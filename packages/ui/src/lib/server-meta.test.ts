@@ -45,12 +45,14 @@ it("publishes refreshes only to the same attachment and rejects revoked metadata
     return value
   } })
   const first = new AbortController(), second = new AbortController()
+  await cache.getServerMeta()
   await cache.getServerMeta(false, first.signal)
   assert.equal(cache.meta(first.signal)?.previewsUnavailable, undefined)
   assert.equal(cache.meta(second.signal), null)
   value = { ...value, previewsUnavailable: true }
   await cache.getServerMeta(true, first.signal)
   assert.equal(cache.meta(first.signal)?.previewsUnavailable, true)
+  assert.equal(cache.previewsUnavailable(), false, "attachment refreshes cannot replace the host switch")
   assert.equal(cache.meta(second.signal), null)
   release = () => {}
   const pending = cache.getServerMeta(false, second.signal)

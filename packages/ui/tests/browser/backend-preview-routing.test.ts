@@ -12,7 +12,7 @@ async function fixturePage(run: (page: Page) => Promise<void>) {
   const page = await browser.newPage(), errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.addInitScript({ content: 'window.EventSource = class extends EventTarget { close() {} }' })
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route(url => url.pathname.startsWith("/api/"), route => route.fulfill({ json: {} }))
   await page.route("**/previews/**", route => route.request().resourceType() === "document"
     ? route.fulfill({ contentType: "text/html", body: "<html><body>Preview fixture</body></html>" }) : route.fallback())
   try {
@@ -67,7 +67,23 @@ test("revoked metadata cannot enable links or block a new generation; missing ow
     && !document.querySelector('[data-owner="remote"] a')?.hasAttribute("data-preview-link-title"))
   const calls = await page.evaluate(() => (window as any).previewRouting.calls)
   assert.equal(calls.filter((call: any) => call.owner === "local" && call.method === "POST").length, 0)
-  assert.equal(calls.filter((call: any) => call.owner === "local" && call.url === "/api/meta").length, 1)
+  assert.equal(calls.filter((call: any) => call.owner === "local" && call.url === "/api/meta").length, 2,
+    "the host snapshot and local project's attachment each have one read")
+}))
+
+test("host-level preview disablement wins over available remote metadata", async () => fixturePage(async page => {
+  const linkEnabled = (expected: boolean) => page.waitForFunction(enabled =>
+    document.querySelector('[data-owner="remote"] a')?.hasAttribute("data-preview-link-title") === enabled, expected)
+  await page.evaluate(() => { const f = (window as any).previewRouting; f.detach(); f.reattach() })
+  await linkEnabled(true)
+  const remoteReads = () => page.evaluate(() => (window as any).previewRouting.calls
+    .filter((call: any) => call.owner === "remote" && call.url.endsWith("/api/meta")).length)
+  const reads = await remoteReads()
+  await page.evaluate(() => (window as any).previewRouting.hostPreviews(true))
+  await linkEnabled(false)
+  await page.evaluate(() => (window as any).previewRouting.hostPreviews(false))
+  await linkEnabled(true)
+  assert.equal(await remoteReads(), reads)
 }))
 
 test("a revoked pending Markdown preview never mounts a guest", async () => fixturePage(async page => {

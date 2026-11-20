@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { remotePreviewAddress, remotePreviewSource } from "./remote-preview-address"
+import { remotePreviewAddress, remotePreviewContent, remotePreviewSource } from "./remote-preview-address"
 
 const preview = { token: "remote-token", capability: "local-cap", contentUrl: "http://local-cap.preview.localhost:1234/previews/remote-token/start",
   targetUrl: "http://remote-app.test/start", sessionId: "session", createdAt: "", proxyUrl: "/previews/remote-token/start" }
@@ -13,6 +13,26 @@ test("remote preview addresses and loaded sources round-trip without persisting 
     assert.equal(remotePreviewAddress(preview, source), address)
   }
   assert.equal(remotePreviewAddress(preview, "http://local-cap.preview.localhost:1234/root?q=2"), "http://remote-app.test/root?q=2")
+})
+
+test("remote clients map host path capabilities on their page origin, never other application paths", () => {
+  const page = "https://host.example"
+  const path = { ...preview, contentUrl: "/previews/local-cap/start" }
+  assert.deepEqual(remotePreviewContent(path, page), { origin: page, prefix: "/previews/local-cap", opaque: true })
+  assert.deepEqual(remotePreviewContent(preview, page), { origin: "http://local-cap.preview.localhost:1234", prefix: "/previews/remote-token", opaque: false })
+  for (const address of ["http://remote-app.test/", "http://remote-app.test/next?q=1#fragment"]) {
+    const source = remotePreviewSource(path, address, page)!
+    assert.ok(source.startsWith(`${page}/previews/local-cap/`))
+    assert.equal(source.includes("remote-token") || source.includes(".preview.localhost"), false)
+    assert.equal(remotePreviewAddress(path, source, page), address)
+  }
+  for (const source of [`${page}/api/meta`, `${page}/previews/remote-token/start`, `${page}/previews/other-cap/start`, "https://other.example/previews/local-cap/start"]) {
+    assert.equal(remotePreviewAddress(path, source, page), undefined)
+  }
+  for (const contentUrl of ["/previews/other-cap/start", "/previews/remote-token/start", "//evil.test/previews/local-cap/start"]) {
+    assert.equal(remotePreviewContent({ ...preview, contentUrl }, page), undefined)
+  }
+  assert.equal(remotePreviewContent({ ...path, capability: "remote-token" }, page), undefined)
 })
 
 test("foreign capabilities, app origins and embedded credentials stay outside a preview mapping", () => {

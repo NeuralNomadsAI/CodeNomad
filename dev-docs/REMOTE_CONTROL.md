@@ -234,7 +234,8 @@ Authenticated browser admission retains these method/path boundaries:
 | Config document/owner patches changing `server.sidecarsOverDirectHttps` | Host-owned setting; authoritative before/after comparison |
 | GET `/api/opencode/logs`, including backend relays | Host-only global diagnostics: the absolute path and raw global log may contain credentials and data from other projects |
 | `/sidecars/:id` and descendants, HTTP/WS | Device-local content, with the explicit host-controlled direct HTTPS opt-in |
-| `/api/backends/:id/preview-capabilities` and `/:capability`; preview HTTP/WS content | Scoped preview authority; live ingress content additionally follows the Web previews switch |
+| `/api/backends/:id/preview-capabilities` and `/:capability`; preview HTTP/WS content | Scoped preview authority; live ingress content additionally follows the Web previews switch. Under `multiBackend`, remote clients may POST the collection and DELETE their own capability through the authenticated UI guard; collection DELETE stays local |
+| Remote-client `/previews/<capability>/…` HTTP/WS content | Cookie-free; bound to the issuing principal's liveness, channel and exact Host; paired devices also follow the Web previews switch |
 | POST `/api/opencode-plugin/automation` | Private loopback native bridge and token |
 | POST `/api/remote-proxy/sessions`; DELETE `/api/remote-proxy/sessions/:id` | Local native window transport |
 | Nested relays and destination host administration | Closed relay boundary |
@@ -304,8 +305,11 @@ Where the tunnel is blocked but a direct HTTPS deployment exists (a TLS-terminat
 See [Browser Automation](BROWSER_AUTOMATION.md#remote-preview-content-transport)
 for capability APIs, exclusive content origins, sandbox/resource policy,
 revocation, original-client cleanup, logical history and service-worker refusal.
-Management requires the host's local-origin guard and current relay proof;
-ingress content follows Remote Control's **Web previews** switch.
+Local management requires the host's local-origin guard and current relay proof;
+ingress content follows Remote Control's **Web previews** switch. Remote clients
+receive host path capabilities instead, bound to their principal, channel and
+Host ([Remote-client path capabilities](BROWSER_AUTOMATION.md#remote-client-path-capabilities)).
+The manager's `hasPreview` admits them beside local previews.
 HTTP/WS transports pin the saved destination, verify its TLS hostname and borrow
 the identity-gated SSH forward. Private connection credentials serve only preview
 creation/deletion; content uses the cookie-free remote capability protocol.
@@ -315,8 +319,8 @@ asset-fallback and WebSocket dispatch. Control APIs on this backend's own origin
 and loopback aliases, and every preview capability origin, return 404 before IO.
 Ordinary application targets retain their proxy behavior. Direct HTTPS SideCar
 opt-in admits only SideCar content, including an authenticated direct browser
-device. Backend relays and memory follow the authenticated UI matrix; remote-preview
-authority retains its host rules.
+device. Backend relays, memory and remote-client preview management follow the
+authenticated UI matrix; preview content retains its capability lifetime rules.
 
 The administrator's listening lock governs the ordinary application listener.
 Relay APIs share that listener and apply the authenticated UI admission matrix.
@@ -388,6 +392,7 @@ credentials follow their separate registry lifetime and revocation rules.
   with colliding raw IDs over ingress, a TLS reverse proxy and non-loopback LAN,
   including destination-owned Tidy up eligibility and strict mutation revisions.
 - `remote-control/security-sentinels.test.ts` scans admitted Remote Control, TLS reverse-proxy and non-loopback LAN flows over direct and injected SSH TCP-forward transports. Controlled A/B destinations exercise stored password/device identities, private SSH/TLS material, pairing tokens and relay proofs. Captured response bodies/headers, redirect failures, rejected raw targets, exposed URL carriers, persisted state and trace-level application logs are checked together. Relay proofs retain their authorized bootstrap-header/resource-query contract; every other response, state/log field and upstream request keeps them private. Rejected targets retain the fixed namespace log treatment even when path admission refuses their syntax.
+- `remote-control/remote-client-previews.test.ts` exercises remote-client path previews over RC, TLS reverse proxy and real LAN against A/B remotes with identical tokens: content, rewriting, SSE/WS, hostile and cross-channel refusals before remote IO, trace logs, and revocation by logout, password change, idle expiry, device revocation, the Web previews switch, Stop, Forget and owner deletion.
 - `codenomad-servers/relay-principal.test.ts` drives real HTTP streams through logout, idle/absolute session expiry, persistent password replacement, device revocation/expiry and tunnel Stop, checking bounded upstream/client closure and isolation of other principals and local-loopback authority.
 
 - `codenomad-servers/ssh-manager.test.ts` exercises private authentication restoration through the owned SSH dial, single business dispatch and stale-proof refusal before IO after SSH retargeting. Concurrent mutations, direct status reads and post-401 observations share the renewal identity gate; a changed, missing or refused identity prevents status dispatch through the replacement forward.

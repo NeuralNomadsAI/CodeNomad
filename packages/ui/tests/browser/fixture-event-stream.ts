@@ -19,7 +19,8 @@ export async function fixtureEventStream(origin: string) {
     send: (event: WorkspaceEventPayload) => {
       for (const client of clients) client.write(`data: ${JSON.stringify(event)}\n\n`)
     },
-    route: (page: Page) => page.route("**/api/events*", route => route.continue({ url })),
+    route: (page: Page) => page.route(request => request.pathname === "/api/events", route => route.continue({ url })),
+    disconnect: () => server.closeAllConnections(),
     close: async () => {
       server.closeAllConnections()
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))

@@ -1,11 +1,12 @@
 import type { FastifyReply, FastifyRequest } from "fastify"
 import type { AuthManager } from "../auth/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
+import { isRemoteSocket } from "../remote-control/request-origin"
 
 /** One admitted remote request retains its original principal through dispatch and publication. */
 export function createRelayPrincipalBinding(deps: {
-  auth: AuthManager
-  devices: Pick<RemoteControlManager, "isDeviceAuthorized">
+  auth: Pick<AuthManager, "getSessionFromRequest" | "isAuthEnabled" | "isSessionValid" | "onPrincipalLoggedOut" | "onSessionInvalidated">
+  devices: Pick<RemoteControlManager, "isDeviceAuthorized" | "isPreviewDeviceAuthorized" | "onPreviewDeviceInvalidated">
   local(request: FastifyRequest): boolean
 }) {
   const principals = new WeakMap<FastifyRequest, AbortSignal>()
@@ -50,5 +51,50 @@ export function createRelayPrincipalBinding(deps: {
       releaseSession = deps.auth.onSessionInvalidated(principal.sessionId, abort)
     }
   }
-  return { bind, signal: (request: FastifyRequest) => principals.get(request) }
+  /**
+   * A principal's lifetime beyond one request, for resources such as preview capabilities.
+   * Admission reads current authority; notifications end already-admitted transfers.
+   */
+  const lifetime = (request: FastifyRequest, host: string) => {
+    const principal = deps.auth.getSessionFromRequest(request)
+    if (!principal) return null
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setInterval> | undefined
+    const cleanups: (() => void)[] = []
+    let active = true
+    const release = () => {
+      if (!active) return
+      active = false
+      clearInterval(timer)
+      for (const cleanup of cleanups.splice(0)) cleanup()
+    }
+    const end = () => { release(); controller.abort() }
+    const own = (cleanup: () => void) => { if (active) cleanups.push(cleanup); else cleanup() }
+    const key = principal.sessionId
+    const ingress = isRemoteSocket(request.raw.socket)
+    const device = key.startsWith("remote-device:") ? key.slice("remote-device:".length) : undefined
+    const current = () => {
+      if (!active) return false
+      const valid = device !== undefined ? deps.devices.isPreviewDeviceAuthorized(device, host, ingress)
+        : key === "auth-disabled" ? !deps.auth.isAuthEnabled() : deps.auth.isSessionValid(key)
+      if (!valid) end()
+      return valid
+    }
+    try {
+      if (!current()) return null
+      if (device !== undefined || key === "auth-disabled") {
+        own(deps.auth.onPrincipalLoggedOut(id => { if (id === key) end() }))
+      }
+      if (device !== undefined) {
+        own(deps.devices.onPreviewDeviceInvalidated(device, ingress, end))
+        // Idle expiry can occur without a revocation event.
+        if (active) { timer = setInterval(current, 250); timer.unref() }
+      } else if (key !== "auth-disabled") own(deps.auth.onSessionInvalidated(key, end))
+      return current() ? { key, signal: controller.signal, current, release, ingress, host } : null
+    } catch (error) {
+      release()
+      throw error
+    }
+  }
+  return { bind, lifetime, signal: (request: FastifyRequest) => principals.get(request) }
 }

@@ -156,12 +156,80 @@ retains the trusted UI's storage. A worker-synthesized response can bypass
 network headers, so registration prevention and fresh capability origins own
 the authority boundary.
 
+### Remote-client path capabilities
+
+Remote clients (Remote Control devices, verified direct HTTPS, admitted LAN HTTP
+and their PWAs) cannot resolve `preview.localhost`. Under `multiBackend`, the
+same creation route issues them a host path capability instead:
+`contentUrl` is `/previews/<capability>/…` on the page's own origin, and the
+remote token stays private. Creation uses the authenticated UI guard
+(`isBackendUiRoute()` admits only POST of the collection and DELETE of one
+capability; generation-wide detachment stays local) and binds the capability to
+its issuing principal (`relay-principal.ts` `lifetime()`), its channel (ingress
+socket or direct listener) and exact public `Host`. Logout, idle/absolute expiry,
+password replacement, device revocation or expiry, Remote Control Stop for tunnel
+devices, the host's **Web previews** switch for paired devices, server
+remove/retarget/Forget and owner deletion revoke it and close its HTTP and WS
+transfers. Admission and publication read current authority without extending
+its lifetime. Explicit invalidation is synchronous; the device expiration and
+availability check supplements it for idle transfers. Only the issuing principal
+can delete it.
+
+Content is cookie-free. `/previews/:token` routes and the preview upgrade handler
+hand capabilities they do not own locally to `RemotePreviewCapabilities.servePath()`
+/ `upgradePath()`, which reuse the generation owner's pinned transport and the
+isolated listener's header filtering. They accept only absent or `null` Origin,
+the issuing channel and Host, and refuse service-worker script requests. Responses
+carry `sandbox` without `allow-same-origin` plus `frame-ancestors 'self'`,
+`Referrer-Policy: no-referrer` and `Access-Control-Allow-Origin: null`; same-origin
+CORP is omitted because the opaque document's own no-CORS loads would fail it.
+HTML, CSS and JavaScript bodies and `Location` replace the remote prefix with
+the host capability prefix, which also retargets the remote runtime bridge's
+fetch/XHR/WS/SSE rewriting. Body replacement preserves the surrounding bytes and
+omits the origin's representation validators and range headers; partial text
+responses are refused. The source and host use the same MIME classification,
+including the exact JavaScript essences from WHATWG MIME Sniffing. Each proxy
+admits four active rewrites of up to 16 MiB per document and queues up to 32
+paused inputs in arrival order without allocating rewrite buffers for them.
+The 15-second deadline covers queueing, rewriting and downstream completion;
+disconnect or authority revocation cancels the wait. The source rewrites
+UTF-8, UTF-16 and supported
+ASCII-compatible legacy text in its original charset, after streaming
+decompression for gzip, deflate or Brotli if needed. The host substitutes the
+prefix in place. The host also admits up to 128 pending and live relay preview
+records together. Binary bodies and SSE stream without a rewrite slot;
+WebSocket messages pass through unchanged.
+
+`remotePreviewContent()` (`lib/remote-preview-address.ts`) resolves either form;
+`BrowserFrame`'s `opaqueSource` keeps the iframe sandbox without
+`allow-same-origin` and expects `null` message origins, while the logical
+address and history mapping stay as for isolated sources. Previews sharing the
+public hostname have distinct opaque origins: they cannot script, frame or
+store into each other, reach application APIs or register workers. Chromium
+sends no Referer or Fetch Metadata from these documents, so HTTP/WS reads between
+previews rely on keeping capability URLs private. CodeNomad keeps remote-client
+bearer URLs out of its own logs and saved logical preview history. A same-preview
+`Location` may carry the public capability. Browser navigation history and
+reverse-proxy access logs may retain bearer URLs, and plain HTTP exposes them
+in transit. Treat these URLs as secrets and prefer HTTPS.
+
+Remote project preview controls and preview links wait for metadata from both
+the host and the project's attached backend. A host event-stream open lets mounted
+views recover missing host metadata through the shared cache. If the initial read
+is still pending, recovery waits for it and shares one follow-up read on failure.
+
 `preview-capabilities.test.ts` covers content-origin reservation, equal remote
 tokens on separate backends, guarded issuance, real HTTP/WS exchange, SSH
 destination ownership, revocation and the real remote CodeNomad path proxy.
 `tests/browser/remote-preview-origin-isolation.test.ts` drives Chromium against identical remote
 tokens to qualify fetch/XHR/WS, no-CORS scripts/images/fetch, iframe embedding,
 opaque callers and legitimate own-origin resources.
+`remote-control/remote-client-previews.test.ts` drives two controlled A/B remotes
+with identical tokens through Remote Control, a TLS reverse proxy and a real LAN
+interface: rewriting, fetch/preflight/redirect/SSE/WS, hostile refusals and each
+revocation row. `tests/browser/remote-preview-path-isolation.test.ts` qualifies
+the opaque path documents in Chromium, including UI embedding and sibling,
+application, worker and Referer probes.
 
 ## Design constraints
 
@@ -283,7 +351,7 @@ Native open claims retain their request deadline and backend-generation fence. T
 
 ## Agent conventions
 
-- Live open/restore/navigation resolves the owning backend from the instance key before HTTP. Token deletion, including superseded-response cleanup, retains that client. Attachment revocation releases live resources and preserves the occurrence's saved history; restore coalescence and cleanup retain the exact attachment/request. Nonlocal frame sources resolve against their backend; local proxy paths and native token-subdomain URLs keep their contract. Preview availability follows attachment-scoped backend metadata; host version/update checks use local metadata.
+- Live open/restore/navigation resolves the owning backend from the instance key before HTTP. Token deletion, including superseded-response cleanup, retains that client. Attachment revocation releases live resources and preserves the occurrence's saved history; restore coalescence and cleanup retain the exact attachment/request. Nonlocal frame sources resolve against their backend; local proxy paths and native token-subdomain URLs keep their contract. Remote project preview controls wait for both the host snapshot and attachment-scoped project metadata. Host version/update checks use local metadata.
 - A floating session drawer covers the portaled session preview: `SessionPreviewHost` hides its retained DOM and deactivates its native target until that shell's drawer leaves the DOM. Body-portaled menus and dialogs retain their shared stacking layers; Tauri child views follow `localOverlayOpen()` visibility.
 
 - After changing fixed page programs or their signatures, run `node --import tsx scripts/build-page-function-registry.ts` and the driver contract tests. Keep `functions.generated.json` derived from the authored registry. Bump the private driver contract version for incompatible operation/signature changes. Preserve the fixed-program hashes and snapshot goldens when behavior is unchanged. Never accept caller-supplied protocol names or JavaScript source in the page channel.

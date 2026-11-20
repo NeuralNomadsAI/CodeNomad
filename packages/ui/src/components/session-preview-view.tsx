@@ -6,7 +6,7 @@ import { previewKey, sessionPreviews, openSessionPreview, dismissSessionPreview,
 import { BrowserFrame, type BrowserFrameElementTarget } from "./browser-frame"
 import { getPreviewFrameSource } from "./browser-frame-security"
 import { runtimeEnv } from "../lib/runtime-env"
-import { remotePreviewAddress, remotePreviewSource } from "../lib/remote-preview-address"
+import { remotePreviewAddress, remotePreviewContent, remotePreviewSource } from "../lib/remote-preview-address"
 import type { RemotePreviewCapability } from "../../../server/src/api-types"
 import { beginGesture } from "../stores/session-surface"
 
@@ -101,6 +101,7 @@ const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
     })
   }
 
+  const content = () => props.preview.capability ? remotePreviewContent(props.preview as RemotePreviewCapability) : undefined
   const frameSource = (preview: SessionPreviewRecord = props.preview) =>
     getPreviewFrameSource(runtimeEnv, preview, window.location.href, preview.owner.client.id)
 
@@ -132,9 +133,10 @@ const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
         onHistoryChange={(history) => updateSessionPreviewHistory(props.preview.storageKey, history)}
         onNavigationStart={() => { beginGesture({ sessionId: props.preview.sessionId, instanceId: props.instanceId }) }}
         onCancelNavigation={() => cancelSessionPreviewNavigation(props.preview.storageKey)}
-        proxyBasePath={`/previews/${encodeURIComponent(props.preview.token)}`}
+        proxyBasePath={content()?.prefix ?? `/previews/${encodeURIComponent(props.preview.token)}`}
         addressMode="url"
         isolatedSource={Boolean(props.preview.capability)}
+        opaqueSource={content()?.opaque}
         sourceAddress={source => remotePreviewAddress(props.preview as RemotePreviewCapability, source)}
         onNavigate={async (address) => {
           const source = props.preview.capability && remotePreviewSource(props.preview as RemotePreviewCapability, address)
