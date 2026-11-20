@@ -9,7 +9,7 @@ import { sleep } from "./lib.mjs"
 
 export const assetsDirectory = tree => path.join(tree, "packages/ui/src/renderer/dist/assets")
 
-export async function withBackend(daemon, tree, root, run) {
+export async function withBackend(daemon, tree, root, followLongReplies, run) {
   root = privatePath(root)
   await mkdir(root, { recursive: true })
   const password = randomUUID()
@@ -47,6 +47,10 @@ export async function withBackend(daemon, tree, root, run) {
       recentFolders: [{ path: daemon.project, projectName: "project", lastAccessed: Date.now() }],
     }, cookie)
     if (!patched.ok) throw Error(`Could not set recent folder (${patched.status})`)
+    if (followLongReplies) {
+      const setting = await request("/api/storage/config/ui", "PATCH", { settings: { holdLongAssistantReplies: false } }, cookie)
+      if (!setting.ok) throw Error(`Could not enable long-reply following (${setting.status})`)
+    }
     await run(origin, cookie.slice(cookie.indexOf("=") + 1))
   } finally {
     try { await stopFixtureChild(child, stopped) } finally {

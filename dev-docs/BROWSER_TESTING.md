@@ -85,6 +85,7 @@ profile. The foreground session has 300 history turns. The guard compares three
 native event. Each client and level forks the same seed histories and must
 complete the expected stream in every active session. At 8 and 32 sessions the
 guard compares the final foreground marker on screen and p95 key latency.
+Latency samples leave long-reply following enabled in both clients.
 Intermediate-marker coverage is reported separately. Ratios floor both inputs
 at 50 ms.
 

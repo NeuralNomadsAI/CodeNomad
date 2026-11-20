@@ -7,8 +7,8 @@ import { privatePath } from "./isolation.mjs"
 import { now } from "./lib.mjs"
 import { withBackend } from "./stacks.mjs"
 
-export async function withBrowser(daemon, tree, root, run) {
-  return withBackend(daemon, tree, root, async (url, cookie) => {
+export async function withBrowser(daemon, tree, root, followLongReplies, run) {
+  return withBackend(daemon, tree, root, followLongReplies, async (url, cookie) => {
     const profile = privatePath(path.join(root, "chromium"))
     // Chromium puts its Linux singleton socket under TMPDIR; keep it short.
     const socketDir = process.platform === "linux" ? await mkdtemp(path.join(os.tmpdir(), "cn-perf-")) : undefined

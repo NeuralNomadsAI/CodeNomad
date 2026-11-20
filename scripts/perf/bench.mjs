@@ -147,7 +147,7 @@ await withDaemon(binary, path.join(root, "daemon"), chunks, async daemon => {
             await sleep(3000)
             await write(scenario, tree ? "codenomad" : "tui", label, round, level, await measure(daemon, ids, driver, countWork))
           }
-          if (tree) await withBrowser(daemon, tree, path.join(root, `${scenario}-${label}-${round}-${level}`), run)
+          if (tree) await withBrowser(daemon, tree, path.join(root, `${scenario}-${label}-${round}-${level}`), !countWork, run)
           else await withTui(binary, daemon, ids[0], run)
         })
       }
