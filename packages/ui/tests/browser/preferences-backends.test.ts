@@ -110,7 +110,7 @@ async function api(page: Page, selected: () => string) {
 }
 
 for (const kind of ["electron", "tauri"] as const) {
-  for (const reason of ["usage", "transport", "network", "401", "503", "inventory"] as const) test(`${kind}: Servers retarget shows ${reason === "usage" ? "the actionable remote-context usage refusal" : `a masked ${reason} failure`}`, async () => {
+  for (const reason of ["usage", "transport", "network", "401", "503", "inventory"] as const) test(`${kind}: Servers retarget ${reason === "transport" ? "masks the failed save" : `can be confirmed without the old backend (${reason})`}`, async () => {
     const page = await browser.newPage(), f = await api(page, () => "a")
     f.missing()
     if (reason === "transport") f.failWrites()
@@ -120,27 +120,27 @@ for (const kind of ["electron", "tauri"] as const) {
     try {
       await page.goto(url)
       await page.locator('[data-remote-server="a"]').waitFor()
+      const before = f.requests.length
       await page.getByRole("button", { name: "Edit server: a", exact: true }).click()
       await page.getByLabel("SSH host (optional)", { exact: true }).fill("other-lab")
       await page.getByRole("button", { name: "Save", exact: true }).click()
-      if (reason === "transport") await page.getByRole("button", { name: "Confirm", exact: true }).click()
-      const alert = page.getByRole("dialog").getByRole("alert")
-      await alert.waitFor()
-      assert.equal(await alert.innerText(), reason === "usage"
-        ? "Close this server’s tabs and reopen Settings from another project before changing its address."
-        : "Could not save the preference.")
+      const confirm = page.locator(".alert-dialog")
+      await confirm.getByText("Change this server connection? Saved tabs in other windows may become unavailable.", { exact: true }).waitFor()
+      if (reason === "transport") {
+        await confirm.getByRole("button", { name: "Confirm", exact: true }).click()
+        const alert = page.getByRole("dialog").getByRole("alert")
+        await alert.waitFor()
+        assert.equal(await alert.innerText(), "Could not save the preference.")
+      } else {
+        await confirm.getByRole("button", { name: "Cancel", exact: true }).click()
+        await confirm.waitFor({ state: "hidden" })
+      }
       assert.equal((await page.locator("body").innerText()).includes("do-not-display"), false)
       const forget = (value: typeof f.requests[number]) => value.owner === "local" && value.method === "POST" && value.path === "/api/remote-servers/a/forget"
       const patch = (value: typeof f.requests[number]) => value.owner === "local" && value.method === "PATCH" && value.path === "/api/storage/state/ui"
-      if (reason !== "transport") {
-        if (reason === "usage") assert.equal(await page.getByText("Could not save the preference.", { exact: true }).count(), 0)
-        else assert.equal(await page.getByText("Close this server’s tabs and reopen Settings from another project before changing its address.", { exact: true }).count(), 0)
-        assert.equal(f.requests.some(value => forget(value) || patch(value)), false)
-      } else assert.ok(f.requests.some(patch))
-      if (!["usage", "transport"].includes(reason)) {
-        assert.ok(f.requests.some(value => value.owner === "a" && value.method === "GET"
-          && value.path === (reason === "inventory" ? "/api/workspaces" : "/api/meta")))
-      }
+      const edits = f.requests.slice(before)
+      assert.equal(edits.some(value => value.owner !== "local" || forget(value)), false)
+      assert.equal(edits.filter(patch).length, reason === "transport" ? 1 : 0)
       assert.equal(await page.locator('[data-remote-server="a"]').count(), 1)
       assert.deepEqual(f.errors, [])
     } finally { await page.close() }
@@ -177,7 +177,7 @@ for (const kind of ["electron", "tauri"] as const) {
     } finally { await page.close() }
   })
 
-  test(`${kind}: a remote Preferences context reserves its server even with an empty inventory`, async () => {
+  test(`${kind}: a remote Preferences context can review a connection change without inventory work`, async () => {
     const page = await browser.newPage(), f = await api(page, () => "a")
     f.missing()
     await host(page, kind, project("a", "providers"))
@@ -195,9 +195,10 @@ for (const kind of ["electron", "tauri"] as const) {
       await page.getByRole("status").filter({ hasText: "Open a project first." }).waitFor()
       const before = f.requests.length
       await check()
-      await page.waitForFunction(() => (window as any).usageResult !== "pending" || !!document.querySelector(".alert-dialog"))
-      assert.equal(await page.evaluate(() => (window as any).usageResult), "refused")
-      assert.equal(f.requests.length, before, "the native context refuses before registry or inventory work")
+      const confirm = page.locator(".alert-dialog")
+      await confirm.getByRole("button", { name: "Cancel", exact: true }).click()
+      await page.waitForFunction(() => (window as any).usageResult === "cancelled")
+      assert.equal(f.requests.length, before, "reviewing the change does not contact the registry or inventory")
       await page.evaluate(() => (window as any).open({ section: "servers" }))
       await page.locator('[data-remote-server="a"]').waitFor()
       await check()
