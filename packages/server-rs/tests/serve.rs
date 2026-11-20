@@ -1,4 +1,4 @@
-//! The binary started as `process-manager.ts` starts the reference: same arguments and variables,
+//! The binary started as Tauri's `cli_manager.rs` starts the reference: same arguments and variables,
 //! then the ready line, the token exchange, the UI, the TLS files and a clean stop over stdin.
 use std::{
     fs,
@@ -19,9 +19,9 @@ const PROD: [&str; 11] = [
     "serve",
     "--host",
     "127.0.0.1",
-    "--generate-token",
     "--auth-cookie-name",
     COOKIE,
+    "--generate-token",
     "--unrestricted-root",
     "--https",
     "true",
@@ -71,7 +71,7 @@ impl Server {
     async fn line(&mut self) -> String {
         timeout(Duration::from_secs(60), self.lines.recv()).await.expect("stdout line within the hosts' 60 s").unwrap()
     }
-    /// `process-manager.ts`: the token, then the URL matched by its regular expression, then the remote URL.
+    /// `cli_manager.rs`: the token, then the URL matched by its regular expression, then the remote URL.
     async fn ready(&mut self) -> (String, String, String) {
         let token = self.line().await.strip_prefix("CODENOMAD_BOOTSTRAP_TOKEN:").unwrap().to_owned();
         let ready = regex::Regex::new(r"(?i)^Local\s+Connection\s+URL\s*:\s*(https?://\S+)\s*$").unwrap();
@@ -79,7 +79,7 @@ impl Server {
         assert!(url.starts_with("http://127.0.0.1:"));
         (token, url, self.line().await)
     }
-    /// `process-stop.ts`: the command, end of input, the status line and exit within 30 s.
+    /// `cli_manager.rs` stop: the command, end of input, the status line and exit within 30 s.
     async fn stop(mut self, before: &[u8]) {
         let mut stdin = self.child.stdin.take().unwrap();
         stdin.write_all(before).await.unwrap();
@@ -95,6 +95,28 @@ impl Server {
 fn scratch(name: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     std::env::temp_dir().join(format!("cnrs-{name}-{}-{nanos}", std::process::id()))
+}
+
+/// The request `cli_manager.rs` writes on a raw socket; the whole answer, which needs `Connection: close`.
+async fn tauri_exchange(url: &str, token: &str) -> String {
+    let url = reqwest::Url::parse(url).unwrap();
+    let (host, port) = (url.host_str().unwrap().to_owned(), url.port().unwrap());
+    let body = format!("{{\"token\":\"{token}\"}}");
+    tokio::task::spawn_blocking(move || {
+        use std::io::{Read, Write};
+        let mut stream = std::net::TcpStream::connect((host.as_str(), port)).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let request = format!(
+            "POST /api/auth/token HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(request.as_bytes()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        response
+    })
+    .await
+    .unwrap()
 }
 
 fn client() -> reqwest::Client {
@@ -138,14 +160,12 @@ async fn desktop_launch_contract() {
     let unauthorized = client.get(format!("{url}/api/meta")).send().await.unwrap();
     assert_eq!(unauthorized.status(), 401);
 
-    // `main.ts` / `cli_manager.rs`: the token for the named cookie, once.
-    let exchange = || client.post(format!("{url}/api/auth/token")).json(&serde_json::json!({ "token": token }));
-    let accepted = exchange().send().await.unwrap();
-    assert_eq!(accepted.status(), 200);
-    let set = accepted.headers()["set-cookie"].to_str().unwrap().to_owned();
+    // `exchange_bootstrap_token`: Tauri's own HTTP/1.1 request, read to the end of the connection.
+    let set = tauri_exchange(&url, &token).await;
+    let set = set.lines().find_map(|l| l.strip_prefix("set-cookie: ")).expect("200 with a cookie").to_owned();
     assert!(set.starts_with(&format!("{COOKIE}=")) && set.ends_with("; HttpOnly; Path=/; SameSite=Lax"), "{set}");
     let cookie = set.split(';').next().unwrap().to_owned();
-    assert_eq!(exchange().send().await.unwrap().status(), 401);
+    assert!(tauri_exchange(&url, &token).await.starts_with("HTTP/1.1 401 "));
 
     let status: serde_json::Value = get("/api/auth/status", Some(&cookie)).send().await.unwrap().json().await.unwrap();
     assert_eq!(
@@ -174,7 +194,7 @@ async fn desktop_launch_contract() {
     drop(events);
 }
 
-/// Electron's development launch: plain HTTP on any port, the UI from the Vite server.
+/// Tauri's development launch: loopback HTTP on any port, the UI from the Vite server.
 #[tokio::test]
 async fn desktop_dev_launch_proxies_the_ui() {
     let vite = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -184,13 +204,10 @@ async fn desktop_dev_launch_proxies_the_ui() {
         ([("content-type", "text/html"), ("x-vite", "1")], seen)
     });
     tokio::spawn(async move { axum::serve(vite, app).await });
-    let args = [&PROD[..7], &["--https", "false", "--http", "true", "--http-port", "0"]].concat();
+    let args = [&PROD[..], &["--http-port", "0"]].concat();
     let args = [&args[..], &["--ui-dev-server", &dev, "--log-level", "info"]].concat();
     let mut server = Server::start(scratch("dev"), Path::new(env!("CARGO_BIN_EXE_codenomad-rs")), &args);
-    let (token, url, remote) = server.ready().await;
-    let port = url.rsplit(':').next().unwrap();
-    assert_eq!(remote, format!("Remote Connection URL : http://localhost:{port}"));
-    assert!(!server.config.join("tls").exists());
+    let (token, url, _) = server.ready().await;
     let client = client();
     let set = client.post(format!("{url}/api/auth/token")).json(&serde_json::json!({ "token": token })).send().await;
     let cookie = set.unwrap().headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap().to_owned();

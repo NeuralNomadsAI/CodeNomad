@@ -23,7 +23,7 @@ enum Kind {
 }
 use Kind::*;
 
-const OPTIONS: [(&str, Kind, &str); 27] = [
+const OPTIONS: [(&str, Kind, &str); 26] = [
     ("host", Value, "CLI_HOST"),
     ("https", Value, "CLI_HTTPS"),
     ("http", Value, "CLI_HTTP"),
@@ -34,7 +34,6 @@ const OPTIONS: [(&str, Kind, &str); 27] = [
     ("tls-ca", Value, "CLI_TLS_CA"),
     ("tlsSANs", Value, "CLI_TLS_SANS"),
     ("workspace-root", Value, "CLI_WORKSPACE_ROOT"),
-    ("root", Value, "CLI_ROOT"),
     ("unrestricted-root", Flag, "CLI_UNRESTRICTED_ROOT"),
     ("config", Value, "CLI_CONFIG"),
     ("log-level", Value, "CLI_LOG_LEVEL"),
@@ -295,13 +294,13 @@ mod tests {
         }
     }
 
-    /// The desktop hosts' exact arguments (`process-manager.ts`, `cli_manager.rs`). Variables the
-    /// grammar reads are left to the environment of the test process, which sets none of them.
+    /// Tauri's exact arguments (`cli_manager.rs` `build_args`). Variables the grammar reads are left
+    /// to the environment of the test process, which sets none of them.
     #[test]
     fn desktop_arguments_and_reference_defaults() {
         let cookie = "codenomad_session_42_1700000000000";
         let prod =
-            ["serve", "--host", "127.0.0.1", "--generate-token", "--auth-cookie-name", cookie, "--unrestricted-root"];
+            ["serve", "--host", "127.0.0.1", "--auth-cookie-name", cookie, "--generate-token", "--unrestricted-root"];
         let l = launch(&[&prod[..], &["--https", "true", "--http", "true"]].concat()).unwrap();
         assert!(l.serve && l.auth.token && !l.auth.skip && l.auth.cookie == cookie && l.auth.username == "codenomad");
         assert_eq!((l.http.ip.to_string(), l.http.port, l.http.fallback), ("127.0.0.1".into(), 9899, true));

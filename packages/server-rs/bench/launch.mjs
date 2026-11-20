@@ -1,4 +1,4 @@
-// Mode `launch`: both servers started as the desktop hosts start them (`process-manager.ts` arguments,
+// Mode `launch`: both servers started as Tauri starts them (`cli_manager.rs` arguments,
 // `CODENOMAD_NATIVE_PARENT=1`, `CLI_CONFIG`), one after the other in private homes; stdout contract
 // lines, token exchange, sign-in pages, UI bundle, `tls/` and the stdin stop compared. `node launch.mjs`
 import assert from "node:assert/strict"
@@ -11,7 +11,7 @@ import { out, repo, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
 
 await useBenchTemp()
 const cookieName = `codenomad_session_${process.pid}_1700000000000`
-const args = ["serve", "--host", "127.0.0.1", "--generate-token", "--auth-cookie-name", cookieName, "--unrestricted-root",
+const args = ["serve", "--host", "127.0.0.1", "--auth-cookie-name", cookieName, "--generate-token", "--unrestricted-root",
   "--https", "true", "--http", "true"]
 const sha = text => createHash("sha256").update(text).digest("hex").slice(0, 16)
 

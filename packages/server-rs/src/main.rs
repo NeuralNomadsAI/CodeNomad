@@ -1,4 +1,4 @@
-//! CodeNomad server in Rust: `codenomad-rs serve [options]` as the desktop hosts launch the reference,
+//! CodeNomad server in Rust: `codenomad-rs serve [options]` as Tauri launches the reference,
 //! or the bench's positional launch. Start-up, then every domain's routes behind the loopback
 //! password session and, with HTTPS configured, behind the paired-device admission.
 mod app;
