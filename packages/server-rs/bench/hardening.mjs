@@ -14,7 +14,7 @@ import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { withProductRuntime } from "../../../scripts/native-product-fixture.mjs"
 import { stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
-import { out, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { dropRegistration, out, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
 
 const cli = process.argv[2]
 assert(path.isAbsolute(cli ?? ""), "usage: node hardening.mjs <absolute opencode executable>")
@@ -102,11 +102,8 @@ await withProductRuntime(cli, async () => ({}), async ({ root: home, env, connec
     // ---- M2: no route opens a client-chosen device or network path
     const routes = [
       ["filesystem.path", p => ["GET", `/api/filesystem?path=${encodeURIComponent(p)}`]],
-      ["filesystem.files.content", p => ["GET", `/api/filesystem/files/content?path=${encodeURIComponent(p)}`]],
       ["files.directory", p => ["GET", `/api/workspaces/${id}/files?directory=${encodeURIComponent(p)}`]],
       ["files.path", p => ["GET", `/api/workspaces/${id}/files?path=${encodeURIComponent(p)}`]],
-      ["files.content.directory", p => ["GET", `/api/workspaces/${id}/files/content?path=a.txt&directory=${encodeURIComponent(p)}`]],
-      ["files.content.path", p => ["GET", `/api/workspaces/${id}/files/content?path=${encodeURIComponent(p)}`]],
       ["files.preview.directory", p => ["GET", `/api/workspaces/${id}/files/preview?path=a.txt&directory=${encodeURIComponent(p)}`]],
       ["files.put.directory", p => ["PUT", `/api/workspaces/${id}/files/content?path=a.txt&directory=${encodeURIComponent(p)}`, { contents: "x" }]],
       ["workspaces.create.path", p => ["POST", "/api/workspaces", { path: p }]],
@@ -275,6 +272,7 @@ await withProductRuntime(cli, async () => ({}), async ({ root: home, env, connec
     for (const s of open) s.destroy()
     child.stdin.write("shutdown\n")
     await stopFixtureChild(child, stopped).catch(() => child.kill())
+    await dropRegistration(env, child.pid)
     await writeJson("hardening.json", { binary: bin, failures, results })
     await writeFile(path.join(out, "hardening-rs.log"), lines)
   }

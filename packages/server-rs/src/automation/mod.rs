@@ -53,6 +53,9 @@ pub async fn publish(app: &Shared, stop: CancellationToken) -> Option<tokio::tas
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
         let url = format!("http://127.0.0.1:{}{PATH}", listener.local_addr()?.port());
         let dir = crate::config::automation_bridges().ok_or_else(|| std::io::Error::other("No home directory"))?;
+        if !crate::bench::private_registry(&dir) {
+            return Err(std::io::Error::other("Fixture bridge registry outside the private home"));
+        }
         Ok::<_, std::io::Error>((listener, registry::publish(&dir, &url, &token)?))
     };
     let (listener, record) = match opened.await {

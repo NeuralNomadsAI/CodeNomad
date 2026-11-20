@@ -103,7 +103,7 @@ export async function pair(...hosts){
     const states=values=>values.slice().sort((a,b)=>a.path.localeCompare(b.path))
     await check("root tree","/files",{normalize:list})
     await check("nested Unicode listing","/files?path=nested",{normalize:list})
-    await check("Unicode UTF-8",`/files/content?${q({path:"nested/étude.txt"})}`,{normalize:content})
+    await check("Unicode path",`/files/preview?${q({path:"nested/étude.txt"})}`,{normalize:content})
     await check("binary bytes","/files/preview?path=binary.bin",{normalize:content})
     await check("large file","/files/preview?path=large.txt",{normalize:content})
     await check("5 MiB preview limit","/files/preview?path=ignored.large",{codes:[400,400]})

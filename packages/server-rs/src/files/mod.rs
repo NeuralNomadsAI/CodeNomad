@@ -1,4 +1,4 @@
-//! Project files: listing, previews, content reads and writes under an owned checkout,
+//! Project files: listing, previews and writes under an owned checkout,
 //! the global file browser and its watches.
 pub mod browse;
 pub mod links;
@@ -11,12 +11,9 @@ pub fn routes() -> axum::Router<Shared> {
     axum::Router::new()
         .route("/api/workspaces/{id}/files", routing::get(list))
         .route("/api/workspaces/{id}/files/preview", routing::get(preview))
-        .route(
-            "/api/workspaces/{id}/files/content",
-            routing::get(get).put(put).layer(DefaultBodyLimit::max(8 * 1024 * 1024)),
-        )
+        .route("/api/workspaces/{id}/files/content", routing::put(put).layer(DefaultBodyLimit::max(8 * 1024 * 1024)))
         .route("/api/filesystem", routing::get(browse::browse))
-        .route("/api/filesystem/files/content", routing::get(global_content))
+        .route("/api/filesystem/folders", routing::post(browse::create_folder))
 }
 
 use crate::{Error, Shared, Workspace, error};
@@ -50,14 +47,6 @@ fn io_error(e: io::Error) -> Error {
 }
 fn not_owned() -> Error {
     error(Status::BAD_REQUEST, "Directory is not owned by this workspace")
-}
-/// The requested `encoding` (`utf-8` by default) and the contents in it.
-fn encoded<'a>(bytes: &[u8], encoding: Option<&'a str>) -> Result<(&'a str, String), Error> {
-    match encoding.unwrap_or("utf-8") {
-        "base64" => Ok(("base64", STANDARD.encode(bytes))),
-        "utf-8" => Ok(("utf-8", String::from_utf8_lossy(bytes).into_owned())),
-        _ => Err(error(Status::BAD_REQUEST, "Invalid encoding")),
-    }
 }
 fn large() -> Error {
     error(Status::BAD_REQUEST, "Selected file is too large to attach")
@@ -202,12 +191,11 @@ pub fn host_identity(path: &Path) -> io::Result<String> {
 pub struct Input {
     path: Option<String>,
     directory: Option<String>,
-    encoding: Option<String>,
     worktree: Option<String>,
 }
 async fn select(app: &crate::App, id: &str, q: &Input) -> Result<Workspace, Error> {
     let w = app.workspace(id)?;
-    if q.directory.as_deref().is_some_and(|d| !paths::under(&app.root, Path::new(d))) {
+    if q.directory.as_deref().is_some_and(|d| !paths::under(&app.scope, Path::new(d))) {
         return Err(not_owned());
     }
     let slug = q.worktree.as_deref().filter(|s| !s.is_empty());
@@ -270,47 +258,26 @@ pub async fn list(
     app.workspace(&id)?;
     Ok(Json(json!(entries)))
 }
-async fn content(app: Shared, id: String, q: Input, preview: bool) -> Result<Response, Error> {
-    let w = select(&app, &id, &q).await?;
-    let key = q.path.as_deref().ok_or_else(invalid)?;
-    let p = workspace_path(&w.path, key, false)?;
-    let encoding = if preview { Some("base64") } else { q.encoding.as_deref() };
-    encoded(&[], encoding)?;
-    let _slot = app.file_reader.acquire().await.unwrap();
-    root(&w)?;
-    let bytes = links::read(&w.path, &p, MAX)?.ok_or_else(unavailable)?;
-    let tag = version(&bytes);
-    let (encoding, contents) = encoded(&bytes, encoding)?;
-    app.workspace(&id)?;
-    Ok((
-        [(axum::http::header::ETAG, tag.clone())],
-        Json(json!({"workspaceId":id,"relativePath":key,"contents":contents,"encoding":encoding,"version":tag})),
-    )
-        .into_response())
-}
+/// `GET files/preview`: the base64 contents and version of a project file.
 pub async fn preview(
     State(app): State<Shared>,
     Route(id): Route<String>,
     Query(q): Query<Input>,
 ) -> Result<Response, Error> {
-    content(app, id, q, true).await
-}
-pub async fn get(
-    State(app): State<Shared>,
-    Route(id): Route<String>,
-    Query(q): Query<Input>,
-) -> Result<Response, Error> {
-    content(app, id, q, false).await
-}
-
-pub async fn global_content(State(app): State<Shared>, Query(q): Query<Input>) -> Result<Json<Value>, Error> {
-    let path = q.path.as_deref().ok_or_else(invalid)?;
-    let relative = workspace_path(&app.root, path, false)?;
-    encoded(&[], q.encoding.as_deref())?;
+    let w = select(&app, &id, &q).await?;
+    let key = q.path.as_deref().ok_or_else(invalid)?;
+    let p = workspace_path(&w.path, key, false)?;
     let _slot = app.file_reader.acquire().await.unwrap();
-    let data = links::read(&app.root, &relative, MAX)?.ok_or_else(unavailable)?;
-    let (encoding, contents) = encoded(&data, q.encoding.as_deref())?;
-    Ok(Json(json!({"path":path,"contents":contents,"encoding":encoding})))
+    root(&w)?;
+    let bytes = links::read(&w.path, &p, MAX)?.ok_or_else(unavailable)?;
+    let tag = version(&bytes);
+    app.workspace(&id)?;
+    let contents = STANDARD.encode(&bytes);
+    Ok((
+        [(axum::http::header::ETAG, tag.clone())],
+        Json(json!({"workspaceId":id,"relativePath":key,"contents":contents,"encoding":"base64","version":tag})),
+    )
+        .into_response())
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

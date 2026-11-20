@@ -111,20 +111,6 @@ pub async fn verify_mutation(app: &App, id: &str, directory: &str, record: &Valu
     Ok(())
 }
 
-pub async fn yolo_read(
-    State(app): State<Shared>,
-    axum::extract::Path((id, session)): axum::extract::Path<(String, String)>,
-) -> Result<Json<Value>, Error> {
-    let w = app.workspace(&id)?;
-    let row = session_record(&app, &session).await?;
-    let directory = row["location"]["directory"].as_str().ok_or_else(foreign)?;
-    if row["location"].get("workspaceID").is_some() || !crate::worktrees::owns(&app, &w, directory).await {
-        return Err(foreign());
-    }
-    // This prototype has no automatic permission decisions.
-    Ok(Json(json!({"enabled":false})))
-}
-
 /// The native status and the cache headers a relayed body keeps.
 fn relayed(response: &reqwest::Response) -> axum::http::response::Builder {
     ["content-type", "cache-control", "etag", "last-modified"].into_iter().fold(

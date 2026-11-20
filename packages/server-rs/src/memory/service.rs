@@ -6,28 +6,19 @@ use super::store::{Mutation, Namespace, Store};
 use super::{identity, rules};
 use crate::App;
 use serde_json::{Map, Value, json};
-use std::{path::PathBuf, sync::LazyLock};
+use std::sync::LazyLock;
 use tokio_util::sync::CancellationToken;
 
+/// The memory repository lives under the settings base, like the reference's.
 pub fn store(app: &App) -> Store {
-    Store::new(&app.data)
-}
-pub fn settings_file(app: &App) -> PathBuf {
-    app.data.join("config-server.json")
-}
-/// The raw `server` configuration owner (empty when absent).
-pub fn server_owner(app: &App) -> std::result::Result<Map<String, Value>, ()> {
-    match crate::storage::read_bounded(&settings_file(app), json!({}), 1024 * 1024) {
-        Ok(Value::Object(m)) => Ok(m),
-        _ => Err(()),
-    }
+    Store::new(&app.settings.location.base)
 }
 fn preference() -> MemoryError {
     fail(Code::Unreadable, "Memory preference is unavailable")
 }
 /// `readMemoryEnabled`: absence means disabled; anything but a boolean is unreadable.
 pub fn enabled(app: &App) -> Result<bool> {
-    match server_owner(app).map_err(|_| preference())?.get("memoryEnabled") {
+    match app.settings.raw_config_owner("server").map_err(|_| preference())?.get("memoryEnabled") {
         None => Ok(false),
         Some(Value::Bool(b)) => Ok(*b),
         Some(_) => Err(preference()),
@@ -48,15 +39,8 @@ pub async fn set_enabled(app: &App, value: bool, cancel: Option<&CancellationTok
     let guard = super::lock::acquire(&s.directory, cancel).await?;
     let outcome = (|| {
         check(cancel)?;
-        // Fresh authority before the merge preserves external fields.
-        let mut owner = server_owner(app).map_err(|_| preference())?;
-        owner.insert("memoryEnabled".into(), json!(value));
-        crate::storage::write(&settings_file(app), &Value::Object(owner.clone())).map_err(|_| preference())?;
-        let mut published = json!({"serverId": app.meta["serverId"], "opencodeBinary": app.binary});
-        for (k, v) in owner {
-            published[k] = v;
-        }
-        app.emit(json!({"type":"storage.configChanged","owner":"server","value":published}));
+        // The owner merge starts from the document on disk, preserving external fields.
+        crate::settings::patch_owner(app, "server", json!({"memoryEnabled": value})).map_err(|_| preference())?;
         invalidate(app);
         enabled(app)
     })();

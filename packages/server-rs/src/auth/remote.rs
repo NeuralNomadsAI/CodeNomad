@@ -20,12 +20,12 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     [
     ("GET",r"^/api/(?:meta|events|auth/status|filesystem|storage/(?:state/ui|config/(?:ui|server))|panel-extensions|workspaces)$"),
     ("GET",r"^/api/workspaces/[^/]+(?:/(?:worktrees|pending-requests|sessions/[^/]+/permission-receipts))?$"),
-    ("GET",r"^/api/workspaces/[^/]+/(?:files(?:/preview|/content|/search)?|worktrees/[^/]+/(?:git-status|git-diff|git-history(?:/[a-f0-9]+)?))$"),
+    ("GET",r"^/api/workspaces/[^/]+/(?:files(?:/preview|/search)?|worktrees/[^/]+/(?:git-status|git-diff|git-history(?:/[a-f0-9]+)?))$"),
     ("PUT",r"^/api/workspaces/[^/]+/files/content$"),
     ("POST",r"^/api/workspaces/[^/]+/(?:git-init|worktrees/[^/]+/git-(?:stage|unstage|commit))$"),
     ("POST",r"^/api/workspaces/[^/]+/(?:worktrees|sessions/[^/]+/worktree)$"),
     ("DELETE",r"^/api/workspaces/[^/]+/worktrees/[^/]+$"),
-    ("GET",r"^/workspaces/[^/]+/(?:yolo/sessions/[^/]+|instance/api/vcs/status)$"),
+    ("GET",r"^/workspaces/[^/]+/instance/api/vcs/status$"),
     ("GET",r"^/api/(?:missions/playbooks|workspaces/[^/]+/missions(?:/msn_[a-z0-9]+(?:/(?:content|tasks))?)?)$"),
     ("GET",r"^/api/workspaces/[^/]+/missions/creation/[A-Za-z0-9_-]+$"),
     ("GET POST",r"^/api/workspaces/[^/]+/missions/recurrence$"),
@@ -201,7 +201,7 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
     }) {
         return cors(reply(Status::NOT_FOUND, "Not found"), supplied);
     }
-    let Ok((_, token)) = crate::auth::cookies(h) else {
+    let Ok((_, token)) = crate::auth::cookies(h, app.auth.cookie_name()) else {
         return cors(reply(Status::BAD_REQUEST, "Invalid cookie"), supplied);
     };
     let owner = token.filter(|_| direct).and_then(|token| {

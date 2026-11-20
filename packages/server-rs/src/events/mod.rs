@@ -294,7 +294,7 @@ pub async fn bridge(app: Shared) {
                             let native_dir = workspace.location["directory"].as_str().unwrap_or_default();
                             directory.as_deref().map_or_else(
                                 || GLOBAL.split(' ').any(|g| g == kind) || kind == "session.deleted",
-                                |dir| dir == native_dir || Path::new(dir).starts_with(&app.root),
+                                |dir| dir == native_dir || Path::new(dir).starts_with(&app.scope),
                             ) && event["location"].get("workspaceID").is_none()
                         })
                         .cloned()

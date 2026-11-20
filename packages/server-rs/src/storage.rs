@@ -1,9 +1,7 @@
-//! UI preferences and per-instance documents under the data folder, bounded JSON reads
-//! and atomic writes shared with the other stores.
+//! Per-instance documents (`storage/instance-store.ts`) beside the settings, and the bounded
+//! JSON reads and atomic writes shared with the other stores.
 pub fn routes() -> axum::Router<Shared> {
-    axum::Router::new()
-        .route("/api/storage/{family}/ui", axum::routing::any(preferences))
-        .route("/api/storage/instances/{id}", axum::routing::any(instance))
+    axum::Router::new().route("/api/storage/instances/{id}", axum::routing::any(instance))
 }
 
 use axum::{
@@ -14,7 +12,6 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::{
     fs, io,
     path::{Path, PathBuf},
@@ -60,74 +57,6 @@ pub fn write(file: &Path, data: &Value) -> Result<(), Error> {
     result.map_err(|_| failed())
 }
 
-fn merge(target: &mut Value, patch: Value) {
-    if let Value::Object(patch) = patch {
-        if !target.is_object() {
-            *target = json!({});
-        }
-        let target = target.as_object_mut().unwrap();
-        for (key, value) in patch {
-            if value.is_null() {
-                target.remove(&key);
-            } else {
-                merge(target.entry(key).or_insert(Value::Null), value);
-            }
-        }
-    } else {
-        *target = patch;
-    }
-}
-
-/// A merged preferences document stays well below the read bound, so a patch
-/// can never make the route unreadable (audit F4); the file is left intact.
-pub const PREFERENCES_LIMIT: usize = 1024 * 1024;
-fn bounded(document: &Value, previous: usize) -> Result<(), Error> {
-    let size = document.to_string().len();
-    // A document already past the bound can still shrink.
-    if size > PREFERENCES_LIMIT && size > previous {
-        return Err(error(Status::PAYLOAD_TOO_LARGE, "Preferences too large"));
-    }
-    Ok(())
-}
-
-pub async fn preferences(
-    State(app): State<Shared>,
-    Param(family): Param<String>,
-    request: Request,
-) -> Result<Response, Error> {
-    if !matches!(family.as_str(), "config" | "state") {
-        return Ok(unavailable());
-    }
-    let file = app.data.join(format!("{family}-ui.json"));
-    let path = request.uri();
-    if path.query().is_some() {
-        return Ok(unavailable());
-    }
-    if request.method() == Method::GET {
-        return Ok(Json(read(&file, json!({}))?).into_response());
-    }
-    if request.method() != Method::PATCH {
-        return Ok(unavailable());
-    }
-    let Json(patch) = Json::<Value>::from_request(request, &app)
-        .await
-        .map_err(|_: axum::extract::rejection::JsonRejection| error(Status::BAD_REQUEST, "Invalid patch"))?;
-    let patch: Value = patch;
-    let Some(input) = patch.as_object() else { return Err(error(Status::BAD_REQUEST, "Invalid patch")) };
-    // No changes to host-only flags, profiles, mission settings, or other unported features.
-    let allowed: &[&str] = if family == "state" { &["recentFolders", "models"] } else { &[] };
-    if input.keys().any(|k| !allowed.contains(&k.as_str())) {
-        return Ok(unavailable());
-    }
-    let mut updated = read(&file, json!({}))?;
-    let previous = updated.to_string().len();
-    merge(&mut updated, patch);
-    bounded(&updated, previous)?;
-    write(&file, &updated)?;
-    app.emit(json!({"type":format!("storage.{family}Changed"),"owner":"ui","value":updated}));
-    Ok(Json(updated).into_response())
-}
-
 #[derive(serde::Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Model {
@@ -141,6 +70,20 @@ struct Instance {
     agent_model_selections: std::collections::BTreeMap<String, Model>,
 }
 
+/// `InstanceStore.sanitizeId`: the file name the reference derives from the storage key.
+fn file_name(key: &str) -> String {
+    let mut name = String::new();
+    for c in key.chars() {
+        let c = if c.is_ascii_alphanumeric() || matches!(c, '.' | '-') { c } else { '_' };
+        if !(c == '_' && name.ends_with('_')) {
+            name.push(c);
+        }
+    }
+    let name = name.strip_prefix('_').unwrap_or(&name);
+    name.strip_suffix('_').unwrap_or(name).to_lowercase()
+}
+
+/// The storage key is an open workspace's folder, found by ID or by folder.
 fn instance_file(app: &crate::App, id: &str) -> Result<PathBuf, Error> {
     let workspace = app.workspace(id).or_else(|_| {
         app.inner
@@ -152,8 +95,9 @@ fn instance_file(app: &crate::App, id: &str) -> Result<PathBuf, Error> {
             .cloned()
             .ok_or_else(crate::not_found)
     })?;
-    let digest = Sha256::digest(workspace.path.to_string_lossy().as_bytes());
-    Ok(app.data.join(format!("instance-{digest:x}.json")))
+    let instances = &app.settings.location.instances;
+    fs::create_dir_all(instances).map_err(|_| failed())?;
+    Ok(instances.join(format!("{}.json", file_name(&workspace.path.to_string_lossy()))))
 }
 
 pub async fn instance(
@@ -164,7 +108,14 @@ pub async fn instance(
     let file = instance_file(&app, &id)?;
     let empty = || json!(Instance::default());
     let value = match *request.method() {
-        Method::GET => return Ok(Json(read(&file, empty())?).into_response()),
+        Method::GET => {
+            // `{ ...DEFAULT_INSTANCE_DATA, ...parsed }`
+            let mut data = empty();
+            if let Value::Object(stored) = read(&file, json!({}))? {
+                data.as_object_mut().unwrap().extend(stored);
+            }
+            return Ok(Json(data).into_response());
+        }
         Method::PUT => {
             let Json(data) = Json::<Instance>::from_request(request, &app).await.map_err(
                 |_: axum::extract::rejection::JsonRejection| error(Status::BAD_REQUEST, "Invalid instance data"),
@@ -193,16 +144,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn preferences_never_grow_past_the_bound() {
-        let mut document = json!({"recentFolders":["a"]});
-        let previous = document.to_string().len();
-        merge(&mut document, json!({"recentFolders":["x".repeat(PREFERENCES_LIMIT)]}));
-        assert_eq!(bounded(&document, previous).unwrap_err().0, Status::PAYLOAD_TOO_LARGE);
-        // An oversized document left by an earlier version can still shrink.
-        let previous = document.to_string().len();
-        merge(&mut document, json!({"recentFolders":["x".repeat(PREFERENCES_LIMIT - 64)]}));
-        assert!(bounded(&document, previous).is_ok());
-        merge(&mut document, json!({"recentFolders":[]}));
-        assert!(bounded(&document, previous).is_ok());
+    fn instance_files_follow_the_reference_names() {
+        assert_eq!(file_name(r"C:\Users\Ana\Mon Projet"), "c_users_ana_mon_projet");
+        assert_eq!(file_name("/home/ana/étude__x/"), "home_ana_tude_x");
+        assert_eq!(file_name("a.b-c"), "a.b-c");
     }
 }

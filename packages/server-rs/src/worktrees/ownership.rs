@@ -7,7 +7,7 @@
 //!   (`sharesGitCommonDirectory`), so links and junctions to foreign folders are refused;
 //! - the (virtual) target is then owned by the deepest live checkout whose project folder
 //!   contains it (`resolveOwnedWorktreePath`), with one fresh inventory read on a miss.
-//! The prototype also keeps every location under its workspace root. WSL is not ported.
+//! Every location also stays under the authorized scope (`App::scope`). WSL is not ported.
 
 use crate::{App, Workspace};
 use std::path::{Path, PathBuf};
@@ -80,7 +80,7 @@ async fn repository_root(root: &Path) -> PathBuf {
 
 pub async fn resolve(app: &App, w: &Workspace, directory: &str) -> Option<Owned> {
     let root = &w.path;
-    if !crate::files::paths::under(&app.root, Path::new(directory)) {
+    if !crate::files::paths::under(&app.scope, Path::new(directory)) {
         return None;
     }
     let target = dunce::canonicalize(directory).ok();
@@ -92,7 +92,7 @@ pub async fn resolve(app: &App, w: &Workspace, directory: &str) -> Option<Owned>
             return None;
         }
     }
-    let resolved = resolve_directory(directory).filter(|r| r.starts_with(&app.root))?;
+    let resolved = resolve_directory(directory).filter(|r| r.starts_with(&app.scope))?;
     for fresh in [false, true] {
         // A non-Git folder has no inventory: only the opened folder itself is owned.
         let catalogue = crate::worktrees::linked::catalogue(app, w, fresh).await.ok()?;

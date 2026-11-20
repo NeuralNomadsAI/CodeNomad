@@ -4,6 +4,7 @@ const path = require("path")
 const { spawnSync } = require("child_process")
 const { MANAGED_NODE_VERSION } = require("./prepare-node-runtime.cjs")
 const { NPM_VERSION, checkNpmEngine } = require("./bundled-npm.cjs")
+const { rustServerFile, rustServerSymbols } = require("./rust-server-binary.cjs")
 
 const requiredPackages = [
   "yaml",
@@ -72,11 +73,15 @@ function smokeServer(resourcesRoot, target, electron) {
   const remoteTunnel = path.join(serverRoot, "dist", "remote-control", "tunnel-runtime.js")
   // The web app's icon, which also names Tauri's notifications on Windows.
   const appIcon = path.join(serverRoot, "public", "pwa-192x192.png")
+  // Tauri only: the Rust server, launched instead of the Node entry under CODENOMAD_SERVER_IMPL=rust,
+  // and the debug info that gives its panic backtraces file and line.
+  const rustServer = electron ? [] : [path.join(serverRoot, rustServerFile(target))]
+  const rustSymbols = !electron && rustServerSymbols(target) ? [path.join(serverRoot, rustServerSymbols(target))] : []
   const node = electron ? path.resolve(electron) : nodeBinary(resourcesRoot, target)
   const npm = electron ? path.join(resourcesRoot, "node", target, "npm", "bin", "npm-cli.js")
     : path.join(resourcesRoot, "node", target, target.startsWith("win32-") ? "node_modules" : "lib/node_modules", "npm", "bin", "npm-cli.js")
 
-  for (const requiredPath of [npm, node, entrypoint, remoteTunnel, appIcon, path.join(serverRoot, "node_modules")]) {
+  for (const requiredPath of [npm, node, entrypoint, ...rustServer, ...rustSymbols, remoteTunnel, appIcon, path.join(serverRoot, "node_modules")]) {
     if (!fs.existsSync(requiredPath)) throw new Error(`Missing packaged runtime path: ${requiredPath}`)
   }
 
@@ -109,6 +114,7 @@ function smokeServer(resourcesRoot, target, electron) {
   console.log(`bundled npm ${NPM_VERSION} engine ok: ${version} satisfies ${engine}`)
   run(node, [npm, "--version"], { env })
   run(node, [entrypoint, "--version"], { env })
+  for (const binary of rustServer) run(binary, ["--version"])
 
   const importScript = [
     `for (const name of ${JSON.stringify(requiredPackages)}) await import(name);`,
