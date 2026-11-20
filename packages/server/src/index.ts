@@ -538,7 +538,7 @@ async function main() {
   const panelExtensions = new PanelExtensionStore(path.join(configDir, "panel-extensions"), () => {
     eventBus.publish({ type: "storage.stateChanged", owner: "panelExtensions", value: {} })
     void refreshDesignRequest()
-  })
+  }, id => eventBus.publish({ type: "panelExtensions.notesChanged", id }))
   // This backend's Design request, carried by each of its session-pruning leases.
   const refreshDesignRequest = designRequestRefresher(panelExtensions, pruningLifecycle)
   void refreshDesignRequest()

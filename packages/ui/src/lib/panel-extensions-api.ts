@@ -36,6 +36,8 @@ export const panelExtensionsApi4 = {
     api4<{ status: "ok"; value: Record<string, unknown> } | { status: "unavailable" }>(id, "preferencesGet", authority, signal),
   preferencesSet: ({ id, ...authority }: Authority, value: unknown, signal: AbortSignal) =>
     api4<{ status: PanelPreferencesSetStatus }>(id, "preferencesSet", { ...authority, value }, signal),
+  notes: <T>({ id, ...authority }: Authority, method: "notesGet" | "notesSet" | "notesList" | "notesDelete" | "notesOpen",
+    input: Record<string, unknown>, signal: AbortSignal) => api4<T>(id, method, { ...authority, ...input }, signal),
 }
 export const panelExtensionsApi = {
   assets: (instanceId: string, id: string, digest: string, sessionID: string, cursor: string | undefined, signal: AbortSignal) =>
