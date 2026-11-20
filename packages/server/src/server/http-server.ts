@@ -113,7 +113,7 @@ import { parsePreviewUpgradePath } from "../previews/upgrade-path"
 import { forwardRuntimeRequest } from "../opencode/compatibility/proxy"
 import { SessionModeConflict, SessionPermissionModes } from "../permissions/session-mode"
 import { appendSessionProjection, sessionPermissionRules, blockPositions } from "../permissions/session-mode-rules"
-import { registerSessionPermissionModeRoutes, sessionPermissionTarget } from "./routes/session-permission-mode"
+import { recordPermissionFork, registerSessionPermissionModeRoutes, sessionPermissionTarget } from "./routes/session-permission-mode"
 import { connectSessionPermissionRefresh } from "./routes/session-permission-refresh"
 import { requestAdmission } from "./request-admission"
 import { LOCATION_CONTEXT_HEADER, locationRequestOptions, readLocationContext, readLocationRef, sameLocation } from "../opencode/compatibility/location"
@@ -1505,6 +1505,8 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     // The native session PATCH can replace the entire permission array.
     const patchSession = args.permissionModes && request.method === "PATCH" && /^\/api\/session\/[^/]+\/?$/.test(pathname)
       ? authorizedSession : undefined
+    const forkSource = args.permissionModes && request.method === "POST" && /^\/api\/session\/[^/]+\/fork\/?$/.test(pathname)
+      ? authorizedSession : undefined
     if (connection || workspaceManager.getSharedServiceFetch) {
       const headers = sanitizeInstanceProxyRequestHeaders(request.headers, instanceAuthHeader)
       delete headers[LOCATION_CONTEXT_HEADER]
@@ -1522,9 +1524,29 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
           ? body => deferToolMedia((body as { data?: unknown } | null)?.data, { workspaceId, sessionId })
           : undefined,
         request, reply, url: targetUrl.toString(), body, headers,
-        fetch: confirmPermission || confirmDeletion || confirmRoot ? async (input, init) => {
+        fetch: confirmPermission || confirmDeletion || confirmRoot || forkSource ? async (input, init) => {
           const response = await runtimeFetch(input, init)
-          if (response.ok) { await confirmPermission?.(); await confirmDeletion?.() }
+          if (response.ok) {
+            await confirmPermission?.()
+            await confirmDeletion?.()
+            if (forkSource) {
+              try {
+                const client = await clientForRequest()
+                const forkSignal = AbortSignal.any([signal, AbortSignal.timeout(10_000)])
+                await recordPermissionFork(response, args.permissionModes!, forkSource, {
+                  client, distro: workspaceManager.getServiceWslDistro?.(workspaceId),
+                  signal: forkSignal,
+                  current: () => {
+                    forkSignal.throwIfAborted()
+                    connection?.assertCurrent()
+                    if (workspaceManager.get(workspaceId) !== workspace) throw new SessionModeConflict("Workspace changed")
+                  },
+                }, location => workspaceManager.ownsLocation(workspaceId, location, client, { signal: forkSignal }))
+              } catch {
+                logger.warn({ workspaceId }, "Unable to record forked conversation permissions")
+              }
+            }
+          }
           return confirmRoot ? confirmRoot(response) : response
         } : runtimeFetch, release: releaseMutation,
         retainMutation: ordinarySessionMutation && targetSessionId && args.sessionCleanup

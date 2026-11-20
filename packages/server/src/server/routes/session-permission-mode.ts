@@ -4,6 +4,7 @@ import { z } from "zod"
 import { isReservedMissionScheduleSessionID } from "../../missions/mission-schedule-carrier-identity"
 import { sameLocation } from "../../opencode/compatibility/location"
 import { SessionModeConflict, type NativeTarget, type SessionPermissionModes } from "../../permissions/session-mode"
+import { sessionPermissionRules } from "../../permissions/session-mode-rules"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { requestAdmission } from "../request-admission"
@@ -50,6 +51,20 @@ export function sessionPermissionTarget(initial: SessionInfo, target: Omit<Nativ
       }
     },
   }
+}
+
+export async function recordPermissionFork(response: Response, modes: SessionPermissionModes, source: SessionInfo,
+  scope: Omit<NativeTarget, "sessionID" | "read" | "readAncestor">, owns: (location: SessionInfo["location"]) => Promise<boolean>) {
+  const { data: session } = await response.clone().json() as { data: SessionInfo }
+  scope.current()
+  if (!session || !ordinaryPermissionSession(session.id) || session.fork?.sessionID !== source.id
+    || session.projectID !== source.projectID || !sameLocation(session.location, source.location)) return
+  await modes.observeCopy(scope.distro, session.id, source.id, async () => {
+    const target = sessionPermissionTarget(session, scope, owns)
+    const fresh = await target.read()
+    if (fresh.fork?.sessionID !== source.id || !await owns(fresh.location)) return
+    return { session, target, rules: sessionPermissionRules.parse(session.permissions ?? []), exactNativeCopy: true }
+  })
 }
 
 export function registerSessionPermissionModeRoutes(app: FastifyInstance, deps: Deps) {

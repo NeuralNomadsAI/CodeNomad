@@ -21,6 +21,7 @@ export type NativeTarget = {
   distro: string | undefined
 }
 type NativeCreation = { client: OpenCodeClient; location: LocationPublicRef; distro: string | undefined; signal: AbortSignal }
+type CopyObservation = { target: NativeTarget; session: SessionInfo; rules: PermissionRule[]; exactNativeCopy: boolean }
 
 const blockStart = supervisedRules([], false)
 const savedBlock = sessionPermissionRules.refine(block => sameRules(block.slice(0, 2), blockStart))
@@ -32,6 +33,7 @@ const savedBlocks = z.object({
   revisions: z.array(savedBlock).default([]), pending: savedBlock.nullish(), target: savedTarget.nullish().catch(undefined),
 })
 type SavedBlocks = z.infer<typeof savedBlocks>
+type Ownership = SavedBlocks & { recorded: boolean }
 const sourceSessionID = (session: SessionInfo) => session.fork?.sessionID ?? session.parentID
 const ambiguous = "ambiguous" as const
 
@@ -78,15 +80,15 @@ export class SessionPermissionModes {
       : savedBlocks.parse(saved ?? { previous: [] })
   }
 
-  private owned(key: string, state = this.settings.getPrivateSessionPermissionState()) {
-    return this.parseSaved(state[key])
+  private owned(key: string, state = this.settings.getPrivateSessionPermissionState()): Ownership {
+    return { ...this.parseSaved(state[key]), recorded: Object.hasOwn(state, key) }
   }
 
   private remember(key: string, active: PermissionRule[] | null, previous: RetiredBlock[] = [],
-    revisions: PermissionRule[][] = [], pending?: PermissionRule[] | null) {
+    revisions: PermissionRule[][] = [], pending?: PermissionRule[] | null, keepEmpty = false) {
     const target = active || pending ? this.known.get(key) : undefined
     this.settings.setPrivateSessionPermissionBlock(key, active, previous, revisions, pending ?? undefined,
-      target && { ...target, distro: target.distro ?? null })
+      target && { ...target, distro: target.distro ?? null }, keepEmpty)
   }
 
   private track(key: string, distro: string | undefined, session: SessionInfo) {
@@ -139,34 +141,65 @@ export class SessionPermissionModes {
     if (!source || !blockPositions(rules, blockStart).length) return
     const state = this.settings.getPrivateSessionPermissionState()
     const visited = new Set([session.id])
-    let inherited: { block: PermissionRule[]; offset: number } | undefined
+    let inherited: PermissionRule[] | undefined
     while (source) {
       if (visited.has(source) || visited.size > 64) throw new SessionModeConflict("Invalid permission ancestry")
       visited.add(source)
       const ancestor = await target.readAncestor(source)
       if (!ancestor) break
       const { active, previous, revisions, pending } = this.owned(this.key(target.distro, ancestor), state)
-      const current = revisions.length || pending ? revisionMatch(rules, [active, pending, ...revisions]) : active
-      if (current === ambiguous) return ambiguous
-      let match: PermissionRule[] | undefined
-      for (const entry of current ? [current, ...previous] : previous) {
-        const block = revisionMatch(rules, Array.isArray(entry[0]) ? entry as PermissionRule[][] : [entry as PermissionRule[]])
-        if (block === ambiguous) return ambiguous
+      const retired = previous.flatMap(entry => Array.isArray(entry[0]) ? entry as PermissionRule[][] : [entry as PermissionRule[]])
+      for (const block of [active, pending, ...revisions, ...retired]) {
         if (!block) continue
-        // Separate activations on one source can leave unrelated copies.
-        if (match && !sameRules(match, block)) return ambiguous
-        match = block
-      }
-      if (match) {
-        // Different ancestors can describe the same span. Keep the nearest
-        // source's boundary, but refuse a separate candidate elsewhere.
-        const [offset] = blockPositions(rules, match)
-        if (inherited && inherited.offset !== offset) return ambiguous
-        inherited ??= { block: match, offset }
+        const positions = blockPositions(rules, block)
+        if (!positions.length) continue
+        if (positions.length > 1 || (inherited && !sameRules(inherited, block))) return ambiguous
+        inherited = block
       }
       source = sourceSessionID(ancestor)
     }
-    return inherited?.block
+    return inherited
+  }
+
+  private block(target: NativeTarget, session: SessionInfo, rules: PermissionRule[], saved: Ownership) {
+    const local = revisionMatch(rules, [saved.active, saved.pending])
+    return saved.recorded ? local : this.inheritedBlock(target, session, rules)
+  }
+
+  /** Bind an owned creation snapshot to its direct source before refreshing the copy. */
+  observeCopy(distro: string | undefined, id: string, sourceID: string, load: () => Promise<CopyObservation | undefined>) {
+    if (id === sourceID) return Promise.resolve(false)
+    return this.serialize(distro, [sourceID, id], async () => {
+      const observation = await load()
+      if (!observation) return false
+      const { target, session, rules, exactNativeCopy } = observation
+      const key = this.key(distro, session)
+      if (this.owned(key).recorded) return true
+
+      let block: PermissionRule[] | undefined
+      if (blockPositions(rules, blockStart).length) {
+        // A later source state cannot disambiguate the creation boundary.
+        const ancestor = await target.readAncestor(sourceID)
+        if (!ancestor || !(ancestor.time.updated <= session.time.created)) return false
+        const sourceRules = this.rules(ancestor)
+        // Explicit child rules can replace the native copy.
+        if (sameRules(sourceRules, rules)) {
+          const saved = this.owned(this.key(distro, ancestor))
+          const copied = await this.block(target, ancestor, sourceRules, saved)
+          if (copied === ambiguous || saved.pending || (copied && blockPositions(rules, copied).length !== 1)) return false
+          block = copied
+          const fresh = await target.readAncestor(sourceID)
+          if (!fresh || this.key(distro, fresh) !== this.key(distro, ancestor)
+            || fresh.time.updated !== ancestor.time.updated || !sameRules(this.rules(fresh), sourceRules)) return false
+          const current = this.owned(this.key(distro, fresh))
+          if (current.pending || current.recorded !== saved.recorded || !sameRules(current.active ?? [], saved.active ?? [])) return false
+        } else if (exactNativeCopy) return false
+      }
+      target.current()
+      if (block) this.track(key, distro, session)
+      this.remember(key, block ?? null, [], [], undefined, true)
+      return true
+    })
   }
 
   private async configBlock({ client, location, distro, signal }: NativeCreation) {
@@ -200,9 +233,7 @@ export class SessionPermissionModes {
 
   read(target: NativeTarget): Promise<ConversationPermissionModeResponse> {
     return this.exclusive(target, async (key, session) => {
-      const { active, pending } = this.owned(key)
-      const rules = this.rules(session)
-      const block = revisionMatch(rules, [active, pending]) ?? await this.inheritedBlock(target, session, rules)
+      const block = await this.block(target, session, this.rules(session), this.owned(key))
       if (block) this.track(key, target.distro, session)
       else this.known.delete(key)
       return { mode: block ? "supervised" : "autonomous" }
@@ -216,8 +247,7 @@ export class SessionPermissionModes {
       let rules = currentRules(initial)
       let config: PermissionRule[] | undefined
       for (let attempt = 0; attempt < 3; attempt++) {
-        const local = revisionMatch(rules, [saved.active, saved.pending])
-        const owned = local ?? await this.inheritedBlock(target, initial, rules)
+        const owned = await this.block(target, initial, rules, saved)
         if (!owned) {
           this.known.delete(key)
           if (attempt) throw new SessionModeConflict("Permission block changed")
@@ -238,7 +268,7 @@ export class SessionPermissionModes {
         if (sameRules(owned, replacement)) {
           const fresh = currentRules(await target.read())
           if (!sameRules(fresh, rules)) { rules = fresh; continue }
-          if (!local || saved.pending || saved.target?.directory !== initial.location.directory) this.remember(key, owned, saved.previous, revisions)
+          if (!saved.recorded || saved.pending || saved.target?.directory !== initial.location.directory) this.remember(key, owned, saved.previous, revisions)
           return { mode: "supervised" }
         }
         const updated = [...prefix, ...replacement, ...rules.slice(index + owned.length)]
@@ -251,7 +281,7 @@ export class SessionPermissionModes {
         this.remember(key, owned, saved.previous, revisions, replacement)
         const beforeWrite = currentRules(await target.read())
         if (!sameRules(beforeWrite, rules)) {
-          this.remember(key, saved.active ?? null, saved.previous, saved.revisions, saved.pending)
+          this.remember(key, saved.active ?? null, saved.previous, saved.revisions, saved.pending, saved.recorded)
           rules = beforeWrite
           continue
         }
@@ -260,7 +290,7 @@ export class SessionPermissionModes {
           this.remember(key, replacement, saved.previous, revisions)
           return { mode: "supervised" }
         }
-        if (sameRules(confirmed, rules)) this.remember(key, saved.active ?? null, saved.previous, saved.revisions, saved.pending)
+        if (sameRules(confirmed, rules)) this.remember(key, saved.active ?? null, saved.previous, saved.revisions, saved.pending, saved.recorded)
         if (failure) throw failure.error
         // Rebase from verified ownership if another client changed other rules.
         saved.active = owned
@@ -274,25 +304,23 @@ export class SessionPermissionModes {
 
   write(target: NativeTarget, mode: ConversationPermissionMode): Promise<ConversationPermissionModeResponse> {
     return this.exclusive(target, async (key, initial) => {
-      const { active, previous, revisions, pending } = this.owned(key)
+      const saved = this.owned(key)
+      const { active, previous, revisions, pending, recorded } = saved
       const currentRules = this.currentRules(target, key, initial)
       const original = currentRules(initial)
-      const local = revisionMatch(original, [active, pending])
-      const owned = local ?? await this.inheritedBlock(target, initial, original)
+      const owned = await this.block(target, initial, original, saved)
       if (owned) this.track(key, target.distro, initial)
-      if (owned === "ambiguous") {
-        if (mode === "supervised") return { mode }
-        throw new SessionModeConflict("Ambiguous permission block")
-      }
+      if (owned === ambiguous) throw new SessionModeConflict("Ambiguous permission block")
       const config = mode === "supervised" && !owned ? await this.configBlock({ ...target, location: initial.location }) : undefined
       const history = [...previous]
       if (active || pending) {
         if (revisions.length || pending) history.push([...revisions, ...(active ? [active] : []), ...(pending ? [pending] : [])])
         else if (active && !history.some(entry => !Array.isArray(entry[0]) && sameRules(entry as PermissionRule[], active))) history.push(active)
       }
+      if (owned && !recorded) history.push(owned)
       const forget = () => {
         // A descendant can still carry this block after the source changes mode.
-        if (active || pending) this.remember(key, null, history)
+        if (active || pending || (owned && !recorded)) this.remember(key, null, history)
         this.known.delete(key)
       }
       let retained: { block: PermissionRule[]; previous: RetiredBlock[] } | undefined
@@ -302,14 +330,13 @@ export class SessionPermissionModes {
         const rules = currentRules(await target.read())
         const knownBlock = owned ?? retained?.block
         const positions = knownBlock ? blockPositions(rules, knownBlock) : []
-        if (mode === "supervised" && owned && positions.length) return { mode }
-        if (sourceSessionID(initial) && !local && !sameRules(rules, original)) {
-          const fresh = await this.inheritedBlock(target, initial, rules)
-          if (fresh && (fresh === "ambiguous" || !knownBlock || !sameRules(fresh, knownBlock))) {
+        if (!sameRules(rules, original) && (recorded || sourceSessionID(initial))) {
+          const fresh = await this.block(target, initial, rules, saved)
+          if (fresh && (fresh === ambiguous || !knownBlock || !sameRules(fresh, knownBlock))) {
             throw new SessionModeConflict("Permission rules changed")
           }
           // Keep the rule read immediately before dispatch if ancestry required I/O.
-          if (!sameRules(currentRules(await target.read()), rules)) continue
+          if (!recorded && !sameRules(currentRules(await target.read()), rules)) continue
         }
         if (mode === "autonomous" && !positions.length) {
           forget()
@@ -333,7 +360,7 @@ export class SessionPermissionModes {
           this.remember(key, block, retired)
           const fresh = currentRules(await target.read())
           if (!sameRules(fresh, rules)) {
-            this.remember(key, prior ?? active ?? null, retained?.previous ?? previous, revisions, pending)
+            this.remember(key, prior ?? active ?? null, retained?.previous ?? previous, revisions, pending, recorded)
             if (blockPositions(fresh, block).length) throw new SessionModeConflict("Permission rules changed")
             continue
           }
@@ -352,7 +379,7 @@ export class SessionPermissionModes {
         // A failed transport is never replayed. A successful write followed by
         // divergence can rebase against a fresh read in the next iteration.
         if (failure) throw failure.error
-        if (retained && attempt === 2 && !blockPositions(confirmed, block).length) this.remember(key, active ?? null, previous, revisions, pending)
+        if (retained && attempt === 2 && !blockPositions(confirmed, block).length) this.remember(key, active ?? null, previous, revisions, pending, recorded)
       }
       throw new SessionModeConflict("Permission rules changed")
     })
@@ -377,18 +404,21 @@ export class SessionPermissionModes {
     return { confirmed: currentRules(await target.read()), failure }
   }
 
-  async withSessionLock<T>(target: NativeTarget, run: (session: SessionInfo) => Promise<T>): Promise<T> {
-    const key = JSON.stringify([target.distro?.toLowerCase(), target.sessionID])
-    const previous = this.pending.get(key)
-    const task = Promise.resolve(previous).catch(() => {}).then(async () => {
+  private async serialize<T>(distro: string | undefined, sessionIDs: string[], run: () => Promise<T>): Promise<T> {
+    const keys = sessionIDs.map(id => JSON.stringify([distro?.toLowerCase(), id]))
+    const task = Promise.allSettled(keys.map(key => this.pending.get(key))).then(run)
+    for (const key of keys) this.pending.set(key, task)
+    try { return await task }
+    finally { for (const key of keys) if (this.pending.get(key) === task) this.pending.delete(key) }
+  }
+
+  withSessionLock<T>(target: NativeTarget, run: (session: SessionInfo) => Promise<T>): Promise<T> {
+    return this.serialize(target.distro, [target.sessionID], async () => {
       target.current()
       const fresh = await target.read()
       target.current()
       return run(fresh)
     })
-    this.pending.set(key, task)
-    try { return await task }
-    finally { if (this.pending.get(key) === task) this.pending.delete(key) }
   }
 
   private exclusive<T>(target: NativeTarget, run: (key: string, session: SessionInfo) => Promise<T>): Promise<T> {

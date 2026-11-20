@@ -118,19 +118,20 @@ approved tools run under the same OS account and isolation as in Autonomous.
 
 Private backend state records the exact contiguous block and the native session
 identity. Hash-only records are matched against scoped native session metadata.
-Subagents and forks receive a native copy at creation and can change modes
-independently. With no matching local block, the backend checks
-the copy against blocks recorded along its owned native parent or fork lineage,
-including blocks retired by a source that changed modes. Returning to Autonomous
-removes only the matching block from the selected conversation, preserving the
-order and content of all other rules; ambiguous matches are left unchanged.
-A refresh replaces the block in place and retains prior versions to identify
-child and fork copies. Exact matches from different ancestors at the same offset
-identify one inherited span, using the nearest matching ancestor. Different offsets
-or competing activations of one source remain ambiguous. A rule deliberately
-added by another native client after the block keeps its native precedence.
-A missing or unowned ancestor ends the lookup. Proof uses
-native lineage and exact rule values; rules have no per-entry native identity.
+Subagents and forks receive native copies at creation and can change modes
+independently. An owned child creation event supplies its initial rules; a fork
+uses its native creation response or an unchanged session snapshot matched to
+the fork event. The backend records the direct source's exact block before
+refreshing the copy when its creation rules match a verifiable source snapshot.
+Reads, projection refresh and removal use the copy's own record even when the
+source changes modes or rules.
+
+Without a creation record, the backend checks active and historical blocks along
+the owned lineage. Only one distinct exact span can be refreshed or removed;
+competing lengths at the same offset and matches at different offsets produce
+an explicit conflict. A missing or unowned ancestor ends the lookup. Returning
+to Autonomous removes the identified block and preserves all other rules in
+order. Rules have no per-entry native identity.
 Mode writes, projection refreshes and native session PATCHes through the same
 backend share a per-session lock and read fresh state before forwarding. Mode
 writes and refreshes verify the resulting rules and retry a detected concurrent
