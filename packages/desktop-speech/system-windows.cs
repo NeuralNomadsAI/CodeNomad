@@ -115,7 +115,7 @@ internal static class SystemSpeech {
             }
         }
         engine.SetInputToNull();
-        if (aborted || overflow || outcome == null || outcome.Error != null || outcome.Cancelled) return Error("failed");
+        if (aborted || overflow || outcome == null || outcome.Error != null || (outcome.Cancelled && !finish)) return Error("failed");
         Emit(new { value = text.ToString() });
         return 0;
     }
