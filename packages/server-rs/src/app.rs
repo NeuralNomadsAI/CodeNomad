@@ -47,6 +47,8 @@ pub struct App {
     pub mission_read_slot: Semaphore,
     pub linked_events: crate::worktrees::linked::EventCache,
     pub mission_bridge: Option<String>,
+    /// The published automation bridge token: the Missions fixture's when it runs, else fresh.
+    pub bridge_token: Option<String>,
     pub mission_control_slot: Semaphore,
     pub calendar_profile: Option<PathBuf>,
     pub calendar_slot: tokio::sync::Mutex<()>,
@@ -95,7 +97,9 @@ impl App {
         watches: watch::Watches,
         calendar_profile: Option<PathBuf>,
     ) -> Self {
+        let mission_bridge = missions::run::new_token();
         Self {
+            bridge_token: mission_bridge.clone().or_else(crate::automation::new_token),
             auth,
             port,
             data,
@@ -118,7 +122,7 @@ impl App {
             mission_reads: crate::bench::missions_read(),
             mission_read_slot: Semaphore::new(1),
             linked_events: Default::default(),
-            mission_bridge: missions::run::new_token(),
+            mission_bridge,
             mission_control_slot: Semaphore::new(1),
             calendar_profile,
             calendar_slot: Default::default(),
@@ -131,7 +135,10 @@ impl App {
     }
 }
 
+/// Internal failures are also kept, with their call site, for `codenomad.inspect`.
+#[track_caller]
 pub fn error(code: Status, message: &str) -> Error {
+    crate::automation::diagnostics::error(code.as_u16(), message, std::panic::Location::caller());
     (code, Json(json!({"error": message})))
 }
 pub fn unavailable() -> Response {

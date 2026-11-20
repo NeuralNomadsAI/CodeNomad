@@ -1,6 +1,6 @@
 //! Switches reserved for the qualification bench: the injected native endpoint,
 //! fixture-only features and traces. Production never sets them.
-use std::{env, ffi::OsString, sync::LazyLock};
+use std::{env, sync::LazyLock};
 
 use axum::{body::Body, extract::Request, middleware::Next, response::Response};
 use tokio_util::sync::CancellationToken;
@@ -28,14 +28,11 @@ pub fn missions_read() -> bool {
 pub fn missions_calendar() -> bool {
     on("CNRS_FIXTURE_MISSIONS_CALENDAR")
 }
-pub fn missions_registry() -> Option<OsString> {
-    env::var_os("CNRS_FIXTURE_MISSIONS_REGISTRY")
-}
 pub fn family_trace() -> bool {
     on("CNRS_FIXTURE_FAMILY_TRACE")
 }
 #[cfg(test)]
-pub fn provision_fixture() -> Option<OsString> {
+pub fn provision_fixture() -> Option<std::ffi::OsString> {
     env::var_os("CNRS_PROVISION_FIXTURE")
 }
 

@@ -3,12 +3,14 @@
 //! and, with HTTPS configured, behind the paired-device admission.
 mod app;
 mod auth;
+mod automation;
 mod bench;
 mod config;
 mod events;
 mod extensions;
 mod files;
 mod git;
+mod host;
 mod memory;
 mod meta;
 #[rustfmt::skip] // Frozen while its contract is redesigned: moved, never reformatted.
@@ -37,6 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if config::print_version() {
         return Ok(());
     }
+    automation::diagnostics::install();
     let args: Vec<_> = env::args().skip(1).collect();
     let [root, identity, port, binary] = &args[..] else {
         return Err("usage: codenomad-rs <root> <identity.json> <port or 0> <native-binary-label-path>".into());
@@ -92,9 +95,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let shutdown = CancellationToken::new();
     service::stop_on_terminate(shutdown.clone());
-    bench::stop_on_stdin(shutdown.clone());
+    if host::native_parent::available() {
+        host::read_stdin(shutdown.clone());
+    } else {
+        bench::stop_on_stdin(shutdown.clone());
+    }
+    let bridge = automation::publish(&state, shutdown.clone()).await;
     let plugins = extensions::lifecycle::start(&state, shutdown.clone())?;
-    missions::serve_bridge(&state, shutdown.clone());
     tokio::spawn(files::watch::run(state.clone(), watch_rx, shutdown.clone()));
     let remote = tls.map(|tls| {
         let remote = routes
@@ -119,7 +126,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let done = shutdown.clone();
     axum::serve(listener, local).with_graceful_shutdown(async move { done.cancelled().await }).await?;
     shutdown.cancel();
-    if let Some(task) = plugins {
+    host::native_parent::close();
+    for task in [plugins, bridge].into_iter().flatten() {
         let _ = task.await;
     }
     if let Some(task) = remote {

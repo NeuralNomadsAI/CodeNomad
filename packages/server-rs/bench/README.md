@@ -39,6 +39,7 @@ node hardening.mjs $OpenCode
 | `search` | `files/search`: queries, limits, zod refusals, folders, cache and 30 s TTL, busy scans. |
 | `memory` | Agent memory: Preferences routes, automation bridge and the TS plugin client, memory store and its Git history. |
 | `design` | Design request written to the pruning plugin lease according to an API 4 extension state. |
+| `automation` | Automation bridge under a scripted desktop host (native requests over stdout/stdin): registration file, token and body refusals, session ownership, Missions not-owner answers, browser claim/probe/execute with the exact native requests, window status and command validation, the TS plugin's browser client. Page-engine steps compare their status only. |
 | `solid` | Real UI served by TS: HTTPS pairing of Rust, two prompts, two isolated tabs, worktree, Files, Rust memory under 48 MiB, no error toast. |
 | `security.mjs` | TLS and pairing: same checks on the Rust HTTPS listener and the TS remote surface, revocation during SSE, certificate reuse and rotation. |
 | `hardening.mjs` | Rust only: HTTPS admission under silent-socket floods, device and network paths, cross-site navigation, Git configuration guard, data folder ACL, SSE budgets. |

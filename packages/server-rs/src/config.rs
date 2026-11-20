@@ -49,6 +49,23 @@ pub fn provision_plugins() -> Option<String> {
 pub fn native_parent() -> bool {
     env::var("CODENOMAD_NATIVE_PARENT").as_deref() == Ok("1")
 }
+/// `CODENOMAD_NATIVE_BROWSER_AUTOMATION=0`: the host has no browser automation.
+pub fn native_browser_automation_unavailable() -> bool {
+    env::var("CODENOMAD_NATIVE_BROWSER_AUTOMATION").as_deref() == Ok("0")
+}
+/// `automationBridgeDirectory`: `%LOCALAPPDATA%` on Windows, else `$XDG_RUNTIME_DIR/codenomad`,
+/// else `~/.config/codenomad`, each with `automation-bridges`.
+pub fn automation_bridges() -> Option<std::path::PathBuf> {
+    let var = |name: &str| env::var_os(name).filter(|v| !v.is_empty()).map(std::path::PathBuf::from);
+    let base = match var("LOCALAPPDATA").filter(|_| cfg!(windows)) {
+        Some(local) => local.join("CodeNomad"),
+        None => match var("XDG_RUNTIME_DIR") {
+            Some(runtime) => runtime.join("codenomad"),
+            None => var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })?.join(".config").join("codenomad"),
+        },
+    };
+    Some(base.join("automation-bridges"))
+}
 pub fn plugin_assets() -> Option<OsString> {
     env::var_os("CNRS_PLUGIN_ASSETS")
 }

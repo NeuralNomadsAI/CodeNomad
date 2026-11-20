@@ -1,24 +1,16 @@
 use crate::{App, Error, Shared, Workspace, error, worktrees::linked, files};
 use axum::{
-    Extension, Json, Router,
-    extract::{DefaultBodyLimit, Path, State},
+    Extension, Json,
+    extract::{Path, State},
     http::{Method, StatusCode as Status},
     response::{IntoResponse, Response},
-    routing::post,
 };
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::{
-    path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
-};
 use subtle::ConstantTimeEq;
-use tokio_util::sync::CancellationToken;
 
 const PREFIX: &str = "/api/rpc/codenomad.missions/";
-const BRIDGE: &str = "/api/opencode-plugin/automation";
 pub async fn playbooks() -> Response {
     (
         [(axum::http::header::CONTENT_TYPE, "application/json")],
@@ -432,7 +424,7 @@ struct Life {
     start_text: Option<String>,
 }
 
-async fn dispatch(
+pub async fn dispatch(
     State(app): State<Shared>,
     request: axum::extract::Request,
 ) -> Result<Json<Value>, Error> {
@@ -658,55 +650,7 @@ async fn dispatch(
     Ok(Json(json!({"result":{"nativeAcknowledgement":ack}})))
 }
 
+/// The Missions fixture runs on the automation bridge, with its token.
 pub fn new_token() -> Option<String> {
-    if !crate::bench::missions_run() {
-        return None;
-    }
-    let mut bytes = [0u8; 32];
-    getrandom::fill(&mut bytes).ok()?;
-    Some(URL_SAFE_NO_PAD.encode(bytes))
-}
-pub async fn serve(app: Shared, stop: CancellationToken) -> Result<(), Box<dyn std::error::Error>> {
-    let token = app.mission_bridge.as_ref().ok_or("Missing bridge token")?;
-    let dir = crate::bench::missions_registry()
-        .map(PathBuf::from)
-        .ok_or("Missing fixture registry")?;
-    // Only publish inside the same private fixture profile as the identity.
-    let home = app.data.parent().ok_or("Missing private fixture root")?;
-    if !dir.is_absolute()
-        || !dir.starts_with(home)
-        || dir
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir))
-    {
-        return Err("Foreign bridge registry".into());
-    }
-    crate::auth::tls::private_directory(&dir)?;
-    if !dunce::canonicalize(&dir)?.starts_with(dunce::canonicalize(home)?) {
-        return Err("Foreign bridge registry".into());
-    }
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
-    let time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
-    let pid = std::process::id();
-    let record = dir.join(format!("{time}-{pid}-{}.json", &token[..12]));
-    let value = json!({"version":1,"url":format!("http://127.0.0.1:{}{BRIDGE}",listener.local_addr()?.port()),"token":token,
-        "pid":pid,"startedAt":time});
-    crate::auth::tls::write_private(&record, serde_json::to_string(&value)?.as_bytes())?;
-    struct Remove(PathBuf);
-    impl Drop for Remove {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.0);
-        }
-    }
-    let _record = Remove(record);
-    let router = Router::new()
-        .route(
-            BRIDGE,
-            post(dispatch).layer(DefaultBodyLimit::max(512 * 1024)),
-        )
-        .with_state(app);
-    axum::serve(listener, router)
-        .with_graceful_shutdown(async move { stop.cancelled().await })
-        .await?;
-    Ok(())
+    crate::bench::missions_run().then(crate::automation::new_token).flatten()
 }

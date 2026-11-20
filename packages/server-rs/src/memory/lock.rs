@@ -108,7 +108,7 @@ pub fn lookup(pid: i64) -> State {
 }
 
 /// `process.kill(pid, 0)` answering ESRCH: a confirmed absence.
-fn confirmed_absent(pid: i64) -> bool {
+pub(crate) fn confirmed_absent(pid: i64) -> bool {
     #[cfg(unix)]
     {
         // SAFETY: signal 0 only probes existence.
