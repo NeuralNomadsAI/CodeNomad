@@ -139,6 +139,9 @@ dispatches retain their original durable preparations and stay read-only. The
 receiver consumes and closes auxiliary technical claims before owner and pending
 business reconciliation, then reapplies owner cleanup after settlement. Its
 business bridge is registered once by `registerNativeScheduledBusinessRpc`.
+A `MissionControlError` refusal crosses that bridge as a bounded `refusal` reply
+(message and code) and is rethrown to the tool as on the direct path; every
+other receiver or transport failure surfaces as "Scheduled Mission business unavailable".
 
 The principal preparation is written by the prompt hook before native inbox
 admission, serialized with Pause and temporal replacement. Context reads the
