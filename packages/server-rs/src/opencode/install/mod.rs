@@ -78,43 +78,56 @@ pub enum Probed {
 }
 
 /// `opencode --version` within `timeout` (spawn.ts `parseBinaryVersion`): the first output line,
-/// its presentation prefix removed.
+/// its presentation prefix removed. On expiry or past 64 KiB of output the probe's whole process
+/// family is ended (`boundedVersionProbe`): wrappers may start descendants.
 pub async fn probe_version(binary: &str, timeout: Duration) -> Probed {
     let Ok(spec) = launch::spec(binary, &["--version"]) else { return Probed::Failed };
     let mut command = tokio::process::Command::new(&spec.command);
     #[cfg(windows)]
-    {
-        command.creation_flags(0x0800_0000);
-        for arg in &spec.args {
-            if spec.verbatim {
-                command.raw_arg(arg);
-            } else {
-                command.arg(arg);
-            }
+    for arg in &spec.args {
+        if spec.verbatim {
+            command.raw_arg(arg);
+        } else {
+            command.arg(arg);
         }
     }
     #[cfg(not(windows))]
     command.args(&spec.args);
-    command.stdin(std::process::Stdio::null()).kill_on_drop(true);
-    let output = match tokio::time::timeout(timeout, command.output()).await {
-        Ok(Ok(output)) => output,
-        Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => return Probed::Missing,
-        Ok(Err(_)) => return Probed::Failed,
-        Err(_) => return Probed::Unknown,
+    crate::shared::process_group::prepare(&mut command);
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = match command.kill_on_drop(true).spawn() {
+        Ok(child) => child,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Probed::Missing,
+        Err(_) => return Probed::Failed,
     };
-    if output.stdout.len() + output.stderr.len() > 64 * 1024 {
+    let Some(group) = crate::shared::process_group::Group::adopt(&mut child) else { return Probed::Failed };
+    let (out, err) = (child.stdout.take(), child.stderr.take());
+    let read = |stream: Option<Box<dyn tokio::io::AsyncRead + Unpin + Send>>| async move {
+        match stream {
+            Some(stream) => crate::shared::read_capped(stream, 64 * 1024).await,
+            None => Ok(Vec::new()),
+        }
+    };
+    let (out, err) = (out.map(|s| Box::new(s) as _), err.map(|s| Box::new(s) as _));
+    let finished = tokio::time::timeout(timeout, async { tokio::join!(read(out), read(err), child.wait()) }).await;
+    let Ok((Ok(stdout), Ok(stderr), Ok(status))) = finished else {
+        // Before the leader is reaped, so the group is still its own.
+        group.kill();
+        let _ = child.kill().await;
         return Probed::Unknown;
-    }
-    if !output.status.success() {
+    };
+    if !status.success() {
         return Probed::Failed;
     }
     let first = |b: &[u8]| String::from_utf8_lossy(b).lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_owned);
-    let line = first(&output.stdout).or_else(|| first(&output.stderr)).unwrap_or_default();
+    let line = first(&stdout).or_else(|| first(&stderr)).unwrap_or_default();
     let version = line.strip_prefix("opencode2 ").or_else(|| line.strip_prefix("opencode ")).unwrap_or(&line);
     let version = version.strip_prefix('v').filter(|v| v.starts_with(|c: char| c.is_ascii_digit())).unwrap_or(version);
     Probed::Version(version.to_owned())
 }
-
 /// The installed binary's version: `Ok(None)` when it is missing.
 pub async fn probe(binary: &str) -> Result<Option<String>, ()> {
     match probe_version(binary, Duration::from_secs(5)).await {

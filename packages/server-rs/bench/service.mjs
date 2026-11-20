@@ -11,7 +11,7 @@ import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { promisify } from "node:util"
 import { stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
-import { out, privateGit, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { assertPrivateProfile, out, privateGit, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
 
 const exe = process.argv[2]
 assert(path.isAbsolute(exe ?? "") && process.platform === "win32", "usage: node service.mjs <absolute opencode executable> (Windows)")
@@ -77,6 +77,8 @@ async function start(p, binary, logs) {
   await writeFile(config, `server:\n  opencodeBinary: '${binary}'\n`)
   await mkdir(path.join(p.root, "ui"), { recursive: true })
   await writeFile(path.join(p.root, "ui", "index.html"), "<!doctype html>")
+  // TS: its --config file; Rust (positional): settings beside the identity's data folder.
+  assertPrivateProfile(p.env, p.label === "ts" ? path.dirname(config) : path.join(p.root, "rust.data"))
   const child = p.label === "ts"
     ? spawn(process.execPath, [path.join(import.meta.dirname, "ts-server.mjs"), "--http", "true", "--http-port", String(port), "--https", "false",
       "--ui-no-update", "--ui-dir", path.join(p.root, "ui"), "--config", config, "--workspace-root", path.dirname(p.project)],

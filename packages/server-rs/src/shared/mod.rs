@@ -1,7 +1,8 @@
-//! Helpers shared across domains: JavaScript text semantics, clocks and capped reads.
+//! Helpers shared across domains: JavaScript text semantics, clocks, capped reads and process families.
 pub mod data_owner;
 pub mod fastify;
 pub mod panic_guard;
+pub mod process_group;
 
 use tokio::io::{AsyncRead, AsyncReadExt};
 
