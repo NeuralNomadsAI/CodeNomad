@@ -15,6 +15,10 @@ export interface BrowserPresentation {
   viewport?: { width: number; height: number }
 }
 
+export function selectBrowserOpenOwner<T extends { id: string }>(owners: readonly T[], activeInstanceId?: string): T | undefined {
+  return owners.find(owner => owner.id === activeInstanceId) ?? (owners.length === 1 ? owners[0] : undefined)
+}
+
 export interface BrowserHostCapabilities {
   embedding: boolean
   history: boolean
@@ -58,6 +62,7 @@ export async function registerTauriBrowserTarget(payload: {
   url: string
   bounds: BrowserTargetBounds
   presentation?: BrowserPresentation
+  logicalAddress?: string
 }): Promise<void> {
   await invoke("browser_target_register", { payload: { ...payload, visible: false } })
 }
@@ -71,8 +76,8 @@ export async function updateTauriBrowserTarget(
   await invoke("browser_target_update", { payload: { registrationId, bounds, visible, ...(presentation ? { presentation } : {}) } })
 }
 
-export async function controlTauriBrowserTarget(registrationId: string, action: "back" | "reload" | "navigate", url?: string): Promise<void> {
-  await invoke("browser_target_action", { payload: { registrationId, action, url } })
+export async function controlTauriBrowserTarget(registrationId: string, action: "back" | "reload" | "navigate", url?: string, logicalAddress?: string): Promise<void> {
+  await invoke("browser_target_action", { payload: { registrationId, action, url, ...(logicalAddress ? { logicalAddress } : {}) } })
 }
 
 export async function readBrowserHistory(registrationId: string, guestWebContentsId?: number): Promise<NativeBrowserHistory> {

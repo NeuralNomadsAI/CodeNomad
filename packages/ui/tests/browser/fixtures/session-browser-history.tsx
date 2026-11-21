@@ -93,7 +93,10 @@ Object.assign(shell, {
   preview: (sessionId: string, instanceId = ids[0]) => {
     if (!isInstanceOccurrenceOpen(instanceId)) return null
     const preview = getSessionPreview(sessionId)
-    return preview && { ...preview, mode: getTabViewState(instanceId).previews?.[sessionId]?.mode ?? "chat" }
+    if (!preview) return null
+    const { owner: { client: { id, baseUrl, eventsUrl }, signal: { aborted } }, ...snapshot } = preview
+    return { ...snapshot, owner: { client: { id, baseUrl, eventsUrl }, signal: { aborted } },
+      mode: getTabViewState(instanceId).previews?.[sessionId]?.mode ?? "chat" }
   },
   savedPreview: (sessionId: string, instanceId = ids[0]) => ({ ...savedSessionBrowser(sessionId), ...getTabViewState(instanceId).previews?.[sessionId] }),
   previewModes: (instanceId: string) => getTabViewState(instanceId).previews,

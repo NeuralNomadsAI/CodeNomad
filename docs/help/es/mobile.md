@@ -4,11 +4,13 @@ Usa la interfaz de navegador en un teléfono o tableta para continuar trabajando
 
 ## Conectarse desde un teléfono o tableta {#connect}
 
+Los servidores guardados están disponibles en Inicio y Configuración → Servidores. [Restaurar pestañas remotas](projects.md#restore-remote-tabs).
+
 1. En el anfitrión, abre **Configuración → Acceso remoto → Control remoto** y elige **Iniciar control remoto**.
 2. Escanea el QR de emparejamiento con tu dispositivo móvil y abre el enlace en el navegador que quieras seguir usando.
 3. Como alternativa, configura el [acceso directo](remote-access.md), abre la URL HTTPS accesible y de confianza del anfitrión e inicia sesión con su contraseña de servidor.
 
-Control remoto requiere emparejar el dispositivo; las conexiones directas requieren enrutamiento, un listener accesible y autenticación. No uses `localhost` en el teléfono para llegar a tu equipo de trabajo. Perder los datos del sitio o cambiar de perfil de navegador puede exigir iniciar sesión o emparejarse de nuevo; consulta [Control remoto](remote-control.md).
+Control remoto requiere emparejar el dispositivo; las conexiones directas requieren enrutamiento, un listener accesible y autenticación. No uses `localhost` en el teléfono para llegar a tu equipo de trabajo. Perder los datos del sitio o cambiar de perfil de navegador puede exigir iniciar sesión o emparejarse de nuevo; consulta [Control remoto](remote-control.md). Si el túnel está bloqueado, empareja en una dirección HTTPS de confianza; consulta [Emparejar por HTTPS directo](remote-control.md#direct-https).
 
 ## Instalar la PWA {#install-pwa}
 

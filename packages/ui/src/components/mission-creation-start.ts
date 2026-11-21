@@ -1,7 +1,8 @@
 import { createRoot, getOwner, onCleanup, runWithOwner } from "solid-js"
 import { generateUUID } from "../lib/client-identity"
 import type { MissionPanelMap } from "../../../server/src/api-types"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { isRejectedLifecycleIntent } from "../lib/mission-lifecycle-request"
 import { instances } from "../stores/instances"
 import { missionStore } from "../stores/missions"
@@ -21,8 +22,9 @@ export function createMissionCreationStart(props: { instanceId: string; projectI
     // Use the selected controls' exact project/directory key for every retained receipt.
     const instanceId = props.instanceId, projectID = props.projectID, directory = props.directory
     const view = props.captureView(), client = instances().get(instanceId)?.client
+    const operation = captureBackendOperation(instanceId)
     const generation = getOpenCodeInstanceGeneration(instanceId)
-    const current = () => alive && requested && view() && props.active()
+    const current = () => operation.current() && alive && requested && view() && props.active()
       && props.instanceId === instanceId && props.projectID === projectID && props.directory === directory
       && instances().get(instanceId)?.client === client && getOpenCodeInstanceGeneration(instanceId) === generation
     let consumed = false
@@ -54,7 +56,7 @@ export function createMissionCreationStart(props: { instanceId: string; projectI
           if (!intent || !missionLifecycleIntents.start(intent)) return
           let outcome: "acknowledged" | "rejected" | "unknown" = "unknown"
           try {
-            const result = await serverApi.controlMission(instanceId, created.id, intent.input)
+            const result = await backendOf(instanceId).api.controlMission(instanceId, created.id, intent.input)
             const mission = result?.mission, control = mission?.control
             if (mission && missionLifecycleSource(instanceId, mission, location) === source
               && control?.requestID === intent.input.requestId && control.action === "start"

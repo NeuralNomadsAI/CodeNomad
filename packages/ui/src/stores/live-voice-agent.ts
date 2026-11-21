@@ -1,7 +1,7 @@
 import type { LiveVoiceContext, LiveVoiceSessionStatus, LiveVoiceTool } from "../../../server/src/speech/live-voice-contract"
 import { resolvePromptDelivery } from "../components/prompt-input/submitPrompt"
 import { getInstanceLabel } from "../lib/instance-label"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents } from "../lib/server-events"
 import { partHasRenderableText } from "../types/message"
 import { activeInstanceId, instances } from "./instances"
 import { messageStoreBus } from "./message-v2/bus"
@@ -99,7 +99,7 @@ export function liveVoiceAgent({ instance, session }: Target, options: {
     })
   }
   return async (tool: LiveVoiceTool, current: () => boolean) => {
-    if (tool.name === "get_session_status") serverEvents.flushPendingBatch()
+    if (current() && tool.name === "get_session_status") backendEvents.flushPendingBatch(instanceId)
     if (!current()) return { error: "The conversation has changed." }
     switch (tool.name) {
       case "get_session_status":

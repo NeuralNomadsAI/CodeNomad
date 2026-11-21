@@ -399,11 +399,11 @@ export function initializeClientState(): Promise<void> {
         if (session) {
           const tabs = session.tabs
           const ordered = [tabs[session.activeTabIndex], ...tabs.filter((_, index) => index !== session.activeTabIndex)]
-          const views = ordered.flatMap(tab => tab?.kind === "workspace" ? [tab.viewState] : [])
+          const views = ordered.flatMap(tab => tab?.kind === "workspace" && (!tab.backendId || tab.backendId === "local") ? [tab.viewState] : [])
           if (views.some(view => Object.values(view?.previews ?? {}).some(p => p.targetUrl))) {
             const value = mergeSessionBrowsers(views, readClientLayoutValue(SESSION_BROWSER_STATE_KEY))
             if (writeClientLayoutValue(SESSION_BROWSER_STATE_KEY, value)) {
-              setLoadedRestorableSession({ ...session, tabs: tabs.map(tab => tab.kind === "workspace" && tab.viewState
+              setLoadedRestorableSession({ ...session, tabs: tabs.map(tab => tab.kind === "workspace" && (!tab.backendId || tab.backendId === "local") && tab.viewState
                 ? { ...tab, viewState: tabPreviewModes(tab.viewState) } : tab) })
               scheduleSave()
             }

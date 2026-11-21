@@ -3,7 +3,9 @@ import { Save, WrapText, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { withHotkey } from "../lib/hotkeys"
 import { useTheme } from "../lib/theme"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
+import { captureBackendOperation } from "../lib/backend-operation"
+import { backendEvents } from "../lib/server-events"
 import { previewReads } from "../lib/background-read-queue"
 import { loadMonaco } from "../lib/monaco/setup"
 import { createDebouncedRefresh, filesystemInvalidationVersion } from "../lib/filesystem-events"
@@ -27,7 +29,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
   const [loading, setLoading] = createSignal(false)
   const [source, setSource] = createSignal(false)
   const [wrap, setWrap] = createSignal(readStoredEnum(RIGHT_PANEL_FILES_WORD_WRAP_KEY, ["on", "off"] as const) === "on")
-  const editor = useWorkspaceFileEditor({ instanceId: props.instanceId, target: () => props.target, active: () => props.active, t, onError: setError })
+  const editor = useWorkspaceFileEditor({ instanceId: props.instanceId, target: () => props.target, active: () => props.active, t, onError: setError, captureOperation: captureBackendOperation })
   createEffect(() => writeClientLayoutValue(RIGHT_PANEL_FILES_WORD_WRAP_KEY, wrap() ? "on" : "off"))
   let controller: AbortController | undefined
   let pending = false
@@ -38,13 +40,15 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
     if (!props.active || editor.dirty() || editor.saving()) return
     if (loading()) { pending = true; return }
     const request = controller = new AbortController(), target = props.target
+    const operation = captureBackendOperation(props.instanceId, request.signal)
+    if (!operation.current()) return
     if (!previewable() && !imageTypes[target.path.split(".").pop()!.toLowerCase()]) void loadMonaco().catch(() => {})
     setLoading(true)
     setError(null)
     try {
-      const result = await previewReads.run(request.signal,
-        () => serverApi.previewWorkspaceFile(props.instanceId, target.path, target.directory, request.signal), "visible")
-      if (request.signal.aborted || editor.dirty() || editor.saving()) return
+      const result = await previewReads.run(operation.signal,
+        () => backendOf(props.instanceId).api.previewWorkspaceFile(props.instanceId, target.path, target.directory, operation.signal), "visible")
+      if (!operation.current() || editor.dirty() || editor.saving()) return
       const mime = imageTypes[target.path.split(".").pop()!.toLowerCase()]
       if (mime && result.encoding === "base64") setContent({ image: `data:${mime};base64,${result.contents}` })
       else {
@@ -55,11 +59,11 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
         } catch { setContent({ binary: true }) }
       }
     } catch (cause) {
-      if (!request.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause))
+      if (operation.current()) setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       if (controller === request) {
         setLoading(false)
-        if (pending) { pending = false; void load() }
+        if (pending && operation.current()) { pending = false; void load() }
       }
     }
   }
@@ -73,16 +77,22 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
     else void load()
   }))
   createEffect(on(() => props.active, active => { if (!active) cancel(); else void load() }, { defer: true }))
+  createEffect(on(() => backendEvents.signalForInstance(props.instanceId), signal => {
+    cancel()
+    if (!signal.aborted) void load()
+  }, { defer: true }))
   const refresh = createDebouncedRefresh(() => void load())
   createEffect(on(() => filesystemInvalidationVersion(props.instanceId), () => { if (props.active) refresh.trigger() }, { defer: true }))
   onCleanup(() => { cancel(); refresh.cancel() })
   async function explicitRefresh() {
     const target = props.target
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     if (editor.dirty()) {
       const confirmed = await showConfirmDialog(t("instanceShell.rightPanel.actions.refreshDirty.message"), {
         variant: "warning", confirmLabel: t("instanceShell.rightPanel.actions.refreshDirty.confirmLabel"), cancelLabel: t("instanceShell.rightPanel.actions.refreshDirty.cancelLabel"),
       })
-      if (!confirmed || target !== props.target || !props.active) return
+      if (!confirmed || !operation.current() || target !== props.target || !props.active) return
       editor.discard()
     }
     await load()
@@ -113,7 +123,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
           <Show when={mermaid()} fallback={<div class="workspace-markdown" ref={element => {
             queueMicrotask(() => { if (element.isConnected) element.scrollTop = views.get(props.target)?.scrollTop ?? 0 })
           }} onScroll={event => views.set(props.target, { source: source(), scrollTop: event.currentTarget.scrollTop })}>
-            <Markdown part={{ type: "text", text: editor.text() }} isDark={isDark()} escapeRawHtml />
+            <Markdown instanceId={props.instanceId} part={{ type: "text", text: editor.text() }} isDark={isDark()} escapeRawHtml />
           </div>}>
             <div class="workspace-mermaid"><MermaidDiagram code={editor.text()} isDark={isDark()} showSourceOnError /></div>
           </Show>

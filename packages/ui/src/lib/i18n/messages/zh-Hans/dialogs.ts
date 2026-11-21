@@ -1,4 +1,12 @@
 export const dialogMessages = {
+  "remoteRestore.absent": "找不到服务器",
+  "remoteRestore.confirmChange": "更改此服务器连接？其他窗口中保存的标签页可能会变得不可用。",
+  "remoteRestore.idle": "等待中",
+  "remoteRestore.admitting": "正在连接…",
+  "remoteRestore.compatible": "项目不可用",
+  "remoteRestore.refused": "服务器不兼容",
+  "remoteRestore.unreachable": "服务器不可用",
+  "remoteRestore.inUse": "更改此服务器的地址前，请关闭其标签页，并从另一个项目重新打开设置。",
   "authRecovery.title": "重新登录 CodeNomad",
   "authRecovery.pairing": "请在主机上打开 设置 → 远程访问，创建配对链接并在此设备上打开，然后检查连接。",
   "authRecovery.pairingTitle": "重新配对此设备",

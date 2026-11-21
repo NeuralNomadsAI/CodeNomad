@@ -6,6 +6,7 @@ import { setBrowserEmulation } from "./browser-emulation"
 import { executeCdpOperation } from "../../../server/src/automation/page/cdp-driver"
 import { parsePageOperation, pageEnvelope } from "../../../server/src/automation/page/operations"
 import { PAGE_DRIVER_VERSION } from "../../../server/src/automation/page/protocol"
+import { setBrowserLogicalAddress } from "./browser-presentation"
 
 const electron = () => createRequire(import.meta.url)("electron") as typeof import("electron")
 
@@ -15,6 +16,7 @@ interface BrowserControllerElectron {
 }
 
 interface RegistrationInput {
+  logicalAddress?: string
   sessionId: string
   registrationId: string
   guestWebContentsId: number
@@ -111,6 +113,7 @@ export class BrowserController {
       throw new Error("Browser guest does not belong to this window")
     }
     const previous = this.registrations.get(input.registrationId)
+    setBrowserLogicalAddress(guest, input.logicalAddress)
     if (previous) this.releaseGuest(previous.guest)
     this.registrations.set(input.registrationId, { ...input, owner, guest, generation: randomUUID() })
   }

@@ -8,10 +8,13 @@ import { migrateSettingsLayout } from "./migrate"
 import type { WorkspaceEventPayload } from "../api-types"
 import { sanitizeConfigOwner } from "./public-config"
 import { applyMergePatch } from "./merge-patch"
+import { compactRemoteProjectHistory } from "./remote-project-history"
 import { readAdmissionEnvironment } from "./admission-environment"
 import { ServerFlagReader } from "./server-flag-reader"
 import { canonicalScope } from "../host-lifetime/protocol"
 import { createHash } from "node:crypto"
+import fs from "node:fs"
+import { claimServerIdentity } from "./server-identity"
 import path from "node:path"
 import { lstatSync, statSync } from "node:fs"
 import { assertVoiceConversationPatch } from "../speech/voice-conversation-config"
@@ -97,9 +100,44 @@ export class SettingsService {
     this.stateStore = new YamlDocStore(
       location.stateYamlPath,
       logger.child({ component: "settings-state" }),
-      { throwOnPersistError: true },
+      { throwOnPersistError: true, normalize: compactRemoteProjectHistory },
     )
     this.serverFlags = new ServerFlagReader(location.configYamlPath)
+  }
+
+  /** Identity failures disable native backend admission while startup continues. */
+  getServerId(): string | undefined {
+    try { return this.initializeServerId() }
+    catch (error) {
+      this.logger.warn({ err: error }, "Stable server identity unavailable; backend compatibility falls back")
+      return undefined
+    }
+  }
+
+  private initializeServerId(): string {
+    const server = this.configStore.getAuthoritativeOwner("server")
+    if (server.serverId !== undefined) {
+      return z.string().uuid().parse(server.serverId)
+    }
+    const serverId = claimServerIdentity(this.location.configYamlPath)
+    // Refresh after exclusive publication: every process uses the winning claim.
+    const current = this.configStore.getAuthoritativeOwner("server")
+    if (current.serverId !== undefined) {
+      const persisted = z.string().uuid().parse(current.serverId)
+      if (persisted !== serverId) throw new Error("Conflicting persisted server identity")
+      return persisted
+    }
+    try {
+      fs.accessSync(this.location.configYamlPath, fs.constants.W_OK)
+    } catch (error: any) {
+      if (error?.code !== "ENOENT") throw error
+    }
+    try { this.configStore.mergePatchOwner("server", { serverId }) }
+    catch (error) {
+      // A concurrent initializer may have committed while Windows refused our rename.
+      if (this.configStore.getAuthoritativeOwner("server").serverId !== serverId) throw error
+    }
+    return z.string().uuid().parse(this.configStore.getAuthoritativeOwner("server").serverId)
   }
 
   /** Selected desktop profile; same identity used at Mission Play. */
@@ -146,6 +184,10 @@ export class SettingsService {
   /** Authoritative boolean server setting for access decisions; see `ServerFlagReader`. */
   serverFlag(key: string): boolean {
     return this.serverFlags.enabled(key)
+  }
+
+  multiBackendEnabled(): boolean {
+    return this.serverFlags.enabled("multiBackend", ["ui", "settings"], true)
   }
 
   readEnvironmentForAdmission(signal?: AbortSignal): Promise<Record<string, string>> {

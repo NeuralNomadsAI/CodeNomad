@@ -8,6 +8,7 @@ import { setSessionArchived } from "./session-archive"
 import { handleNativeSessionEvent } from "./session-events"
 import { activeSessionId, sessions, setActiveSession, setSessions } from "./session-state"
 import { ensureWorktreesLoaded } from "./worktrees"
+import { backendEvents } from "../lib/server-events"
 
 const originalWorktrees = serverApi.fetchWorktrees
 serverApi.fetchWorktrees = async () => ({ isGitRepo: false, worktrees: [] })
@@ -68,6 +69,26 @@ test("a late archive acknowledgement cannot refresh a replacement connection", a
   await ready
   updateInstance(f.id, { client: {} as any })
   release(); await pending
+  assert.equal(f.lists.length, 0)
+  assert.equal(f.current()?.time.archived, undefined)
+})
+
+test("a late archive acknowledgement cannot refresh a replacement attachment on the same client", async t => {
+  const f = await fixture(t)
+  let controller = new AbortController()
+  t.mock.method(backendEvents, "signalForInstance", () => controller.signal)
+  let entered!: () => void, release!: () => void
+  const ready = new Promise<void>(resolve => { entered = resolve })
+  const gate = new Promise<void>(resolve => { release = resolve })
+  let signal: AbortSignal | undefined
+  f.client.session.update = async (_input: unknown, options: { signal: AbortSignal }) => {
+    signal = options.signal; entered(); await gate
+  }
+  const pending = setSessionArchived(f.id, "session", true)
+  await ready
+  controller.abort(); controller = new AbortController()
+  release(); await pending
+  assert.equal(signal?.aborted, true)
   assert.equal(f.lists.length, 0)
   assert.equal(f.current()?.time.archived, undefined)
 })

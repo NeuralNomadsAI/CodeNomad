@@ -4,14 +4,17 @@ import type { RecordingState } from "../../components/prompt-input/recording-con
 import { showAlertDialog } from "../../stores/alerts"
 import { speechCapabilities } from "../../stores/speech"
 import { useI18n } from "../i18n"
+import { captureBackendOperation } from "../backend-operation"
 
 export function useTranscriptionTest(beforeStateChange: (next: RecordingState) => void) {
   const { t } = useI18n()
   const [state, setState] = createSignal<RecordingState>("idle")
   const [result, setResult] = createSignal<string | null>(null)
 
+  let releaseAttachment: (() => void) | undefined
   const capture = createApiRecordingController({
     onStateChange: next => {
+      if (next === "idle") releaseAttachment?.()
       beforeStateChange(next)
       setState(next)
     },
@@ -23,6 +26,7 @@ export function useTranscriptionTest(beforeStateChange: (next: RecordingState) =
   onMount(() => window.addEventListener("pagehide", capture.cancelRecording))
   onCleanup(() => {
     window.removeEventListener("pagehide", capture.cancelRecording)
+    releaseAttachment?.()
     capture.cancelRecording()
   })
 
@@ -40,6 +44,12 @@ export function useTranscriptionTest(beforeStateChange: (next: RecordingState) =
     async toggle() {
       if (state() === "recording") capture.stopRecording()
       else if (state() === "idle") {
+        const operation = captureBackendOperation("")
+        if (!operation.current()) return
+        releaseAttachment?.()
+        const abort = () => capture.cancelRecording()
+        operation.signal.addEventListener("abort", abort, { once: true })
+        releaseAttachment = () => operation.signal.removeEventListener("abort", abort)
         setResult(null)
         await capture.startRecording()
       }

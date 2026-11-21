@@ -2,14 +2,16 @@ import assert from "node:assert/strict"
 import { it } from "node:test"
 
 import { OpenCode } from "@opencode/client"
+import { registerLocalBackendFixture } from "../../tests/contracts/local-backend-fixture.ts"
 import { serverApi } from "../lib/api-client.ts"
+import { parseInstanceKey } from "../lib/backend-identity.ts"
 import { serverEvents } from "../lib/server-events.ts"
 import { buildInstanceBaseUrl, createInstanceFetch, sdkManager } from "../lib/sdk-manager.ts"
 import { SESSION_LOCATED_ELSEWHERE_REASON, SESSION_PLACEMENT_HEADER } from "../../../server/src/opencode/session-access-contract.ts"
 import { addAttachment, deleteSessionAttachments, getAttachments } from "./attachments.ts"
-import { fetchSessions } from "./session-api.ts"
+import { fetchSessions, loadMoreSessions, searchSessions } from "./session-api.ts"
 import type { Session } from "../types/session.ts"
-import { addInstance, removeInstance } from "./instances.ts"
+import { addInstance, handleInstanceInvalidation, removeInstance } from "./instances.ts"
 import { setInstanceMetadata } from "./instance-metadata.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { handleNativeSessionEvent, handleSessionDeleted, isSessionMovePending } from "./session-events.ts"
@@ -22,9 +24,9 @@ import { ensureWorktreesLoaded, getWorktreeSlugForParentSession, reloadWorktrees
 
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
 
-async function movedOutsideWorkspace() {
+async function movedOutsideWorkspace({ sessionID }: { sessionID: string }) {
   throw Object.assign(new Error("Session does not belong to workspace"), {
-    _tag: "SessionNotFoundError", reason: SESSION_LOCATED_ELSEWHERE_REASON,
+    _tag: "SessionNotFoundError", sessionID, reason: SESSION_LOCATED_ELSEWHERE_REASON,
   })
 }
 
@@ -39,8 +41,9 @@ function setup(id: string, folder: string) {
     active: async () => ({}),
     list: async () => ({ data: [{ ...session, parentID: undefined }] }),
   } } as any
-  ;(sdkManager as any).clients.set(`${id}:/workspaces/${id}/instance`, client)
-  addInstance({ id, folder, port: 0, pid: 0, proxyPath: "", status: "ready", client })
+  const { backendId, workspaceId } = parseInstanceKey(id)
+  ;(sdkManager as any).clients.set(`${id}:/workspaces/${workspaceId}/instance`, client)
+  addInstance({ id, backendId, folder, port: 0, pid: 0, proxyPath: "", status: "ready", client })
   setSessions((previous) => new Map(previous).set(id, new Map([[session.id, session]])))
   prependSessionListId(id, session.id)
   return { session, client, cleanup() {
@@ -256,6 +259,8 @@ it("keeps a child moved into an owned project subfolder listed, also after a rel
   const row = (sessionId: string, directory: string, parentID?: string) => ({ ...source.session, id: sessionId, title: sessionId,
     parentId: parentID ?? null, parentID, location: { directory } })
   let childDirectory = "/repo"
+  source.client.session.get = async ({ sessionID }: { sessionID: string }) =>
+    sessionID === "sub-child" ? row(sessionID, childDirectory, "restored") : undefined
   source.client.session.list = async (input: any) => {
     const native = [row("restored", "/repo"), row("sub-child", childDirectory, "restored"), row("other", "/repo")]
     return { data: input.project ? native : native.filter(session => session.location.directory === input.directory && !session.parentID) }
@@ -520,9 +525,9 @@ for (const registered of [true, false]) {
     // The local case is standalone: the old inventory can't include the moved
     // row through a child, so it retains the original checkout until recovery.
     source.client.session.list = async (input: any) => ({ data: input.project ? registered ? [row] : [row, child] : [] })
-    source.client.session.get = async () => {
+    source.client.session.get = async (input: { sessionID: string }) => {
       if (!recovered) throw Object.assign(new Error("Forbidden"), { status: 403 })
-      if (!registered) return movedOutsideWorkspace()
+      if (!registered) return movedOutsideWorkspace(input)
       return row
     }
     const agentDirectories: string[] = []
@@ -654,3 +659,230 @@ it("applies only the latest move's placement when an earlier decision is still r
     assert.deepEqual(getSessionListIds(id), ["restored"])
   } finally { release(); serverApi.fetchWorktrees = original; source.cleanup() }
 })
+
+for (const boundary of ["before the timer", "during the placement read"] as const) {
+  it(`reconciles session moves after reconnect ${boundary}`, async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+    const source = setup(`move-reconnect-${boundary.replaceAll(" ", "-")}`, "/repo")
+    registerLocalBackendFixture(t, "move_reconnect_other")
+    const other = setup("move_reconnect_other~workspace", "/other")
+    const id = source.session.instanceId
+    const otherId = other.session.instanceId
+    const tick = () => new Promise<void>(resolve => setImmediate(resolve))
+    const cwd = source.session.location.directory
+    const attachment = { id: "attachment", type: "text", display: "notes", url: "data:text/plain,notes", filename: "notes.txt", mediaType: "text/plain" } as any
+    const displaced = Object.assign(new Error("Session is elsewhere"), {
+      _tag: "SessionNotFoundError", sessionID: "restored", reason: SESSION_LOCATED_ELSEWHERE_REASON,
+    })
+    let rejectOld!: (error: Error) => void
+    let resolveCurrent!: (row: unknown) => void
+    const oldRead = new Promise((_resolve, reject) => { rejectOld = reject })
+    const currentRead = new Promise(resolve => { resolveCurrent = resolve })
+    // An assertion before dispatch must not leave an unhandled rejection.
+    void oldRead.catch(() => {})
+    let worktreeReads = 0, reads = 0, departureConfirmed = false
+    t.mock.method(serverApi, "fetchWorktrees", async () => {
+      worktreeReads++
+      return { isGitRepo: true, worktrees: [{ slug: "root", directory: cwd, kind: "root" } as const, newWorktree] }
+    })
+    source.client.agent = { list: async () => [] }
+    const stale = { ...source.session, location: { directory: "/obsolete" }, title: "obsolete list row" }
+    source.client.session.list = async (input: any) => ({
+      data: input.project ? [] : [stale],
+      cursor: input.parentID === null ? { next: "next-page" } : {},
+    })
+    source.client.session.get = async (_input: unknown, options: { headers: HeadersInit }) => {
+      assert.equal(new Headers(options.headers).get(SESSION_PLACEMENT_HEADER), "1")
+      reads++
+      if (boundary === "during the placement read") return reads === 1 ? oldRead : currentRead
+      if (!departureConfirmed) throw Object.assign(new Error("Forbidden"), { status: 403 })
+      throw displaced
+    }
+    try {
+      await ensureWorktreesLoaded(id)
+      setInstanceMetadata(id, { project: { id: "project" } as any })
+      setActiveSession(id, "restored")
+      setSessionDraftPrompt(id, "restored", "unsent reply")
+      addAttachment(id, "restored", attachment)
+      const otherRow = sessions().get(otherId)?.get("restored")
+      const messages = messageStoreBus.getOrCreate(id)
+      messages.setMessageWindow("restored", { kind: "history", olderCursor: "older", resumeCursor: "resume", newerCursors: [] })
+      const window = messages.getMessageWindow("restored")
+      handleNativeSessionEvent(id, moved("obsolete", "restored", "/obsolete"))
+      if (boundary === "during the placement read") {
+        t.mock.timers.tick(100)
+        await tick()
+        assert.equal(reads, 1, "the old placement read is in flight")
+      }
+      const inventoriesBeforeReconnect = worktreeReads
+      const connected = { id: "connected", type: "server.connected", created: 2, data: {} } as const
+      handleInstanceInvalidation(id, connected as any)
+      assert.equal(isSessionMovePending(id, "restored"), false, "the old event lost authority without detaching")
+      handleNativeSessionEvent(id, connected as any)
+      t.mock.timers.tick(100)
+      await tick()
+      assert.equal(reads, boundary === "before the timer" ? 1 : 2, "reconnect reads the current owner")
+      assert.equal(worktreeReads, inventoriesBeforeReconnect, "reconnect never replays the stale worktree lookup")
+      assert.equal(activeSessionId().get(id), "restored")
+      assert.equal(messages.getMessageWindow("restored"), window)
+
+      if (boundary === "before the timer") {
+        source.client.session.list = async () => ({ data: [] })
+        // A complete inventory can be absent while the exact read is unavailable.
+        await fetchSessions(id, { strictStatus: true })
+        assert.equal(activeSessionId().get(id), "restored")
+        assert.equal(sessions().get(id)?.get("restored")?.location.directory, cwd)
+        assert.equal(messages.getMessageWindow("restored"), window)
+        departureConfirmed = true
+        await fetchSessions(id, { strictStatus: true })
+        assert.equal(activeSessionId().get(id), undefined, "the current typed refusal removes the projection")
+        assert.equal(sessions().get(id)?.has("restored") ?? false, false)
+        assert.deepEqual([...getMovedAwaySessionIds(id)], ["restored"])
+      } else {
+        await fetchSessions(id, { strictStatus: true })
+        assert.equal(sessions().get(id)?.get("restored")?.location.directory, cwd, "a partial row cannot overtake the current probe")
+        const held = sessions().get(id)?.get("restored")
+        await loadMoreSessions(id)
+        assert.equal(sessionState.getSessionNextCursor(id), undefined, "the guarded page still advances the cursor")
+        assert.equal(sessions().get(id)?.get("restored"), held, "a stale continuation cannot replace the row under verification")
+        await searchSessions(id, "obsolete")
+        assert.equal(sessions().get(id)?.get("restored"), held, "a stale search result cannot replace the row under verification")
+        assert.equal(reads, 2, "list operations share the current placement probe")
+        handleNativeSessionEvent(id, { id: "rename", type: "session.renamed", created: 3,
+          data: { sessionID: "restored", title: "newer title" } } as any)
+        resolveCurrent({ ...source.session, location: { directory: newWorktree.directory } })
+        await tick()
+        assert.equal(sessions().get(id)?.get("restored")?.location.directory, newWorktree.directory)
+        assert.equal(sessions().get(id)?.get("restored")?.title, "newer title")
+        assert.equal(isSessionMovePending(id, "restored"), false)
+        handleNativeSessionEvent(id, moved("newer", "restored", cwd, 4))
+        rejectOld(displaced)
+        await tick()
+        const latest = sessions().get(id)?.get("restored")
+        assert.equal(latest?.location.directory, cwd)
+        assert.equal(latest?.title, "newer title")
+        assert.equal(activeSessionId().get(id), "restored")
+        assert.equal(messages.getMessageWindow("restored"), window)
+        assert.equal(isSessionMovePending(id, "restored"), true, "the old completion cannot clear the newer event")
+      }
+      assert.equal(sessionState.getAuthoritativelyDeletedSessionIdsForInstance(id).has("restored"), false)
+      assert.equal(getSessionDraftPrompt(id, "restored"), "unsent reply")
+      assert.deepEqual(getAttachments(id, "restored").map(value => value.id), ["attachment"])
+      assert.equal(sessions().get(otherId)?.get("restored"), otherRow)
+    } finally {
+      rejectOld(displaced)
+      resolveCurrent(null)
+      deleteSessionAttachments(id, "restored")
+      source.cleanup()
+      other.cleanup()
+    }
+  })
+}
+
+it("does not publish a search row returned after a newer move settled as missing", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  const source = setup("move-stale-search", "/repo")
+  const id = source.session.instanceId
+  const stale = { ...source.session, id: "missing", title: "match missing", parentID: undefined }
+  const ordinary = { ...stale, id: "ordinary", title: "match ordinary" }
+  let release!: () => void
+  const heldPage = new Promise<void>(resolve => { release = resolve })
+  let searchReads = 0
+  let placementReads = 0
+  t.mock.method(serverApi, "fetchWorktrees", async () => ({
+    isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" } as const],
+  }))
+  source.client.session.list = async ({ search }: { search?: string }) => {
+    if (search !== "match") return { data: [] }
+    searchReads++
+    await heldPage
+    return { data: [stale, ordinary] }
+  }
+  source.client.session.get = async ({ sessionID }: { sessionID: string }, options: { headers: HeadersInit }) => {
+    assert.equal(sessionID, stale.id)
+    assert.equal(new Headers(options.headers).get(SESSION_PLACEMENT_HEADER), "1")
+    placementReads++
+    throw { _tag: "SessionNotFoundError", sessionID, message: "Session not found" }
+  }
+  const tick = () => new Promise<void>(resolve => setImmediate(resolve))
+  try {
+    await ensureWorktreesLoaded(id)
+    assert.equal(sessions().get(id)?.has(stale.id) ?? false, false)
+    const search = searchSessions(id, "match")
+    await tick()
+    assert.equal(searchReads, 1, "the old search page is in flight")
+
+    handleNativeSessionEvent(id, moved("newer-move", stale.id, "/elsewhere", 2))
+    assert.equal(isSessionMovePending(id, stale.id), true)
+    t.mock.timers.tick(100)
+    await tick()
+    assert.equal(placementReads, 1)
+    assert.equal(isSessionMovePending(id, stale.id), false, "the exact missing read settled the move")
+    assert.equal(sessions().get(id)?.has(stale.id) ?? false, false)
+
+    release()
+    await search
+    assert.deepEqual({
+      cachedIds: [stale.id, ordinary.id].filter(sessionId => sessions().get(id)?.has(sessionId)),
+      resultIds: sessionState.getSessionSearchResultIds(id),
+    }, { cachedIds: [ordinary.id], resultIds: [ordinary.id] })
+  } finally {
+    release()
+    source.cleanup()
+  }
+})
+
+for (const supersession of ["none", "move", "reconnect", "deletion"] as const) {
+  it(`keeps a confirmed arrival until its registered checkout is listed (${supersession})`, async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+    const destination = setup(`move-late-worktree-${supersession}`, "/repo")
+    const id = destination.session.instanceId
+    const tick = () => new Promise<void>(resolve => setImmediate(resolve))
+    const alias = "/checkout-alias"
+    const incoming = { ...destination.session, id: "incoming", location: { directory: alias }, listWorktreeSlug: newWorktree.slug }
+    const root = { slug: "root", directory: "/repo", kind: "root" } as const
+    let worktrees = [root, { ...newWorktree, slug: "different" }]
+    let reads = 0
+    t.mock.method(serverApi, "fetchWorktrees", async () => ({ isGitRepo: true, worktrees }))
+    destination.client.session.get = async ({ sessionID }: { sessionID: string }, options: { headers: HeadersInit }) => {
+      assert.equal(sessionID, incoming.id)
+      assert.equal(new Headers(options.headers).get(SESSION_PLACEMENT_HEADER), "1")
+      if (++reads === 1) return incoming
+      throw Object.assign(new Error("Session is elsewhere"), {
+        _tag: "SessionNotFoundError", sessionID, reason: SESSION_LOCATED_ELSEWHERE_REASON,
+      })
+    }
+    try {
+      await ensureWorktreesLoaded(id)
+      handleNativeSessionEvent(id, moved("arrive", incoming.id, alias))
+      t.mock.timers.tick(100)
+      await tick()
+      assert.equal(reads, 1)
+      assert.equal(sessions().get(id)?.has(incoming.id), false, "a different slug at the same path cannot admit the arrival")
+      assert.equal(isSessionMovePending(id, incoming.id), true)
+
+      if (supersession === "move") handleNativeSessionEvent(id, moved("leave", incoming.id, "/elsewhere", 2))
+      if (supersession === "deletion") handleSessionDeleted(id, { type: "session.deleted", data: { sessionID: incoming.id } } as any)
+      if (supersession === "reconnect") {
+        const connected = { id: "connected", type: "server.connected", created: 2, data: {} } as const
+        handleInstanceInvalidation(id, connected as any)
+        handleNativeSessionEvent(id, connected as any)
+      }
+      worktrees = [root, newWorktree]
+      await reloadWorktrees(id, true)
+      await tick()
+
+      if (supersession === "none") {
+        assert.equal(sessions().get(id)?.get(incoming.id)?.location.directory, alias)
+        assert.equal(getWorktreeSlugForParentSession(id, incoming.id), newWorktree.slug)
+        assert.deepEqual(listedIds(id), ["incoming", "restored"])
+        assert.equal(isSessionMovePending(id, incoming.id), false)
+        assert.equal(reads, 1, "publication reuses the current exact read")
+      } else {
+        assert.equal(sessions().get(id)?.has(incoming.id), false, "the old arrival cannot publish")
+        assert.deepEqual(listedIds(id), ["restored"])
+        assert.equal(reads, supersession === "reconnect" ? 2 : 1)
+      }
+    } finally { destination.cleanup() }
+  })
+}

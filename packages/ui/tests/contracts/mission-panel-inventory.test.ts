@@ -519,6 +519,39 @@ test(`selected header ${phase} ${mode} revision skew coalesces one retry and rec
   } finally { store.clear("fixture") }
 })
 
+test("a revoked selected-header task response cannot publish or start a revision-skew retry", async () => {
+  const f = seeded(1), id = "msn_0"
+  let attachment = new AbortController(), revoke = true, headers = 0
+  await f.journal.append({ version: 1, projectID: f.project.id, missionID: id, id: "evt_task", type: "task.created",
+    task: { id: "tsk_task", key: "task", title: "Task", brief: "Brief", role: "specialist", blockedBy: [],
+      executionMode: { kind: "native", parentTaskKey: null } }, createdAt: 2 })
+  const store = createMissionPanelInventory({ scope: () => "revoked-header", signal: () => attachment.signal,
+    tasks: async (_instance, missionID, request, scope) => {
+      const result = await readMissionTaskPage(missionID, request, { ...scope, exchange: f.exchange })
+      if (revoke) {
+        revoke = false
+        const map = (await f.journal.missionView(id)).mission!
+        await f.control.update({ missionID: id, requestID: "revoke-skew", expectedRevision: map.revision, objective: "New attachment" })
+        attachment.abort(); attachment = new AbortController()
+        return { ...result, revision: map.revision + 1 }
+      }
+      return result
+    },
+    read: (_instance, selector, scope) => {
+      if (selector.source === "mission" && selector.header) headers++
+      return readMissionPanelWindow(selector, { ...scope, exchange: f.exchange, runTransfer: read => read() })
+    } })
+  try {
+    store.setDemand("fixture", true); await store.ensure("fixture")
+    store.want("fixture", "selection", id); await store.refresh("fixture")
+    assert.equal(headers, 1, "retired response never admits a skew retry")
+    assert.equal(store.state("fixture").missions.length, 0, "retired task data stays unpublished")
+    await store.refresh("fixture")
+    assert.equal(store.state("fixture").missions[0]?.revision, 3)
+    assert.equal(store.state("fixture").missions[0]?.tasks[0]?.id, "tsk_task")
+  } finally { store.clear("fixture") }
+})
+
 test("selected header assembly refuses oversized advertised data before hashing or allocation", async () => {
   const f = seeded(), map = (await f.journal.missionView("msn_0")).mission!, header = missionPanelHeader(map)
   Object.assign(header.root, { oversized: "x".repeat(1024 * 1024) })

@@ -63,6 +63,8 @@ import {
   beginSessionSearch,
   clearSessionSearch,
   isLatestSessionSearch,
+  isSessionSearchLoading,
+  getSessionSearchResultIds,
   setSessionSearchResults,
   setSessionListError,
   setSessionExpanded,
@@ -81,7 +83,7 @@ import { seedSessionMessagesV2, reconcilePendingPermissionsV2 } from "./message-
 import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents } from "../lib/server-events"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
 import { buildProviderCatalog } from "../lib/model-catalog"
 import { getRootClient } from "./opencode-client"
@@ -95,7 +97,7 @@ import {
 const MAX_SESSION_LIST_PAGES = 1_000
 import { getInstanceMetadata } from "./instance-metadata"
 import {
-  captureSessionPlacementEvidence, clearPendingSessionMove, confirmSessionPlacement, confirmedSessionListDirectory, getPendingSessionMove, isSessionMovePending,
+  captureSessionPlacementEvidence, clearPendingSessionMove, confirmSessionPlacement, confirmedSessionListDirectory, getPendingSessionMove, isSessionMovePending, reconcileInterruptedSessionMoves,
   hasPendingSessionReturn, matchesSessionPlacement, nativeSessionLifecycleGeneration, retainConfirmedSessionPlacement, settleListedReturn,
 } from "./session-events"
 import { idleReadAdmissionEpoch, mergeFetchedSessionRuntimeState, reconcileFetchedSessionRuntime } from "./session-generation-recovery"
@@ -124,17 +126,20 @@ const log = getLogger("api")
 const sessionLog = getLogger("session")
 const sessionListRequestIds = new Map<string, number>()
 const restorePlacementReads = new Map<string, Set<() => boolean>>()
+const searchMoveGuards = new Map<string, (sessionId: string) => void>()
 const catalogLocations = new Map<string, string>()
-const catalogRefreshes = new Map<string, { key: string; promise: Promise<void>; pending: boolean }>()
+const catalogRefreshes = new Map<string, { key: string; promise: Promise<void>; pending: boolean; current: () => boolean }>()
 const agentRequestIds = new Map<string, number>()
 const providerRequestIds = new Map<string, number>()
-const agentRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean }>()
-const providerRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean }>()
+const agentRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean; current: () => boolean }>()
+const providerRefreshes = new Map<string, { promise: Promise<boolean>; pending: boolean; cancelled: boolean; current: () => boolean }>()
 const sessionPageRequests = new Map<string, Promise<void>>()
 const sessionExhaustionRequests = new Map<string, Promise<void>>()
+const sessionRequestOwners = new WeakMap<Promise<void>, () => boolean>()
 const sessionPageTraversals = new Map<string, { cursors: Set<string>; pages: number }>()
 interface MessagePageRequest {
   controller: AbortController
+  current: () => boolean
   consumers: Set<symbol>
   request: Promise<boolean>
 }
@@ -155,9 +160,10 @@ function messagePageKey(instanceId: string, sessionId: string): string {
 }
 
 function captureInstanceRequestAuthority(instanceId: string): () => boolean {
+  const signal = backendEvents.signalForInstance(instanceId)
   const generation = getOpenCodeInstanceGeneration(instanceId)
   const client = instances().get(instanceId)?.client
-  return () => getOpenCodeInstanceGeneration(instanceId) === generation
+  return () => !signal?.aborted && getOpenCodeInstanceGeneration(instanceId) === generation
     && instances().get(instanceId)?.client === client
 }
 
@@ -190,21 +196,24 @@ function catalogLocationKey(location: LocationRef): string {
 }
 
 async function refreshSessionCatalog(instanceId: string, force = false): Promise<void> {
+  const signal = backendEvents.signalForInstance(instanceId)
+  if (signal.aborted) return
   const instance = instances().get(instanceId)
   if (!instance?.client) return
   const client = instance.client
+  const current = () => !signal.aborted && instances().get(instanceId)?.client === client
   const location = getActiveCatalogLocation(instanceId)
   const key = catalogLocationKey(location)
   if (!force && catalogLocations.get(instanceId) === key) return
   const existing = catalogRefreshes.get(instanceId)
-  if (existing?.key === key) {
+  if (existing?.key === key && existing.current()) {
     if (force) existing.pending = true
     return existing.promise
   }
-  const state = { key, promise: Promise.resolve(), pending: false }
+  const state = { key, promise: Promise.resolve(), pending: false, current }
   state.promise = (async () => {
     await waitForInstanceReady(instanceId)
-    if (instances().get(instanceId)?.client !== client || catalogRefreshes.get(instanceId) !== state
+    if (!current() || catalogRefreshes.get(instanceId) !== state
       || catalogLocationKey(getActiveCatalogLocation(instanceId)) !== key) return
     let refresh = force
     do {
@@ -215,6 +224,7 @@ async function refreshSessionCatalog(instanceId: string, force = false): Promise
         fetchProviders(instanceId, location, refresh),
         fetchCommands(instanceId, client, location),
       ])
+      if (!current() || catalogRefreshes.get(instanceId) !== state) return
       if (successes.every(Boolean) && catalogLocationKey(getActiveCatalogLocation(instanceId)) === key) {
         catalogLocations.set(instanceId, key)
       }
@@ -223,7 +233,7 @@ async function refreshSessionCatalog(instanceId: string, force = false): Promise
       if (getOpenCodeInstanceGeneration(instanceId) !== generation) state.pending = true
       refresh = true
     } while (state.pending
-      && instances().get(instanceId)?.client === client
+      && current()
       && catalogRefreshes.get(instanceId) === state
       && catalogLocationKey(getActiveCatalogLocation(instanceId)) === key)
   })().finally(() => {
@@ -327,9 +337,11 @@ function hasMissingParentChain(session: SDKSession, loaded: Map<string, SDKSessi
 async function fetchV2Sessions(
   instanceId: string,
   options: V2SessionListOptions,
-  signal?: AbortSignal,
+  signal = backendEvents.signalForInstance(instanceId),
   visiblePage = false,
 ): Promise<ProjectSessionListResponse> {
+  signal.throwIfAborted()
+  const instanceClient = instances().get(instanceId)?.client
   const client = getRootClient(instanceId)
   const project = options.project ?? (options.directory ? undefined : getInstanceMetadata(instanceId)?.project?.id)
   const scopedProject = project === "global" ? undefined : project
@@ -339,10 +351,11 @@ async function fetchV2Sessions(
     : { ...options, project: scopedProject, directory, order: options.order ?? "desc" }
   if (scopedProject) delete listOptions.directory
 
-  const read = () => client.session.list(
-    buildProjectSessionListOptions(listOptions),
-    signal ? { signal } : undefined,
-  )
+  const read = () => {
+    signal.throwIfAborted()
+    if (instances().get(instanceId)?.client !== instanceClient) return Promise.resolve({ data: [], cursor: {} })
+    return client.session.list(buildProjectSessionListOptions(listOptions), { signal })
+  }
   // Publish the visible directory/project page before secondary scans, while
   // historical cursor traversal continues within the shared background budget.
   const response = await prioritizedRead(
@@ -460,7 +473,11 @@ function withRuntimeStatus(session: Session, existingSession: Session | undefine
 }
 
 async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSignal) {
-  serverEvents.flushPendingBatch()
+  const attachment = backendEvents.signalForInstance(instanceId)
+  signal = signal ? AbortSignal.any([attachment, signal]) : attachment
+  if (signal.aborted) return
+  backendEvents.flushPendingBatch(instanceId)
+  if (signal.aborted) return
   const client = instances().get(instanceId)?.client
   if (!client) return
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
@@ -468,7 +485,8 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
     id, baseline, lifecycle: nativeSessionLifecycleGeneration(instanceId, id),
   }))
   let active = await getRootClient(instanceId).session.active(signal ? { signal } : undefined)
-  if (signal?.aborted || !generationCurrent() || instances().get(instanceId)?.client !== client) return
+  const currentRequest = () => !signal.aborted && generationCurrent() && instances().get(instanceId)?.client === client
+  if (!currentRequest()) return
   // An active-only map cannot explain a run that settled during an SSE gap.
   // Read outcomes only for inactive rows whose completion needs reconciling.
   const outcomes = new Map(await Promise.all(captured.flatMap(({ id, baseline }) => {
@@ -484,13 +502,14 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
       }
     })()]
   })))
-  if (signal?.aborted || !generationCurrent() || instances().get(instanceId)?.client !== client) return
+  if (!currentRequest()) return
   // Outcome is historical. Work may have restarted while its read was pending,
   // including without a delivered SSE event; the later activity read wins.
   if (outcomes.size) active = await getRootClient(instanceId).session.active(signal ? { signal } : undefined)
   // A buffered delta can advance activity without changing an already-working row.
-  serverEvents.flushPendingBatch()
-  if (signal?.aborted || !generationCurrent() || instances().get(instanceId)?.client !== client) return
+  if (!currentRequest()) return
+  backendEvents.flushPendingBatch(instanceId)
+  if (!currentRequest()) return
   const settledWithoutEvent: string[] = []
   setSessions(previous => {
     const next = new Map(previous)
@@ -539,17 +558,27 @@ async function hydrateRestoredSessionChain(
   { verifyDrafts = false, reconcileDeparture = false, resolveListPlacement = false }:
     { verifyDrafts?: boolean; reconcileDeparture?: boolean; resolveListPlacement?: boolean } = {},
 ): Promise<ReadonlyMap<string, () => boolean>> {
+  const attachment = backendEvents.signalForInstance(instanceId)
+  signal ??= attachment
+  // Keep the caller's logical signal at the SDK boundary; its fetch adapter
+  // binds dispatch to the attachment. Queueing and settlement retain A here.
+  const cancellation = signal === attachment ? attachment : AbortSignal.any([attachment, signal])
+  const client = instances().get(instanceId)?.client
+  const owns = isCurrent
+  isCurrent = () => !cancellation.aborted && instances().get(instanceId)?.client === client && owns()
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    cancellation.throwIfAborted()
+    if (!isCurrent()) return new Map()
     const generationCurrent = captureInstanceRequestAuthority(instanceId)
     const releaseReads: Array<() => void> = []
     const absent = new Map<string, () => boolean>()
     try {
       await hydrateRestoredSessionChainAttempt(instanceId, requestedIds, releaseReads, signal, () => isCurrent() && generationCurrent(),
-        reconcileDeparture || resolveListPlacement, verifyDrafts ? absent : undefined, resolveListPlacement)
+        cancellation, reconcileDeparture || resolveListPlacement, verifyDrafts ? absent : undefined, resolveListPlacement)
     } finally {
       for (const release of releaseReads) release()
     }
-    signal?.throwIfAborted()
+    cancellation.throwIfAborted()
     if (!isCurrent()) return new Map()
     if (generationCurrent()) return absent
   }
@@ -560,8 +589,9 @@ async function hydrateRestoredSessionChainAttempt(
   instanceId: string,
   requestedIds: Array<string | null | undefined>,
   releaseReads: Array<() => void>,
-  signal?: AbortSignal,
-  isCurrent: () => boolean = () => true,
+  signal: AbortSignal,
+  isCurrent: () => boolean,
+  cancellation: AbortSignal,
   reconcileInitialDeparture = false,
   absentDrafts?: Map<string, () => boolean>,
   resolveListPlacement = false,
@@ -579,7 +609,7 @@ async function hydrateRestoredSessionChainAttempt(
   let readFailure: PromiseRejectedResult | undefined
   while (pending.length > 0) {
     if (!isRequestCurrent()) return
-    signal?.throwIfAborted()
+    cancellation.throwIfAborted()
     const level = [...new Set(pending)].filter((sessionId) => !visited.has(sessionId))
     pending = []
     level.forEach((sessionId) => visited.add(sessionId))
@@ -614,12 +644,12 @@ async function hydrateRestoredSessionChainAttempt(
           })
         }
         try {
-          signal?.throwIfAborted()
+          cancellation.throwIfAborted()
           const read = () => isRequestCurrent()
             ? client.session.get({ sessionID: sessionId }, readOptions)
             : Promise.resolve(null)
-          const apiSession = await prioritizedRead(foreground, signal ?? new AbortController().signal, read)
-          signal?.throwIfAborted()
+          const apiSession = await prioritizedRead(foreground, cancellation, read)
+          cancellation.throwIfAborted()
           if (!apiSession || !isRequestCurrent() || (placementReadCurrent && (!placementReadCurrent() || !evidenceCurrent()))) return null
           const listWorktreeSlug = "listWorktreeSlug" in apiSession && typeof apiSession.listWorktreeSlug === "string" ? apiSession.listWorktreeSlug : undefined
           const placement = { location: apiSession.location, projectID: apiSession.projectID, subpath: apiSession.subpath, listWorktreeSlug }
@@ -659,11 +689,11 @@ async function hydrateRestoredSessionChainAttempt(
             && matchesSessionPlacement(sessions().get(instanceId)?.get(sessionId), placement)
           ownedReads.set(sessionId, ownsPlacement)
         } catch (error) {
-          if (signal?.aborted) throw error
+          if (cancellation.aborted) throw error
           if (!isRequestCurrent()) return null
           const missing = isSessionNotFoundError(error)
           if (!missing && !absentDrafts) throw error
-          if (missing && "reason" in error && error.reason === SESSION_LOCATED_ELSEWHERE_REASON) {
+          if (missing && error.sessionID === sessionId && "reason" in error && error.reason === SESSION_LOCATED_ELSEWHERE_REASON) {
             departures.push(() => {
               // Catalogue merges are display updates, not fresh ownership evidence.
               if (!evidenceCurrent() || placementReadCurrent?.() === false
@@ -699,7 +729,7 @@ async function hydrateRestoredSessionChainAttempt(
     pending = parents.flatMap(result => result.status === "fulfilled" && result.value ? [result.value] : [])
   }
   // A selected local child may finish loading after its parent's refusal.
-  signal?.throwIfAborted()
+  cancellation.throwIfAborted()
   if (!isRequestCurrent()) return
   batch(() => {
     for (const depart of departures) depart()
@@ -727,6 +757,16 @@ async function ensureV2ParentChainsLoaded(
   if (missingChains.length > 0) await hydrateRestoredSessionChain(instanceId, missingChains, signal, isCurrent, { reconcileDeparture: true })
 }
 
+/** An exact move read owns placement even if it settles before this page returns. */
+function captureCatalogMoveGuard(instanceId: string) {
+  const protectedIds = new Set(reconcileInterruptedSessionMoves(instanceId))
+  const protects = (id: string) => {
+    if (isSessionMovePending(instanceId, id)) protectedIds.add(id)
+    return protectedIds.has(id)
+  }
+  return protects
+}
+
 async function fetchSessions(instanceId: string, options?: {
   reset?: boolean
   strictStatus?: boolean
@@ -734,6 +774,9 @@ async function fetchSessions(instanceId: string, options?: {
   registerInvalidation?: (invalidate: () => void) => void
   signal?: AbortSignal
 }): Promise<void> {
+  const attachment = backendEvents.signalForInstance(instanceId)
+  options = { ...options, signal: options?.signal ? AbortSignal.any([attachment, options.signal]) : attachment }
+  options.signal!.throwIfAborted()
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -767,6 +810,7 @@ async function fetchSessions(instanceId: string, options?: {
 
   try {
     const sessionListOptions = { ...(instance.folder ? { directory: instance.folder } : {}), parentID: null as null, order: "desc" as const }
+    const protects = captureCatalogMoveGuard(instanceId)
     const existingSessions = new Map(sessions().get(instanceId) ?? new Map<string, Session>())
     const existingCatalogIds = new Set(getSessionListIds(instanceId))
 
@@ -781,6 +825,7 @@ async function fetchSessions(instanceId: string, options?: {
     }
     const rootApiSessions = getV2SessionItems(response)
     const publishPartialPage = (page: SDKSession[]) => {
+      page = page.filter(session => !protects(session.id))
       const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
       setSessions((prev) => {
         const next = new Map(prev)
@@ -842,6 +887,7 @@ async function fetchSessions(instanceId: string, options?: {
     }
     const rootIdsFromPage = new Set(rootApiSessions.map((session) => session.id))
     const apiSessions = [...rootApiSessions, ...inventory.filter((session) => !rootIdsFromPage.has(session.id))]
+      .filter(session => !protects(session.id))
     // Read current activity after the historical outcomes, never use an earlier
     // idle map as proof that an execution with an old outcome is still idle.
     const activePromise = getRootClient(instanceId).session.active(options?.signal ? { signal: options.signal } : undefined).catch((error) => {
@@ -899,6 +945,12 @@ async function fetchSessions(instanceId: string, options?: {
         .filter((session) => !existingSessions.has(session.id) && getSessionRoot(instanceId, session.id)?.id === session.id)
         .map((session) => session.id))
       const validRootIds = new Set([...fetchedRootIds, ...concurrentRootIds])
+      // Retaining a protected root also retains its held family.
+      for (const id of existingSessions.keys()) {
+        if (!protects(id)) continue
+        const root = getSessionRoot(instanceId, id)
+        if (root) validRootIds.add(root.id)
+      }
       const currentSessions = sessions().get(instanceId) ?? new Map()
       const revalidations = new Map<string, () => Promise<void>>()
       const retainPlacement = (id: string, session: Session | undefined) =>
@@ -906,7 +958,7 @@ async function fetchSessions(instanceId: string, options?: {
           || retainConfirmedSessionPlacement(instanceId, id, session, revalidations, isCurrent, options?.signal)
       // Catalogue containment cannot settle a verified return waiting on its checkout.
       for (const { id } of apiSessions) {
-        if (hasPendingSessionReturn(instanceId, id) && !isSessionMovePending(instanceId, id)) retainPlacement(id, currentSessions.get(id))
+        if (hasPendingSessionReturn(instanceId, id) && !protects(id)) retainPlacement(id, currentSessions.get(id))
       }
       const staleIds = new Set(getDisconnectedCapturedSessionIds(existingSessions, currentSessions, validRootIds))
       const fetchedIds = new Set(authoritativeSessions.map(session => session.id))
@@ -917,7 +969,7 @@ async function fetchSessions(instanceId: string, options?: {
         while (parent && !fetchedIds.has(parent)) {
           fetchedIds.add(parent)
           // Family membership retains the row, not its previous placement.
-          if (!isSessionMovePending(instanceId, parent)) retainPlacement(parent, currentSessions.get(parent))
+          if (!protects(parent)) retainPlacement(parent, currentSessions.get(parent))
           parent = currentSessions.get(parent)?.parentId
         }
       }
@@ -928,7 +980,7 @@ async function fetchSessions(instanceId: string, options?: {
       }
       for (const sessionId of staleIds) {
         const current = currentSessions.get(sessionId)
-        if (current !== existingSessions.get(sessionId) || isSessionMovePending(instanceId, sessionId)
+        if (current !== existingSessions.get(sessionId) || protects(sessionId)
           || retainPlacement(sessionId, current)) continue
         // An absent row may still exist in another workspace.
         removeSessionProjection(instanceId, sessionId)
@@ -938,7 +990,7 @@ async function fetchSessions(instanceId: string, options?: {
       // otherwise use the merged placement, which retains newer move metadata.
       for (const { id, location } of inventory) {
         const directory = currentSessions.get(id)?.location.directory
-        if (isSessionMovePending(instanceId, id) || directory !== location.directory
+        if (protects(id) || directory !== location.directory
           || isWorkspaceServedDirectory(directory, instance.folder, worktrees)
           || retainPlacement(id, currentSessions.get(id))) continue
         if (!getMovedAwaySessions(instanceId).has(id)) markSessionMovedAway(instanceId, id, directory)
@@ -1010,6 +1062,7 @@ async function fetchSessions(instanceId: string, options?: {
         const next = new Map(prev)
         const instanceSessions = new Map(next.get(instanceId) ?? new Map())
         for (const apiSession of apiSessions) {
+          if (protects(apiSession.id)) continue
           const current = instanceSessions.get(apiSession.id)
           if (!current) continue
           const captured = existingSessions.get(apiSession.id)
@@ -1028,6 +1081,7 @@ async function fetchSessions(instanceId: string, options?: {
         && !getDirectoryOnlyWorktree(instanceId)) reconcileWorktreeMoves()
     })
     if (options?.strictStatus) await statusUpdate
+    if (!isCurrent()) return
 
     setMessagesLoaded((prev) => {
       const next = new Map(prev)
@@ -1046,7 +1100,7 @@ async function fetchSessions(instanceId: string, options?: {
   } catch (error) {
     const aborted = options?.signal?.aborted === true
     if (!aborted) log.error("Failed to fetch sessions:", error)
-    if (!aborted && isLatestSessionListRequest(instanceId, requestId)) {
+    if (!aborted && isCurrent()) {
       setSessionListError(instanceId, getOpencodeErrorMessage(error, tGlobal("sessionList.loadError.detail")))
     }
     throw error
@@ -1072,31 +1126,39 @@ async function fetchSessions(instanceId: string, options?: {
 }
 
 async function loadMoreSessions(instanceId: string): Promise<void> {
+  const current = captureInstanceRequestAuthority(instanceId)
+  if (!current()) return
   const pending = sessionPageRequests.get(instanceId)
-  if (pending) return pending
+  if (pending && sessionRequestOwners.get(pending)?.()) return pending
   const request = loadNextSessionPage(instanceId).finally(() => {
     if (sessionPageRequests.get(instanceId) === request) sessionPageRequests.delete(instanceId)
   })
   sessionPageRequests.set(instanceId, request)
+  sessionRequestOwners.set(request, current)
   return request
 }
 
 async function loadAllSessions(instanceId: string): Promise<void> {
+  const current = captureInstanceRequestAuthority(instanceId)
+  if (!current()) return
   const pending = sessionExhaustionRequests.get(instanceId)
-  if (pending) return pending
+  if (pending && sessionRequestOwners.get(pending)?.()) return pending
   const listRequestId = sessionListRequestIds.get(instanceId)
   const request = (async () => {
     setSessionListError(instanceId, null)
     try {
       while (getSessionHasMore(instanceId)) {
+        if (!current()) return
         const cursor = getSessionNextCursor(instanceId)
         await loadMoreSessions(instanceId)
+        if (!current()) return
         if (sessionListRequestIds.get(instanceId) !== listRequestId) return
         if (getSessionHasMore(instanceId) && getSessionNextCursor(instanceId) === cursor) {
           throw new Error("Session pagination was interrupted")
         }
       }
     } catch (error) {
+      if (!current()) return
       if (sessionListRequestIds.get(instanceId) !== listRequestId) return
       setSessionListError(instanceId, getOpencodeErrorMessage(error, tGlobal("sessionList.loadError.detail")))
       throw error
@@ -1105,10 +1167,13 @@ async function loadAllSessions(instanceId: string): Promise<void> {
     if (sessionExhaustionRequests.get(instanceId) === request) sessionExhaustionRequests.delete(instanceId)
   })
   sessionExhaustionRequests.set(instanceId, request)
+  sessionRequestOwners.set(request, current)
   return request
 }
 
 async function loadNextSessionPage(instanceId: string): Promise<void> {
+  const signal = backendEvents.signalForInstance(instanceId)
+  if (signal.aborted) return
   const cursor = getSessionNextCursor(instanceId)
   if (!cursor) return
   const instance = instances().get(instanceId)
@@ -1119,10 +1184,11 @@ async function loadNextSessionPage(instanceId: string): Promise<void> {
   const isCurrent = () => instances().get(instanceId)?.client === client
     && sessionListRequestIds.get(instanceId) === listRequestId
     && generationCurrent()
+  const protects = captureCatalogMoveGuard(instanceId)
   const capturedSessions = new Map(sessions().get(instanceId) ?? [])
   const [response, activeSessions] = await Promise.all([
-    fetchV2Sessions(instanceId, { cursor }),
-    getRootClient(instanceId).session.active().catch((error) => {
+    fetchV2Sessions(instanceId, { cursor }, signal),
+    getRootClient(instanceId).session.active({ signal }).catch((error) => {
       log.warn("Failed to refresh active sessions", { instanceId, error })
       return null
     }),
@@ -1136,7 +1202,7 @@ async function loadNextSessionPage(instanceId: string): Promise<void> {
   traversal.pages += 1
   if (response.nextCursor) traversal.cursors.add(response.nextCursor)
   sessionPageTraversals.set(instanceId, traversal)
-  const pageSessions = response.data
+  const pageSessions = response.data.filter(item => !protects(item.id))
   const deleted = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
   setSessions((previous) => {
     const next = new Map(previous)
@@ -1152,10 +1218,10 @@ async function loadNextSessionPage(instanceId: string): Promise<void> {
     next.set(instanceId, current)
     return next
   })
-  await ensureV2ParentChainsLoaded(instanceId, pageSessions, undefined, isCurrent)
+  await ensureV2ParentChainsLoaded(instanceId, pageSessions, signal, isCurrent)
   if (!isCurrent() || getSessionNextCursor(instanceId) !== cursor) return
-  const roots = response.data.filter((item) => !item.parentID).map((item) => item.id)
-  for (const item of response.data) {
+  const roots = pageSessions.filter((item) => !item.parentID).map((item) => item.id)
+  for (const item of pageSessions) {
     const root = getSessionRoot(instanceId, item.id)
     if (root && !roots.includes(root.id)) roots.push(root.id)
   }
@@ -1163,7 +1229,13 @@ async function loadNextSessionPage(instanceId: string): Promise<void> {
   for (const rootId of roots) updateThreadTotalsForParent(instanceId, rootId)
 }
 
+export function excludeMissingMoveFromSearch(instanceId: string, sessionId: string): void {
+  searchMoveGuards.get(instanceId)?.(sessionId)
+}
+
 async function searchSessions(instanceId: string, query: string): Promise<void> {
+  const signal = backendEvents.signalForInstance(instanceId)
+  if (signal.aborted) return
   const trimmedQuery = query.trim()
   if (!trimmedQuery) return
 
@@ -1178,18 +1250,26 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
   const isCurrent = () => isLatestSessionSearch(instanceId, trimmedQuery, requestId)
     && instances().get(instanceId)?.client === client
     && generationCurrent()
-  const capturedSessions = new Map(sessions().get(instanceId) ?? [])
+  // A settled move leaves the pending map, but still outranks this search.
+  const missingMoves = new Set<string>()
+  const excludeMissingMove = (id: string) => {
+    if (isCurrent()) missingMoves.add(id)
+  }
+  searchMoveGuards.set(instanceId, excludeMissingMove)
 
   try {
+    const protects = captureCatalogMoveGuard(instanceId)
+    const capturedSessions = new Map(sessions().get(instanceId) ?? [])
     log.info("v2.session.search", { instanceId, query: trimmedQuery, directory: instance.folder })
-    await ensureWorktreesLoaded(instanceId)
+    await ensureWorktreesLoaded(instanceId, signal)
+    if (!isCurrent()) return
     const results = new Map<string, SDKSession>()
     const worktreeDirectories = getInstanceMetadata(instanceId)?.project?.id === "global"
       ? [] : getWorktrees(instanceId).map(entry => entry.serviceDirectory ?? entry.directory)
     const directories = new Set([instance.folder, ...worktreeDirectories])
     for (const directory of directories) {
       if (!isCurrent()) return
-      let response = await fetchV2Sessions(instanceId, { search: trimmedQuery, directory })
+      let response = await fetchV2Sessions(instanceId, { search: trimmedQuery, directory }, signal)
       const cursors = new Set<string>()
       let pageCount = 1
       while (true) {
@@ -1199,7 +1279,7 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
         if (++pageCount > MAX_SESSION_LIST_PAGES) throw new Error("Session search exceeded the page limit")
         if (cursors.has(response.nextCursor)) throw new Error(`Repeated session cursor: ${response.nextCursor}`)
         cursors.add(response.nextCursor)
-        response = await fetchV2Sessions(instanceId, { cursor: response.nextCursor })
+        response = await fetchV2Sessions(instanceId, { cursor: response.nextCursor }, signal)
       }
     }
     const searchResults = Array.from(results.values())
@@ -1215,7 +1295,7 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
       const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
 
       for (const apiSession of searchResults) {
-        if (deletedSessionIds.has(apiSession.id)) continue
+        if (deletedSessionIds.has(apiSession.id) || missingMoves.has(apiSession.id) || protects(apiSession.id)) continue
         const captured = capturedSessions.get(apiSession.id)
         const fetched = toClientSessionV2(instanceId, apiSession, captured)
         const merged = mergeFetchedSessionRuntimeState(fetched, captured, instanceSessions.get(apiSession.id))
@@ -1228,15 +1308,22 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
     if (!isCurrent()) return
 
     const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
-    const currentSearchResults = searchResults.filter((session) => !deletedSessionIds.has(session.id))
+    const currentSessions = sessions().get(instanceId)
+    const currentSearchResults = searchResults.filter(({ id }) =>
+      !deletedSessionIds.has(id) && !missingMoves.has(id) && (!protects(id) || currentSessions?.has(id)))
 
     setSessionSearchResults(instanceId, trimmedQuery, currentSearchResults.map((session) => session.id), requestId)
   } catch (error) {
     log.error("Failed to search sessions:", error)
-    if (isLatestSessionSearch(instanceId, trimmedQuery, requestId)) {
+    if (isCurrent()) {
       clearSessionSearch(instanceId)
     }
     throw error
+  } finally {
+    if (searchMoveGuards.get(instanceId) === excludeMissingMove) searchMoveGuards.delete(instanceId)
+    if (isLatestSessionSearch(instanceId, trimmedQuery, requestId) && isSessionSearchLoading(instanceId)) {
+      setSessionSearchResults(instanceId, trimmedQuery, getSessionSearchResultIds(instanceId), requestId)
+    }
   }
 }
 
@@ -1283,20 +1370,32 @@ function isCreatingSession(instanceId: string): boolean {
 
 // Creations can overlap (the sidebar's and the draft composer's first send):
 // the instance stays busy until the last one settles.
-const creationsInFlight = new Map<string, number>()
+const creationsInFlight = new Map<string, { count: number; current: () => boolean }>()
 
-function trackCreation(instanceId: string, delta: 1 | -1): void {
-  const count = (creationsInFlight.get(instanceId) ?? 0) + delta
-  if (count > 0) creationsInFlight.set(instanceId, count)
-  else creationsInFlight.delete(instanceId)
+function trackCreation(instanceId: string, current: () => boolean): () => void {
+  const previous = creationsInFlight.get(instanceId)
+  const state = previous?.current() ? previous : { count: 0, current }
+  state.count++
+  creationsInFlight.set(instanceId, state)
   setLoading((prev) => {
     const next = { ...prev }
-    next.creatingSession.set(instanceId, count > 0)
+    next.creatingSession.set(instanceId, true)
     return next
   })
+  return () => {
+    if (creationsInFlight.get(instanceId) !== state) return
+    if (--state.count === 0) creationsInFlight.delete(instanceId)
+    setLoading(prev => {
+      const next = { ...prev }
+      next.creatingSession.set(instanceId, state.count > 0)
+      return next
+    })
+  }
 }
 
 async function createSession(instanceId: string, agent?: string, location?: { directory: string }): Promise<Session> {
+  const attachment = backendEvents.signalForInstance(instanceId)
+  attachment.throwIfAborted()
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -1308,10 +1407,6 @@ async function createSession(instanceId: string, agent?: string, location?: { di
   const client = getRootClient(instanceId)
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
 
-  const instanceAgents = agents().get(instanceId) || []
-  const primaryAgents = instanceAgents.filter(isSelectablePrimaryAgent)
-  const selectedAgent = agent || primaryAgents[0]?.id || ""
-
   // Pending spans the whole flow — catalog/config reads included — so a slow
   // network shows feedback from the first click instead of silence. There is
   // deliberately no client-side timeout and no coalescing here: session.create
@@ -1320,9 +1415,20 @@ async function createSession(instanceId: string, agent?: string, location?: { di
   // visibly in progress until the request settles one way or the other, each
   // call sends its own request, and repeated UI triggers are deduplicated by
   // the startNewSession action instead.
-  trackCreation(instanceId, 1)
+  const creationCurrent = () => !attachment.aborted && instances().get(instanceId)?.client === instance.client
+  const finishCreation = trackCreation(instanceId, creationCurrent)
 
   try {
+    const needsAgents = !agents().has(instanceId)
+    const needsProviders = !providers().has(instanceId)
+    if (needsAgents || needsProviders) {
+      await Promise.all([
+        needsAgents && fetchAgents(instanceId),
+        needsProviders && fetchProviders(instanceId),
+      ])
+      if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
+    }
+    const selectedAgent = agent || agents().get(instanceId)?.find(isSelectablePrimaryAgent)?.id || ""
     const defaultModel = await getDefaultModel(instanceId, selectedAgent)
     if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
 
@@ -1397,7 +1503,7 @@ async function createSession(instanceId: string, agent?: string, location?: { di
     log.error("Failed to create session:", error)
     throw error
   } finally {
-    trackCreation(instanceId, -1)
+    finishCreation()
   }
 }
 
@@ -1406,6 +1512,7 @@ async function forkSession(
   sourceSessionId: string,
   options?: { afterMessageId?: string },
 ): Promise<Session> {
+  backendEvents.signalForInstance(instanceId).throwIfAborted()
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -1475,6 +1582,9 @@ export function deleteBlankSession(instanceId: string, sessionId: string, signal
 }
 
 async function removeSession(instanceId: string, sessionId: string, cleanup: boolean, signal?: AbortSignal): Promise<boolean> {
+  const attachment = backendEvents.signalForInstance(instanceId)
+  const live = signal ? AbortSignal.any([attachment, signal]) : attachment
+  live.throwIfAborted()
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -1496,11 +1606,11 @@ async function removeSession(instanceId: string, sessionId: string, cleanup: boo
   try {
     log.info(`[HTTP] DELETE /session.remove for instance ${instanceId}`, { sessionId })
     if (cleanup) {
-      if (!(await serverApi.cleanupSession(instanceId, sessionId, signal)).deleted) return false
+      if (!(await backendOf(instanceId).api.cleanupSession(instanceId, sessionId, live)).deleted) return false
     } else {
       await client.session.remove({ sessionID: sessionId })
     }
-    if (!generationCurrent()) throw new Error("Session deletion was superseded by reconnect")
+    if (attachment.aborted || !generationCurrent()) throw new Error("Session deletion was superseded by reconnect")
 
     removeSessionRuntimeState(instanceId, sessionId)
     return true
@@ -1602,19 +1712,21 @@ function removeSessionProjection(instanceId: string, sessionId: string, ownsSele
 }
 
 function fetchAgents(instanceId: string, location = getActiveCatalogLocation(instanceId), refresh = false): Promise<boolean> {
+  const current = captureInstanceRequestAuthority(instanceId)
   const key = `${instanceId}\0${catalogLocationKey(location)}`
   const existing = agentRefreshes.get(key)
-  if (existing) {
+  if (existing?.current()) {
     if (refresh) existing.pending = true
     return existing.promise
   }
-  const state = { promise: Promise.resolve(false), pending: false, cancelled: false }
+  const state = { promise: Promise.resolve(false), pending: false, cancelled: false, current }
   state.promise = (async () => {
     let result: boolean
     do {
+      if (!current()) return false
       state.pending = false
       result = await loadAgents(instanceId, location)
-    } while (state.pending && !state.cancelled)
+    } while (current() && state.pending && !state.cancelled)
     return result
   })().finally(() => {
     if (agentRefreshes.get(key) === state) agentRefreshes.delete(key)
@@ -1638,8 +1750,10 @@ async function loadAgents(instanceId: string, location: LocationRef): Promise<bo
     log.info(`[HTTP] GET /agent.list for instance ${instanceId}`)
     const requestLocation = toRequestLocation(location)
     const response = await rootClient.agent.list({ location: requestLocation }, requestLocationOptions(location))
+    if (!generationCurrent()) return false
     const agentsById = new Map((response.data ?? []).map((agent) => [agent.id, agent]))
     await Promise.all(["build", "plan"].filter((id) => !agentsById.has(id)).map(async (id) => {
+      if (!generationCurrent()) return
       try {
         const result = await rootClient.agent.get({ agentID: id, location: requestLocation }, requestLocationOptions(location))
         agentsById.set(result.data.id, result.data)
@@ -1668,6 +1782,7 @@ async function loadAgents(instanceId: string, location: LocationRef): Promise<bo
       next.set(instanceId, agentList)
       return next
     })
+    if (!generationCurrent()) return false
     setAgentCatalogLocations((prev) => new Map(prev).set(instanceId, catalogLocationKey(location)))
     return true
   } catch (error) {
@@ -1677,19 +1792,21 @@ async function loadAgents(instanceId: string, location: LocationRef): Promise<bo
 }
 
 function fetchProviders(instanceId: string, location = getActiveCatalogLocation(instanceId), refresh = false): Promise<boolean> {
+  const current = captureInstanceRequestAuthority(instanceId)
   const key = `${instanceId}\0${catalogLocationKey(location)}`
   const existing = providerRefreshes.get(key)
-  if (existing) {
+  if (existing?.current()) {
     if (refresh) existing.pending = true
     return existing.promise
   }
-  const state = { promise: Promise.resolve(false), pending: false, cancelled: false }
+  const state = { promise: Promise.resolve(false), pending: false, cancelled: false, current }
   state.promise = (async () => {
     let result: boolean
     do {
+      if (!current()) return false
       state.pending = false
       result = await loadProviders(instanceId, location)
-    } while (state.pending && !state.cancelled)
+    } while (current() && state.pending && !state.cancelled)
     return result
   })().finally(() => {
     if (providerRefreshes.get(key) === state) providerRefreshes.delete(key)
@@ -1800,11 +1917,15 @@ async function loadMessages(
   sessionId: string,
   options?: MessageLoadOptions,
 ): Promise<boolean> {
+  const attachment = backendEvents.signalForInstance(instanceId)
+  if (attachment.aborted) return false
+  options = { ...options, signal: options?.signal ? AbortSignal.any([attachment, options.signal]) : attachment }
   const force = options?.force ?? false
   const intent = options?.intent ?? "open"
   const revisionRetry = options?.revisionRetry ?? 0
   // Events already received belong to the baseline of this read.
-  serverEvents.flushPendingBatch()
+  backendEvents.flushPendingBatch(instanceId)
+  if (options.signal?.aborted) return false
   const store = messageStoreBus.getOrCreate(instanceId)
   const storedWindow = store.getMessageWindow(sessionId)
   let expectedWindow = storedWindow
@@ -1855,7 +1976,8 @@ async function loadMessages(
     && store.getMessageWindow(sessionId) === expectedWindow
   const isCurrentAfterEvents = () => {
     // HTTP can complete before the frame for an already received native event.
-    serverEvents.flushPendingBatch()
+    if (signal.aborted) return false
+    backendEvents.flushPendingBatch(instanceId)
     return isCurrent()
   }
   const commitCurrentWindow = (window: MessageWindowState, windowIntent: MessageWindowIntent) => {
@@ -1884,6 +2006,7 @@ async function loadMessages(
   const releaseLoadingFlag = () => {
     if (isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) clearMessageLoadingFlag(instanceId, sessionId)
   }
+  attachment.addEventListener("abort", releaseLoadingFlag, { once: true })
   const staleReason = () => {
     if (options?.signal?.aborted) return undefined
     if (!isCurrentMessageLoad(instanceId, sessionId, loadEpoch)) return "superseded"
@@ -2118,7 +2241,7 @@ async function loadMessages(
     // A revision conflict keeps the flag through its bounded, backed-off retry.
     deferRelease = retryAfterRevisionConflict
   } catch (error) {
-    serverEvents.flushPendingBatch()
+    if (!signal.aborted) backendEvents.flushPendingBatch(instanceId)
     if (signal.aborted || !isCurrentLoad()) return false
     if (error instanceof MissingHistoryAnchorError && intent === "open" && isCurrent()) {
       // A persisted window can outlive its anchor (deletion, compaction, undo).
@@ -2134,6 +2257,7 @@ async function loadMessages(
     }
     throw error
   } finally {
+    attachment.removeEventListener("abort", releaseLoadingFlag)
     if (!committed && !deferRelease) {
       // Diagnostic only (session logger): names the identity that discarded a result.
       const reason = staleReason()
@@ -2180,11 +2304,13 @@ function enqueueMessageWindowLoad(
   intent: Exclude<MessageWindowIntent, "open">,
   signal?: AbortSignal,
 ): Promise<boolean> {
+  const current = captureInstanceRequestAuthority(instanceId)
+  if (!current()) return Promise.resolve(false)
   const key = `${messagePageKey(instanceId, sessionId)}\0${intent}`
   let pending = messagePageRequests.get(key)
-  if (!pending) {
+  if (!pending?.current()) {
     const controller = new AbortController()
-    pending = { controller, consumers: new Set(), request: undefined as unknown as Promise<boolean> }
+    pending = { controller, current, consumers: new Set(), request: undefined as unknown as Promise<boolean> }
     const entry = pending
     entry.request = loadMessages(instanceId, sessionId, { force: true, intent, signal: controller.signal }).then(
       (committed) => {
@@ -2308,4 +2434,4 @@ export {
   clearSessionListRequestState,
   clearSessionCatalogState,
 }
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"

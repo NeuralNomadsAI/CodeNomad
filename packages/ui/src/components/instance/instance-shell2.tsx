@@ -39,6 +39,8 @@ import { getLogger } from "../../lib/logger"
 import PromptInput from "../prompt-input"
 import PromptContextControls from "../prompt-input/PromptContextControls"
 import { useI18n } from "../../lib/i18n"
+import { captureBackendOperation } from "../../lib/backend-operation"
+import { projectScope } from "../../lib/backend-identity"
 import { hotkeyLabel, withHotkey } from "../../lib/hotkeys"
 import { getInterruptionQueue } from "../../stores/interruption-scope"
 import SessionSidebar from "./shell/SessionSidebar"
@@ -88,7 +90,7 @@ import { useSessionCache } from "./shell/useSessionCache"
 import { useInstanceSessionContext } from "./shell/useInstanceSessionContext"
 import { readClientLayoutValue, writeClientLayoutValue } from "../../stores/client-state"
 import { runtimeEnv } from "../../lib/runtime-env"
-import { getServerMeta, previewsUnavailable } from "../../lib/server-meta"
+import { createProjectServerMeta } from "../../lib/project-server-meta"
 import { useInterruptionViewport } from "./shell/useInterruptionViewport"
 
 const log = getLogger("session")
@@ -287,7 +289,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   })
 
   // Remote Control clients hide the preview entry points while their host keeps previews off.
-  onMount(() => { void getServerMeta().catch(() => undefined) })
+  const { previewsUnavailable } = createProjectServerMeta(() => props.instance.id)
 
   onMount(() => {
     if (typeof window === "undefined") return
@@ -444,7 +446,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const activeSessionPreview = createMemo(() => {
     const sessionId = activeSessionIdForInstance()
-    return sessionId ? getSessionPreview(sessionId) : null
+    return sessionId ? getSessionPreview(sessionId, props.instance.id) : null
   })
   const showingPreview = () => getSessionSurface({ instanceId: props.instance.id, sessionId: activeSessionIdForInstance() }).kind === "web"
 
@@ -463,13 +465,17 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   async function handleOpenPreview() {
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return
-    const intent = beginGesture({ instanceId: props.instance.id, sessionId })
+    const instanceId = props.instance.id
+    const operation = captureBackendOperation(instanceId, undefined, () => props.instance.id === instanceId && activeSessionIdForInstance() === sessionId)
+    const intent = beginGesture({ instanceId, sessionId })
     try {
-      const restored = await restoreSessionPreview(sessionId, props.instance.id)
-      if (!intent.current()) return
-      if (restored) showSessionPreview(sessionId, props.instance.id, intent)
-      else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, props.instance.id, undefined, intent)
+      if (!operation.current()) return
+      const restored = await restoreSessionPreview(sessionId, instanceId)
+      if (!operation.current() || !intent.current()) return
+      if (restored) showSessionPreview(sessionId, instanceId, intent)
+      else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, instanceId, undefined, intent)
     } catch (error) {
+      if (!operation.current() || !intent.current()) return
       if (error instanceof Error && error.name === "AbortError") return
       if (props.isActiveInstance === false || activeSessionIdForInstance() !== sessionId) return
       showAlertDialog(t("sessionPreview.open.title"), {
@@ -960,16 +966,22 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   function createAndActivateDraftSession() {
     if (draftSessionCreation) return draftSessionCreation
+    const operation = captureBackendOperation(props.instance.id)
+    const assertCurrent = () => { if (!operation.current()) throw new DOMException("Backend detached", "AbortError") }
     const intent = beginGesture({ instanceId: props.instance.id, sessionId: activeSessionIdForInstance() ?? null })
     const creation = (async () => {
+      assertCurrent()
       const agent = draftAgent()
       const model = draftModel()
       if (agent && model.providerId && model.modelId) {
         await setAgentModelPreference(props.instance.id, agent, model)
+        assertCurrent()
       }
       const session = await createSession(props.instance.id, agent || undefined)
+      assertCurrent()
       if (model.providerId && model.modelId) {
         await updateSessionModel(props.instance.id, session.id, model)
+        assertCurrent()
       }
       if (intent.current() && (!window.matchMedia?.("(pointer: coarse)")?.matches || window.matchMedia?.("(any-pointer: fine)")?.matches)) {
         setFocusConversationSessionId(session.id)
@@ -988,10 +1000,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     submit: (sessionId: string) => Promise<void>,
     draft?: { text: string; attachments: Attachment[] },
   ) {
+    const operation = captureBackendOperation(props.instance.id)
+    if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
     const session = await createAndActivateDraftSession()
+    if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
     try {
       await submit(session.id)
+      if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
     } catch (error) {
+      if (!operation.current()) throw error
       if (draft) {
         const api = sessionPromptApis()[session.id]
         if ((!api || !api.getPromptText()) && getAttachments(props.instance.id, session.id).length === 0) {
@@ -1189,7 +1206,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       onSidebarToggle={() => setLeftOpen(true)}
                       forceCompactStatusLayout={showEmbeddedSidebarToggle()}
                     />
-                    <Show when={readingWithoutConversation()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
+                    <Show when={readingWithoutConversation()}><MissionReader instanceId={props.instance.id} scope={projectScope(props.instance)} /></Show>
                     </div>
 
                     <RecoveredDrafts instanceId={props.instance.id} />

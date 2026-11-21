@@ -6,6 +6,20 @@ const OWNER: &str = "local-11111111-1111-4111-8111-111111111111";
 const OTHER: &str = "local-22222222-2222-4222-8222-222222222222";
 
 #[test]
+fn private_preview_origin_matches_only_the_parsed_content_host() {
+    let cases: serde_json::Value =
+        serde_json::from_str(include_str!("../../tests/private-preview-url-cases.json")).unwrap();
+    for case in cases.as_array().unwrap() {
+        let raw = case["url"].as_str().unwrap();
+        let expected = case["private"].as_bool().unwrap();
+        assert_eq!(preview_origin::private_preview_url(raw), expected, "{raw}");
+        if let Ok(url) = tauri::Url::parse(raw) {
+            assert_eq!(private_preview_url(&url), expected, "{raw}");
+        }
+    }
+}
+
+#[test]
 fn child_policy_is_registered_before_creation_and_fails_closed() {
     let views = EmbeddedViews::default();
     let http = "https://example.com".parse().unwrap();

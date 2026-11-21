@@ -3,8 +3,9 @@ import { activeSessionId, invalidateSessionMessageLoad, sessions } from "./sessi
 import { loadMessages } from "./session-api"
 import { getLogger } from "../lib/logger"
 import { invalidateOpenCodeSessionContent } from "./opencode-data"
+import { captureBackendOperation } from "../lib/backend-operation"
 
-const refreshing = new Map<string, { dirty: boolean }>()
+const refreshing = new Map<string, { dirty: boolean; signal: AbortSignal }>()
 const log = getLogger("sse")
 
 export function handlePruningEvent(instanceId: string, event: { type: string; data: unknown }): boolean {
@@ -15,25 +16,27 @@ export function handlePruningEvent(instanceId: string, event: { type: string; da
 }
 
 export function refreshSessionContent(instanceId: string, sessionId: string): boolean {
+  const operation = captureBackendOperation(instanceId)
+  if (!operation.current()) return true
   if (!sessions().get(instanceId)?.has(sessionId)) return true
   invalidateOpenCodeSessionContent(instanceId, sessionId)
   invalidateSessionMessageLoad(instanceId, sessionId)
   if (activeSessionId().get(instanceId) !== sessionId) return true
   const key = `${instanceId}\0${sessionId}`
   const pending = refreshing.get(key)
-  if (pending) { pending.dirty = true; return true }
-  const state = { dirty: false }
+  if (pending?.signal === operation.signal) { pending.dirty = true; return true }
+  const state = { dirty: false, signal: operation.signal }
   refreshing.set(key, state)
   void (async () => {
     try {
       do {
         state.dirty = false
-        if (activeSessionId().get(instanceId) !== sessionId || !sessions().get(instanceId)?.has(sessionId)) return
+        if (!operation.current() || activeSessionId().get(instanceId) !== sessionId || !sessions().get(instanceId)?.has(sessionId)) return
         await loadMessages(instanceId, sessionId, { force: true })
-      } while (state.dirty)
+      } while (operation.current() && state.dirty)
     } catch (error) {
       log.warn("Failed to reload changed history", { instanceId, sessionId, error })
-    } finally { refreshing.delete(key) }
+    } finally { if (refreshing.get(key) === state) refreshing.delete(key) }
   })()
   return true
 }

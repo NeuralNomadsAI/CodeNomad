@@ -9,7 +9,8 @@ import { messageStoreBus } from "./message-v2/bus"
 import { instances } from "./instances"
 import { showConfirmDialog } from "./alerts"
 import { getLogger } from "../lib/logger"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents } from "../lib/server-events"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
 import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
@@ -42,6 +43,7 @@ import { getSessionListView } from "./session-list-view"
 const log = getLogger("session")
 let generationAdmissionSequence = 0
 interface GenerationAdmission {
+  signal: AbortSignal
   token: number
   pending: number
   accepted: boolean
@@ -740,12 +742,15 @@ function beginSessionGenerationAdmission(instanceId: string, sessionId: string):
   complete: () => void
   rollback: () => void
 } {
+  const { signal } = captureBackendOperation(instanceId)
+  if (signal.aborted) return { complete: () => {}, rollback: () => {} }
   const key = `${instanceId}:${sessionId}`
   let admission = generationAdmissions.get(key)
-  if (!admission) {
+  if (!admission || admission.signal !== signal) {
     const session = sessions().get(instanceId)?.get(sessionId)
     if (!session) return { complete: () => {}, rollback: () => {} }
     admission = {
+      signal,
       token: ++generationAdmissionSequence,
       pending: 0,
       accepted: false,
@@ -799,7 +804,7 @@ function writeSessionSelection(
   sessionId: string | null,
 ): void {
   // Publish pending transcript pages under the old selection.
-  flushTranscriptProjections()
+  flushTranscriptProjections(instanceId)
   setter((prev) => {
     const next = new Map(prev)
     if (sessionId) next.set(instanceId, sessionId)
@@ -820,7 +825,7 @@ function writeActiveParentSession(instanceId: string, parentSessionId: string | 
 function canSelectSession(instanceId: string, sessionId: string, gesture?: SurfaceGesture): boolean {
   if (gesture && !gesture.current()) return false
   // Reduce and publish buffered deltas under the old selection.
-  serverEvents.flushPendingBatch()
+  backendEvents.flushPendingBatch(instanceId)
   return (!gesture || gesture.current())
     && !authoritativelyDeletedSessionKeys().has(getDraftKey(instanceId, sessionId))
     && !getMovedAwaySessions(instanceId).has(sessionId)
@@ -859,8 +864,10 @@ function clearActiveParentSession(instanceId: string, gesture?: SurfaceGesture):
 }
 
 export function clearSelectedSession(instanceId: string): void {
-  serverEvents.flushPendingBatch()
-  clearActiveParentSession(instanceId, beginGesture({ instanceId, sessionId: null }))
+  const gesture = beginGesture({ instanceId, sessionId: null })
+  if (!gesture.current()) return
+  backendEvents.flushPendingBatch(instanceId)
+  clearActiveParentSession(instanceId, gesture)
 }
 
 function clearActiveSession(instanceId: string): void {
@@ -874,7 +881,8 @@ function hydrateActiveSessionSelection(
   sessionId: string | null,
   isCurrent: () => boolean = () => true,
 ): void {
-  serverEvents.flushPendingBatch()
+  if (!isCurrent()) return
+  backendEvents.flushPendingBatch(instanceId)
   if (hasAuthoritativeSessionSelection(instanceId)) return
   batch(() => {
     if (!isCurrent()) return
@@ -887,7 +895,7 @@ function hydrateActiveSessionSelection(
 // Restore selection identity before HTTP hydration, without starting any
 // session-scoped effects until the native session has actually been resolved.
 function seedRestoredSessionSelection(instanceId: string, parentSessionId: string | null, sessionId: string | null): void {
-  serverEvents.flushPendingBatch()
+  backendEvents.flushPendingBatch(instanceId)
   if (hasAuthoritativeSessionSelection(instanceId)) return
   batch(() => {
     const deleted = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
@@ -1254,19 +1262,21 @@ function updateThreadTotalsForSession(instanceId: string, sessionId: string): vo
 const automaticCleanupRequests = new Map<string, {
   client: unknown
   generation: number
+  signal: AbortSignal
   promise: Promise<void>
 }>()
 
 function cleanupBlankSessions(instanceId: string, excludeSessionId?: string, fetchIfNeeded = false): Promise<void> {
+  const operation = captureBackendOperation(instanceId)
   if (fetchIfNeeded) return runSessionCleanup(instanceId, excludeSessionId, true)
   const client = instances().get(instanceId)?.client
   const generation = getOpenCodeInstanceGeneration(instanceId)
   const pending = automaticCleanupRequests.get(instanceId)
-  if (pending?.client === client && pending?.generation === generation) return pending.promise
+  if (pending?.client === client && pending?.generation === generation && pending.signal === operation.signal) return pending.promise
 
   // One bounded sweep per connection. Later creations are outside the captured
   // candidate set; they do not enqueue another full historical scan.
-  const request = { client, generation, promise: Promise.resolve() }
+  const request = { client, generation, signal: operation.signal, promise: Promise.resolve() }
   request.promise = runSessionCleanup(instanceId, excludeSessionId, false).finally(() => {
     if (automaticCleanupRequests.get(instanceId) === request) automaticCleanupRequests.delete(instanceId)
   })
@@ -1275,12 +1285,13 @@ function cleanupBlankSessions(instanceId: string, excludeSessionId?: string, fet
 }
 
 async function runSessionCleanup(instanceId: string, excludeSessionId: string | undefined, fetchIfNeeded: boolean): Promise<void> {
+  const operation = captureBackendOperation(instanceId)
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions) return
   const client = instances().get(instanceId)?.client
   const generation = getOpenCodeInstanceGeneration(instanceId)
   const candidates = Array.from(instanceSessions)
-  const current = () => instances().get(instanceId)?.client === client
+  const current = () => operation.current() && instances().get(instanceId)?.client === client
     && getOpenCodeInstanceGeneration(instanceId) === generation
 
   if (fetchIfNeeded) {
@@ -1294,7 +1305,7 @@ async function runSessionCleanup(instanceId: string, excludeSessionId: string | 
         dismissible: false,
       }
     )
-    if (!confirmed) return
+    if (!confirmed || !current()) return
   }
 
   // Bound native checks instead of fanning out one read per historical session.
@@ -1307,7 +1318,7 @@ async function runSessionCleanup(instanceId: string, excludeSessionId: string | 
     if (await cleanupBlankSession(instanceId, sessionId)) deletedCount++
   }
 
-  if (deletedCount > 0) {
+  if (current() && deletedCount > 0) {
     showToastNotification({ category: "sessions",
       message: deletedCount === 1
         ? tGlobal("sessionState.cleanup.toast.one", { count: deletedCount })

@@ -223,4 +223,26 @@ describe("useActiveSessionMessageLoad", () => {
     }
   })
 
+  it("forces one failed activation without looping and retries only on a real binding transition", async () => {
+    const [active, setActive] = createSignal(true)
+    const [session, setSession] = createSignal({ id: "a" })
+    let reads = 0, errors = 0, dispose = () => {}
+    createRoot(done => {
+      dispose = done
+      useActiveSessionMessageLoad({ isActive: active, instanceId: () => "inst", session, shouldLoad: () => true,
+        forceLoad: true, waitForHydration: async () => {}, onError: () => { errors++ },
+        loadMessages: async (_instance, _session, options) => { assert.equal(options?.force, true); reads++; throw new Error("latched failure") },
+      })
+    })
+    try {
+      await tick(); await tick()
+      assert.equal(reads, 1); assert.equal(errors, 1)
+      setSession({ id: "a" }); await tick()
+      assert.equal(reads, 1, "same-ID hydration never loops a failed forced activation")
+      setActive(false); setActive(true); await tick()
+      assert.equal(reads, 2)
+      setSession({ id: "b" }); await tick()
+      assert.equal(reads, 3); assert.equal(errors, 3)
+    } finally { dispose() }
+  })
 })

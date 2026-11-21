@@ -50,6 +50,8 @@ interrupts, updates a session or replays anything automatically.
 
 ## Display acknowledgement
 
+Remote app-tab Retry rebinds the saved server's inventory and runs this same read-only hydration. Explicit Open can create a missing workspace. See [remote opening ownership](PROJECTS.md#remote-opening-ownership) for placeholder preservation, cancellation and uncertain creation.
+
 `session-interruption-seen.ts` owns per-window, per-project-tab acknowledgement
 watermarks keyed by session ID and the native `time.idle` boundary. The session
 list's explicit badge click and sweep acknowledge

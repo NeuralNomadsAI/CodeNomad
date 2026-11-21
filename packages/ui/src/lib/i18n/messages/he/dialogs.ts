@@ -1,4 +1,12 @@
 export const dialogMessages = {
+  "remoteRestore.absent": "השרת לא נמצא",
+  "remoteRestore.confirmChange": "לשנות את החיבור לשרת? לשוניות שמורות בחלונות אחרים עלולות להפוך ללא זמינות.",
+  "remoteRestore.idle": "בהמתנה",
+  "remoteRestore.admitting": "מתחבר…",
+  "remoteRestore.compatible": "הפרויקט אינו זמין",
+  "remoteRestore.refused": "השרת אינו תואם",
+  "remoteRestore.unreachable": "השרת אינו זמין",
+  "remoteRestore.inUse": "סגרו את לשוניות השרת ופתחו שוב את הגדרות מפרויקט אחר לפני שינוי כתובתו.",
   "authRecovery.title": "התחברות מחדש ל-CodeNomad",
   "authRecovery.pairing": "במחשב המארח, יש לפתוח הגדרות ← גישה מרחוק, ליצור קישור צימוד ולפתוח אותו במכשיר הזה, ואז לבדוק את החיבור.",
   "authRecovery.pairingTitle": "יש לצמד מחדש את המכשיר הזה",

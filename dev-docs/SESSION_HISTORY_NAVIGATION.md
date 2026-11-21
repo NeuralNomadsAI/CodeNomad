@@ -137,7 +137,12 @@ the rail's `foldTimelineSegments` both group through `groupTranscriptRows`
 text or thinking around it shares one row and one marker; hidden thinking and
 system context leave the rail but still end the row before them. Resident messages use their exact part-level markers; indexed
 messages outside the window take their native sequence position around them and
-derive their markers from the outline's `layout`. Markers are keyed
+derive their markers from the outline's `layout`. Each resident message
+publishes its marker structure independently: the merge and fold keep their
+inputs while streamed bodies and tool payloads leave that structure unchanged.
+Mounted markers get localized labels and bounded accessible excerpts from the
+current record; the open preview reads current content independently of geometry.
+Markers are keyed
 `messageId:type:ordinal`, with ordinals counted over all of a message's parts,
 displayed or omitted, so an indexed marker keeps its identity and target when its
 window loads. A run the omitted-parts placeholder splits keeps its id before it and
@@ -407,7 +412,8 @@ focus, RTL and 125% zoom, mixed text/tool/idle records, actual native thumb drag
 and viewport anchor stability during streaming and distant jumps.
 
 Hover/focus previews escape raw HTML and do no syntax highlighting; moving
-elsewhere cancels obsolete excerpt work. An unloaded/empty excerpt shows no popup; resident
+elsewhere cancels obsolete excerpt work. A preview follows its mounted marker's
+live content and closes when that marker unmounts. An unloaded/empty excerpt shows no popup; resident
 selected content can supply it directly. A separate 512-excerpt cache survives
 view switches; entries older than 30 seconds revalidate on demand, without
 timers/polling. The opaque surface wraps text and stays inside the viewport;
@@ -441,8 +447,9 @@ A status transition during an incomplete scan cannot discard its progress.
   starting among or split by omitted parts) and a send after a jump.
   `session-outline-projection.test.ts` compares the plugin's layouts, projected,
   with the markers `buildTimelineSegments` builds for the same native steps;
-  `streaming-outline.test.ts` counts full-history projections and rail folds per
-  token, including after a hidden tool under Nothing.
+  `streaming-outline.test.ts` counts full-history projections and rail folds
+  during native text growth, including after a hidden tool under Nothing, and
+  checks that focus and live excerpts stay on the same marker.
 - `timeline-sync.qualification.ts` (opt-in, `npm run qualify:browser:timeline-sync`)
   measures marker agreement and click accuracy on replayed native session stores.
 - `test-session-navigation-native.mjs`, run by the isolated pruning fixture, checks

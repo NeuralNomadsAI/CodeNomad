@@ -17,8 +17,8 @@ function tokens(input: number, output: number) {
 }
 
 function setup(instanceId: string, sessionId: string, options: { active?: boolean; session?: Record<string, unknown> } = {}) {
-  const statuses = sseManager.getStatuses
-  sseManager.getStatuses = () => new Map([[instanceId, "connected"]])
+  const status = sseManager.getRawStatus
+  sseManager.getRawStatus = id => id === instanceId ? "connected" : null
   const client = {
     session: { active: async () => ({}), get: async () => ({ id: sessionId, location: { directory: "/fixture" }, time: { created: 1, updated: 5 } }) },
     message: { list: async () => ({ data: [], cursor: {} }) },
@@ -37,7 +37,7 @@ function setup(instanceId: string, sessionId: string, options: { active?: boolea
     handleNativeSessionEvent(instanceId, event)
   }
   const cleanup = () => {
-    sseManager.getStatuses = statuses
+    sseManager.getRawStatus = status
     destroyOpenCodeData(instanceId)
     removeInstance(instanceId, { authoritative: false })
     sdkManager.destroyClientsForInstance(instanceId)

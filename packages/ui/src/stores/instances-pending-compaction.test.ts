@@ -232,10 +232,10 @@ test("liveness handles a missed end for an unloaded child, but an active or newl
   globalThis.requestAnimationFrame = () => 0
   try {
     const polling = reconcilePendingRequestLiveness(a.id)
-    serverEvents["queueBatch"]([{ type: "instance.event", instanceId: a.id, event: {
+    serverEvents["admitEvent"]({ type: "instance.event", instanceId: a.id, event: {
       id: "next-delta", type: "session.compaction.delta", created: Date.now() + ++a.clock,
       location: { directory: a.directory }, data: { sessionID: "unknown-child", text: "summary" },
-    } }])
+    } })
     active.resolve({})
     await polling
     assert.equal(brokerReads, 0, "a stale status read cannot settle newer compaction activity received before paint")

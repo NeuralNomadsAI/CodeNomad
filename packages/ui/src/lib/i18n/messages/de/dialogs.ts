@@ -1,4 +1,12 @@
 export const dialogMessages = {
+  "remoteRestore.absent": "Server nicht gefunden",
+  "remoteRestore.confirmChange": "Diese Serververbindung ändern? Gespeicherte Tabs in anderen Fenstern können nicht mehr verfügbar sein.",
+  "remoteRestore.idle": "Warten",
+  "remoteRestore.admitting": "Verbindung wird hergestellt…",
+  "remoteRestore.compatible": "Projekt nicht verfügbar",
+  "remoteRestore.refused": "Server inkompatibel",
+  "remoteRestore.unreachable": "Server nicht verfügbar",
+  "remoteRestore.inUse": "Schließen Sie die Tabs dieses Servers und öffnen Sie Einstellungen von einem anderen Projekt aus, bevor Sie seine Adresse ändern.",
   "authRecovery.title": "Erneut bei CodeNomad anmelden",
   "authRecovery.pairing": "Öffnen Sie auf dem Host Einstellungen → Remote-Zugriff, erstellen Sie einen Kopplungslink, öffnen Sie ihn auf diesem Gerät und prüfen Sie die Verbindung.",
   "authRecovery.pairingTitle": "Dieses Gerät erneut koppeln",

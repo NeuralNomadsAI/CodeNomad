@@ -5,7 +5,7 @@ import { withTimeout, type RendererFlushWindow } from "./renderer-client-state-f
 export function requireMemoryCleanup(value: unknown, context: PreferencesRequest | undefined): MemoryCleanupRequest {
   const request = normalizeMemoryCleanupRequest(value)
   if (!request || context?.section !== "general" || context.instanceId !== request.workspaceId ||
-      context.location?.directory !== request.directory) throw new Error("Memory cleanup context changed")
+      context.serverId !== request.serverId || context.location?.directory !== request.directory) throw new Error("Memory cleanup context changed")
   return request
 }
 

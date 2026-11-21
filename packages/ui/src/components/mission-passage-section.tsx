@@ -1,7 +1,8 @@
 import { Show, createEffect, createSignal, onCleanup } from "solid-js"
 import type { MissionRecurrenceCurrentContent } from "../../../server/src/api-types"
 import type { RecurrenceCurrentContentInput } from "../../../server/src/missions/recurrence-current"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { useI18n } from "../lib/i18n"
 import { instances } from "../stores/instances"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
@@ -21,6 +22,7 @@ export function MissionPassageSectionContent(props: { instanceId: string; source
   createEffect(() => {
     attempt()
     const source = props.source, page = props.page, instanceId = props.instanceId
+    const operation = captureBackendOperation(instanceId)
     const directory = instances().get(instanceId)?.folder, client = instances().get(instanceId)?.client, generation = getOpenCodeInstanceGeneration(instanceId)
     const key = JSON.stringify([instanceId, directory, generation, source, page])
     const initial = cache.get(key)
@@ -29,8 +31,9 @@ export function MissionPassageSectionContent(props: { instanceId: string; source
     const controller = new AbortController()
     let current = true
     const { projectID, missionID, ...input } = source
-    void serverApi.fetchMissionCurrentContent(instanceId, { ...input, page }, controller.signal).then(result => {
-      if (!current || controller.signal.aborted || instances().get(instanceId)?.folder !== directory
+    if (!operation.current()) return
+    void backendOf(instanceId).api.fetchMissionCurrentContent(instanceId, { ...input, page }, AbortSignal.any([operation.signal, controller.signal])).then(result => {
+      if (!operation.current() || !current || controller.signal.aborted || instances().get(instanceId)?.folder !== directory
         || instances().get(instanceId)?.client !== client || getOpenCodeInstanceGeneration(instanceId) !== generation) return
       const parsed = result
       if (parsed.version !== 1 || parsed.projectID !== projectID || parsed.missionID !== missionID || parsed.scheduleID !== source.scheduleID
@@ -41,7 +44,7 @@ export function MissionPassageSectionContent(props: { instanceId: string; source
         || parsed.markdownText !== null && (typeof parsed.markdownText !== "string" || parsed.markdownText.length > 3_116)) throw new Error("Passage source changed")
       if (cache.size >= 128 && !cache.has(key)) cache.delete(cache.keys().next().value!)
       cache.set(key, parsed); setValue(parsed); props.onPageCount(parsed.pageCount)
-    }).catch(() => { if (current) setError(true) })
+    }).catch(() => { if (operation.current() && current) setError(true) })
     onCleanup(() => { current = false; controller.abort() })
   })
   const markdown = () => {

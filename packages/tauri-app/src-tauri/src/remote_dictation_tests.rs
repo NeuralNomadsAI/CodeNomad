@@ -285,7 +285,7 @@ fn app_acl_filters_before_custom_invoke_handler() {
             invoke.resolver.resolve(invoke.acl.is_some());
             true
         })
-        .build(tauri::generate_context!())
+        .build(crate::app_context())
         .unwrap();
     let remote_url = Url::parse("https://remote.example:9443").unwrap();
     let local_url = Url::parse("http://127.0.0.1:8100").unwrap();

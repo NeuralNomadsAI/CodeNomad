@@ -11,15 +11,15 @@ import "../../../src/index.css"
 
 // Real timeline markers wired to Message content preferences as in MessageSection.
 const tool = (index: number, toolName: string): TimelineSegment => ({ id: `tool-${index}`, messageId: `message-${index}`, type: "tool",
-  label: toolName, tooltip: `Tool ${toolName}`, toolName, toolPartIds: [`part-${index}`], totalChars: 0 })
+  toolName, toolPartIds: [`part-${index}`] })
 const segments: TimelineSegment[] = [
-  { id: "user-0", messageId: "message-0", type: "user", label: "You", tooltip: "Question", totalChars: 0 },
+  { id: "user-0", messageId: "message-0", type: "user" },
   tool(1, "shell"), tool(2, "read"), tool(3, "custom_mcp_tool"),
-  { id: "assistant-3", messageId: "message-3", type: "assistant", label: "Assistant", tooltip: "Answer", totalChars: 0 },
+  { id: "assistant-3", messageId: "message-3", type: "assistant" },
   // A reply on both sides of a tool: one row in the transcript once the tool is hidden.
-  { id: "assistant-4", messageId: "message-4", type: "assistant", label: "Assistant", tooltip: "Before", totalChars: 0 },
+  { id: "assistant-4", messageId: "message-4", type: "assistant" },
   tool(4, "read"),
-  { id: "assistant-4b", messageId: "message-4", type: "assistant", label: "Assistant", tooltip: "After", totalChars: 0 },
+  { id: "assistant-4b", messageId: "message-4", type: "assistant" },
 ]
 await applyUiSettings({ locale: "en" })
 const rows = transcriptVisibilityRows((key) => key)

@@ -50,10 +50,10 @@ function holdEventFrame(t: TestContext) {
 }
 
 function queueTextDelta(instanceId: string, sessionId: string) {
-  serverEvents["queueBatch"]([{ type: "instance.event", instanceId, event: {
+  serverEvents["admitEvent"]({ type: "instance.event", instanceId, event: {
     id: "delta", type: "session.text.delta", created: 2, location: { directory: "/work" },
     data: { sessionID: sessionId, assistantMessageID: "msg_live", ordinal: 0, delta: "live" },
-  } }])
+  } })
 }
 
 function session(instanceId: string, id: string): Session {
@@ -1229,7 +1229,7 @@ describe("session request authority", () => {
       const store = messageStoreBus.getOrCreate(instanceId)
       const hydration = t.mock.method(store, "hydrateMessages")
       holdEventFrame(t)
-      serverEvents["queueBatch"]([{ type: "instance.event", instanceId, event: {
+      serverEvents["admitEvent"]({ type: "instance.event", instanceId, event: {
         id: "live",
         type: "session.step.started",
         created: 2,
@@ -1242,17 +1242,18 @@ describe("session request authority", () => {
           model: { providerID: "provider", id: "model" },
           started: 2,
         },
-      } }, { type: "instance.event", instanceId, event: {
+      } })
+      serverEvents["admitEvent"]({ type: "instance.event", instanceId, event: {
         id: "text", type: "session.text.started", created: 3, location: { directory: "/work" },
         durable: { aggregateID: sessionId, seq: 2, version: 1 },
         data: { sessionID: sessionId, assistantMessageID: "fresh", ordinal: 0 },
-      } }])
+      } })
       const revision = getOpenCodeMessageRevision(instanceId, sessionId)
       const request = loadLatestMessageWindow(instanceId, sessionId)
-      serverEvents["queueBatch"]([{ type: "instance.event", instanceId, event: {
+      serverEvents["admitEvent"]({ type: "instance.event", instanceId, event: {
         id: "delta", type: "session.text.delta", created: 4, location: { directory: "/work" },
         data: { sessionID: sessionId, assistantMessageID: "fresh", ordinal: 0, delta: "live" },
-      } }])
+      } })
       assert.equal(getOpenCodeMessageRevision(instanceId, sessionId), revision, "the delta is still queued")
       staleLatest.resolve({ data: [apiMessage("stale")], cursor: {} })
       assert.equal(await request, true)
@@ -1274,10 +1275,10 @@ describe("session request authority", () => {
     try {
       let prepared = 0
       const opening = openListedSession(instanceId, sessionId, () => true, () => { prepared += 1 })
-      serverEvents["queueBatch"]([{ type: "instance.event", instanceId, event: {
+      serverEvents["admitEvent"]({ type: "instance.event", instanceId, event: {
         id: "deleted", type: "session.deleted", created: 2, location: { directory: "/work" },
         durable: { aggregateID: sessionId, seq: 1, version: 2 }, data: { sessionID: sessionId },
-      } }])
+      } })
       assert.equal(sessions().get(instanceId)?.has(sessionId) ?? false, false, "the deletion is visible before paint")
       assert.deepEqual({ opened: await opening, prepared }, { opened: false, prepared: 0 })
     } finally {
@@ -1356,10 +1357,10 @@ describe("session request authority", () => {
         { canSend: () => true, followUp: () => "queue" })
       const read = () => voice({ name: "get_last_reply", arguments: {} }, () => true)
       assert.deepEqual(await read(), { text: "Undo-hidden reply" })
-      serverEvents["queueBatch"]([{ type: "instance.event", instanceId, event: {
+      serverEvents["admitEvent"]({ type: "instance.event", instanceId, event: {
         id: "undo", type: "session.revert.staged", created: 2, location: { directory: "/work" },
         durable: { aggregateID: sessionId, seq: 1, version: 1 }, data: { sessionID: sessionId, revert: { messageID: "msg_2" } },
-      } }])
+      } })
       assert.deepEqual(await read(), { text: "Visible reply" })
     } finally { cleanup() }
   })

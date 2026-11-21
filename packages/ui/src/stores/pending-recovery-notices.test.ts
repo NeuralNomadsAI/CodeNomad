@@ -19,6 +19,15 @@ test("saved warning claims keep failed coverage without retaining diagnostic tex
     const cause = { kind: "request", detail: "test" } as const
     assert.equal(claimPendingRecoveryNotice("/project", cause), false)
     assert.equal(claimPendingRecoveryNotice("/other", { kind: "unsupported" }), false)
+    const unsupported = { kind: "unsupported" } as const
+    assert.equal(claimPendingRecoveryNotice("/project", unsupported, "remote-a"), true)
+    assert.equal(claimPendingRecoveryNotice("/another", unsupported, "remote-a"), false)
+    assert.equal(claimPendingRecoveryNotice("/project", unsupported, "remote-b"), true)
+    capturePendingRecoveryNotices("/another", "remote-b").release([])
+    assert.equal(claimPendingRecoveryNotice("/project", unsupported, "remote-a"), false)
+    assert.equal(claimPendingRecoveryNotice("/project", unsupported, "remote-b"), true)
+    capturePendingRecoveryNotices("/another", "remote-a").release([])
+    assert.equal(claimPendingRecoveryNotice("/project", unsupported, "remote-a"), true)
     assert.equal(claimPendingRecoveryNotice("/other", cause), true)
     assert.doesNotMatch([...storage.values()].join(), /checkout/)
     capturePendingRecoveryNotices("/other").release(["/other"])

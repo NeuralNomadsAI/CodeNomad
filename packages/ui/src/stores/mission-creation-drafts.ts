@@ -3,7 +3,8 @@ import type { MissionMap } from "../../../server/src/api-types"
 import type { MissionExecution } from "../../../server/src/missions/execution"
 import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import type { MissionTaskMode } from "../lib/mission-defaults"
-import { serverApi } from "../lib/api-client"
+import { captureBackendOperation } from "../lib/backend-operation"
+import { backendOf } from "../lib/backend-client"
 import type { MissionCreationReceipt } from "../../../server/src/missions/creation-receipt"
 
 export interface UncertainMissionCreation {
@@ -69,11 +70,15 @@ export function reconcileMissionCreation(scope: string, instanceId: string, owne
   existing?.controller.abort()
   const controller = new AbortController()
   let entry: ReceiptRead
-  const promise = serverApi.missionCreationReceipt(instanceId, operation.operation.requestId, controller.signal).then(receipt => {
-    if (!current() || controller.signal.aborted || missionCreationHold(scope) !== operation || receipt.requestId !== operation.operation.requestId
+  const attachment = captureBackendOperation(instanceId, controller.signal, current)
+  const promise = Promise.resolve().then(() => {
+    attachment.signal.throwIfAborted()
+    return backendOf(instanceId).api.missionCreationReceipt(instanceId, operation.operation.requestId, attachment.signal)
+  }).then(receipt => {
+    if (!attachment.current() || missionCreationHold(scope) !== operation || receipt.requestId !== operation.operation.requestId
       || receipt.state !== "created" && receipt.state !== "rejected"
       || receipt.state === "created" && (!receipt.mission || typeof receipt.mission.id !== "string")) return
-    held.get(scope)!.get(receipt.requestId)!.confirmed = { owner, receipt, current }
+    held.get(scope)!.get(receipt.requestId)!.confirmed = { owner, receipt, current: attachment.current }
     return receipt
   }).catch(() => undefined).finally(() => { if (reading.get(key) === entry) reading.delete(key) })
   entry = { owner, controller, promise }

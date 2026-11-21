@@ -1,9 +1,11 @@
-import { Component, JSX, createContext, createEffect, createMemo, createSignal, useContext, type Accessor } from "solid-js"
+import { Component, JSX, createContext, createEffect, createMemo, createSignal, onCleanup, useContext, type Accessor } from "solid-js"
 import type { Instance } from "../../types/instance"
 import { instances, waitForInstanceInitialSessionHydration } from "../../stores/instances"
 import { getInstanceMetadata } from "../../stores/instance-metadata"
 import { getActiveCatalogLocation } from "../../stores/sessions"
 import { loadInstanceMetadata, hasMetadataLoaded } from "../hooks/use-instance-metadata"
+import { captureBackendOperation } from "../backend-operation"
+import { backendEvents } from "../server-events"
 
 interface InstanceMetadataContextValue {
   isLoading: Accessor<boolean>
@@ -23,10 +25,15 @@ export const InstanceMetadataProvider: Component<InstanceMetadataProviderProps> 
   const resolvedInstance = createMemo(() => instances().get(props.instance.id) ?? props.instance)
   const [isLoading, setIsLoading] = createSignal(true)
   let metadataLoadId = 0
+  let disposed = false
+  let attachment: AbortSignal | undefined
+  onCleanup(() => { disposed = true; metadataLoadId++ })
 
   const ensureMetadata = async (force = false) => {
     const loadId = ++metadataLoadId
     const current = resolvedInstance()
+    const operation = captureBackendOperation(current.id, undefined, () => !disposed)
+    if (!operation.current()) return
     if (!current) {
       if (loadId === metadataLoadId) setIsLoading(false)
       return
@@ -44,15 +51,20 @@ export const InstanceMetadataProvider: Component<InstanceMetadataProviderProps> 
       // Initial session reads get the limited per-origin browser connections
       // before MCP/plugin/project decoration for each restored project pane.
       await waitForInstanceInitialSessionHydration(current.id)
-      if (loadId !== metadataLoadId || resolvedInstance()?.client !== current.client) return
+      if (!operation.current() || loadId !== metadataLoadId || resolvedInstance()?.client !== current.client) return
       await loadInstanceMetadata(current, { force, location })
     } finally {
-      if (loadId === metadataLoadId) setIsLoading(false)
+      if (!disposed && loadId === metadataLoadId) setIsLoading(false)
     }
   }
 
   createEffect(() => {
     const current = resolvedInstance()
+    const signal = backendEvents.signalForInstance(current.id)
+    const replaced = attachment !== undefined && attachment !== signal
+    attachment = signal
+    if (signal.aborted) { setIsLoading(false); return }
+    if (replaced) { void ensureMetadata(true); return }
     if (!current) {
       setIsLoading(false)
       return

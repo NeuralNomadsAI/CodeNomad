@@ -1047,10 +1047,10 @@ for (const kind of ["form", "permission"] as const) {
       const syncing = syncPendingRequests(h.id)
       await started.promise
       const location = { directory: h.directory }
-      serverEvents["queueBatch"]([{ type: "instance.event", instanceId: h.id, event: kind === "form"
+      serverEvents["admitEvent"]({ type: "instance.event", instanceId: h.id, event: kind === "form"
         ? { id: "cancelled", type: "form.cancelled", created: 1, location, data: { id, sessionID: "global" } }
         : { id: "replied", type: "permission.replied", created: 1, location, data: { requestID: id, sessionID: "background", reply: "once" } },
-      }])
+      })
       assert.equal(isSettled(h.id, id), true, "the live settlement does not wait for paint")
       pending.resolve(snapshot(h.directory, kind === "permission" ? [permission(id)] : [], kind === "form" ? [form(id)] : []))
       await syncing

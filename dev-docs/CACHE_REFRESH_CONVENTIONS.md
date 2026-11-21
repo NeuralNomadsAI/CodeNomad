@@ -11,10 +11,23 @@ Keep domain-specific implementations where authority, lifetime or runtime differ
   for the next demand. Avoid background polling merely to keep a hidden view warm.
 - A response must still belong to the current identity/generation before publication.
   Serialize follow-up reads so an older response cannot overwrite their result.
+- Release transient loading/busy state by its request/controller identity, independently
+  of response authority. Revocation prevents data publication; it must not strand a
+  completed indicator or let an old completion clear its replacement's active flag.
 - Preserve the last good snapshot on refresh failure and permit recovery. Surface
   failures for explicit operations rather than reporting stale data as success.
 - A successful mutation must be visible to its next dependent read. Display-cache
   policies must not weaken ownership checks or transactional revalidation.
+- Backend preference owner caches and read flights retain their attachment signal.
+  Reattaching the same client starts fresh owner reads; revoked reads and ACKs are
+  fenced before cache publication and subscriber delivery, and their cleanup
+  releases only their own flight. Already sent mutations retain their durable result.
+  Client/document barriers keep their settlement ahead of replacement reads and edits,
+  including conditional Mission writes sharing `config/ui`. After settlement, fresh
+  reads supersede events received during the wait. A ten-second owner reconciliation
+  budget bounds each wait; expiry fails closed and retains the barrier until settlement.
+  Preference edit queues await only their own document's initial read and prior edits;
+  independent owner reads publish separately while full initialization joins them all.
 - Treat a background update of a displayed collection as data, never as a user
   selection: preserve its open state, stable-key keyboard target and inline actions.
 
@@ -47,6 +60,7 @@ content before promoting it, and retain the last good display on expiry.
 | Git changes | Shared filesystem cache invalidations debounce locally for 100 ms; one passive refresh plus a pending follow-up; hidden project/panel marked stale. Queued reads cancel on deactivation/disposal and request versions fence late status/diff results. Reads share the secondary HTTP budget. Server shares only in-flight status requests and runs status/diff process creation in the Git worker. | `useGitChanges.ts`, `filesystem-events.ts`, server `workspaces/git-status.ts` |
 | Worktree display | Last successful server snapshot; demand-driven refresh after 10 s or invalidation; one scan per workspace; obsolete scans discarded and followed by validation; UI display requests coalesce with one trailing demand. Pending recovery can explicitly request `?fresh=true` once after a missing/not-owned inventory-only candidate; so does a session move whose destination the display snapshot does not own, before the session leaves the list. Concurrent fresh callers share their fresh read, never a cached completion. Fresh and display outcomes are independent on one serialized read/publication lane: a failed fresh read rejects its callers without dropping queued display demand or leaking freshness into later requests. | server `workspaces/worktree-inventory.ts`, UI `stores/worktrees.ts` |
 | Worktree authority | Validated reads await stale-inventory revalidation; family transactions force scans. Ownership misses can bypass a warm inventory once per directory-cache lifetime. Create/remove requires a validated next display read. | server `workspaces/worktree-directory.ts`, `manager.ts` |
+| Session-media authority | Request-private native inventory and strict physical directory/Git reads retain the captured occurrence, root, client and signal. Guards fence each dependent step; occurrence revisions use `WORKTREE_OWNERSHIP_RESTART_LIMIT`. Private reads bypass shared directory/inventory flights, publish no shared snapshot and perform no refresh-on-miss. | server `workspaces/manager.ts`, `native-worktrees.ts`, `worktree-directory.ts` |
 | Git ownership preflight | Common-directory reads resolve the enclosing checkout's administrative files (`.git`, `commondir`, `HEAD`/`objects`) directly on every call; concurrent reads share one pending read per directory. Environment overrides, paths inside `.git` and invalid layouts defer to Git, whose commands run with two process slots in a lazy worker, keeping Windows process creation off the HTTP/SSE thread. Completed/failed reads are removed immediately; a matching identity still requires native inventory validation. | server `workspaces/git-common-directory.ts`, `git-process.ts`, `git-worktrees.ts` |
 | Transcript pages | Session reducer reads and first latest-window loads merge their page with the rows streamed during the fetch; only destructive events (deletion, revert commit, inbox cancellation, compaction boundaries) restart a reducer read. Reloads and history windows keep revision checks. Committed latest pages reseed a reducer that diverged or lacks an open step; live events for rows the reducer lacks owe one coalesced, budgeted repair read in watched sessions only. Event-driven projections coalesce to one pass per animation frame. Rules in [TRANSCRIPT.md](TRANSCRIPT.md). | UI `stores/opencode-data.ts`, `opencode-data-divergence.ts`, `opencode-projection-frame.ts`, `opencode-data-read-merge.ts`, `session-api.ts` |
 | Mission bodies | Display-only content-route reads keyed by workspace, project, mission and selector; continuations pinned to their first slice's digest, read only as far as the shown page needs. One read at a time per body with coalesced demand. The panel's maps are compact: a descriptor in place of each body. A shown body is read again when its map's descriptor names another digest (a map naming no descriptor expects nothing); a plugin update, reconnect or new stream advances the entry's invalidation epoch, so a request sent before it neither settles nor parks the body and one fresh read follows. The last good body stays shown until the newer one covers it; failures (a plugin without content reads included) show beside it and park until demand, an invalidation or Retry. Intents copying inputs (edit prefill, Save configuration) accept only bodies whose digests are their snapshot's descriptors. Unshown bodies stay within 4 MiB / 128 bodies, LRU. Never authority. Rules in [MISSIONS.md](MISSIONS.md) (Body display, Compact maps). | UI `stores/mission-content-store.ts`, `stores/mission-content.ts`, `components/mission-target-bodies.ts` |
@@ -147,16 +161,16 @@ logs separate event age, location resolution, queue wait and ownership time
 
 ### UI event stream liveness
 
-`lib/server-events.ts` queues only native text and reasoning deltas until the
-next frame (or a fallback timer). Every other event delivers at once in FIFO
-order, in the same Solid batch as any queued predecessors. Transcript projections
-run at that batch's end. Selection, visibility and transport transitions drain
-pending deltas first; callbacks from a replaced stream stay fenced. Transcript
-window reads drain before capturing or validating revisions. Lifecycle checks
-also drain because a delta can be the first evidence of running work.
+Each `ServerEvents` queues only native text and reasoning deltas until the next
+frame (or a fallback timer). Every other event delivers at once, in FIFO order
+and in the same Solid batch as its queued predecessors. Projections for that
+attachment run at batch end. Selection, transcript reads and lifecycle checks
+drain only the target backend before consulting state. A visibility transition
+or reconnect drains each affected stream before resuming; disposal discards
+its queue. Replaced streams and attachments fence stale callbacks.
 
-`lib/server-events.ts` restarts the shared UI event stream once a connected
-stream has carried no batch, open or ping for 45 s (`lib/stream-staleness.ts`,
+`lib/server-events.ts` restarts a backend's UI event stream once it has carried
+no event, open or ping for 45 s while connected (`lib/stream-staleness.ts`,
 checked every 15 s, once per silent episode); an `online` event or the page
 becoming visible restarts it as soon as that threshold has elapsed. Each
 connection attempt starts its own threshold. The restart takes the ordinary
@@ -215,4 +229,7 @@ never re-traversing the whole session inventory.
 
 ## Agent conventions
 
+- Project server metadata publishes refreshes to mounted consumers through its
+  backend/attachment-scoped signal. Revocation clears project presentation;
+  pending replies from a revoked attachment cannot publish into another snapshot.
 - The browser opens only a few connections to the CodeNomad server. The selected transcript and its metadata read directly; secondary panel and timeline reads (plugin controls, outlines/previews) go through `secondaryRead` in `lib/api-client.ts`, sharing the bounded `backgroundReads` budget. Provider usage stays direct (superseded reads run to completion and are fenced), and so does the OpenCode status read awaited by Restart/Start, so daemon-bound reads in the shared budget can never hold it. Startup effects must not track app-wide state they only await (`untrack` readiness gates), or every restored workspace update restarts and requeues the transcript read. Search visibility must be value-diffed before its close effect: reactive instance metadata can change while search stays closed, and running search cleanup then would cancel the initial transcript read. Restore tests must exercise reactive identity accessors and assert visible messages as well as request counts.

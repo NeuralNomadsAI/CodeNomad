@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import { test, type TestContext } from "node:test"
 import { createMemo, createRoot, createSignal } from "solid-js"
-import { serverApi } from "./api-client"
-import { authRecovery } from "./auth-recovery"
-import { serverEvents } from "./server-events"
+import { BackendEvents } from "./backend-events"
+import { ServerEvents } from "./server-events"
+import type { ServerApi } from "./api-client"
 import type { WorkspaceEventPayload } from "../../../server/src/api-types"
 
 function native(id: string, type = "session.text.delta"): WorkspaceEventPayload {
@@ -13,29 +13,12 @@ function native(id: string, type = "session.text.delta"): WorkspaceEventPayload 
 }
 
 async function setup(t: TestContext) {
-  const sources: Array<{
-    event: (id: string, type?: string) => void; receive: (event: WorkspaceEventPayload) => void
-    disconnect: () => void; onopen: (() => void) | null; closed: boolean
-  }> = []
-  t.mock.method(serverApi, "connectEvents", (receive: Parameters<typeof serverApi.connectEvents>[0], disconnect: () => void) => {
-    const source = {
-      event: (id: string, type?: string) => receive(native(id, type)),
-      receive,
-      disconnect,
-      onopen: null, closed: false,
-      close: () => { source.closed = true },
-    }
-    sources.push(source)
-    return source
-  })
-  t.mock.method(authRecovery, "check", async () => {})
   t.mock.timers.enable({ apis: ["setTimeout"] })
-  t.after(() => serverEvents.flushPendingBatch())
   const document = { hidden: false }
   const frames = new Map<number, FrameRequestCallback>()
   let frameId = 0
   for (const [name, value] of Object.entries({
-    document,
+    window: new EventTarget(), document,
     requestAnimationFrame: (callback: FrameRequestCallback) => (frames.set(++frameId, callback), frameId),
     cancelAnimationFrame: (id: number) => frames.delete(id),
   })) {
@@ -46,9 +29,33 @@ async function setup(t: TestContext) {
       else Reflect.deleteProperty(globalThis, name)
     })
   }
-  serverEvents.restart()
-  await Promise.resolve()
-  return { sources, document, frames, paint() {
+  async function open() {
+    const sources: Array<{
+      event: (id: string, type?: string) => void; receive: (event: WorkspaceEventPayload) => void
+      disconnect: () => void; onopen: (() => void) | null; closed: boolean
+    }> = []
+    const serverEvents = new ServerEvents({
+      api: {
+        connectEvents(receive, disconnect) {
+          const source = {
+            event: (id: string, type?: string) => receive(native(id, type)),
+            receive,
+            disconnect: disconnect!,
+            onopen: null, closed: false,
+            close: () => { source.closed = true },
+          }
+          sources.push(source)
+          return source as unknown as ReturnType<ServerApi["connectEvents"]>
+        },
+        sendClientConnectionPong: async () => {},
+      },
+      auth: { check: async () => {}, onRestored: () => () => false },
+    })
+    t.after(() => serverEvents.dispose())
+    await serverEvents.start()
+    return { serverEvents, sources }
+  }
+  return { ...await open(), open, document, frames, paint() {
     for (const [id, callback] of [...frames]) {
       frames.delete(id)
       callback(0)
@@ -57,7 +64,7 @@ async function setup(t: TestContext) {
 }
 
 test("separate SSE arrivals publish one Solid update per frame without losing FIFO", async t => {
-  const { sources: [source], frames, paint } = await setup(t)
+  const { serverEvents, sources: [source], frames, paint } = await setup(t)
   const calls: string[] = [], publications: string[] = []
   createRoot(dispose => {
     t.after(dispose)
@@ -88,7 +95,7 @@ test("separate SSE arrivals publish one Solid update per frame without losing FI
 })
 
 test("structural events deliver immediately with their earlier deltas in one Solid batch", async t => {
-  const { sources: [source], frames, paint } = await setup(t)
+  const { serverEvents, sources: [source], frames, paint } = await setup(t)
   const calls: string[] = [], publications: string[] = []
   createRoot(dispose => {
     t.after(dispose)
@@ -128,7 +135,7 @@ test("structural events deliver immediately with their earlier deltas in one Sol
 })
 
 test("the timer drives hidden or suspended frames and wakes only once", async t => {
-  const { sources: [source], document, frames } = await setup(t)
+  const { serverEvents, sources: [source], document, frames } = await setup(t)
   const delivered: string[] = []
   t.after(serverEvents.on("instance.event", event => {
     if (event.type === "instance.event") delivered.push(event.event.id)
@@ -155,7 +162,7 @@ test("the timer drives hidden or suspended frames and wakes only once", async t 
 })
 
 test("a transport error drains accepted events before disconnect and fences callbacks from the old stream", async t => {
-  const { sources, frames, paint } = await setup(t)
+  const { serverEvents, sources, frames, paint } = await setup(t)
   const [previous] = sources
   const order: string[] = []
   const publish = () => { order.push("published") }
@@ -182,4 +189,64 @@ test("a transport error drains accepted events before disconnect and fences call
   paint()
   t.mock.timers.tick(1000)
   assert.deepEqual(order, ["before-a", "before-b", "published", "disconnected", "disconnected", "connected", "open", "after", "published"])
+})
+
+test("a scoped read, authority event, restart and disposal leave other backends' deltas buffered", async t => {
+  const { serverEvents: local, sources: [localStream], open, frames, paint } = await setup(t)
+  const { serverEvents: remote, sources: [remoteStream] } = await open()
+  const bus = new BackendEvents(), seen: string[] = []
+  t.after(bus.attach("local", local))
+  t.after(bus.attach("remote", remote))
+  const publish = () => { seen.push("publish") }
+  bus.on("instance.event", event => {
+    assert.equal(event.type, "instance.event")
+    seen.push(`${event.instanceId}:${event.event.id}`)
+    assert.ok(bus.deferUntilBatchEnd(event.instanceId, publish))
+  })
+  localStream.event("local-1")
+  remoteStream.event("remote-1")
+  assert.equal(frames.size, 2)
+  bus.flushPendingBatch("remote~fixture")
+  assert.deepEqual(seen, ["remote~fixture:remote-1", "publish"])
+  remoteStream.event("remote-2")
+  remoteStream.event("remote-authority", "session.execution.started")
+  assert.deepEqual(seen.slice(2), ["remote~fixture:remote-2", "remote~fixture:remote-authority", "publish"])
+  remoteStream.event("before-restart")
+  remote.restart()
+  assert.deepEqual(seen.slice(5), ["remote~fixture:before-restart", "publish"])
+  await Promise.resolve()
+  remoteStream.event("stale-generation")
+  const replacement = await open()
+  const oldWake = [...frames.values()][0]!
+  localStream.event("discard-on-dispose")
+  local.dispose()
+  t.after(bus.attach("local", replacement.serverEvents))
+  localStream.event("stale-after-dispose")
+  replacement.sources[0].event("fresh-local")
+  oldWake(0)
+  assert.equal(frames.size, 1)
+  paint()
+  t.mock.timers.tick(1000)
+  assert.deepEqual(seen.slice(7), ["fixture:fresh-local", "publish"])
+})
+
+test("reattaching a stream during a drain cannot deliver the rest of that batch to its replacement", async t => {
+  const { serverEvents, sources: [source], paint } = await setup(t)
+  const bus = new BackendEvents(), seen: string[] = []
+  const detach = bus.attach("remote", serverEvents)
+  let first = true
+  bus.on("instance.event", event => {
+    assert.equal(event.type, "instance.event")
+    seen.push(event.event.id)
+    if (!first) return
+    first = false
+    detach()
+    t.after(bus.attach("remote", serverEvents))
+  })
+  source.event("first")
+  source.event("old-attachment")
+  paint()
+  source.event("new-attachment")
+  paint()
+  assert.deepEqual(seen, ["first", "new-attachment"])
 })

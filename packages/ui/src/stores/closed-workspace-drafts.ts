@@ -1,4 +1,5 @@
 import { getLogger } from "../lib/logger"
+import { LOCAL_BACKEND_ID, parseInstanceKey } from "../lib/backend-identity"
 import type { RestorableWorkspaceTabState } from "./client-state-codec"
 import { normalizeRestorableAttachmentRecord } from "./client-state-attachments-codec"
 import { getAuthoritativeAttachmentSessionIdsForInstance, getSessionAttachmentsForInstance } from "./attachments"
@@ -8,14 +9,14 @@ import { getRestoredSessionIds } from "./app-session-restored-session-ids"
 import { NO_SESSION_DRAFT_SESSION_ID } from "./local-draft-ids"
 import { hydrateRestoredSessionChain } from "./session-api"
 import { getAuthoritativeDraftSessionIdsForInstance, getSessionDraftPromptsForInstance, getSessions, isSessionInWorkspaceScope } from "./session-state"
-import { waitForInstanceInitialSessionHydration } from "./instances"
+import { instances, waitForInstanceInitialSessionHydration } from "./instances"
 
 /**
  * Unsent drafts and attachments of project tabs removed from this window,
  * kept for the page lifetime so reopening the project gives them back.
  */
 type ClosedWorkspaceDrafts = Pick<RestorableWorkspaceTabState, "drafts" | "attachments">
-type DraftSnapshot = ClosedWorkspaceDrafts & Pick<RestorableWorkspaceTabState, "folder" | "workspaceId">
+type DraftSnapshot = ClosedWorkspaceDrafts & Pick<RestorableWorkspaceTabState, "folder" | "workspaceId" | "serverId">
 type VaultEntry = ClosedWorkspaceDrafts & {
   origins: Record<string, readonly string[]>
   /** A received bundle may answer an unambiguous plain folder opening. */
@@ -46,9 +47,9 @@ const restoreAuthority = new Map<string, RestoreAuthority>()
  */
 const claims = new Map<string, { key: string; entry: VaultEntry }>()
 
-/** Project identity: the backend (one per window today) and the normalized folder. */
-export function closedWorkspaceDraftKey(folder: string, backendId = ""): string {
-  return `${backendId}\n${normalizeWorkspacePath(folder)}`
+/** Closed occurrences merge within one backend's normalized project folder. */
+export function closedWorkspaceDraftKey(folder: string, backendId = LOCAL_BACKEND_ID, serverId?: string): string {
+  return JSON.stringify([backendId === LOCAL_BACKEND_ID ? "" : backendId, normalizeWorkspacePath(folder), serverId])
 }
 
 /** Snapshot fallback yields per session, including both fields of a clear. */
@@ -65,7 +66,8 @@ export function omitSupersededClosedDrafts<T extends DraftSnapshot>(
   snapshot: T,
 ): T {
   void restoreClosedWorkspaceDrafts(instanceId, snapshot.folder, () => waitForInstanceInitialSessionHydration(instanceId), snapshot)
-  const key = closedWorkspaceDraftKey(snapshot.folder)
+  const key = closedWorkspaceDraftKey(snapshot.folder, parseInstanceKey(instanceId).backendId,
+    instances().get(instanceId)?.serverId ?? snapshot.serverId)
   const sourceId = snapshot.workspaceId
   const existing = restoreAuthority.get(instanceId)
   const sources = closedAuthority.get(key)
@@ -130,6 +132,24 @@ function pendingOwner(bound: RestoreAuthority | undefined, id: string): string |
   return bound?.returnOwners?.get(id) ?? (bound?.claimedIds.has(id) ? bound.snapshotId : undefined)
 }
 
+/** Closing a suspended remote tab hands its saved prompt state back to the vault. */
+export function retainClosedWorkspaceSnapshot(snapshot: RestorableWorkspaceTabState): void {
+  const key = closedWorkspaceDraftKey(snapshot.folder, snapshot.backendId, snapshot.serverId)
+  const captured = normalizeRestorableAttachmentRecord(snapshot.attachments, snapshot.drafts)
+    ?? { drafts: snapshot.drafts, attachments: {} }
+  const ids = contentSessions(captured)
+  const owner = snapshot.workspaceId
+  const entry: VaultEntry = { ...captured,
+    origins: owner ? Object.fromEntries([...ids].map(id => [id, [owner]])) : {},
+    folderEligible: Object.fromEntries([...ids].map(id => [id, true])),
+  }
+  const project = vault.get(key) ?? emptyProject()
+  supersedePendingDrafts(key, ids, (_id, pending) => pending === owner)
+  if (owner) setExact(project, owner, merge(project.exact.get(owner) ?? empty, entry, ids))
+  else project.shared = merge(project.shared, entry, ids)
+  stash(key, project)
+}
+
 /** Sessions the user typed in, cleared or sent from in this instance. */
 const touchedSessions = (instanceId: string) => new Set([
   ...getAuthoritativeDraftSessionIdsForInstance(instanceId),
@@ -186,15 +206,16 @@ function supersedePendingDrafts(
  * Called before the instance's drafts are cleared. `keep` saves its latest
  * bundles and clears, separately for its exact claims and folder fallback,
  * then returns untouched pending bundles beneath newer writes of their owner.
- * `skip` keeps nothing of this instance; `discard` also purges the project's
- * whole entry, because its folder is deleted.
+ * `suspend` leaves captured state with the placeholder and returns unapplied claims.
+ * `skip` keeps nothing of this instance; `discard` purges the folder's entry.
  */
 export function retainClosedWorkspaceDrafts(
   instanceId: string,
   folder: string,
-  mode: "keep" | "skip" | "discard" = "keep",
+  mode: "keep" | "skip" | "discard" | "suspend" = "keep",
+  serverId = instances().get(instanceId)?.serverId,
 ): void {
-  const key = closedWorkspaceDraftKey(folder)
+  const key = closedWorkspaceDraftKey(folder, parseInstanceKey(instanceId).backendId, serverId)
   const claim = claims.get(instanceId)
   const bound = restoreAuthority.get(instanceId)
   claims.delete(instanceId)
@@ -204,6 +225,7 @@ export function retainClosedWorkspaceDrafts(
       vault.delete(key)
       closedAuthority.delete(key)
     }
+    if (mode === "suspend" && claim && bound) requeue(bound, emptySessionsOf(instanceId, claim.entry))
     return
   }
   const remaining = claim ? emptySessionsOf(instanceId, claim.entry) : null
@@ -287,7 +309,8 @@ export function restoreClosedWorkspaceDrafts(
   sessionsReady: () => Promise<void>,
   snapshot?: DraftSnapshot,
 ): Promise<void> | undefined {
-  const key = closedWorkspaceDraftKey(folder)
+  const key = closedWorkspaceDraftKey(folder, parseInstanceKey(instanceId).backendId,
+    instances().get(instanceId)?.serverId ?? snapshot?.serverId)
   if (restoreAuthority.has(instanceId)) return
   const project = vault.get(key)
   const available = project?.shared

@@ -99,3 +99,41 @@ test("session titles fence a remote change after both scope reads", async () => 
   await reached.promise; f.change("remote"); gate.resolve()
   await assert.rejects(pending, { code: "conflict" })
 })
+
+for (const phase of ["before dispatch", "storage read", "writability", "locked decision", "committed result"]) {
+  test(`remote memory principal revocation fences ${phase} independently`, async () => {
+    const f = fixture(), reached = deferred(), gate = deferred(), caller = new AbortController()
+    const displayed = (await f.service.executeUI({ action: "read", scope: "global", query: entry.id }) as any).entry
+    let reads = 0, decisions = 0
+    const list = f.store.listForUI
+    f.store.listForUI = async () => {
+      reads++
+      if (phase === "storage read") { reached.resolve(); await gate.promise }
+      return list()
+    }
+    f.store.cleanupWritable = async () => {
+      if (phase === "writability") { reached.resolve(); await gate.promise }
+      return true
+    }
+    f.store.mutate = async (_namespace, decide) => {
+      if (phase === "locked decision") { reached.resolve(); await gate.promise }
+      const result = await decide([entry])
+      decisions++
+      if (phase === "committed result") { reached.resolve(); await gate.promise }
+      return result.result
+    }
+    reads = 0
+    if (phase === "before dispatch") caller.abort()
+    const mutation = phase === "locked decision" || phase === "committed result"
+    const operation = mutation
+      ? { action: "delete", scope: "global", id: entry.id, revision: displayed.revision }
+      : { action: "list", scope: "global" }
+    const pending = f.service.executeUI(operation, undefined, caller.signal)
+    const rejected = assert.rejects(pending, { name: "AbortError" })
+    if (phase !== "before dispatch") { await reached.promise; caller.abort(); gate.resolve() }
+    await rejected
+    if (phase === "before dispatch") assert.equal(reads, 0)
+    if (phase === "locked decision") assert.equal(decisions, 0)
+    assert.equal((await f.service.executeUI({ action: "read", scope: "global", query: entry.id }) as any).entry.text, entry.text)
+  })
+}

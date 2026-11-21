@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
-import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "./session-media-contract"
+import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE, parseSessionMediaPath } from "./session-media-contract"
+import { ASSET_URI_LIMIT } from "./embedded-asset"
 
 export { DEFERRED_MEDIA_HEADER } from "./session-media-contract"
 /** Data URIs up to this length stay inline. */
@@ -18,7 +19,8 @@ export function mediaDigest(uri: string): string {
 /** An image the renderer shows inline: a base64 data URI of its declared image type. */
 export function isRenderableToolImage(value: unknown): value is ToolImage {
   const file = value as Partial<ToolImage> | null
-  if (file?.type !== "file" || typeof file.mime !== "string" || !/^image\/[\w.+-]+$/i.test(file.mime) || typeof file.uri !== "string") return false
+  if (file?.type !== "file" || typeof file.mime !== "string" || file.mime.length > 128 || !/^image\/[\w.+-]+$/i.test(file.mime)
+    || typeof file.uri !== "string" || file.uri.length > ASSET_URI_LIMIT) return false
   const header = `data:${file.mime.toLowerCase()};base64,`
   return file.uri.slice(0, header.length).toLowerCase() === header
 }
@@ -48,7 +50,10 @@ export function deferToolMedia(messages: unknown, scope: { workspaceId: string; 
       if (tool?.type !== "tool" || !Array.isArray(tool.state?.content)) return
       tool.state.content.forEach((file: unknown, index: number) => {
         if (!isRenderableToolImage(file) || file.uri.length <= INLINE_MEDIA_LIMIT) return
-        file.uri = sessionMediaPath({ ...scope, messageId: message.id, part, index, digest: mediaDigest(file.uri) })
+        try {
+          const reference = sessionMediaPath({ ...scope, messageId: message.id, part, index, digest: mediaDigest(file.uri) })
+          if (parseSessionMediaPath(reference)) file.uri = reference
+        } catch (error) { if (!(error instanceof URIError)) throw error }
       })
     })
   }

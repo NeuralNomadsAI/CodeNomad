@@ -195,7 +195,7 @@ test("a structural SSE event publishes earlier deltas in the same Solid update b
 }))
 
 for (const timing of ["before Enter", "during prompt preparation"] as const) {
-  test(`Enter honors Queue when execution starts ${timing}`, { timeout: 120_000 }, () => open(async page => {
+  test(`Enter honors Queue when the first delta arrives ${timing}`, { timeout: 120_000 }, () => open(async page => {
     await page.evaluate(() => (window as any).streamingFixture.setPreferences({ followUpBehavior: "queue" }))
     const input = page.locator(".session-view textarea").first()
     await input.fill("Follow-up")
@@ -219,14 +219,14 @@ for (const timing of ["before Enter", "during prompt preparation"] as const) {
         await input.press("Enter")
         await preparing.promise
       }
-      const id = "evt_execution_started"
+      const id = "evt_first_delta"
       await observeSse(page, id)
       stream.send({ type: "instance.event", instanceId: "streaming-fixture", event: {
-        id, type: "session.execution.started", created: 1, location: { directory: "/fixture" },
-        durable: { aggregateID: "active", seq: 1, version: 1 }, data: { sessionID: "active" },
+        id, type: "session.text.delta", created: 1, location: { directory: "/fixture" },
+        data: { sessionID: "active", assistantMessageID: "msg_live", ordinal: 0, delta: "live reply" },
       } })
       await waitForSse(page)
-      assert.equal((await snapshot(page)).status, "working", "execution start is visible before paint")
+      assert.equal((await snapshot(page)).status, "idle", "the first evidence of execution is still buffered")
       if (timing !== "during prompt preparation") {
         await input.press("Enter")
         await preparing.promise

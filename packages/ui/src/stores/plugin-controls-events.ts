@@ -1,5 +1,5 @@
 import type { WorkspaceEventPayload } from "../../../server/src/api-types"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { pluginControlsCache } from "./plugin-controls"
 import { pluginSourcesStore } from "./plugin-sources"
 
@@ -31,7 +31,7 @@ serverEvents.on("instance.eventStatus", (event) => {
 // Renderer-to-backend reconnects are independent of the native subscription.
 // The event transport has no replay; visible demand reconciles these snapshots,
 // while hidden worktrees remain stale until their next activation.
-serverEvents.onOpen(() => pluginControlsCache.invalidateAll())
+serverEvents.onOpen(backendId => pluginControlsCache.invalidateAll(backendId))
 
 serverEvents.on("workspace.stopped", (event) => {
   if (event.type !== "workspace.stopped") return

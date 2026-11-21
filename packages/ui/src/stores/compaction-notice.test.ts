@@ -22,6 +22,15 @@ describe("compaction notices", () => {
     assert.equal(claim(end("evt_2")), true)
   })
 
+  it("keeps homonymous durable and volatile events independent across backends", () => {
+    const claim = createCompactionNoticeClaims()
+    for (const event of [end("evt", 1), end("volatile")]) {
+      assert.equal(claim(event, "A"), true)
+      assert.equal(claim(event, "B"), true)
+      assert.equal(claim(event, "A"), false)
+    }
+  })
+
   it("forgets the oldest compactions beyond its bound", () => {
     const claim = createCompactionNoticeClaims(2)
     for (const seq of [1, 2, 3]) assert.equal(claim(end(`evt_${seq}`, seq)), true)

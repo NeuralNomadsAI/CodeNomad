@@ -1,6 +1,6 @@
 import { Show, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import type { PublicVoiceConversationConfig, VoiceConversationEngine, VoiceConversationProvider } from "../../../../server/src/api-types"
-import { CODENOMAD_API_BASE } from "../../lib/api-base"
+import { localTransport } from "../../lib/backend-transport"
 import { useI18n } from "../../lib/i18n"
 import { liveVoiceAudioUnavailable } from "../../lib/live-voice-audio"
 import { hasLiveVoiceConsent } from "../../lib/live-voice-consent"
@@ -99,7 +99,7 @@ export function VoiceConversationCard(props: { settled: boolean }) {
     if (!speechCapabilities()?.voiceConversation?.[id].configured) return t("settings.voice.notConfigured")
     const reason = liveVoiceAudioUnavailable()
     if (reason) return t(`voice.command.${reason}`)
-    const origin = new URL(CODENOMAD_API_BASE ?? window.location.origin).origin
+    const origin = new URL(localTransport.baseUrl ?? window.location.origin).origin
     return t(hasLiveVoiceConsent(origin, selected) ? "settings.voice.ready" : "settings.voice.conversation.confirmationRequired")
   }
 

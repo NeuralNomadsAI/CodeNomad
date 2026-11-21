@@ -77,3 +77,10 @@ export function formatRelativeTime(t: Translate, timestamp: number, now = Date.n
   if (minutes > 0) return t("time.relative.minutesAgoShort", { count: minutes })
   return t("time.relative.justNow")
 }
+
+export function filterRecents<T extends { path: string; projectName?: string; serverLabel?: string }>(recents: readonly T[], query: string): readonly T[] {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return recents
+  return recents.filter(recent => [getProjectDisplayName(recent.path, recent.projectName), recent.path, recent.serverLabel]
+    .some(value => value?.toLowerCase().includes(needle)))
+}

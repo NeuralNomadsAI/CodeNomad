@@ -1,5 +1,6 @@
 import type { Data } from "@opencode/client/solid"
 import { getLogger } from "../lib/logger"
+import { captureBackendOperation } from "../lib/backend-operation"
 
 const log = getLogger("session")
 
@@ -19,7 +20,7 @@ const log = getLogger("session")
  * touch arrives through the gates the instance layer registers.
  */
 export type TranscriptProjectionGates = {
-  deferUntilEventBatchEnd(callback: () => void): boolean
+  deferUntilEventBatchEnd?(instanceId: string, callback: () => void): boolean
   isActiveSession(instanceId: string, sessionId: string): boolean
   isLatestMessageWindow(instanceId: string, sessionId: string): boolean
   /** Inactive-session recovery: the next activation loads the page authoritatively. */
@@ -31,6 +32,7 @@ export type TranscriptProjectionGates = {
 }
 
 type PendingProjection = {
+  operation: ReturnType<typeof captureBackendOperation>
   instanceId: string
   sessionId: string
   data: Data
@@ -52,6 +54,7 @@ const FRAME_FALLBACK_MS = 32
 
 let gates: TranscriptProjectionGates | undefined
 const pending = new Map<string, PendingProjection>()
+const eventBatchProjections = new WeakMap<AbortSignal, () => void>()
 let cancelScheduledRun: (() => void) | undefined
 
 export function setTranscriptProjectionGates(next: TranscriptProjectionGates): void {
@@ -85,11 +88,14 @@ export function scheduleTranscriptProjection(
   options: { confirmPending?: boolean; updateUsage?: boolean } = {},
 ): void {
   if (!gates) return
+  const operation = captureBackendOperation(instanceId)
+  if (!operation.current()) return
   const key = projectionKey(instanceId, sessionId)
   const previous = pending.get(key)
-  const merged = previous !== undefined && previous.data === data
+  const merged = previous !== undefined && previous.operation.signal === operation.signal && previous.data === data
   pending.set(key, {
     instanceId,
+    operation,
     sessionId,
     data,
     // The merged pass replaces a sequence of per-event projections, so the last
@@ -98,7 +104,7 @@ export function scheduleTranscriptProjection(
     confirmPending: options.confirmPending ?? true,
     updateUsage: (merged ? previous.updateUsage : false) || Boolean(options.updateUsage),
   })
-  requestScheduledRun()
+  if (!gates.deferUntilEventBatchEnd?.(instanceId, eventBatchProjection(operation.signal))) requestScheduledRun()
 }
 
 /** Publishes pending projections now. Selection changes call this so a
@@ -128,7 +134,7 @@ export function takeTranscriptProjection(instanceId: string, sessionId: string):
   const key = projectionKey(instanceId, sessionId)
   const entry = pending.get(key)
   if (entry !== undefined) disarmIfEmpty(key)
-  return entry
+  return entry?.operation.current() ? entry : undefined
 }
 
 /** Drops pending projections for a session (or whole instance): destroyed
@@ -157,15 +163,18 @@ function disarm(): void {
   }
 }
 
-function drain(bypassActiveGate: boolean, matches?: (key: string) => boolean): void {
+function drain(bypassActiveGate: boolean, matches?: (key: string, entry: PendingProjection) => boolean): void {
   if (!pending.size || !gates) {
     disarm()
     return
   }
-  const keys = matches === undefined ? [...pending.keys()] : [...pending.keys()].filter(matches)
-  if (!keys.length) return
-  const entries = keys.map(key => pending.get(key)!)
-  for (const key of keys) pending.delete(key)
+  const entries: PendingProjection[] = []
+  for (const [key, entry] of pending) {
+    if (matches && !matches(key, entry)) continue
+    entries.push(entry)
+    pending.delete(key)
+  }
+  if (!entries.length) return
   // A scoped drain leaves the other sessions on their already armed wake:
   // re-arming it would let repeated retirements elsewhere postpone them.
   if (!pending.size) disarm()
@@ -184,7 +193,7 @@ function drain(bypassActiveGate: boolean, matches?: (key: string) => boolean): v
 
 function applyProjection(entry: PendingProjection, bypassActiveGate: boolean): void {
   const gate = gates
-  if (!gate) return
+  if (!gate || !entry.operation.current()) return
   if (!bypassActiveGate && !gate.isActiveSession(entry.instanceId, entry.sessionId)) {
     // Admitted under an older selection: the next activation reads the page
     // authoritatively instead of trusting a stale display window.
@@ -196,10 +205,16 @@ function applyProjection(entry: PendingProjection, bypassActiveGate: boolean): v
   if (entry.updateUsage) gate.onProjectedUsage(entry.instanceId, entry.sessionId)
 }
 
-const projectEventBatch = () => drain(false)
+function eventBatchProjection(signal: AbortSignal): () => void {
+  let project = eventBatchProjections.get(signal)
+  if (!project) {
+    project = () => drain(false, (_, entry) => entry.operation.signal === signal)
+    eventBatchProjections.set(signal, project)
+  }
+  return project
+}
 
 function requestScheduledRun(): void {
-  if (gates?.deferUntilEventBatchEnd(projectEventBatch)) return
   if (cancelScheduledRun) return
   if (typeof document !== "undefined" && document.hidden) {
     const timer = setTimeout(() => drain(false), HIDDEN_PROJECTION_INTERVAL_MS)

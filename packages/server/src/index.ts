@@ -9,6 +9,7 @@ import { fileURLToPath } from "url"
 import { createRequire } from "module"
 import { createHttpServer } from "./server/http-server"
 import { parseAllowedOrigins } from "./server/direct-origin"
+import { verifiedHttpsOrigins } from "./remote-control/direct-https"
 import { sessionTimeoutMs } from "./auth/session-manager"
 import { PanelExtensionStore } from "./panel-extensions/store"
 import { WorkspaceManager } from "./workspaces/manager"
@@ -20,6 +21,7 @@ import { prepareForeignProbe } from "./opencode-update/shared-installation"
 import { FileSystemBrowser } from "./filesystem/browser"
 import { EventBus } from "./events/bus"
 import { ServerMeta } from "./api-types"
+import { CODENOMAD_API_CONTRACT, CODENOMAD_CAPABILITIES } from "./meta-contract"
 import { InstanceStore } from "./storage/instance-store"
 import { InstanceEventBridge } from "./workspaces/instance-events"
 import { createLogger } from "./logger"
@@ -28,6 +30,7 @@ import { resolveUi } from "./ui/remote-ui"
 import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, DEFAULT_AUTH_USERNAME } from "./auth/manager"
 import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
+import { RemoteServerBrowseManager } from "./codenomad-servers/browse-manager"
 import { LiveVoiceGateway } from "./speech/live-voice-gateway"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
 import { nativeServiceStarter } from "./workspaces/native-service-start"
@@ -363,6 +366,9 @@ async function main() {
   })
 
   const settings = new SettingsService(configLocation, eventBus, configLogger)
+  serverMeta.serverId = settings.getServerId()
+  serverMeta.apiContract = CODENOMAD_API_CONTRACT
+  serverMeta.capabilities = [...CODENOMAD_CAPABILITIES]
   const binaryResolver = new BinaryResolver(settings)
   // Warm the bounded, asynchronous version probe of a foreign PATH OpenCode so
   // synchronous resolution can prefer a managed OpenCode 2 without spawning.
@@ -501,14 +507,17 @@ async function main() {
   // Decrypted Remote Control requests enter the same application as local ones.
   let remoteControlRouter: ((request: IncomingMessage, response: ServerResponse) => void) | null = null
   let remoteControlPreviewUpgrade: ReturnType<typeof createHttpServer>["previewUpgrade"] | null = null
+  let remoteControlServesRemotePreview: (token: string) => boolean = () => false
+  const allowedOrigins = parseAllowedOrigins(process.env.CODENOMAD_ALLOWED_ORIGINS)
   let remoteControlVoiceUpgrade: ReturnType<typeof createHttpServer>["remoteVoiceUpgrade"] | null = null
   const remoteControlManager = new RemoteControlManager({
+    directHttpsOrigins: () => verifiedHttpsOrigins(serverMeta, allowedOrigins),
     registry: new RemoteDeviceRegistry(path.join(configDir, "remote-control-devices.json")),
     lease: new RemoteControlOwnerLease(path.join(configDir, "remote-control.owner")),
     router: () => remoteControlRouter,
     previewUpgrade: () => remoteControlPreviewUpgrade,
     voiceUpgrade: () => remoteControlVoiceUpgrade,
-    hasPreview: (token) => previewManager.get(token) !== undefined,
+    hasPreview: (token) => previewManager.get(token) !== undefined || remoteControlServesRemotePreview(token),
     tunnelApi: process.env.CODENOMAD_REMOTE_CONTROL_API?.trim() || undefined,
     disabledByAdministrator: options.remoteControlDisabled,
     logger: logger.child({ component: "remote-control" }),
@@ -541,13 +550,17 @@ async function main() {
   const stopPermissionRefresh = connectSessionPermissionRefresh(eventBus, workspaceManager, sessionPermissions.modes,
     worktreeDeletionFence, sessionPermissions.cleanup, logger)
   const missionsHost = () => missionBridge !== "failed"
+  const remoteServerBrowseManager = new RemoteServerBrowseManager(settings)
+  const reconcileBackends = () => remoteServerBrowseManager.reconcile()
+  eventBus.on("storage.stateChanged", reconcileBackends)
 
   // The same application behind every listener of this backend.
   const listenerDeps = {
-    allowedOrigins: parseAllowedOrigins(process.env.CODENOMAD_ALLOWED_ORIGINS),
+    allowedOrigins,
     memoryStore,
     workspaceManager,
     settings,
+    remoteServerBrowseManager,
     fileSystemBrowser,
     eventBus,
     serverMeta,
@@ -616,6 +629,7 @@ async function main() {
   const routingServer = options.http || nativeParent.available || !httpsServer ? httpServer : httpsServer
   remoteControlRouter = (request, response) => routingServer.instance.routing(request, response)
   remoteControlPreviewUpgrade = routingServer.previewUpgrade
+  remoteControlServesRemotePreview = routingServer.servesRemotePreview
   remoteControlVoiceUpgrade = routingServer.remoteVoiceUpgrade
 
   const [httpStart, httpsStart, bridgeStart] = await Promise.all([
@@ -744,6 +758,8 @@ async function main() {
             if (failures.length) throw new AggregateError(failures, "Workspace and plugin cleanup failed")
           },
           stopHttpServers: async () => {
+            eventBus.off("storage.stateChanged", reconcileBackends)
+            remoteServerBrowseManager.close()
             const results = await Promise.allSettled(servers.map((srv) => srv.stop()))
             const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
             if (failures.length > 0) {

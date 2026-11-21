@@ -4,11 +4,12 @@ import { assetTargetSchema } from "../../../../server/src/opencode/session-pruni
 import { generationTargetSchema } from "../../../../server/src/opencode/session-pruning/assets-gallery-contract"
 import { PANEL_EXTENSION_LIMITS, type ForgeWorkItemKind, type PanelWorkItemWorktree } from "../../../../server/src/panel-extensions/contract"
 import { panelExtensionsApi4 } from "../../lib/panel-extensions-api"
-import { serverEvents } from "../../lib/server-events"
+import { captureBackendOperation } from "../../lib/backend-operation"
+import { backendEvents as serverEvents } from "../../lib/server-events"
 import { tGlobal } from "../../lib/i18n"
 import { showToastNotification, type ToastHandle } from "../../lib/notifications"
 import { HttpResponseError } from "../../lib/retryable-file-search"
-import { serverApi } from "../../lib/api-client"
+import { backendOf } from "../../lib/backend-client"
 import { alertDialogState, showConfirmDialog } from "../../stores/alerts"
 import { createWorktree, getParentSessionId, getWorktreeForSession, getWorktreeSlugForParentSession, getWorktrees, reloadWorktrees,
   setWorktreeSlugForParentSession } from "../../stores/worktrees"
@@ -51,7 +52,7 @@ const STATUS_EVENTS = new Set(["agent.updated", "skill.updated", "config.updated
   "integration.updated", "credential.updated", "credential.switched"])
 
 // At most one prefill a second per extension in this window, counted when accepted.
-const lastPrefill = new Map<string, number>()
+const prefillByAttachment = new WeakMap<AbortSignal, Map<string, number>>()
 
 export interface Api4Host {
   /** The displayed conversation's composer. */
@@ -107,16 +108,22 @@ export function useApi4Channel(props: {
       notes: changes.notes || (notes && granted("panel.notes")) }
     if (disposed || !(next.gallery || next.status || next.notes)) return
     changes = next
+    const operation = captureBackendOperation(props.instanceId)
     timer ??= setTimeout(() => {
       timer = undefined
       const { notes, ...detail } = changes
       changes = { gallery: false, status: false, notes: false }
-      if (disposed || !connected || !nativeConnected) return
+      if (!operation.current() || !current()) return
       if (detail.gallery || detail.status) props.send({ type: "images:changed", ...detail })
       if (notes) props.send({ type: "notes:changed" })
     }, CHANGE_DELAY_MS)
   }
-  onCleanup(serverEvents.on("instance.event", payload => {
+  createEffect(on(() => serverEvents.signalForInstance(props.instanceId), signal => {
+    clearTimeout(timer); timer = undefined; abort()
+    if (!signal.aborted) invalidate(true, true)
+  }, { defer: true }))
+  const events = serverEvents.forInstance(() => props.instanceId)
+  onCleanup(events.on("instance.event", payload => {
     if (payload.type !== "instance.event") return
     const event = payload.event as { type?: string; data?: { sessionID?: string } }
     const type = event.type ?? ""
@@ -129,10 +136,10 @@ export function useApi4Channel(props: {
     else if (STATUS_EVENTS.has(type)) invalidate(false, true)
   }))
   // Data-free and per package: the frame re-reads what its own authority shows.
-  onCleanup(serverEvents.on("panelExtensions.notesChanged", event => {
+  onCleanup(events.on("panelExtensions.notesChanged", event => {
     if (event.type === "panelExtensions.notesChanged" && event.id === props.id) invalidate(false, false, true)
   }))
-  onCleanup(serverEvents.on("instance.eventStatus", event => {
+  onCleanup(events.on("instance.eventStatus", event => {
     if (event.type !== "instance.eventStatus") return
     // Another instance resynchronized: it may have missed a deletion in a project these notes share.
     if (event.instanceId !== props.instanceId) { if (event.status === "connected") invalidate(false, false, true); return }
@@ -142,7 +149,7 @@ export function useApi4Channel(props: {
     nativeGeneration = event.generation
     if (nativeConnected) { invalidate(true, true, true); worktreesRecovered() }
   }))
-  onCleanup(serverEvents.onTransportStatus(status => {
+  onCleanup(events.onTransportStatus(status => {
     connected = status === "connected"
     if (!connected) { epoch++; abort() }
     else { invalidate(true, true, true); worktreesRecovered() }
@@ -279,7 +286,7 @@ export function useApi4Channel(props: {
     // The server's fresh inventory itself, not the shared display store a cached read may overwrite:
     // the dialog and its acceptance see a checkout added meanwhile.
     const [answer, inventory] = await Promise.all([panelExtensionsApi4.workItemBranchLookup(authority, kind, number, signal),
-      serverApi.fetchWorktrees(props.instanceId, true)])
+      backendOf(props.instanceId).api.fetchWorktrees(props.instanceId, true, signal)])
     if (answer.status === "unavailable") return null
     if (answer.status === "conflict") return { conflict: answer.branch }
     const checkout = answer.branch === null ? undefined : inventory.worktrees.find(worktree => worktree.branch === answer.branch)
@@ -305,39 +312,41 @@ export function useApi4Channel(props: {
     // An answer the dispatcher will drop (deadline, unmount) must not hold the reservation.
     signal.throwIfAborted()
     if (confirming || reserved || !connected || !nativeConnected) return { result: "busy" }
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return { result: "unavailable" }
     reserved = true
     setTimeout(() => { reserved = false }, API4_HOST_DEADLINE_MS)
-    return { result: "confirming", after: () => { void confirmWorktree(session, kind, number, target.repository, target.slug, target.branch) } }
+    return { result: "confirming", after: () => { void confirmWorktree(session, kind, number, target.repository, target.slug, target.branch, operation) } }
   }
 
   // The confirmation names the repository; acceptance applies to that repository only.
   async function confirmWorktree(session: string, kind: ForgeWorkItemKind, number: number, repository: string | undefined, slug: string | undefined,
-    branchLabel: string | undefined) {
+    branchLabel: string | undefined, operation: ReturnType<typeof captureBackendOperation>) {
     // One dialog at a time, never over another host dialog, and none for a while after a refusal,
     // so a panel cannot keep the modal up while the user reaches its checkbox.
     reserved = false
-    if (confirming || alertDialogState() || disposed || !connected || !nativeConnected || Date.now() < quietUntil) return
+    if (!operation.current() || confirming || alertDialogState() || !current() || Date.now() < quietUntil) return
     confirming = true
     const controller = new AbortController()
     confirmation = controller
     // `abort()` (disposal, connection loss) aborts it.
-    const signal = controller.signal
+    const signal = AbortSignal.any([controller.signal, operation.signal])
     const item = tGlobal(`panelExtensions.worktrees.${kind}`, { number })
     let progress: ToastHandle | undefined
     // Before each host mutation: still mounted, and the server still grants this exact package
     // (a disabled or replaced package fails the lookup's consent check).
     // Before each host mutation: the item is still linked to that exact branch of the confirmed repository.
     const consented = async (branch: string | undefined) => {
-      if (disposed || !connected || !nativeConnected) throw new Refusal(tGlobal("panelExtensions.worktrees.error", { item }))
+      if (signal.aborted || !operation.current() || !current()) throw new Refusal(tGlobal("panelExtensions.worktrees.error", { item }))
       const answer = await panelExtensionsApi4.workItemBranchLookup(authority, kind, number, signal)
-      if (disposed || !connected || !nativeConnected) throw new Refusal(tGlobal("panelExtensions.worktrees.error", { item }))
+      if (signal.aborted || !operation.current() || !current()) throw new Refusal(tGlobal("panelExtensions.worktrees.error", { item }))
       if (answer.status !== "ok" || answer.repository !== repository || branch === undefined || answer.branch !== branch) throw new Refusal(tGlobal("panelExtensions.worktrees.changed", { item }))
     }
     try {
       const accepted = await showConfirmDialog(tGlobal(slug ? "panelExtensions.worktrees.confirmMove" : "panelExtensions.worktrees.confirmCreate", { item, worktree: branchLabel ?? slug }), {
         title: props.name, detail: repository, confirmLabel: tGlobal(slug ? "panelExtensions.worktrees.move" : "panelExtensions.worktrees.create") }, signal)
       if (!accepted) quietUntil = Date.now() + REFUSED_QUIET_MS
-      if (!accepted || disposed) return
+      if (!accepted || signal.aborted || !operation.current() || !current()) return
       // Consent is read again, and the confirmed worktree must still be the item's.
       const target = await itemWorktree(kind, number, signal)
       if (target && "conflict" in target) throw new Refusal(tGlobal("panelExtensions.worktrees.conflict", { item, branch: target.conflict }))
@@ -360,6 +369,7 @@ export function useApi4Channel(props: {
       await consented(branchName)
       // The store moves only to a worktree it knows: bring it up to the inventory just validated.
       await reloadWorktrees(props.instanceId, true)
+      if (signal.aborted || !operation.current() || !current()) return
       // Checked again inside the move queue, right before dispatch.
       await setWorktreeSlugForParentSession(props.instanceId, getParentSessionId(props.instanceId, session), destination,
         { branch: branchName, admit: () => consented(branchName), wholeFamily: true }).catch(() => {})
@@ -384,6 +394,7 @@ export function useApi4Channel(props: {
     // the user selects during hydration wins: navigation needs the mount's selection unchanged.
     const selected = props.sessionId
     return { result: mode === "new" ? { opened: true } : { opened: true, created: result.created }, after: () => {
+      if (signal.aborted || !current()) return
       void showImagesConversation(props.instanceId, result, () => !signal.aborted && (props.host.activeSessionId() ?? null) === selected, intent)
       if (intent.current() && props.host.isPhoneLayout()) props.host.closePanel()
     } }
@@ -396,13 +407,16 @@ export function useApi4Channel(props: {
     const api = props.host.promptInputApi()
     if (!session || !api) return { result: "no-session" }
     const now = Date.now()
+    const attachment = serverEvents.signalForInstance(props.instanceId)
+    let lastPrefill = prefillByAttachment.get(attachment)
+    if (!lastPrefill) prefillByAttachment.set(attachment, lastPrefill = new Map())
     if (api.getMode() === "shell" || now - (lastPrefill.get(props.id) ?? -Infinity) < PREFILL_INTERVAL_MS) return { result: "busy" }
     lastPrefill.set(props.id, now)
     if (prefillMarkers(text, refs.length) === "invalid") return { result: "invalid" }
     const paths = refs.length ? (await panelExtensionsApi4.prefillReferences(authority, session, refs, signal)).paths : []
     if (paths.some(path => path === null)) return { result: "invalid" }
     // The conversation captured at mount must still be displayed, with the same composer.
-    if (!current() || props.host.promptInputApi() !== api) throw new Error("Conversation changed")
+    if (signal.aborted || !current() || props.host.promptInputApi() !== api) throw new Error("Conversation changed")
     if (api.getMode() === "shell") return { result: "busy" }
     const composed = composePrefill(api.getPromptText(), text, paths as string[])
     if (composed.status !== "added") return { result: composed.status }
@@ -410,7 +424,7 @@ export function useApi4Channel(props: {
     api.setPromptText(composed.draft, { focus: !phone })
     if (phone) return { result: "added", after: () => { props.host.closePanel(); requestComposerFocus(props.instanceId, session) } }
     // Checked one frame later and taken once more if the frame kept it.
-    requestAnimationFrame(() => { if (!disposed && document.activeElement?.closest?.(".prompt-input") == null) api.focus() })
+    requestAnimationFrame(() => { if (!signal.aborted && current() && document.activeElement?.closest?.(".prompt-input") == null) api.focus() })
     return { result: "added" }
   }
 
@@ -420,25 +434,26 @@ export function useApi4Channel(props: {
     if (!parsed.success || disposed) return
     const { id, capability, method, input } = parsed.data
     const controller = new AbortController()
+    const operation = captureBackendOperation(props.instanceId)
     let settled = false
     const answer = (message: Record<string, unknown>) => {
       if (settled) return false
       settled = true
       clearTimeout(deadline)
       pending.delete(controller)
-      if (!disposed && (props.host.activeSessionId() ?? null) === props.sessionId) props.send({ type: "api4:result", id, ...message })
+      if (operation.current() && current()) props.send({ type: "api4:result", id, ...message })
       return true
     }
     const deadline = setTimeout(() => { controller.abort(new Error("Deadline")); answer({ error: true }) }, API4_HOST_DEADLINE_MS)
     try {
       const run = methods.get(capability)?.get(method)
-      if (!granted(grants[capability]) || typeof run !== "function" || !connected || !nativeConnected || pending.size >= MAX_PENDING) throw new Error("Unavailable")
+      if (!operation.current() || !granted(grants[capability]) || typeof run !== "function" || !connected || !nativeConnected || pending.size >= MAX_PENDING) throw new Error("Unavailable")
       pending.add(controller)
-      const { result, after } = await run(input, controller.signal)
-      if (!current() || controller.signal.aborted) throw new Error("Stale")
+      const { result, after } = await run(input, AbortSignal.any([operation.signal, controller.signal]))
+      if (!current() || !operation.current() || controller.signal.aborted) throw new Error("Stale")
       // Host actions that remove the frame (navigation, closing the phone panel) wait one
       // task, so the frame handles its answer first. Only host functions, never a string.
-      if (answer({ result }) && typeof after === "function") setTimeout(() => after(), 0)
+      if (answer({ result }) && typeof after === "function") setTimeout(() => { if (operation.current() && current()) after() }, 0)
     } catch {
       controller.abort()
       answer({ error: true })

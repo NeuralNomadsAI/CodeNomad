@@ -117,3 +117,49 @@ test("a populated but unmatched inventory never captures session links", async (
   }
   assert.deepEqual(errors, [])
 })
+
+test("session links retain backend availability, preview scope and revocation fences", { timeout: 60_000 }, async () => {
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean(document.querySelector('#remote-A a[href="http://localhost:3000/x"]')?.getAttribute("title")))
+    assert.equal(await page.getAttribute('#remote-B a[href="http://localhost:3000/x"]', "title"), null)
+    await page.click('#remote-B a[href="http://localhost:3000/x"]')
+    assert.equal(await page.evaluate(() => (window as any).fixture.clicks().at(-1).prevented), false)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.remoteCalls()), [])
+
+    await page.click('#main-root a[href="http://localhost:3000/x"]')
+    await page.click('#remote-A a[href="http://localhost:3000/x"]')
+    await page.waitForFunction(() => (window as any).fixture.previewMode("A") === "preview")
+    assert.equal(await page.evaluate(() => (window as any).fixture.previewMode("local")), "preview")
+    await page.click('#remote-A a[href="./README.md"]')
+    assert.equal(await page.evaluate(() => (window as any).fixture.remoteTarget("A")), "README.md")
+    assert.equal(await page.evaluate(() => (window as any).fixture.target()), null)
+    assert.equal(await page.evaluate(() => (window as any).fixture.previewMode("A")), "chat")
+    assert.equal(await page.evaluate(() => (window as any).fixture.previewMode("local")), "preview")
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.remoteCalls()), ["A"])
+
+    await page.evaluate(() => {
+      const f = (window as any).fixture
+      f.selectRemoteSession("A")
+      f.holdPreview()
+    })
+    await page.click('#remote-A a[href="http://localhost:3000/next"]')
+    await page.waitForFunction(() => (window as any).fixture.pending())
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.remoteCalls()), ["A", "A"])
+    await page.evaluate(() => { (window as any).fixture.detach("A"); (window as any).fixture.rejectPending() })
+    await page.waitForFunction(() => !document.querySelector('#remote-A a[href="./README.md"]')?.hasAttribute("title"))
+    await page.click('#remote-A a[href="./README.md"]')
+    assert.equal(await page.evaluate(() => (window as any).fixture.clicks().at(-1).prevented), false)
+    assert.equal(await page.evaluate(() => (window as any).fixture.isRemoteSessionSelected("A")), true,
+      "the stale failure is suppressed even while A's session remains selected")
+    assert.equal(await page.evaluate(() => (window as any).fixture.alert()), null)
+    assert.equal(await page.evaluate(() => (window as any).fixture.previewMode("local")), "preview")
+  } finally {
+    await page.close()
+  }
+  assert.deepEqual(errors, [])
+})

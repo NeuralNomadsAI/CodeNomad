@@ -190,11 +190,11 @@ describe("V2 session lifecycle signals", () => {
       run("root", "msg_previous", "succeeded")
       assert.equal(request.mock.callCount(), 1)
       const generation = nativeSessionLifecycleGeneration(instanceId, "root")
-      serverEvents["queueBatch"]([{ type: "instance.event", instanceId, event: {
+      serverEvents["admitEvent"]({ type: "instance.event", instanceId, event: {
         id: "next", type: "session.text.delta", created: ++sequence,
         location: { directory: "/work" },
         data: { sessionID: "root", assistantMessageID: "msg_next", ordinal: 0, delta: "live" },
-      } }])
+      } })
       assert.equal(nativeSessionLifecycleGeneration(instanceId, "root"), generation, "the delta is still queued")
       reply({})
       await response

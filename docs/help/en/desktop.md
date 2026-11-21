@@ -2,7 +2,7 @@
 
 ## Windows, tabs and the shared service {#windows-tabs}
 
-1. Use **New instance** to open another project/home tab in the current window.
+1. Use **New instance** to open an empty tab in the current window, then choose a project. The CodeNomad logo opens Home.
 2. Use native **Window → New Window** (`Ctrl+Shift+N` or `Cmd+Shift+N`) for a separate application window.
 3. In **Settings → Advanced**, enable **Focus existing window on second launch** if another launch should focus the most recently used window rather than open a new one.
 
@@ -16,12 +16,12 @@ Pass these arguments after the **desktop executable** (Tauri or Electron), in a 
 
 | Argument | Effect |
 | --- | --- |
-| `--connect-server <server>` | Open a remote CodeNomad server using its HTTP(S) URL, saved name or saved ID. See [connection and sign-in behavior](remote-access.md#saved-servers). |
+| `--connect-server <name-or-url>` | Open a separate remote window regardless of `multiBackend`, using an HTTP(S) URL, saved name or saved ID. See [remote connections](remote-access.md#connect-server). |
 | `--folder <path>` | Open an existing project directory. Repeat the argument to open several directories; relative paths use the launch working directory. |
 | `<path> ...` | Open project directories without spelling out `--folder`. **Windows Tauri, when already running:** use `--folder` for every directory. Mixing positional paths with `--folder` also drops the entire folder request. |
 | `--new-window` | Request a new application window, including when another launch would normally focus the existing window. |
 
-`--connect-server=<server>` and `--folder=<path>` also work. Quote paths or server names containing spaces. To open only the remote window, use `--connect-server` alone, without folders or `--new-window`; local window restoration is then deferred unless connecting fails.
+`--connect-server=<name-or-url>` and `--folder=<path>` also work. Quote paths or server names containing spaces. To open only the remote window, use `--connect-server` alone, without folders or `--new-window`. An already running local window handles the request; at startup, local window restoration is deferred unless connecting fails.
 
 In **PowerShell**:
 
@@ -47,6 +47,8 @@ Each project tab restores its own right-panel selection, Files mode and Mission 
 The Preferences window does not own a separate restore state: these controls target the window that opened it. When that window has closed, or is unknown because Preferences reopened at launch, they follow the most recently used window instead; a change prepared for another window is never applied, and the controls first show the new window's value. To configure a specific window, open Preferences from it. Project-scoped settings likewise use the opener's Location; they stay unavailable without one. When Preferences reopens at launch, they reconnect once that project has finished opening; while the folder is still starting, or open in several tabs, they stay unavailable until you open Preferences from the intended window.
 
 Browser and remote clients use embedded settings.
+
+[Restore remote tabs](projects.md#restore-remote-tabs).
 
 ## Desktop data profiles {#data-profiles}
 

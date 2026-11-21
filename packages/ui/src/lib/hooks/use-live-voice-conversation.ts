@@ -4,12 +4,13 @@ import { liveVoiceAgent, liveVoiceContext, liveVoiceTargetSession } from "../../
 import type { FollowUpBehavior } from "../../stores/preferences"
 import { speechCapabilities } from "../../stores/speech"
 import { voiceConversationEngine, voiceConversationEngineLoaded, voiceConversationReadFailed } from "../../stores/voice-conversation-engine"
-import { CODENOMAD_API_BASE } from "../api-base"
+import { localTransport } from "../backend-transport"
+import { LOCAL_BACKEND_ID, parseInstanceKey } from "../backend-identity"
 import { liveVoiceAudioUnavailable, startLiveVoiceAudio } from "../live-voice-audio"
 import { hasLiveVoiceConsent, rememberLiveVoiceConsent } from "../live-voice-consent"
 import { openLiveVoiceSession, type LiveVoiceActivity, type LiveVoiceStopReason, type LiveVoiceTranscriptRow } from "../live-voice-session"
 
-export type LiveVoiceUnavailable = "loading" | "capabilitiesError" | "noSession" | "missingKey" | "secureContext" | "remoteWebKit" | "device"
+export type LiveVoiceUnavailable = "loading" | "capabilitiesError" | "noSession" | "missingKey" | "secureContext" | "remoteWebKit" | "device" | "composerUnavailable"
 export type LiveVoiceState =
   | { phase: "closed" }
   | { phase: "consent" | "starting" | "live"; engine: LiveVoiceEngine }
@@ -31,8 +32,11 @@ export function useLiveVoiceConversation(options: {
     const engine = voiceConversationEngine()
     return engine === "classic" ? undefined : engine
   }
-  const target = () => options.active() ? liveVoiceTargetSession(options.instanceId(), options.sessionId()) : undefined
-  const server = () => new URL(CODENOMAD_API_BASE ?? window.location.origin).origin
+  const belongsToRendererServer = () => parseInstanceKey(options.instanceId()).backendId === LOCAL_BACKEND_ID
+  // The socket belongs to this renderer's server; never send a relayed session to it.
+  const target = () => options.active() && belongsToRendererServer()
+    ? liveVoiceTargetSession(options.instanceId(), options.sessionId()) : undefined
+  const server = () => new URL(localTransport.baseUrl ?? window.location.origin).origin
   const needsConsent = () => {
     const engine = selectedEngine()
     return !!engine && !hasLiveVoiceConsent(server(), engine)
@@ -46,6 +50,7 @@ export function useLiveVoiceConversation(options: {
   }
 
   function unavailable(): LiveVoiceUnavailable | undefined {
+    if (!belongsToRendererServer()) return "composerUnavailable"
     if (voiceConversationReadFailed()) return "capabilitiesError"
     if (!voiceConversationEngineLoaded()) return "loading"
     const engine = selectedEngine()
