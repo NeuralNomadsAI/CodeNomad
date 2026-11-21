@@ -74,6 +74,7 @@ interface ProbedBridge {
   nativeIdentity: string
   runId: string
   windows?: DeveloperWindowCandidate[]
+  windowId?: string
 }
 
 interface DeveloperWindowCandidate {
@@ -583,14 +584,16 @@ function formatBridgeResult(resultValue: unknown, screenshot = { text: "Captured
   return { content: JSON.stringify(result ?? null, null, 2) }
 }
 
-async function probeBridge(registration: DiscoveredBridgeRegistration, sessionID: string, inventory?: boolean): Promise<ProbedBridge | undefined> {
+async function probeBridge(registration: DiscoveredBridgeRegistration, sessionID: string, inventory?: boolean, selector?: string): Promise<ProbedBridge | undefined> {
   try {
-    const response = await callBridge(registration, { mode: "developer-probe", sessionID, ...(inventory ? { purpose: "targets" } : {}) })
-    const result = response.body.result as { available?: unknown; nativeIdentity?: unknown; runId?: unknown; windows?: unknown } | undefined
+    const response = await callBridge(registration, { mode: "developer-probe", sessionID,
+      ...(selector ? { purpose: "target", target: selector } : inventory ? { purpose: "targets" } : {}) })
+    const result = response.body.result as { available?: unknown; nativeIdentity?: unknown; runId?: unknown; windows?: unknown; windowId?: unknown } | undefined
     const windows = Array.isArray(result?.windows) ? result.windows.slice(0, 16).filter((item): item is DeveloperWindowCandidate =>
       item && typeof item.windowId === "string" && ["visible", "open", "elsewhere"].includes(item.session)) : undefined
     return response.status === 200 && result?.available === true && typeof result.nativeIdentity === "string" && typeof result.runId === "string"
-      ? { registration, nativeIdentity: result.nativeIdentity, runId: result.runId, windows }
+      ? { registration, nativeIdentity: result.nativeIdentity, runId: result.runId, windows,
+          windowId: typeof result.windowId === "string" ? result.windowId : undefined }
       : undefined
   } catch {
     return undefined
@@ -600,13 +603,13 @@ async function probeBridge(registration: DiscoveredBridgeRegistration, sessionID
 async function probeBridges(
   active: DiscoveredBridgeRegistration[],
   sessionID: string,
-  options: { limit?: number; inventory?: boolean; accept?: (bridge: ProbedBridge) => boolean } = {},
+  options: { limit?: number; inventory?: boolean; selector?: string; accept?: (bridge: ProbedBridge) => boolean } = {},
 ): Promise<ProbedBridge[]> {
   const found: ProbedBridge[] = []
   const limit = options.limit ?? 2
   for (let index = 0; index < active.length && found.length < limit; index += PROBE_CONCURRENCY) {
     const batch = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY)
-      .map((registration) => probeBridge(registration, sessionID, options.inventory)))
+      .map((registration) => probeBridge(registration, sessionID, options.inventory, options.selector)))
     for (const value of batch) {
       if (value && (options.accept?.(value) ?? true)) found.push(value)
     }
@@ -782,28 +785,31 @@ async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
   options: { inventory?: boolean; selector?: string } = {}) {
   let target = inspectedTargets.get(sessionID)
   let select = options.selector
-  if (command.action === "inspect" && (options.inventory || select || !target && !command.ref)) {
+  if (command.action === "inspect" && select) {
+    const exact = select
+    const matches = await probeBridges(await registrations(), sessionID, { selector: exact,
+      accept: bridge => !!bridge.windowId && windowSelector(bridge, bridge.windowId) === exact })
+    if (!matches.length) throw targetError("target-gone", "The selected window is unavailable; list the targets again")
+    if (matches.length > 1) throw targetError("ambiguous-target", "Several backends returned the selected window")
+    target = matches[0]
+  } else if (command.action === "inspect" && (options.inventory || !target && !command.ref)) {
     const bridges = await probeBridges(await registrations(), sessionID, { inventory: true, limit: MAX_REGISTRATIONS })
     const windows = bridges.flatMap(bridge => (bridge.windows ?? []).map(window => ({
       bridge, window, target: windowSelector(bridge, window.windowId),
     })))
     if (options.inventory) return formatBridgeResult({ targets: windows.map(({ target, window }) => ({ target, ...window })) })
-    if (select) {
-      target = windows.find(window => window.target === select)?.bridge
-      if (!target) throw targetError("target-gone", "The selected window is unavailable; list the targets again")
-    } else {
-      const candidates = bridges.flatMap<{ bridge: ProbedBridge; rank: number; selector?: string }>(bridge => {
-        const best = windows.filter(window => window.bridge === bridge).sort((left, right) => windowRank(left.window) - windowRank(right.window))[0]
-        return best ? [{ bridge, rank: windowRank(best.window), selector: best.target }]
-          : bridge.windows === undefined ? [{ bridge, rank: 2, selector: undefined }] : []
-      }).sort((left, right) => left.rank - right.rank)
-      if (!candidates[0]) throw targetError("no-window", "No ready local CodeNomad window for this session")
-      if (candidates[1]?.rank === candidates[0].rank) {
-        throw targetError("ambiguous-target", "Several CodeNomad profiles match; choose a window in inspect({targets:true})")
-      }
-      target = candidates[0].bridge
-      select = candidates[0].selector
+    const candidates = bridges.flatMap<{ bridge: ProbedBridge; rank: number; selector?: string }>(bridge => {
+      const best = (bridge.windows ?? []).reduce<DeveloperWindowCandidate | undefined>((chosen, window) =>
+        !chosen || windowRank(window) < windowRank(chosen) ? window : chosen, undefined)
+      return best ? [{ bridge, rank: windowRank(best), selector: windowSelector(bridge, best.windowId) }]
+        : bridge.windows === undefined ? [{ bridge, rank: 2 }] : []
+    }).sort((left, right) => left.rank - right.rank)
+    if (!candidates[0]) throw targetError("no-window", "No ready local CodeNomad window for this session")
+    if (candidates[1]?.rank === candidates[0].rank) {
+      throw targetError("ambiguous-target", "Several CodeNomad profiles match; choose a window in inspect({targets:true})")
     }
+    target = candidates[0].bridge
+    select = candidates[0].selector
   }
   if (!target) {
     throw targetError("inspect-required", "Run codenomad.inspect before acting on or restarting CodeNomad")
@@ -820,7 +826,7 @@ async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
   if (command.action === "restart") {
     return waitForRestart(inspectedTargets, sessionID, target.nativeIdentity, target.runId, existingTokens!)
   }
-  if (command.action === "inspect") inspectedTargets.set(sessionID, target)
+  if (command.action === "inspect" && !command.ref) inspectedTargets.set(sessionID, target)
   return formatBridgeResult(response.body.result)
 }
 

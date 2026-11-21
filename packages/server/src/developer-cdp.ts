@@ -1,4 +1,5 @@
 import { WebSocket } from "undici"
+import { randomBytes } from "node:crypto"
 import { bindRefs, performAction, snapshotPage, type PageActionResult, type PageSession } from "./automation/page/actions"
 import { cdpSession } from "./automation/page/cdp-driver"
 import type { RefAction } from "./automation/page/parse"
@@ -134,7 +135,7 @@ export class DeveloperCdp {
   private readonly windows = new Map<string, RunState>()
   private readonly operations = new Map<string, Promise<void>>()
   /** Shared by runs so a ref name is never reused for another element. */
-  private readonly refs = new RefTable()
+  private readonly refs = new RefTable("inspect again", `e${BigInt(`0x${randomBytes(8).toString("hex")}`).toString().padStart(20, "0")}`)
   private stamps = 0
 
   constructor(dependencies: Partial<DeveloperCdpDependencies> = {}) {
@@ -159,7 +160,7 @@ export class DeveloperCdp {
             const live = new Set([...this.windows.values()].filter(window => window.target && window.socket)
               .map(window => this.generation(window)))
             return this.refs.issuer(generation, candidate => live.has(candidate))
-          }, { rootBackendNodeId: root, query: options.query })
+          }, { rootBackendNodeId: root, query: options.query, refLength: this.refs.refLength })
       } catch (error) {
         if (error instanceof SnapshotScopeError) throw new Error(`${options.ref} is no longer in the page; inspect again`)
         throw error
@@ -223,6 +224,12 @@ export class DeveloperCdp {
 
   async context(selection: DeveloperCdpSelection): Promise<DeveloperCdpContext> {
     return this.exclusive(selection.runId, async () => (await this.ensure(selection)).context!)
+  }
+
+  async probeContext(selection: DeveloperCdpSelection): Promise<DeveloperCdpContext> {
+    const state = this.newState(discoveryUrl(selection.endpoint), selection.windowId)
+    try { return (await this.ensureTarget(state)).context! }
+    finally { this.disconnect(state, new Error("CDP target probe completed")) }
   }
 
   private publicContext({ localSessions: _localSessions, ...context }: DeveloperCdpContext): DeveloperCdpContext {
@@ -413,7 +420,7 @@ export class DeveloperCdp {
       else pending.resolve(message.result ?? {})
       return
     }
-    if (message.method === "Page.frameNavigated") {
+    if (message.method === "Page.frameNavigated" && !(message.params?.frame as { parentId?: string } | undefined)?.parentId) {
       this.invalidateRefs(state)
       return
     }

@@ -263,7 +263,9 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     try {
       if (!probe) command = parseDeveloperAction(body.command)
       if (body.target !== undefined) {
-        if (command?.action !== "inspect" || command.ref) throw new Error("Select another window in a fresh inspection")
+        if (!(probe && body.purpose === "target") && (command?.action !== "inspect" || command.ref)) {
+          throw new Error("Select another window in a fresh inspection")
+        }
         explicit = parseDeveloperTarget(body.target)
       }
     } catch (error) {
@@ -294,7 +296,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       if (inventory) {
         const windows = await Promise.all((native.windows ?? []).slice(0, 16).map(async window => {
           try {
-            const context = await deps.developerCdp.context({ ...selection, windowId: window.windowId })
+            const context = await deps.developerCdp.probeContext({ ...selection, windowId: window.windowId })
             const visible = context.sessionId === body.sessionID && !context.instanceId?.includes("~")
             return { windowId: context.windowId, focused: window.focused === true,
               session: visible ? "visible" : context.localSessions?.includes(body.sessionID as string) ? "open" : "elsewhere",
@@ -304,7 +306,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         return reply.send({ result: { ...selected, windows: windows.filter(Boolean) } })
       }
       try { await deps.developerCdp.context(selection) } catch { return unavailable() }
-      return reply.send({ result: selected })
+      return reply.send({ result: { ...selected, windowId: selection.windowId } })
     }
 
     if (!command) return reply.code(400).send({ error: "Missing developer command" })
@@ -320,7 +322,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       if (command.action === "inspect") {
         const result = await deps.developerCdp.inspect(identity, { ref: command.ref, query: command.query })
         result.diagnostics.push(...(native.logs ?? []).slice(-32))
-        inspectedTargets.remember(body.sessionID, { ...identity, ...(result.document ? { document: result.document } : {}) })
+        if (!command.ref) inspectedTargets.remember(body.sessionID, { ...identity, ...(result.document ? { document: result.document } : {}) })
         const { document: _document, ...inspection } = result
         return reply.send({ result: inspection })
       }

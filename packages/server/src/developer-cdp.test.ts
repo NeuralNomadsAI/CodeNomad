@@ -118,6 +118,17 @@ const identity = {
 }
 
 describe("DeveloperCdp", () => {
+  it("never resolves a ref issued by a different backend", async () => {
+    const chrome = new FakeChrome()
+    const first = chrome.client(), second = chrome.client()
+    try {
+      const a = refOf(await first.inspect(identity))
+      const b = refOf(await second.inspect(identity))
+      assert.notEqual(a, b)
+      await assert.rejects(second.act(identity, { action: "click", ref: a }), /stale ref/)
+    } finally { first.close(); second.close() }
+  })
+
   it("preserves live refs across inspections of distinct windows in the same run", async () => {
     const first = new FakeChrome(), second = new FakeChrome()
     second.target = page("two")
@@ -131,6 +142,8 @@ describe("DeveloperCdp", () => {
       await client.act({ ...identity, document: a.document }, { action: "click", ref: refOf(a) })
       await assert.rejects(client.act(other, { action: "click", ref: refOf(a) }), /stale ref/)
       await client.act({ ...other, document: b.document }, { action: "click", ref: refOf(b) })
+      first.sockets.find(socket => !socket.closed)!.emit("Page.frameNavigated", { frame: { parentId: "root" } })
+      assert.equal((await client.screenshot({ ...identity, document: a.document })).bytes, 3)
       first.sockets.find(socket => !socket.closed)!.emit("Page.frameNavigated")
       await assert.rejects(client.screenshot({ ...identity, document: a.document }), /Page changed/)
       assert.equal((await client.screenshot({ ...other, document: b.document })).bytes, 3)

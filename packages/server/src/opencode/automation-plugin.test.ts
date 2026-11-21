@@ -433,6 +433,10 @@ test("lists exact window selectors, prefers the visible session and stays pinned
     for (const profile of ["a", "b"]) {
       const bridge = await listen(async (body, response) => {
         calls.push({ ...body, profile })
+        if (body.mode === "developer-probe" && body.purpose === "target") {
+          const windowId = body.target === `electron:${profile}/run/window-2` ? "window-2" : undefined
+          return { result: { available: !!windowId, nativeIdentity: `electron:${profile}`, runId: "run", windowId } }
+        }
         if (body.mode === "developer-probe") return { result: { available: true, nativeIdentity: `electron:${profile}`, runId: "run",
           windows: [{ windowId: "window-1", focused: true, session: profile === "b" && !twoVisible ? "elsewhere" : "visible" },
             { windowId: "window-2", focused: false, session: "open" }] } }

@@ -33,6 +33,8 @@ test("targets the inspected window independently of the visible conversation", a
   let runId = "run-1"
   let focusedWindow = "window-1"
   let firstWindowOpen = true
+  let holdStatus: (() => Promise<void>) | undefined
+  let screenshotWindow: string | undefined
   let visibleSession = "session-1"
   let inspectedIdentity: unknown
   const previewError = { level: "error", text: "browser preview: install navigation starting handler: Paramètre incorrect. (0x80070057)" }
@@ -43,6 +45,11 @@ test("targets the inspected window independently of the visible conversation", a
     nativeParent: {
       request: async (method: string, params: { windowId?: string; runId?: string }) => {
         nativeCalls.push({ method, params })
+        if (holdStatus && params.windowId === "window-1") {
+          const wait = holdStatus
+          holdStatus = undefined
+          await wait()
+        }
         if (method === "developer.restart") {
           runId = "run-2"
           return { state: "starting", runId }
@@ -79,7 +86,7 @@ test("targets the inspected window independently of the visible conversation", a
       },
       close: () => undefined,
       screenshot: async (identity: { windowId: string }) => {
-        assert.equal(identity.windowId, "window-1")
+        screenshotWindow = identity.windowId
         return { data: "fixture", mediaType: "image/png" }
       },
       act: async (identity: { sessionId?: string; instanceId?: string }, action: { action: string; values?: string[] }) => {
@@ -118,6 +125,7 @@ test("targets the inspected window independently of the visible conversation", a
   focusedWindow = "window-2"
   assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "click", ref: "ax1" } })).statusCode, 200)
   assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "screenshot" } })).statusCode, 200)
+  assert.equal(screenshotWindow, "window-1")
   assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "inspect", ref: "e1", query: "Save" } })).statusCode, 200)
   assert.deepEqual(inspectOptions, [{ ref: undefined, query: undefined }, { ref: "e1", query: "Save" }])
   const selected = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "select", ref: "e2", values: ["Exploration"] } })
@@ -145,6 +153,22 @@ test("targets the inspected window independently of the visible conversation", a
   assert.equal(vanished.statusCode, 404)
   assert.equal(vanished.json().code, "target-gone")
   assert.equal(actions.length, 3, "a vanished window cannot send a key to the newly focused window")
+
+  firstWindowOpen = true
+  const select = (window: string) => request({ mode: "developer-execute", sessionID: "session-1",
+    target: `electron:test/${runId}/${window}`, command: { action: "inspect" } })
+  assert.equal((await select("window-1")).statusCode, 200)
+  let entered!: () => void, release!: () => void
+  const statusEntered = new Promise<void>(resolve => { entered = resolve })
+  const releaseStatus = new Promise<void>(resolve => { release = resolve })
+  holdStatus = () => { entered(); return releaseStatus }
+  const expansion = request({ mode: "developer-execute", sessionID: "session-1", command: { action: "inspect", ref: "e1" } })
+  await statusEntered
+  try { assert.equal((await select("window-2")).statusCode, 200) }
+  finally { release() }
+  assert.equal((await expansion).statusCode, 200)
+  assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "screenshot" } })).statusCode, 200)
+  assert.equal(screenshotWindow, "window-2", "a late expansion must not switch windows")
 
   state = "stopped"
   assert.equal((await request({ mode: "developer-probe", sessionID: "session-2" })).statusCode, 404)
