@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { EventEmitter, once } from "node:events"
 import { test } from "node:test"
-import { resolveSystemSpeechLocale } from "../../../desktop-speech/contract"
+import { maxDeviceSpeechTextBytes, resolveSystemSpeechLocale } from "../../../desktop-speech/contract"
 import { runSystemDictation, SystemSpeechFailure } from "./device-speech-system"
 import type { SpeechOperationControl } from "./device-speech"
 
@@ -13,7 +13,7 @@ function operation(source: string) {
     signal: abort.signal, finish: finish.signal,
     waitForAudio: async () => undefined,
     revokePermission: () => abort.abort(),
-    progress: ({ state }) => events.emit(state),
+    progress: value => events.emit(value.state, value),
   }
   const result = runSystemDictation(process.execPath, ["-e", source], control)
   return { result, events, abort, finish }
@@ -52,6 +52,24 @@ test("finish sends one control message and accepts text after native exit", { ti
   finish.abort()
   await processing
   assert.equal(await result, "Bonjour")
+})
+
+test("the system bridge reads multiple bounded previews before the authoritative final text", async () => {
+  const { result, events } = operation(`
+    const frames = ["B", "Bo", "Bon", "Bonj", "Bonjour", "é".repeat(${maxDeviceSpeechTextBytes / 2})]
+      .map(text => ({ progress: { state: "recording", text } }))
+    process.stdout.write([...frames, { value: "Bonjour !" }].map(frame => JSON.stringify(frame)).join("\\n") + "\\n")
+  `)
+  const texts: string[] = []
+  events.on("recording", value => texts.push(value.text))
+  assert.equal(await result, "Bonjour !")
+  assert.deepEqual(texts, ["B", "Bo", "Bon", "Bonj", "Bonjour", "é".repeat(maxDeviceSpeechTextBytes / 2)])
+  for (const text of ["null", `"é".repeat(${maxDeviceSpeechTextBytes / 2 + 1})`]) {
+    await assert.rejects(operation(`
+      console.log(JSON.stringify({ progress: { state: "recording", text: ${text} } }))
+      console.log('{"value":"must not pass"}')
+    `).result, SystemSpeechFailure)
+  }
 })
 
 test("cancellation waits for a stalled system helper to stop and discards its output", { timeout: 5000 }, async () => {

@@ -76,7 +76,7 @@ impl Driver for Fake {
         _locale: String,
         control: Control,
     ) -> Result<String, SpeechError> {
-        control.progress(Operation::Recording);
+        control.progress(Operation::Recording { text: None });
         self.started.send(control).unwrap();
         if let Resolution::Text(value) = self
             .release
@@ -354,6 +354,54 @@ fn cancellation_retains_previous_choice_until_verified_retry() {
     assert!(
         started.try_recv().is_err(),
         "zero missing components never invoke preparation"
+    );
+}
+
+#[test]
+fn recording_text_is_bounded_and_exposed_only_while_recording() {
+    let (_directory, device, started, release) = fixture();
+    device.store.select(Engine::System, None).unwrap();
+    let id = operation(
+        &device,
+        "owner",
+        Request::Start {
+            engine: Some(Engine::System),
+            locale: "en-US".into(),
+            microphone_lease_id: None,
+        },
+    );
+    let control = started.recv_timeout(Duration::from_secs(3)).unwrap();
+    let progress = |text: Value| json!({ "state": "recording", "text": text });
+    let partial = progress(json!("café"));
+    let recording = Ok(json!({ "state": "recording" }));
+    assert_eq!(device.request("owner", status(&id)), recording);
+    assert!(serde_json::from_value::<Operation>(progress(json!("é".repeat(MAX_TEXT / 2)))).is_ok());
+    for invalid in [json!(null), json!("é".repeat(MAX_TEXT / 2 + 1))] {
+        assert!(serde_json::from_value::<Operation>(progress(invalid)).is_err());
+    }
+    control.progress(serde_json::from_value(partial.clone()).unwrap());
+    assert_eq!(device.request("owner", status(&id)), Ok(partial.clone()));
+    assert_eq!(
+        device.request("other", status(&id)),
+        Err(SpeechError::NotOwned)
+    );
+    device
+        .request(
+            "owner",
+            Request::Finish {
+                id: id.clone(),
+                wav: None,
+            },
+        )
+        .unwrap();
+    control.progress(serde_json::from_value(partial).unwrap());
+    assert_eq!(device.request("owner", status(&id)), recording);
+    release.send(Resolution::Text("café final")).unwrap();
+    assert_eq!(
+        settle(&control),
+        Operation::Transcribed {
+            text: "café final".into()
+        }
     );
 }
 

@@ -43,6 +43,8 @@ If the API uses WAV fallback on Linux Tauri, **Dictate** and **Test API input** 
 
 Encoded API recordings also stop at a size limit and offer the same **Transcribe** and **Cancel** choices.
 
+With system recognition, a preview appears as you speak. You can keep editing the draft; only the final transcript can be inserted.
+
 ### Choose a desktop engine {#desktop-dictation}
 
 In local desktop **Preferences → Voice → Dictation**, set **Dictation engine on this device**. This choice applies across projects on the device. **API provider** uses the connected server's API settings and requires a secure context for microphone access.

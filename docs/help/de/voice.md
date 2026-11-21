@@ -43,6 +43,8 @@ Wenn die API unter Linux mit Tauri auf WAV ausweicht, endet die Aufnahme beim Di
 
 Komprimierte API-Aufnahmen stoppen am Größenlimit und bieten ebenfalls **Transkribieren** oder **Abbrechen** an.
 
+Bei der System-Spracherkennung erscheint beim Sprechen eine Vorschau. Sie können den Entwurf weiter bearbeiten; nur das fertige Transkript lässt sich einfügen.
+
 ### Desktop-Engine auswählen {#desktop-dictation}
 
 Wählen Sie in der lokalen Desktop-App unter **Einstellungen → Sprache → Diktat** die **Diktier-Engine auf diesem Gerät**. Die Wahl gilt für alle Projekte auf diesem Gerät. **API-Anbieter** nutzt die Einstellungen des verbundenen Servers und benötigt einen sicheren Kontext für das Mikrofon.

@@ -62,18 +62,23 @@ internal static class SystemSpeech {
 
     private static int Recognize(SpeechRecognitionEngine engine, string fixture) {
         var text = new StringBuilder();
+        var progress = new object();
         var complete = new ManualResetEvent(false);
         var input = new ManualResetEvent(false);
         RecognizeCompletedEventArgs outcome = null;
         bool aborted = false, finish = false, overflow = false;
+        bool transcribing = false;
         int bytes = 0;
         engine.SpeechRecognized += (_, args) => {
-            var word = args.Result.Text;
-            bytes += Encoding.UTF8.GetByteCount(word) + 1;
-            if (bytes > MaxText) overflow = true;
-            if (overflow) return;
-            if (text.Length != 0) text.Append(' ');
-            text.Append(word);
+            lock (progress) {
+                var word = args.Result.Text;
+                bytes += Encoding.UTF8.GetByteCount(word) + (text.Length == 0 ? 0 : 1);
+                if (bytes > MaxText) overflow = true;
+                if (overflow) return;
+                if (text.Length != 0) text.Append(' ');
+                text.Append(word);
+                if (!transcribing) Emit(new { progress = new { state = "recording", text = text.ToString() } });
+            }
         };
         engine.RecognizeCompleted += (_, args) => { outcome = args; complete.Set(); };
         if (fixture == null) {
@@ -96,8 +101,8 @@ internal static class SystemSpeech {
         } else {
             engine.SetInputToWaveFile(fixture);
         }
-        engine.RecognizeAsync(RecognizeMode.Multiple);
         if (fixture == null) Emit(new { progress = new { state = "recording" } });
+        engine.RecognizeAsync(RecognizeMode.Multiple);
         int signal = WaitHandle.WaitAny(new WaitHandle[] { complete, input }, TimeSpan.FromSeconds(120));
         if (signal != 0) {
             if (aborted || !finish) {
@@ -106,8 +111,11 @@ internal static class SystemSpeech {
                 return Error("failed");
             }
             input.Reset();
+            lock (progress) {
+                transcribing = true;
+                Emit(new { progress = new { state = "transcribing" } });
+            }
             engine.RecognizeAsyncStop();
-            Emit(new { progress = new { state = "transcribing" } });
             if (aborted || WaitHandle.WaitAny(new WaitHandle[] { complete, input }, TimeSpan.FromSeconds(10)) != 0) {
                 engine.RecognizeAsyncCancel();
                 complete.WaitOne(TimeSpan.FromSeconds(2));
@@ -115,8 +123,11 @@ internal static class SystemSpeech {
             }
         }
         engine.SetInputToNull();
-        if (aborted || overflow || outcome == null || outcome.Error != null || (outcome.Cancelled && !finish)) return Error("failed");
-        Emit(new { value = text.ToString() });
+        lock (progress) {
+            transcribing = true;
+            if (aborted || overflow || outcome == null || outcome.Error != null || (outcome.Cancelled && !finish)) return Error("failed");
+            Emit(new { value = text.ToString() });
+        }
         return 0;
     }
 

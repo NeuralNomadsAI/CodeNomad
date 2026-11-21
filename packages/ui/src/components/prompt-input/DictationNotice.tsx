@@ -2,6 +2,7 @@ import { Show } from "solid-js"
 import { useI18n } from "../../lib/i18n"
 
 export default function DictationNotice(props: {
+  recordingPreview: string
   recordingLimitReached: boolean
   focusDraft: () => void
   onTranscribe: (restoreFocus: boolean) => void
@@ -17,6 +18,10 @@ export default function DictationNotice(props: {
     action()
   }
   return <>
+    <div classList={{ "composer-notice": !!props.recordingPreview, absolute: !props.recordingPreview }}
+      role="status" aria-live="polite" aria-atomic="false">
+      <span class="composer-notice-text line-clamp-2" dir="auto">{props.recordingPreview}</span>
+    </div>
     <Show when={props.recordingLimitReached}><div class="composer-notice">
       <div class="composer-notice-text" role="status">{t("promptInput.voiceInput.limitReached")}</div>
       <button type="button" class="window-action composer-notice-action"
