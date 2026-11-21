@@ -118,7 +118,7 @@ fn clicked(app: &AppHandle, id: Uuid, _activation_token: Option<String>) {
             return;
         }
         #[cfg(target_os = "linux")]
-        let native_focus = linux::focus_with_token(&webview, _activation_token.as_deref());
+        let native_focus = linux::focus(&webview, _activation_token.as_deref());
         #[cfg(not(target_os = "linux"))]
         let native_focus = false;
         if !native_focus {

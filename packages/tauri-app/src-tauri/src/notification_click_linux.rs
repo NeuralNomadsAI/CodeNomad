@@ -1,3 +1,4 @@
+use gtk::gdk::Backend;
 use gtk::prelude::*;
 use std::{
     collections::VecDeque,
@@ -10,8 +11,10 @@ use std::{
 use tauri::{AppHandle, Manager, Webview};
 use uuid::Uuid;
 use zbus::{
-    blocking::{connection::Builder, Connection, Proxy},
+    blocking::{connection::Builder, Connection, MessageIterator, Proxy},
+    message::Type,
     zvariant::Value,
+    MatchRule,
 };
 
 const SERVICE: &str = "org.freedesktop.Notifications";
@@ -43,19 +46,27 @@ struct Notice {
 }
 
 impl Bus {
-    fn connect(events: Weak<SyncSender<Event>>) -> Result<Self, String> {
-        let session = Builder::session()
-            .and_then(connect_with_timeout)
-            .map_err(|error| error.to_string())?;
-        let bus = Self::new(session).map_err(|error| error.to_string())?;
-        let signals = bus
-            .proxy
-            .receive_all_signals()
-            .map_err(|error| error.to_string())?;
+    fn connect(session: Connection, events: Weak<SyncSender<Event>>) -> zbus::Result<Self> {
+        let bus = Self::new(session)?;
+        if let Err(error) = bus.listen(events) {
+            eprintln!("[notification] cannot listen for actions: {error}");
+        }
+        Ok(bus)
+    }
+
+    fn listen(&self, events: Weak<SyncSender<Event>>) -> zbus::Result<()> {
+        // Match without a well-known sender lookup; consume_signal checks the Notify reply's sender.
+        let rule = MatchRule::builder()
+            .msg_type(Type::Signal)
+            .path(PATH)?
+            .interface(SERVICE)?
+            .build();
+        let signals = MessageIterator::for_match_rule(rule, self.proxy.connection(), None)?;
         std::thread::Builder::new()
             .name("notification-actions".into())
             .spawn(move || {
                 for signal in signals {
+                    let Ok(signal) = signal else { break };
                     let Some(events) = events.upgrade() else {
                         break;
                     };
@@ -63,9 +74,8 @@ impl Bus {
                         break;
                     }
                 }
-            })
-            .map_err(|error| error.to_string())?;
-        Ok(bus)
+            })?;
+        Ok(())
     }
 
     fn new(session: Connection) -> zbus::Result<Self> {
@@ -88,7 +98,7 @@ impl Bus {
         let reply = self.proxy.call_method(
             "Notify",
             &(
-                "CodeNomad",
+                "codenomad-tauri",
                 0u32,
                 "codenomad-tauri",
                 title,
@@ -189,12 +199,10 @@ fn run(host: Weak<AppHandle>, events: Weak<SyncSender<Event>>, rx: Receiver<Even
             Event::Show(id, title, body) => {
                 let result = (|| {
                     if bus.is_none() {
-                        bus = Some(Bus::connect(events.clone())?);
+                        let session = connect_with_timeout(Builder::session()?)?;
+                        bus = Some(Bus::connect(session, events.clone())?);
                     }
-                    bus.as_mut()
-                        .unwrap()
-                        .show(id, &title, &body)
-                        .map_err(|error| error.to_string())
+                    bus.as_mut().unwrap().show(id, &title, &body)
                 })();
                 if let Err(error) = result {
                     app.state::<super::NotificationClicks>().take(id);
@@ -220,23 +228,131 @@ fn run(host: Weak<AppHandle>, events: Weak<SyncSender<Event>>, rx: Receiver<Even
     }
 }
 
-pub(super) fn focus_with_token(webview: &Webview, token: Option<&str>) -> bool {
-    let Some(token) = token else { return false };
+#[derive(Debug, PartialEq, Eq)]
+enum FocusRequest<'a> {
+    Wayland(&'a str),
+    X11(Option<u32>),
+    Fallback,
+}
+
+fn focus_request(backend: Backend, token: Option<&str>) -> FocusRequest<'_> {
+    match (backend, token) {
+        (Backend::Wayland, Some(token)) => FocusRequest::Wayland(token),
+        (Backend::X11, token) => FocusRequest::X11(
+            token
+                .and_then(|token| token.rsplit_once("_TIME"))
+                .and_then(|(_, time)| time.parse().ok()),
+        ),
+        _ => FocusRequest::Fallback,
+    }
+}
+
+pub(super) fn focus(webview: &Webview, token: Option<&str>) -> bool {
     let Ok(window) = webview.window().gtk_window() else {
         return false;
     };
-    // GTK forwards the compositor-issued startup ID to this window's Wayland surface.
-    window.show();
-    window.deiconify();
-    window.set_startup_id(token);
+    match focus_request(window.display().backend(), token) {
+        FocusRequest::Wayland(token) => {
+            // GTK forwards the compositor-issued startup ID to this Wayland surface.
+            window.show();
+            window.deiconify();
+            window.set_startup_id(token);
+        }
+        FocusRequest::X11(timestamp) => {
+            // An X11 startup ID alone does not raise the window.
+            window.deiconify();
+            window.present_with_time(timestamp.unwrap_or(gtk::gdk::ffi::GDK_CURRENT_TIME as u32));
+        }
+        FocusRequest::Fallback => return false,
+    }
     true
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::net::{TcpListener, TcpStream};
-    use zbus::blocking::MessageIterator;
+    use zbus::zvariant::OwnedValue;
+
+    #[test]
+    fn notification_focus_uses_the_window_backend_and_click_timestamp() {
+        let token = Some("plasmashell-123_TIME4294967295");
+        assert_eq!(
+            focus_request(Backend::Wayland, token),
+            FocusRequest::Wayland(token.unwrap())
+        );
+        assert_eq!(
+            focus_request(Backend::X11, token),
+            FocusRequest::X11(Some(u32::MAX))
+        );
+        assert_eq!(focus_request(Backend::X11, None), FocusRequest::X11(None));
+        assert_eq!(
+            focus_request(Backend::X11, Some("opaque_TIMEbad")),
+            FocusRequest::X11(None)
+        );
+        assert_eq!(
+            focus_request(Backend::Wayland, None),
+            FocusRequest::Fallback
+        );
+        assert_eq!(
+            focus_request(Backend::Broadway, token),
+            FocusRequest::Fallback
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)] // Use blocking TCP sockets for the private test bus.
+    fn notification_send_continues_when_the_bus_does_not_answer_add_match() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let server = std::thread::spawn(move || {
+            let mut messages = Builder::tcp_stream(listener.accept().unwrap().0)
+                .auth_mechanism(zbus::AuthMechanism::Anonymous)
+                .server(zbus::Guid::generate())
+                .unwrap()
+                .p2p()
+                .build_message_iterator()
+                .unwrap();
+            let connection = Connection::from(&messages);
+            let mut request = |member| {
+                let message = messages.next().unwrap().unwrap();
+                assert_eq!(message.header().member().unwrap().as_str(), member);
+                message
+            };
+            connection
+                .reply(&request("Hello").header(), &":1.20")
+                .unwrap();
+            connection
+                .reply(&request("GetCapabilities").header(), &Vec::<String>::new())
+                .unwrap();
+            let add_match = request("AddMatch").body();
+            let rule: MatchRule<'_> = add_match.deserialize().unwrap();
+            assert_eq!(rule.msg_type(), Some(Type::Signal));
+            assert_eq!(rule.interface().unwrap().as_str(), SERVICE);
+            assert!(
+                matches!(rule.path_spec(), Some(zbus::match_rule::PathSpec::Path(path)) if path.as_str() == PATH)
+            );
+            assert!(rule.sender().is_none());
+            // A silent AddMatch must not stop Notify; GetNameOwner must never be sent.
+            connection
+                .reply(&request("Notify").header(), &1u32)
+                .unwrap();
+        });
+        let session = connect_with_timeout(
+            Builder::tcp_stream(stream).auth_mechanism(zbus::AuthMechanism::Anonymous),
+        )
+        .unwrap();
+        let (done, result) = mpsc::channel();
+        let client = std::thread::spawn(move || {
+            let sent = Bus::connect(session, Weak::new())
+                .and_then(|mut bus| bus.show(Uuid::new_v4(), "Title", "Body"));
+            done.send(sent).unwrap();
+        });
+        result.recv_timeout(REPLY_TIMEOUT * 10).unwrap().unwrap();
+        client.join().unwrap();
+        server.join().unwrap();
+    }
 
     #[test]
     #[allow(deprecated)] // Use blocking TCP sockets for the private peer-to-peer bus.
@@ -269,6 +385,25 @@ mod tests {
             for number in 1..=2u32 {
                 let request = messages.next().unwrap().unwrap();
                 assert_eq!(request.header().member().unwrap().as_str(), "Notify");
+                type Notify<'a> = (
+                    &'a str,
+                    u32,
+                    &'a str,
+                    &'a str,
+                    &'a str,
+                    Vec<&'a str>,
+                    HashMap<String, OwnedValue>,
+                    i32,
+                );
+                let payload = request.body();
+                let (app_name, _, _, _, body, _, mut hints, _): Notify<'_> =
+                    payload.deserialize().unwrap();
+                assert_eq!(app_name, "codenomad-tauri");
+                assert_eq!(body, "R&D");
+                assert_eq!(
+                    String::try_from(hints.remove("desktop-entry").unwrap()).unwrap(),
+                    crate::identity::STABLE_IDENTIFIER
+                );
                 connection.reply(&request.header(), &number).unwrap();
             }
         });

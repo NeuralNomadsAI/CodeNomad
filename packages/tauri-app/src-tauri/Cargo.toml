@@ -73,4 +73,4 @@ gstreamer-app = "0.23"
 zbus = "5"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-zbus = { version = "5", features = ["p2p"] }
+zbus = { version = "5", features = ["bus-impl"] }
