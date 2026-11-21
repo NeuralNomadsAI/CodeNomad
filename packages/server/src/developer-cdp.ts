@@ -44,7 +44,7 @@ const INPUT_DESTINATION = `function (point, expected, release, handle, insertTex
   if (!release && (current.tabId !== (expected.tabId ?? null) || current.instanceId !== expected.instanceId
     || current.sessionId !== expected.sessionId)) return "tab";
   if (!target || ${FRAME_OWNER}.test(target.localName)) return "frame";
-  if (handle) {
+  if (handle && (point || !release)) {
     const element = handle.nodeType === Node.ELEMENT_NODE ? handle : handle.parentElement;
     if (!element?.isConnected || element.ownerDocument !== document) return "element";
     if (point) {
@@ -181,6 +181,8 @@ export class DeveloperCdp {
   private readonly dependencies: DeveloperCdpDependencies
   private readonly windows = new Map<string, RunState>()
   private readonly operations = new Map<string, Promise<void>>()
+  private readonly retiredRuns = new Set<string>()
+  private closed = false
   private readonly refNamespace = BigInt(`0x${randomBytes(8).toString("hex")}`).toString().padStart(20, "0")
   private stamps = 0
 
@@ -345,6 +347,11 @@ export class DeveloperCdp {
   }
 
   close(runId?: string): void {
+    if (runId) this.retiredRuns.add(runId)
+    else {
+      this.closed = true
+      this.retiredRuns.clear()
+    }
     for (const [id, state] of this.windows) {
       if (runId && !id.startsWith(`${runId}\0`)) continue
       this.disconnect(state, new Error("Developer CDP controller closed"))
@@ -406,6 +413,7 @@ export class DeveloperCdp {
 
   private async ensure(identity: DeveloperCdpSelection | DeveloperCdpIdentity): Promise<RunState> {
     if (!identity.runId.trim()) throw new Error("runId is required")
+    if (this.closed || this.retiredRuns.has(identity.runId)) throw new Error("Developer CDP run is closed; inspect again")
     const endpoint = discoveryUrl(identity.endpoint)
     const key = windowKey(identity)
     let state = this.windows.get(key)
@@ -623,8 +631,10 @@ export class DeveloperCdp {
     }
     if (message.method === "Runtime.executionContextCreated") {
       const context = message.params?.context as { id?: number; auxData?: { isDefault?: boolean; frameId?: string } } | undefined
-      if (typeof context?.id === "number" && context.auxData?.isDefault && context.auxData.frameId === state.mainFrameId)
+      if (typeof context?.id === "number" && context.auxData?.isDefault && context.auxData.frameId === state.mainFrameId) {
+        if (state.mainContextId !== undefined && state.mainContextId !== context.id) this.invalidateRefs(state)
         state.mainContextId = context.id
+      }
       return
     }
     if (message.method === "Runtime.executionContextDestroyed") {

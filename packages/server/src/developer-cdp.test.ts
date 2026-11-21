@@ -146,6 +146,40 @@ const identity = {
 }
 
 describe("DeveloperCdp", () => {
+  it("does not reopen a retired run for an inspection already in its queue", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    try {
+      await client.inspect(identity)
+      chrome.deferred.set("Accessibility.getFullAXTree", undefined as never)
+      const active = assert.rejects(client.inspect(identity), /retired|closed/i)
+      while (!chrome.deferred.get("Accessibility.getFullAXTree")) await new Promise<void>(resolve => setImmediate(resolve))
+      const queued = assert.rejects(client.inspect(identity), /retired|closed/i)
+      chrome.deferred.clear()
+      const connections = chrome.sockets.length
+      client.close(identity.runId)
+      await Promise.all([active, queued])
+      assert.equal(chrome.sockets.length, connections)
+      await client.inspect({ ...identity, runId: "next-run" })
+    } finally { client.close() }
+  })
+
+  it("retires the pin when a new main context arrives before the old context is destroyed", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    try {
+      await client.inspect(identity)
+      const socket = chrome.sockets.at(-1)!
+      const context = (id: number) => ({ context: { id, auxData: { isDefault: true, frameId: "main" } } })
+      socket.emit("Runtime.executionContextCreated", context(1))
+      const { document } = await client.inspect(identity)
+      socket.emit("Runtime.executionContextCreated", context(2))
+      socket.emit("Runtime.executionContextDestroyed", { executionContextId: 1 })
+      await assert.rejects(client.act({ ...identity, document }, { action: "press", key: "Enter" }), /Page changed/)
+      assert.ok(chrome.commands.every(command => !command.method.startsWith("Input.")))
+    } finally { client.close() }
+  })
+
   it("does not reopen a window retired while discovering targets for the same run", async () => {
     const chrome = new FakeChrome()
     let hold: (() => void) | undefined, started: (() => void) | undefined

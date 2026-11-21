@@ -35,6 +35,7 @@ test("targets the exact inspection independently of the visible conversation or 
   let focusedWindow = "window-1"
   let firstWindowOpen = true
   let holdStatus: (() => Promise<void>) | undefined
+  let loseRestartReply = false
   let screenshotWindow: string | undefined
   let windowInstance: string | undefined
   let onInspection: (() => void) | undefined
@@ -54,6 +55,7 @@ test("targets the exact inspection independently of the visible conversation or 
           await wait()
         }
         if (method === "developer.restart") {
+          if (loseRestartReply) throw new Error("Native request timed out")
           runId = "run-2"
           return { state: "starting", runId }
         }
@@ -229,6 +231,17 @@ test("targets the exact inspection independently of the visible conversation or 
   runId = "run-3"
   visibleSession = "session-2"
   assert.equal((await request({ mode: "developer-probe", sessionID: "session-2" })).statusCode, 200)
+  onInspection = undefined
+  const beforeRestart = await request({ mode: "developer-execute", sessionID: "session-1",
+    target: `electron:test/${runId}/window-2/${windowInstance}`, command: { action: "inspect" } })
+  assert.equal(beforeRestart.statusCode, 200)
+  const retiringPin = beforeRestart.json().result.pin
+  loseRestartReply = true
+  const unconfirmed = await execute({ action: "restart" }, retiringPin)
+  assert.equal(unconfirmed.json().code, "restart-outcome-unknown")
+  assert.match(unconfirmed.json().error, /Inspect again before retrying/)
+  assert.equal((await execute({ action: "restart" }, retiringPin)).json().code, "target-gone")
+  assert.equal(nativeCalls.filter(({ method }) => method === "developer.restart").length, 2)
 
   const unauthorized = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH, payload: { mode: "developer-probe", sessionID: "session-1" } })
   assert.equal(unauthorized.statusCode, 401)

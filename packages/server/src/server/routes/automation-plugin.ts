@@ -349,8 +349,13 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     try {
       if (command.action === "restart") {
         await deps.developerCdp.context(identity)
-        const result = await deps.nativeParent.request<DeveloperNativeStatus["status"]>("developer.restart", nativeWindowParams(identity))
         inspectedTargets.forgetRun(body.sessionID, selection.runId)
+        let result: DeveloperNativeStatus["status"]
+        try {
+          result = await deps.nativeParent.request<DeveloperNativeStatus["status"]>("developer.restart", nativeWindowParams(identity))
+        } catch {
+          return reply.code(502).send({ code: "restart-outcome-unknown", error: "The restart outcome is unknown. Inspect again before retrying." })
+        }
         deps.developerCdp.close(selection.runId)
         return reply.send({ result })
       }

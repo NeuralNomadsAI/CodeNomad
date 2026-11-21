@@ -80,7 +80,8 @@ test("keys, hover, wheel, drag and pointer clicks behave like a user and are alw
     assert.deepEqual(await act({ action: "press", key: "Enter", ref: query }), { focused: "input \"Query\"" })
     assert.deepEqual(await log(page), ["keydown:query:Enter:true:true", "click:BUTTON::true:true", "submit:hello"],
       "a trusted Enter submits the form through its default button; the key and the implicit click are both marked")
-    assert.deepEqual(await act({ action: "press", key: "Tab" }), { focused: "button \"Go\"" }, "Tab moves focus like a keyboard")
+    assert.deepEqual(await act({ action: "press", key: "Tab", ref: query }), { focused: "button \"Go\"" },
+      "Tab moves focus away from its exact ref, then releases in the same main document")
     assert.equal(await page.evaluate(() => (globalThis as any).__codenomadAutomationInputUntil <= performance.now()), true,
       "the mark ends after each action but retains its timestamp for queued events")
 
