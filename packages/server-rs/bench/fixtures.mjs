@@ -57,7 +57,7 @@ export async function installPruning({ root, configDirectory }) {
   }
 }
 
-/** The Missions plugin Rust's read-only Missions routes and automation bridge expect (no Missions comparison runs). */
+/** The same bundled plugin backs both servers' Missions routes. */
 export async function installMissions({ root, configDirectory }) {
   assertFixtureRoot(root)
   const { installDesktopPluginPresence } = await fromDist("opencode/desktop-plugin-installation.js")
@@ -101,10 +101,12 @@ export const writeJson = (name, value) => writeFile(path.join(out, name), JSON.s
 
 /** The fixture daemon module with a short provider delay and a Git ceiling: the bench lies inside the
  * CodeNomad checkout, whose repository must stay invisible to it. Returns its runner and a cleanup. */
-export async function productRuntime() {
+export async function productRuntime({ holdProvider } = {}) {
   const source = path.join(repo, "scripts/native-product-fixture.mjs")
   const file = path.join(out, `native-product-fixture-${process.pid}.mjs`)
   const edits = [['      res.end("data: [DONE]\\n\\n")', "      await delay(60)\n"], ["  await mkdir(env.OPENCODE_CONFIG_DIR)", "  env.GIT_CEILING_DIRECTORIES = root\n"]]
+  if (holdProvider) edits.push(['      res.setHeader("Content-Type", "text/event-stream")',
+    `      if (JSON.stringify(requests.at(-1).messages).includes(${JSON.stringify(holdProvider)})) {\n        await new Promise(resolve => res.once("close", resolve))\n        return\n      }\n`])
   let code = await readFile(source, "utf8")
   for (const [marker, before] of edits) { assert.equal(code.split(marker).length, 2, marker); code = code.replace(marker, before + marker) }
   code = code.replace('"./native-fixture-guards.mjs"', JSON.stringify(pathToFileURL(path.join(repo, "scripts/native-fixture-guards.mjs")).href))

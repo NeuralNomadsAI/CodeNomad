@@ -15,7 +15,7 @@ import { assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
 import { browserFiles, populate } from "./files.mjs"
 import { browserWorktrees } from "./worktrees.mjs"
 
-const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
+const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "missions-family", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
 const [mode, exe] = process.argv.slice(2)
 assert(MODES.includes(mode) && path.isAbsolute(exe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)
 const bin = rustBinary()
@@ -29,7 +29,7 @@ const { resolveConfigLocation } = await fromDist("config/location.js")
 const shots = path.join(out, "screenshots", mode)
 await mkdir(shots, { recursive: true })
 
-const { withProductRuntime, remove: removeRuntime } = await productRuntime()
+const { withProductRuntime, remove: removeRuntime } = await productRuntime({ holdProvider: bench?.holdProvider })
 
 const HTTP_TIMEOUT = 20000
 const STARTUP_TIMEOUT = Number(process.env.CNRS_BENCH_STARTUP_TIMEOUT_MS ?? 25000)
@@ -212,11 +212,11 @@ async function qualify(ts, rs, password, rsRoot) {
   result.tests.push("restricted filesystem, workspace claims, root worktree, instance storage and pending snapshot (RS)")
 }
 
-/** Both servers through one sequence each (TS first); their observations must be identical. */
+/** Both servers through one sequence each; their observations must be identical. */
 async function compareSides(sides) {
   const settle = run => run.then(value => value, error => ({ error: error?.stack ?? String(error), partial: error?.partial }))
-  result.typescript = await settle(bench.run(sides[0]))
-  result.rust = await settle(bench.run(sides[1]))
+  const order = mode === "missions-family" && process.env.CNRS_BENCH_RS_FIRST === "1" ? [1, 0] : [0, 1]
+  for (const i of order) result[i === 0 ? "typescript" : "rust"] = await settle(bench.run(sides[i]))
   assert(!result.typescript.error && !result.rust.error, "a bench sequence raised")
   const comparable = bench.comparable ?? (value => value)
   assert.deepEqual(comparable(result.rust), comparable(result.typescript))
