@@ -93,13 +93,13 @@ Meldet ein Client eine Zertifikatswarnung, halten Sie an und prüfen Sie Hostnam
 
 ## Remote-Server speichern {#saved-servers}
 
-Authentifizierte Remote-Clients können alle auf dem Host gespeicherten Server nutzen und verwalten; Startseite und **Einstellungen → Server** zeigen die vom Host erlaubten Aktionen. Unverschlüsseltes LAN-HTTP deaktiviert die Eingabe neuer Serverpasswörter und Kopplungslinks: „Verwenden Sie HTTPS oder Fernsteuerung, um Zugangsdaten einzugeben.“ Verbindungen mit gespeicherten Zugangsdaten sowie das Hinzufügen, Bearbeiten und Entfernen von Profilen ohne Geheimnisse bleiben verfügbar.
+Authentifizierte Remote-Clients können dieselben gespeicherten Server nutzen und verwalten wie lokale Clients. Für neue Serverpasswörter oder Kopplungslinks ist HTTPS oder Fernsteuerung erforderlich.
 
-Öffnen Sie **Einstellungen → Server**: Fügen Sie eine Adresse oder einen Kopplungslink in **Serveradresse oder -link** ein oder bestätigen Sie mit Enter. Das Hinzufügen speichert ein Profil auf dem Host, ohne ein Projekt zu öffnen. **Server bearbeiten** ändert **URL** oder den optionalen **Name**; Umbenennen bei gleicher URL und TLS-Richtlinie funktioniert offline. Nach der Bestätigung schließt **Entfernen** die Tabs des Servers in diesem Fenster und entfernt seine Einträge aus der Liste der zuletzt verwendeten Projekte. Projekte und Unterhaltungen bleiben auf dem Server.
+Öffnen Sie **Einstellungen → Server**: Fügen Sie eine Adresse oder einen Kopplungslink in **Serveradresse oder -link** ein oder bestätigen Sie die Eingabe mit Enter. Das speichert den Server, ohne ein Projekt zu öffnen. **Server bearbeiten** ändert **URL** oder den optionalen **Name**; Umbenennen bei gleicher URL und TLS-Richtlinie funktioniert offline. Nach der Bestätigung schließt **Entfernen** die Tabs des Servers in diesem Fenster und entfernt seine Einträge aus der Liste der zuletzt verwendeten Projekte. Bei temporären Projekten wählen Sie **Behalten** oder **Verwerfen**; **Verwerfen** löscht ihre Dateien und Unterhaltungen. Andere Projekte und Unterhaltungen bleiben auf dem Server.
 
 Auf dem CodeNomad-Host muss OpenSSH installiert sein, und am Ziel muss CodeNomad bereits laufen. Wählen Sie unter **Einstellungen → Server** die Option **SSH-Server hinzufügen**. Geben Sie die CodeNomad-**URL** aus Sicht des SSH-Hosts und den **SSH-Host (optional)** oder Alias ein, dann **Speichern**. Das Profil lässt sich offline speichern. OpenSSH benötigt Schlüsselauthentifizierung und einen geprüften Hostschlüssel in `known_hosts`. Melden Sie sich am CodeNomad-Server an; HTTPS-Zertifikate werden geprüft.
 
-**TLS-Prüfung überspringen** erscheint nach einem Zertifikatsfehler für diese Adresse; eine neue Adresse löscht die Zustimmung. Kopplung prüft TLS immer.
+Der Servereditor enthält das Kontrollkästchen **TLS-Prüfung überspringen**. Das Feld **Serveradresse oder -link** bietet die Option erst nach einem Zertifikatsfehler für diese Adresse an; eine neue Adresse setzt die Auswahl zurück. Bei der Kopplung wird TLS immer geprüft.
 
 Nur wenn `multiBackend` auf `false` gesetzt ist, gelten die folgenden Schritte für separate Desktop-Fenster:
 
@@ -117,8 +117,8 @@ Wählen Sie auf der Startseite oder in einem neuen Tab **Durchsuchen** und dann 
 
 Lokale und entfernte Projekte teilen sich das Fenster. **Zuletzt verwendete Tabs** zeigt beim Durchsuchen die Einträge des ausgewählten Servers. In der gemischten Liste stehen Serversymbol und Servername bei den hier geöffneten Projekten. [Remote-Tabs wiederherstellen](projects.md#restore-remote-tabs).
 
-Unter **Einstellungen → Server** wählt **Öffnen** den Server in **Durchsuchen** und verwendet den leeren Tab, falls vorhanden. Für temporäre Tabs gelten die üblichen Schließoptionen.
+Unter **Einstellungen → Server** wählt **Öffnen** den Server in **Durchsuchen** und verwendet den leeren Tab, falls vorhanden.
 
 ### `--connect-server` {#connect-server}
 
-Dieser Befehl öffnet ein separates Remote-Fenster. Läuft CodeNomad bereits, verarbeitet sein lokales Fenster die Anfrage. Um einen gespeicherten Server direkt von der Befehlszeile zu öffnen, starten Sie die Desktop-App mit `--connect-server <name>` (oder `--connect-server=<name>`) und dem gespeicherten Namen des Servers oder seiner `https://`-URL. Eine URL, die zu keinem gespeicherten Server passt, wird unter ihrem Hostnamen gespeichert. Startwerte enthalten nie Zugangsdaten: Eine URL mit Benutzername, Passwort oder Kopplungscode wird abgelehnt. Unter Windows startet der Tauri-Build nicht, wenn ein Startargument `|` enthält; verwenden Sie stattdessen die URL des Servers oder benennen Sie den Server um.
+`--connect-server <name-or-url>` öffnet unabhängig von `multiBackend` ein separates Remote-Fenster. Geben Sie einen gespeicherten Namen, eine gespeicherte ID oder eine HTTP(S)-URL an. Eine neue URL wird unter ihrem Hostnamen gespeichert. Die URL darf weder Benutzername noch Passwort oder Kopplungscode enthalten. Syntax und Start ohne lokales Fenster stehen in der [Tabelle der Desktop-Startargumente](desktop.md#desktop-cli).

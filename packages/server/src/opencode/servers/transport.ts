@@ -32,7 +32,6 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 export function createExplicitTransport(options: {
   origin: string
   signal?: AbortSignal
-  ca?: string
   skipTlsVerify?: boolean
   /** Backend-held cookies, set after filtering. */
   headers?: () => Record<string, string>
@@ -48,7 +47,6 @@ export function createExplicitTransport(options: {
   dial?: () => Promise<{ address: string; family: 4 | 6; port: number }>
 }, resolve?: ResolveAddresses) {
   const origin = normalizeExplicitOrigin(options.origin)
-  if (options.ca !== undefined) throw new ExplicitEndpointError("custom_ca_unsupported")
   const lifetime = options.signal ?? new AbortController().signal
   const fetch: typeof globalThis.fetch = async (input, init) => {
     let agent: Agent | undefined

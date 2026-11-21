@@ -13,7 +13,7 @@ El enlace es válido durante **cinco minutos** y funciona **una vez**. Trátalo 
 
 En otro CodeNomad de escritorio, pega el enlace de emparejamiento en **Configuración → Servidores → Dirección o enlace del servidor**.
 
-Para volver a vincularlo, pega el nuevo enlace en el formulario de conexión del servidor o del proyecto.
+Para volver a emparejarlo, pega el nuevo enlace en el formulario de conexión del servidor o del proyecto.
 
 ## Emparejar por HTTPS directo {#direct-https}
 
@@ -27,7 +27,7 @@ El enlace sigue las mismas reglas de cinco minutos y un solo uso, y reemplaza cu
 
 Ese dispositivo se conecta solo por su dirección HTTPS, nunca por el túnel, y **Dispositivos emparejados** muestra esa dirección bajo su nombre. Detener el control remoto no cancela el enlace ni desconecta estos dispositivos; **Revocar**, 30 días sin uso, el límite de 32 dispositivos o quitar la dirección de la configuración terminan su acceso. Un navegador que presenta una credencial de dispositivo revocada o caducada en esa dirección no puede recurrir a la contraseña del servidor: vuelve a emparejarlo o borra los datos del sitio para iniciar sesión con la contraseña.
 
-Estos dispositivos tienen la misma [superficie](#remote-surface) que los del túnel y nunca obtienen privilegios de bucle local, ni siquiera a través de un proxy en el anfitrión.
+Consulta las [funciones disponibles](#remote-surface), incluida la excepción de HTTPS directo para el contenido de SideCar. El emparejamiento no concede privilegios de bucle local, ni siquiera a través de un proxy en el anfitrión.
 
 ## Gestionar dispositivos emparejados {#paired-devices}
 
@@ -44,7 +44,7 @@ Cambiar la contraseña de acceso directo **no** revoca dispositivos. **Detener c
 ### Volver a emparejar sin perder tu lugar {#re-pair}
 
 1. Si el cliente muestra **Vincular de nuevo este dispositivo**, deja abierta esa página.
-2. En el anfitrión, elige **Crear nuevo enlace de emparejamiento** y ábrelo en el **mismo navegador/perfil del cliente**. En una ventana remota independiente, el enlace nuevo reutiliza el almacenamiento de esa ventana.
+2. En el anfitrión, crea un enlace para la conexión original: **Crear nuevo enlace de emparejamiento** para el túnel, o selecciona la **Dirección HTTPS** original en **Emparejamiento HTTPS directo** y elige **Crear enlace de emparejamiento HTTPS**. Ábrelo en el **mismo navegador/perfil del cliente**. Una ventana remota independiente reutiliza su almacenamiento.
 3. Vuelve a la página en espera y elige **Comprobar conexión**; también vuelve a comprobarla cuando la página recupera el foco.
 
 La recuperación conserva la página abierta y los borradores; no repite una acción fallida. Comprueba si un envío, respuesta o eliminación surtió efecto antes de reintentarlo. Una contraseña de acceso directo no puede recuperar el emparejamiento de Control remoto.
@@ -70,9 +70,10 @@ Los dispositivos emparejados pueden usar las API normales de proyectos/conversac
 | Interfaz autenticada normal, espacios de trabajo, conversaciones y SSE | Disponible para un dispositivo emparejado. |
 | Inicio/cierre de sesión con contraseña, cambios de contraseña, inicialización local por token | No disponible; se requieren credenciales de dispositivo incluso si la autenticación directa está desactivada. |
 | Estado de Control remoto | Legible para un dispositivo emparejado; la gestión no está disponible. Iniciar/Detener, crear emparejamientos, la lista de dispositivos y la revocación permanecen en la vía de acceso del anfitrión. |
-| Servidores guardados y relé del backend | Los clientes remotos autenticados pueden usar/administrar todos los servidores guardados en el anfitrión si la función y sus capacidades lo permiten. Las nuevas contraseñas/enlaces de vinculación requieren Control remoto o HTTPS, no HTTP sin cifrar en la LAN. Consulta [servidores guardados](remote-access.md#saved-servers). |
+| Servidores guardados y relé del backend | Los clientes remotos autenticados pueden usar/administrar todos los servidores guardados en el anfitrión si la función y sus capacidades lo permiten. Las nuevas contraseñas o enlaces de emparejamiento requieren Control remoto o HTTPS. Consulta [servidores guardados](remote-access.md#saved-servers). |
 | Ventanas remotas de escritorio y su proxy | Solo en el anfitrión (`/api/remote-proxy/`). |
-| **Proxy de contenido** de SideCar | Requiere loopback (`/sidecars/`), al igual que los WebSockets de SideCar. Las API de registro `/api/sidecars` están disponibles para dispositivos emparejados y clientes directos de LAN autenticados. |
+| Contenido y WebSockets de SideCar (`/sidecars/`) | No disponibles a través del túnel. Usa el bucle local o activa el [acceso HTTPS directo a SideCars](browser-sidecars.md#register-sidecar) en el anfitrión. |
+| Registro de SideCar (`/api/sidecars`) | Disponible para dispositivos emparejados y clientes directos autenticados. |
 | Contenido de vistas previas web | [Abrir el navegador de una sesión](browser-sidecars.md#session-browser) |
 | Puente de automatización | No disponible (`/api/opencode-plugin/`). Las capacidades nativas de escritorio no se convierten en capacidades del navegador. |
 | Actualizaciones de conexión a WebSocket | Disponibles para vistas previas web y, en dispositivos emparejados, para [conversaciones de voz en directo](voice.md#conversation). |

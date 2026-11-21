@@ -25,7 +25,11 @@ const createdTypes: string[] = []
 const create = URL.createObjectURL.bind(URL), revoke = URL.revokeObjectURL.bind(URL)
 URL.createObjectURL = blob => { const url = create(blob); created.push(url); createdTypes.push(blob instanceof Blob ? blob.type : ""); return url }
 URL.revokeObjectURL = url => { revoked.push(url); revoke(url) }
-HTMLAnchorElement.prototype.click = function () { downloads.push(this.href) }
+const click = HTMLAnchorElement.prototype.click
+HTMLAnchorElement.prototype.click = function () {
+  downloads.push(this.href)
+  if (this.download === "attachment.txt") click.call(this)
+}
 let held: "fetch" | "body" | undefined
 const pending: (() => void)[] = []
 const wait = async (phase: typeof held) => { if (held === phase) await new Promise<void>(resolve => pending.push(resolve)) }
@@ -41,7 +45,7 @@ const fetcher: typeof fetch = async (input, init) => {
   response.arrayBuffer = async () => { await wait("body"); return readBody() }
   return response
 }
-const remote = relay ? createRemoteBackendClient("lab", { fetcher, bindRelayAuthority }) : createBackendClient({ id: "lab", baseUrl: "https://media.example.invalid", fetcher })
+const remote = relay ? createRemoteBackendClient("lab", { fetcher, bindRelayAuthority }) : createBackendClient({ id: "lab", baseUrl: "https://media.example.invalid/tenant/", fetcher })
 if (bindRelayAuthority && !remote.admitRelayAuthority!("a".repeat(43))) throw new Error("Fixture authority admission failed")
 const registry = backends as Map<string, BackendClient>
 registry.set("lab", remote)
@@ -55,6 +59,7 @@ const [visible, setVisible] = createSignal(true)
 const [external, setExternal] = createSignal<string>()
 const [localSource, setLocalSource] = createSignal<string>()
 const [localHtml, setLocalHtml] = createSignal(false)
+const [textAttachment, setTextAttachment] = createSignal(false)
 const raw = '<img src="/api/media-probe.png" alt="root"><img src="./media-probe.png" alt="dot"><img src="../media-probe.png" alt="parent">'
 const path = (kind: string) => `/api/workspaces/same/session-media/session/message/0/${["tool", "markdown", "attachment"].indexOf(kind)}/${version().repeat(64)}`
 const source = (id: string, kind: string) => (id.startsWith("lab~") ? external() : localSource()) ?? path(kind)
@@ -74,6 +79,10 @@ function Consumers(props: { id: string }) {
     <div data-consumer="markdown"><Markdown instanceId={props.id} sessionId="session" part={{ id: "answer", type: "text", text: "![Markdown](C:/Exact/image.png)" } as any} /></div>
     <div data-consumer="attachment"><MessageItem record={record as any} instanceId={props.id} sessionId="session" technicalCleanupParts={() => []}
       parts={[{ id: "attachment", type: "file", mime: "image/png", filename: "attachment.png", url: source(props.id, "attachment") } as any]} /></div>
+    <Show when={props.id !== "same" && textAttachment()}>
+      <div data-consumer="text-attachment"><MessageItem record={record as any} instanceId={props.id} sessionId="session" technicalCleanupParts={() => []}
+        parts={[{ id: "text", type: "file", mime: "text/plain", filename: "attachment.txt", url: "data:text/plain,Remote%20attachment%20bytes" } as any]} /></div>
+    </Show>
   </>
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}>
@@ -92,6 +101,7 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}
   unmount: () => setVisible(false),
   remount: () => setVisible(true),
   localHtml: () => setLocalHtml(true),
+  textAttachment: () => setTextAttachment(true),
   external: (url: string) => { calls.length = 0; setExternal(url); seed(remoteId()) },
   local: (url: string) => { setLocalSource(url); seed("same") },
 }

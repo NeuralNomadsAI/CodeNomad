@@ -16,12 +16,12 @@
 
 | 引数 | 動作 |
 | --- | --- |
-| `--connect-server <server>` | HTTP(S) URL、保存済みの名前またはIDでリモートCodeNomadサーバーを開きます。[接続とサインイン](remote-access.md#saved-servers)も参照してください。 |
+| `--connect-server <name-or-url>` | `multiBackend` の値に関係なく、HTTP(S) URL、保存済みの名前または ID で別のリモートウィンドウを開きます。[リモート接続](remote-access.md#connect-server)を参照してください。 |
 | `--folder <path>` | 既存のプロジェクトディレクトリを開きます。複数の場合は繰り返し指定します。相対パスは起動時の作業ディレクトリが基準です。 |
 | `<path> ...` | `--folder`を省略してプロジェクトディレクトリを開きます。**WindowsのTauriが既に起動している場合：**すべてのディレクトリに`--folder`を付けてください。位置引数のパスと`--folder`を混在させた場合も、フォルダーを開く要求全体が破棄されます。 |
 | `--new-window` | 通常は既存ウィンドウにフォーカスする再起動でも、新しいアプリウィンドウを要求します。 |
 
-`--connect-server=<server>`と`--folder=<path>`も使えます。空白を含むパスや名前は引用符で囲みます。リモートウィンドウだけを開く場合は、フォルダーや`--new-window`を付けず`--connect-server`だけを指定します。接続に失敗するまでローカルウィンドウの復元を保留します。
+`--connect-server=<name-or-url>` と `--folder=<path>` も使えます。空白を含むパスや名前は引用符で囲みます。リモートウィンドウだけを開くには、フォルダーや `--new-window` を付けず `--connect-server` だけを指定します。開いているローカルウィンドウがあれば要求を処理し、新規起動時は接続に失敗した場合にだけローカルウィンドウを復元します。
 
 **PowerShell**では次のように実行します。
 

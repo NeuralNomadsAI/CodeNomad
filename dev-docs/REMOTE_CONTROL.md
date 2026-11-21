@@ -141,8 +141,8 @@ override them. An unknown value refuses startup.
   the remote window. TLS verification stays on; a Tauri TLS-proxy window uses an
   incognito store. Re-pairing against the same origin reuses that window's
   device-cookie storage. See `tests/browser/remote-server-pairing.test.ts`.
-- `--connect-server` opens a saved server or URL at launch through that same
-  connect flow ([architecture.md](architecture.md#native-profiles-windows-and-client-state)).
+- `--connect-server` opens a saved server or URL at launch through the separate
+  desktop-window flow regardless of `multiBackend` ([architecture.md](architecture.md#native-profiles-windows-and-client-state)).
   It refuses URLs with user info or a fragment, so a pairing code or password
   never travels on a command line; use the pairing field instead.
 
@@ -205,7 +205,7 @@ Direct opted-in status reads join the same client/principal flight across caller
 
 `POST /api/remote-control/server-pair` is a dedicated cookie-free protocol on the ingress or a verified direct HTTPS target with `X-CodeNomad-Server-Pairing: 1`, a strict JSON body and no Origin, Referer, authorization or browser metadata. It atomically consumes the five-minute pairing code for the targeted channel and returns one revocable device credential to the local backend. Invalid attempts have a backend-wide failure bucket; a valid high-entropy code remains usable. Servers without this route yield a stable `pairing_unavailable` result. Password connections use the direct listener's existing login policy and private session cookies.
 
-An authenticated device request carrying `X-CodeNomad-Server-Request: 1` can mutate through the ingress or direct listener while carrying no browser context: Origin, Referer, Fetch Metadata, client hints and preflight headers, including empty ones, exclude this admission. Browser requests continue to require the public Origin. Device scope applies on both listeners, with host-only paths and nested backend relays denied. Invalid explicit device credentials never fall back to password sessions or skipped authentication. Revocation, eviction, Stop, shutdown and tunnel failure destroy admitted device sockets on both listeners. Profile removal or retargeting similarly aborts local uploads/SSE and deletes its private identity; pending connection results check their captured owner before saving.
+An authenticated device request carrying `X-CodeNomad-Server-Request: 1` can mutate through the ingress or direct listener while carrying no browser context: Origin, Referer, Fetch Metadata, client hints and preflight headers, including empty ones, exclude this admission. Browser requests continue to require the public Origin. Device scope applies on both listeners, with host-only paths and nested backend relays denied. Invalid explicit device credentials never fall back to password sessions or skipped authentication. Revocation, eviction and shutdown close admitted device sockets on both listeners. Stop and tunnel failure close only ingress sockets. Profile removal or retargeting similarly aborts local uploads/SSE and deletes its private identity; pending connection results check their captured owner before saving.
 
 `gate.ts` maintains the closed `SERVER_DEVICE_ROUTES` catalog of method/path pairs for the relay's existing backend API contracts. Additions require review of the caller and remote route together; unknown paths and unlisted methods return 404. Direct requests using the explicit device protocol stay within this catalog even when they carry browser headers, and never reach browser pairing. Server pairing checks the physical ingress or the exact verified direct HTTPS Host before handling the exchange. Browser pairing (`/remote-pair`, `/api/remote-control/pair`) requires ingress membership or a [verified direct HTTPS origin](#direct-https-devices).
 
@@ -213,7 +213,7 @@ An authenticated device request carrying `X-CodeNomad-Server-Request: 1` can mut
 |---|---|
 | Identity and connection | GET auth status, metadata, events and read-only Remote Control status; POST connection pong. |
 | Backend data and preferences | Explicit filesystem, config-file, storage owner/instance, usage, runtime, speech, SideCar/previews and panel-extension method/path pairs in `SERVER_DEVICE_ROUTES`; existing host-only exclusions still apply. |
-| Project operations | Workspace inventory/lifecycle, repository-source discovery, directory-owned background Shell inventory (GET), worktrees, files/Git, plugin/integration settings, accounts/usage, session media/history/pruning preview and mutation, pending requests, Missions and Yolo method/path pairs. |
+| Project operations | Workspace inventory/lifecycle, repository-source discovery, directory-owned background Shell inventory (GET), worktrees, files/Git, plugin/integration settings, accounts/usage, session media/history/pruning preview and mutation, pending requests, Missions and conversation permission-mode reads/writes. |
 | Agent memory | UI clients use exact POST `/api/memory` and GET/PUT `/api/memory/settings`; remote browser admission requires the strict host flag and channel provenance. Relayed memory requires its current proof. The explicit server-device catalog retains its authenticated direct transport and ingress boundary. Project-directory ownership and strict schemas apply at the destination. |
 | Native workspace API | `/workspaces/:id/instance/api/…` under the existing `isAllowedInstanceApiRoute()` allowlist and workspace/location ownership checks in `http-server.ts`. |
 

@@ -27,7 +27,7 @@ link मा उही पाँच मिनेट र एकपटक प्र
 
 यस्तो device आफ्नो HTTPS ठेगानाबाट मात्र जोडिन्छ, tunnel बाट कहिल्यै होइन, र **जोडिएका उपकरणहरू** ले उसको नामतल त्यो ठेगाना देखाउँछ। रिमोट कन्ट्रोल रोक्दा link रद्द हुँदैन र यी device disconnect हुँदैनन्; **हटाउनुहोस्**, 30 दिन प्रयोग नहुनु, 32-device सीमा वा configuration बाट ठेगाना हटाउँदा तिनको पहुँच अन्त्य हुन्छ। त्यो ठेगानामा revoke वा expire भएको device credential पठाउने browser server password मा फर्कन सक्दैन: फेरि pair गर्नुहोस्, वा password ले sign in गर्न site data मेटाउनुहोस्।
 
-यी device को [surface](#remote-surface) tunnel device जस्तै हो र host मा रहेको proxy मार्फत पनि loopback privilege कहिल्यै पाउँदैनन्।
+[उपलब्ध सुविधाहरू](#remote-surface) मा SideCar सामग्रीका लागि प्रत्यक्ष HTTPS को अपवाद हेर्नुहोस्। होस्टको प्रोक्सीबाट पनि जोडी बनाउँदा loopback अधिकार पाइँदैन।
 
 ## paired device व्यवस्थापन {#paired-devices}
 
@@ -44,7 +44,7 @@ direct-access password बदल्दा device revoke **हुँदैनन�
 ### आफ्नो ठाउँ नगुमाई पुनःpair {#re-pair}
 
 1. client ले **यो उपकरण फेरि जोड्नुहोस्** देखाए त्यो पृष्ठ खुलै राख्नुहोस्।
-2. host मा **नयाँ जोडी लिंक बनाउनुहोस्** रोजी **उही client browser/profile** मा खोल्नुहोस्। छुट्टै रिमोट सञ्झ्यालमा नयाँ लिङ्कले त्यही सञ्झ्यालको भण्डारण पुनः प्रयोग गर्छ।
+2. होस्टमा पहिलेकै जडानका लागि नयाँ लिङ्क बनाउनुहोस्: टनेलका लागि **नयाँ जोडी लिंक बनाउनुहोस्** रोज्नुहोस्, वा **प्रत्यक्ष HTTPS जोडी** मा पहिलेकै **HTTPS ठेगाना** छानेर **HTTPS जोडी लिंक बनाउनुहोस्** रोज्नुहोस्। लिङ्क उही क्लाइन्ट ब्राउजर वा प्रोफाइलमा खोल्नुहोस्। छुट्टै रिमोट सञ्झ्यालले आफ्नो भण्डारण पुनः प्रयोग गर्छ।
 3. पर्खिरहेको पृष्ठमा फर्केर **जडान जाँच्नुहोस्** रोज्नुहोस्; पृष्ठमा फेरि focus आउँदा पनि यसले फेरि जाँच्छ।
 
 recovery ले खुला पृष्ठ र मस्यौदा जोगाउँछ; असफल कार्य replay गर्दैन। retry अघि send, answer वा delete लागू भयो कि जाँच्नुहोस्। direct-access password ले Remote Control pairing पुनःप्राप्त गर्न सक्दैन।
@@ -72,7 +72,8 @@ paired device ले समान ownership जाँचअन्तर्गत
 | Remote Control status | paired device ले पढ्न सक्छ; management अनुपलब्ध। Start/Stop, pairing सिर्जना, device सूची र revocation host access path मै रहन्छन्। |
 | बचत गरिएका सर्भर र ब्याकएन्ड रिले | सुविधा र होस्टको क्षमताले अनुमति दिँदा प्रमाणीकृत रिमोट क्लाइन्टहरूले होस्टमा बचत भएका सबै सर्भर प्रयोग/व्यवस्थापन गर्न सक्छन्। नयाँ सर्भर पासवर्ड वा जोडी बनाउने लिङ्कका लागि रिमोट कन्ट्रोल वा HTTPS चाहिन्छ, साधारण LAN HTTP होइन। [बचत भएका सर्भर](remote-access.md#saved-servers) हेर्नुहोस्। |
 | desktop remote window र window proxy | होस्टमा मात्र (`/api/remote-proxy/`)। |
-| SideCar **सामग्री proxy** | loopback चाहिन्छ (`/sidecars/`); SideCar WebSocket लाई पनि यही चाहिन्छ। `/api/sidecars` दर्ता API जोडी बनाइएका उपकरण र प्रमाणीकृत प्रत्यक्ष LAN क्लाइन्टलाई उपलब्ध छन्। |
+| SideCar सामग्री र WebSocket (`/sidecars/`) | टनेलबाट उपलब्ध छैन। Loopback प्रयोग गर्नुहोस् वा होस्टमा [SideCar को प्रत्यक्ष HTTPS पहुँच](browser-sidecars.md#register-sidecar) खोल्नुहोस्। |
+| SideCar दर्ता (`/api/sidecars`) | जोडी बनाइएका उपकरण र प्रमाणीकृत प्रत्यक्ष क्लाइन्टलाई उपलब्ध छ। |
 | वेब पूर्वावलोकन सामग्री | [सत्र ब्राउजर खोल्नुहोस्](browser-sidecars.md#session-browser) |
 | automation bridge | अनुपलब्ध (`/api/opencode-plugin/`)। native desktop क्षमता browser क्षमता बन्दैनन्। |
 | WebSocket upgrade | वेब पूर्वावलोकनका लागि र जोडिएका उपकरणमा [प्रत्यक्ष आवाज कुराकानी](voice.md#conversation) का लागि उपलब्ध। |
