@@ -331,12 +331,15 @@ async fn patch_config(
         Some(fastify::Body::Text(text)) => Value::String(text),
     };
     let conditional = query.into_iter().find(|(key, _)| key == "conditional").map(|(_, mode)| mode);
+    let mut refresh_login = false;
     let saved = match conditional {
         Some(mode) if mode != "missions-v1" => Err(Failure::Invalid("Unknown conditional patch mode".into())),
         Some(_) => conditional::apply(&app.settings, &name, &patch),
         None => {
             if name == "server" {
                 let current = app.settings.raw_config_owner("server").map_err(|e| Failure::from(e).response())?;
+                refresh_login =
+                    patch.get("opencodeBinary").is_some_and(|binary| Some(binary) != current.get("opencodeBinary"));
                 patch = speech_pairing(&patch, &current);
             }
             // Requests through the HTTPS listener are never local.
@@ -349,6 +352,9 @@ async fn patch_config(
     };
     let saved = saved.map_err(Failure::response)?;
     publish(&app, Kind::Config, &name, saved.clone());
+    if refresh_login {
+        crate::opencode::login_start::refresh(&app);
+    }
     Ok(Json(sanitized(&name, saved)).into_response())
 }
 

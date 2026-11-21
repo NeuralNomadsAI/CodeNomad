@@ -5,7 +5,7 @@ pub mod admission;
 pub mod daemon;
 pub mod install;
 pub mod launch;
-mod login_start;
+pub(crate) mod login_start;
 pub mod proxy;
 pub mod scope;
 pub mod update;
@@ -181,7 +181,7 @@ pub fn upstream_error() -> Error {
     error(Status::BAD_GATEWAY, "Workspace instance proxy failed")
 }
 
-pub async fn read_json(mut response: reqwest::Response, max: usize) -> Result<Value, ()> {
+pub(crate) async fn read_bytes(mut response: reqwest::Response, max: usize) -> Result<Vec<u8>, ()> {
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|_| ())? {
         if body.len() + chunk.len() > max {
@@ -189,7 +189,11 @@ pub async fn read_json(mut response: reqwest::Response, max: usize) -> Result<Va
         }
         body.extend_from_slice(&chunk);
     }
-    serde_json::from_slice(&body).map_err(|_| ())
+    Ok(body)
+}
+
+pub async fn read_json(response: reqwest::Response, max: usize) -> Result<Value, ()> {
+    serde_json::from_slice(&read_bytes(response, max).await?).map_err(|_| ())
 }
 
 pub fn native_rpc_absent(body: &Value, status: Status) -> bool {

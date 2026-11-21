@@ -49,7 +49,7 @@ The TS worktree creation with a session move stayed pending on this fixture (ove
 ## Not ported
 
 - **By decision**: Yolo, sign-out (`/api/auth/logout` and its relayed form), the remote window proxy (`remote-proxy`, `--connect-server`), the downloaded UI (`--ui-auto-update`), the release monitor, old migrations (`settings/migrate.ts`, legacy and retired installations), the dead code of the usage audit's section 2 (`GET /api/workspaces/:id/files/content`, whose `PUT` is served; `GET /api/filesystem/files/content`; `GET`/`PATCH /api/storage/config` and `/api/storage/state`), and `GET`/`PATCH /api/storage/state/:owner` for owners other than `ui` (no caller).
-- **Desktop login**: `GET /api/opencode/login-start` reports unavailable and a valid `POST` returns 503; Rust has no launch-at-login owner.
+- **Desktop login**: `GET`/`POST /api/opencode/login-start` manage the account’s marked task, agent or user unit; the login renderer tests compare artifacts with TypeScript without installing them.
 - **Frozen while it is redesigned**: voice (`/api/speech/*`).
 
 ## Capabilities

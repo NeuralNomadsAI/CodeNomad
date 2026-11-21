@@ -369,6 +369,7 @@ pub async fn upgrade(app: &Shared) -> Result<String, Error> {
             format!("OpenCode reported {target}, but the configured binary is {installed} instead of {latest}"),
         ));
     }
+    super::login_start::refresh(app);
     Ok(installed)
 }
 
