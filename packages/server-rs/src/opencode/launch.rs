@@ -7,6 +7,19 @@ use std::{
     process::Command,
 };
 
+use crate::settings::{Kind, Settings};
+
+/// `BinaryResolver.resolveDefault`: a saved custom path wins over automatic discovery.
+pub fn custom_binary(settings: &Settings) -> Option<String> {
+    settings
+        .owner(Kind::Config, "server")
+        .get("opencodeBinary")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|s| !matches!(*s, "" | "opencode" | "opencode2") && !retired(s))
+        .map(resolve)
+}
+
 /// One CLI invocation: `verbatim` passes the arguments to `cmd.exe` unquoted (Windows only).
 #[derive(Debug, PartialEq)]
 pub struct Spec {

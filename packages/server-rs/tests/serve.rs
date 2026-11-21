@@ -39,6 +39,12 @@ struct Server {
 impl Server {
     /// `exe` with the hosts' variables in a private home; the daemon endpoint is a placeholder.
     fn start(root: PathBuf, exe: &Path, args: &[&str]) -> Self {
+        Self::start_with(root, exe, args, |command| {
+            command.env("CODENOMAD_NATIVE_PARENT", "1");
+        })
+    }
+
+    fn start_with(root: PathBuf, exe: &Path, args: &[&str], configure: impl FnOnce(&mut Command)) -> Self {
         let resolved = dunce::canonicalize(&root)
             .unwrap_or_else(|_| dunce::canonicalize(root.parent().unwrap()).unwrap().join(root.file_name().unwrap()));
         if cfg!(windows) {
@@ -59,8 +65,8 @@ impl Server {
                 command.env_remove(name);
             }
         }
+        configure(&mut command);
         command
-            .env("CODENOMAD_NATIVE_PARENT", "1")
             .env("CLI_CONFIG", &config)
             .env("HOME", &home)
             .env("USERPROFILE", &home)
@@ -133,6 +139,77 @@ async fn tauri_exchange(url: &str, token: &str) -> String {
 
 fn client() -> reqwest::Client {
     reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).build().unwrap()
+}
+
+#[tokio::test]
+async fn serve_selects_opencode_from_cli_config_before_path() {
+    for (selection, marker) in [(true, "selected-cli"), (false, "automatic-cli")] {
+        let root = scratch("opencode-selection");
+        let bin = root.join("fixture-bin");
+        let config = root.join("config");
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(&config).unwrap();
+        let fixture = |name: &str, marker: &str| {
+            let file = bin.join(if cfg!(windows) { format!("{name}.cmd") } else { name.to_owned() });
+            let script = if cfg!(windows) {
+                format!("@echo off\r\nif \"%1 %2\"==\"service status\" echo {marker}\r\nexit /b 7\r\n")
+            } else {
+                format!("#!/bin/sh\n[ \"$*\" = 'service status' ] && echo {marker}\nexit 7\n")
+            };
+            fs::write(&file, script).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&file, fs::Permissions::from_mode(0o700)).unwrap();
+            }
+            file
+        };
+        let selected = fixture("custom opencode", "selected-cli");
+        fixture("opencode2", "automatic-cli");
+        let selected = if selection { selected.to_str().unwrap() } else { "opencode2" };
+        fs::write(config.join("config.yaml"), serde_json::json!({"server": {"opencodeBinary": selected}}).to_string())
+            .unwrap();
+        let executable = Path::new(env!("CARGO_BIN_EXE_codenomad-rs"));
+        let mut server = Server::start_with(
+            root,
+            executable,
+            &["serve", "--generate-token", "--http", "true", "--http-port", "0", "--https", "false"],
+            |command| {
+                command.env_clear();
+                #[cfg(windows)]
+                {
+                    let system = PathBuf::from(std::env::var_os("SystemRoot").unwrap());
+                    command.env("SystemRoot", &system).env("ComSpec", system.join(r"System32\cmd.exe"));
+                }
+                let home = bin.parent().unwrap().join("home");
+                command
+                    .env("PATH", &bin)
+                    .env("PATHEXT", ".CMD")
+                    .env("ProgramData", home.join("ProgramData"))
+                    .env("TEMP", &home)
+                    .env("TMP", &home)
+                    .env("TMPDIR", &home);
+            },
+        );
+        let (token, url, _) = server.ready().await;
+        let client = client();
+        let auth = client.post(format!("{url}/api/auth/token")).json(&serde_json::json!({ "token": token }));
+        let token_response = auth.send().await.unwrap();
+        let cookie = token_response.headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap();
+        let response = client
+            .post(format!("{url}/api/workspaces"))
+            .header("cookie", cookie)
+            .json(&serde_json::json!({"path": server.root.join("cwd")}))
+            .timeout(Duration::from_secs(40))
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = response.text().await.unwrap();
+        server.stop(b"").await;
+        assert_eq!(status, 400, "{body}");
+        assert!(body.contains(marker), "{body}");
+    }
 }
 
 #[tokio::test]
