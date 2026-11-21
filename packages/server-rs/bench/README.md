@@ -44,6 +44,7 @@ node roundtrip.mjs $OpenCode
 | `memory` | Agent memory: Preferences routes, automation bridge and the TS plugin client, memory store and its Git history. |
 | `design` | Design request written to the pruning plugin lease according to an API 4 extension state. |
 | `automation` | Scripted native parent: private bridge registration, token and ownership checks, browser and desktop command forwarding, guarded window and document selection, diagnostics. No desktop window. |
+| `missions` | One-time Mission HTTP routes over the shipped plugin: creation receipts, list/map/admission, bounded content and task reads, panel, text edits, recovery refusals and deletion with session retention. |
 | `missions-family` | Native coordinator and three descendants held by a loopback provider: deepest-first Stop and Pause, idle verification, queue ownership and exact receipt replay. Set `CNRS_BENCH_RS_FIRST=1` to run Rust first. |
 | `sidecars` | SideCar records seeded in `config.yaml`, management and its zod and Fastify refusals; the proxy against a recording upstream: prefix modes, raw paths and queries, parsed bodies, redirects, cookies both ways, credential and routing headers, this server's own port, HTTPS without a trusted certificate, a stopped port, WebSocket handshakes and their refusals. |
 | `usage` | Settings › Stats: the native service aggregate, its display cache in `state.yaml`, the restored period, query refusals, an unknown workspace. |

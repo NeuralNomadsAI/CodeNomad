@@ -64,6 +64,8 @@ export async function run({ call, fixture: { client, requests }, root, folder })
       ;({ mission } = await control(action, request))
       const ack = mission.control.receipts.find(r => r.sessionID === chain[0])?.nativeAcknowledgement
       assert.equal(ack?.disposition, "interrupt-observed")
+      const heldAfterReceipt = held()
+      await delay(2500)
       const active = await client.session.active()
       const queuedAfter = await Promise.all(chain.map(sessionID => client.session.inbox.list({ sessionID })))
       const replay = (await control(action, request, revision)).mission
@@ -71,6 +73,7 @@ export async function run({ call, fixture: { client, requests }, root, folder })
       assert.deepEqual(replay.control.receipts, mission.control.receipts)
       observations[action] = { state: mission.runState, rootInterrupted: ack.interrupt.interrupted, ...ack.descendants,
         sessions: ack.descendants.sessions.map(id => chain.indexOf(id)), active: chain.map(id => Boolean(active[id])),
+        lateProviderCalls: held() - heldAfterReceipt,
         retained: queued.map((id, i) => queuedAfter[i].some(item => item.id === id)),
         rootMissionCancelled: ack.cancellations.some(c => c.inboxID === queued[0]),
         foreignCancelled: ack.cancellations.some(c => c.inboxID === foreign) }
@@ -90,6 +93,7 @@ export function comparable(value) {
     assert.deepEqual(receipt.sessions, [3, 2, 1])
     assert.equal(receipt.foreignCancelled, false)
     assert.equal(receipt.rootMissionCancelled, action === "stop")
+    assert.equal(receipt.lateProviderCalls, 0)
     assert(receipt.active.every(x => !x))
     assert.deepEqual(receipt.retained.slice(1), Array(3).fill(action === "pause"))
   }
