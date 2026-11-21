@@ -92,6 +92,7 @@ pub fn run(
             }
             Ok(Input::Opened(e)) if e == epoch => {
                 opened = true;
+                publish(&out, &wake, Event::AgentHint(true));
                 dirty = true;
                 parked = false;
                 quiet = Instant::now() + Duration::from_millis(100);
@@ -171,8 +172,17 @@ pub fn run(
                     publish(&out, &wake, Event::Failed);
                 }
             }
-            Ok(Input::Native(e, v, native)) if e == epoch && v > fence && seen.insert(&native) => {
+            Ok(Input::Native(e, v, native)) if e == epoch => {
                 let kind = native["type"].as_str().unwrap_or_default();
+                if kind.starts_with("permission.")
+                    || kind.starts_with("form.")
+                    || kind.contains("model")
+                {
+                    publish(&out, &wake, Event::AgentHint(false));
+                }
+                if v <= fence || !seen.insert(&native) {
+                    continue;
+                }
                 let id = native["data"]["assistantMessageID"]
                     .as_str()
                     .unwrap_or_default();
@@ -203,10 +213,6 @@ pub fn run(
                             history::check(&resident)?;
                             publish(&out, &wake, Event::Delta(id.into(), delta.into()));
                         }
-                    }
-                    kind if kind.starts_with("session.tool.") => {
-                        dirty = true;
-                        quiet = Instant::now() + Duration::from_millis(100);
                     }
                     kind if kind.starts_with("session.tool.") => {
                         dirty = true;

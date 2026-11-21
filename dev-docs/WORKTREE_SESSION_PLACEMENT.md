@@ -34,11 +34,6 @@
 
 Implementation:
 
-- Rust root-session mutations verify the opened folder's native project, physical
-  checkout, common Git directory and current filesystem identity through a bounded
-  point read. Sibling checkout enumeration belongs to the worktree inventory and
-  placement controls, which retain their bounded response reads.
-
 - `workspaces/native-worktrees.ts` calls OpenCode `worktree.refresh/list/create/remove`;
   never add a second production `git worktree list/add/remove` implementation. Git
   reads establish each checkout's physical common-directory identity (rejecting

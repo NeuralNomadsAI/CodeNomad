@@ -63,7 +63,7 @@ const native=createServer(async(req,res)=>{
 await new Promise(r=>native.listen(0,'127.0.0.1',r))
 const env={...await privateEnvironment(profile),CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${native.address().port}/`,
   CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled'}
-const server=spawn(path.join(here,'../server-rs/target/debug/codenomad-rs.exe'),
+const server=spawn(process.env.RUNE_SERVER_EXE??path.join(here,'../server-rs/target/debug/codenomad-rs.exe'),
   [path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
 let log='',child,proxy
 server.stdout.on('data',d=>log+=d);server.stderr.on('data',d=>log+=d)

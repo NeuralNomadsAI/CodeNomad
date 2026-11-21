@@ -85,6 +85,7 @@ fn read(b: &Backend, epoch: u64, out: &SyncSender<Input>, state: &State) -> Resu
                 } else if own
                     && value["type"] == "instance.event"
                     && (native["data"]["sessionID"] == b.session
+                        || native["data"]["form"]["sessionID"] == b.session
                         || native["type"] == "server.connected")
                 {
                     let version = state.version.fetch_add(1, SeqCst) + 1;

@@ -174,6 +174,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.next = rows.next;
         }
         Ok(Reply::Bound(b, title)) => {
+            s.agent = None;
             s.expanded_tools.clear();
             s.chat_title = title;
             s.messages.clear();
@@ -189,7 +190,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             s.commands = Some(commands);
             let wake = l.wake.clone();
             std::thread::spawn(move || {
-                if crate::recovery::run(b, out.clone(), input, wake.clone()).is_err() {
+                if crate::transport::run_backend(b, out.clone(), input, wake.clone()).is_err() {
                     crate::transport::publish(&out, &wake, crate::transport::Event::Failed);
                 }
             });
@@ -215,10 +216,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
 pub fn back(s: &mut State) {
     if !matches!(s.phase, Phase::Ready | Phase::Failed)
         || !s.draft.text.is_empty()
+        || crate::agent::navigation_blocked(s)
         || s.launcher.is_none()
     {
         return;
     }
+    s.agent = None;
     s.commands = None;
     s.incoming = None;
     s.launcher_visible = true;

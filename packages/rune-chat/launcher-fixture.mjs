@@ -9,6 +9,7 @@ import path from 'node:path'
 import {FixtureStore} from './fixture-store.mjs'
 import {responseFor} from './fixture-response.mjs'
 import {privateEnvironment} from './private-profile.mjs'
+import {controlsFixture} from './controls-fixture.mjs'
 const here=import.meta.dirname,profile=path.join(here,'fixture-profile',`launcher-${randomUUID()}`)
 const project=path.join(profile,'projects','synthetic');await mkdir(project,{recursive:true})
 const gitCount=Number(process.env.RUNE_TEST_GIT_COUNT??0)
@@ -17,6 +18,7 @@ const records=new Map(),stores=new Map(),streams=new Set(),requests=[]
 const stats={created:0,prompts:0,lists:0}
 const uncertain=process.argv.includes('--uncertain-create')
 const withTools=process.argv.includes('--with-tools')
+const controls=process.argv.includes('--controls')
 function add(id,title) {
   const row={id,title,projectID:'global',location:{directory:project},permissions:[{action:'*',resource:'*',effect:'deny'}],time:{created:1,busy:0,idle:1}}
   records.set(id,row);stores.set(id,new FixtureStore(0));return row
@@ -24,12 +26,14 @@ function add(id,title) {
 add('ses_existing','Existing history');stores.get('ses_existing').append('user','Existing project history');stores.get('ses_existing').append('assistant','Existing answer')
 add('ses_another','Another session')
 if(withTools)stores.get('ses_existing').rows[1].content.push({type:'tool',id:'historical-read',name:'read',state:{status:'completed',input:{file:'synthetic.rs'},content:[{type:'text',text:'fn historical() {}'}]}})
+const control=controls?controlsFixture({records,stores,streams,project,stats}):null
 const upstream=createServer(async(req,res)=>{
   try {
     const url=new URL(req.url,'http://127.0.0.1');requests.push(`${req.method} ${url.pathname}`)
     assert.equal(req.headers.authorization,`Basic ${Buffer.from('opencode:fixture-native').toString('base64')}`)
     let raw='';for await(const chunk of req){raw+=chunk;assert(raw.length<262144)}
     const json=data=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(data))}
+    if(control&&await control.route(req,url,raw,json,res))return
     if(url.pathname==='/api/event') {
       res.writeHead(200,{'content-type':'text/event-stream'});res.write(`data: ${JSON.stringify({id:randomUUID(),type:'server.connected',created:Date.now(),data:{}})}\n\n`)
       streams.add(res);req.on('close',()=>streams.delete(res));return
@@ -91,16 +95,17 @@ const upstream=createServer(async(req,res)=>{
 await new Promise(r=>upstream.listen(0,'127.0.0.1',r))
 const env=await privateEnvironment(profile)
 Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled'})
-const server=spawn(path.join(here,'../server-rs/target/debug/codenomad-rs.exe'),[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
+const server=spawn(process.env.RUNE_SERVER_EXE??path.join(here,'../server-rs/target/debug/codenomad-rs.exe'),[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
 let log='',client,result=1;server.stdout.on('data',d=>log+=d);server.stderr.on('data',d=>log+=d)
 try{
   let origin;for(const until=Date.now()+20000;!origin;){assert(Date.now()<until&&server.exitCode===null,'Rust startup');origin=log.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];if(!origin)await new Promise(r=>setTimeout(r,50))}
-  client=spawn(path.join(here,'target/debug/codenomad-rune-recovery.exe'),['--probe-launcher'],{cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{})}})
+  client=spawn(path.join(here,'target/debug/codenomad-rune-recovery.exe'),[controls?'--probe-controls':'--probe-launcher'],{cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{})}})
   result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})
-  assert.equal(result,0);assert.equal(stats.created,1);assert.equal(stats.prompts,2)
+  assert.equal(result,0);if(controls){control.done()}else{assert.equal(stats.created,1);assert.equal(stats.prompts,2)}
   if(gitCount)assert.equal(requests.filter(r=>r==='GET /api/worktree').length,0,'root mutations must not enumerate sibling worktrees')
   console.log(JSON.stringify({fixture:'launcher',uncertain,withTools,...stats,profile}))
 }finally{
+  control?.close()
   if(client?.exitCode===null)client.kill();server.stdin.end()
   await Promise.race([new Promise(r=>server.on('exit',r)),new Promise(r=>setTimeout(r,3000))]);if(server.exitCode===null)server.kill()
   for(const stream of streams)stream.destroy();upstream.closeAllConnections();upstream.close()

@@ -1,4 +1,12 @@
 #![forbid(unsafe_code)]
+mod agent;
+mod agent_api;
+mod agent_form_view;
+mod agent_forms;
+mod agent_live_probe;
+mod agent_probe;
+mod agent_strings;
+mod agent_view;
 mod backend;
 mod catalog;
 mod content;
@@ -33,6 +41,7 @@ pub struct Message {
     pub parts: Vec<content::Part>,
 }
 struct State {
+    agent: Option<agent::Ui>,
     expanded_tools: std::collections::HashSet<String>,
     launcher: Option<launcher::Launcher>,
     launcher_visible: bool,
@@ -57,6 +66,7 @@ enum Phase {
 }
 fn init() -> State {
     State {
+        agent: None,
         expanded_tools: Default::default(),
         launcher: None,
         launcher_visible: false,
@@ -94,7 +104,10 @@ fn local_stress() -> bool {
         .any(|args| args[0] == "--scene" && args[1] == "synthetic")
 }
 fn send(s: &mut State, _: &mut Tx) {
-    if s.phase != Phase::Ready || s.draft.text.trim().is_empty() {
+    if s.phase != Phase::Ready
+        || s.draft.text.trim().is_empty()
+        || s.agent.as_ref().is_some_and(|a| a.blocked())
+    {
         return;
     }
     let body = s.draft.text.clone();
@@ -125,12 +138,28 @@ fn request_older(s: &mut State, _: &mut Tx) {
 }
 fn poll(s: &mut State, _: f64, tx: &mut Tx) -> bool {
     let mut changed = launcher::poll(s, tx);
+    changed |= s.agent.as_mut().is_some_and(|a| a.poll());
     for _ in 0..64 {
         let Some(event) = s.incoming.as_ref().and_then(|r| r.try_recv().ok()) else {
             break;
         };
         match event {
+            Event::AgentReady(handle) => s.agent = Some(agent::Ui::new(handle)),
+            Event::AgentHint(catalog) => {
+                if let Some(a) = s.agent.as_mut() {
+                    if catalog {
+                        a.online = true;
+                    }
+                    a.refresh(catalog)
+                }
+            }
             Event::Sync(page) => {
+                if let Some(a) = s.agent.as_mut() {
+                    if !a.online {
+                        a.online = true;
+                        a.refresh(false);
+                    }
+                }
                 s.messages = page.rows;
                 s.can_older = page.older.is_some();
                 s.paging = false;
@@ -152,7 +181,12 @@ fn poll(s: &mut State, _: f64, tx: &mut Tx) -> bool {
                 }
                 s.paging = false;
             }
-            Event::Reconnecting => s.phase = Phase::Reconnecting,
+            Event::Reconnecting => {
+                s.phase = Phase::Reconnecting;
+                if let Some(a) = s.agent.as_mut() {
+                    a.online = false;
+                }
+            }
             Event::PagingFailed => {
                 s.paging = false;
                 s.history_error = true;
@@ -174,7 +208,12 @@ fn poll(s: &mut State, _: f64, tx: &mut Tx) -> bool {
                 }
             }
             Event::Done => s.phase = Phase::Ready,
-            Event::Failed => s.phase = Phase::Failed,
+            Event::Failed => {
+                s.phase = Phase::Failed;
+                if let Some(a) = s.agent.as_mut() {
+                    a.online = false;
+                }
+            }
         }
         s.revision += 1;
         changed = true;
@@ -223,7 +262,8 @@ fn view(s: &State, _: &mut Cx<State>) -> El {
                         "sessions-back",
                         strings::t("sessions"),
                         !matches!(s.phase, Phase::Ready | Phase::Failed)
-                            || !s.draft.text.is_empty(),
+                            || !s.draft.text.is_empty()
+                            || agent::navigation_blocked(s),
                     )
                     .on_press(launcher::back)
                 } else {
@@ -286,6 +326,7 @@ fn view(s: &State, _: &mut Cx<State>) -> El {
                 .scroll(ScrollSpec { stick_bottom: true })
                 .child(rows),
         )
+        .child(agent_view::view(s))
         .child(
             col()
                 .w_full()
@@ -315,12 +356,23 @@ fn view(s: &State, _: &mut Cx<State>) -> El {
                         .focusable(true)
                         .padding(10.0)
                         .fill(t.control)
-                        .disabled(s.phase != Phase::Ready)
+                        .disabled(
+                            s.phase != Phase::Ready
+                                || s.agent.as_ref().is_some_and(|a| a.blocked()),
+                        )
                         .on_press_tx(send),
                 ),
         )
 }
 fn main() {
+    if std::env::args().any(|arg| arg == "--probe-real-controls") {
+        agent_live_probe::run();
+        return;
+    }
+    if std::env::args().any(|arg| arg == "--probe-controls") {
+        agent_probe::run();
+        return;
+    }
     if std::env::args().any(|arg| arg == "--probe-launcher") {
         launcher_probe::run();
         return;
@@ -362,6 +414,8 @@ fn main() {
     });
 }
 
+#[cfg(test)]
+mod agent_tests;
 #[cfg(test)]
 mod content_tests;
 #[cfg(test)]

@@ -7,7 +7,7 @@ Ce journal rassemble les résultats effectivement observés sous Windows et les 
 Worktree isolé :
 
 ```text
-C:\Users\Admin\Documents\Codex\2026-11-21\realtime-voice-chat\work\rune-prototype-b970ca97
+D:\CodeNomad\.codenomad\worktrees\rune-native-chat
 ```
 
 Le prototype est dans `packages/rune-chat`. Les sources du serveur de production et le dépôt principal restent inchangés. Les fixtures possèdent leurs profils, projets synthétiques, ports éphémères et processus enfants. Les traces sont dans `packages/rune-chat/evidence/` et les profils dans `packages/rune-chat/fixture-profile/`.
@@ -27,6 +27,80 @@ Le binaire `codenomad-rune-recovery.exe` sert aux vérifications en arrière-pla
 | Historique et reprise réels en arrière-plan | Véritable exécutable Rust, proxy de coupure propre au test | Véritable stockage et service OpenCode V2 | 600 archives de test importées par l'API native, puis une réponse réelle | Runtime Rune sans fenêtre |
 
 ## Résultats vérifiés
+
+### Serveur séparé et comparaison avec TypeScript
+
+Les modifications du serveur et le contrôle ciblé du dossier racine sont isolés dans `D:\CodeNomad\.codenomad\worktrees\rs-agent-controls-20261122`, branche `codex/rs-agent-controls`, [PR serveur dédiée](https://github.com/NeuralNomadsAI/CodeNomad/pull/1667) vers `feat/rust-server`. Le contenu `packages/server-rs` de la branche Rune correspond à la branche serveur de base ; les fonctionnalités de contrôle utilisent l’exécutable du worktree serveur séparé.
+
+Le banc officiel lance deux véritables daemons OpenCode 2.3.2 avec profils et bases propres. Le fournisseur est synthétique et local : aucun compte, daemon, projet ou fenêtre utilisateur n’est utilisé.
+
+| Comparaison | Résultat et preuve dans le worktree serveur |
+|---|---|
+| `agent-controls` | Observations TypeScript et Rust strictement égales : décisions `once`/`always`/`reject`, reçus et motifs, invalides HTTP 400, périmés HTTP 409, session étrangère HTTP 403, réponse typée à une Form, annulation, interruption active puis inactive. `packages/server-rs/bench/out/agent-controls.json`. |
+| `contract` | Placement racine et worktree, refus des sessions étrangères, lecture des demandes en attente : observations identiques. `packages/server-rs/bench/out/contract.json`. |
+| Tests TypeScript ciblés | 99 réussis, compilation réussie. `packages/server-rs/bench-control-ts-tests.log`. |
+| Tests Rust | 251 tests unitaires et 4 tests de lancement réussis, 1 test ignoré. `packages/server-rs/bench-control-rust-tests.log`. |
+| Rune contre ce serveur séparé | Parcours complet de contrôle réussi avec service OpenCode simulé, vingt événements de question coalescés, lecture après reprise, trois reçus avec motifs. `evidence/controls-separated-server.log`, profil `fixture-profile/launcher-66c81205-e402-4235-a804-9bdef7e27177`. |
+
+Écarts traités : les routes Rust reprennent le contrat natif déjà relayé par TypeScript ; la confirmation des reçus reprend sa sémantique existante. La validation stricte, la vérification de demande encore en attente et la revalidation finale d’identité sont ajoutées aussi à TypeScript. Le contrôle ciblé de racine conserve les preuves physiques Git et correspond au chemin direct de propriété déjà utilisé par TypeScript. La PR détaille ces choix.
+
+Commandes du banc, depuis le worktree serveur :
+
+```powershell
+$env:CODENOMAD_RS_BINARY = (Resolve-Path packages/server-rs/target/debug/codenomad-rs.exe).Path
+$runeOpenCodeExe = 'C:/Users/Admin/AppData/Roaming/npm/node_modules/@opencode/cli/bin/opencode.exe'
+node packages/server-rs/bench/compare.mjs agent-controls $runeOpenCodeExe
+node packages/server-rs/bench/compare.mjs contract $runeOpenCodeExe
+```
+
+### Piloter l’agent : modèle, permissions, questions et arrêt
+
+Ces essais s’exécutent entièrement en arrière-plan : runtime Rune réel sans fenêtre, sans entrée globale ni presse-papiers. Les fenêtres de démonstration existantes restent ouvertes. Les profils et projets de test sont propres à chaque exécution.
+
+| Cas | Environnement et résultat vérifié |
+|---|---|
+| Catalogue et variante | Vrai Rune + vrai Rust + OpenCode simulé : deux choix affichés pour un modèle et sa variante ; modèle désactivé exclu, configuration et en-têtes exclus du modèle d’affichage ; sélection persistée puis relue. |
+| Question typée | Même banc : texte, entier borné, booléen, multisélection, champ conditionnel actif et valeur cachée par défaut transmis avec leurs types natifs. Une deuxième question est annulée explicitement. |
+| Brouillon et navigation | Même banc : sélection de question conservée après remplacement des objets natifs, réponse partielle conservée et navigation Sessions bloquée tant que ce brouillon reste édité. |
+| Permissions | Même banc : réponses `once`, `always`, `reject`, avec motif. La première tentative de refus reçoit HTTP 503 ; demande et motif restent présents. Un nouvel essai explicite réussit. |
+| Propriété et demandes périmées | Même banc : HTTP 409 pour une permission absente et pour une permission appartenant à l’autre session ; ces mutations atteignent seulement le contrôle du serveur, jamais le relais natif de mutation. |
+| Reçus durables | Même banc : trois reçus relus via le vrai serveur ; provenance `codenomad` et motif exact. L’événement natif de règlement et la confirmation HTTP conservent le motif. |
+| Question arrivée en direct | Même banc : `form.created` avec `data.form.sessionID` recharge la file de la session ; vingt notifications successives sont coalescées. Le scénario complet effectue cinq lectures de catalogue. |
+| Arrêt indépendant | Même banc : fragments intermédiaires observés, puis bouton Arrêter utilisé pendant une lecture de catalogue retardée de 1,5 s. La requête d’arrêt se termine en moins de 1,2 s ; relecture autoritative terminée en moins de 5 s, texte partiel conservé, un seul prompt et une seule interruption. |
+| Modèle et arrêt réels | Vrai Rune + vrai Rust + vrai service OpenCode : 355 choix de modèle/variante lus ; changement vers le modèle déjà configuré avec variante confirmé ; deux événements de texte et 1 141 octets visibles avant l’arrêt ; événement natif `session.execution.interrupted`, quatre lignes natives uniques et retour Prêt. Zéro appel d’outil. Session jetable supprimée après vérification du dossier, du titre et des permissions interdisant tous les outils. |
+
+Preuve du banc complet : `evidence/controls-fixture.log` et `fixture-profile/launcher-2f27080c-a689-4217-8089-2a26e336fd04/proof.json`. Preuve réelle initiale : `fixture-profile/controls-live-2e53761f-1dd1-443b-b51a-db47bb1b31f8/proof.json`, dont `cleaned: true`. Les sorties ne contiennent aucun secret du service installé.
+
+Une répétition réelle supplémentaire atteint le délai de 120 s avant le premier texte. La lecture native indépendante confirme alors le modèle et la variante choisis, l’état occupé et un assistant sans texte ; la sonde échoue à l’étape `real streamed text`. Cette répétition figure dans `evidence/controls-real.log` et `fixture-profile/controls-live-7f66c368-5f4a-46df-8966-f7c210236fd0/proof.json`. La session est supprimée (`cleaned: true`). Le premier essai qualifie l’arrêt pendant du texte réel ; cette répétition établit une limite de disponibilité de réponse du service pendant la campagne.
+
+Limites de cette tranche : permissions et questions qualifiées avec OpenCode simulé ; décision et réponse à une demande émise par un vrai outil restent à qualifier dans un projet jetable. Les formulaires d’authentification externes et globaux restent à traiter dans les hôtes existants. Le rendu natif de ces nouvelles commandes dans une fenêtre visible demande une qualification interactive distincte. Le délai de 1,2 s vérifié concerne l’arrêt concurrent d’une lecture de catalogue, sous la charge du banc.
+
+Les treize tests du client réussissent, avec le cas presse-papiers exclu de cette campagne. Les 251 tests unitaires du serveur réussissent, avec un test ignoré. Les quatre tests de lancement du serveur réussissent avec `TEMP` et `TMP` dans le profil du banc sur D. Une première exécution utilisant le répertoire temporaire utilisateur est refusée par trois de ces tests avant le lancement : leur assertion impose une racine hors du profil utilisateur. Aucun changement des tests n’est nécessaire. Traces : `evidence/controls-client-tests.log`, `evidence/controls-server-tests-all.log`, `evidence/controls-server-serve-tests.log`.
+
+La non-régression du parcours dossier/sessions, de deux envois distincts et des outils en cours/terminés réussit : `evidence/controls-launcher-regression.log`. Les sept injections de pagination et reconnexion réussissent encore : 606 lignes natives finales, déplacement maximal de l’ancre de 0 point ; `evidence/controls-recovery-regression.log`.
+
+Commandes depuis le worktree :
+
+```powershell
+$runeServerWorktree = 'D:/CodeNomad/.codenomad/worktrees/rs-agent-controls-20261122'
+cargo +1.99.1 build --locked --manifest-path "$runeServerWorktree/packages/server-rs/Cargo.toml"
+cargo +1.99.1 build --locked --manifest-path packages/rune-chat/Cargo.toml --bin codenomad-rune-recovery
+cargo +1.99.1 test --locked --manifest-path packages/rune-chat/Cargo.toml --bin codenomad-rune-recovery -- --skip selects_code_and_routes_copy_to_memory_clipboard
+$env:RUNE_SERVER_EXE = "$runeServerWorktree/packages/server-rs/target/debug/codenomad-rs.exe"
+node packages/rune-chat/launcher-fixture.mjs --controls
+node packages/rune-chat/launcher-fixture.mjs --with-tools
+node packages/rune-chat/recovery-fixture.mjs
+# Test explicite utilisant l’accès modèle existant, avec création puis suppression de sa session :
+node packages/rune-chat/controls-live.mjs
+# Les tests de lancement imposent un dossier temporaire hors du profil utilisateur :
+$runeTestTemp = Join-Path (Get-Location) 'packages/rune-chat/fixture-profile/server-suite-temp'
+New-Item -ItemType Directory -Force -Path $runeTestTemp | Out-Null
+$env:TEMP = $runeTestTemp
+$env:TMP = $runeTestTemp
+cargo +1.99.1 test --locked --manifest-path packages/server-rs/Cargo.toml --target-dir packages/server-rs/target/controls
+```
+
+Limites de cette tranche : décisions de permission et réponses aux questions testées avec OpenCode simulé ; échanges réels limités au modèle, au streaming et à l’arrêt, avec tous les outils interdits. Les formulaires d’authentification externes et sans session restent hors du client Rune. Les formats et expressions régulières des chaînes sont validés par le service. Le parcours de plusieurs demandes sur une petite fenêtre Windows, les clics manuels et les courses entre plusieurs clients réels restent à qualifier. L’arrêt contourne les lectures du client ; les mutations du relais Rust conservent leur verrou d’appartenance. Le binaire de test est distinct de celui de la fenêtre ouverte.
 
 ### Vérification de l’intégration du serveur Rust
 

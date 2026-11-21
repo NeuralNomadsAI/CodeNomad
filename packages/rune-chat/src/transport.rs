@@ -15,6 +15,8 @@ pub enum Command {
 }
 #[derive(Debug)]
 pub enum Event {
+    AgentReady(crate::agent::Handle),
+    AgentHint(bool),
     History(Vec<Message>),
     Sync(Page),
     Older(Page),
@@ -49,7 +51,7 @@ pub fn publish(out: &SyncSender<Event>, wake: &rune::Waker, event: Event) -> boo
 pub fn run(out: SyncSender<Event>, input: Receiver<Command>, wake: rune::Waker) {
     if std::env::var_os("RUNE_BACKEND").is_some() && !crate::local_stress() {
         let result = crate::backend::Backend::environment()
-            .and_then(|backend| crate::recovery::run(backend, out.clone(), input, wake.clone()));
+            .and_then(|backend| run_backend(backend, out.clone(), input, wake.clone()));
         if let Err(error) = result {
             eprintln!("Rune backend: {error}");
             publish(&out, &wake, Event::Failed);
@@ -90,4 +92,18 @@ pub fn run(out: SyncSender<Event>, input: Receiver<Command>, wake: rune::Waker) 
         }
         publish(&out, &wake, Event::Done);
     }
+}
+
+pub fn run_backend(
+    b: crate::backend::Backend,
+    out: SyncSender<Event>,
+    input: Receiver<Command>,
+    wake: rune::Waker,
+) -> crate::history::Result<()> {
+    publish(
+        &out,
+        &wake,
+        Event::AgentReady(crate::agent::start(b.clone(), wake.clone())),
+    );
+    crate::recovery::run(b, out, input, wake)
 }

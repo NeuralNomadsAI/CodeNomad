@@ -124,6 +124,8 @@ pub fn contract() {
             | Event::History(_)
             | Event::Older(_)
             | Event::Reconnecting
+            | Event::AgentReady(_)
+            | Event::AgentHint(_)
             | Event::PagingFailed => {}
             Event::Message(message) => {
                 assert!(

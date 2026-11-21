@@ -2,6 +2,28 @@
 
 Windows-native Rune client for opening a CodeNomad project, choosing or creating a session, and sending messages through a multiline composer and a virtualized, selectable transcript. The native surface palette resolves the existing dark tokens from `packages/ui/src/styles/tokens.css` at compile time. UI labels have catalogues for all ten CodeNomad locales; `RUNE_LOCALE` selects one, with French as the default.
 
+## Agent controls
+
+Model opens a searchable native catalogue with explicit variants. A selection writes the active session model and reads it back before sending is enabled. Stop interrupts the active session with `resume: false`; its worker is independent of catalogue and pending-request reads.
+
+The non-modal request area shows the active session's authoritative permission and question queues. Permission actions are This time, Always and Reject, with an optional reason. Confirmed replies retain the server's durable receipt. Questions support string/options, number, integer, boolean and multiselect fields, defaults, conditional fields and hidden answer values. Answer and Cancel are explicit actions. External authentication forms show Unsupported form. Native validation handles string patterns and formats; failed replies preserve the editors for an explicit retry.
+
+Multiple requests have previous/next controls and a pinned selection. Refreshes retain partial answers and reasons; Sessions remains disabled while an edited request or mutation needs attention. The composer stays mounted. Stream loss disables request actions until authoritative recovery. Mutations are sent once. Each binding owns its request workers and discards their display results when closed.
+
+Background qualification uses real Rune widgets, a real Rust server, an isolated project/profile and an OpenCode contract fixture:
+
+The backend controls are maintained separately in [the server controls PR](https://github.com/NeuralNomadsAI/CodeNomad/pull/1667). Select that server checkout's executable with `RUNE_SERVER_EXE` for these tests.
+
+```powershell
+$runeServerWorktree = 'D:/CodeNomad/.codenomad/worktrees/rs-agent-controls-20261122'
+cargo +1.99.1 build --locked --manifest-path "$runeServerWorktree/packages/server-rs/Cargo.toml"
+cargo +1.99.1 build --locked --manifest-path packages/rune-chat/Cargo.toml --bin codenomad-rune-recovery
+$env:RUNE_SERVER_EXE = "$runeServerWorktree/packages/server-rs/target/debug/codenomad-rs.exe"
+node packages/rune-chat/launcher-fixture.mjs --controls
+```
+
+The explicit `node packages/rune-chat/controls-live.mjs` test uses the configured installed OpenCode service and model on its own empty project/session, denies all model tools, verifies model persistence, actual streaming and interruption, then removes its owned session. It runs without a window, global input or clipboard access. Permissions and questions use the contract fixture. The French journal records qualification results and limits.
+
 Rune source is pinned to `21e5342b9a4cc33eeee88071b4b1f0eafb1247d4` from `https://github.com/anomalyco/rune`. `setup.ps1` installs that source under the checkout's `.prototype-deps/rune`, verifies its revision and cleanliness, and builds with Rust 1.99.1. `build.rs` checks the pin for direct Cargo builds. `Cargo.lock` fixes transitive dependencies. The root manifest applies Rune's required vendored patches.
 
 ## Build and run
@@ -103,7 +125,7 @@ For a reproducible offline image:
 
 ## Prototype scope
 
-The adapter opens the latest bounded history window and supports older pages plus authoritative recovery after stream interruptions. The offline stress fixture supplies the complete 10,000-row synthetic collection independently of the connected resident bound. Markdown is displayed as selectable text; Rust-looking code and fenced samples use a monospace style. Concurrent writers during sustained traffic, complete fragment-level reconciliation, tool rendering, cancellation, model selection, persistent preferences and project discovery remain qualification or integration work. The upstream OpenCode service and model response in `rust-fixture.mjs` and `recovery-fixture.mjs` are synthetic. `live.mjs` uses the existing real service on its newly created disposable session. Interactive Windows checks and background runtime tests have separate evidence in the test journal.
+The adapter opens the latest bounded history window and supports older pages plus authoritative recovery after stream interruptions. The offline stress fixture supplies the complete 10,000-row synthetic collection independently of the connected resident bound. Markdown is displayed as selectable text; Rust-looking code and fenced samples use a monospace style. Tool blocks preserve native order and expose status and details. Concurrent writers during sustained traffic, complete fragment-level reconciliation, persistent preferences, attachments and session-less provider authentication forms remain qualification or integration work. The upstream OpenCode service and model response in `rust-fixture.mjs` and `recovery-fixture.mjs` are synthetic. `live.mjs` uses the existing real service on its newly created disposable session. Interactive Windows checks and background runtime tests have separate evidence in the test journal.
 
 ## Agent conventions
 
