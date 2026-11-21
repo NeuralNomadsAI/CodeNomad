@@ -37,6 +37,8 @@ test("targets the exact inspection independently of the visible conversation or 
   let focusedWindow = "window-1"
   let firstWindowOpen = true
   let holdStatus: (() => Promise<void>) | undefined
+  let holdRestart: (() => Promise<void>) | undefined
+  let disconnectReply: (() => void) | undefined
   let restartFailure: Error | undefined
   let screenshotWindow: string | undefined
   let windowInstance: string | undefined
@@ -60,6 +62,7 @@ test("targets the exact inspection independently of the visible conversation or 
           await wait()
         }
         if (method === "developer.restartScope") {
+          await holdRestart?.()
           if (restartFailure) throw restartFailure
           return params
         }
@@ -119,6 +122,11 @@ test("targets the exact inspection independently of the visible conversation or 
       ownsLocation: async () => owned,
     },
   } as never
+  app.addHook("preHandler", async (req, reply) => {
+    if ((req.body as { command?: { restartId?: string } })?.command?.restartId === "f4747d3e-86d2-4c01-8f7a-32489301a945") {
+      disconnectReply = () => { reply.raw.emit("close") }
+    }
+  })
   registerAutomationPluginRoute(app, deps)
 
   const request = async (body: Record<string, unknown>, server = app) => server.inject({
@@ -309,9 +317,17 @@ test("targets the exact inspection independently of the visible conversation or 
   assert.equal(anotherInspection.statusCode, 200)
   const lostPin = anotherInspection.json().result.pin
   restartFailure = new Error("Native request timed out")
-  const unconfirmed = await restartRequest(lostCommand, lostPin)
-  assert.equal(unconfirmed.statusCode, 502)
-  assert.equal(unconfirmed.json().code, "restart-outcome-unknown")
+  let started!: () => void, releaseRestart!: () => void
+  const sent = new Promise<void>(resolve => { started = resolve })
+  const nativePending = new Promise<void>(resolve => { releaseRestart = resolve })
+  holdRestart = () => { started(); return nativePending }
+  const disconnected = assert.rejects(restartRequest(lostCommand, lostPin), { code: "LIGHT_ECONNRESET" })
+  try {
+    await sent
+    disconnectReply!()
+    assert.deepEqual(closedRuns, ["run-1", "run-3"], "HTTP disconnect retires the old run before the outstanding native reply")
+  } finally { releaseRestart() }
+  await disconnected
   assert.deepEqual(closedRuns, ["run-1", "run-3"])
   assert.equal((await restartRequest(lostCommand, lostPin)).statusCode, 409)
   assert.deepEqual(nativeCalls.filter(({ method }) => method.startsWith("developer.restart")), [

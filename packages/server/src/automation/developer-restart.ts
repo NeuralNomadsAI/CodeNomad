@@ -33,4 +33,5 @@ export function sameDeveloperTarget(a: DeveloperTarget, b: DeveloperTarget): boo
 export function isRestartSuccessor(expected: DeveloperRestart, target: DeveloperTarget, restartId: unknown): boolean {
   return restartId === expected.restartId && target.nativeIdentity === expected.nativeIdentity
     && target.runId !== expected.runId && target.windowId === expected.windowId
+    && (target.windowInstance === undefined || target.windowInstance !== expected.windowInstance)
 }

@@ -220,7 +220,8 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       // An absent window may also mean no restored project owns the session.
       // The native receipt can prove the relaunch without disclosing renderer data.
       if (native.status.state === "missing") return reply.send({ ...result, windowState: "missing" })
-      if (body.purpose === "confirm" || native.status.state !== "ready" || typeof native.status.cdpUrl !== "string") {
+      if (body.purpose === "confirm" || native.status.state !== "ready" || typeof native.status.cdpUrl !== "string"
+        || expected.windowInstance && !target.windowInstance) {
         return reply.send({ ...result, windowState: "pending" })
       }
       reconnect = { native, target, restartId: expected.restartId }
@@ -292,15 +293,24 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         current()
         inspectedTargets.forgetRun(sessionID, expected.runId)
         // Older hosts accepted an unscoped restart; a distinct method keeps a mixed build inert.
+        let retired = false
+        const retireRun = () => {
+          if (retired) return
+          retired = true
+          deps.developerCdp.close(expected.runId)
+        }
+        signal.addEventListener("abort", retireRun, { once: true })
         let result: unknown
         try {
           result = await deps.nativeParent.request("developer.restartScope", expected)
         } catch (error) {
           if (error instanceof NativeRequestRefused) throw error
-          deps.developerCdp.close(expected.runId)
+          retireRun()
           return reply.code(502).send({ code: "restart-outcome-unknown", error: "Native restart outcome is unknown" })
+        } finally {
+          signal.removeEventListener("abort", retireRun)
         }
-        deps.developerCdp.close(expected.runId)
+        retireRun()
         return reply.send({ result })
       } catch (error) {
         return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) })

@@ -1084,11 +1084,12 @@ async function waitForRestart(
 ) {
   const deadline = Date.now() + REQUEST_TIMEOUT_MS
   const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  const current = () => !signal.aborted && Date.now() < deadline
   let reconnected = false
   const superseded = { content: "CodeNomad restarted; the original inspection was not restored. Inspect again." }
-  while (!signal.aborted && Date.now() < deadline) {
+  while (current()) {
     const active = (await registrations({}, signal).catch(() => [])).filter(({ token }) => !existingTokens.has(token))
-    for (let index = 0; index < active.length && !signal.aborted; index += PROBE_CONCURRENCY) {
+    for (let index = 0; index < active.length && current(); index += PROBE_CONCURRENCY) {
       const batch = await Promise.allSettled(active.slice(index, index + PROBE_CONCURRENCY).map(async registration => ({
         registration,
         response: await callBridge(registration, { mode: "developer-reconnect", sessionID, command: expected, order,
@@ -1096,6 +1097,7 @@ async function waitForRestart(
           INSPECTION_TIMEOUT_MS, signal),
       })))
       for (const candidate of batch) {
+        if (!current()) break
         if (candidate.status !== "fulfilled") continue
         const { registration, response } = candidate.value
         if (response.status !== 200 || !response.body || typeof response.body !== "object") continue
@@ -1107,9 +1109,12 @@ async function waitForRestart(
           return { content: "CodeNomad restarted, but the inspected window was not restored." }
         }
         const inspected = inspectedBridge({ registration, ...target }, response.body.result)
-        if (response.body.windowState === "inspected" && inspected?.pin) {
+        if (response.body.windowState === "inspected" && inspected?.pin && (!expected.windowInstance || target.windowInstance)) {
+          let formatted
+          try { formatted = formatBridgeResult(response.body.result) } catch { continue }
+          if (!current()) break
           if (!publish(inspected)) return superseded
-          return formatBridgeResult(response.body.result)
+          return formatted
         }
       }
     }

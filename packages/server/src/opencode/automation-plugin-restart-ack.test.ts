@@ -8,7 +8,7 @@ import { NativeParent, NATIVE_REQUEST_PREFIX, NATIVE_RESPONSE_PREFIX } from "../
 import { registerAutomationPluginRoute } from "../server/routes/automation-plugin"
 import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, createDeveloperToolTransform, publishAutomationBridge } from "./automation-plugin"
 
-for (const outcome of ["lost", "refused", "invalid-ack", "null-ack", "redirect"]) {
+for (const outcome of ["lost", "refused", "invalid-ack", "null-ack", "redirect", "late-successor", "reused-incarnation"]) {
   const lost = outcome !== "refused"
   test(`restart acknowledgement: ${outcome}`, { timeout: 15_000 }, async t => {
     const root = await mkdtemp(join(tmpdir(), "codenomad-restart-ack-"))
@@ -103,22 +103,38 @@ for (const outcome of ["lost", "refused", "invalid-ack", "null-ack", "redirect"]
     const status: number[] = []
     const redirectRules: Array<RequestRedirect | undefined> = []
     let originalOffline = false
+    const clock = Date.now.bind(Date)
+    let advance = 0
+    t.mock.method(Date, "now", () => clock() + advance)
     t.mock.method(globalThis, "fetch", (async (url, init) => {
       const payload = JSON.parse(String(init?.body))
       if (originalOffline && new URL(String(url)).port === "11001") return new Response("{}", { status: 404 })
       const response = await apps.get(String(url))!.inject({
         method: "POST", url: new URL(String(url)).pathname, headers: init?.headers as Record<string, string>, payload,
       })
-       if (payload.mode === "developer-restart") {
-         status.push(response.statusCode)
-         if (outcome === "invalid-ack") return new Response('{"result":null}')
-         if (outcome === "null-ack") return new Response("null")
-         if (outcome === "redirect") {
-           redirectRules.push(init?.redirect)
-           if (init?.redirect === "error") throw new TypeError("redirect disallowed")
-           return new Response("{}", { status: 307, headers: { Location: "http://127.0.0.1:11002" } })
-         }
-       }
+      if (payload.mode === "developer-restart") {
+        status.push(response.statusCode)
+        if (outcome === "invalid-ack") return new Response('{"result":null}')
+        if (outcome === "null-ack") return new Response("null")
+        if (outcome === "redirect") {
+          redirectRules.push(init?.redirect)
+          if (init?.redirect === "error") throw new TypeError("redirect disallowed")
+          return new Response("{}", { status: 307, headers: { Location: "http://127.0.0.1:11002" } })
+        }
+      }
+      if (payload.mode === "developer-reconnect" && response.statusCode === 200
+        && (outcome === "late-successor" || outcome === "reused-incarnation")) {
+        advance = 96_000
+        const body = response.json()
+        if (outcome === "reused-incarnation") {
+          const windowInstance = ready("old").windowInstance
+          body.developerTarget.windowInstance = windowInstance
+          body.result.context.windowInstance = windowInstance
+          advance = 0
+          setImmediate(() => { advance = 96_000 })
+        }
+        return Response.json(body)
+      }
       return new Response(response.body, { status: response.statusCode })
     }) satisfies typeof fetch)
     type Tool = { name: string; execute(input: unknown, context: { sessionID: string }): Promise<{ content: unknown }> }
@@ -131,7 +147,12 @@ for (const outcome of ["lost", "refused", "invalid-ack", "null-ack", "redirect"]
     const context = { sessionID: "session" }
     await tools.get("inspect")!.execute({}, context)
     const restart = tools.get("act")!.execute({ action: "restart" }, context)
-    if (lost) assert.match(String((await restart).content), /successor/)
+    if (outcome === "late-successor" || outcome === "reused-incarnation") {
+      await assert.rejects(restart, /could not be confirmed/)
+      await assert.rejects(tools.get("screenshot")!.execute({}, context), /inspect/i)
+      assert.equal(attempts.length, 1)
+      return
+    } else if (lost) assert.match(String((await restart).content), /successor/)
     else await assert.rejects(restart, /Native parent is shutting down/)
     await replacement
     assert.equal(attempts.length, 1)
