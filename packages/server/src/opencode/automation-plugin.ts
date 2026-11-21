@@ -945,7 +945,8 @@ export async function executeBrowserTool(sessionID: string, input: unknown, pins
     remaining()
     if (pins && snapshot && target) {
       pins.delete(sessionID)
-      pins.set(sessionID, { registration, target })
+      pins.set(sessionID, currentPin?.target === target && sameBrowserBridge(currentPin.registration, registration)
+        ? currentPin : { registration, target })
       if (pins.size > 128) pins.delete(pins.keys().next().value!)
     }
     return { content }

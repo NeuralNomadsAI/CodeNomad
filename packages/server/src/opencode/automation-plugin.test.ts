@@ -813,8 +813,12 @@ test("unscoped snapshots change the preview pin; ref-free actions stay on that p
   await newer
   await queued
   await browser("session", { action: "press", key: "Enter" })
-  assert.equal(probes, 4)
-  assert.deepEqual(messages, ["one", "two", "two"])
+  await Promise.all([
+    browser("session", { action: "snapshot" }),
+    browser("session", { action: "snapshot", ref: "e1" }),
+  ])
+  assert.equal(probes, 6)
+  assert.deepEqual(messages, ["one", "two", "two", "two", "two"])
 })
 
 test("validates browser actions", () => {
