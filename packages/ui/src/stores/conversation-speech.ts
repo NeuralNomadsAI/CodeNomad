@@ -229,6 +229,8 @@ async function runConversationQueue(): Promise<void> {
       } catch (error) {
         if (controller.signal.aborted) continue
         spokenKeys.delete(entry.key)
+        // The failed playback has settled; an HTTP 401 status check can still finish.
+        currentPlayback = null
         clearConversationPlaybackForInstance(entry.instanceId)
         if (!playbackErrorShown) {
           playbackErrorShown = true
@@ -244,7 +246,6 @@ async function runConversationQueue(): Promise<void> {
         log.error("Conversation playback failed", error)
         break
       } finally {
-        controller.abort()
         if (currentPlayback?.controller === controller) {
           currentPlayback = null
         }

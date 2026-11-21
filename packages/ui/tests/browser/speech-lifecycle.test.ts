@@ -182,7 +182,7 @@ test("buffered playback uses the binary route without newer AbortSignal methods"
   assert.deepEqual((await snapshot(page)).revoked, ["blob:speech-1"])
 }))
 
-test("a synthesis 401 leaves the delayed pairing status check alive without AbortSignal.any", () => withPage(async page => {
+for (const classic of [false, true]) test(`${classic ? "Classic" : "manual"} synthesis 401 leaves the delayed pairing check alive without AbortSignal.any`, () => withPage(async page => {
   await page.route("**/api/speech/synthesize/stream", route => route.fulfill({ status: 401, json: { error: "Expired" } }))
   let release!: () => void
   const afterPlayback = new Promise<void>(resolve => { release = resolve })
@@ -190,14 +190,16 @@ test("a synthesis 401 leaves the delayed pairing status check alive without Abor
     await afterPlayback
     await route.fulfill({ json: { authenticated: false, pairingRequired: true } })
   })
-  await page.evaluate(() => {
+  await page.evaluate(classic => {
     const f = (window as any).fixture
     f.useRealTransport()
-    f.mount("a", "auth")
     Object.defineProperty(AbortSignal, "any", { value: undefined, configurable: true })
-    f.toggle("a")
-  })
-  await state(page, "a", "idle")
+    if (classic) f.startClassic()
+    else { f.mount("a", "auth"); f.toggle("a") }
+  }, classic)
+  if (classic) await page.waitForFunction(() => (window as any).fixture.classicFailed())
+  else await state(page, "a", "idle")
   release()
   await page.waitForFunction(() => (window as any).fixture.authRequired())
+  assert.equal((await snapshot(page)).audios.length, 0)
 }))
