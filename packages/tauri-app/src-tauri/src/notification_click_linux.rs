@@ -100,6 +100,9 @@ impl Bus {
             self.capabilities = (now, capabilities);
         }
         let body = super::linux_body(body, &self.capabilities.1);
+        // Some daemons (Notify OSD) turn any action into a dialog: offer the click only when supported.
+        let clickable = self.capabilities.1.iter().any(|value| value == "actions");
+        let actions: &[&str] = if clickable { &["default", ""] } else { &[] };
         let hints = std::collections::HashMap::from([(
             "desktop-entry",
             Value::from(crate::identity::STABLE_IDENTIFIER),
@@ -112,13 +115,13 @@ impl Bus {
                 "codenomad-tauri",
                 title,
                 body.as_ref(),
-                ["default", ""].as_slice(),
+                actions,
                 hints,
                 -1i32,
             ),
         )?;
         let number = reply.body().deserialize::<u32>()?;
-        if let Some(owner) = reply.header().sender() {
+        if let Some(owner) = reply.header().sender().filter(|_| clickable) {
             if self.notices.len() >= super::MAX_NOTICES {
                 self.notices.pop_front();
             }
@@ -399,7 +402,7 @@ mod tests {
                         "GetCapabilities"
                     );
                     let capabilities = if number == 3 {
-                        vec!["body-markup"]
+                        vec!["body-markup", "actions"]
                     } else {
                         vec![]
                     };
@@ -418,10 +421,13 @@ mod tests {
                     i32,
                 );
                 let payload = request.body();
-                let (app_name, _, _, _, body, _, mut hints, _): Notify<'_> =
+                let (app_name, _, _, _, body, actions, mut hints, _): Notify<'_> =
                     payload.deserialize().unwrap();
                 assert_eq!(app_name, "codenomad-tauri");
                 assert_eq!(body, expected_body);
+                // Without the `actions` capability the notification stays passive.
+                let expected_actions: &[&str] = if number == 3 { &["default", ""] } else { &[] };
+                assert_eq!(actions, expected_actions);
                 assert_eq!(
                     String::try_from(hints.remove("desktop-entry").unwrap()).unwrap(),
                     crate::identity::STABLE_IDENTIFIER
