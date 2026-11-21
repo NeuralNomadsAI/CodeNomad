@@ -19,6 +19,9 @@ interface PendingRequest {
   timeout: NodeJS.Timeout
 }
 
+/** Admission was refused locally or by an explicit response from the host. */
+export class NativeRequestRefused extends Error {}
+
 export class NativeParent {
   private readonly pending = new Map<string, PendingRequest>()
   private closed = false
@@ -30,9 +33,9 @@ export class NativeParent {
   ) {}
 
   request<T>(method: string, params: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
-    if (!this.available) return Promise.reject(new Error("Native control is unavailable in this host"))
-    if (this.closed) return Promise.reject(new Error("Native parent is shutting down"))
-    if (this.pending.size >= MAX_PENDING) return Promise.reject(new Error("Too many pending native requests"))
+    if (!this.available) return Promise.reject(new NativeRequestRefused("Native control is unavailable in this host"))
+    if (this.closed) return Promise.reject(new NativeRequestRefused("Native parent is shutting down"))
+    if (this.pending.size >= MAX_PENDING) return Promise.reject(new NativeRequestRefused("Too many pending native requests"))
 
     const id = randomUUID()
     const deadline = Date.now() + timeoutMs
@@ -55,13 +58,13 @@ export class NativeParent {
     } catch {
       return true
     }
-    if (response.v !== 1 || typeof response.id !== "string") return true
+    if (!response || response.v !== 1 || typeof response.id !== "string" || typeof response.ok !== "boolean") return true
     const pending = this.pending.get(response.id)
     if (!pending) return true
     this.pending.delete(response.id)
     clearTimeout(pending.timeout)
     if (response.ok) pending.resolve(response.result)
-    else pending.reject(new Error(response.error?.message || response.error?.code || "Native request failed"))
+    else pending.reject(new NativeRequestRefused(response.error?.message || response.error?.code || "Native request failed"))
     return true
   }
 

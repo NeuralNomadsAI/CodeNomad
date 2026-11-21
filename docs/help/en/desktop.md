@@ -8,6 +8,9 @@
 
 Project tabs, selected conversations and layout belong to a window. OpenCode sessions/messages belong to the shared native OpenCode service: another window can see the same conversation. Closing a project tab closes that project in CodeNomad, not its OpenCode sessions; reopen it to find them again. Another window displaying the same project connection also closes its tab and shows a notification; separately opened tabs of the same folder are unaffected. Closing a whole window, quitting or reloading preserves project connections for restoration; see [Projects](projects.md). Do not use closing windows as proof that an agent or scheduled Mission has stopped.
 
+Desktop automation stays on the window the agent inspected, even when you switch windows. The agent can list eligible local windows with `codenomad.inspect({targets:true})` and inspect another by its returned identifier.
+Native pointer and keyboard input in the app window requires its main page. Use the separate browser-preview tools for a conversation's web preview.
+
 Native application menus use CodeNomad's interface language once a window has loaded; they show English until then. **Help → About CodeNomad** (also in the macOS application menu) opens **Settings → Info** with the version, updates and diagnostics. **Help → Support CodeNomad** opens the [Support CodeNomad](sponsor.md) page in your browser.
 
 ## Desktop launch arguments {#desktop-cli}
