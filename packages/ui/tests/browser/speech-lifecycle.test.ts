@@ -125,6 +125,13 @@ test("stream disposal aborts pending work and revokes allocated audio", () => wi
   assert.deepEqual(stopped.audios[0], { paused: true, src: "", loads: 1 })
 }))
 
+test("streaming feeds later chunks while the audio decoder waits for enough data to play", () => withPage(async page => {
+  await page.evaluate(() => { const f = (window as any).fixture; f.mount("a", "split", "streaming"); f.toggle("a") })
+  await page.waitForFunction(() => (window as any).fixture.snapshot().pending === 1)
+  await page.evaluate(() => (window as any).fixture.resolveSplit(0))
+  await page.waitForFunction(() => (window as any).fixture.snapshot().audios[0]?.paused === false)
+}))
+
 test("stop and disposal fence buffered responses and capabilities still loading", () => withPage(async page => {
   await page.evaluate(() => { const f = (window as any).fixture; f.mount("a", "buffered"); f.toggle("a") })
   await page.waitForFunction(() => (window as any).fixture.snapshot().pending === 1)

@@ -4,7 +4,7 @@ import test from "node:test"
 import { streamToMediaSource } from "./audio-utils"
 
 test("audio streaming preserves append order and releases the stream and listeners on failure or cancellation", async () => {
-  for (const scenario of ["complete", "append-error", "play-error", "read-error", "cancel-append"] as const) {
+  for (const scenario of ["complete", "append-error", "read-error", "cancel-append"] as const) {
     const events: string[] = []
     const failure = new Error(scenario)
     const lifetime = new AbortController()
@@ -39,16 +39,14 @@ test("audio streaming preserves append order and releases the stream and listene
         controller.close()
       },
     })
-    const result = streamToMediaSource(media as unknown as MediaSource, stream, "audio/mpeg", lifetime.signal, async () => {
+    const result = streamToMediaSource(media as unknown as MediaSource, stream, "audio/mpeg", lifetime.signal, () => {
       events.push("play")
-      if (scenario === "play-error") throw failure
     }, () => failure)
     if (scenario === "complete") await result
     else await assert.rejects(result, error => error === failure)
     assert.deepEqual(events, {
       complete: ["append:1,2", "updateend", "play", "append:3", "updateend", "end"],
       "append-error": ["append:1,2", "updateend"],
-      "play-error": ["append:1,2", "updateend", "play"],
       "read-error": [],
       "cancel-append": ["append:1,2"],
     }[scenario])

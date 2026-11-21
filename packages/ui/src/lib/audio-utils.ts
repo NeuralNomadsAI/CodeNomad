@@ -22,7 +22,7 @@ export function createMediaRecorder(stream: MediaStream): MediaRecorder {
 
 export async function streamToMediaSource(
   media: MediaSource, stream: ReadableStream<Uint8Array>, mime: string,
-  signal: AbortSignal, play: () => Promise<void>, error: () => Error,
+  signal: AbortSignal, play: () => void, error: () => Error,
 ) {
   signal.throwIfAborted()
   const source = media.addSourceBuffer(mime)
@@ -39,7 +39,7 @@ export async function streamToMediaSource(
       await appendChunk(source, value, signal, error)
       if (!started) {
         started = true
-        await play()
+        play()
       }
     }
     if (media.readyState === "open") media.endOfStream()

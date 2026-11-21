@@ -15,13 +15,15 @@ let resolveCapabilities: (() => void) | undefined
 serverApi.synthesizeSpeechStream = (_request, signal) => new Promise(resolve => pending.push({ resolve, signal }))
 
 const audios: FakeAudio[] = [], revoked: string[] = []
+let waitForDecoder: Promise<void> | undefined
+let decoderReady: (() => void) | undefined
 class FakeAudio extends EventTarget {
   src: string
   currentTime = 0
   paused = true
   loads = 0
   constructor(src: string) { super(); this.src = src; audios.push(this) }
-  async play() { this.paused = false }
+  async play() { if (waitForDecoder) await waitForDecoder; this.paused = false }
   pause() { this.paused = true }
   load() { this.loads++ }
 }
@@ -30,8 +32,12 @@ class FakeMediaSource extends EventTarget {
   static isTypeSupported() { return true }
   addSourceBuffer() {
     const buffer = new EventTarget()
+    let appends = 0
     return Object.assign(buffer, {
-      appendBuffer: () => queueMicrotask(() => buffer.dispatchEvent(new Event("updateend"))),
+      appendBuffer: () => queueMicrotask(() => {
+        buffer.dispatchEvent(new Event("updateend"))
+        if (++appends === 2) decoderReady?.()
+      }),
     })
   }
   endOfStream() {}
@@ -98,6 +104,17 @@ async function cards(count: number, drift: boolean) {
   toggle: (key: string) => { void owners.get(key)!.speech.toggle() },
   state: (key: string) => owners.get(key)!.speech.state(),
   resolve: (index: number) => pending[index].resolve(new Response(new Uint8Array([97]), { headers: { "content-type": "audio/mpeg" } })),
+  resolveSplit: (index: number) => {
+    waitForDecoder = new Promise(resolve => { decoderReady = resolve })
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1]))
+        controller.enqueue(new Uint8Array([2]))
+        controller.close()
+      },
+    })
+    pending[index].resolve(new Response(stream, { headers: { "content-type": "audio/mpeg" } }))
+  },
   finish: (index: number, event = "ended") => audios[index].dispatchEvent(new Event(event)),
   snapshot: () => ({ pending: pending.length, aborted: pending.map(request => request.signal.aborted), revoked: [...revoked], audios: audios.map(audio => ({ paused: audio.paused, src: audio.src, loads: audio.loads })) }),
 }

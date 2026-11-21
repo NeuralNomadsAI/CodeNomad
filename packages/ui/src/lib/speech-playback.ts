@@ -15,9 +15,10 @@ export async function playSpeech(
     signal.throwIfAborted()
     const error = () => new Error(tGlobal("messageItem.actions.speak.error.generate"))
     const mime = response.headers.get("content-type") || formatToMimeType(ttsFormat)
+    const stream = response.body
     let media: MediaSource | undefined
     if (playbackMode === "streaming") {
-      if (!response.body) throw error()
+      if (!stream) throw error()
       if (!MediaSource.isTypeSupported(mime)) {
         throw new Error(tGlobal("settings.speech.compatibility.browserStreamingUnavailable"))
       }
@@ -42,12 +43,14 @@ export async function playSpeech(
         onPlaying?.()
         await player.play()
       }
-      if (media) {
+      const start = () => { void play().catch(fail) }
+      if (media && stream) {
         const source = media
         source.addEventListener("sourceopen", () => {
-          void streamToMediaSource(source, response.body!, mime, listeners.signal, play, error).catch(fail)
+          // The first chunk can trigger play without being enough for the decoder.
+          void streamToMediaSource(source, stream, mime, listeners.signal, start, error).catch(fail)
         }, once)
-      } else void play().catch(fail)
+      } else start()
     })
   } finally {
     if (audio) {
