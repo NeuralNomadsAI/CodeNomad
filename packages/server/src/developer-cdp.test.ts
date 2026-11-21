@@ -78,12 +78,20 @@ class FakeChrome {
     }
     queueMicrotask(() => socket.respond(command, command.method === "Runtime.evaluate" && command.params?.expression === "document.documentElement"
       ? { result: { objectId: "input-document" } } : command.method === "Runtime.callFunctionOn"
-        && command.params?.objectId === "input-document" ? { result: { value: 1_700_000_000 } } : this.result(command.method)))
+        && command.params?.objectId === "input-document" ? {
+          result: { value: String(command.params.functionDeclaration).includes("activeElement") ? this.mainFocus : 1_700_000_000 },
+        } : command.method === "Runtime.callFunctionOn" && String(command.params?.functionDeclaration).includes("window.top") ? {
+          result: { value: this.mainRef },
+        } : this.result(command.method)))
   }
 
   /** Visible box of every element, or none; and the element hit at its centre. */
   quads: number[][] = []
   hit = 42
+  hitFrame = "main"
+  hitTag = "button"
+  mainFocus = true
+  mainRef = true
   functionResult: unknown
 
   result(method: string): Record<string, unknown> {
@@ -91,7 +99,9 @@ class FakeChrome {
       nodes: this.axNodes,
     }
     if (method === "DOM.getContentQuads") return { quads: this.quads }
-    if (method === "DOM.getNodeForLocation") return { backendNodeId: this.hit }
+    if (method === "DOM.getNodeForLocation") return { backendNodeId: this.hit, frameId: this.hitFrame }
+    if (method === "DOM.describeNode") return { node: { localName: this.hitTag } }
+    if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } }
     if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } }
     if (method === "Runtime.evaluate") return { result: { value: this.context } }
     if (method === "Runtime.callFunctionOn") return { result: { value: this.functionResult } }
@@ -189,10 +199,7 @@ describe("DeveloperCdp", () => {
     } finally { client.close() }
   })
 
-  for (const [event, params] of [
-    ["Page.documentOpened", { frame: { id: "child", parentId: "main" } }],
-    ["Runtime.executionContextsCleared", {}],
-  ] as const) it(`does not release an admitted key after ${event}`, async () => {
+  it("does not release an admitted key after the main execution contexts are cleared", async () => {
     const chrome = new FakeChrome()
     const client = chrome.client()
     const { endpoint, runId, windowId } = identity
@@ -202,12 +209,118 @@ describe("DeveloperCdp", () => {
       chrome.onCommand = command => {
         if (command.method === "Input.dispatchKeyEvent" && command.params?.code === "ControlLeft"
           && command.params.type !== "keyUp") {
-          chrome.sockets.at(-1)!.emit(event, params)
+          chrome.sockets.at(-1)!.emit("Runtime.executionContextsCleared")
         }
       }
       await assert.rejects(client.act({ ...window, document }, { action: "press", key: "Control+]" }), /changed during action/)
       const keys = chrome.commands.filter(command => command.method === "Input.dispatchKeyEvent")
       assert.deepEqual(keys.map(command => command.params?.code), ["ControlLeft"])
+    } finally { client.close() }
+  })
+
+  it("refuses keyboard input when a child document has focus after its replacement", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    try {
+      chrome.mainFocus = false
+      const { document } = await client.inspect(identity)
+      chrome.sockets.at(-1)!.emit("Page.frameNavigated", { frame: { id: "child", parentId: "main" } })
+      await assert.rejects(client.act({ ...identity, document }, { action: "press", key: "Enter" }), /focus.*outside the main document/i)
+      assert.ok(!chrome.commands.some(command => command.method === "Input.dispatchKeyEvent"))
+    } finally { client.close() }
+  })
+
+  it("does not send keyUp to a child document that takes focus during keyDown", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    try {
+      const { document } = await client.inspect(identity)
+      chrome.onCommand = command => {
+        if (command.method === "Input.dispatchKeyEvent" && command.params?.type === "keyDown") chrome.mainFocus = false
+      }
+      await assert.rejects(client.act({ ...identity, document }, { action: "press", key: "Enter" }), /focus.*outside the main document.*Input already sent/i)
+      assert.deepEqual(chrome.commands.filter(command => command.method === "Input.dispatchKeyEvent")
+        .map(command => command.params?.type), ["keyDown"])
+      assert.ok(chrome.commands.some(command => command.params?.objectId === "input-document"
+        && String(command.params.functionDeclaration).includes("Math.min")))
+    } finally { client.close() }
+  })
+
+  for (const isDefault of [true, false]) it(`fences loss of the main world only (default: ${isDefault})`, async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    try {
+      const { document } = await client.inspect(identity)
+      const socket = chrome.sockets.at(-1)!
+      socket.emit("Runtime.executionContextCreated", { context: { id: 5, auxData: { isDefault, frameId: "main" } } })
+      socket.emit("Runtime.executionContextDestroyed", { executionContextId: 5 })
+      const press = client.act({ ...identity, document }, { action: "press", key: "Enter" })
+      if (isDefault) await assert.rejects(press, /Page changed/)
+      else await press
+      assert.equal(chrome.commands.filter(command => command.method === "Input.dispatchKeyEvent").length, isDefault ? 0 : 2)
+    } finally { client.close() }
+  })
+
+  it("refuses a child-frame keyboard ref before calling a page function on it", async () => {
+    const chrome = new FakeChrome()
+    chrome.mainRef = false
+    const client = chrome.client()
+    try {
+      const inspection = await client.inspect(identity)
+      await assert.rejects(client.act({ ...identity, document: inspection.document }, {
+        action: "press", key: "Enter", ref: refOf(inspection),
+      }), /does not support keyboard input into a subframe/)
+      assert.equal(chrome.commands.filter(command => command.params?.objectId === "node-1").length, 1)
+      assert.ok(!chrome.commands.some(command => command.method === "Input.dispatchKeyEvent"))
+    } finally { client.close() }
+  })
+
+  for (const retargeted of [false, true]) it(`releases an admitted mouse press only if its point stays in the main frame (retargeted: ${retargeted})`, async () => {
+    const chrome = new FakeChrome()
+    chrome.quads = [[100, 40, 300, 40, 300, 80, 100, 80]]
+    const client = chrome.client()
+    try {
+      const inspection = await client.inspect(identity)
+      const socket = chrome.sockets.at(-1)!
+      socket.emit("Runtime.executionContextCreated", { context: { id: 5, auxData: { isDefault: true, frameId: "main" } } })
+      socket.emit("Runtime.executionContextCreated", { context: { id: 6, auxData: { isDefault: true, frameId: "unrelated-child" } } })
+      chrome.onCommand = command => {
+        if (command.method !== "Input.dispatchMouseEvent" || command.params?.type !== "mousePressed") return
+        socket.emit("Runtime.executionContextDestroyed", { executionContextId: 6 })
+        socket.emit("Page.frameDetached", { frameId: "unrelated-child", reason: "remove" })
+        if (retargeted) chrome.hitTag = "iframe" // Out-of-process frames are reported as their owner in the main frame.
+      }
+      const click = client.act({ ...identity, document: inspection.document }, { action: "click", ref: refOf(inspection) })
+      if (retargeted) await assert.rejects(click, /pointer.*main document.*Input already sent/i)
+      else await click
+      assert.deepEqual(chrome.commands.filter(command => command.method === "Input.dispatchMouseEvent")
+        .map(command => command.params?.type), retargeted ? ["mouseMoved", "mousePressed"] : ["mouseMoved", "mousePressed", "mouseReleased"])
+      assert.ok(chrome.commands.some(command => command.params?.objectId === "input-document"
+        && String(command.params.functionDeclaration).includes("Math.min")))
+    } finally { client.close() }
+  })
+
+  it("rechecks a pending hit if a child's default execution context dies before Page reports navigation", async () => {
+    const chrome = new FakeChrome()
+    chrome.quads = [[100, 40, 300, 40, 300, 80, 100, 80]]
+    const client = chrome.client()
+    try {
+      const inspection = await client.inspect(identity)
+      const socket = chrome.sockets.at(-1)!
+      socket.emit("Runtime.executionContextCreated", { context: { id: 6, auxData: { isDefault: true, frameId: "child" } } })
+      chrome.onCommand = command => {
+        if (command.method === "DOM.describeNode" && chrome.commands.some(previous => previous.params?.type === "mousePressed")) {
+          socket.emit("Runtime.executionContextDestroyed", { executionContextId: 6 })
+          chrome.hitFrame = "child"
+        }
+      }
+      await assert.rejects(client.act({ ...identity, document: inspection.document }, {
+        action: "click", ref: refOf(inspection),
+      }), /pointer.*main document.*Input already sent/i)
+      assert.deepEqual(chrome.commands.filter(command => command.method === "Input.dispatchMouseEvent")
+        .map(command => command.params?.type), ["mouseMoved", "mousePressed"])
+      assert.ok(chrome.commands.some(command => command.params?.objectId === "input-document"
+        && String(command.params.functionDeclaration).includes("Math.min")))
     } finally { client.close() }
   })
 

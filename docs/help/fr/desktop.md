@@ -11,6 +11,7 @@ Les onglets de projet, conversations sélectionnées et dispositions appartienne
 Les menus natifs de l’application utilisent la langue de l’interface de CodeNomad dès qu’une fenêtre est chargée ; ils restent en anglais jusque-là. **Aide → À propos de CodeNomad** (aussi dans le menu de l’application sur macOS) ouvre **Paramètres → Info** avec la version, les mises à jour et les diagnostics. **Aide → Soutenir CodeNomad** ouvre la page [Soutenir CodeNomad](sponsor.md) dans votre navigateur.
 
 L’automatisation reste dans la fenêtre inspectée par l’agent, même si vous changez de fenêtre. L’agent peut lister les fenêtres locales disponibles avec `codenomad.inspect({targets:true})` et en inspecter une autre par son identifiant.
+Dans la fenêtre de l’application, la souris et le clavier ne ciblent que la page principale. Pour l’aperçu web d’une conversation, utilisez les outils d’aperçu.
 
 ## Arguments de lancement de l’application {#desktop-cli}
 

@@ -6,7 +6,7 @@ import { GLOBAL_FUNCTIONS } from "./automation/page/functions"
 import type { RefAction } from "./automation/page/parse"
 import { RefTable } from "./automation/page/refs"
 import { SnapshotScopeError } from "./automation/page/snapshot"
-import { OBJECT_GROUP, PageTargetChangedError } from "./automation/page/protocol"
+import { OBJECT_GROUP, PageDriverUnsupportedError, PageTargetChangedError } from "./automation/page/protocol"
 
 const DEFAULT_TIMEOUT_MS = 5_000
 const DEFAULT_MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024
@@ -16,6 +16,14 @@ const DISCOVERY_TEXT_LIMIT = 256 * 1024
 const DISCOVERY_TARGET_LIMIT = 64
 const DISCOVERY_PROBE_CONCURRENCY = 4
 const INVENTORY_PAGE_MS = 250
+const FRAME_OWNER = /^(iframe|frame|fencedframe|object|embed|portal|webview)$/
+const INPUT_FOCUS = `function () {
+  if (this !== document.documentElement) return false;
+  let active = document.activeElement;
+  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+  if (!active || ${FRAME_OWNER}.test(active.localName)) return false;
+  return active.matches(':focus') ? true : active;
+}`
 const CONTEXT_FUNCTION = `(session) => {
   const root = document.querySelector('[data-tab-visible="true"][data-tab-id]');
   const pane = root?.querySelector('.session-cache-pane[data-session-active="true"][data-session-id]');
@@ -137,7 +145,10 @@ interface RunState {
   refs: RefTable
   nextCommandId: number
   navigationEpoch: number
-  childDocumentEpoch: number
+  childFrameEpoch: number
+  mainFrameId?: string
+  mainContextId?: number
+  childContexts: Set<number>
   pending: Map<number, PendingCommand>
   diagnostics: DeveloperCdpDiagnostic[]
 }
@@ -191,9 +202,8 @@ export class DeveloperCdp {
       const monitorForeground = action.action === "scroll" && !action.ref || action.action === "wait"
       const foreground = state.context
       const message = "Page changed during action; inspect again"
-      const childEpoch = state.childDocumentEpoch
       const guard = () => {
-        if (state.navigationEpoch !== epoch || !state.socket || state.childDocumentEpoch !== childEpoch) {
+        if (state.navigationEpoch !== epoch || !state.socket) {
           throw new PageTargetChangedError(message)
         }
       }
@@ -203,6 +213,7 @@ export class DeveloperCdp {
         guard()
       }
       let inputRoot: string | undefined
+      let inputRefusal: PageTargetChangedError | undefined
       const session: PageSession = cdpSession({ send: async (method, params) => {
         guard()
         const expression = params?.expression
@@ -218,6 +229,38 @@ export class DeveloperCdp {
             functionDeclaration: `function () { if (this !== document.documentElement) return; return ${expression} }`,
             returnByValue: true,
           })
+        }
+        if (method === "Input.dispatchKeyEvent" || method === "Input.insertText" || method === "Input.dispatchMouseEvent") {
+          if (inputRefusal) throw inputRefusal
+          // CDP Input has no frame selector. Recheck the destination before each send, including releases.
+          const mouse = method === "Input.dispatchMouseEvent"
+          const point = mouse && typeof params?.x === "number" && typeof params.y === "number"
+            ? { x: Math.floor(params.x), y: Math.floor(params.y) } : undefined
+          for (let attempt = 0; attempt < 2; attempt++) {
+            const childEpoch = state.childFrameEpoch
+            const inMainFrame = await (mouse ? this.isMainFramePoint(state, point, guard)
+              : this.isMainFrameFocus(state, inputRoot, guard)).catch(() => false)
+            guard()
+            if (!inMainFrame) break
+            if (childEpoch === state.childFrameEpoch) return this.command(state, method, point ? { ...params, ...point } : params)
+          }
+          inputRefusal = new PageTargetChangedError(mouse
+            ? "Cannot confirm the pointer is in the main document; inspect again"
+            : "Keyboard focus is outside the main document or unavailable; focus the main document and inspect again", true)
+          throw inputRefusal
+        }
+        if (method === "DOM.resolveNode" && (action.action === "press" || action.action === "type")) {
+          const result = await this.command(state, method, params)
+          guard()
+          const objectId = (result.object as { objectId?: string } | undefined)?.objectId
+          if (objectId) {
+            const owner = await this.command(state, "Runtime.callFunctionOn", { objectId, returnByValue: true,
+              functionDeclaration: "function () { return this.ownerDocument?.defaultView === window.top }" })
+            guard()
+            if ((owner.result as { value?: unknown } | undefined)?.value !== true)
+              throw new PageDriverUnsupportedError("cdp", "keyboard input into a subframe")
+          }
+          return result
         }
         return this.command(state, method, params)
       } }, () => check(monitorForeground ? foreground : undefined), true)
@@ -267,6 +310,34 @@ export class DeveloperCdp {
 
   async context(selection: DeveloperCdpSelection): Promise<DeveloperCdpContext> {
     return this.exclusive(windowKey(selection), async () => (await this.ensure(selection)).context!)
+  }
+
+  private async isMainFrameFocus(state: RunState, objectId: string | undefined, guard: () => void): Promise<boolean> {
+    if (!objectId) return false
+    const response = await this.command(state, "Runtime.callFunctionOn", {
+      objectId, functionDeclaration: INPUT_FOCUS, objectGroup: OBJECT_GROUP,
+    })
+    const result = response.result as { value?: unknown; objectId?: string } | undefined
+    if (result?.value === true) return true
+    if (!result?.objectId) return false
+    // An apparent focus fallback may hide the actual focused element in a closed shadow root.
+    guard()
+    const described = await this.command(state, "DOM.describeNode", { objectId: result.objectId, depth: 0, pierce: true })
+    const node = described.node as { shadowRoots?: unknown[] } | undefined
+    return !!node && !node.shadowRoots?.length
+  }
+
+  private async isMainFramePoint(state: RunState, point: { x: number; y: number } | undefined, guard: () => void): Promise<boolean> {
+    if (!state.mainFrameId || !point) return false
+    const hit = await this.command(state, "DOM.getNodeForLocation", {
+      ...point, includeUserAgentShadowDOM: false, ignorePointerEventsNone: false,
+    })
+    if (hit.frameId !== state.mainFrameId || typeof hit.backendNodeId !== "number") return false
+    // Chromium reports an out-of-process frame as its owner element in this target's hit test.
+    guard()
+    const described = await this.command(state, "DOM.describeNode", { backendNodeId: hit.backendNodeId, depth: 0 })
+    const node = described.node as { localName?: string } | undefined
+    return typeof node?.localName === "string" && !FRAME_OWNER.test(node.localName)
   }
 
   async probeContexts(endpoint: string, windowIds: ReadonlyMap<string, string | undefined>,
@@ -330,7 +401,8 @@ export class DeveloperCdp {
       refs: new RefTable("inspect again", `e${this.refNamespace}${String(stamp).padStart(10, "0")}`),
       nextCommandId: 0,
       navigationEpoch: 0,
-      childDocumentEpoch: 0,
+      childFrameEpoch: 0,
+      childContexts: new Set(),
       pending: new Map(),
       diagnostics: [],
     }
@@ -451,13 +523,13 @@ export class DeveloperCdp {
     socket.onclose = () => {
       if (state.socket !== socket) return
       state.socket = undefined
-      state.open = undefined
-      this.invalidateRefs(state)
-      this.rejectPending(state, new Error("CDP WebSocket closed"))
+      this.disconnect(state, new Error("CDP WebSocket closed"))
     }
     await state.open
     if (!enable) return
     await this.command(state, "Page.enable")
+    const result = await this.command(state, "Page.getFrameTree")
+    state.mainFrameId = (result.frameTree as { frame?: { id?: string } } | undefined)?.frame?.id
     await this.command(state, "Runtime.enable")
     await this.command(state, "Accessibility.enable")
   }
@@ -499,13 +571,39 @@ export class DeveloperCdp {
       return
     }
     if (message.method === "Runtime.executionContextsCleared") {
+      state.mainContextId = undefined
+      state.childContexts.clear()
       this.invalidateRefs(state)
       return
     }
-    if (message.method === "Page.frameNavigated" || message.method === "Page.documentOpened" || message.method === "Page.frameDetached") {
-      if (message.method === "Page.frameDetached" || (message.params?.frame as { parentId?: string } | undefined)?.parentId) {
-        state.childDocumentEpoch++
-      } else this.invalidateRefs(state)
+    if (message.method === "Runtime.executionContextCreated") {
+      const context = message.params?.context as { id?: number; auxData?: { isDefault?: boolean; frameId?: string } } | undefined
+      if (typeof context?.id === "number" && context.auxData?.isDefault && context.auxData.frameId) {
+        if (context.auxData.frameId === state.mainFrameId) state.mainContextId = context.id
+        else state.childContexts.add(context.id)
+      }
+      return
+    }
+    if (message.method === "Runtime.executionContextDestroyed") {
+      const id = message.params?.executionContextId
+      if (typeof id !== "number") return
+      if (id === state.mainContextId) {
+        state.mainContextId = undefined
+        this.invalidateRefs(state)
+      } else if (state.childContexts.delete(id)) state.childFrameEpoch++
+      return
+    }
+    if (message.method === "Page.frameDetached" || message.method === "Page.frameAttached") {
+      if (state.mainFrameId && message.params?.frameId === state.mainFrameId) this.invalidateRefs(state)
+      else state.childFrameEpoch++
+      return
+    }
+    if (message.method === "Page.frameNavigated" || message.method === "Page.documentOpened") {
+      const frame = message.params?.frame as { id?: string; parentId?: string } | undefined
+      if (!frame?.parentId) {
+        if (frame?.id) state.mainFrameId = frame.id
+        this.invalidateRefs(state)
+      } else state.childFrameEpoch++
       return
     }
     const diagnostic = readDiagnostic(message)
@@ -552,6 +650,9 @@ export class DeveloperCdp {
     const socket = state.socket
     state.socket = undefined
     state.open = undefined
+    state.mainFrameId = undefined
+    state.mainContextId = undefined
+    state.childContexts.clear()
     this.invalidateRefs(state)
     this.rejectPending(state, error)
     socket?.close()
