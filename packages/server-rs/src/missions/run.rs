@@ -1,4 +1,9 @@
-use crate::{App, Error, Shared, Workspace, error, worktrees::linked, files};
+use super::{
+    configuration,
+    creation_admission::{self, Attempt, Scope},
+};
+use crate::shared::js_trim;
+use crate::{App, Error, Shared, Workspace, error, files, worktrees::linked};
 use axum::{
     Extension, Json,
     extract::{Path, State},
@@ -8,6 +13,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 use subtle::ConstantTimeEq;
 
 const PREFIX: &str = "/api/rpc/codenomad.missions/";
@@ -22,16 +28,10 @@ fn bad() -> Error {
     error(Status::BAD_REQUEST, "Invalid one-time Mission request")
 }
 fn foreign() -> Error {
-    error(
-        Status::FORBIDDEN,
-        "Mission does not belong to an open authorized root",
-    )
+    error(Status::FORBIDDEN, "Mission does not belong to an open authorized root")
 }
 fn held() -> Error {
-    error(
-        Status::SERVICE_UNAVAILABLE,
-        "Mission outcome unavailable; reconcile the same request",
-    )
+    error(Status::SERVICE_UNAVAILABLE, "Mission outcome unavailable; reconcile the same request")
 }
 fn id(s: &str, n: usize) -> bool {
     s.len() <= n && crate::opencode::valid_id(s)
@@ -39,7 +39,7 @@ fn id(s: &str, n: usize) -> bool {
 fn text(s: &str, n: usize) -> bool {
     !s.trim().is_empty() && s.encode_utf16().count() <= n && !s.contains('\0')
 }
-fn token(s: &str, n: usize) -> String {
+pub(super) fn token(s: &str, n: usize) -> String {
     format!("{:x}", Sha256::digest(s.as_bytes()))[..n].into()
 }
 pub fn directory(w: &Workspace) -> Result<&str, Error> {
@@ -53,11 +53,7 @@ pub async fn rpc(
     input: Value,
     max: usize,
 ) -> Result<Value, Error> {
-    let url = app
-        .native
-        .url()
-        .join(&format!("{PREFIX}{method}"))
-        .map_err(|_| held())?;
+    let url = app.native.url().join(&format!("{PREFIX}{method}")).map_err(|_| held())?;
     let res = app
         .native
         .request(Method::POST, url)
@@ -71,17 +67,12 @@ pub async fn rpc(
     let body = crate::opencode::read_json(res, max).await.map_err(|_| held())?;
     if !status.is_success() {
         // Preserve reviewed reserved conflict/validation codes, not daemon prose.
-        let code = body["type"]
-            .as_str()
-            .or_else(|| body["code"].as_str())
-            .unwrap_or_default();
+        let code = body["type"].as_str().or_else(|| body["code"].as_str()).unwrap_or_default();
         let public = code.strip_prefix("mission.").unwrap_or(code);
         if crate::bench::missions_run() {
             eprintln!(
                 "Mission RPC {method} refused ({status}, {})",
-                if public
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                if public.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
                     && public.len() <= 64
                 {
                     public
@@ -127,11 +118,7 @@ pub async fn project_owner(app: &App, w: &Workspace) -> Result<(String, String),
     )
     .await?;
     let current = |value: &Value| {
-        value
-            .as_str()
-            .and_then(|p| dunce::canonicalize(p).ok())
-            .as_ref()
-            == Some(&w.path)
+        value.as_str().and_then(|p| dunce::canonicalize(p).ok()).as_ref() == Some(&w.path)
     };
     if !current(&here["directory"])
         || !current(&here["project"]["directory"])
@@ -159,15 +146,12 @@ async fn snapshot(app: &App, w: &Workspace, project: &str) -> Result<Value, Erro
     Ok(seen)
 }
 fn map<'a>(s: &'a Value, id: &str) -> Result<&'a Value, Error> {
-    s["missions"]
-        .as_array()
-        .and_then(|r| r.iter().find(|m| m["id"] == id))
-        .ok_or_else(foreign)
+    s["missions"].as_array().and_then(|r| r.iter().find(|m| m["id"] == id)).ok_or_else(foreign)
 }
 fn ordinary(m: &Value) -> bool {
     let doc = &m["document"];
     let launch = &doc["launch"];
-    m["template"] == "custom"
+    m["template"].as_str().is_some_and(|t| configuration::TEMPLATES.contains(&t))
         && m["taskMode"].as_str().is_none_or(|v| v == "native" || v == "independent")
         && (doc.is_null()
             || doc["scheduleActivation"].is_null()
@@ -183,10 +167,7 @@ fn ordinary(m: &Value) -> bool {
 }
 fn response_ok(value: &Value, w: &Workspace, project: &str) -> bool {
     value["projectID"] == project
-        && value["projectCanonical"]
-            .as_str()
-            .and_then(|p| dunce::canonicalize(p).ok())
-            .as_ref()
+        && value["projectCanonical"].as_str().and_then(|p| dunce::canonicalize(p).ok()).as_ref()
             == Some(&w.path)
         && ordinary(value)
 }
@@ -225,122 +206,185 @@ pub async fn create(
     State(app): State<Shared>,
     Path(wid): Path<String>,
     Extension(p): Extension<crate::auth::Principal>,
-    Json(q): Json<Create>,
+    Json(raw): Json<Value>,
 ) -> Result<(Status, Json<Value>), Error> {
+    let request = raw["requestId"]
+        .as_str()
+        .map(js_trim)
+        .filter(|s| valid_text(s, 1, 128))
+        .ok_or_else(creation_admission::invalid)?;
+    app.mission_creations.register(&wid, request, &raw)?;
+    let key = (wid, request.to_owned());
+    // Losing the HTTP client must not drop the permit or cancel an already dispatched create.
+    let result = tokio::spawn(async move {
+        let result = create_once(&app, &key, p, raw).await;
+        app.mission_creations.finish(&key, &result);
+        result
+    })
+    .await
+    .map_err(|_| creation_admission::uncertain())??;
+    Ok((Status::OK, Json(result)))
+}
+
+async fn create_once(
+    app: &App,
+    key: &(String, String),
+    p: crate::auth::Principal,
+    raw: Value,
+) -> Result<Value, Error> {
+    let invalid = creation_admission::invalid;
+    let unavailable = creation_admission::unavailable;
     if app.mission_bridge.is_none() {
-        return Err(held());
+        return Err(unavailable());
     }
-    let options = crate::missions::creation_admission::options(
+    if raw.as_object().is_none_or(|o| o.values().any(Value::is_null)) {
+        return Err(invalid());
+    }
+    let q: Create = serde_json::from_value(raw).map_err(|_| invalid())?;
+    let options = creation_admission::options(
         q.task_mode.as_deref(),
-        q.watched_conversation_ids.clone(),
+        q.watched_conversation_ids,
         q.coordinator_session_id.as_deref(),
     )?;
-    if q.template != "custom"
-        || !id(&q.request_id, 128)
-        || !text(&q.objective, 20_000)
+    let requested = q.directory.as_deref().map(js_trim);
+    if !configuration::TEMPLATES.contains(&q.template.as_str())
+        || !valid_text(js_trim(&q.objective), 1, 20_000)
         || q.title
             .as_deref()
-            .is_some_and(|s| !text(s, 60) || s.contains(['\r', '\n']))
-        || q.notes
-            .as_deref()
-            .is_some_and(|s| s.encode_utf16().count() > 20_000)
-        || q.profiles.as_ref().is_some_and(|p| !p.is_object())
+            .map(js_trim)
+            .is_some_and(|s| !valid_text(s, 1, 60) || s.contains(['\r', '\n']))
+        || q.notes.as_deref().is_some_and(|s| !valid_text(s, 0, 20_000))
+        || requested.is_some_and(|s| !valid_text(s, 1, 4096))
     {
-        return Err(bad());
+        return Err(invalid());
     }
-    let _lock = app.project_mutation.lock().await;
-    let w = app.workspace(&wid)?;
-    files::directory(&w, q.directory.as_deref())?;
-    let project = owner(&app, &w).await?;
-    let dir = directory(&w)?;
-    let scope = files::host_identity(&w.path).map_err(|_| foreign())?;
-    let mut input = json!({"requestID":q.request_id,"objective":q.objective.trim(),"template":"custom","taskMode":options.task_mode,"prepared":true,
-        "expectedCoordinatorLocation":{"directory":dir}});
-    if let Some(watched) = &options.watched {
+    let profiles = creation_profiles(&q.template, q.profiles)?;
+    let workspace =
+        app.workspace(&key.0).map_err(|_| error(Status::NOT_FOUND, "Workspace unavailable"))?;
+    let mut scope = Scope::open(app, workspace, requested).await?;
+    let mut input = json!({"requestID":js_trim(&q.request_id),"objective":js_trim(&q.objective),"template":q.template,"taskMode":options.task_mode,"prepared":true,
+        "expectedCoordinatorLocation":{"directory":scope.dir}});
+    if let Some(watched) = options.watched {
         input["watchedConversationIDs"] = json!(watched);
     }
     if let Some(title) = q.title {
-        input["title"] = json!(title.trim());
+        input["title"] = json!(js_trim(&title));
     }
     if let Some(notes) = q.notes {
         input["notes"] = json!(notes);
     }
-    if let Some(profiles) = q.profiles {
+    if let Some(profiles) = profiles {
         input["profiles"] = profiles;
     }
     if p.0.is_cancelled() {
         return Err(foreign());
     }
-    let caps = rpc(&app, dir, "documentCapabilities", json!({}), 65536).await?;
-    if caps["version"] != 1
-        || files::host_identity(&w.path).ok().as_ref() != Some(&scope)
-        || p.0.is_cancelled()
-    {
-        eprintln!("Mission creation checkpoint refused");
-        return Err(held());
+    let (status, caps) = scope.call(app, "documentCapabilities", &json!({}), 10, 65536).await?;
+    if !status.is_success() || !document_capabilities(&caps["output"]) {
+        return Err(creation_unavailable("Unified Mission documents unavailable"));
     }
     // Reference order: the coordinator is read after the capability check.
     if let Some(session) = &options.coordinator {
-        let location = crate::missions::creation_admission::coordinator(&app, &w, &project, session).await?;
         input["coordinatorSessionID"] = json!(session);
-        input["expectedCoordinatorLocation"] = location;
+        input["expectedCoordinatorLocation"] = scope.attach(app, session).await?;
+    } else {
+        let ui = app.settings.raw_config_owner("ui").map_err(|_| unavailable())?;
+        if ui
+            .get("settings")
+            .and_then(|s| s.get("newConversationPermissions"))
+            .and_then(Value::as_str)
+            == Some("supervised")
+        {
+            // Until the shared permission service supplies the projected rules
+            // and owns their confirmed block, do not create an Autonomous root.
+            return Err(creation_unavailable("Mission root permissions unavailable"));
+        }
     }
-    if p.0.is_cancelled() || files::host_identity(&w.path).ok().as_ref() != Some(&scope) {
-        return Err(foreign());
+    let permit = scope.permit().ok_or_else(|| {
+        (
+            Status::CONFLICT,
+            Json(json!({"error":"Worktree deletion is in progress","code":"creation-worktree-deleting"})),
+        )
+    })?;
+    scope.refresh(app).await?;
+    if p.0.is_cancelled() {
+        return Err(unavailable());
     }
-    let mission = format!("msn_{}", token(&format!("{project}\0{}", q.request_id), 24));
-    let result = crate::missions::creation_admission::create(&app, dir, input, &mission).await?;
-    if !response_ok(&result["mission"], &w, &project)
-        || result["mission"]["id"] != mission.as_str()
-        || result["mission"]["runState"] != "prepared"
-        || result["mission"]["taskMode"].as_str().unwrap_or("native") != options.task_mode
-        || options.coordinator.as_ref().is_some_and(|c| result["mission"]["coordinatorSessionId"] != c.as_str())
-    {
-        eprintln!("Mission creation acknowledgement did not match scope or prepared state");
-        return Err(crate::missions::creation_admission::uncertain());
+    let mission = format!("msn_{}", token(&format!("{}\0{}", scope.project, key.1), 24));
+    let attempt = Arc::new(Attempt { scope, input, mission });
+    app.mission_creations.dispatched(key, attempt.clone(), permit)?;
+    let result = attempt.create(app).await?;
+    if !attempt.acknowledgement(&result) || attempt.scope.refresh(app).await.is_err() {
+        return Err(creation_admission::uncertain());
     }
-    root_session(
-        &app,
-        &w,
-        &project,
-        result["mission"]["coordinatorSessionId"]
-            .as_str()
-            .ok_or_else(held)?,
-    )
-    .await?;
-    Ok((Status::OK, Json(result)))
+    Ok(result)
 }
+
+fn valid_text(value: &str, min: usize, max: usize) -> bool {
+    (min..=max).contains(&value.chars().count())
+}
+
+fn creation_unavailable(message: &str) -> Error {
+    (Status::SERVICE_UNAVAILABLE, Json(json!({"error":message,"code":"creation-unavailable"})))
+}
+
+fn document_capabilities(value: &Value) -> bool {
+    value["version"] == 1
+        && value.as_object().is_some_and(|o| {
+            o.iter().all(|(k, v)| {
+                k == "version"
+                    || (matches!(
+                        k.as_str(),
+                        "automaticStart"
+                            | "agentSchedulePreparation"
+                            | "agentScheduleControl"
+                            | "rootPermissions"
+                    ) && v == true)
+            })
+        })
+}
+
+fn creation_profiles(template: &str, profiles: Option<Value>) -> Result<Option<Value>, Error> {
+    let mut profiles = profiles
+        .map(|p| configuration::profiles(&p))
+        .transpose()
+        .map_err(|_| creation_admission::invalid())?;
+    if template == "compare" {
+        let roles = profiles.as_ref().and_then(|p| p.get("roles")).unwrap_or(&Value::Null);
+        let (a, b) = (&roles["model-a"]["model"], &roles["model-b"]["model"]);
+        let reason = if a.is_null() || b.is_null() {
+            Some("compare-models-required")
+        } else if a["providerID"] == b["providerID"] && a["id"] == b["id"] {
+            Some("compare-models-identical")
+        } else {
+            None
+        };
+        if let Some(code) = reason {
+            return Err((Status::BAD_REQUEST, Json(json!({"error":code,"code":code}))));
+        }
+        let profiles = profiles.as_mut().unwrap();
+        if profiles["roles"]["comparator"]["model"].is_null()
+            && !profiles["coordinator"]["model"].is_null()
+        {
+            let model = profiles["coordinator"]["model"].clone();
+            profiles["roles"]["comparator"]["model"] = model;
+        }
+    }
+    if profiles.as_ref().is_some_and(|p| !configuration::valid_profile_roles(template, p)) {
+        return Err(creation_admission::invalid());
+    }
+    Ok(profiles)
+}
+
 pub async fn creation_receipt(
     State(app): State<Shared>,
     Path((wid, request)): Path<(String, String)>,
 ) -> Result<Json<Value>, Error> {
-    if app.mission_bridge.is_none() || !id(&request, 128) {
-        return Err(bad());
+    if !valid_text(&request, 1, 128) {
+        return Err(error(Status::BAD_REQUEST, "Invalid creation receipt request"));
     }
-    let w = app.workspace(&wid)?;
-    let project = owner(&app, &w).await?;
-    let lookup = format!("msn_{}", token(&format!("{project}\0{request}"), 24));
-    let result = rpc(
-        &app,
-        directory(&w)?,
-        "mission",
-        json!({"missionID":lookup}),
-        4 * 1024 * 1024,
-    )
-    .await?;
-    if result["projectID"] != project {
-        return Err(foreign());
-    }
-    if let Some(m) = result.get("mission") {
-        if m["id"] != lookup || !response_ok(m, &w, &project) {
-            return Err(foreign());
-        }
-        Ok(Json(
-            json!({"requestId":request,"state":"created","mission":m}),
-        ))
-    } else {
-        Ok(Json(json!({"requestId":request,"state":"unknown"})))
-    }
+    app.workspace(&wid).map_err(|_| error(Status::NOT_FOUND, "Workspace unavailable"))?;
+    Ok(Json(app.mission_creations.receipt(&app, &(wid, request)).await))
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -354,47 +398,159 @@ pub async fn control(
     State(app): State<Shared>,
     Path((wid, mid)): Path<(String, String)>,
     Extension(p): Extension<crate::auth::Principal>,
-    Json(q): Json<Control>,
+    Json(raw): Json<Value>,
 ) -> Result<Json<Value>, Error> {
-    if app.mission_bridge.is_none() {
-        return Err(held());
-    }
-    if !id(&mid, 100)
-        || !id(&q.request_id, 128)
-        || q.expected_revision == 0
-        || q.expected_revision > 9_007_199_254_740_991
-        || !matches!(q.action.as_str(), "start" | "pause" | "stop")
+    let invalid = "Invalid mission control request";
+    let q: Control = mutation_body(raw, invalid)?;
+    let (mid, request) = mutation_ids(&mid, &q.request_id, q.expected_revision, invalid)?;
+    if !matches!(q.action.as_str(), "start" | "pause" | "stop")
         || q.graceful.is_some_and(|v| !v || q.action != "pause")
     {
-        return Err(bad());
+        return Err(error(Status::BAD_REQUEST, invalid));
     }
-    let _slot = app.mission_control_slot.acquire().await.unwrap();
-    let w = app.workspace(&wid)?;
-    let project = owner(&app, &w).await?;
-    let seen = snapshot(&app, &w, &project).await?;
-    let m = map(&seen, &mid)?;
-    if !response_ok(m, &w, &project) {
-        return Err(foreign());
-    }
-    root_session(
-        &app,
-        &w,
-        &project,
-        m["coordinatorSessionId"].as_str().ok_or_else(foreign)?,
-    )
-    .await?;
-    let mut input = json!({"missionID":mid,"action":q.action,"requestID":q.request_id,"expectedRevision":q.expected_revision});
+    let mut input = json!({"missionID":mid,"action":q.action,"requestID":request,"expectedRevision":q.expected_revision});
     if q.graceful == Some(true) {
         input["graceful"] = json!(true);
     }
-    if p.0.is_cancelled() {
-        return Err(foreign());
+    mutate(app, wid, p, "lifecycle", input).await
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Update {
+    request_id: String,
+    expected_revision: u64,
+    objective: String,
+    notes: Option<String>,
+}
+
+pub async fn update(
+    State(app): State<Shared>,
+    Path((wid, mid)): Path<(String, String)>,
+    Extension(p): Extension<crate::auth::Principal>,
+    Json(raw): Json<Value>,
+) -> Result<Json<Value>, Error> {
+    let invalid = "Invalid mission update request";
+    let q: Update = mutation_body(raw, invalid)?;
+    let (mid, request) = mutation_ids(&mid, &q.request_id, q.expected_revision, invalid)?;
+    let objective = js_trim(&q.objective);
+    if !valid_text(objective, 1, 20_000)
+        || q.notes.as_deref().is_some_and(|n| !valid_text(n, 0, 20_000))
+    {
+        return Err(error(Status::BAD_REQUEST, invalid));
     }
-    let result = rpc(&app, directory(&w)?, "lifecycle", input, 4 * 1024 * 1024).await?;
-    if !response_ok(&result["mission"], &w, &project) || result["mission"]["id"] != mid {
-        return Err(held());
+    let mut input = json!({"missionID":mid,"objective":objective,"requestID":request,"expectedRevision":q.expected_revision});
+    if let Some(notes) = q.notes {
+        input["notes"] = json!(notes);
     }
-    Ok(Json(result))
+    mutate(app, wid, p, "update", input).await
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Delete {
+    request_id: String,
+    expected_revision: u64,
+    delete_managed_sessions: Option<bool>,
+}
+
+pub async fn delete(
+    State(app): State<Shared>,
+    Path((wid, mid)): Path<(String, String)>,
+    Extension(p): Extension<crate::auth::Principal>,
+    Json(raw): Json<Value>,
+) -> Result<Json<Value>, Error> {
+    let invalid = "Invalid mission deletion request";
+    let q: Delete = mutation_body(raw, invalid)?;
+    let (mid, request) = mutation_ids(&mid, &q.request_id, q.expected_revision, invalid)?;
+    if q.delete_managed_sessions == Some(true) {
+        // The cleanup callback is not qualified here. Refuse before the native
+        // deletion journal could record an intent it cannot settle.
+        return Err(plugin_unavailable());
+    }
+    let mut input =
+        json!({"missionID":mid,"requestID":request,"expectedRevision":q.expected_revision});
+    if let Some(delete) = q.delete_managed_sessions {
+        input["deleteManagedSessions"] = json!(delete);
+    }
+    mutate(app, wid, p, "delete", input).await
+}
+
+fn mutation_body<T: serde::de::DeserializeOwned>(raw: Value, invalid: &str) -> Result<T, Error> {
+    if raw.as_object().is_none_or(|o| o.values().any(Value::is_null)) {
+        return Err(error(Status::BAD_REQUEST, invalid));
+    }
+    serde_json::from_value(raw).map_err(|_| error(Status::BAD_REQUEST, invalid))
+}
+
+fn mutation_ids<'a>(
+    mid: &'a str,
+    request: &'a str,
+    revision: u64,
+    invalid: &str,
+) -> Result<(&'a str, &'a str), Error> {
+    let (mid, request) = (js_trim(mid), js_trim(request));
+    if !valid_text(mid, 1, 100)
+        || !valid_text(request, 1, 128)
+        || !(1..=9_007_199_254_740_991).contains(&revision)
+    {
+        return Err(error(Status::BAD_REQUEST, invalid));
+    }
+    Ok((mid, request))
+}
+
+fn plugin_unavailable() -> Error {
+    error(Status::SERVICE_UNAVAILABLE, "Mission plugin unavailable")
+}
+
+async fn mutate(
+    app: Shared,
+    wid: String,
+    p: crate::auth::Principal,
+    method: &'static str,
+    input: Value,
+) -> Result<Json<Value>, Error> {
+    if app.mission_bridge.is_none() {
+        return Err(plugin_unavailable());
+    }
+    tokio::spawn(async move {
+        let _slot = app.mission_control_slot.acquire().await.map_err(|_| plugin_unavailable())?;
+        p.live()?;
+        let workspace =
+            app.workspace(&wid).map_err(|_| error(Status::NOT_FOUND, "Workspace unavailable"))?;
+        let scope = Scope::open(&app, workspace, None)
+            .await
+            .map_err(|e| if e.0 == Status::FORBIDDEN { e } else { plugin_unavailable() })?;
+        let _permit = scope
+            .permit()
+            .ok_or_else(|| error(Status::CONFLICT, "Worktree deletion is in progress"))?;
+        p.live()?;
+        if scope.refresh(&app).await.is_err() {
+            return Err(error(Status::CONFLICT, "Mission workspace changed"));
+        }
+        p.live()?;
+        let (status, body) = scope
+            .call(&app, method, &input, 85, 4 * 1024 * 1024)
+            .await
+            .map_err(|_| plugin_unavailable())?;
+        if !status.is_success() {
+            return Err(creation_admission::rejection(&body).unwrap_or_else(plugin_unavailable));
+        }
+        let result = &body["output"];
+        if !scope.current(&app)
+            || if method == "delete" {
+                result["deleted"] != true
+            } else {
+                result["mission"]["id"] != input["missionID"]
+                    || result["mission"]["projectID"] != scope.project
+            }
+        {
+            return Err(plugin_unavailable());
+        }
+        Ok(Json(result.clone()))
+    })
+    .await
+    .map_err(|_| plugin_unavailable())?
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -432,36 +588,24 @@ pub async fn dispatch(
         return Err(foreign());
     };
     let headers = request.headers();
-    let got = headers
-        .get("x-codenomad-automation-token")
-        .map(|v| v.as_bytes())
-        .unwrap_or_default();
+    let got = headers.get("x-codenomad-automation-token").map(|v| v.as_bytes()).unwrap_or_default();
     if got.len() != secret.len()
         || !bool::from(secret.as_bytes().ct_eq(got))
         || headers.keys().any(|k| {
-            matches!(
-                k.as_str(),
-                "origin" | "referer" | "cookie" | "forwarded" | "x-forwarded-for"
-            ) || k.as_str().starts_with("sec-")
+            matches!(k.as_str(), "origin" | "referer" | "cookie" | "forwarded" | "x-forwarded-for")
+                || k.as_str().starts_with("sec-")
         })
     {
         return Err(error(Status::UNAUTHORIZED, "Unauthorized Mission bridge"));
     }
-    if headers
-        .get(axum::http::header::CONTENT_TYPE)
-        .and_then(|h| h.to_str().ok())
+    if headers.get(axum::http::header::CONTENT_TYPE).and_then(|h| h.to_str().ok())
         != Some("application/json")
     {
         return Err(bad());
     }
     let data = axum::body::to_bytes(request.into_body(), 512 * 1024)
         .await
-        .map_err(|_| {
-            error(
-                Status::PAYLOAD_TOO_LARGE,
-                "Mission bridge payload too large",
-            )
-        })?;
+        .map_err(|_| error(Status::PAYLOAD_TOO_LARGE, "Mission bridge payload too large"))?;
     let req: Bridge = serde_json::from_slice(&data).map_err(|_| bad())?;
     if req.mode == "recurrence-control-verify" {
         return crate::missions::calendar::verify(
@@ -493,10 +637,7 @@ pub async fn dispatch(
         return Err(foreign());
     }
     if req.mode == "browser-claim"
-        && matches!(
-            req.purpose.as_deref(),
-            Some("mission" | "mission-preferences")
-        )
+        && matches!(req.purpose.as_deref(), Some("mission" | "mission-preferences"))
         && req.command.is_none()
     {
         return Ok(Json(json!({"result":{"available":true}})));
@@ -510,19 +651,13 @@ pub async fn dispatch(
         return Ok(Json(json!({"result":{}})));
     }
     if command.kind != "lifecycle" {
-        return Err(error(
-            Status::NOT_IMPLEMENTED,
-            "Mission bridge operation unavailable",
-        ));
+        return Err(error(Status::NOT_IMPLEMENTED, "Mission bridge operation unavailable"));
     }
     let life: Life = serde_json::from_value(command.input).map_err(|_| bad())?;
     if !id(&life.mid, 100)
         || !id(&life.operation, 100)
         || life.sid != req.session_id
-        || life
-            .start_text
-            .as_deref()
-            .is_some_and(|t| !text(t, 250_000))
+        || life.start_text.as_deref().is_some_and(|t| !text(t, 250_000))
     {
         return Err(bad());
     }
@@ -534,9 +669,7 @@ pub async fn dispatch(
     if !response_ok(m, &w, project)
         || m["coordinatorSessionId"] != life.sid
         || op["id"] != life.operation
-        || !op["pending"]
-            .as_array()
-            .is_some_and(|p| p.contains(&json!(life.sid)))
+        || !op["pending"].as_array().is_some_and(|p| p.contains(&json!(life.sid)))
         || !op["targets"].as_array().is_some_and(|p| {
             p.len() == 1 && p[0]["sessionID"] == life.sid && p[0]["location"] == co["location"]
         })
@@ -610,10 +743,8 @@ pub async fn dispatch(
         )
         .await?;
         checkpoint().await?;
-        let message = format!(
-            "msg_{}",
-            token(&format!("{}\0resume\0{}", life.operation, life.sid), 28)
-        );
+        let message =
+            format!("msg_{}", token(&format!("{}\0resume\0{}", life.operation, life.sid), 28));
         let input = json!({"id":message,"text":route,"description":"CodeNomad mission start/resume","delivery":"queue","resume":true,
             "metadata":{"codenomad.mission":{"version":1,"missionID":life.mid,"kind":"lifecycle","operationID":life.operation}}});
         let result = linked::native(
@@ -631,19 +762,12 @@ pub async fn dispatch(
         ack["disposition"] = json!("start-admitted");
         ack["admission"] = result["data"].clone();
     } else if matches!(action, "pause" | "stop") && life.start_text.is_none() {
-        if m["runState"]
-            != if action == "pause" {
-                "paused"
-            } else {
-                "stopped"
-            }
-        {
+        if m["runState"] != if action == "pause" { "paused" } else { "stopped" } {
             return Err(foreign());
         }
-        let effect = crate::missions::family::apply(&app, &co, action, &life.mid, checkpoint).await?;
-        ack.as_object_mut()
-            .unwrap()
-            .extend(effect.as_object().ok_or_else(held)?.clone());
+        let effect =
+            crate::missions::family::apply(&app, &co, action, &life.mid, checkpoint).await?;
+        ack.as_object_mut().unwrap().extend(effect.as_object().ok_or_else(held)?.clone());
     } else {
         return Err(foreign());
     }
@@ -653,4 +777,87 @@ pub async fn dispatch(
 /// The Missions fixture runs on the automation bridge, with its token.
 pub fn new_token() -> Option<String> {
     crate::bench::missions_run().then(crate::automation::new_token).flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn document_capabilities_accept_the_pinned_root_permission_flag_only_if_true() {
+        assert!(document_capabilities(&json!({"version":1})));
+        assert!(document_capabilities(
+            &json!({"version":1,"automaticStart":true,"agentSchedulePreparation":true,
+            "agentScheduleControl":true,"rootPermissions":true})
+        ));
+        assert!(!document_capabilities(&json!({"version":1,"rootPermissions":false})));
+        assert!(!document_capabilities(&json!({"version":1,"unknown":true})));
+    }
+
+    #[test]
+    fn one_time_profiles_check_roles_and_freeze_the_comparator_model() {
+        let a = json!({"providerID":"fixture","id":"a"});
+        let b = json!({"providerID":"fixture","id":"b"});
+        let mut p = json!({"coordinator":{"model":a},
+            "roles":{"model-a":{"model":a},"model-b":{"model":b},"comparator":{"agent":"build"}}});
+        let frozen = creation_profiles("compare", Some(p.clone())).unwrap().unwrap();
+        assert_eq!(frozen["roles"]["comparator"], json!({"agent":"build","model":a}));
+        p["roles"]["model-b"]["model"] = a;
+        p["roles"]["model-b"]["model"]["variant"] = json!("different");
+        assert_eq!(
+            creation_profiles("compare", Some(p)).unwrap_err().1.0["code"],
+            "compare-models-identical"
+        );
+        assert_eq!(
+            creation_profiles("compare", None).unwrap_err().1.0["code"],
+            "compare-models-required"
+        );
+        assert!(creation_profiles("debug", Some(json!({"roles":{"specialist":{}}}))).is_err());
+    }
+
+    #[test]
+    fn ordinary_mutation_envelopes_preserve_missing_and_explicit_fields() {
+        let invalid = "invalid";
+        assert!(
+            mutation_body::<Update>(
+                json!({"requestId":"a","expectedRevision":1,"objective":"edit"}),
+                invalid
+            )
+            .unwrap()
+            .notes
+            .is_none()
+        );
+        assert_eq!(
+            mutation_body::<Update>(
+                json!({"requestId":"a","expectedRevision":1,"objective":"edit","notes":""}),
+                invalid
+            )
+            .unwrap()
+            .notes
+            .as_deref(),
+            Some("")
+        );
+        assert!(
+            mutation_body::<Update>(
+                json!({"requestId":"a","expectedRevision":1,"objective":"edit","notes":null}),
+                invalid
+            )
+            .is_err()
+        );
+        assert!(
+            mutation_body::<Delete>(
+                json!({"requestId":"a","expectedRevision":1,"deleteManagedSessions":false}),
+                invalid
+            )
+            .is_ok()
+        );
+        assert!(
+            mutation_body::<Delete>(
+                json!({"requestId":"a","expectedRevision":1,"foreign":false}),
+                invalid
+            )
+            .is_err()
+        );
+        assert_eq!(mutation_ids(" mission ", " id ", 1, invalid).unwrap(), ("mission", "id"));
+    }
 }

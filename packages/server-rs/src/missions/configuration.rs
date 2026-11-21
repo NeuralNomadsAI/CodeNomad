@@ -10,7 +10,7 @@ const TIMESTAMP_MAX: u64 = 253_401_955_200_000; // Date.parse("9999-12-28T00:00:
 const MIN_INTERVAL_MS: u64 = 15 * 60_000;
 const CALENDAR_LIMIT: usize = 8;
 pub const CONFIGURATION_MAX_BYTES: usize = 64 * 1024;
-const TEMPLATES: [&str; 5] = ["custom", "debug", "wayfinder", "delivery", "compare"];
+pub(super) const TEMPLATES: [&str; 5] = ["custom", "debug", "wayfinder", "delivery", "compare"];
 
 fn template_roles(template: &str) -> &'static [&'static str] {
     match template {
@@ -553,7 +553,7 @@ fn selection(v: &Value) -> R<Value> {
     }
     Ok(Value::Object(out))
 }
-fn profiles(v: &Value) -> R<Value> {
+pub(super) fn profiles(v: &Value) -> R<Value> {
     let o = plain_object(v)?;
     if o.keys().any(|k| k != "coordinator" && k != "roles") {
         return Err(());
@@ -574,6 +574,10 @@ fn profiles(v: &Value) -> R<Value> {
         out.insert("roles".into(), Value::Object(parsed));
     }
     Ok(Value::Object(out))
+}
+
+pub(super) fn valid_profile_roles(template: &str, profiles: &Value) -> bool {
+    profiles["roles"].as_object().is_none_or(|roles| roles.keys().all(|r| template_roles(template).contains(&r.as_str())))
 }
 
 /// The reference schema's parse output, or `Err` for its refusal.
@@ -671,7 +675,7 @@ fn parse(input: &Value, refine: bool) -> R<Value> {
     }
     let roles = template_roles(template);
     let role_map = profiles.as_ref().and_then(|p| p["roles"].as_object());
-    if role_map.is_some_and(|r| r.keys().any(|k| !roles.contains(&k.as_str()))) {
+    if profiles.as_ref().is_some_and(|p| !valid_profile_roles(template, p)) {
         return Err(());
     }
     if template == "compare" {
