@@ -423,7 +423,10 @@ fn window_control(
     require_preferences_or_local_app_webview(&webview, &state)?;
     let window = webview.window();
     match action.as_str() {
-        "minimize" => window.minimize(),
+        "minimize" => {
+            state.browser_controller.revoke_window_visibility(window.label());
+            window.minimize()
+        }
         "maximize" => {
             if window.is_maximized().unwrap_or(false) {
                 window.unmaximize()
@@ -2235,6 +2238,7 @@ fn main() {
                 // Window menu
                 "minimize" => {
                     if let Some(webview) = local_windows::targeted_window(app_handle) {
+                        app_handle.state::<AppState>().browser_controller.revoke_window_visibility(webview.window().label());
                         let _ = webview.window().minimize();
                     }
                 }
@@ -2303,7 +2307,7 @@ fn main() {
                 // App menu (macOS)
                 "hide" => {
                     if let Some(webview) = local_windows::targeted_window(app_handle) {
-                        let _ = webview.window().hide();
+                        let _ = app_handle.state::<AppState>().browser_controller.hide_owner(&webview.window());
                     }
                 }
                 "hide_others" => {

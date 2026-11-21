@@ -30,6 +30,8 @@ Native previews share cookies, sign-ins and site storage across projects/session
 
 An agent opens the session's shared browser in an owning tab, using the active tab when possible. The chosen tab stays fixed while opening; closing it cancels that open. Page actions target the session's visible native preview; hidden previews are excluded.
 
+The agent takes a snapshot before acting on or capturing the preview. If the preview changes, the command stops instead of using a different preview.
+
 | Client | Preview implementation | Agent browser automation | Mobile templates |
 | --- | --- | --- | --- |
 | Electron on supported desktop platforms | Native Chromium guest; OAuth pop-ups, downloads and dialogs | Supported for the visible owned session preview | Android/Chromium identity, touch and density emulation |

@@ -1,6 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto"
 import { execFile, spawn } from "node:child_process"
-import { mkdir, open, opendir, readFile, rename, rm, writeFile } from "node:fs/promises"
+import { mkdir, open, opendir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
+import http from "node:http"
 import os from "node:os"
 import path from "node:path"
 import type { Plugin } from "@opencode/plugin"
@@ -10,6 +11,7 @@ import { missionRecoveryControlError, missionRecoveryError } from "../missions/r
 import { parseMissionCreationDefaultsInput } from "../missions/creation-defaults"
 import { MISSION_PREFERENCES_UNAVAILABLE, resolveMissionCreationDefaults } from "../missions/profile-defaults"
 import { isConnectionRefused } from "./connection-errors"
+import { BROWSER_DISCOVERY_TIMEOUT_MS, isBrowserTarget } from "../automation/browser-target"
 import { PAGE_ACTION_PROPERTIES, PAGE_ACTIONS, parsePageAction, type RefAction } from "../automation/page/parse"
 import { MemoryError } from "../memory/model"
 import type { MemoryErrorCode } from "../memory/model"
@@ -95,7 +97,7 @@ type BridgeDirectoryOptions = {
   env?: NodeJS.ProcessEnv
   home?: string
   windowsLocalAppData?: WindowsDiscovery
-  strict?: boolean
+  strict?: boolean | "browser"
 }
 
 export function automationBridgeDirectory(options: BridgeDirectoryOptions = {}): string {
@@ -116,7 +118,9 @@ export async function automationBridgeDirectories(options: BridgeDirectoryOption
   const primary = automationBridgeDirectory(options)
   if (platform !== "linux" || !env.WSL_DISTRO_NAME) return [primary]
   const windowsLocalAppData = options.windowsLocalAppData !== undefined ? options.windowsLocalAppData : await resolveWslWindowsLocalAppData(env, { strict: options.strict })
-  if (options.strict && !windowsLocalAppData && windowsLocalAppData !== false) throw new Error("Windows mission backend discovery is unavailable")
+  if (options.strict && !windowsLocalAppData && windowsLocalAppData !== false) {
+    throw new Error(`Windows ${options.strict === "browser" ? "browser" : "mission"} backend discovery is unavailable`)
+  }
   return windowsLocalAppData
     ? [...new Set([primary, path.posix.join(windowsLocalAppData, "CodeNomad", "automation-bridges")])]
     : [primary]
@@ -132,32 +136,39 @@ export async function discoverAutomationBridgeDirectories(signal?: AbortSignal, 
   return automationBridgeDirectories({ ...options, windowsLocalAppData })
 }
 
-function windowsDiscoveryOutput(file: string, args: string[], env: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<string> {
-  return new Promise((resolve, reject) => execFile(file, args, { env, signal, encoding: "utf8", timeout: 2_000, maxBuffer: MAX_REGISTRATION_BYTES, windowsHide: true },
-    (error, stdout) => error ? reject(error) : resolve(stdout.trim())))
+function windowsDiscoveryOutput(file: string, args: string[], encoding: "utf8" | "utf16le",
+  env: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<string> {
+  return new Promise((resolve, reject) => execFile(file, args, { env, signal, encoding, timeout: 2_000, maxBuffer: MAX_REGISTRATION_BYTES, windowsHide: true },
+    (error, stdout) => error ? reject(error) : resolve(stdout)))
 }
 
-function resolveWslWindowsLocalAppData(env: NodeJS.ProcessEnv, { strict = false, signal, cacheFailures = true }: { strict?: boolean; signal?: AbortSignal; cacheFailures?: boolean } = {}): Promise<WindowsDiscovery> {
+function resolveWslWindowsLocalAppData(env: NodeJS.ProcessEnv, { strict = false, signal, cacheFailures = true }: {
+  strict?: BridgeDirectoryOptions["strict"]; signal?: AbortSignal; cacheFailures?: boolean
+} = {}): Promise<WindowsDiscovery> {
   const key = `${env.WSL_DISTRO_NAME}\0${env.PATH}`
+  const rememberFailures = cacheFailures && strict !== "browser"
   if (cachedWslWindowsLocalAppData?.key === key && (typeof cachedWslWindowsLocalAppData.value === "string"
-    || cacheFailures && (!strict || cachedWslWindowsLocalAppData.expiresAt > Date.now()))) return Promise.resolve(cachedWslWindowsLocalAppData.value)
-  if (cacheFailures && !signal && pendingWslWindowsLocalAppData?.key === key) return pendingWslWindowsLocalAppData.promise
+    || rememberFailures && (!strict || cachedWslWindowsLocalAppData.expiresAt > Date.now()))) return Promise.resolve(cachedWslWindowsLocalAppData.value)
+  if (rememberFailures && !signal && pendingWslWindowsLocalAppData?.key === key) return pendingWslWindowsLocalAppData.promise
   const promise = (async (): Promise<WindowsDiscovery> => {
     try {
-      const windowsPath = await windowsDiscoveryOutput("cmd.exe", ["/d", "/s", "/c", "echo %LOCALAPPDATA%"], env, signal)
+      const variables = await windowsDiscoveryOutput("cmd.exe", ["/d", "/s", "/u", "/c", "set LOCALAPPDATA"], "utf16le", env, signal)
       signal?.throwIfAborted()
-      const translated = await windowsDiscoveryOutput("wslpath", ["-u", windowsPath], env, signal)
+      const windowsPath = /^LOCALAPPDATA=([^\r\n]+)\r?$/im.exec(variables)?.[1]
+      if (!windowsPath) return null
+      const translated = (await windowsDiscoveryOutput("wslpath", ["-u", windowsPath], "utf8", env, signal)).replace(/\r?\n$/, "")
       signal?.throwIfAborted()
       return path.posix.isAbsolute(translated) ? translated : null
     } catch (error) {
       signal?.throwIfAborted()
+      if (strict === "browser") return null
       return ["ENOENT", "ENOEXEC"].includes((error as NodeJS.ErrnoException).code ?? "") ? false : null
     }
   })().then(value => {
-    if (cacheFailures || typeof value === "string") cachedWslWindowsLocalAppData = { key, value, expiresAt: typeof value === "string" ? Infinity : Date.now() + 2_000 }
+    if (rememberFailures || typeof value === "string") cachedWslWindowsLocalAppData = { key, value, expiresAt: typeof value === "string" ? Infinity : Date.now() + 2_000 }
     return value
   }).finally(() => { if (pendingWslWindowsLocalAppData?.promise === promise) pendingWslWindowsLocalAppData = undefined })
-  if (cacheFailures && !signal) pendingWslWindowsLocalAppData = { key, promise }
+  if (rememberFailures && !signal) pendingWslWindowsLocalAppData = { key, promise }
   return promise
 }
 
@@ -236,17 +247,21 @@ function registrationFile(name: string, local: boolean) {
 
 type RegistrationFile = NonNullable<ReturnType<typeof registrationFile>>
 
-async function readRegistration(target: string, { throwReadErrors = false } = {}): Promise<AutomationBridgeRegistration | null | undefined> {
+async function readRegistration(target: string, { throwReadErrors = false, checkCurrent }: {
+  throwReadErrors?: boolean; checkCurrent?: () => void
+} = {}): Promise<AutomationBridgeRegistration | null | undefined> {
   const buffer = Buffer.alloc(MAX_REGISTRATION_BYTES + 1)
   let bytesRead = 0
   try {
     const file = await open(target, "r")
     try {
+      checkCurrent?.()
       bytesRead = (await file.read(buffer, 0, buffer.length, 0)).bytesRead
     } finally {
       await file.close()
     }
   } catch (error) {
+    checkCurrent?.()
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
     if (throwReadErrors) throw error
     return undefined
@@ -354,17 +369,21 @@ export async function verifyHumanAnswerBridge(body: import("../missions/human-an
   return false
 }
 
-async function registrations({ pruneStale = true, strict = false } = {}, signal?: AbortSignal): Promise<DiscoveredBridgeRegistration[]> {
+async function registrations({ pruneStale = true, strict }: { pruneStale?: boolean; strict?: "browser" | "mission" } = {},
+  signal?: AbortSignal, checkCurrent = () => signal?.throwIfAborted()): Promise<DiscoveredBridgeRegistration[]> {
   const found: DiscoveredBridgeRegistration[] = []
-  const directories = signal ? await discoverAutomationBridgeDirectories(signal, { strict }) : await automationBridgeDirectories({ strict })
+  const options: BridgeDirectoryOptions = { strict: strict === "browser" ? "browser" : Boolean(strict) }
+  const directories = signal ? await discoverAutomationBridgeDirectories(signal, options) : await automationBridgeDirectories(options)
   for (const [directoryIndex, directory] of directories.entries()) {
-    signal?.throwIfAborted()
+    checkCurrent()
     let entries: RegistrationFile[] = []
     const entryLimit = directoryIndex === 0 ? MAX_LOCAL_REGISTRY_FILES : MAX_REGISTRATIONS
     try {
       const stream = await opendir(directory)
+      try { checkCurrent() }
+      catch (error) { await stream.close().catch(() => undefined); throw error }
       for await (const entry of stream) {
-        signal?.throwIfAborted()
+        checkCurrent()
         if (!entry.isFile()) continue
         const file = registrationFile(entry.name, directoryIndex === 0)
         if (!file) continue
@@ -376,25 +395,30 @@ async function registrations({ pruneStale = true, strict = false } = {}, signal?
         }
       }
     } catch (error) {
-      signal?.throwIfAborted()
+      checkCurrent()
       if (strict && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+      if (strict === "browser" && directoryIndex > 0) {
+        // An absent registry is meaningful only on a readable Windows profile mount.
+        if (entries.length || !(await stat(path.dirname(path.dirname(directory)))).isDirectory()) throw error
+      }
       continue
     }
     entries.sort((left, right) => right.startedAt - left.startedAt)
     entries.length = Math.min(entries.length, entryLimit)
     for (const entry of entries) {
-      signal?.throwIfAborted()
+      checkCurrent()
       const target = path.join(directory, entry.name)
       if (entry.deadPublisher) {
         if (pruneStale) await rm(target, { force: true }).catch(() => undefined)
         continue
       }
-      const registration = await readRegistration(target, { throwReadErrors: strict }) as DiscoveredBridgeRegistration | null | undefined
+      const registration = await readRegistration(target, { throwReadErrors: Boolean(strict), checkCurrent }) as DiscoveredBridgeRegistration | null | undefined
+      checkCurrent()
       if (registration === null) continue
       if (!registration) {
-        // A malformed foreign advertisement supplies no usable bridge contract.
-        // Its PID belongs to Windows; preserve the file for its own publisher.
-        if (strict && directoryIndex === 0) throw new Error("Mission backend registration is unreadable")
+        // Mission discovery treats malformed foreign advertisements as unsupported.
+        if (strict === "browser") throw new Error("Browser backend registration is unreadable")
+        if (strict === "mission" && directoryIndex === 0) throw new Error("Mission backend registration is unreadable")
         continue
       }
       if (directoryIndex === 0 && !isProcessAlive(registration.pid)) {
@@ -405,6 +429,7 @@ async function registrations({ pruneStale = true, strict = false } = {}, signal?
       found.push(registration)
     }
   }
+  checkCurrent()
   if (strict && found.length > MAX_REGISTRATIONS) throw new Error("Mission backend discovery exceeded its bound")
   return found.sort((left, right) => right.startedAt - left.startedAt).slice(0, MAX_REGISTRATIONS)
 }
@@ -434,12 +459,16 @@ async function callBridge(
   signal?: AbortSignal,
 ): Promise<{ status: number; body: BridgeResponse }> {
   signal?.throwIfAborted()
-  if (registration[WINDOWS_INTEROP]) return callWindowsBridge(registration, body, timeoutMs, signal)
+  const browser = body.mode === "browser-execute" || body.mode === "browser-probe"
+    || body.mode === "browser-claim" && body.purpose === undefined
+  if (registration[WINDOWS_INTEROP]) return callWindowsBridge(registration, body, timeoutMs, signal, browser)
+  const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)
+  if (browser) return callLocalBrowserBridge(registration, body, requestSignal)
   const response = await fetch(registration.url, {
     method: "POST",
     headers: { "content-type": "application/json", "x-codenomad-automation-token": registration.token },
     body: JSON.stringify(body),
-    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
+    signal: requestSignal,
   })
   const contentLength = Number(response.headers.get("content-length"))
   if (Number.isFinite(contentLength) && contentLength > MAX_BRIDGE_RESPONSE_BYTES) {
@@ -466,15 +495,48 @@ async function callBridge(
   }
 }
 
+async function callLocalBrowserBridge(registration: AutomationBridgeRegistration, body: Record<string, unknown>, signal: AbortSignal) {
+  const url = new URL(registration.url)
+  if (url.username || url.password) throw new Error("Invalid native automation bridge URL")
+  const json = JSON.stringify(body)
+  signal.throwIfAborted()
+  const response = await new Promise<http.IncomingMessage>((resolve, reject) => {
+    // A private socket bypasses the proxy configured on Node's global agent.
+    const request = http.request(url, { agent: false, signal, method: "POST", headers: {
+      "content-type": "application/json", "content-length": Buffer.byteLength(json), "x-codenomad-automation-token": registration.token,
+    } }, resolve)
+    request.once("error", reject)
+    request.end(json)
+  })
+  const status = response.statusCode ?? 0
+  const redirected = status >= 300 && status < 400
+  if (redirected || Number(response.headers["content-length"]) > MAX_BRIDGE_RESPONSE_BYTES) {
+    response.destroy()
+    throw new Error(redirected ? "Native automation bridge redirected" : "Native automation bridge response is too large")
+  }
+  const chunks: Buffer[] = []
+  let bytes = 0
+  for await (const chunk of response) {
+    bytes += chunk.length
+    if (bytes > MAX_BRIDGE_RESPONSE_BYTES) throw new Error("Native automation bridge response is too large")
+    chunks.push(chunk)
+  }
+  signal.throwIfAborted()
+  return { status, body: JSON.parse(Buffer.concat(chunks, bytes).toString("utf8")) as BridgeResponse }
+}
+
 function callWindowsBridge(
   registration: AutomationBridgeRegistration,
   body: Record<string, unknown>,
   timeoutMs: number,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  rejectRedirects: boolean,
 ): Promise<{ status: number; body: BridgeResponse }> {
   signal?.throwIfAborted()
   return new Promise((resolve, reject) => {
     const child = spawn("curl.exe", [
+      // First argument disables curlrc, which can turn on redirect following.
+      ...(rejectRedirects ? ["--disable", "--globoff"] : []),
       "--verbose", "--silent", "--show-error", "--max-time", String(timeoutMs / 1_000),
       "--noproxy", "*",
       "--request", "POST",
@@ -521,6 +583,10 @@ function callWindowsBridge(
       const output = Buffer.concat(stdout, stdoutBytes).toString("utf8")
       const separator = output.lastIndexOf("\n")
       const status = separator >= 0 ? Number(output.slice(separator + 1)) : NaN
+      if (rejectRedirects && status >= 300 && status < 400) {
+        reject(new Error("Windows native automation bridge redirected the request"))
+        return
+      }
       if (code !== 0 || !Number.isInteger(status)) {
         // Curl's exit 7 also covers denied sockets. Its connect diagnostic proves
         // refusal; keep verbose headers/private tokens out of the returned error.
@@ -623,19 +689,17 @@ async function probeBridges(
   return found.slice(0, limit)
 }
 
-async function probeBrowserBridges(
+async function probeMissionBridges(
   active: DiscoveredBridgeRegistration[],
   sessionID: string,
-  mode: "browser-claim" | "browser-probe",
-  timeoutMs = PROBE_TIMEOUT_MS,
-  purpose?: "mission" | "mission-preferences" | "mission-prepare",
+  purpose: "mission" | "mission-preferences" | "mission-prepare",
 ): Promise<DiscoveredBridgeRegistration[]> {
   const strict = purpose === "mission-preferences" || purpose === "mission-prepare"
   const found: DiscoveredBridgeRegistration[] = []
   for (let index = 0; index < active.length && found.length < 2; index += PROBE_CONCURRENCY) {
     const batch = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async (registration) => {
       try {
-        const response = await callBridge(registration, { mode, sessionID, ...(purpose ? { purpose } : {}) }, timeoutMs)
+        const response = await callBridge(registration, { mode: "browser-claim", sessionID, purpose }, MISSION_PROBE_TIMEOUT_MS)
         const result = response.body.result as { available?: unknown; missionCreationDefaults?: unknown; missionPreparationStart?: unknown } | undefined
         if (response.status === 200 && (!strict || result?.available === true)) {
           if (purpose === "mission-prepare" && (result?.missionCreationDefaults !== true || result.missionPreparationStart !== true))
@@ -675,7 +739,7 @@ async function callMissionInput(target: DiscoveredBridgeRegistration, sessionID:
 export async function resolveMissionProfileDefaults(sessionID: string, input: unknown): Promise<unknown> {
   try {
     const request = parseMissionCreationDefaultsInput(input)
-    const targets = await probeBrowserBridges(await registrations({ strict: true }), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS, "mission-preferences")
+    const targets = await probeMissionBridges(await registrations({ strict: "mission" }), sessionID, "mission-preferences")
     if (targets.length === 0) return {
       ...resolveMissionCreationDefaults({ ...request, preferences: undefined }), preferences: MISSION_PREFERENCES_UNAVAILABLE,
     }
@@ -689,7 +753,7 @@ export async function resolveMissionProfileDefaults(sessionID: string, input: un
 
 export async function readMissionConfigurations(sessionID: string): Promise<unknown> {
   try {
-    const targets = await probeBrowserBridges(await registrations({ strict: true }), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS, "mission-preferences")
+    const targets = await probeMissionBridges(await registrations({ strict: "mission" }), sessionID, "mission-preferences")
     if (targets.length !== 1) throw new Error("Saved configurations require exactly one owning CodeNomad backend")
     return await callMissionInput(targets[0], sessionID, "configurations", {})
   } catch (error) {
@@ -704,8 +768,7 @@ export async function sendMissionInput(sessionID: string,
   const requiresDefaults = kind === "prepare" || kind === "schedule" || kind === "settings" || kind === "project-read" || kind.startsWith("project-control") || kind === "project-update"
   try {
     // A backend without native browsers can still claim the session for dispatch.
-    targets = await probeBrowserBridges(await registrations({ strict: requiresDefaults }), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS,
-      requiresDefaults ? "mission-prepare" : "mission")
+    targets = await probeMissionBridges(await registrations({ strict: requiresDefaults ? "mission" : undefined }), sessionID, requiresDefaults ? "mission-prepare" : "mission")
     if (targets.length !== 1) throw new Error("Mission dispatch requires exactly one owning CodeNomad backend")
   } catch (error) {
     if (error instanceof MissionControlError && error.code === "mission-preferences-update-required") throw error
@@ -758,23 +821,140 @@ async function sendMemoryBridge(sessionID: string, mode: "memory-input" | "memor
   return response.body.result
 }
 
-export async function executeBrowserTool(sessionID: string, input: unknown) {
+interface BrowserPin {
+  registration: DiscoveredBridgeRegistration
+  target: string
+}
+
+function sameBrowserBridge(a: DiscoveredBridgeRegistration, b: DiscoveredBridgeRegistration): boolean {
+  return a.token === b.token && a.url === b.url && a[WINDOWS_INTEROP] === b[WINDOWS_INTEROP]
+}
+
+export function createBrowserToolExecutor() {
+  const pins = new Map<string, BrowserPin>()
+  const queues = new Map<string, Promise<void>>()
+  return async (sessionID: string, input: unknown) => {
+    const deadline = Date.now() + REQUEST_TIMEOUT_MS
+    const submitted = { pin: pins.get(sessionID) }
+    const result = (queues.get(sessionID) ?? Promise.resolve()).then(() => executeBrowserTool(sessionID, input, pins, deadline, submitted))
+    const tail = result.then(() => undefined, () => undefined)
+    queues.set(sessionID, tail)
+    try { return await result }
+    finally { if (queues.get(sessionID) === tail) queues.delete(sessionID) }
+  }
+}
+
+export async function executeBrowserTool(sessionID: string, input: unknown, pins?: Map<string, BrowserPin>, deadline = Date.now() + REQUEST_TIMEOUT_MS,
+  submitted?: { pin?: BrowserPin }) {
+  const expired = () => new Error("preview-expired: Browser command expired before execution")
+  const remaining = (now = Date.now()) => {
+    const ms = deadline - now
+    if (ms <= 0) throw expired()
+    return ms
+  }
+  remaining()
   const command = parseBrowserAction(input)
-  const mode = command.action === "open" ? "browser-claim" : "browser-probe"
-  const targets = await probeBrowserBridges(await registrations(), sessionID, mode)
-  if (targets.length === 0) {
-    throw new Error(command.action === "open"
-      ? "No local CodeNomad window owns this session"
-      : "No visible local CodeNomad browser is attached to this session")
+  const snapshot = command.action === "snapshot" && !command.ref
+  const bound = command.action !== "open" && !snapshot
+  const pin = bound ? submitted ? submitted.pin : pins?.get(sessionID) : undefined
+  const currentPin = pins?.get(sessionID)
+  if (bound && submitted && pin !== currentPin) {
+    throw new Error("stale-preview: The preview selection changed; take a new snapshot")
   }
-  if (targets.length > 1) {
-    throw new Error(command.action === "open"
-      ? "Multiple CodeNomad instances own this session"
-      : "Multiple CodeNomad windows expose a browser for this session")
+  if (pins && !pin && command.action !== "open" && !snapshot) {
+    throw new Error("snapshot-required: Take a new browser snapshot before using this preview")
   }
-  const response = await callBridge(targets[0], { mode: "browser-execute", sessionID, command }, REQUEST_TIMEOUT_MS)
-  if (response.status !== 200) throw new Error(response.body.error || `Browser command failed (${response.status})`)
-  return formatBridgeResult(response.body.result, { text: "Captured the visible CodeNomad browser.", name: "browser.png" })
+  const opening = command.action === "open"
+  const inventoryUnavailable = () => new Error("browser-unavailable: The preview inventory could not be verified; take a new snapshot")
+  const signal = AbortSignal.timeout(remaining())
+  const checkDiscovery = () => { if (signal.aborted) throw expired(); remaining() }
+  let abort!: () => void
+  const timeout = new Promise<never>((_resolve, reject) => {
+    abort = () => reject(expired())
+    signal.addEventListener("abort", abort, { once: true })
+  })
+  // Stop waiting on uncancellable filesystem calls and fence their continuations.
+  const discovery = registrations({ strict: "browser" }, signal, checkDiscovery)
+  const active = await Promise.race([discovery, timeout]).catch(() => {
+    checkDiscovery()
+    throw inventoryUnavailable()
+  }).finally(() => signal.removeEventListener("abort", abort))
+  const owners: Array<{ bridge: DiscoveredBridgeRegistration; witness?: string }> = []
+  let incomplete = false, unsupported = false, stale = false
+  for (let index = 0; index < active.length && owners.length < 2; index += PROBE_CONCURRENCY) {
+    const results = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async bridge => {
+      const now = Date.now()
+      const timeout = Math.min(remaining(now), BROWSER_DISCOVERY_TIMEOUT_MS)
+      const probeDeadline = now + timeout
+      try {
+        const result = await callBridge(bridge, { mode: opening ? "browser-claim" : "browser-probe", sessionID, deadline: probeDeadline }, timeout)
+        if (Date.now() < probeDeadline) return { bridge, ...result }
+        incomplete = true
+      } catch (error) {
+        if (Date.now() >= probeDeadline || !isConnectionRefused(error)) incomplete = true
+      }
+      return undefined
+    }))
+    for (const item of results) {
+      if (!item) continue
+      const { bridge, status, body } = item
+      const code = body?.code
+      if (status === 404 && (code === "no-preview-host" || code === "browser-not-owner" || !opening && code === "hidden-preview")) continue
+      if (status === 409 && code === "ambiguous-target") throw new Error("ambiguous-target: Several visible previews match this session")
+      if (status === 409 && code === "stale-preview") stale = true
+      else if (status === 409 && code === "unsupported") unsupported = true
+      else if (status === 200 && (body?.result as { available?: unknown } | undefined)?.available === true) {
+        const witness = (body.result as { target?: unknown }).target
+        if (opening) owners.push({ bridge })
+        else if (isBrowserTarget(witness)) owners.push({ bridge, witness })
+        else unsupported = true
+      } else incomplete = true
+    }
+  }
+  remaining()
+  if (owners.length > 1) throw new Error(opening ? "Multiple CodeNomad instances own this session"
+    : "ambiguous-target: Several CodeNomad profiles show this session preview")
+  if (incomplete) throw inventoryUnavailable()
+  if (unsupported) throw new Error("unsupported: A CodeNomad backend cannot verify the preview target; update the desktop host")
+  if (stale) throw new Error("stale-preview: The preview changed; take a new snapshot")
+  const owner = owners[0]
+  if (pin && (!owner || !sameBrowserBridge(owner.bridge, pin.registration) || owner.witness !== pin.target)) {
+    throw new Error("stale-preview: The preview changed; take a new snapshot")
+  }
+  if (!owner) throw new Error(opening ? "No local CodeNomad window owns this session"
+    : "hidden-preview: Show the session preview and take a new snapshot")
+  const registration = pin?.registration ?? owner.bridge
+  const target = pin?.target ?? owner.witness
+  const response = await callBridge(registration, { mode: "browser-execute", sessionID, command, deadline, ...(target ? { target } : {}) }, remaining())
+    .catch(error => { remaining(); throw error })
+  remaining()
+  if (response.status !== 200) {
+    const reason = response.body?.error || `Browser command failed (${response.status})`
+    throw new Error(typeof response.body?.code === "string" ? `${response.body.code}: ${reason}` : reason)
+  }
+  const result = response.body?.result
+  if (command.action === "snapshot") {
+    const { url, snapshot: text, collapsed } = (result ?? {}) as { url?: unknown; snapshot?: unknown; collapsed?: unknown }
+    const address = typeof url === "string" ? URL.parse(url) : null
+    if (!address || !["http:", "https:"].includes(address.protocol) || address.username || address.password
+      || typeof text !== "string" || !text.trim()
+      || collapsed !== undefined && (typeof collapsed !== "number" || !Number.isSafeInteger(collapsed) || collapsed < 0)) {
+      throw new Error("The browser bridge returned no valid snapshot result; take a new snapshot")
+    }
+    const content = formatBrowserSnapshot({ url: address.href, snapshot: text, collapsed })
+    remaining()
+    if (pins && snapshot && target) {
+      pins.delete(sessionID)
+      pins.set(sessionID, currentPin?.target === target && sameBrowserBridge(currentPin.registration, registration)
+        ? currentPin : { registration, target })
+      if (pins.size > 128) pins.delete(pins.keys().next().value!)
+    }
+    return { content }
+  }
+  const formatted = formatBridgeResult(result, { text: "Captured the visible CodeNomad browser.", name: "browser.png" })
+  remaining()
+  if (command.action === "open") pins?.delete(sessionID)
+  return formatted
 }
 
 function targetError(code: string, message: string): Error {

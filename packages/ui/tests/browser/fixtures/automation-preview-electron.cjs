@@ -65,8 +65,8 @@ app.whenReady().then(async () => {
   const browser = new BrowserPage({ request: (method, params, timeout = 25000) =>
     handleNativeBrowserRequest(controller, method, params, Date.now() + timeout) })
   globalThis.automationPreview = {
-    execute: action => browser.execute("fixture-session", action),
-    navigate: url => controller.execute("fixture-session", { action: "navigate", url }),
+    execute: async action => browser.execute("fixture-session", action, undefined, (await controller.probe("fixture-session")).target),
+    navigate: async url => controller.execute("fixture-session", { action: "navigate", url }, Infinity, (await controller.probe("fixture-session")).target),
     visible: value => { visible = value },
     ready: async () => {
       const deadline = performance.now() + PREPARATION_MS

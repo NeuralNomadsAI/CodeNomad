@@ -57,3 +57,22 @@ test("late native replies cannot settle a subsequent request", async () => {
   assert.equal(await second, "current")
   parent.close()
 })
+
+test("absolute native deadlines fence replies at receipt before the timer runs", async t => {
+  let now = 1_000
+  t.mock.method(Date, "now", () => now)
+  let requestLine = ""
+  const parent = new NativeParent({ write: line => { requestLine = String(line); return true } }, true)
+  t.after(() => parent.close())
+  const send = (budget: number | { deadline: number }, receivedAt: number) => {
+    const pending = parent.request("browser.probe", {}, budget)
+    const { id } = JSON.parse(requestLine.slice(NATIVE_REQUEST_PREFIX.length))
+    // Deliver synchronously after advancing the wall clock; no timer has had a turn.
+    now = receivedAt
+    assert.equal(parent.handleLine(`${NATIVE_RESPONSE_PREFIX}${JSON.stringify({ v: 1, id, ok: true, result: "received" })}`), true)
+    return pending
+  }
+  assert.equal(await send({ deadline: 2_000 }, 1_999), "received")
+  await assert.rejects(send({ deadline: 2_000 }, 2_000), /Native request timed out: browser\.probe/)
+  assert.equal(await send(1_000, 3_001), "received", "relative budgets still rely on their timer")
+})

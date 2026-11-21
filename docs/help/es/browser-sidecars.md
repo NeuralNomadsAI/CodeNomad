@@ -30,6 +30,8 @@ Las vistas previas nativas comparten cookies, inicios de sesión y almacenamient
 
 Un agente abre el navegador compartido de la sesión en una pestaña que la contiene, preferiblemente la activa. La pestaña elegida permanece fija durante la apertura; cerrarla cancela esa apertura. Las acciones sobre la página se dirigen a la vista previa nativa visible de la sesión; las ocultas quedan excluidas.
 
+El agente toma una instantánea antes de interactuar con la vista previa o capturarla. Si la vista previa cambia, el comando se detiene en lugar de usar otra.
+
 | Cliente | Implementación de vista previa | Automatización de navegador del agente | Plantillas móviles |
 | --- | --- | --- | --- |
 | Electron en plataformas de escritorio compatibles | Navegador invitado Chromium nativo; ventanas OAuth, descargas y diálogos | Compatible para la vista previa visible de la sesión propia | Emulación de identidad Android/Chromium, entrada táctil y densidad |

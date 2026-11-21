@@ -30,6 +30,8 @@ Native önizlemeler aynı masaüstü motoru ve profil/yapılandırma kapsamında
 
 Ajan, oturumun ortak tarayıcısını onu içeren bir sekmede, mümkünse etkin sekmede açar. Seçilen sekme açılış boyunca sabit kalır; onu kapatmak bu açılışı iptal eder. Sayfa eylemleri oturumun görünür yerel önizlemesini hedefler; gizli önizlemeler dışarıda bırakılır.
 
+Ajan önizlemede işlem yapmadan veya ekran görüntüsü almadan önce bir anlık görüntü alır. Önizleme değişirse komut başka bir önizlemeyi kullanmak yerine durur.
+
 | İstemci | Önizleme uygulaması | Ajan tarayıcı otomasyonu | Mobil şablonlar |
 | --- | --- | --- | --- |
 | Desteklenen masaüstü platformlarında Electron | Yerel Chromium konuğu; OAuth pencereleri, indirmeler ve iletişim kutuları | Görünür sahip olunan oturum önizlemesi için desteklenir | Android/Chromium kimliği, dokunma ve yoğunluk emülasyonu |
