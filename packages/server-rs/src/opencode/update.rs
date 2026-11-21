@@ -17,22 +17,10 @@ use super::{
     admission::{self, MINIMUM_VERSION, Refusal},
     daemon, install, launch,
 };
-use crate::{Shared, settings::Kind, shared::fastify};
+use crate::{Shared, shared::fastify};
 
 const RECOMMENDED_VERSION: &str = "2.3.2";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// `BinaryResolver.resolveDefault` then `resolveBinaryPath`: the saved selection, else the default
-/// installation (its source: a PATH command or the user npm prefix).
-fn custom_binary(app: &crate::App) -> Option<String> {
-    let saved = app.settings.owner(Kind::Config, "server");
-    saved
-        .get("opencodeBinary")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !matches!(*s, "" | "opencode" | "opencode2") && !launch::retired(s))
-        .map(launch::resolve)
-}
 
 /// One bounded `execFile`: exit status, spawn or timeout error (`missing` for ENOENT) and output.
 struct Run {
@@ -203,7 +191,7 @@ pub async fn status(State(app): State<Shared>, Query(query): Query<Vec<(String, 
     let force = query.iter().filter(|(key, _)| key == "recheck").map(|(_, value)| value.as_str()).eq(["1"]);
     let plan = install::plan::plan(force).await;
     let user = install::plan::user_prefix();
-    let (binary, source, default_selection) = match custom_binary(&app) {
+    let (binary, source, default_selection) = match launch::custom_binary(&app.settings) {
         Some(path) => (path, None, false),
         None => {
             let (path, source) = install::plan::resolve_default().await;

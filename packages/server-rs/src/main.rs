@@ -81,12 +81,6 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     if !launch.serve && config::service_record_named() {
         return Err("CNRS_OPENCODE_SERVICE_FILE is not supported: run the install again".into());
     }
-    // An empty selection is the default OpenCode installation (no saved selection is read yet).
-    let selected = launch.binary.to_string_lossy();
-    let selected =
-        if selected.is_empty() { opencode::install::plan::resolve_default().await.0 } else { selected.into_owned() };
-    let binary = opencode::launch::resolve(&selected);
-    let native = opencode::Native::connect(&binary)?;
     let listener = launch.http.listen().await?;
     let port = listener.local_addr()?.port();
     let (identity, data) = (launch.identity.as_path(), launch.data);
@@ -106,6 +100,15 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     };
     let settings = settings::Settings::new(launch.settings);
     let meta = meta::document(settings.server_id()?, port, &root, tls.as_ref(), launch.ui.meta())?;
+    let positional = launch.binary.to_string_lossy();
+    let binary = if !positional.is_empty() {
+        opencode::launch::resolve(&positional)
+    } else if let Some(configured) = launch.serve.then(|| opencode::launch::custom_binary(&settings)).flatten() {
+        configured
+    } else {
+        opencode::launch::resolve(&opencode::install::plan::resolve_default().await.0)
+    };
+    let native = opencode::Native::connect(&binary)?;
     let (watch_tx, watch_rx) = tokio::sync::mpsc::channel(512);
     let calendar_profile = missions::calendar::setup(&data)?;
     let watches = files::watch::Watches::new(watch_tx);
