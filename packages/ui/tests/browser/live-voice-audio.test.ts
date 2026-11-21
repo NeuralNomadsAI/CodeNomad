@@ -158,6 +158,7 @@ test("Tauri Linux local capture uses a leased frame and removes it when the docu
       Object.assign(window, {
         __CODENOMAD_RUNTIME_HOST__: "tauri", __CODENOMAD_WINDOW_CONTEXT__: "local", calls,
         __TAURI_INTERNALS__: {
+          metadata: { currentWindow: { label: "local-fixture" }, currentWebview: { label: "local-fixture" } },
           async invoke(command: string, { request }: { request: { action: string; id: string } }) {
             if (command !== "device_speech_request") throw new Error(command)
             calls.push(request)

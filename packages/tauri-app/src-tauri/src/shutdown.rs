@@ -283,10 +283,6 @@ impl ShutdownCoordinator {
             .remove(label);
     }
 
-    fn take_committed_local_close(&self, label: &str) -> Option<PendingClose> {
-        self.state.lock().ok()?.committed_local_closes.remove(label)
-    }
-
     fn local_close_in_flight(&self, label: &str) -> bool {
         self.state.lock().map_or(true, |state| {
             state.local_closes.contains_key(label)
@@ -298,19 +294,21 @@ impl ShutdownCoordinator {
 
     fn approve_local_close(
         &self,
-        label: String,
-        removal: Result<(), String>,
-    ) -> Result<Option<u64>, String> {
-        removal?;
+        label: &str,
+        remove_state: impl FnOnce(&PendingClose) -> Result<(), String>,
+    ) -> Option<Result<u64, (u64, String)>> {
+        // Removal and release admission share the shutdown lock: Quit can only
+        // select this window after knowing whether its persisted state survived.
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if state.shutdown_started {
-            return Ok(None);
+        let pending = state.committed_local_closes.remove(label)?;
+        if let Err(error) = remove_state(&pending) {
+            return Some(Err((pending.generation, error)));
         }
         // A late preflush acknowledgement cannot finish the release phase.
         state.next_generation += 1;
         let generation = state.next_generation;
-        state.releasing_local_closes.insert(label, generation);
-        Ok(Some(generation))
+        state.releasing_local_closes.insert(label.to_string(), generation);
+        Some(Ok(generation))
     }
 
     fn finish_local_release(&self, label: &str, generation: u64) -> bool {
@@ -855,10 +853,10 @@ pub(crate) fn consume_local_window_close(app: &AppHandle, label: &str) -> Option
     {
         return Some(true);
     }
-    let pending = app
-        .state::<ShutdownCoordinator>()
-        .take_committed_local_close(label)?;
-    let result = if pending.removes_state {
+    let decision = coordinator.approve_local_close(label, |pending| {
+        if !pending.removes_state {
+            return Ok(());
+        }
         app.try_state::<client_state::ClientState>()
             .ok_or_else(|| "client state is unavailable".to_string())
             .and_then(|state| match state.remove_window(&pending.window_id) {
@@ -866,11 +864,9 @@ pub(crate) fn consume_local_window_close(app: &AppHandle, label: &str) -> Option
                 Ok(false) => Err("persistent window state was not removed".to_string()),
                 Err(error) => Err(error),
             })
-    } else {
-        Ok(())
-    };
-    match coordinator.approve_local_close(label.to_string(), result) {
-        Ok(Some(generation)) => {
+    })?;
+    match decision {
+        Ok(generation) => {
             let emitted = emit_flush(app, label, generation, RendererFlush::Release);
             let app = app.clone();
             let label = label.to_string();
@@ -881,10 +877,9 @@ pub(crate) fn consume_local_window_close(app: &AppHandle, label: &str) -> Option
                 finish_local_release(&app, &label, generation);
             });
         }
-        Ok(None) => {} // Global shutdown owns the window.
-        Err(error) => {
+        Err((generation, error)) => {
             eprintln!("[client-state] failed to remove closed window: {error}");
-            emit_flush_cancelled(app, label, pending.generation);
+            emit_flush_cancelled(app, label, generation);
         }
     }
     Some(false)

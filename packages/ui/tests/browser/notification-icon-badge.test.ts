@@ -97,7 +97,7 @@ test("Tauri forwards count-only calls and failed native badges leave the favicon
   const page = await browser.newPage()
   try {
     await page.addInitScript(`window.badgeCalls = []; window.__TAURI__ = { core: {} };
-      window.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
+      window.__TAURI_INTERNALS__ = { metadata: { currentWindow: { label: "local-fixture" }, currentWebview: { label: "local-fixture" } }, invoke: async (command, args) => {
         window.badgeCalls.push({ command, args }); throw new Error('Unsupported platform');
       } }`)
     await page.goto(url)
@@ -134,6 +134,7 @@ test("async native updates retain FIFO through failure, rapid clearing and clean
   try {
     await page.addInitScript(`window.badgeCalls = []; window.badgeRelease = [];
       window.__TAURI__ = { core: {} }; window.__TAURI_INTERNALS__ = {
+        metadata: { currentWindow: { label: "local-fixture" }, currentWebview: { label: "local-fixture" } },
         invoke: (command, args) => new Promise((resolve, reject) => {
           window.badgeCalls.push(args.count); window.badgeRelease.push({ resolve, reject });
         })

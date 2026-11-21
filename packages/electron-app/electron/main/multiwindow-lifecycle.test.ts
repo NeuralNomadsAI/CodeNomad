@@ -1,6 +1,12 @@
 import assert from "node:assert/strict"
+import { EventEmitter } from "node:events"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import test from "node:test"
+import { ClientStateManager } from "./client-state"
 import { MultiwindowLifecycle, type LifecycleWindow } from "./multiwindow-lifecycle"
+import { WindowStateTracker } from "./window-state"
 
 const tick = () => new Promise((resolve) => setImmediate(resolve))
 function windowRecord(id: string, calls: string[]): LifecycleWindow & { events: Map<string, Function> } {
@@ -14,7 +20,7 @@ function windowRecord(id: string, calls: string[]): LifecycleWindow & { events: 
       else if (!source.includes('flush("cancel")')) calls.push(`renderer:${id}`)
     } },
   }
-  return { id, window: window as never, tracker: { flush: async () => calls.push(`native:${id}`) } as never, events }
+  return { id, window: window as never, tracker: { flush: async () => calls.push(`native:${id}`), disarm() {} } as never, events }
 }
 
 test("closing one local window removes only its V3 record and leaves backend running", async () => {
@@ -96,6 +102,74 @@ for (const failed of [false, true]) test(`quit joins an approved window's releas
     assert.ok(calls.includes("show:two"), "only the remaining window recovers after refused quit")
     assert.ok(!calls.includes("show:one"))
   }
+})
+
+for (const refused of [false, true]) test(`quit waits for a window removal on disk (refused=${refused})`, async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "codenomad-close-"))
+  let started!: () => void, finish!: () => void
+  const writeStarted = new Promise<void>(resolve => { started = resolve })
+  const finishWrite = new Promise<void>(resolve => { finish = resolve })
+  const calls: string[] = []
+  let removedId: string | undefined
+  const state = new ClientStateManager(directory, async (path, contents) => {
+    if (removedId && !JSON.parse(contents).windowOrder.includes(removedId)) {
+      removedId = undefined
+      started()
+      await finishWrite
+      if (refused) throw new Error("removal refused")
+    }
+    await writeFile(path, contents)
+  }, { crossHostElectionDirectory: join(directory, "election") })
+  t.after(async () => {
+    await state.drainAndReleasePrimary()
+    await rm(directory, { recursive: true, force: true })
+  })
+  const first = windowRecord(state.activeWindowId, calls), second = windowRecord((await state.addWindow())!, calls)
+  const events = new EventEmitter()
+  Object.assign(first.window, {
+    on: events.on.bind(events),
+    getPosition: () => [0, 0], getContentSize: () => [1200, 800],
+    isMaximized: () => false, isFullScreen: () => false,
+    close: () => {
+      calls.push("closed")
+      events.emit("close", { preventDefault: () => assert.fail("approved close was prevented") })
+      events.emit("closed")
+    },
+  })
+  Object.assign(first.window.webContents, { on: () => {}, getZoomFactor: () => 1 })
+  const execute = first.window.webContents.executeJavaScript
+  first.window.webContents.executeJavaScript = async source => {
+    if (source.includes('flush("prepare")')) await state.saveClientState({ drafts: [] }, undefined, first.id)
+    return execute(source)
+  }
+  first.tracker = new WindowStateTracker(first.window, state)
+  const warn = t.mock.method(console, "warn", () => {})
+  const app = new EventEmitter()
+  const lifecycle = new MultiwindowLifecycle({
+    app: Object.assign(app, { exit: () => calls.push("exit") }) as never,
+    clientStateManager: state,
+    cliManager: { shutdown: async () => calls.push("stop") } as never,
+    getLocalWindows: () => [first, second], getAllWindows: () => [first.window, second.window],
+    removeWindowState: id => { removedId = id; return state.removeWindow(id) },
+    getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.attach(first)
+  lifecycle.registerAppEvents()
+  events.emit("close", { preventDefault() {} })
+  await writeStarted
+  try {
+    app.emit("before-quit", { preventDefault() {} })
+    await tick()
+  } finally {
+    finish()
+  }
+  await (lifecycle as any).shutdown?.catch(() => {})
+  await tick()
+  assert.deepEqual(calls.filter(call => call === `renderer:${first.id}`), Array(refused ? 2 : 1).fill(`renderer:${first.id}`))
+  assert.deepEqual(state.windowIds, refused ? [first.id, second.id] : [second.id])
+  assert.ok(calls.includes("exit"), "quit completes rather than reopening the other window")
+  assert.ok(!warn.mock.calls.some(({ arguments: args }) => args[0] === "[client-state] failed to save window state"),
+    "the final close event does not save removed geometry")
 })
 
 test("closing a remote window awaits only that window's workspace release", async () => {

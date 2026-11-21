@@ -107,10 +107,11 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
         } : { remoteDictation: relay, ...(kind !== "remote-api-legacy" ? { remoteMicrophoneLease: true } : {}) }
         Object.assign(window, { native: bridge, speechSettings: settings, __CODENOMAD_WINDOW_CONTEXT__: local ? "local" : "remote" })
         if (kind === "remote-tauri" || tauriApi) {
+          const label = kind === "tauri-preferences" ? "preferences" : kind === "tauri-api" ? "local" : "remote"
           Object.assign(window, {
-            __CODENOMAD_WINDOW_CONTEXT__: kind === "tauri-preferences" ? "preferences" : kind === "tauri-api" ? "local" : "remote",
+            __CODENOMAD_WINDOW_CONTEXT__: label,
             __CODENOMAD_RUNTIME_HOST__: "tauri", __CODENOMAD_REMOTE_DICTATION__: true,
-            __TAURI_INTERNALS__: { invoke: async (command: string, payload: { request: Record<string, unknown> }) => {
+            __TAURI_INTERNALS__: { metadata: { currentWindow: { label }, currentWebview: { label } }, invoke: async (command: string, payload: { request: Record<string, unknown> }) => {
               if (command === "device_speech_request" &&
                   (payload.request?.action === "authorizeApiMicrophone" || payload.request?.action === "revokeApiMicrophone")) {
                 requests.push(payload.request)

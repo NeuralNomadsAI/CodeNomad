@@ -45,6 +45,7 @@ export class MultiwindowLifecycle {
   private relaunchRequested = false
   private readonly sessionEndWindows = new WeakSet<BrowserWindow>()
   private readonly pendingWindowCloses = new Set<BrowserWindow>()
+  private readonly windowCloseDecisions = new Map<BrowserWindow, Promise<void>>()
   private readonly approvedWindowCloses = new WeakSet<BrowserWindow>()
   private readonly windowReleases = new Map<BrowserWindow, Promise<void>>()
 
@@ -69,25 +70,35 @@ export class MultiwindowLifecycle {
           this.dependencies.app.quit()
           return
         }
-        // A hidden launch window holds no user state: dispose it even when its renderer never started.
-        const launch = this.dependencies.isLaunchWindow?.(record.window)
-        const remote = this.dependencies.isRemoteWindow?.(record.window) === true
-        if (!launch && !remote) await this.flushWindow(record, "prepare")
-        if (this.shutdown) {
-          closing = false
-          this.pendingWindowCloses.delete(record.window)
-          return
-        }
-        // The last local window keeps its saved state beside remote windows, as when it quits CodeNomad:
-        // the next local window (New Window, a later launch or the next start) reopens it.
-        if (record.persisted !== false && this.hasOtherLocalWindow(record.id)
-          && !await this.dependencies.removeWindowState(record.id)) {
+        let settle!: () => void
+        this.windowCloseDecisions.set(record.window, new Promise<void>(resolve => { settle = resolve }))
+        let launch: boolean | undefined
+        try {
+          // A hidden launch window holds no user state: dispose it even when its renderer never started.
+          launch = this.dependencies.isLaunchWindow?.(record.window)
+          if (!launch && !this.dependencies.isRemoteWindow?.(record.window)) await this.flushWindow(record, "prepare")
+          if (this.shutdown) return
+          // The last local window keeps its saved state beside remote windows.
+          if (record.persisted !== false && this.hasOtherLocalWindow(record.id)) {
+            if (!await this.dependencies.removeWindowState(record.id)) {
+              this.resumeCapture(record.window)
+              return
+            }
+            record.tracker?.disarm()
+          }
+          this.approvedWindowCloses.add(record.window)
+        } catch (error) {
           this.resumeCapture(record.window)
-          closing = false
-          this.pendingWindowCloses.delete(record.window)
+          console.warn("[client-state] local window close failed", error)
           return
+        } finally {
+          if (!this.approvedWindowCloses.has(record.window)) {
+            closing = false
+            this.pendingWindowCloses.delete(record.window)
+          }
+          this.windowCloseDecisions.delete(record.window)
+          settle()
         }
-        this.approvedWindowCloses.add(record.window)
         if (!launch) await this.releaseWorkspaces(record.window)
         approved = true
         record.window.close()
@@ -131,7 +142,6 @@ export class MultiwindowLifecycle {
       for (const window of visibleWindows) window.hide()
       void this.startShutdown().then(() => this.exit(), (error) => {
         this.relaunchRequested = false
-        this.pendingWindowCloses.clear()
         for (const window of this.dependencies.getAllWindows()) if (!window.isDestroyed() && !this.approvedWindowCloses.has(window)) {
           if (this.needsShutdownFlush(window) && !this.dependencies.isSupportWindow?.(window)) this.resumeCapture(window)
           if (visibleWindows.includes(window)) window.show()
@@ -193,9 +203,10 @@ export class MultiwindowLifecycle {
     return shutdown
   }
 
-  private flushApplicationWindows(closing: false | "prepare" = false): Promise<void> {
+  private async flushApplicationWindows(closing: false | "prepare" = false): Promise<void> {
+    await Promise.all(this.windowCloseDecisions.values())
     // A hidden launch window holds no state to preserve, and its pending connection ends with the app.
-    return Promise.all([
+    await Promise.all([
       ...this.dependencies.getLocalWindows()
         .filter((record) => this.needsShutdownFlush(record.window))
         .map((record) => this.flushWindow(record, closing)),
@@ -203,7 +214,7 @@ export class MultiwindowLifecycle {
         .filter(window => this.dependencies.isRemoteWindow?.(window) && this.needsShutdownFlush(window))
         .map(window => this.flushWindow({ id: "", window, tracker: null }, closing)) : []),
       this.dependencies.flushSupportWindows?.(),
-    ]).then(() => undefined)
+    ])
   }
 
   private prepareSessionEnd(): void {

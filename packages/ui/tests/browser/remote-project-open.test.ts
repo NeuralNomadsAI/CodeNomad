@@ -146,7 +146,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       window.electronAPI = { selectServer: async intent => { (window as any).selections.push(intent) } } as any
       ;(window as any).__TAURI_INTERNALS__ = { invoke: async (command: string, args: any) => {
         if (command === "preferences_select_server") (window as any).selections.push(args.intent)
-      }, metadata: { currentWindow: { label: native ? "preferences" : "main" } } }
+      }, metadata: { currentWindow: { label: native ? "preferences" : "main" }, currentWebview: { label: native ? "preferences" : "main" } } }
     }, { host, native })
     if (host === "web") await page.route("**/api/meta", route => {
       if (new URL(route.request().url()).pathname !== "/api/meta") return route.continue()

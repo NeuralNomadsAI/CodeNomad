@@ -83,6 +83,7 @@ window.__CODENOMAD_BROWSER_CAPABILITIES__ = { embedding: true, history: true,
 Object.assign(window, {
   nativeFixture,
   __TAURI_INTERNALS__: {
+    metadata: { currentWindow: { label: "local-fixture" }, currentWebview: { label: "local-fixture" } },
     invoke,
     transformCallback(callback: (event: unknown) => void) {
       callbacks.set(++callbackId, callback)
