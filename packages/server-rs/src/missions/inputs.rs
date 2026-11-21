@@ -2,7 +2,7 @@ use super::{
     bridge::{self, current_root, dir, find, matches_execution, mission, recorded, running, send, session, snapshot},
     creation_admission::{Scope, derived_session},
     recovery,
-    run::{autonomous_creation, bad, foreign, held, id, token},
+    run::{bad, foreign, held, id, token},
 };
 use crate::{App, Error, Shared};
 use axum::http::{Method, StatusCode as Status};
@@ -151,18 +151,8 @@ pub(super) async fn admit(app: &Shared, mut scope: Scope, co: Value, kind: &str,
         check().await?;
     }
     if kind == "prompt" {
-        // Permission-sensitive prompt dispatch joins the ordinary permission
-        // refresh service here. A persisted Supervised block may outlive the
-        // current new-root preference; do not use the preference to bypass it.
-        let may_be_supervised = fresh["permissions"].as_array().is_some_and(|rules| {
-            rules.windows(2).any(|rules| {
-                rules[0] == json!({"action":"edit","resource":"*","effect":"ask"})
-                    && rules[1] == json!({"action":"shell","resource":"*","effect":"ask"})
-            })
-        });
-        if may_be_supervised || fresh.get("permissions").is_some_and(|p| !p.is_array()) {
-            return Err(held());
-        }
+        crate::sessions::permission_mode::refresh_coordinator(app, &scope.workspace, &scope.endpoint, &fresh).await?;
+        check().await?;
     }
     let mut body = input.clone();
     body.as_object_mut().ok_or_else(bad)?.remove("sessionID");
@@ -232,10 +222,13 @@ pub(super) async fn create_root(app: &App, scope: Scope, co: Value, request: Val
                     }
                 }
             }
+            let permissions = crate::sessions::permission_mode::new_root(app, &scope.endpoint, &scope.dir, true).await?;
+            if let Some(block) = &permissions {
+                input["permissions"] = block.clone();
+            }
             if managed_contract(app, &scope, &co, mid, key).await? != contract {
                 return Err(foreign());
             }
-            autonomous_creation(app)?;
             app.mission_creations.hold_root(&owner, sid, permit)?;
             let body = send(app, &scope, Method::POST, "/api/session", &input)
                 .await
@@ -243,6 +236,13 @@ pub(super) async fn create_root(app: &App, scope: Scope, co: Value, request: Val
             let row = body.get("data").unwrap_or(&body);
             if !matches(row) {
                 return Err(super::creation_admission::uncertain());
+            }
+            if let Some(block) = &permissions {
+                if managed_contract(app, &scope, &co, mid, key).await? != contract {
+                    return Err(super::creation_admission::uncertain());
+                }
+                crate::sessions::permission_mode::confirm_root(app, &scope.endpoint, &scope.dir, &scope.project,
+                    sid, block, false, || scope.current(app)).await.map_err(|_| super::creation_admission::uncertain())?;
             }
             app.mission_creations.release_root(&owner, sid);
             row.clone()

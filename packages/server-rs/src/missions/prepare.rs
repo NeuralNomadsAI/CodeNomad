@@ -2,7 +2,7 @@ use super::{
     bridge::{self, dir, session, snapshot},
     configuration,
     creation_admission::{self, Attempt, Scope},
-    run::{autonomous_creation, creation_profiles, document_capabilities, token},
+    run::{creation_profiles, document_capabilities, token},
 };
 use crate::{App, Error, shared::js_trim};
 use axum::{Json, http::StatusCode as Status};
@@ -300,7 +300,11 @@ pub(super) async fn prepare(
         if dir(&fresh)? != dir(&author)? || source(app, &scope, &fresh).await? != initial_source {
             return Err(invalid());
         }
-        autonomous_creation(app)?;
+        if let Some(block) = crate::sessions::permission_mode::new_root(app, &scope.endpoint, &scope.dir,
+            caps["output"]["rootPermissions"] == true).await? {
+            input["permissions"] = block;
+        }
+        scope.refresh(app).await?;
         if lifetime.is_cancelled() {
             return Err(invalid());
         }
@@ -311,6 +315,7 @@ pub(super) async fn prepare(
         if !attempt.acknowledgement(&created) || attempt.scope.refresh(app).await.is_err() {
             return Err(creation_admission::uncertain());
         }
+        attempt.confirm_permissions(app, &created["mission"], created["acknowledgement"] == "recovered").await?;
         // Confirm creation before following a separately guarded fresh Play intent.
         if created["acknowledgement"] == "recovered" {
             return Ok(recovered(created["mission"].clone(), &request_start));

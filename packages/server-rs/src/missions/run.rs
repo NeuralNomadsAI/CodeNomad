@@ -266,16 +266,6 @@ fn creation_unavailable(message: &str) -> Error {
     (Status::SERVICE_UNAVAILABLE, Json(json!({"error":message,"code":"creation-unavailable"})))
 }
 
-pub(super) fn autonomous_creation(app: &App) -> Result<(), Error> {
-    let ui = app.settings.raw_config_owner("ui").map_err(|_| creation_admission::unavailable())?;
-    // Join the shared permission service here before admitting Supervised roots.
-    match ui.get("settings").and_then(|s| s.get("newConversationPermissions")) {
-        None => Ok(()),
-        Some(v) if v == "autonomous" => Ok(()),
-        _ => Err(creation_unavailable("Mission root permissions unavailable")),
-    }
-}
-
 pub(super) fn document_capabilities(value: &Value) -> bool {
     value["version"] == 1
         && value.as_object().is_some_and(|o| {
