@@ -308,3 +308,89 @@ async fn desktop_dev_launch_proxies_the_ui() {
     assert_eq!(meta["ui"], serde_json::json!({"source": "dev-proxy"}));
     server.stop(b"").await;
 }
+
+#[tokio::test]
+async fn shutdown_cancels_pending_plugin_snapshot() {
+    let root = scratch("pending-stop");
+    let project = root.join("project");
+    fs::create_dir_all(&project).unwrap();
+    let directory = dunce::canonicalize(&project).unwrap();
+    let native = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let native_url = format!("http://{}/", native.local_addr().unwrap());
+    let waiting = std::sync::Arc::new(tokio::sync::Notify::new());
+    let entered = waiting.clone();
+    let stub = axum::Router::new()
+        .route(
+            "/api/location",
+            axum::routing::get(move || async move { axum::Json(serde_json::json!({"directory":directory})) }),
+        )
+        .route(
+            "/api/plugin",
+            axum::routing::get(move || async move {
+                entered.notify_one();
+                std::future::pending::<axum::http::StatusCode>().await
+            }),
+        );
+    tokio::spawn(async move { axum::serve(native, stub).await });
+    let mut command = Command::new(env!("CARGO_BIN_EXE_codenomad-rs"));
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000);
+    command
+        .env_clear()
+        .envs(std::env::vars_os().filter(|(key, _)| {
+            matches!(key.to_string_lossy().to_ascii_uppercase().as_str(), "PATH" | "SYSTEMROOT" | "WINDIR")
+        }))
+        .env("HOME", &root)
+        .env("USERPROFILE", &root)
+        .env("GIT_CEILING_DIRECTORIES", &root)
+        .env("CNRS_SERVER_PASSWORD", "fixture-only")
+        .env("CNRS_FIXTURE_URL", native_url)
+        .env("CNRS_FIXTURE_PASSWORD", "fixture-daemon")
+        .env("CNRS_FIXTURE_STDIN_STOP", "1")
+        .args([root.as_os_str(), root.join("identity.json").as_os_str(), "0".as_ref(), "fixture".as_ref()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = command.spawn().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
+    let url = timeout(Duration::from_secs(30), stdout.next_line()).await.unwrap().unwrap().unwrap();
+    let client = client();
+    let login = client
+        .post(format!("{url}/api/auth/login"))
+        .json(&serde_json::json!({
+            "username":"codenomad", "password":"fixture-only"
+        }))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let cookie = login.headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap().to_owned();
+    let workspace: serde_json::Value = client
+        .post(format!("{url}/api/workspaces"))
+        .header("cookie", &cookie)
+        .json(&serde_json::json!({"path":project}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = workspace["id"].as_str().unwrap();
+    let pending = tokio::spawn(
+        client
+            .get(format!("{url}/api/workspaces/{id}/pending-requests"))
+            .header("cookie", cookie)
+            .query(&[("directories", project.to_str().unwrap())])
+            .send(),
+    );
+    timeout(Duration::from_secs(15), waiting.notified()).await.expect("snapshot reached the plugin");
+    child.stdin.take().unwrap().write_all(b"shutdown\n").await.unwrap();
+    let response = timeout(Duration::from_secs(15), pending).await.expect("cancel pending snapshot").unwrap().unwrap();
+    assert_eq!(response.status(), 503);
+    assert_eq!(response.json::<serde_json::Value>().await.unwrap()["error"], "Server is shutting down");
+    assert!(timeout(Duration::from_secs(15), child.wait()).await.unwrap().unwrap().success());
+    let _ = fs::remove_dir_all(root);
+}

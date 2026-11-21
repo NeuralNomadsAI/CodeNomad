@@ -127,6 +127,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         calendar_profile,
     ));
 
+    let shutdown = CancellationToken::new();
     let routes = Router::new()
         .merge(meta::routes())
         .merge(auth::routes())
@@ -139,7 +140,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         .merge(settings::routes())
         .merge(memory::routes())
         .merge(subagent_depth::routes())
-        .merge(sessions::routes())
+        .merge(sessions::routes(shutdown.clone()))
         .merge(events::routes())
         .merge(extensions::routes())
         .merge(missions::routes())
@@ -148,7 +149,6 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         .merge(opencode::routes())
         .merge(opencode::install::routes());
 
-    let shutdown = CancellationToken::new();
     service::stop_on_terminate(shutdown.clone());
     if launch.serve {
         host::read_stdin(shutdown.clone());

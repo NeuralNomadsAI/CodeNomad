@@ -1,6 +1,6 @@
 //! Pending questions and permissions of a workspace, from the native pending-requests plugin.
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Path as Route, RawQuery, State},
     http::{StatusCode as Status, header},
     response::{IntoResponse, Response},
@@ -12,6 +12,7 @@ use std::{
     sync::atomic::Ordering::Relaxed,
     time::Duration,
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     App, Error, Shared, Workspace, error, unavailable,
@@ -236,8 +237,18 @@ fn refused(kind: Refusal) -> Error {
 
 /// `GET /api/workspaces/:id/pending-requests?directories=…[&optionalDirectories=…]`: the pending
 /// permissions and Forms of each owned directory, through the pruning plugin's snapshot RPC.
-pub async fn snapshot(State(app): State<Shared>, Route(id): Route<String>, RawQuery(query): RawQuery) -> Response {
-    let mut response = snapshot_response(app, id, query).await.into_response();
+pub async fn snapshot(
+    State(app): State<Shared>,
+    Route(id): Route<String>,
+    RawQuery(query): RawQuery,
+    Extension(shutdown): Extension<CancellationToken>,
+) -> Response {
+    // A read waiting for plugin readiness outlives the desktop host's shutdown grace.
+    let mut response = tokio::select! {
+        biased;
+        _ = shutdown.cancelled() => Err(error(Status::SERVICE_UNAVAILABLE, "Server is shutting down")),
+        result = snapshot_response(app, id, query) => result,
+    }.into_response();
     response.headers_mut().insert(header::CACHE_CONTROL, header::HeaderValue::from_static("no-store"));
     response
 }
