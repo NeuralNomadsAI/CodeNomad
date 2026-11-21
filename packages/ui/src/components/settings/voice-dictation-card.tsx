@@ -65,7 +65,9 @@ export function VoiceDictationCard(props: {
       const key = deviceHexLabel(snapshot)
       return t(key === "settings.speech.device.hex" ? "settings.voice.ready" : key)
     }
-    if (remote && remoteChoice() !== "api") return t(remoteChoice() ? "settings.voice.ready" : "settings.voice.unavailable")
+    const choice = remoteChoice()
+    if (choice === null) return t("settings.speech.device.chooseLocal")
+    if (remote && choice !== "api") return t(choice ? "settings.voice.ready" : "settings.voice.unavailable")
     if (speechCapabilitiesError()) return t("settings.speech.status.error")
     const capabilities = speechCapabilities()
     if (!capabilities) return t("settings.speech.status.loading")

@@ -582,6 +582,7 @@ export const settingsMessages = {
   "settings.speech.device.system": "Reconocimiento local del sistema",
   "settings.speech.device.unavailable": "Reconocimiento del sistema no disponible",
   "settings.speech.device.platformUnsupported": "Reconocimiento del sistema no compatible con esta plataforma",
+  "settings.speech.device.chooseLocal": "Elige un motor en Preferencias → Voz → Dictado de la aplicación local.",
   "settings.speech.device.runtimeUnavailable": "Servicio de reconocimiento del sistema no disponible",
   "settings.speech.device.noRecognizer": "No hay un motor local del sistema instalado",
   "settings.speech.device.localeUnavailable": "Reconocimiento del sistema no disponible para este idioma",

@@ -582,6 +582,7 @@ export const settingsMessages = {
   "settings.speech.device.system": "システムのローカル音声認識",
   "settings.speech.device.unavailable": "システムの音声認識は利用できません",
   "settings.speech.device.platformUnsupported": "このプラットフォームはシステムの音声認識に非対応です",
+  "settings.speech.device.chooseLocal": "ローカルアプリの環境設定 → 音声 → 音声入力でエンジンを選んでください。",
   "settings.speech.device.runtimeUnavailable": "システムの音声認識サービスは利用できません",
   "settings.speech.device.noRecognizer": "システムのローカル音声認識がインストールされていません",
   "settings.speech.device.localeUnavailable": "この言語ではシステムの音声認識を利用できません",

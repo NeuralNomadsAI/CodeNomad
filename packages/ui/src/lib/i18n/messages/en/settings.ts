@@ -584,6 +584,7 @@ export const settingsMessages = {
   "settings.speech.device.system": "On-device system recognition",
   "settings.speech.device.unavailable": "System recognition unavailable",
   "settings.speech.device.platformUnsupported": "System recognition unsupported on this platform",
+  "settings.speech.device.chooseLocal": "Choose an engine in local Preferences → Voice → Dictation.",
   "settings.speech.device.runtimeUnavailable": "System recognition service unavailable",
   "settings.speech.device.noRecognizer": "No on-device system recognizer installed",
   "settings.speech.device.localeUnavailable": "System recognition unavailable for this language",

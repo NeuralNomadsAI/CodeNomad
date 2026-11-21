@@ -582,6 +582,7 @@ export const settingsMessages = {
   "settings.speech.device.system": "זיהוי דיבור מקומי של המערכת",
   "settings.speech.device.unavailable": "זיהוי הדיבור של המערכת אינו זמין",
   "settings.speech.device.platformUnsupported": "זיהוי הדיבור של המערכת אינו נתמך בפלטפורמה זו",
+  "settings.speech.device.chooseLocal": "בחרו מנוע בהגדרות → קול → הכתבה ביישום המקומי.",
   "settings.speech.device.runtimeUnavailable": "שירות זיהוי הדיבור של המערכת אינו זמין",
   "settings.speech.device.noRecognizer": "לא מותקן מנוע זיהוי דיבור מקומי של המערכת",
   "settings.speech.device.localeUnavailable": "זיהוי הדיבור של המערכת אינו זמין בשפה זו",

@@ -562,6 +562,7 @@ export const settingsMessages = {
   "settings.speech.device.system": "Yerel sistem konuşma tanıma",
   "settings.speech.device.unavailable": "Sistem konuşma tanıma kullanılamıyor",
   "settings.speech.device.platformUnsupported": "Bu platform sistem konuşma tanımayı desteklemiyor",
+  "settings.speech.device.chooseLocal": "Yerel uygulamada Tercihler → Ses → Dikte bölümünden bir motor seçin.",
   "settings.speech.device.runtimeUnavailable": "Sistem konuşma tanıma hizmeti kullanılamıyor",
   "settings.speech.device.noRecognizer": "Yerel sistem konuşma tanıma motoru yüklü değil",
   "settings.speech.device.localeUnavailable": "Bu dilde sistem konuşma tanıma kullanılamıyor",

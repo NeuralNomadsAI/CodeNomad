@@ -582,6 +582,7 @@ export const settingsMessages = {
   "settings.speech.device.system": "Локальное распознавание речи системой",
   "settings.speech.device.unavailable": "Системное распознавание речи недоступно",
   "settings.speech.device.platformUnsupported": "На этой платформе нет системного распознавания речи",
+  "settings.speech.device.chooseLocal": "Выберите движок в разделе Настройки → Голос → Диктовка локального приложения.",
   "settings.speech.device.runtimeUnavailable": "Служба системного распознавания речи недоступна",
   "settings.speech.device.noRecognizer": "Локальный системный распознаватель речи не установлен",
   "settings.speech.device.localeUnavailable": "Системное распознавание речи недоступно для этого языка",

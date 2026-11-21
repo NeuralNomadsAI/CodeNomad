@@ -629,6 +629,7 @@ test("an unsupported remote system choice opens Dictation settings without start
   await dictate.click()
   await page.waitForFunction(() => document.activeElement?.id === "voice-dictation")
   await page.getByText("System recognition unsupported on this platform", { exact: true }).waitFor()
+  await page.getByText("Choose an engine in local Preferences → Voice → Dictation.", { exact: true }).waitFor()
   assert.equal(await page.evaluate(() => (window as any).native.requests.some(({ action }: any) => action === "begin")), false)
   assert.equal(await page.evaluate(() => (window as any).capture.starts), 0)
 }, false, "remote", false, "en", false, false, { systemUnsupported: true }))

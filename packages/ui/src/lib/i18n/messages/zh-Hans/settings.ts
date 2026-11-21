@@ -582,6 +582,7 @@ export const settingsMessages = {
   "settings.speech.device.system": "系统本地语音识别",
   "settings.speech.device.unavailable": "系统语音识别不可用",
   "settings.speech.device.platformUnsupported": "此平台不支持系统语音识别",
+  "settings.speech.device.chooseLocal": "请在本地应用的偏好设置 → 语音 → 听写中选择引擎。",
   "settings.speech.device.runtimeUnavailable": "系统语音识别服务不可用",
   "settings.speech.device.noRecognizer": "未安装系统本地语音识别引擎",
   "settings.speech.device.localeUnavailable": "系统语音识别不支持此语言",

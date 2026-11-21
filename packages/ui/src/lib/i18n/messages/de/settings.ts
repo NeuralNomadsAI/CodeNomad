@@ -583,6 +583,7 @@ export const settingsMessages = {
   "settings.speech.device.system": "Lokale System-Spracherkennung",
   "settings.speech.device.unavailable": "System-Spracherkennung nicht verfügbar",
   "settings.speech.device.platformUnsupported": "System-Spracherkennung auf dieser Plattform nicht unterstützt",
+  "settings.speech.device.chooseLocal": "Wählen Sie in der lokalen App unter Einstellungen → Sprache → Diktat eine Engine.",
   "settings.speech.device.runtimeUnavailable": "Dienst für System-Spracherkennung nicht verfügbar",
   "settings.speech.device.noRecognizer": "Keine lokale System-Spracherkennung installiert",
   "settings.speech.device.localeUnavailable": "System-Spracherkennung für diese Sprache nicht verfügbar",

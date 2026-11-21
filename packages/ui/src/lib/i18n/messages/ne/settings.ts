@@ -583,6 +583,7 @@ export const settingsMessages = {
   "settings.speech.device.system": "स्थानीय प्रणाली वाणी पहिचान",
   "settings.speech.device.unavailable": "प्रणाली वाणी पहिचान उपलब्ध छैन",
   "settings.speech.device.platformUnsupported": "यो प्लेटफर्ममा प्रणाली वाणी पहिचान समर्थित छैन",
+  "settings.speech.device.chooseLocal": "स्थानीय एपको प्राथमिकताहरू → आवाज → श्रुतलेखनमा इन्जिन छान्नुहोस्।",
   "settings.speech.device.runtimeUnavailable": "प्रणाली वाणी पहिचान सेवा उपलब्ध छैन",
   "settings.speech.device.noRecognizer": "स्थानीय प्रणाली वाणी पहिचान इन्जिन स्थापना गरिएको छैन",
   "settings.speech.device.localeUnavailable": "यो भाषाका लागि प्रणाली वाणी पहिचान उपलब्ध छैन",

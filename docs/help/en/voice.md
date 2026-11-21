@@ -49,7 +49,7 @@ With system recognition, a preview appears as you speak. You can keep editing th
 
 In local desktop **Preferences → Voice → Dictation**, set **Dictation engine on this device**. This choice applies across projects on the device. **API provider** uses the connected server's API settings and requires a secure context for microphone access.
 
-- **On-device system recognition** is available on macOS with an installed local recognizer for the app language. On Windows or Linux, or if system recognition is unavailable, choose **Hex (local)** if offered or **API provider**. A saved but unavailable system choice requires you to select another engine before dictating.
+- **On-device system recognition** is available on macOS with an installed local recognizer for the app language. On Windows or Linux, choose **Hex (local)** if offered or **API provider**. If a remote window reports that the saved system engine is unsupported, change it in the local app’s **Preferences → Voice → Dictation**.
 - **Dictation** shows the remaining download size, per component and in total, before you choose **Activate Hex**. Activation verifies and reuses compatible files, downloads what is missing, and selects Hex when ready. Use **Cancel Hex activation** to stop or **Resume Hex activation** when offered. Failure or cancellation keeps your previous engine. Selecting ready **Hex (local)** starts no download.
 - Hex is offered on eligible Windows x64/arm64, Apple silicon with macOS 15+, and Linux x64/arm64 with glibc 2.36+ and the libraries required by Hex. Intel Macs and Linux systems with older glibc or musl are ineligible. The engine and models are separate from the CodeNomad installer; no terminal or API key is needed.
 
