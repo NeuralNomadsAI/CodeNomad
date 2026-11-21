@@ -196,7 +196,7 @@ async function qualify(ts, rs, password, rsRoot) {
   assert.equal(await callStatus("/api/meta", { headers: { "x-codenomad-server-request": "1" } }), 401)
   assert.equal(await callStatus("/api/meta", { headers: { "x-codenomad-backend-authority": "bootstrap" } }), 403)
   assert.equal(await callStatus("/api/auth/login", { ...jsonBody({ username: "codenomad", password }), headers: { "content-type": "application/json", "x-forwarded-proto": "https" } }), 403)
-  assert.equal(await callStatus("/api/remote-control/server-pair", { ...jsonBody({ code: "a".repeat(32) }), headers: { "content-type": "application/json", "x-codenomad-server-pairing": "1" } }), 404)
+  assert.equal(await callStatus("/api/remote-control/server-pair", { ...jsonBody({ code: "a".repeat(32) }), headers: { "content-type": "application/json", "x-codenomad-server-pairing": "1" } }), missionServe ? 403 : 404)
   result.tests.push("password, cookies, cross-origin and Referer (TS + RS), logout (TS), unsupported device/authority/pairing (RS)")
   // Lexical refusals before any disk access: outside the root without `--unrestricted-root`; network,
   // verbatim and device paths in both cases.
@@ -446,7 +446,8 @@ try {
     const password = randomUUID()
     const tsRoot = path.join(local.root, "local"), rsRoot = path.join(remote.root, "remote")
     for (const root of [tsRoot, rsRoot]) {
-      await populate(path.join(root, "Rich"), true)
+      if (mode.startsWith("missions")) await mkdir(path.join(root, "Rich"))
+      else await populate(path.join(root, "Rich"), true)
       await mkdir(path.join(root, "No Repository"))
     }
     await populate(path.join(rsRoot, "Rust Project"))
