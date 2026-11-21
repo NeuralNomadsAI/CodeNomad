@@ -31,32 +31,48 @@ pub(super) async fn automation_api(app: &App, endpoint: &Arc<Endpoint>) -> Resul
     })
 }
 
-pub(super) async fn flag_origin(
-    app: &App, endpoint: &Arc<Endpoint>, dir: &str, provenance: &str,
-) -> Result<Option<String>, Error> {
-    if !matches!(provenance, "experimental-block" | "all-flags") {
-        return Ok(None);
+pub(super) async fn config_entries(app: &App, endpoint: &Arc<Endpoint>, dir: &str) -> Result<Vec<Value>, Error> {
+    if !on_connection(app, endpoint) {
+        return Err(unavailable());
     }
-    let response = app.native.client.get(endpoint.url.join("/api/config").map_err(|_| unavailable())?)
+    let response = app
+        .native
+        .client
+        .get(endpoint.url.join("/api/config").map_err(|_| unavailable())?)
         .basic_auth("opencode", Some(&endpoint.password))
         .query(&[("location[directory]", dir)])
         .timeout(Duration::from_secs(5))
-        .send().await.map_err(|_| unavailable())?
-        .error_for_status().map_err(|_| unavailable())?;
+        .send()
+        .await
+        .map_err(|_| unavailable())?
+        .error_for_status()
+        .map_err(|_| unavailable())?;
     let entries = crate::opencode::read_json(response, 2 * 1024 * 1024).await.map_err(|_| unavailable())?;
     if !on_connection(app, endpoint) {
         return Err(unavailable());
     }
-    let entries = entries.as_array().ok_or_else(unavailable)?;
-    Ok(origin(entries, provenance).map(str::to_owned))
+    match entries {
+        Value::Array(entries) if entries.len() <= 256 => Ok(entries),
+        _ => Err(unavailable()),
+    }
 }
 
-fn origin<'a>(entries: &'a [Value], provenance: &str) -> Option<&'a str> {
-    entries.iter().rev().find(|entry| {
-        if entry["type"] != "document" { return false; }
-        let Some(experimental) = entry["info"].get("experimental") else { return false; };
-        provenance == "experimental-block" || experimental.get("all_flags").is_some()
-    }).and_then(|entry| entry["path"].as_str())
+pub(super) fn experimental(entry: &Value) -> Option<&Value> {
+    (entry["type"] == "document").then(|| entry["info"].get("experimental")).flatten()
+}
+
+pub(super) fn origin<'a>(entries: &'a [Value], provenance: &str) -> Option<&'a str> {
+    if !matches!(provenance, "experimental-block" | "all-flags") {
+        return None;
+    }
+    entries
+        .iter()
+        .rev()
+        .find(|entry| {
+            experimental(entry)
+                .is_some_and(|block| provenance == "experimental-block" || block.get("all_flags").is_some())
+        })
+        .and_then(|entry| entry["path"].as_str())
 }
 
 #[test]
