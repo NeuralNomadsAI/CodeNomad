@@ -60,34 +60,41 @@ const INPUT_DESTINATION = `function (point, expected, release, handle, insertTex
   if (!sameWindow) return "root";
   if (!release && !sameTab) return "tab";
   if (!target || ${FRAME_OWNER}.test(target.localName)) return "frame";
-  let capturing = false;
+  let capture;
+  if (point && this.dragPress) {
+    const { id, path } = this.dragPress;
+    const holds = node => node.isConnected && node.ownerDocument === document &&
+      Element.prototype.hasPointerCapture.call(node, id);
+    capture = this.dragCapture;
+    if (capture && !holds(capture)) return "receiver";
+    if (!capture) this.dragCapture = capture = path.find(holds);
+  }
   if (handle && (point || !release)) {
     const element = handle.nodeType === Node.ELEMENT_NODE ? handle : handle.parentElement;
     if (!element?.isConnected || element.ownerDocument !== document) return "element";
     if (point) {
       const cover = (element, ...args) => { ${POINTER_COVER} };
       const blocked = cover(element, target);
-      const dragging = Boolean(dragSource?.isConnected) && this.dragPointerId !== undefined;
-      capturing = dragging && Element.prototype.hasPointerCapture.call(dragSource, this.dragPointerId);
       // The source can follow the pointer without capture. In that case retain the exact hit.
-      if (blocked !== null && !(dragging && cover(dragSource, target) === null)) return "cover:" + blocked;
+      const moved = capture ?? (this.dragPress && dragSource?.isConnected ? dragSource : null);
+      if (blocked !== null && !(moved && cover(moved, target) === null)) return "cover:" + blocked;
     } else {
       const field = element, active = target;
       const editable = insertText && !(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement);
       if (${FOCUS_MISMATCH}) return "focus";
     }
   }
-  const receiver = capturing ? dragSource : target;
+  const receiver = capture ?? target;
   if (confirmReceiver && (this.hit?.id !== confirmReceiver || this.hit.receiver !== receiver)) return "receiver";
   // A hit retargeted out of a closed shadow root looks like any other host.
   const canHostShadow = /-|^(article|aside|blockquote|body|div|footer|h[1-6]|header|main|nav|p|section|span)$/;
   if (!target.shadowRoot && canHostShadow.test(target.localName) && target !== confirmed) return target;
   if (track) this.hit = { id: track, receiver };
-  // Learn the pointer ID from this press; geometry alone cannot prove capture.
+  // Only a recipient from this trusted press path can become the drag's capture owner.
   if (observeDrag) window.addEventListener("pointerdown", event => {
     if (event.isTrusted && event.pointerType === "mouse" && event.button === 0 &&
         event.clientX === point.x && event.clientY === point.y && event.composedPath()[0] === target)
-      this.dragPointerId = event.pointerId;
+      this.dragPress = { id: event.pointerId, path: event.composedPath().filter(node => node instanceof Element) };
   }, { capture: true, once: true, signal: AbortSignal.timeout(${INPUT_MARK_LEASE_MS}) });
   return "ready";
 }`
