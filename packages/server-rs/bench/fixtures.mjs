@@ -27,7 +27,13 @@ const assertFixtureRoot = root => assert(path.resolve(root).startsWith(path.join
 /** A forced stop skips a server's own removal: drop `pid`'s bridge registration from its fixture registry. */
 export async function dropRegistration(env, pid) {
   const registry = path.join(env.LOCALAPPDATA, "CodeNomad", "automation-bridges")
-  assert(path.resolve(registry).startsWith(path.join(out, "tmp")), `Not a bench registry: ${registry}`)
+  const parent = process.env.CODENOMAD_NATIVE_FIXTURE_PARENT
+  const root = path.resolve(env.USERPROFILE)
+  assert(path.resolve(env.LOCALAPPDATA) === path.join(root, "AppData", "Local"))
+  const allowed = [path.join(out, "tmp"), ...(parent ? [path.resolve(parent)] : [])]
+  assert(allowed.some(dir => path.relative(dir, root).split(path.sep).length === 2
+    && path.dirname(root) === path.join(dir, "opencode") && /^product-native-[A-Za-z0-9]+$/.test(path.basename(root))),
+  `Not a bench registry: ${registry}`)
   for (const name of await readdir(registry).catch(() => [])) if (name.includes(`-${pid}-`)) await rm(path.join(registry, name), { force: true })
 }
 

@@ -4,7 +4,7 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { copyFile, cp, mkdir, writeFile } from "node:fs/promises"
+import { copyFile, cp, lstat, mkdir, writeFile } from "node:fs/promises"
 import net from "node:net"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
@@ -15,14 +15,25 @@ import { assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
 import { browserFiles, populate } from "./files.mjs"
 import { browserWorktrees } from "./worktrees.mjs"
 
-const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "missions", "missions-family", "missions-calendar", "mission-permissions", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
+const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "missions", "missions-family", "missions-calendar", "missions-wayfinder", "mission-permissions", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
 const [mode, exe] = process.argv.slice(2)
 assert(MODES.includes(mode) && path.isAbsolute(exe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)
 const bin = rustBinary()
 const bench = mode === "solid" ? undefined : await import(`./${mode === "http" ? "worktrees" : mode}.mjs`)
-const missionServe = process.env.CNRS_BENCH_MISSIONS_SERVE === "1"
-assert(!missionServe || process.platform === "win32" && ["missions", "missions-calendar"].includes(mode))
+const missionServe = process.env.CNRS_BENCH_MISSIONS_SERVE === "1" || mode === "missions-wayfinder" && process.platform === "win32"
+assert(!missionServe || process.platform === "win32" && ["missions", "missions-calendar", "missions-wayfinder"].includes(mode))
 const runtime = missionServe ? { ...bench?.runtime, service: true } : bench?.runtime
+if (runtime?.projectConfig) {
+  assert(missionServe && process.env.CODENOMAD_NATIVE_FIXTURE_PARENT, "Project config requires a separate private root")
+  const root = await outsideUserHome(process.env.CODENOMAD_NATIVE_FIXTURE_PARENT)
+  for (let dir = root; ; dir = path.dirname(dir)) {
+    for (const name of [".opencode", "opencode.json", "opencode.jsonc"]) {
+      const absent = await lstat(path.join(dir, name)).then(() => false, e => e.code === "ENOENT")
+      assert(absent, `Fixture ancestor contains OpenCode settings: ${dir}`)
+    }
+    if (path.dirname(dir) === dir) break
+  }
+}
 await useBenchTemp()
 await outsideUserHome(process.env.TEMP)
 const daemonTemp = path.join(process.env.TEMP, "opencode")

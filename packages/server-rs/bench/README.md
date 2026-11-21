@@ -38,7 +38,7 @@ node roundtrip.mjs $OpenCode
 | `files` | Files and Git on a rich repository (rename, gitlink, conflict, CRLF, large and binary files), mutations, refusals, watches. |
 | `contract` | Session placement header, foreign sessions, outline in a worktree, `pending-requests`. |
 | `depth` | `subagent-depth` on subfolders, linked worktree, junctions, written documents, worktree deletion fence. |
-| `mission-permissions` | Paused Supervised creation, native rule projection, private state read by TypeScript, an altered acknowledgement and a lost acknowledgement recovered by exact receipt, ambiguous block refusal, ordinary mode switching and refresh before a prompt. No desktop window. |
+| `mission-permissions` | Supervised creation and exact receipt recovery; direct child and fork provenance, additive background refresh, owned fork removal and unowned fork refusal. |
 | `worktree-gone` | Registered worktree whose `.git` or administrative folder is gone. |
 | `links` | Symbolic links and junctions (internal, outgoing, broken, loop) for read, write, diff, status and search. |
 | `search` | `files/search`: queries, limits, zod refusals, folders, cache and 30 s TTL, busy scans. |
@@ -47,7 +47,8 @@ node roundtrip.mjs $OpenCode
 | `automation` | Scripted native parent: private bridge registration, token and ownership checks, browser and desktop command forwarding, guarded window and document selection, diagnostics. No desktop window. |
 | `missions` | One-time Mission HTTP routes over the shipped plugin: editor branch and repository sources, creation receipts, list/map/admission, bounded content and task reads, panel, text edits, recovery refusals and deletion with session retention. |
 | `missions-family` | Native coordinator and three descendants held by a loopback provider: deepest-first Stop and Pause, idle verification, queue ownership and exact receipt replay. Set `CNRS_BENCH_RS_FIRST=1` to run Rust first. |
-| `missions-calendar` | Private managed daemon: schedule creation and activation with Automations enabled, Code Mode principal, exact Play/Pause/Resume/Stop receipts, and daily Run now and current-passage reads. |
+| `missions-calendar` | Private managed daemon: exact activation and controls through HTTP and native agent tools, Code Mode principal, daily Run now and current-passage reads. |
+| `missions-wayfinder` | Native Play, question answered through the authenticated Form dock, decision proof, task readout and terminal report. |
 | `sidecars` | SideCar records seeded in `config.yaml`, management and its zod and Fastify refusals; the proxy against a recording upstream: prefix modes, raw paths and queries, parsed bodies, redirects, cookies both ways, credential and routing headers, this server's own port, HTTPS without a trusted certificate, a stopped port, WebSocket handshakes and their refusals. |
 | `usage` | Settings › Stats: the native service aggregate, its display cache in `state.yaml`, the restored period, query refusals, an unknown workspace. |
 | `host` | Both servers with `--unrestricted-root` on equal `config.yaml`: the `config` owners read at start-up (normalization and repair, speech keys) and the `/api/meta` feed, `config/:owner` merge patches (normalization, speech key pairing, refusals, Missions conditions), the OpenCode config file editor, binary validation, the OpenCode update status and the Remote Control status (install, restart, reload and preview flags excepted), `state/ui` merge patches and refusals, the folder browser over the home and drives, folder creation and its refusals, a workspace outside the root and its files. Rust alone: lexical refusals (network, device, verbatim paths) with and without the option. |
@@ -66,7 +67,9 @@ node roundtrip.mjs $OpenCode
 
 `sidecars` serves a private static UI fixture on both servers to check the SPA fallback for unmatched paths. Set `CNRS_SIDECARS_NO_UI=1` to compare the same paths with no UI bundle. Neither run launches a window.
 `CNRS_BENCH_STARTUP_TIMEOUT_MS` changes the readiness budget for `compare.mjs` when the machine is busy.
-Set `CNRS_BENCH_MISSIONS_SERVE=1` on Windows to compare `missions` or `missions-calendar` with Rust's production `serve` contract, packaged plugins and a CLI shim bound to the owned fixture daemon. No Tauri window is opened.
+Set `CNRS_BENCH_MISSIONS_SERVE=1` on Windows to compare `missions` or `missions-calendar` with Rust's production `serve` contract. `missions-wayfinder` uses it by default. The packaged plugins and CLI shim are bound to the owned fixture daemon, with no Tauri window.
+
+For `missions-calendar`, `CNRS_BENCH_MISSIONS_ENABLE_IN_PROJECT=1` qualifies the write to enable a missing Automations flag. Run in `serve` and name an existing private `CODENOMAD_NATIVE_FIXTURE_PARENT` outside the user home and all OpenCode configuration ancestors.
 
 On Windows, set `TEMP` and `TMP` to a private directory outside the account's home and run
 `node packages/server-rs/bench/missions-human.mjs <OpenCode exe> <Rust exe> <packages/server/dist/plugins>`
@@ -87,4 +90,5 @@ node generate-search-query-cases.mjs    # search-query-cases.json
 node generate-depth-golden.mjs          # depth-golden.json
 node generate-fuzzy-cases.mjs           # fuzzy-cases.json (pool drawn from the repository's paths)
 node generate-contracts.mjs             # ../contracts/*.json (history and pending-requests schemas)
+node generate-login-start.mjs           # login-start.json (Windows task, Linux unit, macOS plist)
 ```
