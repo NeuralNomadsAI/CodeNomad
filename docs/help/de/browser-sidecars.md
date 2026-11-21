@@ -34,6 +34,8 @@ Native Vorschauen teilen Cookies, Anmeldungen und Websitespeicher über Projekte
 
 Ein Agent öffnet die Vorschau im fokussierten lokalen Fenster mit einer Registerkarte für die Sitzung, sonst im zuletzt verwendeten geeigneten Fenster, ohne es in den Vordergrund zu holen. Hat das Fenster mehrere passende Registerkarten und ist keine davon aktiv, wählen Sie eine aus und versuchen Sie es erneut. Wenn Sie während des Öffnens die Registerkarte wechseln, bleibt Ihre Auswahl erhalten. Das Schließen der gewählten Registerkarte bricht das Öffnen ab. Ist die Vorschau bereits in einem anderen Fenster geöffnet, verwenden Sie dieses Fenster. Seitenaktionen zielen auf die sichtbare native Vorschau der Sitzung.
 
+Schließen Sie eine geöffnete Datei oder den Missionsleser in der gewählten Registerkarte, bevor der Agent dort eine Vorschau öffnet. Ihre eigene Navigation hat Vorrang vor einem ausstehenden Öffnen durch den Agenten.
+
 Vor einer Aktion oder Aufnahme erstellt der Agent einen Snapshot der Vorschau. Ändert sich die Vorschau, bricht der Befehl ab, statt eine andere Vorschau zu verwenden.
 
 | Client | Vorschauimplementierung | Agenten-Browser-Automatisierung | Mobilvorlagen |

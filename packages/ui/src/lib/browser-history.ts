@@ -3,13 +3,19 @@ export interface BrowserHistory { urls: string[]; index: number }
 export interface NativeBrowserHistory { entries: Array<{ id: number; url: string }>; index: number }
 export const MAX_BROWSER_HISTORY = 32
 
-export function historyUrl(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.length > 2048) return
+export function browserAddress(value: unknown): string | undefined {
+  if (typeof value !== "string") return
   try {
     const url = new URL(value)
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return
     return url.href
   } catch { return }
+}
+
+export function historyUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 2048) return
+  const url = browserAddress(value)
+  return url && url.length <= 2048 ? url : undefined
 }
 
 export function parseBrowserHistory(value: unknown, currentUrl: string): BrowserHistory {

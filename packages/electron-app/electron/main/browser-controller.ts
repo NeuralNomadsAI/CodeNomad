@@ -43,6 +43,8 @@ interface OpenClaim {
   adopted?: boolean
   guest?: WebContents
   target?: Registration
+  dispatched?: boolean
+  retirement: AbortController
   discovery?: { resolve: (result: string | null | true) => void; reject: (error: Error) => void }
 }
 
@@ -120,9 +122,15 @@ export class BrowserController {
     this.observedGuests.set(guest.id, owner.id)
     this.navigationVersions.set(guest, 0)
     const invalidate = () => this.invalidateDocument(guest)
-    guest.on("did-navigate", invalidate)
+    const invalidateNavigation = () => {
+      invalidate()
+      for (const [id, claim] of this.openClaims) {
+        if (claim.target?.guest === guest && !claim.dispatched) this.releaseOpen(claim.owner, id, undefined, true)
+      }
+    }
+    guest.on("did-navigate", invalidateNavigation)
     guest.on("did-navigate-in-page", (_event, _url, isMainFrame) => {
-      if (isMainFrame) invalidate()
+      if (isMainFrame) invalidateNavigation()
     })
     guest.on("did-frame-navigate", (_event, _url, _code, _status, isMainFrame) => {
       if (isMainFrame) invalidate()
@@ -139,7 +147,7 @@ export class BrowserController {
       if (!this.controlledDetach.has(guest)) invalidate()
     })
     guest.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
-      if (isMainFrame) invalidate()
+      if (isMainFrame) invalidateNavigation()
     })
     guest.once("destroyed", () => {
       this.observedGuests.delete(guest.id)
@@ -266,17 +274,20 @@ export class BrowserController {
       && claim.owner.mainFrame === claim.frame && Date.now() < (claim.target ? claim.deadline : claim.attachDeadline)
   }
 
-  releaseOpen(owner: WebContents, requestID: unknown, committedUrl?: string): boolean {
+  releaseOpen(owner: WebContents, requestID: unknown, committedUrl?: string, keepGuest?: boolean): boolean {
     if (typeof requestID !== "string") return false
     const claim = this.openClaims.get(requestID)
     if (!claim || claim.owner !== owner) return false
+    const preserveGuest = keepGuest && claim.target && this.registrations.get(claim.target.registrationId) === claim.target
     claim.discovery?.reject(new Error("Browser open target changed"))
     this.openClaims.delete(requestID)
+    claim.retirement.abort(new Error("Browser open target changed"))
     if (!claim.target && claim.guest && !claim.guest.isDestroyed()) claim.guest.close()
     if (claim.adopted && !owner.isDestroyed() && owner.mainFrame === claim.frame) {
-      owner.send("browser-target:open-settled", { requestID, sessionID: claim.sessionID, instanceId: claim.instanceId, committedUrl })
+      owner.send("browser-target:open-settled", { requestID, sessionID: claim.sessionID, instanceId: claim.instanceId, committedUrl,
+        ...(preserveGuest && { keepGuest: true }) })
     }
-    return true
+    return !keepGuest || Boolean(preserveGuest)
   }
 
   observeOwner(window: BrowserWindow): void {
@@ -391,7 +402,8 @@ export class BrowserController {
       if (!this.openWindowVisible(owner)) continue
       ensureDeadline(registrationDeadline)
       const requestID = randomUUID()
-      const claim: OpenClaim = { owner, frame: owner.mainFrame, sessionID, deadline, attachDeadline: registrationDeadline, workspaceIDs, checkAdmission }
+      const claim: OpenClaim = { owner, frame: owner.mainFrame, sessionID, deadline, attachDeadline: registrationDeadline,
+        workspaceIDs, checkAdmission, retirement: new AbortController() }
       const check = () => {
         if (!this.openClaimCurrent(requestID, claim)) throw new Error("Browser open target changed or timed out")
       }
@@ -425,11 +437,12 @@ export class BrowserController {
             const { guest } = expected
             return await this.enqueue(guest, async () => {
               checkRegistration()
+              claim.dispatched = true
               const committed = await loadNavigation(guest, url, deadline, checkRegistration)
               checkRegistration()
               this.releaseOpen(owner, requestID, committed.url)
               return committed
-            }, deadline)
+            }, deadline, claim.retirement.signal)
           }
           await new Promise(resolve => setTimeout(resolve, 25))
         }
@@ -628,12 +641,13 @@ export class BrowserController {
     finally { this.controlledDetach.delete(guest) }
   }
 
-  private async enqueue<T>(guest: WebContents, operation: () => Promise<T>, deadline = Number.POSITIVE_INFINITY): Promise<T> {
+  private async enqueue<T>(guest: WebContents, operation: () => Promise<T>, deadline = Number.POSITIVE_INFINITY, signal?: AbortSignal): Promise<T> {
     let admit!: () => void
     const admission = new Promise<void>(resolve => { admit = resolve })
     const result = (this.commandQueues.get(guest) ?? Promise.resolve()).then(() => {
       admit()
       ensureDeadline(deadline)
+      signal?.throwIfAborted()
       return operation()
     })
     const tail = result.then(() => undefined, () => undefined)
@@ -642,7 +656,15 @@ export class BrowserController {
       if (this.commandQueues.get(guest) === tail) this.commandQueues.delete(guest)
     })
     // Bound the wait for the slot, not the admitted operation's cleanup.
-    await withDeadline(() => admission, deadline)
+    if (signal) {
+      let onAbort!: () => void
+      const retired = new Promise<never>((_, reject) => { onAbort = () => reject(signal.reason) })
+      signal.addEventListener("abort", onAbort, { once: true })
+      try {
+        signal.throwIfAborted()
+        await withDeadline(() => Promise.race([admission, retired]), deadline)
+      } finally { signal.removeEventListener("abort", onAbort) }
+    } else await withDeadline(() => admission, deadline)
     return await result
   }
 }
@@ -734,6 +756,8 @@ async function loadNavigation(guest: WebContents, url: string, deadline: number,
   let superseded = false
   let rejectLoad!: (error: Error) => void
   const revoked = new Promise<never>((_, reject) => { rejectLoad = reject })
+  let complete!: () => void
+  const completed = new Promise<void>(resolve => { complete = resolve })
   const startedNavigation = (_event: Electron.Event, destination: string, inPage: boolean, mainFrame: boolean) => {
     if (!mainFrame) return
     if (!started && destination === expected) { started = true; sameDocument = inPage; return }
@@ -745,7 +769,16 @@ async function loadNavigation(guest: WebContents, url: string, deadline: number,
     if (started && !committed && !superseded) committed = destination
   }
   const inPage = (event: Electron.Event, destination: string, mainFrame: boolean) => {
-    if (sameDocument && mainFrame && destination === expected) document(event, destination)
+    if (sameDocument && mainFrame && destination === expected) {
+      document(event, destination)
+      complete()
+    }
+  }
+  const finished = () => { if (!sameDocument && committed) complete() }
+  const failed = (_event: Electron.Event, code: number, description: string, failedUrl: string, mainFrame: boolean) => {
+    if (mainFrame && started && !superseded && (failedUrl === expected || failedUrl === committed)) {
+      rejectLoad(new Error(`Browser navigation failed (${code}): ${description}`))
+    }
   }
   const validate = () => {
     ensureDeadline(deadline)
@@ -761,8 +794,10 @@ async function loadNavigation(guest: WebContents, url: string, deadline: number,
   guest.on("did-start-navigation", startedNavigation)
   guest.on("did-navigate", document)
   guest.on("did-navigate-in-page", inPage)
+  guest.on("did-finish-load", finished)
+  guest.on("did-fail-load", failed)
   try {
-    await Promise.race([guest.loadURL(expected), revoked])
+    await Promise.race([Promise.all([guest.loadURL(expected), completed]), revoked])
     validate()
     if (!started || superseded) throw new Error("Browser navigation changed")
     if (!committed || !isBrowserUrlAllowed(committed)) throw new Error("Browser document is unavailable")
@@ -772,5 +807,7 @@ async function loadNavigation(guest: WebContents, url: string, deadline: number,
     guest.removeListener("did-start-navigation", startedNavigation)
     guest.removeListener("did-navigate", document)
     guest.removeListener("did-navigate-in-page", inPage)
+    guest.removeListener("did-finish-load", finished)
+    guest.removeListener("did-fail-load", failed)
   }
 }

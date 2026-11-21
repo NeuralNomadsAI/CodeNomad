@@ -34,6 +34,8 @@ Las vistas previas nativas comparten cookies, inicios de sesión y almacenamient
 
 El agente abre la vista previa en la ventana local enfocada si tiene una pestaña para la sesión o, si no, en la ventana apta usada más recientemente, sin traerla al primer plano. Se da prioridad a la pestaña activa si es apta; si hay varias pestañas aptas y ninguna está activa, selecciona una e inténtalo de nuevo. Si cambias de pestaña mientras se abre la vista previa, se mantiene tu selección. Cerrar la pestaña elegida cancela la apertura. Si la vista previa ya existe en otra ventana, usa esa ventana. Las acciones sobre la página se dirigen a la vista previa nativa visible de la sesión.
 
+Cierra el archivo o el lector de misiones en la pestaña elegida para que el agente pueda abrir una vista previa allí. Tu navegación tiene prioridad sobre una apertura pendiente del agente.
+
 El agente toma una instantánea antes de interactuar con la vista previa o capturarla. Si la vista previa cambia, el comando se detiene en lugar de usar otra.
 
 | Cliente | Implementación de vista previa | Automatización de navegador del agente | Plantillas móviles |

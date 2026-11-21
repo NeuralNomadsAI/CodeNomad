@@ -35,6 +35,7 @@ function createGuest(options: GuestOptions) {
       await options.loadURL?.(nextUrl)
       url = nextUrl
       events.emit("did-navigate", {}, nextUrl)
+      events.emit("did-finish-load")
     },
     debugger: Object.assign(new EventEmitter(), {
       isAttached: () => attached,
@@ -760,6 +761,7 @@ describe("BrowserController preview lifecycle", () => {
         setUrl(next)
         if (replacement) events.emit("did-navigate", {}, next)
         else events.emit("did-navigate-in-page", {}, next, true)
+        events.emit("did-finish-load")
       })
       const opening = h.controller.open("session", url, Infinity, ["tab"])
       if (replacement) await assert.rejects(opening, /Browser navigation changed/)
@@ -767,6 +769,34 @@ describe("BrowserController preview lifecycle", () => {
       assert.deepEqual(h.receipts.map(receipt => (receipt as { committedUrl?: string }).committedUrl), [replacement ? undefined : committedUrl])
     })
   }
+
+  it("waits for the main frame to finish when a child fragment resolves loadURL early", async t => {
+    const h = createHarness()
+    const { guest, events, setUrl } = createGuest({ id: 22, owner: h.owner })
+    h.add(guest, "one")
+    const url = "https://example.com/new"
+    let childNavigated!: () => void
+    const child = new Promise<void>(resolve => { childNavigated = resolve })
+    t.mock.method(guest, "loadURL", async () => {
+      events.emit("did-start-navigation", {}, url, false, true)
+      setUrl(url)
+      events.emit("did-navigate", {}, url)
+      events.emit("did-navigate-in-page", {}, `${url}#child`, false)
+      childNavigated()
+    })
+    let completed = false
+    const target = (await h.controller.probe("session")).target
+    const navigation = h.controller.execute("session", { action: "navigate", url }, Date.now() + 1000, target)
+      .then(result => { completed = true; return result })
+    try {
+      await child
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(completed, false)
+    } finally {
+      events.emit("did-finish-load")
+      assert.deepEqual(await navigation, { url })
+    }
+  })
 
   it("reports the native failure from the exact first load", async () => {
     const h = createHarness((owner, channel, { requestID, instanceId }) => {
@@ -822,6 +852,44 @@ describe("BrowserController preview lifecycle", () => {
     }
     await new Promise<void>(resolve => setImmediate(resolve))
     assert.equal(loads, 0)
+  })
+
+  it("retires a queued open when the acknowledged guest starts a user navigation", async () => {
+    let unblock!: () => void, occupied!: () => void, acknowledged!: () => void
+    const gate = new Promise<void>(resolve => { unblock = resolve })
+    const started = new Promise<void>(resolve => { occupied = resolve })
+    const ack = new Promise<void>(resolve => { acknowledged = resolve })
+    const automated = "https://example.com/queued", manual = "https://example.com/manual"
+    const loads: string[] = []
+    const h = createHarness((owner, channel, { requestID, instanceId }) => {
+      if (channel === "browser-target:discover") {
+        h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
+        return
+      }
+      h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId })
+      h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId })
+      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "one" }), true)
+      acknowledged()
+    })
+    const { guest } = createGuest({ id: 22, owner: h.owner, loadURL: async url => { loads.push(url) },
+      sendCommand: async method => {
+        if (method === "Browser.getVersion") return { product: "Chrome/123.0.0.0" }
+        if (method === "Emulation.setDeviceMetricsOverride") { occupied(); await gate }
+        return {}
+      } })
+    h.add(guest, "one")
+    const emulation = h.controller.emulate(h.owner, "one", "mobile")
+    await started
+    const opening = h.controller.open("session", automated, Date.now() + 1000, ["tab"])
+    const rejected = assert.rejects(opening, /changed/)
+    await ack
+    await new Promise<void>(resolve => setImmediate(resolve))
+    await guest.loadURL(manual)
+    const releasedWhileQueued = h.receipts.length
+    try { await rejected } finally { unblock(); await emulation }
+    assert.equal(releasedWhileQueued, 1)
+    assert.equal(guest.getURL(), manual)
+    assert.deepEqual(loads, [manual])
   })
 
   for (const scenario of ["timeout", "backend", "target", "superseded"]) {

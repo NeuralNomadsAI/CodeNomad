@@ -20,11 +20,11 @@ impl BrowserController {
         let fence = fence.clone();
         let document = witness.map(|(document, _)| document);
         let open_request_id = open_request_id.map(str::to_owned);
+        let dispatch_request_id = open_request_id.clone();
         let check_open = move |inner: &Inner, expected: &Registration| match &open_request_id {
             Some(id) => super::open::check_open_target(inner, id, expected),
             None => Ok(()),
         };
-        let check_open_dispatch = check_open.clone();
         let dispatch_fence = fence.clone();
         let check = move || {
             fence.check()?;
@@ -69,7 +69,10 @@ impl BrowserController {
                     if Instant::now() >= deadline {
                         return Err("Native browser command timed out".into());
                     }
-                    check_open_dispatch(inner, &expected)
+                    if let Some(id) = &dispatch_request_id {
+                        super::open::admit_open_dispatch(inner, id, &expected)?;
+                    }
+                    Ok(())
                 })?;
             *receipt = Some(sequence);
             Ok(sequence)

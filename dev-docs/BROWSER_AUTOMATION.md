@@ -329,6 +329,7 @@ owning tab wins or ambiguity stops the request. An inconclusive discovery stops.
 The host sends the URL to that renderer and occurrence alone, without raising the
 window. Foreground selection respects tab selections made after the renderer
 receives the open; the existing claim still requires its exact visible registration.
+The renderer refuses adoption while the owning tab shows a file or Mission reader.
 Claim and adoption are scoped to the native window incarnation, renderer
 generation and tab; the host waits for that renderer's acknowledgement of its visible native registration
 and checks the same registration after load. Hide, minimize, renderer reload,
@@ -359,12 +360,17 @@ creation. A new guest starts on a neutral document: Electron consumes the exact
 claim before attachment; Tauri checks it before construction and at publication.
 Retirement before acknowledgement releases the abandoned guest and record; a prior
 preview remains available.
+An explicit surface gesture retires the superseded request immediately. A user navigation
+on its acknowledged guest retires a queued open and retains that guest. The native
+dispatch rechecks the exact reservation immediately before navigating.
 
 The native host issues the URL only after the exact visible registration is admitted.
-It waits for completion and returns that navigation's committed URL, including redirects.
+It returns that navigation's committed URL, including redirects, after the main document's
+load completes or a requested same-document navigation is confirmed in the main frame.
 The owning renderer saves the URL and journal only from that request's successful native
 result while its gesture is current. A valid commit outside the journal's URL bound stays
-live and preserves the previous saved journal, as does retirement. Expiry or
+live and preserves the previous saved journal, as does retirement. Live address updates
+follow the native location independently of the receipt. Expiry or
 revocation stops the admitted navigation on its own guest while it is still current;
 a successor navigation or replacement guest keeps its own lifetime.
 Native-parent stdin preserves UTF-8 across buffer boundaries, and timed-out response

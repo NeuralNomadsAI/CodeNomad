@@ -1164,7 +1164,7 @@ impl BrowserController {
         registration: &Registration,
         url: &str,
         document: Option<u64>,
-        check_admission: impl FnOnce(&Inner) -> Result<(), String>,
+        check_admission: impl FnOnce(&mut Inner) -> Result<(), String>,
     ) -> Result<u64, String> {
         let mut inner = self.inner.0.lock().map_err(|error| error.to_string())?;
         let id = &registration.registration_id;
@@ -1173,7 +1173,7 @@ impl BrowserController {
         {
             return Err(STALE_TARGET.into());
         }
-        check_admission(&inner)?;
+        check_admission(&mut inner)?;
         invalidate_page(&mut inner, id);
         Ok(record_page_load(&mut inner, id, url, true))
     }
@@ -1202,6 +1202,16 @@ impl BrowserController {
                 return;
             }
             invalidate_page(&mut inner, registration_id);
+        }
+        self.inner.1.notify_all();
+    }
+
+    fn retire_queued_open(&self, registration_id: &str, generation: u64, url: &str) {
+        if url == "about:blank" {
+            return;
+        }
+        if let Ok(mut inner) = self.inner.0.lock() {
+            open::retire_queued_open(&mut inner, registration_id, generation);
         }
         self.inner.1.notify_all();
     }
@@ -1296,6 +1306,9 @@ impl BrowserController {
                 .map(|item| item.generation)
                 == Some(generation)
             {
+                if url != "about:blank" {
+                    open::retire_queued_open(&mut inner, registration_id, generation);
+                }
                 if let Some(expectation) = inner.page_load_expectations.get_mut(registration_id) {
                     if expectation
                         .navigation_id
@@ -1682,13 +1695,20 @@ fn install_webview2_handlers(
                     .map_err(|error| preview_error("install document-opened handler", error))
                 })?;
 
-                let source = SourceChangedEventHandler::create(Box::new(move |core, _| {
+                let source = SourceChangedEventHandler::create(Box::new(move |core, args| {
                     let Some(core) = core else {
                         return Ok(());
                     };
                     let mut raw = Default::default();
                     unsafe { core.Source(&mut raw)? };
                     let url = CoTaskMemPWSTR::from(raw).to_string();
+                    if let Some(args) = args {
+                        let mut new_document = Default::default();
+                        unsafe { args.IsNewDocument(&mut new_document)? };
+                        if !new_document.as_bool() {
+                            controller.retire_queued_open(&registration_id, generation, &url);
+                        }
+                    }
                     controller.invalidate_page_for_generation(&registration_id, generation);
                     if let Some(webview) = app.get_webview(&window_label) {
                         let _ = webview.emit(

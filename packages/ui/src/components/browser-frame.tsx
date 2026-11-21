@@ -105,7 +105,7 @@ interface BrowserFrameProps {
   onViewportChange?: (viewport: BrowserViewportPreset) => void
   onHistoryChange?: (history: BrowserHistory) => void
   onCancelNavigation?: () => void
-  onNavigationStart?: () => void
+  onNavigationStart?: () => void | Promise<void>
   commentBridge?: boolean
   commentMode?: boolean
   onToggleCommentMode?: () => void
@@ -170,6 +170,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     ? "about:blank" : props.isolatedSource ? props.initialUrl : props.initialAddress ?? "")
   let observedFrameSource: string | undefined
   let appliedInitialSource: string | undefined
+  let appliedInitialAddress: string | undefined
   let iframeRef: HTMLIFrameElement | undefined
   let webviewRef: ElectronBrowserWebviewElement | undefined
   // Electron exposes the methods before its guest is ready to accept them.
@@ -477,6 +478,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   const reportNativeError = (error: unknown) => {
     if (!disposed && props.active !== false) props.onNavigationError?.(error)
   }
+  const canNavigate = (instanceId: string | undefined) => !disposed && props.active !== false && props.instanceId === instanceId
 
   const requestNativeTarget = (address: string) => {
     webviewObservedUrl = undefined
@@ -828,6 +830,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   let openPending = false
   let openSource: string | undefined
   let historyBeforeOpen: BrowserHistory | undefined
+  let addressBeforeOpen: string | undefined
   createEffect(() => {
     const initialUrl = props.initialUrl
     const initialAddress = props.initialAddress
@@ -838,6 +841,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       if (pending) {
         openSource = untrack(() => props.proxyBasePath)
         historyBeforeOpen = untrack(() => props.initialHistory)
+        addressBeforeOpen = untrack(pathInput)
         ++historyTravelVersion
         journal?.cancel()
         setHistoryBusy(false)
@@ -846,7 +850,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     openPending = pending
     untrack(() => {
       if (settled) {
-        // The host already navigated. Reconcile the journal without assigning src.
+        // The receipt updates only the journal; native location events own the live address.
         const committed = props.initialHistory
         if (journal && committed && committed !== historyBeforeOpen) {
           const address = committed.urls[committed.index]
@@ -855,14 +859,16 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
             void captureHistory(address)
           }
         }
-        if (initialAddress) setPathInput(initialAddress)
+        if (initialAddress && pathInput() === addressBeforeOpen) setPathInput(initialAddress)
         appliedInitialSource = initialUrl
+        appliedInitialAddress = initialAddress
         return
       }
       if (initialOpenRequestId && appliedInitialSource === undefined) { appliedInitialSource = initialUrl; return }
       if (pending) return
-      if (props.isolatedSource && appliedInitialSource === initialUrl) return
+      if (appliedInitialSource === initialUrl && (props.isolatedSource || appliedInitialAddress === initialAddress)) return
       appliedInitialSource = initialUrl
+      appliedInitialAddress = initialAddress
       observedFrameSource = undefined
       setFrameSrc(initialUrl)
       const address = initialAddress ?? getEditablePathFromUrl(initialUrl)
@@ -906,11 +912,16 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     cleanupTauriTarget?.()
   })
 
-  const handleBack = (event: MouseEvent) => {
+  const handleBack = async (event: MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
     if (journal) { void traverseHistory(-1); return }
-    props.onNavigationStart?.()
+    const instanceId = props.instanceId
+    try {
+      const retirement = props.onNavigationStart?.()
+      if (retirement) await retirement
+    } catch (error) { reportNativeError(error); return }
+    if (!canNavigate(instanceId)) return
     if (nativeMode()) {
       if (browserHost === "tauri") actOnTauri("back")
       else if (webviewReady && webviewRef?.canGoBack()) webviewRef.goBack()
@@ -927,15 +938,19 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     if (!journal || historyBusy()) return
     const index = journal.value.index + offset
     if (index < 0 || index >= journal.value.urls.length) return
-    props.onNavigationStart?.()
+    const instanceId = props.instanceId
+    const retirement = props.onNavigationStart?.()
     pendingTauriNavigation = undefined
     setHistoryBusy(true)
     const version = ++historyTravelVersion
     ++historyRead // Fence reads started before this explicit traversal.
     try {
+      if (retirement) await retirement
+      if (disposed || version !== historyTravelVersion) return
+      if (!canNavigate(instanceId)) { setHistoryBusy(false); return }
       const native: NativeBrowserHistory = nativeMode() ? await readBrowserHistory(browserRegistrationId, historyGuestId()) : { entries: [], index: -1 }
       if (disposed || version !== historyTravelVersion) return
-      if (props.active === false) { setHistoryBusy(false); return }
+      if (!canNavigate(instanceId)) { setHistoryBusy(false); return }
       const target = journal.request(index, logicalHistory(native))
       if (target.id !== undefined) await goToBrowserHistoryEntry(browserRegistrationId, target.id, historyGuestId())
       else if (nativeMode()) {
@@ -959,9 +974,15 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     }
   }
 
-  const handleRefresh = () => {
-    props.onNavigationStart?.()
+  const handleRefresh = async () => {
+    const instanceId = props.instanceId
     supersedeHistoryTraversal()
+    const version = historyTravelVersion
+    try {
+      const retirement = props.onNavigationStart?.()
+      if (retirement) await retirement
+    } catch (error) { reportNativeError(error); return }
+    if (version !== historyTravelVersion || !canNavigate(instanceId)) return
     if (nativeMode()) {
       if (browserHost === "tauri") actOnTauri("reload")
       else if (webviewReady) webviewRef?.reload()
@@ -1009,8 +1030,12 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       if (nativeBrowserAvailable) {
         try {
           const target = normalizeBrowserPreviewUrl(pathInput())
-          props.onNavigationStart?.()
+          const instanceId = props.instanceId
           supersedeHistoryTraversal()
+          const version = historyTravelVersion
+          const retirement = props.onNavigationStart?.()
+          if (retirement) await retirement
+          if (version !== historyTravelVersion || !canNavigate(instanceId)) return
           setPathInput(target)
           if (nativeMode() && webviewReady && webviewRef?.getURL() === target) {
             webviewRef.reload()

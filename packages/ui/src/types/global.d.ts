@@ -88,7 +88,7 @@ declare global {
     browserTargetHistory?: (guestWebContentsId: number, entryId?: number) => Promise<import("../lib/browser-history").NativeBrowserHistory | undefined>
     claimBrowserOpen?: (requestID: string, response: import("../lib/native/browser").BrowserOpenResponse) => Promise<boolean>
     onBrowserOpenSettled?: (callback: (payload: import("../lib/native/browser").BrowserOpenSettled) => void) => () => void
-    releaseBrowserOpen?: (requestID: string) => Promise<boolean>
+    releaseBrowserOpen?: (requestID: string, keepGuest?: boolean) => Promise<boolean>
     onBrowserOpenDiscovery?: (callback: (payload: import("../lib/native/browser").BrowserOpenDiscovery) => void) => () => void
     onBrowserOpenRequest?: (callback: (payload: import("../lib/native/browser").BrowserOpenRequest) => void) => () => void
 

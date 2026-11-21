@@ -2,14 +2,13 @@ import { createEffect, createMemo, createSignal, For, onCleanup, type Component 
 import { Portal } from "solid-js/web"
 import { useI18n } from "../lib/i18n"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
-import { previewKey, sessionPreviews, openSessionPreview, dismissSessionPreview, showSessionChatFor, updateSessionPreviewLocation, updateSessionPreviewHistory, updateSessionPreviewViewport, cancelSessionPreviewNavigation, settleSessionPreviewOpen, type SessionPreviewRecord } from "../stores/session-previews"
+import { previewKey, sessionPreviews, openSessionPreview, dismissSessionPreview, showSessionChatFor, updateSessionPreviewLocation, updateSessionPreviewHistory, updateSessionPreviewViewport, cancelSessionPreviewNavigation, retireSessionPreviewOpen, startSessionPreviewNavigation, type SessionPreviewRecord } from "../stores/session-previews"
 import { BrowserFrame, type BrowserFrameElementTarget } from "./browser-frame"
 import { getPreviewFrameSource } from "./browser-frame-security"
 import { runtimeEnv } from "../lib/runtime-env"
 import { remotePreviewAddress, remotePreviewContent, remotePreviewSource } from "../lib/remote-preview-address"
 import type { RemotePreviewCapability } from "../../../server/src/api-types"
-import { beginGesture } from "../stores/session-surface"
-import { claimNativeBrowserOpen, releaseNativeBrowserOpen } from "../lib/native/browser"
+import { claimNativeBrowserOpen } from "../lib/native/browser"
 
 interface SessionPreviewViewProps {
   preview: SessionPreviewRecord
@@ -131,13 +130,9 @@ const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
           if (!request || request === reportedOpen || request.instanceId !== props.instanceId) return
           reportedOpen = request
           void (async () => {
-            const sessionID = props.preview.sessionId
             const admitted = request.current() && await claimNativeBrowserOpen(request.requestID,
               { kind: "target", instanceId: request.instanceId, registrationId }).catch(() => false)
-            if (!admitted || !request.current()) {
-              settleSessionPreviewOpen(sessionID, request.instanceId, request.requestID)
-              await releaseNativeBrowserOpen(request.requestID)
-            }
+            if (!admitted || !request.current()) await retireSessionPreviewOpen(request)
           })().catch(() => {})
         }}
         onClose={() => props.preview.capability ? dismissSessionPreview(props.preview.storageKey) : showSessionChatFor(props.preview.sessionId, props.instanceId)}
@@ -149,7 +144,7 @@ const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
         initialViewport={props.preview.viewport}
         onViewportChange={viewport => updateSessionPreviewViewport(props.preview.storageKey, viewport)}
         onHistoryChange={(history) => updateSessionPreviewHistory(props.preview.storageKey, history)}
-        onNavigationStart={() => { beginGesture({ sessionId: props.preview.sessionId, instanceId: props.instanceId }) }}
+        onNavigationStart={() => startSessionPreviewNavigation(props.preview.sessionId, props.instanceId)}
         onCancelNavigation={() => cancelSessionPreviewNavigation(props.preview.storageKey)}
         proxyBasePath={content()?.prefix ?? `/previews/${encodeURIComponent(props.preview.token)}`}
         addressMode="url"

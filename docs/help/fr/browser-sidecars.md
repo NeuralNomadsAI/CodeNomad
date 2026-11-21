@@ -34,6 +34,8 @@ Les aperçus natifs partagent cookies, connexions et stockage de site entre proj
 
 Un agent ouvre l’aperçu dans la fenêtre locale active si elle contient un onglet pour la session, sinon dans la dernière fenêtre admissible utilisée, sans la mettre au premier plan. L’onglet actif est prioritaire s’il convient ; si plusieurs onglets conviennent et qu’aucun n’est actif, sélectionnez-en un et réessayez. Si vous changez d’onglet pendant l’ouverture, votre sélection est conservée. Fermer l’onglet choisi annule l’ouverture. Si l’aperçu existe déjà dans une autre fenêtre, utilisez cette fenêtre. Les actions sur la page ciblent l’aperçu natif visible de la session.
 
+Fermez le fichier ou le lecteur de mission dans l’onglet choisi avant que l’agent y ouvre un aperçu. Votre navigation est prioritaire sur une ouverture en attente.
+
 L’agent prend un instantané avant d’agir sur l’aperçu ou de le capturer. Si l’aperçu change, la commande s’arrête au lieu de viser un autre aperçu.
 
 | Client | Implémentation de l’aperçu | Automatisation navigateur par agent | Modèles mobiles |

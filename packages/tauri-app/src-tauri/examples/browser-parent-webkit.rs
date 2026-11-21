@@ -232,7 +232,7 @@ fn main() {
                         }).unwrap());
                     } else {
                         eprintln!("open fixture failed: {result:?}");
-                        controller.release_open(OWNER, &request);
+                        controller.release_open(OWNER, &request, false);
                     }
                 });
             });

@@ -1067,6 +1067,67 @@ test("native preview saves the redirected receipt after registration without rei
   } finally { await page.close() }
 })
 
+test("native open receipts keep the live address separate from the saved journal", async t => {
+  const requested = `${base}/page/requested`, committed = `${base}/page/redirected`
+  for (const [name, receipt, live, saved] of [
+    ["a fragment arrives before the receipt", committed, `${committed}#latest`, committed],
+    ["a long commit keeps the preceding journal", `${base}/page/${"a".repeat(2049)}`, `${base}/page/${"a".repeat(2049)}`, committed],
+  ]) await t.test(name, async () => {
+    const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
+    try {
+      await prepare(page, "tauri")
+      const address = page.getByRole("textbox", { name: "Preview URL", exact: true })
+      if (receipt === live) {
+        await page.evaluate(url => (window as any).fixture.openPreview("session", url), committed)
+        await address.waitFor()
+      }
+      const readSaved = () => page.evaluate(() => (window as any).fixture.savedPreview("session").targetUrl)
+      const previousSaved = await readSaved()
+      await page.evaluate(async url => { await (window as any).fixture.openNativePreview("exact", url) }, requested)
+      await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_claim_open"))
+      await page.evaluate(({ receipt, live }) => {
+        const { native } = (window as any).fixture
+        const registration = native.calls.find((call: any) => call.command === "browser_target_claim_open").response.registrationId
+        native.navigate(registration, receipt)
+        if (live !== receipt) native.navigate(registration, live)
+      }, { receipt, live })
+      assert.equal(await address.inputValue(), live)
+      assert.equal(await readSaved(), previousSaved, "native events cannot save a pending request")
+      await page.evaluate(url => (window as any).fixture.settleNativePreview("exact", url), receipt)
+      assert.equal(await readSaved(), saved)
+      assert.equal((await preview(page, "session")).targetUrl, live)
+      assert.deepEqual((await preview(page, "session")).history, { urls: [saved], index: 0 })
+      assert.equal(await address.inputValue(), live)
+      assert.equal(await page.evaluate(() => (window as any).fixture.native.calls.some((call: any) => call.payload?.action === "navigate")), false)
+    } finally { await page.close() }
+  })
+})
+
+test("user navigation retires the acknowledged open before sending native navigation", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
+  try {
+    await prepare(page, "tauri")
+    const requested = `${base}/page/queued`, manual = `${base}/page/manual`
+    await page.evaluate(url => (window as any).fixture.openNativePreview("queued", url), requested)
+    await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_claim_open"))
+    const address = page.getByRole("textbox", { name: "Preview URL", exact: true })
+    await address.evaluate((input: HTMLInputElement, url) => {
+      ;(window as any).fixture.native.deferOpenRelease = true
+      input.value = url
+      input.dispatchEvent(new Event("input", { bubbles: true }))
+      input.form!.requestSubmit()
+    }, manual)
+    const commands = () => page.evaluate(() => (window as any).fixture.native.calls
+      .filter((call: any) => call.command === "browser_target_release_open" || call.payload?.action === "navigate"))
+    assert.deepEqual(await commands(), [{ command: "browser_target_release_open", requestId: "queued", keepGuest: true }])
+    await page.evaluate(() => (window as any).fixture.native.settleOpenRelease())
+    await page.waitForFunction(url => (window as any).fixture.savedPreview("session").targetUrl === url, manual)
+    await page.evaluate(url => (window as any).fixture.settleNativePreview("queued", url), requested)
+    assert.equal((await preview(page, "session")).targetUrl, manual)
+    assert.equal((await commands()).length, 2)
+  } finally { await page.close() }
+})
+
 test("Tauri retains hidden native registrations and restores the correct session target", async () => {
   const page = await browser.newPage({ userAgent: "Windows fixture", viewport: { width: 1200, height: 900 } })
   const errors: string[] = []

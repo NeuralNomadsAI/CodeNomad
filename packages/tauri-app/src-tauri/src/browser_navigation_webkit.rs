@@ -13,6 +13,17 @@ pub(super) fn install(
     use webkit2gtk::WebViewExt;
     let (sender, receiver) = mpsc::sync_channel(1);
     view.with_webview(move |native| {
+        let location = controller.clone();
+        let location_registration = registration.clone();
+        native.inner().connect_uri_notify(move |view| {
+            if let Some(url) = view.uri() {
+                location.retire_queued_open(
+                    &location_registration.registration_id,
+                    location_registration.generation,
+                    &url,
+                );
+            }
+        });
         let token = Rc::new(Cell::new(0u64));
         let started_token = token.clone();
         let started = controller.clone();
@@ -95,7 +106,7 @@ mod macos {
     ) {
         let observer = unsafe { &*context.cast::<Observer>() };
         let registration = &observer.registration;
-        if event == 0 || event == 3 {
+        if event == 0 || event == 3 || event == 4 {
             if !url.is_null() {
                 let url = unsafe { CStr::from_ptr(url) }
                     .to_string_lossy()
@@ -107,12 +118,18 @@ mod macos {
                         token,
                         url,
                     );
-                } else {
+                } else if event == 3 {
                     observer.controller.mark_page_committed(
                         &registration.registration_id,
                         registration.generation,
                         token,
                         url,
+                    );
+                } else {
+                    observer.controller.retire_queued_open(
+                        &registration.registration_id,
+                        registration.generation,
+                        &url,
                     );
                 }
             }

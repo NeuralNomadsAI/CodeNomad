@@ -10,6 +10,7 @@ let historyId = 0
 let callbackId = 0
 let pendingEmulation: (() => void) | undefined
 let pendingRegistration: { resolve: () => void; reject: (error: Error) => void } | undefined
+let pendingOpenRelease: (() => void) | undefined
 
 export const nativeFixture = {
   calls,
@@ -19,6 +20,8 @@ export const nativeFixture = {
   failEmulation: false,
   deferRegistration: false,
   deferEmulation: false,
+  deferOpenRelease: false,
+  settleOpenRelease() { pendingOpenRelease?.(); pendingOpenRelease = undefined },
   settleEmulation() { pendingEmulation?.(); pendingEmulation = undefined },
   settleRegistration(reject = false) {
     if (!pendingRegistration) throw new Error("No pending registration")
@@ -42,6 +45,10 @@ async function invoke(command: string, args: any = {}) {
   if (command === "browser_target_action" && registering.has(args.payload.registrationId)) throw new Error("Browser target is not registered")
   if (command === "plugin:event|listen") return args.handler
   if (command === "browser_target_claim_open") return args.response.kind === "target"
+  if (command === "browser_target_release_open") {
+    if (nativeFixture.deferOpenRelease) await new Promise<void>(resolve => { pendingOpenRelease = resolve })
+    return true
+  }
   if (command === "browser_target_register") histories.set(args.payload.registrationId, args.payload.openRequestId
     ? { entries: [], index: -1 } : { entries: [{ id: ++historyId, url: args.payload.url }], index: 0 })
   if (command === "browser_target_action" && args.payload.action === "history") return histories.get(args.payload.registrationId)

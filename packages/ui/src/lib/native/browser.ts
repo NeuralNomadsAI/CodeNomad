@@ -110,7 +110,7 @@ export async function emulateBrowserTarget(registrationId: string, preset: Brows
 
 export type BrowserOpenDiscovery = { requestID: string; workspaceIDs: string[] }
 export type BrowserOpenRequest = { sessionID: string; requestID: string; url: string; instanceId: string }
-export type BrowserOpenSettled = Omit<BrowserOpenRequest, "url"> & { committedUrl?: string | null }
+export type BrowserOpenSettled = Omit<BrowserOpenRequest, "url"> & { committedUrl?: string | null; keepGuest?: boolean }
 export type BrowserOpenResponse =
   | { kind: "discover"; instanceId: string | null }
   | { kind: "discover"; ambiguous: true }
@@ -147,9 +147,9 @@ export async function claimNativeBrowserOpen(requestID: string, response: Browse
   return invoke<boolean>("browser_target_claim_open", { requestId: requestID, response })
 }
 
-export async function releaseNativeBrowserOpen(requestID: string): Promise<boolean> {
-  if (window.electronAPI?.releaseBrowserOpen) return window.electronAPI.releaseBrowserOpen(requestID)
-  return invoke<boolean>("browser_target_release_open", { requestId: requestID })
+export async function releaseNativeBrowserOpen(requestID: string, keepGuest?: boolean): Promise<boolean> {
+  if (window.electronAPI?.releaseBrowserOpen) return window.electronAPI.releaseBrowserOpen(requestID, keepGuest)
+  return invoke<boolean>("browser_target_release_open", { requestId: requestID, keepGuest })
 }
 
 export function onTauriBrowserNavigation(

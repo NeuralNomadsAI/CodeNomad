@@ -50,6 +50,8 @@ pub(super) struct OpenClaim {
     claimed: bool,
     adopted: bool,
     revoked: bool,
+    keep_guest: bool,
+    dispatched: bool,
     construction: Option<(String, u64)>,
     target: Option<Registration>,
 }
@@ -184,10 +186,16 @@ impl BrowserController {
         Ok(true)
     }
 
-    pub(crate) fn release_open(&self, owner: &str, request_id: &str) -> bool {
+    pub(crate) fn release_open(&self, owner: &str, request_id: &str, keep_guest: bool) -> bool {
         let Ok(mut inner) = self.inner.0.lock() else {
             return false;
         };
+        let preserve_guest = keep_guest
+            && inner
+                .open_claims
+                .get(request_id)
+                .and_then(|claim| claim.target.as_ref())
+                .is_some_and(|target| inner.registrations.get(&target.registration_id) == Some(target));
         let Some(claim) = inner
             .open_claims
             .get_mut(request_id)
@@ -195,9 +203,10 @@ impl BrowserController {
         else {
             return false;
         };
+        claim.keep_guest = preserve_guest;
         claim.revoke();
         self.inner.1.notify_all();
-        true
+        !keep_guest || claim.keep_guest
     }
 
     pub(super) fn reserve_open_construction(
@@ -298,6 +307,8 @@ impl BrowserController {
                 claimed: false,
                 adopted: false,
                 revoked: false,
+                keep_guest: false,
+                dispatched: false,
                 construction: None,
                 target: None,
             };
@@ -410,7 +421,8 @@ impl BrowserController {
                 }
                 let committed_url = result.as_ref().ok().and_then(|url| url.as_deref());
                 let _ = app.emit_to(tauri::EventTarget::webview(&owner), "browser-target:open-settled",
-                    json!({ "requestID": request_id, "sessionID": session_id, "instanceId": claim.instance_id, "committedUrl": committed_url }));
+                    json!({ "requestID": request_id, "sessionID": session_id, "instanceId": claim.instance_id,
+                        "committedUrl": committed_url, "keepGuest": claim.keep_guest }));
             }
             if let Some(url) = result? {
                 return Ok(json!({ "url": url }));
@@ -441,6 +453,30 @@ pub(super) fn check_open_target(
         return Err("Browser open registration changed".into());
     }
     check_no_foreign_preview(inner, &expected.session_id, &expected.window_label)
+}
+
+pub(super) fn admit_open_dispatch(
+    inner: &mut Inner,
+    request_id: &str,
+    expected: &Registration,
+) -> Result<(), String> {
+    check_open_target(inner, request_id, expected)?;
+    inner.open_claims.get_mut(request_id).unwrap().dispatched = true;
+    Ok(())
+}
+
+pub(super) fn retire_queued_open(inner: &mut Inner, registration_id: &str, generation: u64) {
+    for claim in inner.open_claims.values_mut() {
+        if !claim.revoked
+            && !claim.dispatched
+            && claim.target.as_ref().is_some_and(|target| {
+                target.registration_id == registration_id && target.generation == generation
+            })
+        {
+            claim.keep_guest = true;
+            claim.revoke();
+        }
+    }
 }
 
 fn current_claim<'a>(inner: &'a Inner, request_id: &str) -> Result<&'a OpenClaim, String> {
@@ -492,6 +528,8 @@ mod tests {
                     claimed: false,
                     adopted: false,
                     revoked: false,
+                    keep_guest: false,
+                    dispatched: false,
                     construction: None,
                     target: None,
                 },
@@ -627,7 +665,7 @@ mod tests {
         };
         let admit = || {
             controller.prepare_navigation(&expected, "https://example.com/", None, |inner| {
-                check_open_target(inner, "request", &expected)
+                admit_open_dispatch(inner, "request", &expected)
             })
         };
         assert!(admit().unwrap_err().contains("timed out"));
@@ -639,8 +677,38 @@ mod tests {
             assert!(current_claim(&inner, "request").is_err());
             inner.renderer_versions.remove("owner");
         }
-        assert!(!controller.release_open("other", "request"));
-        assert!(controller.release_open("owner", "request"));
+        assert!(!controller.release_open("other", "request", false));
+        controller.mark_page_started(
+            "right",
+            expected.generation - 1,
+            1,
+            "https://example.com/old".into(),
+        );
+        {
+            let inner = controller.inner.0.lock().unwrap();
+            assert!(check_open_target(&inner, "request", &expected).is_ok());
+        }
+        controller.mark_page_started(
+            "right",
+            expected.generation,
+            2,
+            "https://example.com/manual".into(),
+        );
+        assert!(admit().unwrap_err().contains("target changed"));
+        {
+            let mut inner = controller.inner.0.lock().unwrap();
+            let claim = inner.open_claims.get_mut("request").unwrap();
+            assert!(claim.keep_guest);
+            claim.revoked = false;
+            claim.keep_guest = false;
+        }
+        assert!(admit().is_ok());
+        controller.mark_page_started("right", expected.generation, 3, "https://example.com/".into());
+        {
+            let inner = controller.inner.0.lock().unwrap();
+            assert!(check_open_target(&inner, "request", &expected).is_ok());
+        }
+        assert!(controller.release_open("owner", "request", false));
         assert!(admit().unwrap_err().contains("target changed"));
         assert!(!report("other", json!({"kind":"claim","instanceId":"tab"})));
         assert!(!report("owner", json!({"kind":"claim","instanceId":"tab"})));

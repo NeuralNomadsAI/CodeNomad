@@ -34,6 +34,8 @@ Native previews share cookies, sign-ins and site storage across projects/session
 
 An agent opens the preview in the focused local window that has a tab for the session, or the most recently used eligible window, without bringing it forward. In that window, the active eligible tab wins; if several tabs qualify and none is active, select one and try again. If you switch tabs while the preview is opening, your selection stays in place. Closing the chosen tab cancels the open. If a preview already exists in another window, use that window. Page actions target the session’s visible native preview.
 
+Close any open file or Mission reader in the chosen tab before the agent opens a preview there. Your own navigation takes priority over an agent’s pending open.
+
 The agent takes a snapshot before acting on or capturing the preview. If the preview changes, the command stops instead of using a different preview.
 
 | Client | Preview implementation | Agent browser automation | Mobile templates |

@@ -11,7 +11,7 @@ import { getPreviewFrameSource } from "../components/browser-frame-security"
 import { closeSessionPreview, dismissSessionPreview, getSessionPreview, openSessionPreview, restoreSessionPreview, sessionPreviews, settleSessionPreviewOpen, showSessionChatFor, showSessionPreview, updateSessionPreviewHistory } from "./session-previews"
 import { detachInstanceTabMembership } from "./app-tab-membership"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
-import { beginGesture } from "./session-surface"
+import { applySurface, beginGesture, getSessionSurface, type CentralSurface } from "./session-surface"
 import { savedSessionBrowser } from "./session-browser-persistence"
 import { initializeClientState } from "./client-state"
 import { getTabViewState, seedTabViewState } from "./tab-view-state"
@@ -450,6 +450,59 @@ test("App native browser claim and preview continuations retain the admitted att
       t.mock.restoreAll()
     }
   }
+})
+
+test("an autonomous open cannot clear the owning tab's file or reader when the user switches tabs", async t => {
+  const surfaces: CentralSurface[] = [
+    { kind: "file", target: { sessionId: "session", kind: "workspace", slug: "root", directory: "/repo", path: "notes.md" } },
+    { kind: "mission", target: { missionId: "mission", kind: "overview" } },
+  ]
+  for (const surface of surfaces) await t.test(surface.kind, async t => {
+    const instanceId = `occupied-${surface.kind}`, duplicate = `${instanceId}-duplicate`, sessionId = "session"
+    const context = { instanceId, sessionId }
+    for (const [occurrence, id] of [instanceId, duplicate].entries())
+      publishInstanceLifecycleAuthority({ type: "opened", instanceId: id, folder: "/repo", occurrence })
+    applySurface(context, surface)
+    const createPreview = t.mock.method(localBackend.api, "createPreview", async ({ url }: { url: string }) =>
+      ({ token: instanceId, sessionId, targetUrl: url, proxyUrl: "/preview", createdAt: "" }))
+    t.mock.method(localBackend.api, "deletePreview", async () => {})
+    let selected = instanceId
+    let claimStarted!: () => void, answerClaim!: () => void
+    const started = new Promise<void>(resolve => { claimStarted = resolve })
+    const answer = new Promise<void>(resolve => { answerClaim = resolve })
+    const claims: BrowserOpenResponse[] = [], released: string[] = []
+    const openRequested = appCallback("openRequestedPreview", {
+      pendingBrowserOpens: new Map(), disposed: false,
+      localInstances: () => [{ id: instanceId }, { id: duplicate }],
+      appTabSelectionRevision: () => Number(selected === duplicate),
+      captureBackendOperation, beginGesture, getSessionPreview, openSessionPreview,
+      getSessions: () => [{ id: sessionId }],
+      claimNativeBrowserOpen: async (_: string, response: BrowserOpenResponse) => {
+        claims.push(response)
+        if (response.kind === "claim") { claimStarted(); await answer }
+        return true
+      },
+      releaseNativeBrowserOpen: async (requestID: string) => { released.push(requestID) },
+      setShowFolderSelection: () => assert.fail("must not activate a view"),
+      selectInstanceTab: (id: string) => { selected = id },
+      setActiveSessionFromList: () => assert.fail("must not switch a conversation"),
+    })
+    const requestID = `request-${surface.kind}`, url = "https://example.com/pending"
+    const opening = openRequested({ sessionID: sessionId, url, requestID, instanceId })
+      .catch((error: Error) => { assert.equal(error.name, "AbortError") })
+    await started
+    selected = duplicate
+    answerClaim()
+    await opening
+    settleSessionPreviewOpen(sessionId, instanceId, requestID) // Native deadline elapsed without a commit.
+    assert.equal(selected, duplicate)
+    assert.deepEqual(getSessionSurface(context), surface)
+    assert.equal(getSessionPreview(sessionId, instanceId), null)
+    assert.equal(savedSessionBrowser(sessionId), undefined)
+    assert.deepEqual(claims, [{ kind: "claim", instanceId }])
+    assert.deepEqual(released, [requestID])
+    assert.equal(createPreview.mock.callCount(), 0)
+  })
 })
 
 test("App automatic host setup follows the selected live or restoring backend without gating remote tabs", () => {

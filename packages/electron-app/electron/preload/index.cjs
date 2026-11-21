@@ -90,7 +90,7 @@ const localElectronAPI = {
   browserTargetHistory: (guestWebContentsId, entryId) => ipcRenderer.invoke("browser-target:history", guestWebContentsId, entryId),
   unregisterBrowserTarget: (registrationId) => ipcRenderer.invoke("browser-target:unregister", registrationId),
   claimBrowserOpen: (requestId, response) => ipcRenderer.invoke("browser-target:claimOpen", requestId, response),
-  releaseBrowserOpen: (requestId) => ipcRenderer.invoke("browser-target:releaseOpen", requestId),
+  releaseBrowserOpen: (requestId, keepGuest) => ipcRenderer.invoke("browser-target:releaseOpen", requestId, keepGuest),
   onBrowserOpenDiscovery: (callback) => {
     const handler = (_event, payload) => callback(payload)
     ipcRenderer.on("browser-target:discover", handler)

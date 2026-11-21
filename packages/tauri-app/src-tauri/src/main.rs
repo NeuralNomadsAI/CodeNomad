@@ -607,11 +607,14 @@ fn browser_target_release_open(
     webview: tauri::Webview,
     state: tauri::State<'_, AppState>,
     request_id: String,
+    keep_guest: Option<bool>,
 ) -> Result<bool, String> {
     require_local_app_webview(&webview, &state)?;
-    Ok(state
-        .browser_controller
-        .release_open(webview.label(), &request_id))
+    Ok(state.browser_controller.release_open(
+        webview.label(),
+        &request_id,
+        keep_guest.unwrap_or(false),
+    ))
 }
 
 fn release_remote_proxy_session_cleanup(app: &AppHandle, session_id: &str) {
