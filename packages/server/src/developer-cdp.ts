@@ -185,7 +185,9 @@ export class DeveloperCdp {
       const state = await this.ensure(identity)
       const epoch = state.navigationEpoch, generation = this.generation(state)
       const page = bindRefs(action, ref => state.refs.resolve(ref, generation))
-      return performAction(this.session(state, epoch, "Page changed during action; inspect again"), page)
+      const foreground = (action.action === "press" || action.action === "scroll") && !action.ref || action.action === "wait"
+        ? state.context : undefined
+      return performAction(this.session(state, epoch, "Page changed during action; inspect again", foreground), page)
     })
   }
 
@@ -194,9 +196,9 @@ export class DeveloperCdp {
     return `${state.stamp}\0${state.target!.id}\0${state.navigationEpoch}`
   }
 
-  private session(state: RunState, epoch: number, message: string): PageSession {
+  private session(state: RunState, epoch: number, message: string, foreground?: DeveloperCdpContext): PageSession {
     return cdpSession({ send: (method, params) => this.command(state, method, params) },
-      () => this.assertContextCurrent(state, epoch, message), true)
+      () => this.assertContextCurrent(state, epoch, message, foreground), true)
   }
 
   async screenshot(identity: DeveloperCdpIdentity): Promise<DeveloperCdpScreenshot> {
@@ -464,7 +466,7 @@ export class DeveloperCdp {
     }
   }
 
-  private async assertContextCurrent(state: RunState, epoch: number, message: string): Promise<void> {
+  private async assertContextCurrent(state: RunState, epoch: number, message: string, foreground?: DeveloperCdpContext): Promise<void> {
     if (state.navigationEpoch !== epoch || !state.socket) {
       throw new Error(message)
     }
@@ -477,6 +479,8 @@ export class DeveloperCdp {
     if (state.navigationEpoch !== epoch || !state.socket) {
       throw new Error(message)
     }
+    if (foreground && (context.tabId !== foreground.tabId || context.instanceId !== foreground.instanceId
+      || context.sessionId !== foreground.sessionId)) throw new Error("The active tab changed during the action; inspect again")
     state.context = context
   }
 

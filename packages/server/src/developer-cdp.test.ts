@@ -49,6 +49,7 @@ class FakeChrome {
   target = page("one")
   targets: Array<ReturnType<typeof page>> | undefined
   context = { windowId: "window-1", instanceId: "workspace-1", sessionId: "session-1", windowInstance: undefined as string | undefined }
+  onCommand?: (command: Command) => void
   sockets: FakeSocket[] = []
   commands: Command[] = []
   deferred = new Map<string, { socket: FakeSocket; command: Command }>()
@@ -69,6 +70,7 @@ class FakeChrome {
   }
 
   receive(socket: FakeSocket, command: Command): void {
+    this.onCommand?.(command)
     this.commands.push(command)
     if (this.deferred.has(command.method)) {
       this.deferred.set(command.method, { socket, command })
@@ -118,6 +120,23 @@ const identity = {
 }
 
 describe("DeveloperCdp", () => {
+  it("refuses a key without a ref when the foreground tab changes before input", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    try {
+      const { endpoint, runId, windowId } = identity
+      const window = { endpoint, runId, windowId }
+      const { document } = await client.inspect(window)
+      chrome.onCommand = command => {
+        if (command.method === "Runtime.evaluate" && String(command.params?.expression).includes("inputDelayMs")) {
+          chrome.context = { ...chrome.context, instanceId: "duplicate" }
+        }
+      }
+      await assert.rejects(client.act({ ...window, document }, { action: "press", key: "Enter" }), /active tab changed/)
+      assert.ok(chrome.commands.every(command => command.method !== "Input.dispatchKeyEvent"))
+    } finally { client.close() }
+  })
+
   it("skips unresponsive inventory pages and checks the window incarnation before reading", async () => {
     const chrome = new FakeChrome(), stalled = new FakeChrome()
     stalled.target = page("stalled")
