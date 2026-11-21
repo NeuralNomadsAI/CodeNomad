@@ -782,9 +782,9 @@ pub async fn dispatch(
     Ok(Json(json!({"result":{"nativeAcknowledgement":ack}})))
 }
 
-/// The Missions fixture runs on the automation bridge, with its token.
+/// Mission mutations use the same private bridge registration as the desktop tools.
 pub fn new_token() -> Option<String> {
-    crate::bench::missions_run().then(crate::automation::new_token).flatten()
+    (crate::config::serve() || crate::bench::missions_run()).then(crate::automation::new_token).flatten()
 }
 
 #[cfg(test)]

@@ -48,7 +48,10 @@ fn sign(v: &Value, key: &str) -> String {
     mac.update(encoded(v).as_bytes());
     format!("{:x}", mac.finalize().into_bytes())
 }
-pub fn setup(data: &std::path::Path) -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+pub fn setup(data: &std::path::Path, config: &std::path::Path) -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+    if crate::config::serve() {
+        return Ok(crate::settings::profile::scope(config).map(|_| config.to_path_buf()));
+    }
     if !crate::bench::missions_calendar() {
         return Ok(None);
     }
@@ -67,6 +70,9 @@ pub fn setup(data: &std::path::Path) -> Result<Option<PathBuf>, Box<dyn std::err
 }
 fn source(app: &App) -> Result<Value, Error> {
     let y = app.calendar_profile.as_ref().and_then(|p| p.to_str()).ok_or_else(unavailable)?;
+    if crate::config::serve() {
+        return super::recurrence_control::profile(app).map(|(_, source)| source).ok_or_else(unavailable);
+    }
     Ok(json!({"profileID":digest(&json!(["cnrs-calendar",y])),"executionHost":"local","configYamlPath":y}))
 }
 

@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::{Shared, auth::tls, bench, config, settings::Kind};
 
-/// CodeNomad, feat/multi-backend 03743cd51c093bd2bcc391e84b3e09697c4694bf
+/// CodeNomad `meta-contract.ts`.
 const API_CONTRACT: u32 = 1;
 
 pub fn routes() -> Router<Shared> {
@@ -16,6 +16,13 @@ pub fn routes() -> Router<Shared> {
 
 async fn read(State(app): State<Shared>, channel: Option<Extension<tls::Channel>>) -> Json<Value> {
     let mut meta = app.meta.clone();
+    if config::serve()
+        && app.mission_bridge.is_some()
+        && crate::automation::published()
+        && let Some(capabilities) = meta["capabilities"].as_array_mut()
+    {
+        capabilities.push(json!("missions"));
+    }
     meta["updateFeed"] = json!(update_feed(&app.settings.owner(Kind::Config, "server")));
     if channel.is_some() {
         // SideCar content stays host-only: the direct HTTPS opt-in is not served here.

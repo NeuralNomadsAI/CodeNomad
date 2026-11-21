@@ -138,7 +138,7 @@ impl App {
             file_watches: Mutex::new(watches),
             file_reader: Semaphore::new(1),
             project_mutation: tokio::sync::Mutex::new(()),
-            mission_reads: crate::bench::missions_read(),
+            mission_reads: crate::config::serve() || crate::bench::missions_read(),
             mission_read_slot: Semaphore::new(1),
             linked_events: Default::default(),
             mission_bridge,

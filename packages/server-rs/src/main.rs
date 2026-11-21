@@ -114,7 +114,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     };
     let native = opencode::Native::connect(&binary)?;
     let (watch_tx, watch_rx) = tokio::sync::mpsc::channel(512);
-    let calendar_profile = missions::calendar::setup(&data)?;
+    let calendar_profile = missions::calendar::setup(&data, &settings.location.config)?;
     let watches = files::watch::Watches::new(watch_tx);
     let state = Arc::new(App::new(
         auth,

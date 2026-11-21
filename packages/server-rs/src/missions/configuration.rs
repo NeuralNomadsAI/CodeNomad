@@ -369,14 +369,19 @@ fn condition(v: &Value) -> R<Value> {
             }
             Ok(out)
         }
-        "repository-activity" => {
-            let o = obj(v, &["kind", "provider", "host", "repository", "event", "author"])?;
+        "repository-activity" | "remote-branch-commits" => {
+            let o = obj(v, if kind == "repository-activity" { &["kind", "provider", "host", "repository", "event", "author"] }
+                else { &["kind", "provider", "host", "repository", "ref"] })?;
             let provider = o.get("provider").and_then(Value::as_str).filter(|p| matches!(*p, "github" | "gitlab" | "gitea")).ok_or(())?;
             let host = o.get("host").and_then(Value::as_str).filter(|h| repository_host(h)).ok_or(())?;
             let repository = text(o.get("repository"), 3, 1024)?;
             let parts: Vec<&str> = repository.split('/').collect();
             if parts.len() < 2 || parts.iter().any(|p| p.is_empty() || !ascii_set(p, b"_.-") || p.bytes().all(|b| b == b'.')) {
                 return Err(());
+            }
+            if kind == "remote-branch-commits" {
+                let reference = o.get("ref").and_then(Value::as_str).filter(|value| branch_ref(value)).ok_or(())?;
+                return Ok(json!({"kind":kind,"provider":provider,"host":host,"repository":repository,"ref":reference}));
             }
             let event = o.get("event").and_then(Value::as_str)
                 .filter(|e| matches!(*e, "pull-request-created" | "pull-request-merged" | "issue-created")).ok_or(())?;
@@ -387,6 +392,19 @@ fn condition(v: &Value) -> R<Value> {
             Ok(out)
         }
         _ => Err(()),
+    }
+}
+
+#[test]
+fn remote_branch_uses_the_shared_repository_identity_and_exact_head_ref() {
+    let valid = json!({"kind":"remote-branch-commits","provider":"gitea","host":"forge.example:8443",
+        "repository":"org/project","ref":"refs/heads/main"});
+    assert_eq!(condition(&valid), Ok(valid.clone()));
+    for (key, bad) in [("host", "forge.example/path"), ("ref", "refs/tags/v1"), ("ref", "refs/heads/x.lock"),
+        ("repository", "org/.."), ("provider", "git")] {
+        let mut input = valid.clone();
+        input[key] = json!(bad);
+        assert!(condition(&input).is_err());
     }
 }
 

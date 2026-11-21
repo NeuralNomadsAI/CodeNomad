@@ -5,17 +5,23 @@ use sha2::{Digest, Sha256};
 
 use crate::files::node_path::Style;
 
-pub fn key(config: &Path) -> Option<String> {
+pub struct Scope {
+    pub channel: String,
+    pub identity: String,
+    pub key: String,
+}
+
+pub fn scope(config: &Path) -> Option<Scope> {
     let channel = env::var("CODENOMAD_UPDATE_CHANNEL").unwrap_or_default();
     let default = if env::var("CODENOMAD_DEV").as_deref() == Ok("1") { "dev" } else { "stable" };
     let expected = env::var("CODENOMAD_PROFILE_CONFIG_IDENTITY");
     if matches!(expected, Err(env::VarError::NotUnicode(_))) {
         return None;
     }
-    scope_key(Style::host(), config.to_str()?, &channel, default, expected.ok().as_deref())
+    profile_scope(Style::host(), config.to_str()?, &channel, default, expected.ok().as_deref())
 }
 
-fn scope_key(style: Style, config: &str, channel: &str, default: &str, expected: Option<&str>) -> Option<String> {
+fn profile_scope(style: Style, config: &str, channel: &str, default: &str, expected: Option<&str>) -> Option<Scope> {
     let channel = channel.trim().to_lowercase();
     let channel = if channel.is_empty() { default } else { channel.as_str() };
     if !channel.as_bytes().first().is_some_and(|b| b.is_ascii_alphanumeric())
@@ -34,7 +40,8 @@ fn scope_key(style: Style, config: &str, channel: &str, default: &str, expected:
         }
         Some(_) => return None,
     };
-    Some(format!("{:x}", Sha256::digest(format!("{channel}\0{identity}"))))
+    let key = format!("{:x}", Sha256::digest(format!("{channel}\0{identity}")));
+    Some(Scope { channel: channel.into(), identity: identity.into(), key })
 }
 
 #[cfg(test)]
@@ -45,6 +52,9 @@ mod tests {
         format!("{:x}", Sha256::digest(format!("{channel}\0{path}")))
     }
 
+    fn scope_key(style: Style, config: &str, channel: &str, default: &str, expected: Option<&str>) -> Option<String> {
+        profile_scope(style, config, channel, default, expected).map(|scope| scope.key)
+    }
     #[test]
     fn matches_desktop_profile_without_resolving_links() {
         let path = "/fixture/link/relative/../config.yaml";

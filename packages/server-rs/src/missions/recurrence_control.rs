@@ -25,14 +25,19 @@ use std::{sync::Arc, time::Duration};
 const READ: usize = 512 * 1024;
 const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The Settings-profile stand-in: the prototype's private fixed environment
-/// document, keyed like the reference `ProfileScope` (`sha256(channel\0identity)`).
+/// The selected profile and its source, keyed like `SettingsService.getProfileScope`.
 pub(crate) fn profile(app: &App) -> Option<(Value, Value)> {
-    let yaml = app.calendar_profile.as_ref()?.to_str()?;
-    let channel = "cnrs-recurrence";
-    let key = contract::sha(&format!("{channel}\0{yaml}"));
+    let path = app.calendar_profile.as_ref()?;
+    let yaml = path.to_str()?;
+    let (channel, identity, key) = if crate::config::serve() {
+        let scope = crate::settings::profile::scope(path)?;
+        (scope.channel, scope.identity, scope.key)
+    } else {
+        let channel = "cnrs-recurrence";
+        (channel.into(), yaml.into(), contract::sha(&format!("{channel}\0{yaml}")))
+    };
     Some((
-        json!({"channel":channel,"configIdentity":yaml,"key":key}),
+        json!({"channel":channel,"configIdentity":identity,"key":key}),
         json!({"profileID":key,"executionHost":"local","configYamlPath":yaml}),
     ))
 }
