@@ -20,7 +20,7 @@ const control=(kind:string)=>request('fixture.action-control',{kind})
 const observe=()=>request('fixture.action-probe')
 async function main(){
    assert.equal(parent.browserAutomationUnavailable,false)
-  await request('browser.execute',{command:{action:'open',url:`${base}/read/preview`}})
+  await request('browser.execute',{workspaceIDs:["fixture-tab"],command:{action:'open',url:`${base}/read/preview`}})
   const result=await actionScenarios({
     navigate:name=>{console.error(`action fixture: ${name}`);return navigate(name)},
     snapshot:async()=>(await execute({action:'snapshot'})).snapshot as string,

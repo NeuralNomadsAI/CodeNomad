@@ -30,7 +30,7 @@ async function lease() {
 }
 async function main() {
    assert.equal(parent.browserAutomationUnavailable,false)
-  await request("browser.execute",{command:{action:"open",url:`${base}/read/preview`}})
+  await request("browser.execute",{workspaceIDs:["fixture-tab"],command:{action:"open",url:`${base}/read/preview`}})
   for(const name of ["preview","forms","edges","inputs","advanced"]) {
     await navigate(`${base}/read/${name}`)
     if(name === 'inputs') await execute({action:'wait',text:'Ready now',gone:false,timeout:5000})

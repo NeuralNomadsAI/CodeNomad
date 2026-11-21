@@ -14,6 +14,7 @@ interface GuestOptions {
   sendInputEvent?: (event: Electron.InputEvent) => void
   loading?: boolean
   documentRoot?: () => number
+  stop?: () => void
 }
 
 function createGuest(options: GuestOptions) {
@@ -25,11 +26,17 @@ function createGuest(options: GuestOptions) {
   const guest = Object.assign(events, {
     id: options.id, hostWebContents: options.owner,
     getType: () => "webview", isDestroyed: () => false,
-    isLoading: () => options.loading ?? false,
-    stop: () => undefined, reload: () => undefined, getURL: () => url,
+    isLoading: () => options.loading ?? false, isLoadingMainFrame: () => options.loading ?? false,
+    stop: options.stop ?? (() => undefined), reload: () => undefined, getURL: () => url,
     insertText: options.insertText ?? (async (text: string) => { await options.sendCommand?.("Input.insertText", { text }) }),
     sendInputEvent: options.sendInputEvent ?? (() => undefined),
-    loadURL: async (nextUrl: string) => { await options.loadURL?.(nextUrl); url = nextUrl },
+    loadURL: async (nextUrl: string) => {
+      events.emit("did-start-navigation", {}, nextUrl, false, true)
+      await options.loadURL?.(nextUrl)
+      url = nextUrl
+      events.emit("did-navigate", {}, nextUrl)
+      events.emit("did-finish-load")
+    },
     debugger: Object.assign(new EventEmitter(), {
       isAttached: () => attached,
       attach: () => { attached = true; attachCount += 1 },
@@ -43,35 +50,38 @@ function createGuest(options: GuestOptions) {
       },
     }),
   }) as unknown as WebContents
-  return { guest, events, counts: () => ({ attachCount, detachCount }) }
+  return { guest, events, setUrl: (value: string) => { url = value }, counts: () => ({ attachCount, detachCount }) }
 }
 
-function createHarness(requestOpen: (sessionID: string, url: string, requestID: string) => void = () => {}) {
-  const guests = new Map<number, WebContents>()
-  const windows = new Map<WebContents, BrowserWindow>()
-  let visible = true
-  const controller = new BrowserController(requestOpen, {
-    fromId: id => guests.get(id) ?? null, fromWebContents: owner => windows.get(owner) ?? null,
-  })
-  const addOwner = (id: number, isVisible = () => true) => {
-    const owner = { id, isDestroyed: () => false } as WebContents
-    const window = Object.assign(new EventEmitter(), {
-      webContents: owner, isDestroyed: () => false, isVisible, isMinimized: () => false,
-    }) as unknown as BrowserWindow
-    windows.set(owner, window)
-    controller.observeOwner(window)
+function createHarness(send: (owner: WebContents, channel: string, payload: any) => void = () => {}) {
+  const receipts: unknown[] = []
+  const makeOwner = (id: number): WebContents => {
+    const owner = { id, isDestroyed: () => false, send: (channel: string, payload: unknown) => {
+      if (channel === "browser-target:open-settled") receipts.push(payload)
+      else send(owner, channel, payload)
+    } } as WebContents
     return owner
   }
-  const owner = addOwner(1, () => visible)
-  const add = (guest: WebContents, registrationId: string, sessionId = "session") => {
-    const owner = guest.hostWebContents!
+  const owner = makeOwner(1), other = makeOwner(2)
+  const guests = new Map<number, WebContents>()
+  let visible = true
+  const window = Object.assign(new EventEmitter(), {
+    webContents: owner, isDestroyed: () => false, isVisible: () => visible, isMinimized: () => false,
+  }) as unknown as BrowserWindow
+  const controller = new BrowserController(() => [owner, other], {
+    fromId: id => guests.get(id) ?? null, fromWebContents: () => window,
+  })
+  controller.observeOwner(window)
+  const add = (guest: WebContents, registrationId: string, sessionId = "session", instanceId = "tab") => {
+    const host = guest.hostWebContents
+    assert.ok(host)
     guests.set(guest.id, guest)
-    controller.observeGuest(owner, guest)
-    controller.register(owner, { sessionId, registrationId, guestWebContentsId: guest.id })
+    controller.observeGuest(host, guest)
+    controller.register(host, { sessionId, registrationId, instanceId, guestWebContentsId: guest.id })
   }
   return {
-    controller, owner, addOwner, add,
-    hide: (event = "hide") => { visible = false; windows.get(owner)!.emit(event) },
+    controller, owner, other, add, receipts,
+    hide: (event = "hide") => { visible = false; window.emit(event) },
     show: () => { visible = true },
   }
 }
@@ -615,107 +625,355 @@ describe("BrowserController preview lifecycle", () => {
     await assert.rejects(emulation, /target changed/)
   })
 
-  it("allows one open owner and redistributes an explicitly released claim", async () => {
-    const requests: string[] = []
-    let requestID = ""
-    const h = createHarness((_sessionID, _url, id) => { requestID = id; requests.push(id) })
-    const pending = h.controller.execute("session", { action: "open", url: "https://example.com/next" })
-    const other = h.addOwner(2)
-    assert.equal(h.controller.claimOpen(h.owner, requestID), true)
-    assert.equal(h.controller.claimOpen(other, requestID), false)
-    assert.equal(h.controller.releaseOpen(h.owner, requestID), true)
-    assert.deepEqual(requests, [requestID, requestID])
-    assert.equal(h.controller.claimOpen(h.owner, requestID), false)
-    assert.equal(h.controller.claimOpen(other, requestID), true)
-    const { guest, events } = createGuest({ id: 14, owner: other, loading: true })
-    h.add(guest, "one")
-    events.emit("did-start-navigation", {}, "https://example.com/next", false, true)
-    events.emit("did-finish-load")
-    await pending
-    assert.equal(h.controller.claimOpen(other, requestID), false)
-  })
-
-  it("refuses expired open claims and releases before their timer runs", async () => {
-    mock.timers.enable({ apis: ["Date", "setTimeout", "setInterval"], now: 1000 })
-    try {
-      const requests: string[] = []
-      const h = createHarness((_sessionID, _url, requestID) => { requests.push(requestID) })
-      const command = { action: "open", url: "https://example.com/" } as const
-      await assert.rejects(h.controller.execute("session", command, Date.now()), /expired/)
-      assert.equal(requests.length, 0)
-      for (const [ttl, error] of [[100, /expired/], [10_000, /Timed out waiting for CodeNomad/]] as const) {
-        const expiresAt = Date.now() + ttl
-        const deadline = ttl === 100 ? expiresAt : Infinity
-        const expired = assert.rejects(h.controller.execute("session", command, deadline), error)
-        const requestID = requests.at(-1)
-        assert.ok(requestID)
-        assert.equal(h.controller.claimOpen(h.owner, requestID), true)
-        mock.timers.setTime(expiresAt)
-        const count: number = requests.length
-        assert.equal(h.controller.claimOpen(h.owner, requestID), false)
-        assert.equal(h.controller.releaseOpen(h.owner, requestID), false)
-        assert.equal(requests.length, count)
-        mock.timers.tick(50)
-        await expired
+  it("discovers in native rank order, pins one tab, and never redispatches after release", async () => {
+    const trace: unknown[] = []
+    const h = createHarness((owner, channel, { requestID, instanceId }) => {
+      trace.push([owner.id, channel, instanceId])
+      if (channel === "browser-target:discover") {
+        assert.equal(h.controller.claimOpen(h.other, requestID, { kind: "discover", instanceId: "wrong" }), false)
+        assert.equal(h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: owner === h.owner ? null : "second" }), true)
+      } else {
+        assert.equal(h.controller.claimOpen(h.owner, requestID, { kind: "claim", instanceId }), false)
+        assert.equal(h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId: "wrong" }), false)
+        assert.equal(h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId }), true)
+        assert.equal(h.controller.releaseOpen(owner, requestID), true)
       }
-    } finally { mock.timers.reset() }
-  })
-
-  it("does not report a same-URL preview in another window as the result of a claimed open", async () => {
-    let requestID = ""
-    const h = createHarness((_sessionID, _url, id) => { requestID = id })
-    const other = h.addOwner(2)
-    const pending = h.controller.execute("session", { action: "open", url: "https://example.com/" })
-    assert.equal(h.controller.claimOpen(h.owner, requestID), true)
-    h.add(createGuest({ id: 15, owner: other }).guest, "other")
-    await assert.rejects(pending, /Browser target is stale/)
-  })
-
-  it("pins the claimed registration throughout its pending initial load", async () => {
-    mock.timers.enable({ apis: ["Date", "setTimeout", "setInterval"], now: 1000 })
-    try {
-      let requestID = ""
-      const h = createHarness((_sessionID, _url, id) => { requestID = id })
-      const pending = h.controller.execute("session", { action: "open", url: "https://example.com/" })
-      const stale = assert.rejects(pending, /Browser target is stale/)
-      assert.equal(h.controller.claimOpen(h.owner, requestID), true)
-      const { guest, events } = createGuest({ id: 16, owner: h.owner, loading: true })
-      h.add(guest, "one")
-      mock.timers.tick(50)
-      await Promise.resolve()
-      assert.equal(events.listenerCount("did-finish-load"), 2)
-      h.controller.register(h.owner, { sessionId: "session", registrationId: "one", guestWebContentsId: 16 })
-      events.emit("did-finish-load")
-      await stale
-    } finally { mock.timers.reset() }
-  })
-
-  it("reports ambiguity while waiting for a renderer target", async () => {
-    let h!: ReturnType<typeof createHarness>
-    h = createHarness(() => {
-      for (const id of [20, 21]) h.add(createGuest({ id, owner: h.owner }).guest, `r${id}`)
     })
-    await assert.rejects(h.controller.execute("session", { action: "open", url: "https://example.com/" }), /Multiple visible/)
+    await assert.rejects(h.controller.open("session", "https://example.com/next", Infinity, ["second"]), /changed/)
+    assert.deepEqual(trace, [[1, "browser-target:discover", undefined], [2, "browser-target:discover", undefined], [2, "browser-target:open", "second"]])
   })
 
-  for (const scenario of ["live-failure", "early-failure", "early-other-load", "live-other-load"]) {
-    it(`preserves initial load failure semantics: ${scenario}`, async () => {
-      let h!: ReturnType<typeof createHarness>
-      h = createHarness((_sessionID, _url, requestID) => {
-        assert.equal(h.controller.claimOpen(h.owner, requestID), true)
-        const { guest, events } = createGuest({ id: 22, owner: h.owner, loading: scenario !== "early-failure" })
-        h.add(guest, "one")
-        const fail = () => events.emit("did-fail-load", {}, -102, "connection refused", "http://127.0.0.1:43127/", true)
-        if (scenario === "early-failure") fail()
-        else {
-          if (scenario === "early-other-load") events.emit("did-finish-load")
-          if (scenario === "live-other-load") setTimeout(() => events.emit("did-finish-load"), 25)
-          setTimeout(fail, 75)
+  it("refuses ambiguous tabs in the best window without any mutation", async () => {
+    const h = createHarness((owner, channel, { requestID }) => {
+      assert.equal(channel, "browser-target:discover")
+      assert.equal(owner, h.owner)
+      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "discover", ambiguous: true }), true)
+    })
+    await assert.rejects(h.controller.open("session", "https://example.com/", Infinity, ["tab"]), /Multiple.*tabs/)
+  })
+
+  it("ignores a discovery receipt if the backend retires before native dispatch", async () => {
+    let backendCurrent = true
+    const h = createHarness((owner, channel, { requestID }) => {
+      assert.equal(channel, "browser-target:discover")
+      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" }), true)
+      backendCurrent = false
+    })
+    await assert.rejects(h.controller.open("session", "https://example.com/", Infinity, ["tab"], () => {
+      if (!backendCurrent) throw new Error("Backend changed")
+    }), /changed/)
+  })
+
+  it("does not bypass discovery to navigate an existing preview in a different window", async () => {
+    const h = createHarness((owner, channel, { requestID }) => {
+      assert.equal(channel, "browser-target:discover")
+      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" }), true)
+    })
+    h.add(createGuest({ id: 20, owner: h.other, loadURL: async () => assert.fail("wrong window navigated") }).guest, "foreign")
+    await assert.rejects(h.controller.open("session", "https://example.com/", Infinity, ["tab"]), /another window/)
+  })
+
+  it("requires occurrence authority for open and invalidates the prior document witness on success", async () => {
+    const url = "https://example.com/next"
+    const h = createHarness((owner, channel, { requestID, instanceId }) => {
+      if (channel === "browser-target:discover") {
+        h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
+        return
+      }
+      h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId })
+      h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId })
+      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "one" }), true)
+    })
+    const { guest, counts } = createGuest({ id: 24, owner: h.owner, sendCommand: async () => ({ data: "png" }) })
+    h.add(guest, "one")
+    const execute = (params: object) => handleNativeBrowserRequest(h.controller, "browser.execute", { sessionID: "session", ...params })
+    const { target } = await h.controller.probe("session")
+    const command = { action: "open", url }
+    await assert.rejects(execute({ command, target }), /Owning project tabs are unavailable/)
+    assert.deepEqual(await execute({ command, workspaceIDs: ["tab"] }), { url })
+    await assert.rejects(execute({ command: { action: "screenshot" }, target }), /Browser target is stale/)
+    const refreshed = await h.controller.probe("session")
+    assert.notEqual(refreshed.target, target)
+    assert.deepEqual(await execute({ command: { action: "screenshot" }, target: refreshed.target }), {
+      image: { mime: "image/png", data: "png" }, url,
+    })
+    assert.deepEqual(counts(), { attachCount: 1, detachCount: 0 })
+  })
+
+  for (const replace of [false, true]) {
+    it(`navigates only the reported registration${replace ? " and refuses a replacement result" : ""}`, async () => {
+      const url = "https://example.com/next"
+      const trace: number[] = []
+      let request = ""
+      const h = createHarness((owner, channel, { requestID, instanceId }) => {
+        assert.equal(owner, h.owner)
+        if (channel === "browser-target:discover") {
+          h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
+          return
         }
+        assert.equal(h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId }), true)
+        request = requestID
+        assert.equal(h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId }), true)
+        assert.equal(h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "other-tab", navigate: true }), false)
+        assert.equal(h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "exact", navigate: true }), true)
       })
-      await assert.rejects(h.controller.execute("session", { action: "open", url: "http://127.0.0.1:43127" }), /connection refused \(-102\)/)
+      h.add(createGuest({ id: 15, owner: h.owner, loadURL: async () => { trace.push(15) } }).guest, "other-tab", "session", "sibling")
+      h.add(createGuest({ id: 16, owner: h.owner, loadURL: async () => {
+        trace.push(16)
+        if (replace) h.add(createGuest({ id: 17, owner: h.owner }).guest, "exact")
+      } }).guest, "exact")
+      const opening = h.controller.open("session", url, Infinity, ["tab"])
+      if (replace) await assert.rejects(opening, /registration changed/)
+      else assert.deepEqual(await opening, { url })
+      assert.deepEqual(trace, [16])
+      assert.deepEqual(h.receipts, [{ requestID: request, sessionID: "session", instanceId: "tab", committedUrl: replace ? undefined : url }])
     })
   }
+
+  for (const scenario of ["post-commit fragment", "fragment-only", "replacement after commit", "fragment aborts initial load"] as const) {
+    it(`keeps the exact navigation receipt: ${scenario}`, async t => {
+      const fragmentOnly = scenario === "fragment-only"
+      const replacement = scenario === "replacement after commit"
+      const fragmentAborted = scenario === "fragment aborts initial load"
+      const url = fragmentOnly ? "https://example.com/#requested" : "https://example.com/next"
+      const committedUrl = fragmentOnly ? url : "https://example.com/redirected"
+      const h = createHarness((owner, channel, { requestID, instanceId }) => {
+        if (channel === "browser-target:discover") {
+          h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
+          return
+        }
+        h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId })
+        h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId })
+        assert.equal(h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "one" }), true)
+      })
+      const { guest, events, setUrl } = createGuest({ id: 22, owner: h.owner })
+      h.add(guest, "one")
+      t.mock.method(guest, "loadURL", async (requested: string) => {
+        assert.equal(requested, url)
+        events.emit("did-start-navigation", {}, requested, fragmentOnly, true)
+        setUrl(committedUrl)
+        if (fragmentOnly) {
+          events.emit("did-navigate-in-page", {}, committedUrl, true)
+          return
+        }
+        events.emit("did-navigate", {}, committedUrl)
+        const next = replacement ? "https://example.com/replacement" : `${committedUrl}#after`
+        events.emit("did-start-navigation", {}, next, !replacement, true)
+        setUrl(next)
+        if (replacement) events.emit("did-navigate", {}, next)
+        else events.emit("did-navigate-in-page", {}, next, true)
+        if (fragmentAborted) throw Object.assign(new Error("ERR_ABORTED (-3)"), { code: "ERR_ABORTED" })
+        events.emit("did-finish-load")
+      })
+      const opening = h.controller.open("session", url, Infinity, ["tab"])
+      if (replacement || fragmentAborted) await assert.rejects(opening, /Browser navigation changed/)
+      else assert.deepEqual(await opening, { url: committedUrl })
+      assert.deepEqual(h.receipts.map(receipt => (receipt as { committedUrl?: string }).committedUrl), [replacement || fragmentAborted ? undefined : committedUrl])
+      if (fragmentAborted) assert.equal((h.receipts[0] as { keepGuest?: boolean }).keepGuest, true)
+    })
+  }
+
+  it("waits for the main frame to finish when a child fragment resolves loadURL early", async t => {
+    const h = createHarness()
+    const { guest, events, setUrl } = createGuest({ id: 22, owner: h.owner })
+    h.add(guest, "one")
+    const url = "https://example.com/new"
+    let childNavigated!: () => void
+    const child = new Promise<void>(resolve => { childNavigated = resolve })
+    t.mock.method(guest, "loadURL", async () => {
+      events.emit("did-start-navigation", {}, url, false, true)
+      setUrl(url)
+      events.emit("did-navigate", {}, url)
+      events.emit("did-navigate-in-page", {}, `${url}#child`, false)
+      childNavigated()
+    })
+    let completed = false
+    const target = (await h.controller.probe("session")).target
+    const navigation = h.controller.execute("session", { action: "navigate", url }, Date.now() + 1000, target)
+      .then(result => { completed = true; return result })
+    try {
+      await child
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(completed, false)
+    } finally {
+      events.emit("did-finish-load")
+      assert.deepEqual(await navigation, { url })
+    }
+  })
+
+  it("reports the native failure from the exact first load", async () => {
+    const h = createHarness((owner, channel, { requestID, instanceId }) => {
+      if (channel === "browser-target:discover") {
+        h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
+        return
+      }
+      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId }), true)
+      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId }), true)
+      const { guest } = createGuest({ id: 22, owner, loadURL: async () => { throw new Error("connection refused (-102)") } })
+      h.add(guest, "one")
+      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "one" }), true)
+    })
+    await assert.rejects(h.controller.open("session", "http://127.0.0.1:43127", Infinity, ["tab"]), /connection refused \(-102\)/)
+    assert.equal(h.receipts.length, 1)
+    assert.equal((h.receipts[0] as { committedUrl?: string }).committedUrl, undefined)
+  })
+
+  it("expires a queued open before an occupied native slot is released", async () => {
+    let unblock!: () => void
+    let occupied!: () => void
+    const gate = new Promise<void>(resolve => { unblock = resolve })
+    const started = new Promise<void>(resolve => { occupied = resolve })
+    let loads = 0
+    const h = createHarness((owner, channel, { requestID, instanceId }) => {
+      if (channel === "browser-target:discover") {
+        h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
+        return
+      }
+      h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId })
+      h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId })
+      h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "one" })
+    })
+    h.add(createGuest({ id: 22, owner: h.owner, loadURL: async () => { loads++ },
+      sendCommand: async method => {
+        if (method === "Browser.getVersion") return { product: "Chrome/123.0.0.0" }
+        if (method === "Emulation.setDeviceMetricsOverride") { occupied(); await gate }
+        return {}
+      } }).guest, "one")
+    const emulation = h.controller.emulate(h.owner, "one", "mobile")
+    let watchdog: NodeJS.Timeout | undefined
+    try {
+      await started
+      const opening = h.controller.open("session", "https://example.com/queued", Date.now() + 80, ["tab"])
+      await assert.rejects(Promise.race([opening, new Promise((_, reject) => {
+        watchdog = setTimeout(() => reject(new Error("Native slot still queued")), 500)
+      })]), /timed out|expired/)
+      assert.deepEqual(h.receipts.map(receipt => (receipt as { committedUrl?: string }).committedUrl), [undefined])
+    } finally {
+      clearTimeout(watchdog)
+      unblock()
+      await emulation
+    }
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(loads, 0)
+  })
+
+  it("retires a queued open when the acknowledged guest starts a user navigation", async () => {
+    let unblock!: () => void, occupied!: () => void, acknowledged!: () => void
+    const gate = new Promise<void>(resolve => { unblock = resolve })
+    const started = new Promise<void>(resolve => { occupied = resolve })
+    const ack = new Promise<void>(resolve => { acknowledged = resolve })
+    const automated = "https://example.com/queued", manual = "https://example.com/manual"
+    const loads: string[] = []
+    const h = createHarness((owner, channel, { requestID, instanceId }) => {
+      if (channel === "browser-target:discover") {
+        h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
+        return
+      }
+      h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId })
+      h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId })
+      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "one" }), true)
+      acknowledged()
+    })
+    const { guest } = createGuest({ id: 22, owner: h.owner, loadURL: async url => { loads.push(url) },
+      sendCommand: async method => {
+        if (method === "Browser.getVersion") return { product: "Chrome/123.0.0.0" }
+        if (method === "Emulation.setDeviceMetricsOverride") { occupied(); await gate }
+        return {}
+      } })
+    h.add(guest, "one")
+    const emulation = h.controller.emulate(h.owner, "one", "mobile")
+    await started
+    const opening = h.controller.open("session", automated, Date.now() + 1000, ["tab"])
+    const rejected = assert.rejects(opening, /changed/)
+    await ack
+    await new Promise<void>(resolve => setImmediate(resolve))
+    await guest.loadURL(manual)
+    const releasedWhileQueued = h.receipts.length
+    try { await rejected } finally { unblock(); await emulation }
+    assert.equal(releasedWhileQueued, 1)
+    assert.equal(guest.getURL(), manual)
+    assert.deepEqual(loads, [manual])
+  })
+
+  for (const scenario of ["timeout", "backend", "target", "superseded"]) {
+    it(`cancels only the first open navigation: ${scenario}`, async () => {
+      const url = "http://127.0.0.1:43127/"
+      const next = "https://example.com/next"
+      const stops: number[] = []
+      let backendCurrent = true
+      const h = createHarness((owner, channel, { requestID, instanceId }) => {
+        if (channel === "browser-target:discover") {
+          h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
+          return
+        }
+        h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId })
+        h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId })
+        let complete!: () => void
+        const { guest, events, setUrl } = createGuest({ id: 22, owner, loading: true, stop: () => stops.push(22),
+          loadURL: () => new Promise<void>(resolve => { complete = resolve }) })
+        h.add(guest, "first")
+        h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "first" })
+        setTimeout(() => {
+          if (scenario === "backend") backendCurrent = false
+          if (scenario === "target") {
+            h.controller.unregister(owner, "first")
+            h.add(createGuest({ id: 23, owner, stop: () => stops.push(23) }).guest, "first")
+          }
+          if (scenario === "superseded") {
+            complete()
+            events.emit("did-start-navigation", {}, next, false, true)
+            setUrl(next)
+          }
+        }, 30)
+      })
+      await assert.rejects(h.controller.open("session", url, Date.now() + 150, ["tab"], () => {
+        if (!backendCurrent) throw new Error("Backend changed")
+      }),
+        scenario === "timeout" ? /timed out|expired/ : /changed/)
+      assert.deepEqual(stops, scenario === "superseded" ? [] : [22])
+    })
+  }
+
+  it("refuses expired renderer construction while another window adopts", async () => {
+    let expired = ""
+    const h = createHarness((owner, channel, { requestID, instanceId }) => {
+      if (channel === "browser-target:discover") {
+        h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: owner === h.owner && expired ? null : "tab" })
+        return
+      }
+      h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId })
+      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId }), true)
+      if (!expired) { expired = requestID; return }
+      const params = (request: string) => ({ webpreferences: `codenomadOpen=${request}`, src: "about:blank" })
+      assert.equal(h.controller.permitOpenAttachment(h.owner, params(expired)), false)
+      assert.equal(h.controller.permitOpenAttachment(owner, params(requestID)), true)
+      const { guest } = createGuest({ id: 22, owner })
+      h.controller.guestCreated(guest)
+      assert.equal(h.controller.permitOpenAttachment(owner, params(requestID)), false)
+      h.add(guest, "second")
+      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "second" }), true)
+    })
+    const url = "https://example.com/next"
+    await assert.rejects(h.controller.open("session", url, Date.now() + 80, ["tab"]), /timed out/)
+    assert.deepEqual(await h.controller.open("session", url, Infinity, ["tab"]), { url })
+  })
+
+  it("uses the remaining native budget after the exact guest is admitted", async t => {
+    let now = Date.now()
+    t.mock.method(Date, "now", () => now)
+    const url = "https://example.com/slow"
+    const h = createHarness((owner, channel, { requestID, instanceId }) => {
+      if (channel === "browser-target:discover") {
+        h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
+        return
+      }
+      h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId })
+      h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId })
+      h.add(createGuest({ id: 22, owner, loadURL: async () => { now += 11_000 } }).guest, "first")
+      h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "first" })
+    })
+    assert.deepEqual(await h.controller.open("session", url, now + 90_000, ["tab"]), { url })
+  })
 
   it("propagates navigation failures and keeps the queue usable", async () => {
     const h = createHarness()
