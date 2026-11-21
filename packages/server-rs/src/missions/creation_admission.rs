@@ -41,6 +41,21 @@ enum State {
 }
 
 impl Creations {
+    pub(super) fn hold_root(&self, owner: &str, root: &str, permit: fence::Entered) -> Result<(), Error> {
+        let key = (owner.to_owned(), root.to_owned());
+        self.register(owner, root, &Value::Null)?;
+        self.0.lock().unwrap().get_mut(&key).unwrap().permit = Some(permit);
+        Ok(())
+    }
+
+    pub(super) fn release_root(&self, owner: &str, root: &str) {
+        self.0.lock().unwrap().remove(&(owner.to_owned(), root.to_owned()));
+    }
+
+    pub(super) fn root_held(&self, owner: &str, root: &str) -> bool {
+        self.0.lock().unwrap().contains_key(&(owner.to_owned(), root.to_owned()))
+    }
+
     pub fn register(&self, workspace: &str, request: &str, raw: &Value) -> Result<(), Error> {
         use sha2::{Digest, Sha256};
         let key = (workspace.to_owned(), request.to_owned());
@@ -242,12 +257,22 @@ impl Scope {
             .as_str()
             .filter(|_| location.get("workspaceID").is_none())
             .ok_or_else(foreign_coordinator)?;
-        let (_, checkout) = owned_path(app, &self.workspace, dir).await.map_err(|_| foreign_coordinator())?;
-        if !row["parentID"].is_null() || row["projectID"] != self.project || !self.owns_project(app, dir).await? {
+        if !row["parentID"].is_null() || row["projectID"] != self.project {
             return Err(foreign_coordinator());
         }
-        self.capture_location(dir, &checkout)?;
+        self.add_location(app, dir).await.map_err(|_| foreign_coordinator())?;
         Ok(location.clone())
+    }
+
+    pub async fn add_location(&mut self, app: &App, dir: &str) -> Result<(), Error> {
+        if dir == self.dir {
+            return Ok(());
+        }
+        let (_, checkout) = owned_path(app, &self.workspace, dir).await?;
+        if !self.owns_project(app, dir).await? {
+            return Err(foreign_coordinator());
+        }
+        self.capture_location(dir, &checkout)
     }
 
     pub fn current(&self, app: &App) -> bool {
@@ -272,21 +297,50 @@ impl Scope {
         seconds: u64,
         max: usize,
     ) -> Result<(Status, Value), Error> {
-        let url =
-            self.endpoint.url.join(&format!("/api/rpc/codenomad.missions/{method}")).map_err(|_| unavailable())?;
-        let res = app
+        self.request(
+            app,
+            Method::POST,
+            &format!("/api/rpc/codenomad.missions/{method}"),
+            &[("location[directory]", self.dir.as_str())],
+            Some(&json!({"input":input})),
+            seconds,
+            max,
+        )
+        .await
+    }
+
+    pub async fn request(
+        &self,
+        app: &App,
+        method: Method,
+        path: &str,
+        query: &[(&str, &str)],
+        input: Option<&Value>,
+        seconds: u64,
+        max: usize,
+    ) -> Result<(Status, Value), Error> {
+        let url = self.endpoint.url.join(path).map_err(|_| unavailable())?;
+        if !self.current(app) {
+            return Err(unavailable());
+        }
+        let request = app
             .native
             .client
-            .request(Method::POST, url)
+            .request(method, url)
             .basic_auth("opencode", Some(&self.endpoint.password))
-            .query(&[("location[directory]", self.dir.as_str())])
-            .json(&json!({"input":input}))
-            .timeout(Duration::from_secs(seconds))
-            .send()
-            .await
-            .map_err(|_| unavailable())?;
+            .query(query)
+            .timeout(Duration::from_secs(seconds));
+        let request = if let Some(input) = input { request.json(input) } else { request };
+        let res = request.send().await.map_err(|_| unavailable())?;
         let status = res.status();
-        let body = opencode::read_json(res, max).await.map_err(|_| unavailable())?;
+        let body = if status == Status::NO_CONTENT {
+            Value::Null
+        } else {
+            opencode::read_json(res, max).await.map_err(|_| unavailable())?
+        };
+        if !self.current(app) {
+            return Err(unavailable());
+        }
         Ok((status, body))
     }
 }
@@ -345,7 +399,13 @@ impl Attempt {
             && (result["acknowledgement"] == "recovered" || m["runState"] == "prepared")
             && m["taskMode"].as_str().unwrap_or("native") == self.input["taskMode"]
             && m["profiles"] == self.input["profiles"]
-            && m["preparedBy"].is_null()
+            && match self.input.get("preparedBy") {
+                Some(author) => {
+                    m["preparedBy"]["missionId"] == author["missionID"]
+                        && m["preparedBy"]["coordinatorSessionId"] == author["coordinatorSessionID"]
+                }
+                None => m["preparedBy"].is_null(),
+            }
             && m["actors"].as_array().is_some_and(|actors| {
                 actors.iter().any(|a| {
                     a["sessionId"] == m["coordinatorSessionId"]
@@ -386,14 +446,17 @@ fn coordinator_matches(explicit: Option<&str>, id: &str, mission: &str) -> bool 
     if let Some(explicit) = explicit {
         return explicit == id;
     }
+    derived_session(id, &format!("{mission}\0coordinator"))
+}
+
+pub(super) fn derived_session(id: &str, seed: &str) -> bool {
     let Some(suffix) = id
         .strip_prefix("ses_")
         .filter(|s| s.len() == 26 && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
     else {
         return false;
     };
-    let seed = format!("{mission}\0coordinator");
-    suffix[12..] == super::run::token(&seed, 14) || suffix == super::run::token(&seed, 26)
+    suffix[12..] == super::run::token(seed, 14) || suffix == super::run::token(seed, 26)
 }
 
 /// `missionCreationRequestSchema` refusal.
@@ -409,7 +472,7 @@ fn foreign_coordinator() -> Error {
 }
 
 /// `nativeDocumentID`: 1–240 characters of `[A-Za-z0-9_.:-]`.
-fn native_id(s: &str) -> bool {
+pub(super) fn native_id(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 240
         && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b':' | b'-'))

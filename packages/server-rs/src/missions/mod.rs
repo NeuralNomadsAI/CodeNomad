@@ -1,11 +1,16 @@
 //! Missions: one-time runs, reads, the daily recurrence and the calendar, each a thin
 //! admission in front of the native Missions plugin.
 pub mod activity;
+mod bridge;
 pub mod calendar;
+mod cleanup;
 pub mod configuration;
 pub mod creation_admission;
 pub mod family;
+mod inputs;
+mod prepare;
 pub mod reads;
+mod recovery;
 pub mod recurrence;
 pub mod recurrence_contract;
 pub mod recurrence_control;
@@ -14,6 +19,7 @@ pub mod recurrence_holds;
 pub mod recurrence_selector;
 pub mod run;
 pub mod schedule_contract;
+mod task_sessions;
 pub mod time_zone;
 
 use axum::{
@@ -59,6 +65,7 @@ pub fn routes() -> Router<Shared> {
         )
         .route("/api/workspaces/{id}/missions/creation/{request}", get(run::creation_receipt))
         .route("/api/workspaces/{id}/missions/{mission}/control", post(run::control))
+        .route("/api/workspaces/{id}/missions/{mission}/recover", post(run::recover))
         .route("/api/workspaces/{id}/missions/{mission}", get(reads::mission).patch(run::update).delete(run::delete))
         .route("/api/workspaces/{id}/missions/{mission}/admission", get(reads::admission))
         .route("/api/workspaces/{id}/missions/{mission}/content", get(reads::content))

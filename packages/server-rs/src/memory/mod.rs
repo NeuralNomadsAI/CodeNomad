@@ -18,6 +18,7 @@ mod yaml;
 
 pub(crate) use lock::confirmed_absent;
 pub use routes::{bridge, lease_requested, sync};
+pub(crate) use routes::prepare as prepare_instruction;
 
 pub fn routes() -> axum::Router<crate::Shared> {
     use axum::routing::{get, post};
