@@ -383,6 +383,11 @@ pub async fn tasks(
             _ => return Err(bad("Invalid mission task selector")),
         }
     }
+    let named = ["keys", "ids", "reportIds"].iter().any(|key| input.get(key).is_some());
+    if usize::from(named) + usize::from(input.get("offset").is_some()) + usize::from(input.get("attention").is_some()) != 1
+    {
+        return Err(bad("Invalid mission task request"));
+    }
     Ok(read(app, id, "tasks", input, 4 * 1024 * 1024).await)
 }
 pub async fn panel(

@@ -31,6 +31,45 @@ pub(super) async fn automation_api(app: &App, endpoint: &Arc<Endpoint>) -> Resul
     })
 }
 
+pub(super) async fn flag_origin(
+    app: &App, endpoint: &Arc<Endpoint>, dir: &str, provenance: &str,
+) -> Result<Option<String>, Error> {
+    if !matches!(provenance, "experimental-block" | "all-flags") {
+        return Ok(None);
+    }
+    let response = app.native.client.get(endpoint.url.join("/api/config").map_err(|_| unavailable())?)
+        .basic_auth("opencode", Some(&endpoint.password))
+        .query(&[("location[directory]", dir)])
+        .timeout(Duration::from_secs(5))
+        .send().await.map_err(|_| unavailable())?
+        .error_for_status().map_err(|_| unavailable())?;
+    let entries = crate::opencode::read_json(response, 2 * 1024 * 1024).await.map_err(|_| unavailable())?;
+    if !on_connection(app, endpoint) {
+        return Err(unavailable());
+    }
+    let entries = entries.as_array().ok_or_else(unavailable)?;
+    Ok(origin(entries, provenance).map(str::to_owned))
+}
+
+fn origin<'a>(entries: &'a [Value], provenance: &str) -> Option<&'a str> {
+    entries.iter().rev().find(|entry| {
+        if entry["type"] != "document" { return false; }
+        let Some(experimental) = entry["info"].get("experimental") else { return false; };
+        provenance == "experimental-block" || experimental.get("all_flags").is_some()
+    }).and_then(|entry| entry["path"].as_str())
+}
+
+#[test]
+fn flag_origin_tracks_native_document_precedence() {
+    let entries = [
+        json!({"type":"document","path":"/global","info":{"experimental":{"all_flags":true}}}),
+        json!({"type":"document","path":"/project","info":{"experimental":{"automations":false}}}),
+        json!({"type":"directory","path":"/unrelated"}),
+    ];
+    assert_eq!(origin(&entries, "experimental-block"), Some("/project"));
+    assert_eq!(origin(&entries, "all-flags"), Some("/global"));
+}
+
 fn members(v: &Value) -> impl Iterator<Item = &Value> {
     v.as_array().into_iter().flatten()
 }

@@ -187,7 +187,9 @@ pub async fn list(
 }
 async fn flag(app: &App, endpoint: &Arc<Endpoint>, w: &Workspace) -> Result<Value, Error> {
     let flag = rpc(app, endpoint, directory(w)?, "scheduleFlag", json!({}), 32768).await?;
-    if !flag["enabled"].is_boolean() {
+    if !flag["enabled"].is_boolean()
+        || !matches!(flag["provenance"].as_str(), Some("environment" | "experimental-block" | "all-flags" | "channel-default"))
+    {
         return Err(unavailable());
     }
     Ok(flag)
@@ -207,12 +209,13 @@ pub async fn capabilities(
     }
     let api = automation_api(&app, &endpoint).await?;
     let state = flag(&app, &endpoint, &w).await?;
+    let origin = capability::flag_origin(&app, &endpoint, dir, state["provenance"].as_str().unwrap()).await?;
     if !current(&app, &w, &project, &canonical, &physical, &endpoint).await || !display.load(Ordering::Relaxed) {
         return Err(unavailable());
     }
     let enabled = state["enabled"] == true;
     Ok(Json(json!({"location":{"directory":directory(&w)?},"api":api,"enabled":enabled,
-        "origin":null,"provenance":state["provenance"],"activation":if enabled&&api["available"]==true{json!({"available":true,"targets":[]})}
+        "origin":origin,"provenance":state["provenance"],"activation":if enabled&&api["available"]==true{json!({"available":true,"targets":[]})}
         else{json!({"available":false,"reason":"explicit-off","targets":[]})}})))
 }
 fn schedule_id(project: &str, dir: &str, request: &str) -> String {
