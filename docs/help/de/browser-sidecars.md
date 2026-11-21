@@ -26,9 +26,15 @@ Für die Fernsteuerung sind **Web-Vorschauen** unter **Einstellungen → Remote-
 
 ## Geteilte Anmeldungen und Automatisierungsgrenzen {#signins-automation}
 
+Unter Electron und Tauri für Windows startet der automatisierte Neustart (`codenomad.act`, `restart`) das geprüfte Profil mit derselben Konfiguration und demselben Build neu. Wird das ursprüngliche Fenster wiederhergestellt, wird es erneut geprüft; andernfalls meldet die Automatisierung das fehlende Fenster und prüft kein anderes. Eine erfolgreiche Prüfung während der Wiederverbindung hat Vorrang.
+
+Wird der Neustart abgebrochen, listen Sie die offenen Fenster mit `codenomad.inspect` und `targets: true` auf und prüfen Sie das gewünschte Fenster anhand seines `target`.
+
 Native Vorschauen teilen Cookies, Anmeldungen und Websitespeicher über Projekte/Sitzungen innerhalb derselben Desktop-Engine und desselben Profil-/Konfigurationsbereichs, getrennt vom vertrauenswürdigen CodeNomad-Renderer. Abmelden von einer Website in einer Vorschau betrifft andere Vorschauen desselben Speichers. Dokumente, Formulare, Sitzungsspeicher, Navigationsverläufe und Automatisierungszuordnungen gehören jeweils zur Sitzung.
 
 Ein Agent öffnet den gemeinsamen Sitzungsbrowser in einer zugehörigen Registerkarte, möglichst der aktiven. Die gewählte Registerkarte bleibt während des Öffnens fest; ihr Schließen bricht das Öffnen ab. Seitenaktionen zielen auf die sichtbare native Vorschau der Sitzung; ausgeblendete Vorschauen bleiben ausgeschlossen.
+
+Vor einer Aktion oder Aufnahme erstellt der Agent einen Snapshot der Vorschau. Ändert sich die Vorschau, bricht der Befehl ab, statt eine andere Vorschau zu verwenden.
 
 | Client | Vorschauimplementierung | Agenten-Browser-Automatisierung | Mobilvorlagen |
 | --- | --- | --- | --- |

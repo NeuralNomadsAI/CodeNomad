@@ -832,6 +832,7 @@ const App: Component = () => {
                   style={{ display: isVisible() ? "flex" : "none" }}
                   data-instance-id={tab.instance.id}
                   data-tab-id={tab.id}
+                  data-tab-session-id={activeSessionId().get(tab.instance.id) ?? undefined}
                   data-tab-kind={tab.kind}
                   data-tab-visible={isVisible() ? "true" : "false"}
                 >

@@ -16,8 +16,16 @@ interface NativeResponse {
 interface PendingRequest {
   resolve(value: unknown): void
   reject(error: Error): void
+  expire(): void
+  absoluteDeadline?: number
   timeout: NodeJS.Timeout
 }
+
+/** Admission was refused locally or by an explicit response from the host. */
+export class NativeRequestRefused extends Error {}
+
+/** The request was refused before it could reach the host. */
+export class NativeRequestNotSent extends NativeRequestRefused {}
 
 export class NativeParent {
   private readonly pending = new Map<string, PendingRequest>()
@@ -29,20 +37,25 @@ export class NativeParent {
     readonly browserAutomationUnavailable = process.env.CODENOMAD_NATIVE_BROWSER_AUTOMATION === "0",
   ) {}
 
-  request<T>(method: string, params: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
-    if (!this.available) return Promise.reject(new Error("Native control is unavailable in this host"))
-    if (this.closed) return Promise.reject(new Error("Native parent is shutting down"))
-    if (this.pending.size >= MAX_PENDING) return Promise.reject(new Error("Too many pending native requests"))
+  request<T>(method: string, params: unknown, budget: number | { deadline: number } = DEFAULT_TIMEOUT_MS): Promise<T> {
+    if (!this.available) return Promise.reject(new NativeRequestNotSent("Native control is unavailable in this host"))
+    if (this.closed) return Promise.reject(new NativeRequestNotSent("Native parent is shutting down"))
+    if (this.pending.size >= MAX_PENDING) return Promise.reject(new NativeRequestNotSent("Too many pending native requests"))
 
     const id = randomUUID()
-    const deadline = Date.now() + timeoutMs
+    const deadline = typeof budget === "number" ? Date.now() + budget : budget.deadline
+    const absoluteDeadline = typeof budget === "number" ? undefined : deadline
     return new Promise<T>((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      const line = `${NATIVE_REQUEST_PREFIX}${JSON.stringify({ v: 1, id, method, params, deadline })}\n`
+      const timeoutMs = typeof budget === "number" ? budget : deadline - Date.now()
+      if (typeof budget !== "number" && timeoutMs <= 0) return reject(new NativeRequestNotSent("Native request expired before execution"))
+      const expire = () => {
         this.pending.delete(id)
         reject(new Error(`Native request timed out: ${method}`))
-      }, timeoutMs)
-      this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject, timeout })
-      this.output.write(`${NATIVE_REQUEST_PREFIX}${JSON.stringify({ v: 1, id, method, params, deadline })}\n`)
+      }
+      const timeout = setTimeout(expire, timeoutMs)
+      this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject, expire, absoluteDeadline, timeout })
+      this.output.write(line)
     })
   }
 
@@ -55,13 +68,17 @@ export class NativeParent {
     } catch {
       return true
     }
-    if (response.v !== 1 || typeof response.id !== "string") return true
+    if (!response || response.v !== 1 || typeof response.id !== "string" || typeof response.ok !== "boolean") return true
     const pending = this.pending.get(response.id)
     if (!pending) return true
-    this.pending.delete(response.id)
     clearTimeout(pending.timeout)
+    if (pending.absoluteDeadline !== undefined && Date.now() >= pending.absoluteDeadline) {
+      pending.expire()
+      return true
+    }
+    this.pending.delete(response.id)
     if (response.ok) pending.resolve(response.result)
-    else pending.reject(new Error(response.error?.message || response.error?.code || "Native request failed"))
+    else pending.reject(new NativeRequestRefused(response.error?.message || response.error?.code || "Native request failed"))
     return true
   }
 

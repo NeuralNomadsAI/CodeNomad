@@ -26,9 +26,15 @@ Uzaktan Kontrol için **Web önizlemeleri**, ana bilgisayarda **Ayarlar → Uzak
 
 ## Paylaşılan oturum açma işlemleri ve otomasyon sınırları {#signins-automation}
 
+Electron ve Windows için Tauri’de otomatik yeniden başlatma (`codenomad.act`, `restart`), incelenen profili, yapılandırmayı ve derlemeyi yeniden açar. Özgün pencere geri yüklenirse yeniden incelenir; yüklenmezse araç pencerenin bulunmadığını bildirir ve başka bir pencereyi incelemez. Yeniden bağlanma sırasında başarıyla tamamlanan inceleme önceliklidir.
+
+Yeniden başlatma iptal edilirse `codenomad.inspect` ile `targets: true` kullanarak açık pencereleri listeleyin, ardından istediğiniz pencereyi `target` değeriyle inceleyin.
+
 Native önizlemeler aynı masaüstü motoru ve profil/yapılandırma kapsamındaki projeler/oturumlar arasında çerezleri, oturum açma bilgilerini ve site depolamasını paylaşır; bunlar güvenilir CodeNomad arayüzünden ayrıdır. Önizlemede siteden çıkış yapmak aynı depoyu kullanan diğer önizlemeleri etkiler. Belgeler, formlar, oturum depolaması, gezinme geçmişi ve otomasyon bağlantıları her oturuma aittir.
 
 Ajan, oturumun ortak tarayıcısını onu içeren bir sekmede, mümkünse etkin sekmede açar. Seçilen sekme açılış boyunca sabit kalır; onu kapatmak bu açılışı iptal eder. Sayfa eylemleri oturumun görünür yerel önizlemesini hedefler; gizli önizlemeler dışarıda bırakılır.
+
+Ajan önizlemede işlem yapmadan veya ekran görüntüsü almadan önce bir anlık görüntü alır. Önizleme değişirse komut başka bir önizlemeyi kullanmak yerine durur.
 
 | İstemci | Önizleme uygulaması | Ajan tarayıcı otomasyonu | Mobil şablonlar |
 | --- | --- | --- | --- |

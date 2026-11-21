@@ -83,7 +83,9 @@ export function parsePageOperation(raw: unknown, allowApplication = false): Page
 }
 
 export function pageEnvelope(method: string, input: Record<string, unknown>): void {
-  keys(input, ["sessionID", "operationID", ...(method === "browser.page.send" ? ["generation", "operation"] : method === "browser.page.check" || method === "browser.page.end" ? ["generation"] : [])],
+  keys(input, ["sessionID", "operationID", ...(method === "browser.page.begin" ? ["target"] : method === "browser.page.send" ? ["generation", "operation"] : method === "browser.page.check" || method === "browser.page.end" ? ["generation"] : [])],
     ["sessionID", "operationID", ...(method === "browser.page.send" ? ["generation", "operation"] : method === "browser.page.check" ? ["generation"] : [])])
   if (Object.hasOwn(input, "generation") && !string(input.generation)) fail()
+  if (Object.hasOwn(input, "target") && !isBrowserTarget(input.target)) fail()
 }
+import { isBrowserTarget } from "../browser-target"
