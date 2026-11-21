@@ -68,7 +68,7 @@ function resolveStoragePaths(baseUserDataPath: string, profileKey: string, origi
     profileKey, cliConfig: originalConfig, cwd: process.cwd(), baseUserDataPath, packaged: app.isPackaged,
   })
   const artifact = pinElectronRelaunch(process.execPath, app.getAppPath(), relaunchArgs, mainPath)
-  const nativeIdentity = developerNativeIdentity(scope.profile, scope.configIdentity, originalConfig, artifact)
+  const nativeIdentity = developerNativeIdentity(scope.profile, scope.configIdentity, originalConfig, artifact, baseUserDataPath)
   if (expectedIdentity !== undefined && expectedIdentity !== nativeIdentity) throw new Error("CodeNomad automation relaunch scope changed")
   // The backend must use the exact desktop data profile for paused Mission metadata. It is
   // handed to the backend command only: in this host CODENOMAD_UPDATE_CHANNEL is a legacy
@@ -125,7 +125,7 @@ app.commandLine.appendSwitch("remote-debugging-port", "0")
 app.commandLine.appendSwitch("enable-logging")
 process.env.NODE_OPTIONS = appendNodeOption(process.env.NODE_OPTIONS, "--enable-source-maps")
 process.setSourceMapsEnabled?.(true)
-const baseUserDataPath = app.isPackaged ? app.getPath("userData") : join(app.getPath("appData"), "CodeNomad")
+let baseUserDataPath = app.isPackaged ? app.getPath("userData") : join(app.getPath("appData"), "CodeNomad")
 if (!app.isPackaged) app.setName("CodeNomad")
 let storageScope!: StorageScope
 let profilePinned = false
@@ -137,8 +137,10 @@ sweepSelectionFolders({ temporaryRoot: tmpdir() })
 try {
   if (process.defaultApp && !devEntry) throw new Error("Unable to identify the Electron app entry")
   const relaunch = readDeveloperRelaunch(launchArgs)
-  if (relaunch) startProfile(relaunch.profile, relaunch.pinned, relaunch)
-  else {
+  if (relaunch) {
+    baseUserDataPath = relaunch.storageRoot ?? baseUserDataPath
+    startProfile(relaunch.profile, relaunch.pinned, relaunch)
+  } else {
     const launchProfile = resolveInitialProfile(baseUserDataPath)
     if (launchProfile) startProfile(launchProfile.key, isPinnedLaunch(launchProfile))
   }
@@ -183,7 +185,7 @@ function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, artifact:
     relaunchScopeGeneration: () => lifecycle.relaunchScopeGeneration(),
     verifyRelaunch: () => verifyElectronRelaunch(artifact),
     requestRelaunch: restart => lifecycle.requestRelaunch(developerRelaunchOptions({
-      profile: storageScope.profile, pinned: profilePinned, config, restart,
+      profile: storageScope.profile, pinned: profilePinned, config, storageRoot: baseUserDataPath, restart,
     }, artifact)),
   })
   const browserController = new BrowserController((sessionID, url, requestID) => {

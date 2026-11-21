@@ -184,9 +184,13 @@ test("the relaunch arguments pin only the original profile, config and artifact"
   assert.deepEqual(readDeveloperRelaunch(options.args!.slice(1)), launch)
   assert.throws(() => readDeveloperRelaunch([...options.args!.slice(1), "--new-window"]))
   const packaged = pinElectronRelaunch(executable, dirname(entryPath), ["--no-sandbox"], entryPath)
-  const packagedArgs = developerRelaunchOptions(launch, packaged).args!
+  const storageRoot = join(tmpdir(), "custom Electron data")
+  const scoped = { ...launch, storageRoot, restart: { ...launch.restart,
+    nativeIdentity: developerNativeIdentity("default", "config.yaml", config, packaged, storageRoot) } }
+  const packagedArgs = developerRelaunchOptions(scoped, packaged).args!
   assert.equal(packagedArgs[0], "--no-sandbox")
-  assert.deepEqual(readDeveloperRelaunch(packagedArgs), launch)
+  assert.deepEqual(readDeveloperRelaunch(packagedArgs), scoped)
+  assert.notEqual(scoped.restart.nativeIdentity, developerNativeIdentity("default", "config.yaml", config, packaged, dirname(storageRoot)))
   assert.throws(() => readDeveloperRelaunch([...packagedArgs, "--folder", "/other"]))
   assert.notEqual(developerNativeIdentity("stable", "config.yaml", config, artifact), launch.restart.nativeIdentity)
   assert.notEqual(developerNativeIdentity("default", "config.yaml", undefined, artifact), launch.restart.nativeIdentity)

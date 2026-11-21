@@ -11,6 +11,7 @@ export interface DeveloperRelaunch {
   profile: string
   pinned: boolean
   config: string | null
+  storageRoot?: string
 }
 
 /** Capture the running module, not a second resolution of Electron's CLI operand. */
@@ -28,8 +29,8 @@ export function pinElectronRelaunch(execPath: string, appPath: string, appArgs: 
 
 export type ElectronRelaunchArtifact = ReturnType<typeof pinElectronRelaunch>
 
-export function developerNativeIdentity(profile: string, configIdentity: string, config: string | undefined, { execPath, appPath, mainPath }: ElectronRelaunchArtifact): string {
-  return `electron:${createHash("sha256").update(`${profile}\0${configIdentity}\0${config ?? ""}\0${execPath}\0${appPath}\0${mainPath}`).digest("hex")}`
+export function developerNativeIdentity(profile: string, configIdentity: string, config: string | undefined, { execPath, appPath, mainPath }: ElectronRelaunchArtifact, storageRoot = ""): string {
+  return `electron:${createHash("sha256").update(`${profile}\0${configIdentity}\0${config ?? ""}\0${execPath}\0${appPath}\0${mainPath}\0${storageRoot}`).digest("hex")}`
 }
 
 export async function verifyElectronRelaunch({ execPath, appPath, mainPath, cliPackage }: ElectronRelaunchArtifact): Promise<void> {
@@ -90,12 +91,13 @@ export function readDeveloperRelaunch(args: string[]): DeveloperRelaunch | undef
   if (!marker) return
   if (args.length === 1) {
     try {
-      const { restart: value, profile, pinned, config } = JSON.parse(Buffer.from(marker.slice(PREFIX.length), "base64url").toString("utf8"))
+      const { restart: value, profile, pinned, config, storageRoot } = JSON.parse(Buffer.from(marker.slice(PREFIX.length), "base64url").toString("utf8"))
       const restart = readDeveloperRestart(value)
       // Storage keys also include verbatim normalized legacy aliases such as "default".
       if (restart && typeof profile === "string" && /^[a-z0-9._-]{1,255}$/.test(profile)
-        && typeof pinned === "boolean" && (config === null || typeof config === "string" && isAbsolute(config) && !config.includes("\0"))) {
-        return { restart, profile, pinned, config }
+        && typeof pinned === "boolean" && (config === null || typeof config === "string" && isAbsolute(config) && !config.includes("\0"))
+        && (storageRoot === undefined || typeof storageRoot === "string" && isAbsolute(storageRoot) && !storageRoot.includes("\0"))) {
+        return { restart, profile, pinned, config, ...(storageRoot !== undefined && { storageRoot }) }
       }
     } catch { /* A malformed handoff must never fall back to another profile. */ }
   }
