@@ -972,6 +972,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     if (!journal || historyBusy()) return
     const index = journal.value.index + offset
     if (index < 0 || index >= journal.value.urls.length) return
+    setAddressDraft(undefined)
     const instanceId = props.instanceId
     const retirement = startNavigation()
     pendingTauriNavigation = undefined

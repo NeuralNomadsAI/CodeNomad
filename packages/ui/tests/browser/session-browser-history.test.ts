@@ -1249,6 +1249,24 @@ test("the first agent open cannot refresh the neutral document or erase an addre
   } finally { await page.close() }
 })
 
+test("Back discards the address draft that existed before the navigation gesture", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
+  try {
+    await prepare(page, "tauri")
+    const a = `${base}/page/a`, b = `${base}/page/b`, draft = `${base}/page/draft`
+    await page.evaluate(url => (window as any).fixture.openPreview("session", url), a)
+    const registration = await page.waitForFunction(() => (window as any).fixture.native.calls
+      .find((call: any) => call.command === "browser_target_register")?.payload.registrationId)
+    await page.evaluate(({ id, url }) => (window as any).fixture.native.navigate(id, url), { id: await registration.jsonValue(), url: b })
+    const address = page.getByRole("textbox", { name: "Preview URL", exact: true })
+    await page.waitForFunction(url => (window as any).fixture.preview("session")?.targetUrl === url, b)
+    await address.fill(draft)
+    await page.locator('[data-session-id="session"] .window-shell').getByRole("button", { name: "Back", exact: true }).click()
+    await page.waitForFunction(url => (window as any).fixture.preview("session")?.targetUrl === url, a)
+    assert.equal(await address.inputValue(), a)
+  } finally { await page.close() }
+})
+
 test("Tauri retains hidden native registrations and restores the correct session target", async () => {
   const page = await browser.newPage({ userAgent: "Windows fixture", viewport: { width: 1200, height: 900 } })
   const errors: string[] = []
