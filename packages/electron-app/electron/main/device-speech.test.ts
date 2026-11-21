@@ -9,6 +9,7 @@ import type { BrowserWindow, IpcMainInvokeEvent, Session, WebContents } from "el
 import { isDeviceSpeechRequest } from "../../../desktop-speech/contract"
 import vectors from "../../../desktop-speech/request-vectors.json"
 import { DeviceSpeech, DeviceSpeechPreference, type DeviceSpeechDriver, type SpeechOperationControl } from "./device-speech"
+import { createSystemSpeechDriver } from "./device-speech-system"
 import { setupDeviceSpeechIPC } from "./device-speech-ipc"
 
 test("an unused remote microphone reservation expires; an authorized one stays held until revocation", t => {
@@ -86,6 +87,22 @@ const notOwned = { ok: false, error: "notOwned" }
 
 test("device speech parses the shared native wire vectors", () => {
   for (const { request, valid } of vectors) assert.equal(isDeviceSpeechRequest(request), valid, JSON.stringify(request))
+})
+
+test("an unsupported system choice stays saved until the user selects another engine", {
+  skip: process.platform === "darwin",
+}, t => {
+  const { device, preference } = fixture(t, createSystemSpeechDriver("unused"))
+  assert.equal(preference.select("system"), undefined)
+  const saved = preference.read()
+  assert.deepEqual(device.request(1, { action: "read" }), { ok: true, value: {
+    engine: "system", system: "unavailable", systemReason: "platformUnsupported", hex: { state: "unavailable" },
+  } })
+  assert.deepEqual(device.request(1, { action: "start", locale: "en" }), { ok: false, error: "unavailable" })
+  assert.deepEqual(device.request(1, { action: "select", engine: "system" }), { ok: false, error: "unavailable" })
+  assert.deepEqual(preference.read(), saved)
+  assert.equal(device.request(1, { action: "select", engine: "api" }).ok, true)
+  assert.equal(preference.read().engine, "api")
 })
 
 test("microphone reservations compete across owners and native dictation stays busy through driver shutdown", async (t) => {

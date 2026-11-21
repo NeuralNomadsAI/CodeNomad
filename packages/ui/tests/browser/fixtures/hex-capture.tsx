@@ -1,4 +1,4 @@
-import { createHexRecordingController } from "../../../src/components/prompt-input/hex-recording-controller"
+import { createNativeRecordingController } from "../../../src/components/prompt-input/hex-recording-controller"
 import type { requestDeviceSpeech } from "../../../src/lib/native/device-speech"
 import { createMicrophoneLeases } from "../../../src/lib/microphone-lease"
 
@@ -66,7 +66,7 @@ Worklet.prototype.addModule = async function (url, options) {
   catch (error) { info.workletError = String(error); throw error }
 }
 
-const capture = createHexRecordingController("fr-FR", {
+const capture = createNativeRecordingController("hex", "fr-FR", {
   onStateChange: (state) => { info.state = state },
   onTranscript: (text) => { info.text = text },
   onError: (error) => { info.error = error },

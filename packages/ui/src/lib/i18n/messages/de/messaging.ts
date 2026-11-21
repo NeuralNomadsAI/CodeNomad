@@ -394,7 +394,6 @@ export const messagingMessages = {
   "voice.microphone.conversation": "Das Live-Gespräch verwendet das Mikrofon.",
   "voice.microphone.unavailable": "Das Mikrofon ist in diesem Fenster nicht verfügbar.",
   "promptInput.voiceInput.error.permissionDenied": "Mikrofonzugriff wurde von macOS verweigert.",
-  "promptInput.voiceInput.error.unsupported": "Spracheingabe wird in diesem Browser nicht unterstützt.",
   "promptInput.voiceInput.error.transcribe": "Das aufgenommene Audio konnte nicht transkribiert werden.",
   "promptInput.resizeHandle.title": "Ziehen, um die Eingabehöhe zu ändern",
 } as const

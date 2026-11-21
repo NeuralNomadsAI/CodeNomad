@@ -286,6 +286,7 @@ This environment variable is a comma-separated list of exact HTTP(S) origins,
 for example `https://code.example.test,https://ui.example.test:8443`. Paths,
 credentials, opaque origins and wildcards fail startup. Configure DNS aliases,
 reverse-proxy public origins and separately hosted UIs here, then restart.
+For a separately hosted UI, deploy the renderer that uses binary synthesis before updating the backend.
 Forwarding headers grant neither origins nor local privileges; a proxy connected
 over loopback has the privileges of its loopback transport and needs an enforcing
 trusted perimeter. The configured UI development origin is admitted for local

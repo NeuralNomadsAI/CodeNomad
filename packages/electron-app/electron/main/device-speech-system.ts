@@ -12,11 +12,10 @@ export class SystemSpeechFailure extends Error {
 }
 
 export function createSystemSpeechDriver(resources: string): DeviceSpeechDriver {
-  const program = join(resources, "server", "desktop-speech",
-    process.platform === "win32" ? "codenomad-system-speech.exe" : "codenomad-system-speech")
+  const program = join(resources, "server", "desktop-speech", "codenomad-system-speech")
   let probe: { until: number; value: Capability } | undefined
   function discover(): Capability {
-    if (process.platform !== "win32" && process.platform !== "darwin")
+    if (process.platform !== "darwin")
       return { system: "unavailable", systemReason: "platformUnsupported" }
     if (!existsSync(program)) return { system: "unavailable", systemReason: "runtimeUnavailable" }
     const child = spawnSync(program, ["probe"], {

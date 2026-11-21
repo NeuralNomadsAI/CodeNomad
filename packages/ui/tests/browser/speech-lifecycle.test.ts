@@ -117,7 +117,7 @@ test("stream disposal aborts pending work and revokes allocated audio", () => wi
   await page.evaluate(() => (window as any).fixture.toggle("a"))
   await page.waitForFunction(() => (window as any).fixture.snapshot().pending === 2)
   await page.evaluate(() => (window as any).fixture.resolve(1))
-  await page.waitForFunction(() => (window as any).fixture.snapshot().audios.length === 1)
+  await state(page, "a", "playing")
   await page.evaluate(() => (window as any).fixture.remove("a"))
   const stopped = await snapshot(page)
   assert.deepEqual(stopped.aborted, [true, true])
@@ -128,7 +128,7 @@ test("stream disposal aborts pending work and revokes allocated audio", () => wi
 test("stop and disposal fence buffered responses and capabilities still loading", () => withPage(async page => {
   await page.evaluate(() => { const f = (window as any).fixture; f.mount("a", "buffered"); f.toggle("a") })
   await page.waitForFunction(() => (window as any).fixture.snapshot().pending === 1)
-  await page.evaluate(() => { const f = (window as any).fixture; f.stop("a"); f.resolve(0) })
+  await page.evaluate(() => { const f = (window as any).fixture; f.toggle("a"); f.resolve(0) })
   await state(page, "a", "idle")
   await page.evaluate(() => (window as any).fixture.toggle("a"))
   await page.waitForFunction(() => (window as any).fixture.snapshot().pending === 2)
@@ -139,6 +139,8 @@ test("stop and disposal fence buffered responses and capabilities still loading"
   })
   // Cross one event-loop turn so all deliberately resolved continuations run.
   await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 0)))
-  assert.equal((await snapshot(page)).pending, 2, "disposed capability wait must not start synthesis")
-  assert.equal((await snapshot(page)).audios.length, 0)
+  const stopped = await snapshot(page)
+  assert.equal(stopped.pending, 2, "disposed capability wait must not start synthesis")
+  assert.deepEqual(stopped.aborted, [true, true])
+  assert.equal(stopped.audios.length, 0)
 }))

@@ -24,7 +24,6 @@ interface UsePromptVoiceInputOptions {
   disabled: Accessor<boolean>
   sending: Accessor<boolean>
   canInsertTranscript: Accessor<boolean>
-  engine?: (api: VoiceInputEngine) => VoiceInputEngine | undefined
 }
 
 type TextSelection = Pick<HTMLTextAreaElement, "selectionStart" | "selectionEnd" | "selectionDirection">
@@ -50,7 +49,7 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
 
   const deviceDictation = useDeviceDictation(locale, options.enabled)
   const remoteDictation = useRemoteDictation(locale, options.enabled)
-  const route = remoteDictation?.route ?? options.engine ?? deviceDictation?.route
+  const route = remoteDictation?.route ?? deviceDictation?.route
   const authorizeApi = remoteDictation?.authorizeApi ?? deviceDictation?.authorizeApi
   const apiEngine: VoiceInputEngine = {
     canStart: () => {
@@ -183,7 +182,6 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     state,
     recordingPreview,
     unavailableKey,
-    deviceDictation,
     canStartRecording,
     startRecording,
     stopRecording: () => activeCapture()?.controller?.stopRecording(),

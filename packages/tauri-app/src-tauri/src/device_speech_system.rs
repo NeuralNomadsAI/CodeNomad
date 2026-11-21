@@ -3,7 +3,6 @@ use crate::{
         valid_locale, Capabilities, Control, Driver, Engine, Hex, Plan, SpeechError, System,
     },
     device_speech_worker::run_worker,
-    managed_node::candidate_resource_roots,
 };
 use parking_lot::Mutex;
 use std::{
@@ -26,25 +25,13 @@ pub(crate) struct SystemDriver {
 }
 
 fn helper() -> Result<PathBuf, SystemReason> {
-    let name = match std::env::consts::OS {
-        "macos" => {
-            return std::env::current_exe()
-                .ok()
-                .and_then(|exe| Some(exe.parent()?.join("codenomad-system-speech")))
-                .filter(|path| path.is_file())
-                .ok_or(SystemReason::RuntimeUnavailable);
-        }
-        "windows" => "codenomad-system-speech.exe",
-        _ => return Err(SystemReason::PlatformUnsupported),
-    };
-    candidate_resource_roots()
-        .into_iter()
-        .chain(
-            cfg!(debug_assertions)
-                .then(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources")),
-        )
-        .map(|root| root.join("server").join("desktop-speech").join(name))
-        .find(|path| path.is_file())
+    if !cfg!(target_os = "macos") {
+        return Err(SystemReason::PlatformUnsupported);
+    }
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.join("codenomad-system-speech")))
+        .filter(|path| path.is_file())
         .ok_or(SystemReason::RuntimeUnavailable)
 }
 
@@ -191,7 +178,7 @@ mod tests {
         assert_eq!(resolve_locale(&locales, "zh-SG"), None);
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn an_unqualified_platform_exposes_no_system_recognizer() {
         assert!(matches!(helper(), Err(SystemReason::PlatformUnsupported)));

@@ -10,9 +10,8 @@ import { resetSpeechCapabilities } from "../../../src/stores/speech"
 
 const capabilities = { available: true, ttsConfigured: true, supportsTts: true, supportsStreamingTts: true }
 serverApi.fetchSpeechCapabilities = async () => capabilities as any
-const pending: Array<{ resolve: (value: any) => void; signal?: AbortSignal }> = []
+const pending: Array<{ resolve: (value: Response) => void; signal: AbortSignal }> = []
 let resolveCapabilities: (() => void) | undefined
-serverApi.synthesizeSpeech = () => new Promise(resolve => pending.push({ resolve }))
 serverApi.synthesizeSpeechStream = (_request, signal) => new Promise(resolve => pending.push({ resolve, signal }))
 
 const audios: FakeAudio[] = [], revoked: string[] = []
@@ -27,12 +26,23 @@ class FakeAudio extends EventTarget {
   load() { this.loads++ }
 }
 class FakeMediaSource extends EventTarget {
+  readyState = "open"
   static isTypeSupported() { return true }
+  addSourceBuffer() {
+    const buffer = new EventTarget()
+    return Object.assign(buffer, {
+      appendBuffer: () => queueMicrotask(() => buffer.dispatchEvent(new Event("updateend"))),
+    })
+  }
+  endOfStream() {}
 }
 window.Audio = FakeAudio as any
 window.MediaSource = FakeMediaSource as any
 let urlSequence = 0
-URL.createObjectURL = () => `blob:speech-${++urlSequence}`
+URL.createObjectURL = source => {
+  if (source instanceof FakeMediaSource) queueMicrotask(() => source.dispatchEvent(new Event("sourceopen")))
+  return `blob:speech-${++urlSequence}`
+}
 URL.revokeObjectURL = url => { revoked.push(url) }
 
 const Providers = (props: any) => <ConfigProvider><I18nProvider><ThemeProvider>{props.children}</ThemeProvider></I18nProvider></ConfigProvider>
@@ -87,10 +97,7 @@ async function cards(count: number, drift: boolean) {
   remove: (key: string) => { owners.get(key)!.dispose(); owners.delete(key) },
   toggle: (key: string) => { void owners.get(key)!.speech.toggle() },
   state: (key: string) => owners.get(key)!.speech.state(),
-  stop: (key: string) => owners.get(key)!.speech.stop(),
-  resolve: (index: number) => pending[index].resolve(pending[index].signal
-    ? new Response(new ReadableStream({ start(controller) { controller.close() } }), { headers: { "content-type": "audio/mpeg" } })
-    : { audioBase64: "YQ==", mimeType: "audio/mpeg" }),
+  resolve: (index: number) => pending[index].resolve(new Response(new Uint8Array([97]), { headers: { "content-type": "audio/mpeg" } })),
   finish: (index: number, event = "ended") => audios[index].dispatchEvent(new Event(event)),
-  snapshot: () => ({ pending: pending.length, aborted: pending.map(request => request.signal?.aborted ?? false), revoked: [...revoked], audios: audios.map(audio => ({ paused: audio.paused, src: audio.src, loads: audio.loads })) }),
+  snapshot: () => ({ pending: pending.length, aborted: pending.map(request => request.signal.aborted), revoked: [...revoked], audios: audios.map(audio => ({ paused: audio.paused, src: audio.src, loads: audio.loads })) }),
 }

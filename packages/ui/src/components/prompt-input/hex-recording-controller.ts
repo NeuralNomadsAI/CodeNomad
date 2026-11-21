@@ -7,15 +7,6 @@ import type { RecordingControllerCallbacks, VoiceInputController } from "./recor
 
 export { hexCaptureAvailable }
 
-export function createHexRecordingController(
-  locale: string,
-  callbacks: RecordingControllerCallbacks,
-  send = requestDeviceSpeech,
-  claim = claimMicrophone,
-): VoiceInputController {
-  return createNativeRecordingController("hex", locale, callbacks, send, claim)
-}
-
 export function createNativeRecordingController(
   engine: LocalSpeechEngine,
   locale: string,

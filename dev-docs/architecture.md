@@ -315,8 +315,9 @@ Run `node --import tsx packages/ui/tests/contracts/backend-async-inventory.ts > 
 | `stores/session-previews.ts` | A+C | occurrence preview open/restore/dismiss; capability issuance/deletion; lifecycle and pagehide cleanup | Qualified instance/session identity, original gesture and attachment fence publication. Captured client/token owns cleanup; dismissal keeps saved logical history, and pagehide deletes with keepalive. |
 | `stores/sidecars.ts` | C | ensureSidecarsLoaded/openSidecarTab; pending load; storage/event reconciliation | Local client cache and pending identity; local-source events; tab demand retained. |
 | `stores/speech.ts` | C | loadSpeechCapabilities; shared promise/cache | Local API/client capability cache and pending owner retained through reconnect. |
-| `stores/conversation-speech.ts` | V+C | runConversationQueue; buffered/streaming playback handles; playable callbacks | Conversation playback queue and AbortController; retained local speech HTTP client; playback request/controller owns stop. |
-| `lib/hooks/use-speech.ts` | A | start/toggle; buffered/streaming synthesis; response stream cancel; onPlayable | captureBackendOperation plus playback controller/current/disposed; media callbacks belong to playback request. |
+| `stores/conversation-speech.ts` | V+C | runConversationQueue; Classic summary playback | Conversation playback queue and AbortController; playback request/controller owns stop. |
+| `lib/hooks/use-speech.ts` | A | start/toggle; manual playback | captureBackendOperation plus playback controller and content identity; owner disposal stops playback. |
+| `lib/speech-playback.ts` | V+C | playSpeech; binary synthesis and audio playback | Local speech client and caller's signal cover request, buffered body or stream, and audio cleanup. |
 | `lib/hooks/use-live-voice-conversation.ts` | A+V | local speech WebSocket and session controller | Renderer server origin and matching local session/client, provider engine and explicit consent; target change or disposal stops audio and socket. |
 | `lib/live-voice-consent.ts` | C | persist accepted provider notice | Renderer server origin, provider and notice version own the write; native profile HTTP or browser storage. |
 | `lib/live-voice-session.ts` | V | provider socket, audio and agent turn callbacks | Captured audience, run and socket lifetime; signal fences pending work and stop releases capture and connection. |
@@ -487,8 +488,7 @@ Tool, Markdown and attachment images follow the [passive media contract](TRANSCR
 | Local runtime/bootstrap | validateBinary, fetchOpenCodeUpdateStatus, getOpenCodeLoginStart, setOpenCodeLoginStart, updateOpenCode, startOpenCode, reloadOpenCodeConfiguration | C; setup/client generation |
 | Host log snapshot | fetchOpenCodeLogs | S; explicit host settings reader owns cancellation and publication |
 | Speech client services | fetchSpeechCapabilities, getDesktopVoiceConversationEngine, setDesktopVoiceConversationEngine | C for renderer-server capabilities and profile-owned engine preference |
-| Speech capture/playback | transcribeAudio, synthesizeSpeech | S for the caller's capture or playback lifetime |
-| Streaming synthesis | synthesizeSpeechStream | S; playback passes its AbortSignal |
+| Speech capture/playback | transcribeAudio, synthesizeSpeechStream | S for the caller's capture or playback lifetime; both playback modes consume the binary response. |
 | SideCars/previews | fetchSidecars, createSidecar, updateSidecar, deleteSidecar, createPreview, deletePreview, createPreviewCapability, deletePreviewCapability | C; resource token/session/client ownership; remote capability deletion retains its original proof and supports pagehide keepalive |
 | Conversation permission mode | readConversationPermissionMode, setConversationPermissionMode | S for reads, C for writes; the conversation and attachment fence publication |
 | Mission display windows | fetchMissionPanel, fetchMissionTasks, fetchMissionCurrentPanel, fetchMissionCurrentTasks | scope: supplied signal/current and capped deadline; per-transfer checks and secondary queue |

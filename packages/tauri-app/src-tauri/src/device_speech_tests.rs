@@ -119,6 +119,46 @@ fn fixture_with_hex_ready(
     (directory, device, listen, release)
 }
 
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn unsupported_system_choice_requires_explicit_reselection() {
+    let directory = tempfile::tempdir().unwrap();
+    let device = DeviceSpeech::new(
+        directory.path().join("choice.json"),
+        Some(Arc::new(crate::device_speech_system::SystemDriver::default())),
+    );
+    device.store.select(Engine::System, None).unwrap();
+    let saved = device.store.read().unwrap();
+    let read = device.request("local", Request::Read {}).unwrap();
+    assert_eq!(read["engine"], "system");
+    assert_eq!(read["systemReason"], "platformUnsupported");
+    assert_eq!(
+        device.request(
+            "local",
+            Request::Start {
+                locale: "en".into(),
+                engine: None,
+                microphone_lease_id: None,
+            },
+        ),
+        Err(SpeechError::Unavailable)
+    );
+    assert_eq!(
+        device.request(
+            "local",
+            Request::Select {
+                engine: Engine::System,
+            },
+        ),
+        Err(SpeechError::Unavailable)
+    );
+    assert_eq!(device.store.read().unwrap().revision, saved.revision);
+    device
+        .request("local", Request::Select { engine: Engine::Api })
+        .unwrap();
+    assert_eq!(device.preferred_engine().unwrap(), Engine::Api);
+}
+
 fn operation(device: &DeviceSpeech, owner: &str, input: Request) -> String {
     device.request(owner, input).unwrap()["id"]
         .as_str()

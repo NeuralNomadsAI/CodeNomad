@@ -8,7 +8,7 @@ let fixture: Awaited<ReturnType<typeof startProductFixture>>
 before(async () => { fixture = await startProductFixture("composer-dictation") })
 after(async () => { await fixture?.close() })
 
-async function withComposer(run: (page: Page) => Promise<void>, mobile = false, native?: "remote" | "remote-api" | "remote-api-legacy" | "remote-tauri" | "wsl" | "hex-setup" | "tauri-api" | "tauri-preferences" | "tauri-remote-api", pcm = false, locale: "en" | "he" | "zh-Hans" = "en", ttsOnly = false, unconfigured: boolean | Promise<number> = false, options: { history?: boolean; engineStatus?: Promise<number>; expectedSends?: string[]; systemLocale?: string } = {}) {
+async function withComposer(run: (page: Page) => Promise<void>, mobile = false, native?: "remote" | "remote-api" | "remote-api-legacy" | "remote-tauri" | "wsl" | "hex-setup" | "tauri-api" | "tauri-preferences" | "tauri-remote-api", pcm = false, locale: "en" | "he" | "zh-Hans" = "en", ttsOnly = false, unconfigured: boolean | Promise<number> = false, options: { history?: boolean; engineStatus?: Promise<number>; expectedSends?: string[]; systemLocale?: string; systemUnsupported?: boolean } = {}) {
   const context = await fixture.browser.newContext({
     viewport: mobile ? { width: 390, height: 844 } : { width: 900, height: 600 },
     isMobile: mobile, hasTouch: mobile,
@@ -20,7 +20,7 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
   page.on("pageerror", error => errors.push(error))
   try {
     if (native) {
-      const installNativeBridge = (kind: typeof native, systemLocale: string) => {
+      const installNativeBridge = (kind: typeof native, systemLocale: string, systemUnsupported: boolean) => {
         const requests: Array<Record<string, unknown>> = []
         const settings = {
           opened: [] as string[], engine: "system", state: "needsPreparation", token: "plan-initial",
@@ -64,7 +64,9 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
             requests.push(request)
             if (mic(request.action)) return mic(request.action)
             if (kind === "hex-setup") {
-              const snapshot = () => ({ engine: settings.engine, system: "ready", systemLocales: ["fr-FR"],
+              const snapshot = () => ({ engine: settings.engine,
+                ...(systemUnsupported ? { system: "unavailable", systemReason: "platformUnsupported" }
+                  : { system: "ready", systemLocales: ["fr-FR"] }),
                 hex: { state: settings.state, plan: { id: settings.token, missing: settings.state === "ready" ? [] : [
                   { component: "engine", downloadBytes: 0 }, { component: "model", downloadBytes: settings.remaining },
                 ] } },
@@ -132,7 +134,7 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
           Object.assign(window, { electronAPI: desktop, __CODENOMAD_RUNTIME_HOST__: "electron" })
         }
       }
-      await page.addInitScript(`{ const __name = (value) => value; (${installNativeBridge.toString()})(${JSON.stringify(native)}, ${JSON.stringify(options.systemLocale ?? "en-US")}); }`)
+      await page.addInitScript(`{ const __name = (value) => value; (${installNativeBridge.toString()})(${JSON.stringify(native)}, ${JSON.stringify(options.systemLocale ?? "en-US")}, ${Boolean(options.systemUnsupported)}); }`)
     }
     await context.route("**/api/**", async route => {
       const url = route.request().url()
@@ -603,6 +605,22 @@ test("System dictation previews on the local host before inserting only the fina
   assert.equal(capture.starts, 0)
   assert.deepEqual(capture.requests, [])
 }, false, "wsl"))
+
+test("an unsupported saved system engine requires an explicit change and is not offered again", () => withComposer(async page => {
+  const more = page.getByRole("button", { name: "More actions", exact: true })
+  await more.click()
+  const dictate = page.locator('[data-action-key="voice"]')
+  assert.match(await dictate.innerText(), /Set up dictation/)
+  await dictate.click()
+  const engine = page.getByRole("combobox", { name: "Dictation engine on this device" })
+  await engine.waitFor()
+  assert.equal(await engine.inputValue(), "system")
+  assert.equal(await engine.locator("option:checked").isDisabled(), true)
+  assert.equal(await page.evaluate(() => (window as any).capture.starts), 0)
+  await engine.selectOption("api")
+  await engine.locator('option[value="system"]').waitFor({ state: "detached" })
+  assert.equal(await engine.inputValue(), "api")
+}, false, "hex-setup", false, "en", false, false, { systemUnsupported: true }))
 
 test("typing during a System preview preserves the draft and saves only the final text for insertion", () => withComposer(async page => {
   await start(page)

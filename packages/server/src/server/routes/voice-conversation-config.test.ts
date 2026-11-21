@@ -238,7 +238,6 @@ test("classic speech provider errors keep upstream credential echoes out of resp
   const { app } = fixture(t, stringify({ server: { speech: { apiKey: secret, baseUrl } } }))
   for (const [url, payload] of [
     ["/api/speech/transcribe", { audioBase64: "AAA=", mimeType: "audio/wav" }],
-    ["/api/speech/synthesize", { text: "fixture" }],
     ["/api/speech/synthesize/stream", { text: "fixture" }],
   ] as const) {
     const response = await app.inject({ method: "POST", url, payload })

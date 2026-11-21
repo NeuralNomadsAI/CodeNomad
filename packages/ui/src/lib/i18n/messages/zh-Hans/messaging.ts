@@ -396,7 +396,6 @@ export const messagingMessages = {
   "voice.microphone.conversation": "实时对话正在使用麦克风。",
   "voice.microphone.unavailable": "此窗口无法使用麦克风。",
   "promptInput.voiceInput.error.permissionDenied": "macOS 已拒绝麦克风访问。",
-  "promptInput.voiceInput.error.unsupported": "此浏览器不支持语音输入。",
   "promptInput.voiceInput.error.transcribe": "无法转写录制的音频。",
   "promptInput.resizeHandle.title": "拖动以调整输入框高度",
 } as const

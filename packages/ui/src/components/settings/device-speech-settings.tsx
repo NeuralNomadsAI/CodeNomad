@@ -39,6 +39,7 @@ export function DeviceSpeechSettings(props: { speech: ReturnType<typeof useDevic
   }
   const isolatedSize = (bytes: number) => `\u2068${formatSize(bytes)}\u2069`
   const systemKey = () => deviceSystemLabel(speech.snapshot(), locale())
+  const showSystem = () => speech.snapshot()?.systemReason !== "platformUnsupported" || speech.snapshot()?.engine === "system"
   const hexKey = () => deviceHexLabel(speech.snapshot())
   const errorKey = () => {
     switch (speech.error()) {
@@ -85,7 +86,9 @@ export function DeviceSpeechSettings(props: { speech: ReturnType<typeof useDevic
             }}
           >
             <option value="api">{t("settings.speech.device.api")}</option>
-            <option value="system" disabled={systemKey() !== "settings.speech.device.system"}>{t(systemKey())}</option>
+            <Show when={showSystem()}>
+              <option value="system" disabled={systemKey() !== "settings.speech.device.system"}>{t(systemKey())}</option>
+            </Show>
             <option value="hex" disabled={hexKey() !== "settings.speech.device.hex"}>{t(hexKey())}</option>
           </select>
         </label>

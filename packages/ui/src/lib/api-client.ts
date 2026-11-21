@@ -32,7 +32,6 @@ import type {
   OpenCodeUpdateResponse,
   OpenCodeUpdateStatus,
   SpeechCapabilitiesResponse,
-  SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
   VoiceConversationEngine,
   SideCar,
@@ -805,16 +804,9 @@ export function createServerApi(ctx: BackendHttp) {
         signal,
       })
     },
-    synthesizeSpeech(payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" }, signal?: AbortSignal): Promise<SpeechSynthesisResponse> {
-      return request<SpeechSynthesisResponse>("/api/speech/synthesize", {
-        method: "POST",
-        body: JSON.stringify(payload),
-        signal,
-      })
-    },
     synthesizeSpeechStream(
       payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" },
-      signal?: AbortSignal,
+      signal: AbortSignal,
     ): Promise<Response> {
       return requestRaw("/api/speech/synthesize/stream", {
         method: "POST",

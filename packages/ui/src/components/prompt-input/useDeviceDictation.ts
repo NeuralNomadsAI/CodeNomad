@@ -26,7 +26,6 @@ export function useDeviceDictation(locale: () => string, active: Accessor<boolea
   })
   const system = engine("system"), hex = engine("hex")
   return {
-    snapshot,
     readFailed: device.readFailed,
     languageMissing: () => {
       const current = snapshot()

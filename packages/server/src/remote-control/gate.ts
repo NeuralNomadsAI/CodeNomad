@@ -45,7 +45,7 @@ const SERVER_DEVICE_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
   ["GET POST", /^\/api\/opencode\/(?:update|login-start)$/],
   ["POST", /^\/api\/opencode\/service$/],
   ["GET", /^\/api\/speech\/capabilities$/],
-  ["POST", /^\/api\/speech\/(?:transcribe|synthesize(?:\/stream)?)$/],
+  ["POST", /^\/api\/speech\/(?:transcribe|synthesize\/stream)$/],
   ["GET POST", /^\/api\/sidecars$/],
   ["POST", /^\/api\/previews$/],
   ["PUT DELETE", /^\/api\/sidecars\/[^/]+$/],
