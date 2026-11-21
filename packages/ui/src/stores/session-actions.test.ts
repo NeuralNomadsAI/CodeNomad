@@ -941,6 +941,28 @@ describe("native prompt serialization", () => {
     assert.deepEqual(prompts, ["first", "second"])
   })
 
+  it("reserves a prompt's place in the queue before preparing its history window", async () => {
+    let release!: () => void
+    const pending = new Promise<void>(resolve => { release = resolve })
+    const prompts: string[] = []
+    seed({ session: {
+      instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchAgent: async () => {},
+      switchModel: async () => {},
+      prompt: async (input: any) => {
+        prompts.push(input.text)
+        return { id: input.id }
+      },
+    } })
+    const first = sendMessage(instanceId, sessionId, "from history", [], { prepareAdmission: () => pending })
+    const second = sendMessage(instanceId, sessionId, "later")
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(prompts, [])
+    release()
+    await Promise.all([first, second])
+    assert.deepEqual(prompts, ["from history", "later"])
+  })
+
   it("uses the current client when a queued prompt starts after reconnect", async () => {
     const oldPrompts: string[] = []
     const newPrompts: string[] = []

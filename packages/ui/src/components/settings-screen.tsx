@@ -41,7 +41,6 @@ import { createPreferencesProjectContext } from "./settings/preferences-project-
 import { activeInstanceId, instances } from "../stores/instances"
 import { getActiveCatalogLocation } from "../stores/sessions"
 import { requestServerSelection } from "../lib/native/server-selection"
-import { showToastNotification } from "../lib/notifications"
 import { backendRegistry } from "../stores/remote-backends"
 import { parseInstanceKey } from "../lib/backend-identity"
 import { getServerMeta, serversUsable } from "../lib/server-meta"
@@ -101,7 +100,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
       { id: "chat", icon: MessageSquare, label: t("settings.nav.chat") },
       { id: "hotkeys", icon: Keyboard, label: t("settings.nav.hotkeys") },
       { id: "notifications", icon: Bell, label: t("settings.nav.notifications") },
-      { id: "speech", icon: Volume2, label: t("settings.nav.speech") },
+      { id: "speech", icon: Volume2, label: t("settings.nav.voice") },
       { id: "opencode", icon: Terminal, label: t("settings.nav.opencode") },
       { id: "providers", icon: PlugZap, label: t("settings.nav.providers") },
       { id: "missions", icon: Flag, label: t("settings.nav.missions") },
@@ -142,8 +141,9 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
       case "opencode":
         return <OpenCodeSettingsSection />
       case "servers":
-        return <Show when={serversEnabled()} fallback={<GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} instanceId={memoryContext()?.instanceId} location={memoryContext()?.location} serverId={memoryContext()?.serverId} projectUnavailable={projectUnavailable()} />}><ServersSettingsSection onSelectServer={intent => {
-          void requestServerSelection(intent).catch(() => showToastNotification({ category: "settings", variant: "error", message: t("remoteBrowse.unreachable") }))
+        return <Show when={serversEnabled()} fallback={<GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} instanceId={memoryContext()?.instanceId} location={memoryContext()?.location} serverId={memoryContext()?.serverId} projectUnavailable={projectUnavailable()} />}><ServersSettingsSection onSelectServer={async intent => {
+          await requestServerSelection(intent)
+          if (props.standalone) await handleCloseSettings()
         }} /></Show>
       case "providers":
         return <Show when={!props.projectUnavailable} fallback={<p role="status">{t("commands.openWorkspace.projectRequired.message")}</p>}><ProvidersSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} /></Show>

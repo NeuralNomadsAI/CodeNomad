@@ -611,8 +611,9 @@ test("actual MissionControl reuses the current task tree and attention, with bri
         await probe.evaluate(async () => (await import("/src/stores/forms.ts" as string)).removeFormFromQueue("fixture", "form_child"))
         fail = true
         release(); hold = undefined
-        // (The selected row is folded: its detail's read status is mounted, not shown.)
-        await probe.getByText(/Schedules could not be loaded|last confirmed snapshot/).first().waitFor({ state: "attached" })
+        // A failed read posts no inline status: the shell's activity indicator covers reads.
+        await probe.waitForTimeout(500)
+        assert.equal(await probe.getByText(/Schedules could not be loaded|last confirmed snapshot|Reading the mission map/).count(), 0)
         fail = false
         await probe.evaluate(async () => (await import("/src/stores/forms.ts" as string)).addFormToQueue("fixture", { id: "form_later", sessionID: "ses_child",
           location: { directory: "/fixture" }, title: "Later question", tool: { name: "question" }, fields: [], time: { created: 2 } } as never))
@@ -761,7 +762,8 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     assert.deepEqual(nativeReads, [], "the loaded asking conversation is reused")
     fail = true
     await page.evaluate(() => (window as any).passageFixture.invalidate())
-    await page.getByText(/last confirmed snapshot/).waitFor()
+    await page.waitForTimeout(500)
+    assert.equal(await page.getByText(/last confirmed snapshot/).count(), 0, "a failed refresh posts no inline status")
     assert.equal(await card.locator(".mission-tree").getByText("Review commits", { exact: true }).count(), 1, "failed refresh preserves map")
     assert.equal(await card.locator('.mission-tree .mission-tree-node[data-task-key="first"]').count(), 1)
     await page.evaluate(() => (window as any).passageFixture.activate(false))

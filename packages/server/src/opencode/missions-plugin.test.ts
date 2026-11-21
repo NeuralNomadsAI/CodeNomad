@@ -193,10 +193,10 @@ test("registers project tools, typed snapshot RPC, and role context", async () =
   const inspect = tools.find((tool) => tool.name === "inspect")!
   assert.match(description("inspect"), /start attaches THIS root as a paused coordinator/)
   assert.match(description("inspect"), /including human-created Missions, from any owned conversation/)
-  assert.match(description("prepare"), /this conversation stays unchanged/)
+  assert.match(description("prepare"), /without starting a passage in this conversation/)
   assert.match(description("prepare"), /new coordinator is the default/)
   assert.match(description("prepare"), /Any owned project session may prepare/)
-  assert.match(description("prepare"), /coordinatorSessionID explicitly selects an eligible idle root for scheduling only/)
+  assert.match(description("prepare"), /coordinatorSessionID explicitly selects an eligible root for scheduling only, including your own root/)
   assert.match(description("prepare"), /mission.schedule controls project schedules/)
   assert.match(description("schedule"), /including human-created schedules/)
   assert.equal((inspect as any).input.properties.start.properties.title.maxLength, 60)

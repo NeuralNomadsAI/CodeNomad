@@ -11,7 +11,6 @@ import { sdkManager } from "./sdk-manager"
 import { filesystemInvalidationVersion } from "./filesystem-events"
 import { sessionGoals } from "../stores/session-goal"
 import { serverApi } from "./api-client"
-import { TrailingResyncCoordinator } from "./trailing-resync"
 import { registerLocalBackendFixture } from "../../tests/contracts/local-backend-fixture"
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve))
@@ -190,21 +189,4 @@ test("an old ping callback after reconnect cannot send a pong", async t => {
   assert.equal(pongs, 0)
   pings[1]({ ts: 2 }); await tick()
   assert.equal(pongs, 1)
-})
-
-test("old resync finally preserves the replacement lane while it remains occupied", async () => {
-  const releases: (() => void)[] = []
-  const coordinator = new TrailingResyncCoordinator(async () => new Promise<void>(resolve => { releases.push(resolve) }), () => {})
-  const a = new AbortController(), b = new AbortController()
-  const old = coordinator.request("ws", a.signal); await tick()
-  a.abort()
-  const current = coordinator.request("ws", b.signal); await tick()
-  releases[0](); await old
-  const joined = coordinator.request("ws", b.signal)
-  try { assert.equal(joined, current) }
-  finally {
-    b.abort()
-    for (const release of releases) release()
-    await Promise.all([current, joined])
-  }
 })

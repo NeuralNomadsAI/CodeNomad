@@ -10,6 +10,10 @@ interface OpenAICompatibleSpeechProviderOptions {
   logger: Logger
 }
 
+export class SpeechNotConfiguredError extends Error {
+  constructor() { super("Speech provider is not configured. Add an API key in Speech settings.") }
+}
+
 export class OpenAICompatibleSpeechProvider {
   constructor(private readonly options: OpenAICompatibleSpeechProviderOptions) {}
 
@@ -31,7 +35,8 @@ export class OpenAICompatibleSpeechProvider {
     }
   }
 
-  async transcribe(input: TranscribeAudioInput): Promise<SpeechTranscriptionResponse> {
+  async transcribe(input: TranscribeAudioInput, signal?: AbortSignal): Promise<SpeechTranscriptionResponse> {
+    signal?.throwIfAborted()
     const client = this.createClient()
     const startedAt = Date.now()
     const extension = extensionForMime(input.mimeType)
@@ -48,7 +53,8 @@ export class OpenAICompatibleSpeechProvider {
       "speech.transcribe",
     )
 
-    const response = await this.requestTranscription(client, buffer, filename, input)
+    const response = await this.requestTranscription(client, buffer, filename, input, signal)
+    signal?.throwIfAborted()
 
     return {
       text: typeof response?.text === "string" ? response.text : "",
@@ -71,6 +77,7 @@ export class OpenAICompatibleSpeechProvider {
     buffer: Buffer,
     filename: string,
     input: TranscribeAudioInput,
+    signal?: AbortSignal,
   ): Promise<any> {
     const baseRequest = {
       model: this.options.settings.sttModel,
@@ -78,24 +85,27 @@ export class OpenAICompatibleSpeechProvider {
       ...(input.prompt ? { prompt: input.prompt } : {}),
     }
 
+    const requestOptions = { signal, maxRetries: 0 }
+    const file = await toFile(buffer, filename, { type: input.mimeType })
+    signal?.throwIfAborted()
     try {
-      const file = await toFile(buffer, filename, { type: input.mimeType })
       return (await client.audio.transcriptions.create({
         ...baseRequest,
         file,
         response_format: "verbose_json" as any,
-      } as any)) as any
+      } as any, requestOptions)) as any
     } catch (error) {
-      this.options.logger.warn({ err: error }, "speech.transcribe verbose_json failed; retrying default format")
-      const retryFile = await toFile(buffer, filename, { type: input.mimeType })
+      signal?.throwIfAborted()
+      if (!(error instanceof OpenAI.APIError) || (error.status !== 400 && error.status !== 422)
+        || (error.param !== "response_format" && !/response[ _-]format|verbose_json/i.test(error.message))) throw error
       return (await client.audio.transcriptions.create({
         ...baseRequest,
-        file: retryFile,
-      } as any)) as any
+        file,
+      } as any, requestOptions)) as any
     }
   }
 
-  async synthesize(input: SynthesizeSpeechInput): Promise<SpeechSynthesisResponse> {
+  async synthesize(input: SynthesizeSpeechInput, signal?: AbortSignal): Promise<SpeechSynthesisResponse> {
     const format = input.format ?? this.options.settings.ttsFormat
 
     this.options.logger.info(
@@ -107,7 +117,7 @@ export class OpenAICompatibleSpeechProvider {
       "speech.synthesize",
     )
 
-    const response = await this.requestSpeechAudio(input.text, format)
+    const response = await this.requestSpeechAudio(input.text, format, signal)
     const mimeType = response.headers.get("content-type") || mimeTypeForFormat(format)
 
     const audioBuffer = Buffer.from(await response.arrayBuffer())
@@ -117,7 +127,7 @@ export class OpenAICompatibleSpeechProvider {
     }
   }
 
-  async synthesizeStream(input: SynthesizeSpeechInput): Promise<SpeechSynthesisStreamResponse> {
+  async synthesizeStream(input: SynthesizeSpeechInput, signal?: AbortSignal): Promise<SpeechSynthesisStreamResponse> {
     const format = input.format ?? this.options.settings.ttsFormat
 
     this.options.logger.info(
@@ -129,7 +139,7 @@ export class OpenAICompatibleSpeechProvider {
       "speech.synthesize.stream",
     )
 
-    const response = await this.requestSpeechAudio(input.text, format)
+    const response = await this.requestSpeechAudio(input.text, format, signal)
     if (!response.body) {
       throw new Error("Speech provider did not return a stream.")
     }
@@ -140,60 +150,31 @@ export class OpenAICompatibleSpeechProvider {
     }
   }
 
-  private async requestSpeechAudio(text: string, format: "mp3" | "wav" | "opus" | "aac"): Promise<Response> {
+  private async requestSpeechAudio(text: string, format: "mp3" | "wav" | "opus" | "aac", signal?: AbortSignal): Promise<Response> {
     const { settings } = this.options
     if (!settings.apiKey) {
-      throw new Error("Speech provider is not configured. Add an API key in Speech settings.")
+      throw new SpeechNotConfiguredError()
     }
 
     const endpoint = new URL("audio/speech", ensureTrailingSlash(settings.baseUrl ?? "https://api.openai.com/v1"))
-    let response: Response
-    try {
-      response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${settings.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: settings.ttsModel,
-          voice: settings.ttsVoice,
-          input: text,
-          response_format: format,
-        }),
-      })
-    } catch (error) {
-      const detailedError = error as Error & {
-        cause?: unknown
-        code?: string
-        errno?: number | string
-        syscall?: string
-        address?: string
-        port?: number
-      }
-      this.options.logger.error(
-        {
-          err: error,
-          endpoint: endpoint.toString(),
-          baseUrl: settings.baseUrl,
-          model: settings.ttsModel,
-          voice: settings.ttsVoice,
-          format,
-          cause: detailedError.cause,
-          code: detailedError.code,
-          errno: detailedError.errno,
-          syscall: detailedError.syscall,
-          address: detailedError.address,
-          port: detailedError.port,
-        },
-        "speech.synthesize fetch failed",
-      )
-      throw error
-    }
+    const response = await fetch(endpoint, {
+      method: "POST",
+      signal,
+      headers: {
+        Authorization: `Bearer ${settings.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: settings.ttsModel,
+        voice: settings.ttsVoice,
+        input: text,
+        response_format: format,
+      }),
+    })
 
     if (!response.ok) {
-      const detail = await response.text()
-      throw new Error(detail || `Speech synthesis failed with ${response.status}`)
+      await response.body?.cancel()
+      throw new Error(`Speech synthesis failed with ${response.status}`)
     }
 
     return response
@@ -202,12 +183,13 @@ export class OpenAICompatibleSpeechProvider {
   private createClient(): OpenAI {
     const { settings } = this.options
     if (!settings.apiKey) {
-      throw new Error("Speech provider is not configured. Add an API key in Speech settings.")
+      throw new SpeechNotConfiguredError()
     }
 
     return new OpenAI({
       apiKey: settings.apiKey,
       baseURL: settings.baseUrl,
+      logLevel: "off",
     })
   }
 }

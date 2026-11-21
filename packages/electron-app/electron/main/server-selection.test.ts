@@ -15,14 +15,17 @@ test("selection rejects credentials, extra fields, malformed policy and another 
 })
 test("native forwarding executes only in the exact trusted opener origin", async () => {
   const calls: unknown[] = []
-  const context = { window: { location: { origin: "http://localhost:3000" }, __CODENOMAD_SELECT_SERVER__: (value: unknown) => { calls.push(value) } } }
+  const context = { window: { location: { origin: "http://localhost:3000" },
+    __CODENOMAD_SELECT_SERVER__: (value: unknown, action?: "remove") => { calls.push(action ? { value, action } : value) } } }
   const target = { isDestroyed: () => false, webContents: { isDestroyed: () => false, getURL: () => "http://localhost:3000",
     executeJavaScript: async (source: string) => vm.runInNewContext(source, context) } }
   await selectServerInWindow(target, intent, () => true)
-  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [intent])
+  await selectServerInWindow(target, intent, () => true, "remove")
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [intent, { value: intent, action: "remove" }])
   await assert.rejects(selectServerInWindow(undefined, intent, () => true))
   await assert.rejects(selectServerInWindow(target, intent, () => false))
   context.window.location.origin = "https://outside.test"
   await assert.rejects(selectServerInWindow(target, intent, () => true), /origin changed/)
-  assert.equal(calls.length, 1)
+  await assert.rejects(selectServerInWindow(target, intent, () => true, "remove"), /origin changed/)
+  assert.equal(calls.length, 2)
 })

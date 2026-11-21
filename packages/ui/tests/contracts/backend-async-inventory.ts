@@ -136,23 +136,22 @@ function analyzer(checker: ts.TypeChecker) {
 
 const analyzers = new WeakMap<ts.TypeChecker, ReturnType<typeof analyzer>>()
 
-export function scanOperations(file: string, text: string, source?: ts.SourceFile, checker?: ts.TypeChecker): string[] {
-  if (!source || !checker) throw new Error("Backend inventory requires a typed program")
+export function scanOperations(source: ts.SourceFile, checker: ts.TypeChecker): string[] {
   let reachesBackend = analyzers.get(checker)
   if (!reachesBackend) analyzers.set(checker, reachesBackend = analyzer(checker))
   const counts = new Map<string, number>()
   function add(id: string) { counts.set(id, (counts.get(id) ?? 0) + 1) }
   function visit(node: ts.Node) {
     if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
-      const id = boundary(node, checker!)
+      const id = boundary(node, checker)
       if (id) add(id)
-      const declaration = checker!.getResolvedSignature(node)?.declaration
+      const declaration = checker.getResolvedSignature(node)?.declaration
       if (!id && declaration && !declaration.getSourceFile().isDeclarationFile && reachesBackend!(declaration)) {
         // Aggregate delegated invocations by their IO effect, never UI helper names.
         add("delegated:backend")
       }
       // Callback registration/continuation matters only when it reaches IO.
-      for (const callback of callbacks(node, checker!)) if (!callback.getSourceFile().isDeclarationFile && reachesBackend!(callback)) {
+      for (const callback of callbacks(node, checker)) if (!callback.getSourceFile().isDeclarationFile && reachesBackend!(callback)) {
         const expression = node.expression
         const name = declaration?.getSourceFile().isDeclarationFile
           ? ("name" in declaration ? declaration.name?.getText() : undefined)
@@ -165,10 +164,6 @@ export function scanOperations(file: string, text: string, source?: ts.SourceFil
   }
   visit(source)
   return [...counts].sort(([a], [b]) => a.localeCompare(b)).map(([id, count]) => `${id} x${count}`)
-}
-
-export function requiresClassification(file: string, text: string, source?: ts.SourceFile, checker?: ts.TypeChecker): boolean {
-  return scanOperations(file, text, source, checker).length > 0
 }
 
 export function inventoryProgram() {
@@ -184,7 +179,7 @@ export function discoverOperations(program: ts.Program): Record<string, string[]
   const checker = program.getTypeChecker()
   return Object.fromEntries(sources(sourceRoot).map(file => {
     const source = program.getSourceFile(file)!
-    return [relative(sourceRoot, file).replace(/\\/g, "/"), scanOperations(file, source.text, source, checker)]
+    return [relative(sourceRoot, file).replace(/\\/g, "/"), scanOperations(source, checker)]
   }))
 }
 

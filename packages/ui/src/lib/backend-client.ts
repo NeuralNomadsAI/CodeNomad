@@ -27,6 +27,9 @@ export interface BackendClient {
   readonly admitRelayAuthority?: (proof: string | null) => boolean
 }
 
+/** The identity verified on this client, retained for the lifetime of its workspace records. */
+export const admittedServerIds = new WeakMap<BackendClient, string>()
+
 export interface BackendClientOptions extends BackendTransportOptions {
   /** Absolute http(s) URL of the other backend. */
   baseUrl: string

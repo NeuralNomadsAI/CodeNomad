@@ -14,6 +14,11 @@ mod client_state;
 mod data_profile;
 mod data_profile_cleanup;
 mod developer_mode;
+mod device_speech;
+mod device_speech_hex;
+mod device_speech_ipc;
+mod device_speech_system;
+mod device_speech_worker;
 mod embedded_view;
 mod external_open;
 mod identity;
@@ -33,6 +38,7 @@ mod notification_badge_lifetime;
 mod preferences_window;
 mod profile_selection_dialog;
 mod profile_transition;
+mod remote_dictation;
 mod shutdown;
 mod title_bar;
 mod update_releases;
@@ -92,7 +98,7 @@ const HELP_URL: &str = "https://neuralnomadsai.github.io/CodeNomad/";
 /// English page opened when no renderer can choose the UI locale (`helpUrl("en", "sponsor")`).
 const SPONSOR_URL: &str = "https://neuralnomadsai.github.io/CodeNomad/en/sponsor.html";
 const REMOTE_WINDOW_CONTEXT_SCRIPT: &str =
-    "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
+    "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote'; window.__CODENOMAD_REMOTE_DICTATION__ = true;";
 
 pub struct AppState {
     pub manager: CliProcessManager,
@@ -121,6 +127,8 @@ pub struct AppState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct RemoteWindowMetadata {
     origin: String,
+    dictation_destination: String,
+    dictation_document: remote_dictation::RemoteDocument,
     title: String,
     allow_linux_tls_certificate: bool,
     generation: u64,
@@ -864,6 +872,10 @@ fn open_remote_external_url(url: &Url, open: impl FnOnce(&Url)) -> bool {
 
 fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
     let window_label = webview.label().to_string();
+    if remote_dictation::is_sheet(&window_label) {
+        // The registered sheet's own builder enforces its one-document policy.
+        return true;
+    }
     if let Some(allowed) = webview.app_handle()
         .state::<embedded_view::EmbeddedViews>()
         .navigation_allowed(&window_label, url)
@@ -871,6 +883,9 @@ fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
         return allowed;
     }
     if should_allow_window_origin(&webview.app_handle(), &window_label, url) {
+        if window_label.starts_with("remote-") {
+            remote_dictation::remote_navigation_pending(webview.app_handle(), &window_label, None);
+        }
         return true;
     }
 
@@ -938,7 +953,7 @@ fn open_remote_window_locked(
     label: String,
     requested_profile: RemoteProfileIdentity,
 ) -> Result<(), String> {
-    require_http_url(&payload.base_url, "baseUrl")?;
+    let base_url = require_http_url(&payload.base_url, "baseUrl")?;
     let entry_url = payload
         .entry_url
         .as_deref()
@@ -954,6 +969,7 @@ fn open_remote_window_locked(
     let mut previous_profile = None;
 
     if let Some(existing) = app.get_webview_window(&label) {
+        remote_dictation::remote_navigation_pending(&app, &label, None);
         previous_profile = app
             .state::<AppState>()
             .remote_profiles
@@ -988,6 +1004,7 @@ fn open_remote_window_locked(
                 &app,
                 &label,
                 &window_url,
+                &base_url,
                 &title,
                 allow_linux_tls_certificate,
                 false,
@@ -1027,6 +1044,7 @@ fn open_remote_window_locked(
         &app,
         &label,
         &window_url,
+        &base_url,
         &title,
         allow_linux_tls_certificate,
         true,
@@ -1106,6 +1124,9 @@ fn open_remote_window_locked(
         NewWindowResponse::Deny
     })
     .on_page_load(move |window, payload| {
+        remote_dictation::remote_page_load(
+            window.app_handle(), window.label(), window_generation, payload.event(), payload.url(),
+        );
         if payload.event() == PageLoadEvent::Started {
             notification_badge::page_started(window.as_ref(), badge_binding);
         }
@@ -1113,6 +1134,19 @@ fn open_remote_window_locked(
     .title(title)
     .inner_size(1400.0, 900.0)
     .min_inner_size(client_state::MIN_WINDOW_WIDTH as f64, 600.0);
+    #[cfg(not(target_os = "linux"))]
+    let builder = builder.on_permission_request(move |webview, kind| {
+        if kind == tauri::webview::PermissionKind::Microphone {
+            let authorized =
+                remote_dictation::authorize_renderer_microphone(&webview, window_generation);
+            // WebKit can complete macOS system consent before asking the webview delegate.
+            // WebView2 asks before its default prompt and can persist a Deny in the profile.
+            if cfg!(target_os = "macos") && !authorized {
+                return tauri::webview::PermissionResponse::Deny;
+            }
+        }
+        tauri::webview::PermissionResponse::Default
+    });
     let builder = window_zoom::configure(builder);
     #[cfg(target_os = "macos")]
     let builder = builder.data_store_identifier(profile_identifier(&profile_key));
@@ -1135,6 +1169,8 @@ fn open_remote_window_locked(
     #[cfg(windows)]
     windows_browser_accelerators::bind(window.as_ref());
     notification_badge::bind_webview(window.as_ref(), badge_binding);
+    #[cfg(target_os = "linux")]
+    device_speech_ipc::bind_microphone(&window, true);
     window_constraints::register(&window.as_ref().window(), 1.0);
     #[cfg(windows)]
     window_constraints::register_remote_zoom(&window, &app);
@@ -1188,11 +1224,13 @@ fn open_remote_window_locked(
     let app_handle = app.clone();
     let label_for_cleanup = label.clone();
     let profile_for_cleanup = requested_profile.clone();
+    remote_dictation::bind_termination(window.as_ref(), Some(window_generation));
     window.on_window_event(move |event| {
         if matches!(event, WindowEvent::Focused(_)) {
             update_workspace_menu_state(&app_handle);
         }
         if let WindowEvent::Destroyed = event {
+            remote_dictation::remote_unloading(&app_handle, &label_for_cleanup, Some(window_generation));
             schedule_remote_window_destroyed_cleanup(
                 app_handle.clone(),
                 label_for_cleanup.clone(),
@@ -1209,6 +1247,7 @@ fn set_remote_window_metadata(
     app: &AppHandle,
     label: &str,
     url: &Url,
+    base_url: &Url,
     title: &str,
     allow_linux_tls_certificate: bool,
     new_window: bool,
@@ -1235,12 +1274,16 @@ fn set_remote_window_metadata(
         label.to_string(),
         RemoteWindowMetadata {
             origin: url.origin().ascii_serialization(),
+            dictation_destination: base_url.origin().ascii_serialization(),
+            dictation_document: Default::default(),
             title: title.to_string(),
             allow_linux_tls_certificate,
             generation,
             window_generation,
         },
     );
+    drop(values);
+    remote_dictation::remote_navigation_pending(app, label, Some(window_generation));
     Ok(StagedRemoteWindowMetadata {
         generation,
         window_generation,
@@ -1353,6 +1396,7 @@ fn clear_remote_window_metadata(
         return false;
     }
     profiles.remove(label);
+    app.state::<device_speech::DeviceSpeech>().revoke(Some(label));
     navigation.remove(label);
     if let Ok(mut values) = state.remote_tls_handlers.lock() {
         clear_remote_tls_handler(&mut values, label, window_generation);
@@ -1688,6 +1732,7 @@ fn is_final_application_window<'a>(
     !labels.any(|label| {
         label != closing_label
             && label != preferences_window::LABEL
+            && !remote_dictation::is_sheet(label)
             && !label.starts_with("browser-popup-")
             && !launch_windows.iter().any(|launch| launch == label)
     })
@@ -1790,6 +1835,11 @@ fn resolve_launch_profile_or_exit(
     })
 }
 
+fn app_context<R: tauri::Runtime>() -> tauri::Context<R> {
+    // On macOS this macro emits a fixed symbol for the embedded Info.plist.
+    tauri::generate_context!()
+}
+
 fn main() {
     #[cfg(windows)]
     if let Some(code) = cli_manager::run_windows_cli_launcher_if_requested() {
@@ -1874,7 +1924,7 @@ fn main() {
         .on_navigation(|webview, url| intercept_navigation(webview, url))
         .build();
 
-    let mut context = tauri::generate_context!();
+    let mut context = app_context();
     context.config_mut().identifier = scope.identifier.clone();
     let setup_scope = scope.clone();
     let setup_queue = Arc::clone(&launch_queue);
@@ -1942,6 +1992,27 @@ fn main() {
                 pinned: profile_pinned,
             },
         ))
+        .manage(
+            device_speech::DeviceSpeech::new(
+                identity::electron_user_data_base(&home)
+                    .join("device-speech")
+                    .join("choice.json"),
+                Some(std::sync::Arc::new(
+                    device_speech_system::SystemDriver::default(),
+                )),
+            )
+            .with_hex(
+                if cfg!(windows) {
+                    dirs::data_local_dir()
+                        .map(|path| path.join("CodeNomad"))
+                        .unwrap_or_else(|| identity::electron_user_data_base(&home))
+                } else {
+                    identity::electron_user_data_base(&home)
+                }
+                .join("device-speech"),
+            ),
+        )
+        .manage(remote_dictation::RemoteDictation::default())
         .manage(AppState {
             manager: CliProcessManager::with_profile(
                 setup_scope.profile.clone(),
@@ -1971,6 +2042,9 @@ fn main() {
         })
         .on_page_load(|webview, payload| {
             if payload.event() == PageLoadEvent::Started {
+                if !webview.label().starts_with("remote-") {
+                    webview.app_handle().state::<device_speech::DeviceSpeech>().revoke(Some(webview.label()));
+                }
                 webview
                     .app_handle()
                     .state::<AppState>()
@@ -2016,6 +2090,8 @@ fn main() {
             let badge_host = Arc::new(app.handle().clone());
             app.state::<notification_badge::NotificationBadge>()
                 .set_host(&badge_host);
+            app.state::<remote_dictation::RemoteDictation>()
+                .set_host(&badge_host);
             *setup_notification_badge_host
                 .lock()
                 .unwrap_or_else(|e| e.into_inner()) = Some(badge_host);
@@ -2057,9 +2133,10 @@ fn main() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(remote_dictation::with_relay(tauri::generate_handler![
             clipboard_attachments::read_clipboard_attachments,
             cli_get_status,
+            device_speech_ipc::device_speech_request,
             cli_restart,
             wake_lock_start,
             wake_lock_stop,
@@ -2111,7 +2188,7 @@ fn main() {
             browser_target_unregister,
             browser_target_claim_open,
             browser_target_release_open
-        ])
+        ]))
         .on_menu_event(|app_handle, event| {
             if embedded_view::zoom::focused(app_handle, event.id().0.as_str()) {
                 return;
@@ -2220,7 +2297,7 @@ fn main() {
                     }
                 }
                 "open-about" | "help_open_about" => {
-                    // About opens Settings → Info → About from the most recently used
+                    // About opens Settings ÔåÆ Info ÔåÆ About from the most recently used
                     // application window, which brings the Preferences window forward.
                     let delivered = local_windows::update_flow_window(app_handle)
                         .is_some_and(|window| emit_menu_action_to(app_handle, &window, "open-about"));
@@ -2270,6 +2347,8 @@ fn main() {
         .expect("error while building tauri application")
         .run(|app_handle, event| match event {
             tauri::RunEvent::ExitRequested { api, .. } => {
+                remote_dictation::revoke(&app_handle, None);
+                app_handle.state::<device_speech::DeviceSpeech>().revoke(None);
                 if shutdown::exit_allowed(&app_handle) {
                     return;
                 }
@@ -2321,6 +2400,13 @@ fn main() {
                 event: tauri::WindowEvent::CloseRequested { api, .. },
                 ..
             } => {
+                if remote_dictation::is_sheet(&label) {
+                    remote_dictation::revoke(&app_handle, Some(&label));
+                    return;
+                }
+                if label.starts_with("remote-") {
+                    remote_dictation::remote_navigation_pending(&app_handle, &label, None);
+                }
                 if label == preferences_window::LABEL {
                     client_state::capture_and_flush_window(&app_handle, &label);
                     if shutdown::exit_allowed(&app_handle) {
@@ -2384,6 +2470,13 @@ fn main() {
                 event: tauri::WindowEvent::Destroyed,
                 ..
             } => {
+                if remote_dictation::is_sheet(&label) {
+                    remote_dictation::revoke(&app_handle, Some(&label));
+                    remote_dictation::retired(&app_handle, &label);
+                }
+                if !label.starts_with("remote-") {
+                    app_handle.state::<device_speech::DeviceSpeech>().revoke(Some(&label));
+                }
                 shutdown::local_window_destroyed(&app_handle, &label);
                 let _ = consume_approved_auxiliary_close(&app_handle, &label);
                 app_handle
@@ -2716,7 +2809,7 @@ fn open_releases_page(app_handle: &AppHandle) {
     }
 }
 
-/// Text of the native fallback when no application window can open Settings → Info.
+/// Text of the native fallback when no application window can open Settings ÔåÆ Info.
 fn about_fallback_text(version: &str) -> String {
     format!("CodeNomad {version}\nA desktop workspace for OpenCode.")
 }
@@ -2923,6 +3016,7 @@ mod menu_tests {
     fn remote_windows_identify_as_remote_tauri_windows() {
         assert!(REMOTE_WINDOW_CONTEXT_SCRIPT.contains("__CODENOMAD_RUNTIME_HOST__ = 'tauri'"));
         assert!(REMOTE_WINDOW_CONTEXT_SCRIPT.contains("__CODENOMAD_WINDOW_CONTEXT__ = 'remote'"));
+        assert!(REMOTE_WINDOW_CONTEXT_SCRIPT.contains("__CODENOMAD_REMOTE_DICTATION__ = true"));
 
         let capability: serde_json::Value = serde_json::from_str(include_str!(
             "../capabilities/remote-window-notifications.json"
@@ -3002,6 +3096,8 @@ mod menu_tests {
     fn failed_remote_navigation_restores_exact_previous_authority() {
         let previous = RemoteWindowMetadata {
             origin: "https://old.example".into(),
+            dictation_destination: "https://old.example".into(),
+            dictation_document: Default::default(),
             title: "Old title".into(),
             allow_linux_tls_certificate: false,
             generation: 4,
@@ -3011,6 +3107,8 @@ mod menu_tests {
             "remote-a".to_string(),
             RemoteWindowMetadata {
                 origin: "https://new.example".into(),
+                dictation_destination: "https://new.example".into(),
+                dictation_document: Default::default(),
                 title: "New title".into(),
                 allow_linux_tls_certificate: true,
                 generation: 5,
@@ -3031,6 +3129,8 @@ mod menu_tests {
     fn stale_remote_navigation_failure_cannot_rollback_newer_authority() {
         let current = RemoteWindowMetadata {
             origin: "https://newest.example".into(),
+            dictation_destination: "https://newest.example".into(),
+            dictation_document: Default::default(),
             title: "Newest title".into(),
             allow_linux_tls_certificate: true,
             generation: 6,

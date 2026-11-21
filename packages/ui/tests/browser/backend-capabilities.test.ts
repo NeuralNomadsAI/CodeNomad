@@ -17,11 +17,11 @@ after(async () => { await fixture?.close() })
 
 const CORE = ["workspaces", "workspace-files", "workspace-git", "events"]
 /** Routes of the optional families these surfaces would read at startup or on display. */
-const OPTIONAL_ROUTES = /\/api\/(speech|opencode|sidecars|config-files|remote-control\/status|usage)\b|\/(background-shells|plugin-controls|integrations|service-usage)\b/
+const OPTIONAL_ROUTES = /\/api\/(speech|opencode|sidecars|config-files|remote-control\/status|usage)\b|\/(background-shells|plugin-controls|integrations|service-usage|permission-mode)\b/
 const HIDDEN = {
-  home: ["Clone Git Repo", "New temporary instance", "Open SideCar", "OpenCode"],
-  status: ["Yolo Mode", "Background Shells", "Plugins"],
-  settings: ["Speech", "Remote Access", "OpenCode", "Missions", "Stats", "SideCars", "Config Files"],
+  home: ["Clone Git Repo", "New temporary tab", "New SideCar", "OpenCode"],
+  status: ["Permissions", "Background Shells", "Plugins"],
+  settings: ["Voice", "Remote Access", "OpenCode", "Missions", "Stats", "SideCars", "Config Files"],
 }
 
 for (const [label, capabilities] of [["core families only", CORE], ["every family", [...CODENOMAD_CAPABILITIES]], ["no capability list", undefined]] as const) {

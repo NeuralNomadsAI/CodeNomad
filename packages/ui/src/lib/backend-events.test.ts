@@ -85,6 +85,8 @@ test("reattachment during abort preserves the replacement's reactive authority",
   const bus = new BackendEvents()
   const source = { on: () => () => {}, onOpen: () => () => {}, onTransportStatus: () => () => {}, onDispose: () => () => {} }
   const detach = bus.attach("replacement", source), first = bus.signal("replacement")!
+  const removed: AbortSignal[] = []
+  bus.onDetach((_id, signal) => { removed.push(signal) })
   let detachReplacement!: () => void
   first.addEventListener("abort", () => { detachReplacement = bus.attach("replacement", source) }, { once: true })
   const observed: (AbortSignal | undefined)[] = []
@@ -93,6 +95,8 @@ test("reattachment during abort preserves the replacement's reactive authority",
     detach()
     const replacement = bus.signal("replacement")!
     assert.notEqual(replacement, first)
+    assert.deepEqual(removed, [first])
+    assert.equal(replacement.aborted, false)
     assert.equal(observed.at(-1), replacement)
     detachReplacement()
     assert.equal(replacement.aborted, true)
@@ -113,8 +117,6 @@ test("all CodeNomad envelope identities are scoped, with native identities and l
     { type: "instance.event", instanceId: "ws", event: native },
     { type: "instance.eventStatus", instanceId: "ws", status: "connected", generation: 7 },
     { type: "instance.dataChanged", instanceId: "ws", data: { messageHistory: [], agentModelSelections: {} } },
-    { type: "yolo.stateChanged", instanceId: "ws", sessionId: "session", enabled: true },
-    { type: "yolo.autoAccepted", instanceId: "ws", sessionId: "session", permissionId: "permission" },
     { type: "permission.receiptsChanged", instanceId: "ws", sessionId: "session", messageId: "message" },
     { type: "storage.stateChanged", owner: "ui", value: { untouched: "ws" } },
     { type: "storage.configChanged", owner: "ui", value: {} },
@@ -151,10 +153,12 @@ test("two real streams fan in in order; subscriptions, status, generations, 401 
     owner.client.events.start()
   }
   await settle(() => a.sources.length === 1 && b.sources.length === 1)
-  const observedKeys: string[][] = []
+  const observedStatuses: unknown[] = []
+  let localStatusReads = 0
   createRoot(dispose => {
     t.after(dispose)
-    createComputed(() => { observedKeys.push([...sseManager.getStatuses().keys()]) })
+    createComputed(() => { observedStatuses.push(sseManager.getRawStatus("b~ws")) })
+    createComputed(() => { sseManager.getBackendStatuses(); localStatusReads++ })
   })
   const seen: string[] = [], aOnly: string[] = [], opens: string[] = [], statuses: string[] = []
   t.after(bus.on("*", event => { seen.push(`*:${event.backendId}:${event.type}`) }))
@@ -177,8 +181,9 @@ test("two real streams fan in in order; subscriptions, status, generations, 401 
   assert.notEqual(getSseManager("a"), getSseManager("b"))
   assert.equal(sseManager.getStatus("a~ws"), "connected")
   assert.equal(sseManager.getStatus("b~ws"), "connected")
-  assert.equal(sseManager.getStatuses().get("b~ws"), "connected")
-  assert.ok(observedKeys.some(keys => keys.includes("b~ws")), "existing observers discover new backend managers")
+  assert.equal(sseManager.getRawStatus("b~ws"), "connected")
+  assert.equal(observedStatuses.at(-1), "connected", "existing observers discover new backend managers")
+  assert.equal(localStatusReads, 1, "remote status changes do not invalidate host setup")
   const previousHandler = sseManager.onNativeSessionEvent, nativeOwners: string[] = []
   sseManager.onNativeSessionEvent = (id, event) => { nativeOwners.push(`${id}:${event.type}`) }
   t.after(() => { sseManager.onNativeSessionEvent = previousHandler })

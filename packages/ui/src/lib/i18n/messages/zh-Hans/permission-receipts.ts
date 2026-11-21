@@ -5,7 +5,7 @@ export const permissionReceiptMessages = {
   "permissionReceipts.always": "始终允许",
   "permissionReceipts.reject": "已拒绝",
   "permissionReceipts.origin.codenomad": "在 CodeNomad 中作出的决定",
-  "permissionReceipts.origin.yolo": "自动 · Yolo",
+  "permissionReceipts.origin.automatic": "自动决定",
   "permissionReceipts.origin.native": "原生决定",
   "permissionReceipts.more": "加载更多决定",
   "permissionReceipts.error": "无法加载权限决定。",

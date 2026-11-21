@@ -18,6 +18,7 @@ import { prepareMissionMapMutation } from "./mission-map-mutation"
 import { missionPreparationOptionsSchema, normalizedPreparationOptions } from "../../missions/preparation-input"
 import { prepareScheduledCoordinatorMission, type ScheduledPreparationDeps } from "./mission-prepare-scheduled"
 import type { ScheduledMissionManager } from "./mission-scheduled-admission"
+import type { SessionPermissionModes } from "../../permissions/session-mode"
 
 const commandSchema = z.object({ kind: z.literal("prepare"), input: z.object({
   missionID: z.string().min(1).max(100).optional(), requestID: z.string().min(1).max(128),
@@ -36,7 +37,7 @@ type Manager = MissionCreationPipelineManager & Pick<WorkspaceManager, "list">
 /** Fresh creation alone may continue the explicit first-Play intention.
  * Native lifecycle consumes it durably before any effect. */
 export async function prepareCoordinatorMission(manager: Manager, fence: WorktreeDeletionFence, coordinatorID: string, command: unknown,
-  signal: AbortSignal, scheduled: ScheduledPreparationDeps = {}): Promise<PreparationResult> {
+  signal: AbortSignal, scheduled: ScheduledPreparationDeps = {}, permissionModes?: SessionPermissionModes): Promise<PreparationResult> {
   const { input } = commandSchema.parse(command)
   const options = normalizedPreparationOptions(input)
   if (options.kind === "one-time" && options.coordinatorSessionID) throw refusal("prepare-refused")
@@ -69,7 +70,7 @@ export async function prepareCoordinatorMission(manager: Manager, fence: Worktre
         authorSessionID: coordinatorID, input: { ...input, creationDefaults: input.creationDefaults === undefined
           ? undefined : parseMissionCreationDefaults(input.template, input.creationDefaults) }, signal, ...scheduled })
     }
-    creation = await prepareMissionCreation({ manager, fence, workspaceID: workspace.id, signal,
+    creation = await prepareMissionCreation({ manager, fence, workspaceID: workspace.id, signal, permissionModes,
       expectedProjectID: coordinator.projectID, preparedBy: { ...(source ? { missionID: source.id } : {}), coordinatorSessionID: coordinatorID },
       startOnCreation: input.startOnCreation === true,
       ...(options.watchedConversationIDs.length ? { preparationOptions: { watchedConversationIDs: options.watchedConversationIDs } } : {}),

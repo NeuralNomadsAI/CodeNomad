@@ -36,7 +36,7 @@
 | Service status/start/password | CodeNomad adapter using the selected host or WSL CLI; only the explicit setup restart may stop/start the shared daemon |
 | Workspace and directory authorization | CodeNomad |
 | Git status/diff and mutations | CodeNomad |
-| Yolo policy/persistence/auto-reply | CodeNomad |
+| Conversation permission block ownership | CodeNomad |
 | Browser event multiplexing | CodeNomad `/api/events` |
 
 Background Shell output uses native cursor pagination; interactive PTYs remain separate. Never use `@opencode-ai/sdk`, per-workspace processes or server plugin/background-process tools.

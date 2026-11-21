@@ -1,16 +1,13 @@
 import assert from "node:assert/strict"
 import { test, type TestContext } from "node:test"
-import { backendOf, backends, createBackendClient, localBackend, type BackendClient } from "./backend-client"
+import { backendOf, createBackendClient, localBackend, registerBackendClient, type BackendClient } from "./backend-client"
+import { requestWire } from "../../tests/test-support/backend"
 import { parseInstanceKey } from "./backend-identity"
 
 type Api = BackendClient["api"]
-type Wire = { url: string; method: string; body: unknown; signal: AbortSignal | null | undefined; credentials?: RequestCredentials; headers: [string, string][] }
-const registry = backends as Map<string, BackendClient>
 const workspace = "w/1", directory = "/repo with space/é", integration = "provider/a"
-function wire(input: RequestInfo | URL, init?: RequestInit): Wire {
-  return { url: String(input), method: init?.method ?? "GET", body: init?.body, signal: init?.signal,
-    credentials: init?.credentials, headers: [...new Headers(init?.headers)] }
-}
+const wire = (input: RequestInfo | URL, init?: RequestInit) => ({ ...requestWire(input, init), signal: init?.signal })
+type Wire = ReturnType<typeof wire>
 
 // Literal wire expectations independently checked against 7903f1193's real createServerApi.
 const paths = [
@@ -45,8 +42,8 @@ function fixture(t: TestContext, id: string) {
     return request.url.endsWith("/api/auth/status") ? Response.json({ authenticated: false })
       : refused ? Response.json({ error: "owner refused" }, { status: 401 }) : Response.json({ owner: id })
   } })
-  registry.set(id, backend)
-  t.after(() => { backend.events.dispose(); registry.delete(id) })
+  const unregister = registerBackendClient(backend)
+  t.after(() => { backend.events.dispose(); unregister() })
   return { backend, calls, refuse: () => { refused = true } }
 }
 

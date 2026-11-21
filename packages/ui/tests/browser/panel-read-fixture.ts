@@ -25,7 +25,7 @@ export function observeBackendPanelReads() {
     }, failed)
   }
   window.fetch = observedFetch
-  return window.fixturePanelReadCancelled = async id => await outcomes.get(id) ?? false
+  return window.fixturePanelReadCancelled = async id => await outcomes.get(id)
 }
 
 /** Keep every raw failure; classify only the exact observed controller-owned read. */
@@ -56,5 +56,5 @@ export function collectPanelReadFailures(page: Page, url: string) {
 }
 
 declare global {
-  interface Window { fixturePanelReadCancelled(id: string): Promise<boolean> }
+  interface Window { fixturePanelReadCancelled(id: string): Promise<boolean | undefined> }
 }

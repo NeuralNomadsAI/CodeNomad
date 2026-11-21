@@ -318,7 +318,8 @@ test("real preference consumers isolate host, server, fallback, instance data an
         }
         const sessionID = url.pathname.split("/session/")[1]?.split("/")[0]
         if (url.pathname.endsWith("/model/default")) { defaults.push(url.pathname); return Response.json({ data: { providerID: nativeDefault.providerId, id: nativeDefault.modelId } }) }
-        if (url.pathname.endsWith("/model")) { switched.push({ ...body, sessionID }); return new Response(null, { status: 204 }) }
+        if (url.pathname.endsWith("/model") && sessionID) { switched.push({ ...body, sessionID }); return new Response(null, { status: 204 }) }
+        if (url.pathname.endsWith("/provider") || url.pathname.endsWith("/model")) return new Response(null, { status: 503 })
         if (url.pathname.endsWith("/prompt")) { prompts.push({ ...body, sessionID }); return Response.json({ data: { id: body.id } }) }
         assert.ok(url.pathname.endsWith("/agent") || url.pathname.includes("/instructions/entries/"), "no provider or unrelated API request")
         return new Response(null, { status: 204 })
@@ -356,7 +357,7 @@ test("real preference consumers isolate host, server, fallback, instance data an
         assert.deepEqual(owner.switched.map(input => input.model), expected)
         assert.deepEqual(owner.switched.map(input => input.sessionID), [savedSession.id, recentSession.id])
         assert.deepEqual(owner.prompts.map(input => [input.sessionID, input.text]), [[savedSession.id, "saved choice"], [recentSession.id, "recent choice"]])
-        assert.equal(owner.defaults.length, 0)
+        assert.equal(owner.defaults.length, 2, "the cold catalog is requested before each creation")
         setAgents(previous => new Map(previous).set(owner.instanceId, [{ id: "configured", name: "Configured", description: "", mode: "primary", model: owner.saved }]))
         assert.deepEqual(await getDefaultModel(owner.instanceId, "configured"), owner.saved)
         assert.ok(owner.data.calls.some(call => call.url === `https://${owner.backend.id.toLowerCase()}.invalid/api/storage/instances/same`))
@@ -366,13 +367,13 @@ test("real preference consumers isolate host, server, fallback, instance data an
       setProviders(previous => new Map(previous).set(owner.instanceId, []))
       setAgents(previous => new Map(previous).set(owner.instanceId, [{ id: "build", name: "Build", description: "", mode: "primary", model: owner.saved }]))
       assert.deepEqual(await getDefaultModel(owner.instanceId, "build"), owner.nativeDefault, "published empty catalog rejects configured, saved and recent choices")
-      assert.equal(owner.defaults.length, 1, "only the owning native fallback is consulted")
+      assert.equal(owner.defaults.length, 3, "only the owning native fallback is consulted")
       setProviders(previous => { const next = new Map(previous); next.delete(owner.instanceId); return next })
       clearInstanceConfig(owner.instanceId)
       await owner.backend.storage.saveInstanceData("same", { messageHistory: [], agentModelSelections: { build: { providerId: "", modelId: "partial-saved" } } })
       setAgents(previous => new Map(previous).set(owner.instanceId, [{ id: "build", name: "Build", description: "", mode: "primary", model: { providerId: "partial-configured", modelId: "" } }]))
       assert.deepEqual(await getDefaultModel(owner.instanceId, "build"), owner.recent, "incomplete choices are rejected even while cold")
-      assert.equal(owner.defaults.length, 1)
+      assert.equal(owner.defaults.length, 3)
 
       const revoked = setup("coldRevokedSaved")
       owners.push(revoked)
@@ -382,6 +383,7 @@ test("real preference consumers isolate host, server, fallback, instance data an
       const creating = createSession(revoked.instanceId, "build")
       const rejections = [assert.rejects(resolving, /Backend unavailable|abort/i), assert.rejects(creating, /Backend unavailable|abort/i)]
       await new Promise<void>(resolve => setImmediate(resolve))
+      const catalogReads = revoked.defaults.length
       revoked.detach()
       const detachFresh = backendEvents.attach(revoked.backend.id, revoked.backend.events)
       try {
@@ -393,7 +395,7 @@ test("real preference consumers isolate host, server, fallback, instance data an
         assert.equal(revoked.prompts.length, 0)
         assert.equal(revoked.switched.length, 0)
         assert.equal(sessions().get(revoked.instanceId)?.size ?? 0, 0, "revoked creation never publishes a session")
-        assert.equal(revoked.defaults.length, 0, "revoked resolution never reaches native fallback")
+        assert.equal(revoked.defaults.length, catalogReads, "revoked resolution never reaches native fallback")
       } finally { release(); detachFresh() }
       const sent = owner.prompts.length
       owner.detach()

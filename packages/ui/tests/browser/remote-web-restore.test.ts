@@ -35,7 +35,7 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
     if (!sessionStorage.getItem("codenomad.client-state.v1")) {
       sessionStorage.setItem("codenomad.client-state.v1", JSON.stringify({
         version: 1, revision: 1, savedAt: 1, layout: {}, session: { activeTabIndex: 1, tabs: ["a", "b"].map((backendId, index) => ({
-          kind: "workspace", folder: "/same", backendId, workspaceId: `${backendId}~same`, occurrence: 0,
+          kind: "workspace", folder: "/same", backendId, serverId: backendId, workspaceId: `${backendId}~same`, occurrence: 0,
           drafts: { __no_session_draft__: `draft-${backendId}` }, attachments: {}, scrollSnapshots: {},
           unseenIdleSince: {}, generationRecovery: {}, viewState: { version: 1, rightPanelTab: index ? "files" : "status" },
         })) },
@@ -90,7 +90,7 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
       assert.equal(state[1].kind, "remote-restore")
       await page.getByRole("button", { name: "Connect", exact: true }).click()
       assert.equal(await page.getByLabel("Password", { exact: true }).isDisabled(), true)
-      assert.equal(await page.getByLabel("Pairing link", { exact: true }).isDisabled(), true)
+      assert.equal(await page.getByLabel("New pairing link", { exact: true }).isDisabled(), true)
       healthy = true
       await page.getByRole("button", { name: "Retry", exact: true }).click()
     } else if (!["reuse", "offline"].includes(mode)) {
@@ -181,7 +181,7 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
     } as any
     if (!sessionStorage.getItem("codenomad.client-state.v1")) sessionStorage.setItem("codenomad.client-state.v1", JSON.stringify({
       version: 1, revision: 1, savedAt: 1, layout: {}, session: { activeTabIndex: 1, tabs: [
-        { folder: "/local", workspaceId: "same" }, { folder: "/remote", workspaceId: "a~same", backendId: "a" },
+        { folder: "/local", workspaceId: "same" }, { folder: "/remote", workspaceId: "a~same", backendId: "a", serverId: "a" },
       ].map(project => ({ kind: "workspace", ...project,
         ...(disappears && project.backendId ? { activeParentSessionId: "held-session", activeSessionId: "held-session" } : {}),
         drafts: { __no_session_draft__: project.folder,

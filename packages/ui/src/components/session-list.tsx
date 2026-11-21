@@ -777,6 +777,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     const sessionId = () => rowProps.session.id
     const isChild = () => rowProps.depth > 0
     const isSubsession = () => Boolean(rowProps.session.parentId)
+    const archived = createMemo(() => isSessionArchived(rowProps.session))
 
     const worktreeSlug = createMemo(() => {
       if (isChild()) return ""
@@ -962,8 +963,8 @@ const SessionList: Component<SessionListProps> = (props) => {
       },
       {
         key: "archive",
-        get label() { return t(isSessionArchived(rowProps.session) ? "sessionList.actions.restore.title" : "sessionList.actions.archive.title") },
-        get icon() { return isSessionArchived(rowProps.session) ? <ArchiveRestore class="w-3.5 h-3.5" /> : <Archive class="w-3.5 h-3.5" /> },
+        get label() { return t(archived() ? "sessionList.actions.restore.title" : "sessionList.actions.archive.title") },
+        get icon() { return archived() ? <ArchiveRestore class="w-3.5 h-3.5" /> : <Archive class="w-3.5 h-3.5" /> },
         get disabled() { return archivingSessionIds().has(sessionId()) || isSessionDeleting(sessionId()) },
         onSelect: () => handleArchiveSession(sessionId()),
       },
@@ -1037,7 +1038,7 @@ const SessionList: Component<SessionListProps> = (props) => {
             class="session-item-badges"
             onClick={(event) => { if (!(event.target as Element).closest("button")) selectRow() }}
           >
-            <Show when={isSessionArchived(rowProps.session)}>
+            <Show when={archived()}>
               <span class="status-indicator session-status-list" title={t("sessionList.status.archived")}>
                 <Archive class="w-3.5 h-3.5" aria-hidden="true" />
                 <span>{t("sessionList.status.archived")}</span>

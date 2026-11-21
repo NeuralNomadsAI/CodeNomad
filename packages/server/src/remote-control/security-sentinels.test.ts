@@ -188,6 +188,15 @@ for (const viaSsh of [false, true]) for (const channel of ["RC", "HTTPS", "LAN"]
       return reply
     }
     assert.equal((await call("/api/remote-servers/ssh-hosts")).status, 200)
+    if (channel === "HTTPS" && !viaSsh) {
+      const post = (action: string, body = {}) => call(`/api/remote-servers/A/${action}`, { method: "POST", body })
+      assert.equal((await post("forget")).status, 200)
+      const missing = await post("browse")
+      assert.equal(missing.status, 409, missing.body)
+      assert.equal(JSON.parse(missing.body).error, "needs_credentials")
+      assert.equal((await post("connect", { username: "codenomad", password })).status, 200)
+      assert.equal((await post("browse")).status, 200)
+    }
     // Establish stored connections before testing new-secret entry, including LAN
     // refusal: a forbidden submission must leave both existing identities usable.
     for (const id of ["A", "B"]) {

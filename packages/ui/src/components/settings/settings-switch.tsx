@@ -18,7 +18,7 @@ export const ACCENT_SWITCH_SX = {
   "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": { backgroundColor: "var(--accent-primary)" },
 }
 
-/** On/off control for a lone setting: the Yolo switch, in the plain accent color. */
+/** On/off control for a lone setting, in the plain accent color. */
 export const SettingsSwitch: Component<SettingsSwitchProps> = (props) => (
   <Switch
     class="settings-switch"

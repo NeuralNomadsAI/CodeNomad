@@ -69,21 +69,24 @@ function Fixture() {
     ;(sseManager as any).handleEvent(id.slice("instance:".length), {
       id: "notice", type: "tui.toast.show", created: 1, data: { message: "Remote notice", variant: "info" },
     })
-    retainedNotice = getToastHistory().find(item => item.action?.target?.instanceId === id.slice("instance:".length))?.action
+    retainedNotice = getToastHistory().find(item => item.message === "Remote notice")?.action
     if (!retainedNotice) throw new Error("Remote notice action missing")
   },
   activateNotice: () => retainedNotice && runToastAction(retainedNotice),
   retry: async () => { await Promise.all(appTabs().filter(tab => tab.kind === "remote-restore").map(tab => tab.retry())) },
+  openSaved: (index: number) => {
+    const tab = appTabs()[index]
+    if (tab?.kind === "remote-restore") return tab.open?.()
+  },
   restartBackend: async () => { const client = backends.get("a")!; await refreshWorkspaceList("a", client.api) },
   disconnect: () => backends.get("a")!.events.restart(),
   state: () => backendRegistry.state("a"),
   waitForInventory: () => waitForInitialWorkspaceLoad(),
   snapshot: loadedRestorableSession,
   saved: async () => { const value = (window as any).committedState; return value && decodeClientSnapshotV2(value.snapshot, 1, async key => value.partitions[key] ?? null) },
-  removeServer: () => preferencesForBackend("local").removeRemoteServerProfile("a"),
   removeServerQueued: () => relayProfiles.removeServer(preferencesForBackend("local").remoteServers().find(profile => profile.id === "a")!),
   retargetServerQueued: () => preferencesForBackend("local").saveRemoteServerProfile({
     ...preferencesForBackend("local").remoteServers().find(profile => profile.id === "a")!, baseUrl: "https://changed.test",
   }, () => true),
 }
-;(window as any).disposeRestoreFixture = render(() => <Fixture />, document.getElementById("root")!)
+render(() => <Fixture />, document.getElementById("root")!)

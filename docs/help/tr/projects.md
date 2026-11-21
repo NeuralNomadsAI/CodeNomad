@@ -1,35 +1,28 @@
 # Projeler ve çalışma ağaçları
 
-Çoklu arka uç etkinse ana sayfada veya `+` başlatıcısında **UZAKLAR** bölümünü genişletin. Kayıtlı CodeNomad sunucusunun yanında **+ Proje**'yi seçin, aynı yerde klasörlere göz atın ve **Aç**'ı seçin. Sunucu eklemek için eşleştirme bağlantısını veya adresi listenin altına yapıştırın. Burada açılan projeler, sunucu çevrimdışı olsa bile simgesi ve adıyla ortak listede kalır. Göz atma, klonlama ve geçici projeler bu bilgisayarı kullanır.
-
 Bir proje sekmesi CodeNomad'i arka uç bilgisayarındaki bir klasöre bağlar. Sekme açmak, bir çalışma kopyasına göz atmak ve konuşma ailesini taşımak farklı işlemlerdir.
-
-**+ Proje**, sunucunun bilinen son proje yolundan başlar. Klasör taşındıysa veya silindiyse **Sunucu kök dizini**'ni seçin. Son kullanılan proje açılırken **İptal** sunucu listesine döndürür.
-
-Son kullanılanlarda yalnızca burada başarıyla açtığınız uzak projeler görünür. Klasörlere göz atmak kısayol eklemez. Kayıtlı kısayollar aynı bağlantı (profil, adres, TLS doğrulama ayarı ve SSH hedefi) için çevrimdışıyken de görünür. Uzak klasör için zaten bekleyen bir sekme varsa o sekme seçilir ve taslakları korunur. Yeniden denemeyi siz başlatırsınız.
-
-Kaldırdığınız kısayol, o klasörü yeniden açana kadar son kullanılan projelerde görünmez.
 
 ## Bir proje açın {#open-project}
 
-1. Ana sayfayı açmak için **Yeni instance** (`+`) öğesine tıklayın.
-2. **Klasörlere Göz At** öğesini seçin, arka uç klasörünü seçin ve açın; veya **Son Klasörler** altında bir giriş seçin.
-3. Depoyu kopyalamak için **Git Deposunu Klonla** eylemini seçin; **Depo URL'si** ve **Hedef klasör** alanlarını doldurup **Klonla** eylemini seçin. **Hedef klasör**, son klonunuzun bulunduğu klasörde (yoksa en son projenizin yanında) depo adıyla önceden doldurulur. **Göz At** klonu içerecek klasörü seçer; klon klasörünün adı dahil yolu elle de düzenleyebilirsiniz.
+Boş sekme açmak için **Yeni instance** (`+`) veya `Ctrl/Cmd+N` kullanın. **Son sekmeler** ya da **Gözat** üzerinden proje seçin. CodeNomad logosu Ana Sayfayı açar. Klonlama ve geçici sekmeler yerel sunucuyu kullanır.
+
+
+[Uzak projeyi sekmede açma](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
+
+Depoyu kopyalamak için **Git Deposunu Klonla** eylemini seçin; **Depo URL'si** ve **Hedef klasör** alanlarını doldurup **Klonla** eylemini seçin. **Hedef klasör**, son klonunuzun bulunduğu klasörde (yoksa en son projenizin yanında) depo adıyla önceden doldurulur. **Göz At** klonu içerecek klasörü seçer; klon klasörünün adı dahil yolu elle de düzenleyebilirsiniz.
 
 Uzak bir sunucuya göz atmak, telefonunuzun veya dizüstü bilgisayarınızın değil, o sunucunun dosya sistemine göz atmak anlamına gelir. Bir projeyi açmak, her sekme için ayrı bir OpenCode arka plan programı oluşturmaz. Konuşmalar yerel OpenCode oturumlarıdır; bunların ömrü sekmenin ömrü değildir.
 
-Klonlama hedefe bir depo yazar. **Hedef klasör zaten varsa önce onu kaldırın.** yıkıcıdır: yalnızca zaten orada olan her şeyin silinebildiği durumlarda etkinleştirin. Emin değilseniz yeni bir hedef kullanın.
+Klonlama hedefe bir depo yazar. **Hedef klasör zaten varsa önce onu kaldırın.** yıkıcıdır: yalnızca zaten orada olan her şeyin silinebildiği durumlarda etkinleştirin. Emin değilseniz yeni bir hedef kullanın. Başarısız bir klon, mevcut bir projeyi silmek için bir neden değildir; yeniden denemeden önce bildirilen hedefi ve hatayı inceleyin.
 
-Son kullanılan kayıtlar birer kısayoldur. **Workspace'i yeniden adlandır** görünen adı değiştirir; **Son kullanılanlardan kaldır** dosyaları veya konuşmaları değil, kısayolu kaldırır. Zaten açık olan bir son kullanılan projeye tıklamak yeni bir sekme açar; mevcut sekmeyi seçmek için bunun yerine projenin **Aç** düğmesini (**Açık projeye geç**) kullanın.
+Son kullanılanlar kısayoldur. Ana sayfanın satır içi düğmeleri ve boş sekmelerin eylem menüsü uygun olduğunda **Workspace'i yeniden adlandır** ve **Son kullanılanlardan kaldır** sunar; dosyalar ve konuşmalar korunur. Ana sayfa, boş sekme ve hızlı başlatıcıda yerel/uzak proje veya SideCar satırına tıklamak, zaten açık olsa da yeni bir örnek oluşturur. Ayrı **Aç** eylemi (**Açık projeye geç**) mevcut örneği seçer.
 
-Aynı klasörü iki kez açıp her iki sekmede de aynı konuşmayı seçerek birinde sohbeti, diğerinde web önizlemesini, dosyayı veya Görev raporunu tutun. Her sekme kendi görünümünü, konuşmanın kaydırma konumunu, sağ panel seçimini ve Dosyalar modunu korur; iletiler, yürütme ve proje verileri ortak kalır.
+Açık sekmeye geçme eylemi sunucusunu bekleyen sekmeyi de seçer ve başlangıçtaki boş sekmeyi kapatır.
 
 ## Yeni örnek başlatıcıyı kullanın {#new-instance-launcher}
 
-1. `+`'ye uzun basın veya sağ tıklayın; Klavye odağı oradayken **Alt+Down**, **Shift+F10** veya Menü tuşunu kullanın.
-2. Son projeleri arayın veya **Gözat…**, **Geçici** veya **Klonla…** öğesini seçin.
-
-Normal tıklama ana sayfayı açar. Başlatıcı açık projeye geçer; ana sayfa, bekleyen bir sekme seçilmedikçe yeni bir sekme açar. **UZAKLAR** bölümünde Escape sunuculara döner, listeyi daraltır, ardından başlatıcıyı kapatıp odağı `+`'ya döndürür.
+`+`'ye uzun basın veya sağ tıklayın; Klavye odağı oradayken **Alt+Down**, **Shift+F10** veya Menü tuşunu kullanın.
+Tab aramayı açar, oklar ve Enter seçim yapar, Escape odağı `+` düğmesine döndürür.
 
 ## Bir projeyi kapatın {#close-stop}
 
@@ -50,15 +43,15 @@ Başlangıç geri yüklemesi etkinken kalan her sekme kendi panel tercihlerini, 
 
 ## Uzak sekmeleri geri yükleme {#restore-remote-tabs}
 
-Çoklu arka uç etkinken kayıtlı uzak projeler sekme sırasını, seçimi ve her sekmenin kendi taslaklarını korur. Kullanılamayan sunucu bekleyen bir sekme bırakır: sunucu döndüğünde **Yeniden dene**, ya da kullanıcı adı/parola veya yeni bir **Eşleştirme bağlantısı** ile **Bağlan** seçin. Diğer sunucular kullanılabilir kalır.
+Geri yükleme açıkken yeniden yüklediğinizde uzak sekmelerin sırası, seçimi ve taslakları korunur. Kullanılamayan sunucu bekleyen bir sekme bırakır: sunucu döndüğünde **Yeniden dene**, ya da kullanıcı adı/parola veya **Yeni eşleştirme bağlantısı** alanındaki bağlantıyla **Bağlan** seçin. Diğer sunucular kullanılabilir kalır. **Sunucu bulunamadı**, kayıtlı sunucunun eksik olduğunu gösterir.
+
+**Yeniden dene**, var olan bir projeye yeniden bağlanır. Sunucuya erişilebiliyor ancak proje bulunamıyorsa **Aç** seçeneğini kullanın.
 
 **Yeniden dene**, başlangıçta otomatik geri yükleme kapalıyken de bekleyen sekmeleri kurtarır. Bildirimler mevcut bekleyen sekmeyi seçer. Onaylanmamış bir konuşma işlemini yeniden göndermeden önce sonucunu kontrol edin.
 
-Sunucuyu kaldırmadan veya adresini değiştirmeden önce tüm pencerelerdeki proje sekmelerini kapatın ve Ayarlar hâlâ bu sunucuyu kullanıyorsa **Ayarlar**'ı başka bir projeden yeniden açın. Erişilemeyen proje listesi, kontrol edilene kadar değişikliği engeller.
-
 ## Geçici çalışma alanları {#temporary-workspaces}
 
-1. Başlatıcıda **Geçici** öğesini veya ana sayfada **Yeni geçici instance** öğesini seçin.
+1. Ana sayfada **Yeni geçici sekme** veya boş sekmenin sütunları üstünde **Geçici** seçin.
 2. Boş CodeNomad tarafından yönetilen klasörde çalışın; Git otomatik olarak başlatılmıyor.
 3. Sekmeyi kapatırken **Sakla**, **At** veya **İptal** öğesini seçin. Sekme menüsü ayrıca **Proje olarak sakla** öğesini de sunar.
 

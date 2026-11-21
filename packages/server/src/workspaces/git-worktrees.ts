@@ -109,7 +109,8 @@ export async function revisionContainsFolder(directory: string, revision: string
 
 export async function attachWorktreeBranch(directory: string, branch: string, existing: boolean): Promise<void> {
   // Never -B/--force: preserve branch refs and Git's already-checked-out guard.
-  await git(directory, ["switch", ...(existing ? [] : ["-c"]), branch])
+  // An existing branch only: never let Git guess one from a same-named remote-tracking branch.
+  await git(directory, ["switch", ...(existing ? ["--no-guess"] : ["-c"]), branch])
 }
 
 export async function gitExcludePath(directory: string): Promise<string> {

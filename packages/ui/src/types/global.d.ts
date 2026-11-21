@@ -65,6 +65,10 @@ declare global {
     getZoomFactor?: () => number
     getPathForFile?: (file: File) => string | null
     requestMicrophoneAccess?: () => Promise<{ granted: boolean }>
+    deviceSpeech?: (request: import("../../../desktop-speech/contract").DeviceSpeechRequest) => Promise<unknown>
+    remoteMicrophoneLease?: true
+    remoteDictation?: (request: import("../../../desktop-speech/remote-contract").RemoteDictationRequest) => Promise<unknown>
+    settleRemoteDictation?: (request: import("../../../desktop-speech/remote-contract").SettleRemoteDictation) => Promise<unknown>
     setWakeLock?: (enabled: boolean) => Promise<{ enabled: boolean }>
     setNotificationBadge?: (count: number) => Promise<unknown>
     claimClientStateAccess?: (accessToken: string) => Promise<boolean>
@@ -104,7 +108,7 @@ declare global {
     resolvePreferencesTransition?: (id: number, approved: boolean) => Promise<unknown>
     openerStartupState?: (command: string, epoch?: number) => Promise<unknown>
     memoryCleanup?: (request: import("../lib/native/memory-cleanup-command").MemoryCleanupRequest) => Promise<unknown>
-    selectServer?: (intent: import("../lib/native/server-selection-intent").ServerSelectionIntent) => Promise<unknown>
+    selectServer?: (intent: import("../lib/native/server-selection-intent").ServerSelectionIntent, action?: "remove") => Promise<unknown>
     onPreferencesSection?: (callback: (request: unknown) => void) => () => void
     onPreferencesCloseRequested?: (callback: () => void) => () => void
     onPreferencesTransitionRequested?: (callback: (value: unknown) => void) => () => void
@@ -145,7 +149,7 @@ declare global {
        __CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?: () => Promise<void>
        __CODENOMAD_STARTUP_STATE_COMMAND__?: (command: unknown) => Promise<unknown>
        __CODENOMAD_MEMORY_CLEANUP__?: (request: unknown) => Promise<void>
-       __CODENOMAD_SELECT_SERVER__?: (intent: unknown) => void
+       __CODENOMAD_SELECT_SERVER__?: (intent: unknown, action?: "remove") => void
        electronAPI?: ElectronAPI
       __TAURI__?: TauriBridge
       codenomadLogger?: LoggerControls

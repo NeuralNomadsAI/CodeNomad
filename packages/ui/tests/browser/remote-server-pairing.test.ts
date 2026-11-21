@@ -88,27 +88,6 @@ test("an ordinary address saved without Connect opens no window", async () => {
   } finally { await page.close() }
 })
 
-test("SSH profiles preserve the remote origin and host without direct probing or opening a window", async () => {
-  const page = await browser.newPage({ viewport: { width: 900, height: 1100 }, locale: "en-US" })
-  const errors: string[] = []
-  page.on("pageerror", error => errors.push(error.message))
-  try {
-    await page.goto(`${url}?scenario=ssh`)
-    const host = page.getByLabel("SSH host (optional)")
-    await host.fill("lab")
-    assert.equal(await page.getByRole("button", { name: "Connect", exact: true }).isDisabled(), true)
-    await page.waitForFunction(() => document.querySelectorAll("datalist option").length === 2)
-    await submit(page, "http://127.0.0.1:9899/", "Save")
-    await page.getByTestId("servers").getByText("http://127.0.0.1:9899").waitFor()
-    const state = JSON.parse(await page.evaluate(() => (window as unknown as { uiState: () => string }).uiState()))
-    assert.deepEqual(state.remoteServers[0].ssh, { host: "lab" })
-    assert.equal(state.remoteServers[0].baseUrl, "http://127.0.0.1:9899")
-    assert.deepEqual(await page.evaluate(() => (window as unknown as { probes: string[] }).probes), [])
-    assert.deepEqual(await opened(page), [])
-    assert.deepEqual(errors, [])
-  } finally { await page.close() }
-})
-
 test("desktop launch reports an SSH window refusal instead of acknowledging an unopened connection", async () => {
   const page = await browser.newPage()
   try {

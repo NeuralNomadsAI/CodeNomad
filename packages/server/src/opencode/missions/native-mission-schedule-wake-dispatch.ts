@@ -41,7 +41,7 @@ export async function recoverNativeMissionScheduleClaim(claim: NativeMissionSche
  * until status proves its receiver ended without consuming the run: that same
  * identity is then claimed again (`retry`) and dispatched. */
 export async function dispatchNativeMissionScheduleWake(input: { wake: NativeScheduleWake; registrationFile: string; directory: string; signal?: AbortSignal },
-  ports: { transport: ReturnType<typeof createNativeScheduleTransport>; current(): true; held(): Promise<boolean>;
+  ports: { transport: Pick<ReturnType<typeof createNativeScheduleTransport>, "status" | "wake">; current(): true; held(): Promise<boolean>;
     claim(incarnation: NativeScheduleIncarnation, preflight: NativeSchedulePreflight, retry: boolean): Promise<boolean> }): Promise<NativeScheduleTransportResult> {
   const abort = new AbortController(), signal = input.signal ? AbortSignal.any([input.signal, abort.signal]) : abort.signal
   const timer = setTimeout(() => abort.abort(), 8000)

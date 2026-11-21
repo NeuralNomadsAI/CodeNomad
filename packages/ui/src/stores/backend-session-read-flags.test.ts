@@ -9,14 +9,11 @@ import { loading, sessions, setSessions, beginSessionSearch, setSessionSearchRes
   getSessionSearchQuery, isSessionSearchLoading } from "./session-state"
 import type { Session } from "../types/session"
 import { registerLocalBackendFixture } from "../../tests/contracts/local-backend-fixture"
+import { deferred as gate } from "../../tests/test-support/deferred"
 
 const source = { on: () => () => {}, onOpen: () => () => {}, onTransportStatus: () => () => {}, onDispose: () => () => {} }
 const tick = () => new Promise<void>(resolve => setImmediate(resolve))
-function deferred() {
-  let resolve!: (value: { data: never[]; cursor: object }) => void, reject!: (error: Error) => void
-  const promise = new Promise<{ data: never[]; cursor: object }>((yes, no) => { resolve = yes; reject = no })
-  return { promise, resolve, reject }
-}
+const deferred = gate<{ data: never[]; cursor: object }>
 async function until(condition: () => boolean) {
   for (let n = 0; n < 100 && !condition(); n++) await tick()
   assert.ok(condition(), "read dispatched")

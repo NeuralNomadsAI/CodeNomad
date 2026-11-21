@@ -1,57 +1,31 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
 import { test } from "node:test"
 import { generateUUID } from "../lib/client-identity"
 import ts from "typescript"
-import { isMissionGithubKind } from "../../../server/src/missions/mission-github-condition"
+import { evaluateExpression, productionHandler, readSource } from "../../tests/test-support/production-ast"
+import { deferred } from "../../tests/test-support/deferred"
+import { isMissionPickerSource } from "./mission-scheduling-data"
 import { createEffect, createMemo, createRoot, createSignal, createUniqueId, mapArray, on, onCleanup, untrack } from "solid-js"
 
 // Execute production AST, including the actual finally/cleanup branches. Imports
 // and JSX are outside these indicator tests; request and view owners are explicit.
-function source(path: string) {
-  return ts.createSourceFile(path, readFileSync(new URL(path, import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
-}
-function compile(text: string, scope: Record<string, any>) {
+function bindings(scope: Record<string, any>) {
   scope.generateUUID ??= generateUUID
   scope.backendOf ??= () => ({ api: scope.serverApi })
-  const code = ts.transpileModule(`(${text})`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText
-  return new Function("scope", `with (scope) { return ${code} }`)(scope)
+  return scope
 }
 function method(path: string, name: string, scope: Record<string, any>) {
-  const file = source(path)
-  let found: ts.FunctionDeclaration | ts.ArrowFunction | undefined
-  function visit(node: ts.Node) {
-    if (ts.isFunctionDeclaration(node) && node.name?.text === name) found = node
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name
-      && node.initializer && ts.isArrowFunction(node.initializer)) found = node.initializer
-    ts.forEachChild(node, visit)
-  }
-  visit(file)
-  assert.ok(found, name)
-  return compile(found.getText(file).replace(/^export\s+/, ""), scope)
+  return productionHandler(new URL(path, import.meta.url), name, bindings(scope))
 }
 function component(path: string, name: string, expose: string, scope: Record<string, any>) {
-  const file = source(path)
+  const file = readSource(new URL(path, import.meta.url))
   const declaration = file.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name) as ts.FunctionDeclaration
   assert.ok(declaration?.body)
   const statements = declaration.body.statements.slice(0, -1).map(node => node.getText(file)).join("\n")
-  return compile(`function(props) { ${statements}\nreturn ${expose} }`, scope)
+  return evaluateExpression(`function(props) { ${statements}\nreturn ${expose} }`, bindings(scope))
 }
 function effect(path: string, marker: string, scope: Record<string, any>) {
-  const file = source(path)
-  let found: ts.ArrowFunction | undefined
-  function visit(node: ts.Node) {
-    if (ts.isCallExpression(node) && node.expression.getText(file) === "createEffect"
-      && ts.isArrowFunction(node.arguments[0]) && node.arguments[0].getText(file).includes(marker)) found = node.arguments[0]
-    ts.forEachChild(node, visit)
-  }
-  visit(file); assert.ok(found, marker)
-  return compile(found.getText(file), scope)
-}
-function deferred() {
-  let resolve!: (value?: any) => void, reject!: (error: Error) => void
-  const promise = new Promise<any>((accept, fail) => { resolve = accept; reject = fail })
-  return { promise, resolve, reject }
+  return productionHandler(new URL(path, import.meta.url), "createEffect", bindings(scope), marker)
 }
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve() }
 function attachment() {
@@ -86,11 +60,11 @@ for (const outcome of ["success", "failure", "cancellation"] as const) {
         scope.epoch++; refreshing = false; backend.replace()
         void check()
       }
-      if (outcome === "success") requests[0].resolve()
+      if (outcome === "success") requests[0].resolve(undefined)
       else requests[0].reject(new DOMException(outcome, outcome === "cancellation" ? "AbortError" : "Error"))
       await first
       assert.equal(refreshing, successor)
-      if (successor) { requests[1].resolve(); await flush(); assert.equal(refreshing, false) }
+      if (successor) { requests[1].resolve(undefined); await flush(); assert.equal(refreshing, false) }
     })
   }
 }
@@ -111,11 +85,11 @@ for (const outcome of ["success", "failure"] as const) {
       backend.revoke(); backend.replace()
       let second: Promise<void> | undefined
       if (successor) { second = ensure(true); await flush() }
-      if (outcome === "success") requests[0].resolve()
+      if (outcome === "success") requests[0].resolve(undefined)
       else requests[0].reject(new Error("failed"))
       await first
       assert.equal(loading, successor)
-      if (second) { requests[1].resolve(); await second; assert.equal(loading, false) }
+      if (second) { requests[1].resolve(undefined); await second; assert.equal(loading, false) }
     })
   }
 }
@@ -155,7 +129,7 @@ for (const outcome of ["success", "failure", "cancellation"] as const) {
     }
     const run = method("./mission-editor.tsx", "useSavedDefaults", scope)
     const first = run(); backend.revoke(); await run()
-    if (outcome === "success") request.resolve()
+    if (outcome === "success") request.resolve(undefined)
     else request.reject(new DOMException(outcome, outcome === "cancellation" ? "AbortError" : "Error"))
     await first
     assert.equal(refreshing, false); assert.equal(publications, 1) // Initial reset only.
@@ -166,7 +140,7 @@ for (const outcome of ["success", "failure", "cancellation"] as const) {
   test(`editor source retained view: ${outcome}, hidden cancellation then active B`, async () => {
     const backend = attachment(), requests: ReturnType<typeof deferred>[] = []
     const [active, setActive] = createSignal(true)
-    const client = {}, scope = { ...solid, ...backend, isMissionGithubKind, getOpenCodeInstanceGeneration: () => 1,
+    const client = {}, scope = { ...solid, ...backend, isMissionPickerSource, getOpenCodeInstanceGeneration: () => 1,
       getRootClient: () => client, serverApi: { fetchMissionScheduleSourcePage: () => {} } }
     // Branch sources avoid loading unrelated native session/cursor adapters.
     Object.assign(scope.serverApi, { fetchLocalGitBranches: () => { const request = deferred(); requests.push(request); return request.promise } })
@@ -318,7 +292,7 @@ test("lifecycle: revocation during the acknowledged control's refresh releases i
   }
   const act = method("./mission-lifecycle-controls.tsx", "act", scope), result = act("pause")
   await flush(); assert.equal(refreshing, true)
-  backend.revoke(); backend.replace(); refresh.resolve(); await result
+  backend.revoke(); backend.replace(); refresh.resolve(undefined); await result
   assert.equal(refreshing, false)
 })
 

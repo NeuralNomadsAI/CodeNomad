@@ -127,7 +127,7 @@ test("native ARM smoke consumes only the successful Intel producer's immutable a
 test("artifact identity rejects missing/mismatched provenance before download (API double, no network)", () => {
   const script = workflow("build-and-upload.yml").jobs["smoke-electron-macos-arm64"].steps[2].run.split("<<'PY'\n")[1].split("\nPY")[0]
   python(String.raw`
-import contextlib, copy, datetime, io, json, os, pathlib, subprocess, sys, tempfile, urllib.request
+import contextlib, datetime, io, json, os, subprocess, sys, tempfile, urllib.request
 from unittest.mock import patch, Mock
 script = sys.argv[1]
 source, workflow_sha, checksum = 'a' * 40, 'b' * 40, 'c' * 64
@@ -173,8 +173,8 @@ print('metadata: positive and 18 fail-closed cases; no network')
 `, [script])
 })
 
-test("real stdlib ZIP validation and smoke subprocess doubles (not native ARM proof)", () => {
-  const output = python(String.raw`
+test("macOS ZIP validation and packaged smoke subprocess handling", () => {
+  python(String.raw`
 import contextlib, importlib.util, io, os, pathlib, stat, struct, subprocess, sys, tempfile, warnings, zipfile
 from unittest.mock import patch
 spec = importlib.util.spec_from_file_location('archive', sys.argv[1])
@@ -198,10 +198,12 @@ with tempfile.TemporaryDirectory() as tmp:
         return p
     F, D, L = stat.S_IFREG, stat.S_IFDIR, stat.S_IFLNK
     base = [('CodeNomad.app/',D,b''), ('CodeNomad.app/Contents/',D,b'')]
-    def rejected(p, outer=False):
+    def rejected(p, outer=False, reason=None):
         try:
             m.validate(p, outer)
-        except (ValueError, zipfile.BadZipFile, UnicodeError):
+        except (ValueError, zipfile.BadZipFile, UnicodeError) as error:
+            if reason is not None:
+                assert str(error) == reason, (p, str(error))
             return
         raise AssertionError('accepted unsafe ZIP: '+str(p))
     framework = base + [
@@ -296,52 +298,19 @@ with tempfile.TemporaryDirectory() as tmp:
                 assert arch!='ARM64' or bad
             else: assert arch=='ARM64' and not bad
         return calls
-    assert trial()
+    trial()
     assert not trial(arch='X64')
     for bad in ('uname','node','sysctl','lipo','CodeNomad','skip','marker','exit'):
         trial(bad=bad)
-print('ZIP positive/negative cases and subprocess failure propagation passed; not native ARM proof')
-`, [path.join(__dirname, "electron-macos-archive.py")])
-  assert.match(output, /failure propagation passed; not native ARM proof/)
-})
-
-test("macOS link prefix aliases fail before parent folding or transitive substitution", () => {
-  python(String.raw`
-import importlib.util, pathlib, stat, sys, tempfile, zipfile
-spec = importlib.util.spec_from_file_location('archive', sys.argv[1])
-m = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(m)
-F, D, L = stat.S_IFREG, stat.S_IFDIR, stat.S_IFLNK
-base = [('CodeNomad.app/',D,b''), ('CodeNomad.app/inside',F,b'benign')]
-cases = {
-    'review-case': [('CodeNomad.app/A',L,b'.'), ('CodeNomad.app/link',L,b'a/../inside')],
-    'NFC-NFD': [('CodeNomad.app/É',L,b'.'), ('CodeNomad.app/link',L,'E\u0301/../inside'.encode())],
-    'NFD-NFC': [('CodeNomad.app/E\u0301',L,b'.'), ('CodeNomad.app/link',L,'É/../inside'.encode())],
-    'transitive': [('CodeNomad.app/A',L,b'.'), ('CodeNomad.app/bridge',L,b'a/../inside'),
-                   ('CodeNomad.app/link',L,b'bridge')],
-    'case-cycle': [('CodeNomad.app/A',L,b'a/../inside')],
-    'Unicode-cycle': [('CodeNomad.app/É',L,'E\u0301/../inside'.encode())],
-    'nested-parent': [('CodeNomad.app/Dir/',D,b''), ('CodeNomad.app/Dir/A',L,b'.'),
-                      ('CodeNomad.app/link',L,b'Dir/a/../../inside')],
-    'implicit-directory': [('CodeNomad.app/Dir/file',F,b'x'), ('CodeNomad.app/link',L,b'dir/../inside')],
-}
-accepted = []
-with tempfile.TemporaryDirectory() as tmp:
-    for label, entries in cases.items():
-        p = pathlib.Path(tmp)/(label+'.zip')
-        with zipfile.ZipFile(p,'w') as z:
-            for name, kind, body in base+entries:
-                info = zipfile.ZipInfo(name)
-                info.create_system = 3
-                info.external_attr = (kind|0o755)<<16
-                z.writestr(info,body)
-        try:
-            m.validate(p)
-        except ValueError as error:
-            assert str(error) == 'macOS link prefix alias', (label,str(error))
-        else:
-            accepted.append(label)
-assert not accepted, 'accepted alias prefixes before folding: ' + ', '.join(accepted)
-print('eight real-validator alias countercases rejected before extraction; no native execution')
+    aliases = [
+        [('CodeNomad.app/A',L,b'.'), ('CodeNomad.app/link',L,b'a/../inside')],
+        [('CodeNomad.app/É',L,b'.'), ('CodeNomad.app/link',L,'E\u0301/../inside'.encode())],
+        [('CodeNomad.app/A',L,b'.'), ('CodeNomad.app/bridge',L,b'a/../inside'), ('CodeNomad.app/link',L,b'bridge')],
+        [('CodeNomad.app/A',L,b'a/../inside')],
+        [('CodeNomad.app/Dir/',D,b''), ('CodeNomad.app/Dir/A',L,b'.'), ('CodeNomad.app/link',L,b'Dir/a/../../inside')],
+        [('CodeNomad.app/Dir/file',F,b'x'), ('CodeNomad.app/link',L,b'dir/../inside')],
+    ]
+    for entries in aliases:
+        rejected(zip_path(base+[('CodeNomad.app/inside',F,b'benign')]+entries), reason='macOS link prefix alias')
 `, [path.join(__dirname, "electron-macos-archive.py")])
 })

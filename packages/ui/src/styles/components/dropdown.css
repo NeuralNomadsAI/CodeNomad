@@ -78,6 +78,7 @@
 
 .action-overflow-content {
   min-width: 12rem;
+  max-inline-size: calc(100vw - 1rem);
   padding: 0.25rem;
   border: 1px solid var(--border-base);
   border-radius: 0;
@@ -125,4 +126,5 @@
 .action-overflow-item-label {
   min-width: 0;
   flex: 1 1 auto;
+  overflow-wrap: anywhere;
 }

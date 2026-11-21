@@ -3,7 +3,7 @@ import { supportsWorkspaceCapability } from "../../../../stores/workspace-capabi
 
 /** Status sections backed by an optional route family; the others only need the native relay. */
 const capabilitiesBySection: Record<string, readonly CodeNomadCapability[]> = {
-  "yolo-mode": ["yolo"],
+  "permissions": ["conversation-permissions"],
   "provider-usage": ["provider-usage"],
   "background-processes": ["background-shells"],
   "plugins": ["plugin-controls", "integrations"],

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
-import { chromium, type Browser } from "playwright"
+import { chromium, type Browser, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { installSourceScrollDelivery } from "./source-scroll-delivery"
@@ -15,19 +15,27 @@ before(async () => {
 })
 after(async () => { await browser?.close() })
 
-for (const held of [false, true]) test(`scroll registration lifetimes match Chromium after delivery (held: ${held})`, async t => {
+async function fixturePage(instrumented: boolean, run: (page: Page) => Promise<void>) {
+  const page = await browser.newPage(), errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  page.on("console", message => { if (message.type() === "error") errors.push(message.text()) })
+  page.on("requestfailed", request => errors.push(`${request.url()}: ${request.failure()?.errorText}`))
+  await page.addInitScript("window.__name = Object")
+  // Capture before the helper patches the shared prototype.
+  await page.addInitScript("window.originalScrollPrototype = [EventTarget.prototype.addEventListener, EventTarget.prototype.removeEventListener]")
+  try {
+    if (instrumented) await installSourceScrollDelivery(page)
+    await page.goto(url)
+    await run(page)
+    assert.deepEqual(errors, [])
+  } finally { try { await page.evaluate(() => window.sourceScrollDelivery?.dispose()) } finally { await page.close() } }
+}
+
+test("immediate and held scroll registrations match Chromium lifetimes", async t => {
   const results = []
-  for (const instrumented of [false, true]) {
-    const page = await browser.newPage(), errors: string[] = []
-    page.on("pageerror", error => errors.push(error.message))
-    page.on("console", message => { if (message.type() === "error") errors.push(message.text()) })
-    page.on("requestfailed", request => errors.push(`${request.url()}: ${request.failure()?.errorText}`))
-    await page.addInitScript("window.__name = Object")
-    // Capture before the helper patches the shared prototype.
-    await page.addInitScript("window.originalScrollPrototype = [EventTarget.prototype.addEventListener, EventTarget.prototype.removeEventListener]")
-    try {
-      if (instrumented) await installSourceScrollDelivery(page)
-      await page.goto(url)
+  // Without instrumentation arming a hold is a no-op, so take one Chromium baseline.
+  for (const [instrumented, held] of [[false, false], [true, false], [true, true]]) {
+    await fixturePage(instrumented, async page => {
       const result = await page.evaluate(({ held, instrumented }) => {
         const list = document.querySelector('[role="listbox"]')!
         const barrier = instrumented ? window.sourceScrollDelivery : undefined
@@ -75,23 +83,15 @@ for (const held of [false, true]) test(`scroll registration lifetimes match Chro
         assert.equal(result.state?.pending, 0); assert.equal(result.state?.armed, false)
         assert.equal(Boolean(result.state?.retained), held)
       }
-      assert.deepEqual(errors, [])
-    } finally { try { await page.evaluate(() => window.sourceScrollDelivery?.dispose()) } finally { await page.close() } }
+    })
   }
   const expected = { abortedReadd: 1, onceReadd: 2, alreadyAborted: 1, duplicate: 2, captures: 3,
     objectCalls: 1, wrongThis: 0, snapshot: 1, reentrant: 2 }
   assert.deepEqual(results[0], expected)
-  assert.deepEqual(results[1], results[0])
+  assert.deepEqual(results.slice(1), [results[0], results[0]])
 })
 
-test("held deliveries belong to their registration and dispose restores the prototype", async t => {
-  const page = await browser.newPage(), errors: string[] = []
-  page.on("pageerror", error => errors.push(error.message))
-  page.on("console", message => { if (message.type() === "error") errors.push(message.text()) })
-  page.on("requestfailed", request => errors.push(`${request.url()}: ${request.failure()?.errorText}`))
-  await page.addInitScript("window.originalScrollPrototype = [EventTarget.prototype.addEventListener, EventTarget.prototype.removeEventListener]")
-  try {
-    await installSourceScrollDelivery(page); await page.goto(url)
+test("held deliveries belong to their registration and dispose restores the prototype", async t => fixturePage(true, async page => {
     const result = await page.evaluate(() => {
       const list = document.querySelector('[role="listbox"]')!, barrier = window.sourceScrollDelivery
       const event = () => list.dispatchEvent(new Event("scroll"))
@@ -125,6 +125,4 @@ test("held deliveries belong to their registration and dispose restores the prot
     assert.equal(result.removed, 1); assert.equal(result.aborted, 1); assert.equal(result.consumed, 2)
     assert.equal(result.duplicates, 1); assert.equal(result.disposed, 1); assert.equal(result.restored, true)
     assert.equal(result.beforeDispose.pending, 1); assert.equal(result.afterDispose.pending, 0); assert.equal(result.afterDispose.armed, false)
-    assert.deepEqual(errors, [])
-  } finally { try { await page.evaluate(() => window.sourceScrollDelivery?.dispose()) } finally { await page.close() } }
-})
+}))

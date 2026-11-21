@@ -32,6 +32,7 @@ export const GeneralSettingsSection: Component<GeneralSettingsSectionProps> = (p
         setting.id === "behavior.scrollControlsInTimelineCorner" ||
         setting.id === "behavior.autoExpandActiveSubsessions" ||
         setting.id === "behavior.diffViewMode" ||
+        setting.id === "behavior.newConversationPermissions" ||
         setting.id === "behavior.followUpBehavior" ||
         (setting.id === "behavior.keepComputerAwake" && isDesktopHost() && isNativeApplicationWindow()),
     ),

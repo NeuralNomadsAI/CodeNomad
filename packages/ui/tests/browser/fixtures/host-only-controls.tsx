@@ -9,7 +9,6 @@ import { SavedRemoteServersCard } from "../../../src/components/settings/saved-r
 import { RemoteAccessSettingsSection } from "../../../src/components/settings/remote-access-settings-section"
 import { RemoteControlSettingsSection } from "../../../src/components/settings/remote-control-settings-section"
 import { SideCarsSettingsSection } from "../../../src/components/settings/sidecars-settings-section"
-import { SideCarPickerDialog } from "../../../src/components/sidecar-picker-dialog"
 import { getServerMeta } from "../../../src/lib/server-meta"
 import "../../../src/index.css"
 
@@ -43,7 +42,6 @@ function Harness() {
   Object.assign(window, { hostControlsConfig: useConfig() })
   const surface = query.get("surface")
   void getServerMeta().catch(() => {}).finally(() => { document.documentElement.dataset.metaSettled = "true" })
-  if (surface === "picker") return <SideCarPickerDialog open onClose={() => {}} onOpenSidecar={() => {}} />
   if (surface === "settings") return <><SavedRemoteServersCard />{query.has("locked") && <RemoteControlSettingsSection />}<RemoteAccessSettingsSection /><SideCarsSettingsSection /></>
   return <FolderSelectionView onSelectFolder={() => {}} onSelectExistingInstance={() => {}} onOpenSidecar={() => {}} />
 }

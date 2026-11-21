@@ -31,9 +31,7 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 /** Internal backend seam. All explicit HTTP dispatches, including probes, use this fetch. */
 export function createExplicitTransport(options: {
   origin: string
-  credentials?: { username: string; password: string }
   signal?: AbortSignal
-  ca?: string
   skipTlsVerify?: boolean
   /** Backend-held cookies, set after filtering. */
   headers?: () => Record<string, string>
@@ -41,16 +39,14 @@ export function createExplicitTransport(options: {
   onSetCookie?: (values: string[]) => void
   /** Explicit server protocols must not carry Fetch's automatically generated browser metadata. */
   omitFetchMetadata?: boolean
+  /** A CodeNomad password connection uses the saved destination's own CSRF origin for writes. */
+  sendOwnOriginOnMutation?: boolean
   /** Preview responses keep redirects for capability-scoped rewriting by their isolated listener. */
   previewRedirects?: boolean
   /** Owned local endpoint that carries this origin (an SSH forward). The origin stays the request and TLS identity. */
   dial?: () => Promise<{ address: string; family: 4 | 6; port: number }>
 }, resolve?: ResolveAddresses) {
   const origin = normalizeExplicitOrigin(options.origin)
-  if (options.ca !== undefined) throw new ExplicitEndpointError("custom_ca_unsupported")
-  // Copy secret inputs; subsequent caller mutation cannot retarget credentials.
-  const credentials = options.credentials ? { ...options.credentials } : undefined
-  if (credentials?.username.includes(":")) throw new ExplicitEndpointError("invalid_origin")
   const lifetime = options.signal ?? new AbortController().signal
   const fetch: typeof globalThis.fetch = async (input, init) => {
     let agent: Agent | undefined
@@ -83,8 +79,8 @@ export function createExplicitTransport(options: {
         return dispatch({ ...options, headers }, handler)
       }) : agent
       const headers = filterHeaders(request.headers, requestDenied)
-      if (credentials) headers.set("authorization", `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString("base64")}`)
       for (const [name, value] of Object.entries(options.headers?.() ?? {})) if (name.toLowerCase() !== "origin") headers.set(name, value)
+      if (options.sendOwnOriginOnMutation && !["GET", "HEAD", "OPTIONS"].includes(request.method)) headers.set("origin", origin)
       const response = await undiciFetch(url, {
         method: request.method, headers: Object.fromEntries(headers),
         body: request.body as never, duplex: "half", signal, redirect: "manual", dispatcher,

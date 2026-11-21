@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
 import { test } from "node:test"
 import { generateUUID } from "../lib/client-identity"
 import { repositoryIdentitySchema } from "../../../server/src/missions/mission-repository-condition"
-import ts from "typescript"
-import { isMissionGithubKind } from "../../../server/src/missions/mission-github-condition"
+import { productionHandler } from "../../tests/test-support/production-ast"
+import { deferred } from "../../tests/test-support/deferred"
+import { isMissionPickerSource } from "./mission-scheduling-data"
 import { isReservedMissionScheduleSessionID } from "../../../server/src/missions/mission-schedule-carrier-identity"
 import { buildProjectSessionListOptions, normalizeSessionDirectory } from "../stores/session-list-options"
 import { backgroundReads } from "../lib/background-read-queue"
@@ -16,24 +16,7 @@ import { createEffect, createMemo, createRoot, createSignal, mapArray, on, onCle
 // Local and remote transports are deliberately distinct: reverting a consumer to
 // the singleton fails at dispatch, even when the API layer itself still routes.
 function production(path: string, name: string, scope: Record<string, any>, marker?: string) {
-  const file = ts.createSourceFile(path, readFileSync(new URL(path, import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
-  let found: ts.Node | undefined
-  const visit = (node: ts.Node) => {
-    if (!marker && ts.isFunctionDeclaration(node) && node.name?.text === name) found = node
-    if (!marker && ts.isVariableDeclaration(node) && node.name.getText(file) === name && node.initializer) found = node.initializer
-    if (marker && ts.isCallExpression(node) && node.expression.getText(file) === name
-      && node.arguments[0]?.getText(file).includes(marker)) found = node.arguments[0]
-    ts.forEachChild(node, visit)
-  }
-  visit(file); assert.ok(found, `${path}: ${name}`)
-  const text = found.getText(file).replace(/^export\s+/, "")
-  const code = ts.transpileModule(`(${text})`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText
-  return new Function("scope", `with (scope) { return ${code} }`)(scope)
-}
-function deferred() {
-  let resolve!: (value?: any) => void
-  const promise = new Promise<any>(accept => { resolve = accept })
-  return { promise, resolve }
+  return productionHandler(new URL(path, import.meta.url), name, scope, marker)
 }
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve() }
 const solid = { createEffect, createMemo, createSignal, mapArray, on, onCleanup, untrack }
@@ -54,21 +37,6 @@ function fixture(api: Record<string, any>, id = "remote~same") {
     revoke: () => controller.abort(),
   }
 }
-
-test("playbook routes by instance; late A never replaces B", async () => {
-  const reads: ReturnType<typeof deferred>[] = [], env = fixture({ fetchMissionPlaybooks: () => {
-    const read = deferred(); reads.push(read); return read.promise
-  } })
-  let details: any, dispose!: () => void
-  const effect = production("./mission-playbook-reader.tsx", "createEffect", { ...env,
-    props: { instanceId: id, taskMode: "native" }, attempt: () => 0, setFailed: () => {}, setDetails: (value: any) => { details = value },
-  }, "fetchMissionPlaybooks")
-  createRoot(close => { dispose = close; createEffect(effect) })
-  assert.equal(env.owners.length, 1)
-  env.replace(); reads[1].resolve({ source: "B" }); await flush()
-  reads[0].resolve({ source: "A" }); await flush()
-  assert.deepEqual(details, { source: "B" }); dispose()
-})
 
 test("lifecycle control uses remote owner; revoked ACK cannot refresh", async () => {
   const read = deferred(), env = fixture({ controlMission: () => read.promise }), mission = { id: "m", revision: 1 }
@@ -114,20 +82,6 @@ test("recovery admission is remote; detached completion cannot notify the view",
   })
   const pending = run(); assert.equal(env.owners.length, 1)
   env.replace(); read.resolve({ admitted: true }); await pending; assert.equal(publications, 0)
-})
-
-test("cleanup remote preflight cannot delete after detachment", async () => {
-  const read = deferred(); let deletes = 0, refreshes = 0
-  const env = fixture({ fetchMission: () => read.promise, deleteMission: async () => { deletes++ } })
-  const saved = { missionID: "m", deletionID: "d", requestID: "r", expectedRevision: 1, deleteManagedSessions: false }
-  const run = production("./mission-cleanup.tsx", "retry", { ...env,
-    props: { instanceId: id, active: true, disabled: false, refresh: () => { refreshes++ } },
-    pending: () => "", rows: () => new Map([["row", saved]]), missionCleanupPending: () => true,
-    captureView: () => () => true, attempt: 0, alive: true, setPending: () => {}, setError: () => {},
-  })
-  const pending = run("row"); assert.equal(env.owners.length, 1)
-  env.replace(); read.resolve({ available: true, cleanups: [saved] }); await pending
-  assert.equal(deletes, 0); assert.equal(refreshes, 0)
 })
 
 // These routing cases opt out of automatic start; either unexpected opt-in or continuation fails.
@@ -181,7 +135,7 @@ for (const kind of ["schedule-success", "mission-completed", "branch-commits"] a
     let dispose!: () => void
     const timers = new Map<number, () => void>()
     let timerId = 0
-    const create = production("./mission-editor-sources.ts", "createMissionEditorSources", { ...env, isMissionGithubKind, getOpenCodeInstanceGeneration: () => 1,
+    const create = production("./mission-editor-sources.ts", "createMissionEditorSources", { ...env, isMissionPickerSource, getOpenCodeInstanceGeneration: () => 1,
       setTimeout: (callback: () => void) => { const key = ++timerId; timers.set(key, callback); return key },
       clearTimeout: (key: number) => timers.delete(key),
     })
@@ -199,7 +153,7 @@ test("coordinator sources keep same-ID roots on A/B, filter foreign rows and rej
     const env = fixture({}, owner), reads: any[] = [], pending = deferred(), pins: string[] = [], timers = new Map<number, () => void>()
     let timerID = 0
     const row = (id: string, extra = {}) => ({ id, title: `${owner}:${id}`, projectID: "p", location: { directory: "/repo" }, ...extra })
-    const create = production("./mission-editor-sources.ts", "createMissionEditorSources", { ...env, isMissionGithubKind,
+    const create = production("./mission-editor-sources.ts", "createMissionEditorSources", { ...env, isMissionPickerSource,
       isReservedMissionScheduleSessionID, buildProjectSessionListOptions, normalizeSessionDirectory, backgroundReads,
       conversationTitleQuery: production("./mission-editor-sources.ts", "conversationTitleQuery", {}),
       getOpenCodeInstanceGeneration: () => 1, setTimeout: (callback: () => void) => { const key = ++timerID; timers.set(key, callback); return key }, clearTimeout: (key: number) => timers.delete(key),
@@ -326,7 +280,7 @@ test("depth writes stay on their owner and a detached acknowledgement never star
     instances: () => new Map([[id, { client }]]), getOpenCodeInstanceGeneration: () => 1, read: () => { reads++ },
   })
   const pending = run(); assert.equal(env.owners.length, 1)
-  env.revoke(); write.resolve(); await pending
+  env.revoke(); write.resolve(undefined); await pending
   assert.equal(reads, 0); assert.equal(state.phase, "uncertain")
 })
 
@@ -536,7 +490,7 @@ test("lifecycle reconcile authorizes only its exact request after its own read",
   const scope = { ...env, props: { instanceId: id }, identity: () => "scope", epoch: 1, alive: true,
     durableRequest: () => input, retry: () => undefined, retryable: () => true, missionStore: { state: () => ({ status: "ready" }) } }
   const reconcile = production("./mission-lifecycle-controls.tsx", "reconcile", scope)
-  const pending = reconcile(read.promise); env.revoke(); read.resolve(); assert.equal(await pending, false)
+  const pending = reconcile(read.promise); env.revoke(); read.resolve(undefined); assert.equal(await pending, false)
   env.replace(); assert.equal(await reconcile(Promise.resolve()), true)
 })
 

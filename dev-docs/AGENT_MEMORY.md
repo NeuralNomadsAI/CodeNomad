@@ -197,7 +197,7 @@ filesystem targets.
 
 Remote browsers use the authenticated UI admission matrix in
 [Remote Control](REMOTE_CONTROL.md#saved-profile-relay). With the strict host-owned
-`multiBackend` flag enabled, paired Remote Control devices, verified HTTPS clients
+`multiBackend` flag enabled (the default), paired Remote Control devices, verified HTTPS clients
 and declared LAN HTTP sessions can use the exact memory routes on the host and
 through saved-profile relays. PWA requests follow their current URL's channel.
 Relayed memory retains the current backend proof, destination schemas and

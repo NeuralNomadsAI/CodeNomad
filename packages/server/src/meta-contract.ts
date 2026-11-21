@@ -9,7 +9,7 @@ export const CODENOMAD_API_CONTRACT = 1
 export const CODENOMAD_CAPABILITIES = [
   "workspaces", "workspace-files", "workspace-git", "events",
   "linked-worktrees", "force-worktree-delete", "workspace-clone", "temporary-workspaces",
-  "missions", "yolo", "session-goals", "history-search", "background-shells",
+  "missions", "conversation-permissions", "session-goals", "history-search", "background-shells",
   "plugin-controls", "integrations", "websearch-settings", "image-settings", "provider-usage", "service-usage",
   "speech", "previews", "sidecars", "remote-control", "opencode-admin", "config-files",
 ] as const

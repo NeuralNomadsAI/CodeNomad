@@ -15,7 +15,7 @@ export default function OpenCodeSetup(props: { automatic?: boolean } = {}) {
   const { serverSettings } = useConfig()
   createEffect(() => { serverSettings().opencodeBinary; untrack(invalidateOpenCodeSetup) })
   createEffect(() => {
-    sseManager.getStatuses()
+    sseManager.getBackendStatuses()
     untrack(() => { if (!document.hidden) void refreshOpenCodeSetup() })
   })
   let announced = ""

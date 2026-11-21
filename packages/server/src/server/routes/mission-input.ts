@@ -12,6 +12,8 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { syncSessionGitContext } from "../../workspaces/session-git-context"
 import { syncSessionMemoryContext } from "../../workspaces/session-memory-context"
 import type { MemoryService } from "../../memory/service"
+import type { SessionPermissionModes } from "../../permissions/session-mode"
+import { sessionPermissionTarget } from "./session-permission-mode"
 import { cleanupMissionSession } from "./mission-cleanup"
 import { applyMissionLifecycle } from "./mission-lifecycle"
 import { missionIsRunning } from "../../missions/lifecycle-model"
@@ -39,11 +41,12 @@ const inputSchema = z.object({
 }).strict()
 
 type Manager = Pick<WorkspaceManager, "list" | "getSharedServiceConnection" | "ownsLocation" | "getWorktreeIdentityForPath" | "getSessionEnvironment">
+  & Partial<Pick<WorkspaceManager, "getServiceWslDistro">>
 
 // Called only behind the loopback token-authenticated desktop bridge. No environment
 // values leave this backend; both native writes share ownership, connection and fence.
 export async function admitMissionInput(manager: Manager, fence: WorktreeDeletionFence, coordinatorID: string, command: unknown, signal: AbortSignal,
-  authority?: MissionAuthorityCheckpoint, memory?: MemoryService) {
+  authority?: MissionAuthorityCheckpoint, memory?: MemoryService, permissionModes?: SessionPermissionModes) {
   if (command && typeof command === "object" && "kind" in command && command.kind === "lifecycle") {
     return applyMissionLifecycle(manager, fence, coordinatorID, command, signal, authority, memory)
   }
@@ -147,10 +150,18 @@ export async function admitMissionInput(manager: Manager, fence: WorktreeDeletio
     // Readiness/environment/Git awaits are not location authority. Re-read both
     // identities after them; the existing fence covers only the recorded roots.
     await prepareMissionAuthority(authority)
-    await assertSessionsCurrent()
+    const beforeSend = await assertSessionsCurrent()
     assertMissionAuthorityCurrent(authority)
-    if (kind === "prompt") await client.session.prompt(input, { signal })
-    else await client.session.synthetic(input, { signal })
+    if (kind === "prompt") {
+      if (permissionModes?.mayBeSupervised(beforeSend)) {
+        const current = () => { signal.throwIfAborted(); connection.assertCurrent(); assertMissionAuthorityCurrent(authority) }
+        await permissionModes.refresh(sessionPermissionTarget(beforeSend, {
+          client, current, signal, distro: manager.getServiceWslDistro?.(workspace.id),
+        }))
+        current()
+      }
+      await client.session.prompt(input, { signal })
+    } else await client.session.synthetic(input, { signal })
     return { admitted: true }
   } finally { release() }
 }

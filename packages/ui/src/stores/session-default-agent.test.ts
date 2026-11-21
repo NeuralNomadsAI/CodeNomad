@@ -16,9 +16,13 @@ test("new sessions use the native default agent and its model, while explicit ch
   let listed = [nativeAgent("orchestrator"), nativeAgent("build"), nativeAgent("plan"),
     nativeAgent("aaa-child", "subagent"), nativeAgent("aaa-hidden", "primary", true)]
   const created: any[] = []
+  let resumeCatalog!: () => void
+  const catalog = new Promise<void>(resolve => { resumeCatalog = resolve })
+  let beginCatalog!: () => void
+  const catalogStarted = new Promise<void>(resolve => { beginCatalog = resolve })
   const client = {
     agent: {
-      list: async () => ({ data: listed }),
+      list: async () => { beginCatalog(); await catalog; return { data: listed } },
       get: async () => { throw new Error("All built-ins were already listed") },
     },
     session: {
@@ -40,8 +44,13 @@ test("new sessions use the native default agent and its model, while explicit ch
   setProviders(previous => new Map(previous).set(instanceId, [{ id: "fixture", name: "Fixture",
     models: listed.map(agent => ({ id: agent.model.id, providerId: "fixture", name: agent.model.id })) }]))
   try {
-    assert.equal(await fetchAgents(instanceId), true)
+    const first = createSession(instanceId)
+    await catalogStarted
+    assert.deepEqual(created, [], "the first conversation waits for the catalog")
+    resumeCatalog()
+    assert.equal((await first).agent, "orchestrator")
     assert.deepEqual(agents().get(instanceId)?.map(agent => agent.id), listed.map(agent => agent.id))
+    setSessions(previous => new Map(previous).set(instanceId, new Map()))
     for (const [explicit, expected] of [[undefined, "orchestrator"], ["build", "build"]] as const) {
       const result = await createSession(instanceId, explicit)
       assert.equal(result.agent, expected)
@@ -57,6 +66,7 @@ test("new sessions use the native default agent and its model, while explicit ch
     assert.equal(refreshed.agent, "plan", "a refreshed host default replaces the old default")
     assert.equal(refreshed.model.modelId, "plan-model")
   } finally {
+    resumeCatalog()
     serverApi.fetchConfigOwner = originalRead
     serverApi.patchConfigOwner = originalWrite
     messageStoreBus.unregisterInstance(instanceId)

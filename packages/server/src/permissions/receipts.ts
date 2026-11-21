@@ -160,9 +160,9 @@ export class PermissionReceipts {
     }, signal)
   }
 
-  /** Called after proxy/Yolo ownership checks, before the native mutation. */
+  /** Called after proxy ownership checks, before the native mutation. */
   async prepare(instanceId: string, connection: ServiceConnection, sessionId: string, requestId: string,
-    decision: PermissionReceipt["decision"], origin: "codenomad" | "yolo", reason?: string) {
+    decision: PermissionReceipt["decision"], origin: "codenomad", reason?: string) {
     const scope = await this.scope(instanceId, connection)
     const pending = await connection.client.permission.get({ sessionID: sessionId, requestID: requestId }, { signal: AbortSignal.timeout(10_000) })
     const request = permissionSnapshot(pending)

@@ -45,6 +45,15 @@ for (const motion of ["no-preference", "reduce"] as const) {
     assert.equal(await page.locator(".status-dot.ready").count(), 8)
     assert.equal(await page.getByRole("checkbox").count(), 8)
     assert.equal(await perpetualAnimations(page), 0, "connected servers must not schedule perpetual animation frames")
+    // Witnesses for the shared rule: animation utilities on an SVG and its child stay inert.
+    assert.equal(await page.evaluate(() => {
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"), path = document.createElementNS("http://www.w3.org/2000/svg", "path")
+      svg.setAttribute("class", "animate-spin"); path.setAttribute("class", "animate-pulse"); path.setAttribute("d", "M0 0h4")
+      svg.append(path); document.body.append(svg)
+      const running = document.getAnimations().filter(a => (a.effect as KeyframeEffect | null)?.target instanceof SVGElement).length
+      svg.remove()
+      return running
+    }), 0, "SVG icons never animate")
     assert.deepEqual(await page.evaluate(() => (window as any).mcpFixture.calls), [])
     const header = page.locator(".right-panel-accordion-trigger")
     await header.click()
@@ -60,9 +69,12 @@ for (const motion of ["no-preference", "reduce"] as const) {
     const toggle = page.getByRole("checkbox", { name: "Toggle dnd-5e MCP server", exact: true })
     assert.equal(await toggle.isChecked(), true)
     await toggle.click()
-    await page.locator("svg.animate-spin").waitFor()
+    await page.locator(".animate-spin svg").waitFor()
     assert.equal(await toggle.isDisabled(), true)
     assert.equal(await perpetualAnimations(page), motion === "reduce" ? 0 : 2, "only the pending dot and spinner may loop")
+    assert.equal(await page.evaluate(() => document.getAnimations().filter(a => (a.effect as KeyframeEffect | null)?.target instanceof SVGElement).length), 0, "SVG icons never animate")
+    if (motion === "no-preference") assert.equal(await page.evaluate(() => document.getAnimations().filter(a =>
+      (a as CSSAnimation).animationName === "spin" && (a.effect as KeyframeEffect | null)?.target instanceof HTMLSpanElement).length), 1, "the spinner rotates its HTML wrapper")
     if (motion === "reduce") {
       // Exercise live OS-preference changes rather than only the initial media query.
       await page.emulateMedia({ reducedMotion: "no-preference" })
@@ -71,21 +83,21 @@ for (const motion of ["no-preference", "reduce"] as const) {
       assert.equal(await perpetualAnimations(page), 0)
     }
     await page.evaluate(() => (window as any).mcpFixture.settle())
-    await page.locator("svg.animate-spin").waitFor({ state: "detached" })
+    await page.locator(".animate-spin svg").waitFor({ state: "detached" })
     assert.equal(await toggle.isChecked(), false)
     assert.equal(await toggle.isEnabled(), true)
     assert.equal(await perpetualAnimations(page), 0)
     await toggle.click()
-    await page.locator("svg.animate-spin").waitFor()
+    await page.locator(".animate-spin svg").waitFor()
     await page.evaluate(() => (window as any).mcpFixture.settle(true))
-    await page.locator("svg.animate-spin").waitFor({ state: "detached" })
+    await page.locator(".animate-spin svg").waitFor({ state: "detached" })
     assert.equal(await toggle.isChecked(), false)
     assert.equal(await toggle.isEnabled(), true)
     assert.equal(await perpetualAnimations(page), 0)
     await toggle.click()
-    await page.locator("svg.animate-spin").waitFor()
+    await page.locator(".animate-spin svg").waitFor()
     await page.evaluate(() => (window as any).mcpFixture.settle())
-    await page.locator("svg.animate-spin").waitFor({ state: "detached" })
+    await page.locator(".animate-spin svg").waitFor({ state: "detached" })
     assert.equal(await toggle.isChecked(), true)
     assert.equal(await page.locator(".status-dot.ready").count(), 8)
     assert.equal(await perpetualAnimations(page), 0)

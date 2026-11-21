@@ -17,7 +17,6 @@ interface StoredDevice {
   lastSeenAt: string
   /** Verified direct HTTPS origin the device paired on; absent for Remote Control devices. */
   origin?: string
-  pushEpoch?: string
 }
 
 interface StoredState {
@@ -26,7 +25,6 @@ interface StoredState {
   devices: StoredDevice[]
   /** Set by Start and cleared only by Stop, so Remote Control resumes after a restart. */
   enabled?: boolean
-  tunnelPushEpoch?: string
   /** Stored only when the host turns web previews off; they are served by default. */
   previews?: false
 }
@@ -41,6 +39,7 @@ export class RemoteDeviceRegistry {
   private state: StoredState
   private pairing: { codeHash: Buffer; expiresAt: number; origin?: string } | null = null
   private readonly persistedLastSeen = new Map<string, number>()
+  private readonly pendingRevocations = new Map<string, RemoteControlDevice>()
   private persisted: boolean
 
   constructor(private readonly filePath: string, private readonly now: () => number = Date.now) {
@@ -60,27 +59,10 @@ export class RemoteDeviceRegistry {
     return this.state.enabled === true
   }
 
-  tunnelPushEpoch(): string {
-    return this.state.tunnelPushEpoch ?? ""
-  }
-
-  devicePushEpoch(id: string): string {
-    return this.state.devices.find(device => device.id === id)?.pushEpoch ?? ""
-  }
-
-  invalidatePushConsent(id: string): void {
-    const device = this.state.devices.find(device => device.id === id)
-    if (!device) return
-    device.pushEpoch = randomUUID()
-    this.persist()
-  }
-
-  /** Records the Start/Stop choice and rotates tunnel push authority atomically on Stop. */
   setStartsOnLaunch(enabled: boolean): void {
     if (enabled && this.startsOnLaunch()) return
     if (!enabled && !this.persisted && !this.startsOnLaunch()) return
     this.state.enabled = enabled
-    if (!enabled) this.state.tunnelPushEpoch = randomUUID()
     this.persist()
   }
 
@@ -146,8 +128,8 @@ export class RemoteDeviceRegistry {
     const now = this.now()
     device.lastSeenAt = new Date(now).toISOString()
     if (now - (this.persistedLastSeen.get(device.id) ?? 0) >= LAST_SEEN_PERSIST_MS) {
-      this.persistedLastSeen.set(device.id, now)
       this.persist()
+      this.persistedLastSeen.set(device.id, now)
     }
     return publicDevice(device)
   }
@@ -160,14 +142,21 @@ export class RemoteDeviceRegistry {
 
   list(): RemoteControlDevice[] {
     this.pruneExpired()
-    return this.state.devices.map(publicDevice)
+    return [...this.state.devices.map(publicDevice), ...this.pendingRevocations.values()]
+  }
+
+  pairedCount(): number {
+    this.pruneExpired()
+    return this.state.devices.length
   }
 
   revoke(id: string): boolean {
-    const before = this.state.devices.length
-    this.state.devices = this.state.devices.filter((device) => device.id !== id)
-    if (this.state.devices.length === before) return false
-    this.persistedLastSeen.delete(id)
+    const device = this.state.devices.find(device => device.id === id)
+    if (device) {
+      this.state.devices = this.state.devices.filter(device => device.id !== id)
+      this.pendingRevocations.set(id, { ...publicDevice(device), revocationPending: true })
+      this.persistedLastSeen.delete(id)
+    } else if (!this.pendingRevocations.has(id)) return false
     this.persist()
     return true
   }
@@ -188,6 +177,7 @@ export class RemoteDeviceRegistry {
     const temporary = `${this.filePath}.${process.pid}.tmp`
     fs.writeFileSync(temporary, `${JSON.stringify(this.state, null, 2)}\n`, { mode: 0o600 })
     fs.renameSync(temporary, this.filePath)
+    this.pendingRevocations.clear()
     this.persisted = true
   }
 }
@@ -225,18 +215,14 @@ function readState(filePath: string): StoredState | null {
   if (typeof value !== "object" || value === null) return null
   const candidate = value as Partial<StoredState>
   if (candidate.version !== 1 || typeof candidate.route !== "string" || !isRoute(candidate.route) || !Array.isArray(candidate.devices)) return null
-  if (candidate.tunnelPushEpoch !== undefined && (typeof candidate.tunnelPushEpoch !== "string"
-    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidate.tunnelPushEpoch))) return null
   const devices = candidate.devices.filter((device): device is StoredDevice =>
     typeof device === "object" && device !== null
     && typeof device.id === "string" && typeof device.name === "string" && /^[0-9a-f]{64}$/.test(String(device.tokenHash))
     && !Number.isNaN(Date.parse(String(device.createdAt))) && !Number.isNaN(Date.parse(String(device.lastSeenAt)))
-    && (device.origin === undefined || typeof device.origin === "string" && device.origin.startsWith("https://"))
-    && (device.pushEpoch === undefined || typeof device.pushEpoch === "string" && /^[0-9a-f-]{36}$/i.test(device.pushEpoch)))
+    && (device.origin === undefined || typeof device.origin === "string" && device.origin.startsWith("https://")))
   return {
     version: 1, route: candidate.route, devices,
     ...(candidate.enabled === true ? { enabled: true } : {}),
-    ...(candidate.tunnelPushEpoch !== undefined ? { tunnelPushEpoch: candidate.tunnelPushEpoch } : {}),
     ...(candidate.previews === false ? { previews: false as const } : {}),
   }
 }

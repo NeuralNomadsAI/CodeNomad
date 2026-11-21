@@ -76,6 +76,8 @@ Sie erhalten die Aufgabenberichte und einen Abschlussbericht; Codeänderungen bl
 
 ## Fehlersuche {#debug}
 
+Bevor er Aufgaben anlegt, kann der Koordinator die Mission mit Prüfnachweisen abschließen, wenn keine Änderung nötig ist oder die Arbeit ohne Debugging erfolgreich geprüft wurde, etwa bei einer geprüften und getesteten Zusammenführung ohne Konflikte.
+
 Belege zuerst: Fehler und Ursache beweisen, testgetrieben beheben, die Korrektur von zwei unabhängigen Prüfern kontrollieren lassen, ihre Befunde bearbeiten und dann alles grün validieren. Wählen Sie es für einen reproduzierbaren Fehler, einen fehlschlagenden Test oder eine Regression, wenn Sie einen Beweis statt einer Vermutung wollen.
 
 ### Schritte und Rollen {#debug-steps}

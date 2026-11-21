@@ -402,7 +402,7 @@ test("palette arrow navigation retains focus and saves the latest choice during 
 
 test("Classic and soft palettes preserve local subtle hover on messages, sessions and panels", async () => open(async page => {
   const ids = ["classic", "mist", "slate", "clay", "sage", "porcelain", "dawn", "parchment", "linen", "iris", "sage-light", "light", "basalt", "fjord", "lichen", "velvet", "ember"]
-  const targets = [".tool-call-header", ".session-item-inactive", ".session-item-active", ".file-list-item", ".file-list-item-active", ".file-viewer-toolbar-icon-button", ".git-change-section-header", ".status-process-card", ".right-panel-accordion-header-row", '.settings-nav-button[data-selected="true"]', ".right-panel-tab-active", ".right-panel-tab-inactive"]
+  const targets = [".tool-call-header", ".session-item-inactive", ".session-item-active", ".file-list-item", ".file-list-item-active", ".file-viewer-toolbar-icon-button", ".git-change-section-header", ".status-process-command", ".right-panel-accordion-header-row", '.settings-nav-button[data-selected="true"]', ".right-panel-tab-active", ".right-panel-tab-inactive"]
   const output = process.env.CODENOMAD_PALETTE_SCREENSHOTS
   if (output) await mkdir(output, { recursive: true })
   for (const id of ids) {

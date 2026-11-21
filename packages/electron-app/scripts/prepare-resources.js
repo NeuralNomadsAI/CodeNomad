@@ -14,6 +14,7 @@ const resourcesRoot = join(appDir, "electron", "resources")
 const serverDest = join(resourcesRoot, "server")
 const { prepareBundledNodeRuntime } = require(join(workspaceRoot, "scripts", "prepare-node-runtime.cjs"))
 const { copyPackagedServerResources, stagePackagedServer } = require(join(workspaceRoot, "scripts", "desktop-server-resources.cjs"))
+const { buildSystemSpeech } = require(join(workspaceRoot, "scripts", "desktop-system-speech.cjs"))
 
 function log(message) {
   console.log(`[prepare-resources] ${message}`)
@@ -32,6 +33,7 @@ async function main() {
   const staged = stagePackagedServer({ workspaceRoot, serverRoot, log })
   try {
     copyPackagedServerResources({ serverRoot: staged.stagedServerRoot, serverDest, target: staged.target, log })
+    buildSystemSpeech(serverDest, staged.target)
   } finally {
     fs.rmSync(staged.stagingRoot, { recursive: true, force: true })
   }

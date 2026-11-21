@@ -1,6 +1,6 @@
 # Ayarlar ve düzen
 
-Deneysel çoklu arka uç etkin olduğunda Tercihler, proje ayarları, sağlayıcılar, istatistikler ve bellek düzenleme için seçili projenin sunucusunu kullanır. Sunucu kullanılamıyorsa proje denetimleri devre dışı kalır. Cihaz ayarları ve SideCars yerel kalır.
+Tercihler, proje ayarları, sağlayıcılar, istatistikler ve bellek düzenleme için seçili projenin sunucusunu kullanır. Sunucu kullanılamıyorsa proje denetimleri devre dışı kalır. Cihaz ayarları ve SideCars yerel kalır. Görseller ve Web araması ayarları, genel varsayılanlar dahil projenin sunucusuna aittir.
 
 ## Ayarları açın ve kapsamını belirleyin {#open-settings}
 
@@ -8,11 +8,12 @@ Deneysel çoklu arka uç etkin olduğunda Tercihler, proje ayarları, sağlayıc
 2. Bir bölüm seçin. Yerel Electron ve Tauri pencereleri bir yerel Tercihler penceresini açar veya odaklar; tarayıcı ve uzak görünümler yerleşik ayarlar ekranını kullanır.
 3. Ayrılmadan önce ayarın kapsamını ve herhangi bir **Kaydet** eylemini kontrol edin.
 
-Her değişikliği siz yaptıkça kaydeden Görev tercihleri dahil, çoğu seçim hemen uygulanır. Ses, özel palet renkleri ve Yapılandırma Dosyaları açık bir **Kaydet** eylemini korur. Kısa açıklama için ayar başlığının yanındaki **i** simgesinin üzerine gelin veya odaklanın. Yardım bağlantısı varsa tıklamak, Enter'a basmak veya dokunmak ilgili bölümü arayüz dilinde sistem tarayıcısında ya da ayrı bir sekmede açar. Yalnızca ipucu içeren simgeler dokunulduğunda açıklamayı gösterir. **Ayarlar → Bilgi** bölümünde ayrıca **CodeNomad'i destekleyin** kartı bulunur: **Sponsor olun veya katkıda bulunun**, [CodeNomad'i destekleyin](sponsor.md) sayfasını açar.
+Her değişikliği siz yaptıkça kaydeden Görev tercihleri dahil, çoğu seçim hemen uygulanır. Ses API’si ayarları, özel palet renkleri ve Yapılandırma Dosyaları için **Kaydet** düğmesine basın. Kısa açıklama için ayar başlığının yanındaki **i** simgesinin üzerine gelin veya odaklanın. Yardım bağlantısı varsa tıklamak, Enter'a basmak veya dokunmak ilgili bölümü arayüz dilinde sistem tarayıcısında ya da ayrı bir sekmede açar. Yalnızca ipucu içeren simgeler dokunulduğunda açıklamayı gösterir. **Ayarlar → Bilgi** bölümünde ayrıca **CodeNomad'i destekleyin** kartı bulunur: **Sponsor olun veya katkıda bulunun**, [CodeNomad'i destekleyin](sponsor.md) sayfasını açar.
 
 | Durum | Neyi yönetir |
 | --- | --- |
-| CodeNomad yapılandırması | Bu yapılandırmayı kullanan istemcilerin arayüz tercihleri, ses, SideCars ve sunucu ayarları. Rozeti olmayan tercihler de cihaz başına saklanmaz; **Sunucu ayarı**, Ses, SideCars, Uzaktan Kontrol ve Ortam Değişkenleri gibi sunucu tarafı yapılandırmayı işaretler. |
+| CodeNomad yapılandırması | Paylaşılan arayüz tercihleri ve ses API’si, SideCars, Uzaktan Kontrol ve Ortam Değişkenleri gibi **Sunucu ayarı** olarak işaretlenen seçenekler. |
+| Ses motorları | [Masaüstü dikte motoru](voice.md#desktop-dictation) cihazdaki tüm projeler için geçerlidir. [Sohbet motoru](voice.md#conversation), masaüstü profiline veya tarayıcı profili ile bağlı sunucuya göre seçilir. |
 | Pencere/proje sekmesi düzeni | Açık paneller, seçilen sekmeler, okuyucu durumu ve geri yüklenebilir taslaklar/düzen. Bunlar OpenCode yapılandırması değildir. |
 | Genel/Proje OpenCode ayarları | Görüntülenen kapsamda yerel eklenti/yapılandırma değişiklikleri. Proje kontrolleri etkin bir proje/Location gerektirir. |
 | Masaüstü veri profili | Yerel pencereler, yapılandırma dosyasından ve paylaşılan OpenCode hizmetinden bağımsız olarak geri yükleme durumu ve tarayıcı depolaması. Bkz. [Masaüstü pencereleri ve veriler](desktop.md). |
@@ -39,9 +40,13 @@ Renklerin okunması zorlaşırsa **Kontrast → Açık** seçin. Yerleşik bir p
 
 **Ayarlar → Genel** bölümündeki **CodeNomad çalışırken bilgisayarı uyanık tut** seçeneği varsayılan olarak kapalıdır. Hiçbir oturum çalışmasa bile yerel bir CodeNomad penceresi açıkken (simge durumuna küçültülmüş olsa bile) sistemin uykuya geçmesini önlemek için açın; ekran yine de kapanabilir. Bu seçenek kapalıyken CodeNomad, bilgisayarı yalnızca bir oturum çalışırken uyanık tutar. Seçenek yalnızca masaüstü uygulamasının yerel pencerelerinde ve Tercihler penceresinde görünür; tarayıcı ve uzak görünümlerde gizlidir.
 
+## Yeni konuşmaların izinleri {#new-conversation-permissions}
+
+CodeNomad’da oluşturduğunuz yeni ana konuşmalar için **Ayarlar → Genel → Yeni konuşmaların izinleri** bölümünden **Özerk** (varsayılan) veya **Denetimli** modunu seçin. Mevcut konuşmalar değişmez. Bir konuşmanın modunu değiştirmek için o konuşmada [Durum → İzinler](permissions.md#conversation-mode) bölümünü açın.
+
 ## Kalıcı ajan belleği {#agent-memory}
 
-Deneysel çoklu arka uç (`multiBackend`) etkinken Uzaktan Kontrol, doğrulanmış HTTPS, LAN veya yüklü PWA üzerinden kimliği doğrulanmış kullanıcılar seçili yerel ya da uzak projenin belleğini inceleyebilir, değiştirebilir ve **Düzenle** işlemini kullanabilir. Seçili proje, belleği hangi arka ucun yöneteceğini belirler.
+Uzaktan Kontrol, doğrulanmış HTTPS, LAN veya yüklü PWA üzerinden kimliği doğrulanmış kullanıcılar seçili yerel ya da uzak projenin belleğini inceleyebilir, değiştirebilir ve **Düzenle** işlemini kullanabilir.
 
 CodeNomad oturumun eski bellek talimatlarını kaldırmayı dener; temizleme de başarısız olursa önceki talimatlar başarılı bir yenilemeye kadar kalabilir.
 
@@ -73,7 +78,7 @@ Sabitlenmiş bir paneli yeniden boyutlandırmak için iç kenarını sürükleyi
 
 Tüm Durum bölümlerini sürükleyerek veya Yukarı/Aşağı tuşlarıyla sıralayın. Görünürlük ve sıra yeniden yüklemelerde korunur.
 
-Durum; belirteç bilgilerini, Yolo modunu, sağlayıcı Kullanımı, arka plan kabuklarını, MCP ve Eklentileri içerir. Görüşmenin bir [hedefi](conversations.md#goal) olduğu sürece bu bölümlerin üzerindeki bir hedef satırı onu gösterir; bu satır bir bölüm değildir, gizlenemez ve taşınamaz. Bir bölümün gizlenmesi, o bölümün hizmetini devre dışı bırakmaz veya izinleri iptal etmez. Dar düzenler, konuşmayı sıkıştırmak yerine artık sığmayan panelleri kapatır; orada açılan bir panel konuşmanın üzerinde yüzer ve bir yüzer panelin açılması diğerini kapatır.
+Durum; belirteç bilgilerini, **İzinler** bölümünü, sağlayıcı Kullanımı, arka plan kabuklarını, MCP ve Eklentileri içerir. Görüşmenin bir [hedefi](conversations.md#goal) olduğu sürece bu bölümlerin üzerindeki bir hedef satırı onu gösterir; bu satır bir bölüm değildir, gizlenemez ve taşınamaz. Bir bölümün gizlenmesi, o bölümün hizmetini devre dışı bırakmaz veya izinleri iptal etmez. Dar düzenler, konuşmayı sıkıştırmak yerine artık sığmayan panelleri kapatır; orada açılan bir panel konuşmanın üzerinde yüzer ve bir yüzer panelin açılması diğerini kapatır.
 
 Yerleşik düzen proje değişikliği değil, pencere yerleşimidir. Uzantı onay kutuları farklıdır: yapılandırmayı kullanan tüm projelerde kodu etkinleştirir. **Sıfırla** uzantı onayını değiştirmez. Bkz. [Panel uzantıları](extensions.md).
 
@@ -86,11 +91,13 @@ Yerleşik düzen proje değişikliği değil, pencere yerleşimidir. Uzantı ona
 
 Zaman çizelgesinde, konuşmada gösterilen her yanıt, akıl yürütme, araç, sıkıştırma ve sistem bağlamı için aynı sırayla bir işaretçi bulunur. İşaretçiler **Mesaj içeriği** ayarlarını izler: orada bir araç türünü, akıl yürütmeyi veya sistem mesajlarını gizlemek, bekleyen izni olan araç dışında bunların işaretçilerini de gizler; **Hiçbir şey** tüm araç işaretçilerini gizler. Görünürlük ve genişletme ayarları yalnızca sunumu değiştirir. Saklanan araçları/akıl yürütmeyi kaldırmaz veya model bağlamını sıkıştırmaz. Yıkıcı işlemler için bkz. [Geçmiş ve temizleme](history.md).
 
-İleti düzenleyicisinin yüksekliği ekran klavyesi dahil görünür konuşmayı izler: en az 44 piksel tabanıyla minimum %8, maksimum %60. Elle seçilen yükseklik oran olarak saklanır; dar genişlik ve uzun metin sınırları yükseltmez. Genişletilmiş izin/soru, kayıtlı yüksekliği veya taslağı değiştirmeden düzenleyiciyi geçici küçültür. Yeniden boyutlandırmaya dönmek için isteği daraltın veya sonuçlandırın.
+İleti düzenleyicisinin yüksekliğini elle ayarlarken ekran klavyesi kapalıyken konuşma alanının yüksekliği esas alınır: en az %8 (44 pikselden az olamaz), en çok %60. Dar bir düzen veya uzun metin bu sınırları yükseltmez. Klavye açıldığında kontroller ve mesajlar için yer bırakmak üzere alan geçici olarak küçülebilir; kayıtlı yükseklik oranı değişmez. Genişletilmiş izin/soru, kayıtlı yüksekliği veya taslağı değiştirmeden düzenleyiciyi geçici küçültür. Yeniden boyutlandırmaya dönmek için isteği daraltın veya sonuçlandırın.
 
 ## Bildirimler ve rozetler {#notifications}
 
-Başka bir CodeNomad sunucusundaki proje sekmesinin bildirimleri sunucu adını içerir. **Sohbeti görüntüle** tam olarak o projeyi ve konuşmayı açar; sunucuyu ayırmak bildirimlerini temizler. Görseller ve Web araması ayarları, genel varsayılanlar dahil projenin sunucusuna aittir.
+Başka bir CodeNomad sunucusundaki proje sekmesinin bildirimleri sunucu adını içerir. **Sohbeti görüntüle** tam olarak o projeyi ve konuşmayı açar; sunucuyu ayırmak bildirimlerini temizler.
+
+Görevlerin teknik oturumları sıkıştırıldığında bildirim gösterilmez.
 
 1. **Bildirimler** öğesini açın. Her bildirim türü için nerede görüneceğini işaretleyin: **Ekranda** (geçici bir baloncuk), **Geçmiş** (sekme çubuğundaki, macOS masaüstü uygulamasında başlık çubuğundaki zilin bildirim geçmişinde saklanır) ve **Sistem** (işletim sistemi bildirimi). Birkaçını tek seferde ayarlamak için bir kutu satırı veya sütunu üzerinde sürükleyin.
 2. Bir **Sistem** kutusunu işaretlemek gerekirse izin ister. **Sistem bildirimleri** altında, izin eksikken **İzin iste** yeniden izin ister.
@@ -117,4 +124,4 @@ Yalnızca Geçmiş'e yönlendirilen bildirimleri sayan zil/okunmamış geçmiş 
 | Uzun asistan yanıtlarını beklet | Bir akış yanıtı görünümün ötesine geçtiğinde otomatik takibi durdurur. |
 | Ortam Değişkenleri | Her istem veya oturum komutundan önce sunucu tarafında uygulanır; okumalar halihazırda çalışmakta olan yürütmeyi güncellemez. Bkz. [OpenCode kurulumu](opencode.md). |
 
-Klavye yapılandırması için [Klavye kısayolları](shortcuts.md); ses kontrolleri için [Ses girişi ve oynatma](voice.md)'yi kullanın. Başlangıç geri yükleme ve masaüstü veri profilleri, [Masaüstü pencereleri ve veriler](desktop.md) kapsamında ele alınmaktadır.
+Klavye ayarları için [Klavye kısayolları](shortcuts.md) bölümüne bakın. **Ses**, [Dikte, Oynatma ve Sohbet](voice.md) kartlarını içerir. Başlangıçta geri yükleme ve masaüstü profilleri için [Masaüstü pencereleri ve veriler](desktop.md) bölümüne bakın.

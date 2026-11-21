@@ -2,7 +2,7 @@
 
 ## Fenêtres, onglets et service partagé {#windows-tabs}
 
-1. Utilisez **Nouvelle instance** pour ouvrir un autre onglet projet/accueil dans la fenêtre actuelle.
+1. Utilisez **Nouvelle instance** pour ouvrir un onglet vide dans la fenêtre actuelle, puis choisissez un projet. Le logo CodeNomad ouvre l'accueil.
 2. Utilisez le menu natif **Fenêtre → Nouvelle fenêtre** (`Ctrl+Shift+N` ou `Cmd+Shift+N`) pour une fenêtre d’application séparée.
 3. Dans **Paramètres → Avancé**, activez **Focaliser la fenêtre existante au second lancement** si un autre lancement doit focaliser la dernière fenêtre utilisée au lieu d’en ouvrir une nouvelle.
 
@@ -16,12 +16,12 @@ Placez ces arguments après **l’exécutable desktop** (Tauri ou Electron), dan
 
 | Argument | Effet |
 | --- | --- |
-| `--connect-server <server>` | Ouvre un serveur CodeNomad distant à partir de son URL HTTP(S), de son nom enregistré ou de son identifiant enregistré. Voir [la connexion et l’authentification](remote-access.md#saved-servers). |
+| `--connect-server <name-or-url>` | Ouvre une fenêtre distante séparée, quelle que soit la valeur de `multiBackend`, avec une URL HTTP(S), un nom ou un identifiant enregistré. Voir [les connexions distantes](remote-access.md#connect-server). |
 | `--folder <path>` | Ouvre un dossier de projet existant. Répétez l’argument pour plusieurs dossiers ; les chemins relatifs partent du répertoire de lancement. |
 | `<path> ...` | Ouvre des dossiers de projet sans écrire `--folder`. **Tauri Windows, si l’application est déjà ouverte :** utilisez `--folder` devant chaque dossier. Mélanger des chemins seuls avec `--folder` annule aussi toute la demande d’ouverture de dossiers. |
 | `--new-window` | Demande une nouvelle fenêtre, même lorsqu’un second lancement devrait normalement sélectionner la fenêtre existante. |
 
-Les formes `--connect-server=<server>` et `--folder=<path>` fonctionnent aussi. Entourez de guillemets les chemins ou noms contenant des espaces. Pour ouvrir uniquement la fenêtre distante, utilisez `--connect-server` seul, sans dossier ni `--new-window` ; la restauration des fenêtres locales est différée sauf si la connexion échoue.
+Les formes `--connect-server=<name-or-url>` et `--folder=<path>` fonctionnent aussi. Entourez de guillemets les chemins ou noms contenant des espaces. Pour ouvrir uniquement la fenêtre distante, utilisez `--connect-server` seul, sans dossier ni `--new-window`. Une fenêtre locale déjà ouverte traite la demande ; au démarrage, la restauration locale est différée sauf si la connexion échoue.
 
 Dans **PowerShell** :
 
@@ -47,6 +47,8 @@ Chaque onglet de projet retrouve sa propre sélection du panneau droit, son mode
 La fenêtre Preferences ne possède pas d’état de restauration séparé : ces commandes ciblent la fenêtre qui l’a ouverte. Si cette fenêtre est fermée, ou inconnue parce que Preferences a été rouvert au lancement, elles suivent la dernière fenêtre utilisée ; une modification préparée pour une autre fenêtre n’est jamais appliquée, les commandes affichent d’abord la valeur de la nouvelle fenêtre. Pour régler une fenêtre précise, ouvrez Preferences depuis celle-ci. Les paramètres propres au projet utilisent aussi la Location d’origine ; ils restent indisponibles sans elle. Quand Preferences se rouvre au lancement, ils se reconnectent une fois ce projet ouvert ; tant que le dossier démarre encore, ou s’il est ouvert dans plusieurs onglets, ils restent indisponibles jusqu’à ce que vous ouvriez Preferences depuis la fenêtre voulue.
 
 Les clients navigateur et distants utilisent les paramètres intégrés.
+
+[Restaurer les onglets distants](projects.md#restore-remote-tabs).
 
 ## Profils de données de bureau {#data-profiles}
 

@@ -1,7 +1,7 @@
 import { decodeClientSnapshot, normalizeRestorableSession } from "./client-state-codec"
 import type { ClientSnapshotV1, RestorableSessionState, RestorableWorkspaceTabState } from "./client-state-codec"
 import type { RestorableAttachment } from "./client-state-attachments-codec"
-import { canonicalJson, sha256 } from "./client-state-partition-json"
+import { canonicalJson, encodePartition, sha256 } from "./client-state-partition-json"
 export { canonicalJson, sha256 } from "./client-state-partition-json"
 import { encodeOutlinePartitions, decodeOutlinePartitions } from "./client-state-outline-partitions"
 import { encodeCatalogPartitions, decodeCatalogPartitions } from "./client-state-catalog-partitions"
@@ -116,13 +116,12 @@ async function encodeAttachments(attachments: RestorableAttachment[], addPartiti
 async function encodeSessionGraph(session: RestorableSessionState | null) {
   const generated: Record<string, string> = Object.create(null)
   const addPartition = async (value: unknown) => {
-    const partition = canonicalJson(value)
-    if (encoder.encode(partition).byteLength > MAX_PARTITION_BYTES) {
+    const partition = await encodePartition(value, MAX_PARTITION_BYTES)
+    if (partition.bytes > MAX_PARTITION_BYTES) {
       throw new Error("Client state partition exceeds the native size limit")
     }
-    const key = await sha256(partition)
-    generated[key] = partition
-    return key
+    generated[partition.key] = partition.text
+    return partition.key
   }
 
   const encodedSession = session === null ? null : {
@@ -178,7 +177,8 @@ async function encodeSessionGraph(session: RestorableSessionState | null) {
       if (tab.occurrence !== undefined) shell.occurrence = tab.occurrence
       if (tab.projectName !== undefined) shell.projectName = tab.projectName
       if (tab.binaryPath !== undefined) shell.binaryPath = tab.binaryPath
-      if (tab.backendId !== undefined) shell.backendId = tab.backendId
+  if (tab.backendId !== undefined) shell.backendId = tab.backendId
+  if (tab.serverId !== undefined) shell.serverId = tab.serverId
       if (tab.workspaceId !== undefined) shell.workspaceId = tab.workspaceId
       return shell
     })),
@@ -373,7 +373,7 @@ async function decodeGraph(
       continue
     }
     if (shell.kind !== "workspace"
-      || !hasExactKeys(shell, ["kind", "folder", "workspacePartition"], ["occurrence", "projectName", "binaryPath", "backendId", "workspaceId"])) return
+      || !hasExactKeys(shell, ["kind", "folder", "workspacePartition"], ["occurrence", "projectName", "binaryPath", "backendId", "serverId", "workspaceId"])) return
     if (typeof shell.workspacePartition !== "string" || !PARTITION_KEY.test(shell.workspacePartition)) return
     declaredGraph.add(shell.workspacePartition)
     const workspace = await loadCanonical(shell.workspacePartition)
@@ -397,7 +397,7 @@ async function decodeGraph(
       unseenIdleSince: Object.create(null),
       generationRecovery: Object.create(null),
     }
-    for (const key of ["occurrence", "projectName", "binaryPath", "backendId", "workspaceId"] as const) {
+    for (const key of ["occurrence", "projectName", "binaryPath", "backendId", "serverId", "workspaceId"] as const) {
       if (hasOwn(shell, key)) tab[key] = shell[key]
     }
     for (const key of ["activeParentSessionId", "activeSessionId", "expandedSessionIds"] as const) {

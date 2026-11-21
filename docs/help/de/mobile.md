@@ -4,7 +4,7 @@ Verwenden Sie die Browseroberfläche auf Telefon oder Tablet, um Arbeit auf dem 
 
 ## Mit Telefon oder Tablet verbinden {#connect}
 
-Bei aktiviertem Mehrserverbetrieb auf dem Host sind gespeicherte Server über die Startseite und Einstellungen → Server verfügbar. Projekttabs jedes Backends, einschließlich des primären Backends, stellen nach dem Neuladen Entwürfe und Ansichten wieder her. Ein nicht verfügbares Projekt behält seinen Tab: **Wiederholen** verbindet mit einem vorhandenen Datensatz; **Öffnen** öffnet ein fehlendes Projekt ausdrücklich.
+Gespeicherte Server sind über die Startseite und Einstellungen → Server verfügbar. [Remote-Tabs wiederherstellen](projects.md#restore-remote-tabs).
 
 1. Öffnen Sie auf dem Host **Einstellungen → Remote-Zugriff → Fernsteuerung** und wählen Sie **Fernsteuerung starten**.
 2. Scannen Sie den Kopplungs-QR-Code mit Ihrem Mobilgerät und öffnen Sie den Link im Browser, den Sie weiterverwenden möchten.
@@ -30,7 +30,7 @@ Deaktivieren Sie zur Installationsreparatur weder Authentifizierung noch TLS-Pr�
 
 Öffnen Sie Navigation und Werkzeuge über **Linke Seitenleiste** und **Rechte Seitenleiste**. In schmalen Layouts überlagern Panels die Unterhaltung, statt eine Desktop-breite Fläche zu erzwingen; ein schwebendes Panel zu öffnen schließt das andere. Die Auswahl einer Sitzung im schwebenden Sitzungspanel schließt es, um Ihre Auswahl zu zeigen, auch bei der bereits angezeigten Sitzung; **Zurück** und **Vorwärts** lassen es geöffnet. Aktionen im Unterhaltungskopf wandern bei Platzmangel ins Überlaufmenü.
 
-Das Eingabefeld behält Agent, Modell und Denken in der Fußzeile. Seine Größe folgt der sichtbaren Unterhaltung einschließlich Bildschirmtastatur; lange Entwürfe bleiben scrollbar. Auf reinen Touch-Geräten öffnet Senden die Bildschirmtastatur nicht erneut, damit Sie die Antwort lesen können; tippen Sie zum Fortfahren auf das Eingabefeld. Während eine Sitzung läuft, bietet das Menü **Weitere Aktionen** des Eingabefelds **Nachricht einreihen** oder **Jetzt einschieben** an, je nachdem, was Ihr normales Senden nicht tut, ohne ein Tastenkürzel einer Hardwaretastatur zu benötigen. Eine Unterbrechung verkleinert das Eingabefeld vorübergehend, ohne gespeicherte Höhe oder Entwurf zu ändern. Beantworten Sie Berechtigungen/Fragen im Dock darüber und halten Sie dessen Aktionsfußzeile erreichbar. Siehe [Unterhaltungen](conversations.md) und [Berechtigungen](permissions.md).
+Das Eingabefeld behält Agent, Modell und Denken in der Fußzeile. Seine Größe richtet sich nach der Höhe der Unterhaltung ohne Bildschirmtastatur. Bei geöffneter Tastatur kann das Feld vorübergehend kleiner werden, damit Bedienelemente und Nachrichten erreichbar bleiben. Das gespeicherte Höhenverhältnis bleibt dabei unverändert. Lange Entwürfe bleiben scrollbar. Auf reinen Touch-Geräten öffnet Senden die Bildschirmtastatur nicht erneut, damit Sie die Antwort lesen können; tippen Sie zum Fortfahren auf das Eingabefeld. Während eine Sitzung läuft, bietet das Menü **Weitere Aktionen** des Eingabefelds **Nachricht einreihen** oder **Jetzt einschieben** an, je nachdem, was Ihr normales Senden nicht tut, ohne ein Tastenkürzel einer Hardwaretastatur zu benötigen. Eine Unterbrechung verkleinert das Eingabefeld vorübergehend, ohne gespeicherte Höhe oder Entwurf zu ändern. Beantworten Sie Berechtigungen/Fragen im Dock darüber und halten Sie dessen Aktionsfußzeile erreichbar. Siehe [Unterhaltungen](conversations.md) und [Berechtigungen](permissions.md).
 
 ## Fähigkeits- und Verbindungsgrenzen {#limits}
 

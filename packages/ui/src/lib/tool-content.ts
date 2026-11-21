@@ -1,6 +1,5 @@
 import type { ToolFileContent } from "@opencode/client"
 import { isSessionMediaPath } from "../../../server/src/opencode/session-media-contract"
-import { localTransport, resolveBackendUrl, type BackendTransport } from "./backend-transport"
 
 /** Images stay in native content; text projections must not stringify their bytes. */
 export function isToolImageContent(value: unknown): value is ToolFileContent {
@@ -10,12 +9,9 @@ export function isToolImageContent(value: unknown): value is ToolFileContent {
     && typeof part.uri === "string"
 }
 
-export function toolImageSource(file: ToolFileContent, backend: string | Pick<BackendTransport, "url"> = {
-  url: path => resolveBackendUrl(localTransport.baseUrl, path, "append-trimmed"),
-}): string | undefined {
+export function toolImageReference(file: ToolFileContent): string | undefined {
   // A large image that a transcript page deferred; CodeNomad serves its bytes.
-  if (isSessionMediaPath(file.uri)) return typeof backend === "string"
-    ? resolveBackendUrl(backend, file.uri, /^https?:\/\//i.test(backend) ? "url" : "append-trimmed") : backend.url(file.uri)
+  if (isSessionMediaPath(file.uri)) return file.uri
   if (/^data:/i.test(file.uri)) {
     const header = file.uri.slice(0, file.uri.indexOf(",") + 1).toLowerCase()
     return header === `data:${file.mime.toLowerCase()};base64,` ? file.uri : undefined
@@ -26,6 +22,3 @@ export function toolImageSource(file: ToolFileContent, backend: string | Pick<Ba
   } catch { /* Non-URL/local file references cannot be loaded by the renderer. */ }
   return undefined
 }
-
-/** Keep deferred paths unjoined until a mounted consumer has selected its instance owner. */
-export const toolImageReference = (file: ToolFileContent) => toolImageSource(file, { url: path => path })

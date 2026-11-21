@@ -5,7 +5,7 @@ export const permissionReceiptMessages = {
   "permissionReceipts.always": "Siempre permitido",
   "permissionReceipts.reject": "Rechazado",
   "permissionReceipts.origin.codenomad": "Decisión en CodeNomad",
-  "permissionReceipts.origin.yolo": "Automático · Yolo",
+  "permissionReceipts.origin.automatic": "Decisión automática",
   "permissionReceipts.origin.native": "Decisión nativa",
   "permissionReceipts.more": "Cargar más decisiones",
   "permissionReceipts.error": "No se pudieron cargar las decisiones de permisos.",

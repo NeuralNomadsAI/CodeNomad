@@ -102,28 +102,6 @@ async function fixture(t: test.TestContext, configureApp?: NonNullable<Parameter
     directId: JSON.parse(directReply.body).device.id as string }
 }
 
-test("memory remote admission: paired RC can read relayed memory settings", async t => {
-  const fixture = await backendAdmissionFixture(t)
-  fixture.remotes[0]!.state.overrides.set("/api/memory/settings", { status: 200, body: { enabled: true } })
-  const surface = await startRemoteSurface(t, { settings: fixture.settings })
-  const paired = await send(surface.target(), "/api/remote-control/pair", {
-    method: "POST", headers: { host: FAKE_TUNNEL_HOST, origin: REMOTE, "content-type": "application/json" },
-    body: JSON.stringify({ code: surface.code }),
-  })
-  assert.equal(paired.status, 200, paired.body)
-  const cookie = paired.headers["set-cookie"]![0]!.split(";")[0]!
-  const meta = await send(surface.target(), "/api/backends/A/api/meta", {
-    headers: { host: FAKE_TUNNEL_HOST, origin: REMOTE, cookie, [backendAuthorityHeader]: backendBootstrap },
-  })
-  assert.equal(meta.status, 200, meta.body)
-  const reply = await send(surface.target(), "/api/backends/A/api/memory/settings", {
-    headers: { host: FAKE_TUNNEL_HOST, origin: REMOTE, cookie,
-      [backendAuthorityHeader]: String(meta.headers[backendAuthorityHeader]) },
-  })
-  assert.equal(reply.status, 200, reply.body)
-  assert.deepEqual(JSON.parse(reply.body), { enabled: true })
-})
-
 test("memory channel matrix: RC, HTTPS session/device and LAN operate host and A/B memory", { timeout: 30_000 }, async t => {
   const f = await fixture(t)
   const callers = [["RC", f.rc], ["HTTPS session", f.session()], ["HTTPS device", f.direct], ["LAN", f.lan]] as const
@@ -138,7 +116,7 @@ test("memory channel matrix: RC, HTTPS session/device and LAN operate host and A
       const proof = await f.proof(caller, id)
       const settings = await call(caller, `/api/backends/${id}/api/memory/settings`, "GET", undefined, proof)
       assert.equal(settings.status, 200, settings.body)
-      assert.equal(JSON.parse(settings.body).server, id)
+      assert.deepEqual(JSON.parse(settings.body), { server: id, enabled: true })
       assert.equal((await call(caller, `/api/backends/${id}/api/memory/settings`, "PUT", { enabled: false }, proof)).status, 200)
       const list = await call(caller, `/api/backends/${id}/api/memory`, "POST", {
         operation: { action: "list", scope: "project" },

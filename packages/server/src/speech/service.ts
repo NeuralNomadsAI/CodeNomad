@@ -2,8 +2,11 @@ import { z } from "zod"
 import type { Readable } from "node:stream"
 import type { Logger } from "../logger"
 import type { SettingsService } from "../settings/service"
-import type { SpeechCapabilitiesResponse, SpeechSynthesisResponse, SpeechTranscriptionResponse } from "../api-types"
+import type { SpeechCapabilitiesResponse, SpeechSynthesisResponse, SpeechTranscriptionResponse, VoiceConversationEngine } from "../api-types"
+import { SettingsReadError } from "../settings/yaml-doc-store"
 import { OpenAICompatibleSpeechProvider } from "./providers/openai-compatible"
+import { resolveVoiceConversationProvider, voiceConversationCapabilities, type VoiceConversationProviderSettings } from "./voice-conversation-config"
+import { LIVE_VOICE_NOTICE_VERSION, type LiveVoiceEngine } from "./live-voice-contract"
 
 const ServerSpeechSettingsSchema = z.object({
   speech: z
@@ -55,11 +58,11 @@ export interface SpeechSynthesisStreamResponse {
 export interface SpeechProvider {
   getCapabilities(): Omit<
     SpeechCapabilitiesResponse,
-    "separateProviders" | "sttConfigured" | "ttsConfigured" | "sttBaseUrl" | "ttsBaseUrl"
+    "separateProviders" | "sttConfigured" | "ttsConfigured" | "sttBaseUrl" | "ttsBaseUrl" | "voiceConversation" | "desktopVoiceConversationEngine"
   >
-  transcribe(input: TranscribeAudioInput): Promise<SpeechTranscriptionResponse>
-  synthesize(input: SynthesizeSpeechInput): Promise<SpeechSynthesisResponse>
-  synthesizeStream(input: SynthesizeSpeechInput): Promise<SpeechSynthesisStreamResponse>
+  transcribe(input: TranscribeAudioInput, signal?: AbortSignal): Promise<SpeechTranscriptionResponse>
+  synthesize(input: SynthesizeSpeechInput, signal?: AbortSignal): Promise<SpeechSynthesisResponse>
+  synthesizeStream(input: SynthesizeSpeechInput, signal?: AbortSignal): Promise<SpeechSynthesisStreamResponse>
 }
 
 export interface NormalizedSpeechSettings {
@@ -109,20 +112,66 @@ export class SpeechService {
       separateProviders: separate,
       sttConfigured,
       ttsConfigured,
+      desktopVoiceConversationEngine: Boolean(process.env.CODENOMAD_PROFILE_CONFIG_IDENTITY),
       ...(separate ? { sttBaseUrl: sttSettings.baseUrl, ttsBaseUrl: ttsSettings.baseUrl } : {}),
+      voiceConversation: voiceConversationCapabilities(this.readVoiceConversationConfig()),
     }
   }
 
-  async transcribe(input: TranscribeAudioInput): Promise<SpeechTranscriptionResponse> {
-    return this.createSttProvider().transcribe(input)
+  getVoiceConversationProvider(engine: VoiceConversationEngine): VoiceConversationProviderSettings | undefined {
+    switch (engine) {
+      case "gemini-live":
+        return resolveVoiceConversationProvider(this.readVoiceConversationConfig(), "geminiLive")
+      case "openai-realtime":
+        return resolveVoiceConversationProvider(this.readVoiceConversationConfig(), "openaiRealtime")
+    }
   }
 
-  async synthesize(input: SynthesizeSpeechInput): Promise<SpeechSynthesisResponse> {
-    return this.createTtsProvider().synthesize(input)
+  private readVoiceConversationConfig(): unknown {
+    try {
+      return this.settings.getRawConfigOwner("server", { refreshCache: false }).voiceConversation
+    } catch (error) {
+      if (!(error instanceof SettingsReadError)) throw error
+    }
   }
 
-  async synthesizeStream(input: SynthesizeSpeechInput): Promise<SpeechSynthesisStreamResponse> {
-    return this.createTtsProvider().synthesizeStream(input)
+  desktopVoiceConversationEngine(engine?: VoiceConversationEngine): VoiceConversationEngine | undefined {
+    const store = this.settings.desktopVoiceConversationEngineStore()
+    if (!store) return undefined
+    if (engine !== undefined) {
+      store.replace({ selection: { engine } })
+      return engine
+    }
+    const selected = store.getAuthoritativeOwner("selection").engine
+    if (selected === undefined) return "classic"
+    if (selected === "classic" || selected === "gemini-live" || selected === "openai-realtime") return selected
+    throw new SettingsReadError()
+  }
+
+  desktopLiveVoiceConsent(engine: LiveVoiceEngine, accept = false): number | undefined {
+    const store = this.settings.desktopLiveVoiceConsentStore(engine)
+    if (!store) return
+    if (accept) {
+      store.replace({ notice: { version: LIVE_VOICE_NOTICE_VERSION } })
+      return LIVE_VOICE_NOTICE_VERSION
+    }
+    try {
+      if (store.getAuthoritativeOwner("notice").version === LIVE_VOICE_NOTICE_VERSION) return LIVE_VOICE_NOTICE_VERSION
+    } catch (error) {
+      if (!(error instanceof SettingsReadError)) throw error
+    }
+  }
+
+  async transcribe(input: TranscribeAudioInput, signal?: AbortSignal): Promise<SpeechTranscriptionResponse> {
+    return this.createSttProvider().transcribe(input, signal)
+  }
+
+  async synthesize(input: SynthesizeSpeechInput, signal?: AbortSignal): Promise<SpeechSynthesisResponse> {
+    return this.createTtsProvider().synthesize(input, signal)
+  }
+
+  async synthesizeStream(input: SynthesizeSpeechInput, signal?: AbortSignal): Promise<SpeechSynthesisStreamResponse> {
+    return this.createTtsProvider().synthesizeStream(input, signal)
   }
 
   private parseConfig() {

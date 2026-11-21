@@ -52,6 +52,6 @@ test("a MagicDNS saved origin authenticates and lists the real fake server throu
   assert.equal(lookups, remote.state.requests.length)
   for (const request of remote.state.requests) {
     assert.equal(request.headers.host, new URL(origin).host)
-    assert.equal(request.headers.origin, undefined)
+    assert.equal(request.headers.origin, request.path === "/api/auth/login" ? origin : undefined)
   }
 })

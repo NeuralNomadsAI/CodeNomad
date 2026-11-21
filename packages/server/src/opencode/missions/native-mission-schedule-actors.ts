@@ -165,11 +165,12 @@ export const acquireNativeScheduledActorTransport = Effect.fn("missions.acquireS
         const session = await get(id, callSignal), actor = mission.actors.find(actor => actor.sessionId === id)
         const assigned = mission.tasks.filter(task => task.actorSessionId === id).sort((a, b) => b.updatedAt - a.updatedAt || b.createdAt - a.createdAt)
         const unfinished = assigned.filter(task => task.status === "queued" || task.status === "dispatching" || task.outstandingExecution)
-        const selections = id === coordinatorID ? [frozen.profiles?.coordinator]
-          : (unfinished.length ? unfinished : assigned.slice(0, 1)).map(task => task.execution ?? frozen.profiles?.roles?.[task.role])
+        // An admitted coordinator's model is its user's choice; task roots keep their role profile.
+        const selections = (unfinished.length ? unfinished : assigned.slice(0, 1)).map(task => task.execution ?? frozen.profiles?.roles?.[task.role])
         if (!actor || session.parentID || !sameLocation(actor.location, session.location)
-          || !frozen.roots.some(owned => sameLocation(owned, session.location)) || !selections.length
-          || selections.some(selected => !selected?.agent || !selected.model || !matchesExecution(selected, session))
+          || !frozen.roots.some(owned => sameLocation(owned, session.location))
+          || id !== coordinatorID && (!selections.length
+            || selections.some(selected => !selected?.agent || !selected.model || !matchesExecution(selected, session)))
           || marker(session)?.version !== 1 || marker(session)?.missionID !== mission.id
           || marker(session)?.kind !== (id === coordinatorID ? "coordinator" : "actor")
           || !actor.roles.includes(String(marker(session)?.role))

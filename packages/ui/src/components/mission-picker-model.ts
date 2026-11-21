@@ -75,8 +75,8 @@ export function scheduleMark(schedule: RecurrenceSchedule, openRequests = 0, see
 export function unifiedScheduleMark(doc: UnifiedMissionSchedule, openRequests = 0, seen = true, fresh = true, now = Date.now()): MissionMark {
   const prepared = doc.firstPlayedAt === null && doc.state === "paused"
   const observed = doc.observation.state === "known" && doc.observation.timeGeneration === doc.timeGeneration
+  // A resumed schedule clears its block: an archived failed outcome still marks it below, a reportless one does not.
   const failure = Boolean(doc.blockReason && ["failed", "ended-without-report"].includes(doc.blockReason))
-    || doc.state !== "paused" && !doc.pendingPassage && Boolean(doc.latestResult && doc.latestResult.outcome !== "completed")
   const waiting = observed && doc.state === "running" && (doc.observation.nativeStatus === "active" || doc.observation.nativeStatus === "mixed")
     && doc.observation.nextDueAt !== null && doc.observation.nextDueAt > now
   const uncertain = !fresh || Boolean(doc.control?.pending) || Boolean(doc.blockReason && !failure)

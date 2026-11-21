@@ -316,8 +316,6 @@ test("registry admits two real relayed backends and revalidates before reconnect
 
 test("failed inventory recovery composes with restore cancellation and user opening", { timeout: 120_000 }, async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-inventory-lifecycle-"))
-  const evidence = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-inventory-evidence-"))
-  t.diagnostic(`Interaction captures: ${evidence}`)
   const a = await startFakeCodeNomad({ anonymous: true }), b = await startFakeCodeNomad({ anonymous: true })
   const streams = new Map<string, ServerResponse>()
   const requests: string[] = [], bodies: unknown[] = [], local: string[] = []
@@ -473,8 +471,6 @@ test("failed inventory recovery composes with restore cancellation and user open
       assert.deepEqual(requests.filter(route => route.includes("DELETE")), ["b:DELETE /api/workspaces/w"])
       assert.equal(local.some(route => /^(POST|DELETE) \/api\/workspaces/.test(route)), false)
       assert.equal([...a.state.requests, ...b.state.requests].some(request => /location.*(?:evict|delete)/i.test(request.path)), false)
-      await page.screenshot({ path: path.join(evidence, `${order}.png`) })
-      fs.writeFileSync(path.join(evidence, `${order}.json`), JSON.stringify({ requests, bodies, local, html: await page.locator("#root").innerHTML() }, null, 2))
       expectedAborts.add("GET /api/backends/a/api/events"); expectedAborts.add("GET /api/backends/b/api/events")
       await page.evaluate(() => (window as any).registryFixture.dispose())
       await page.close()
@@ -533,8 +529,6 @@ test("failed inventory recovery composes with restore cancellation and user open
         await page.locator('[role="tab"][title$="/same"]').first().waitFor()
         expectedAborts.add("GET /api/backends/a/api/events"); expectedAborts.add("GET /api/backends/b/api/events")
       }
-      await page.screenshot({ path: path.join(evidence, `${change}.png`) })
-      fs.writeFileSync(path.join(evidence, `${change}.json`), JSON.stringify({ requests, bodies, local, html: await page.locator("#root").innerHTML() }, null, 2))
       await page.evaluate(() => (window as any).registryFixture.dispose())
       await page.close()
       assert.deepEqual(errors, []); assert.deepEqual(failures, []); assert.deepEqual([...expectedAborts], [])
@@ -626,8 +620,6 @@ test("failed inventory recovery composes with restore cancellation and user open
       assert.equal(local.some(route => /^(POST|DELETE) \/api\/workspaces/.test(route)), false)
       assert.equal(requests.some(route => route.includes("DELETE")), false)
       assert.deepEqual(bodies.filter((body: any) => body.backend === "a" && body.requestId), [{ backend: "a", path: "/same", requestId }], "restore POST is never replayed")
-      await page.screenshot({ path: path.join(evidence, `cleanup-${change}.png`) })
-      fs.writeFileSync(path.join(evidence, `cleanup-${change}.json`), JSON.stringify({ requests, bodies, releaseCalls, refused, refusedConsole, oldTag, html: await page.locator("#root").innerHTML() }, null, 2))
       if (change !== "dispose") { expectedAborts.add("GET /api/backends/a/api/events"); expectedAborts.add("GET /api/backends/b/api/events") }
       await page.evaluate(() => (window as any).registryFixture.dispose()); await page.close()
       assert.deepEqual(errors, []); assert.deepEqual(failures, []); assert.deepEqual([...expectedAborts], [])

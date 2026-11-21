@@ -121,6 +121,42 @@ describe("optimistic send lifecycle", () => {
     }
   })
 
+  for (const delivery of ["steer", "queue"] as const) {
+    it(`reconciles an immediate typed echo when admitted as ${delivery}`, async () => {
+      const instanceId = `send-pending-${delivery}`
+      const sessionId = "session"
+      let release!: () => void
+      const instructions = new Promise<undefined>(resolve => { release = () => resolve(undefined) })
+      const requests: { delivery: string; resume?: boolean }[] = []
+      const cleanup = setup(instanceId, sessionId, async input => {
+        requests.push(input)
+        return { id: input.id }
+      }, { put: async () => instructions, remove: async () => instructions })
+      try {
+        const store = messageStoreBus.getOrCreate(instanceId)
+        let resolved = false
+        const sending = sendMessage(instanceId, sessionId, "typed", [], {
+          pendingDelivery: "steer",
+          delivery: () => { resolved = true; return delivery },
+        })
+        const [projectedId] = store.getSessionMessageIds(sessionId)
+        assert.equal(store.getMessage(projectedId)?.status, "sending")
+        assert.equal(resolved, false)
+        assert.equal(requests.length, 0)
+        release()
+        assert.equal(await sending, projectedId)
+        assert.equal(requests.length, 1)
+        assert.equal(requests[0]?.delivery, delivery)
+        assert.equal(requests[0]?.resume, delivery === "queue" ? false : undefined)
+        assert.deepEqual(store.getSessionMessageIds(sessionId), delivery === "queue" ? [] : [projectedId])
+        assert.equal(store.getMessage(projectedId)?.status, delivery === "queue" ? undefined : "sent")
+      } finally {
+        release()
+        cleanup()
+      }
+    })
+  }
+
   it("sends the message when voice instruction sync fails", async () => {
     const instanceId = "send-voice-failure"
     const sessionId = "session"

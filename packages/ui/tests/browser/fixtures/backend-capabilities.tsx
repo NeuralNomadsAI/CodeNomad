@@ -40,7 +40,9 @@ const Fixture = () => {
   </div>
 }
 
-// Surfaces render before the host metadata answers, then follow it.
-render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
-void getServerMeta().catch(() => {}).finally(() => { document.documentElement.dataset.metaSettled = "true" })
 ;(window as any).fixture = { loadSpeechCapabilities, refreshOpenCodeSetup }
+// Local workspace inventory resolves the host's route families before displaying its panels.
+void getServerMeta().then(() => {
+  render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+  document.documentElement.dataset.metaSettled = "true"
+})
