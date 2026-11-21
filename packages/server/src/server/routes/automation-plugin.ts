@@ -6,7 +6,7 @@ import type { DeveloperCdp } from "../../developer-cdp"
 import type { DeveloperCdpDiagnostic, DeveloperCdpIdentity, DeveloperCdpSelection } from "../../developer-cdp"
 import { StaleDeveloperDocument } from "../../developer-cdp"
 import { parseDeveloperTarget, type DeveloperTargetSelector } from "../../automation/developer-target-selector"
-import type { NativeParent } from "../../native-parent"
+import { NativeRequestRefused, type NativeParent } from "../../native-parent"
 import { AUTOMATION_BRIDGE_PATH, parseBrowserAction, parseDeveloperAction } from "../../opencode/automation-plugin"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
@@ -353,7 +353,9 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         let result: DeveloperNativeStatus["status"]
         try {
           result = await deps.nativeParent.request<DeveloperNativeStatus["status"]>("developer.restart", nativeWindowParams(identity))
-        } catch {
+        } catch (error) {
+          if (error instanceof NativeRequestRefused) throw error
+          deps.developerCdp.close(selection.runId)
           return reply.code(502).send({ code: "restart-outcome-unknown", error: "The restart outcome is unknown. Inspect again before retrying." })
         }
         deps.developerCdp.close(selection.runId)
