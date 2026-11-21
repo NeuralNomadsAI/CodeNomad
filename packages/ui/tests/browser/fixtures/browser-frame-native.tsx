@@ -29,7 +29,7 @@ function Fixture() {
         <BrowserFrame sessionId={sessionId()} title="Preview" onClose={() => setMounted(false)}
           initialUrl={query.has("isolated") ? remote.contentUrl : address()} initialAddress={address()}
           isolatedSource={query.has("isolated")} sourceAddress={source => remotePreviewAddress(remote, source)}
-          proxyBasePath="" addressMode="url"
+          proxyBasePath="" addressMode="url" initialViewport={(query.get("viewport") ?? undefined) as any}
           labels={{ back: "Back", forward: "Forward", refresh: "Refresh", path: "Address", go: "Go", viewport: "Viewport",
             viewportResponsive: "Responsive", viewportDesktop: "Desktop (1440 × 900)",
             viewportTablet: "Tablet (768 × 1024)", viewportTabletLandscape: "Tablet landscape (1024 × 768)",

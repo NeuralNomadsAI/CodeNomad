@@ -8,6 +8,7 @@ const callbacks = new Map<number, (event: unknown) => void>()
 const histories = new Map<string, { entries: Array<{ id: number; url: string }>; index: number }>()
 let historyId = 0
 let callbackId = 0
+let pendingEmulation: (() => void) | undefined
 let pendingRegistration: { resolve: () => void; reject: (error: Error) => void } | undefined
 
 export const nativeFixture = {
@@ -17,6 +18,8 @@ export const nativeFixture = {
   failUpdates: false,
   failEmulation: false,
   deferRegistration: false,
+  deferEmulation: false,
+  settleEmulation() { pendingEmulation?.(); pendingEmulation = undefined },
   settleRegistration(reject = false) {
     if (!pendingRegistration) throw new Error("No pending registration")
     if (reject) pendingRegistration.reject(new Error("Registration failed"))
@@ -31,8 +34,12 @@ export const nativeFixture = {
   listenerCount: () => callbacks.size,
 }
 
+// Like the Rust controller, a target answers actions only once its registration completed.
+const registering = new Set<string>()
+
 async function invoke(command: string, args: any = {}) {
   calls.push({ command, ...args })
+  if (command === "browser_target_action" && registering.has(args.payload.registrationId)) throw new Error("Browser target is not registered")
   if (command === "plugin:event|listen") return args.handler
   if (command === "browser_target_register") histories.set(args.payload.registrationId, { entries: [{ id: ++historyId, url: args.payload.url }], index: 0 })
   if (command === "browser_target_action" && args.payload.action === "history") return histories.get(args.payload.registrationId)
@@ -43,8 +50,21 @@ async function invoke(command: string, args: any = {}) {
     for (const callback of callbacks.values()) callback({ payload: { registrationId: args.payload.registrationId, url: history.entries[history.index].url } })
   }
   if (command === "browser_target_action" && args.payload.action === "emulate" && nativeFixture.failEmulation) throw new Error("Emulation failed")
+  if (command === "browser_target_action" && args.payload.action === "emulate" && nativeFixture.deferEmulation) await new Promise<void>(resolve => { pendingEmulation = resolve })
   if (command === "browser_target_register" && nativeFixture.deferRegistration) {
-    return new Promise<void>((resolve, reject) => { pendingRegistration = { resolve, reject } })
+    const id = args.payload.registrationId
+    registering.add(id)
+    return new Promise<void>((resolve, reject) => {
+      pendingRegistration = {
+        // The Rust controller publishes the target and starts its first load before answering.
+        resolve: () => {
+          registering.delete(id)
+          for (const callback of callbacks.values()) callback({ payload: { registrationId: id, url: args.payload.url } })
+          resolve()
+        },
+        reject: (error) => { registering.delete(id); reject(error) },
+      }
+    })
   }
   if (command === "browser_target_update" && nativeFixture.failUpdates) {
     // IPC completes asynchronously. Avoid starving Chromium's event loop even
