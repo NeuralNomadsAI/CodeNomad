@@ -3,6 +3,7 @@
 mod conditional;
 pub mod config_files;
 pub mod document;
+pub mod profile;
 
 use std::sync::Mutex;
 

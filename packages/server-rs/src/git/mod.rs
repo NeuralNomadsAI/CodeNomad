@@ -1,5 +1,6 @@
 //! Git display and mutations of an owned checkout, every command under an admitted
 //! configuration (`config_guard`), a bounded output and a shared slot.
+mod branches;
 mod config_guard;
 mod history;
 mod status_read;
@@ -7,6 +8,7 @@ mod status_read;
 pub fn routes() -> axum::Router<Shared> {
     use axum::routing::{get, post};
     axum::Router::new()
+        .route("/api/workspaces/{id}/git-branches", get(branches::list))
         .route("/api/workspaces/{id}/worktrees/{slug}/git-status", get(status_read::status))
         .route("/api/workspaces/{id}/worktrees/{slug}/git-diff", get(status_read::diff))
         .route("/api/workspaces/{id}/worktrees/{slug}/git-history", get(history::history))

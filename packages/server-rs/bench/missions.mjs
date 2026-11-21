@@ -32,6 +32,10 @@ export async function run({ call, fixture: { client }, root, folder }) {
     const refusal = v => ({ code: v.code, available: v.available, reason: v.reason, refused: v.refused, rejected: typeof v.error === "string" })
     const requestId = "missions-route-fixture"
     const objective = "Mission route fixture: verify native journal parity."
+    const branches = `/api/workspaces/${workspace.id}/git-branches?directory=`
+    const local = await read("branches", branches + encodeURIComponent(location.directory), 200)
+    assert(local.branches.length > 0 && local.branches.every(ref => ref.startsWith("refs/heads/")))
+    await read("branches-foreign", branches + encodeURIComponent(path.join(root, "Rich")), 403, refusal)
     await read("playbooks", "/api/missions/playbooks", 200, v => Object.keys(v).sort())
     await read("receipt-missing", `${base}/creation/${requestId}`, 200)
     await post("create-invalid", base, {}, 400)
