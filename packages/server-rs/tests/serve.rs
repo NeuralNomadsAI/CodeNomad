@@ -47,13 +47,14 @@ impl Server {
     fn start_with(root: PathBuf, exe: &Path, args: &[&str], configure: impl FnOnce(&mut Command)) -> Self {
         let resolved = dunce::canonicalize(&root)
             .unwrap_or_else(|_| dunce::canonicalize(root.parent().unwrap()).unwrap().join(root.file_name().unwrap()));
-        if cfg!(windows) {
-            assert!(!resolved.to_string_lossy().to_lowercase().starts_with("c:\\users\\admin\\"));
-        }
+        let actual_home = std::env::home_dir().and_then(|home| dunce::canonicalize(home).ok());
+        assert!(actual_home.is_some_and(|home| !resolved.starts_with(home)), "Test root is under the user's home");
         let (home, config, cwd) = (root.join("home"), root.join("config"), root.join("cwd"));
         for dir in [&home, &config, &cwd] {
             fs::create_dir_all(dir).unwrap();
         }
+        let config = dunce::canonicalize(config).unwrap();
+        assert!(config.starts_with(resolved), "Test config escapes the private root");
         let mut command = Command::new(exe);
         #[cfg(windows)]
         command.creation_flags(0x0800_0000);
@@ -271,6 +272,13 @@ async fn desktop_launch_contract() {
     assert_eq!(asset.text().await.unwrap(), "console.log(1)");
     let spa = get("/workspace/route", Some(&cookie)).send().await.unwrap();
     assert!(spa.text().await.unwrap().contains("<title>ui</title>"));
+    let long_sidecar = format!("/sidecars/{}/app", "i".repeat(101));
+    for path in ["/sidecars", "/sidecars?x=1", &long_sidecar] {
+        let fallback = get(path, Some(&cookie)).send().await.unwrap();
+        assert_eq!(fallback.status(), 200, "{path}");
+        assert_eq!(fallback.headers()["content-type"], "text/html", "{path}");
+        assert!(fallback.text().await.unwrap().contains("<title>ui</title>"), "{path}");
+    }
     for hidden in ["/.secret", "/assets%5C..%5C..%5C..%5Ccwd%5Cplain.txt"] {
         let body = get(hidden, Some(&cookie)).send().await.unwrap().text().await.unwrap();
         assert!(body.contains("<title>ui</title>"), "{hidden}: {body}");

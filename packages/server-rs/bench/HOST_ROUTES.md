@@ -40,6 +40,9 @@ The Rust column describes the current host. **Excluded** routes are listed below
 | GET | `/api/speech/capabilities` | start-up | 200 | frozen while voice is redesigned |
 | GET | `/api/sidecars` | SideCars | 200 | here, with POST, PUT, DELETE and the `/sidecars/:id/*` proxy (HTTP, WebSocket), compared by `sidecars` |
 | GET | `/api/workspaces/:id/service-usage`, `/cache`, `/owner` | Stats | 200 | here, compared by `usage` |
+| GET | `/api/usage/:provider` | Conversation Status › Provider Usage | 200 | compared by `providers` against synthetic credentials and provider responses |
+| POST, DELETE, * | `/api/previews`, `/api/previews/:token`, `/previews/:token/*` | Local preview | 200, 204, upstream | source HTTP/WS compared by `previews` |
+| POST, DELETE | `/api/backends/:id/preview-capabilities` | Preview of a remote project | 200, 204 | HTTP(S) profiles, generation-bound; compared by `remote-previews` |
 
 The TS worktree creation with a session move stayed pending on this fixture (over 120 s), so the journey stops at the dialog; the TS instance storage answered GET 403 and PUT 404 once the conversation started.
 
@@ -51,7 +54,7 @@ The TS worktree creation with a session move stayed pending on this fixture (ove
 
 ## Capabilities
 
-`/api/meta` declares `config-files` with the families already served. `remote-control` stays undeclared (start, stop and previews are not served, so the UI hides the Remote Access section that reads the status), and so does `opencode-admin` until the OpenCode service routes are complete.
+`/api/meta` declares `config-files` and `provider-usage`. The complete `remote-control`, `opencode-admin` and `previews` capabilities await the remaining routes and transports.
 
 ## Local host checks
 
@@ -60,11 +63,12 @@ The `host` mode also reads, on both servers, the conversation list (by directory
 ## Differences kept on purpose
 
 - Settings are read from disk: an external edit is visible at once (the reference caches until an event). An unreadable `state.yaml` refuses writes (503) instead of being replaced.
-- `PATCH /api/storage/state/ui` touching multi-backend profiles (`remoteServers`, remote project history) answers 501: this host does not serve them and does not compact their history.
+- The local UI can save remote profiles with multi-backend enabled. This host serves the preview relay's admission and content routes; general project relay and SSH forwards are unavailable.
+- The preview relay admits saved direct HTTP(S) profiles. Its HTTP redirects stay within the source capability. A paired client's relay capability belongs to its issuing device, listener and Host. The full `previews` capability requires the rest of the remote backend transport.
 - The unrestricted folder browser and workspace creation still refuse UNC shares and device paths (audit M2).
 - Session favorites stay in the data folder rather than in `state.yaml`.
 - The Files tree omits `.git` and refuses paths inside it (the reference lists and edits it): an edited Git configuration or hook would run during later Git commands.
 - `/api/opencode/update` uses the installer’s configured registry and installation plan, including `foreignInstallation`. `canRestart` and `canReload` stay false; OpenCode 1.x migration is outside this contract.
-- `/api/remote-control/status`: this server has no tunnel and serves no web previews, so Remote Control is stopped, never resumes, and `previews` is false; the direct HTTPS origin and paired devices come from its own registry.
+- `/api/remote-control/status` reports the direct HTTPS origin and paired devices; the tunnel remains stopped and its `previews` flag stays false.
 - SideCar content and WebSockets are served on the loopback listener only: the host's `sidecarsOverDirectHttps` opt-in is not served, so `/api/meta` reports `sidecarsAllowed: false` on the HTTPS listener (the reference's default). A refused SideCar upgrade carries the admission's JSON error body (the reference answers empty).
 - HTTPS SideCars verify against `NODE_EXTRA_CA_CERTS` alone: public authorities never certify 127.0.0.1. A relayed JSON body is re-encoded like `JSON.stringify`, keeping integer-like keys in their received order.

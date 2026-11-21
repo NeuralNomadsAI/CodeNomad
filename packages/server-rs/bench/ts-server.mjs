@@ -21,9 +21,43 @@ if (process.env.CNRS_FIXTURE_URL) {
   OpenCodeCliService.prototype.discover = async () => endpoint
   for (const action of ["ensure", "restart"]) OpenCodeCliService.prototype[action] = async () => { throw new Error(`Fixture forbids service ${action}`) }
 }
+// `providers` mode: every HTTPS request goes to the bench's fake provider (`https://host/path` →
+// `<fake>/host/path`), so no provider is ever contacted.
+if (process.env.CNRS_FIXTURE_PROVIDERS) {
+  const fake = new URL(process.env.CNRS_FIXTURE_PROVIDERS)
+  assert(fake.hostname === "127.0.0.1" && fake.protocol === "http:")
+  const real = globalThis.fetch
+  const { googleOAuthClients } = await fromDist("usage/google-credential.js")
+  googleOAuthClients.get = () => ({ client_id: "fixture-client-id", client_secret: "fixture-client-secret" })
+  globalThis.fetch = (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input))
+    if (url.protocol === "https:") {
+      input = `${fake.origin}/${url.host}${url.pathname}${url.search}`
+      return real(input, { ...init, redirect: init?.redirect === "error" ? "error" : "manual" })
+    }
+    assert(url.protocol === "http:" && url.hostname === "127.0.0.1", "Provider bench refuses external HTTP")
+    return real(input, init)
+  }
+}
 // The saved Rust profile is verified against the bench's private CA, in this child only.
 if (process.env.CNRS_FIXTURE_TRUSTED_CA)
   tls.setDefaultCACertificates([...tls.getCACertificates("bundled"), await readFile(process.env.CNRS_FIXTURE_TRUSTED_CA, "utf8")])
 const entry = new URL("index.js", dist)
+if (process.env.CNRS_PREVIEW_TEST_TUNNEL === "1") {
+  const { RemoteControlManager } = await fromDist("remote-control/manager.js")
+  const start = RemoteControlManager.prototype.start
+  RemoteControlManager.prototype.start = function () {
+    this.options.openTunnel = async ({ target }) => {
+      assert.match(target, /^127\.0\.0\.1:\d+$/)
+      const hostname = "preview-ingress.fixture.test"
+      let close
+      const closed = new Promise(resolve => { close = resolve })
+      console.log(`CNRS_TEST_INGRESS http://${target}`)
+      return { hostname, url: `https://${hostname}`, closed, close: async () => close(),
+        status: () => ({ state: "connected", connections: 0 }) }
+    }
+    return start.call(this)
+  }
+}
 process.argv[1] = fileURLToPath(entry)
 await import(entry)

@@ -13,7 +13,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, Method, StatusCode as Status, header},
     middleware::Next,
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::Deserialize;
@@ -48,6 +48,7 @@ pub fn local_routes() -> Router<Shared> {
         .route("/api/remote-control/pairings", post(devices::issue).layer(DefaultBodyLimit::max(4096)))
         .route("/api/remote-control/devices", get(devices::list))
         .route("/api/remote-control/devices/{id}", delete(devices::revoke))
+        .route("/api/remote-control/previews", put(devices::set_previews).layer(DefaultBodyLimit::max(4096)))
         .route("/api/auth/token", post(token).layer(DefaultBodyLimit::max(4096)))
         .route("/api/auth/password", post(set_password).layer(DefaultBodyLimit::max(24 * 1024)))
         .route("/login", get(login_page))
@@ -316,7 +317,11 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
     {
         return Err(error(Status::FORBIDDEN, "Cross-origin request rejected"));
     }
-    if AUTHORITY_HEADERS.iter().any(|h| req.headers().contains_key(*h)) {
+    let backend = req.uri().path().starts_with("/api/backends/");
+    if AUTHORITY_HEADERS
+        .iter()
+        .any(|h| req.headers().contains_key(*h) && (!backend || *h != crate::previews::backend::PROOF))
+    {
         return Err(error(Status::FORBIDDEN, "Unsupported authority"));
     }
     if req.uri().query().is_some_and(|query| {

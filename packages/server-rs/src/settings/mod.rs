@@ -329,17 +329,28 @@ async fn patch_config(
 async fn read_state(State(app): State<Shared>) -> Json<Doc> {
     Json(app.settings.owner(Kind::State, "ui"))
 }
-async fn patch_state(State(app): State<Shared>, headers: HeaderMap, bytes: Bytes) -> Result<Response, Error> {
+async fn patch_state(State(app): State<Shared>, request: axum::extract::Request) -> Result<Response, Error> {
+    let allow_profiles = crate::previews::backend::enabled(&app)
+        && crate::auth::tls::https_only(&request).is_none()
+        && request.extensions().get::<crate::auth::Principal>().is_some_and(|p| !p.0.is_cancelled());
+    let (head, body) = request.into_parts();
+    let bytes = axum::body::to_bytes(body, 1024 * 1024)
+        .await
+        .map_err(|_| error(Status::PAYLOAD_TOO_LARGE, "Request body is too large"))?;
     // Fastify's parsers, then `request.body ?? {}`.
-    let patch = match fastify::body(&headers, &bytes)? {
+    let patch = match fastify::body(&head.headers, &bytes)? {
         None => json!({}),
         Some(fastify::Body::Json(value)) => value,
         Some(fastify::Body::Text(text)) => Value::String(text),
     };
-    if patch.as_object().is_some_and(|ui| SERVER_PROFILES.iter().any(|key| ui.contains_key(*key))) {
+    let profiles = patch.get("remoteServers").is_some();
+    if patch.as_object().is_some_and(|ui| SERVER_PROFILES.iter().any(|key| ui.contains_key(*key))) && !allow_profiles {
         return Ok(unavailable());
     }
     let saved = app.settings.patch(Kind::State, "ui", &patch).map_err(Failure::response)?;
+    if profiles {
+        app.previews.owners.reconcile(&app);
+    }
     publish(&app, Kind::State, "ui", saved.clone());
     Ok(Json(saved).into_response())
 }

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+async-compression = { version = "0.4", features = ["tokio", "gzip", "zlib", "brotli"] }
 async-stream = "0.3"
 axum = "0.8"
 base64 = "0.22"
@@ -21,8 +22,8 @@ regex = "1"
 fancy-regex = "0.16"
 icu_normalizer = { version = "2.4", default-features = false, features = ["compiled_data"] }
 icu_properties = "2.4"
-# HTTPS with the Mozilla roots Node bundles: the npm registry (OpenCode installation).
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls-webpki-roots"] }
+# HTTPS with the Mozilla roots Node bundles, including the npm registry and provider reads.
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls-webpki-roots", "gzip", "deflate", "brotli"] }
 # The TLS folder shared with the reference: RSA authority keys, as Tauri's aws-lc-rs.
 rcgen = { version = "0.13", default-features = false, features = ["aws_lc_rs", "pem", "x509-parser"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
@@ -43,7 +44,7 @@ serde_norway = "0.9"
 sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt", "signal", "sync", "time"] }
-tokio-util = "0.7"
+tokio-util = { version = "0.7", features = ["io"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 zip = { version = "9.7", default-features = false, features = ["deflate-flate2-zlib-rs"] }

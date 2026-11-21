@@ -71,6 +71,27 @@ pub fn native_endpoint() -> Result<(String, String), env::VarError> {
 pub fn native_endpoint_set() -> bool {
     env::var_os("CNRS_FIXTURE_URL").is_some()
 }
+
+/// On a positional fixture launch every provider request is sent to a local recorder.
+pub fn provider_fixture() -> Option<reqwest::Url> {
+    if crate::config::serve() || !native_endpoint_set() {
+        return None;
+    }
+    let raw = env::var_os("CNRS_FIXTURE_PROVIDERS")?;
+    let url: reqwest::Url = raw.to_str().and_then(|v| v.parse().ok()).expect("Invalid provider fixture origin");
+    assert!(
+        url.scheme() == "http"
+            && url.host_str() == Some("127.0.0.1")
+            && url.port().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.path() == "/"
+            && url.query().is_none()
+            && url.fragment().is_none(),
+        "Invalid provider fixture origin"
+    );
+    Some(url)
+}
 /// `CNRS_FIXTURE_PANIC=1`: panic at startup, to check the backtrace a desktop host logs.
 pub fn panic_on_start() {
     if on("CNRS_FIXTURE_PANIC") {

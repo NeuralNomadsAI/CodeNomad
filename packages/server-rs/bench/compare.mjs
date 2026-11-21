@@ -15,13 +15,16 @@ import { assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
 import { browserFiles, populate } from "./files.mjs"
 import { browserWorktrees } from "./worktrees.mjs"
 
-const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "host", "sidecars", "usage", "solid"]
+const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
 const [mode, exe] = process.argv.slice(2)
 assert(MODES.includes(mode) && path.isAbsolute(exe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)
 const bin = rustBinary()
 const bench = mode === "solid" ? undefined : await import(`./${mode === "http" ? "worktrees" : mode}.mjs`)
 await useBenchTemp()
 await outsideUserHome(process.env.TEMP)
+const daemonTemp = path.join(process.env.TEMP, "opencode")
+await mkdir(daemonTemp, { recursive: true })
+await outsideUserHome(daemonTemp)
 const { resolveConfigLocation } = await fromDist("config/location.js")
 const shots = path.join(out, "screenshots", mode)
 await mkdir(shots, { recursive: true })
@@ -29,6 +32,7 @@ await mkdir(shots, { recursive: true })
 const { withProductRuntime, remove: removeRuntime } = await productRuntime()
 
 const HTTP_TIMEOUT = 20000
+const STARTUP_TIMEOUT = Number(process.env.CNRS_BENCH_STARTUP_TIMEOUT_MS ?? 25000)
 const result = { mode, binary: bin, tests: [], browser: {}, statuses: {}, samples: {} }
 const capture = async (page, name) => {
   await page.screenshot({ path: path.join(shots, `${name}.png`), animations: "disabled" })
@@ -67,6 +71,11 @@ async function start(label, fixture, folder, password, trustedCA) {
     ...(mode === "memory" ? provisionEnv(root, "memory") : mode === "design" || mode === "host" ? provisionEnv(root) : {}) })
   // `host`: both servers as the desktop hosts start them, over the whole filesystem, on equal settings.
   if (mode === "host") Object.assign(env, { CLI_UNRESTRICTED_ROOT: "true", CODENOMAD_REMOTE_CONTROL: "disabled" })
+  Object.assign(env, bench?.environment?.(root) ?? {})
+  if (label === "ts" && bench?.remoteIngress) {
+    env.CNRS_PREVIEW_TEST_TUNNEL = "1"
+    delete env.CODENOMAD_REMOTE_CONTROL
+  }
   // Modes that seed `config.yaml` start both servers on equal settings.
   // Keep the Rust settings at their private positional default in modes without a seeded YAML.
   env.CLI_CONFIG = label === "ts" ? path.join(root, "ts.yaml")
@@ -86,14 +95,18 @@ async function start(label, fixture, folder, password, trustedCA) {
   const request = (route, init) => fetch(`${listen}${route}`, { signal: AbortSignal.timeout(HTTP_TIMEOUT), redirect: "manual", ...init })
   const close = async () => {
     if (!spawnError && child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, stopped)
-    await writeFile(path.join(out, `${mode}-${label}.log`), output.replaceAll(password, "<redacted>").replaceAll(env.CNRS_FIXTURE_PASSWORD, "<redacted>"))
+    const leaked = (bench?.secrets?.() ?? []).filter(secret => output.includes(secret))
+    const safe = leaked.reduce((text, secret) => text.replaceAll(secret, "<redacted>"), output)
+    await writeFile(path.join(out, `${mode}-${label}.log`), safe.replaceAll(password, "<redacted>").replaceAll(env.CNRS_FIXTURE_PASSWORD, "<redacted>"))
+    if (leaked.length) (result.leaks ??= []).push({ label, count: leaked.length })
   }
   try {
     await eventually(async () => {
       if (spawnError || child.exitCode !== null) throw Error(`${label} startup: ${spawnError ?? output.slice(-2500)}`)
       return (await request("/api/auth/status").catch(() => undefined))?.status === 200 && (label !== "ts" || output.includes("Local Connection URL"))
-    }, `${label} startup`, 25000).catch(error => { throw Error(`${error.message}\n${output.slice(-2500)}`, { cause: error }) })
-    return { request, close, origin: listen, secureOrigin: /^HTTPS (https:\/\/\S+)$/m.exec(output)?.[1]?.trim(), pid: child.pid, status: info.version, daemonPID: info.pid }
+    }, `${label} startup`, STARTUP_TIMEOUT).catch(error => { throw Error(`${error.message}\n${output.slice(-2500)}`, { cause: error }) })
+    const ingress = () => /^CNRS_TEST_INGRESS (http:\/\/127\.0\.0\.1:\d+)$/m.exec(output)?.[1]
+    return { request, close, origin: listen, secureOrigin: /^HTTPS (https:\/\/\S+)$/m.exec(output)?.[1]?.trim(), ingress, pid: child.pid, status: info.version, daemonPID: info.pid }
   } catch (e) { await close(); throw e }
 }
 
@@ -364,7 +377,7 @@ async function solid({ ts, rs, local, remote, tsRoot, rsRoot, password }) {
 let rustPruning, missionsPresence
 const prepare = async fixture => {
   if (mode === "depth") await (await import("./depth.mjs")).prepare(fixture)
-  return {}
+  return (await bench?.prepare?.(fixture)) ?? {}
 }
 try {
   await withProductRuntime(exe, async fixture => {
@@ -385,7 +398,7 @@ try {
     await populate(path.join(rsRoot, "Rust Project"))
     await populate(path.join(tsRoot, "Local Project"))
     await rustPruning.ready(remote.client, path.join(rsRoot, "Rust Project"))
-    const seeded = (await bench?.configure?.()) ?? ""
+    const seeded = (await bench?.configure?.(local, remote)) ?? ""
     const settings = `server:\n  opencodeBinary: ${JSON.stringify(exe)}\n${seeded}ui:\n  settings:\n    multiBackend: true\n    locale: en\n`
     await writeFile(path.join(local.root, "ts.yaml"), settings)
     if (mode === "host" || bench?.configure) await writeFile(path.join(remote.root, "rust.yaml"), settings)
@@ -400,7 +413,8 @@ try {
       const hosts = []
       for (const host of [ts, rs]) {
         const cookie = await signIn(host, password)
-        hosts.push({ call: (route, init) => host.request(route, withCookie(cookie, init)), origin: host.origin, cookie })
+        hosts.push({ call: (route, init) => host.request(route, withCookie(cookie, init)), origin: host.origin, cookie,
+          ...(bench?.remoteIngress ? { secureOrigin: host.secureOrigin, ingress: host.ingress } : {}) })
       }
       if (bench.pair) { result[mode] = await bench.pair(...hosts); return }
       await compareSides([
@@ -408,6 +422,7 @@ try {
         { ...hosts[1], fixture: remote, folder: "Rust Project", root: rsRoot, other: path.join(rsRoot, "No Repository"), pid: rs.pid, data: path.join(remote.root, "rust.data") },
       ])
     } finally { await Promise.all([ts?.close(), rs?.close(), bench?.close?.()]) }
+    assert(!result.leaks, "A server logged a synthetic provider credential")
   }))
 } catch (error) {
   result.error = String(error.stack)

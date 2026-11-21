@@ -303,7 +303,8 @@ impl Listener {
                     // Also bounds the wait for a request's first byte, after the
                     // handshake and between keep-alive requests (hyper 1.x).
                     .header_read_timeout(IDLE)
-                    .serve_connection(TokioIo::new(io), TowerToHyperService::new(service));
+                    .serve_connection(TokioIo::new(io), TowerToHyperService::new(service))
+                    .with_upgrades();
                 tokio::select! { _=lifetime.cancelled()=>{}, _=connection=>{} }
                 lifetime.cancel();
             });

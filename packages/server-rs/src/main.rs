@@ -15,6 +15,8 @@ mod meta;
 #[rustfmt::skip] // Frozen while its contract is redesigned: moved, never reformatted.
 mod missions;
 mod opencode;
+mod previews;
+mod provider_usage;
 mod search;
 mod service;
 mod sessions;
@@ -146,6 +148,8 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         .merge(missions::routes())
         .merge(sidecars::routes())
         .merge(usage::routes())
+        .merge(provider_usage::routes())
+        .merge(previews::routes())
         .merge(opencode::routes())
         .merge(opencode::install::routes());
 
@@ -156,6 +160,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         bench::stop_on_stdin(shutdown.clone());
     }
     let plugins = extensions::lifecycle::start(&state, shutdown.clone())?;
+    tokio::spawn(previews::sweep(state.clone(), shutdown.clone()));
     missions::serve_bridge(&state, shutdown.clone());
     tokio::spawn(files::watch::run(state.clone(), watch_rx, shutdown.clone()));
     let remote_url = tls.as_ref().map(|tls| tls.origin.clone());
@@ -179,12 +184,22 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     let local = routes
         .merge(auth::local_routes())
         .merge(sidecars::proxy::routes(ui.clone()))
-        .fallback(move |req: Request| {
+        .fallback({
             let ui = ui.clone();
-            async move { host::ui::serve(&ui, req).await }
+            let app = state.clone();
+            move |req: Request| {
+                let (ui, app) = (ui.clone(), app.clone());
+                async move {
+                    match previews::fallback(&app, req).await {
+                        Ok(response) => response,
+                        Err(req) => host::ui::serve(&ui, req).await,
+                    }
+                }
+            }
         })
-        .layer(from_fn(panic_guard::catch))
         .layer(from_fn_with_state(state.clone(), auth::admit))
+        .layer(from_fn_with_state(state.clone(), previews::admit_local))
+        .layer(from_fn(panic_guard::catch))
         .with_state(state.clone());
     tokio::spawn(auth::Auth::sweep(state.clone()));
     tokio::spawn(events::bridge(state.clone()));
