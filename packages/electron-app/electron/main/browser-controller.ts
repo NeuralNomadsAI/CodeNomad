@@ -68,6 +68,7 @@ export class BrowserController {
   private readonly documentWatches = new WeakMap<WebContents, boolean>()
   private readonly commandQueues = new WeakMap<WebContents, Promise<void>>()
   private readonly navigationVersions = new WeakMap<WebContents, number>()
+  private readonly documentRoots = new WeakMap<WebContents, number>()
   private readonly loadResults = new WeakMap<WebContents, { at: number; url: string; startedUrl: string; error?: Error }>()
   private readonly openClaims = new Map<string, OpenClaim>()
 
@@ -83,10 +84,7 @@ export class BrowserController {
     this.observedGuests.set(guest.id, owner.id)
     this.navigationVersions.set(guest, 0)
     let startedUrl = guest.getURL()
-    const invalidate = () => {
-      this.navigationVersions.set(guest, (this.navigationVersions.get(guest) ?? 0) + 1)
-      this.releaseGuest(guest)
-    }
+    const invalidate = () => this.invalidateDocument(guest)
     guest.on("did-navigate", invalidate)
     guest.on("did-navigate-in-page", (_event, _url, isMainFrame) => {
       if (isMainFrame) invalidate()
@@ -120,6 +118,7 @@ export class BrowserController {
     guest.once("destroyed", () => {
       this.observedGuests.delete(guest.id)
       this.documentWatches.delete(guest)
+      this.documentRoots.delete(guest)
       this.releaseGuest(guest)
       for (const [id, registration] of this.registrations) {
         if (registration.guest.id === guest.id) this.registrations.delete(id)
@@ -243,19 +242,17 @@ export class BrowserController {
     ensureDeadline(deadline)
     const registration = this.resolve(sessionID)
     const { guest } = registration
-    const target = this.pageGeneration(registration)
-    if (!this.documentWatches.has(guest)) {
-      await this.enqueue(guest, async () => {
+    const generation = this.pageGeneration(registration)
+    const target = await this.enqueue(guest, async () => {
+      const check = () => {
         ensureDeadline(deadline)
-        const check = () => {
-          if (this.resolve(sessionID) !== registration || this.pageGeneration(registration) !== target) throw new Error(staleTarget)
-        }
-        check()
-        if (this.documentWatches.has(guest)) return
+        if (this.resolveWitness(sessionID) !== registration || this.pageGeneration(registration) !== generation) throw new Error(staleTarget)
+      }
+      check()
+      if (!this.documentWatches.has(guest)) {
         const ownsDebugger = !guest.debugger.isAttached()
         if (ownsDebugger) guest.debugger.attach("1.3")
         try {
-          // A stream reopened at the same URL keeps its frame, loader and Document node.
           // Observe the renderer even between page leases.
           await withDeadline(() => guest.debugger.sendCommand("Page.enable"), deadline)
           check()
@@ -265,8 +262,10 @@ export class BrowserController {
           if (ownsDebugger) this.detachDebugger(guest)
           throw error
         }
-      })
-    }
+      }
+      await this.refreshDocument(guest, deadline, check)
+      return this.pageGeneration(registration)
+    })
     ensureDeadline(deadline)
     this.resolveWitness(sessionID, target)
     return { available: true, target }
@@ -284,7 +283,9 @@ export class BrowserController {
         || registration.visibilityVersion !== visibilityVersion) throw new Error(staleTarget)
     }
     return this.enqueue(guest, async () => {
-      check(true)
+      const checkDocument = () => check(true)
+      await this.refreshDocument(guest, deadline, checkDocument)
+      checkDocument()
       switch (command.action) {
         case "navigate": {
           if (!isBrowserUrlAllowed(command.url)) throw new Error("Browser navigation requires a credential-free HTTP(S) URL")
@@ -297,7 +298,8 @@ export class BrowserController {
             format: "png",
             fromSurface: true,
           }), deadline) as { data?: unknown }
-          check(true)
+          await this.refreshDocument(guest, deadline, checkDocument)
+          checkDocument()
           if (typeof result.data !== "string" || result.data.length > 16 * 1024 * 1024) throw new Error("Browser screenshot is unavailable or too large")
           return { image: { mime: "image/png", data: result.data }, url: guest.getURL() }
         }
@@ -429,7 +431,9 @@ export class BrowserController {
       this.pageLeases.set(operationID, lease)
       try {
         return await this.enqueue(registration.guest, async () => {
-          this.resolveWitness(sessionID, target)
+          const check = () => this.resolveWitness(sessionID, target)
+          await this.refreshDocument(registration.guest, Math.min(deadline, lease.expires), check)
+          check()
           const url = this.checkLease(lease, deadline)
           return { generation: lease.generation, url, driver: "cdp", contractVersion: PAGE_DRIVER_VERSION }
         })
@@ -443,29 +447,30 @@ export class BrowserController {
     if (!lease || lease.sessionID !== sessionID || lease.generation !== input.generation) {
       throw new Error("Browser page lease is no longer current")
     }
-    if (method === "browser.page.check") {
-      try { return { url: this.checkLease(lease, deadline) } }
-      catch (error) { this.releaseLease(lease); throw error }
-    }
-    const operation = parsePageOperation(input.operation)
-    return this.enqueue(lease.registration.guest, async () => {
+    const operation = method === "browser.page.send" ? parsePageOperation(input.operation) : undefined
+    const { guest } = lease.registration
+    const check = () => this.checkLease(lease, deadline)
+    const stopAt = Math.min(deadline, lease.expires)
+    return this.enqueue(guest, async () => {
       try {
-        this.checkLease(lease, deadline)
+        await this.refreshDocument(guest, stopAt, check)
+        if (!operation) return { url: check() }
         const result = await executeCdpOperation({ send: async (command, params = {}) => {
-          this.checkLease(lease, deadline)
+          check()
+          // Electron's native insertion reaches the guest's focused frame even
+          // when CDP Input.insertText is ignored in an embedded/background view.
           const response = await withDeadline(
-          // Electron's native insertion targets the guest's focused frame even when
-          // CDP Input.insertText is silently ignored by an embedded/background view.
-          () => command === "Input.insertText" && typeof (params as { text?: unknown }).text === "string"
-            ? lease.registration.guest.insertText((params as { text: string }).text).then(() => ({}))
-            : command === "Input.dispatchKeyEvent" ? sendGuestKey(lease.registration.guest, params as Record<string, unknown>)
-            : lease.registration.guest.debugger.sendCommand(command, params), Math.min(deadline, lease.expires),
+            () => command === "Input.insertText" && typeof (params as { text?: unknown }).text === "string"
+              ? guest.insertText((params as { text: string }).text).then(() => ({}))
+              : command === "Input.dispatchKeyEvent" ? sendGuestKey(guest, params as Record<string, unknown>)
+              : guest.debugger.sendCommand(command, params), stopAt,
           )
-          this.checkLease(lease, deadline)
+          check()
           if (Buffer.byteLength(JSON.stringify(response ?? null)) > 4 * 1024 * 1024) throw new Error("Browser page response is too large")
           return response as Record<string, unknown>
         } }, operation)
-        this.checkLease(lease, deadline)
+        await this.refreshDocument(guest, stopAt, check)
+        check()
         if (Buffer.byteLength(JSON.stringify(result ?? null)) > 4 * 1024 * 1024) throw new Error("Browser page response is too large")
         return result
       } catch (error) {
@@ -473,6 +478,29 @@ export class BrowserController {
         throw error
       }
     })
+  }
+
+  private async refreshDocument(guest: WebContents, deadline: number, check: () => void): Promise<void> {
+    check()
+    // document.open() can replace the root element before Page.documentOpened arrives,
+    // while retaining the frame, loader and Document node.
+    const result = await withDeadline(() => guest.debugger.sendCommand("DOM.getDocument", { depth: 1 }), deadline) as {
+      root?: { children?: Array<{ nodeType: number; backendNodeId: number }> }
+    }
+    check()
+    const root = result.root?.children?.find(node => node.nodeType === 1)?.backendNodeId
+    const previous = this.documentRoots.get(guest)
+    if (previous !== undefined && previous !== root) {
+      this.invalidateDocument(guest)
+    }
+    if (root === undefined || !Number.isSafeInteger(root) || root <= 0) throw new Error(staleTarget)
+    this.documentRoots.set(guest, root)
+  }
+
+  private invalidateDocument(guest: WebContents): void {
+    this.documentRoots.delete(guest)
+    this.navigationVersions.set(guest, (this.navigationVersions.get(guest) ?? 0) + 1)
+    this.releaseGuest(guest)
   }
 
   private pageGeneration(registration: Registration): string {

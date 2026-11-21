@@ -13,6 +13,7 @@ interface GuestOptions {
   insertText?: (text: string) => Promise<void>
   sendInputEvent?: (event: Electron.InputEvent) => void
   loading?: boolean
+  documentRoot?: () => number
 }
 
 function createGuest(options: GuestOptions) {
@@ -33,7 +34,13 @@ function createGuest(options: GuestOptions) {
       isAttached: () => attached,
       attach: () => { attached = true; attachCount += 1 },
       detach: () => { attached = false; detachCount += 1; guest.debugger.emit("detach", {}, "test") },
-      sendCommand: options.sendCommand ?? (async () => ({})),
+      sendCommand: async (method: string, params?: Record<string, unknown>) => {
+        if (method === "DOM.getDocument") {
+          assert.deepEqual(params, { depth: 1 })
+          return { root: { children: [{ nodeType: 1, backendNodeId: options.documentRoot?.() ?? 42 }] } }
+        }
+        return options.sendCommand?.(method, params) ?? {}
+      },
     }),
   }) as unknown as WebContents
   return { guest, events, counts: () => ({ attachCount, detachCount }) }
@@ -368,6 +375,59 @@ describe("BrowserController private page channel", () => {
 })
 
 describe("BrowserController preview lifecycle", () => {
+  it("binds probes and all admissions to the live root even before the document-open event", async () => {
+    for (const action of ["navigate", "screenshot", "begin"] as const) {
+      const h = createHarness()
+      let root = 42
+      const navigate = mock.fn(async () => {})
+      const capture = mock.fn(async () => ({ data: "png" }))
+      const { guest } = createGuest({ id: 119, owner: h.owner, documentRoot: () => root, loadURL: navigate,
+        sendCommand: async method => method === "Page.captureScreenshot" ? capture() : {} })
+      h.add(guest, "one")
+      const sessionID = "session"
+      const { target } = await h.controller.probe(sessionID)
+      root++
+      const operationID = randomUUID()
+      const admission = action === "begin" ? page(h.controller, "begin", { sessionID, operationID, target })
+        : h.controller.execute(sessionID, action === "navigate" ? { action, url: `${guest.getURL()}#next` } : { action }, Infinity, target)
+      await assert.rejects(admission, /Browser target is stale/, action)
+      assert.equal(navigate.mock.callCount(), 0)
+      assert.equal(capture.mock.callCount(), 0)
+
+      const { target: refreshed } = await h.controller.probe(sessionID)
+      assert.notEqual(refreshed, target)
+      assert.equal((await h.controller.probe(sessionID)).target, refreshed)
+      const lease = await page(h.controller, "begin", { sessionID, operationID, target: refreshed }) as { generation: string }
+      assert.notEqual(lease.generation, target)
+      await page(h.controller, "end", { sessionID, operationID })
+    }
+  })
+
+  it("rechecks the live root before using a lease and after reading page content", async () => {
+    for (const phase of ["check", "input", "tree", "screenshot"] as const) {
+      const h = createHarness()
+      let root = 42
+      const send = mock.fn(async (method: string) => {
+        if (method === "Accessibility.getFullAXTree" || method === "Page.captureScreenshot") root++
+        return { data: "png" }
+      })
+      const { guest } = createGuest({ id: 120, owner: h.owner, documentRoot: () => root, sendCommand: send })
+      h.add(guest, "one")
+      const lease = await begin(h.controller)
+      if (phase === "check" || phase === "input") root++
+      if (phase === "screenshot") {
+        await assert.rejects(h.controller.execute(lease.sessionID, { action: "screenshot" }, Infinity, lease.generation), /Browser target is stale/)
+      } else {
+        const result = phase === "check" ? page(h.controller, "check", lease) : page(h.controller, "send", {
+          ...lease, method: phase === "input" ? "Input.insertText" : "Accessibility.getFullAXTree",
+        })
+        await assert.rejects(result, /Browser page lease is no longer current/)
+      }
+      assert.equal(send.mock.calls.some(call => call.arguments[0] === "Input.insertText"), false)
+      await assert.rejects(page(h.controller, "check", lease), /Browser page lease is no longer current/)
+    }
+  })
+
   it("preserves the main preview witness and lease through in-page navigation in an iframe", async () => {
     const h = createHarness()
     const { guest, events } = createGuest({ id: 117, owner: h.owner })
