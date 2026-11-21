@@ -23718,9 +23718,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -23735,9 +23741,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -23755,9 +23767,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -23843,9 +23861,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -23860,9 +23884,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -23880,9 +23910,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -23929,9 +23965,6 @@
           "function": "option-click",
           "handle": "h14",
           "args": []
-        },
-        {
-          "checkpoint": true
         },
         {
           "op": "release-handles"
@@ -24122,9 +24155,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "insert-text",
@@ -24337,9 +24376,6 @@
           ]
         },
         {
-          "checkpoint": true
-        },
-        {
           "op": "release-handles"
         }
       ],
@@ -24413,9 +24449,6 @@
           ]
         },
         {
-          "checkpoint": true
-        },
-        {
           "op": "release-handles"
         }
       ],
@@ -24462,9 +24495,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -24578,9 +24617,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -24595,9 +24640,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -24615,9 +24666,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -24634,9 +24691,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -24653,9 +24716,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -24672,9 +24741,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -24691,9 +24766,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -24710,9 +24791,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -24729,9 +24816,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -24748,9 +24841,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -24767,9 +24866,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -24786,9 +24891,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -24805,9 +24916,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -24855,9 +24972,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -24872,9 +24995,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "wheel",
@@ -24944,9 +25073,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "pointer",
@@ -24961,9 +25096,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "wheel",
@@ -25006,9 +25147,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "keyboard",
@@ -25026,9 +25173,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "keyboard",
@@ -25045,9 +25198,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "keyboard",
@@ -25064,9 +25223,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "keyboard",
@@ -25146,9 +25311,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "keyboard",
@@ -25167,9 +25338,15 @@
           "checkpoint": true
         },
         {
+          "checkpoint": true
+        },
+        {
           "op": "call",
           "function": "mark-input",
           "args": []
+        },
+        {
+          "checkpoint": true
         },
         {
           "op": "keyboard",
@@ -25235,9 +25412,6 @@
           "function": "focus",
           "handle": "h10",
           "args": []
-        },
-        {
-          "checkpoint": true
         },
         {
           "op": "release-handles"
@@ -25574,9 +25748,6 @@
           "args": []
         },
         {
-          "checkpoint": true
-        },
-        {
           "op": "release-handles"
         }
       ],
@@ -25970,9 +26141,6 @@
           ]
         },
         {
-          "checkpoint": true
-        },
-        {
           "op": "release-handles"
         }
       ],
@@ -26044,9 +26212,6 @@
               "Gold"
             ]
           ]
-        },
-        {
-          "checkpoint": true
         },
         {
           "op": "release-handles"
@@ -26694,9 +26859,6 @@
           "function": "focus",
           "handle": "h10",
           "args": []
-        },
-        {
-          "checkpoint": true
         },
         {
           "op": "release-handles"

@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 const RESTART_DELAY: Duration = Duration::from_millis(100);
 
@@ -134,22 +134,43 @@ impl DeveloperMode {
         }
     }
 
-    /// Like the update flow, automation targets an application window: a focused
-    /// Preferences or remote window falls back to the most recently used one.
-    fn focused_window_id(app: &AppHandle) -> Option<String> {
-        crate::local_windows::update_flow_window(app)
-            .and_then(|window| crate::identity::local_window_id(window.label()).ok())
-    }
-
-    pub(crate) fn native_snapshot(&self, app: &AppHandle) -> Result<Value, String> {
+    pub(crate) fn native_snapshot(
+        &self,
+        app: &AppHandle,
+        params: Option<Value>,
+        inventory: bool,
+    ) -> Result<Value, String> {
         if !cfg!(windows) {
             return Err("Native automation requires the Tauri Windows runtime".to_string());
         }
         let port = self.discovered_port();
-        let window_id = (self.in_process || port.is_some())
-            .then(|| Self::focused_window_id(app))
-            .flatten();
-        Ok(self.snapshot(port, window_id))
+        let state = app.state::<crate::AppState>();
+        let mut windows: Vec<(String, String, bool)> = if self.in_process || port.is_some() {
+            app.state::<crate::local_windows::LocalWindows>()
+                .automation_labels()
+                .into_iter()
+                .filter_map(|(label, instance)| {
+                    let view = app.get_webview(&label)?;
+                    crate::require_local_app_webview(&view, &state).ok()?;
+                    let focused = view.window().is_focused().unwrap_or(false);
+                    Some((crate::identity::local_window_id(&label).ok()?, instance, focused))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        windows.sort_by_key(|(_, _, focused)| !focused);
+        let chosen = select_window(&self.run_id, &windows, params.as_ref());
+        let mut result = self.snapshot(port, chosen.map(|(id, _, _)| id.clone()));
+        if let Some((_, instance, _)) = chosen {
+            result["status"]["windowInstance"] = json!(instance);
+        }
+        if inventory {
+            result["windows"] = json!(windows.iter().map(|(id, instance, focused)| {
+                json!({ "windowId": id, "windowInstance": instance, "focused": focused })
+            }).collect::<Vec<_>>());
+        }
+        Ok(result)
     }
 
     fn snapshot(&self, port: Option<u16>, window_id: Option<String>) -> Value {
@@ -159,9 +180,14 @@ impl DeveloperMode {
         })
     }
 
-    pub(crate) fn request_restart(&self, app: &AppHandle) -> Result<Value, String> {
+    pub(crate) fn request_restart(&self, app: &AppHandle, params: Option<Value>) -> Result<Value, String> {
         if !cfg!(windows) {
             return Err("Native automation requires the Tauri Windows runtime".to_string());
+        }
+        if params.as_ref().is_some_and(|value| value.get("runId").is_some())
+            && self.native_snapshot(app, params, false)?["status"]["state"] != "ready"
+        {
+            return Err("The selected window is no longer available".to_string());
         }
         let status = self.status(self.discovered_port(), None);
         let app = app.clone();
@@ -173,9 +199,38 @@ impl DeveloperMode {
     }
 }
 
+fn select_window<'a>(
+    run: &str,
+    windows: &'a [(String, String, bool)],
+    params: Option<&Value>,
+) -> Option<&'a (String, String, bool)> {
+    let exact = params.filter(|value| value.get("runId").is_some() || value.get("windowId").is_some());
+    match exact {
+        None => windows.first(),
+        Some(input) if input["runId"].as_str() == Some(run) => windows
+            .iter()
+            .find(|(id, instance, _)| Some(id.as_str()) == input["windowId"].as_str()
+                && Some(instance.as_str()) == input["windowInstance"].as_str()),
+        Some(_) => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selects_exact_window_without_using_focus_or_substituting() {
+        let mut windows = vec![("B".into(), "b".into(), true), ("A".into(), "a".into(), false)];
+        let target = json!({ "runId": "current", "windowId": "A", "windowInstance": "a" });
+        assert_eq!(select_window("current", &windows, None).map(|w| w.0.as_str()), Some("B"));
+        assert_eq!(select_window("current", &windows, Some(&target)).map(|w| w.0.as_str()), Some("A"));
+        assert_eq!(select_window("old", &windows, Some(&target)), None);
+        windows.pop();
+        assert_eq!(select_window("current", &windows, Some(&target)), None);
+        windows.push(("A".into(), "new".into(), false));
+        assert_eq!(select_window("current", &windows, Some(&target)), None);
+    }
 
     #[test]
     fn native_snapshot_includes_recorded_preview_failure() {

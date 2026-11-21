@@ -1,7 +1,12 @@
 //! The page engine (`page/protocol.ts`, `input.ts`, `actions.ts`): actions on refs over the closed
 //! operation set, trusted input aimed like a user's, and its provenance mark in the app window.
-use super::{keys, refs::RefTable, snapshot};
-use serde_json::{json, Map, Value};
+use super::{
+    input::{marked, Guard, Refusal, Target},
+    keys,
+    refs::RefTable,
+    snapshot,
+};
+use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
 const VALUE_LIMIT: usize = 200;
@@ -11,13 +16,15 @@ const VALUE_LIMIT: usize = 200;
 #[derive(Debug)]
 pub(crate) struct Fail {
     pub message: String,
-    unsupported: bool,
+    pub(super) unsupported: bool,
+    pub(super) refusal: Option<Refusal>,
 }
 impl From<String> for Fail {
     fn from(message: String) -> Self {
         Self {
             message,
             unsupported: false,
+            refusal: None,
         }
     }
 }
@@ -26,7 +33,16 @@ impl From<&str> for Fail {
         message.to_string().into()
     }
 }
-type Result<T> = std::result::Result<T, Fail>;
+impl From<Refusal> for Fail {
+    fn from(refusal: Refusal) -> Self {
+        Self {
+            message: refusal.message.clone(),
+            unsupported: false,
+            refusal: Some(refusal),
+        }
+    }
+}
+pub(super) type Result<T> = std::result::Result<T, Fail>;
 
 /// One page: its operation transport, a checkpoint revalidating the target, and whether trusted
 /// input carries the application's provenance mark (the app window only, never a preview).
@@ -35,13 +51,14 @@ pub(crate) struct Session<'a> {
     pub send: &'a dyn Fn(Value) -> std::result::Result<Value, String>,
     pub checkpoint: &'a dyn Fn() -> std::result::Result<(), String>,
     pub mark: bool,
+    pub(crate) guard: Option<Guard<'a>>,
 }
 
 /// A target handle argument of a fixed function.
 pub(crate) struct Handle(pub String);
 
 impl Session<'_> {
-    fn run(&self, operation: Value) -> Result<Value> {
+    pub(super) fn run(&self, operation: Value) -> Result<Value> {
         let op = operation["op"].as_str().unwrap_or_default().to_string();
         let result = (self.send)(operation)?;
         if result["error"]["code"] == "unsupported" {
@@ -51,14 +68,20 @@ impl Session<'_> {
             return Err(Fail {
                 message: format!("{} page driver does not support {operation}", self.driver),
                 unsupported: true,
+                refusal: None,
             });
         }
         Ok(result)
     }
-    fn check(&self) -> Result<()> {
+    pub(super) fn check(&self) -> Result<()> {
         Ok((self.checkpoint)()?)
     }
-    fn call(&self, function: &str, handle: Option<&str>, args: Vec<Value>) -> Result<Value> {
+    pub(super) fn call(
+        &self,
+        function: &str,
+        handle: Option<&str>,
+        args: Vec<Value>,
+    ) -> Result<Value> {
         let mut operation = json!({"op": "call", "function": function, "args": args});
         if let Some(handle) = handle {
             operation["handle"] = json!(handle);
@@ -106,13 +129,13 @@ fn call_on(
         Arg::Handle(Handle(id)) => json!({"handle": id}),
     });
     let result = s.call(function, Some(handle), args.collect())?;
-    s.check()?;
     if let Some(exception) = result.get("exception") {
         return Err(page_error(
             reference,
             exception.as_str().unwrap_or_default(),
         ));
     }
+    s.check()?;
     if !by_value {
         return result["handle"]
             .as_str()
@@ -152,6 +175,11 @@ fn page_error(reference: &str, description: &str) -> Fail {
         "not-select" => format!("{r} is not a native select; click it to open its menu, then click the option").into(),
         "is-select" => format!("{r} is a native select; use select with its option labels").into(),
         "no-option" => format!("No option {quoted} in {r}; inspect it to see its options").into(),
+        "options-changed" => format!("The options of {r} changed during focus; inspect again").into(),
+        "delete-refused" => format!("The page refused to delete the selection in {r}").into(),
+        "action-root" => "Page changed during action; inspect again".into(),
+        "action-tab" => "The active tab changed during the action; inspect again".into(),
+        "has-box" => format!("{r} now has a box; inspect before clicking").into(),
         "option-disabled" => format!("Option {quoted} of {r} is disabled").into(),
         "single" => format!("{r} takes exactly one value").into(),
         "disabled" => format!("{r} is disabled").into(),
@@ -168,153 +196,6 @@ fn release_objects(s: &Session) {
     let _ = s.run(json!({"op": "release-handles"}));
 }
 
-/// Input recorded for release; `pointer` releases go back to the last pointer position.
-struct Held {
-    id: String,
-    kind: &'static str,
-    params: Value,
-}
-
-/// `markedInput`: in the app window every trusted input renews the provenance lease and carries its
-/// timestamp; anything still pressed is released on failure, never replayed.
-fn marked_input<T>(
-    s: &Session,
-    run: impl FnOnce(&mut dyn FnMut(&'static str, Value) -> Result<()>) -> Result<T>,
-) -> Result<T> {
-    let mut held: Vec<Held> = Vec::new();
-    let mut point = json!({"x": 0, "y": 0});
-    let mut attempted = false;
-    await_input_acceptance(s)?;
-    let outcome = {
-        let mut dispatch = |kind: &'static str, params: Value| -> Result<()> {
-            let mut timestamp = None;
-            if s.mark {
-                let stamp = s.call("mark-input", None, vec![])?["value"].as_f64();
-                timestamp = Some(
-                    stamp
-                        .filter(|t| t.is_finite() && *t > 0.0)
-                        .ok_or("Cannot establish automation input provenance")?,
-                );
-            }
-            let mouse = kind == "pointer" || kind == "wheel";
-            if mouse && params["x"].is_number() && params["y"].is_number() {
-                point = json!({"x": params["x"], "y": params["y"]});
-            }
-            let id = if mouse {
-                format!("mouse:{}", js(&params["button"]))
-            } else {
-                format!("key:{}", js(&params["code"]))
-            };
-            let kind_of = params["type"].as_str().unwrap_or_default();
-            let down = if mouse {
-                kind_of == "mousePressed"
-            } else {
-                kind_of == "keyDown" || kind_of == "rawKeyDown"
-            };
-            let up = if mouse {
-                kind_of == "mouseReleased"
-            } else {
-                kind_of == "keyUp"
-            };
-            if down {
-                let mut release = params.clone();
-                release["type"] = json!(if mouse { "mouseReleased" } else { "keyUp" });
-                release["buttons"] = json!(0);
-                release["modifiers"] = json!(0);
-                if let Some(t) = timestamp {
-                    release["timestamp"] = json!(t);
-                }
-                match held.iter_mut().find(|h| h.id == id) {
-                    Some(entry) => entry.params = release,
-                    None => held.push(Held {
-                        id: id.clone(),
-                        kind,
-                        params: release,
-                    }),
-                }
-            }
-            attempted = true;
-            let mut sent = params;
-            if let (Some(t), false) = (timestamp, kind == "insert-text") {
-                sent["timestamp"] = json!(t);
-            }
-            send_input(s, kind, sent)?;
-            if up {
-                held.retain(|h| h.id != id);
-            }
-            s.check()
-        };
-        run(&mut dispatch)
-    };
-    let outcome = outcome.map_err(|fail| {
-        let lower = fail.message.to_lowercase();
-        if attempted && (lower.contains("timed out") || lower.contains("timeout")) {
-            return Fail::from("Input timed out: its outcome is unknown. The page was busy and the input may still be delivered; inspect before retrying.");
-        }
-        fail
-    });
-    for release in held.into_iter().rev() {
-        if s.mark {
-            let _ = s.call("mark-input", None, vec![]);
-        }
-        let mut params = release.params;
-        if let Some(object) = params.as_object_mut() {
-            object.remove("text");
-            object.remove("unmodifiedText");
-            if release.kind == "pointer" {
-                object.insert("x".into(), point["x"].clone());
-                object.insert("y".into(), point["y"].clone());
-            }
-        }
-        // Exact original channel, best effort; never replay a press.
-        let _ = send_input(s, release.kind, params);
-    }
-    if s.mark {
-        let _ = s.call("unmark-input", None, vec![]);
-    }
-    outcome
-}
-
-/// JS `${value}` of an optional event field.
-fn js(value: &Value) -> String {
-    match value {
-        Value::Null => "undefined".into(),
-        Value::String(s) => s.clone(),
-        other => other.to_string(),
-    }
-}
-
-fn send_input(s: &Session, kind: &str, params: Value) -> Result<()> {
-    let operation = match kind {
-        "insert-text" => json!({"op": "insert-text", "text": params["text"]}),
-        _ => json!({"op": kind, "event": params}),
-    };
-    s.run(operation).map(drop)
-}
-
-/// After a navigation Chromium drops input until the first paint (about 500 ms after it became
-/// interactive): wait for it, at most one second.
-fn await_input_acceptance(s: &Session) -> Result<()> {
-    let started = Instant::now();
-    loop {
-        let result = match s.call("input-acceptance", None, vec![]) {
-            Err(fail) if fail.unsupported => return Err(fail),
-            result => result.ok(),
-        };
-        s.check()?;
-        let delay = result
-            .as_ref()
-            .and_then(|r| r["value"]["inputDelayMs"].as_f64());
-        let remaining = 1_000.0 - started.elapsed().as_millis() as f64;
-        match delay {
-            Some(delay) if delay > 0.0 && remaining > 0.0 => {
-                std::thread::sleep(Duration::from_millis(delay.min(remaining).min(50.0) as u64))
-            }
-            _ => return Ok(()),
-        }
-    }
-}
-
 #[derive(Clone, Copy)]
 struct Point {
     x: f64,
@@ -322,18 +203,30 @@ struct Point {
 }
 
 /// The point a user would click, or `None` for an element without a visible box.
-fn aim(s: &Session, reference: &str, node: u64, scroll: bool) -> Result<Option<Point>> {
+fn aim(
+    s: &Session,
+    reference: &str,
+    node: u64,
+    scroll: bool,
+    wheel: bool,
+) -> Result<(Option<Point>, bool)> {
     if scroll {
         s.lenient(json!({"op": "scroll-into-view", "node": node}))?;
     }
     s.check()?;
-    let quads = s
-        .lenient(json!({"op": "geometry", "node": node}))?
-        .map(|r| r["quads"].clone())
-        .unwrap_or(Value::Null);
+    let geometry = s.run(json!({"op": "geometry", "node": node}))?;
+    let quads = geometry["quads"]
+        .as_array()
+        .filter(|quads| {
+            quads.iter().all(|q| {
+                q.as_array()
+                    .is_some_and(|q| q.len() == 8 && q.iter().all(Value::is_number))
+            })
+        })
+        .ok_or("Invalid page geometry (content quads); inspect again")?;
     s.check()?;
     let (width, height) = viewport(s)?;
-    let quad: Option<Vec<f64>> = quads.as_array().into_iter().flatten().find_map(|q| {
+    let quad: Option<Vec<f64>> = quads.iter().find_map(|q| {
         let q: Vec<f64> = q
             .as_array()?
             .iter()
@@ -341,7 +234,9 @@ fn aim(s: &Session, reference: &str, node: u64, scroll: bool) -> Result<Option<P
             .collect();
         (q.len() == 8 && area(&q) >= 1.0).then_some(q)
     });
-    let Some(q) = quad else { return Ok(None) };
+    let Some(q) = quad else {
+        return Ok((None, quads.is_empty()));
+    };
     // The visible part of the box, so a half-clipped element is aimed where it shows.
     let xs = [q[0], q[2], q[4], q[6]];
     let ys = [q[1], q[3], q[5], q[7]];
@@ -350,19 +245,25 @@ fn aim(s: &Session, reference: &str, node: u64, scroll: bool) -> Result<Option<P
     let (left, right) = (min(xs).max(0.0), width.min(max(xs)));
     let (top, bottom) = (min(ys).max(0.0), height.min(max(ys)));
     if right - left < 1.0 || bottom - top < 1.0 {
-        return Ok(None);
+        return Ok((None, false));
     }
     let point = Point {
         x: (left + right) / 2.0,
         y: (top + bottom) / 2.0,
     };
-    assert_receives(s, reference, node, point)?;
-    Ok(Some(point))
+    assert_receives(s, reference, node, point, wheel)?;
+    Ok((Some(point), false))
 }
 
 /// Refuses a point that another element covers, instead of acting on whatever is on top. Like
 /// real events, hit testing passes through `pointer-events: none` layers.
-fn assert_receives(s: &Session, reference: &str, node: u64, point: Point) -> Result<()> {
+fn assert_receives(
+    s: &Session,
+    reference: &str,
+    node: u64,
+    point: Point,
+    wheel: bool,
+) -> Result<()> {
     let hit = s.lenient(json!({"op": "hit-test", "x": point.x.floor(), "y": point.y.floor()}))?;
     s.check()?;
     let Some(hit) = hit
@@ -379,7 +280,7 @@ fn assert_receives(s: &Session, reference: &str, node: u64, point: Point) -> Res
         s,
         reference,
         &target,
-        "receives",
+        if wheel { "receives-wheel" } else { "receives" },
         vec![Arg::Handle(Handle(other))],
         true,
     )?;
@@ -393,9 +294,11 @@ fn assert_receives(s: &Session, reference: &str, node: u64, point: Point) -> Res
 }
 
 fn viewport(s: &Session) -> Result<(f64, f64)> {
-    let result = s.lenient(json!({"op": "viewport"}))?.unwrap_or(Value::Null);
-    let side = |key: &str| result[key].as_f64().unwrap_or(f64::INFINITY);
-    Ok((side("width"), side("height")))
+    let result = s.run(json!({"op": "viewport"}))?;
+    let side = |key: &str| result[key].as_f64().filter(|n| n.is_finite() && *n > 0.0);
+    side("width")
+        .zip(side("height"))
+        .ok_or_else(|| "Invalid page viewport; inspect again".into())
 }
 
 fn area(q: &[f64]) -> f64 {
@@ -421,15 +324,20 @@ fn buttons(button: &str) -> u32 {
     }
 }
 
-fn click_at(s: &Session, point: Point, button: &str) -> Result<()> {
-    marked_input(s, |dispatch| {
-        dispatch("pointer", at(point, json!({"type": "mouseMoved"})))?;
+fn click_at(s: &Session, point: Point, button: &str, target: Target) -> Result<()> {
+    marked(s, |dispatch| {
+        dispatch(
+            "pointer",
+            at(point, json!({"type": "mouseMoved"})),
+            Some(target),
+        )?;
         dispatch(
             "pointer",
             at(
                 point,
                 json!({"type": "mousePressed", "button": button, "buttons": buttons(button), "clickCount": 1}),
             ),
+            Some(target),
         )?;
         dispatch(
             "pointer",
@@ -437,43 +345,58 @@ fn click_at(s: &Session, point: Point, button: &str) -> Result<()> {
                 point,
                 json!({"type": "mouseReleased", "button": button, "buttons": 0, "clickCount": 1}),
             ),
+            Some(target),
         )
     })
 }
 
-fn wheel_at(s: &Session, point: Option<Point>, dx: f64, dy: f64) -> Result<()> {
+fn wheel_at(
+    s: &Session,
+    point: Option<Point>,
+    dx: f64,
+    dy: f64,
+    target: Option<Target>,
+) -> Result<()> {
     let point = match point {
         Some(point) => point,
         None => {
             let (w, h) = viewport(s)?;
             Point {
-                x: if w.is_finite() { w / 2.0 } else { 400.0 },
-                y: if h.is_finite() { h / 2.0 } else { 300.0 },
+                x: w / 2.0,
+                y: h / 2.0,
             }
         }
     };
-    marked_input(s, |dispatch| {
-        dispatch("pointer", at(point, json!({"type": "mouseMoved"})))?;
+    marked(s, |dispatch| {
+        dispatch("pointer", at(point, json!({"type": "mouseMoved"})), target)?;
         dispatch(
             "wheel",
             at(
                 point,
                 json!({"type": "mouseWheel", "deltaX": dx, "deltaY": dy}),
             ),
+            target,
         )
     })
 }
 
 /// A pointer drag in small steps, so pointer-based drag libraries pass their activation distance.
-fn drag_between(s: &Session, from: Point, to: Point) -> Result<()> {
-    marked_input(s, |dispatch| {
-        dispatch("pointer", at(from, json!({"type": "mouseMoved"})))?;
+fn drag_between(
+    s: &Session,
+    from: Point,
+    to: Point,
+    source: Option<Target>,
+    target: Option<Target>,
+) -> Result<()> {
+    marked(s, |dispatch| {
+        dispatch("pointer", at(from, json!({"type": "mouseMoved"})), source)?;
         dispatch(
             "pointer",
             at(
                 from,
                 json!({"type": "mousePressed", "button": "left", "buttons": 1, "clickCount": 1}),
             ),
+            source,
         )?;
         for step in 1..=10 {
             let p = Point {
@@ -486,6 +409,7 @@ fn drag_between(s: &Session, from: Point, to: Point) -> Result<()> {
                     p,
                     json!({"type": "mouseMoved", "button": "left", "buttons": 1}),
                 ),
+                if step == 10 { target } else { None },
             )?;
         }
         dispatch(
@@ -494,6 +418,7 @@ fn drag_between(s: &Session, from: Point, to: Point) -> Result<()> {
                 to,
                 json!({"type": "mouseReleased", "button": "left", "buttons": 0, "clickCount": 1}),
             ),
+            target,
         )
     })
 }
@@ -534,17 +459,14 @@ fn wait_for_text(s: &Session, text: &str, gone: bool, timeout: u64) -> Result<Va
     }
 }
 
-fn focused(s: &Session) -> Result<Option<String>> {
+fn focused(s: &Session) -> Result<String> {
     let active = s.call("active-element", None, vec![])?;
     s.check()?;
-    let Some(handle) = active["handle"].as_str() else {
-        return Ok(None);
-    };
-    Ok(
-        call_on(s, "the focused element", handle, "describe", vec![], true)?
-            .as_str()
-            .map(str::to_owned),
-    )
+    let handle = active["handle"].as_str().ok_or("Missing focused element")?;
+    call_on(s, "the focused element", handle, "describe", vec![], true)?
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| "Invalid focus description".into())
 }
 
 /// JS `String(value)` of a page value.
@@ -599,8 +521,7 @@ pub(crate) fn act(
             .map(|r| Ok((r.to_string(), resolve_ref(r)?)))
             .transpose()
     };
-    let (main, to) = (target("ref")?, target("to")?);
-    let out = perform(s, command, main, to);
+    let out = (|| perform(s, command, target("ref")?, target("to")?))();
     release_objects(s);
     out
 }
@@ -612,6 +533,13 @@ fn perform(
     to: Option<(String, u64)>,
 ) -> Result<Value> {
     let missing = || Fail::from("Invalid page action");
+    let pointer = |r: &str, n| {
+        if s.guard.is_some() {
+            resolve(s, r, n).map(Some)
+        } else {
+            Ok(None)
+        }
+    };
     let action = command["action"].as_str().unwrap_or_default();
     match action {
         "click" => {
@@ -622,16 +550,23 @@ fn perform(
                 return Ok(json!({"selected": selected.iter().map(string).collect::<Vec<_>>()}));
             }
             let button = command["button"].as_str();
-            match aim(s, &r, node, true)? {
-                None if button.is_some_and(|b| b != "left") => Err(format!(
+            match aim(s, &r, node, true, false)? {
+                (None, true) if button.is_some_and(|b| b != "left") => Err(format!(
                     "{r} has no visible box to {}-click",
                     button.unwrap_or_default()
                 )
                 .into()),
-                None => {
+                (None, true) => {
                     call_on(s, &r, &element, "programmatic-click", vec![], true).map(|_| json!({}))
                 }
-                Some(point) => click_at(s, point, button.unwrap_or("left")).map(|()| json!({})),
+                (None, false) => Err(format!("{r} has no visible box to click").into()),
+                (Some(point), _) => click_at(
+                    s,
+                    point,
+                    button.unwrap_or("left"),
+                    Target::new(&r, &element),
+                )
+                .map(|()| json!({})),
             }
         }
         "type" => {
@@ -663,11 +598,25 @@ fn perform(
                     true,
                 )?;
             } else if !text.is_empty() {
-                marked_input(s, |dispatch| dispatch("insert-text", json!({"text": text})))?;
+                marked(s, |dispatch| {
+                    dispatch(
+                        "insert-text",
+                        json!({"text": text}),
+                        Some(Target::new(&r, field)),
+                    )
+                })?;
             } else if clear {
                 call_on(s, &r, field, "delete-selection", vec![], true)?;
             }
-            Ok(json!({"value": string(&call_on(s, &r, field, "read-value", vec![], true)?)}))
+            let read = call_on(s, &r, field, "read-value", vec![], true).and_then(|v| {
+                v.as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| "Invalid field value".into())
+            });
+            read.map(|value| json!({"value": value})).map_err(|error| {
+                if text.is_empty() && !clear && mode != "value" && mode != "append" { error }
+                else { "Text input was sent, but the field value could not be read; inspect before retrying.".into() }
+            })
         }
         "select" => {
             let (r, node) = main.ok_or_else(missing)?;
@@ -686,20 +635,41 @@ fn perform(
         }
         "hover" => {
             let (r, node) = main.ok_or_else(missing)?;
-            let point = aim(s, &r, node, true)?
+            let point = aim(s, &r, node, true, false)?
+                .0
                 .ok_or_else(|| Fail::from(format!("{r} has no visible box to hover")))?;
-            marked_input(s, |dispatch| {
-                dispatch("pointer", at(point, json!({"type": "mouseMoved"})))
+            let handle = pointer(&r, node)?;
+            marked(s, |dispatch| {
+                dispatch(
+                    "pointer",
+                    at(point, json!({"type": "mouseMoved"})),
+                    handle.as_deref().map(|h| Target::new(&r, h)),
+                )
             })
             .map(|()| json!({}))
         }
         "drag" => {
             let ((r, node), (to_ref, to_node)) =
                 (main.ok_or_else(missing)?, to.ok_or_else(missing)?);
-            let from = aim(s, &r, node, false)?;
-            let to = aim(s, &to_ref, to_node, false)?;
+            let from = aim(s, &r, node, false, false)?.0;
+            let to = aim(s, &to_ref, to_node, false, false)?.0;
             match (from, to) {
-                (Some(from), Some(to)) => drag_between(s, from, to).map(|()| json!({})),
+                (Some(from), Some(to)) => {
+                    let source = pointer(&r, node)?;
+                    let target = pointer(&to_ref, to_node)?;
+                    drag_between(
+                        s,
+                        from,
+                        to,
+                        source.as_deref().map(|h| Target::new(&r, h)),
+                        target.as_deref().map(|h| Target {
+                            reference: &to_ref,
+                            handle: h,
+                            drag_source: source.as_deref(),
+                        }),
+                    )
+                    .map(|()| json!({}))
+                }
                 (None, _) => Err(format!("{r} has no visible box to drag from").into()),
                 (_, None) => Err(format!("{to_ref} has no visible box to drag to").into()),
             }
@@ -707,7 +677,8 @@ fn perform(
         "scroll" => {
             let point = match &main {
                 Some((r, node)) => Some(
-                    aim(s, r, *node, true)?
+                    aim(s, r, *node, true, true)?
+                        .0
                         .ok_or_else(|| Fail::from(format!("{r} has no visible box to scroll")))?,
                 ),
                 None => None,
@@ -725,27 +696,41 @@ fn perform(
             } else {
                 (sign * amount, 0.0)
             };
-            wheel_at(s, point, dx, dy).map(|()| json!({}))
+            let handle = main
+                .as_ref()
+                .map(|(r, n)| pointer(r, *n))
+                .transpose()?
+                .flatten();
+            let target = main
+                .as_ref()
+                .zip(handle.as_deref())
+                .map(|((r, _), h)| Target::new(r, h));
+            wheel_at(s, point, dx, dy, target).map(|()| json!({}))
         }
         "press" => {
-            if let Some((r, node)) = &main {
+            let handle = if let Some((r, node)) = &main {
                 let element = resolve(s, r, *node)?;
                 call_on(s, r, &element, "focus", vec![], true)?;
-            }
+                Some(element)
+            } else {
+                None
+            };
+            let target = main
+                .as_ref()
+                .zip(handle.as_deref())
+                .map(|((r, _), h)| Target::new(r, h));
             let events = keys::chord(
                 command["key"].as_str().unwrap_or_default(),
                 cfg!(target_os = "macos"),
             )?;
-            marked_input(s, |dispatch| {
+            marked(s, |dispatch| {
                 events
                     .into_iter()
-                    .try_for_each(|event| dispatch("keyboard", event))
+                    .try_for_each(|event| dispatch("keyboard", event, target))
             })?;
-            let mut out = Map::new();
-            if let Some(focused) = focused(s)? {
-                out.insert("focused".into(), json!(focused));
-            }
-            Ok(Value::Object(out))
+            focused(s).map(|focus| json!({"focused": focus})).map_err(|_| {
+                "Key input was sent, but the current focus could not be read; inspect before retrying.".into()
+            })
         }
         "wait" => wait_for_text(
             s,

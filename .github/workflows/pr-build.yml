@@ -579,7 +579,6 @@ jobs:
           packages/ui/src/stores/session-pending-state.test.ts
           packages/ui/src/stores/session-tree.test.ts
           packages/ui/src/stores/session-previews.test.ts
-          packages/ui/src/stores/backend-preview-routing.test.ts
           packages/ui/src/stores/session-browser-persistence.test.ts
           packages/ui/src/stores/session-surface-passive.test.ts
           packages/ui/src/stores/session-deletion-reconciliation.test.ts
@@ -647,6 +646,7 @@ jobs:
       - name: Test restore ownership integration
         run: >-
           node --conditions=browser --import tsx --test --test-force-exit
+          packages/ui/src/stores/backend-preview-routing.test.ts
           packages/ui/src/stores/backend-preferences.test.ts
           packages/ui/src/stores/recent-projects.test.ts
           packages/ui/src/stores/backend-registry.test.ts

@@ -1,7 +1,12 @@
 //! The CodeNomad window itself on Windows (`developer-cdp.ts` in process): `developer.execute`
 //! inspects, acts on and captures the inspected local window through WebView2's own DevTools
-//! session, with no remote debugging port. Operations of one run are serialized.
-use super::{page, refs::RefTable};
+//! session, with no remote debugging port.
+use super::{
+    input::{Guard, Refusal, Target},
+    page,
+    refs::RefTable,
+    window_input::{program, Input},
+};
 use crate::browser_controller::page::operations;
 use base64::Engine;
 use serde_json::{json, Value};
@@ -15,43 +20,95 @@ const DIAGNOSTICS: usize = 1_000;
 const DIAGNOSTIC_TEXT: usize = 512;
 const SCREENSHOT_BYTES: usize = 5 * 1024 * 1024;
 const RESPONSE_BYTES: usize = 24 * 1024 * 1024;
-const CONTEXT: &str = r#"(() => {
-  const root = document.querySelector('[data-tab-visible="true"][data-instance-id]');
-  const pane = root?.querySelector('.session-cache-pane[data-session-active="true"][data-session-id]');
-  return {
-    windowId: window.__CODENOMAD_WINDOW_ID__ ?? null,
-    instanceId: root?.getAttribute('data-instance-id') ?? null,
-    sessionId: pane?.getAttribute('data-session-id') ?? null,
-    title: document.title,
-  };
-})()"#;
+const WINDOW_GONE: &str = "The selected window is no longer available";
 
 /// DevTools events of one webview: console and exceptions for diagnostics, navigations that make
 /// every earlier ref stale.
 struct Watch {
-    stamp: u64,
+    instance: String,
     epoch: AtomicU64,
+    document: Mutex<Document>,
     diagnostics: Mutex<VecDeque<Value>>,
+    operation: Mutex<WindowState>,
 }
 
 #[derive(Default)]
 pub(crate) struct WindowAutomation {
-    state: Mutex<State>,
+    windows: Mutex<HashMap<String, Arc<Watch>>>,
 }
 
-struct State {
-    /// Shared by every window so a ref name is never reused for another element.
+struct WindowState {
+    enabled: bool,
     refs: RefTable,
-    watches: HashMap<String, Arc<Watch>>,
-    stamps: u64,
 }
 
-impl Default for State {
+impl Default for WindowState {
     fn default() -> Self {
         Self {
-            refs: RefTable::new("inspect again", "e"),
-            watches: HashMap::new(),
-            stamps: 0,
+            enabled: false,
+            refs: RefTable::new(
+                "inspect again",
+                format!("e{:020}", uuid::Uuid::new_v4().as_u128() as u64),
+            ),
+        }
+    }
+}
+
+#[derive(Default)]
+struct Document {
+    frame: Option<String>,
+    contexts: HashMap<String, u64>,
+}
+
+impl Document {
+    fn changed(&mut self, event: &str, params: &Value) -> bool {
+        match event {
+            "Runtime.executionContextsCleared" => {
+                self.contexts.clear();
+                true
+            }
+            "Runtime.executionContextCreated" => {
+                let ctx = &params["context"];
+                let aux = &ctx["auxData"];
+                let (Some(id), Some(frame)) = (ctx["id"].as_u64(), aux["frameId"].as_str()) else {
+                    return false;
+                };
+                aux["isDefault"] == true
+                    && self
+                        .contexts
+                        .insert(frame.into(), id)
+                        .is_some_and(|old| old != id)
+                    && self.frame.as_deref() == Some(frame)
+            }
+            "Runtime.executionContextDestroyed" => {
+                let Some(id) = params["executionContextId"].as_u64() else {
+                    return false;
+                };
+                let changed = self
+                    .frame
+                    .as_deref()
+                    .is_some_and(|frame| self.contexts.get(frame) == Some(&id));
+                self.contexts.retain(|_, context| *context != id);
+                changed
+            }
+            "Page.frameDetached" | "Page.frameAttached" => {
+                let Some(frame) = params["frameId"].as_str() else {
+                    return false;
+                };
+                if event == "Page.frameDetached" {
+                    self.contexts.remove(frame);
+                }
+                self.frame.as_deref() == Some(frame)
+            }
+            "Page.frameNavigated" | "Page.documentOpened"
+                if params["frame"]["parentId"].is_null() =>
+            {
+                if let Some(id) = params["frame"]["id"].as_str() {
+                    self.frame = Some(id.into());
+                }
+                true
+            }
+            _ => false,
         }
     }
 }
@@ -115,7 +172,13 @@ fn install(webview: &tauri::Webview, watch: Arc<Watch>) -> Result<(), String> {
                 for event in [
                     "Runtime.consoleAPICalled",
                     "Runtime.exceptionThrown",
+                    "Runtime.executionContextsCleared",
+                    "Runtime.executionContextCreated",
+                    "Runtime.executionContextDestroyed",
                     "Page.frameNavigated",
+                    "Page.documentOpened",
+                    "Page.frameDetached",
+                    "Page.frameAttached",
                 ] {
                     let name = CoTaskMemPWSTR::from(event);
                     let receiver = unsafe {
@@ -126,16 +189,18 @@ fn install(webview: &tauri::Webview, watch: Arc<Watch>) -> Result<(), String> {
                     let handler = DevToolsProtocolEventReceivedEventHandler::create(Box::new(
                         move |_, args| {
                             let Some(args) = args else { return Ok(()) };
-                            if event == "Page.frameNavigated" {
-                                watch.epoch.fetch_add(1, Ordering::SeqCst);
-                                return Ok(());
-                            }
                             let mut raw = Default::default();
                             unsafe { args.ParameterObjectAsJson(&mut raw)? };
                             let params =
                                 serde_json::from_str(&CoTaskMemPWSTR::from(raw).to_string())
                                     .unwrap_or(Value::Null);
-                            if let (Some(item), Ok(mut list)) =
+                            if watch
+                                .document
+                                .lock()
+                                .is_ok_and(|mut doc| doc.changed(event, &params))
+                            {
+                                watch.epoch.fetch_add(1, Ordering::SeqCst);
+                            } else if let (Some(item), Ok(mut list)) =
                                 (diagnostic(event, &params), watch.diagnostics.lock())
                             {
                                 list.push_back(item);
@@ -161,7 +226,7 @@ fn install(webview: &tauri::Webview, watch: Arc<Watch>) -> Result<(), String> {
 }
 
 impl WindowAutomation {
-    /// `developer.execute { runId, windowId, command }`, the command validated by the backend.
+    /// `developer.execute` only admits the exact registered, ready local renderer.
     pub(crate) fn execute(
         &self,
         app: &AppHandle,
@@ -171,100 +236,186 @@ impl WindowAutomation {
         fence: &crate::native_request::RequestFence,
     ) -> Result<Value, String> {
         let input = params.unwrap_or(Value::Null);
-        if input["runId"].as_str() != Some(run_id) {
-            return Ok(failure(
-                "target",
-                "Run codenomad.inspect before acting on or restarting this CodeNomad window",
-            ));
-        }
-        let window_id = input["windowId"]
-            .as_str()
-            .ok_or("Invalid developer command")?;
         let command = &input["command"];
-        let Some(webview) = app.webviews().into_values().find(|w| {
-            crate::identity::local_window_id(w.label()).ok().as_deref() == Some(window_id)
-        }) else {
-            return Ok(failure(
-                "target",
-                "No CodeNomad page matches the selected window and OpenCode session",
-            ));
+        let (Some(window_id), Some(instance)) =
+            (input["windowId"].as_str(), input["windowInstance"].as_str())
+        else {
+            return Ok(failure("target", WINDOW_GONE));
         };
-        let mut state = self.state.lock().map_err(|e| e.to_string())?;
-        let label = webview.label().to_string();
-        let watch = match state.watches.get(&label) {
-            Some(watch) => watch.clone(),
-            None => {
-                state.stamps += 1;
-                let watch = Arc::new(Watch {
-                    stamp: state.stamps,
-                    epoch: AtomicU64::new(0),
-                    diagnostics: Mutex::default(),
-                });
-                let call = |method: &str| cdp(&webview, method, json!({}), deadline, fence);
-                if let Err(error) = install(&webview, watch.clone())
-                    .and_then(|()| call("Page.enable"))
-                    .and_then(|_| call("Runtime.enable"))
-                    .and_then(|_| call("Accessibility.enable"))
-                {
-                    return Ok(failure("target", error));
+        let label = crate::identity::local_window_label(window_id)?;
+        let app_state = app.state::<crate::AppState>();
+        let windows = app.state::<crate::local_windows::LocalWindows>();
+        let available = || windows.automation_matches(&label, instance);
+        if input["runId"].as_str() != Some(run_id) || !available() {
+            return Ok(failure("target", WINDOW_GONE));
+        }
+        let Some(webview) = app.get_webview(&label) else {
+            return Ok(failure("target", WINDOW_GONE));
+        };
+        let Ok(url) = crate::require_local_app_webview(&webview, &app_state) else {
+            return Ok(failure("target", WINDOW_GONE));
+        };
+        let watch = {
+            let mut windows = self.windows.lock().map_err(|e| e.to_string())?;
+            windows.retain(|label, _| app.get_webview(label).is_some());
+            match windows
+                .get(&label)
+                .filter(|watch| watch.instance == instance)
+            {
+                Some(watch) => watch.clone(),
+                None => {
+                    let watch = Arc::new(Watch {
+                        instance: instance.to_owned(),
+                        epoch: AtomicU64::new(0),
+                        document: Mutex::default(),
+                        diagnostics: Mutex::default(),
+                        operation: Mutex::default(),
+                    });
+                    windows.insert(label.clone(), watch.clone());
+                    watch
                 }
-                state.watches.insert(label.clone(), watch.clone());
+            }
+        };
+        let native = {
+            let app = app.clone();
+            let label = label.clone();
+            let instance = instance.to_owned();
+            let fence = fence.clone();
+            move || {
+                fence.check()?;
+                if !app
+                    .state::<crate::local_windows::LocalWindows>()
+                    .automation_matches(&label, &instance)
+                {
+                    return Err(WINDOW_GONE.into());
+                }
+                Ok(())
+            }
+        };
+        let mut state = watch.operation.lock().map_err(|e| e.to_string())?;
+        if !available() {
+            return Ok(failure("target", WINDOW_GONE));
+        }
+        if !state.enabled {
+            let call = |method: &str| cdp(&webview, method, json!({}), deadline, native.clone());
+            let setup = || {
+                install(&webview, watch.clone())?;
+                call("Page.enable")?;
+                let tree = call("Page.getFrameTree")?;
+                let frame = tree["frameTree"]["frame"]["id"]
+                    .as_str()
+                    .ok_or("No main document")?;
                 watch
+                    .document
+                    .lock()
+                    .map_err(|e| e.to_string())?
+                    .frame
+                    .get_or_insert_with(|| frame.to_owned());
+                call("Runtime.enable")?;
+                call("Accessibility.enable")?;
+                Ok::<_, String>(())
+            };
+            if let Err(error) = setup() {
+                return Ok(failure("target", error));
             }
-        };
+            state.enabled = true;
+        }
         let epoch = watch.epoch.load(Ordering::SeqCst);
-        let context = match read_context(&webview, deadline, fence) {
-            Ok(context) if context["windowId"] == window_id => context,
-            Ok(_) => {
-                return Ok(failure(
-                    "target",
-                    "CodeNomad window or active session changed; inspect again",
-                ))
-            }
-            Err(error) => return Ok(failure("target", error)),
-        };
-        let generation = format!("{}\0{label}\0{epoch}", watch.stamp);
+        let generation = format!("{instance}/{epoch}");
         let action = command["action"].as_str().unwrap_or_default();
+        let selecting = action == "inspect" && command.get("ref").is_none();
+        if action != "context" && !selecting && input["document"] != generation {
+            return Ok(failure("document", "The page changed; inspect it again"));
+        }
         let changed = match action {
             "inspect" => "Page changed during inspection; inspect again",
             "screenshot" => "Page changed during screenshot; capture again",
             _ => "Page changed during action; inspect again",
         };
-        // Refs and checkpoints belong to this navigation epoch and window.
+        let guard = {
+            let watch = watch.clone();
+            move || {
+                native()?;
+                if watch.epoch.load(Ordering::SeqCst) != epoch {
+                    return Err(changed.into());
+                }
+                Ok(())
+            }
+        };
+        let devtools = |method: &str, params: Value| {
+            let result = cdp(&webview, method, params, deadline, guard.clone())?;
+            guard()?;
+            Ok(result)
+        };
+        let session_id = input["sessionID"]
+            .as_str()
+            .filter(|id| id.encode_utf16().count() <= 256);
+        let read = |session| read_context(&devtools, session, window_id, instance);
+        let mut context = match read(if action == "context" {
+            session_id
+        } else {
+            None
+        }) {
+            Ok(context) => context,
+            Err(error) => return Ok(failure("target", error)),
+        };
+        if action == "context" {
+            return Ok(json!({"context": context, "document": generation}));
+        }
+        let title = context.as_object_mut().and_then(|c| c.remove("title"));
+        context.as_object_mut().unwrap().remove("sessionOpen");
+        let monitor_tab = action == "wait" || action == "scroll" && command.get("ref").is_none();
         let checkpoint = || -> Result<(), String> {
-            let current = read_context(&webview, deadline, fence).ok();
-            if watch.epoch.load(Ordering::SeqCst) != epoch
-                || current.is_none_or(|c| c["windowId"] != window_id)
+            let current = read(None).map_err(|_| changed.to_string())?;
+            if monitor_tab
+                && ["tabId", "instanceId", "sessionId"]
+                    .iter()
+                    .any(|k| current[k] != context[k])
             {
-                return Err(changed.into());
+                return Err("The active tab changed during the action; inspect again".into());
             }
             Ok(())
         };
+        let input = Input::new(&devtools, action, &context);
         let send = |operation: Value| -> Result<Value, String> {
+            let function = operation["function"].as_str().map(str::to_owned);
             let parsed = operations::parse_in(operation, true)?;
             match parsed.cdp_in(true) {
                 None => Ok(json!({})),
                 Some((method, params)) => {
-                    Ok(parsed.result(cdp(&webview, method, params, deadline, fence)?))
+                    Ok(parsed.result(input.send(function.as_deref(), method, params)?))
                 }
             }
+        };
+        let input_check = || {
+            guard().map_err(|message| Refusal {
+                message,
+                same_document: false,
+                timeout: false,
+            })
+        };
+        let destination = |kind: &str, params: &mut Value, target: Option<Target<'_>>| {
+            input.destination(kind, params, target)
         };
         let session = page::Session {
             driver: "cdp",
             send: &send,
             checkpoint: &checkpoint,
             mark: true,
+            guard: Some(Guard {
+                check: &input_check,
+                destination: &destination,
+            }),
         };
         let outcome: Result<Value, page::Fail> = match action {
             "inspect" => page::snapshot(&session, &mut state.refs, &generation, command, true).map(|(snapshot, collapsed)| {
                 let diagnostics: Vec<Value> = watch.diagnostics.lock().map(|mut list| list.drain(..).collect()).unwrap_or_default();
                 json!({
-                    "target": { "id": label, "title": context["title"], "url": webview.url().map(|u| u.to_string()).unwrap_or_default() },
-                    "context": { "windowId": window_id, "instanceId": context["instanceId"], "sessionId": context["sessionId"] },
-                    "snapshot": snapshot, "collapsed": collapsed, "diagnostics": diagnostics,
+                    "target": { "id": label, "title": title, "url": url },
+                    "context": context, "document": generation, "snapshot": snapshot, "collapsed": collapsed, "diagnostics": diagnostics,
                 })
             }),
-            "screenshot" => screenshot(&webview, deadline, fence, &checkpoint).map_err(page::Fail::from),
+            "screenshot" => screenshot(&devtools, &checkpoint).map_err(page::Fail::from),
             _ => {
                 let refs = &state.refs;
                 let resolve = |r: &str| refs.resolve(r, &generation);
@@ -275,7 +426,17 @@ impl WindowAutomation {
                 })
             }
         };
-        Ok(outcome.unwrap_or_else(|fail| failure("action", fail.message)))
+        if !available() {
+            return Ok(failure("target", WINDOW_GONE));
+        }
+        Ok(outcome.unwrap_or_else(|fail| {
+            let stage = if watch.epoch.load(Ordering::SeqCst) != epoch {
+                "document"
+            } else {
+                "action"
+            };
+            failure(stage, fail.message)
+        }))
     }
 }
 
@@ -284,39 +445,41 @@ fn cdp(
     method: &str,
     params: Value,
     deadline: Instant,
-    fence: &crate::native_request::RequestFence,
+    guard: impl Fn() -> Result<(), String> + Send + 'static,
 ) -> Result<Value, String> {
-    let fence = fence.clone();
     crate::browser_controller::cdp_guarded_inner(
         webview,
         method,
         params,
         deadline,
-        move || fence.check(),
+        guard,
         RESPONSE_BYTES,
     )
 }
 
 /// `readContext`: the page's own window id, visible workspace and active conversation.
 fn read_context(
-    webview: &tauri::Webview,
-    deadline: Instant,
-    fence: &crate::native_request::RequestFence,
+    cdp: &super::window_input::Cdp<'_>,
+    session: Option<&str>,
+    window: &str,
+    instance: &str,
 ) -> Result<Value, String> {
+    let program = program("context").as_str().expect("fixed context program");
+    let session = json!(session);
     let response = cdp(
-        webview,
         "Runtime.evaluate",
-        json!({ "expression": CONTEXT, "returnByValue": true }),
-        deadline,
-        fence,
+        json!({ "expression": format!("({{ ...({program})({session}), title: document.title.slice(0, 512) }})"),
+            "returnByValue": true }),
     )?;
     let value = &response["result"]["value"];
     let id = |v: &Value| v.is_null() || v.as_str().is_some_and(|s| s.encode_utf16().count() <= 256);
-    if !value["windowId"]
-        .as_str()
-        .is_some_and(|s| s.encode_utf16().count() <= 256)
-        || !id(&value["instanceId"])
-        || !id(&value["sessionId"])
+    if value["windowId"] != window
+        || value["windowInstance"] != instance
+        || !["instanceId", "sessionId", "tabId"]
+            .iter()
+            .all(|key| value.get(*key).is_some_and(id))
+        || !value["sessionOpen"].is_boolean()
+        || !value["title"].is_string()
     {
         return Err("CodeNomad page has no valid window context".into());
     }
@@ -324,13 +487,11 @@ fn read_context(
 }
 
 fn screenshot(
-    webview: &tauri::Webview,
-    deadline: Instant,
-    fence: &crate::native_request::RequestFence,
+    cdp: &super::window_input::Cdp<'_>,
     checkpoint: &dyn Fn() -> Result<(), String>,
 ) -> Result<Value, String> {
     let params = json!({ "format": "png", "fromSurface": true, "captureBeyondViewport": false });
-    let result = cdp(webview, "Page.captureScreenshot", params, deadline, fence)?;
+    let result = cdp("Page.captureScreenshot", params)?;
     checkpoint()?;
     let data = result["data"]
         .as_str()
@@ -348,6 +509,32 @@ fn screenshot(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_main_document_changes_retire_its_generation() {
+        let mut doc = Document::default();
+        assert!(doc.changed("Page.frameNavigated", &json!({"frame": {"id": "main"}})));
+        let context = |id, frame: &str| json!({"context": {"id": id, "auxData": {"isDefault": true, "frameId": frame}}});
+        assert!(!doc.changed("Runtime.executionContextCreated", &context(1, "main")));
+        assert!(!doc.changed(
+            "Page.frameNavigated",
+            &json!({"frame": {"id": "child", "parentId": "main"}})
+        ));
+        assert!(!doc.changed("Runtime.executionContextCreated", &context(2, "child")));
+        assert!(!doc.changed(
+            "Runtime.executionContextDestroyed",
+            &json!({"executionContextId":2})
+        ));
+        assert!(doc.changed("Runtime.executionContextCreated", &context(3, "main")));
+        assert!(!doc.changed(
+            "Runtime.executionContextDestroyed",
+            &json!({"executionContextId":1})
+        ));
+        assert!(doc.changed(
+            "Runtime.executionContextDestroyed",
+            &json!({"executionContextId":3})
+        ));
+    }
 
     #[test]
     fn diagnostics_read_like_the_reference() {

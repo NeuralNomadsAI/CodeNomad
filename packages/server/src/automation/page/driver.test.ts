@@ -11,6 +11,7 @@ import { renderSnapshot, type AxNode } from "./snapshot"
 import { snapshotPage } from "./actions"
 import { RefTable } from "./refs"
 import { engineCases } from "./engine-cases"
+import { nativeDeveloperPrograms } from "../developer-programs"
 const json = (file: string) => JSON.parse(readFileSync(new URL(file, import.meta.url), "utf8"))
 const golden = json("./driver.golden.json")
 
@@ -23,10 +24,19 @@ test("the shared fixed registry matches the qualified program hashes", () => {
   for (const [id, source] of Object.entries(GLOBAL_FUNCTIONS)) assert.equal(hash(source), golden.globals[id], id)
   assert.deepEqual(json("./functions.generated.json"), nativeFunctionRegistry(), "regenerate the checked-in native resource when programs change")
   assert.deepEqual(json("./functions.application.generated.json"), nativeFunctionRegistry(true), "regenerate the application registry when programs change")
+  assert.deepEqual(json("./developer.generated.json"), nativeDeveloperPrograms(), "regenerate the trusted window programs when they change")
 })
 
 test("the Rust engine's parity cases are current", async () => {
   assert.deepEqual(json("./engine.cases.json"), JSON.parse(JSON.stringify(await engineCases())), "node --import tsx scripts/build-page-function-registry.ts")
+})
+
+test("the native WebKit header embeds the same generated reader", () => {
+  const read = (file: string) => readFileSync(new URL(file, import.meta.url), "utf8").replace(/\r\n/g, "\n")
+  const header = read("../../../../tauri-app/src-tauri/src/embedded_view/page_read.generated.h")
+  const program = /^static const char CN_PAGE_READ\[\] = (".*");$/m.exec(header)?.[1]
+  assert.ok(program)
+  assert.equal(JSON.parse(program.replace(/\\\?/g, "?")), read("./webkit/read.generated.js"))
 })
 
 test("closed driver contract refuses unknown operations, params, programs and malformed arguments", () => {

@@ -14,50 +14,118 @@ export const comparable = value => value.compared
 
 /** Rust only: the window commands the bridge forwards to the host (`developer.execute`), the run and
  * window an inspection pins, refusals by stage, restart and the server's own diagnostics. */
-async function window(native, bridge, sessions, ready, answer) {
-  const ok = result => () => ({ ok: true, result })
-  const { runId, nativeIdentity, windowId } = ready
+async function window(native, post, sessions, ready, answer) {
+  const ok = result => ({ ok: true, result })
+  const { runId, nativeIdentity, windowId, windowInstance } = ready
+  const exact = { runId, windowId, windowInstance }
+  const target = `${nativeIdentity}/${runId}/${windowId}/${windowInstance}`
+  const document = "fixture-document"
+  const context = { windowId, windowInstance, instanceId: "local", sessionId: sessions.root, tabId: "tab-a", sessionOpen: true }
   const inspection = { target: { id: "local-window-1", title: "CodeNomad", url: "http://127.0.0.1/" },
-    context: { windowId, instanceId: null, sessionId: null }, snapshot: "- button \"Save\" [e1]", collapsed: 0, diagnostics: [{ level: "log", text: "renderer" }] }
-  let executed = []
-  const host = (execute, status = ready) => answer({
-    "developer.status": ok({ status, logs: [{ level: "error", text: "preview failure" }] }),
-    "developer.execute": params => { executed.push(params); return { ok: true, result: execute(params) } },
-    "developer.restart": ok({ state: "starting", runId, nativeIdentity }),
+    context, document, snapshot: "- button \"Save\" [e1]", collapsed: 0, diagnostics: [{ level: "log", text: "renderer" }] }
+  const other = { ...ready, windowId: "window-2", windowInstance: "instance-2" }
+  const others = [other, { ...other, windowId: "window-3" }, { ...other, windowId: "window-4" }]
+  const host = (execute, selected = ready) => answer({
+    "developer.targets": () => ok({ status: selected, windows: [ready, ...others].map(w => ({
+      windowId: w.windowId, windowInstance: w.windowInstance, focused: w === selected,
+    })) }),
+    "developer.status": params => {
+      const status = !params.windowId ? selected : [ready, ...others].find(w => w.windowId === params.windowId) ?? { state: "starting" }
+      return ok({ status, logs: [{ level: "error", text: "preview failure" }] })
+    },
+    "developer.execute": params => {
+      const { command, windowId: id } = params
+      if (command.action !== "context") return ok(execute(params))
+      if (id === windowId) return ok({ context, document })
+      if (id === "window-4") return ok({ error: "Window closed", stage: "target" })
+      return ok({ context: { ...context, windowId: id, windowInstance: other.windowInstance,
+        instanceId: "remote~project", sessionOpen: id === "window-2" }, document })
+    },
+    "developer.restart": () => ok({ state: "starting", runId, nativeIdentity }),
   })
-  const call = async (command, mode = "developer-execute") => { executed = []; return bridge(mode, sessions.root, command) }
+  const call = (command, extra) => post({ mode: "developer-execute", sessionID: sessions.root, command, ...extra })
+  const probe = extra => post({ mode: "developer-probe", sessionID: sessions.root, ...extra })
+  const reset = () => { native.requests.length = 0 }
+  const executed = () => native.requests.filter(r => r.method === "developer.execute").map(r => r.params)
   host(() => inspection)
-  assert.deepEqual(await call(undefined, "developer-probe"), { status: 200, body: { result: { available: true, nativeIdentity, runId } } })
-  assert.deepEqual(executed, [], "a probe reads the status only")
+  assert.deepEqual(await probe(), { status: 200, body: { result: { available: true, nativeIdentity, ...exact } } })
+  assert.deepEqual(executed(), [{ ...exact, sessionID: sessions.root, command: { action: "context" } }])
+  reset()
+  const inventory = await probe({ purpose: "targets" })
+  assert.deepEqual(inventory.body.result.windows.map(w => [w.windowId, w.session, w.tabId]),
+    [[windowId, "visible", "tab-a"], ["window-2", "open", undefined], ["window-3", "elsewhere", undefined], ["window-4", "unknown", undefined]])
+  assert.equal(executed().length, 4)
+  reset()
+  assert.equal((await probe({ purpose: "target", target })).status, 200)
+  assert.deepEqual(native.requests, [{ method: "developer.status", params: exact }], "an explicit probe does not touch the renderer")
+  reset()
   const act = await call({ action: "click", ref: "e1" })
-  assert.deepEqual([act.status, act.body.error, executed.length], [404, "Run codenomad.inspect before acting on or restarting this CodeNomad window", 0])
-  const inspected = await call({ action: "inspect", query: "Save" })
+  assert.deepEqual([act.status, act.body.code, native.requests.length], [404, "inspect-required", 0])
+  const source = "00000000-0000-0000-0000-000000000000"
+  const inspected = await call({ action: "inspect", query: "Save" }, { target, order: `${source}/2` })
   assert.equal(inspected.status, 200)
-  assert.deepEqual(executed, [{ runId, windowId, command: { action: "inspect", query: "Save" } }])
+  assert.deepEqual(native.requests, [
+    { method: "developer.status", params: exact },
+    { method: "developer.execute", params: { ...exact, sessionID: sessions.root, command: { action: "inspect", query: "Save" } } },
+    { method: "developer.status", params: exact },
+  ])
   assert.deepEqual(inspected.body.result.diagnostics.slice(0, 2), [{ level: "log", text: "renderer" }, { level: "error", text: "preview failure" }])
+  const { pin } = inspected.body.result
+  assert.match(pin, /^[\da-f-]{36}$/)
+  assert.equal(inspected.body.result.document, undefined, "document is private to the bridge")
+  assert.equal(inspected.body.result.context.sessionOpen, undefined)
+  reset()
+  assert.equal((await call({ action: "inspect" }, { target, order: `${source}/1` })).body.code, "stale-inspection")
+  assert.equal((await call({ action: "click", ref: "e1" }, { sessionID: sessions.subfolder, pin })).body.code, "target-gone")
+  assert.deepEqual(native.requests, [])
+  host(() => inspection, other)
+  const expanded = await call({ action: "inspect", ref: "e1" }, { pin })
+  assert.equal(expanded.status, 200)
+  assert.equal(expanded.body.result.pin, undefined)
+  assert.deepEqual(executed(), [{ ...exact, document, sessionID: sessions.root, command: { action: "inspect", ref: "e1" } }])
+  reset()
+  host(() => inspection, other)
+  const refreshed = await call({ action: "inspect" }, { pin, order: `${source}/3` })
+  assert.equal(refreshed.status, 200)
+  assert.deepEqual(executed(), [{ ...exact, sessionID: sessions.root, command: { action: "inspect" } }])
+  reset()
   host(({ command }) => ({ ok: true, value: command.text }))
-  const typed = await call({ action: "type", ref: "e1", text: "abc" })
-  assert.deepEqual([typed.status, typed.body.result, executed[0].command], [200, { ok: true, value: "abc" }, { action: "type", ref: "e1", text: "abc", clear: true }])
+  const typed = await call({ action: "type", ref: "e1", text: "abc" }, { pin })
+  assert.deepEqual([typed.status, typed.body.result, executed()[0]], [200, { ok: true, value: "abc" },
+    { ...exact, document, sessionID: sessions.root, command: { action: "type", ref: "e1", text: "abc", clear: true } }])
   host(() => ({ error: "e1 is covered by div \"Overlay\"; close or move it first, then inspect again", stage: "action" }))
-  const covered = await call({ action: "click", ref: "e1" })
+  const covered = await call({ action: "click", ref: "e1" }, { pin })
   assert.deepEqual([covered.status, covered.body.error], [409, "e1 is covered by div \"Overlay\"; close or move it first, then inspect again"])
+  host(() => ({ error: "Page changed; inspect again", stage: "document" }))
+  const stale = await call({ action: "press", key: "Enter" }, { pin })
+  assert.deepEqual([stale.status, stale.body.code], [409, "stale-document"])
   host(() => ({ image: { data: "iVBORw0KGgo=", mime: "image/png" } }))
-  assert.deepEqual((await call({ action: "screenshot" })).body.result, { image: { data: "iVBORw0KGgo=", mime: "image/png" } }, "still pinned after an action failure")
-  host(() => inspection, { ...ready, windowId: "window-2" })
-  const moved = await call({ action: "hover", ref: "e1" })
-  assert.deepEqual([moved.status, executed.length], [404, 0], "another window needs a fresh inspection")
-  host(() => inspection)
-  await call({ action: "inspect" })
+  assert.deepEqual((await call({ action: "screenshot" }, { pin })).body.result, { image: { data: "iVBORw0KGgo=", mime: "image/png" } })
+  answer({ "developer.status": () => ok({ status: { ...ready, windowInstance: "replacement" } }) })
+  reset()
+  const moved = await call({ action: "hover", ref: "e1" }, { pin })
+  assert.deepEqual([moved.status, moved.body.code, executed().length], [404, "target-gone", 0], "a reopened window cannot inherit the pin")
+  let captured = false
+  answer({
+    "developer.status": () => ok({ status: captured ? { ...ready, windowInstance: "replacement" } : ready }),
+    "developer.execute": () => { captured = true; return ok(inspection) },
+  })
+  const replaced = await call({ action: "inspect" }, { target })
+  assert.deepEqual([replaced.status, replaced.body.code, replaced.body.result], [404, "target-gone", undefined],
+    "a window replaced during capture cannot publish a receipt")
   host(() => ({ error: "CodeNomad window or active session changed; inspect again", stage: "target" }))
-  assert.equal((await call({ action: "press", key: "Enter" })).status, 404)
+  assert.equal((await call({ action: "press", key: "Enter" }, { pin })).body.code, "target-gone")
   host(() => inspection)
-  assert.equal((await call({ action: "scroll", direction: "down" })).status, 404, "a target failure forgets the pin")
-  await call({ action: "inspect" })
-  native.requests.length = 0
-  const restarted = await call({ action: "restart" })
-  assert.deepEqual([restarted.status, restarted.body.result, native.requests.map(r => r.method)],
-    [200, { state: "starting", runId, nativeIdentity }, ["developer.status", "developer.restart"]])
-  assert.equal((await call({ action: "click", ref: "e1" })).status, 404, "restart forgets the pin")
+  reset()
+  const restarted = await call({ action: "restart" }, { pin })
+  assert.deepEqual([restarted.status, restarted.body.result, native.requests],
+    [200, { state: "starting", runId, nativeIdentity }, [
+      { method: "developer.status", params: exact },
+      { method: "developer.execute", params: { ...exact, sessionID: sessions.root, command: { action: "context" } } },
+      { method: "developer.restart", params: exact },
+    ]])
+  assert.equal((await call({ action: "click", ref: "e1" }, { pin })).body.code, "target-gone", "restart forgets all existing receipts for the run")
+  assert.equal((await call({ action: "inspect" }, { target })).status, 409, "an acknowledged restart retires the previous run")
 }
 
 export async function run({ call, fixture, root, pid, native, folder, data }) {
@@ -90,7 +158,7 @@ export async function run({ call, fixture, root, pid, native, folder, data }) {
   const answer = replies => { native.answer = (method, params) => replies[method]?.(params) ?? { ok: false, error: { message: `No fixture answer for ${method}` } } }
   const fail = message => () => ({ ok: false, error: { code: "fixture", message } })
   const ok = result => () => ({ ok: true, result })
-  const ready = { state: "ready", runId: "run-1", nativeIdentity: "tauri:fixture", cdpUrl: "http://127.0.0.1:9", windowId: "window-1" }
+  const ready = { state: "ready", runId: "run-1", nativeIdentity: "tauri:fixture", cdpUrl: "http://127.0.0.1:9", windowId: "window-1", windowInstance: "instance-1" }
   try {
     // Registration: shape, name and owner-only atomic write leave nothing else behind.
     const expected = new RegExp(`^${registration.startedAt}-${pid}-${registration.token.slice(0, 12)}\\.json$`)
@@ -126,11 +194,16 @@ export async function run({ call, fixture, root, pid, native, folder, data }) {
     answer({ "developer.status": ok({ status: { ...ready, windowId: 7 } }) })
     await step("developer-probe malformed status", () => bridge("developer-probe", sessions.root))
     answer({ "developer.status": ok({ status: ready, logs: [] }) })
+    const target = `${ready.nativeIdentity}/${ready.runId}/${ready.windowId}/${ready.windowInstance}`
+    const probe = target => post({ ...body, purpose: "target", target })
+    await step("developer-probe exact target", () => probe(target))
+    await step("developer-probe wrong incarnation", () => probe(`${target}-wrong`))
+    await step("developer-probe invalid selector", () => probe("invalid"))
     for (const [name, command] of [["not object", "inspect"], ["unsupported", { action: "nope" }], ["click without ref", { action: "click" }],
       ["bad modifier", { action: "press", key: "Hyper+K" }], ["bad scroll", { action: "scroll", direction: "up", amount: 0 }],
       ["bad wait", { action: "wait", text: "x", timeout: 20000 }], ["long query", { action: "inspect", query: "q".repeat(201) }]])
       await step(`developer-execute ${name}`, () => bridge("developer-execute", sessions.root, command))
-    if (data) await window(native, bridge, sessions, ready, answer)
+    if (data) await window(native, post, sessions, ready, answer)
 
     answer({
       "browser.probe": ({ sessionID }) => sessionID === sessions.root ? { ok: true, result: { available: true, driver: "cdp" } } : { ok: true, result: { available: false } },

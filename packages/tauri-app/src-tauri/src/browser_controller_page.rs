@@ -451,6 +451,7 @@ impl BrowserController {
                 send: &send,
                 checkpoint: &checkpoint,
                 mark: false,
+                guard: None,
             };
             let mut result = if command["action"] == "snapshot" {
                 crate::automation::page::snapshot(&session, &mut refs, &generation, command, false)
