@@ -8,6 +8,42 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+@interface CNPreviewOwnerObserver : NSObject
+@property(nonatomic) void (*changed)(void *);
+@property(nonatomic) void (*disposeContext)(void *);
+@property(nonatomic) void *context;
+@end
+
+@implementation CNPreviewOwnerObserver
+- (void)revoke:(NSNotification *)notification {
+    (void)notification;
+    self.changed(self.context);
+}
+- (void)occlusionChanged:(NSNotification *)notification {
+    NSWindow *window = notification.object;
+    if (!window.isVisible) [self revoke:notification];
+}
+- (void)dealloc {
+    [NSNotificationCenter.defaultCenter removeObserver:self];
+    _disposeContext(_context);
+}
+@end
+
+void cn_observe_owner_visibility(void *opaque, void (*changed)(void *),
+                                 void (*release)(void *), void *context) {
+    NSWindow *window = (__bridge NSWindow *)opaque;
+    CNPreviewOwnerObserver *observer = [CNPreviewOwnerObserver new];
+    observer.changed = changed;
+    observer.disposeContext = release;
+    observer.context = context;
+    NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
+    [center addObserver:observer selector:@selector(revoke:) name:NSWindowDidMiniaturizeNotification object:window];
+    [center addObserver:observer selector:@selector(revoke:) name:NSApplicationDidHideNotification object:NSApp];
+    [center addObserver:observer selector:@selector(occlusionChanged:) name:NSWindowDidChangeOcclusionStateNotification object:window];
+    static char key;
+    objc_setAssociatedObject(window, &key, observer, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
 /* WebKit samples this class method while translating native mouse input.
  * Only the dispatching UI thread sees synthetic state. Other threads retain
  * the original behavior, and every exit path restores the implementation. */

@@ -36,16 +36,22 @@ test("WebKit reader finds composed text and accepts shadow descendants without a
     const tree = await cdp.send("Page.getFrameTree")
     const world = await cdp.send("Page.createIsolatedWorld", { frameId: tree.frameTree.frame.id, worldName: "codenomad-webkit" })
     const source = readFileSync(new URL("../../../server/src/automation/page/webkit/read.generated.js", import.meta.url), "utf8")
+    let expectedDocument: string
     const read = async (operation: PageOperation) => {
       if (operation.op === "pointer" || operation.op === "wheel") {
         await cdp.send("Input.dispatchMouseEvent", operation.event)
         return {}
       }
+      const request = operation.op === "checkpoint" ? operation : { ...operation, expectedDocument }
       const response = await cdp.send("Runtime.evaluate", { contextId: world.executionContextId,
-        expression: `(function(request){${source}\n})(${JSON.stringify(JSON.stringify(operation))})`, returnByValue: true })
+        expression: `(function(request){${source}\n})(${JSON.stringify(JSON.stringify(request))})`, returnByValue: true })
       assert.equal(response.exceptionDetails, undefined)
-      return JSON.parse(response.result.value).result
+      const { document, result } = JSON.parse(response.result.value)
+      if (operation.op === "checkpoint") expectedDocument = document
+      else assert.equal(document, expectedDocument)
+      return result
     }
+    await read({ op: "checkpoint" })
     const root = (await read({ op: "call", function: "document-root", args: [] })).handle
     const session = { driver: nativeDriver({ driver: "webkit", contractVersion: 1 }, read, async () => {}),
       markAutomation: false, checkpoint: async () => {} }

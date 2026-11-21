@@ -30,6 +30,8 @@ Les aperçus natifs partagent cookies, connexions et stockage de site entre proj
 
 Un agent ouvre le navigateur partagé de la session dans un onglet qui la contient, de préférence l’onglet actif. L’onglet choisi reste fixé pendant l’ouverture ; sa fermeture annule cette ouverture. Les actions sur la page ciblent l’aperçu natif visible de la session ; les aperçus masqués sont exclus.
 
+L’agent prend un instantané avant d’agir sur l’aperçu ou de le capturer. Si l’aperçu change, la commande s’arrête au lieu de viser un autre aperçu.
+
 | Client | Implémentation de l’aperçu | Automatisation navigateur par agent | Modèles mobiles |
 | --- | --- | --- | --- |
 | Electron sur les plateformes de bureau prises en charge | Invité Chromium natif ; pop-ups OAuth, téléchargements et dialogues | Prise en charge pour l’aperçu de session détenu visible | Émulation d’identité Android/Chromium, tactile et densité |
