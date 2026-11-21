@@ -498,6 +498,10 @@ export class DeveloperCdp {
       else pending.resolve(message.result ?? {})
       return
     }
+    if (message.method === "Runtime.executionContextsCleared") {
+      this.invalidateRefs(state)
+      return
+    }
     if (message.method === "Page.frameNavigated" || message.method === "Page.documentOpened" || message.method === "Page.frameDetached") {
       if (message.method === "Page.frameDetached" || (message.params?.frame as { parentId?: string } | undefined)?.parentId) {
         state.childDocumentEpoch++

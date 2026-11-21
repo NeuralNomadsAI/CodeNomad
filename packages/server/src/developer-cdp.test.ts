@@ -139,7 +139,10 @@ describe("DeveloperCdp", () => {
     } finally { client.close() }
   })
 
-  it("does not release an admitted key after a nested document changes", async () => {
+  for (const [event, params] of [
+    ["Page.documentOpened", { frame: { id: "child", parentId: "main" } }],
+    ["Runtime.executionContextsCleared", {}],
+  ] as const) it(`does not release an admitted key after ${event}`, async () => {
     const chrome = new FakeChrome()
     const client = chrome.client()
     const { endpoint, runId, windowId } = identity
@@ -149,7 +152,7 @@ describe("DeveloperCdp", () => {
       chrome.onCommand = command => {
         if (command.method === "Input.dispatchKeyEvent" && command.params?.code === "ControlLeft"
           && command.params.type !== "keyUp") {
-          chrome.sockets.at(-1)!.emit("Page.documentOpened", { frame: { id: "child", parentId: "main" } })
+          chrome.sockets.at(-1)!.emit(event, params)
         }
       }
       await assert.rejects(client.act({ ...window, document }, { action: "press", key: "Control+]" }), /changed during action/)
