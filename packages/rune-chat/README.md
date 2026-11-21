@@ -1,6 +1,6 @@
 # Native Rune chat prototype
 
-Windows-native Rune client for a CodeNomad conversation: a multiline composer and a virtualized, selectable transcript. The native surface palette resolves the existing dark tokens from `packages/ui/src/styles/tokens.css` at compile time. UI labels have catalogues for all ten CodeNomad locales; `RUNE_LOCALE` selects one, with French as the default.
+Windows-native Rune client for opening a CodeNomad project, choosing or creating a session, and sending messages through a multiline composer and a virtualized, selectable transcript. The native surface palette resolves the existing dark tokens from `packages/ui/src/styles/tokens.css` at compile time. UI labels have catalogues for all ten CodeNomad locales; `RUNE_LOCALE` selects one, with French as the default.
 
 Rune source is pinned to `21e5342b9a4cc33eeee88071b4b1f0eafb1247d4` from `https://github.com/anomalyco/rune`. `setup.ps1` installs that source under the checkout's `.prototype-deps/rune`, verifies its revision and cleanliness, and builds with Rust 1.99.1. `build.rs` checks the pin for direct Cargo builds. `Cargo.lock` fixes transitive dependencies. The root manifest applies Rune's required vendored patches.
 
@@ -13,13 +13,32 @@ Run from this isolated CodeNomad worktree:
 ./packages/rune-chat/target/debug/codenomad-rune-chat.exe
 ```
 
-The default in-memory fixture opens 10,000 synthetic Unicode messages and streams a deterministic Rust code sample. Enter sends; Shift+Enter adds a line. The transcript follows its end while the reader stays at the bottom; scrolling upward holds the reading position. Select text with the pointer and copy with Ctrl+C. “Derniers messages” returns to the end. The message field grows within its height bound.
+The initial screen connects to an already-running Rust server using its loopback address and password. Open a folder with Browse or an absolute path, select a session by title, or enter a title and Create. Project and session identifiers are resolved by the client. The session list loads 200 records per request, with More sessions and a filter over loaded titles. Sessions returns to that folder after the reply finishes and the composer is empty. A failed creation offers Refresh to reconcile its outcome before another creation.
+
+Enter sends; Shift+Enter adds a line. The transcript follows its end while the reader stays at the bottom; scrolling upward holds the reading position. Select text with the pointer and copy with Ctrl+C. “Derniers messages” returns to the end. The message field grows within its height bound. `--scene synthetic` opens the independent 10,000-message memory fixture and deterministic streaming reply.
+
+The launcher keeps credentials and navigation state in process memory. Its workers serialize opening actions away from the UI thread. Each session binding owns separate display/command channels and a fresh SSE client identity; returning releases the old binding. Empty newly created sessions use the bounded native message endpoint. Existing histories use the history plugin contract below.
+
+## Agent conventions
+
+Keep native UI state, opening actions, API transport and rendering in their dedicated modules. Every visible label belongs in the ten-locale catalogues. Reuse the Rust workspace and native session contracts with exact folder scope and opaque cursors. Keep project/session creation explicit and never automatically repeat an uncertain mutation. Background verification uses the real Rune Runtime and scripted file-dialog results; never open a desktop window from a probe.
+
+## Background opening qualification
+
+```powershell
+node packages/rune-chat/launcher-fixture.mjs
+node packages/rune-chat/launcher-fixture.mjs --uncertain-create
+```
+
+Both commands run the actual Rust server against synthetic OpenCode, then exercise the real Rune widgets without a window. They cover login and folder errors, folder-dialog selection/cancellation, catalog continuation, existing history, unsent-draft retention, creation, two distinct streaming sends and return to the original session. The second injects an error after native creation and checks reconciliation with exactly one created session. Desktop presentation of the Windows folder picker and the complete opening flow against an installed OpenCode service require interactive qualification. Model choice, tool blocks, permission/question controls and persisted tabs/drafts remain outside this milestone.
 
 ## Existing backend contract
 
-The adapter accepts an explicit HTTP loopback endpoint in `RUNE_BACKEND`, an existing workspace in `RUNE_WORKSPACE`, and its exact session in `RUNE_SESSION`. Authentication uses an explicitly supplied `RUNE_BOOTSTRAP_TOKEN` or `RUNE_PASSWORD` and an in-memory cookie jar.
+`RUNE_BACKEND` and `RUNE_PASSWORD` can prefill the connection fields. Supplying `RUNE_WORKSPACE` and `RUNE_SESSION` explicitly selects a session for contract fixtures and direct launches. Authentication uses an explicitly supplied `RUNE_BOOTSTRAP_TOKEN` or `RUNE_PASSWORD` and an in-memory cookie jar.
 
 - `POST /api/auth/token` or `POST /api/auth/login`.
+- `GET /api/workspaces` and `POST /api/workspaces` with an absolute `{path}`.
+- `GET /workspaces/{workspace}/instance/api/session?directory=…&limit=200`, then cursor-only continuation; `POST` to the same path with `{title,location:{directory}}` creates a root session. Exact native reads validate a session before binding.
 - `POST /api/workspaces/{workspace}/session-history/window`, with `{sessionID,target:{kind:"latest"}}`; at most 200 native message records, a 2 MiB response limit.
 - `GET /api/events?clientId=…&connectionId=…`, decoding `instance.event` envelopes and native V2 `session.step.started`, `session.text.delta` and terminal execution events. Ping events receive `POST /api/client-connections/pong`.
 - `POST /workspaces/{workspace}/instance/api/session/{session}/prompt`, with `{text}`.

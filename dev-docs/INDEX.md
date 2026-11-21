@@ -28,7 +28,7 @@
 - [UI conventions](UI_CONVENTIONS.md): dialogs, utility windows, icon toggles, surfaces and scrollbars.
 - [Application shell](UI_SHELL.md): panel toggles, drawers, tabs, session sidebar and native menus.
 - [Composer](COMPOSER.md): context selectors, height, focus, delivery, attachments and mentions.
-- [Native Rune chat prototype](../packages/rune-chat/README.md): isolated Windows composer, transcript and HTTP/SSE qualification fixtures.
+- [Native Rune chat prototype](../packages/rune-chat/README.md): native project/session opening, Windows composer, transcript and HTTP/SSE qualification fixtures.
 - [Transcript rendering](TRANSCRIPT.md): Message content presets, token lines, tool renderers and lifecycle signals.
 - [Settings and Preferences](SETTINGS.md): settings rows, the Preferences window, Providers/Web search, Stats and notifications.
 - [Projects and tabs](PROJECTS.md): closing tabs, temporary workspaces, the new-instance launcher and Git-unavailable mode.

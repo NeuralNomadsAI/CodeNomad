@@ -28,6 +28,39 @@ Le binaire `codenomad-rune-recovery.exe` sert aux vérifications en arrière-pla
 
 ## Résultats vérifiés
 
+### Ouverture d’un projet et choix d’une session depuis Rune
+
+Les preuves de cette campagne sont dans le worktree de reprise :
+
+```text
+D:\CodeNomad\.codenomad\worktrees\rune-native-chat
+```
+
+Le parcours utilise les vrais composants et actions Rune, le serveur Rust compilé dans ce worktree et un OpenCode HTTP/SSE **simulé**. Chaque exécution possède un dossier projet vide, un profil privé, des ports éphémères et ses propres processus. Les identifiants projet/session sont obtenus par les appels d’ouverture et de catalogue ; la sonde reçoit seulement l’adresse, le mot de passe de fixture et le dossier à ouvrir.
+
+| Cas | Résultat vérifié | Preuve dans le worktree de reprise |
+|---|---|---|
+| Démarrage du parcours standard | Sans identifiants de projet/session, le setup affiche l’ouverture | `evidence/launcher.log`, sonde `launcher_probe.rs` |
+| Connexion refusée puis corrigée | Un mauvais mot de passe garde l’écran de connexion ; la correction ouvre le parcours et efface le champ secret après succès | `evidence/launcher.log` |
+| Dossier invalide et sélecteur | Chemin relatif refusé ; annulation du sélecteur conserve l’état ; réponse scriptée du sélecteur ouvre le dossier | `evidence/launcher.log` |
+| Catalogue natif | Deux pages, continuation par curseur seul, deux sessions distinctes sélectionnables par titre | `evidence/launcher.log`, `fixture-profile/launcher-*/proof.json` |
+| Reprise d’une session | Les deux messages existants sont chargés dans le transcript | `evidence/launcher.log` |
+| Brouillon saisi | Le retour aux sessions garde le chat et son brouillon tant que le champ contient du texte | `evidence/launcher.log` |
+| Création et deux envois | Exactement une session créée, deux prompts et quatre lignes natives distinctes ; réponses liées aux deux messages et texte intermédiaire observé pendant le streaming | `evidence/launcher.log`, `proof.json` : `created=1`, `prompts=2` |
+| Retour à la session initiale | Les deux lignes initiales sont retrouvées après les échanges de l’autre session | `evidence/launcher.log` |
+| Réponse perdue après création | Le service simule une création réussie suivie d’une erreur HTTP ; nouvelle création bloquée, actualisation puis sélection de la session créée, deux envois réussis ; total d’une seule création | `evidence/launcher-uncertain.log`, `proof.json` : `created=1`, `prompts=2` |
+| Régression du chat | Huit tests réussis, dont charge de 10 000 messages, saisie multiligne, Unicode, deux échanges et bornes d’historique ; test de presse-papiers filtré | `evidence/background-tests.log` |
+| Régression pagination/reprise | 606 lignes canoniques, sept injections vérifiées, déplacement maximal de l’ancre de lecture de 0 point | `evidence/recovery.log` |
+
+Commandes depuis ce worktree, après les compilations décrites plus bas :
+
+```powershell
+node packages/rune-chat/launcher-fixture.mjs
+node packages/rune-chat/launcher-fixture.mjs --uncertain-create
+```
+
+Les sondes exécutent les clics et réponses de sélecteur dans le runtime sans fenêtre. La présentation du sélecteur Windows et le nouveau parcours complet avec OpenCode installé restent à vérifier en interactif. Les essais réels de streaming/reprise du socle sont documentés séparément ci-dessous. Cette campagne laisse la démonstration existante ouverte et préserve le focus ainsi que le presse-papiers Windows.
+
 ### Charge, saisie et affichage
 
 | Cas | Résultat observé | Preuve |

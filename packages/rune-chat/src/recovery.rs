@@ -54,6 +54,7 @@ pub fn run(
                 break;
             }
         }
+        let _ = forward.send(Input::Command(Command::Close));
     });
     let mut epoch = 1;
     let mut wire = Arc::new(stream::State::default());
@@ -85,6 +86,10 @@ pub fn run(
             stream::start(backend.clone(), epoch, tx.clone(), wire.clone());
         }
         match rx.recv_timeout(Duration::from_millis(25)) {
+            Ok(Input::Command(Command::Close)) => {
+                wire.cancelled.store(true, SeqCst);
+                return Ok(());
+            }
             Ok(Input::Opened(e)) if e == epoch => {
                 opened = true;
                 dirty = true;
@@ -224,9 +229,9 @@ pub fn run(
         }
         if dirty && !parked && opened && wire.upstream.load(SeqCst) && Instant::now() >= quiet {
             let stamp = wire.version.load(SeqCst);
-            let snapshot = if initial && std::env::var("RUNE_EMPTY_SESSION").as_deref() == Ok("1") {
+            let snapshot = if initial && backend.fresh_mode {
                 backend.empty()
-            } else if std::env::var("RUNE_EMPTY_SESSION").as_deref() == Ok("1") {
+            } else if backend.fresh_mode {
                 backend.fresh(first.as_deref())
             } else {
                 backend.restore(first.as_deref())

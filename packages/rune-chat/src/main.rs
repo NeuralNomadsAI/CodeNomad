@@ -1,6 +1,11 @@
 #![forbid(unsafe_code)]
 mod backend;
+mod catalog;
 mod history;
+mod launcher;
+mod launcher_probe;
+mod launcher_strings;
+mod launcher_view;
 mod probes;
 mod real_history_probe;
 mod recovery;
@@ -24,6 +29,9 @@ pub struct Message {
     pub body: String,
 }
 struct State {
+    launcher: Option<launcher::Launcher>,
+    launcher_visible: bool,
+    chat_title: String,
     messages: Vec<Message>,
     draft: TextEdit,
     incoming: Option<Receiver<Event>>,
@@ -44,6 +52,9 @@ enum Phase {
 }
 fn init() -> State {
     State {
+        launcher: None,
+        launcher_visible: false,
+        chat_title: String::new(),
         messages: vec![],
         draft: TextEdit::new(""),
         incoming: None,
@@ -56,11 +67,25 @@ fn init() -> State {
     }
 }
 fn setup(s: &mut State, wake: rune::Waker) {
+    let scoped = ["RUNE_BACKEND", "RUNE_WORKSPACE", "RUNE_SESSION"]
+        .iter()
+        .all(|key| std::env::var_os(key).is_some());
+    if !scoped && !local_stress() {
+        s.launcher = Some(launcher::Launcher::new(wake));
+        s.launcher_visible = true;
+        return;
+    }
     let (out, incoming) = mpsc::sync_channel(64);
     let (commands, input) = mpsc::sync_channel(1);
     s.incoming = Some(incoming);
     s.commands = Some(commands);
     std::thread::spawn(move || transport::run(out, input, wake));
+}
+fn local_stress() -> bool {
+    std::env::args()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .any(|args| args[0] == "--scene" && args[1] == "synthetic")
 }
 fn send(s: &mut State, _: &mut Tx) {
     if s.phase != Phase::Ready || s.draft.text.trim().is_empty() {
@@ -92,7 +117,7 @@ fn request_older(s: &mut State, _: &mut Tx) {
     }
 }
 fn poll(s: &mut State, _: f64, tx: &mut Tx) -> bool {
-    let mut changed = false;
+    let mut changed = launcher::poll(s, tx);
     for _ in 0..64 {
         let Some(event) = s.incoming.as_ref().and_then(|r| r.try_recv().ok()) else {
             break;
@@ -153,6 +178,9 @@ fn poll(s: &mut State, _: f64, tx: &mut Tx) -> bool {
     changed
 }
 fn view(s: &State, _: &mut Cx<State>) -> El {
+    if s.launcher_visible {
+        return launcher_view::view(s);
+    }
     let t = surfaces::get();
     let rows = col()
         .key("rows")
@@ -211,6 +239,17 @@ fn view(s: &State, _: &mut Cx<State>) -> El {
                 .padding(14.0)
                 .gap(20.0)
                 .child(text(strings::t("title")).font(type_::TITLE))
+                .child(if s.launcher.is_some() {
+                    launcher_view::button(
+                        "sessions-back",
+                        strings::t("sessions"),
+                        !matches!(s.phase, Phase::Ready | Phase::Failed)
+                            || !s.draft.text.is_empty(),
+                    )
+                    .on_press(launcher::back)
+                } else {
+                    rune::el()
+                })
                 .child(text(strings::t(status)))
                 .child(
                     text(strings::t(if s.paging { "loading" } else { "older" }))
@@ -254,6 +293,11 @@ fn view(s: &State, _: &mut Cx<State>) -> El {
                         .on_press_tx(|_: &mut State, tx| tx.scroll_to_bottom_instant("history")),
                 ),
         )
+        .child(if s.chat_title.is_empty() {
+            rune::el()
+        } else {
+            text(&s.chat_title).key("chat-title").padding(14.0)
+        })
         .child(
             col()
                 .key("history")
@@ -298,6 +342,10 @@ fn view(s: &State, _: &mut Cx<State>) -> El {
         )
 }
 fn main() {
+    if std::env::args().any(|arg| arg == "--probe-launcher") {
+        launcher_probe::run();
+        return;
+    }
     if std::env::args().any(|arg| arg == "--probe-real-history") {
         real_history_probe::run();
         return;

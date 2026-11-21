@@ -145,6 +145,9 @@ pub fn t(key: &str) -> &'static str {
     static LOCALE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     let locale =
         LOCALE.get_or_init(|| std::env::var("RUNE_LOCALE").unwrap_or_else(|_| "fr".into()));
+    if let Some(value) = crate::launcher_strings::get(locale, key) {
+        return value;
+    }
     if let Some(index) = ["older", "reconnecting", "retry"]
         .iter()
         .position(|k| *k == key)

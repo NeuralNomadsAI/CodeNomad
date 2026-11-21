@@ -9,10 +9,23 @@ pub struct Backend {
     pub workspace: String,
     pub session: String,
     pub client_id: String,
+    pub fresh_mode: bool,
 }
 impl Backend {
     pub fn environment() -> Result<Self> {
         let base = std::env::var("RUNE_BACKEND")?;
+        let password = std::env::var("RUNE_PASSWORD").unwrap_or_default();
+        let mut backend = Self::connect(&base, &password)?;
+        backend.workspace = std::env::var("RUNE_WORKSPACE")?;
+        backend.session = std::env::var("RUNE_SESSION")?;
+        if !history::valid_id(&backend.workspace) || !history::valid_id(&backend.session) {
+            return Err("invalid scope".into());
+        }
+        backend.fresh_mode = std::env::var("RUNE_EMPTY_SESSION").as_deref() == Ok("1");
+        Ok(backend)
+    }
+    pub fn connect(address: &str, password: &str) -> Result<Self> {
+        let base = format!("{}/", address.trim().trim_end_matches('/'));
         let url = reqwest::Url::parse(&base)?;
         if url.scheme() != "http"
             || url.host_str() != Some("127.0.0.1")
@@ -23,11 +36,6 @@ impl Backend {
             || url.password().is_some()
         {
             return Err("explicit loopback endpoint required".into());
-        }
-        let workspace = std::env::var("RUNE_WORKSPACE")?;
-        let session = std::env::var("RUNE_SESSION")?;
-        if !history::valid_id(&workspace) || !history::valid_id(&session) {
-            return Err("invalid scope".into());
         }
         let client = Client::builder()
             .no_proxy()
@@ -45,10 +53,7 @@ impl Backend {
                 .send()?
                 .error_for_status()?;
         }
-        if let Some(password) = std::env::var("RUNE_PASSWORD")
-            .ok()
-            .filter(|v| !v.is_empty())
-        {
+        if !password.is_empty() {
             client
                 .post(format!("{base}api/auth/login"))
                 .json(&json!({"username":"codenomad","password":password}))
@@ -61,9 +66,10 @@ impl Backend {
         Ok(Self {
             client,
             base,
-            workspace,
-            session,
+            workspace: String::new(),
+            session: String::new(),
             client_id: format!("rune-{}-{nonce}", std::process::id()),
+            fresh_mode: false,
         })
     }
     pub fn page(&self, target: Value) -> Result<Page> {

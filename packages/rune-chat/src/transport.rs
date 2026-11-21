@@ -11,6 +11,7 @@ pub enum Command {
     Send(String),
     Older,
     Retry,
+    Close,
 }
 #[derive(Debug)]
 pub enum Event {
@@ -45,7 +46,7 @@ pub fn publish(out: &SyncSender<Event>, wake: &rune::Waker, event: Event) -> boo
     true
 }
 pub fn run(out: SyncSender<Event>, input: Receiver<Command>, wake: rune::Waker) {
-    if std::env::var_os("RUNE_BACKEND").is_some() {
+    if std::env::var_os("RUNE_BACKEND").is_some() && !crate::local_stress() {
         let result = crate::backend::Backend::environment()
             .and_then(|backend| crate::recovery::run(backend, out.clone(), input, wake.clone()));
         if let Err(error) = result {
@@ -57,6 +58,9 @@ pub fn run(out: SyncSender<Event>, input: Receiver<Command>, wake: rune::Waker) 
     publish(&out, &wake, Event::History(synthetic()));
     let mut turn = 0;
     while let Ok(command) = input.recv() {
+        if matches!(command, Command::Close) {
+            return;
+        }
         let Command::Send(_) = command else {
             publish(&out, &wake, Event::PagingFailed);
             continue;

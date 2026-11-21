@@ -11,6 +11,7 @@ use std::{
 };
 #[derive(Default)]
 pub struct State {
+    pub cancelled: AtomicBool,
     pub version: AtomicU64,
     pub alive: AtomicBool,
     pub upstream: AtomicBool,
@@ -54,6 +55,9 @@ fn read(b: &Backend, epoch: u64, out: &SyncSender<Input>, state: &State) -> Resu
         }
         if line.len() > 262144 {
             return Err("oversized SSE line".into());
+        }
+        if state.cancelled.load(SeqCst) {
+            return Ok(());
         }
         if line.trim().is_empty() {
             if kind == "codenomad.client.ping" {
