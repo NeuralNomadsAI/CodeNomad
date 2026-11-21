@@ -19,6 +19,10 @@ mod windows;
 
 const MAX_NOTICES: usize = 256;
 
+#[cfg(any(test, target_os = "macos"))]
+#[path = "notification_authorization.rs"]
+mod authorization;
+
 #[cfg(any(windows, target_os = "linux", test))]
 fn escape_text(text: &str) -> String {
     text.replace('&', "&amp;")
@@ -42,6 +46,8 @@ pub(crate) struct NotificationClicks {
     native_host: OnceLock<Weak<AppHandle>>,
     #[cfg(target_os = "linux")]
     linux: linux::LinuxNotifications,
+    #[cfg(target_os = "macos")]
+    macos: macos::Delivery,
 }
 
 struct Target {
@@ -156,14 +162,11 @@ pub(crate) async fn notification_permission(
 ) -> Result<Option<&'static str>, String> {
     sender_url(&webview)?;
     #[cfg(target_os = "macos")]
-    if webview
-        .app_handle()
-        .state::<NotificationClicks>()
-        .native_host
-        .get()
-        .is_some()
     {
-        return macos::permission(request).await.map(Some);
+        let routes = webview.app_handle().state::<NotificationClicks>();
+        if routes.native_host.get().is_some() {
+            return routes.macos.permission(request).await.map(Some);
+        }
     }
     let _ = request;
     Ok(None)
@@ -202,8 +205,12 @@ pub(crate) fn notification_show(
     };
     #[cfg(target_os = "macos")]
     {
-        macos::show(host.clone(), routes.remember_macos(target), title, body);
-        Ok(())
+        let id = routes.remember_macos(target);
+        routes.macos.show(host, id, title, body).inspect_err(|_| {
+            if let Some(id) = id {
+                routes.take(id);
+            }
+        })
     }
     #[cfg(not(target_os = "macos"))]
     {

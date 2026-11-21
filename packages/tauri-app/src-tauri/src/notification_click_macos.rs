@@ -1,3 +1,4 @@
+use super::authorization::{Authorization, Center, Permission};
 use block2::{DynBlock, RcBlock};
 use objc2::{
     define_class, msg_send,
@@ -12,7 +13,12 @@ use objc2_user_notifications::{
     UNNotificationRequest, UNNotificationResponse, UNNotificationSettings,
     UNUserNotificationCenter, UNUserNotificationCenterDelegate,
 };
-use std::{cell::OnceCell, ptr::NonNull, sync::Weak};
+use std::{
+    cell::OnceCell,
+    ptr::NonNull,
+    sync::{Arc, OnceLock, Weak},
+};
+use tauri::async_runtime::{self, Sender};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
@@ -74,12 +80,65 @@ pub(super) fn install(host: Weak<AppHandle>) -> bool {
     true
 }
 
-pub(super) async fn permission(request: bool) -> Result<&'static str, String> {
-    if request {
-        let (tx, mut rx) = tauri::async_runtime::channel(1);
+#[derive(Default)]
+pub(super) struct Delivery {
+    auth: Arc<Authorization>,
+    queue: OnceLock<Sender<(Option<Uuid>, String, String)>>,
+}
+
+impl Delivery {
+    pub(super) async fn permission(&self, request: bool) -> Result<&'static str, String> {
+        Ok(
+            match self.auth.permission(&NotificationCenter, request).await? {
+                Permission::Granted => "granted",
+                Permission::Denied => "denied",
+                Permission::Undetermined => "default",
+            },
+        )
+    }
+
+    pub(super) fn show(
+        &self,
+        host: &Weak<AppHandle>,
+        route: Option<Uuid>,
+        title: String,
+        body: String,
+    ) -> Result<(), String> {
+        let queue = self.queue.get_or_init(|| {
+            let (tx, mut rx) = async_runtime::channel(super::MAX_NOTICES);
+            let host = host.clone();
+            let auth = self.auth.clone();
+            async_runtime::spawn(async move {
+                while let Some((route, title, body)) = rx.recv().await {
+                    let result = auth
+                        .deliver(&NotificationCenter, || {
+                            show(host.clone(), route, title, body);
+                        })
+                        .await;
+                    if !matches!(result, Ok(true)) {
+                        retire_route(&host, route);
+                        if let Err(error) = result {
+                            eprintln!("[notification] {error}");
+                        }
+                    }
+                }
+            });
+            tx
+        });
+        queue
+            .try_send((route, title, body))
+            .map_err(|_| "macOS notification queue unavailable".into())
+    }
+}
+
+struct NotificationCenter;
+
+impl Center for NotificationCenter {
+    async fn request(&self) -> Result<Permission, String> {
+        let (tx, mut rx) = async_runtime::channel(1);
         {
-            let complete = RcBlock::new(move |_: Bool, error: *mut NSError| {
-                let _ = tx.try_send(error.is_null());
+            let complete = RcBlock::new(move |allowed: Bool, error: *mut NSError| {
+                let _ = tx.try_send(error.is_null().then_some(allowed.as_bool()));
             });
             UNUserNotificationCenter::currentNotificationCenter()
                 .requestAuthorizationWithOptions_completionHandler(
@@ -87,33 +146,45 @@ pub(super) async fn permission(request: bool) -> Result<&'static str, String> {
                     &complete,
                 );
         }
-        if rx.recv().await != Some(true) {
-            return Err("macOS could not request notification authorization".into());
+        match rx.recv().await.flatten() {
+            Some(true) => Ok(Permission::Granted),
+            Some(false) => Ok(Permission::Denied),
+            None => Err("macOS could not request notification authorization".into()),
         }
     }
-    let (tx, mut rx) = tauri::async_runtime::channel(1);
-    {
-        let complete = RcBlock::new(move |settings: NonNull<UNNotificationSettings>| {
-            // Notification Center supplies a live settings object for this callback.
-            let status = unsafe { settings.as_ref() }.authorizationStatus();
-            let value = match status {
-                UNAuthorizationStatus::Authorized
-                | UNAuthorizationStatus::Provisional
-                | UNAuthorizationStatus::Ephemeral => "granted",
-                UNAuthorizationStatus::Denied => "denied",
-                _ => "default",
-            };
-            let _ = tx.try_send(value);
-        });
-        UNUserNotificationCenter::currentNotificationCenter()
-            .getNotificationSettingsWithCompletionHandler(&complete);
+
+    async fn status(&self) -> Result<Permission, String> {
+        let (tx, mut rx) = async_runtime::channel(1);
+        {
+            let complete = RcBlock::new(move |settings: NonNull<UNNotificationSettings>| {
+                // Notification Center supplies a live settings object for this callback.
+                let status = unsafe { settings.as_ref() }.authorizationStatus();
+                let permission = match status {
+                    UNAuthorizationStatus::Authorized
+                    | UNAuthorizationStatus::Provisional
+                    | UNAuthorizationStatus::Ephemeral => Permission::Granted,
+                    UNAuthorizationStatus::NotDetermined => Permission::Undetermined,
+                    // Fail closed for a status this host doesn't recognise.
+                    _ => Permission::Denied,
+                };
+                let _ = tx.try_send(permission);
+            });
+            UNUserNotificationCenter::currentNotificationCenter()
+                .getNotificationSettingsWithCompletionHandler(&complete);
+        }
+        rx.recv()
+            .await
+            .ok_or_else(|| "macOS did not return notification settings".into())
     }
-    rx.recv()
-        .await
-        .ok_or_else(|| "macOS did not return notification settings".into())
 }
 
-pub(super) fn show(host: Weak<AppHandle>, route: Option<Uuid>, title: String, body: String) {
+fn retire_route(host: &Weak<AppHandle>, route: Option<Uuid>) {
+    if let (Some(app), Some(id)) = (host.upgrade(), route) {
+        app.state::<super::NotificationClicks>().take(id);
+    }
+}
+
+fn show(host: Weak<AppHandle>, route: Option<Uuid>, title: String, body: String) {
     let content = UNMutableNotificationContent::new();
     content.setTitle(&NSString::from_str(&title));
     content.setBody(&NSString::from_str(&body));
@@ -125,9 +196,7 @@ pub(super) fn show(host: Weak<AppHandle>, route: Option<Uuid>, title: String, bo
     );
     let delivered = RcBlock::new(move |error: *mut NSError| {
         if !error.is_null() {
-            if let (Some(app), Some(id)) = (host.upgrade(), route) {
-                app.state::<super::NotificationClicks>().take(id);
-            }
+            retire_route(&host, route);
         }
     });
     UNUserNotificationCenter::currentNotificationCenter()

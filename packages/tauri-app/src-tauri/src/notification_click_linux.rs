@@ -6,7 +6,7 @@ use std::{
         mpsc::{self, Receiver, SyncSender},
         Arc, OnceLock, Weak,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::{AppHandle, Manager, Webview};
 use uuid::Uuid;
@@ -20,6 +20,7 @@ use zbus::{
 const SERVICE: &str = "org.freedesktop.Notifications";
 const PATH: &str = "/org/freedesktop/Notifications";
 const REPLY_TIMEOUT: Duration = Duration::from_millis(300);
+const CAPABILITIES_TTL: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 pub(super) struct LinuxNotifications {
@@ -29,7 +30,7 @@ pub(super) struct LinuxNotifications {
 
 struct Bus {
     proxy: Proxy<'static>,
-    capabilities: Vec<String>,
+    capabilities: (Instant, Vec<String>),
     notices: VecDeque<Notice>,
 }
 
@@ -80,17 +81,25 @@ impl Bus {
 
     fn new(session: Connection) -> zbus::Result<Self> {
         let proxy = Proxy::new_owned(session, SERVICE, PATH, SERVICE)?;
-        // A timed-out or unsupported probe stays plain text until there is a new connection.
         let capabilities = proxy.call("GetCapabilities", &()).unwrap_or_default();
         Ok(Self {
             proxy,
-            capabilities,
+            capabilities: (Instant::now(), capabilities),
             notices: VecDeque::new(),
         })
     }
 
     fn show(&mut self, id: Uuid, title: &str, body: &str) -> zbus::Result<()> {
-        let body = super::linux_body(body, &self.capabilities);
+        self.show_at(id, title, body, Instant::now())
+    }
+
+    fn show_at(&mut self, id: Uuid, title: &str, body: &str, now: Instant) -> zbus::Result<()> {
+        // A running daemon can change its capabilities on reload. Probe again on demand.
+        if now.duration_since(self.capabilities.0) >= CAPABILITIES_TTL {
+            let capabilities = self.proxy.call("GetCapabilities", &()).unwrap_or_default();
+            self.capabilities = (now, capabilities);
+        }
+        let body = super::linux_body(body, &self.capabilities.1);
         let hints = std::collections::HashMap::from([(
             "desktop-entry",
             Value::from(crate::identity::STABLE_IDENTIFIER),
@@ -356,7 +365,7 @@ mod tests {
 
     #[test]
     #[allow(deprecated)] // Use blocking TCP sockets for the private peer-to-peer bus.
-    fn notification_capability_timeout_caches_plain_text_and_allows_later_sends() {
+    fn notification_capabilities_expire_even_after_a_timeout() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
         let (ready, subscribed) = mpsc::channel();
@@ -382,7 +391,20 @@ mod tests {
             connection
                 .reply(&request.header(), &vec!["body-markup"])
                 .unwrap();
-            for number in 1..=2u32 {
+            for (number, expected_body) in [(1u32, "R&D"), (2, "R&D"), (3, "R&amp;D"), (4, "R&D")] {
+                if number >= 3 {
+                    let request = messages.next().unwrap().unwrap();
+                    assert_eq!(
+                        request.header().member().unwrap().as_str(),
+                        "GetCapabilities"
+                    );
+                    let capabilities = if number == 3 {
+                        vec!["body-markup"]
+                    } else {
+                        vec![]
+                    };
+                    connection.reply(&request.header(), &capabilities).unwrap();
+                }
                 let request = messages.next().unwrap().unwrap();
                 assert_eq!(request.header().member().unwrap().as_str(), "Notify");
                 type Notify<'a> = (
@@ -399,7 +421,7 @@ mod tests {
                 let (app_name, _, _, _, body, _, mut hints, _): Notify<'_> =
                     payload.deserialize().unwrap();
                 assert_eq!(app_name, "codenomad-tauri");
-                assert_eq!(body, "R&D");
+                assert_eq!(body, expected_body);
                 assert_eq!(
                     String::try_from(hints.remove("desktop-entry").unwrap()).unwrap(),
                     crate::identity::STABLE_IDENTIFIER
@@ -415,10 +437,17 @@ mod tests {
         .unwrap();
         subscribed.recv().unwrap();
         let mut bus = Bus::new(session).unwrap();
-        assert!(bus.capabilities.is_empty());
+        assert!(bus.capabilities.1.is_empty());
+        let checked_at = bus.capabilities.0;
         resume.send(()).unwrap();
-        for _ in 0..2 {
-            bus.show(Uuid::new_v4(), "Title", "R&D").unwrap();
+        for elapsed in [
+            Duration::ZERO,
+            CAPABILITIES_TTL - Duration::from_millis(1),
+            CAPABILITIES_TTL,
+            CAPABILITIES_TTL * 2,
+        ] {
+            bus.show_at(Uuid::new_v4(), "Title", "R&D", checked_at + elapsed)
+                .unwrap();
         }
         server.join().unwrap();
     }
