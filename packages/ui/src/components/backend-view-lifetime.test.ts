@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
 import { test } from "node:test"
-import ts from "typescript"
+import { productionModule } from "../../tests/test-support/production-ast"
+import { deferred } from "../../tests/test-support/deferred"
 import { createEffect, createMemo, createRoot, createSignal, on, onCleanup, untrack } from "solid-js"
 import { z } from "zod"
 import { BackgroundReadQueue } from "../lib/background-read-queue"
@@ -10,22 +10,9 @@ import { integrationAttachChoice, integrationLink } from "../lib/integration-row
 // Execute the real view functions, with imports supplied explicitly. No JSX or
 // application singleton is needed to test their asynchronous authority boundary.
 function view(path: string, imports: Record<string, unknown>) {
-  imports = { backendOf: () => ({ api: imports.serverApi }), ...imports }
-  const source = ts.createSourceFile(path, readFileSync(new URL(path, import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-  const body = ts.factory.updateSourceFile(source, source.statements.filter(statement => !ts.isImportDeclaration(statement)))
-  const code = ts.transpileModule(ts.createPrinter().printFile(body), {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
-  }).outputText
-  const exports: Record<string, any> = {}
-  new Function("exports", ...Object.keys(imports), code)(exports, ...Object.values(imports))
-  return exports
+  return productionModule(new URL(path, import.meta.url), { backendOf: () => ({ api: imports.serverApi }), ...imports })
 }
 const solid = { createEffect, createMemo, createSignal, on, onCleanup, untrack }
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>(accept => { resolve = accept })
-  return { promise, resolve }
-}
 const flush = async () => { for (let i = 0; i < 20; i++) await Promise.resolve() }
 function attachment() {
   let controller = new AbortController()

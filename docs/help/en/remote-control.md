@@ -27,7 +27,7 @@ The link follows the same five-minute, one-use rules and replaces any unused lin
 
 Such a device connects only through its HTTPS address, never through the tunnel, and **Paired devices** shows that address under its name. Stopping Remote Control neither cancels the link nor disconnects these devices; **Revoke**, 30 days without use, the 32-device limit or removing the address from the configuration ends their access. A browser presenting a revoked or expired device credential on that address cannot fall back to the server password: pair again, or clear the site's data to sign in with the password.
 
-These devices have the same [surface](#remote-surface) as tunnel devices and never gain loopback privileges, even through a proxy on the host.
+See [available surfaces](#remote-surface), including the direct HTTPS exception for SideCar content. Pairing grants no loopback privileges, even through a proxy on the host.
 
 ## Manage paired devices {#paired-devices}
 
@@ -44,7 +44,7 @@ Changing the direct-access password does **not** revoke devices. **Stop Remote C
 ### Re-pair without losing your place {#re-pair}
 
 1. If the client shows **Pair this device again**, leave that page open.
-2. On the host, choose **Create new pairing link** and open it in the **same client browser/profile**. For a separate remote window, a fresh link reuses that window’s storage.
+2. On the host, create a link for the original connection: **Create new pairing link** for the tunnel, or select the original **HTTPS address** under **Direct HTTPS pairing** and choose **Create HTTPS pairing link**. Open it in the **same client browser/profile**. A fresh link for a separate remote window reuses that window's storage.
 3. Return to the waiting page and choose **Check connection**; it also checks again when the page regains focus.
 
 Recovery preserves the open page and drafts; it does not replay a failed action. Check whether a send, answer or delete took effect before retrying it. A direct-access password cannot recover Remote Control pairing.
@@ -72,7 +72,8 @@ Paired devices can use ordinary project/conversation APIs, send prompts, inspect
 | Remote Control status | Readable by a paired device; management is unavailable. Start/Stop, pairing creation, device list and revocation stay on the host access path. |
 | Saved servers and backend relay | Authenticated remote clients can use/manage all host-saved servers when the feature and host capabilities allow it. New server passwords/pairing links require Remote Control or HTTPS, not plain LAN HTTP. See [saved servers](remote-access.md#saved-servers). |
 | Desktop remote windows and window proxy | Host-only (`/api/remote-proxy/`). |
-| SideCar **content proxy** | Requires loopback (`/sidecars/`), as do SideCar WebSockets. The `/api/sidecars` registration APIs are available to paired devices and authenticated direct LAN clients. |
+| SideCar content and WebSockets (`/sidecars/`) | Unavailable through the tunnel. Use loopback or enable [direct HTTPS access to SideCars](browser-sidecars.md#register-sidecar) on the host. |
+| SideCar registration (`/api/sidecars`) | Available to paired devices and authenticated direct clients. |
 | Web preview content | [Open a session browser](browser-sidecars.md#session-browser) |
 | Automation bridge | Unavailable (`/api/opencode-plugin/`). Native desktop capabilities do not become browser capabilities. |
 | WebSocket upgrades | Available for web previews and, on paired devices, [live voice conversations](voice.md#conversation). |

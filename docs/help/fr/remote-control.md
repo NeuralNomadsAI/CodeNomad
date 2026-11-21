@@ -27,7 +27,7 @@ Le lien suit les mêmes règles de cinq minutes et d’usage unique, et remplace
 
 Un tel appareil se connecte uniquement par son adresse HTTPS, jamais par le tunnel, et **Appareils appairés** affiche cette adresse sous son nom. Arrêter le Contrôle à distance n’annule pas le lien et ne déconnecte pas ces appareils ; **Révoquer**, 30 jours sans utilisation, la limite de 32 appareils ou le retrait de l’adresse de la configuration mettent fin à leur accès. Un navigateur présentant un identifiant d’appareil révoqué ou expiré sur cette adresse ne peut pas revenir au mot de passe du serveur : appairez-le à nouveau, ou effacez les données du site pour vous connecter avec le mot de passe.
 
-Ces appareils ont la même [surface](#remote-surface) que les appareils du tunnel et n’obtiennent jamais les privilèges de boucle locale, même via un proxy sur l’hôte.
+Voir les [fonctions disponibles](#remote-surface), dont l’exception HTTPS directe pour le contenu SideCar. L’appairage ne donne aucun privilège de boucle locale, même via un proxy sur l’hôte.
 
 ## Gérer les appareils appairés {#paired-devices}
 
@@ -44,7 +44,7 @@ Changer le mot de passe d’accès direct ne révoque **pas** les appareils. **A
 ### Réappairer sans perdre sa place {#re-pair}
 
 1. Si le client affiche **Appairer à nouveau cet appareil**, laissez cette page ouverte.
-2. Sur l’hôte, choisissez **Créer un nouveau lien d’appairage** et ouvrez-le dans le **même navigateur/profil client**. Dans une fenêtre distante séparée, un nouveau lien réutilise le stockage de cette fenêtre.
+2. Sur l’hôte, créez un lien pour la connexion d’origine : **Créer un nouveau lien d’appairage** pour le tunnel, ou sélectionnez l’**Adresse HTTPS** d’origine sous **Appairage HTTPS direct**, puis **Créer un lien d’appairage HTTPS**. Ouvrez-le dans le **même navigateur/profil client**. Une fenêtre distante séparée réutilise son stockage.
 3. Revenez à la page en attente et choisissez **Vérifier la connexion** ; la vérification se refait aussi quand la page reprend le focus.
 
 La récupération préserve la page ouverte et les brouillons ; elle ne rejoue pas une action échouée. Vérifiez si un envoi, une réponse ou une suppression a pris effet avant de réessayer. Un mot de passe d’accès direct ne peut pas récupérer un appairage de Contrôle à distance.
@@ -72,7 +72,8 @@ Les appareils appairés peuvent utiliser les API ordinaires de projet/conversati
 | État du Contrôle à distance | Lisible par un appareil appairé ; la gestion est indisponible. Démarrage/arrêt, création d’appairage, liste et révocation des appareils restent sur le chemin d’accès de l’hôte. |
 | Serveurs enregistrés et relais | Les clients distants authentifiés peuvent utiliser/gérer tous les serveurs enregistrés sur l’hôte si la fonction et ses capacités l’autorisent. Les nouveaux mots de passe/liens d’appairage nécessitent le Contrôle à distance ou HTTPS, pas le HTTP simple sur le réseau local. Voir [Serveurs enregistrés](remote-access.md#saved-servers). |
 | Fenêtres distantes de bureau et leur proxy | Réservés à l’hôte (`/api/remote-proxy/`). |
-| **Proxy de contenu** SideCar | Exige la boucle locale (`/sidecars/`), comme les WebSockets SideCar. Les API d’enregistrement `/api/sidecars` sont accessibles aux appareils appairés et aux clients LAN directs authentifiés. |
+| Contenu SideCar et WebSockets (`/sidecars/`) | Indisponibles via le tunnel. Utilisez la boucle locale ou activez [l’accès direct HTTPS aux SideCars](browser-sidecars.md#register-sidecar) sur l’hôte. |
+| Enregistrement SideCar (`/api/sidecars`) | Disponible pour les appareils appairés et les clients directs authentifiés. |
 | Contenu des aperçus web | [Ouvrir un navigateur de session](browser-sidecars.md#session-browser) |
 | Pont d’automatisation | Indisponible (`/api/opencode-plugin/`). Les capacités natives de bureau ne deviennent pas des capacités navigateur. |
 | Mises à niveau WebSocket | Disponibles pour les aperçus web et, sur les appareils appairés, pour les [conversations vocales en direct](voice.md#conversation). |

@@ -1,21 +1,15 @@
 import assert from "node:assert/strict"
-import { createServer } from "node:http"
-import { once } from "node:events"
 import { test, type TestContext } from "node:test"
-import { backendOf, backends, createBackendClient, localBackend, type BackendClient } from "./backend-client"
-import { backendEvents } from "./backend-events"
+import { backendOf, createBackendClient, localBackend } from "./backend-client"
+import { attachBackend, loopbackBackend } from "../../tests/test-support/backend"
 import { getRootClient, buildRootProxyPath, type OpenCodeClient } from "../stores/opencode-client"
 import { readHistoryWindow } from "../stores/history-window"
 import { SDKManager } from "./sdk-manager"
 
 type Wire = { path: string; method: string; body: string; media?: string }
-const registry = backends as Map<string, BackendClient>
-
 async function fixture(t: TestContext, id: string) {
   const requests: Wire[] = []
-  const server = createServer(async (request, response) => {
-    let body = ""
-    for await (const chunk of request) body += chunk
+  const owner = await loopbackBackend(t, id, (request, response, body) => {
     requests.push({ path: request.url!, method: request.method!, body,
       ...(request.headers["x-codenomad-media"] ? { media: String(request.headers["x-codenomad-media"]) } : {}) })
     response.setHeader("Content-Type", "application/json")
@@ -27,18 +21,7 @@ async function fixture(t: TestContext, id: string) {
       response.end(JSON.stringify({ status: "window", messages: [], latest: true, resume: { kind: "latest" } }))
     } else response.end(JSON.stringify({ enabled: false, receipts: [] }))
   })
-  server.listen(0, "127.0.0.1")
-  await once(server, "listening")
-  const address = server.address() as { port: number }
-  const backend = createBackendClient({ id, baseUrl: `http://127.0.0.1:${address.port}` })
-  registry.set(id, backend)
-  const detach = backendEvents.attach(id, backend.events)
-  t.after(async () => {
-    detach(); backend.events.dispose(); registry.delete(id)
-    server.closeAllConnections()
-    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
-  })
-  return { backend, requests, detach }
+  return { ...owner, requests }
 }
 
 const nativeCalls: [string, (client: OpenCodeClient) => Promise<unknown>][] = [
@@ -161,14 +144,12 @@ test("a detached SDK response cannot settle on the replacement attachment", asyn
   let release!: (response: Response) => void
   const backend = createBackendClient({ id: "revoked", baseUrl: "https://revoked.invalid",
     fetcher: () => new Promise<Response>(resolve => { release = resolve }) })
-  registry.set(backend.id, backend)
-  const detach = backendEvents.attach(backend.id, backend.events)
-  t.after(() => { backend.events.dispose(); registry.delete(backend.id) })
+  const owner = attachBackend(t, backend)
   const pending = getRootClient("revoked~w").session.get({ sessionID: "s" })
   const rejected = assert.rejects(pending, error => error instanceof Error && /abort/i.test(error.message))
   assert.ok(release, "request dispatched under A")
-  detach()
-  t.after(backendEvents.attach(backend.id, backend.events))
+  owner.detach()
+  owner.reattach()
   release(Response.json({}))
   await rejected
 })

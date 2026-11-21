@@ -1,15 +1,23 @@
 import assert from "node:assert/strict"
-import { test } from "node:test"
-import { chromium, type Page } from "playwright"
+import { readFile } from "node:fs/promises"
+import { after, before, test } from "node:test"
+import { chromium, type Browser, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
-async function fixturePage(run: (page: Page) => Promise<void>) {
+let browser: Browser, url: string
+before(async () => {
   const fixture = await borrowFixture({ name: "backend-media-routing", routes: [{ path: "/fixture", html:
     '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/backend-media-routing.tsx"></script></body></html>' }] })
-  const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  url = fixture.url
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined, headless: true })
   armFixtureNavigationBudget(browser)
-  const page = await browser.newPage(), errors: string[] = []
+})
+after(async () => { await browser?.close() })
+
+async function fixturePage(run: (page: Page) => Promise<void>) {
+  const context = await browser.newContext()
+  const page = await context.newPage(), errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.addInitScript({ content: 'window.EventSource = class extends EventTarget { close() {} }' })
   await page.route("**/api/**", async route => {
@@ -20,7 +28,7 @@ async function fixturePage(run: (page: Page) => Promise<void>) {
     return route.fulfill({ json: {} })
   })
   try {
-    await page.goto(fixture.url)
+    await page.goto(url)
     await decoded(page)
     await run(page)
     assert.deepEqual(errors, [])
@@ -29,7 +37,7 @@ async function fixturePage(run: (page: Page) => Promise<void>) {
       await page.locator("[data-owner] img").evaluateAll(images => images.map(image => image.outerHTML)),
       await page.evaluate(() => (window as any).media?.calls.map((call: any) => call.url)))
     throw error
-  } finally { await browser.close() }
+  } finally { await context.close() }
 }
 
 async function decoded(page: Page) {
@@ -40,7 +48,7 @@ async function decoded(page: Page) {
 }
 const settle = (page: Page) => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
 
-test("tool, Markdown local images and attachment thumbnails use their backend, preserving exact local src", async () => fixturePage(async page => {
+test("tool, Markdown and attachments use their backend, retain local src, and reuse the blob for downloads", async () => fixturePage(async page => {
   for (const [index, kind] of ["tool", "markdown", "attachment"].entries()) {
     const path = `/api/workspaces/same/session-media/session/message/0/${index}/${"a".repeat(64)}`
     assert.equal(await page.locator(`[data-owner="local"] [data-consumer="${kind}"] img`).getAttribute("src"),
@@ -53,6 +61,11 @@ test("tool, Markdown local images and attachment thumbnails use their backend, p
   await page.locator('[data-owner="remote"] .attachment-chip').hover()
   await page.locator(".attachment-image-popover img").waitFor()
   assert.match(await page.locator(".attachment-image-popover img").getAttribute("src") ?? "", /^blob:/)
+  const source = await page.locator('[data-owner="remote"] [data-consumer="attachment"] img').getAttribute("src")
+  assert.match(source ?? "", /^blob:/)
+  await page.locator('[data-owner="remote"] .attachment-download').click()
+  assert.deepEqual(await page.evaluate(() => (window as any).media.downloads), [source])
+  assert.equal(await page.evaluate(() => (window as any).media.calls.length), calls.length)
 }))
 
 test("replacement and unmount revoke every backend-owned object URL", async () => fixturePage(async page => {
@@ -157,11 +170,15 @@ test("local tool, Markdown and attachment consumers preserve exact data and publ
   }
 }))
 
-test("remote attachment download reuses its resolved blob without another backend request", async () => fixturePage(async page => {
+test("remote non-image attachment downloads its inline bytes without backend credentials", async () => fixturePage(async page => {
   const calls = await page.evaluate(() => (window as any).media.calls.length)
-  const source = await page.locator('[data-owner="remote"] [data-consumer="attachment"] img').getAttribute("src")
-  assert.match(source ?? "", /^blob:/)
-  await page.locator('[data-owner="remote"] .attachment-download').click()
-  assert.deepEqual(await page.evaluate(() => (window as any).media.downloads), [source])
+  await page.evaluate(() => (window as any).media.textAttachment())
+  const pendingDownload = page.waitForEvent("download")
+  await page.locator('[data-consumer="text-attachment"] .attachment-download').click()
+  const download = await pendingDownload
+  assert.equal(download.suggestedFilename(), "attachment.txt")
+  assert.equal(await readFile(await download.path(), "utf8"), "Remote attachment bytes")
   assert.equal(await page.evaluate(() => (window as any).media.calls.length), calls)
+  assert.deepEqual(await page.evaluate(() => (window as any).media.plainCalls.filter(({ url }: any) => url.startsWith("data:text/plain,"))),
+    [{ url: "data:text/plain,Remote%20attachment%20bytes", credentials: "omit" }])
 }))

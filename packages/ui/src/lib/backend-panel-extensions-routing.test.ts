@@ -1,11 +1,12 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
 import { spawnSync } from "node:child_process"
 import { test, type TestContext } from "node:test"
 import { createRoot } from "solid-js"
-import ts from "typescript"
-import { backends, createBackendClient, localBackend, type BackendClient } from "./backend-client"
+import { createBackendClient, localBackend } from "./backend-client"
 import { backendEvents } from "./backend-events"
+import { attachBackend, requestWire as wire } from "../../tests/test-support/backend"
+import { productionHandler } from "../../tests/test-support/production-ast"
+import { deferred } from "../../tests/test-support/deferred"
 import { captureBackendOperation } from "./backend-operation"
 import { createPanelExtensionsApi, panelExtensionsApi, panelExtensionsApi4 } from "./panel-extensions-api"
 import { panelExtensionsFor } from "./panel-extensions-backend"
@@ -14,15 +15,10 @@ import { useAssetsChannel } from "../components/panel-extensions/assets-channel"
 import { useWorkItemsChannel } from "../components/panel-extensions/work-items-channel"
 import { useApi4Channel } from "../components/panel-extensions/api4-channel"
 
-const registry = backends as Map<string, BackendClient>
 const entry = { manifest: { id: "example.panel", name: "Panel", version: "1.0.0", apiVersion: 1 as const,
   author: "Example", license: "MIT", repository: "https://github.com/example/panel", permissions: ["session.context"] as ["session.context"] },
   digest: "d", enabled: true }
-type Wire = { url: string; method: string; body: unknown; headers: [string, string][]; credentials?: RequestCredentials }
-function wire(input: RequestInfo | URL, init?: RequestInit): Wire {
-  return { url: String(input), method: init?.method ?? "GET", body: init?.body,
-    headers: [...new Headers(init?.headers)], credentials: init?.credentials }
-}
+type Wire = ReturnType<typeof wire>
 function reply(request: Wire) {
   if (request.url.endsWith("/api/panel-extensions")) return Response.json([entry])
   if (request.url.endsWith("/catalog")) return Response.json({ entries: [] })
@@ -37,17 +33,9 @@ function fixture(t: TestContext, id: string, respond: (request: Wire) => Promise
   const backend = createBackendClient({ id, baseUrl: `https://${id}.invalid`, fetcher: async (input, init) => {
     const request = wire(input, init); calls.push(request); return respond(request)
   } })
-  registry.set(id, backend)
-  const detach = backendEvents.attach(id, backend.events)
-  t.after(() => { detach(); backend.events.dispose(); registry.delete(id) })
-  return { backend, calls, detach }
+  return { ...attachBackend(t, backend), calls }
 }
 const flush = async () => { for (let i = 0; i < 30; i++) await new Promise<void>(done => setImmediate(done)) }
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>(done => { resolve = done })
-  return { promise, resolve }
-}
 function inventory(t: TestContext, id: string) {
   let controller!: ReturnType<typeof usePanelExtensions>
   createRoot(dispose => { t.after(dispose); controller = usePanelExtensions(() => id, () => true) })
@@ -74,16 +62,7 @@ async function bridges(t: TestContext, instanceId: string) {
 
 // Run the actual manager callback bodies with their real controller and HTTP API, without unrelated JSX.
 function managerAction(name: string, scope: Record<string, unknown>) {
-  const text = readFileSync(new URL("../components/panel-extensions/extension-manager.tsx", import.meta.url), "utf8")
-  const file = ts.createSourceFile("manager.tsx", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
-  let found: ts.Expression | undefined
-  function visit(node: ts.Node) {
-    if (ts.isVariableDeclaration(node) && node.name.getText(file) === name) found = node.initializer
-    ts.forEachChild(node, visit)
-  }
-  visit(file); assert.ok(found)
-  const code = ts.transpileModule(`return (${found.getText(file)})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
-  return new Function(...Object.keys(scope), code)(...Object.values(scope))
+  return productionHandler(new URL("../components/panel-extensions/extension-manager.tsx", import.meta.url), name, scope)
 }
 function manager(controller: ReturnType<typeof usePanelExtensions>) {
   let busy = false, failed = false, preview: unknown
@@ -140,7 +119,7 @@ test("missing backend produces real consumer errors with zero local dispatch", a
   let calls = 0
   t.mock.method(globalThis, "fetch", async () => { calls++; return Response.json({}) })
   const owner = fixture(t, "panelsMissing")
-  registry.delete(owner.backend.id)
+  owner.unregister()
   const controller = inventory(t, "panelsMissing~w/1")
   await flush(); assert.equal(controller.failed(), true); assert.equal(controller.verified(), false)
   const answers = await bridges(t, "panelsMissing~w/1")

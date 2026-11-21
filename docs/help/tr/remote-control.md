@@ -27,7 +27,7 @@ Bağlantı aynı beş dakika ve tek kullanım kurallarına uyar ve kullanılmaya
 
 Böyle bir cihaz yalnızca HTTPS adresi üzerinden bağlanır, asla tünel üzerinden bağlanmaz; **Eşleştirilmiş cihazlar** bu adresi adının altında gösterir. Uzaktan Kontrolü durdurmak bağlantıyı iptal etmez ve bu cihazların bağlantısını kesmez; **İptal et**, 30 gün kullanılmama, 32 cihaz sınırı veya adresin yapılandırmadan kaldırılması erişimlerini sonlandırır. Bu adreste iptal edilmiş veya süresi dolmuş bir cihaz kimlik bilgisi sunan tarayıcı sunucu parolasına geri dönemez: yeniden eşleştirin veya parolayla oturum açmak için site verilerini temizleyin.
 
-Bu cihazlar tünel cihazlarıyla aynı [yüzeye](#remote-surface) sahiptir ve ana bilgisayardaki bir proxy üzerinden bile geri döngü ayrıcalıkları kazanmaz.
+SideCar içeriğinin doğrudan HTTPS istisnası için [kullanılabilir özelliklere](#remote-surface) bakın. Eşleştirme, ana bilgisayardaki bir proxy üzerinden bile loopback ayrıcalığı vermez.
 
 ## Eşleştirilmiş cihazları yönetin {#paired-devices}
 
@@ -44,7 +44,7 @@ Doğrudan erişim parolasını değiştirmek cihazları **iptal etmez**. **Uzakt
 ### Yerinizi kaybetmeden yeniden eşleştirin {#re-pair}
 
 1. İstemci **Bu cihazı yeniden eşleştirin** gösterirse bu sayfayı açık bırakın.
-2. Ana bilgisayarda **Yeni eşleştirme bağlantısı oluştur** öğesini seçin ve **aynı istemci tarayıcısında/profilinde** açın. Ayrı bir uzak pencere için yeni bağlantı, o pencerenin depolama alanını tekrar kullanır.
+2. Ana bilgisayarda ilk bağlantı için yeni bir bağlantı oluşturun: tünel için **Yeni eşleştirme bağlantısı oluştur** öğesini seçin veya **Doğrudan HTTPS eşleştirme** bölümünde ilk **HTTPS adresi** değerini seçip **HTTPS eşleştirme bağlantısı oluştur** öğesini kullanın. Bağlantıyı aynı istemci tarayıcısında veya profilinde açın. Ayrı bir uzak pencere mevcut depolama alanını yeniden kullanır.
 3. Bekleme sayfasına dönün ve **Bağlantıyı kontrol et** öğesini seçin; sayfa yeniden odak kazandığında da kontrol tekrarlanır.
 
 Kurtarma, açık sayfayı ve taslakları korur; başarısız bir eylemi tekrarlamaz. Yeniden denemeden önce bir gönderme, yanıtlama veya silme işleminin etkili olup olmadığını kontrol edin. Doğrudan erişim parolası Uzaktan Kontrol eşleştirmesini kurtaramaz.
@@ -72,7 +72,8 @@ Eşleştirilen cihazlar sıradan proje/konuşma API'lerini kullanabilir, istemle
 | Uzaktan Kontrol durumu | Eşleştirilmiş bir cihaz tarafından okunabilir; yönetim mevcut değildir. Başlat/Durdur, eşleştirme oluşturma, cihaz listesi ve iptal etme, ana bilgisayar erişim yolunda kalır. |
 | Kayıtlı sunucular ve arka uç aktarımı | Özellik ve ana bilgisayar yetenekleri izin verdiğinde kimliği doğrulanmış uzak istemciler tüm kayıtlı sunucuları kullanabilir/yönetebilir. Yeni sunucu parolaları/eşleştirme bağlantıları düz LAN HTTP yerine Uzaktan Kontrol veya HTTPS gerektirir. [Kayıtlı sunuculara](remote-access.md#saved-servers) bakın. |
 | Masaüstü uzak pencereleri ve pencere proxy'si | Yalnızca ana bilgisayarda (`/api/remote-proxy/`). |
-| SideCar **içerik proxy'si** | SideCar WebSocket'leri gibi loopback gerektirir (`/sidecars/`). `/api/sidecars` kayıt API'leri, eşleştirilmiş cihazlar ve kimliği doğrulanmış doğrudan LAN istemcileri için kullanılabilir. |
+| SideCar içeriği ve WebSocket'leri (`/sidecars/`) | Tünel üzerinden kullanılamaz. Loopback kullanın veya ana bilgisayarda [SideCar için doğrudan HTTPS erişimini](browser-sidecars.md#register-sidecar) etkinleştirin. |
+| SideCar kaydı (`/api/sidecars`) | Eşleştirilmiş cihazlar ve kimliği doğrulanmış doğrudan istemciler için kullanılabilir. |
 | Web önizleme içeriği | [Bir oturum tarayıcısı açın](browser-sidecars.md#session-browser) |
 | Otomasyon köprüsü | Kullanılamaz (`/api/opencode-plugin/`). Native masaüstü yetenekleri tarayıcı yeteneğine dönüşmez. |
 | WebSocket yükseltmeleri | Web önizlemelerinde ve eşleştirilmiş cihazlarda [canlı sesli konuşmalarda](voice.md#conversation) kullanılabilir. |

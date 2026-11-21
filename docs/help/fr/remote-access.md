@@ -93,13 +93,13 @@ Si un client signale un avertissement de certificat, arrêtez-vous et vérifiez 
 
 ## Enregistrer un serveur distant {#saved-servers}
 
-Les clients distants authentifiés peuvent utiliser et gérer tous les serveurs enregistrés sur l’hôte ; l’accueil et **Paramètres → Serveurs** affichent les actions autorisées par les capacités de l’hôte. Le HTTP simple sur le réseau local désactive la saisie de nouveaux mots de passe de serveur et liens d’appairage : « Utilisez HTTPS ou le Contrôle à distance pour saisir des identifiants. » Les connexions utilisant des identifiants enregistrés et l’ajout, la modification ou la suppression de profils sans secrets restent disponibles.
+Les clients distants authentifiés peuvent utiliser et gérer les mêmes serveurs enregistrés que les clients locaux. Saisir un nouveau mot de passe de serveur ou un lien d’appairage exige HTTPS ou le Contrôle à distance.
 
-Ouvrez **Paramètres → Serveurs** : collez une adresse ou un lien d’appairage dans **Adresse ou lien du serveur**, ou validez par Entrée. L’ajout enregistre un profil sur l’hôte sans ouvrir de projet. **Modifier le serveur** change son **URL** ou son **Nom** facultatif ; renommer à URL et politique TLS identiques fonctionne hors ligne. Après confirmation, **Supprimer** ferme les onglets de ce serveur dans cette fenêtre et retire ses raccourcis récents. Les projets et conversations restent sur le serveur.
+Dans **Paramètres → Serveurs**, collez une adresse ou un lien d’appairage dans **Adresse ou lien du serveur**, ou saisissez-le et validez par Entrée. Cela enregistre le serveur sans ouvrir de projet. **Modifier le serveur** change son **URL** ou son **Nom** facultatif ; renommer à URL et politique TLS identiques fonctionne hors ligne. Après confirmation, **Supprimer** ferme les onglets de ce serveur dans cette fenêtre et retire ses raccourcis récents. Pour les projets temporaires, choisissez **Garder** ou **Jeter** ; **Jeter** supprime leurs fichiers et conversations. Les autres projets et conversations restent sur le serveur.
 
 OpenSSH doit être installé sur l’hôte CodeNomad, et CodeNomad doit déjà être en cours d’exécution à destination. Dans **Paramètres → Serveurs**, choisissez **Ajouter un serveur SSH**. Saisissez l’**URL** de CodeNomad telle que l’hôte SSH y accède, puis l’**Hôte SSH (facultatif)** ou son alias et choisissez **Enregistrer**. Le profil peut être enregistré hors ligne. OpenSSH exige une authentification par clé et une clé d’hôte vérifiée dans `known_hosts`. Connectez-vous à CodeNomad sur ce serveur ; les certificats HTTPS sont toujours vérifiés.
 
-**Ignorer la vérification TLS** est proposé après un échec de certificat pour cette adresse ; changer d’adresse retire l’accord. L’appairage vérifie toujours TLS.
+L’éditeur de serveur comporte la case **Ignorer la vérification TLS**. Le champ **Adresse ou lien du serveur** ne propose cette option qu’après un échec de certificat pour cette adresse ; changer d’adresse efface ce choix. L’appairage vérifie toujours TLS.
 
 Uniquement si `multiBackend` est réglé sur `false`, utilisez les fenêtres de bureau séparées ci-dessous :
 
@@ -117,8 +117,8 @@ Pour le Contrôle à distance, collez plutôt un lien d’appairage récent dans
 
 Les projets locaux et distants partagent la même fenêtre. **Onglets récents** affiche les raccourcis du serveur parcouru ; les récents mixtes indiquent l’icône et le nom du serveur pour les projets ouverts ici. [Restaurer les onglets distants](projects.md#restore-remote-tabs).
 
-Dans **Paramètres → Serveurs**, **Ouvrir** sélectionne le serveur dans **Parcourir** et réutilise l’onglet vide s’il existe. Les choix de fermeture des onglets temporaires restent disponibles.
+Dans **Paramètres → Serveurs**, **Ouvrir** sélectionne le serveur dans **Parcourir** et réutilise l’onglet vide s’il existe.
 
 ### `--connect-server` {#connect-server}
 
-Cette commande ouvre une fenêtre distante distincte. Si CodeNomad est déjà lancé, sa fenêtre locale traite la demande. Pour ouvrir un serveur enregistré directement depuis la ligne de commande, lancez l’application de bureau avec `--connect-server <nom>` (ou `--connect-server=<nom>`), en indiquant le nom enregistré du serveur ou son URL `https://`. Une URL qui ne correspond à aucun serveur enregistré est enregistrée sous son nom d’hôte. Les valeurs de lancement ne portent jamais d’identifiants : une URL avec un nom d’utilisateur, un mot de passe ou un code d’appairage est refusée. Sous Windows, la version Tauri refuse de démarrer quand un argument de lancement contient `|` ; utilisez plutôt l’URL du serveur, ou renommez le serveur.
+`--connect-server <name-or-url>` ouvre une fenêtre distante séparée, quelle que soit la valeur de `multiBackend`. Utilisez un nom ou un identifiant enregistré, ou une URL HTTP(S). Une nouvelle URL est enregistrée sous son nom d’hôte. L’URL de lancement ne peut contenir ni nom d’utilisateur, ni mot de passe, ni code d’appairage. Voir le [tableau des arguments de lancement](desktop.md#desktop-cli) pour la syntaxe et le démarrage en fenêtre distante seule.

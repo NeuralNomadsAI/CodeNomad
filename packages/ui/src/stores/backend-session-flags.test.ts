@@ -9,17 +9,11 @@ import { messageStoreBus } from "./message-v2/bus"
 import type { Session } from "../types/session"
 import { registerLocalBackendFixture } from "../../tests/contracts/local-backend-fixture"
 import { serverApi } from "../lib/api-client"
+import { deferred } from "../../tests/test-support/deferred"
 
 const source = {
   on: () => () => {}, onOpen: () => () => {},
   onTransportStatus: () => () => {}, onDispose: () => () => {},
-}
-
-function deferred() {
-  let resolve!: (value: any) => void
-  let reject!: (error: Error) => void
-  const promise = new Promise<any>((yes, no) => { resolve = yes; reject = no })
-  return { promise, resolve, reject }
 }
 
 async function until(predicate: () => boolean) {

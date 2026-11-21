@@ -16,12 +16,12 @@ Pass these arguments after the **desktop executable** (Tauri or Electron), in a 
 
 | Argument | Effect |
 | --- | --- |
-| `--connect-server <server>` | Open a remote CodeNomad server using its HTTP(S) URL, saved name or saved ID. See [connection and sign-in behavior](remote-access.md#saved-servers). |
+| `--connect-server <name-or-url>` | Open a separate remote window regardless of `multiBackend`, using an HTTP(S) URL, saved name or saved ID. See [remote connections](remote-access.md#connect-server). |
 | `--folder <path>` | Open an existing project directory. Repeat the argument to open several directories; relative paths use the launch working directory. |
 | `<path> ...` | Open project directories without spelling out `--folder`. **Windows Tauri, when already running:** use `--folder` for every directory. Mixing positional paths with `--folder` also drops the entire folder request. |
 | `--new-window` | Request a new application window, including when another launch would normally focus the existing window. |
 
-`--connect-server=<server>` and `--folder=<path>` also work. Quote paths or server names containing spaces. To open only the remote window, use `--connect-server` alone, without folders or `--new-window`; local window restoration is then deferred unless connecting fails.
+`--connect-server=<name-or-url>` and `--folder=<path>` also work. Quote paths or server names containing spaces. To open only the remote window, use `--connect-server` alone, without folders or `--new-window`. An already running local window handles the request; at startup, local window restoration is deferred unless connecting fails.
 
 In **PowerShell**:
 

@@ -248,10 +248,7 @@ export const RemoteControlSettingsSection: Component = () => {
         <Show when={status()?.manageable && !disabled() ? status() : null}>
           {(current) => (
             <div class="settings-toggle-row">
-              <div>
-                <div class="settings-toggle-title">{t("remoteControl.previews.title")}</div>
-                <div class="settings-toggle-caption">{t("remoteControl.previews.caption")}</div>
-              </div>
+              <div class="settings-toggle-title">{t("remoteControl.previews.title")} <SettingsInfoTip text={t("remoteControl.previews.info")} /></div>
               <SettingsSwitch
                 checked={current().previews}
                 label={t("remoteControl.previews.title")}

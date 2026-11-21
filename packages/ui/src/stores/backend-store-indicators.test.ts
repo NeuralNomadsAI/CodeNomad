@@ -13,48 +13,12 @@ import { createMissionStore } from "./mission-store"
 import { createSessionOutline } from "./session-outline"
 import { setSessions } from "./session-state"
 import type { MissionListResponse, PluginControlsSnapshot } from "../../../server/src/api-types"
-
-// Audited ownership families (source / flag / owner / terminal cleanup):
-// plugin-controls / loading,refreshing,inFlight / record + promise / finally or attachment rebind
-// shell-store / loading,requests.dirty / request object / identity-checked finally
-// session-goal-store, integration-bindings-store / busy / admitted command / exclusive finally
-// integrations-store, session-goal-store, integration-bindings-store / reading / reading object / cancel + finally
-// mission-store / status,taskReads.loading / refresh generation + counted task lifetime / finally + clear
-// mission-panel-inventory / lanes.loading,pending,headerReads / operation or job / identity-checked finally
-// mission-content-store, mission-recurrence / controller / controller identity / cancel + finally
-// mission-schedules / loading,controller / effect epoch + controller / effect reset + finally
-// mission-task-session-reads / inFlight / flight object / identity-checked finally
-// session-actions / pendingNewSessions,technicalPartUpdates / attempt promise / identity-checked finally
-// session-actions / modelSelectionPending / optimistic model object / releasePending on aborted settlement
-// session-action-queue, session-instructions, session-model-reconciliation / admissions,running,pending / promise or state / finally
-// instances / volatile refresh,pending sync,liveness / state,promise,token / identity-checked abort + finally
-// worktrees / requests,reads,readyRefreshes,pendingFamilyMoveSlugs / task promise / identity-checked abort + finally
-// session-events, session-pruning-events / pendingSessionFetches,refreshing / state object / identity-checked finally
-// session-state / automaticCleanupRequests / request object / identity-checked finally
-// session-cleanup-progress / jobs(controller,phase,count) / exclusive job / caller's unconditional finally
-// session-outline / pending / reactive effect + controller / inactive effect reset; current-only finally
-// history-search-sessions / running,queue,requested / owner object / owner-checked finally + restart
-// permission-receipt-cache / reads / read object / release + identity-checked finally
-// plugin-sources, plugin-package-actions / removing,pending / exclusive admitted mutation / unconditional finally
-// opencode-data / transcript read,settlement,replay / transcript epoch / owner cleanup + projection disposal
-// opencode-setup / checking,busy / pending identity,exclusive action / finally (local setup, not attachment-scoped)
-// instance-config, preferences, session-previews / loadPromises,pending preferences,restorePromises / local storage lane / finally
-// speech,conversation-speech,desktop-updates / loading,runner,installing / local host/playback lane / finally or host event
-// sidecars / sidecarsLoading,loadPromise / exclusive local list / success + rejection handlers
-// Durable exclusions: session working/compaction, generation admission after dispatch, inbox/permission/form receipts,
-// plugin install-confirmation hints, mission holds/intents, uncertain family moves, restore/UI demand and frame queues.
-// session-api owns fetching/creating/deleting/loadingMessages/search; its regression coverage is separate.
+import { deferred } from "../../tests/test-support/deferred"
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve))
 const location = { directory: "/repo" }
 const snapshot = (id: string) => ({ location, runtime: [], configured: { rules: [], sources: [] }, targets: [],
   controls: [{ id }] }) as unknown as PluginControlsSnapshot
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  let reject!: (error: Error) => void
-  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
-  return { promise, resolve, reject }
-}
 const source = { on: () => () => {}, onOpen: () => () => {}, onDispose: () => () => {}, onTransportStatus: () => () => {} }
 async function until(check: () => boolean) {
   for (let attempt = 0; attempt < 100 && !check(); attempt++) await new Promise(resolve => setTimeout(resolve, 1))

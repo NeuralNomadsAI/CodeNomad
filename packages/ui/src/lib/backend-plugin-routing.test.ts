@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
 import { registerHooks } from "node:module"
 import { after, test, type TestContext } from "node:test"
-import ts from "typescript"
-import { backendOf, backends, createBackendClient, localBackend, type BackendClient } from "./backend-client"
+import { backendOf, createBackendClient, localBackend } from "./backend-client"
+import { attachBackend, requestWire as wire } from "../../tests/test-support/backend"
+import { productionHandler } from "../../tests/test-support/production-ast"
 import { backendEvents } from "./backend-events"
 import { captureBackendOperation } from "./backend-operation"
 import { SDKManager } from "./sdk-manager"
@@ -32,12 +32,7 @@ after(() => hooks.deregister())
 const location = { directory: "/repo" }
 const source = { scope: "global" as const, expectedRevision: "confirmed", target: "example-plugin", entryIndex: 0 }
 const snapshot = { location, runtime: [], configured: { rules: [], sources: [] }, targets: [], controls: [] }
-type Wire = { url: string; method: string; body: unknown; headers: [string, string][]; credentials?: RequestCredentials }
-const registry = backends as Map<string, BackendClient>
-function wire(input: RequestInfo | URL, init?: RequestInit): Wire {
-  return { url: String(input), method: init?.method ?? "GET", body: init?.body,
-    headers: [...new Headers(init?.headers)], credentials: init?.credentials }
-}
+type Wire = ReturnType<typeof wire>
 function reply(request: Wire) {
   if (request.url.includes("/instance/")) return Response.json({ _tag: "InvalidRequestError", message: "native refusal", kind: "fixture" }, { status: 400 })
   if (request.method === "GET") return Response.json(snapshot)
@@ -49,10 +44,9 @@ function fixture(t: TestContext, id: string) {
   const backend = createBackendClient({ id, baseUrl: `https://${id}.invalid`, fetcher: async (input, init) => {
     const request = wire(input, init); calls.push(request); return reply(request)
   } })
-  registry.set(id, backend)
-  const detach = backendEvents.attach(id, backend.events)
-  t.after(() => { detach(); backend.events.dispose(); registry.delete(id); pluginControlsCache.clearInstance(`${id}~w/1`); pluginSourcesStore.clearInstance(`${id}~w/1`) })
-  return { backend, calls, detach }
+  const owner = attachBackend(t, backend)
+  t.after(() => { pluginControlsCache.clearInstance(`${id}~w/1`); pluginSourcesStore.clearInstance(`${id}~w/1`) })
+  return { ...owner, calls }
 }
 
 function releaseHintTimers(t: TestContext) {
@@ -67,18 +61,8 @@ function releaseHintTimers(t: TestContext) {
 // Compile the actual callback bodies so request routing, catch and post-await guards
 // are exercised without substituting implementations or mounting unrelated JSX.
 function consumer(path: string, name: string, scope: Record<string, unknown>) {
-  const text = readFileSync(new URL(path, import.meta.url), "utf8")
-  const file = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
-  let found: ts.ArrowFunction | undefined
-  function visit(node: ts.Node) {
-    if (ts.isVariableDeclaration(node) && node.name.getText(file) === name && node.initializer && ts.isArrowFunction(node.initializer)) found = node.initializer
-    if (name === "skills" && ts.isCallExpression(node) && node.expression.getText(file) === "createEffect"
-      && ts.isArrowFunction(node.arguments[0]) && node.arguments[0].getText(file).includes("skill.list")) found = node.arguments[0]
-    ts.forEachChild(node, visit)
-  }
-  visit(file); assert.ok(found, name)
-  const code = ts.transpileModule(`(${found.getText(file)})`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText
-  return new Function("scope", `with (scope) { return ${code} }`)(scope)
+  const url = new URL(path, import.meta.url)
+  return name === "skills" ? productionHandler(url, "createEffect", scope, "skill.list") : productionHandler(url, name, scope)
 }
 const flush = async () => { for (let i = 0; i < 100; i++) await new Promise<void>(done => setImmediate(done)) }
 function nativeConsumers(id: string) {

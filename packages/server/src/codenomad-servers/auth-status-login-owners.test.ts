@@ -15,48 +15,6 @@ async function bounded<T>(promise: Promise<T>): Promise<T> {
   finally { clearTimeout(timer) }
 }
 
-for (const ownerOld of [true, false]) for (const cancelOriginating of [true, false]) test(`r2: surviving ${ownerOld ? "fresh" : "retired"} flight borrows private login; originating cancellation=${cancelOriginating}`, async t => {
-  const remote = await startFakeCodeNomad({ anonymous: true })
-  const persisted: string[] = []; let rejected = 0, statuses = 0, logins = 0
-  const client = new CodeNomadServerClient(remote.origin, secret, { onSecretChanged: value => { persisted.push(value.cookie!) }, onRejected: () => { rejected++ } })
-  t.after(async () => { client.close(); await remote.close() })
-  const businessEntered = gate(), releaseBusiness = gate(), loginEntered = gate(), releaseLogin = gate()
-  remote.state.handlers.set("/api/test/barrier", (_req, res) => json(res, {}))
-  const barrier = async () => { await (await fetch(remote.origin + "/api/test/barrier")).text() }
-  remote.state.handlers.set(BUSINESS, (_req, res) => { businessEntered.resolve(); void releaseBusiness.promise.then(() => json(res, { original: true }, 401)) })
-  remote.state.handlers.set(STATUS, (_req, res) => json(res, { authenticated: ++statuses === 1 || persisted.length > 0 }))
-  remote.state.handlers.set(LOGIN, (req, res) => { req.resume(); logins++; loginEntered.resolve(); void releaseLogin.promise.then(() => { if (!res.destroyed) { res.setHeader("set-cookie", "codenomad_session=restored"); json(res, {}) } }) })
-  const oldController = new AbortController(), freshController = new AbortController()
-  const old = result(client.fetch(BUSINESS, { signal: oldController.signal }, "observe-status"))
-  await bounded(businessEntered.promise)
-  assert.deepEqual(await (await client.fetch(STATUS, {}, "observe-status")).json(), { authenticated: true })
-  let fresh: ReturnType<typeof result>
-  if (ownerOld) {
-    releaseBusiness.resolve(); await bounded(loginEntered.promise)
-    fresh = result(client.fetch(STATUS, { signal: freshController.signal }, "observe-status"))
-  } else {
-    fresh = result(client.fetch(STATUS, { signal: freshController.signal }, "observe-status"))
-    await bounded(loginEntered.promise); releaseBusiness.resolve()
-  }
-  await barrier()
-  // Two independent HTTP round trips admit the held business response's continuations.
-  await barrier()
-  assert.deepEqual([statuses, logins], [2, 1], "borrower waits on existing login rather than issuing status/login")
-  const originating = ownerOld ? old : fresh!, surviving = ownerOld ? fresh! : old
-  if (cancelOriginating) {
-    ;(ownerOld ? oldController : freshController).abort()
-    await bounded(originating)
-  }
-  releaseLogin.resolve()
-  const actual = await bounded(surviving)
-  if (!cancelOriginating) await bounded(originating)
-  const expected = ownerOld ? { status: 200, body: JSON.stringify({ authenticated: true }) } : { status: 401, body: JSON.stringify({ original: true }) }
-  assert.deepEqual(actual, expected)
-  // A cancelled fresh origin spends no final GET: initial old GET + fresh false
-  // + surviving old GET = three. With both live, the fresh final GET makes four.
-  assert.deepEqual([statuses, logins, persisted.length, rejected], [ownerOld ? 3 : cancelOriginating ? 3 : 4, 1, 1, 0], "only live flights get post-login status; exactly one cookie effect")
-})
-
 test("r2: concurrent retired observations keep old quota; old finally and release preserve replacement flight", async t => {
   const remote = await startFakeCodeNomad({ anonymous: true })
   const client = new CodeNomadServerClient(remote.origin, { kind: "session", cookie: "codenomad_session=old" })
@@ -184,17 +142,21 @@ for (const ownerOld of [true, false]) test(`r2: ${ownerOld ? "originating" : "bo
   assert.deepEqual(f.persisted, ["codenomad_session=restored"])
 })
 
-for (const ownerOld of [true, false]) test(`r2: cancelling the ${ownerOld ? "fresh" : "retired"} borrower preserves the originating private login`, async t => {
+for (const ownerOld of [true, false]) for (const cancel of ["origin", "borrower", "neither"] as const) test(`cross-flight login succeeds with ${cancel} cancelled; old origin=${ownerOld}`, async t => {
   const f = await crossFlight(t, ownerOld)
-  const borrower = ownerOld ? f.fresh : f.old
-  ;(ownerOld ? f.freshController : f.oldController).abort()
-  assert.ok("error" in await bounded(borrower), "only the cancelled borrower fails")
+  const cancelOld = cancel !== "neither" && (cancel === "origin") === ownerOld
+  const cancelFresh = cancel !== "neither" && !cancelOld
+  if (cancel !== "neither") {
+    const controller = cancelOld ? f.oldController : f.freshController
+    controller.abort()
+    assert.ok("error" in await bounded(cancelOld ? f.old : f.fresh), "only the cancelled flight fails")
+  }
   f.release()
-  const origin = await bounded(ownerOld ? f.old : f.fresh)
-  assert.deepEqual(origin, ownerOld ? { status: 401, body: JSON.stringify({ original: true }) } : { status: 200, body: JSON.stringify({ authenticated: true }) })
-  // The old origin already spent both GETs; cancelling its fresh borrower
-  // leaves no eligible final GET. A surviving fresh origin still has one.
-  assert.deepEqual(f.counts(), [ownerOld ? 2 : 3, 1, 1, 1, 0])
+  if (!cancelOld) assert.deepEqual(await bounded(f.old), { status: 401, body: JSON.stringify({ original: true }) })
+  if (!cancelFresh) assert.deepEqual(await bounded(f.fresh), { status: 200, body: JSON.stringify({ authenticated: true }) })
+  // The originating old flight already spent both GETs.
+  const statuses = 2 + Number(!cancelFresh) + Number(!ownerOld && !cancelOld)
+  assert.deepEqual(f.counts(), [statuses, 1, 1, 1, 0], "only live flights with quota get post-login status")
 })
 
 test("r2: cookie callback starves origin deadline timer; live borrower still owns login settlement", async t => {

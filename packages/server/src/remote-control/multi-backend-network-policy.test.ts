@@ -11,6 +11,7 @@ import pino from "pino"
 import { AuthManager } from "../auth/manager"
 import { RELAY_AUTHORITY_HEADER as AUTHORITY, RELAY_BOOTSTRAP } from "../codenomad-servers/relay-authority"
 import { startFakeCodeNomad } from "../codenomad-servers/test-support/fake-codenomad"
+import { EventBus } from "../events/bus"
 import { PreviewManager } from "../previews/manager"
 import { createHttpServer } from "../server/http-server"
 import { readNetworkPolicy } from "../server/network-policy"
@@ -113,7 +114,7 @@ async function fixture(t: TestContext, disabled: boolean, locked: boolean, skipA
   const server = createHttpServer({
     bindHost: policy.lockedHost ?? "0.0.0.0", bindPort: 0, defaultPort: 0, protocol: "http",
     allowedOrigins: [PUBLIC], serverMeta: meta as never,
-    workspaceManager: stub, settings: settings as never, fileSystemBrowser: stub, eventBus: stub,
+    workspaceManager: stub, settings: settings as never, fileSystemBrowser: stub, eventBus: new EventBus(),
     instanceStore: stub, speechService: stub, clientConnectionManager: stub, remoteProxySessionManager: stub,
     nativeParent: stub, authManager, previewManager, remoteControlManager: manager,
     sidecarManager: {
@@ -162,11 +163,7 @@ async function fixture(t: TestContext, disabled: boolean, locked: boolean, skipA
     retargetSidecar: (url: string) => { sidecarTarget = url; sidecar.port = Number(new URL(url).port) } }
 }
 
-for (const [method, pathname] of [
-  ["GET", `${PREFIX}/api/filesystem`],
-  ["GET", `${PREFIX}/api/memory/settings`],
-  ["POST", `${PREFIX}/preview-capabilities`],
-] as const) test(`an RC-created ordinary preview cannot rebound into ${method} ${pathname}`, async t => {
+test("an RC-created ordinary preview cannot rebound into backend browsing, memory or preview management", async t => {
   const f = await fixture(t, false, true, true)
   const created = await send(`http://${f.target}/api/previews`, {
     method: "POST", headers: { host: FAKE_TUNNEL_HOST, origin: REMOTE, cookie: f.device, "content-type": "application/json" },
@@ -175,12 +172,18 @@ for (const [method, pathname] of [
   assert.equal(created.status, 200, created.body)
   const token = JSON.parse(created.body).token
   const before = f.remote.state.requests.length
-  const response = await send(`http://${f.target}/previews/${token}${pathname}`, {
-    method, headers: { host: FAKE_TUNNEL_HOST, [AUTHORITY]: f.proof, "content-type": "application/json" },
-    body: method === "POST" ? JSON.stringify({ sessionId: "session", url: "http://app.invalid/start" }) : undefined,
-  })
-  assert.equal(response.status, 404, `${pathname}: ${response.body}`)
-  assert.equal(f.remote.state.requests.length, before, "a preview proxy must not manufacture local backend authority")
+  for (const [method, pathname] of [
+    ["GET", `${PREFIX}/api/filesystem`],
+    ["GET", `${PREFIX}/api/memory/settings`],
+    ["POST", `${PREFIX}/preview-capabilities`],
+  ] as const) {
+    const response = await send(`http://${f.target}/previews/${token}${pathname}`, {
+      method, headers: { host: FAKE_TUNNEL_HOST, [AUTHORITY]: f.proof, "content-type": "application/json" },
+      body: method === "POST" ? JSON.stringify({ sessionId: "session", url: "http://app.invalid/start" }) : undefined,
+    })
+    assert.equal(response.status, 404, `${pathname}: ${response.body}`)
+    assert.equal(f.remote.state.requests.length, before, "a preview proxy must not manufacture local backend authority")
+  }
 })
 
 async function capability(f: Awaited<ReturnType<typeof fixture>>) {
@@ -235,17 +238,17 @@ test("direct HTTPS SideCar opt-in cannot proxy an isolated remote capability ori
   assert.equal(f.remote.state.requests.length, before)
 })
 
-for (const pathname of [`${PREFIX}/api/filesystem`, `${PREFIX}/api/memory/settings`]) {
-  test(`direct HTTPS SideCar opt-in cannot rebound into ${pathname}`, async t => {
-    const f = await fixture(t, false, true, true)
+test("direct HTTPS SideCar opt-in cannot rebound into backend browsing or memory", async t => {
+  const f = await fixture(t, false, true, true)
+  const before = f.remote.state.requests.length
+  for (const pathname of [`${PREFIX}/api/filesystem`, `${PREFIX}/api/memory/settings`]) {
     f.retargetSidecar(`${f.origin}${pathname}`)
-    const before = f.remote.state.requests.length
     const response = await f.app.inject({ url: `/sidecars/fixture${pathname}`, remoteAddress: "192.0.2.20",
       headers: { host: "code.example.test", origin: PUBLIC, cookie: f.cookie, [AUTHORITY]: f.proof } })
-    assert.equal(response.statusCode, 404, response.body)
+    assert.equal(response.statusCode, 404, `${pathname}: ${response.body}`)
     assert.equal(f.remote.state.requests.length, before)
-  })
-}
+  }
+})
 
 for (const locked of [false, true]) test(`paired direct HTTPS devices retain only SideCar opt-in (locked=${locked})`, async t => {
   const f = await fixture(t, false, locked)

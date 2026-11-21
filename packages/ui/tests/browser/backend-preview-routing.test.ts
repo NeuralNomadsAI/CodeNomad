@@ -51,7 +51,9 @@ test("Markdown availability and live preview navigation follow their backend, ke
   assert.ok(calls.filter((call: any) => call.method === "POST").every((call: any) => call.body.sessionId === "session"))
 }))
 
-test("revoked metadata cannot enable links or block a new generation; missing owners never fall back to local", async () => fixturePage(async page => {
+test("preview links require current backend metadata and host permission; missing owners never fall back to local", async () => fixturePage(async page => {
+  const linkEnabled = (expected: boolean) => page.waitForFunction(enabled =>
+    document.querySelector('[data-owner="remote"] a')?.hasAttribute("data-preview-link-title") === enabled, expected)
   await page.evaluate(() => { const f = (window as any).previewRouting; f.hold("meta"); f.detach(); f.reattach() })
   await page.waitForFunction(() => (window as any).previewRouting.pending === 1)
   await page.evaluate(() => { const f = (window as any).previewRouting; f.detach(); f.reattach() })
@@ -59,22 +61,6 @@ test("revoked metadata cannot enable links or block a new generation; missing ow
   await page.evaluate(() => (window as any).previewRouting.releaseOne())
   assert.equal(await page.locator('[data-owner="remote"] a').getAttribute("data-preview-link-title"), null)
   await page.evaluate(() => (window as any).previewRouting.release())
-  await page.waitForFunction(() => document.querySelector('[data-owner="remote"] a')?.hasAttribute("data-preview-link-title"))
-  await page.locator('[data-owner="remote"] a').click()
-  await page.locator('[data-preview-instance="preview_remote~same"] iframe').waitFor()
-  await page.evaluate(() => (window as any).previewRouting.missing())
-  await page.waitForFunction(() => !document.querySelector('[data-session-id="session"] iframe')
-    && !document.querySelector('[data-owner="remote"] a')?.hasAttribute("data-preview-link-title"))
-  const calls = await page.evaluate(() => (window as any).previewRouting.calls)
-  assert.equal(calls.filter((call: any) => call.owner === "local" && call.method === "POST").length, 0)
-  assert.equal(calls.filter((call: any) => call.owner === "local" && call.url === "/api/meta").length, 2,
-    "the host snapshot and local project's attachment each have one read")
-}))
-
-test("host-level preview disablement wins over available remote metadata", async () => fixturePage(async page => {
-  const linkEnabled = (expected: boolean) => page.waitForFunction(enabled =>
-    document.querySelector('[data-owner="remote"] a')?.hasAttribute("data-preview-link-title") === enabled, expected)
-  await page.evaluate(() => { const f = (window as any).previewRouting; f.detach(); f.reattach() })
   await linkEnabled(true)
   const remoteReads = () => page.evaluate(() => (window as any).previewRouting.calls
     .filter((call: any) => call.owner === "remote" && call.url.endsWith("/api/meta")).length)
@@ -84,6 +70,17 @@ test("host-level preview disablement wins over available remote metadata", async
   await page.evaluate(() => (window as any).previewRouting.hostPreviews(false))
   await linkEnabled(true)
   assert.equal(await remoteReads(), reads)
+  await page.locator('[data-owner="remote"] a').click()
+  await page.locator('[data-preview-instance="preview_remote~same"] iframe').waitFor()
+  const localMetaReads = await page.evaluate(() => (window as any).previewRouting.calls
+    .filter((call: any) => call.owner === "local" && call.url === "/api/meta").length)
+  await page.evaluate(() => (window as any).previewRouting.missing())
+  await page.waitForFunction(() => !document.querySelector('[data-session-id="session"] iframe')
+    && !document.querySelector('[data-owner="remote"] a')?.hasAttribute("data-preview-link-title"))
+  const calls = await page.evaluate(() => (window as any).previewRouting.calls)
+  assert.equal(calls.filter((call: any) => call.owner === "local" && call.method === "POST").length, 0)
+  assert.equal(localMetaReads, 4, "host and local attachment read once, plus two explicit host refreshes")
+  assert.equal(calls.filter((call: any) => call.owner === "local" && call.url === "/api/meta").length, localMetaReads)
 }))
 
 test("a revoked pending Markdown preview never mounts a guest", async () => fixturePage(async page => {

@@ -16,12 +16,12 @@ Bu argümanları **masaüstü çalıştırılabilir dosyasından** (Tauri veya E
 
 | Argüman | Etki |
 | --- | --- |
-| `--connect-server <server>` | HTTP(S) URL’si, kayıtlı adı veya kayıtlı kimliğiyle uzak CodeNomad sunucusunu açar. [Bağlantı ve oturum açma davranışına](remote-access.md#saved-servers) bakın. |
+| `--connect-server <name-or-url>` | `multiBackend` değerinden bağımsız olarak HTTP(S) URL’si, kayıtlı ad veya kimlikle ayrı bir uzak pencere açar. [Uzak bağlantılara](remote-access.md#connect-server) bakın. |
 | `--folder <path>` | Var olan bir proje klasörünü açar. Birden çok klasör için tekrarlayın; göreli yollar başlatma çalışma klasörüne göredir. |
 | `<path> ...` | `--folder` yazmadan proje klasörlerini açar. **Windows Tauri zaten çalışıyorsa:** her klasör için `--folder` kullanın. Konumsal yolları `--folder` ile karıştırmak da tüm klasör açma isteğini düşürür. |
 | `--new-window` | Yeni başlatmanın normalde mevcut pencereyi odaklayacağı durumda bile yeni bir uygulama penceresi ister. |
 
-`--connect-server=<server>` ve `--folder=<path>` da çalışır. Boşluk içeren yol ve adları tırnak içine alın. Yalnızca uzak pencereyi açmak için klasör veya `--new-window` eklemeden `--connect-server` kullanın; bağlantı başarısız olmadıkça yerel pencereler geri yüklenmez.
+`--connect-server=<name-or-url>` ve `--folder=<path>` da çalışır. Boşluk içeren yol ve adları tırnak içine alın. Yalnızca uzak pencereyi açmak için klasör veya `--new-window` eklemeden `--connect-server` kullanın. Açık bir yerel pencere isteği işler; başlangıçta yerel pencereler yalnızca bağlantı başarısız olursa geri yüklenir.
 
 **PowerShell** içinde:
 

@@ -4,7 +4,8 @@ import { chromium } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
-for (const mode of ["control", "reader"]) for (const delivery of ["immediate", "held"]) test(`real composers retain exact local history and isolate backends; Missions ${mode} uses physical directories; history ${delivery}`, { timeout: 60000 }, async () => {
+// The Mission surface changes its own requests, not either composer's history delivery.
+for (const [mode, delivery] of [["control", "held"], ["reader", "immediate"]]) test(`real composers retain exact local history and isolate backends; Missions ${mode} uses physical directories; history ${delivery}`, { timeout: 60000 }, async () => {
   const fixture = await borrowFixture({ name: "backend-consumers", routes: [{ path: "/fixture", html:
     '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/backend-consumers.tsx"></script></body></html>' }] })
   const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
