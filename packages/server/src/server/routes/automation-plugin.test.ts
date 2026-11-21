@@ -455,6 +455,63 @@ test("the HTTP preview deadline bounds native probe slots after ownership reads"
   assert.equal(deadlines.length, 33)
 })
 
+test("browser execution stops waiting at its HTTP deadline during each ownership read", async t => {
+  const stages = ["service", "session", "ownership"] as const
+  for (const stage of stages) await t.test(stage, async t => {
+    const now = Date.now()
+    t.mock.timers.enable({ apis: ["Date", "setTimeout"], now })
+    const app = Fastify()
+    t.after(() => app.close())
+    const reads: string[] = []
+    const nativeCalls: string[] = []
+    let entered!: () => void, release!: () => void
+    const enteredRead = new Promise<void>(resolve => { entered = resolve })
+    const blockedRead = new Promise<void>(resolve => { release = resolve })
+    let completed = false
+    const read = async (name: string) => {
+      reads.push(name)
+      if (name === stage) { entered(); await blockedRead; completed = true }
+    }
+    registerAutomationPluginRoute(app, {
+      authManager: { isLoopbackRequest: () => true }, bridgeToken: "secret",
+      nativeParent: { request: async (method: string) => { nativeCalls.push(method); return {} } },
+      workspaceManager: {
+        getSharedServiceClient: async () => {
+          await read("service")
+          return { session: { get: async () => { await read("session"); return { location: { directory: "/repo" } } } } }
+        },
+        list: () => [{ id: "owner" }],
+        ownsLocation: async () => { await read("ownership"); return true },
+      },
+    } as never)
+    const execute = (deadline: number) => app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
+      headers: { "x-codenomad-automation-token": "secret" },
+      payload: { mode: "browser-execute", sessionID: "owned", command: { action: "snapshot" }, target: "document", deadline } })
+    const pending = execute(now + 1_000).then(response => response)
+    try {
+      await enteredRead
+      t.mock.timers.tick(1_000)
+      const response = await Promise.race([pending, new Promise<void>(resolve => setImmediate(resolve))])
+      assert.ok(response, "the HTTP deadline must settle before the underlying read finishes")
+      assert.equal(response.statusCode, 409)
+      assert.equal(response.json().code, "preview-expired")
+      assert.equal(completed, false)
+    } finally {
+      release()
+      await pending
+    }
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(completed, true, "the shared read can finish after its observer expires")
+    assert.deepEqual(reads, stages.slice(0, stages.indexOf(stage) + 1))
+    assert.deepEqual(nativeCalls, [], "late ownership work cannot dispatch the command")
+    reads.length = 0
+    const expired = await execute(now - 1)
+    assert.equal(expired.statusCode, 409)
+    assert.equal(expired.json().code, "preview-expired")
+    assert.deepEqual(reads, [])
+  })
+})
+
 test("a pause at the native channel cannot extend or revive an HTTP preview deadline", async t => {
   const now = Date.now()
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now })
@@ -499,14 +556,14 @@ test("a pause at the native channel cannot extend or revive an HTTP preview dead
       messages.length = 0
       const deadline = Date.now() + 1_000
       const response = await inject(payload, deadline)
-      const work = messages.filter(message => message.method !== "browser.page.end")
       if (gap < 1_000) {
         assert.equal(response.statusCode, 200, response.body)
+        const work = messages.filter(message => message.method !== "browser.page.end")
         assert.equal(work[0]?.method, method)
         assert.ok(work.every(message => message.deadline === deadline), JSON.stringify(work))
       } else {
         assert.equal(response.statusCode, method === "browser.probe" ? 503 : 409)
-        assert.deepEqual(work, [], "no expired operation is sent to the native host")
+        assert.deepEqual(messages, [], "no command or cleanup is sent for an expired operation")
       }
     })
   }

@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto"
-import type { NativeParent } from "../native-parent"
+import { NativeRequestNotSent, type NativeParent } from "../native-parent"
 import { bindRefs, performAction, snapshotPage, type PageSession } from "./page/actions"
 import type { RefAction } from "./page/parse"
 import { RefTable } from "./page/refs"
@@ -45,6 +45,7 @@ export class BrowserPage {
     stopAt: number): Promise<Record<string, unknown>> {
     const operationID = randomUUID(), deadline = Math.min(stopAt, Date.now() + OPERATION_MS)
     let failure: Error | undefined
+    let beginMayHaveReachedHost = false
     const checkDeadline = () => {
       if (Date.now() >= deadline) throw new Error("Browser operation timed out; inspect before another action")
     }
@@ -56,7 +57,10 @@ export class BrowserPage {
     }
     const request = async <T>(method: string, params: Record<string, unknown>): Promise<T> => {
       current()
+      const beginning = method === "browser.page.begin"
+      if (beginning) beginMayHaveReachedHost = true
       const result = await this.native.request<T>(method, { sessionID, operationID, ...params }, { deadline }).catch(error => {
+        if (beginning && error instanceof NativeRequestNotSent) beginMayHaveReachedHost = false
         failure = error instanceof Error ? error : new Error(String(error))
         throw failure
       })
@@ -90,7 +94,7 @@ export class BrowserPage {
     } finally {
       // Cleanup is exact, best effort and independent of cancellation/navigation. A lost
       // reply never replays the operation; the native lease also expires on its own.
-      await this.native.request("browser.page.end", { sessionID, operationID }, 5_000).catch(() => undefined)
+      if (beginMayHaveReachedHost) await this.native.request("browser.page.end", { sessionID, operationID }, 5_000).catch(() => undefined)
     }
     checkDeadline()
     return result

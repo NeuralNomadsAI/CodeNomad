@@ -24,6 +24,9 @@ interface PendingRequest {
 /** Admission was refused locally or by an explicit response from the host. */
 export class NativeRequestRefused extends Error {}
 
+/** The request was refused before it could reach the host. */
+export class NativeRequestNotSent extends NativeRequestRefused {}
+
 export class NativeParent {
   private readonly pending = new Map<string, PendingRequest>()
   private closed = false
@@ -35,9 +38,9 @@ export class NativeParent {
   ) {}
 
   request<T>(method: string, params: unknown, budget: number | { deadline: number } = DEFAULT_TIMEOUT_MS): Promise<T> {
-    if (!this.available) return Promise.reject(new NativeRequestRefused("Native control is unavailable in this host"))
-    if (this.closed) return Promise.reject(new NativeRequestRefused("Native parent is shutting down"))
-    if (this.pending.size >= MAX_PENDING) return Promise.reject(new NativeRequestRefused("Too many pending native requests"))
+    if (!this.available) return Promise.reject(new NativeRequestNotSent("Native control is unavailable in this host"))
+    if (this.closed) return Promise.reject(new NativeRequestNotSent("Native parent is shutting down"))
+    if (this.pending.size >= MAX_PENDING) return Promise.reject(new NativeRequestNotSent("Too many pending native requests"))
 
     const id = randomUUID()
     const deadline = typeof budget === "number" ? Date.now() + budget : budget.deadline
@@ -45,7 +48,7 @@ export class NativeParent {
     return new Promise<T>((resolve, reject) => {
       const line = `${NATIVE_REQUEST_PREFIX}${JSON.stringify({ v: 1, id, method, params, deadline })}\n`
       const timeoutMs = typeof budget === "number" ? budget : deadline - Date.now()
-      if (typeof budget !== "number" && timeoutMs <= 0) return reject(new NativeRequestRefused("Native request expired before execution"))
+      if (typeof budget !== "number" && timeoutMs <= 0) return reject(new NativeRequestNotSent("Native request expired before execution"))
       const expire = () => {
         this.pending.delete(id)
         reject(new Error(`Native request timed out: ${method}`))

@@ -108,6 +108,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
   app.addHook("onClose", async () => browserPage.close())
   app.post(AUTOMATION_BRIDGE_PATH, { bodyLimit: 512 * 1024 }, async (request, reply) => {
     const lifetime = requestAdmission(request, reply)
+    let executionTimer: NodeJS.Timeout | undefined
     try {
     if (!isAutomationPluginRequest(request, deps)) return reply.code(401).send({ error: "Unauthorized automation bridge" })
     const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown; purpose?: unknown
@@ -169,7 +170,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       ...(preferenceProbe ? { code: "mission-not-owner" } : browserDiscovery ? { code: "browser-not-owner" } : {}) })
     const inventoryUnavailable = () => reply.code(503).send({ code: "inventory-unavailable", error: "The preview inventory could not be verified" })
     let discoveryDeadline: number | undefined
-    let discoverySignal = lifetime.signal
+    let readSignal = lifetime.signal
     if (browserDiscovery) {
       if (body.deadline !== undefined && (typeof body.deadline !== "number" || !Number.isSafeInteger(body.deadline))) {
         return reply.code(400).send({ code: "invalid-deadline", error: "Invalid browser discovery deadline" })
@@ -180,40 +181,60 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       if (!deps.nativeParent.available || deps.nativeParent.browserAutomationUnavailable) {
         return reply.code(404).send({ code: "no-preview-host", error: "Browser automation is unavailable in this host" })
       }
-      discoverySignal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(discoveryDeadline - now)])
+      readSignal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(discoveryDeadline - now)])
+    }
+    let executionDeadline: number | undefined
+    const executionExpired = () => executionDeadline !== undefined && (readSignal.aborted || executionDeadline <= Date.now())
+    const expiredExecution = () => reply.code(409).send({ code: "preview-expired", error: "Browser command expired before execution" })
+    if (body.mode === "browser-execute") {
+      if (body.deadline !== undefined && (typeof body.deadline !== "number" || !Number.isSafeInteger(body.deadline))) {
+        return reply.code(400).send({ code: "invalid-deadline", error: "Invalid browser command deadline" })
+      }
+      const now = Date.now()
+      executionDeadline = Math.min(body.deadline ?? Infinity, now + 90_000)
+      if (executionExpired()) return expiredExecution()
+      const deadline = new AbortController()
+      readSignal = AbortSignal.any([lifetime.signal, deadline.signal])
+      executionTimer = setTimeout(() => deadline.abort(), executionDeadline - now)
     }
     const lifecycle = commandKind === "lifecycle" || commandKind === "interrupt" || commandKind === "schedule" || commandKind === "project-control"
     const signal = body.mode === "mission-input"
-      ? AbortSignal.any([lifetime.signal, AbortSignal.timeout(lifecycle ? 85_000 : 30_000)]) : discoverySignal
-    const discoveryExpired = () => discoveryDeadline !== undefined && (discoverySignal.aborted || discoveryDeadline <= Date.now())
+      ? AbortSignal.any([lifetime.signal, AbortSignal.timeout(lifecycle ? 85_000 : 30_000)]) : readSignal
+    const discoveryExpired = () => discoveryDeadline !== undefined && (readSignal.aborted || discoveryDeadline <= Date.now())
 
     let location
     try {
       signal.throwIfAborted()
-      const client = await lifetime.wait(deps.workspaceManager.getSharedServiceClient(), discoverySignal)
+      const client = await lifetime.wait(deps.workspaceManager.getSharedServiceClient(), readSignal)
+      if (executionExpired()) return expiredExecution()
       signal.throwIfAborted()
-      location = (await lifetime.wait(client.session.get({ sessionID: body.sessionID }, { signal }), discoverySignal)).location
+      location = (await lifetime.wait(client.session.get({ sessionID: body.sessionID }, { signal }), readSignal)).location
     } catch (error) {
+      if (executionExpired()) return expiredExecution()
       if (preferenceProbe && (signal.aborted || !isSessionNotFoundError(error))) return preferenceUnavailable()
       if (browserDiscovery && (discoveryExpired() || !isSessionNotFoundError(error) || error.sessionID !== body.sessionID)) return inventoryUnavailable()
       return notOwner("Session not found")
     }
+    if (executionExpired()) return expiredExecution()
     if (discoveryExpired()) return inventoryUnavailable()
     // One validated owner is sufficient. Waiting for every unrelated inventory
     // can exceed the plugin's discovery deadline despite a ready local owner.
     let owned: boolean, ownershipReadFailed = false
     try {
       const workspaces = deps.workspaceManager.list()
+      if (executionExpired()) return expiredExecution()
       owned = await lifetime.wait(Promise.any(workspaces.map(async workspace => {
         try { if (await deps.workspaceManager.ownsLocation(workspace.id, location, undefined, { signal, strict: preferenceProbe || browserDiscovery })) return true }
         catch { ownershipReadFailed = true }
         throw new Error("Not an owner")
-      })), discoverySignal).catch(() => false)
+      })), readSignal).catch(() => false)
     } catch (error) {
+      if (executionExpired()) return expiredExecution()
       if (preferenceProbe) return preferenceUnavailable()
       if (browserDiscovery) return inventoryUnavailable()
       throw error
     }
+    if (executionExpired()) return expiredExecution()
     if (preferenceProbe && (signal.aborted || !owned && ownershipReadFailed)) return preferenceUnavailable()
     if (browserDiscovery && (discoveryExpired() || !owned && ownershipReadFailed)) return inventoryUnavailable()
     if (!owned) return notOwner("Session is not owned by this CodeNomad instance")
@@ -280,32 +301,24 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         return reply.code(refusal.code === "hidden-preview" ? 404 : refusal.code === "browser-unavailable" ? 503 : 409).send(refusal)
       }
     }
-    if (body.mode === "browser-execute") {
+    if (executionDeadline !== undefined) {
       let command
       try {
         command = parseBrowserAction(body.command)
       } catch (error) {
         return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) })
       }
-      const { target: rawTarget, deadline: requestedDeadline } = body
-      const target = command.action === "open" ? undefined : rawTarget
+      const target = command.action === "open" ? undefined : body.target
       if (command.action !== "open" && !isBrowserTarget(target)) {
         return reply.code(400).send({ code: "target-required", error: "A current browser target is required" })
       }
-      if (requestedDeadline !== undefined && (typeof requestedDeadline !== "number" || !Number.isSafeInteger(requestedDeadline))) {
-        return reply.code(400).send({ code: "invalid-deadline", error: "Invalid browser command deadline" })
-      }
-      const now = Date.now()
-      const deadline = requestedDeadline === undefined ? undefined : Math.min(requestedDeadline, now + 90_000)
-      if (deadline !== undefined && deadline <= now) {
-        return reply.code(409).send({ code: "preview-expired", error: "Browser command expired before execution" })
-      }
+      if (executionExpired()) return expiredExecution()
       try {
         const result = command.action === "open" || command.action === "navigate" || command.action === "screenshot"
           ? await deps.nativeParent.request("browser.execute", { sessionID: body.sessionID, command, ...(target ? { target } : {}) },
-            deadline === undefined ? undefined : { deadline })
-          : await browserPage.execute(body.sessionID, command, lifetime.signal, target as string, deadline)
-        if (deadline !== undefined && Date.now() >= deadline) {
+            { deadline: executionDeadline })
+          : await browserPage.execute(body.sessionID, command, lifetime.signal, target as string, executionDeadline)
+        if (Date.now() >= executionDeadline) {
           return reply.code(409).send({ code: "preview-expired", error: "Browser command timed out; inspect before another action" })
         }
         return reply.send({ result })
@@ -425,6 +438,6 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       }
       return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) })
     }
-    } finally { lifetime.dispose() }
+    } finally { clearTimeout(executionTimer); lifetime.dispose() }
   })
 }
