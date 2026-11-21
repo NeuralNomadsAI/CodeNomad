@@ -43,7 +43,7 @@ UI (Solid) ──HTTP + SSE──▶ codenomad-rs ──HTTP, basic auth, loopba
 | `src/usage.rs` | Settings › Stats: the service's native aggregate and its display cache in `state.yaml` |
 | `src/provider_usage/` | Conversation Status usage: native session ownership and credential selection, a bounded provider transport and per-provider cache |
 | `src/previews/` | Preview tokens, cookie-free HTTP/WS proxy and bounded document rewriting; direct HTTP(S) relay generations, isolated loopback origins and paired-device path capabilities |
-| `src/missions/` | Missions and calendar brokering (contract under revision: unchanged here) |
+| `src/missions/` | One-time and recurring Mission HTTP admission and observation, exact receipts, family controls; the bundled OpenCode plugin owns the journal and calendar execution. |
 | `src/automation/` | Plugin bridge `/api/opencode-plugin/automation` and its `automation-bridges/` registration; browser and window requests forwarded to the desktop host; the server's own diagnostics ([design note](docs/automation.md)) |
 | `src/host/` | Desktop host channel (`CODENOMAD_NATIVE_PARENT=1`): native requests over stdout/stdin |
 | `src/shared/` | Cross-domain helpers |

@@ -49,7 +49,7 @@ The TS worktree creation with a session move stayed pending on this fixture (ove
 ## Not ported
 
 - **By decision**: Yolo, sign-out (`/api/auth/logout` and its relayed form), the remote window proxy (`remote-proxy`, `--connect-server`), the downloaded UI (`--ui-auto-update`), the release monitor, old migrations (`settings/migrate.ts`, legacy and retired installations), the dead code of the usage audit's section 2 (`GET /api/workspaces/:id/files/content`, whose `PUT` is served; `GET /api/filesystem/files/content`; `GET`/`PATCH /api/storage/config` and `/api/storage/state`), and `GET`/`PATCH /api/storage/state/:owner` for owners other than `ui` (no caller).
-- **Frozen with the Missions**: `GET`/`POST /api/opencode/login-start` (Mission calendars) and `GET /api/workspaces/:id/git-branches` (Mission editor sources).
+- **Desktop login**: `GET`/`POST /api/opencode/login-start` require the host’s OS-specific launch-at-login owner.
 - **Frozen while it is redesigned**: voice (`/api/speech/*`).
 
 ## Capabilities
