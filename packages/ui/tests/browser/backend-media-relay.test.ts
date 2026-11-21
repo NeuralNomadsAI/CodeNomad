@@ -1,15 +1,22 @@
 import assert from "node:assert/strict"
-import { test } from "node:test"
-import { chromium, type Page } from "playwright"
+import { after, before, test } from "node:test"
+import { chromium, type Browser, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
-async function fixturePage(run: (page: Page, probes: string[]) => Promise<void>, relay = true, authority = false) {
+let browser: Browser, url: string
+before(async () => {
   const fixture = await borrowFixture({ name: "backend-media-relay", routes: [{ path: "/fixture", html:
     '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/backend-media-routing.tsx"></script></body></html>' }] })
-  const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  url = fixture.url
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined, headless: true })
   armFixtureNavigationBudget(browser)
-  const page = await browser.newPage(), probes: string[] = [], errors: string[] = []
+})
+after(async () => { await browser?.close() })
+
+async function fixturePage(run: (page: Page, probes: string[]) => Promise<void>, relay = true, authority = false) {
+  const context = await browser.newContext()
+  const page = await context.newPage(), probes: string[] = [], errors: string[] = []
   try {
     page.on("pageerror", error => errors.push(error.message))
     page.on("request", request => { if (request.url().includes("media-probe.png")) probes.push(request.url()) })
@@ -20,12 +27,12 @@ async function fixturePage(run: (page: Page, probes: string[]) => Promise<void>,
       return route.fulfill({ json: {} })
     })
     await page.route("**/media-probe.png", route => route.fulfill({ status: 204 }))
-    await page.goto(fixture.url + (relay ? `?relay=1${authority ? "&authority=1" : ""}` : ""))
+    await page.goto(url + (relay ? `?relay=1${authority ? "&authority=1" : ""}` : ""))
     if (relay) await page.waitForFunction(() => !!(window as any).media && document.querySelectorAll('[data-owner="remote"] [data-consumer="html"] img, [data-owner="remote"] [data-consumer="html"] .markdown-local-image').length === 3)
     await page.waitForFunction(() => [...document.querySelectorAll<HTMLImageElement>('[data-owner="local"] img')].filter(image => image.complete && image.naturalWidth === 8).length === 3)
     await run(page, probes)
     assert.deepEqual(errors, [])
-  } finally { await page.unrouteAll({ behavior: "wait" }); await browser.close() }
+  } finally { await page.unrouteAll({ behavior: "wait" }); await context.close() }
 }
 const settle = (page: Page) => page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
 
@@ -93,31 +100,23 @@ test("relay inline images retain all seven signature checks and canonical MIME t
   assert.ok(calls.every((call: any) => call.credentials === "omit"))
 }))
 
-test("relay session media uses its owning fetch exactly once per consumer", async () => fixturePage(async page => {
-  await page.waitForFunction(() => [...document.querySelectorAll<HTMLImageElement>('[data-owner="remote"] img')]
-    .filter(image => image.src.startsWith("blob:") && image.naturalWidth === 8).length === 3)
-  const calls = await page.evaluate(() => (window as any).media.calls.map(({ url, credentials }: any) => ({ url, credentials })))
-  assert.equal(calls.length, 3)
-  assert.equal(new Set(calls.map((call: any) => call.url)).size, 3)
-  assert.ok(calls.every((call: any) => call.url.startsWith(new URL("/api/backends/lab/api/workspaces/same/session-media/", page.url()).href) && call.credentials === "include"))
-}))
-
-test("authority-bound relay session media renders through its owning transport with the proof intact", async () => fixturePage(async page => {
-  await settle(page)
-  const calls = await page.evaluate(() => (window as any).media.calls)
-  assert.equal(calls.length, 3, "all media consumers must reach the authority-bound transport")
-  for (const call of calls) {
-    const url = new URL(call.url)
-    assert.ok(url.pathname.startsWith("/api/backends/lab/api/workspaces/same/session-media/"))
-    assert.equal(url.searchParams.get("__codenomad_authority"), "a".repeat(43))
-    assert.equal(call.authority, "a".repeat(43))
-    assert.equal(call.credentials, "include")
+for (const mode of ["relay", "proof-bound relay", "direct"]) test(mode === "direct"
+  ? "remote absolute UI-origin sources outside the owner never reach any consumer (direct)"
+  : `owned session media renders but foreign UI-origin media is refused (${mode})`, async () => fixturePage(async page => {
+  if (mode !== "direct") {
+    await page.waitForFunction(() => [...document.querySelectorAll<HTMLImageElement>('[data-owner="remote"] img')]
+      .filter(image => image.src.startsWith("blob:") && image.naturalWidth === 8).length === 3)
+    const calls = await page.evaluate(() => (window as any).media.calls)
+    assert.equal(calls.length, 3)
+    assert.equal(new Set(calls.map((call: any) => call.url)).size, 3)
+    const proof = mode === "proof-bound relay" ? "a".repeat(43) : null
+    for (const call of calls) {
+      assert.ok(call.url.startsWith(new URL("/api/backends/lab/api/workspaces/same/session-media/", page.url()).href))
+      assert.equal(new URL(call.url).searchParams.get("__codenomad_authority"), proof)
+      assert.equal(call.authority, proof)
+      assert.equal(call.credentials, "include")
+    }
   }
-  await page.waitForFunction(() => [...document.querySelectorAll<HTMLImageElement>('[data-owner="remote"] img')]
-    .filter(image => image.src.startsWith("blob:") && image.naturalWidth === 8).length === 3)
-}, true, true))
-
-for (const relay of [true, false]) test(`remote absolute UI-origin sources outside the owner never reach any consumer (${relay ? "relay" : "direct"})`, async () => fixturePage(async page => {
   const requests: string[] = []
   page.on("request", request => { if (request.url().includes("/session-media/")) requests.push(request.url()) })
   await page.evaluate(() => (window as any).media.external(new URL((window as any).media.path("tool"), location.origin).href))
@@ -125,4 +124,4 @@ for (const relay of [true, false]) test(`remote absolute UI-origin sources outsi
   assert.equal(await page.locator('[data-owner="remote"] [data-consumer]:not([data-consumer="html"]) img[src]').count(), 0)
   assert.deepEqual(await page.evaluate(() => (window as any).media.calls), [])
   assert.deepEqual(requests, [])
-}, relay))
+}, mode !== "direct", mode === "proof-bound relay"))

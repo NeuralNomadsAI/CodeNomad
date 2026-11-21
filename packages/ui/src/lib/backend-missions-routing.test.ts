@@ -1,9 +1,7 @@
 import assert from "node:assert/strict"
-import { once } from "node:events"
-import { createServer } from "node:http"
 import { test, type TestContext } from "node:test"
-import { backendOf, backends, createBackendClient, type BackendClient } from "./backend-client"
-import { backendEvents } from "./backend-events"
+import { backendOf } from "./backend-client"
+import { loopbackBackend, requestWire } from "../../tests/test-support/backend"
 import type { ServerApi } from "./api-client"
 import { missionTaskPage } from "../../../server/src/missions/mission-compact-map"
 import { missionPanelPage, type MissionPanelPageRequest } from "../../../server/src/missions/mission-panel-page"
@@ -11,7 +9,6 @@ import type { MissionMap } from "../../../server/src/missions/model"
 
 type Wire = { url: string; method: string; body: string }
 type Case = Wire & { global?: boolean; refused?: boolean; call(api: ServerApi, id: string): Promise<unknown> }
-const registry = backends as Map<string, BackendClient>
 const missionID = "mis/1", scheduleID = "sch/1", passageID = "pas/1", directory = "/repo a+#é"
 const scope = { projectID: "project", current: () => true }
 const signal = new AbortController().signal
@@ -123,9 +120,7 @@ function answer(wire: Wire, owner: string): { status: number; value: unknown } {
 async function fixture(t: TestContext, id: string) {
   const requests: Wire[] = []
   let denied = false
-  const server = createServer(async (request, response) => {
-    let body = ""
-    for await (const chunk of request) body += chunk
+  const owner = await loopbackBackend(t, id, (request, response, body) => {
     const wire = { url: request.url!, method: request.method!, body }
     // Node fetch versions differ on transmitting an empty query marker.
     // The local fetch-boundary assertion below retains its exact bytes.
@@ -134,16 +129,7 @@ async function fixture(t: TestContext, id: string) {
     response.writeHead(reply.status, { "Content-Type": "application/json" })
     response.end(JSON.stringify(reply.value))
   })
-  server.listen(0, "127.0.0.1")
-  await once(server, "listening")
-  const backend = createBackendClient({ id, baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}` })
-  registry.set(id, backend)
-  const detach = backendEvents.attach(id, backend.events)
-  t.after(async () => {
-    detach(); backend.events.dispose(); registry.delete(id); server.closeAllConnections()
-    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
-  })
-  return { backend, requests, deny: () => { denied = true } }
+  return { ...owner, requests, deny: () => { denied = true } }
 }
 
 function expected(item: Case, http = false): Wire {
@@ -192,8 +178,8 @@ test("every Missions/depth HTTP family stays with its selected backend and strip
 test("local Missions/depth requests preserve the exact baseline wire, including headers and credentials", async t => {
   const wire: (Wire & { headers: [string, string][]; credentials?: RequestCredentials })[] = []
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-    const request = { url: String(input), method: init?.method ?? "GET", body: String(init?.body ?? "") }
-    wire.push({ ...request, headers: [...new Headers(init?.headers)], credentials: init?.credentials })
+    const request = { ...requestWire(input, init), body: String(init?.body ?? "") }
+    wire.push(request)
     const reply = answer(request, "local")
     return Response.json(reply.value, { status: reply.status })
   })

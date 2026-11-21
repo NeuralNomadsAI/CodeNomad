@@ -1,9 +1,8 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
 import { test, type TestContext } from "node:test"
-import ts from "typescript"
-import { backends, createBackendClient, type BackendClient } from "./backend-client"
-import { backendEvents } from "./backend-events"
+import { createBackendClient } from "./backend-client"
+import { attachBackend, requestWire } from "../../tests/test-support/backend"
+import { productionHandler } from "../../tests/test-support/production-ast"
 import { captureBackendOperation } from "./backend-operation"
 import { fetchIntegrationBinding, fetchIntegrations, installIntegration, integrationAttachmentRequest } from "./integrations-api"
 import { HttpResponseError } from "./retryable-file-search"
@@ -15,11 +14,8 @@ import { pluginSourcesStore } from "../stores/plugin-sources"
 const catalogue = { integrations: [], catalog: { state: "fresh", fetchedAt: 1 } }
 const target = (instanceId: string) => ({ instanceId, directory: "/repo dir", sessionID: "ses_1", integrationId: "fixture" })
 const flush = async () => { for (let i = 0; i < 20; i++) await new Promise<void>(done => setImmediate(done)) }
-type Wire = { url: string; method: string; body: unknown; headers: [string, string][]; credentials?: RequestCredentials; cache?: RequestCache }
-function wire(input: RequestInfo | URL, init?: RequestInit): Wire {
-  return { url: String(input), method: init?.method ?? "GET", body: init?.body,
-    headers: [...new Headers(init?.headers)], credentials: init?.credentials, cache: init?.cache }
-}
+const wire = (input: RequestInfo | URL, init?: RequestInit) => ({ ...requestWire(input, init), cache: init?.cache })
+type Wire = ReturnType<typeof wire>
 function reply(call: Wire) {
   const action = new URL(call.url, "https://local.invalid").pathname.split("/").at(-1)
   return Response.json(action === "binding" ? { state: "attached", label: "Scene" }
@@ -33,24 +29,14 @@ function fixture(t: TestContext, id: string) {
   const backend = createBackendClient({ id, baseUrl: `https://${id}.invalid/tenant`, fetcher: async (input, init) => {
     const call = wire(input, init); calls.push(call); return transport.answer(call)
   } })
-  const registry = backends as Map<string, BackendClient>
-  registry.set(id, backend)
-  let detach = backendEvents.attach(id, backend.events)
-  t.after(() => { detach(); backend.events.dispose(); registry.delete(id); integrations.clearInstance(`${id}~w/1`); integrationBindings.clearInstance(`${id}~w/1`) })
-  return { backend, calls, transport, detach: () => detach(), reattach: () => { detach = backendEvents.attach(id, backend.events) } }
+  const owner = attachBackend(t, backend)
+  t.after(() => { integrations.clearInstance(`${id}~w/1`); integrationBindings.clearInstance(`${id}~w/1`) })
+  return { ...owner, calls, transport }
 }
 
 // Execute the real component callback, retaining its await, error and release paths.
 function consumer(path: string, name: string, scope: Record<string, unknown>) {
-  const file = ts.createSourceFile(path, readFileSync(new URL(path, import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
-  let found: ts.ArrowFunction | undefined
-  function visit(node: ts.Node) {
-    if (ts.isVariableDeclaration(node) && node.name.getText(file) === name && node.initializer && ts.isArrowFunction(node.initializer)) found = node.initializer
-    ts.forEachChild(node, visit)
-  }
-  visit(file); assert.ok(found, name)
-  const code = ts.transpileModule(`(${found.getText(file)})`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText
-  return new Function("scope", `with (scope) { return ${code} }`)(scope)
+  return productionHandler(new URL(path, import.meta.url), name, scope)
 }
 function hostConsumer(id: string) {
   let pending = false
@@ -139,7 +125,7 @@ test("missing backend and HTTP errors fail closed without local fallback or succ
   let localCalls = 0
   t.mock.method(globalThis, "fetch", async () => { localCalls++; return Response.json({}) })
   const owner = fixture(t, "integrationsMissing"), id = "integrationsMissing~w/1"
-  ;(backends as Map<string, BackendClient>).delete(owner.backend.id)
+  owner.unregister()
   await assert.rejects(fetchIntegrations(id, "/repo", new AbortController().signal), /Backend unavailable/)
   assert.deepEqual(await fetchIntegrationBinding(target(id), new AbortController().signal), { state: "unknown" })
   await assert.rejects(installIntegration(id, "/repo", "fixture", "global"), /Backend unavailable/)

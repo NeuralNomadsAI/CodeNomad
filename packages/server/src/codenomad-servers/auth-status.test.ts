@@ -2,72 +2,33 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import path from "node:path"
 import os from "node:os"
-import http, { type IncomingMessage, type ServerResponse } from "node:http"
+import type { ServerResponse } from "node:http"
 import { gzipSync } from "node:zlib"
 import { test, type TestContext } from "node:test"
-import Fastify from "fastify"
-import { RemoteServerBrowseManager } from "./browse-manager"
 import { CodeNomadServerClient } from "./client"
 import { CodeNomadServerCredentials, type CodeNomadServerSecret } from "./credentials"
 import { startFakeCodeNomad } from "./test-support/fake-codenomad"
-import { registerBackendRelayRoutes } from "../server/routes/backend-relay"
-import { registerRequestLogging } from "../server/request-logging"
 import type { Logger } from "../logger"
 import { RELAY_AUTHORITY_HEADER as AUTHORITY, RELAY_BOOTSTRAP } from "./relay-authority"
 import { resolveHttpsOptions } from "../server/tls"
+import { PREFIX, bounded, deferred, open, read, relayFixture, send } from "./test-support/relay"
 
 const STATUS = "/api/auth/status", LOGIN = "/api/auth/login", BUSINESS = "/api/test/once"
 const valid = { authenticated: true, username: "codenomad", passwordUserProvided: true }
 const password: CodeNomadServerSecret = { kind: "password", username: "codenomad", password: "private-test-password", cookie: "codenomad_session=initial-private" }
-function deferred<T = void>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>(done => { resolve = done })
-  return { promise, resolve }
-}
-async function bounded<T>(promise: Promise<T>, ms = 3000): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try { return await Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("HTTP barrier timed out")), ms) })]) }
-  finally { clearTimeout(timer) }
-}
 function json(response: ServerResponse, body: unknown, code = 200) {
   response.writeHead(code, { "content-type": "application/json" }); response.end(JSON.stringify(body))
 }
-function open(origin: string, target: string, options: { method?: string; headers?: http.OutgoingHttpHeaders } = {}) {
-  const received = deferred<IncomingMessage>()
-  const request = http.request(new URL(target, origin), { method: options.method ?? "GET", agent: false,
-    headers: { origin, ...options.headers } }, response => received.resolve(response))
-  const response = Promise.race([received.promise, new Promise<never>((_, reject) => request.once("error", reject))])
-  // Cancellation before headers is an expected outcome for follower tests.
-  void response.catch(() => {})
-  return { request, response }
-}
-async function read(response: IncomingMessage) {
-  const chunks: Buffer[] = []
-  for await (const chunk of response) chunks.push(Buffer.from(chunk))
-  return { status: response.statusCode!, headers: response.headers, body: Buffer.concat(chunks).toString("utf8") }
-}
 async function fixture(t: TestContext, secret: CodeNomadServerSecret | null = password, anonymous = true) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-auth-status-"))
   // Anonymous fixture admission lets handlers independently control expired/private cookies.
   const remote = await startFakeCodeNomad({ anonymous })
   if (!anonymous) remote.state.sessions.add("initial-private")
-  const file = path.join(directory, "remote-server-credentials.json")
-  if (secret) new CodeNomadServerCredentials(file).set("saved", remote.origin, secret)
-  const profiles = [{ id: "saved", baseUrl: remote.origin, skipTlsVerify: false }]
-  const settings = { getOwner: () => ({ remoteServers: profiles }), configYamlPathForAuthority: () => path.join(directory, "config.yaml") }
-  const manager = new RemoteServerBrowseManager(settings)
-  const app = Fastify()
-  const logs: unknown[] = []
-  registerRequestLogging(app, { debug: (record: unknown) => logs.push(record), trace: (record: unknown) => logs.push(record), isLevelEnabled: () => true } as unknown as Logger)
-  let origin = ""
-  registerBackendRelayRoutes(app, { manager, getSelfOrigins: () => new Set([origin]) })
-  origin = await app.listen({ host: "127.0.0.1", port: 0 })
-  t.after(async () => { manager.close(); app.server.closeAllConnections(); await app.close(); await remote.close(); fs.rmSync(directory, { recursive: true, force: true }) })
+  const f = await relayFixture(t, { remote, secret })
   remote.state.handlers.set("/api/meta", (_req, res) => json(res, { serverId: "remote-A", apiContract: 1 }))
   remote.state.handlers.set(STATUS, (_req, res) => json(res, valid))
   remote.state.handlers.set(LOGIN, (req, res) => { req.resume(); req.on("end", () => { res.setHeader("set-cookie", "codenomad_session=renewed-private; HttpOnly; Path=/"); json(res, { ok: true }) }) })
   remote.state.handlers.set(BUSINESS, (req, res) => { req.resume(); req.on("end", () => { res.writeHead(401, { "content-type": "text/plain", "retry-after": "7" }); res.end("native-401-sentinel") }) })
-  const socket = (target: string, options: Parameters<typeof open>[2] = {}, proof?: string) => open(origin, `/api/backends/saved${target}`, { ...options, headers: { ...(proof ? { [AUTHORITY]: proof } : {}), ...options.headers } })
+  const socket = (target: string, options: Parameters<typeof open>[2] = {}, proof?: string) => open(f.origin, `${PREFIX}${target}`, { ...options, headers: { ...(proof ? { [AUTHORITY]: proof } : {}), ...options.headers } })
   const call = async (target: string, proof?: string, options: Parameters<typeof socket>[1] & { body?: string } = {}) => {
     const request = socket(target, options, proof); request.request.end(options.body)
     return bounded(request.response.then(read), 12000)
@@ -77,7 +38,7 @@ async function fixture(t: TestContext, secret: CodeNomadServerSecret | null = pa
   const proof = String(admitted.headers[AUTHORITY])
   assert.equal(/^[A-Za-z0-9_-]{43}$/.test(proof), true, "local proof format")
   const count = (route: string, method = "GET") => remote.state.requests.filter(req => req.path === route && req.method === method).length
-  const saved = () => fs.existsSync(file) ? fs.readFileSync(file, "utf8") : ""
+  const saved = () => fs.existsSync(f.file) ? fs.readFileSync(f.file, "utf8") : ""
   const live = async () => {
     let upstream!: ServerResponse
     remote.state.handlers.set("/api/events", (_req, res) => { upstream = res; res.writeHead(200, { "content-type": "text/event-stream" }); res.write("data: initial\n\n") })
@@ -96,7 +57,7 @@ async function fixture(t: TestContext, secret: CodeNomadServerSecret | null = pa
       assert.equal(await bounded(next.promise), "data: still-live\n\n")
     } }
   }
-  return { remote, manager, profiles, file, origin, proof, call, socket, count, saved, live, logs }
+  return { ...f, proof, call, socket, count, saved, live }
 }
 
 for (const kind of ["password", "anonymous", "session", "device"] as const) {
@@ -428,19 +389,9 @@ test("7: HTTPS certificate failure remains tls_error and preserves the private v
   const logger = { info() {}, warn() {}, error() {}, child() { return logger } } as unknown as Logger
   const tls = resolveHttpsOptions({ enabled: true, configDir: directory, host: "localhost", logger })!
   const remote = await startFakeCodeNomad({ anonymous: true, tls: tls.httpsOptions })
-  t.after(() => remote.close())
-  const file = path.join(directory, "remote-server-credentials.json")
-  new CodeNomadServerCredentials(file).set("tls", remote.origin, password)
-  const manager = new RemoteServerBrowseManager({ getOwner: () => ({ remoteServers: [{ id: "tls", baseUrl: remote.origin }] }), configYamlPathForAuthority: () => path.join(directory, "config.yaml") })
-  t.after(() => manager.close())
-  const app = Fastify()
-  let origin = ""
-  registerBackendRelayRoutes(app, { manager, getSelfOrigins: () => new Set([origin]) })
-  origin = await app.listen({ host: "127.0.0.1", port: 0 })
-  t.after(async () => { app.server.closeAllConnections(); await app.close() })
+  const { file, origin } = await relayFixture(t, { remote, secret: password })
   const saved = fs.readFileSync(file, "utf8")
-  const socket = open(origin, `/api/backends/tls${STATUS}`, { headers: { [AUTHORITY]: RELAY_BOOTSTRAP } }); socket.request.end()
-  const result = await bounded(socket.response.then(read))
+  const result = await send(origin, `${PREFIX}${STATUS}`, { headers: { [AUTHORITY]: RELAY_BOOTSTRAP } })
   assert.equal(result.status, 502); assert.deepEqual(JSON.parse(result.body), { error: "tls_error" })
   assert.equal(fs.readFileSync(file, "utf8") === saved, true, "TLS uncertainty preserves credentials")
   assert.equal(remote.state.requests.length, 0)

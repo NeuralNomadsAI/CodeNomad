@@ -17,13 +17,9 @@ import { PluginControlsCache } from "./plugin-controls"
 import { PluginSourcesStore } from "./plugin-sources"
 import { createShellStore } from "./shell-store"
 import { acquirePermissionReceipts, cachedPermissionReceipts, permissionReceiptKey } from "./permission-receipt-cache"
+import { deferred } from "../../tests/test-support/deferred"
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve))
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>(done => { resolve = done })
-  return { promise, resolve }
-}
 function attachment(t: TestContext, id: string) {
   let open: (() => void) | undefined
   const source: Pick<ServerEvents, "on" | "onOpen" | "onDispose" | "onTransportStatus"> = {

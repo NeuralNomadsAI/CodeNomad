@@ -34,22 +34,29 @@ for (const change of ["address", "tls"] as const) {
   })
 }
 
-test("stored identity is bound to TLS policy across manager lifetimes", async t => {
-  const remote = await startFakeCodeNomad()
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pr7-review-tls-"))
-  const profiles = [{ id: "saved", baseUrl: remote.origin, skipTlsVerify: true }]
-  const settings = { getOwner: () => ({ remoteServers: profiles }), configYamlPathForAuthority: () => path.join(dir, "config.yaml") }
-  const first = new RemoteServerBrowseManager(settings)
-  await first.connect("saved", { username: "codenomad", password: "remote-password" })
-  first.close()
-  profiles[0]!.skipTlsVerify = false
-  const next = new RemoteServerBrowseManager(settings)
-  t.after(async () => { next.close(); await remote.close(); fs.rmSync(dir, { recursive: true, force: true }) })
-  const requests = remote.state.requests.length
-  await assert.rejects(next.browse("saved", {}), { code: "needs_credentials" })
-  assert(remote.state.requests.slice(requests).every(request => !request.headers.cookie && !request.body))
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, "remote-server-credentials.json"), "utf8")), { servers: {} })
-})
+for (const action of ["browse", "failed replacement"] as const) {
+  test(`stored identity is bound to TLS policy across manager lifetimes: ${action}`, async t => {
+    const remote = await startFakeCodeNomad()
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pr7-review-tls-"))
+    const profiles = [{ id: "saved", baseUrl: remote.origin, skipTlsVerify: true }]
+    const settings = { getOwner: () => ({ remoteServers: profiles }), configYamlPathForAuthority: () => path.join(dir, "config.yaml") }
+    const first = new RemoteServerBrowseManager(settings)
+    let restarted: RemoteServerBrowseManager | undefined
+    t.after(async () => { first.close(); restarted?.close(); await remote.close(); fs.rmSync(dir, { recursive: true, force: true }) })
+    await first.connect("saved", { username: "codenomad", password: "remote-password" })
+    first.close()
+    profiles[0]!.skipTlsVerify = false
+    restarted = new RemoteServerBrowseManager(settings)
+    if (action === "browse") {
+      const requests = remote.state.requests.length
+      await assert.rejects(restarted.browse("saved", {}), { code: "needs_credentials" })
+      assert(remote.state.requests.slice(requests).every(request => !request.headers.cookie && !request.body))
+    } else {
+      await assert.rejects(restarted.connect("saved", { username: "codenomad", password: "wrong" }), { code: "auth" })
+    }
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, "remote-server-credentials.json"), "utf8")), { servers: {} })
+  })
+}
 
 test("forget revokes every listener's shared connection and credential cache", { timeout: 15_000 }, async t => {
   const remote = await startFakeCodeNomad()
@@ -69,21 +76,6 @@ test("forget revokes every listener's shared connection and credential cache", {
   const live = !chunk.done && Buffer.from(chunk.value!).toString().includes("after-forget")
   assert.equal(live, false, "forget on one listener must close the other listener stream")
   await assert.rejects(b.relay("saved", "/api/filesystem", {}), { code: "needs_credentials" })
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, "remote-server-credentials.json"), "utf8")), { servers: {} })
-})
-
-test("a failed replacement under another TLS policy cannot retain the disk identity", async t => {
-  const remote = await startFakeCodeNomad()
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pr7-review-policy-"))
-  const profiles = [{ id: "saved", baseUrl: remote.origin, skipTlsVerify: true }]
-  const settings = { getOwner: () => ({ remoteServers: profiles }), configYamlPathForAuthority: () => path.join(dir, "config.yaml") }
-  const first = new RemoteServerBrowseManager(settings)
-  await first.connect("saved", { username: "codenomad", password: "remote-password" })
-  first.close()
-  profiles[0]!.skipTlsVerify = false
-  const next = new RemoteServerBrowseManager(settings)
-  t.after(async () => { next.close(); await remote.close(); fs.rmSync(dir, { recursive: true, force: true }) })
-  await assert.rejects(next.connect("saved", { username: "codenomad", password: "wrong" }), { code: "auth" })
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, "remote-server-credentials.json"), "utf8")), { servers: {} })
 })
 

@@ -357,6 +357,7 @@ Run `node --import tsx packages/ui/tests/contracts/backend-async-inventory.ts > 
 | `components/unified-picker.tsx` | A | workspace snapshot/search; debounce/retryFileSearch; skill list | captureBackendOperation, signalForInstance, controller/request ID and selected directory/view; compatible snapshot cache owner. |
 | `components/session-list.tsx` | A+C | catalog load-all/more/reload/search debounce; delete/bulk-delete/rename; favorites demand and toggle | captureBackendOperation/current for handler continuations; catalog and favorites stores guard their own reads; durable submitted mutations; age/focus timers are DOM. |
 | `components/session/session-view.tsx` | A+C | inbox sync; send/manage queue/run Shell/abort/background/revert/fork; renamed fork → messages | captureBackendOperation/current for explicit action follow-ups; delegated inbox/message/action owners; sent mutations retain captured client. |
+| `components/session/conversation-permissions.tsx` | V+C | read and change the conversation permission mode; refresh on matching native events and reconnect | The conversation view owns its subscriptions and coalesced, abortable reads. Writes target the owning backend and conversation; only the live view publishes and reconciles their result. |
 | `components/session-picker.tsx` | P | select/new/cancel callbacks | Caller session-action/view owner; selection identity. |
 | `components/session-preview-view.tsx` | A+C+IPC | preview/history/comment target; remote dismissal | Instance/backend-owned capability and isolated source map to application addresses; same-application navigation reuses the capability, other destinations use guarded creation. Store attachment/navigation authority fences requests and retained-client cleanup; native history/locations map to logical addresses. |
 | `components/prompt-input.tsx` | A | handleSend; voice start callback; submission follow-up | captureBackendOperation/current plus delegated recording/action ownership; UI timers separate. |
@@ -456,6 +457,8 @@ Tool, Markdown and attachment images follow the [passive media contract](TRANSCR
 | Transcript/navigation/history | fetchPermissionReceipts, fetchHistoryWindow, fetchSessionOutline, fetchOutlinePreviews, querySessionHistory, queryRankedHistory, pruneSessionHistory, fetchSessionGoal | S; background queue for secondary reads |
 | Background Shell inventory | fetchBackgroundShells | S; owner backend, raw workspace boundary and public directory; secondary queue and attachment-owned watch/read lane |
 | Transcript mutations | pruneSessionMessage | C; callers fence publication with their operation |
+| Conversation permission mode read | readConversationPermissionMode | S; owning backend, conversation view cancels stale reads |
+| Conversation permission mode write | setConversationPermissionMode | C; captured backend and conversation own the write; the live view reconciles afterward |
 | Session favorites inventory | readSessionFavoritesInBackground | S; secondary queue, attachment-owned reads |
 | Session favorite writes | saveSessionFavorite | C; captured client owns the write |
 | Blank-session cleanup | cleanupSession | S+C; caller signal owns the request, backend owns guarded deletion |
