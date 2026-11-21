@@ -32,7 +32,7 @@ Si se cancela el reinicio, usa `codenomad.inspect` con `targets: true` para list
 
 Las vistas previas nativas comparten cookies, inicios de sesión y almacenamiento de sitios entre proyectos/sesiones dentro del mismo motor de escritorio y ámbito de perfil/configuración, separados del renderer de confianza de CodeNomad. Cerrar sesión en un sitio desde una vista previa afecta a las demás que usen ese almacén. Documentos, formularios, almacenamiento de sesión, historiales de navegación y vínculos de automatización pertenecen a cada sesión.
 
-Un agente abre el navegador compartido de la sesión en una pestaña que la contiene, preferiblemente la activa. La pestaña elegida permanece fija durante la apertura; cerrarla cancela esa apertura. Las acciones sobre la página se dirigen a la vista previa nativa visible de la sesión; las ocultas quedan excluidas.
+El agente abre la vista previa en la ventana local enfocada si tiene una pestaña para la sesión o, si no, en la ventana apta usada más recientemente, sin traerla al primer plano. Se da prioridad a la pestaña activa si es apta; si hay varias pestañas aptas y ninguna está activa, selecciona una e inténtalo de nuevo. Cerrar la pestaña elegida cancela la apertura. Si la vista previa ya existe en otra ventana, usa esa ventana. Las acciones sobre la página se dirigen a la vista previa nativa visible de la sesión.
 
 El agente toma una instantánea antes de interactuar con la vista previa o capturarla. Si la vista previa cambia, el comando se detiene en lugar de usar otra.
 

@@ -2,13 +2,14 @@ import { createEffect, createMemo, createSignal, For, onCleanup, type Component 
 import { Portal } from "solid-js/web"
 import { useI18n } from "../lib/i18n"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
-import { previewKey, sessionPreviews, openSessionPreview, dismissSessionPreview, showSessionChatFor, updateSessionPreviewLocation, updateSessionPreviewHistory, updateSessionPreviewViewport, cancelSessionPreviewNavigation, type SessionPreviewRecord } from "../stores/session-previews"
+import { previewKey, sessionPreviews, openSessionPreview, dismissSessionPreview, showSessionChatFor, updateSessionPreviewLocation, updateSessionPreviewHistory, updateSessionPreviewViewport, cancelSessionPreviewNavigation, settleSessionPreviewOpen, type SessionPreviewRecord } from "../stores/session-previews"
 import { BrowserFrame, type BrowserFrameElementTarget } from "./browser-frame"
 import { getPreviewFrameSource } from "./browser-frame-security"
 import { runtimeEnv } from "../lib/runtime-env"
 import { remotePreviewAddress, remotePreviewContent, remotePreviewSource } from "../lib/remote-preview-address"
 import type { RemotePreviewCapability } from "../../../server/src/api-types"
 import { beginGesture } from "../stores/session-surface"
+import { claimNativeBrowserOpen, releaseNativeBrowserOpen } from "../lib/native/browser"
 
 interface SessionPreviewViewProps {
   preview: SessionPreviewRecord
@@ -90,6 +91,7 @@ function buildCommentMarkdown(target: BrowserFrameElementTarget, comment: string
 
 const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
   const { t } = useI18n()
+  let reportedOpen: SessionPreviewRecord["nativeOpen"]
   const [commentMode, setCommentMode] = createSignal(false)
   function showNavigationError(error: unknown) {
     if (props.active === false || props.preview.owner.signal.aborted) return
@@ -122,6 +124,22 @@ const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
     <div class="window-shell flex flex-1 min-h-0 flex-col bg-surface-canvas" style={{ display: props.active === false ? "none" : "flex" }} inert={props.active === false} aria-hidden={props.active === false}>
       <BrowserFrame
         active={props.active}
+        instanceId={props.preview.capability ? undefined : props.instanceId}
+        openRequestId={props.preview.nativeOpen?.requestID}
+        onNativeRegistration={registrationId => {
+          const request = props.preview.nativeOpen
+          if (!request || request === reportedOpen || request.instanceId !== props.instanceId) return
+          reportedOpen = request
+          void (async () => {
+            const sessionID = props.preview.sessionId
+            const admitted = request.current() && await claimNativeBrowserOpen(request.requestID,
+              { kind: "target", instanceId: request.instanceId, registrationId }).catch(() => false)
+            if (!admitted || !request.current()) {
+              settleSessionPreviewOpen(sessionID, request.instanceId, request.requestID)
+              await releaseNativeBrowserOpen(request.requestID)
+            }
+          })().catch(() => {})
+        }}
         onClose={() => props.preview.capability ? dismissSessionPreview(props.preview.storageKey) : showSessionChatFor(props.preview.sessionId, props.instanceId)}
         sessionId={props.preview.sessionId}
         title={t("sessionPreview.title")}

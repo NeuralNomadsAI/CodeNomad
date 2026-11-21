@@ -10,7 +10,7 @@ installShutdownStdinHandler(process.stdin, async () => { throw new Error("Unexpe
 const [base, output] = process.argv.slice(2)
 const request = <T = unknown>(method: string, params: unknown = {}, timeout = 15_000) => parent.request<T>(method, { sessionID: "fixture-session", ...params as object }, timeout)
 const execute = async <T = {url: string}>(action: string, url?: string, timeout?: number) =>
-  request<T>("browser.execute", { command: { action, url }, ...(action === "open" ? {} : { target: await probe() }) }, timeout)
+  request<T>("browser.execute", { command: { action, url }, ...(action === "open" ? { workspaceIDs: ["fixture-tab"] } : { target: await probe() }) }, timeout)
 const probe = async () => {
   const { available, target } = await request<{ available: boolean; target: string }>("browser.probe")
   assert.equal(available, true)
@@ -28,8 +28,8 @@ async function check(name: string, run: () => Promise<void>) { await run(); chec
 try {
   assert.equal(parent.browserAutomationUnavailable, false, "native browser automation is available")
   await check("no preview", async () => { await assert.rejects(request("browser.probe"), /No visible/ ) })
-  await check("autonomous open and redirect", async () => {
-    assert.equal((await execute("open", `${base}/redirect`)).url, `${base}/ok`)
+  await check("autonomous open uses the load budget and follows the redirect", async () => {
+    assert.equal((await execute("open", `${base}/open-slow`, 30_000)).url, `${base}/ok`)
     await probe()
   })
   await check("native channel requires a target", () =>

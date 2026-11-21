@@ -32,7 +32,7 @@ Wird der Neustart abgebrochen, listen Sie die offenen Fenster mit `codenomad.ins
 
 Native Vorschauen teilen Cookies, Anmeldungen und Websitespeicher über Projekte/Sitzungen innerhalb derselben Desktop-Engine und desselben Profil-/Konfigurationsbereichs, getrennt vom vertrauenswürdigen CodeNomad-Renderer. Abmelden von einer Website in einer Vorschau betrifft andere Vorschauen desselben Speichers. Dokumente, Formulare, Sitzungsspeicher, Navigationsverläufe und Automatisierungszuordnungen gehören jeweils zur Sitzung.
 
-Ein Agent öffnet den gemeinsamen Sitzungsbrowser in einer zugehörigen Registerkarte, möglichst der aktiven. Die gewählte Registerkarte bleibt während des Öffnens fest; ihr Schließen bricht das Öffnen ab. Seitenaktionen zielen auf die sichtbare native Vorschau der Sitzung; ausgeblendete Vorschauen bleiben ausgeschlossen.
+Ein Agent öffnet die Vorschau im fokussierten lokalen Fenster mit einer Registerkarte für die Sitzung, sonst im zuletzt verwendeten geeigneten Fenster, ohne es in den Vordergrund zu holen. Hat das Fenster mehrere passende Registerkarten und ist keine davon aktiv, wählen Sie eine aus und versuchen Sie es erneut. Das Schließen der gewählten Registerkarte bricht das Öffnen ab. Ist die Vorschau bereits in einem anderen Fenster geöffnet, verwenden Sie dieses Fenster. Seitenaktionen zielen auf die sichtbare native Vorschau der Sitzung.
 
 Vor einer Aktion oder Aufnahme erstellt der Agent einen Snapshot der Vorschau. Ändert sich die Vorschau, bricht der Befehl ab, statt eine andere Vorschau zu verwenden.
 

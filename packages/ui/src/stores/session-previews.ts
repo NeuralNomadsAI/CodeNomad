@@ -22,6 +22,7 @@ interface SessionPreviewRecord extends PreviewSession {
   owner: { client: BackendClient; signal: AbortSignal }
   history: BrowserHistory
   viewport?: RestorableTabPreview["viewport"]
+  nativeOpen?: { requestID: string; instanceId: string; current: () => boolean; created?: boolean }
 }
 type StoredSessionPreview = RestorableTabPreview
 const DEFAULT_PREVIEW_URL = "http://localhost:3000"
@@ -91,6 +92,26 @@ function removeLivePreview(storageKey: string, keepalive = false) {
   if (record) return releasePreview(record.owner.client, record, keepalive)
 }
 
+export function settleSessionPreviewOpen(sessionId: string, instanceId: string, requestID: string, committedUrl?: string | null) {
+  const record = getSessionPreview(sessionId, instanceId)
+  const request = record?.nativeOpen
+  if (!record || request?.requestID !== requestID || request.instanceId !== instanceId) return
+  const confirmed = request.current() && Boolean(committedUrl)
+  const targetUrl = confirmed ? historyUrl(committedUrl) : undefined
+  if (!confirmed && request.created) {
+    if (request.current()) showSessionChatFor(sessionId, instanceId)
+    void removeLivePreview(record.storageKey)
+    return
+  }
+  const next = { ...record, nativeOpen: undefined }
+  if (targetUrl) {
+    next.targetUrl = targetUrl
+    next.history = { ...new BrowserHistoryJournal(record.history).visitUrl(targetUrl) }
+    storePreview(sessionId, instanceId, next)
+  }
+  publishPreview(next)
+}
+
 /** Retain saved logical history while releasing a remote guest's live authority. */
 export function dismissSessionPreview(storageKey: string, keepalive = false) {
   const record = sessionPreviews().get(storageKey)
@@ -133,7 +154,8 @@ async function createPreview(sessionId: string, url: string, version: PreviewOpe
   }
 }
 
-async function openSessionPreview(sessionId: string, url: string, instanceId: string, canPublish?: () => Promise<boolean>, intent?: SurfaceGesture): Promise<SessionPreviewRecord> {
+async function openSessionPreview(sessionId: string, url: string, instanceId: string, canPublish?: () => Promise<boolean>, intent?: SurfaceGesture,
+  nativeOpen?: NonNullable<SessionPreviewRecord["nativeOpen"]>): Promise<SessionPreviewRecord> {
   if (!isInstanceOccurrenceOpen(instanceId)) throw new DOMException("Preview occurrence is closed", "AbortError")
   if (!historyUrl(url)) throw new TypeError(tGlobal("sessionPreview.open.invalidUrl"))
   const storageKey = previewKey(sessionId, instanceId)
@@ -142,7 +164,8 @@ async function openSessionPreview(sessionId: string, url: string, instanceId: st
   const saved = savedPreview(sessionId, instanceId)
   try {
     if (!operation.current()) throw new DOMException("Preview navigation was superseded", "AbortError")
-    const preview = existing?.targetUrl === url && existing.owner.signal === operation.signal ? existing : await createPreview(sessionId, url, operation)
+    const preview = existing && (nativeOpen || (!existing.nativeOpen && existing.targetUrl === url)) && existing.owner.signal === operation.signal
+      ? existing : await createPreview(sessionId, url, operation)
     if (canPublish && !await canPublish().catch(() => false)) {
       if (preview !== existing) void releasePreview(operation.client, preview)
       throw new Error("Preview open request is no longer current")
@@ -151,13 +174,18 @@ async function openSessionPreview(sessionId: string, url: string, instanceId: st
       if (preview !== existing) void releasePreview(operation.client, preview)
       throw new DOMException("Preview navigation was superseded", "AbortError")
     }
-    const record: SessionPreviewRecord = preview === existing ? existing : { ...preview, sessionId, mode: "preview", storageKey, instanceId,
+    const baseHistory = existing?.history ?? (saved?.targetUrl ? parseBrowserHistory(saved.history, saved.targetUrl) : { urls: [], index: 0 })
+    let record: SessionPreviewRecord = preview === existing ? existing : { ...preview, sessionId, mode: "preview", storageKey, instanceId,
       owner: { client: operation.client, signal: operation.signal }, viewport: existing?.viewport ?? saved?.viewport,
-      history: new BrowserHistoryJournal(existing?.history ?? parseBrowserHistory(saved?.history, saved?.targetUrl ?? preview.targetUrl)).visitUrl(preview.targetUrl) }
+      history: nativeOpen ? baseHistory : new BrowserHistoryJournal(baseHistory).visitUrl(preview.targetUrl) }
+    if (nativeOpen || record.nativeOpen) record = { ...record, nativeOpen: nativeOpen && { ...nativeOpen, created: preview !== existing } }
     if (record !== existing) publishPreview(record)
-    storePreview(sessionId, instanceId, { ...record, mode: "preview" })
-    applySurface({ sessionId, instanceId }, { kind: "web", sessionId }, operation)
-    if (existing && record !== existing) void releasePreview(existing.owner.client, existing)
+    if (nativeOpen) showSessionPreview(sessionId, instanceId, operation)
+    else {
+      storePreview(sessionId, instanceId, { ...record, mode: "preview" })
+      applySurface({ sessionId, instanceId }, { kind: "web", sessionId }, operation)
+    }
+    if (existing && preview !== existing) void releasePreview(existing.owner.client, existing)
     return record
   } finally { finishOperation(storageKey, operation) }
 }
@@ -211,7 +239,7 @@ function showSessionChatFor(sessionId: string, instanceId: string) {
 function updateSessionPreviewLocation(storageKey: string, targetUrl: string) {
   const current = sessionPreviews().get(storageKey)
   const target = historyUrl(targetUrl)
-  if (!current || current.owner.signal.aborted || !target) return
+  if (!current || current.owner.signal.aborted || current.nativeOpen || !target) return
   if (current.capability && new URL(target).hostname.endsWith(".preview.localhost")) return
   setSessionPreviews(previous => new Map(previous).set(storageKey, withLiveMode({ ...current, targetUrl: target })))
   // History capture persists the committed URL and cursor together.
@@ -220,7 +248,7 @@ function updateSessionPreviewLocation(storageKey: string, targetUrl: string) {
 export function updateSessionPreviewHistory(storageKey: string, history: BrowserHistory) {
   const current = sessionPreviews().get(storageKey)
   const targetUrl = historyUrl(history.urls[history.index])
-  if (!current || current.owner.signal.aborted || !targetUrl) return
+  if (!current || current.owner.signal.aborted || current.nativeOpen || !targetUrl) return
   if (current.capability && history.urls.some(url => !historyUrl(url) || new URL(url).hostname.endsWith(".preview.localhost"))) return
   const next = withLiveMode({ ...current, targetUrl, history: parseBrowserHistory(history, targetUrl) })
   setSessionPreviews(previous => new Map(previous).set(storageKey, next))
@@ -232,7 +260,7 @@ export function updateSessionPreviewViewport(storageKey: string, viewport: NonNu
   if (!current || current.owner.signal.aborted) return
   const next = withLiveMode({ ...current, viewport })
   setSessionPreviews(previous => new Map(previous).set(storageKey, next))
-  storePreview(current.sessionId, current.instanceId, next)
+  if (!current.nativeOpen) storePreview(current.sessionId, current.instanceId, next)
 }
 
 export function cancelSessionPreviewNavigation(storageKey: string) { cancelOperation(storageKey) }

@@ -42,31 +42,73 @@ function ownerState(owner) {
   return { visible: owner.isVisible(), focused: owner.isFocused(), focusedWindow: BrowserWindow.getFocusedWindow() !== null }
 }
 app.whenReady().then(async () => {
-  const { BrowserController, BrowserPage, handleNativeBrowserRequest } = require(process.env.CODENOMAD_TEST_AUTOMATION_BUNDLE)
+  const { BrowserController, BrowserPage, handleNativeBrowserRequest, secureBrowserWebview } = require(process.env.CODENOMAD_TEST_AUTOMATION_BUNDLE)
   const window = new BrowserWindow({ show: false, width: 900, height: 700,
     webPreferences: { webviewTag: true, contextIsolation: true, nodeIntegration: false, sandbox: true } })
   let visible = true, guest
   let loaded
   const guestLoaded = new Promise(resolve => { loaded = resolve })
-  const controller = new BrowserController(() => {}, {
-    fromId: id => guest && guest.id === id ? guest : null,
+  const guests = new Map()
+  const controller = new BrowserController(() => [window.webContents], {
+    fromId: id => guests.get(id),
     fromWebContents: owner => owner === window.webContents ? {
       isDestroyed: () => window.isDestroyed(), isVisible: () => visible, isMinimized: () => false,
     } : null,
   })
+  app.on("web-contents-created", (_event, contents) => controller.guestCreated(contents))
+  window.webContents.on("will-attach-webview", (event, preferences, params) => {
+    if (!secureBrowserWebview(preferences, params, () => controller.permitOpenAttachment(window.webContents, params))) event.preventDefault()
+  })
+  let pendingOpen
   window.webContents.on("did-attach-webview", (_event, contents) => {
+    guests.set(contents.id, contents)
+    controller.observeGuest(window.webContents, contents)
+    if (pendingOpen) {
+      const { requestID, instanceId, sessionID } = pendingOpen
+      pendingOpen = undefined
+      contents.once("dom-ready", () => {
+        if (controller.permitOpenAttachment(window.webContents, { src: "about:blank", webpreferences: `codenomadOpen=${requestID}` })) {
+          controller.releaseOpen(window.webContents, requestID)
+          contents.close()
+          return
+        }
+        controller.register(window.webContents, { sessionId: sessionID, registrationId: requestID, instanceId, guestWebContentsId: contents.id })
+        if (!controller.claimOpen(window.webContents, requestID, { kind: "target", instanceId, registrationId: requestID })) contents.close()
+      })
+      return
+    }
     guest = contents
     guest.on("did-stop-loading", () => {
       if (guest.getURL() === process.env.CODENOMAD_TEST_GUEST_URL && !guest.isLoading()) loaded()
     })
-    controller.observeGuest(window.webContents, guest)
     controller.register(window.webContents, { sessionId: "fixture-session", registrationId: "fixture-guest", guestWebContentsId: guest.id })
   })
   const browser = new BrowserPage({ request: (method, params, timeout = 25000) =>
     handleNativeBrowserRequest(controller, method, params, Date.now() + timeout) })
+  const send = window.webContents.send.bind(window.webContents)
+  window.webContents.send = (channel, payload) => {
+    const { requestID, instanceId } = payload
+    if (channel === "browser-target:discover") return controller.claimOpen(window.webContents, requestID, { kind: "discover", instanceId: "fixture-tab" })
+    if (channel === "browser-target:open") {
+      controller.claimOpen(window.webContents, requestID, { kind: "claim", instanceId })
+      controller.claimOpen(window.webContents, requestID, { kind: "adopt", instanceId })
+      pendingOpen = payload
+      void window.webContents.executeJavaScript(`(() => {
+        const preview = document.createElement("webview")
+        preview.setAttribute("webpreferences", "codenomadOpen=${requestID}")
+        preview.setAttribute("partition", "persist:codenomad-browser-open-fixture")
+        preview.src = "about:blank"
+        document.body.append(preview)
+      })()`)
+      return
+    }
+    return send(channel, payload)
+  }
   globalThis.automationPreview = {
     execute: async action => browser.execute("fixture-session", action, undefined, (await controller.probe("fixture-session")).target),
     navigate: async url => controller.execute("fixture-session", { action: "navigate", url }, Infinity, (await controller.probe("fixture-session")).target),
+    open: (session, url, timeout) => handleNativeBrowserRequest(controller, "browser.execute",
+      { sessionID: session, command: { action: "open", url }, workspaceIDs: ["fixture-tab"] }, Date.now() + timeout),
     visible: value => { visible = value },
     ready: async () => {
       const deadline = performance.now() + PREPARATION_MS
@@ -78,7 +120,7 @@ app.whenReady().then(async () => {
       return { loaded: !target.isLoading(), rendered: true, before, after: ownerState(window), captures }
     },
   }
-  const html = `<html><body style="margin:0"><webview src="${process.env.CODENOMAD_TEST_GUEST_URL}" style="width:850px;height:650px;display:flex"></webview></body></html>`
+  const html = `<html><body style="margin:0"><webview partition="persist:codenomad-browser-fixture" src="${process.env.CODENOMAD_TEST_GUEST_URL}" style="width:850px;height:650px;display:flex"></webview></body></html>`
   await window.loadURL(`data:text/html,${encodeURIComponent(html)}`)
 })
 app.on("window-all-closed", () => app.quit())

@@ -48,9 +48,15 @@ export class BrowserHistoryJournal {
       this.pending = undefined
     } else if (url !== this.value.urls[this.value.index]) {
       const urls = [...this.value.urls.slice(0, this.value.index + 1), url].slice(-MAX_BROWSER_HISTORY)
+      this.ids = [...this.ids.slice(0, this.value.index + 1), undefined].slice(-MAX_BROWSER_HISTORY)
       this.value = { urls, index: urls.length - 1 }
     }
     return this.value
+  }
+
+  bindCurrent(entry: NativeBrowserHistory["entries"][number]) {
+    if (entry.url !== this.value.urls[this.value.index]) return
+    this.ids[this.value.index] = this.currentId = entry.id
   }
 
   observe(native: NativeBrowserHistory): BrowserHistory {

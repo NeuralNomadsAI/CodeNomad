@@ -19,6 +19,10 @@ typedef void (*CNRelease)(void *);
     if ([self.original respondsToSelector:_cmd]) [self.original webView:view didStartProvisionalNavigation:navigation];
     self.callback(self.context, (uint64_t)(uintptr_t)(__bridge void *)navigation, 0, view.URL.absoluteString.UTF8String, NULL);
 }
+- (void)webView:(WKWebView *)view didCommitNavigation:(WKNavigation *)navigation {
+    if ([self.original respondsToSelector:_cmd]) [self.original webView:view didCommitNavigation:navigation];
+    self.callback(self.context, (uint64_t)(uintptr_t)(__bridge void *)navigation, 3, view.URL.absoluteString.UTF8String, NULL);
+}
 - (void)webView:(WKWebView *)view didFinishNavigation:(WKNavigation *)navigation {
     if ([self.original respondsToSelector:_cmd]) [self.original webView:view didFinishNavigation:navigation];
     self.callback(self.context, (uint64_t)(uintptr_t)(__bridge void *)navigation, 1, view.URL.absoluteString.UTF8String, NULL);
@@ -53,4 +57,8 @@ uint64_t cn_navigate(void *opaque, const char *url) {
     NSURL *target = [NSURL URLWithString:[NSString stringWithUTF8String:url]];
     WKNavigation *navigation = [view loadRequest:[NSURLRequest requestWithURL:target]];
     return (uint64_t)(uintptr_t)(__bridge void *)navigation;
+}
+
+void cn_stop_navigation(void *opaque) {
+    [(__bridge WKWebView *)opaque stopLoading];
 }

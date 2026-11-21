@@ -12,8 +12,19 @@ import { _electron, type ElectronApplication } from "playwright"
 test("the shared engine drives a real Electron preview through the guarded native channel, without a visible window", { timeout: 90_000 }, async t => {
   const profile = await mkdtemp(path.join(os.tmpdir(), "codenomad-preview-engine-"))
   let app: ElectronApplication | undefined
+  let cancelObserved!: () => void
+  const cancelled = new Promise<void>(resolve => { cancelObserved = resolve })
   const server = createServer((request, response) => {
     response.setHeader("Content-Type", "text/html")
+    if (request.url === "/open-slow") {
+      const timer = setTimeout(() => response.writeHead(302, { Location: "/open-complete" }).end(), 11_000)
+      response.on("close", () => clearTimeout(timer))
+      return
+    }
+    if (request.url === "/open-stall") {
+      response.on("close", cancelObserved)
+      return
+    }
     // Transparent content is not contentful: first contentful paint follows the reveal, and Chromium
     // drops key and click input until then (or its 500 ms commit-deferral limit).
     if (request.url === "/late") return response.end(`<!doctype html><body style="opacity:0"><input autofocus><output id="late">Waiting</output>
@@ -61,6 +72,15 @@ test("the shared engine drives a real Electron preview through the guarded nativ
   assert.deepEqual(prepared, { loaded: true, rendered: true, before: hiddenOwner, after: hiddenOwner },
     "the guest renders before any input while its window stays hidden and unfocused")
   assert.ok(captures >= 1)
+  const open = (session: string, url: string, timeout: number) => running.evaluate(
+    (_electron, args) => (globalThis as any).automationPreview.open(...args), [session, url, timeout] as const)
+  const slowUrl = `${guestURL}open-slow`
+  assert.deepEqual(await open("slow-session", slowUrl, 30_000), { url: `${guestURL}open-complete` })
+  await assert.rejects(open("stalled-session", `${guestURL}open-stall`, 2500), /expired|timed out/)
+  let wait: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([cancelled, new Promise<never>((_, reject) => { wait = setTimeout(() => reject(new Error("Expired load remained connected")), 1200) })])
+  } finally { clearTimeout(wait) }
   assert.equal((await execute({ action: "wait", text: "Title", gone: false, timeout: 15000 })).found, true,
     "the actual guest document is loaded before taking accessibility refs")
   const outline = String((await execute({ action: "snapshot" })).snapshot)

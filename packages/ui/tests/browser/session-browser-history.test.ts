@@ -1045,6 +1045,28 @@ for (const navigation of ["address", "prop"]) {
   })
 }
 
+test("native preview saves the redirected receipt after registration without reissuing the navigation", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
+  try {
+    await prepare(page, "tauri")
+    const requested = `${base}/page/requested`, committed = `${base}/page/redirected`
+    await page.evaluate(async url => { await (window as any).fixture.openNativePreview("exact", url) }, requested)
+    await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_claim_open"))
+    const registration = await page.evaluate(() => (window as any).fixture.native.calls.find((call: any) => call.command === "browser_target_claim_open").response.registrationId)
+    const navigate = (url: string) => page.evaluate(({ registration, url }) => (window as any).fixture.native.navigate(registration, url), { registration, url })
+    await navigate(committed)
+    assert.equal(await page.evaluate(() => (window as any).fixture.savedPreview("session").targetUrl), undefined)
+    await page.evaluate(url => (window as any).fixture.settleNativePreview("exact", url), committed)
+    await page.waitForFunction(url => (window as any).fixture.savedPreview("session").targetUrl === url, committed)
+    assert.deepEqual((await preview(page, "session")).history, { urls: [committed], index: 0 })
+    assert.equal(await page.evaluate(() => (window as any).fixture.native.calls.some((call: any) => call.payload?.action === "navigate")), false)
+    const next = `${base}/page/next`
+    await navigate(next)
+    await page.waitForFunction(url => (window as any).fixture.savedPreview("session").targetUrl === url, next)
+    assert.deepEqual((await preview(page, "session")).history, { urls: [committed, next], index: 1 })
+  } finally { await page.close() }
+})
+
 test("Tauri retains hidden native registrations and restores the correct session target", async () => {
   const page = await browser.newPage({ userAgent: "Windows fixture", viewport: { width: 1200, height: 900 } })
   const errors: string[] = []
