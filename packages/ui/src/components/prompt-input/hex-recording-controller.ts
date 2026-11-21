@@ -46,9 +46,9 @@ export function createHexRecordingController(
   async function poll(owner: string) {
     const result = await send("status", { id: owner })
     if (!current()) return
-    if (!result.ok) { failure(result.error === "permissionDenied"); return }
+    if (!result.ok) { failure(); return }
     switch (result.value.state) {
-      case "error": failure(result.value.error === "permissionDenied"); return
+      case "error": failure(); return
       case "transcribed":
         callbacks.onTranscript(result.value.text.trim())
         settle()
@@ -67,7 +67,7 @@ export function createHexRecordingController(
     void recording.finish().then(blobToBase64).then(async wav => {
       if (!current()) return
       const result = await send("finish", { id: owner, wav })
-      if (!result.ok) failure(result.error === "permissionDenied")
+      if (!result.ok) failure()
     }).catch(() => failure())
   }
 
@@ -84,7 +84,7 @@ export function createHexRecordingController(
         lease = await claim("dictation", lifetime.signal)
         if (!current()) return
         const result = await send("start", { engine: "hex", locale, microphoneLeaseId: lease.id })
-        if (!result.ok) { failure(result.error === "permissionDenied"); return }
+        if (!result.ok) { failure(); return }
         id = result.value.id
         if (!current()) { nativeCancellation = send("cancel", { id }); return }
         void poll(id)

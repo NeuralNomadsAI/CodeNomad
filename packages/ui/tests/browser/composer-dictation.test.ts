@@ -78,7 +78,7 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
                   if (request.planId !== settings.token) return { ok: false, error: "planChanged" }
                   if (settings.defer) await new Promise<void>(resolve => { settings.acknowledge = resolve })
                   return { ok: true, value: { id: "00000000-0000-4000-8000-000000000001" } }
-                case "start": return { ok: false, error: "permissionDenied" }
+                case "start": return { ok: false, error: "failed" }
                 case "status": return settings.phase.state === "forgotten"
                   ? { ok: false, error: "notOwned" } : { ok: true, value: settings.phase }
                 case "cancel":
@@ -599,7 +599,7 @@ test("Hex captures on the local host and inserts its transcript into a WSL draft
   assert.deepEqual(capture.requests, [])
 }, false, "wsl", true))
 
-test("an unsupported saved system engine requires an explicit change and is not offered again", () => withComposer(async page => {
+test("an unsupported saved engine requires explicit reselection before recording", () => withComposer(async page => {
   const more = page.getByRole("button", { name: "More actions", exact: true })
   await more.click()
   const dictate = page.locator('[data-action-key="voice"]')
@@ -616,7 +616,7 @@ test("an unsupported saved system engine requires an explicit change and is not 
   assert.equal(await engine.inputValue(), "api")
 }, false, "hex-setup", false, "en", false, false, { unsupportedChoice: true }))
 
-test("an unsupported remote system choice opens Dictation settings without starting a capture", () => withComposer(async page => {
+test("an unsupported choice in a remote window opens Dictation settings without capture", () => withComposer(async page => {
   await page.getByRole("button", { name: "More actions", exact: true }).click()
   const dictate = page.getByRole("menuitem").filter({ hasText: chooseLocalEngine })
   await dictate.click()

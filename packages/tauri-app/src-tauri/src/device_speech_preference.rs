@@ -19,12 +19,8 @@ pub(super) struct Preference {
 }
 
 fn read_engine<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Engine>, D::Error> {
-    match String::deserialize(d)?.as_str() {
-        "api" => Ok(Some(Engine::Api)),
-        "hex" => Ok(Some(Engine::Hex)),
-        "system" => Ok(None),
-        _ => Err(serde::de::Error::custom("invalid speech engine")),
-    }
+    let value = String::deserialize(d)?;
+    Ok(Engine::deserialize(serde::de::value::StrDeserializer::<D::Error>::new(&value)).ok())
 }
 
 #[derive(Clone)]

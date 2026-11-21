@@ -110,11 +110,11 @@ fn fixture_with_hex_ready(
 }
 
 #[test]
-fn saved_system_choice_requires_explicit_reselection() {
+fn unsupported_saved_engine_requires_explicit_reselection() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("choice.json");
     let device = DeviceSpeech::new(path.clone(), None);
-    let saved = json!({"version": 1, "engine": "system", "revision": Uuid::new_v4().to_string()})
+    let saved = json!({"version": 1, "engine": "unsupported", "revision": Uuid::new_v4().to_string()})
         .to_string();
     fs::write(&path, &saved).unwrap();
     let read = device.request("local", Request::Read {}).unwrap();

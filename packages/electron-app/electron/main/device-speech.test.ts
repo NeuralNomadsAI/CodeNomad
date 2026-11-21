@@ -88,9 +88,9 @@ test("device speech parses the shared native wire vectors", () => {
   for (const { request, valid } of vectors) assert.equal(isDeviceSpeechRequest(request), valid, JSON.stringify(request))
 })
 
-test("a saved system choice blocks native capture and is preserved until explicit reselection", t => {
+test("an unsupported saved engine blocks native capture until explicit reselection", t => {
   const { device, preference, path } = fixture(t)
-  const saved = JSON.stringify({ version: 1, engine: "system", revision: "c2d420ea-2677-4dbd-a521-92435a6ba004" })
+  const saved = JSON.stringify({ version: 1, engine: "unsupported", revision: "c2d420ea-2677-4dbd-a521-92435a6ba004" })
   writeFileSync(path, saved)
   assert.deepEqual(device.request(1, { action: "read" }), { ok: true, value: {
     engine: null, hex: { state: "unavailable" },

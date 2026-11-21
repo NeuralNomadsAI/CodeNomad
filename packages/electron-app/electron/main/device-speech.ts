@@ -44,11 +44,11 @@ export class DeviceSpeechPreference {
       const size = readSync(fd, buffer, 0, buffer.length, null)
       if (size === buffer.length) throw new Error("Speech preference is oversized")
       const value = JSON.parse(buffer.toString("utf8", 0, size))
-      if (value?.version !== 1 || (value.engine !== "system" && !isSpeechEngine(value.engine)) ||
+      if (value?.version !== 1 || typeof value.engine !== "string" ||
           typeof value.revision !== "string" || !/^[a-f0-9-]{36}$/.test(value.revision)) {
         throw new Error("Invalid speech preference")
       }
-      return { engine: value.engine === "system" ? null : value.engine, revision: value.revision }
+      return { engine: isSpeechEngine(value.engine) ? value.engine : null, revision: value.revision }
     } finally { closeSync(fd) }
   }
 

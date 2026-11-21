@@ -22,7 +22,7 @@ export interface DeviceSpeechSnapshot extends DeviceSpeechCapabilities {
   engine: SpeechEngine | null
 }
 export type DeviceSpeechError =
-  | "unavailable" | "busy" | "notOwned" | "planChanged" | "permissionDenied" | "failed"
+  | "unavailable" | "busy" | "notOwned" | "planChanged" | "failed"
 
 export const maxDeviceSpeechTextBytes = 64 * 1024
 
