@@ -12,7 +12,7 @@ export class DeveloperInspectionTargets {
 
   begin(sessionId: string, order?: { source: string; sequence: number }): ((identity: DeveloperCdpIdentity) => string | undefined) | undefined {
     const previous = this.targets.get(sessionId)
-    if (order && previous?.order?.source === order.source && previous.order.sequence >= order.sequence) return undefined
+    if (order && previous?.order?.source === order.source && previous.order.sequence > order.sequence) return undefined
     const entry = { identity: previous?.identity, issued: previous?.issued ?? new Map<string, DeveloperCdpIdentity>(),
       order: order ?? previous?.order }
     this.targets.delete(sessionId)

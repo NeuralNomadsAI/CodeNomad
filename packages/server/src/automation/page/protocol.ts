@@ -49,7 +49,7 @@ export class PageDriverUnsupportedError extends Error {
   readonly code = "unsupported"
   constructor(readonly driver: DriverKind, readonly operation: string) { super(`${driver} page driver does not support ${operation}`) }
 }
-export interface PageSession { driver: PageDriver; checkpoint(): Promise<void>; markAutomation: boolean }
+export interface PageSession { driver: PageDriver; checkpoint(): Promise<void>; beforeInput?(): Promise<void>; markAutomation: boolean }
 export class Handle { constructor(readonly objectId: string) {} }
 export function gone(ref: string): Error { return new Error(`${ref} is no longer in the page; inspect again`) }
 
@@ -101,21 +101,24 @@ async function sendInput(session: PageSession, kind: InputKind, params: Record<s
     case "insert-text": return session.driver.insertText(params.text as string)
   }
 }
-export class PageTargetChangedError extends Error {}
+export class PageTargetChangedError extends Error {
+  constructor(message: string, readonly sameDocument = false) { super(message) }
+}
 
 /** Provenance marking belongs only to the trusted application window. */
 export async function markedInput<T>(session: PageSession, run: (dispatch: (kind: InputKind, params: Record<string, unknown>) => Promise<void>) => Promise<T>): Promise<T> {
   const held = new Map<string, { kind: InputKind; params: Record<string, unknown> }>()
   let point = { x: 0, y: 0 }
   let attempted = false
-  let targetLost = false
+  let targetLost: PageTargetChangedError | undefined
   const dispatch = async (kind: InputKind, params: Record<string, unknown>) => {
     let timestamp: number | undefined
     if (session.markAutomation) {
       const stamp = (await session.driver.call("mark-input", undefined, [])).value
       if (typeof stamp !== "number" || !Number.isFinite(stamp) || stamp <= 0) throw new Error("Cannot establish automation input provenance")
       timestamp = stamp
-      await session.checkpoint()
+      if (session.beforeInput) await session.beforeInput()
+      else await session.checkpoint()
     }
     const mouse = kind === "pointer" || kind === "wheel"
     if (mouse && typeof params.x === "number" && typeof params.y === "number") point = { x: params.x, y: params.y }
@@ -132,7 +135,7 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (kind
   await awaitInputAcceptance(session)
   try { return await run(dispatch) }
   catch (error) {
-    targetLost = error instanceof PageTargetChangedError
+    if (error instanceof PageTargetChangedError) targetLost = error
     if (attempted && error instanceof Error && /timed out|timeout/i.test(error.message)) throw new Error("Input timed out: its outcome is unknown. The page was busy and the input may still be delivered; inspect before retrying.")
     throw error
   } finally {
@@ -143,7 +146,9 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (kind
         await sendInput(session, release.kind, { ...params, ...(release.kind === "pointer" ? point : {}) })
       } catch { /* Exact original driver, best effort; never replay a press. */ }
     }
-    if (session.markAutomation && !targetLost) await session.driver.call("unmark-input", undefined, []).catch(() => undefined)
+    if (session.markAutomation && (!targetLost || targetLost.sameDocument)) {
+      await session.driver.call("unmark-input", undefined, []).catch(() => undefined)
+    }
   }
 }
 async function awaitInputAcceptance(session: PageSession): Promise<void> {

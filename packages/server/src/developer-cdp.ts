@@ -186,9 +186,12 @@ export class DeveloperCdp {
       const state = await this.ensure(identity)
       const epoch = state.navigationEpoch, generation = this.generation(state)
       const page = bindRefs(action, ref => state.refs.resolve(ref, generation))
-      const foreground = (action.action === "press" || action.action === "scroll") && !action.ref || action.action === "wait"
-        ? state.context : undefined
-      return performAction(this.session(state, epoch, "Page changed during action; inspect again", foreground), page)
+      const refFree = (action.action === "press" || action.action === "scroll") && !action.ref || action.action === "wait"
+      const foreground = state.context
+      const message = "Page changed during action; inspect again"
+      const session = this.session(state, epoch, message, refFree ? foreground : undefined)
+      if (!refFree) session.beforeInput = () => this.assertContextCurrent(state, epoch, message, foreground)
+      return performAction(session, page)
     })
   }
 
@@ -486,7 +489,7 @@ export class DeveloperCdp {
       throw new PageTargetChangedError(message)
     }
     if (foreground && (context.tabId !== foreground.tabId || context.instanceId !== foreground.instanceId
-      || context.sessionId !== foreground.sessionId)) throw new PageTargetChangedError("The active tab changed during the action; inspect again")
+      || context.sessionId !== foreground.sessionId)) throw new PageTargetChangedError("The active tab changed during the action; inspect again", true)
     state.context = context
   }
 
