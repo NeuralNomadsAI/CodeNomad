@@ -1818,6 +1818,11 @@ fn resolve_launch_profile_or_exit(
     })
 }
 
+fn app_context<R: tauri::Runtime>() -> tauri::Context<R> {
+    // On macOS this macro emits a fixed symbol for the embedded Info.plist.
+    tauri::generate_context!()
+}
+
 fn main() {
     #[cfg(windows)]
     if let Some(code) = cli_manager::run_windows_cli_launcher_if_requested() {
@@ -1896,7 +1901,7 @@ fn main() {
         .on_navigation(|webview, url| intercept_navigation(webview, url))
         .build();
 
-    let mut context = tauri::generate_context!();
+    let mut context = app_context();
     context.config_mut().identifier = scope.identifier.clone();
     let setup_scope = scope.clone();
     let setup_queue = Arc::clone(&launch_queue);
