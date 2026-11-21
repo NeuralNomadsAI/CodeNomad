@@ -5,7 +5,7 @@
 //! declared actors natively and pages the result with the panel transport.
 mod context;
 mod family;
-mod native;
+pub(super) mod native;
 pub mod ojson;
 mod project;
 

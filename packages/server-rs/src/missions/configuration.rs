@@ -12,7 +12,7 @@ const CALENDAR_LIMIT: usize = 8;
 pub const CONFIGURATION_MAX_BYTES: usize = 64 * 1024;
 pub(super) const TEMPLATES: [&str; 5] = ["custom", "debug", "wayfinder", "delivery", "compare"];
 
-fn template_roles(template: &str) -> &'static [&'static str] {
+pub(super) fn template_roles(template: &str) -> &'static [&'static str] {
     match template {
         "custom" => &["specialist"],
         "debug" => &["review-standards", "review-spec", "validator", "diagnostician", "implementer", "resolver"],
