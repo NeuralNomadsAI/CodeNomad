@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from "node:crypto"
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto"
 import { execFile, spawn } from "node:child_process"
 import { mkdir, open, opendir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
 import http from "node:http"
@@ -17,7 +17,8 @@ import { MemoryError } from "../memory/model"
 import type { MemoryErrorCode } from "../memory/model"
 import type { MemoryOperation, MemoryResult } from "../memory/api"
 import { formatDeveloperTarget, parseDeveloperTarget } from "../automation/developer-target-selector"
-import { randomUUID } from "node:crypto"
+import { isRestartSuccessor, readDeveloperTarget,
+  type DeveloperRestart } from "../automation/developer-restart"
 
 export const AUTOMATION_BRIDGE_PATH = "/api/opencode-plugin/automation"
 const REQUEST_TIMEOUT_MS = 95_000
@@ -70,6 +71,9 @@ interface BridgeResponse {
   error?: string
   code?: unknown
   titles?: string[]
+  developerTarget?: unknown
+  restartId?: unknown
+  windowState?: unknown
 }
 
 interface ProbedBridge {
@@ -461,7 +465,8 @@ async function callBridge(
   signal?.throwIfAborted()
   const browser = body.mode === "browser-execute" || body.mode === "browser-probe"
     || body.mode === "browser-claim" && body.purpose === undefined
-  if (registration[WINDOWS_INTEROP]) return callWindowsBridge(registration, body, timeoutMs, signal, browser)
+  const rejectRedirects = browser || body.mode === "developer-restart" || body.mode === "developer-reconnect"
+  if (registration[WINDOWS_INTEROP]) return callWindowsBridge(registration, body, timeoutMs, signal, rejectRedirects)
   const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)
   if (browser) return callLocalBrowserBridge(registration, body, requestSignal)
   const response = await fetch(registration.url, {
@@ -469,6 +474,7 @@ async function callBridge(
     headers: { "content-type": "application/json", "x-codenomad-automation-token": registration.token },
     body: JSON.stringify(body),
     signal: requestSignal,
+    redirect: rejectRedirects ? "error" : "follow",
   })
   const contentLength = Number(response.headers.get("content-length"))
   if (Number.isFinite(contentLength) && contentLength > MAX_BRIDGE_RESPONSE_BYTES) {
@@ -686,7 +692,7 @@ async function probeBridges(
       if (value && (options.accept?.(value) ?? true)) found.push(value)
     }
   }
-  return found.slice(0, limit)
+  return found
 }
 
 async function probeMissionBridges(
@@ -1012,9 +1018,9 @@ async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
     if (!target.windowId) throw targetError("target-gone", "The selected window is unavailable; list the targets again")
     select = windowSelector(target, target.windowId, target.windowInstance)
   }
-  const existingTokens = command.action === "restart"
-    ? new Set((await registrations()).map((registration) => registration.token))
-    : undefined
+  if (command.action === "restart") {
+    return restartDesktop(inspectedTargets, sessionID, target, options.order!, options.isCurrent!, options.publish!)
+  }
   if (options.isCurrent && !options.isCurrent()) throw targetError("stale-inspection", "A newer inspection selected the window")
   const response = await callBridge(target.registration, { mode: "developer-execute", sessionID, command,
     ...(select ? { target: select } : target.pin ? { pin: target.pin } : {}), ...(options.order ? { order: options.order } : {}) },
@@ -1028,10 +1034,6 @@ async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
   if (response.status !== 200) {
     const message = response.body.error || `Native automation failed (${response.status})`
     throw typeof response.body.code === "string" ? targetError(response.body.code, message) : new Error(message)
-  }
-  if (command.action === "restart") {
-    return waitForRestart(sessionID, target.nativeIdentity, target.runId, target.windowId, existingTokens!,
-      options.order!, options.isCurrent!, options.publish!)
   }
   if (options.publish) {
     const inspected = inspectedBridge(select ? { ...target, ...parseDeveloperTarget(select) } : target, response.body.result)
@@ -1048,59 +1050,78 @@ function inspectedBridge(target: ProbedBridge, result: unknown): ProbedBridge | 
   return { ...target, pin: typeof pin === "string" && pin ? pin : undefined }
 }
 
+async function restartDesktop(inspectedTargets: Map<string, ProbedBridge>, sessionID: string, pinned: ProbedBridge,
+  order: string, isCurrent: () => boolean, publish: (target: ProbedBridge) => boolean) {
+  const target = readDeveloperTarget(pinned)
+  if (!target || !pinned.pin) throw new Error("Restart requires a fresh inspection and matching desktop automation version")
+  const existingTokens = new Set((await registrations()).map(({ token }) => token))
+  existingTokens.add(pinned.registration.token)
+  if (!isCurrent()) throw targetError("stale-inspection", "A newer inspection selected the window")
+  inspectedTargets.delete(sessionID)
+  const expected = { ...target, restartId: randomUUID() }
+  const reconnect = () => waitForRestart(sessionID, expected, existingTokens, order, isCurrent, publish)
+  let response
+  try {
+    response = await callBridge(pinned.registration, { mode: "developer-restart", sessionID, command: expected, pin: pinned.pin }, REQUEST_TIMEOUT_MS)
+  } catch (error) {
+    if (isConnectionRefused(error)) throw targetError("target-gone", "The selected backend has closed; list the targets again")
+    // Admission can close the reply channel. Read the successor; never send the command again.
+    return reconnect()
+  }
+  // Only the successor can confirm the restart, even if its predecessor acknowledged it.
+  if (response.status === 200 || response.status === 502 && response.body?.code === "restart-outcome-unknown") return reconnect()
+  const message = response.body?.error || `Native restart failed (${response.status})`
+  throw typeof response.body?.code === "string" ? targetError(response.body.code, message) : new Error(message)
+}
+
 async function waitForRestart(
   sessionID: string,
-  nativeIdentity: string,
-  previousRunId: string,
-  windowId: string | undefined,
+  expected: DeveloperRestart,
   existingTokens: ReadonlySet<string>,
   order: string,
   isCurrent: () => boolean,
   publish: (target: ProbedBridge) => boolean,
 ) {
   const deadline = Date.now() + REQUEST_TIMEOUT_MS
+  const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+  const current = () => !signal.aborted && Date.now() < deadline
   let reconnected = false
-  while (Date.now() < deadline) {
-    const active = await registrations()
-    const candidates = await probeBridges(
-      active.filter((registration) => !existingTokens.has(registration.token)),
-      sessionID,
-      {
-        limit: 2,
-        inventory: true,
-        accept: (candidate) => candidate.nativeIdentity === nativeIdentity && candidate.runId !== previousRunId,
-      },
-    )
-    if (candidates.length > 1) throw targetError("ambiguous-target", "Several backends claimed the restarted desktop scope")
-    for (const candidate of candidates) {
-      reconnected = true
-      const restored = candidate.windows?.find(window => window.windowId === windowId)
-      if (!restored) continue
-      if (!isCurrent()) return { content: "CodeNomad restarted; the newer window selection was kept." }
-      try {
-        const inspection = await callBridge(candidate.registration, {
-          mode: "developer-execute",
-          sessionID,
-          command: { action: "inspect" },
-          target: windowSelector(candidate, restored.windowId, restored.windowInstance),
-          order,
-        }, INSPECTION_TIMEOUT_MS)
-        const inspected = inspection.status === 200
-          && inspectedBridge({ ...candidate, windowId: restored.windowId, windowInstance: restored.windowInstance }, inspection.body.result)
-        if (inspected) {
-          if (!publish(inspected)) {
-            return { content: "CodeNomad restarted; the newer window selection was kept." }
-          }
-          return formatBridgeResult(inspection.body.result)
+  const superseded = { content: "CodeNomad restarted; the original inspection was not restored. Inspect again." }
+  while (current()) {
+    const active = (await registrations({}, signal).catch(() => [])).filter(({ token }) => !existingTokens.has(token))
+    for (let index = 0; index < active.length && current(); index += PROBE_CONCURRENCY) {
+      const batch = await Promise.allSettled(active.slice(index, index + PROBE_CONCURRENCY).map(async registration => ({
+        registration,
+        response: await callBridge(registration, { mode: "developer-reconnect", sessionID, command: expected, order,
+          ...(!isCurrent() ? { purpose: "confirm" } : {}) },
+          INSPECTION_TIMEOUT_MS, signal),
+      })))
+      for (const candidate of batch) {
+        if (!current()) break
+        if (candidate.status !== "fulfilled") continue
+        const { registration, response } = candidate.value
+        if (response.status !== 200 || !response.body || typeof response.body !== "object") continue
+        const target = readDeveloperTarget(response.body.developerTarget)
+        if (!target || !isRestartSuccessor(expected, target, response.body.restartId)) continue
+        reconnected = true
+        if (response.body.windowState === "superseded" || !isCurrent()) return superseded
+        if (response.body.windowState === "missing") {
+          return { content: "CodeNomad restarted, but the inspected window was not restored." }
         }
-      } catch {
-        // The desktop backend and renderer become ready at different points during relaunch.
+        const inspected = inspectedBridge({ registration, ...target }, response.body.result)
+        if (response.body.windowState === "inspected" && inspected?.pin && (!expected.windowInstance || target.windowInstance)) {
+          let formatted
+          try { formatted = formatBridgeResult(response.body.result) } catch { continue }
+          if (!current()) break
+          if (!publish(inspected)) return superseded
+          return formatted
+        }
       }
     }
     await new Promise((resolve) => setTimeout(resolve, Math.min(RECONNECT_INTERVAL_MS, Math.max(0, deadline - Date.now()))))
   }
   if (reconnected) return { content: "CodeNomad restarted, but the inspected window could not be inspected again." }
-  throw new Error("CodeNomad did not reconnect to the persistent OpenCode session after restart")
+  throw new Error("CodeNomad restart could not be confirmed. Inspect again before retrying.")
 }
 
 export function createDeveloperToolTransform() {
@@ -1109,6 +1130,9 @@ export function createDeveloperToolTransform() {
   const source = randomUUID()
   let sequence = 0
   const selectWindow = async (session: string, command: DeveloperAction, selector?: string) => {
+    if (command.action === "restart" && !inspectedTargets.get(session)?.pin) {
+      throw targetError("inspect-required", "Run codenomad.inspect before restarting CodeNomad")
+    }
     const issued = Symbol()
     const order = `${source}/${++sequence}`
     selections.set(session, issued)
@@ -1157,7 +1181,7 @@ export function createDeveloperToolTransform() {
     })
     draft.add({
       name: "act",
-      description: "Act on refs from the latest codenomad.inspect like a user: click (real pointer at the element's visible centre, refused when covered), type into a field (replacing its text unless clear is false), select native <select> options by label or value, hover, drag onto another ref, scroll (a ref or the page), press a key or chord (optionally after focusing a ref), or wait for text to appear or disappear. restart gracefully relaunches CodeNomad and waits for reconnection.",
+      description: "Act on refs from the latest codenomad.inspect like a user: click (real pointer at the element's visible centre, refused when covered), type into a field (replacing its text unless clear is false), select native <select> options by label or value, hover, drag onto another ref, scroll (a ref or the page), press a key or chord (optionally after focusing a ref), or wait for text to appear or disappear. restart relaunches the inspected desktop scope and re-inspects only the original window if restored.",
       input: {
         type: "object",
         properties: {

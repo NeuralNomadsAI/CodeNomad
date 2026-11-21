@@ -56,12 +56,19 @@ Windows registry-path discovery in WSL uses asynchronous interop with bounded co
 Memory admission cancellation reaches both discovery commands and registry scans;
 only a qualified path is retained across calls.
 
-`codenomad.act({ action: "restart" })` asks the host pinned by the latest successful inspection to relaunch gracefully, ignores the old registration, waits for the same native identity with a new run, re-inspects it for the invoking session and returns that inspection. It never switches to another worktree build.
+`codenomad.act({ action: "restart" })` relaunches the inspected desktop scope (data profile, original config source, executable and Electron app artifact) through the native graceful shutdown. The bridge verifies the current inspection pin and sends its window UUID, incarnation, native scope and run ID with a fresh restart ID to `developer.restartScope`. The host rechecks the exact window before shutdown. The relaunch uses ordinary window restoration and preserves the profile manager's next choice.
+
+Electron's scope binds the physical main module as well as the package root. Direct CLI launches relaunch the resolved script; directory launches keep the package root and require a fresh Electron-compatible entry resolution before admission. The filesystem can still change between admission and the native loader opening the entry; the next CodeNomad run checks the resulting identity before restoring the scope.
+
+`developer-reconnect` checks a new registration for the one-shot restart handoff in a new run of the same scope. It reports a missing UUID, waits for a loading window, or issues a fresh inspection pin for the original UUID's new incarnation. Reconnection uses the same renderer identity and session-ownership checks as ordinary inspection. Transport uncertainty permits read-only reconnection; never resend the restart. Mixed versions refuse restart.
+
+A restart acknowledgement or uncertain delivery retires the run's inspection pins, refs and pending CDP reads. If the profile stays open, a fresh inspection of an exact ready window can issue a new pin.
 
 - The HTTP bridge and CDP endpoint use IPv4 loopback only. The bridge requires its random token. Raw CDP has no authentication and can execute code in authenticated renderer pages, so it trusts local processes; the bridge keeps its token and session/window selection checks.
 - Initial discovery prefers a window visibly showing the invoking session, then a window with that session selected in an inactive tab, then a ready window. Focus and local recency break ties within a profile; equally ranked profiles require an explicit selection. Preferences and remote windows are never targets. `developer.targets` supplies the ready local inventory; `developer.status {runId,windowId,windowInstance}` validates the pinned incarnation, including when another window reuses the saved window ID.
 - Operations for one native window incarnation are serialized. Immediately before native dispatch, the marked document root checks the current window, the active tab for new input, and the live viewport hit or keyboard focus, including the exact element for ref actions. An ambiguous closed-shadow destination is refused. Inspection and screenshot revalidate after capture.
 - Actions, ref expansions, screenshots and restart require the exact receipt from a successful inspection in the invoking session. The OpenCode adapter retains it privately for the inspected window. Without a receipt, another inspection of the selected window sends its exact identifier and verifies the returned window before presenting the outline.
+- A newer selection takes precedence over a pending reconnect; the bridge checks before reading CDP and before publishing the restored window's pin.
 - Registration files, bridge responses, target probes, diagnostics, accessibility snapshots, screenshots, request bodies and reconnect time are bounded.
 
 ## Page engine
@@ -342,7 +349,7 @@ Native open claims retain their request deadline and backend-generation fence. T
 
 - Remote preview transport: see the [capability validation inventory](#preview-transport-validation).
 
-- Server: `automation-plugin.test.ts`, `automation/desktop-plugin.test.ts`, `routes/automation-plugin.test.ts`, and the shared pruning-presence regressions
+- Server: `automation-plugin.test.ts`, `automation-plugin-restart-ack.test.ts`, `developer-cdp.test.ts`, `automation/desktop-plugin.test.ts`, `routes/automation-plugin.test.ts`, and the shared pruning-presence regressions.
 - Native discovery: build with `npm run build:automation --workspace @neuralnomads/codenomad`, then run `node scripts/test-automation-native.mjs <absolute-cli-path>`. The fixture uses an isolated daemon/config/database and exercises ordinary-project discovery, all tools at startup, execution fences, independent leases, shutdown and reopening. CI runs it against the minimum and latest OpenCode runtimes.
 - Electron: `browser-controller.test.ts`, `browser-webview-security.test.ts`, preload tests.
   `npm run test:preloads --workspace @neuralnomads/codenomad-electron-app`

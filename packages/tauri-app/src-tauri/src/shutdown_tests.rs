@@ -72,6 +72,129 @@ fn restart_waits_for_cleanup_and_is_cancelled_when_cleanup_fails() {
 }
 
 #[test]
+fn developer_restart_keeps_the_scoped_plan_through_graceful_shutdown() {
+    let coordinator = ShutdownCoordinator::default();
+    let label = "local-a";
+    let fence = restart_fence(|| true);
+    let generation = coordinator
+        .reserve_automation_restart(label, &fence)
+        .unwrap();
+    let requests = coordinator
+        .begin_automation_restart(
+            [label.into()],
+            label,
+            generation,
+            developer_restart_plan(),
+            &fence,
+        )
+        .unwrap();
+    coordinator.request_restart();
+    assert!(coordinator.acknowledge_global(label, requests[0].1));
+    assert!(coordinator.begin_cleanup(false));
+    assert!(!coordinator.complete_cleanup(), "the generic restart must not run");
+    assert_eq!(
+        coordinator.state.lock().unwrap().automation_restart.as_ref()
+            .unwrap().handoff.profile,
+        "dev"
+    );
+}
+
+fn restart_fence(current: impl Fn() -> bool + Send + Sync + 'static) -> RequestFence {
+    let deadline = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        + Duration::from_secs(30);
+    RequestFence::new(deadline.as_millis() as u64, current)
+}
+
+#[test]
+fn developer_restart_checks_the_fence_after_reading_native_windows() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let coordinator = ShutdownCoordinator::default();
+    let label = "local-a";
+    let current = Arc::new(AtomicBool::new(true));
+    let backend = Arc::clone(&current);
+    let fence = restart_fence(move || backend.load(Ordering::SeqCst));
+    let read_windows = || {
+        current.store(false, Ordering::SeqCst);
+        [label.into()]
+    };
+
+    let generation = coordinator
+        .reserve_automation_restart(label, &fence)
+        .unwrap();
+    fence.check().unwrap();
+    assert!(coordinator
+        .begin_automation_restart(
+            read_windows(),
+            label,
+            generation,
+            developer_restart_plan(),
+            &fence,
+        )
+        .is_none());
+    let state = coordinator.state.lock().unwrap();
+    assert!(!state.shutdown_started && state.automation_restart.is_none());
+    assert!(state.pending_automation_restart.is_none());
+    drop(state);
+    assert!(coordinator.reserve_automation_restart(label, &fence).is_err());
+}
+
+fn developer_restart_plan() -> crate::developer_relaunch::RelaunchPlan {
+    use crate::developer_relaunch::{DeveloperRestart, Handoff, RelaunchPlan};
+
+    RelaunchPlan {
+        executable: "codenomad.exe".into(),
+        handoff: Handoff {
+            restart: DeveloperRestart {
+                run_id: "old".into(),
+                native_identity: "tauri:test".into(),
+                window_id: "a".into(),
+                window_instance: Some("incarnation".into()),
+                restart_id: "7c3e5066-017d-4ce1-a371-187ac459c4b2".into(),
+            },
+            profile: "dev".into(),
+            pinned: true,
+            config: None,
+        },
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_query_and_cancel_revoke_unarmed_developer_restart() {
+    let coordinator = ShutdownCoordinator::default();
+    let label = "local-a";
+    let fence = restart_fence(|| true);
+    let old = coordinator
+        .reserve_automation_restart(label, &fence)
+        .unwrap();
+    coordinator.begin_windows_session_end([label.into()]);
+    assert!(coordinator.reserve_automation_restart(label, &fence).is_err());
+    coordinator.cancel_windows_session_end();
+    let fresh = coordinator
+        .reserve_automation_restart(label, &fence)
+        .unwrap();
+    let arm = |generation| {
+        coordinator.begin_automation_restart(
+            [label.into()],
+            label,
+            generation,
+            developer_restart_plan(),
+            &fence,
+        )
+    };
+    assert!(arm(old).is_none(), "a delayed restart admitted before query is revoked");
+    coordinator.cancel_automation_restart(old);
+    assert!(coordinator.reserve_automation_restart(label, &fence).is_err());
+    assert!(arm(fresh).is_some());
+    coordinator.begin_windows_session_end([label.into()]);
+    coordinator.cancel_windows_session_end();
+    assert!(coordinator.state.lock().unwrap().automation_restart.is_none());
+}
+
+#[test]
 fn failed_shutdown_paths_emit_the_renderer_resume_event() {
     let source = include_str!("shutdown.rs");
     assert_eq!(FLUSH_CANCELLED_EVENT, "client-state:flush-cancelled");

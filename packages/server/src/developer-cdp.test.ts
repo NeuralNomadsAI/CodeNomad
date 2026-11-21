@@ -1,6 +1,9 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { DeveloperCdp } from "./developer-cdp"
+import Fastify from "fastify"
+import { DeveloperCdp, StaleDeveloperDocument } from "./developer-cdp"
+import { AUTOMATION_BRIDGE_PATH } from "./opencode/automation-plugin"
+import { registerAutomationPluginRoute } from "./server/routes/automation-plugin"
 
 interface Command {
   id: number
@@ -171,19 +174,92 @@ const identity = {
 }
 
 describe("DeveloperCdp", () => {
-  it("allows an explicit new inspection after uncertain restart without reviving any old pin", async () => {
-    const chrome = new FakeChrome()
-    const client = chrome.client()
+  it("can inspect a surviving window after an acknowledged restart is cancelled", async t => {
+    const a = { runId: identity.runId, nativeIdentity: "electron:test", windowId: "window-A", windowInstance: "incarnation-A" }
+    const b = { ...a, windowId: identity.windowId, windowInstance: "incarnation-B" }
+    const first = new FakeChrome(), second = new FakeChrome()
+    first.context = { ...first.context, windowId: a.windowId, windowInstance: a.windowInstance }
+    second.context.windowInstance = b.windowInstance
+    second.target = page("two")
+    first.targets = [first.target, second.target]
+    const developerCdp = first.client({ connect: (url: string) => url.endsWith("/two") ? second.connect(url) : first.connect(url) })
+    const app = Fastify()
+    t.after(async () => { developerCdp.close(); await app.close() })
+    const command = { ...a, restartId: "8d80a777-0085-48c8-b791-d3514bd63f32" }
+    let windows = [a, b], scheduled: (() => void) | undefined
+    let restarts = 0, relaunched = false
+    registerAutomationPluginRoute(app, {
+      authManager: { isLoopbackRequest: () => true }, bridgeToken: "fixture", developerCdp,
+      workspaceManager: {
+        getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "/repo" } }) } }),
+        list: () => [{ id: "owner" }], ownsLocation: async () => true,
+      },
+      nativeParent: { request: async (method: string, params: Partial<typeof a>) => {
+        if (method === "developer.restartScope") {
+          assert.deepEqual(params, command)
+          restarts++
+          scheduled = () => { relaunched = windows.includes(a) }
+          return command
+        }
+        if (method === "developer.reconnect") throw new Error("No matching CodeNomad relaunch")
+        assert.ok(method === "developer.status" || method === "developer.targets")
+        const selected = params.windowId === undefined ? windows[0] : windows.find(window =>
+          window.windowId === params.windowId && window.windowInstance === params.windowInstance && window.runId === params.runId)
+        return { windows, status: selected ? { ...selected, state: "ready", cdpUrl: identity.endpoint } : { state: "starting" } }
+      } },
+    } as never)
+    const request = (sessionID: string, payload: object) => app.inject({
+      method: "POST", url: AUTOMATION_BRIDGE_PATH, headers: { "x-codenomad-automation-token": "fixture" },
+      payload: { sessionID, ...payload },
+    })
+    const execute = (session: string, command: object, options: object = {}) =>
+      request(session, { mode: "developer-execute", command, ...options })
+    const inspect = (session: string, window: typeof a) => execute(session, { action: "inspect" }, {
+      target: `${window.nativeIdentity}/${window.runId}/${window.windowId}/${window.windowInstance}`,
+    })
+
+    const previous = (await inspect("ses_B", b)).json().result
+    const pinA = (await inspect("ses_A", a)).json().result.pin
+    const restart = await request("ses_A", { mode: "developer-restart", command, pin: pinA })
+    assert.equal(restart.statusCode, 200, restart.body)
+    windows = [b]
+    first.targets = [second.target]
+    scheduled!()
+    assert.equal(relaunched, false)
+
+    assert.equal((await request("ses_A", { mode: "developer-reconnect", command })).statusCode, 404)
+    assert.equal((await inspect("ses_A", a)).json().code, "target-gone")
+    const inventory = await request("ses_A", { mode: "developer-probe", purpose: "targets" })
+    assert.deepEqual(inventory.json().result.windows.map((window: typeof b) => window.windowId), [b.windowId])
+    assert.equal((await execute("ses_A", { action: "inspect" })).statusCode, 409)
+    assert.equal((await execute("ses_B", { action: "press", key: "Enter" }, { pin: previous.pin })).json().code, "target-gone")
+    const recovered = await inspect("ses_B", b)
+    assert.equal(recovered.statusCode, 200, recovered.body)
+    const fresh = recovered.json().result
+    assert.equal(fresh.context.windowInstance, b.windowInstance)
+    assert.notEqual(refOf(fresh), refOf(previous))
+    for (const command of [{ action: "screenshot" }, { action: "inspect" }, { action: "inspect", ref: refOf(previous) }]) {
+      assert.equal((await execute("ses_B", command, { pin: previous.pin })).json().code, "target-gone")
+    }
+    assert.equal((await execute("ses_B", { action: "screenshot" }, { pin: fresh.pin })).statusCode, 200)
+    assert.equal(restarts, 1)
+  })
+
+  it("only recovers an uncertain CDP run with a fresh inspection and new document", async () => {
+    const client = new FakeChrome().client()
+    const exact = { recoverUncertainRun: true }
     try {
       const previous = await client.inspect(identity)
       client.close(identity.runId, true)
       await assert.rejects(client.inspect(identity), /run is closed/)
-      const recovered = await client.inspect(identity, { recoverUncertainRun: true })
+      await assert.rejects(client.inspect(identity, { ...exact, ref: refOf(previous) }), /run is closed/)
+      await assert.rejects(client.inspect({ ...identity, document: previous.document }, exact), /run is closed/)
+      const recovered = await client.inspect(identity, exact)
       assert.notEqual(recovered.document, previous.document)
-      await assert.rejects(client.screenshot({ ...identity, document: previous.document }), /Page changed/)
+      await assert.rejects(client.screenshot({ ...identity, document: previous.document }), StaleDeveloperDocument)
       await client.screenshot({ ...identity, document: recovered.document })
       client.close(identity.runId)
-      await assert.rejects(client.inspect(identity, { recoverUncertainRun: true }), /run is closed/)
+      await assert.rejects(client.inspect(identity, exact), /run is closed/)
     } finally { client.close() }
   })
 
@@ -262,15 +338,19 @@ describe("DeveloperCdp", () => {
     chrome.deferred.set("Runtime.evaluate", undefined as never)
     try {
       const inspect = assert.rejects(client.inspect(identity), /retired|closed/i)
-      const inventory = client.probeContexts(identity.endpoint, new Map([[identity.windowId, undefined]]))
-      while (chrome.commands.length < 2) await new Promise<void>(resolve => setImmediate(resolve))
+      const windows = new Map([[identity.windowId, undefined]])
+      const inventory = client.probeContexts(identity, windows)
+      const otherInventory = client.probeContexts({ ...identity, runId: "other-run" }, windows)
+      while (chrome.commands.length < 3) await new Promise<void>(resolve => setImmediate(resolve))
       client.close(run ? identity.runId : undefined)
       const sockets = [...chrome.sockets]
-      assert.equal(chrome.sockets.filter(socket => socket.closed).length, run ? 1 : 2)
+      assert.equal(sockets.filter(socket => socket.closed).length, run ? 2 : 3)
       await inspect
+      assert.equal((await inventory).size, 0)
+      assert.equal((await client.probeContexts(identity, windows)).size, 0, "a retired inventory cannot reopen its sockets")
       assert.equal(chrome.sockets.length, sockets.length)
       if (run) client.close()
-      assert.equal((await inventory).size, 0)
+      assert.equal((await otherInventory).size, 0)
     } finally { client.close() }
   })
 
@@ -655,13 +735,19 @@ describe("DeveloperCdp", () => {
     const client = chrome.client()
     const { endpoint, runId, windowId } = identity
     const window = { endpoint, runId, windowId }
+    let selected = true
     try {
       const { document } = await client.inspect(window)
       chrome.onCommand = command => {
         if (command.method === "Input.dispatchKeyEvent" && command.params?.code === "BracketRight"
-          && command.params?.type !== "keyUp") chrome.context = { ...chrome.context, instanceId: "next-tab" }
+          && command.params?.type !== "keyUp") {
+          chrome.context = { ...chrome.context, instanceId: "next-tab" }
+          selected = false
+        }
       }
-      await client.act({ ...window, document }, { action: "press", key: "Control+]" })
+      await client.act({ ...window, document }, { action: "press", key: "Control+]" }, () => {
+        if (!selected) throw new Error("Newer inspection won")
+      })
       const keys = chrome.commands.filter(command => command.method === "Input.dispatchKeyEvent")
       assert.deepEqual(keys.filter(command => command.params?.type === "keyUp").map(command => command.params?.code),
         ["BracketRight", "ControlLeft"])
@@ -704,6 +790,22 @@ describe("DeveloperCdp", () => {
     } finally { client.close() }
   })
 
+  it("refuses a new key when its inspection is superseded during the final focus read", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    let selected = true
+    try {
+      const { document } = await client.inspect(identity)
+      chrome.onCommand = command => {
+        if (isDestination(command)) selected = false
+      }
+      await assert.rejects(client.act({ ...identity, document }, { action: "press", key: "Enter" }, () => {
+        if (!selected) throw new Error("Newer inspection won")
+      }), { message: "Newer inspection won" })
+      assert.ok(chrome.commands.every(command => command.method !== "Input.dispatchKeyEvent"))
+    } finally { client.close() }
+  })
+
   it("binds provenance to the document observed before its marking command", async () => {
     const chrome = new FakeChrome()
     const client = chrome.client()
@@ -732,14 +834,14 @@ describe("DeveloperCdp", () => {
     const client = chrome.client({ connect: (url: string) => url.endsWith("/stalled") ? stalled.connect(url) : chrome.connect(url) })
     try {
       const windows = new Map([[identity.windowId, "current"]])
-      assert.equal((await client.probeContexts(identity.endpoint, windows)).size, 1)
+      assert.equal((await client.probeContexts(identity, windows)).size, 1)
       const retired = new FakeChrome()
       retired.target = page("retired")
       retired.context.windowInstance = "retired"
       const reopened = chrome.client({ connect: (url: string) => url.endsWith("/retired") ? retired.connect(url) : chrome.connect(url) })
       chrome.targets = [retired.target, chrome.target]
       try {
-        assert.equal((await reopened.probeContexts(identity.endpoint, windows)).get(identity.windowId)?.windowInstance, "current")
+        assert.equal((await reopened.probeContexts(identity, windows)).get(identity.windowId)?.windowInstance, "current")
       } finally { reopened.close() }
       chrome.targets = [stalled.target, chrome.target]
       await assert.rejects(client.inspect({ ...identity, windowInstance: "retired" }), /No CodeNomad page matches/)
@@ -859,6 +961,52 @@ describe("DeveloperCdp", () => {
     assert.equal((await client.inspect(identity)).diagnostics[0].text.length, 512)
   })
 
+  it("checks a queued reconnect before reading the same window lane", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    let pinned = false
+    try {
+      chrome.deferred.set("Accessibility.getFullAXTree", undefined as never)
+      const inspecting = client.inspect(identity)
+      while (!chrome.deferred.get("Accessibility.getFullAXTree")) await new Promise<void>(resolve => setImmediate(resolve))
+      const reconnecting = client.inspect(identity, {}, { beforeRead: () => {
+        if (pinned) throw new Error("Newer inspection won")
+      } })
+      const rejected = assert.rejects(reconnecting, /Newer inspection won/)
+      pinned = true
+      const read = chrome.deferred.get("Accessibility.getFullAXTree")!
+      read.socket.respond(read.command, chrome.result("Accessibility.getFullAXTree"))
+      const inspected = await inspecting
+      await rejected
+      assert.equal(chrome.sockets.at(-1)?.closed, false)
+      await client.act(identity, { action: "click", ref: refOf(inspected) })
+    } finally { client.close() }
+  })
+
+  it("checks queued actions and captures before touching a newer inspection's CDP target", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    let replaced = false
+    const checkAdmission = () => { if (replaced) throw new Error("Newer inspection won") }
+    try {
+      chrome.deferred.set("Accessibility.getFullAXTree", undefined as never)
+      const inspection = client.inspect(identity)
+      while (!chrome.deferred.get("Accessibility.getFullAXTree")) await new Promise<void>(resolve => setImmediate(resolve))
+      const failures = Promise.all([
+        assert.rejects(client.act(identity, { action: "press", key: "Enter" }, checkAdmission), /Newer inspection won/),
+        assert.rejects(client.screenshot(identity, checkAdmission), /Newer inspection won/),
+      ])
+      replaced = true
+      const read = chrome.deferred.get("Accessibility.getFullAXTree")!
+      read.socket.respond(read.command, chrome.result("Accessibility.getFullAXTree"))
+      const result = await inspection
+      await failures
+      assert.equal(chrome.sockets.at(-1)?.closed, false)
+      assert.equal(chrome.commands.some(command => command.method.startsWith("Input.") || command.method === "Page.captureScreenshot"), false)
+      await client.act(identity, { action: "click", ref: refOf(result) })
+    } finally { client.close() }
+  })
+
   it("reconnects when the page target is replaced and rejects target-scoped refs", async () => {
     const chrome = new FakeChrome()
     const client = chrome.client()
@@ -959,6 +1107,20 @@ describe("DeveloperCdp", () => {
       client.act(identity, { action: "type", ref: refOf(inspection), text: "hello", clear: true }),
       /stale ref/,
     )
+  })
+
+  it("retires a pinned renderer document only when its main document is reopened", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    try {
+      const { document } = await client.inspect(identity)
+      const pinned = { ...identity, document }
+      const socket = chrome.sockets.at(-1)!
+      socket.emit("Page.documentOpened", { frame: { id: "child", parentId: "main" } })
+      await client.context(pinned)
+      socket.emit("Page.documentOpened", { frame: { id: "main" } })
+      await assert.rejects(client.context(pinned), StaleDeveloperDocument)
+    } finally { client.close() }
   })
 
   it("invalidates refs when the target socket reconnects", async () => {
