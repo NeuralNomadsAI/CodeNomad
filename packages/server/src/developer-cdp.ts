@@ -339,16 +339,21 @@ export class DeveloperCdp {
     return state
   }
 
-  private async discoverTarget(state: RunState, targets: CdpTarget[]): Promise<CdpTarget> {
+  private async discoverTarget(state: RunState, targets: CdpTarget[], timeoutMs = INVENTORY_PAGE_MS): Promise<CdpTarget> {
     const matches: CdpTarget[] = []
     for (let index = 0; index < targets.length && matches.length < 2; index += DISCOVERY_PROBE_CONCURRENCY) {
       const batch = await Promise.all(targets.slice(index, index + DISCOVERY_PROBE_CONCURRENCY).map(async (target) => {
-        const context = await this.probePage(state.endpoint, target, Math.min(this.dependencies.timeoutMs, INVENTORY_PAGE_MS))
+        const context = await this.probePage(state.endpoint, target, Math.min(this.dependencies.timeoutMs, timeoutMs))
         return context && this.matchesContext(state, context) ? target : undefined
       }))
       matches.push(...batch.filter((target): target is CdpTarget => Boolean(target)))
     }
-    if (matches.length === 0) throw new Error("No CodeNomad page matches the selected window and OpenCode session")
+    if (matches.length === 0) {
+      if (state.windowInstance && timeoutMs < this.dependencies.timeoutMs) {
+        return this.discoverTarget(state, targets, this.dependencies.timeoutMs)
+      }
+      throw new Error("No CodeNomad page matches the selected window and OpenCode session")
+    }
     if (matches.length > 1) throw new Error("Multiple CodeNomad pages match the selected window and OpenCode session")
     return matches[0]
   }

@@ -109,7 +109,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     const lifetime = requestAdmission(request, reply)
     try {
     if (!isAutomationPluginRequest(request, deps)) return reply.code(401).send({ error: "Unauthorized automation bridge" })
-    const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown; purpose?: unknown; target?: unknown; pin?: unknown } | undefined
+    const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown; purpose?: unknown; target?: unknown; pin?: unknown; order?: unknown } | undefined
     if (body?.mode === "human-answer-verify") {
       if (!deps.settings) return reply.code(503).send({ error: "Human answer admission unavailable" })
       try { return reply.send({ result: await verifyMissionHumanAnswer(body.command,
@@ -129,8 +129,11 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       return reply.code(400).send({ error: "Invalid automation bridge request" })
     }
     const rawDeveloper = body.mode === "developer-execute" ? body.command as { action?: unknown; ref?: unknown } : undefined
-    const publishInspection = rawDeveloper?.action === "inspect" && (rawDeveloper.ref === undefined || rawDeveloper.ref === "")
-      ? inspectedTargets.begin(body.sessionID) : undefined
+    const order = typeof body.order === "string" ? /^([a-f0-9-]{36})\/(\d{1,12})$/.exec(body.order) : null
+    const selecting = rawDeveloper?.action === "inspect" && (rawDeveloper.ref === undefined || rawDeveloper.ref === "")
+    const publishInspection = selecting ? inspectedTargets.begin(body.sessionID,
+      order ? { source: order[1], sequence: Number(order[2]) } : undefined) : undefined
+    if (selecting && !publishInspection) return reply.code(409).send({ code: "stale-inspection", error: "A newer inspection selected the window" })
     if (body.mode === "memory-probe" || body.mode === "memory-input" || body.mode === "memory-context") {
       if (!deps.memory) return reply.code(503).send({ code: "unreadable", error: "Memory is unavailable" })
       try {
@@ -317,14 +320,13 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         try {
           const contexts = await deps.developerCdp.probeContexts(selection.endpoint,
             new Map(local.map(window => [window.windowId, window.windowInstance])), body.sessionID)
-          const windows = local.flatMap(window => {
+          const windows = local.map(window => {
             const context = contexts.get(window.windowId)
-            if (!context || window.windowInstance && context.windowInstance !== window.windowInstance) return []
-            const visible = context.sessionId === body.sessionID && !context.instanceId?.includes("~")
-            return [{ windowId: context.windowId, focused: window.focused === true,
+            const visible = !!context && context.sessionId === body.sessionID && !context.instanceId?.includes("~")
+            return { windowId: window.windowId, focused: window.focused === true,
               ...(window.windowInstance ? { windowInstance: window.windowInstance } : {}),
-              session: visible ? "visible" : context.sessionOpen ? "open" : "elsewhere",
-              ...(visible && context.tabId ? { tabId: context.tabId } : {}) }]
+              session: visible ? "visible" : context?.sessionOpen ? "open" : context ? "elsewhere" : "unknown",
+              ...(visible && context.tabId ? { tabId: context.tabId } : {}) }
           })
           return reply.send({ result: { ...selected, windows } })
         } catch { return unavailable() }
@@ -338,6 +340,12 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
 
     if (!command) return reply.code(400).send({ error: "Missing developer command" })
     const identity: DeveloperCdpIdentity = command.action === "inspect" && !command.ref ? selection : pin ?? selection
+    const stillAvailable = async () => {
+      if (!identity.windowInstance) return true
+      const after = await deps.nativeParent.request<DeveloperNativeStatus>("developer.status", nativeWindowParams(identity))
+        .catch(() => undefined)
+      return sameNativeWindow(identity, after && developerSelection(after.status))
+    }
     try {
       if (command.action === "restart") {
         await deps.developerCdp.context(identity)
@@ -348,11 +356,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       }
       if (command.action === "inspect") {
         const result = await deps.developerCdp.inspect(identity, { ref: command.ref, query: command.query })
-        if (identity.windowInstance) {
-          const after = await deps.nativeParent.request<DeveloperNativeStatus>("developer.status", nativeWindowParams(identity))
-            .catch(() => undefined)
-          if (!sameNativeWindow(identity, after && developerSelection(after.status))) return unavailable()
-        }
+        if (!await stillAvailable()) return unavailable()
         result.diagnostics.push(...(native.logs ?? []).slice(-32))
         const nextPin = publishInspection?.({ ...identity, ...(result.document ? { document: result.document } : {}) })
         if (publishInspection && !nextPin) return reply.code(409).send({ code: "stale-inspection", error: "A newer inspection selected the window" })
@@ -361,6 +365,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       }
       if (command.action === "screenshot") {
         const image = await deps.developerCdp.screenshot(identity)
+        if (!await stillAvailable()) return unavailable()
         return reply.send({ result: { image: { data: image.data, mime: image.mediaType } } })
       }
       const result = await deps.developerCdp.act(identity, command)

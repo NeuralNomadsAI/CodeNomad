@@ -15,6 +15,7 @@ import { MemoryError } from "../memory/model"
 import type { MemoryErrorCode } from "../memory/model"
 import type { MemoryOperation, MemoryResult } from "../memory/api"
 import { formatDeveloperTarget, parseDeveloperTarget } from "../automation/developer-target-selector"
+import { randomUUID } from "node:crypto"
 
 export const AUTOMATION_BRIDGE_PATH = "/api/opencode-plugin/automation"
 const REQUEST_TIMEOUT_MS = 95_000
@@ -83,7 +84,7 @@ interface DeveloperWindowCandidate {
   windowId: string
   windowInstance?: string
   focused: boolean
-  session: "visible" | "open" | "elsewhere"
+  session: "visible" | "open" | "elsewhere" | "unknown"
   tabId?: string
 }
 
@@ -594,7 +595,7 @@ async function probeBridge(registration: DiscoveredBridgeRegistration, sessionID
     inventory ? INSPECTION_TIMEOUT_MS : PROBE_TIMEOUT_MS)
     const result = response.body.result as { available?: unknown; nativeIdentity?: unknown; runId?: unknown; windows?: unknown; windowId?: unknown; windowInstance?: unknown } | undefined
     const windows = Array.isArray(result?.windows) ? result.windows.slice(0, 16).filter((item): item is DeveloperWindowCandidate =>
-      item && typeof item.windowId === "string" && ["visible", "open", "elsewhere"].includes(item.session)) : undefined
+      item && typeof item.windowId === "string" && ["visible", "open", "elsewhere", "unknown"].includes(item.session)) : undefined
     return response.status === 200 && result?.available === true && typeof result.nativeIdentity === "string" && typeof result.runId === "string"
       ? { registration, nativeIdentity: result.nativeIdentity, runId: result.runId, windows,
           windowId: typeof result.windowId === "string" ? result.windowId : undefined,
@@ -784,11 +785,11 @@ function windowSelector(bridge: ProbedBridge, windowId: string, windowInstance?:
   return formatDeveloperTarget({ nativeIdentity: bridge.nativeIdentity, runId: bridge.runId, windowId, windowInstance })
 }
 
-const windowRank = (window: DeveloperWindowCandidate) => ["visible", "open", "elsewhere"].indexOf(window.session)
+const windowRank = (window: DeveloperWindowCandidate) => ["visible", "open", "elsewhere", "unknown"].indexOf(window.session)
 
 async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
   sessionID: string, command: DeveloperAction,
-  options: { inventory?: boolean; selector?: string; isCurrent?: () => boolean; publish?: (target: ProbedBridge) => boolean } = {}) {
+  options: { inventory?: boolean; selector?: string; order?: string; isCurrent?: () => boolean; publish?: (target: ProbedBridge) => boolean } = {}) {
   let target = inspectedTargets.get(sessionID)
   let select = options.selector
   if (command.action === "inspect" && select) {
@@ -829,7 +830,8 @@ async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
     : undefined
   if (options.isCurrent && !options.isCurrent()) throw targetError("stale-inspection", "A newer inspection selected the window")
   const response = await callBridge(target.registration, { mode: "developer-execute", sessionID, command,
-    ...(select ? { target: select } : target.pin ? { pin: target.pin } : {}) }, REQUEST_TIMEOUT_MS).catch(error => {
+    ...(select ? { target: select } : target.pin ? { pin: target.pin } : {}), ...(options.order ? { order: options.order } : {}) },
+    REQUEST_TIMEOUT_MS).catch(error => {
     if (isConnectionRefused(error)) throw targetError("target-gone", "The selected backend has closed; list the targets again")
     throw error
   })
@@ -894,11 +896,14 @@ async function waitForRestart(
 export function createDeveloperToolTransform() {
   const inspectedTargets = new Map<string, ProbedBridge>()
   const selections = new Map<string, symbol>()
+  const source = randomUUID()
+  let sequence = 0
   const selectWindow = async (session: string, command: DeveloperAction, selector?: string) => {
     const issued = Symbol()
+    const order = command.action === "inspect" ? `${source}/${++sequence}` : undefined
     selections.set(session, issued)
     try {
-      return await executeDeveloperTool(inspectedTargets, session, command, { selector, isCurrent: () => selections.get(session) === issued, publish: chosen => {
+      return await executeDeveloperTool(inspectedTargets, session, command, { selector, order, isCurrent: () => selections.get(session) === issued, publish: chosen => {
         if (selections.get(session) !== issued) return false
         inspectedTargets.set(session, chosen)
         return true
@@ -931,7 +936,7 @@ export function createDeveloperToolTransform() {
         const command = parseDeveloperAction({ ...value, action: "inspect" })
         const session = tool.sessionID
         if (value.targets === true) return executeDeveloperTool(inspectedTargets, session, command, { inventory: true })
-        if (value.ref !== undefined) {
+        if (command.action === "inspect" && command.ref) {
           const before = inspectedTargets.get(session)
           const inspection = await executeDeveloperTool(inspectedTargets, session, command)
           if (inspectedTargets.get(session) !== before) throw targetError("stale-inspection", "A newer inspection selected the window")
