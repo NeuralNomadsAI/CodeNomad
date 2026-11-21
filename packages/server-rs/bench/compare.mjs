@@ -117,7 +117,7 @@ async function start(label, fixture, folder, password, trustedCA) {
     env.FIXTURE_NATIVE_URL = new URL(fixture.connection.endpoint.url).origin
     env.FIXTURE_NATIVE_PASSWORD = fixture.connection.endpoint.auth.password
     assert.match(env.FIXTURE_NATIVE_URL, /^http:\/\/127\.0\.0\.1:\d+$/)
-    assert.match(env.FIXTURE_NATIVE_PASSWORD, /^[a-f0-9-]+$/)
+    assert(/^[A-Za-z0-9_-]{16,128}$/.test(env.FIXTURE_NATIVE_PASSWORD), "Unexpected private service credential format")
     await writeFile(cli, '@echo off\r\nif "%*"=="service status" (echo %FIXTURE_NATIVE_URL%& exit /b 0)\r\nif "%*"=="service get password" (echo %FIXTURE_NATIVE_PASSWORD%& exit /b 0)\r\nexit /b 1\r\n', { flag: "wx" })
     const seeded = await bench.configure?.(fixture) ?? ""
     await writeFile(env.CLI_CONFIG, `server:\n  opencodeBinary: ${JSON.stringify(cli)}\n${seeded}`)

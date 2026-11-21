@@ -74,6 +74,11 @@ fn carrier_denied() -> Error {
 fn marker(record: &Value) -> bool {
     record["metadata"].get("codenomad.schedule-carrier").is_some()
 }
+fn schedule_input(data: &serde_json::Map<String, Value>) -> bool {
+    data.get("metadata").and_then(Value::as_object).is_some_and(|metadata| {
+        ["schedule", "automation", "codenomad.schedule-carrier"].iter().any(|key| metadata.contains_key(*key))
+    })
+}
 pub async fn verify_mutation(app: &App, id: &str, directory: &str, record: &Value) -> Result<(), Error> {
     if id.starts_with("ses_cn_schedule_") || marker(record) {
         return Err(carrier_denied());
@@ -299,11 +304,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         if let Some(location) = data.get("location") {
             one_location(location, directory)?;
         }
-        if data
-            .get("metadata")
-            .and_then(|m| m.as_object())
-            .is_some_and(|m| m.contains_key("schedule") || m.contains_key("codenomad.schedule-carrier"))
-        {
+        if schedule_input(&data) {
             return Err(carrier_denied());
         }
         let fields: &[&str] = if create {
@@ -429,4 +430,13 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     use futures_util::StreamExt;
     let bytes = response.bytes_stream().take_until(principal.0.clone().cancelled_owned());
     builder.extension(NativeBody).body(Body::from_stream(bytes)).map_err(|_| upstream_error())
+}
+
+#[test]
+fn ordinary_input_refuses_reserved_metadata_even_with_null_values() {
+    for key in ["schedule", "automation", "codenomad.schedule-carrier"] {
+        let input = json!({"metadata":{(key):null}});
+        assert!(schedule_input(input.as_object().unwrap()));
+    }
+    assert!(!schedule_input(json!({"metadata":{"other":"automation"}}).as_object().unwrap()));
 }
