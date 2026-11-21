@@ -25,7 +25,7 @@ import { backendRegistry } from "../../stores/remote-backends"
 import { appSessionRestoreGateActive } from "../../stores/app-session-restore-gate"
 import { saveReloadTabSelection } from "../native/reload-tab-selection"
 import { showFolderSelection } from "../../stores/ui"
-import { cancelUnattachedWorkspaceCreations, closeWorkspace, instances, resumeWorkspaceCreations } from "../../stores/instances"
+import { cancelUnattachedWorkspaceCreations, closeWorkspace, holdWorkspaceCommits, instances, resumeWorkspaceCreations } from "../../stores/instances"
 import {
   activeParentSessionId, activeSessionId, expandedSessions, getAuthoritativeDraftSessionIdsForInstance, getPersistentExpandedSessionIds,
   getAuthoritativeSessionExpansionIdsForInstance, getAuthoritativelyDeletedSessionIdsForInstance,
@@ -219,6 +219,18 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   let nativeShutdownGeneration: number | null = null
   let releasing: Promise<unknown> | undefined
   let preparedTabs: RestorableSessionState | undefined
+  const captureWorkspaceRecords = () => {
+    const records = new Map<string, Pick<RestorableWorkspaceTabState, "backendId" | "serverId">>()
+    for (const tab of appTabs()) {
+      if (tab.kind === "instance") records.set(tab.instance.id, tab.instance)
+      if (tab.kind === "remote-restore" && tab.instanceId && tab.snapshot.backendId
+        && matchesRestoredServer(tab.snapshot, backendRegistry.serverId(tab.snapshot.backendId))) {
+        records.set(tab.instanceId, tab.snapshot)
+      }
+    }
+    return records
+  }
+  let preparedRecords: ReturnType<typeof captureWorkspaceRecords> | undefined
   let unlockInput: (() => void) | undefined
   const lockInput = () => {
     if (unlockInput) return
@@ -242,6 +254,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     resumeWorkspaceCreations()
     if (releasing && preparedTabs) recoverReleasedTabs?.(preparedTabs)
     preparedTabs = undefined
+    preparedRecords = undefined
     nativeShutdownGeneration = null
     releasing = undefined
     unlockInput?.()
@@ -262,8 +275,11 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   }
   const flush = async (nativeShutdownGenerationRequest?: number) => {
     const nativeShutdown = nativeShutdownGenerationRequest !== undefined
-    if (nativeShutdown) nativeShutdownGeneration = nativeShutdownGenerationRequest
-    if (nativeShutdown) lockInput()
+    if (nativeShutdown) {
+      nativeShutdownGeneration = nativeShutdownGenerationRequest
+      holdWorkspaceCommits()
+      lockInput()
+    }
     // Record a scroll that has not settled yet; it may reschedule the capture cleared below.
     messageStoreBus.flushScrollSnapshots()
     if (timer) clearTimeout(timer)
@@ -280,6 +296,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     } else if (nativeShutdown && !releasing && recoverReleasedTabs) {
       preparedTabs = captureState(scrollAuthority).state
     }
+    if (nativeShutdown && !releasing) preparedRecords = captureWorkspaceRecords()
     await Promise.all([
       flushClientState(),
       ...(nativeShutdown ? [storage.flushWrites()] : []),
@@ -287,15 +304,14 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   }
   const release = (deleteTabs = true) => {
     if (releasing) return releasing
-    const ids = new Set(appTabs().flatMap(tab => {
-      if (tab.kind === "instance") return [tab.instance.id]
-      if (tab.kind === "remote-restore" && tab.instanceId && tab.snapshot.backendId
-        && matchesRestoredServer(tab.snapshot, backendRegistry.serverId(tab.snapshot.backendId))) return [tab.instanceId]
-      return []
-    }))
+    // Only occurrences owned at capture can be released by record ID.
+    const records = preparedRecords ?? captureWorkspaceRecords()
     return releasing = Promise.allSettled([
-      cancelUnattachedWorkspaceCreations(ids),
-      ...(deleteTabs ? [...ids].map(id => closeWorkspace(id, { keepalive: true, silent: true })) : []),
+      cancelUnattachedWorkspaceCreations(new Set(records.keys())),
+      ...(deleteTabs ? [...records].flatMap(([id, tab]) => {
+        if (tab.backendId && !matchesRestoredServer(tab, backendRegistry.serverId(tab.backendId))) return []
+        return [closeWorkspace(id, { keepalive: true, silent: true })]
+      }) : []),
     ])
   }
   const awaitRelease = async () => {

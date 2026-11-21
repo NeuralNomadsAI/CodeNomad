@@ -18,8 +18,8 @@ import {
   getSidecarAppTabId, selectAppTab, setAppTabOrder,
 } from "../../stores/app-tabs"
 import {
-  createInstance, closeWorkspace, releaseRestoreCreatedInstance, instances, refreshWorkspaceList,
-  waitForInitialWorkspaceLoad, waitForInstanceInitialSessionHydration,
+  createInstance, closeWorkspace, releaseRestoreCreatedInstance, instances, pendingWorkspaceCommit, refreshWorkspaceList,
+  waitForInitialWorkspaceLoad, waitForInstanceInitialSessionHydration, workspaceOpeningSignal,
 } from "../../stores/instances"
 import { openSidecarTab, SidecarNotFoundError } from "../../stores/sidecars"
 import {
@@ -105,6 +105,7 @@ function reconcileRestoredWorkspaces({ snapshot, capture }: RestoreContext) {
 async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<number, () => boolean>,
   primaryInventoryReady = false): Promise<void> {
   const { snapshot, signal, capture } = context
+  const openingSignal = workspaceOpeningSignal(signal)
   const sidecars = retryIndexes ? [] : snapshot.tabs.map((tab, index) => tab.kind === "sidecar" ? restoreSidecar(tab, index) : undefined)
   let localInventoryReady = true
   try {
@@ -120,6 +121,7 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
     localInventoryReady = false
   }
   if (signal.aborted) return Promise.all(sidecars).then(() => undefined)
+  for (let pending; (pending = pendingWorkspaceCommit(openingSignal));) await pending
   const matches = reconcileRestoredWorkspaces(context)
     .filter(match => !retryIndexes || (retryIndexes.get(match.tabIndex)?.() && !hasLocalRestoredTab(capture, match.tabIndex)))
     .filter(match => { const tab = snapshot.tabs[match.tabIndex]; return localInventoryReady || tab.kind === "workspace" && backendIdOf(tab) !== LOCAL_BACKEND_ID })
@@ -182,6 +184,7 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
         const creation = reusableId ? null : await create()
         if (creation && finishCreateCommit) await waitForWorkspaceMountAdoption()
         finishCreateCommit?.()
+        for (let pending; (pending = pendingWorkspaceCommit(operationSignal));) await pending
         if (retainOccurrence && !canCommitCreation()) return null
         const id = reusableId ?? creation?.instanceId ?? null
         if (!id) return null
@@ -205,7 +208,7 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
         return { id, tabId, requestId: creation?.requestId }
       }, {
         timeoutMs: match.existingWorkspaceId ? OPERATION_TIMEOUT_MS : CREATE_TIMEOUT_MS,
-        message: `Timed out restoring workspace ${tab.folder}`, signal,
+        message: `Timed out restoring workspace ${tab.folder}`, signal: openingSignal,
       })
       if (!binding) return
       workspaceOpened = true

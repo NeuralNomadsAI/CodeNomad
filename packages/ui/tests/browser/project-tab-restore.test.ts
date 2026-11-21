@@ -92,6 +92,101 @@ test("reloading cancels an accepted project opening whose POST reply is still he
   }
 })
 
+for (const decision of ["release", "cancel"] as const) test(`native close holds an in-flight opening until ${decision}`, async () => {
+  const page = await browser.newPage()
+  const admitted = Promise.withResolvers<string>(), respond = Promise.withResolvers<void>()
+  const deletes: string[] = [], cancellations: string[] = []
+  try {
+    await page.addInitScript(() => {
+      const w = window as any
+      w.__name = (value: unknown) => value
+      Object.assign(w, { __CODENOMAD_RUNTIME_HOST__: "electron", __CODENOMAD_WINDOW_CONTEXT__: "local",
+        EventSource: class extends EventTarget { close() {} } })
+      w.electronAPI = {
+        claimClientStateAccess: async () => true,
+        loadClientState: async () => ({
+          isPrimary: true, restoreEnabled: true, snapshot: { version: 1, revision: 1, savedAt: 1, layout: {},
+            session: { activeTabIndex: 0, tabs: ["a", "b"].map(id => ({ kind: "workspace", folder: `D:/${id}` })) } },
+        }),
+        saveClientState: async (_token: string, snapshot: unknown) => {
+          if (!w.holdWrite) return true
+          w.holdWrite = false
+          w.prepared = snapshot
+          await new Promise<void>(resolve => { w.finishWrite = resolve })
+          return true
+        },
+      }
+      const json = Response.prototype.json
+      Response.prototype.json = async function () {
+        const body = await json.call(this)
+        // Cross a task boundary after the opening response is decoded.
+        if (body?.id === "first") setTimeout(() => { w.openResponseRead = true }, 0)
+        return body
+      }
+    })
+    await page.route(/\/(?:api|workspaces)\//, async route => {
+      const request = route.request(), path = new URL(request.url()).pathname
+      if (!/^\/(?:api|workspaces)\//.test(path)) return route.continue()
+      if (path === "/api/workspaces" && request.method() === "POST") {
+        const { path: folder, requestId } = request.postDataJSON()
+        const id = folder.split("/").at(-1)
+        if (id === "first") {
+          admitted.resolve(requestId)
+          await respond.promise
+        }
+        return route.fulfill({ json: { id, path: folder, requestId, status: "ready", port: 1234,
+          proxyPath: `/workspaces/${id}/instance`, binaryId: "fixture", createdAt: "", updatedAt: "" } })
+      }
+      if (path === "/api/workspaces/creation/cancel") cancellations.push(request.postDataJSON().requestId)
+      if (path.startsWith("/api/workspaces/") && request.method() === "DELETE") deletes.push(path.split("/").at(-1)!)
+      return route.fulfill({ json: path === "/api/workspaces" ? [] : {} })
+    })
+    await page.goto(url)
+    await page.locator('[data-restoring="false"]').waitFor()
+    const ids = () => page.evaluate(() => (window as any).tabViews.ids())
+    assert.deepEqual(await ids(), ["a", "b"])
+    await page.evaluate(() => {
+      const w = window as any
+      w.opening = w.runtimeRecovery.openFirst().then(() => "opened", (error: Error) => error.message)
+    })
+    const requestId = await admitted.promise
+    await page.evaluate(() => {
+      const w = window as any
+      w.holdWrite = true
+      w.preparing = window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__!("prepare")
+    })
+    await page.waitForFunction(() => Boolean((window as any).finishWrite))
+    respond.resolve()
+    await page.waitForFunction(() => (window as any).openResponseRead)
+    const duringWrite = await ids()
+    await page.evaluate(async () => {
+      const w = window as any
+      w.finishWrite()
+      await w.preparing
+    })
+    assert.deepEqual(await page.evaluate(() => (window as any).prepared.session.tabs.map((tab: any) => tab.workspaceId)), ["a", "b"])
+    assert.deepEqual(deletes, [])
+    assert.deepEqual(cancellations, [])
+    await page.evaluate(phase => window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__!(phase), decision)
+    const outcome = await page.evaluate(() => (window as any).opening)
+    if (decision === "release") {
+      assert.deepEqual(deletes.sort(), ["a", "b"], "release only the records in the prepared snapshot")
+      assert.deepEqual(cancellations, [requestId])
+      assert.match(outcome, /Window is releasing workspace records/)
+      assert.ok(!(await ids()).includes("first"))
+    } else {
+      assert.deepEqual(deletes, [])
+      assert.deepEqual(cancellations, [])
+      assert.equal(outcome, "opened")
+      assert.deepEqual(await ids(), ["a", "b", "first"])
+    }
+    assert.deepEqual(duringWrite, ["a", "b"], "the opening must not attach during the native write")
+  } finally {
+    respond.resolve()
+    await page.close()
+  }
+})
+
 for (const host of ["electron", "tauri"] as const) for (const mode of ["normal", "user", "timeout", "catalog", "foreground", "foreground-user", "foreground-existing", "foreground-git", "foreground-inventory", "foreground-catalog", "foreground-history", "foreground-slow", "foreground-runtime-update", "foreground-runtime-continue", "foreground-runtime-user", "foreground-runtime-closed", "foreground-runtime-failure", "foreground-runtime-settings", "foreground-runtime-disposed", "foreground-runtime-discovered", "foreground-runtime-late", "foreground-runtime-refused-again", "foreground-runtime-manual-pending", "foreground-runtime-manual-same", "foreground-runtime-concurrent-continue"] as const) {
 const userSelection = mode === "user" || mode === "foreground-user"
 test(`${host} restores the active project and saved session identity before hydration (${mode})`, async () => {

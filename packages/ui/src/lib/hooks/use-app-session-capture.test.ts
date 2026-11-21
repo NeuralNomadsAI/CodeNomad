@@ -10,7 +10,7 @@ it("preserves settled tabs during native shutdown", () => {
 })
 
 it("makes native shutdown terminal for reactive captures", () => {
-  assert.match(capture, /if \(nativeShutdown\) nativeShutdownGeneration = nativeShutdownGenerationRequest/)
+  assert.match(capture, /if \(nativeShutdown\) \{\s*nativeShutdownGeneration = nativeShutdownGenerationRequest/)
   assert.match(capture, /if \(!enabled\(\) \|\| disposed \|\| releasing \|\| nativeShutdownGeneration !== null\) return/)
 })
 
