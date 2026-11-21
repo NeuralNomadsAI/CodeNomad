@@ -5,7 +5,6 @@ import { buildTimelineSegments, foldTimelineSegments, parseTimelineSegmentId, su
 import { isRecordPartDisplayed, revealHiddenRecordParts } from "../stores/message-v2/record-display-cache.ts"
 import type { MessageRecord } from "../stores/message-v2/types.ts"
 
-const t = (key: string) => key
 type Part = Record<string, unknown> & { type: string }
 const text = (): Part => ({ type: "text", text: "words" })
 const thinking = (): Part => ({ type: "reasoning", text: "thought" })
@@ -20,7 +19,7 @@ function record(id: string, parts: Part[], role: "user" | "assistant" = "assista
     parts: Object.fromEntries(parts.map((part, index) => [partId(index), { id: partId(index), revision: 0, data: { id: partId(index), ...part } }])),
   } as unknown as MessageRecord
 }
-const segmentsOf = (records: MessageRecord[], instanceId = `fold-${++instances}`) => records.flatMap(value => buildTimelineSegments(instanceId, value, t))
+const segmentsOf = (records: MessageRecord[], instanceId = `fold-${++instances}`) => records.flatMap(value => buildTimelineSegments(instanceId, value))
 const ids = (segments: readonly TimelineSegment[]) => segments.map(segment => segment.id)
 
 interface Visibility { tools: ReadonlySet<string>; thinking: boolean; system: boolean }
@@ -87,7 +86,7 @@ describe("timeline markers keep native ordinals across the omitted-parts window"
   it("numbers displayed tools by their native position and reveals an omitted target", () => {
     const instanceId = `window-${++instances}`
     const value = record("m", [...Array.from({ length: 1001 }, () => tool("read")), text()])
-    const loaded = buildTimelineSegments(instanceId, value, t)
+    const loaded = buildTimelineSegments(instanceId, value)
     const tools = loaded.filter(segment => segment.type === "tool")
     assert.equal(tools.length, 999, "the display window omits two of the 1,001 tools")
     assert.ok(ids(loaded).includes("m:tool:1000"), "the last tool keeps its indexed marker identity")
@@ -95,12 +94,12 @@ describe("timeline markers keep native ordinals across the omitted-parts window"
     assert.equal(loaded.find(segment => segment.id === "m:tool:502")?.omittedBefore, true, "the omitted parts render before the next marker")
     assert.deepEqual(loaded.find(segment => segment.id === "m:tool:500"), undefined)
     // An indexed marker for omitted tool 500 targets native tool 500.
-    const start = timelineRunStart(value, "m:tool:500", t)
+    const start = timelineRunStart(value, "m:tool:500")
     assert.equal(start, 500)
     assert.equal(isRecordPartDisplayed(instanceId, value, start!), false)
     revealHiddenRecordParts(instanceId, "m")
     assert.equal(isRecordPartDisplayed(instanceId, value, start!), true)
-    const revealed = buildTimelineSegments(instanceId, value, t)
+    const revealed = buildTimelineSegments(instanceId, value)
     assert.equal(revealed.find(segment => segment.id === "m:tool:500")?.toolPartIds?.[0], "m-500")
     assert.equal(revealed.find(segment => segment.id === "m:tool:1000")?.toolPartIds?.[0], "m-1000")
   })
@@ -120,14 +119,14 @@ describe("timeline markers keep native ordinals across the omitted-parts window"
   it("targets a run's native start even when its marker shows only the part after the omitted ones", () => {
     const instanceId = `window-${++instances}`
     const value = record("m", [...Array.from({ length: 600 }, () => tool("read")), ...Array.from({ length: 600 }, () => text())])
-    const loaded = buildTimelineSegments(instanceId, value, t)
+    const loaded = buildTimelineSegments(instanceId, value)
     const reply = loaded.find(segment => segment.type === "assistant")!
     assert.equal(reply.id, "m:assistant:0", "the reply's marker exists once loaded")
     assert.equal(reply.partIds?.[0], "m-700", "it shows the run's first displayed part")
-    assert.equal(timelineRunStart(value, reply.id, t), 600, "its run starts among the omitted parts")
+    assert.equal(timelineRunStart(value, reply.id), 600, "its run starts among the omitted parts")
     assert.equal(isRecordPartDisplayed(instanceId, value, 600), false)
     const continued = record("c", Array.from({ length: 1200 }, () => text()))
-    assert.equal(timelineRunStart(continued, "c:assistant:0:continued", t), undefined, "a continuation stands for its displayed part")
+    assert.equal(timelineRunStart(continued, "c:assistant:0:continued"), undefined, "a continuation stands for its displayed part")
   })
 
   it("selects a removed continuation's surviving run marker", () => {

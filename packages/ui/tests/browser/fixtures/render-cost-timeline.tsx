@@ -12,8 +12,8 @@ import "../../../src/index.css"
 const count = Math.min(50_000, Math.max(10, Number(new URLSearchParams(location.search).get("count") ?? 10_000)))
 const segments: TimelineSegment[] = Array.from({ length: count }, (_, index) => ({
   id: `marker-${index}`, messageId: `message-${Math.floor(index / 3)}`, type: index % 3 === 0 ? "user" : index % 3 === 1 ? "tool" : "assistant",
-  label: String(index), tooltip: `Marker ${index}`, toolName: index % 3 === 1 ? "read" : undefined,
-  toolPartIds: index % 3 === 1 ? [`tool-${index}`] : undefined, totalChars: 0,
+  toolName: index % 3 === 1 ? "read" : undefined,
+  toolPartIds: index % 3 === 1 ? [`tool-${index}`] : undefined,
 }))
 // Seed one resident preview; all other excerpts are deterministic HTTP-boundary
 // answers, never transcript loads. This also exercises Markdown in the tooltip.
