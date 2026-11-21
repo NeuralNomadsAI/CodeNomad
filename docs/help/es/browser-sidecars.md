@@ -12,7 +12,7 @@ Los service workers permanecen desactivados en las vistas previas remotas.
 
 Pulsar un enlace `localhost` o `127.0.0.1` en una conversación lo abre en la vista previa web de esa sesión, en cualquier cliente donde las vistas previas estén disponibles. A través de Remote Control cuando el host mantiene las vistas previas web desactivadas, o en un cliente donde las vistas previas no están disponibles de otro modo, esos enlaces conservan su comportamiento normal del navegador. Ctrl+clic (⌘-clic en macOS) o clic central abre el enlace en tu navegador en su lugar.
 
-Cerrar la vista previa local devuelve la pestaña al chat. Las pestañas duplicadas comparten la página activa hasta cerrar la última o recargar la ventana.
+En el escritorio, la vista previa local de una sesión permanece en una sola ventana. Sus pestañas duplicadas comparten la página activa, incluso al volver al chat. Para abrirla en otra ventana, cierra la última pestaña de la sesión en la ventana original, o cierra o recarga esa ventana. Al volver a abrirla se carga una página nueva.
 
 Cada pestaña guarda su elección de chat/vista previa; la sesión guarda la URL, la plantilla de viewport y el historial compartidos. Las páginas guardadas se cargan solo al reabrir explícitamente el navegador de sesión. Se conservan URL y un cursor; formularios activos, DOM, cuerpos POST y memoria JavaScript terminan con el documento. El historial se limita a 32 URL por sesión y a un presupuesto compartido por ventana; las entradas antiguas pueden recortarse. Restaurar una URL puede cargar de nuevo la página.
 
@@ -28,7 +28,7 @@ En Control remoto, **Vistas previas web** está activado por defecto en **Config
 
 Las vistas previas nativas comparten cookies, inicios de sesión y almacenamiento de sitios entre proyectos/sesiones dentro del mismo motor de escritorio y ámbito de perfil/configuración, separados del renderer de confianza de CodeNomad. Cerrar sesión en un sitio desde una vista previa afecta a las demás que usen ese almacén. Documentos, formularios, almacenamiento de sesión, historiales de navegación y vínculos de automatización pertenecen a cada sesión.
 
-Un agente abre el navegador compartido de la sesión en una pestaña que la contiene, preferiblemente la activa. La pestaña elegida permanece fija durante la apertura; cerrarla cancela esa apertura. Las acciones sobre la página se dirigen a la vista previa nativa visible de la sesión; las ocultas quedan excluidas.
+Un agente abre el navegador de la sesión en una pestaña que la contiene, preferiblemente la activa. Cerrar esa pestaña cancela la apertura. Si la vista previa ya está abierta pero oculta, muéstrala en su ventana antes de pedir al agente que la use.
 
 | Cliente | Implementación de vista previa | Automatización de navegador del agente | Plantillas móviles |
 | --- | --- | --- | --- |

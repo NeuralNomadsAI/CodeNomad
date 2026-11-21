@@ -12,7 +12,7 @@ Uzak önizlemelerde service worker devre dışıdır.
 
 Bir görüşmedeki `localhost` veya `127.0.0.1` bağlantısına tıklamak, önizlemelerin kullanılabildiği her istemcide o oturumun web önizlemesinde açar. Remote Control üzerinden host web önizlemelerini kapalı tuttuğunda veya önizlemelerin başka bir nedenle kullanılamadığı bir istemcide bu bağlantılar normal tarayıcı davranışını korur. Ctrl+tıklama (macOS'ta ⌘+tıklama) veya orta tıklama bağlantıyı bunun yerine tarayıcınızda açar.
 
-Yerel önizlemeyi kapatmak sohbete döndürür. Yinelenen sekmeler sonuncusu kapanana veya pencere yeniden yüklenene kadar canlı sayfayı paylaşır.
+Masaüstünde bir oturumun yerel önizlemesi tek bir pencerede kalır. O penceredeki yinelenen sekmeler, sohbete döndükten sonra da aynı sayfayı paylaşır. Başka bir pencerede açmak için önceki pencerede oturumun son sekmesini kapatın ya da pencereyi kapatın veya yeniden yükleyin. Yeniden açıldığında sayfa baştan yüklenir.
 
 Her sekme sohbet/önizleme seçimini kaydeder; oturum ortak URL'yi, görünüm şablonunu ve geçmişi kaydeder. Kaydedilen sayfalar yalnızca oturum tarayıcısını açıkça yeniden açtığınızda yüklenir. URL'ler ve imleç saklanır; canlı formlar, DOM, POST gövdeleri ve JavaScript belleği belgeyle birlikte sona erer. Geçmiş, oturum başına 32 URL ve ortak pencere bütçesiyle sınırlıdır; eski girişler kırpılabilir. URL geri yüklendiğinde sayfa yeniden yüklenebilir.
 
@@ -28,7 +28,7 @@ Uzaktan Kontrol için **Web önizlemeleri**, ana bilgisayarda **Ayarlar → Uzak
 
 Native önizlemeler aynı masaüstü motoru ve profil/yapılandırma kapsamındaki projeler/oturumlar arasında çerezleri, oturum açma bilgilerini ve site depolamasını paylaşır; bunlar güvenilir CodeNomad arayüzünden ayrıdır. Önizlemede siteden çıkış yapmak aynı depoyu kullanan diğer önizlemeleri etkiler. Belgeler, formlar, oturum depolaması, gezinme geçmişi ve otomasyon bağlantıları her oturuma aittir.
 
-Ajan, oturumun ortak tarayıcısını onu içeren bir sekmede, mümkünse etkin sekmede açar. Seçilen sekme açılış boyunca sabit kalır; onu kapatmak bu açılışı iptal eder. Sayfa eylemleri oturumun görünür yerel önizlemesini hedefler; gizli önizlemeler dışarıda bırakılır.
+Ajan, oturumun tarayıcısını oturumun bulunduğu sekmede, mümkünse etkin sekmede açar. O sekmeyi kapatmak açılışı iptal eder. Önizleme zaten açık ama gizliyse ajandan onu kullanmasını istemeden önce kendi penceresinde gösterin.
 
 | İstemci | Önizleme uygulaması | Ajan tarayıcı otomasyonu | Mobil şablonlar |
 | --- | --- | --- | --- |

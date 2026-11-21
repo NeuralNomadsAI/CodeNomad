@@ -159,6 +159,7 @@ export const sessionMessages = {
   "sessionPreview.open.prompt": "Introduce una URL local o de staging de confianza para previsualizarla en esta sesión.",
   "sessionPreview.open.label": "URL de vista previa",
   "sessionPreview.open.invalidUrl": "Introduce una URL HTTP o HTTPS válida.",
+  "sessionPreview.open.alreadyOwned": "Esta vista previa está en otra ventana. Úsala allí o cierra su pestaña antes de volver a intentarlo.",
   "sessionPreview.open.placeholder": "https://staging.example.com",
   "sessionPreview.open.confirm": "Abrir vista previa",
   "sessionPreview.open.cancel": "Cancelar",

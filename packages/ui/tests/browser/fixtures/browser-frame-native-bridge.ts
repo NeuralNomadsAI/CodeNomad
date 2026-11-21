@@ -41,7 +41,10 @@ async function invoke(command: string, args: any = {}) {
   calls.push({ command, ...args })
   if (command === "browser_target_action" && registering.has(args.payload.registrationId)) throw new Error("Browser target is not registered")
   if (command === "plugin:event|listen") return args.handler
-  if (command === "browser_target_register") histories.set(args.payload.registrationId, { entries: [{ id: ++historyId, url: args.payload.url }], index: 0 })
+  if (command === "browser_target_register") {
+    if (new URLSearchParams(location.search).has("busySession")) return false
+    histories.set(args.payload.registrationId, { entries: [{ id: ++historyId, url: args.payload.url }], index: 0 })
+  }
   if (command === "browser_target_action" && args.payload.action === "history") return histories.get(args.payload.registrationId)
   if (command === "browser_target_action" && args.payload.action === "navigate") nativeFixture.navigate(args.payload.registrationId, args.payload.url)
   if (command === "browser_target_action" && args.payload.action === "history-go") {
@@ -54,13 +57,13 @@ async function invoke(command: string, args: any = {}) {
   if (command === "browser_target_register" && nativeFixture.deferRegistration) {
     const id = args.payload.registrationId
     registering.add(id)
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<boolean>((resolve, reject) => {
       pendingRegistration = {
         // The Rust controller publishes the target and starts its first load before answering.
         resolve: () => {
           registering.delete(id)
           for (const callback of callbacks.values()) callback({ payload: { registrationId: id, url: args.payload.url } })
-          resolve()
+          resolve(true)
         },
         reject: (error) => { registering.delete(id); reject(error) },
       }
@@ -72,6 +75,7 @@ async function invoke(command: string, args: any = {}) {
     await new Promise(resolve => setTimeout(resolve, 10))
     throw new Error("Native target unavailable")
   }
+  if (command === "browser_target_register") return true
 }
 
 window.__CODENOMAD_RUNTIME_HOST__ = host

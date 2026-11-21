@@ -12,7 +12,7 @@ Les service workers restent désactivés dans les aperçus distants.
 
 Cliquer sur un lien `localhost` ou `127.0.0.1` dans une conversation l'ouvre dans l'aperçu web de cette session, sur tout client où les aperçus sont disponibles. Via Remote Control lorsque l'hôte garde les aperçus web désactivés, ou sur un client où les aperçus sont autrement indisponibles, ces liens conservent leur comportement normal dans le navigateur. Ctrl+clic (⌘-clic sur macOS) ou clic milieu ouvre le lien dans votre navigateur à la place.
 
-Fermer l’aperçu local ramène au chat. Les onglets en double partagent la page active jusqu’à la fermeture du dernier onglet ou au rechargement de la fenêtre.
+Sur ordinateur, l’aperçu local d’une session reste dans une seule fenêtre. Les onglets en double de cette fenêtre partagent la page, même après un retour au chat. Pour rouvrir l’aperçu ailleurs, fermez le dernier onglet de la session dans la fenêtre d’origine, ou fermez ou rechargez cette fenêtre. La réouverture charge une nouvelle page.
 
 Chaque onglet enregistre son choix chat/aperçu ; la session enregistre l’URL, le modèle de viewport et l’historique partagés. Les pages enregistrées se chargent seulement à la réouverture explicite du navigateur de session. La persistance conserve les URL et un curseur ; formulaires actifs, DOM, corps POST et mémoire JavaScript disparaissent avec le document. L’historique est limité à 32 URL par session et à un budget partagé par fenêtre ; les anciennes entrées peuvent être retirées. Restaurer une URL peut recharger la page.
 
@@ -28,7 +28,7 @@ Pour le Contrôle à distance, **Aperçus web** est activé par défaut dans **P
 
 Les aperçus natifs partagent cookies, connexions et stockage de site entre projets/sessions dans le même moteur de bureau et périmètre profil/configuration, séparément du moteur de rendu de confiance CodeNomad. Se déconnecter d’un site dans un aperçu affecte les autres qui utilisent ce stockage. Documents, formulaires, stockage de session, historiques de navigation et rattachements d’automatisation appartiennent à chaque session.
 
-Un agent ouvre le navigateur partagé de la session dans un onglet qui la contient, de préférence l’onglet actif. L’onglet choisi reste fixé pendant l’ouverture ; sa fermeture annule cette ouverture. Les actions sur la page ciblent l’aperçu natif visible de la session ; les aperçus masqués sont exclus.
+Un agent ouvre le navigateur de la session dans un onglet qui la contient, de préférence l’onglet actif. Fermer cet onglet annule l’ouverture. Si l’aperçu existe déjà mais est masqué, affichez-le dans sa fenêtre avant de demander à l’agent de l’utiliser.
 
 | Client | Implémentation de l’aperçu | Automatisation navigateur par agent | Modèles mobiles |
 | --- | --- | --- | --- |

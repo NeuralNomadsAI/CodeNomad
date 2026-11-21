@@ -63,8 +63,8 @@ export async function registerTauriBrowserTarget(payload: {
   bounds: BrowserTargetBounds
   presentation?: BrowserPresentation
   logicalAddress?: string
-}): Promise<void> {
-  await invoke("browser_target_register", { payload: { ...payload, visible: false } })
+}): Promise<boolean> {
+  return invoke("browser_target_register", { payload: { ...payload, visible: false } })
 }
 
 export async function updateTauriBrowserTarget(

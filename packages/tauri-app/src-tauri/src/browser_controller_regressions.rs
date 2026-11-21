@@ -141,6 +141,7 @@ fn registration() -> Registration {
         webview_label: "browser-preview".to_string(),
         generation: 1,
         visible: true,
+        isolated: false,
     }
 }
 
@@ -293,6 +294,7 @@ fn native_open_claim_cannot_be_reclaimed_after_deadline_or_backend_retirement() 
             url: "https://example.com/".into(),
             owner: None,
             failed_owners: HashSet::new(),
+            attachment: None,
             fence: Some(crate::native_request::RequestFence::new(
                 now + 10_000,
                 move || predicate.load(Ordering::SeqCst),
@@ -371,6 +373,68 @@ fn history_requires_current_owner_and_generation_but_survives_hide() {
         .registrations
         .remove(&expected.registration_id);
     assert!(controller.check_history_registration(&expected).is_err());
+}
+
+#[test]
+fn reserves_the_session_until_native_close_and_fences_stale_renderers() {
+    let (app, owner, child) = app_with_preview();
+    let (controller, mut current) = controller_with_registration();
+    let mut other = current.clone();
+    other.window_label = OTHER.into();
+    other.registration_id = "another-tab".into();
+    other.generation += 1;
+    current.visible = false;
+
+    controller.reserve_attachment(&current, 0).unwrap();
+    assert_eq!(
+        controller.reserve_attachment(&other, 0).unwrap_err(),
+        ATTACHMENT_CONFLICT
+    );
+    assert_eq!(
+        controller.reserve_attachment(&current, 0).unwrap_err(),
+        ATTACHMENT_CONFLICT
+    );
+
+    // Revoking the target and physically closing it are separate steps.
+    let closing = controller
+        .take_registration(OWNER, "preview", None)
+        .unwrap()
+        .unwrap();
+    assert!(app.get_webview(child.label()).is_some());
+    assert_eq!(
+        controller.reserve_attachment(&other, 0).unwrap_err(),
+        ATTACHMENT_CONFLICT
+    );
+    controller
+        .dispose_registration(app.handle(), closing)
+        .unwrap();
+    assert!(app.get_webview(child.label()).is_none());
+    controller.reserve_attachment(&other, 0).unwrap();
+    controller.release_attachment(&current);
+    assert_eq!(
+        controller.reserve_attachment(&current, 0).unwrap_err(),
+        ATTACHMENT_CONFLICT
+    );
+    controller.release_attachment(&other);
+
+    // A queued old-renderer request cannot claim under the next renderer.
+    controller.renderer_page_started(&owner);
+    assert!(controller.reserve_attachment(&current, 0).is_err());
+    let version = controller.renderer_version(OWNER).unwrap();
+    controller
+        .reserve_attachment(&current, version)
+        .unwrap();
+    // Reload invalidates an in-flight creation, but keeps its slot until rollback.
+    controller.renderer_page_started(&owner);
+    assert!(controller
+        .publish_registration(current.clone(), version, "https://example.com/")
+        .is_err());
+    assert_eq!(
+        controller.reserve_attachment(&other, 0).unwrap_err(),
+        ATTACHMENT_CONFLICT
+    );
+    controller.dispose_registration(app.handle(), current).unwrap();
+    controller.reserve_attachment(&other, 0).unwrap();
 }
 
 #[test]

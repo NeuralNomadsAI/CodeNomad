@@ -1,6 +1,7 @@
 use crate::embedded_view::diagnostics::preview_error;
 use crate::embedded_view::{
-    is_allowed_url, validate_bounds, Bounds as BrowserTargetBounds, EmbeddedViews,
+    is_allowed_url, private_preview_url, validate_bounds, Bounds as BrowserTargetBounds,
+    EmbeddedViews,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -12,6 +13,8 @@ use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Emitter, Manager, Window};
 #[cfg(test)]
 use tauri::{PhysicalPosition, PhysicalSize};
+
+pub(crate) const ATTACHMENT_CONFLICT: &str = "Local session preview already exists";
 
 #[cfg(windows)]
 #[path = "browser_emulation.rs"]
@@ -77,6 +80,7 @@ struct Registration {
     webview_label: String,
     generation: u64,
     visible: bool,
+    isolated: bool,
 }
 
 #[derive(Clone)]
@@ -93,6 +97,7 @@ struct OpenClaim {
     url: String,
     owner: Option<String>,
     failed_owners: HashSet<String>,
+    attachment: Option<u64>,
     fence: Option<crate::native_request::RequestFence>,
 }
 
@@ -102,6 +107,9 @@ struct Inner {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     canvases: HashMap<String, viewport::Canvas>,
     registrations: HashMap<String, Registration>,
+    // The controller belongs to one local backend/profile. A reservation spans
+    // pending creation, hidden ownership and native disposal.
+    attachments: HashMap<String, (String, u64)>,
     published_generations: HashMap<String, (String, u64)>,
     renderer_versions: HashMap<String, u64>,
     page_leases: HashMap<String, page::PageLease>,
@@ -109,6 +117,28 @@ struct Inner {
     page_load_sequence: u64,
     page_load_expectations: HashMap<String, PageLoadExpectation>,
     open_claims: HashMap<String, OpenClaim>,
+}
+
+impl Inner {
+    fn open_attachment(&self, request_id: &str, session_id: &str) -> Result<Option<u64>, String> {
+        let claim = self
+            .open_claims
+            .get(request_id)
+            .ok_or("Session preview open ended")?;
+        let generation = self
+            .attachments
+            .get(session_id)
+            .map(|(_, generation)| *generation);
+        if generation != claim.attachment
+            || claim
+                .owner
+                .as_ref()
+                .is_some_and(|owner| claim.failed_owners.contains(owner))
+        {
+            return Err("Session preview ownership changed during open".into());
+        }
+        Ok(generation)
+    }
 }
 
 #[derive(Clone)]
@@ -142,18 +172,82 @@ impl BrowserController {
         &self,
         window: &Window,
         input: BrowserTargetRegistration,
+        renderer_version: u64,
     ) -> Result<(), String> {
         validate_id(&input.session_id, 256)?;
         validate_id(&input.registration_id, 128)?;
         let url = allowed_url(&input.url)?;
         validate_bounds(input.bounds)?;
-        let renderer_version = self
-            .renderer_version(window.label())
-            .map_err(|error| preview_error("read renderer generation", error))?;
-        let registration_id = input.registration_id.clone();
         let generation = self.registration_sequence.fetch_add(1, Ordering::Relaxed);
         // Native labels are unique across replacements, including in-flight creations.
-        let label = format!("browser-{}-{generation}", input.registration_id);
+        let registration = Registration {
+            session_id: input.session_id.clone(),
+            registration_id: input.registration_id.clone(),
+            window_label: window.label().to_string(),
+            webview_label: format!("browser-{}-{generation}", input.registration_id),
+            generation,
+            visible: input.visible.unwrap_or(true),
+            isolated: input.logical_address.is_some() && private_preview_url(&url),
+        };
+        self.reserve_attachment(&registration, renderer_version)?;
+        let result = self.create_registration(window, input, url, &registration, renderer_version);
+        if result.is_err() {
+            let _ = self.take_registration(
+                window.label(),
+                &registration.registration_id,
+                Some(generation),
+            );
+            let _ = self.dispose_registration(window.app_handle(), registration);
+        }
+        result
+    }
+
+    fn reserve_attachment(
+        &self,
+        registration: &Registration,
+        renderer_version: u64,
+    ) -> Result<(), String> {
+        let mut inner = self.inner.0.lock().map_err(|error| error.to_string())?;
+        if inner
+            .renderer_versions
+            .get(&registration.window_label)
+            .copied()
+            .unwrap_or(0)
+            != renderer_version
+        {
+            return Err("Browser preview renderer is no longer current".into());
+        }
+        if !registration.isolated {
+            if inner.attachments.contains_key(&registration.session_id) {
+                return Err(ATTACHMENT_CONFLICT.into());
+            }
+            inner.attachments.insert(
+                registration.session_id.clone(),
+                (registration.window_label.clone(), registration.generation),
+            );
+            for claim in inner.open_claims.values_mut() {
+                if claim.session_id == registration.session_id
+                    && claim.owner.as_ref() == Some(&registration.window_label)
+                {
+                    claim.attachment.get_or_insert(registration.generation);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    fn create_registration(
+        &self,
+        window: &Window,
+        input: BrowserTargetRegistration,
+        url: tauri::Url,
+        registration: &Registration,
+        renderer_version: u64,
+    ) -> Result<(), String> {
+        let label = &registration.webview_label;
+        let generation = registration.generation;
+        let registration_id = input.registration_id.clone();
         let navigation_controller = self.clone();
         let navigation_registration_id = registration_id.clone();
         let policy_controller = self.clone();
@@ -163,7 +257,7 @@ impl BrowserController {
         let profile = self.storage_directory();
         let webview = self.embedded_views.create(
             window,
-            &label,
+            label,
             profile,
             input.bounds,
             move |webview, payload| {
@@ -187,24 +281,11 @@ impl BrowserController {
                 true
             },
         )?;
-        if let Err(error) = self.embedded_views.configure_browser_presentation(
+        self.embedded_views.configure_browser_presentation(
             &webview,
             &url,
             input.logical_address.as_deref(),
-        ) {
-            let _ = self
-                .embedded_views
-                .close(window.app_handle(), window.label(), &label);
-            return Err(error);
-        }
-        let registration = Registration {
-            session_id: input.session_id,
-            registration_id: input.registration_id.clone(),
-            window_label: window.label().to_string(),
-            webview_label: label.clone(),
-            generation,
-            visible: input.visible.unwrap_or(true),
-        };
+        )?;
         #[cfg(windows)]
         let installed = install_webview2_handlers(
             &webview,
@@ -217,93 +298,47 @@ impl BrowserController {
         let installed = webkit_history::install(&webview, self.clone(), registration.clone())
             .and_then(|()| webkit_navigation::install(&webview, self.clone(), registration.clone()))
             .and_then(|()| crate::embedded_view::input::install_read(&webview));
-        if let Err(error) = installed {
-            let _ = self
-                .embedded_views
-                .close(window.app_handle(), window.label(), &label);
-            return Err(error);
-        }
-
-        #[cfg(target_os = "macos")]
-        let observation = registration.clone();
-        let previous = match self.publish_registration(registration, renderer_version, url.as_str())
-            .map_err(|error| preview_error("publish registration", error))
-        {
-            Ok(previous) => previous,
-            Err(error) => {
-                let _ = self
-                    .embedded_views
-                    .close(window.app_handle(), window.label(), &label);
-                return Err(error);
-            }
-        };
+        installed?;
+        let previous = self
+            .publish_registration(registration.clone(), renderer_version, url.as_str())
+            .map_err(|error| preview_error("publish registration", error))?;
         if let Some(previous) = previous {
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
-            webkit_history::remove(window.app_handle(), previous.webview_label.clone());
-            let _ = self.embedded_views.close(
-                window.app_handle(),
-                &previous.window_label,
-                &previous.webview_label,
-            );
+            self.dispose_registration(window.app_handle(), previous)?;
         }
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             let current = self.owned_registration(window.label(), &input.registration_id)?;
-            if let Err(error) = self.resize_webkit(
+            self.resize_webkit(
                 window.app_handle(),
                 &current,
                 input.bounds,
                 input.presentation,
-            ) {
-                let _ = self.unregister_generation(
-                    window.app_handle(),
-                    window.label(),
-                    &input.registration_id,
-                    Some(generation),
-                );
-                return Err(preview_error("configure initial viewport", error));
-            }
+            )
+            .map_err(|error| preview_error("configure initial viewport", error))?;
         }
-        if let Err(error) = webview.navigate(url) {
-            let _ = self.unregister_generation(
-                window.app_handle(),
-                window.label(),
-                &input.registration_id,
-                Some(generation),
-            );
-            return Err(preview_error("navigate initial document", error));
+        webview
+            .navigate(url)
+            .map_err(|error| preview_error("navigate initial document", error))?;
+        let current = self.owned_registration(window.label(), &input.registration_id)?;
+        if current.generation != generation {
+            return Err("Browser target changed during creation".into());
         }
-        let current = self.owned_registration(window.label(), &input.registration_id);
-        match current {
-            Ok(current) if current.generation == generation => {
-                if let Err(error) = self.embedded_views.set_visible(
-                    window.app_handle(),
-                    window.label(),
-                    &label,
-                    current.visible,
-                ) {
-                    let _ = self.unregister_generation(
-                        window.app_handle(),
-                        window.label(),
-                        &input.registration_id,
-                        Some(generation),
-                    );
-                    return Err(error);
-                }
-            }
-            _ => {
-                let _ = self
-                    .embedded_views
-                    .close(window.app_handle(), window.label(), &label);
-                return Err("Browser target changed during creation".into());
-            }
-        }
+        self.embedded_views.set_visible(
+            window.app_handle(),
+            window.label(),
+            label,
+            current.visible,
+        )?;
         #[cfg(target_os = "macos")]
-        webkit_history::observe(window.app_handle().clone(), self.clone(), observation);
+        webkit_history::observe(
+            window.app_handle().clone(),
+            self.clone(),
+            registration.clone(),
+        );
         Ok(())
     }
 
-    fn renderer_version(&self, window_label: &str) -> Result<u64, String> {
+    pub(crate) fn renderer_version(&self, window_label: &str) -> Result<u64, String> {
         let inner = self.inner.0.lock().map_err(|error| error.to_string())?;
         Ok(inner
             .renderer_versions
@@ -379,6 +414,7 @@ impl BrowserController {
         &self,
         _window: &Window,
         _input: BrowserTargetRegistration,
+        _renderer_version: u64,
     ) -> Result<(), String> {
         Err(unsupported())
     }
@@ -584,26 +620,28 @@ impl BrowserController {
         window_label: &str,
         registration_id: &str,
     ) -> Result<(), String> {
-        self.unregister_generation(app, window_label, registration_id, None)
+        if let Some(registration) = self.take_registration(window_label, registration_id, None)? {
+            self.dispose_registration(app, registration)?;
+        }
+        Ok(())
     }
 
-    fn unregister_generation(
+    fn take_registration(
         &self,
-        app: &AppHandle,
         window_label: &str,
         registration_id: &str,
         generation: Option<u64>,
-    ) -> Result<(), String> {
+    ) -> Result<Option<Registration>, String> {
         let (inner, ready) = &*self.inner;
         let mut inner = inner.lock().map_err(|error| error.to_string())?;
         let Some(registration) = inner.registrations.get(registration_id) else {
-            return Ok(());
+            return Ok(None);
         };
         if registration.window_label != window_label {
             return Err("Browser target belongs to another window".to_string());
         }
         if generation.is_some_and(|generation| generation != registration.generation) {
-            return Ok(());
+            return Ok(None);
         }
         let registration = inner.registrations.remove(registration_id).unwrap();
         inner.emulation_profiles.remove(registration_id);
@@ -616,20 +654,63 @@ impl BrowserController {
         inner.page_load_expectations.remove(registration_id);
         drop(inner);
         ready.notify_all();
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        webkit_history::remove(app, registration.webview_label.clone());
-        self.embedded_views
-            .close(app, window_label, &registration.webview_label)?;
-        Ok(())
+        Ok(Some(registration))
+    }
+
+    fn dispose_registration<R: tauri::Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        registration: Registration,
+    ) -> Result<(), String> {
+        // Off-thread Webview::close only queues destruction. Retain the
+        // reservation through the actual UI-thread close, even if the caller times out.
+        let controller = self.clone();
+        let handle = app.clone();
+        let (send, receive) = std::sync::mpsc::sync_channel(1);
+        app.run_on_main_thread(move || {
+            let label = &registration.webview_label;
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            webkit_history::remove(&handle, label.clone());
+            let result =
+                controller
+                    .embedded_views
+                    .close(&handle, &registration.window_label, label);
+            if result.is_ok() {
+                controller.release_attachment(&registration);
+            }
+            let _ = send.send(result);
+        })
+        .map_err(|error| error.to_string())?;
+        receive
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|error| error.to_string())?
+    }
+
+    fn release_attachment(&self, registration: &Registration) {
+        if let Ok(mut inner) = self.inner.0.lock() {
+            if inner
+                .attachments
+                .get(&registration.session_id)
+                .is_some_and(|(owner, generation)| {
+                    owner == &registration.window_label && *generation == registration.generation
+                })
+            {
+                inner.attachments.remove(&registration.session_id);
+            }
+        }
     }
 
     pub(crate) fn claim_open(&self, window_label: &str, request_id: &str) -> bool {
         let Ok(mut inner) = self.inner.0.lock() else {
             return false;
         };
-        let Some(claim) = inner.open_claims.get_mut(request_id) else {
+        let Some(claim) = inner.open_claims.get(request_id) else {
             return false;
         };
+        let attachment = inner.attachments.get(&claim.session_id);
+        if attachment.is_some_and(|(owner, _)| owner != window_label) {
+            return false;
+        }
         if claim
             .fence
             .as_ref()
@@ -645,7 +726,10 @@ impl BrowserController {
         {
             return false;
         }
+        let generation = attachment.map(|(_, generation)| *generation);
+        let claim = inner.open_claims.get_mut(request_id).unwrap();
         claim.owner = Some(window_label.to_string());
+        claim.attachment = claim.attachment.or(generation);
         true
     }
 
@@ -658,7 +742,9 @@ impl BrowserController {
         let Some(claim) = self.release_claim(window_label, request_id) else {
             return false;
         };
-        Self::emit_open_request(app, request_id, &claim);
+        if claim.owner.is_none() {
+            Self::emit_open_request(app, request_id, &claim);
+        }
         true
     }
 
@@ -675,8 +761,10 @@ impl BrowserController {
         if claim.owner.as_deref() != Some(window_label) {
             return None;
         }
-        claim.owner = None;
         claim.failed_owners.insert(window_label.to_string());
+        if claim.attachment.is_none() {
+            claim.owner = None;
+        }
         Some(claim.clone())
     }
 
@@ -708,12 +796,7 @@ impl BrowserController {
                 .collect::<Vec<_>>();
             let children = ids
                 .iter()
-                .filter_map(|id| {
-                    inner
-                        .registrations
-                        .get(id)
-                        .map(|registration| registration.webview_label.clone())
-                })
+                .filter_map(|id| inner.registrations.get(id).cloned())
                 .collect::<Vec<_>>();
             for id in ids {
                 inner
@@ -733,8 +816,11 @@ impl BrowserController {
                     if claim.owner.as_deref() != Some(window_label) {
                         return None;
                     }
-                    claim.owner = None;
                     claim.failed_owners.insert(window_label.to_string());
+                    if claim.attachment.is_some() {
+                        return None;
+                    }
+                    claim.owner = None;
                     Some((request_id.clone(), claim.clone()))
                 })
                 .collect::<Vec<_>>();
@@ -743,10 +829,7 @@ impl BrowserController {
             (Vec::new(), Vec::new())
         };
         for child in children {
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
-            webkit_history::remove(app, child);
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-            let _ = child;
+            let _ = self.dispose_registration(app, child);
         }
         self.embedded_views.remove_owner(app, window_label);
         for (request_id, claim) in retries {
@@ -928,10 +1011,14 @@ impl BrowserController {
             url: raw_url.to_string(),
             owner: None,
             failed_owners: HashSet::new(),
+            attachment: None,
             fence: Some(fence.clone()),
         };
         {
             let mut inner = self.inner.0.lock().map_err(|error| error.to_string())?;
+            if inner.attachments.contains_key(session_id) {
+                return Err("Reveal the existing session preview before using it".into());
+            }
             inner.open_claims.insert(request_id.clone(), claim.clone());
         }
         Self::emit_open_request(app, &request_id, &claim);
@@ -939,11 +1026,21 @@ impl BrowserController {
             let registration_deadline = deadline.min(Instant::now() + Duration::from_secs(10));
             let (inner, ready) = &*self.inner;
             let mut guard = inner.lock().map_err(|error| error.to_string())?;
+            let check_attachment = |generation| {
+                let state = inner.lock().map_err(|error| error.to_string())?;
+                let expected = state.open_attachment(&request_id, session_id)?;
+                if expected.is_some_and(|expected| expected != generation) {
+                    return Err("Session preview ownership changed during open".into());
+                }
+                Ok::<(), String>(())
+            };
             loop {
+                guard.open_attachment(&request_id, session_id)?;
                 drop(guard);
                 fence.check()?;
                 match self.resolve(app, session_id) {
                     Ok(registration) => {
+                        check_attachment(registration.generation)?;
                         let webview = app
                             .get_webview(&registration.webview_label)
                             .ok_or_else(|| "Browser preview is no longer available".to_string())?;
@@ -955,6 +1052,7 @@ impl BrowserController {
                                 sequence,
                                 deadline,
                             )?;
+                            check_attachment(registration.generation)?;
                             self.check_target(app, &registration, deadline, fence)?;
                             return Ok(
                                 json!({ "url": webview.url().map_err(|error| error.to_string())? }),
@@ -1014,7 +1112,11 @@ impl BrowserController {
             .map_err(|error| error.to_string())?
             .registrations
             .values()
-            .filter(|registration| registration.session_id == session_id && registration.visible)
+            .filter(|registration| {
+                !registration.isolated
+                    && registration.session_id == session_id
+                    && registration.visible
+            })
             .cloned()
             .collect::<Vec<_>>();
         let matches = registrations
@@ -1708,6 +1810,7 @@ mod tests {
                 url: "https://example.com/".to_string(),
                 owner: None,
                 failed_owners: HashSet::new(),
+                attachment: None,
                 fence: None,
             },
         );
@@ -1719,6 +1822,44 @@ mod tests {
         assert!(!controller.claim_open("window-1", "request"));
         assert!(controller.claim_open("window-2", "request"));
         assert!(!controller.claim_open("window-1", "missing"));
+    }
+
+    #[test]
+    fn attached_agent_open_cannot_move_after_release() {
+        let controller = BrowserController::new(std::path::PathBuf::new());
+        let registration = Registration {
+            session_id: "session".into(),
+            registration_id: "preview".into(),
+            window_label: "window-1".into(),
+            webview_label: "browser-preview".into(),
+            generation: 1,
+            visible: false,
+            isolated: false,
+        };
+        controller.inner.0.lock().unwrap().open_claims.insert(
+            "request".into(),
+            OpenClaim {
+                session_id: "session".into(),
+                url: "https://example.com/".into(),
+                owner: None,
+                failed_owners: HashSet::new(),
+                attachment: None,
+                fence: None,
+            },
+        );
+        assert!(controller.claim_open("window-1", "request"));
+        controller.reserve_attachment(&registration, 0).unwrap();
+        assert_eq!(
+            controller.inner.0.lock().unwrap().open_attachment("request", "session"),
+            Ok(Some(1))
+        );
+        assert_eq!(
+            controller.release_claim("window-1", "request").unwrap().owner.as_deref(),
+            Some("window-1")
+        );
+        controller.release_attachment(&registration);
+        assert!(!controller.claim_open("window-2", "request"));
+        assert!(controller.inner.0.lock().unwrap().open_attachment("request", "session").is_err());
     }
 
     #[test]
@@ -1757,6 +1898,7 @@ mod tests {
             webview_label: "webview".to_string(),
             generation: 1,
             visible: true,
+            isolated: false,
         };
         controller
             .inner
@@ -1799,6 +1941,7 @@ mod tests {
             webview_label: "webview".to_string(),
             generation: 1,
             visible: true,
+            isolated: false,
         };
         controller
             .inner

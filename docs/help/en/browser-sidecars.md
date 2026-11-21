@@ -12,7 +12,7 @@ Service workers stay disabled in remote previews.
 
 Clicking a `localhost` or `127.0.0.1` link in a conversation opens it in that session's web preview, on every client where previews are available. Through Remote Control when the host keeps web previews off, or on a client where previews are otherwise unavailable, such links keep their normal browser behavior. Ctrl+click (⌘-click on macOS) or middle-click opens the link in your browser instead.
 
-The local preview close button returns the tab to chat. Duplicate tabs share the live page until the last occurrence closes or the window reloads.
+On desktop, the local preview stays in one window per session. Duplicate tabs there share the live page, even when you return to chat. To reopen it in another window, close the session’s last tab in the owning window, or close or reload that window. Reopening creates a fresh page.
 
 Each tab saves its chat/preview choice; the session saves its shared URL, viewport template and history. Saved pages load only when you explicitly reopen the session browser. Persistence keeps URLs and a cursor; live forms, DOM, POST bodies and JavaScript memory end with the document. History is bounded to 32 URLs per session and a shared window budget; older entries may be trimmed. Restoring a URL may load a fresh page.
 
@@ -28,7 +28,7 @@ For Remote Control, **Web previews** is on by default under **Settings → Remot
 
 Native previews share cookies, sign-ins and site storage across projects/sessions within the same desktop engine and profile/configuration scope, separately from the trusted CodeNomad renderer. Logging out of a site in one preview affects other previews using that store. Documents, forms, session storage, navigation histories and automation attachments belong to each session.
 
-An agent opens the session's shared browser in an owning tab, using the active tab when possible. The chosen tab stays fixed while opening; closing it cancels that open. Page actions target the session's visible native preview; hidden previews are excluded.
+An agent opens the session's shared browser in an owning tab, using the active tab when possible. The chosen tab stays fixed while opening; closing it cancels that open. If the preview already exists but is hidden, show it in its window before asking the agent to use it.
 
 | Client | Preview implementation | Agent browser automation | Mobile templates |
 | --- | --- | --- | --- |

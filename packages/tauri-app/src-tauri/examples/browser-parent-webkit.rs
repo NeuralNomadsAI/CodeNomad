@@ -93,7 +93,11 @@ fn register(
     url: &str,
 ) -> Result<(), String> {
     let input: BrowserTargetRegistration = serde_json::from_value(json!({"sessionId":SESSION,"registrationId":id,"url":url,"bounds":bounds(),"visible":false})).unwrap();
-    controller.register(&app.get_window(owner).ok_or("Fixture owner closed")?, input)?;
+    controller.register(
+        &app.get_window(owner).ok_or("Fixture owner closed")?,
+        input,
+        controller.renderer_version(owner)?,
+    )?;
     update(app, controller, owner, id, true)
 }
 #[cfg(not(windows))]

@@ -64,6 +64,33 @@ const snapshot = (page: Page) => page.evaluate(() => {
   return { calls: fixture.calls, errors: fixture.errors, locations: fixture.locations, listeners: fixture.listenerCount() }
 })
 
+test("Tauri ownership refusal never creates a fallback or retries on layout changes", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${url}?busySession`)
+    await page.getByRole("alertdialog").getByText("This preview is in another window.", { exact: false }).waitFor()
+    await page.evaluate(() => { (window as any).nativeFixture.overlay(false); window.dispatchEvent(new Event("resize")) })
+    const { calls, listeners } = await snapshot(page)
+    assert.equal(calls.filter((call: any) => call.command === "browser_target_register").length, 1)
+    assert.equal(calls.some((call: any) => call.command === "browser_target_update"), false)
+    assert.equal(listeners, 0)
+    assert.equal(await page.locator("iframe,webview").count(), 0)
+  } finally { await page.close() }
+})
+
+test("Electron sends the local session identity before guest admission", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${url}?host=electron`)
+    const guest = page.locator("webview")
+    await guest.waitFor()
+    assert.equal(await guest.getAttribute("webpreferences"), "codenomadSession=fixture-session")
+    await guest.evaluate(element => element.dispatchEvent(new Event("destroyed")))
+    assert.match((await snapshot(page)).errors.join("\n"), /This preview is in another window/)
+    assert.equal(await page.locator("iframe").count(), 0)
+  } finally { await page.close() }
+})
+
 test("Tauri remote previews keep loaded capabilities out of addresses and native history", async () => {
   const page = await browser.newPage()
   try {
@@ -97,6 +124,7 @@ test("Electron renderer seam loads remote capabilities while showing only applic
     const guest = page.locator("webview")
     await guest.waitFor()
     assert.equal(await guest.getAttribute("src"), "http://local-cap.preview.localhost:1234/previews/remote-token/start")
+    assert.equal(await guest.getAttribute("webpreferences"), null)
     const address = page.getByRole("textbox", { name: "Address" })
     await address.fill("http://remote-app.test/next")
     await address.press("Enter")

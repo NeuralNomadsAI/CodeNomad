@@ -358,6 +358,43 @@ describe("BrowserController private page channel", () => {
 })
 
 describe("BrowserController preview lifecycle", () => {
+  it("reserves a session before guest construction and keeps it until native destruction", async () => {
+    const h = createHarness()
+    const other = { id: 2, isDestroyed: () => false } as WebContents
+    const params = { src: "https://example.com/", webpreferences: "codenomadSession=session" }
+    assert.equal(h.controller.permitAttachment(h.owner, params), true)
+    assert.equal(h.controller.permitAttachment(other, params), false)
+    assert.equal(h.controller.permitAttachment(h.owner, params), false)
+    const { guest, events } = createGuest({ id: 80, owner: h.owner })
+    h.controller.guestCreated(guest)
+    h.add(guest, "retained")
+    assert.throws(() => h.controller.register(h.owner, { sessionId: "other", registrationId: "forged", guestWebContentsId: guest.id }), /another session/)
+    h.controller.unregister(h.owner, "retained")
+    assert.equal(h.controller.permitAttachment(other, params), false)
+    await assert.rejects(h.controller.execute("session", { action: "open", url: params.src }), /reveal/i)
+    assert.equal(h.controller.permitAttachment(other, { ...params, webpreferences: "codenomadSession=other" }), true)
+    assert.equal(h.controller.permitAttachment(other, { src: params.src }), false)
+    assert.equal(h.controller.permitAttachment(other, { src: "http://id.preview.localhost/" }), true)
+    events.emit("destroyed")
+    await Promise.resolve() // an aborted constructor drops only its own pending slot
+    assert.equal(h.controller.permitAttachment(other, params), true)
+  })
+
+  it("does not reroute an agent after its native guest starts construction", async () => {
+    const requests: string[] = []
+    const h = createHarness((_session, _url, id) => requests.push(id))
+    const url = "https://example.com/"
+    const open = h.controller.execute("session", { action: "open", url })
+    assert.equal(h.controller.claimOpen(h.owner, requests[0]), true)
+    assert.equal(h.controller.permitAttachment(h.owner, { src: url, webpreferences: "codenomadSession=session" }), true)
+    const { guest, events } = createGuest({ id: 81, owner: h.owner })
+    h.controller.guestCreated(guest)
+    events.emit("destroyed")
+    assert.equal(h.controller.releaseOpen(h.owner, requests[0]), true)
+    await assert.rejects(open, /ownership changed/)
+    assert.equal(requests.length, 1)
+  })
+
   it("reads only bounded public history and refuses foreign or unsafe traversal", async () => {
     const h = createHarness()
     const commands: Array<{ method: string; params?: Record<string, unknown> }> = []

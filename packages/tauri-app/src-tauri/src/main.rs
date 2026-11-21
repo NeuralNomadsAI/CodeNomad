@@ -528,14 +528,21 @@ async fn browser_target_register(
     webview: tauri::Webview,
     state: tauri::State<'_, AppState>,
     payload: browser_controller::BrowserTargetRegistration,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     require_local_app_webview(&webview, &state)?;
     let window = webview.window();
     let controller = state.browser_controller.clone();
-    tauri::async_runtime::spawn_blocking(move || controller.register(&window, payload))
-        .await
-        .map_err(|error| embedded_view::diagnostics::preview_error("dispatch registration", error))?
-        .map_err(|error| embedded_view::diagnostics::preview_error("register target", error))
+    let renderer_version = controller.renderer_version(webview.label())?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        controller.register(&window, payload, renderer_version)
+    })
+    .await
+    .map_err(|error| embedded_view::diagnostics::preview_error("dispatch registration", error))?;
+    match result {
+        Ok(()) => Ok(true),
+        Err(error) if error == browser_controller::ATTACHMENT_CONFLICT => Ok(false),
+        Err(error) => Err(embedded_view::diagnostics::preview_error("register target", error)),
+    }
 }
 
 #[tauri::command]

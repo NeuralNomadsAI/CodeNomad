@@ -12,7 +12,7 @@ Service Worker bleiben in entfernten Vorschauen deaktiviert.
 
 Ein Klick auf einen `localhost`- oder `127.0.0.1`-Link in einer Unterhaltung öffnet ihn in der Web-Vorschau dieser Sitzung, auf jedem Client mit verfügbarer Vorschau. Über Remote Control, wenn der Host Web-Vorschauen deaktiviert hält, oder auf einem Client ohne verfügbare Vorschau behalten solche Links ihr normales Browser-Verhalten. Strg+Klick (⌘-Klick auf macOS) oder Mittelklick öffnet den Link stattdessen im Browser.
 
-Das Schließen der lokalen Vorschau führt zum Chat zurück. Doppelte Tabs teilen die Live-Seite, bis der letzte Tab geschlossen oder das Fenster neu geladen wird.
+Auf dem Desktop bleibt die lokale Vorschau einer Sitzung in einem Fenster. Doppelte Tabs dort teilen dieselbe Seite, auch nach der Rückkehr zum Chat. Um die Vorschau in einem anderen Fenster zu öffnen, schließen Sie den letzten Tab der Sitzung im bisherigen Fenster, schließen Sie das Fenster oder laden Sie es neu. Beim erneuten Öffnen wird die Seite neu geladen.
 
 Jede Registerkarte speichert ihre Chat-/Vorschauwahl; die Sitzung speichert gemeinsame URL, Viewport-Vorlage und Verlauf. Gespeicherte Seiten laden erst beim ausdrücklichen erneuten Öffnen des Sitzungsbrowsers. Gespeichert werden URLs und ein Zeiger; aktive Formulare, DOM, POST-Inhalte und JavaScript-Speicher enden mit dem Dokument. Der Verlauf ist auf 32 URLs je Sitzung und ein gemeinsames Fensterbudget begrenzt; ältere Einträge können gekürzt werden. Eine wiederhergestellte URL kann neu geladen werden.
 
@@ -28,7 +28,7 @@ Für die Fernsteuerung sind **Web-Vorschauen** unter **Einstellungen → Remote-
 
 Native Vorschauen teilen Cookies, Anmeldungen und Websitespeicher über Projekte/Sitzungen innerhalb derselben Desktop-Engine und desselben Profil-/Konfigurationsbereichs, getrennt vom vertrauenswürdigen CodeNomad-Renderer. Abmelden von einer Website in einer Vorschau betrifft andere Vorschauen desselben Speichers. Dokumente, Formulare, Sitzungsspeicher, Navigationsverläufe und Automatisierungszuordnungen gehören jeweils zur Sitzung.
 
-Ein Agent öffnet den gemeinsamen Sitzungsbrowser in einer zugehörigen Registerkarte, möglichst der aktiven. Die gewählte Registerkarte bleibt während des Öffnens fest; ihr Schließen bricht das Öffnen ab. Seitenaktionen zielen auf die sichtbare native Vorschau der Sitzung; ausgeblendete Vorschauen bleiben ausgeschlossen.
+Ein Agent öffnet den Sitzungsbrowser in einem zugehörigen Tab, möglichst dem aktiven. Das Schließen dieses Tabs bricht das Öffnen ab. Wenn die Vorschau bereits geöffnet, aber ausgeblendet ist, zeigen Sie sie in ihrem Fenster an, bevor Sie den Agenten bitten, sie zu verwenden.
 
 | Client | Vorschauimplementierung | Agenten-Browser-Automatisierung | Mobilvorlagen |
 | --- | --- | --- | --- |

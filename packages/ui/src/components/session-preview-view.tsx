@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal, For, onCleanup, type Component 
 import { Portal } from "solid-js/web"
 import { useI18n } from "../lib/i18n"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
-import { previewKey, sessionPreviews, openSessionPreview, dismissSessionPreview, showSessionChatFor, updateSessionPreviewLocation, updateSessionPreviewHistory, updateSessionPreviewViewport, cancelSessionPreviewNavigation, type SessionPreviewRecord } from "../stores/session-previews"
+import { previewKey, sessionPreviews, openSessionPreview, closeSessionPreview, dismissSessionPreview, showSessionChatFor, updateSessionPreviewLocation, updateSessionPreviewHistory, updateSessionPreviewViewport, cancelSessionPreviewNavigation, type SessionPreviewRecord } from "../stores/session-previews"
 import { BrowserFrame, type BrowserFrameElementTarget } from "./browser-frame"
 import { getPreviewFrameSource } from "./browser-frame-security"
 import { runtimeEnv } from "../lib/runtime-env"
@@ -143,6 +143,11 @@ const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
           return source || frameSource(await openSessionPreview(props.preview.sessionId, address, props.instanceId))
         }}
         onNavigationError={showNavigationError}
+        onOwnershipConflict={() => {
+          showNavigationError(new Error(t("sessionPreview.open.alreadyOwned")))
+          if (props.active && props.instanceId) showSessionChatFor(props.preview.sessionId, props.instanceId)
+          void closeSessionPreview(props.preview.storageKey)
+        }}
         onFrameLocation={(path) => {
           const target = new URL(path, props.preview.targetUrl)
           if (props.preview.capability && target.origin !== new URL(props.preview.targetUrl).origin) return
