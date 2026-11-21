@@ -118,6 +118,25 @@ const identity = {
 }
 
 describe("DeveloperCdp", () => {
+  it("preserves live refs across inspections of distinct windows in the same run", async () => {
+    const first = new FakeChrome(), second = new FakeChrome()
+    second.target = page("two")
+    second.context = { ...first.context, windowId: "window-2" }
+    first.targets = [first.target, second.target]
+    const client = first.client({ connect: (url: string) => url.endsWith("/two") ? second.connect(url) : first.connect(url) })
+    const other = { ...identity, windowId: "window-2" }
+    try {
+      const a = await client.inspect(identity)
+      const b = await client.inspect(other)
+      await client.act({ ...identity, document: a.document }, { action: "click", ref: refOf(a) })
+      await assert.rejects(client.act(other, { action: "click", ref: refOf(a) }), /stale ref/)
+      await client.act({ ...other, document: b.document }, { action: "click", ref: refOf(b) })
+      first.sockets.find(socket => !socket.closed)!.emit("Page.frameNavigated")
+      await assert.rejects(client.screenshot({ ...identity, document: a.document }), /Page changed/)
+      assert.equal((await client.screenshot({ ...other, document: b.document })).bytes, 3)
+    } finally { client.close() }
+  })
+
   it("keeps window-scoped tools usable across session/project navigation and empty views", async () => {
     const chrome = new FakeChrome()
     const client = chrome.client()

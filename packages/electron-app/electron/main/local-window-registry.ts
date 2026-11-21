@@ -101,6 +101,16 @@ export class LocalWindowRegistry {
     return undefined
   }
 
+  automationWindows(focused: BrowserWindow | null): Array<{ windowId: string; focused: boolean }> {
+    const windows = this.mru.flatMap(id => {
+      const record = this.records.get(id)
+      if (!record || record.connectOnly || record.loading || !record.backendUrl
+        || record.window.isDestroyed() || record.window.webContents.isDestroyed()) return []
+      return [{ windowId: id, focused: record.window === focused }]
+    })
+    return windows.sort((left, right) => Number(right.focused) - Number(left.focused))
+  }
+
   focusMru(): LocalWindowRecord | undefined {
     for (const id of this.mru) {
       const focused = this.focus(id)

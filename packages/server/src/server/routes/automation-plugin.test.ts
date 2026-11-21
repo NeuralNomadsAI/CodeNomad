@@ -31,6 +31,8 @@ test("targets the inspected window independently of the visible conversation", a
   const nativeCalls: Array<{ method: string; params: unknown }> = []
   let state = "ready"
   let runId = "run-1"
+  let focusedWindow = "window-1"
+  let firstWindowOpen = true
   let visibleSession = "session-1"
   let inspectedIdentity: unknown
   const previewError = { level: "error", text: "browser preview: install navigation starting handler: Paramètre incorrect. (0x80070057)" }
@@ -39,19 +41,21 @@ test("targets the inspected window independently of the visible conversation", a
     authManager: { isLoopbackRequest: () => true },
     bridgeToken: "secret",
     nativeParent: {
-      request: async (method: string, params: unknown) => {
+      request: async (method: string, params: { windowId?: string; runId?: string }) => {
         nativeCalls.push({ method, params })
         if (method === "developer.restart") {
           runId = "run-2"
           return { state: "starting", runId }
         }
+        const windowId = params.windowId ?? focusedWindow
+        const available = (!params.runId || params.runId === runId) && (windowId !== "window-1" || firstWindowOpen)
         return {
           status: {
-            state,
+            state: available ? state : "starting",
             runId,
             nativeIdentity: "electron:test",
             cdpUrl: "http://127.0.0.1:9222",
-            windowId: "window-1",
+            windowId: available ? windowId : undefined,
           },
           logs: [previewError],
         }
@@ -74,6 +78,10 @@ test("targets the inspected window independently of the visible conversation", a
         }
       },
       close: () => undefined,
+      screenshot: async (identity: { windowId: string }) => {
+        assert.equal(identity.windowId, "window-1")
+        return { data: "fixture", mediaType: "image/png" }
+      },
       act: async (identity: { sessionId?: string; instanceId?: string }, action: { action: string; values?: string[] }) => {
         assert.equal(identity.sessionId, undefined)
         assert.equal(identity.instanceId, undefined)
@@ -107,7 +115,9 @@ test("targets the inspected window independently of the visible conversation", a
   assert.deepEqual(inspect.json().result.diagnostics, [previewError], "inspection exposes retained native preview errors")
 
   visibleSession = "session-2"
+  focusedWindow = "window-2"
   assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "click", ref: "ax1" } })).statusCode, 200)
+  assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "screenshot" } })).statusCode, 200)
   assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "inspect", ref: "e1", query: "Save" } })).statusCode, 200)
   assert.deepEqual(inspectOptions, [{ ref: undefined, query: undefined }, { ref: "e1", query: "Save" }])
   const selected = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "select", ref: "e2", values: ["Exploration"] } })
@@ -121,11 +131,20 @@ test("targets the inspected window independently of the visible conversation", a
   const restart = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "restart" } })
   assert.equal(restart.statusCode, 200)
   assert.deepEqual(nativeCalls.slice(-2), [
-    { method: "developer.status", params: {} },
+    { method: "developer.status", params: { windowId: "window-1", runId: "run-1" } },
     { method: "developer.restart", params: {} },
   ])
   assert.equal((await request({ mode: "developer-probe", sessionID: "session-2" })).statusCode, 200)
   assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "restart" } })).statusCode, 404)
+
+  focusedWindow = "window-1"
+  assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "inspect" } })).statusCode, 200)
+  firstWindowOpen = false
+  focusedWindow = "window-2"
+  const vanished = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "press", key: "Enter" } })
+  assert.equal(vanished.statusCode, 404)
+  assert.equal(vanished.json().code, "target-gone")
+  assert.equal(actions.length, 3, "a vanished window cannot send a key to the newly focused window")
 
   state = "stopped"
   assert.equal((await request({ mode: "developer-probe", sessionID: "session-2" })).statusCode, 404)
@@ -195,7 +214,7 @@ test("browser works with an unavailable developer target and unrelated inventory
   assert.equal(nativeCalls.length, count, "a model can never choose protocol methods or scripts")
   const developer = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "inspect" } })
   assert.equal(developer.statusCode, 404)
-  assert.match(developer.json().error, /Native automation has no active/)
+  assert.equal(developer.json().code, "no-window")
   await app.close()
 })
 

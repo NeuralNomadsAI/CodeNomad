@@ -15,10 +15,14 @@ const DISCOVERY_PROBE_CONCURRENCY = 4
 const CONTEXT_EXPRESSION = `(() => {
   const root = document.querySelector('[data-tab-visible="true"][data-instance-id]');
   const pane = root?.querySelector('.session-cache-pane[data-session-active="true"][data-session-id]');
+  const localTabs = Array.from(document.querySelectorAll('[data-tab-id][data-instance-id]'))
+    .filter(tab => !tab.getAttribute('data-instance-id').includes('~')).slice(0, 64);
   return {
     windowId: window.__CODENOMAD_WINDOW_ID__ ?? null,
     instanceId: root?.getAttribute('data-instance-id') ?? null,
     sessionId: pane?.getAttribute('data-session-id') ?? null,
+    tabId: root?.getAttribute('data-tab-id') ?? null,
+    localSessions: localTabs.map(tab => tab.getAttribute('data-tab-session-id')).filter(Boolean),
   };
 })()`
 
@@ -31,12 +35,15 @@ export interface DeveloperCdpSelection {
 
 export interface DeveloperCdpIdentity extends DeveloperCdpSelection {
   instanceId?: string
+  document?: string
 }
 
 export interface DeveloperCdpContext {
   windowId: string
   instanceId: string | null
   sessionId: string | null
+  tabId?: string | null
+  localSessions?: string[]
 }
 
 export interface DeveloperCdpDiagnostic {
@@ -49,6 +56,7 @@ export interface DeveloperCdpInspection {
   context: DeveloperCdpContext
   /** Indented accessibility outline with refs (`automation/page/snapshot.ts`). */
   snapshot: string
+  document: string
   /** Lines that hide part of the page; inspect their ref to expand them. */
   collapsed: number
   diagnostics: DeveloperCdpDiagnostic[]
@@ -123,7 +131,7 @@ interface RunState {
 
 export class DeveloperCdp {
   private readonly dependencies: DeveloperCdpDependencies
-  private readonly runs = new Map<string, RunState>()
+  private readonly windows = new Map<string, RunState>()
   private readonly operations = new Map<string, Promise<void>>()
   /** Shared by runs so a ref name is never reused for another element. */
   private readonly refs = new RefTable()
@@ -147,15 +155,20 @@ export class DeveloperCdp {
       let snapshot
       try {
         snapshot = await snapshotPage(this.session(state, state.navigationEpoch, "Page changed during inspection; inspect again"),
-          () => this.refs.issuer(generation), { rootBackendNodeId: root, query: options.query })
+          () => {
+            const live = new Set([...this.windows.values()].filter(window => window.target && window.socket)
+              .map(window => this.generation(window)))
+            return this.refs.issuer(generation, candidate => live.has(candidate))
+          }, { rootBackendNodeId: root, query: options.query })
       } catch (error) {
         if (error instanceof SnapshotScopeError) throw new Error(`${options.ref} is no longer in the page; inspect again`)
         throw error
       }
       return {
         target: { id: state.target!.id, title: state.target!.title, url: state.target!.url },
-        context: state.context!,
+        context: this.publicContext(state.context!),
         snapshot: snapshot.text,
+        document: generation,
         collapsed: snapshot.collapsed,
         diagnostics: state.diagnostics.splice(0),
       }
@@ -201,10 +214,10 @@ export class DeveloperCdp {
   }
 
   close(runId?: string): void {
-    for (const [id, state] of this.runs) {
-      if (runId && id !== runId) continue
+    for (const [id, state] of this.windows) {
+      if (runId && !id.startsWith(`${runId}\0`)) continue
       this.disconnect(state, new Error("Developer CDP controller closed"))
-      this.runs.delete(id)
+      this.windows.delete(id)
     }
   }
 
@@ -212,23 +225,32 @@ export class DeveloperCdp {
     return this.exclusive(selection.runId, async () => (await this.ensure(selection)).context!)
   }
 
+  private publicContext({ localSessions: _localSessions, ...context }: DeveloperCdpContext): DeveloperCdpContext {
+    return context
+  }
 
   private async ensure(identity: DeveloperCdpSelection | DeveloperCdpIdentity): Promise<RunState> {
     if (!identity.runId.trim()) throw new Error("runId is required")
     const endpoint = discoveryUrl(identity.endpoint)
-    for (const [runId, previous] of this.runs) {
-      if (runId === identity.runId) continue
-      this.disconnect(previous, new Error("Developer run was replaced"))
-      this.runs.delete(runId)
-    }
-    let state = this.runs.get(identity.runId)
+    const key = `${identity.runId}\0${identity.windowId}`
+    let state = this.windows.get(key)
     if (!state || state.endpoint !== endpoint || state.windowId !== identity.windowId || state.sessionId !== identity.sessionId
       || ("instanceId" in identity && state.instanceId !== identity.instanceId)) {
       if (state) this.disconnect(state, new Error("CDP endpoint changed"))
       state = this.newState(endpoint, identity.windowId, identity.sessionId, "instanceId" in identity ? identity.instanceId : undefined)
-      this.runs.set(identity.runId, state)
     }
-    return this.ensureTarget(state)
+    this.windows.delete(key)
+    this.windows.set(key, state)
+    if (this.windows.size > 32) {
+      const oldest = this.windows.keys().next().value!
+      this.disconnect(this.windows.get(oldest)!, new Error("Developer target retired"))
+      this.windows.delete(oldest)
+    }
+    await this.ensureTarget(state)
+    if ("document" in identity && identity.document !== undefined && identity.document !== this.generation(state)) {
+      throw new StaleDeveloperDocument()
+    }
+    return state
   }
 
   private newState(endpoint: string, windowId: string, sessionId?: string, instanceId?: string): RunState {
@@ -316,7 +338,10 @@ export class DeveloperCdp {
       || !optionalId(value.instanceId) || !optionalId(value.sessionId)) {
       throw new Error("CodeNomad page has no valid window context")
     }
-    return { windowId: value.windowId, instanceId: value.instanceId!, sessionId: value.sessionId! }
+    const localSessions = Array.isArray(value.localSessions)
+      ? value.localSessions.slice(0, 64).filter((id): id is string => typeof id === "string" && id.length <= 256) : undefined
+    return { windowId: value.windowId, instanceId: value.instanceId!, sessionId: value.sessionId!,
+      ...(optionalId(value.tabId) ? { tabId: value.tabId } : {}), ...(localSessions ? { localSessions } : {}) }
   }
 
   private matchesContext(state: RunState, context: DeveloperCdpContext): boolean {
@@ -446,6 +471,10 @@ export class DeveloperCdp {
     }
     state.pending.clear()
   }
+}
+
+export class StaleDeveloperDocument extends Error {
+  constructor() { super("Page changed; inspect again") }
 }
 
 function discoveryUrl(endpoint: string): string {

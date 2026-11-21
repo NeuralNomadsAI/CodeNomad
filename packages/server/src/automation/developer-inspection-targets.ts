@@ -11,13 +11,8 @@ export class DeveloperInspectionTargets {
     if (this.targets.size > 128) this.targets.delete(this.targets.keys().next().value!)
   }
 
-  get(sessionId: string, native: { runId: string; windowId: string; endpoint: string }): DeveloperCdpIdentity {
-    const target = this.targets.get(sessionId)
-    if (!target || target.runId !== native.runId || target.windowId !== native.windowId || target.endpoint !== native.endpoint) {
-      this.targets.delete(sessionId)
-      throw new Error("Run codenomad.inspect before acting on or restarting this CodeNomad window")
-    }
-    return target
+  get(sessionId: string): DeveloperCdpIdentity | undefined {
+    return this.targets.get(sessionId)
   }
 
   forget(sessionId: string): void {

@@ -4,6 +4,8 @@ import type { FastifyInstance, FastifyRequest } from "fastify"
 import type { AuthManager } from "../../auth/manager"
 import type { DeveloperCdp } from "../../developer-cdp"
 import type { DeveloperCdpDiagnostic, DeveloperCdpIdentity, DeveloperCdpSelection } from "../../developer-cdp"
+import { StaleDeveloperDocument } from "../../developer-cdp"
+import { parseDeveloperTarget, type DeveloperTargetSelector } from "../../automation/developer-target-selector"
 import type { NativeParent } from "../../native-parent"
 import { AUTOMATION_BRIDGE_PATH, parseBrowserAction, parseDeveloperAction } from "../../opencode/automation-plugin"
 import type { WorkspaceManager } from "../../workspaces/manager"
@@ -65,6 +67,13 @@ interface DeveloperNativeStatus {
     windowId?: string
   }
   logs?: DeveloperCdpDiagnostic[]
+  windows?: Array<{ windowId: string; focused: boolean }>
+}
+
+function developerSelection(status: DeveloperNativeStatus["status"]): DeveloperCdpSelection | undefined {
+  if (status?.state !== "ready" || typeof status.runId !== "string" || typeof status.nativeIdentity !== "string"
+    || typeof status.cdpUrl !== "string" || typeof status.windowId !== "string") return undefined
+  return { endpoint: status.cdpUrl, runId: status.runId, windowId: status.windowId }
 }
 
 export function isAutomationPluginRequest(
@@ -88,7 +97,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     const lifetime = requestAdmission(request, reply)
     try {
     if (!isAutomationPluginRequest(request, deps)) return reply.code(401).send({ error: "Unauthorized automation bridge" })
-    const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown; purpose?: unknown } | undefined
+    const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown; purpose?: unknown; target?: unknown } | undefined
     if (body?.mode === "human-answer-verify") {
       if (!deps.settings) return reply.code(503).send({ error: "Human answer admission unavailable" })
       try { return reply.send({ result: await verifyMissionHumanAnswer(body.command,
@@ -247,63 +256,73 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       }
     }
 
+    let command
+    let explicit: DeveloperTargetSelector | undefined
+    const probe = body.mode === "developer-probe"
+    const inventory = probe && body.purpose === "targets"
+    try {
+      if (!probe) command = parseDeveloperAction(body.command)
+      if (body.target !== undefined) {
+        if (command?.action !== "inspect" || command.ref) throw new Error("Select another window in a fresh inspection")
+        explicit = parseDeveloperTarget(body.target)
+      }
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) })
+    }
+    const pin = probe ? undefined : inspectedTargets.get(body.sessionID)
+    const exact = explicit ?? pin
+    if (command && (command.action !== "inspect" || command.ref) && !pin) {
+      return reply.code(404).send({ code: "inspect-required", error: "Run codenomad.inspect before acting on this window" })
+    }
+    const unavailable = (error?: string) => reply.code(404).send(exact
+      ? { code: "target-gone", error: "The selected window is unavailable; choose a window in inspect({targets:true})" }
+      : { code: "no-window", error: error ?? "No ready local CodeNomad window for this backend" })
     let native: DeveloperNativeStatus
     try {
-      native = await deps.nativeParent.request<DeveloperNativeStatus>("developer.status", {})
+      native = await deps.nativeParent.request<DeveloperNativeStatus>(inventory ? "developer.targets" : "developer.status",
+        exact ? { windowId: exact.windowId, runId: exact.runId } : {})
     } catch (error) {
-      return reply.code(404).send({ error: error instanceof Error ? error.message : String(error) })
+      return unavailable(error instanceof Error ? error.message : String(error))
     }
-    const status = native.status
-    const available = status?.state === "ready" && typeof status.runId === "string"
-      && typeof status.nativeIdentity === "string" && typeof status.cdpUrl === "string" && typeof status.windowId === "string"
-    if (!available) {
-      if (typeof status?.runId === "string") deps.developerCdp.close(status.runId)
-      return reply.code(404).send({ error: "Native automation has no active CodeNomad session" })
-    }
+    const selection = developerSelection(native.status)
+    if (!selection || exact && (selection.windowId !== exact.windowId || selection.runId !== exact.runId)
+      || explicit && explicit.nativeIdentity !== native.status.nativeIdentity
+      || !explicit && pin && pin.endpoint !== selection.endpoint) return unavailable()
 
-    const selection: DeveloperCdpSelection = {
-      endpoint: status.cdpUrl!,
-      runId: status.runId!,
-      windowId: status.windowId!,
-    }
-    let command
-    if (body.mode !== "developer-probe") {
-      try {
-        command = parseDeveloperAction(body.command)
-      } catch (error) {
-        return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) })
+    if (probe) {
+      const selected = { available: true, nativeIdentity: native.status.nativeIdentity, runId: selection.runId }
+      if (inventory) {
+        const windows = await Promise.all((native.windows ?? []).slice(0, 16).map(async window => {
+          try {
+            const context = await deps.developerCdp.context({ ...selection, windowId: window.windowId })
+            const visible = context.sessionId === body.sessionID && !context.instanceId?.includes("~")
+            return { windowId: context.windowId, focused: window.focused === true,
+              session: visible ? "visible" : context.localSessions?.includes(body.sessionID as string) ? "open" : "elsewhere",
+              ...(visible && context.tabId ? { tabId: context.tabId } : {}) }
+          } catch { return undefined }
+        }))
+        return reply.send({ result: { ...selected, windows: windows.filter(Boolean) } })
       }
-    }
-    let identity: DeveloperCdpIdentity | undefined
-    try {
-      if (body.mode === "developer-probe" || command?.action === "inspect") {
-        await deps.developerCdp.context(selection)
-      } else {
-        identity = inspectedTargets.get(body.sessionID, selection)
-        await deps.developerCdp.context(identity)
-      }
-    } catch (error) {
-      if (body.mode !== "developer-probe") inspectedTargets.forget(body.sessionID)
-      return reply.code(404).send({ error: error instanceof Error ? error.message : String(error) })
-    }
-    identity ??= selection
-    if (body.mode === "developer-probe") {
-      return reply.send({ result: { available: true, nativeIdentity: status.nativeIdentity, runId: status.runId } })
+      try { await deps.developerCdp.context(selection) } catch { return unavailable() }
+      return reply.send({ result: selected })
     }
 
     if (!command) return reply.code(400).send({ error: "Missing developer command" })
+    const identity: DeveloperCdpIdentity = command.action === "inspect" && !command.ref ? selection : pin ?? selection
     try {
       if (command.action === "restart") {
+        await deps.developerCdp.context(identity)
         inspectedTargets.forget(body.sessionID)
         const result = await deps.nativeParent.request<DeveloperNativeStatus["status"]>("developer.restart", {})
-        deps.developerCdp.close(status.runId)
+        deps.developerCdp.close(selection.runId)
         return reply.send({ result })
       }
       if (command.action === "inspect") {
         const result = await deps.developerCdp.inspect(identity, { ref: command.ref, query: command.query })
         result.diagnostics.push(...(native.logs ?? []).slice(-32))
-        inspectedTargets.remember(body.sessionID, identity)
-        return reply.send({ result })
+        inspectedTargets.remember(body.sessionID, { ...identity, ...(result.document ? { document: result.document } : {}) })
+        const { document: _document, ...inspection } = result
+        return reply.send({ result: inspection })
       }
       if (command.action === "screenshot") {
         const image = await deps.developerCdp.screenshot(identity)
@@ -312,6 +331,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       const result = await deps.developerCdp.act(identity, command)
       return reply.send({ result: { ok: true, ...result } })
     } catch (error) {
+      if (error instanceof StaleDeveloperDocument) return reply.code(409).send({ code: "stale-document", error: error.message })
       return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) })
     }
     } finally { lifetime.dispose() }

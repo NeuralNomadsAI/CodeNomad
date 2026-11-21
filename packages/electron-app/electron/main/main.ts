@@ -160,12 +160,7 @@ function runPrimary(firstIntent: LaunchIntent) {
   const developerMode = new DeveloperMode({
     devtoolsDataPath: sessionDataPath,
     nativeIdentity: developerNativeIdentity,
-    // A focused Preferences or remote window is not an automation target: fall back to the
-    // most recently used application window instead of reporting no target at all.
-    targetWindowId: () => {
-      const focused = BrowserWindow.getFocusedWindow()
-      return (focused ? registry.resolve(focused.webContents)?.id : undefined) ?? registry.mruRecord()?.id
-    },
+    windows: () => registry.automationWindows(BrowserWindow.getFocusedWindow()),
     requestRelaunch: () => lifecycle.requestRelaunch(),
   })
   const browserController = new BrowserController((sessionID, url, requestID) => {
@@ -175,7 +170,7 @@ function runPrimary(firstIntent: LaunchIntent) {
   })
   const cli = new CliProcessManager((method, params, deadline) => method.startsWith("browser.")
     ? handleNativeBrowserRequest(browserController, method, params, deadline)
-    : developerMode.handleNativeRequest(method))
+    : developerMode.handleNativeRequest(method, params))
   const remoteOrigins = new Map<number, Set<string>>()
   const insecureOrigins = new Map<number, Set<string>>()
   const navigationLifecycle = new SerializedLifecycle()

@@ -10,6 +10,8 @@ Las pestañas de proyectos, conversaciones seleccionadas y disposición pertenec
 
 Los menús nativos de la aplicación usan el idioma de la interfaz de CodeNomad en cuanto se ha cargado una ventana; hasta entonces se muestran en inglés. **Ayuda → Acerca de CodeNomad** (también en el menú de la aplicación en macOS) abre **Configuración → Info** con la versión, las actualizaciones y los diagnósticos. **Ayuda → Apoyar a CodeNomad** abre la página [Apoyar a CodeNomad](sponsor.md) en el navegador.
 
+La automatización de escritorio permanece en la ventana inspeccionada por el agente, aunque cambies de ventana. Con `codenomad.inspect({targets:true})`, el agente puede enumerar las ventanas locales disponibles e inspeccionar otra por su identificador.
+
 ## Argumentos de inicio de escritorio {#desktop-cli}
 
 Añade estos argumentos después del **ejecutable de escritorio** (Tauri o Electron), en una terminal o en el campo **Destino** de un acceso directo de Windows. Sustituye las rutas de ejemplo por la de tu ejecutable.

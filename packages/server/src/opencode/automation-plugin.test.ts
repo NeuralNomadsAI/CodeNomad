@@ -422,6 +422,56 @@ test("pins parallel sessions to their independently inspected bridges", async ()
   }
 })
 
+test("lists exact window selectors, prefers the visible session and stays pinned without re-probing", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-automation-targets-"))
+  const restore = isolateAutomationBridgeRegistry(root)
+  const calls: Array<Record<string, unknown>> = []
+  const removals: Array<() => Promise<void>> = []
+  const servers: http.Server[] = []
+  let twoVisible = false
+  try {
+    for (const profile of ["a", "b"]) {
+      const bridge = await listen(async (body, response) => {
+        calls.push({ ...body, profile })
+        if (body.mode === "developer-probe") return { result: { available: true, nativeIdentity: `electron:${profile}`, runId: "run",
+          windows: [{ windowId: "window-1", focused: true, session: profile === "b" && !twoVisible ? "elsewhere" : "visible" },
+            { windowId: "window-2", focused: false, session: "open" }] } }
+        if ((body.command as { action: string }).action === "screenshot") {
+          response.statusCode = 404
+          return { code: "target-gone", error: "Closed" }
+        }
+        return { result: { target: { id: "page", title: "CodeNomad", url: "http://app.test" },
+          context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } }
+      })
+      servers.push(bridge.server)
+      removals.push(await publishAutomationBridge(createAutomationBridgeRegistration(bridge.url)))
+    }
+    const tools = await collectTools()
+    const inspect = tools.find(tool => tool.name === "inspect")!
+    const capture = tools.find(tool => tool.name === "screenshot")!
+    const session = { sessionID: "one" }
+    const list = JSON.parse(String((await inspect.execute({ targets: true }, session)).content))
+    assert.equal(list.targets.length, 4)
+    assert.ok(calls.every(call => call.mode === "developer-probe"), "listing cannot inspect or move a window")
+    await inspect.execute({}, session)
+    assert.equal(calls.at(-1)?.target, "electron:a/run/window-1")
+    twoVisible = true
+    await assert.rejects(inspect.execute({}, { sessionID: "two" }), /ambiguous-target/)
+    const target = list.targets.find((item: { target: string }) => item.target === "electron:b/run/window-2").target
+    await inspect.execute({ target }, session)
+    assert.equal(calls.at(-1)?.target, target)
+    const before = calls.length
+    await assert.rejects(capture.execute({}, session), /target-gone/)
+    assert.equal(calls.length, before + 1, "a closed window cannot trigger a new discovery or capture")
+    assert.equal(calls.at(-1)?.profile, "b")
+  } finally {
+    await Promise.all(removals.map(remove => remove()))
+    await Promise.all(servers.map(closeServer))
+    restore()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("prunes stale registry pressure before limiting discovery", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-automation-stale-"))
   const restoreBridgeRegistry = isolateAutomationBridgeRegistry(root)

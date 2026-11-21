@@ -9,9 +9,9 @@ export class RefTable {
   constructor(private readonly retry = "inspect again", private readonly prefix = "e", private readonly limit = 5_000) {}
 
   /** Issues refs for one inspection; refs of other generations can no longer resolve and are dropped. */
-  issuer(generation: string): (backendNodeId: number) => string {
+  issuer(generation: string, keep?: (generation: string) => boolean): (backendNodeId: number) => string {
     for (const [ref, entry] of this.entries) {
-      if (entry.generation === generation) continue
+      if (entry.generation === generation || keep?.(entry.generation)) continue
       this.entries.delete(ref)
       this.byNode.delete(`${entry.generation}\0${entry.backendNodeId}`)
     }

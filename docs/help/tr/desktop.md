@@ -10,6 +10,8 @@ Proje sekmeleri, seçilen konuşmalar ve düzen bir pencereye aittir. OpenCode o
 
 Yerel uygulama menüleri, bir pencere yüklendikten sonra CodeNomad'ın arayüz dilini kullanır; o zamana kadar İngilizce görünür. **Yardım → CodeNomad hakkında** (macOS uygulama menüsünde de bulunur), sürüm, güncellemeler ve tanılamayla birlikte **Ayarlar → Bilgi** bölümünü açar. **Yardım → CodeNomad'i destekleyin**, [CodeNomad'i destekleyin](sponsor.md) sayfasını tarayıcınızda açar.
 
+Pencere değiştirseniz bile masaüstü otomasyonu aracının incelediği pencerede kalır. Aracı, `codenomad.inspect({targets:true})` ile kullanılabilir yerel pencereleri listeleyebilir ve döndürülen kimlikle başka bir pencereyi inceleyebilir.
+
 ## Masaüstü başlatma argümanları {#desktop-cli}
 
 Bu argümanları **masaüstü çalıştırılabilir dosyasından** (Tauri veya Electron) sonra, terminalde ya da Windows kısayolunun **Hedef** alanında kullanın. Örnek dosya yollarını kendi dosya yolunuzla değiştirin.

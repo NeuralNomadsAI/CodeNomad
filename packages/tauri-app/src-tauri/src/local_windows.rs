@@ -323,6 +323,23 @@ impl LocalWindows {
         self.registry.lock().ok()?.mru_label()
     }
 
+    pub(crate) fn automation_labels(&self) -> Vec<String> {
+        let Ok(registry) = self.registry.lock() else {
+            return Vec::new();
+        };
+        registry
+            .mru
+            .iter()
+            .filter(|label| {
+                registry
+                    .records
+                    .get(*label)
+                    .is_some_and(|record| !record.connect_only && record.renderer_ready)
+            })
+            .cloned()
+            .collect()
+    }
+
     pub(crate) fn mark_focused(&self, app: &AppHandle, label: &str) {
         let id = self
             .registry
