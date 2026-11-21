@@ -758,6 +758,10 @@ impl BrowserController {
 
     fn release_claim(&self, window_label: &str, request_id: &str) -> Option<OpenClaim> {
         let mut inner = self.inner.0.lock().ok()?;
+        let occupied = inner
+            .open_claims
+            .get(request_id)
+            .is_some_and(|claim| inner.attachments.contains_key(&claim.session_id));
         let claim = inner.open_claims.get_mut(request_id)?;
         if claim
             .fence
@@ -770,7 +774,7 @@ impl BrowserController {
             return None;
         }
         claim.failed_owners.insert(window_label.to_string());
-        if claim.attachment.is_none() {
+        if claim.attachment.is_none() && !occupied {
             claim.owner = None;
         }
         Some(claim.clone())
@@ -833,6 +837,7 @@ impl BrowserController {
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
                 inner.canvases.remove(&id);
             }
+            let occupied = inner.attachments.keys().cloned().collect::<HashSet<_>>();
             let retries = inner
                 .open_claims
                 .iter_mut()
@@ -841,7 +846,7 @@ impl BrowserController {
                         return None;
                     }
                     claim.failed_owners.insert(window_label.to_string());
-                    if claim.attachment.is_some() {
+                    if claim.attachment.is_some() || occupied.contains(&claim.session_id) {
                         return None;
                     }
                     claim.owner = None;

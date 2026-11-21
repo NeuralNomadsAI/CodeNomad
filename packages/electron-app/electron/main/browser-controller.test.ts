@@ -401,6 +401,21 @@ describe("BrowserController preview lifecycle", () => {
     assert.equal(requests.length, 1)
   })
 
+  it("does not reroute a claim if another window reserves the session before adoption", async () => {
+    const requests: string[] = []
+    const h = createHarness((_session, _url, id) => requests.push(id))
+    const url = "https://example.com/"
+    const open = h.controller.execute("session", { action: "open", url })
+    const rejected = assert.rejects(open, /ownership changed/)
+    assert.equal(h.controller.claimOpen(h.owner, requests[0]), true)
+    const other = { id: 2, isDestroyed: () => false } as WebContents
+    assert.equal(h.controller.permitAttachment(other, { src: url, webpreferences: "codenomadSession=session" }), true)
+    assert.equal(h.controller.claimOpen(h.owner, requests[0]), false)
+    assert.equal(h.controller.releaseOpen(h.owner, requests[0]), true)
+    await rejected
+    assert.equal(requests.length, 1)
+  })
+
   it("reads only bounded public history and refuses foreign or unsafe traversal", async () => {
     const h = createHarness()
     const commands: Array<{ method: string; params?: Record<string, unknown> }> = []

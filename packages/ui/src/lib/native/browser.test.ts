@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { browserHostCapabilities, nativeBrowserHost, onNativeBrowserOpen, physicalBrowserBounds } from "./browser.ts"
+import { browserHostCapabilities, nativeBrowserHost, onNativeBrowserOpen, physicalBrowserBounds, registerTauriBrowserTarget } from "./browser.ts"
 
 describe("native browser adapter", () => {
   it("subscribes to WebKit open requests with native automation available", async () => {
@@ -58,4 +58,29 @@ describe("native browser adapter", () => {
     })
   })
 
+  it("sends the calling document's nonce with Tauri registration, even if injection is pending", async () => {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, "window")
+    const calls: unknown[] = []
+    const renderer = Object.assign(new EventTarget(), {
+      __TAURI_INTERNALS__: {
+        invoke: async (command: string, args: unknown) => { calls.push({ command, args }); return true },
+      },
+    })
+    try {
+      Object.defineProperty(globalThis, "window", { configurable: true, value: renderer })
+      const payload = { sessionId: "session", registrationId: "preview", url: "https://example.com/", bounds: { x: 0, y: 0, width: 320, height: 240 } }
+      const registered = registerTauriBrowserTarget(payload)
+      assert.deepEqual(calls, [])
+      Object.defineProperty(renderer, "__CODENOMAD_BROWSER_DOCUMENT__", { value: "own-document" })
+      renderer.dispatchEvent(new Event("codenomad:browser-document"))
+      assert.equal(await registered, true)
+      assert.deepEqual(calls, [{
+        command: "browser_target_register",
+        args: { rendererDocument: "own-document", payload: { ...payload, visible: false } },
+      }])
+    } finally {
+      if (previous) Object.defineProperty(globalThis, "window", previous)
+      else Reflect.deleteProperty(globalThis, "window")
+    }
+  })
 })

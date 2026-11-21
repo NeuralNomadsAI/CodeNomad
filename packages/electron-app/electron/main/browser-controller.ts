@@ -228,7 +228,7 @@ export class BrowserController {
     if (typeof requestID !== "string") return false
     const claim = this.openClaims.get(requestID)
     if (!claim || claim.owner !== owner) return false
-    if (claim.attachment) {
+    if (claim.attachment || this.attachments.has(claim.sessionID)) {
       claim.abandoned = true
       return true
     }
