@@ -65,6 +65,7 @@ node roundtrip.mjs $OpenCode
 
 `sidecars` serves a private static UI fixture on both servers to check the SPA fallback for unmatched paths. Set `CNRS_SIDECARS_NO_UI=1` to compare the same paths with no UI bundle. Neither run launches a window.
 `CNRS_BENCH_STARTUP_TIMEOUT_MS` changes the readiness budget for `compare.mjs` when the machine is busy.
+Set `CNRS_BENCH_MISSIONS_SERVE=1` on Windows to compare `missions` or `missions-calendar` with Rust's production `serve` contract, packaged plugins and a CLI shim bound to the owned fixture daemon. No Tauri window is opened.
 
 Results: `bench/out/<mode>.json` (TS and Rust observations, or `error`), redacted logs `out/<mode>-ts.log` / `out/<mode>-rs.log`, screenshots `out/screenshots/<mode>/`. `out/` is ignored by Git; `out/tmp/` keeps each fixture for diagnosis (about 700 MiB after a full run) and can be deleted.
 

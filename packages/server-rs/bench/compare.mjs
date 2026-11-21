@@ -4,7 +4,7 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { mkdir, writeFile } from "node:fs/promises"
+import { copyFile, cp, mkdir, writeFile } from "node:fs/promises"
 import net from "node:net"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
@@ -20,6 +20,9 @@ const [mode, exe] = process.argv.slice(2)
 assert(MODES.includes(mode) && path.isAbsolute(exe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)
 const bin = rustBinary()
 const bench = mode === "solid" ? undefined : await import(`./${mode === "http" ? "worktrees" : mode}.mjs`)
+const missionServe = process.env.CNRS_BENCH_MISSIONS_SERVE === "1"
+assert(!missionServe || process.platform === "win32" && ["missions", "missions-calendar"].includes(mode))
+const runtime = missionServe ? { ...bench?.runtime, service: true } : bench?.runtime
 await useBenchTemp()
 await outsideUserHome(process.env.TEMP)
 const daemonTemp = path.join(process.env.TEMP, "opencode")
@@ -100,16 +103,36 @@ async function start(label, fixture, folder, password, trustedCA) {
   }
   // Modes that seed `config.yaml` start both servers on equal settings.
   // Keep the Rust settings at their private positional default in modes without a seeded YAML.
+  const serve = label === "rs" && missionServe
   env.CLI_CONFIG = label === "ts" ? path.join(root, "ts.yaml")
-    : path.join(root, mode === "host" || bench?.configure ? "rust.yaml" : "rust.data")
+    : path.join(root, serve || mode === "host" || bench?.configure ? "rust.yaml" : "rust.data")
   await assertPrivateProfile(root, env, resolveConfigLocation(env.CLI_CONFIG))
   const uiDir = await bench?.ui?.(root) ?? path.join(out, "ui")
   if (bench?.ui) env.CNRS_FIXTURE_UI_DIR = uiDir
+  let rust = bin
+  let rustArgs = [folder, path.join(root, "rust.json"), String(port), exe]
+  if (serve) {
+    // A read-only CLI shim proves this owned connection and cannot start a daemon.
+    const cli = path.join(root, "mission-opencode.cmd")
+    env.FIXTURE_NATIVE_URL = new URL(fixture.connection.endpoint.url).origin
+    env.FIXTURE_NATIVE_PASSWORD = fixture.connection.endpoint.auth.password
+    assert.match(env.FIXTURE_NATIVE_URL, /^http:\/\/127\.0\.0\.1:\d+$/)
+    assert.match(env.FIXTURE_NATIVE_PASSWORD, /^[a-f0-9-]+$/)
+    await writeFile(cli, '@echo off\r\nif "%*"=="service status" (echo %FIXTURE_NATIVE_URL%& exit /b 0)\r\nif "%*"=="service get password" (echo %FIXTURE_NATIVE_PASSWORD%& exit /b 0)\r\nexit /b 1\r\n', { flag: "wx" })
+    const seeded = await bench.configure?.(fixture) ?? ""
+    await writeFile(env.CLI_CONFIG, `server:\n  opencodeBinary: ${JSON.stringify(cli)}\n${seeded}`)
+    rust = path.join(root, "server", path.basename(bin))
+    await mkdir(path.dirname(rust))
+    await copyFile(bin, rust)
+    await cp(new URL("plugins/", new URL("../../server/dist/", import.meta.url)), path.join(path.dirname(rust), "plugins"), { recursive: true })
+    rustArgs = ["serve", "--http", "true", "--http-port", String(port), "--https", "false",
+      "--ui-dir", uiDir, "--workspace-root", folder]
+  }
   const child = label === "ts"
     ? spawn(process.execPath, [path.join(import.meta.dirname, "ts-server.mjs"), "--http", "true", "--http-port", String(port), "--https", "false",
       "--ui-no-update", "--ui-dir", uiDir, "--config", env.CLI_CONFIG, "--workspace-root", folder],
       { env, cwd: root, windowsHide: true, stdio: [scripted ? "pipe" : "ignore", "pipe", "pipe"] })
-    : spawn(bin, [folder, path.join(root, "rust.json"), String(port), exe], { env, cwd: root, windowsHide: true, stdio: [scripted ? "pipe" : "ignore", "pipe", "pipe"] })
+    : spawn(rust, rustArgs, { env, cwd: root, windowsHide: true, stdio: [scripted || serve ? "pipe" : "ignore", "pipe", "pipe"] })
   const stopped = new Promise(resolve => child.once("close", resolve))
   let output = "", spawnError
   child.on("error", error => { spawnError = error })
@@ -117,6 +140,10 @@ async function start(label, fixture, folder, password, trustedCA) {
   const native = scripted ? nativeHost(child) : undefined
   const request = (route, init) => fetch(`${listen}${route}`, { signal: AbortSignal.timeout(HTTP_TIMEOUT), redirect: "manual", ...init })
   const close = async () => {
+    if (serve && !spawnError && child.exitCode === null && child.signalCode === null) {
+      child.stdin.end("codenomad:shutdown\n", () => {})
+      await Promise.race([stopped, delay(15_000, undefined, { ref: false })])
+    }
     if (!spawnError && child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, stopped)
     await dropRegistration(fixture.env, child.pid)
     const leaked = (bench?.secrets?.() ?? []).filter(secret => output.includes(secret))
@@ -155,6 +182,8 @@ async function qualify(ts, rs, password, rsRoot) {
     const cookie = await signIn(host, password)
     assert.deepEqual(await (await host.request("/api/auth/status", withCookie(cookie))).json(), { authenticated: true, username: "codenomad", passwordUserProvided: true })
     assert.equal(await statusOf(host.request("/api/meta", withCookie(cookie))), 200)
+    if (missionServe && host === rs)
+      assert((await (await host.request("/api/meta", withCookie(cookie))).json()).capabilities.includes("missions"))
     // Sign-out is not ported (decision): its route answers on the reference only.
     if (host === ts) {
       assert.equal(await statusOf(host.request("/api/auth/logout", withCookie(cookie, { method: "POST" }))), 200)
@@ -409,9 +438,9 @@ try {
     await privateGit(path.join(fixture.root, "local", "Local Project"), "typescript-study")
     return prepare(fixture)
   }, async local => withProductRuntime(exe, async fixture => {
-    missionsPresence = await installMissions(fixture)
+    if (!missionServe) missionsPresence = await installMissions(fixture)
     await privateGit(path.join(fixture.root, "remote", "Rust Project"), "rust-study")
-    rustPruning = await installPruning(fixture)
+    if (!missionServe) rustPruning = await installPruning(fixture)
     return prepare(fixture)
   }, async remote => {
     const password = randomUUID()
@@ -422,7 +451,7 @@ try {
     }
     await populate(path.join(rsRoot, "Rust Project"))
     await populate(path.join(tsRoot, "Local Project"))
-    await rustPruning.ready(remote.client, path.join(rsRoot, "Rust Project"))
+    await rustPruning?.ready(remote.client, path.join(rsRoot, "Rust Project"))
     const seeded = (await bench?.configure?.(local, remote)) ?? ""
     const settings = `server:\n  opencodeBinary: ${JSON.stringify(exe)}\n${seeded}ui:\n  settings:\n    multiBackend: true\n    locale: en\n`
     await writeFile(path.join(local.root, "ts.yaml"), settings)
@@ -430,7 +459,7 @@ try {
     let ts, rs
     try {
       rs = await start("rs", remote, rsRoot, password)
-      ts = await start("ts", local, tsRoot, password, path.join(remote.root, "rust.data", "tls", "ca-cert.pem"))
+      ts = await start("ts", local, tsRoot, password, missionServe ? undefined : path.join(remote.root, "rust.data", "tls", "ca-cert.pem"))
       assert.notEqual(ts.daemonPID, rs.daemonPID)
       result.daemons = [ts.status, rs.status]
       await qualify(ts, rs, password, rsRoot)
@@ -448,7 +477,7 @@ try {
       ])
     } finally { await Promise.all([ts?.close(), rs?.close(), bench?.close?.()]) }
     assert(!result.leaks, "A server logged a synthetic provider credential")
-  }, bench?.runtime), bench?.runtime)
+  }, runtime), runtime)
 } catch (error) {
   result.error = String(error.stack)
   console.error(result.error)
