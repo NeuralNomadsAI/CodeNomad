@@ -28,6 +28,8 @@ En Control remoto, **Vistas previas web** está activado por defecto en **Config
 
 En Electron y Tauri para Windows, el reinicio automatizado (`codenomad.act`, `restart`) vuelve a iniciar el perfil, la configuración y la compilación inspeccionados. Si se restaura la ventana original, la vuelve a inspeccionar; si no, informa de su ausencia sin inspeccionar otra ventana. Una inspección que se complete correctamente durante la reconexión tiene prioridad.
 
+Si se cancela el reinicio, usa `codenomad.inspect` con `targets: true` para listar las ventanas abiertas y luego inspecciona la que quieras mediante su `target`.
+
 Las vistas previas nativas comparten cookies, inicios de sesión y almacenamiento de sitios entre proyectos/sesiones dentro del mismo motor de escritorio y ámbito de perfil/configuración, separados del renderer de confianza de CodeNomad. Cerrar sesión en un sitio desde una vista previa afecta a las demás que usen ese almacén. Documentos, formularios, almacenamiento de sesión, historiales de navegación y vínculos de automatización pertenecen a cada sesión.
 
 Un agente abre el navegador compartido de la sesión en una pestaña que la contiene, preferiblemente la activa. La pestaña elegida permanece fija durante la apertura; cerrarla cancela esa apertura. Las acciones sobre la página se dirigen a la vista previa nativa visible de la sesión; las ocultas quedan excluidas.

@@ -32,6 +32,22 @@ test("starting another inspection retires the prior restart admission before CDP
   assert.equal(targets.isCurrent("session", original), false)
 })
 
+test("retiring a run revokes every session's old receipts and fences late publication", () => {
+  const targets = new DeveloperInspectionTargets()
+  const identity = { endpoint: "http://127.0.0.1:10000", runId: "current", windowId: "window-A" }
+  const other = { ...identity, runId: "other" }
+  const pin = targets.begin("A")!(identity)
+  const otherPin = targets.begin("A")!(other)
+  const pending = targets.begin("B")!
+  targets.retireRun(identity.runId)
+  assert.equal(targets.get("A", pin), undefined)
+  assert.equal(targets.get("A", otherPin), other)
+  assert.equal(pending(identity), undefined)
+  const freshPin = targets.begin("B")!(identity)
+  assert.ok(freshPin)
+  assert.equal(targets.get("B", freshPin), identity)
+})
+
 test("evicting a newer inspection cannot reopen a superseded restart", () => {
   const targets = new DeveloperInspectionTargets()
   const identity = { endpoint: "http://127.0.0.1:10000", runId: "current", windowId: "window-B" }

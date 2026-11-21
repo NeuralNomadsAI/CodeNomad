@@ -11,6 +11,8 @@ export class DeveloperInspectionTargets {
     restartId?: string
   }>()
   private evicted = false
+  private retirement = 0
+  private readonly retiredRuns = new Map<string, number>()
 
   canReconnect(sessionId: string, restartId: string): boolean {
     const entry = this.targets.get(sessionId)
@@ -21,6 +23,7 @@ export class DeveloperInspectionTargets {
     const previous = this.targets.get(sessionId)
     if (restartId && !this.canReconnect(sessionId, restartId)) return undefined
     if (order && previous?.order?.source === order.source && previous.order.sequence > order.sequence) return undefined
+    const retirement = this.retirement
     const entry = { current: undefined as DeveloperCdpIdentity | undefined, issued: previous?.issued ?? new Map<string, DeveloperCdpIdentity>(),
       order: order ?? previous?.order, restartId }
     this.targets.delete(sessionId)
@@ -31,7 +34,7 @@ export class DeveloperInspectionTargets {
       this.evicted = true
     }
     return identity => {
-      if (this.targets.get(sessionId) !== entry) return undefined
+      if (this.targets.get(sessionId) !== entry || (this.retiredRuns.get(identity.runId) ?? 0) > retirement) return undefined
       const pin = randomUUID()
       entry.current = identity
       entry.issued.set(pin, identity)
@@ -53,5 +56,10 @@ export class DeveloperInspectionTargets {
     if (!entry) return
     if (entry.current?.runId === runId) entry.current = undefined
     for (const [pin, identity] of entry.issued) if (identity.runId === runId) entry.issued.delete(pin)
+  }
+
+  retireRun(runId: string): void {
+    this.retiredRuns.set(runId, ++this.retirement)
+    for (const sessionId of this.targets.keys()) this.forgetRun(sessionId, runId)
   }
 }

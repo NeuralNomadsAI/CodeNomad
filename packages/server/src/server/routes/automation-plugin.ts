@@ -138,6 +138,10 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     const order = typeof body.order === "string" ? /^([a-f0-9-]{36})\/(\d{1,12})$/.exec(body.order) : null
     const inspectionOrder = order ? { source: order[1], sequence: Number(order[2]) } : undefined
     const selecting = rawDeveloper?.action === "inspect" && (rawDeveloper.ref === undefined || rawDeveloper.ref === "")
+    const unavailableInspection = () => reply.code(404).send({
+      code: "target-gone", error: "The inspection is unavailable; choose a window in inspect({targets:true})",
+    })
+    if (selecting && body.pin !== undefined && !inspectedTargets.get(sessionID, body.pin)) return unavailableInspection()
     const publishInspection = selecting ? inspectedTargets.begin(sessionID, inspectionOrder) : undefined
     if (selecting && !publishInspection) return reply.code(409).send({ code: "stale-inspection", error: "A newer inspection selected the window" })
     if (body.mode === "memory-probe" || body.mode === "memory-input" || body.mode === "memory-context") {
@@ -297,7 +301,9 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         const retireRun = () => {
           if (retired) return
           retired = true
-          deps.developerCdp.close(expected.runId)
+          inspectedTargets.retireRun(expected.runId)
+          // An ACK precedes native shutdown; the exact window can still close and cancel it.
+          deps.developerCdp.close(expected.runId, true)
         }
         signal.addEventListener("abort", retireRun, { once: true })
         let result: unknown
@@ -451,7 +457,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     }
     const pin = probe ? undefined : inspectedTargets.get(body.sessionID, body.pin)
     if (!probe && body.pin !== undefined && !pin) {
-      return reply.code(404).send({ code: "target-gone", error: "The inspection is unavailable; choose a window in inspect({targets:true})" })
+      return unavailableInspection()
     }
     const exact = explicit ?? pin
     if (command && (command.action !== "inspect" || command.ref) && !pin) {

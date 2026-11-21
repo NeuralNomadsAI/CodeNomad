@@ -1,6 +1,9 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
+import Fastify from "fastify"
 import { DeveloperCdp, StaleDeveloperDocument } from "./developer-cdp"
+import { AUTOMATION_BRIDGE_PATH } from "./opencode/automation-plugin"
+import { registerAutomationPluginRoute } from "./server/routes/automation-plugin"
 
 interface Command {
   id: number
@@ -171,19 +174,92 @@ const identity = {
 }
 
 describe("DeveloperCdp", () => {
-  it("allows an explicit new inspection after uncertain restart without reviving any old pin", async () => {
-    const chrome = new FakeChrome()
-    const client = chrome.client()
+  it("can inspect a surviving window after an acknowledged restart is cancelled", async t => {
+    const a = { runId: identity.runId, nativeIdentity: "electron:test", windowId: "window-A", windowInstance: "incarnation-A" }
+    const b = { ...a, windowId: identity.windowId, windowInstance: "incarnation-B" }
+    const first = new FakeChrome(), second = new FakeChrome()
+    first.context = { ...first.context, windowId: a.windowId, windowInstance: a.windowInstance }
+    second.context.windowInstance = b.windowInstance
+    second.target = page("two")
+    first.targets = [first.target, second.target]
+    const developerCdp = first.client({ connect: (url: string) => url.endsWith("/two") ? second.connect(url) : first.connect(url) })
+    const app = Fastify()
+    t.after(async () => { developerCdp.close(); await app.close() })
+    const command = { ...a, restartId: "8d80a777-0085-48c8-b791-d3514bd63f32" }
+    let windows = [a, b], scheduled: (() => void) | undefined
+    let restarts = 0, relaunched = false
+    registerAutomationPluginRoute(app, {
+      authManager: { isLoopbackRequest: () => true }, bridgeToken: "fixture", developerCdp,
+      workspaceManager: {
+        getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "/repo" } }) } }),
+        list: () => [{ id: "owner" }], ownsLocation: async () => true,
+      },
+      nativeParent: { request: async (method: string, params: Partial<typeof a>) => {
+        if (method === "developer.restartScope") {
+          assert.deepEqual(params, command)
+          restarts++
+          scheduled = () => { relaunched = windows.includes(a) }
+          return command
+        }
+        if (method === "developer.reconnect") throw new Error("No matching CodeNomad relaunch")
+        assert.ok(method === "developer.status" || method === "developer.targets")
+        const selected = params.windowId === undefined ? windows[0] : windows.find(window =>
+          window.windowId === params.windowId && window.windowInstance === params.windowInstance && window.runId === params.runId)
+        return { windows, status: selected ? { ...selected, state: "ready", cdpUrl: identity.endpoint } : { state: "starting" } }
+      } },
+    } as never)
+    const request = (sessionID: string, payload: object) => app.inject({
+      method: "POST", url: AUTOMATION_BRIDGE_PATH, headers: { "x-codenomad-automation-token": "fixture" },
+      payload: { sessionID, ...payload },
+    })
+    const execute = (session: string, command: object, options: object = {}) =>
+      request(session, { mode: "developer-execute", command, ...options })
+    const inspect = (session: string, window: typeof a) => execute(session, { action: "inspect" }, {
+      target: `${window.nativeIdentity}/${window.runId}/${window.windowId}/${window.windowInstance}`,
+    })
+
+    const previous = (await inspect("ses_B", b)).json().result
+    const pinA = (await inspect("ses_A", a)).json().result.pin
+    const restart = await request("ses_A", { mode: "developer-restart", command, pin: pinA })
+    assert.equal(restart.statusCode, 200, restart.body)
+    windows = [b]
+    first.targets = [second.target]
+    scheduled!()
+    assert.equal(relaunched, false)
+
+    assert.equal((await request("ses_A", { mode: "developer-reconnect", command })).statusCode, 404)
+    assert.equal((await inspect("ses_A", a)).json().code, "target-gone")
+    const inventory = await request("ses_A", { mode: "developer-probe", purpose: "targets" })
+    assert.deepEqual(inventory.json().result.windows.map((window: typeof b) => window.windowId), [b.windowId])
+    assert.equal((await execute("ses_A", { action: "inspect" })).statusCode, 409)
+    assert.equal((await execute("ses_B", { action: "press", key: "Enter" }, { pin: previous.pin })).json().code, "target-gone")
+    const recovered = await inspect("ses_B", b)
+    assert.equal(recovered.statusCode, 200, recovered.body)
+    const fresh = recovered.json().result
+    assert.equal(fresh.context.windowInstance, b.windowInstance)
+    assert.notEqual(refOf(fresh), refOf(previous))
+    for (const command of [{ action: "screenshot" }, { action: "inspect" }, { action: "inspect", ref: refOf(previous) }]) {
+      assert.equal((await execute("ses_B", command, { pin: previous.pin })).json().code, "target-gone")
+    }
+    assert.equal((await execute("ses_B", { action: "screenshot" }, { pin: fresh.pin })).statusCode, 200)
+    assert.equal(restarts, 1)
+  })
+
+  it("only recovers an uncertain CDP run with a fresh inspection and new document", async () => {
+    const client = new FakeChrome().client()
+    const exact = { recoverUncertainRun: true }
     try {
       const previous = await client.inspect(identity)
       client.close(identity.runId, true)
       await assert.rejects(client.inspect(identity), /run is closed/)
-      const recovered = await client.inspect(identity, { recoverUncertainRun: true })
+      await assert.rejects(client.inspect(identity, { ...exact, ref: refOf(previous) }), /run is closed/)
+      await assert.rejects(client.inspect({ ...identity, document: previous.document }, exact), /run is closed/)
+      const recovered = await client.inspect(identity, exact)
       assert.notEqual(recovered.document, previous.document)
-      await assert.rejects(client.screenshot({ ...identity, document: previous.document }), /Page changed/)
+      await assert.rejects(client.screenshot({ ...identity, document: previous.document }), StaleDeveloperDocument)
       await client.screenshot({ ...identity, document: recovered.document })
       client.close(identity.runId)
-      await assert.rejects(client.inspect(identity, { recoverUncertainRun: true }), /run is closed/)
+      await assert.rejects(client.inspect(identity, exact), /run is closed/)
     } finally { client.close() }
   })
 

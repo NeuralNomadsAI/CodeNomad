@@ -236,7 +236,7 @@ export class DeveloperCdp {
     return this.exclusive(identity, async () => {
       hooks?.beforeRead?.()
       const retirement = this.retiredRuns.get(identity.runId)
-      const recovering = Boolean(options.recoverUncertainRun && !options.ref && retirement?.recoverable)
+      const recovering = Boolean(options.recoverUncertainRun && !options.ref && !identity.document && retirement?.recoverable)
       const state = await this.ensure(identity, recovering)
       hooks?.beforeRead?.()
       const generation = this.generation(state)
@@ -479,7 +479,8 @@ export class DeveloperCdp {
   async probeContexts(selection: Pick<DeveloperCdpSelection, "endpoint" | "runId">, windowIds: ReadonlyMap<string, string | undefined>,
     sessionID?: string): Promise<Map<string, DeveloperCdpContext>> {
     const { endpoint, runId } = selection
-    const current = () => !this.closed && !this.retiredRuns.has(runId)
+    const retirement = this.retiredRuns.get(runId)
+    const current = () => !this.closed && !retirement?.closed && retirement === this.retiredRuns.get(runId)
     if (!current()) return new Map()
     const source = discoveryUrl(endpoint)
     const pages = await this.listTargets(source)
@@ -506,7 +507,9 @@ export class DeveloperCdp {
 
   private async ensure(identity: DeveloperCdpSelection | DeveloperCdpIdentity, recovering = false): Promise<RunState> {
     if (!identity.runId.trim()) throw new Error("runId is required")
-    if (this.closed || !recovering && this.retiredRuns.get(identity.runId)?.closed) throw new Error("Developer CDP run is closed; inspect again")
+    if (this.closed || !recovering && this.retiredRuns.get(identity.runId)?.closed) {
+      throw new Error("Developer CDP run is closed; choose a window in inspect({targets:true})")
+    }
     const endpoint = discoveryUrl(identity.endpoint)
     const key = windowKey(identity)
     let state = this.windows.get(key)
