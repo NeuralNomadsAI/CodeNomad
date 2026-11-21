@@ -10,6 +10,7 @@ import { missionRecoveryControlError, missionRecoveryError } from "../missions/r
 import { parseMissionCreationDefaultsInput } from "../missions/creation-defaults"
 import { MISSION_PREFERENCES_UNAVAILABLE, resolveMissionCreationDefaults } from "../missions/profile-defaults"
 import { isConnectionRefused } from "./connection-errors"
+import { BROWSER_DISCOVERY_TIMEOUT_MS, isBrowserTarget } from "../automation/browser-target"
 import { PAGE_ACTION_PROPERTIES, PAGE_ACTIONS, parsePageAction, type RefAction } from "../automation/page/parse"
 import { MemoryError } from "../memory/model"
 import type { MemoryErrorCode } from "../memory/model"
@@ -623,19 +624,17 @@ async function probeBridges(
   return found.slice(0, limit)
 }
 
-async function probeBrowserBridges(
+async function probeMissionBridges(
   active: DiscoveredBridgeRegistration[],
   sessionID: string,
-  mode: "browser-claim" | "browser-probe",
-  timeoutMs = PROBE_TIMEOUT_MS,
-  purpose?: "mission" | "mission-preferences" | "mission-prepare",
+  purpose: "mission" | "mission-preferences" | "mission-prepare",
 ): Promise<DiscoveredBridgeRegistration[]> {
   const strict = purpose === "mission-preferences" || purpose === "mission-prepare"
   const found: DiscoveredBridgeRegistration[] = []
   for (let index = 0; index < active.length && found.length < 2; index += PROBE_CONCURRENCY) {
     const batch = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async (registration) => {
       try {
-        const response = await callBridge(registration, { mode, sessionID, ...(purpose ? { purpose } : {}) }, timeoutMs)
+        const response = await callBridge(registration, { mode: "browser-claim", sessionID, purpose }, MISSION_PROBE_TIMEOUT_MS)
         const result = response.body.result as { available?: unknown; missionCreationDefaults?: unknown; missionPreparationStart?: unknown } | undefined
         if (response.status === 200 && (!strict || result?.available === true)) {
           if (purpose === "mission-prepare" && (result?.missionCreationDefaults !== true || result.missionPreparationStart !== true))
@@ -675,7 +674,7 @@ async function callMissionInput(target: DiscoveredBridgeRegistration, sessionID:
 export async function resolveMissionProfileDefaults(sessionID: string, input: unknown): Promise<unknown> {
   try {
     const request = parseMissionCreationDefaultsInput(input)
-    const targets = await probeBrowserBridges(await registrations({ strict: true }), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS, "mission-preferences")
+    const targets = await probeMissionBridges(await registrations({ strict: true }), sessionID, "mission-preferences")
     if (targets.length === 0) return {
       ...resolveMissionCreationDefaults({ ...request, preferences: undefined }), preferences: MISSION_PREFERENCES_UNAVAILABLE,
     }
@@ -689,7 +688,7 @@ export async function resolveMissionProfileDefaults(sessionID: string, input: un
 
 export async function readMissionConfigurations(sessionID: string): Promise<unknown> {
   try {
-    const targets = await probeBrowserBridges(await registrations({ strict: true }), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS, "mission-preferences")
+    const targets = await probeMissionBridges(await registrations({ strict: true }), sessionID, "mission-preferences")
     if (targets.length !== 1) throw new Error("Saved configurations require exactly one owning CodeNomad backend")
     return await callMissionInput(targets[0], sessionID, "configurations", {})
   } catch (error) {
@@ -704,8 +703,7 @@ export async function sendMissionInput(sessionID: string,
   const requiresDefaults = kind === "prepare" || kind === "schedule" || kind === "settings" || kind === "project-read" || kind.startsWith("project-control") || kind === "project-update"
   try {
     // A backend without native browsers can still claim the session for dispatch.
-    targets = await probeBrowserBridges(await registrations({ strict: requiresDefaults }), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS,
-      requiresDefaults ? "mission-prepare" : "mission")
+    targets = await probeMissionBridges(await registrations({ strict: requiresDefaults }), sessionID, requiresDefaults ? "mission-prepare" : "mission")
     if (targets.length !== 1) throw new Error("Mission dispatch requires exactly one owning CodeNomad backend")
   } catch (error) {
     if (error instanceof MissionControlError && error.code === "mission-preferences-update-required") throw error
@@ -758,22 +756,104 @@ async function sendMemoryBridge(sessionID: string, mode: "memory-input" | "memor
   return response.body.result
 }
 
-export async function executeBrowserTool(sessionID: string, input: unknown) {
+interface BrowserPin {
+  registration: DiscoveredBridgeRegistration
+  target: string
+}
+
+export function createBrowserToolExecutor() {
+  const pins = new Map<string, BrowserPin>()
+  const queues = new Map<string, Promise<void>>()
+  return async (sessionID: string, input: unknown) => {
+    const deadline = Date.now() + REQUEST_TIMEOUT_MS
+    const submitted = { pin: pins.get(sessionID) }
+    const result = (queues.get(sessionID) ?? Promise.resolve()).then(() => executeBrowserTool(sessionID, input, pins, deadline, submitted))
+    const tail = result.then(() => undefined, () => undefined)
+    queues.set(sessionID, tail)
+    try { return await result }
+    finally { if (queues.get(sessionID) === tail) queues.delete(sessionID) }
+  }
+}
+
+export async function executeBrowserTool(sessionID: string, input: unknown, pins?: Map<string, BrowserPin>, deadline = Date.now() + REQUEST_TIMEOUT_MS,
+  submitted?: { pin?: BrowserPin }) {
+  const remaining = (now = Date.now()) => {
+    const ms = deadline - now
+    if (ms <= 0) throw new Error("preview-expired: Browser command expired before execution")
+    return ms
+  }
+  remaining()
   const command = parseBrowserAction(input)
-  const mode = command.action === "open" ? "browser-claim" : "browser-probe"
-  const targets = await probeBrowserBridges(await registrations(), sessionID, mode)
-  if (targets.length === 0) {
-    throw new Error(command.action === "open"
-      ? "No local CodeNomad window owns this session"
-      : "No visible local CodeNomad browser is attached to this session")
+  const snapshot = command.action === "snapshot" && !command.ref
+  const bound = command.action !== "open" && !snapshot
+  const pin = bound ? submitted ? submitted.pin : pins?.get(sessionID) : undefined
+  const currentPin = pins?.get(sessionID)
+  if (bound && submitted && (pin?.target !== currentPin?.target || pin?.registration.token !== currentPin?.registration.token)) {
+    throw new Error("stale-preview: The preview selection changed; take a new snapshot")
   }
-  if (targets.length > 1) {
-    throw new Error(command.action === "open"
-      ? "Multiple CodeNomad instances own this session"
-      : "Multiple CodeNomad windows expose a browser for this session")
+  if (pins && !pin && command.action !== "open" && !snapshot) {
+    throw new Error("snapshot-required: Take a new browser snapshot before using this preview")
   }
-  const response = await callBridge(targets[0], { mode: "browser-execute", sessionID, command }, REQUEST_TIMEOUT_MS)
-  if (response.status !== 200) throw new Error(response.body.error || `Browser command failed (${response.status})`)
+  const opening = command.action === "open"
+  const inventoryUnavailable = () => new Error("browser-unavailable: The preview inventory could not be verified; take a new snapshot")
+  const active = await registrations({ strict: true }, AbortSignal.timeout(remaining())).catch(() => {
+    remaining()
+    throw inventoryUnavailable()
+  })
+  const owners: Array<{ bridge: DiscoveredBridgeRegistration; witness?: string }> = []
+  let incomplete = false, unsupported = false, stale = false
+  for (let index = 0; index < active.length && owners.length < 2; index += PROBE_CONCURRENCY) {
+    const results = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async bridge => {
+      try {
+        const now = Date.now()
+        const timeout = Math.min(remaining(now), BROWSER_DISCOVERY_TIMEOUT_MS)
+        return { bridge, ...await callBridge(bridge, { mode: opening ? "browser-claim" : "browser-probe", sessionID, deadline: now + timeout }, timeout) }
+      } catch (error) {
+        if (!isConnectionRefused(error)) incomplete = true
+        return undefined
+      }
+    }))
+    for (const item of results) {
+      if (!item) continue
+      const { bridge, status, body } = item
+      const code = body?.code
+      if (status === 404 && (code === "no-preview-host" || code === "browser-not-owner" || !opening && code === "hidden-preview")) continue
+      if (status === 409 && code === "ambiguous-target") throw new Error("ambiguous-target: Several visible previews match this session")
+      if (status === 409 && code === "stale-preview") stale = true
+      else if (status === 409 && code === "unsupported") unsupported = true
+      else if (status === 200 && (body?.result as { available?: unknown } | undefined)?.available === true) {
+        const witness = (body.result as { target?: unknown }).target
+        if (opening) owners.push({ bridge })
+        else if (isBrowserTarget(witness)) owners.push({ bridge, witness })
+        else unsupported = true
+      } else incomplete = true
+    }
+  }
+  remaining()
+  if (owners.length > 1) throw new Error(opening ? "Multiple CodeNomad instances own this session"
+    : "ambiguous-target: Several CodeNomad profiles show this session preview")
+  if (incomplete) throw inventoryUnavailable()
+  if (unsupported) throw new Error("unsupported: A CodeNomad backend cannot verify the preview target; update the desktop host")
+  if (stale) throw new Error("stale-preview: The preview changed; take a new snapshot")
+  const owner = owners[0]
+  if (pin && (!owner || owner.bridge.token !== pin.registration.token || owner.witness !== pin.target)) {
+    throw new Error("stale-preview: The preview changed; take a new snapshot")
+  }
+  if (!owner) throw new Error(opening ? "No local CodeNomad window owns this session"
+    : "hidden-preview: Show the session preview and take a new snapshot")
+  const registration = pin?.registration ?? owner.bridge
+  const target = pin?.target ?? owner.witness
+  const response = await callBridge(registration, { mode: "browser-execute", sessionID, command, deadline, ...(target ? { target } : {}) }, remaining())
+  if (response.status !== 200) {
+    const reason = response.body.error || `Browser command failed (${response.status})`
+    throw new Error(typeof response.body.code === "string" ? `${response.body.code}: ${reason}` : reason)
+  }
+  if (command.action === "open") pins?.delete(sessionID)
+  if (pins && snapshot && target) {
+    pins.delete(sessionID)
+    pins.set(sessionID, { registration, target })
+    if (pins.size > 128) pins.delete(pins.keys().next().value!)
+  }
   return formatBridgeResult(response.body.result, { text: "Captured the visible CodeNomad browser.", name: "browser.png" })
 }
 

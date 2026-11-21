@@ -26,11 +26,13 @@ interface Registration extends RegistrationInput {
   owner: WebContents
   guest: WebContents
   generation: string
+  visibilityVersion: number
 }
 
 interface OpenClaim {
   sessionID: string
   url: string
+  expiresAt: number
   owner?: WebContents
   failedOwners: Set<WebContents>
 }
@@ -40,13 +42,21 @@ type BrowserCommand =
   | { action: "navigate"; url: string }
   | { action: "screenshot" }
 
+const noTarget = "No visible local browser target for this session"
+const staleTarget = "Browser target is stale; probe again"
+const openTimeout = "Timed out waiting for CodeNomad to open the browser preview"
+
+function requireWitness(target: unknown): string {
+  if (!validId(target, 128)) throw new Error("A current browser target is required")
+  return target
+}
+
 interface PageLease {
   sessionID: string
   operationID: string
   registration: Registration
   generation: string
   expires: number
-  ownsDebugger: boolean
   timer: NodeJS.Timeout
 }
 
@@ -55,6 +65,7 @@ export class BrowserController {
   private readonly observedGuests = new Map<number, number>()
   private readonly pageLeases = new Map<string, PageLease>()
   private readonly controlledDetach = new WeakSet<WebContents>()
+  private readonly documentWatches = new WeakMap<WebContents, boolean>()
   private readonly commandQueues = new WeakMap<WebContents, Promise<void>>()
   private readonly navigationVersions = new WeakMap<WebContents, number>()
   private readonly loadResults = new WeakMap<WebContents, { at: number; url: string; startedUrl: string; error?: Error }>()
@@ -77,9 +88,21 @@ export class BrowserController {
       this.releaseGuest(guest)
     }
     guest.on("did-navigate", invalidate)
-    guest.on("did-navigate-in-page", invalidate)
-    guest.on("did-frame-navigate", invalidate)
+    guest.on("did-navigate-in-page", (_event, _url, isMainFrame) => {
+      if (isMainFrame) invalidate()
+    })
+    guest.on("did-frame-navigate", (_event, _url, _code, _status, isMainFrame) => {
+      if (isMainFrame) invalidate()
+    })
+    guest.on("render-process-gone", () => {
+      invalidate()
+      this.releaseTarget(guest)
+    })
+    guest.debugger.on("message", (_event, method, params, sessionId) => {
+      if (!sessionId && method === "Page.documentOpened" && params?.frame?.id && !params.frame.parentId) invalidate()
+    })
     guest.debugger.on("detach", () => {
+      this.documentWatches.delete(guest)
       if (!this.controlledDetach.has(guest)) invalidate()
     })
     guest.on("did-start-navigation", (_event, url, _isInPlace, isMainFrame) => {
@@ -96,6 +119,7 @@ export class BrowserController {
     })
     guest.once("destroyed", () => {
       this.observedGuests.delete(guest.id)
+      this.documentWatches.delete(guest)
       this.releaseGuest(guest)
       for (const [id, registration] of this.registrations) {
         if (registration.guest.id === guest.id) this.registrations.delete(id)
@@ -114,8 +138,8 @@ export class BrowserController {
     }
     const previous = this.registrations.get(input.registrationId)
     setBrowserLogicalAddress(guest, input.logicalAddress)
-    if (previous) this.releaseGuest(previous.guest)
-    this.registrations.set(input.registrationId, { ...input, owner, guest, generation: randomUUID() })
+    if (previous) this.releaseTarget(previous.guest)
+    this.registrations.set(input.registrationId, { ...input, owner, guest, generation: randomUUID(), visibilityVersion: 0 })
   }
 
   async emulate(owner: WebContents, registrationId: unknown, preset: unknown): Promise<void> {
@@ -125,9 +149,13 @@ export class BrowserController {
       if (this.registrations.get(registration.registrationId) !== registration || owner.isDestroyed() || registration.guest.isDestroyed()) {
         throw new Error("Browser target changed before emulation")
       }
-      // Release our temporary attachment before emulation takes persistent ownership.
       this.releaseGuest(registration.guest)
-      await setBrowserEmulation(registration.guest, preset)
+      const { guest } = registration
+      await setBrowserEmulation(guest, preset, () => {
+        if (!this.documentWatches.get(guest)) return false
+        this.documentWatches.set(guest, false)
+        return true
+      })
     })
   }
 
@@ -135,7 +163,7 @@ export class BrowserController {
     if (typeof registrationId !== "string") return
     const registration = this.registrations.get(registrationId)
     if (registration?.owner === owner) {
-      this.releaseGuest(registration.guest)
+      this.releaseTarget(registration.guest)
       this.registrations.delete(registrationId)
     }
   }
@@ -150,7 +178,7 @@ export class BrowserController {
     return this.enqueue(guest, async () => {
       if (!owned()) throw new Error("Browser target changed before history access")
       // CDP supplies stable entry IDs, including same-URL and fragment entries.
-      return withDebugger(guest, Date.now() + 5000, async debuggerSession => {
+      return withDebugger(guest, Date.now() + 5000, () => this.detachDebugger(guest), async debuggerSession => {
         const result = await debuggerSession.sendCommand("Page.getNavigationHistory") as { currentIndex: number; entries: Array<{ id: number; url: string }> }
         if (entryId !== undefined) {
           const entry = result.entries.find(entry => entry.id === entryId)
@@ -170,7 +198,7 @@ export class BrowserController {
   claimOpen(owner: WebContents, requestID: unknown): boolean {
     if (typeof requestID !== "string" || owner.isDestroyed()) return false
     const claim = this.openClaims.get(requestID)
-    if (!claim || claim.failedOwners.has(owner) || (claim.owner && claim.owner !== owner)) return false
+    if (!claim || Date.now() >= claim.expiresAt || claim.failedOwners.has(owner) || (claim.owner && claim.owner !== owner)) return false
     claim.owner = owner
     return true
   }
@@ -178,7 +206,7 @@ export class BrowserController {
   releaseOpen(owner: WebContents, requestID: unknown): boolean {
     if (typeof requestID !== "string") return false
     const claim = this.openClaims.get(requestID)
-    if (!claim || claim.owner !== owner) return false
+    if (!claim || Date.now() >= claim.expiresAt || claim.owner !== owner) return false
     claim.owner = undefined
     claim.failedOwners.add(owner)
     this.requestOpen(claim.sessionID, claim.url, requestID)
@@ -190,105 +218,144 @@ export class BrowserController {
     // the owner identity while it is alive; cleanup only compares references.
     const owner = window.webContents
     window.once("closed", () => this.removeOwner(owner))
-    const releasePages = () => {
+    const revokeVisibility = () => {
       for (const registration of this.registrations.values()) {
-        if (registration.owner === owner) this.releaseGuest(registration.guest)
+        if (registration.owner !== owner) continue
+        registration.visibilityVersion++
+        this.releaseTarget(registration.guest)
       }
     }
-    window.on("hide", releasePages)
-    window.on("minimize", releasePages)
+    window.on("hide", revokeVisibility)
+    window.on("minimize", revokeVisibility)
   }
 
   private removeOwner(owner: WebContents): void {
     for (const [id, registration] of this.registrations) {
       if (registration.owner === owner) {
-        this.releaseGuest(registration.guest)
+        this.releaseTarget(registration.guest)
         this.registrations.delete(id)
       }
     }
-    for (const [requestID, claim] of this.openClaims) {
-      if (claim.owner !== owner) continue
-      claim.owner = undefined
-      claim.failedOwners.add(owner)
-      this.requestOpen(claim.sessionID, claim.url, requestID)
+    for (const requestID of this.openClaims.keys()) this.releaseOpen(owner, requestID)
+  }
+
+  async probe(sessionID: string, deadline = Number.POSITIVE_INFINITY): Promise<{ available: true; target: string }> {
+    ensureDeadline(deadline)
+    const registration = this.resolve(sessionID)
+    const { guest } = registration
+    const target = this.pageGeneration(registration)
+    if (!this.documentWatches.has(guest)) {
+      await this.enqueue(guest, async () => {
+        ensureDeadline(deadline)
+        const check = () => {
+          if (this.resolve(sessionID) !== registration || this.pageGeneration(registration) !== target) throw new Error(staleTarget)
+        }
+        check()
+        if (this.documentWatches.has(guest)) return
+        const ownsDebugger = !guest.debugger.isAttached()
+        if (ownsDebugger) guest.debugger.attach("1.3")
+        try {
+          // A stream reopened at the same URL keeps its frame, loader and Document node.
+          // Observe the renderer even between page leases.
+          await withDeadline(() => guest.debugger.sendCommand("Page.enable"), deadline)
+          check()
+          if (!guest.debugger.isAttached()) throw new Error(staleTarget)
+          this.documentWatches.set(guest, ownsDebugger)
+        } catch (error) {
+          if (ownsDebugger) this.detachDebugger(guest)
+          throw error
+        }
+      })
     }
+    ensureDeadline(deadline)
+    this.resolveWitness(sessionID, target)
+    return { available: true, target }
   }
 
-  probe(sessionID: string): { available: boolean } {
-    this.resolve(sessionID)
-    return { available: true }
-  }
-
-  async execute(sessionID: string, command: BrowserCommand, deadline = Number.POSITIVE_INFINITY): Promise<unknown> {
+  async execute(sessionID: string, command: BrowserCommand, deadline = Number.POSITIVE_INFINITY, target?: unknown): Promise<unknown> {
     if (command.action === "open") return this.open(sessionID, command.url, deadline)
-    const { guest } = this.resolve(sessionID)
-    return this.enqueue(guest, () => {
+    if (command.action !== "navigate" && command.action !== "screenshot") throw new Error("Invalid browser command")
+    const registration = this.resolveWitness(sessionID, requireWitness(target))
+    const { guest, visibilityVersion } = registration
+    const document = this.pageGeneration(registration)
+    const check = (exactDocument: boolean) => {
       ensureDeadline(deadline)
-      this.assertCurrentTarget(sessionID, guest)
-      return this.executeGuest(guest, command, deadline)
-    })
-  }
-
-  private async executeGuest(guest: WebContents, command: Exclude<BrowserCommand, { action: "open" }>, deadline: number): Promise<unknown> {
-    switch (command.action) {
-      case "navigate": {
-        if (!isBrowserUrlAllowed(command.url)) throw new Error("Browser navigation requires a credential-free HTTP(S) URL")
-        await withDeadline(() => guest.loadURL(command.url), deadline, () => guest.stop())
-        return { url: guest.getURL() }
-      }
-      case "screenshot": {
-        const result = await withDebugger(guest, deadline, (debuggerSession) => debuggerSession.sendCommand("Page.captureScreenshot", {
-          format: "png",
-          fromSurface: true,
-        })) as { data?: unknown }
-        if (typeof result.data !== "string" || result.data.length > 16 * 1024 * 1024) throw new Error("Browser screenshot is unavailable or too large")
-        return { image: { mime: "image/png", data: result.data }, url: guest.getURL() }
-      }
-      default: throw new Error("Invalid browser command")
+      if (this.resolveWitness(sessionID, exactDocument ? document : undefined) !== registration
+        || registration.visibilityVersion !== visibilityVersion) throw new Error(staleTarget)
     }
+    return this.enqueue(guest, async () => {
+      check(true)
+      switch (command.action) {
+        case "navigate": {
+          if (!isBrowserUrlAllowed(command.url)) throw new Error("Browser navigation requires a credential-free HTTP(S) URL")
+          await withDeadline(() => guest.loadURL(command.url), deadline, () => guest.stop())
+          check(false)
+          return { url: guest.getURL() }
+        }
+        case "screenshot": {
+          const result = await withDeadline(() => guest.debugger.sendCommand("Page.captureScreenshot", {
+            format: "png",
+            fromSurface: true,
+          }), deadline) as { data?: unknown }
+          check(true)
+          if (typeof result.data !== "string" || result.data.length > 16 * 1024 * 1024) throw new Error("Browser screenshot is unavailable or too large")
+          return { image: { mime: "image/png", data: result.data }, url: guest.getURL() }
+        }
+        default: throw new Error("Invalid browser command")
+      }
+    })
   }
 
   private async open(sessionID: string, url: string, deadline: number): Promise<{ url: string }> {
     if (!isBrowserUrlAllowed(url)) throw new Error("Browser navigation requires a credential-free HTTP(S) URL")
+    ensureDeadline(deadline)
     try {
-      const { guest } = this.resolve(sessionID)
+      const registration = this.resolve(sessionID)
+      const { guest, visibilityVersion } = registration
+      const check = () => this.assertCurrentOpenTarget(registration, visibilityVersion, deadline)
       return this.enqueue(guest, async () => {
-        ensureDeadline(deadline)
-        this.assertCurrentTarget(sessionID, guest)
+        check()
         await withDeadline(() => guest.loadURL(url), deadline, () => guest.stop())
-        this.assertCurrentTarget(sessionID, guest)
+        check()
         return { url: guest.getURL() }
       })
     } catch (error) {
-      if (!(error instanceof Error) || error.message !== "No visible local browser target for this session") throw error
+      if (!(error instanceof Error) || error.message !== noTarget) throw error
     }
 
     const requestID = randomUUID()
-    this.openClaims.set(requestID, { sessionID, url, failedOwners: new Set() })
+    const requestedAt = Date.now()
+    const claim: OpenClaim = { sessionID, url, expiresAt: Math.min(deadline, requestedAt + 10_000), failedOwners: new Set() }
+    this.openClaims.set(requestID, claim)
     return new Promise<{ url: string }>((resolve, reject) => {
-      const requestedAt = Date.now()
       const timeout = setTimeout(() => {
         clearInterval(interval)
-        reject(new Error("Timed out waiting for CodeNomad to open the browser preview"))
-      }, 10_000)
+        reject(new Error(claim.expiresAt === deadline ? "Native request expired before execution" : openTimeout))
+      }, claim.expiresAt - requestedAt)
       const interval = setInterval(() => {
         try {
           ensureDeadline(deadline)
-          const { guest } = this.resolve(sessionID)
+          if (Date.now() >= claim.expiresAt) throw new Error(openTimeout)
+          const registration = this.resolve(sessionID)
+          const { guest, owner, visibilityVersion } = registration
+          const check = () => {
+            if (claim.owner !== owner) throw new Error(staleTarget)
+            this.assertCurrentOpenTarget(registration, visibilityVersion, deadline)
+          }
+          if (claim.owner !== owner) throw new Error(staleTarget)
           clearInterval(interval)
           clearTimeout(timeout)
           void this.enqueue(guest, async () => {
-            ensureDeadline(deadline)
-            this.assertCurrentTarget(sessionID, guest)
+            check()
             await waitForMainFrameLoad(guest, url, requestedAt, deadline, () => this.loadResults.get(guest))
-            this.assertCurrentTarget(sessionID, guest)
+            check()
             return { url: guest.getURL() }
           }).then(
             resolve,
             reject,
           )
         } catch (error) {
-          if (error instanceof Error && error.message === "No visible local browser target for this session") return
+          if (error instanceof Error && error.message === noTarget) return
           clearInterval(interval)
           clearTimeout(timeout)
           reject(error)
@@ -307,13 +374,27 @@ export class BrowserController {
       const window = this.electronApi.fromWebContents(registration.owner)
       return Boolean(window && !window.isDestroyed() && window.isVisible() && !window.isMinimized())
     })
-    if (matches.length === 0) throw new Error("No visible local browser target for this session")
+    if (matches.length === 0) throw new Error(noTarget)
     if (matches.length > 1) throw new Error("Multiple visible browser targets exist for this session")
     return matches[0]
   }
 
-  private assertCurrentTarget(sessionID: string, guest: WebContents): void {
-    if (this.resolve(sessionID).guest !== guest) throw new Error("Browser target changed before command execution")
+  private assertCurrentOpenTarget(registration: Registration, visibilityVersion: number, deadline: number): void {
+    ensureDeadline(deadline)
+    if (this.resolveWitness(registration.sessionId) !== registration
+      || registration.visibilityVersion !== visibilityVersion) throw new Error(staleTarget)
+  }
+
+  private resolveWitness(sessionID: string, target?: string): Registration {
+    try {
+      const registration = this.resolve(sessionID)
+      if (target !== undefined && (target !== this.pageGeneration(registration)
+        || !this.documentWatches.has(registration.guest) || !registration.guest.debugger.isAttached())) throw new Error(staleTarget)
+      return registration
+    } catch (error) {
+      if (error instanceof Error && error.message === noTarget) throw new Error(staleTarget)
+      throw error
+    }
   }
 
   // Only handleNativeBrowserRequest (the private backend transport) calls this.
@@ -331,8 +412,9 @@ export class BrowserController {
     }
     ensureDeadline(deadline)
     if (method === "browser.page.begin") {
+      const target = requireWitness(input.target)
+      const registration = this.resolveWitness(sessionID, target)
       for (const lease of this.pageLeases.values()) if (lease.expires <= Date.now()) this.releaseLease(lease)
-      const registration = this.resolve(sessionID)
       if (this.pageLeases.has(operationID)) throw new Error("Browser page operation already exists")
       if ([...this.pageLeases.values()].some(lease => lease.registration.guest === registration.guest)) {
         throw new Error("Browser page target is busy")
@@ -341,16 +423,13 @@ export class BrowserController {
       const expires = Date.now() + 30_000
       const lease: PageLease = {
         sessionID, operationID, registration, generation: this.pageGeneration(registration), expires,
-        ownsDebugger: false, timer: setTimeout(() => this.releaseLease(lease), 30_000),
+        timer: setTimeout(() => this.releaseLease(lease), 30_000),
       }
       lease.timer.unref()
       this.pageLeases.set(operationID, lease)
       try {
         return await this.enqueue(registration.guest, async () => {
-          this.checkLease(lease, deadline, false)
-          const { guest } = registration
-          if (!guest.debugger.isAttached()) { guest.debugger.attach("1.3"); lease.ownsDebugger = true }
-          await withDeadline(() => guest.debugger.sendCommand("Accessibility.enable"), Math.min(deadline, expires))
+          this.resolveWitness(sessionID, target)
           const url = this.checkLease(lease, deadline)
           return { generation: lease.generation, url, driver: "cdp", contractVersion: PAGE_DRIVER_VERSION }
         })
@@ -397,14 +476,14 @@ export class BrowserController {
   }
 
   private pageGeneration(registration: Registration): string {
-    return `${registration.generation}:${this.navigationVersions.get(registration.guest) ?? 0}`
+    return `${registration.generation}:${registration.visibilityVersion}:${this.navigationVersions.get(registration.guest) ?? 0}`
   }
 
-  private checkLease(lease: PageLease, deadline: number, attached = true): string {
+  private checkLease(lease: PageLease, deadline: number): string {
     ensureDeadline(Math.min(deadline, lease.expires))
     const { registration } = lease
     if (this.pageLeases.get(lease.operationID) !== lease || this.resolve(lease.sessionID) !== registration
-      || this.pageGeneration(registration) !== lease.generation || (attached && !registration.guest.debugger.isAttached())) {
+      || this.pageGeneration(registration) !== lease.generation || !registration.guest.debugger.isAttached()) {
       throw new Error("Browser page lease is no longer current")
     }
     const url = registration.guest.getURL()
@@ -416,12 +495,21 @@ export class BrowserController {
     for (const lease of this.pageLeases.values()) if (lease.registration.guest === guest) this.releaseLease(lease)
   }
 
+  private releaseTarget(guest: WebContents): void {
+    this.releaseGuest(guest)
+    const ownsDebugger = this.documentWatches.get(guest)
+    this.documentWatches.delete(guest)
+    if (ownsDebugger) this.detachDebugger(guest)
+  }
+
   private releaseLease(lease: PageLease): void {
     if (this.pageLeases.get(lease.operationID) !== lease) return
     this.pageLeases.delete(lease.operationID)
     clearTimeout(lease.timer)
-    const { guest } = lease.registration
-    if (!lease.ownsDebugger || guest.isDestroyed()) return
+  }
+
+  private detachDebugger(guest: WebContents): void {
+    if (guest.isDestroyed()) return
     this.controlledDetach.add(guest)
     try { if (guest.debugger.isAttached()) guest.debugger.detach() } catch { /* already disposed */ }
     finally { this.controlledDetach.delete(guest) }
@@ -439,14 +527,14 @@ export class BrowserController {
 }
 
 export async function handleNativeBrowserRequest(controller: BrowserController, method: string, params: unknown, deadline = Number.POSITIVE_INFINITY): Promise<unknown> {
-  const input = params as { sessionID?: unknown; command?: unknown } | undefined
+  const input = params as { sessionID?: unknown; command?: unknown; target?: unknown } | undefined
   if (!input || typeof input.sessionID !== "string") throw new Error("Invalid browser request")
-  if (method === "browser.probe") return controller.probe(input.sessionID)
+  if (method === "browser.probe") return controller.probe(input.sessionID, deadline)
   if (["browser.page.begin", "browser.page.send", "browser.page.check", "browser.page.end"].includes(method)) {
     return controller.page(method, input as Record<string, unknown>, deadline)
   }
   if (method === "browser.execute" && input.command && typeof input.command === "object") {
-    return controller.execute(input.sessionID, input.command as BrowserCommand, deadline)
+    return controller.execute(input.sessionID, input.command as BrowserCommand, deadline, input.target)
   }
   throw new Error(`Unsupported native method: ${method}`)
 }
@@ -471,7 +559,7 @@ function validId(value: unknown, max: number): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= max
 }
 
-async function withDebugger<T>(guest: WebContents, deadline: number, operation: (debuggerSession: Pick<WebContents["debugger"], "sendCommand">) => Promise<T>): Promise<T> {
+async function withDebugger<T>(guest: WebContents, deadline: number, detach: () => void, operation: (debuggerSession: Pick<WebContents["debugger"], "sendCommand">) => Promise<T>): Promise<T> {
   const attached = guest.debugger.isAttached()
   if (!attached) guest.debugger.attach("1.3")
   const debuggerSession = {
@@ -483,11 +571,9 @@ async function withDebugger<T>(guest: WebContents, deadline: number, operation: 
     },
   }
   try {
-    return await withDeadline(() => operation(debuggerSession), deadline, () => {
-      if (!attached && guest.debugger.isAttached()) guest.debugger.detach()
-    })
+    return await withDeadline(() => operation(debuggerSession), deadline, attached ? undefined : detach)
   } finally {
-    if (!attached && guest.debugger.isAttached()) guest.debugger.detach()
+    if (!attached) detach()
   }
 }
 

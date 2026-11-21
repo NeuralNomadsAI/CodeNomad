@@ -138,13 +138,15 @@ fn capture_at_revocation(
         std::time::Instant::now() + Duration::from_secs(15),
         move || {
             fence.check()?;
-            if reads.fetch_add(1, Ordering::SeqCst) == 2 {
-                if close {
-                    controller.unregister(&app, OWNER, &id)?;
-                } else {
-                    update(&app, &controller, OWNER, &id, false)?;
-                }
+            if reads.fetch_add(1, Ordering::SeqCst) != 2 {
+                return Ok(());
             }
+            if close {
+                controller.unregister(&app, OWNER, &id)?;
+            } else {
+                update(&app, &controller, OWNER, &id, false)?;
+            }
+            // Resolve the revoked registration before probing could queue another UI read.
             controller
                 .handle_native(
                     &app,
@@ -187,6 +189,7 @@ fn main() {
             }
             create_primary(app, OWNER, &args[2]);
             create_primary(app, OTHER, &args[2]);
+            controller.observe_owner(&app.get_window(OWNER).unwrap())?;
             let open_app = app.handle().clone();
             let open_controller = controller.clone();
             let open_live = live.clone();
@@ -285,6 +288,16 @@ fn main() {
                             }
                             "fixture.hide" => {
                                 update(&app, &controller, OWNER, &id, false).map(|()| Value::Null)
+                            }
+                            "fixture.window-hide" | "fixture.window-show" => {
+                                let window = app.get_window(OWNER).ok_or("Fixture window missing")?;
+                                if request.method == "fixture.window-hide" {
+                                    controller.hide_owner(&window)
+                                } else {
+                                    window.show()
+                                }
+                                .map(|()| Value::Null)
+                                .map_err(|error| error.to_string())
                             }
                             "fixture.overlay" => {
                                 app.get_webview(OWNER)

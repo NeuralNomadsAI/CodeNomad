@@ -140,6 +140,7 @@ fn registration() -> Registration {
         window_label: OWNER.to_string(),
         webview_label: "browser-preview".to_string(),
         generation: 1,
+        visibility_version: 0,
         visible: true,
     }
 }
@@ -161,6 +162,265 @@ fn controller_with_registration() -> (BrowserController, Registration) {
 }
 
 #[test]
+fn probe_issues_a_bounded_witness_for_the_current_registration_and_document() {
+    let (app, _, _) = app_with_preview();
+    let (controller, mut registration) = controller_with_registration();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let expires = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+        + 10_000;
+    let fence = crate::native_request::RequestFence::new(expires, || true);
+    let probe = || {
+        controller
+            .probe(app.handle(), "session", deadline, &fence, |_, _| {
+                Ok(if cfg!(windows) { "" } else { "isolated-document" }.into())
+            })
+            .unwrap()
+    };
+    let resolve = |target| controller.resolve_witness(app.handle(), "session", target);
+    let first = probe();
+    assert_eq!(first["available"], true);
+    assert!(first["target"]
+        .as_str()
+        .is_some_and(|target| !target.is_empty() && target.len() <= 128));
+    assert_eq!(probe(), first);
+    let target = first["target"].as_str().unwrap();
+    let (_, document, token) = resolve(target).unwrap();
+    if !cfg!(windows) {
+        assert_eq!(token, "isolated-document");
+        assert!(compare_webkit_document(&json!({"document": token}), token).is_ok());
+        assert_eq!(compare_webkit_document(&json!({"document": "recreated"}), token).unwrap_err(), STALE_TARGET);
+    }
+    {
+        let mut inner = controller.inner.0.lock().unwrap();
+        inner.registrations.insert(
+            "other".into(),
+            Registration {
+                registration_id: "other".into(),
+                window_label: OTHER.into(),
+                generation: 2,
+                ..registration.clone()
+            },
+        );
+    }
+    assert_eq!(
+        resolve(target).err().unwrap(),
+        "Multiple visible browser targets exist for this session"
+    );
+    {
+        let mut inner = controller.inner.0.lock().unwrap();
+        inner.registrations.remove("other");
+        inner.registrations.get_mut("preview").unwrap().visible = false;
+    }
+    assert_eq!(resolve(target).err().unwrap(), STALE_TARGET);
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .registrations
+        .get_mut("preview")
+        .unwrap()
+        .visible = true;
+
+    controller.invalidate_page(&registration.registration_id);
+    assert_eq!(resolve(target).err().unwrap(), STALE_TARGET);
+    let operation = uuid::Uuid::new_v4().to_string();
+    assert_eq!(
+        controller
+            .reserve_page_for(registration.clone(), &operation, Some(document))
+            .err()
+            .unwrap(),
+        STALE_TARGET
+    );
+    let url = "https://example.com/next";
+    assert_eq!(
+        controller
+            .prepare_navigation(&registration, url, Some(document))
+            .unwrap_err(),
+        STALE_TARGET
+    );
+    assert_eq!(
+        controller.page_load_expectation("preview", url).unwrap(),
+        None
+    );
+    assert!(controller.inner.0.lock().unwrap().page_leases.is_empty());
+
+    let second = probe();
+    assert_ne!(first["target"], second["target"]);
+    let (_, document, _) = resolve(second["target"].as_str().unwrap()).unwrap();
+    controller
+        .reserve_page_for(registration.clone(), &operation, Some(document))
+        .unwrap();
+    let (_, dispatch_document) = controller
+        .prepare_navigation(&registration, url, Some(document))
+        .unwrap();
+    controller
+        .check_dispatch_document(&registration, dispatch_document)
+        .unwrap();
+    controller.invalidate_page("preview");
+    assert_eq!(
+        controller
+            .check_dispatch_document(&registration, dispatch_document)
+            .unwrap_err(),
+        STALE_TARGET
+    );
+
+    registration.generation += 1;
+    controller
+        .publish_registration(registration, 0, "https://example.com/")
+        .unwrap();
+    assert_ne!(probe()["target"], second["target"]);
+    assert_eq!(
+        resolve(second["target"].as_str().unwrap()).err().unwrap(),
+        STALE_TARGET
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn webview2_same_url_reopen_revokes_only_the_exact_guest_document() {
+    let (app, _, _) = app_with_preview();
+    let (controller, registration) = controller_with_registration();
+    let other = Registration {
+        registration_id: "other".into(),
+        webview_label: "browser-other".into(),
+        session_id: "other-session".into(),
+        generation: 2,
+        ..registration.clone()
+    };
+    let url = "http://127.0.0.1:32123/";
+    controller.publish_registration(other.clone(), 0, url).unwrap();
+    let sequence = controller
+        .prepare_page_load(&registration.registration_id, url)
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let fence = crate::native_request::RequestFence::new(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+            + 10_000,
+        || true,
+    );
+    let probe = || {
+        controller
+            .probe(app.handle(), "session", deadline, &fence, |_, _| Ok(String::new()))
+            .unwrap()
+    };
+    let first = probe();
+    let witness = first["target"].as_str().unwrap();
+    let resolve = |witness| controller.resolve_witness(app.handle(), "session", witness);
+    let (_, document, _) = resolve(witness).unwrap();
+    let operation = uuid::Uuid::new_v4().to_string();
+    let lease = controller
+        .reserve_page_for(registration.clone(), &operation, Some(document))
+        .unwrap();
+    let other_lease = controller
+        .reserve_page(other.clone(), &uuid::Uuid::new_v4().to_string())
+        .unwrap();
+    let top = json!({"frame": {"id": "main", "url": url}}).to_string();
+    let child = json!({"frame": {"id": "child", "parentId": "main", "url": url}}).to_string();
+    for (generation, session, parameters) in [
+        (registration.generation - 1, "", top.as_str()),
+        (registration.generation, "attached-child-session", top.as_str()),
+        (registration.generation, "", child.as_str()),
+        (registration.generation, "", r#"{"frame":{"id":""}}"#),
+        (registration.generation, "", "invalid JSON"),
+    ] {
+        controller.webview2_document_opened("preview", generation, session, parameters);
+        assert_eq!(probe(), first);
+        controller.check_page_state(&lease, deadline).unwrap();
+    }
+    // A response already in flight must also be dropped if its document reopens.
+    let response = controller.finish_page(&lease, deadline, || {
+        controller.webview2_document_opened("preview", registration.generation, "", &top);
+        Ok(url.parse().unwrap())
+    });
+    assert_eq!(resolve(witness).err().as_deref(), Some(STALE_TARGET));
+    assert!(response.is_err());
+    assert_eq!(
+        controller.check_capture(app.handle(), &registration, document, deadline, &fence),
+        Err(STALE_TARGET.into())
+    );
+    assert_eq!(
+        controller.prepare_navigation(&registration, url, Some(document)),
+        Err(STALE_TARGET.into())
+    );
+    assert!(controller.check_page_state(&lease, deadline).is_err());
+    assert_eq!(
+        controller
+            .reserve_page_for(registration.clone(), &operation, Some(document))
+            .err()
+            .as_deref(),
+        Some(STALE_TARGET)
+    );
+    controller.check_page_state(&other_lease, deadline).unwrap();
+    assert_eq!(controller.document_version(&other), Ok(0));
+    assert_eq!(
+        controller.page_load_expectation("preview", url),
+        Ok(Some(sequence))
+    );
+
+    let second = probe();
+    let second_witness = second["target"].as_str().unwrap();
+    let (_, second_document, _) = resolve(second_witness).unwrap();
+    let next = controller
+        .reserve_page_for(registration.clone(), &operation, Some(second_document))
+        .unwrap();
+    controller.check_page_state(&next, deadline).unwrap();
+    controller.end_page("session", &operation);
+    // Reopening between leases also retires the last witness.
+    controller.webview2_document_opened("preview", registration.generation, "", &top);
+    assert_eq!(resolve(second_witness).err().as_deref(), Some(STALE_TARGET));
+    assert_ne!(probe(), second);
+}
+
+#[test]
+fn hiding_a_preview_or_renderer_retires_the_witness_even_after_reshow() {
+    let (app, _, _) = app_with_preview();
+    let (controller, initial) = controller_with_registration();
+    let witness = |registration: &Registration| {
+        let mut target = controller.page_generation(registration, 0);
+        if !cfg!(windows) {
+            target.push_str(":isolated-document");
+        }
+        target
+    };
+    let target = witness(&initial);
+    let _ = controller.update(
+        app.handle(),
+        OWNER,
+        BrowserTargetUpdate {
+            registration_id: "preview".into(),
+            bounds: None,
+            visible: Some(false),
+            presentation: None,
+        },
+    );
+    let reshown = {
+        let mut inner = controller.inner.0.lock().unwrap();
+        let registration = inner.registrations.get_mut("preview").unwrap();
+        assert!(!registration.visible);
+        registration.visible = true;
+        registration.clone()
+    };
+    let resolve = |target: &str| controller.resolve_witness(app.handle(), "session", target).map(|_| ());
+    assert_eq!(resolve(&target).unwrap_err(), STALE_TARGET);
+    let target = witness(&reshown);
+    assert!(resolve(&target).is_ok());
+    controller.revoke_window_visibility(OWNER);
+    assert_eq!(resolve(&target).unwrap_err(), STALE_TARGET);
+    let current = controller.owned_registration(OWNER, "preview").unwrap();
+    assert_eq!(current.generation, initial.generation);
+    assert_eq!(controller.document_version(&current).unwrap(), 0);
+    assert!(resolve(&witness(&current)).is_ok());
+    assert_eq!(read_witness(None).unwrap_err(), "A current browser target is required");
+}
+
+#[test]
 fn windows_and_webkit_navigation_recover_from_blank_without_relaxing_reads() {
     // Both dispatchers must admit recovery by identity, not the current document's URL.
     for source in [
@@ -171,7 +431,7 @@ fn windows_and_webkit_navigation_recover_from_blank_without_relaxing_reads() {
             .split("fn navigate_and_wait(")
             .nth(1)
             .unwrap()
-            .split("self.invalidate_page(")
+            .split("prepare_navigation(")
             .next()
             .unwrap();
         assert!(admission.contains("self.check_target_identity("));

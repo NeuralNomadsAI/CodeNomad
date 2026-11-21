@@ -41,7 +41,7 @@ const firstRef = (snapshot: unknown) => /\[(b\d+e\d+)\]/.exec(String(snapshot))!
 test("preview operations use the shared outline/actions without a CodeNomad input mark, and release their exact lease", async () => {
   const native = new Native(), page = new BrowserPage(native)
   const first = await page.execute("session", { action: "snapshot" })
-  assert.match(String(first.snapshot), /- button "Save" \[b1e1\]/)
+  assert.match(String(first.snapshot), /- button "Save" \[b\d+e1\]/)
   const ref = firstRef(first.snapshot)
   assert.deepEqual(await page.execute("session", { action: "click", ref }), { url: "https://example.test/" })
   const functions = native.protocol.filter(call => call.method === "Runtime.callFunctionOn")
@@ -61,6 +61,9 @@ test("preview operations use the shared outline/actions without a CodeNomad inpu
 test("scoped snapshots preserve refs and a new document or another session cannot reuse them", async () => {
   const native = new Native(), page = new BrowserPage(native)
   const ref = firstRef((await page.execute("a", { action: "snapshot" })).snapshot)
+  const otherBackend = new BrowserPage(new Native())
+  await otherBackend.execute("a", { action: "snapshot" })
+  await assert.rejects(otherBackend.execute("a", { action: "click", ref }), /stale ref/)
   assert.match(String((await page.execute("a", { action: "snapshot", ref })).snapshot), new RegExp(`\\[${ref}\\]`))
   await page.execute("b", { action: "snapshot" })
   await assert.rejects(page.execute("b", { action: "click", ref }), /stale ref/)

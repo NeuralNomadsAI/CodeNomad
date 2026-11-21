@@ -85,6 +85,8 @@ pub(super) fn envelope(method: &str, value: &Value) -> Result<(), String> {
         required.push("generation");
     } else if method == "browser.page.end" {
         allowed.push("generation");
+    } else if method == "browser.page.begin" {
+        allowed.push("target");
     }
     keys(value, &allowed, &required)?;
     if value.get("generation").is_some_and(|value| !handle(value)) {

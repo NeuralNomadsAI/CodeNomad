@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import Fastify from "fastify"
-import { NativeRequestRefused } from "../../native-parent"
+import { NativeParent, NativeRequestRefused, NATIVE_REQUEST_PREFIX } from "../../native-parent"
 import { AUTOMATION_BRIDGE_PATH } from "../../opencode/automation-plugin"
 import { registerAutomationPluginRoute } from "./automation-plugin"
 
@@ -274,7 +274,7 @@ test("browser works with an unavailable developer target and unrelated inventory
           return { nodes: [{ id: "one", node: 42, role: "button", name: "Preview action" }] }
         }
         return method === "developer.status" ? { status: { state: "stopped" } }
-          : method === "browser.probe" ? { available: true } : { url: "https://example.com/" }
+          : method === "browser.probe" ? { available: true, target: "preview-document" } : { url: "https://example.com/" }
       },
     },
     workspaceManager: {
@@ -296,7 +296,8 @@ test("browser works with an unavailable developer target and unrelated inventory
 
   assert.equal((await request({ mode: "browser-claim", sessionID: "session-1" })).statusCode, 200)
   assert.equal(nativeCalls.length, 0)
-  assert.equal((await request({ mode: "browser-probe", sessionID: "session-1" })).statusCode, 200)
+  const probe = await request({ mode: "browser-probe", sessionID: "session-1" })
+  assert.deepEqual(probe.json().result, { available: true, target: "preview-document" })
   const open = await request({ mode: "browser-execute", sessionID: "session-1", command: { action: "open", url: "https://example.com" } })
   assert.equal(open.statusCode, 200)
   assert.deepEqual(nativeCalls, [
@@ -306,9 +307,10 @@ test("browser works with an unavailable developer target and unrelated inventory
       params: { sessionID: "session-1", command: { action: "open", url: "https://example.com" } },
     },
   ])
-  const snapshot = await request({ mode: "browser-execute", sessionID: "session-1", command: { action: "snapshot", query: "Preview" } })
+  const snapshot = await request({ mode: "browser-execute", sessionID: "session-1", target: probe.json().result.target, command: { action: "snapshot", query: "Preview" } })
   assert.equal(snapshot.statusCode, 200)
-  assert.match(snapshot.json().result.snapshot, /- button "Preview action" \[b1e1\]/)
+  assert.equal(Reflect.get(nativeCalls[2].params, "target"), "preview-document")
+  assert.match(snapshot.json().result.snapshot, /- button "Preview action" \[b\d+e1\]/)
   assert.equal(nativeCalls.at(-1)?.method, "browser.page.end", "browser snapshots now use the shared engine's private channel")
   const count = nativeCalls.length
   assert.equal((await request({ mode: "browser-execute", sessionID: "session-1", command: { action: "protocol", method: "Runtime.evaluate" } })).statusCode, 400)
@@ -327,7 +329,7 @@ test("WebKit browser claims, probes and native actions succeed independently of 
     authManager: { isLoopbackRequest: () => true }, bridgeToken: "secret",
     nativeParent: { available: true, browserAutomationUnavailable: false, request: async (method: string) => {
       nativeCalls.push(method)
-      return method === "browser.probe" ? { available: true } : { text: "WebKit native result" }
+      return method === "browser.probe" ? { available: true, target: "webkit-document" } : { text: "WebKit native result" }
     } },
     workspaceManager: {
       getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "/repo" } }) } }),
@@ -349,10 +351,108 @@ test("WebKit browser claims, probes and native actions succeed independently of 
     { action: "open", url: "https://example.com" }, { action: "navigate", url: "https://example.com" },
     { action: "screenshot" },
   ]) {
-    const response = await request({ mode: "browser-execute", command })
+    const response = await request({ mode: "browser-execute", command, ...(command.action !== "open" ? { target: probe.json().result.target } : {}) })
     assert.equal(response.statusCode, 200, command.action)
     assert.equal(response.json().result.text, "WebKit native result", command.action)
   }
+})
+
+test("preview discovery returns explicit evidence of absence and refuses uncertain ownership", async t => {
+  const app = Fastify()
+  t.after(() => app.close())
+  let state: "missing" | "other-missing" | "unauthorized" | "unowned" | "unreadable" | "hidden" | "native-failure" = "missing"
+  registerAutomationPluginRoute(app, {
+    authManager: { isLoopbackRequest: () => true }, bridgeToken: "secret",
+    nativeParent: { available: true, request: async () => {
+      if (state === "hidden") throw new Error("No visible local browser target for this session")
+      throw new Error("Native request timed out: browser.probe")
+    } },
+    workspaceManager: {
+      getSharedServiceClient: async () => ({ session: { get: async () => {
+        if (state === "missing" || state === "other-missing") throw { _tag: "SessionNotFoundError", sessionID: state === "missing" ? "session" : "other" }
+        if (state === "unauthorized") throw { status: 401 }
+        return { location: { directory: "/repo" } }
+      } } }),
+      list: () => [{ id: "owner" }],
+      ownsLocation: async (_id: string, _location: unknown, _client: unknown, { strict }: { strict?: boolean }) => {
+        if (state === "unreadable" && strict) throw new Error("Worktree inventory unavailable")
+        return state === "hidden" || state === "native-failure"
+      },
+    },
+  } as never)
+  const request = (mode: string) => app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
+    headers: { "x-codenomad-automation-token": "secret" }, payload: { mode, sessionID: "session" } })
+  for (const mode of ["browser-probe", "browser-claim"]) {
+    for (state of ["missing", "unowned"] as const) {
+      const response = await request(mode)
+      assert.equal(response.statusCode, 404, state)
+      assert.equal(response.json().code, "browser-not-owner", state)
+    }
+    for (state of ["other-missing", "unauthorized", "unreadable"] as const) {
+      const response = await request(mode)
+      assert.equal(response.statusCode, 503, state)
+      assert.equal(response.json().code, "inventory-unavailable", state)
+    }
+  }
+  state = "hidden"
+  const hidden = await request("browser-probe")
+  assert.equal(hidden.statusCode, 404)
+  assert.equal(hidden.json().code, "hidden-preview")
+  state = "native-failure"
+  const failed = await request("browser-probe")
+  assert.equal(failed.statusCode, 503)
+  assert.equal(failed.json().code, "browser-unavailable")
+})
+
+test("the HTTP preview deadline bounds native probe slots after ownership reads", async t => {
+  const app = Fastify()
+  const now = Date.now()
+  const deadlines: number[] = []
+  let dispatched!: () => void
+  const entered = new Promise<void>(resolve => { dispatched = resolve })
+  const parent = new NativeParent({ write: line => {
+    const { method, deadline } = JSON.parse(String(line).slice(NATIVE_REQUEST_PREFIX.length))
+    deadlines.push(deadline)
+    if (method === "browser.probe" && deadlines.length === 32) dispatched()
+    return true
+  } }, true, false)
+  t.after(async () => { parent.close(); await app.close() })
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now })
+  let releaseOwnership!: () => void, checking!: () => void
+  const ownership = new Promise<void>(resolve => { releaseOwnership = resolve })
+  const checkingOwnership = new Promise<void>(resolve => { checking = resolve })
+  let reads = 0
+  registerAutomationPluginRoute(app, {
+    authManager: { isLoopbackRequest: () => true }, bridgeToken: "secret", nativeParent: parent,
+    workspaceManager: {
+      getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "/repo" } }) } }),
+      list: () => [{ id: "owner" }], ownsLocation: async () => {
+        if (++reads === 33) checking()
+        await ownership
+        return true
+      },
+    },
+  } as never)
+  const probe = (deadline?: number) => app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
+    headers: { "x-codenomad-automation-token": "secret" }, payload: { mode: "browser-probe", sessionID: "session", deadline } })
+  const pending = Promise.all([probe(), probe(now + 90_000), ...Array.from({ length: 30 }, () => probe(now + 5_000))])
+  const expiredWhileChecking = probe(now + 3_000)
+  await checkingOwnership
+  t.mock.timers.tick(4_000)
+  releaseOwnership()
+  await entered
+  assert.equal((await expiredWhileChecking).json().code, "inventory-unavailable")
+  assert.deepEqual(deadlines, Array(32).fill(now + 5_000), "the native envelope retains the HTTP deadline")
+  await assert.rejects(parent.request("developer.status", {}), /Too many pending native requests/)
+  t.mock.timers.tick(1_000)
+  assert.ok((await pending).every(response => response.json().code === "browser-unavailable"))
+  const next = assert.rejects(parent.request("developer.status", {}), /shutting down/)
+  assert.equal(deadlines.length, 33, "the native channel has a free slot at the HTTP deadline")
+  parent.close()
+  await next
+  const expired = await probe(now + 5_000)
+  assert.equal(expired.json().code, "inventory-unavailable")
+  assert.equal(deadlines.length, 33)
 })
 
 test("Mission preference and preparation claims remain available without browser automation", async t => {
@@ -379,9 +479,9 @@ test("Mission preference and preparation claims remain available without browser
   }
   const browser = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
     headers: { "x-codenomad-automation-token": "secret" }, payload: { mode: "browser-claim", sessionID: "owned" } })
-  assert.equal(browser.statusCode, 409)
-  assert.equal(browser.json().code, "unsupported")
-  assert.deepEqual(strictReads, [true, true, false])
+  assert.equal(browser.statusCode, 404)
+  assert.equal(browser.json().code, "no-preview-host")
+  assert.deepEqual(strictReads, [true, true])
 })
 
 test("a backend without a desktop host claims owned sessions for Mission dispatch only", async () => {
@@ -414,6 +514,6 @@ test("a backend without a desktop host claims owned sessions for Mission dispatc
     "ownership is still required for dispatch")
   assert.equal((await request({ mode: "browser-probe", sessionID: "owned" })).statusCode, 404)
   assert.equal((await request({ mode: "developer-probe", sessionID: "owned" })).statusCode, 404)
-  assert.deepEqual(nativeCalls, ["browser.probe", "developer.status"], "native requests fail closed without a host")
+  assert.deepEqual(nativeCalls, ["developer.status"], "preview probes do not query a backend without a native host")
   await app.close()
 })

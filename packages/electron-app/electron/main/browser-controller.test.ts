@@ -40,19 +40,33 @@ function createGuest(options: GuestOptions) {
 }
 
 function createHarness(requestOpen: (sessionID: string, url: string, requestID: string) => void = () => {}) {
-  const owner = { id: 1, isDestroyed: () => false } as WebContents
   const guests = new Map<number, WebContents>()
+  const windows = new Map<WebContents, BrowserWindow>()
   let visible = true
-  const window = { isDestroyed: () => false, isVisible: () => visible, isMinimized: () => false } as BrowserWindow
   const controller = new BrowserController(requestOpen, {
-    fromId: id => guests.get(id) ?? null, fromWebContents: () => window,
+    fromId: id => guests.get(id) ?? null, fromWebContents: owner => windows.get(owner) ?? null,
   })
+  const addOwner = (id: number, isVisible = () => true) => {
+    const owner = { id, isDestroyed: () => false } as WebContents
+    const window = Object.assign(new EventEmitter(), {
+      webContents: owner, isDestroyed: () => false, isVisible, isMinimized: () => false,
+    }) as unknown as BrowserWindow
+    windows.set(owner, window)
+    controller.observeOwner(window)
+    return owner
+  }
+  const owner = addOwner(1, () => visible)
   const add = (guest: WebContents, registrationId: string, sessionId = "session") => {
+    const owner = guest.hostWebContents!
     guests.set(guest.id, guest)
     controller.observeGuest(owner, guest)
     controller.register(owner, { sessionId, registrationId, guestWebContentsId: guest.id })
   }
-  return { controller, owner, add, hide: () => { visible = false } }
+  return {
+    controller, owner, addOwner, add,
+    hide: (event = "hide") => { visible = false; windows.get(owner)!.emit(event) },
+    show: () => { visible = true },
+  }
 }
 
 // Existing lifecycle scenarios keep their raw-CDP fixture vocabulary; the
@@ -74,7 +88,7 @@ const page = (controller: BrowserController, method: string, params: any, deadli
 }
 
 async function begin(controller: BrowserController, sessionID = "session", operationID: string = randomUUID()) {
-  const result = await page(controller, "begin", { sessionID, operationID }) as { generation: string; url: string }
+  const result = await page(controller, "begin", { sessionID, operationID, target: (await controller.probe(sessionID)).target }) as { generation: string; url: string }
   return { sessionID, operationID, generation: result.generation }
 }
 
@@ -91,7 +105,7 @@ describe("BrowserController private page channel", () => {
       { type: "char", keyCode: "a", modifiers: ["shift"] }, { type: "keyUp", keyCode: "a", modifiers: [] }])
     assert.equal(methods.includes("Input.dispatchKeyEvent"), false)
     h.hide()
-    await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.dispatchKeyEvent", params: { type: "keyDown", key: "Enter" } }), /visible/)
+    await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.dispatchKeyEvent", params: { type: "keyDown", key: "Enter" } }), /no longer current/)
     assert.equal(events.length, 3)
   })
   it("refuses unsupported ContextMenu instead of emitting an unknown native key", async () => {
@@ -113,10 +127,10 @@ describe("BrowserController private page channel", () => {
     assert.deepEqual(inserted, ["Pilot"])
     assert.equal(methods.includes("Input.insertText"), false)
     h.hide()
-    await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.insertText", params: { text: "No" } }), /visible/)
+    await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.insertText", params: { text: "No" } }), /no longer current/)
     assert.deepEqual(inserted, ["Pilot"])
   })
-  it("keeps generation stable across owned attach/end, and invalidates on external detach or navigation", async () => {
+  it("keeps the witness armed between leases, and invalidates on external detach or navigation", async () => {
     const h = createHarness()
     const { guest, events, counts } = createGuest({ id: 1, owner: h.owner })
     h.add(guest, "one")
@@ -124,7 +138,7 @@ describe("BrowserController private page channel", () => {
     await page(h.controller, "end", first)
     const second = await begin(h.controller)
     assert.equal(second.generation, first.generation)
-    assert.deepEqual(counts(), { attachCount: 2, detachCount: 1 })
+    assert.deepEqual(counts(), { attachCount: 1, detachCount: 0 })
     guest.debugger.detach()
     await assert.rejects(page(h.controller, "check", second), /no longer current/)
     const third = await begin(h.controller)
@@ -163,13 +177,13 @@ describe("BrowserController private page channel", () => {
     } })
     h.add(guest, "one")
     const lease = await begin(h.controller)
-    for (const method of ["Page.navigate", "Browser.close", "Network.enable", "DOM.getBoxModel", "Accessibility.enable"]) {
+    for (const method of ["Page.navigate", "Page.enable", "Browser.close", "Network.enable", "DOM.getBoxModel", "Accessibility.enable"]) {
       await assert.rejects(page(h.controller, "send", { ...lease, method }), /Unsupported/)
     }
     for (const params of [null, [], "bad", { text: "x".repeat(256 * 1024) }]) {
       await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.insertText", params }), /parameters/)
     }
-    assert.deepEqual(calls, ["Accessibility.enable"])
+    assert.deepEqual(calls, ["Page.enable"])
     const valid = [
       [{op:"tree"},{nodes:[]}], [{op:"resolve",node:42},{}], [{op:"scroll-into-view",node:42},{ok:true}],
       [{op:"geometry",node:42},{ok:true}], [{op:"hit-test",x:0,y:0},{}], [{op:"viewport"},{}],
@@ -179,7 +193,7 @@ describe("BrowserController private page channel", () => {
     for (const [operation,expected] of valid) assert.deepEqual(await page(h.controller,"send",{...lease,operation}),expected)
     assert.deepEqual(await page(h.controller, "send", { ...lease, method: "Input.dispatchKeyEvent", params: { type: "keyUp", key: "a" } }), {})
     await assert.rejects(page(h.controller, "send", { ...lease, method: "Runtime.evaluate" }), /response is too large/)
-    assert.equal(guest.debugger.isAttached(), false)
+    assert.equal(guest.debugger.isAttached(), true)
     await assert.rejects(h.controller.execute("session", { action: "snapshot" } as never), /Invalid browser command/)
   })
 
@@ -200,7 +214,7 @@ describe("BrowserController private page channel", () => {
     const tree = page(h.controller, "send", { ...lease, method: "Accessibility.getFullAXTree" })
     await started
     const queued = page(h.controller, "send", { ...lease, method: "Input.insertText", params: { text: "no" } })
-    events.emit("did-frame-navigate")
+    events.emit("did-frame-navigate", {}, "https://example.com/", 200, "OK", true)
     release()
     await assert.rejects(tree, /no longer current/)
     await assert.rejects(queued, /no longer current/)
@@ -231,7 +245,7 @@ describe("BrowserController private page channel", () => {
     await Promise.all([tree, input])
     assert.deepEqual(counts(), { attachCount: 1, detachCount: 0 })
     await assert.rejects(page(h.controller, "send", { ...lease, operation: {op:"pointer",event:{type:"mouseMoved",x:1,y:1}} }), /no longer current/)
-    assert.deepEqual(counts(), { attachCount: 1, detachCount: 1 })
+    assert.deepEqual(counts(), { attachCount: 1, detachCount: 0 })
   })
 
   it("refuses ambiguous, hidden, unregistered, replaced and disposed targets", async () => {
@@ -247,7 +261,7 @@ describe("BrowserController private page channel", () => {
       if (change === "disposed") events.emit("destroyed")
       await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.insertText" }))
       await page(h.controller, "end", { sessionID: lease.sessionID, operationID: lease.operationID })
-      assert.equal(guest.debugger.isAttached(), false)
+      if (change !== "disposed") assert.equal(guest.debugger.isAttached(), change === "ambiguous", change)
     }
   })
 
@@ -255,17 +269,16 @@ describe("BrowserController private page channel", () => {
     const h = createHarness()
     let release!: () => void
     const gate = new Promise<void>(resolve => { release = resolve })
-    let stall = true
     const { guest, counts } = createGuest({ id: 7, owner: h.owner, sendCommand: async method => {
       if (method === "Browser.getVersion") return { product: "Chrome/140.0.0.0" }
-      if (method === "Accessibility.enable" && stall) await gate
+      if (method === "Page.enable") await gate
       return {}
     } })
     h.add(guest, "mobile")
     await h.controller.emulate(h.owner, "mobile", "mobile")
-    await assert.rejects(page(h.controller, "begin", { sessionID: "session", operationID: randomUUID() }, Date.now() + 20), /timed out/)
+    await assert.rejects(h.controller.probe("session", Date.now() + 20), /timed out/)
     assert.deepEqual(counts(), { attachCount: 1, detachCount: 0 })
-    release(); stall = false
+    release()
     mock.timers.enable({ apis: ["Date", "setTimeout"] })
     try {
       const lease = await begin(h.controller)
@@ -292,7 +305,7 @@ describe("BrowserController private page channel", () => {
     await h.controller.emulate(h.owner, "one", "none")
   })
 
-  it("reserves during begin IO, refuses invalid IDs, and releases a failed owned attachment", async () => {
+  it("never publishes a witness if Page.enable fails and releases only the attachment it opened", async () => {
     const h = createHarness()
     let release!: () => void
     const gate = new Promise<void>(resolve => { release = resolve })
@@ -302,12 +315,9 @@ describe("BrowserController private page channel", () => {
       entered(); await gate; throw new Error("enable failed")
     } })
     h.add(guest, "one")
-    await assert.rejects(begin(h.controller, "session", "invalid"), /identity/)
-    const operationID = randomUUID()
-    const pending = begin(h.controller, "session", operationID)
+    const pending = h.controller.probe("session")
     await started
-    await assert.rejects(begin(h.controller, "session", operationID), /already exists/)
-    await assert.rejects(begin(h.controller), /busy/)
+    await assert.rejects(page(h.controller, "begin", { sessionID: "session", operationID: "invalid" }), /identity/)
     release()
     await assert.rejects(pending, /enable failed/)
     assert.deepEqual(counts(), { attachCount: 1, detachCount: 1 })
@@ -327,7 +337,7 @@ describe("BrowserController private page channel", () => {
       h.add(createGuest({ id: 99, owner: h.owner }).guest, "overflow", "overflow")
       await assert.rejects(begin(h.controller, "overflow"), /Too many/)
       mock.timers.tick(30_001)
-      assert.equal(first.guest.debugger.isAttached(), false)
+      await assert.rejects(page(h.controller, "check", lease), /no longer current/)
       await assert.rejects(page(h.controller, "check", lease), /no longer current/)
       const next = await begin(h.controller, "overflow")
       await page(h.controller, "end", next)
@@ -348,7 +358,7 @@ describe("BrowserController private page channel", () => {
     await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.insertText" }, Date.now()), /expired/)
     assert.equal(input, 0)
     await assert.rejects(page(h.controller, "send", { ...lease, method: "Accessibility.getFullAXTree" }, Date.now() + 20), /timed out/)
-    assert.deepEqual(counts(), { attachCount: 1, detachCount: 1 })
+    assert.deepEqual(counts(), { attachCount: 1, detachCount: 0 })
     stalled = false
     const next = await begin(h.controller)
     await page(h.controller, "send", { ...next, method: "Input.insertText", params: { text: "ok" } })
@@ -358,6 +368,135 @@ describe("BrowserController private page channel", () => {
 })
 
 describe("BrowserController preview lifecycle", () => {
+  it("preserves the main preview witness and lease through in-page navigation in an iframe", async () => {
+    const h = createHarness()
+    const { guest, events } = createGuest({ id: 117, owner: h.owner })
+    h.add(guest, "one")
+    const lease = await begin(h.controller)
+    events.emit("did-navigate-in-page", {}, "https://example.com/frame#section", false, 1, 2)
+    assert.equal((await h.controller.probe("session")).target, lease.generation)
+    assert.deepEqual(await page(h.controller, "check", lease), { url: guest.getURL() })
+
+    events.emit("did-navigate-in-page", {}, "https://example.com/#section", true, 1, 1)
+    await assert.rejects(page(h.controller, "check", lease), /no longer current/)
+    assert.notEqual((await h.controller.probe("session")).target, lease.generation)
+  })
+
+  it("refuses an old witness after the main document stream reopens at the same URL between leases", async () => {
+    const h = createHarness()
+    const calls: string[] = []
+    const inputs: Electron.InputEvent[] = []
+    const sessionID = "session"
+    const { guest } = createGuest({ id: 118, owner: h.owner, sendInputEvent: event => { inputs.push(event) },
+      sendCommand: async method => { calls.push(method); return { data: "new document" } },
+    })
+    h.add(guest, "one")
+    const { target } = await h.controller.probe(sessionID)
+    const lease = await begin(h.controller)
+    await page(h.controller, "end", lease)
+    const opened = (frame: object, cdpSession?: string) => guest.debugger.emit("message", {}, "Page.documentOpened", { frame }, cdpSession)
+    opened({ id: "child", parentId: "main" })
+    opened({ id: "other" }, "nested-target")
+    assert.equal((await h.controller.probe(sessionID)).target, target)
+    assert.equal(guest.debugger.isAttached(), true)
+    opened({ id: "main", url: guest.getURL() })
+    const operationID = randomUUID()
+    await assert.rejects(async () => {
+      const { generation } = await page(h.controller, "begin", { sessionID, operationID, target }) as { generation: string }
+      await page(h.controller, "send", { sessionID, operationID, generation, operation: { op: "keyboard", event: { type: "keyDown", key: "Enter" } } })
+    }, /Browser target is stale/)
+    await assert.rejects(h.controller.execute(sessionID, { action: "screenshot" }, Infinity, target), /Browser target is stale/)
+    assert.deepEqual(calls, ["Page.enable"])
+    assert.deepEqual(inputs, [])
+    const { target: refreshed } = await h.controller.probe(sessionID)
+    assert.notEqual(refreshed, target)
+    assert.deepEqual(await h.controller.execute(sessionID, { action: "screenshot" }, Infinity, refreshed),
+      { image: { mime: "image/png", data: "new document" }, url: guest.getURL() })
+  })
+
+  it("binds native execute and page begin to the probed registration and document", async () => {
+    for (const change of ["none", "navigation", "replacement", "hidden", "hide-show", "minimize-show", "absent", "ambiguous"] as const) {
+      const h = createHarness()
+      const navigate = mock.fn(async () => {})
+      const send = mock.fn(async (method: string) => method === "Page.captureScreenshot" ? { data: "png" } : {})
+      const { guest, events } = createGuest({ id: 90, owner: h.owner, loadURL: navigate, sendCommand: send })
+      h.add(guest, "one")
+      const sessionID = "session"
+      const { available, target: probed } = await handleNativeBrowserRequest(h.controller, "browser.probe", { sessionID }) as { available: boolean; target: string }
+      const target = change === "absent" ? undefined : probed
+      assert.equal(available, true)
+      assert.equal(typeof probed, "string")
+      assert.ok(probed.length > 0 && probed.length <= 128)
+      if (change === "navigation") events.emit("did-navigate")
+      if (change === "replacement") h.controller.register(h.owner, { sessionId: sessionID, registrationId: "one", guestWebContentsId: 90 })
+      if (change === "hidden") h.hide()
+      if (change === "hide-show" || change === "minimize-show") {
+        h.hide(change === "hide-show" ? "hide" : "minimize")
+        h.show()
+        assert.notEqual((await h.controller.probe(sessionID)).target, probed)
+      }
+      if (change === "ambiguous") h.add(createGuest({ id: 91, owner: h.owner }).guest, "two")
+      const operationID = randomUUID()
+      const execute = (command: object) => handleNativeBrowserRequest(h.controller, "browser.execute", { sessionID, target, command })
+      const pageBegin = () => page(h.controller, "begin", { sessionID, operationID, ...(target === undefined ? {} : { target }) })
+      const screenshot = { action: "screenshot" }
+      const navigation = { action: "navigate", url: "https://example.com/next" }
+      if (change === "none") {
+        const lease = await pageBegin() as { generation: string }
+        await page(h.controller, "end", { sessionID, operationID, generation: lease.generation })
+        assert.deepEqual(await execute(screenshot), { image: { mime: "image/png", data: "png" }, url: "https://example.com/" })
+        assert.deepEqual(await execute(navigation), { url: navigation.url })
+      } else {
+        const error = change === "ambiguous" ? /Multiple visible browser targets exist for this session/
+          : change === "absent" ? /A current browser target is required/ : /Browser target is stale/
+        await assert.rejects(pageBegin(), error)
+        await assert.rejects(execute(screenshot), error)
+        await assert.rejects(execute(navigation), error)
+        assert.equal(navigate.mock.callCount(), 0, change)
+        assert.ok(send.mock.calls.every(call => call.arguments[0] === "Page.enable"), change)
+      }
+    }
+  })
+
+  it("revalidates queued work before native input and each native result against its target", async () => {
+    for (const scenario of ["queued", "capture", "reopened", "navigate", "replacement", "hide-show"] as const) {
+      const h = createHarness()
+      let enter!: () => void
+      let release!: () => void
+      const ready = new Promise<void>(resolve => { enter = resolve })
+      const gate = new Promise<void>(resolve => { release = resolve })
+      const hold = async () => { enter(); await gate }
+      const navigate = mock.fn(async () => { if (scenario !== "queued" && scenario !== "capture") await hold() })
+      const { guest, events } = createGuest({ id: 92, owner: h.owner, loadURL: navigate,
+         sendCommand: async method => { if (method === "Page.captureScreenshot") await hold(); return { data: "png" } },
+      })
+      h.add(guest, "one")
+      const sessionID = "session"
+      const { target } = await handleNativeBrowserRequest(h.controller, "browser.probe", { sessionID }) as { target: string }
+      const navigation = { action: "navigate", url: "https://example.com/next" } as const
+      const first = h.controller.execute(sessionID, ["queued", "capture", "reopened"].includes(scenario) ? { action: "screenshot" } : navigation, Infinity, target)
+      await ready
+      const queued = scenario === "queued"
+        ? handleNativeBrowserRequest(h.controller, "browser.execute", { sessionID, target, command: navigation })
+        : undefined
+      const begin = scenario === "queued" ? assert.rejects(
+        page(h.controller, "begin", { sessionID, target, operationID: randomUUID() }), /Browser target is stale/,
+      ) : undefined
+      if (scenario === "replacement") h.controller.register(h.owner, { sessionId: sessionID, registrationId: "one", guestWebContentsId: 92 })
+      else if (scenario === "hide-show") { h.hide(); h.show() }
+      else if (scenario === "reopened") guest.debugger.emit("message", {}, "Page.documentOpened", { frame: { id: "main", url: guest.getURL() } })
+      else events.emit("did-navigate")
+      release()
+      if (scenario === "navigate") assert.deepEqual(await first, { url: navigation.url })
+      else await assert.rejects(first, /Browser target is stale/)
+      if (queued) {
+        await assert.rejects(queued, /Browser target is stale/)
+        await begin
+        assert.equal(navigate.mock.callCount(), 0)
+      }
+    }
+  })
+
   it("reads only bounded public history and refuses foreign or unsafe traversal", async () => {
     const h = createHarness()
     const commands: Array<{ method: string; params?: Record<string, unknown> }> = []
@@ -368,7 +507,7 @@ describe("BrowserController preview lifecycle", () => {
     } })
     h.add(guest, "history")
     h.controller.unregister(h.owner, "history")
-    assert.throws(() => h.controller.probe("session"), /No visible local browser target/)
+    await assert.rejects(h.controller.probe("session"), /No visible local browser target/)
     assert.deepEqual(await h.controller.history(h.owner, 98), { entries: [{ id: 2, url: "https://example.com/" }], index: 0 })
     await assert.rejects(h.controller.history({ id: 2, isDestroyed: () => false } as WebContents, 98), /does not belong/)
     for (const id of [3, 7]) await assert.rejects(h.controller.history(h.owner, 98, id), /Invalid browser history entry/)
@@ -391,7 +530,7 @@ describe("BrowserController preview lifecycle", () => {
     destroyed = true
     assert.doesNotThrow(() => window.emit("closed"))
     assert.equal(guest.debugger.isAttached(), false)
-    assert.throws(() => h.controller.probe("session"), /No visible local browser target/)
+    await assert.rejects(h.controller.probe("session"), /No visible local browser target/)
   })
 
   it("fences queued emulation after target replacement and refuses another owner", async () => {
@@ -421,19 +560,74 @@ describe("BrowserController preview lifecycle", () => {
     let requestID = ""
     const h = createHarness((_sessionID, _url, id) => { requestID = id; requests.push(id) })
     const pending = h.controller.execute("session", { action: "open", url: "https://example.com/next" })
-    const other = { id: 2, isDestroyed: () => false } as WebContents
+    const other = h.addOwner(2)
     assert.equal(h.controller.claimOpen(h.owner, requestID), true)
     assert.equal(h.controller.claimOpen(other, requestID), false)
     assert.equal(h.controller.releaseOpen(h.owner, requestID), true)
     assert.deepEqual(requests, [requestID, requestID])
     assert.equal(h.controller.claimOpen(h.owner, requestID), false)
     assert.equal(h.controller.claimOpen(other, requestID), true)
-    const { guest, events } = createGuest({ id: 14, owner: h.owner, loading: true })
+    const { guest, events } = createGuest({ id: 14, owner: other, loading: true })
     h.add(guest, "one")
     events.emit("did-start-navigation", {}, "https://example.com/next", false, true)
     events.emit("did-finish-load")
     await pending
     assert.equal(h.controller.claimOpen(other, requestID), false)
+  })
+
+  it("refuses expired open claims and releases before their timer runs", async () => {
+    mock.timers.enable({ apis: ["Date", "setTimeout", "setInterval"], now: 1000 })
+    try {
+      const requests: string[] = []
+      const h = createHarness((_sessionID, _url, requestID) => { requests.push(requestID) })
+      const command = { action: "open", url: "https://example.com/" } as const
+      await assert.rejects(h.controller.execute("session", command, Date.now()), /expired/)
+      assert.equal(requests.length, 0)
+      for (const [ttl, error] of [[100, /expired/], [10_000, /Timed out waiting for CodeNomad/]] as const) {
+        const expiresAt = Date.now() + ttl
+        const deadline = ttl === 100 ? expiresAt : Infinity
+        const expired = assert.rejects(h.controller.execute("session", command, deadline), error)
+        const requestID = requests.at(-1)
+        assert.ok(requestID)
+        assert.equal(h.controller.claimOpen(h.owner, requestID), true)
+        mock.timers.setTime(expiresAt)
+        const count: number = requests.length
+        assert.equal(h.controller.claimOpen(h.owner, requestID), false)
+        assert.equal(h.controller.releaseOpen(h.owner, requestID), false)
+        assert.equal(requests.length, count)
+        mock.timers.tick(50)
+        await expired
+      }
+    } finally { mock.timers.reset() }
+  })
+
+  it("does not report a same-URL preview in another window as the result of a claimed open", async () => {
+    let requestID = ""
+    const h = createHarness((_sessionID, _url, id) => { requestID = id })
+    const other = h.addOwner(2)
+    const pending = h.controller.execute("session", { action: "open", url: "https://example.com/" })
+    assert.equal(h.controller.claimOpen(h.owner, requestID), true)
+    h.add(createGuest({ id: 15, owner: other }).guest, "other")
+    await assert.rejects(pending, /Browser target is stale/)
+  })
+
+  it("pins the claimed registration throughout its pending initial load", async () => {
+    mock.timers.enable({ apis: ["Date", "setTimeout", "setInterval"], now: 1000 })
+    try {
+      let requestID = ""
+      const h = createHarness((_sessionID, _url, id) => { requestID = id })
+      const pending = h.controller.execute("session", { action: "open", url: "https://example.com/" })
+      const stale = assert.rejects(pending, /Browser target is stale/)
+      assert.equal(h.controller.claimOpen(h.owner, requestID), true)
+      const { guest, events } = createGuest({ id: 16, owner: h.owner, loading: true })
+      h.add(guest, "one")
+      mock.timers.tick(50)
+      await Promise.resolve()
+      assert.equal(events.listenerCount("did-finish-load"), 2)
+      h.controller.register(h.owner, { sessionId: "session", registrationId: "one", guestWebContentsId: 16 })
+      events.emit("did-finish-load")
+      await stale
+    } finally { mock.timers.reset() }
   })
 
   it("reports ambiguity while waiting for a renderer target", async () => {
@@ -447,7 +641,8 @@ describe("BrowserController preview lifecycle", () => {
   for (const scenario of ["live-failure", "early-failure", "early-other-load", "live-other-load"]) {
     it(`preserves initial load failure semantics: ${scenario}`, async () => {
       let h!: ReturnType<typeof createHarness>
-      h = createHarness(() => {
+      h = createHarness((_sessionID, _url, requestID) => {
+        assert.equal(h.controller.claimOpen(h.owner, requestID), true)
         const { guest, events } = createGuest({ id: 22, owner: h.owner, loading: scenario !== "early-failure" })
         h.add(guest, "one")
         const fail = () => events.emit("did-fail-load", {}, -102, "connection refused", "http://127.0.0.1:43127/", true)
@@ -466,7 +661,7 @@ describe("BrowserController preview lifecycle", () => {
     const h = createHarness()
     const { guest } = createGuest({ id: 12, owner: h.owner, loadURL: async () => { throw new Error("connection refused") } })
     h.add(guest, "one")
-    await assert.rejects(h.controller.execute("session", { action: "navigate", url: "https://example.com/fail" }), /connection refused/)
+    await assert.rejects(h.controller.execute("session", { action: "navigate", url: "https://example.com/fail" }, Infinity, (await h.controller.probe("session")).target), /connection refused/)
     const lease = await begin(h.controller)
     assert.deepEqual(await page(h.controller, "check", lease), { url: "https://example.com/" })
     await page(h.controller, "end", lease)

@@ -158,6 +158,8 @@ impl BrowserController {
         url: &tauri::Url,
         deadline: Instant,
         fence: &crate::native_request::RequestFence,
+        document: Option<u64>,
+        token: Option<&str>,
     ) -> Result<(), String> {
         self.check_target_identity(app, registration, deadline, fence)?;
         let previous = view.url().map_err(|error| error.to_string())?;
@@ -166,59 +168,72 @@ impl BrowserController {
         let mut target_base = url.clone();
         target_base.set_fragment(None);
         let fragment_only = previous != *url && previous_base == target_base;
-        self.invalidate_page(&registration.registration_id);
-        let sequence = self.prepare_page_load(&registration.registration_id, url.as_str())?;
         let expected = registration.clone();
         let controller = self.clone();
         let app = app.clone();
         let queued_fence = fence.clone();
         let target = url.clone();
-        let (sender, receiver) = mpsc::sync_channel(1);
-        view.with_webview(move |native| {
-            let result: Result<(), String> = (|| {
-                controller.check_target_identity(&app, &expected, deadline, &queued_fence)?;
-                if controller.page_load_expectation(&expected.registration_id, target.as_str())?
-                    != Some(sequence)
-                {
-                    return Err("Browser preview navigation is no longer current".into());
-                }
-                #[cfg(target_os = "linux")]
-                {
-                    use webkit2gtk::WebViewExt;
-                    native.inner().load_uri(target.as_str());
-                }
-                #[cfg(target_os = "macos")]
-                {
-                    let target = std::ffi::CString::new(target.as_str())
-                        .map_err(|error| error.to_string())?;
-                    let token = unsafe { macos::cn_navigate(native.inner(), target.as_ptr()) };
-                    if token == 0 {
-                        return Err("Native browser navigation was refused".into());
+        use crate::embedded_view::input::{self, DocumentDispatch, Read};
+        let sequence = input::read(
+            view,
+            Read::Guarded {
+                document: token.map(str::to_owned),
+                dispatch: DocumentDispatch::Navigate(Box::new(move |native| {
+                    controller.check_navigation_dispatch(
+                        &app,
+                        &expected,
+                        document,
+                        deadline,
+                        &queued_fence,
+                    )?;
+                    let (sequence, _) =
+                        controller.prepare_navigation(&expected, target.as_str(), document)?;
+                    #[cfg(target_os = "linux")]
+                    {
+                        use gtk::glib::translate::from_glib_borrow;
+                        use webkit2gtk::WebViewExt;
+                        let view: gtk::glib::translate::Borrowed<webkit2gtk::WebView> =
+                            unsafe { from_glib_borrow(native.cast()) };
+                        view.load_uri(target.as_str());
                     }
-                    let mut inner = controller
-                        .inner
-                        .0
-                        .lock()
-                        .map_err(|error| error.to_string())?;
-                    let expectation = inner
-                        .page_load_expectations
-                        .get_mut(&expected.registration_id)
-                        .filter(|entry| entry.sequence == sequence)
-                        .ok_or("Browser preview navigation is no longer current")?;
-                    // WKWebView can return a navigation object for a fragment
-                    // change without issuing document completion callbacks.
-                    if !fragment_only {
-                        expectation.navigation_id = Some(token);
+                    #[cfg(target_os = "macos")]
+                    {
+                        let target = std::ffi::CString::new(target.as_str())
+                            .map_err(|error| error.to_string())?;
+                        let token = unsafe { macos::cn_navigate(native, target.as_ptr()) };
+                        if token == 0 {
+                            return Err("Native browser navigation was refused".into());
+                        }
+                        let mut inner = controller
+                            .inner
+                            .0
+                            .lock()
+                            .map_err(|error| error.to_string())?;
+                        let expectation = inner
+                            .page_load_expectations
+                            .get_mut(&expected.registration_id)
+                            .filter(|entry| entry.sequence == sequence)
+                            .ok_or("Browser preview navigation is no longer current")?;
+                        // WKWebView can return a navigation object for a fragment
+                        // change without issuing document completion callbacks.
+                        if !fragment_only {
+                            expectation.navigation_id = Some(token);
+                        }
                     }
-                }
-                Ok(())
-            })();
-            let _ = sender.send(result);
-        })
-        .map_err(|error| error.to_string())?;
-        receiver
-            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .map_err(|_| "Timed out dispatching native navigation".to_string())??;
+                    Ok(sequence.to_ne_bytes().to_vec())
+                })),
+            },
+            deadline,
+            {
+                let fence = fence.clone();
+                move || fence.check()
+            },
+        )?;
+        let sequence = u64::from_ne_bytes(
+            sequence
+                .try_into()
+                .map_err(|_| "Missing native browser navigation sequence")?,
+        );
         if fragment_only {
             loop {
                 self.check_target(view.app_handle(), registration, deadline, fence)?;

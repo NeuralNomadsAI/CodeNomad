@@ -33,6 +33,7 @@ import { missionRecoveryControlError, missionRecoveryRejection } from "../../mis
 import { verifyMissionHumanAnswer } from "./mission-human-answer"
 import { verifyRecurrenceRequest, type VerifyScheduleAgentCreation } from "./mission-recurrence-proof"
 import { BrowserPage } from "../../automation/browser-page"
+import { BROWSER_DISCOVERY_TIMEOUT_MS, browserTargetRefusal, isBrowserTarget } from "../../automation/browser-target"
 import type { SettingsService } from "../../settings/service"
 import type { SessionPermissionModes } from "../../permissions/session-mode"
 import type { RemoteControlManager } from "../../remote-control/manager"
@@ -109,7 +110,8 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     const lifetime = requestAdmission(request, reply)
     try {
     if (!isAutomationPluginRequest(request, deps)) return reply.code(401).send({ error: "Unauthorized automation bridge" })
-    const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown; purpose?: unknown; target?: unknown; pin?: unknown; order?: unknown } | undefined
+    const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown; purpose?: unknown
+      deadline?: unknown; target?: unknown; pin?: unknown; order?: unknown } | undefined
     if (body?.mode === "human-answer-verify") {
       if (!deps.settings) return reply.code(503).send({ error: "Human answer admission unavailable" })
       try { return reply.send({ result: await verifyMissionHumanAnswer(body.command,
@@ -162,36 +164,58 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       const failure = missionRecoveryControlError("mission-preferences-unavailable")
       return reply.code(503).send({ error: failure.message, code: failure.code })
     }
-    const notOwner = (error: string) => reply.code(404).send({ error, ...(preferenceProbe ? { code: "mission-not-owner" } : {}) })
-     const lifecycle = commandKind === "lifecycle" || commandKind === "interrupt" || commandKind === "schedule" || commandKind === "project-control"
+    const browserDiscovery = body.mode === "browser-probe" || body.mode === "browser-claim" && !preferenceProbe && body.purpose !== "mission"
+    const notOwner = (error: string) => reply.code(404).send({ error,
+      ...(preferenceProbe ? { code: "mission-not-owner" } : browserDiscovery ? { code: "browser-not-owner" } : {}) })
+    const inventoryUnavailable = () => reply.code(503).send({ code: "inventory-unavailable", error: "The preview inventory could not be verified" })
+    let discoveryDeadline: number | undefined
+    let discoverySignal = lifetime.signal
+    if (browserDiscovery) {
+      if (body.deadline !== undefined && (typeof body.deadline !== "number" || !Number.isSafeInteger(body.deadline))) {
+        return reply.code(400).send({ code: "invalid-deadline", error: "Invalid browser discovery deadline" })
+      }
+      const now = Date.now()
+      discoveryDeadline = Math.min(body.deadline ?? Infinity, now + BROWSER_DISCOVERY_TIMEOUT_MS)
+      if (discoveryDeadline <= now || lifetime.signal.aborted) return inventoryUnavailable()
+      if (!deps.nativeParent.available || deps.nativeParent.browserAutomationUnavailable) {
+        return reply.code(404).send({ code: "no-preview-host", error: "Browser automation is unavailable in this host" })
+      }
+      discoverySignal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(discoveryDeadline - now)])
+    }
+    const lifecycle = commandKind === "lifecycle" || commandKind === "interrupt" || commandKind === "schedule" || commandKind === "project-control"
     const signal = body.mode === "mission-input"
-      ? AbortSignal.any([lifetime.signal, AbortSignal.timeout(lifecycle ? 85_000 : 30_000)]) : lifetime.signal
+      ? AbortSignal.any([lifetime.signal, AbortSignal.timeout(lifecycle ? 85_000 : 30_000)]) : discoverySignal
+    const discoveryExpired = () => discoveryDeadline !== undefined && (discoverySignal.aborted || discoveryDeadline <= Date.now())
 
     let location
     try {
       signal.throwIfAborted()
-      const client = await lifetime.wait(deps.workspaceManager.getSharedServiceClient())
+      const client = await lifetime.wait(deps.workspaceManager.getSharedServiceClient(), discoverySignal)
       signal.throwIfAborted()
-      location = (await lifetime.wait(client.session.get({ sessionID: body.sessionID }, { signal }))).location
+      location = (await lifetime.wait(client.session.get({ sessionID: body.sessionID }, { signal }), discoverySignal)).location
     } catch (error) {
       if (preferenceProbe && (signal.aborted || !isSessionNotFoundError(error))) return preferenceUnavailable()
+      if (browserDiscovery && (discoveryExpired() || !isSessionNotFoundError(error) || error.sessionID !== body.sessionID)) return inventoryUnavailable()
       return notOwner("Session not found")
     }
+    if (discoveryExpired()) return inventoryUnavailable()
     // One validated owner is sufficient. Waiting for every unrelated inventory
     // can exceed the plugin's discovery deadline despite a ready local owner.
     let owned: boolean, ownershipReadFailed = false
     try {
       const workspaces = deps.workspaceManager.list()
       owned = await lifetime.wait(Promise.any(workspaces.map(async workspace => {
-        try { if (await deps.workspaceManager.ownsLocation(workspace.id, location, undefined, { signal, strict: preferenceProbe })) return true }
+        try { if (await deps.workspaceManager.ownsLocation(workspace.id, location, undefined, { signal, strict: preferenceProbe || browserDiscovery })) return true }
         catch { ownershipReadFailed = true }
         throw new Error("Not an owner")
-      }))).catch(() => false)
+      })), discoverySignal).catch(() => false)
     } catch (error) {
       if (preferenceProbe) return preferenceUnavailable()
+      if (browserDiscovery) return inventoryUnavailable()
       throw error
     }
     if (preferenceProbe && (signal.aborted || !owned && ownershipReadFailed)) return preferenceUnavailable()
+    if (browserDiscovery && (discoveryExpired() || !owned && ownershipReadFailed)) return inventoryUnavailable()
     if (!owned) return notOwner("Session is not owned by this CodeNomad instance")
 
     if (body.mode === "mission-input") {
@@ -235,26 +259,25 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       }
     }
 
-    if (["browser-claim", "browser-probe", "browser-execute"].includes(String(body.mode)) && !preferenceProbe && !(body.mode === "browser-claim" && body.purpose === "mission")
-      && deps.nativeParent.browserAutomationUnavailable) {
+    if (body.mode === "browser-execute" && deps.nativeParent.browserAutomationUnavailable) {
       return reply.code(409).send({ code: "unsupported", error: "Browser automation is unavailable in this host" })
     }
 
     if (body.mode === "browser-claim") {
-      // Without a desktop host this backend owns sessions only for Mission
-      // dispatch; claiming browsers too would hand the browser tools an owner
-      // that cannot open a page, or make a desktop owner ambiguous.
-      if (!deps.nativeParent.available && body.purpose !== "mission" && !preferenceProbe) {
-        return reply.code(404).send({ error: "Browser automation is unavailable in this host" })
-      }
       return reply.send({ result: { available: true, ...(preferenceProbe ? { missionCreationDefaults: true, missionPreparationStart: true } : {}) } })
     }
-    if (body.mode === "browser-probe") {
+    if (body.mode === "browser-probe" && discoveryDeadline !== undefined) {
+      const remaining = discoveryDeadline - Date.now()
+      if (remaining <= 0 || discoverySignal.aborted) return inventoryUnavailable()
       try {
-        const result = await deps.nativeParent.request<{ available: boolean }>("browser.probe", { sessionID: body.sessionID })
-        return result.available ? reply.send({ result }) : reply.code(404).send({ error: "No visible browser target" })
+        const result = await lifetime.wait(deps.nativeParent.request<{ available: boolean; target?: string }>("browser.probe", { sessionID: body.sessionID }, remaining))
+        if (discoveryExpired()) return inventoryUnavailable()
+        if (result?.available === false) return reply.code(404).send(browserTargetRefusal("No visible browser target"))
+        if (result?.available !== true || !isBrowserTarget(result.target)) return reply.code(409).send({ code: "unsupported", error: "The desktop host cannot pin a browser target" })
+        return reply.send({ result: { available: true, target: result.target } })
       } catch (error) {
-        return reply.code(404).send({ error: error instanceof Error ? error.message : String(error) })
+        const refusal = browserTargetRefusal(error instanceof Error ? error.message : String(error))
+        return reply.code(refusal.code === "hidden-preview" ? 404 : refusal.code === "browser-unavailable" ? 503 : 409).send(refusal)
       }
     }
     if (body.mode === "browser-execute") {
@@ -264,13 +287,26 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       } catch (error) {
         return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) })
       }
+      const { target: rawTarget, deadline: requestedDeadline } = body
+      const target = command.action === "open" ? undefined : rawTarget
+      if (command.action !== "open" && !isBrowserTarget(target)) {
+        return reply.code(400).send({ code: "target-required", error: "A current browser target is required" })
+      }
+      if (requestedDeadline !== undefined && (typeof requestedDeadline !== "number" || !Number.isSafeInteger(requestedDeadline))) {
+        return reply.code(400).send({ code: "invalid-deadline", error: "Invalid browser command deadline" })
+      }
+      const deadline = typeof requestedDeadline === "number" ? requestedDeadline : undefined
+      const remaining = deadline === undefined ? undefined : Math.min(90_000, deadline - Date.now())
+      if (remaining !== undefined && remaining <= 0) {
+        return reply.code(409).send({ code: "preview-expired", error: "Browser command expired before execution" })
+      }
       try {
         const result = command.action === "open" || command.action === "navigate" || command.action === "screenshot"
-          ? await deps.nativeParent.request("browser.execute", { sessionID: body.sessionID, command })
-          : await browserPage.execute(body.sessionID, command, lifetime.signal)
+          ? await deps.nativeParent.request("browser.execute", { sessionID: body.sessionID, command, ...(target ? { target } : {}) }, remaining)
+          : await browserPage.execute(body.sessionID, command, lifetime.signal, target as string, deadline)
         return reply.send({ result })
       } catch (error) {
-        return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) })
+        return reply.code(409).send(browserTargetRefusal(error instanceof Error ? error.message : String(error)))
       }
     }
 
