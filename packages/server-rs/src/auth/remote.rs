@@ -61,6 +61,9 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
 ].into_iter().map(|(method,path)|(method,Regex::new(path).unwrap())).collect()
 });
 
+#[derive(Clone)]
+pub(crate) struct BrowserDevice(pub uuid::Uuid);
+
 fn reply(code: Status, text: &str) -> Response {
     (code, [(header::CONNECTION, "close")], Json(json!({"error":text}))).into_response()
 }
@@ -187,6 +190,10 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
         );
     }
     let method = req.method().clone();
+    let form_reply = !server
+        && path.strip_prefix("/workspaces/").and_then(|s| s.split_once("/instance")).is_some_and(|(id, route)| {
+            !id.is_empty() && !id.contains('/') && crate::missions::human_answer::form_reply(route, &method).is_some()
+        });
     let backend_ui = !server && crate::previews::backend::enabled(&app) && preview_control(&path, &method);
     let direct = channel.ingress || devices::direct_origin(&channel.origin);
     if path == "/remote-pair" && matches!(method, Method::GET | Method::HEAD) && direct && !server {
@@ -211,6 +218,7 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
         return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
     }
     if !backend_ui
+        && !form_reply
         && !CATALOG.iter().any(|(methods, pat)| {
             methods.split(' ').any(|m| m == if method == Method::HEAD { "GET" } else { method.as_str() })
                 && pat.is_match(&path)
@@ -256,6 +264,9 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
         }
     }
     req.extensions_mut().insert(Principal(principal.clone()));
+    if !server {
+        req.extensions_mut().insert(BrowserDevice(id));
+    }
     let response = tokio::select! {
         biased;
         _=principal.cancelled()=>return reply(Status::UNAUTHORIZED,"This device is not paired"),

@@ -110,7 +110,10 @@ async fn handle(State(app): State<Shared>, request: Request) -> Response {
         Err(refusal) => return refusal.into_response(),
     };
     match body["mode"].as_str().unwrap_or_default() {
-        "human-answer-verify" => refuse(Status::FORBIDDEN, "Human answer admission unavailable"),
+        "human-answer-verify" => match crate::missions::human_answer::verify(&app, &body).await {
+            Some(()) => result(json!({ "admitted": true })),
+            None => refuse(Status::FORBIDDEN, "Human answer admission unavailable"),
+        },
         "recurrence-control-verify" => missions(app, parts, bytes).await,
         mode @ ("memory-probe" | "memory-input" | "memory-context") => match body["sessionID"].as_str() {
             Some(session) => {

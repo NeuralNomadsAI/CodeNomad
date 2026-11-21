@@ -17,6 +17,7 @@ use super::{
     NativeBody, SESSION_LOCATED_ELSEWHERE, SESSION_PLACEMENT_HEADER, native_rpc_absent, read_json, session_directory,
     session_record, upstream_error,
 };
+use crate::missions::human_answer;
 use crate::{App, Error, Shared, error, not_found, unavailable};
 
 // The reference gate is separate from forwarding: allowlisted features whose
@@ -144,16 +145,17 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let workspace = app.workspace(id)?;
     let route = safe_route(suffix).ok_or_else(invalid)?;
     let route = route.trim_end_matches('/');
+    let form = human_answer::form_reply(route, &head.method);
     if !ALLOWED.iter().any(|(m, pat)| *m == head.method.as_str() && pat.is_match(route)) {
         return Err(error(Status::FORBIDDEN, "OpenCode route is not available through a workspace"));
     }
-    if !guarded(route, &head.method) {
+    if form.is_none() && !guarded(route, &head.method) {
         return Ok(unavailable());
     }
     // Native writes that can create or move execution state share the
     // backend's worktree mutation fence with Git, files and removal.
-    let _mutation = if head.method != Method::GET {
-        let held = app.project_mutation.lock().await;
+    let mut mutation = if head.method != Method::GET {
+        let held = app.project_mutation.clone().lock_owned().await;
         principal.live()?;
         Some(held)
     } else {
@@ -315,6 +317,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
         let fields: &[&str] = if create {
             &["title", "location", "agent", "model"]
+        } else if form.is_some() {
+            &["answer"]
         } else if route.ends_with("/agent") {
             &["agent"]
         } else if route.ends_with("/model") {
@@ -392,6 +396,26 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     }
     if !app.native.endpoint().is_some_and(|current| std::sync::Arc::ptr_eq(&current, &endpoint)) {
         return Err(upstream_error());
+    }
+    if let Some(form) = form {
+        if human_answer::reply(
+            &app,
+            &workspace,
+            &endpoint,
+            &head,
+            principal,
+            actual.as_ref().ok_or_else(upstream_error)?,
+            form,
+            input.as_ref().ok_or_else(upstream_error)?,
+            &mut mutation,
+        )
+        .await?
+        {
+            return Ok(Status::NO_CONTENT.into_response());
+        }
+        if !app.native.endpoint().is_some_and(|current| std::sync::Arc::ptr_eq(&current, &endpoint)) {
+            return Err(upstream_error());
+        }
     }
     let mut upstream = app.native.client.request(head.method, target).basic_auth("opencode", Some(&endpoint.password));
     if let Some(accept) = head.headers.get(header::ACCEPT) {

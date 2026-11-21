@@ -126,6 +126,9 @@ pub async fn sweep(app: Shared, stop: CancellationToken) {
     }
 }
 impl Devices {
+    pub(crate) fn is_authorized(&self, id: Uuid) -> bool {
+        !self.disabled && self.doc.devices.iter().any(|d| d.id == id && d.live())
+    }
     pub fn previews_allowed(&self) -> bool {
         !self.disabled && self.doc.previews != Some(false)
     }

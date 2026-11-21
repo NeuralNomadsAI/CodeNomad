@@ -174,6 +174,14 @@ impl Auth {
     pub fn cookie_name(&self) -> &str {
         &self.settings.cookie
     }
+    pub(crate) fn cookie_user(&self, key: &str) -> Option<String> {
+        if self.settings.skip {
+            return None;
+        }
+        let sessions = self.sessions.lock().unwrap();
+        let session = sessions.get(key)?;
+        (!self.expired(session) && session.principal.live().is_ok()).then(|| session.username.clone())
+    }
     fn expired(&self, s: &Session) -> bool {
         s.seen.elapsed() >= self.settings.idle || s.born.elapsed() >= self.settings.absolute
     }

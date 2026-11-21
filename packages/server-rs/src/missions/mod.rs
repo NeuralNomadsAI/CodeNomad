@@ -7,6 +7,7 @@ mod cleanup;
 pub mod configuration;
 pub mod creation_admission;
 pub mod family;
+pub mod human_answer;
 mod inputs;
 mod prepare;
 pub mod reads;
