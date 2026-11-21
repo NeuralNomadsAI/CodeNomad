@@ -18,8 +18,10 @@ mod native_request;
 mod local_windows {
     use tauri::Manager;
 
-    pub(crate) fn browser_open_candidates(_app: &tauri::AppHandle) -> Vec<(String, String)> {
-        vec![(super::OWNER.into(), "fixture-window".into())]
+    pub(crate) fn browser_open_candidates(
+        _app: &tauri::AppHandle,
+    ) -> Result<Vec<(String, String)>, String> {
+        Ok(vec![(super::OWNER.into(), "fixture-window".into())])
     }
 
     pub(crate) fn browser_open_window_current(
