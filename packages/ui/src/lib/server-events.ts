@@ -56,7 +56,8 @@ export class ServerEvents {
   private retryTimer: ReturnType<typeof setTimeout> | null = null
   private pendingBatch: WorkspaceEventPayload[] = []
   private cancelBatchWake: (() => void) | undefined
-  private batchEndCallbacks: Set<() => void> | undefined
+  private readonly pendingPublications = new Set<() => void>()
+  private dispatchDepth = 0
   private connectionValidator?: (signal: AbortSignal) => Promise<boolean>
   private validation?: AbortController
   private watchdog = createStreamStalenessWatchdog({
@@ -272,10 +273,16 @@ export class ServerEvents {
   private admitEvent(event: WorkspaceEventPayload): void {
     if (this.disposed) return
     this.pendingBatch.push(event)
-    if (!isStreamingDelta(event) || (typeof document === "undefined" && typeof requestAnimationFrame !== "function")) {
+    if (typeof document === "undefined" && typeof requestAnimationFrame !== "function") {
       this.flushPendingBatch()
       return
     }
+    if (!isStreamingDelta(event)) this.deliverPendingBatch(false)
+    if (this.pendingBatch.length || this.pendingPublications.size) this.scheduleBatchWake()
+    else this.disarmBatchWake()
+  }
+
+  private scheduleBatchWake(): void {
     if (this.cancelBatchWake) return
 
     const wake = () => {
@@ -295,48 +302,54 @@ export class ServerEvents {
 
   /** Delivers buffered deltas before a consumer reads the transcript or its live state. */
   flushPendingBatch(): void {
+    this.disarmBatchWake()
+    this.deliverPendingBatch(true)
+  }
+
+  private disarmBatchWake(): void {
     this.cancelBatchWake?.()
     this.cancelBatchWake = undefined
+  }
+
+  private deliverPendingBatch(publish: boolean): void {
     const events = this.pendingBatch
-    if (!events.length) return
+    if (!events.length && (!publish || !this.pendingPublications.size)) return
     this.pendingBatch = []
     try {
-      this.dispatchBatch(events)
+      this.dispatchBatch(events, publish)
     } catch (error) {
       // The reactive flush runs outside the EventSource handler's error boundary.
       log.error("Failed to dispatch event", error)
     }
   }
 
-  private dispatchBatch(events: WorkspaceEventPayload[]) {
-    if (events.length === 0) {
-      return
-    }
-
-    logSse("event batch", { size: events.length })
+  private dispatchBatch(events: WorkspaceEventPayload[], publish: boolean) {
+    if (events.length) logSse("event batch", { size: events.length })
     const generation = this.connectGeneration
     solidBatch(() => untrack(() => {
       // A replacement attachment cannot observe the rest of an older batch.
       const wildcardRecipients = [...this.handlers.get("*") ?? []]
-      const parent = this.batchEndCallbacks
-      const callbacks = parent ?? new Set<() => void>()
-      this.batchEndCallbacks = callbacks
+      this.dispatchDepth++
       try {
         for (const event of events) {
           if (this.disposed || generation !== this.connectGeneration) break
           this.dispatch(event, wildcardRecipients)
         }
       } finally {
-        this.batchEndCallbacks = parent
+        this.dispatchDepth--
       }
-      if (!parent) this.notify(callbacks, undefined, "batch-end")
+      if (publish && !this.dispatchDepth) {
+        const callbacks = new Set(this.pendingPublications)
+        this.pendingPublications.clear()
+        this.notify(callbacks, undefined, "batch-end")
+      }
     }))
   }
 
-  /** Coalesces a subscriber's publication inside this batch's Solid update. */
+  /** Shares the stream's next frame with a subscriber's publication. */
   deferUntilBatchEnd(callback: () => void): boolean {
-    if (!this.batchEndCallbacks) return false
-    this.batchEndCallbacks.add(callback)
+    if (!this.dispatchDepth) return false
+    this.pendingPublications.add(callback)
     return true
   }
 
@@ -404,9 +417,9 @@ export class ServerEvents {
     if (this.disposed) return
     this.disposed = true
     this.connectGeneration++
-    this.cancelBatchWake?.()
-    this.cancelBatchWake = undefined
+    this.disarmBatchWake()
     this.pendingBatch = []
+    this.pendingPublications.clear()
     this.validation?.abort()
     this.clearReconnectTimer()
     this.connection?.disconnect()

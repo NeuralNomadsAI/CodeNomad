@@ -163,8 +163,9 @@ logs separate event age, location resolution, queue wait and ownership time
 
 Each `ServerEvents` queues only native text and reasoning deltas until the next
 frame (or a fallback timer). Every other event delivers at once, in FIFO order
-and in the same Solid batch as its queued predecessors. Projections for that
-attachment run at batch end. Selection, transcript reads and lifecycle checks
+and in the same Solid batch as its queued predecessors. Ordinary transcript
+projections share the stream's next frame or fallback, even when a structural
+event has already drained the reducer. Selection, transcript reads and lifecycle checks
 drain only the target backend before consulting state. A visibility transition
 or reconnect drains each affected stream before resuming; disposal discards
 its queue. Replaced streams and attachments fence stale callbacks.

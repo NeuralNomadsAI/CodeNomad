@@ -210,10 +210,10 @@ test("a scoped read, authority event, restart and disposal leave other backends'
   assert.deepEqual(seen, ["remote~fixture:remote-1", "publish"])
   remoteStream.event("remote-2")
   remoteStream.event("remote-authority", "session.execution.started")
-  assert.deepEqual(seen.slice(2), ["remote~fixture:remote-2", "remote~fixture:remote-authority", "publish"])
+  assert.deepEqual(seen.slice(2), ["remote~fixture:remote-2", "remote~fixture:remote-authority"])
   remoteStream.event("before-restart")
   remote.restart()
-  assert.deepEqual(seen.slice(5), ["remote~fixture:before-restart", "publish"])
+  assert.deepEqual(seen.slice(4), ["remote~fixture:before-restart", "publish"])
   await Promise.resolve()
   remoteStream.event("stale-generation")
   const replacement = await open()
@@ -227,7 +227,7 @@ test("a scoped read, authority event, restart and disposal leave other backends'
   assert.equal(frames.size, 1)
   paint()
   t.mock.timers.tick(1000)
-  assert.deepEqual(seen.slice(7), ["fixture:fresh-local", "publish"])
+  assert.deepEqual(seen.slice(6), ["fixture:fresh-local", "publish"])
 })
 
 test("reattaching a stream during a drain cannot deliver the rest of that batch to its replacement", async t => {

@@ -178,7 +178,7 @@ test("SSE deltas project once, in their delivery frame", { timeout: 120_000 }, (
   assert.equal((await snapshot(page)).projections, 1, "there is no later projection frame or fallback replay")
 }))
 
-test("a structural SSE event publishes earlier deltas in the same Solid update before paint", { timeout: 120_000 }, () => open(async page => {
+test("a structural SSE event reduces earlier deltas without forcing an extra display pass", { timeout: 120_000 }, () => open(async page => {
   await queueSseReply(page)
   await observeSse(page, "evt_reasoning_started")
   stream.send({ type: "instance.event", instanceId: "streaming-fixture", event: {
@@ -188,9 +188,10 @@ test("a structural SSE event publishes earlier deltas in the same Solid update b
   } })
   await waitForSse(page)
   const state = await snapshot(page)
-  assert.equal(state.text, "first second")
-  assert.equal(state.projections, 1)
-  await page.clock.runFor(64)
+  assert.ok(state.revision >= 4, "the deltas and structural event already reduced in FIFO order")
+  assert.equal(state.projections, 0, "ordinary structural events leave display work to the next frame")
+  await page.clock.runFor(16)
+  assert.equal((await snapshot(page)).text, "first second")
   assert.equal((await snapshot(page)).projections, 1)
 }))
 
