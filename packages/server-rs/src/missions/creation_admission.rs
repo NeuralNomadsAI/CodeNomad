@@ -325,7 +325,11 @@ impl Scope {
         let request = if let Some(input) = input { request.json(input) } else { request };
         let res = request.send().await.map_err(|_| unavailable())?;
         let status = res.status();
-        let body = opencode::read_json(res, max).await.map_err(|_| unavailable())?;
+        let body = if status == Status::NO_CONTENT {
+            Value::Null
+        } else {
+            opencode::read_json(res, max).await.map_err(|_| unavailable())?
+        };
         if !self.current(app) {
             return Err(unavailable());
         }
