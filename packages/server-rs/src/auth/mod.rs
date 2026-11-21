@@ -174,6 +174,10 @@ impl Auth {
     pub fn cookie_name(&self) -> &str {
         &self.settings.cookie
     }
+
+    pub(crate) fn enabled(&self) -> bool {
+        !self.settings.skip
+    }
     pub(crate) fn cookie_user(&self, key: &str) -> Option<String> {
         if self.settings.skip {
             return None;

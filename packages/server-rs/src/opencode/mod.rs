@@ -5,6 +5,7 @@ pub mod admission;
 pub mod daemon;
 pub mod install;
 pub mod launch;
+mod login_start;
 pub mod proxy;
 pub mod scope;
 pub mod update;
@@ -158,6 +159,7 @@ pub fn routes() -> Router<Shared> {
         .route("/workspaces/{id}/instance", any(proxy::relay))
         .route("/workspaces/{id}/instance/{*route}", any(proxy::relay))
         .route("/api/opencode/update", get(update::status))
+        .route("/api/opencode/login-start", get(login_start::read).post(login_start::set))
         .route("/api/storage/binaries/validate", post(update::validate))
 }
 
