@@ -37,19 +37,6 @@ export async function run({ call, fixture: { client, env }, root, folder }) {
     const local = await read("branches", branches + encodeURIComponent(location.directory), 200)
     assert(local.branches.length > 0 && local.branches.every(ref => ref.startsWith("refs/heads/")))
     await read("branches-foreign", branches + encodeURIComponent(path.join(root, "Rich")), 403, refusal)
-    const forge = `/api/workspaces/${workspace.id}/repository-source`
-    const selected = `${forge}?directory=${encodeURIComponent(location.directory)}`
-    const checkout = path.join(root, folder)
-    const git = (...args) => execFileSync("git", ["-C", checkout, ...args], { windowsHide: true, env })
-    git("remote", "remove", "origin")
-    const missing = await read("repository-source-no-remote", selected, 200)
-    assert.deepEqual(missing, { status: "unavailable", reason: "no_remote" })
-    git("remote", "add", "origin", "https://gitlab.com/fixture/fork.git")
-    git("remote", "add", "upstream", "git@github.com:fixture/project.git")
-    const detected = await read("repository-source-upstream", selected, 200)
-    assert.deepEqual(detected, { status: "ok", repository: { provider: "github", host: "github.com", repository: "fixture/project" } })
-    await read("repository-source-invalid", forge, 400)
-    await read("repository-source-foreign", `${forge}?directory=${encodeURIComponent(path.join(root, "Rich"))}`, 403)
     await read("playbooks", "/api/missions/playbooks", 200, v => Object.keys(v).sort())
     await read("receipt-missing", `${base}/creation/${requestId}`, 200)
     await post("create-invalid", base, {}, 400)
@@ -80,6 +67,19 @@ export async function run({ call, fixture: { client, env }, root, folder }) {
     await observe("delete-replay", "DELETE", url, deletion, 200, v => ({ deleted: v.deleted }))
     await read("deleted-admission", `${url}/admission`, 200, state)
     assert.equal((await client.session.get({ sessionID: mission.coordinatorSessionId })).id, mission.coordinatorSessionId)
+    // Remote edits can change the native project identity; keep them after the journal sequence.
+    const forge = `/api/workspaces/${workspace.id}/repository-source`
+    const selected = `${forge}?directory=${encodeURIComponent(location.directory)}`
+    const git = (...args) => execFileSync("git", ["-C", path.join(root, folder), ...args], { windowsHide: true, env })
+    git("remote", "remove", "origin")
+    const missing = await read("repository-source-no-remote", selected, 200)
+    assert.deepEqual(missing, { status: "unavailable", reason: "no_remote" })
+    git("remote", "add", "origin", "https://gitlab.com/fixture/fork.git")
+    git("remote", "add", "upstream", "git@github.com:fixture/project.git")
+    const detected = await read("repository-source-upstream", selected, 200)
+    assert.deepEqual(detected, { status: "ok", repository: { provider: "github", host: "github.com", repository: "fixture/project" } })
+    await read("repository-source-invalid", forge, 400)
+    await read("repository-source-foreign", `${forge}?directory=${encodeURIComponent(path.join(root, "Rich"))}`, 403)
     return result
   } catch (error) {
     error.partial = result
