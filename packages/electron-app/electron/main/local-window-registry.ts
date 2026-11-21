@@ -18,6 +18,7 @@ export interface LocalWindowRecord {
    * an MRU or launch target, and closes once its connections settle.
    */
   connectOnly?: boolean
+  automationInstance?: string
 }
 
 interface PendingFolder { path: string; attempts: number }
@@ -50,7 +51,7 @@ export class LocalWindowRegistry {
     if (!record.connectOnly && this.userWindowCount() >= MAX_LOCAL_WINDOWS) throw new RangeError("Too many local windows")
     record.id = id
     this.records.set(id, record)
-    this.incarnations.set(record.window, randomUUID())
+    this.incarnations.set(record.window, record.automationInstance ?? randomUUID())
     this.webContentsIds.set(record.window.webContents.id, id)
     if (!record.connectOnly) this.mru = [id, ...this.mru.filter((candidate) => candidate !== id)]
   }

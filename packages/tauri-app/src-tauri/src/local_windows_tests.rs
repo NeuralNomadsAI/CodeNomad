@@ -308,9 +308,10 @@ fn initial_local_document_is_an_offline_about_blank() {
 
 #[test]
 fn local_window_initialization_script_appends_the_boot_splash() {
-    let script = local_window_initialization_script("window-1");
+    let script = local_window_initialization_script("window-1", "instance-1");
     assert!(script.starts_with(LOCAL_WINDOW_CONTEXT_SCRIPT));
     assert!(script.contains("window.__CODENOMAD_WINDOW_ID__ = \"window-1\";"));
+    assert!(script.contains("window.__CODENOMAD_WINDOW_INSTANCE__ = \"instance-1\";"));
     assert!(
         script.ends_with(BOOT_SPLASH_SCRIPT),
         "the boot splash must run in the initial about:blank document"

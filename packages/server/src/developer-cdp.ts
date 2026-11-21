@@ -13,6 +13,7 @@ const DIAGNOSTIC_TEXT_LIMIT = 512
 const DISCOVERY_TEXT_LIMIT = 256 * 1024
 const DISCOVERY_TARGET_LIMIT = 64
 const DISCOVERY_PROBE_CONCURRENCY = 4
+const INVENTORY_PAGE_MS = 250
 const CONTEXT_EXPRESSION = `(() => {
   const root = document.querySelector('[data-tab-visible="true"][data-instance-id]');
   const pane = root?.querySelector('.session-cache-pane[data-session-active="true"][data-session-id]');
@@ -20,6 +21,7 @@ const CONTEXT_EXPRESSION = `(() => {
     .filter(tab => !tab.getAttribute('data-instance-id').includes('~')).slice(0, 64);
   return {
     windowId: window.__CODENOMAD_WINDOW_ID__ ?? null,
+    windowInstance: window.__CODENOMAD_WINDOW_INSTANCE__ ?? null,
     instanceId: root?.getAttribute('data-instance-id') ?? null,
     sessionId: pane?.getAttribute('data-session-id') ?? null,
     tabId: root?.getAttribute('data-tab-id') ?? null,
@@ -42,6 +44,7 @@ export interface DeveloperCdpIdentity extends DeveloperCdpSelection {
 
 export interface DeveloperCdpContext {
   windowId: string
+  windowInstance?: string
   instanceId: string | null
   sessionId: string | null
   tabId?: string | null
@@ -117,6 +120,7 @@ interface PendingCommand {
 interface RunState {
   endpoint: string
   windowId: string
+  windowInstance?: string
   sessionId?: string
   instanceId?: string
   context?: DeveloperCdpContext
@@ -229,7 +233,7 @@ export class DeveloperCdp {
     const found = new Map<string, DeveloperCdpContext>(), ambiguous = new Set<string>()
     for (let index = 0; index < pages.length; index += DISCOVERY_PROBE_CONCURRENCY) {
       const contexts = await Promise.all(pages.slice(index, index + DISCOVERY_PROBE_CONCURRENCY).map(target =>
-        this.probePage(source, target)))
+        this.probePage(source, target, Math.min(this.dependencies.timeoutMs, INVENTORY_PAGE_MS))))
       for (const context of contexts) {
         if (!context || !windowIds.has(context.windowId) || ambiguous.has(context.windowId)) continue
         if (found.has(context.windowId)) {
@@ -254,6 +258,7 @@ export class DeveloperCdp {
       || ("instanceId" in identity && state.instanceId !== identity.instanceId)) {
       if (state) this.disconnect(state, new Error("CDP endpoint changed"))
       state = this.newState(endpoint, identity.windowId, identity.sessionId, "instanceId" in identity ? identity.instanceId : undefined)
+      state.windowInstance = identity.windowInstance
     }
     this.windows.delete(key)
     this.windows.set(key, state)
@@ -340,11 +345,12 @@ export class DeveloperCdp {
     return matches[0]
   }
 
-  private async probePage(endpoint: string, target: CdpTarget): Promise<DeveloperCdpContext | undefined> {
+  private async probePage(endpoint: string, target: CdpTarget, timeoutMs = this.dependencies.timeoutMs): Promise<DeveloperCdpContext | undefined> {
     const probe = this.newState(endpoint, "")
+    const deadline = Date.now() + timeoutMs
     try {
-      await this.connect(probe, target, false)
-      return await this.readContext(probe)
+      await this.connect(probe, target, false, timeoutMs)
+      return await this.readContext(probe, Math.max(1, deadline - Date.now()))
     } catch {
       return undefined
     } finally {
@@ -352,11 +358,11 @@ export class DeveloperCdp {
     }
   }
 
-  private async readContext(state: RunState): Promise<DeveloperCdpContext> {
+  private async readContext(state: RunState, timeoutMs?: number): Promise<DeveloperCdpContext> {
     const response = await this.command(state, "Runtime.evaluate", {
       expression: CONTEXT_EXPRESSION,
       returnByValue: true,
-    })
+    }, timeoutMs)
     const value = (response.result as { value?: unknown } | undefined)?.value as Partial<DeveloperCdpContext> | undefined
     const optionalId = (id: unknown) => id === null || (typeof id === "string" && id.length <= 256)
     if (!value || typeof value.windowId !== "string" || value.windowId.length > 256
@@ -366,15 +372,17 @@ export class DeveloperCdp {
     const localSessions = Array.isArray(value.localSessions)
       ? value.localSessions.slice(0, 64).filter((id): id is string => typeof id === "string" && id.length <= 256) : undefined
     return { windowId: value.windowId, instanceId: value.instanceId!, sessionId: value.sessionId!,
+      ...(typeof value.windowInstance === "string" && optionalId(value.windowInstance) ? { windowInstance: value.windowInstance } : {}),
       ...(optionalId(value.tabId) ? { tabId: value.tabId } : {}), ...(localSessions ? { localSessions } : {}) }
   }
 
   private matchesContext(state: RunState, context: DeveloperCdpContext): boolean {
-    return context.windowId === state.windowId && (state.sessionId === undefined || context.sessionId === state.sessionId)
+    return context.windowId === state.windowId && (state.windowInstance === undefined || state.windowInstance === context.windowInstance)
+      && (state.sessionId === undefined || context.sessionId === state.sessionId)
       && (state.instanceId === undefined || context.instanceId === state.instanceId)
   }
 
-  private async connect(state: RunState, target: CdpTarget, enable = true): Promise<void> {
+  private async connect(state: RunState, target: CdpTarget, enable = true, timeoutMs = this.dependencies.timeoutMs): Promise<void> {
     const socket = this.dependencies.connect(target.webSocketDebuggerUrl)
     state.socket = socket
     state.open = new Promise<void>((resolve, reject) => {
@@ -385,7 +393,7 @@ export class DeveloperCdp {
         } else socket.close()
         reject(error)
       }
-      const timer = setTimeout(() => fail(new Error("CDP WebSocket connection timed out")), this.dependencies.timeoutMs)
+      const timer = setTimeout(() => fail(new Error("CDP WebSocket connection timed out")), timeoutMs)
       socket.onopen = () => { clearTimeout(timer); resolve() }
       socket.onerror = () => fail(new Error("CDP WebSocket connection failed"))
     })
@@ -408,6 +416,7 @@ export class DeveloperCdp {
     state: RunState,
     method: string,
     params?: Record<string, unknown>,
+    timeoutMs = this.dependencies.timeoutMs,
   ): Promise<Record<string, unknown>> {
     if (!state.socket) return Promise.reject(new Error("CDP WebSocket is not connected"))
     const id = ++state.nextCommandId
@@ -415,7 +424,7 @@ export class DeveloperCdp {
       const timer = setTimeout(() => {
         state.pending.delete(id)
         reject(new Error(`CDP command ${method} timed out`))
-      }, this.dependencies.timeoutMs)
+      }, timeoutMs)
       state.pending.set(id, { resolve, reject, timer })
       state.socket!.send(JSON.stringify({ id, method, ...(params ? { params } : {}) }))
     })

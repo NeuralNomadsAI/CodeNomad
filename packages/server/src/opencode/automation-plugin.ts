@@ -590,7 +590,8 @@ function formatBridgeResult(resultValue: unknown, screenshot = { text: "Captured
 async function probeBridge(registration: DiscoveredBridgeRegistration, sessionID: string, inventory?: boolean, selector?: string): Promise<ProbedBridge | undefined> {
   try {
     const response = await callBridge(registration, { mode: "developer-probe", sessionID,
-      ...(selector ? { purpose: "target", target: selector } : inventory ? { purpose: "targets" } : {}) })
+      ...(selector ? { purpose: "target", target: selector } : inventory ? { purpose: "targets" } : {}) },
+    inventory ? INSPECTION_TIMEOUT_MS : PROBE_TIMEOUT_MS)
     const result = response.body.result as { available?: unknown; nativeIdentity?: unknown; runId?: unknown; windows?: unknown; windowId?: unknown; windowInstance?: unknown } | undefined
     const windows = Array.isArray(result?.windows) ? result.windows.slice(0, 16).filter((item): item is DeveloperWindowCandidate =>
       item && typeof item.windowId === "string" && ["visible", "open", "elsewhere"].includes(item.session)) : undefined

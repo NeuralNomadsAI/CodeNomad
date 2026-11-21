@@ -48,7 +48,7 @@ class FakeSocket {
 class FakeChrome {
   target = page("one")
   targets: Array<ReturnType<typeof page>> | undefined
-  context = { windowId: "window-1", instanceId: "workspace-1", sessionId: "session-1" }
+  context = { windowId: "window-1", instanceId: "workspace-1", sessionId: "session-1", windowInstance: undefined as string | undefined }
   sockets: FakeSocket[] = []
   commands: Command[] = []
   deferred = new Map<string, { socket: FakeSocket; command: Command }>()
@@ -118,6 +118,22 @@ const identity = {
 }
 
 describe("DeveloperCdp", () => {
+  it("skips unresponsive inventory pages and checks the window incarnation before reading", async () => {
+    const chrome = new FakeChrome(), stalled = new FakeChrome()
+    stalled.target = page("stalled")
+    chrome.targets = [stalled.target, chrome.target]
+    stalled.deferred.set("Runtime.evaluate", undefined as never)
+    chrome.context.windowInstance = "current"
+    const client = chrome.client({ connect: (url: string) => url.endsWith("/stalled") ? stalled.connect(url) : chrome.connect(url) })
+    try {
+      assert.equal((await client.probeContexts(identity.endpoint, new Set([identity.windowId]))).size, 1)
+      chrome.targets = [chrome.target]
+      await assert.rejects(client.inspect({ ...identity, windowInstance: "retired" }), /No CodeNomad page matches/)
+      assert.ok(chrome.commands.every(command => command.method !== "Accessibility.getFullAXTree"))
+      assert.equal((await client.inspect({ ...identity, windowInstance: "current" })).context.windowId, identity.windowId)
+    } finally { client.close() }
+  })
+
   it("never resolves a ref issued by a different backend", async () => {
     const chrome = new FakeChrome()
     const first = chrome.client(), second = chrome.client()

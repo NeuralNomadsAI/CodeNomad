@@ -41,10 +41,11 @@ fn local_window_initial_url() -> WebviewUrl {
 
 /// The initialization script every document of a local webview runs. The boot
 /// splash guards itself to the top-level about:blank document.
-fn local_window_initialization_script(id: &str) -> String {
+fn local_window_initialization_script(id: &str, instance: &str) -> String {
     format!(
-        "{LOCAL_WINDOW_CONTEXT_SCRIPT} window.__CODENOMAD_WINDOW_ID__ = {};{BOOT_SPLASH_SCRIPT}",
-        serde_json::to_string(id).unwrap()
+        "{LOCAL_WINDOW_CONTEXT_SCRIPT} window.__CODENOMAD_WINDOW_ID__ = {}; window.__CODENOMAD_WINDOW_INSTANCE__ = {};{BOOT_SPLASH_SCRIPT}",
+        serde_json::to_string(id).unwrap(),
+        serde_json::to_string(instance).unwrap()
     )
 }
 
@@ -691,7 +692,7 @@ fn build_local_window(
     connect_only: bool,
 ) -> Result<LocalWindowRecord, String> {
     let record = register(app, id.clone(), persisted, connect_only)?;
-    let script = local_window_initialization_script(&id);
+    let script = local_window_initialization_script(&id, &record.automation_instance);
     let data_directory = app
         .state::<crate::AppState>()
         .webview_data_directory

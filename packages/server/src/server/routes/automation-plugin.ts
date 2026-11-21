@@ -316,7 +316,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
           const contexts = await deps.developerCdp.probeContexts(selection.endpoint, new Set(local.map(window => window.windowId)))
           const windows = local.flatMap(window => {
             const context = contexts.get(window.windowId)
-            if (!context) return []
+            if (!context || window.windowInstance && context.windowInstance !== window.windowInstance) return []
             const visible = context.sessionId === body.sessionID && !context.instanceId?.includes("~")
             return [{ windowId: context.windowId, focused: window.focused === true,
               ...(window.windowInstance ? { windowInstance: window.windowInstance } : {}),
@@ -326,7 +326,9 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
           return reply.send({ result: { ...selected, windows } })
         } catch { return unavailable() }
       }
-      try { await deps.developerCdp.context(selection) } catch { return unavailable() }
+      if (!explicit) {
+        try { await deps.developerCdp.context(selection) } catch { return unavailable() }
+      }
       return reply.send({ result: { ...selected, windowId: selection.windowId,
         ...(selection.windowInstance ? { windowInstance: selection.windowInstance } : {}) } })
     }
@@ -362,6 +364,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       return reply.send({ result: { ok: true, ...result } })
     } catch (error) {
       if (error instanceof StaleDeveloperDocument) return reply.code(409).send({ code: "stale-document", error: error.message })
+      if (exact && error instanceof Error && /^No CodeNomad page matches|^CodeNomad window or active session changed/.test(error.message)) return unavailable()
       return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) })
     }
     } finally { lifetime.dispose() }
