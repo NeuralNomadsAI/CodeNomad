@@ -1626,7 +1626,7 @@ fn update_fullscreen_shortcut(app: &AppHandle) {
 }
 
 #[cfg(windows)]
-fn set_windows_app_user_model_id(identifier: &str) {
+fn set_windows_app_user_model_id(identifier: &str) -> bool {
     let app_id: Vec<u16> = OsStr::new(identifier)
         .encode_wide()
         .chain(iter::once(0))
@@ -1636,11 +1636,9 @@ fn set_windows_app_user_model_id(identifier: &str) {
     if result < 0 {
         eprintln!("[tauri] failed to set AppUserModelID: {result}");
     }
-    windows_notification_identity::register(identifier);
+    let registered = windows_notification_identity::register(identifier);
+    result >= 0 && registered
 }
-
-#[cfg(not(windows))]
-fn set_windows_app_user_model_id(_identifier: &str) {}
 
 #[cfg(windows)]
 fn configure_developer_webview(
@@ -1826,11 +1824,6 @@ fn app_context<R: tauri::Runtime>() -> tauri::Context<R> {
 
 fn main() {
     #[cfg(windows)]
-    if std::env::args_os().any(|arg| arg == notification_click::windows::ACTIVATION_ARG) {
-        // An old toast cannot target a renderer after the notifying process has exited.
-        return;
-    }
-    #[cfg(windows)]
     if let Some(code) = cli_manager::run_windows_cli_launcher_if_requested() {
         std::process::exit(code);
     }
@@ -1919,6 +1912,7 @@ fn main() {
         setup_scope.webview_data_directory.join("browser"),
     );
     desktop_updater::register(tauri::Builder::default(), context.config())
+        .append_invoke_initialization_script("window.__CODENOMAD_NOTIFICATION_ACTIONS__ = true;")
         .plugin(single_instance)
         .plugin(tauri_plugin_dialog::init())
         // Opens links outside Linux (external_open). The renderer's own click
@@ -2076,10 +2070,7 @@ fn main() {
                 .set_host(&badge_host);
             app.state::<remote_dictation::RemoteDictation>()
                 .set_host(&badge_host);
-            set_windows_app_user_model_id(&setup_scope.identifier);
-            if let Err(error) = notification_click::install(&badge_host) {
-                eprintln!("[notification] activation unavailable: {error}");
-            }
+            notification_click::install(&badge_host);
             *setup_notification_badge_host
                 .lock()
                 .unwrap_or_else(|e| e.into_inner()) = Some(badge_host);

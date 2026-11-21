@@ -1,165 +1,83 @@
-use sha2::{Digest, Sha256};
-use std::{ffi::c_void, sync::Weak};
-use tauri::AppHandle;
+use std::sync::Weak;
+use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 use windows::{
-    core::{implement, IUnknown, Interface, Ref, BOOL, GUID, HSTRING, PCWSTR},
+    core::{Result, HSTRING},
     Data::Xml::Dom::XmlDocument,
-    Win32::{
-        Foundation::{CLASS_E_NOAGGREGATION, E_POINTER},
-        System::{
-            Com::{
-                CoRegisterClassObject, CoRevokeClassObject, IClassFactory, IClassFactory_Impl,
-                CLSCTX_LOCAL_SERVER, REGCLS_AGILE, REGCLS_MULTIPLEUSE,
-            },
-            WinRT::{RoInitialize, RoUninitialize, RO_INIT_SINGLETHREADED},
-        },
-        UI::Notifications::{
-            INotificationActivationCallback, INotificationActivationCallback_Impl,
-            NOTIFICATION_USER_INPUT_DATA,
-        },
-    },
+    Foundation::TypedEventHandler,
     UI::Notifications::{ToastNotification, ToastNotificationManager},
 };
 
-pub(crate) const ACTIVATION_ARG: &str = "--codenomad-toast-activation";
-pub(super) type Toast = ToastNotification;
-
-fn toast_identity(profile: &str) -> String {
-    // CustomActivator has one owner per AUMID. Electron owns the shared shell ID.
-    format!("{profile}.tauri")
+pub(super) struct Toast {
+    notification: ToastNotification,
+    activated: i64,
+    dismissed: i64,
+    failed: i64,
 }
 
-#[implement(IClassFactory)]
-struct Factory(Weak<AppHandle>);
-
-impl IClassFactory_Impl for Factory_Impl {
-    fn CreateInstance(
-        &self,
-        outer: Ref<IUnknown>,
-        iid: *const GUID,
-        out: *mut *mut c_void,
-    ) -> windows::core::Result<()> {
-        if iid.is_null() || out.is_null() {
-            return Err(E_POINTER.into());
-        }
-        unsafe { *out = std::ptr::null_mut() };
-        if outer.as_ref().is_some() {
-            return Err(CLASS_E_NOAGGREGATION.into());
-        }
-        let activation: INotificationActivationCallback = Activator(self.0.clone()).into();
-        unsafe { activation.query(iid, out).ok() }
-    }
-
-    fn LockServer(&self, _: BOOL) -> windows::core::Result<()> {
-        Ok(())
-    }
-}
-
-#[implement(INotificationActivationCallback)]
-struct Activator(Weak<AppHandle>);
-
-impl INotificationActivationCallback_Impl for Activator_Impl {
-    fn Activate(
-        &self,
-        _: &PCWSTR,
-        args: &PCWSTR,
-        _: *const NOTIFICATION_USER_INPUT_DATA,
-        _: u32,
-    ) -> windows::core::Result<()> {
-        if let Some(app) = self.0.upgrade() {
-            if !args.is_null() {
-                if let Ok(value) = unsafe { args.to_string() } {
-                    if let Some(id) = super::action_id(&value) {
-                        super::clicked(&app, id, None);
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-thread_local! {
-    static REGISTRATION: std::cell::OnceCell<Registration> = const { std::cell::OnceCell::new() };
-}
-
-struct Registration(u32, Weak<AppHandle>);
-impl Drop for Registration {
+impl Drop for Toast {
     fn drop(&mut self) {
-        unsafe {
-            let _ = CoRevokeClassObject(self.0);
-            RoUninitialize();
-        }
-    }
-}
-
-pub(super) fn install(profile: &str, host: Weak<AppHandle>) -> Result<(), String> {
-    let identifier = toast_identity(profile);
-    let digest = Sha256::digest(identifier.as_bytes());
-    let uuid = Uuid::from_bytes(digest[..16].try_into().unwrap());
-    let clsid = GUID::from_u128(uuid.as_u128());
-    crate::windows_notification_identity::register_activation(
-        &identifier,
-        &format!("{{{uuid}}}"),
-        ACTIVATION_ARG,
-    )?;
-    unsafe { RoInitialize(RO_INIT_SINGLETHREADED) }.map_err(|error| error.to_string())?;
-    let factory: IClassFactory = Factory(host.clone()).into();
-    match unsafe {
-        CoRegisterClassObject(
-            &clsid,
-            &factory,
-            CLSCTX_LOCAL_SERVER,
-            REGCLS_MULTIPLEUSE | REGCLS_AGILE,
-        )
-    } {
-        Ok(cookie) => {
-            let _ = REGISTRATION.with(|registration| registration.set(Registration(cookie, host)));
-            Ok(())
-        }
-        Err(error) => {
-            unsafe { RoUninitialize() };
-            Err(error.to_string())
-        }
+        let _ = self.notification.RemoveActivated(self.activated);
+        let _ = self.notification.RemoveDismissed(self.dismissed);
+        let _ = self.notification.RemoveFailed(self.failed);
     }
 }
 
 pub(super) fn show(
-    app: &AppHandle,
+    profile: &str,
+    host: &Weak<AppHandle>,
     id: Uuid,
     title: &str,
     body: &str,
-) -> windows::core::Result<Toast> {
+) -> Result<Toast> {
+    let notifier = ToastNotificationManager::CreateToastNotifierWithId(&toast_identity(profile))?;
     let xml = XmlDocument::new()?;
-    xml.LoadXml(&HSTRING::from(toast_xml(id, title, body)))?;
-    let toast = ToastNotification::CreateToastNotification(&xml)?;
-    let host = REGISTRATION.with(|r| r.get().map(|registration| registration.1.clone()));
-    // WinRT can deliver the banner click directly; the COM activator handles Notification Center.
-    toast.Activated(&windows::Foundation::TypedEventHandler::new(move |_, _| {
-        if let Some(app) = host.as_ref().and_then(Weak::upgrade) {
-            super::clicked(&app, id, None);
+    xml.LoadXml(&HSTRING::from(toast_xml(title, body)))?;
+    let notification = ToastNotification::CreateToastNotification(&xml)?;
+    let activated = notification.Activated(&TypedEventHandler::new({
+        let host = host.clone();
+        move |_, _| {
+            if let Some(app) = host.upgrade() {
+                super::clicked(&app, id, None);
+            }
+            Ok(())
         }
-        Ok(())
     }))?;
-    ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(toast_identity(
-        &app.config().identifier,
-    )))?
-    .Show(&toast)?;
+    let forget = {
+        let host = host.clone();
+        move || {
+            if let Some(app) = host.upgrade() {
+                let _ = app.clone().run_on_main_thread(move || {
+                    app.state::<super::NotificationClicks>().take(id);
+                });
+            }
+            Ok(())
+        }
+    };
+    let dismissed = notification.Dismissed(&TypedEventHandler::new({
+        let forget = forget.clone();
+        move |_, _| forget()
+    }))?;
+    let failed = notification.Failed(&TypedEventHandler::new(move |_, _| forget()))?;
+    let toast = Toast {
+        notification,
+        activated,
+        dismissed,
+        failed,
+    };
+    notifier.Show(&toast.notification)?;
     Ok(toast)
 }
 
-fn toast_xml(id: Uuid, title: &str, body: &str) -> String {
-    let text = |value: &str| {
-        value
-            .replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-    };
+fn toast_identity(profile: &str) -> HSTRING {
+    HSTRING::from(profile)
+}
+
+fn toast_xml(title: &str, body: &str) -> String {
     format!(
-        r#"<toast launch="{id}"><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual></toast>"#,
-        text(title),
-        text(body),
+        r#"<toast><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual></toast>"#,
+        super::escape_text(title),
+        super::escape_text(body),
     )
 }
 
@@ -168,14 +86,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn toast_keeps_content_as_text_and_uses_an_opaque_launch_argument() {
-        let id = Uuid::new_v4();
-        let xml = toast_xml(id, "<text>x & y</text>", "message");
-        assert!(xml.contains(&format!(r#"launch="{id}""#)));
+    fn notification_uses_the_existing_aumid_for_default_and_scoped_profiles() {
+        let stable = crate::identity::STABLE_IDENTIFIER;
+        let scoped = format!("{stable}.scope.s0123456789abcdef");
+        for profile in [stable, &scoped] {
+            assert_eq!(toast_identity(profile), HSTRING::from(profile));
+        }
+    }
+
+    #[test]
+    fn notification_keeps_content_as_text() {
+        let xml = toast_xml("<text>x & y</text>", "message");
         assert!(xml.contains("<text>&lt;text&gt;x &amp; y&lt;/text&gt;</text>"));
-        assert_ne!(
-            toast_identity("ai.neuralnomads.codenomad.client"),
-            "ai.neuralnomads.codenomad.client"
-        );
     }
 }

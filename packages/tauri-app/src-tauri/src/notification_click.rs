@@ -1,22 +1,45 @@
 use parking_lot::Mutex;
+#[cfg(any(windows, target_os = "macos"))]
+use std::sync::{OnceLock, Weak};
 use std::{collections::VecDeque, sync::Arc};
 use tauri::{AppHandle, Manager, Webview};
-#[cfg(target_os = "macos")]
+#[cfg(any(windows, target_os = "macos"))]
 use tauri_plugin_notification::NotificationExt;
 use uuid::Uuid;
 
 #[cfg(target_os = "linux")]
 #[path = "notification_click_linux.rs"]
 mod linux;
+#[cfg(target_os = "macos")]
+#[path = "notification_click_macos.rs"]
+mod macos;
 #[cfg(windows)]
 #[path = "notification_click_windows.rs"]
-pub(crate) mod windows;
+mod windows;
 
 const MAX_NOTICES: usize = 256;
+
+#[cfg(any(windows, target_os = "linux", test))]
+fn escape_text(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_body<'a>(body: &'a str, capabilities: &[String]) -> std::borrow::Cow<'a, str> {
+    if capabilities.iter().any(|item| item == "body-markup") {
+        std::borrow::Cow::Owned(escape_text(body))
+    } else {
+        std::borrow::Cow::Borrowed(body)
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct NotificationClicks {
     pending: Mutex<VecDeque<(Uuid, Target)>>,
+    #[cfg(any(windows, target_os = "macos"))]
+    native_host: OnceLock<Weak<AppHandle>>,
     #[cfg(target_os = "linux")]
     linux: linux::LinuxNotifications,
 }
@@ -44,6 +67,12 @@ impl NotificationClicks {
         let mut pending = self.pending.lock();
         let index = pending.iter().position(|(key, _)| *key == id)?;
         pending.remove(index).map(|(_, target)| target)
+    }
+
+    #[cfg(any(test, target_os = "macos"))]
+    fn remember_macos(&self, target: Target) -> Option<Uuid> {
+        target.action?;
+        Some(self.remember(target))
     }
 
     pub(crate) fn forget_window(&self, label: &str) {
@@ -104,40 +133,19 @@ fn clicked(app: &AppHandle, id: Uuid, _activation_token: Option<String>) {
     });
 }
 
-pub(crate) fn install(host: &Arc<AppHandle>) -> Result<(), String> {
+pub(crate) fn install(host: &Arc<AppHandle>) {
+    let routes = host.state::<NotificationClicks>();
     #[cfg(windows)]
-    {
-        windows::install(&host.config().identifier, Arc::downgrade(host))
+    if crate::set_windows_app_user_model_id(&host.config().identifier) {
+        let _ = routes.native_host.set(Arc::downgrade(host));
     }
     #[cfg(target_os = "linux")]
     {
-        *host.state::<NotificationClicks>().linux.host.lock() = Arc::downgrade(host);
-        Ok(())
+        *routes.linux.host.lock() = Arc::downgrade(host);
     }
     #[cfg(target_os = "macos")]
-    {
-        // Notification Center knows the bundle ID, not the scoped Tauri configuration ID.
-        if std::env::current_exe().ok().is_some_and(|path| {
-            path.ancestors().any(|parent| parent.extension().is_some_and(|ext| ext == "app"))
-        }) {
-            let _ = notify_rust::set_application(crate::identity::STABLE_IDENTIFIER);
-        }
-        let weak_host = Arc::downgrade(host);
-        host.notification()
-            .on_action(move |event| {
-                if event.action_id() != "tap" {
-                    return;
-                }
-                let id = event
-                    .notification()
-                    .and_then(|notice| notice.extra().get("codenomadClick"))
-                    .and_then(serde_json::Value::as_str)
-                    .and_then(action_id);
-                if let (Some(app), Some(id)) = (weak_host.upgrade(), id) {
-                    clicked(&app, id, None);
-                }
-            })
-            .map_err(|error| error.to_string())
+    if macos::install(Arc::downgrade(host)) {
+        let _ = routes.native_host.set(Arc::downgrade(host));
     }
 }
 
@@ -155,29 +163,41 @@ pub(crate) fn notification_show(
         .map(|value| self::action_id(value).ok_or("Invalid notification action"))
         .transpose()?;
     let routes = app.state::<NotificationClicks>();
-    let id = routes.remember(Target {
+    #[cfg(any(windows, target_os = "macos"))]
+    let Some(host) = routes.native_host.get() else {
+        return app
+            .notification()
+            .builder()
+            .title(title)
+            .body(body)
+            .show()
+            .map_err(|error| error.to_string());
+    };
+    let target = Target {
         label: webview.label().into(),
         url,
         action,
         #[cfg(windows)]
         toast: None,
-    });
-    #[cfg(windows)]
-    let result = windows::show(app, id, &title, &body).map(|toast| routes.retain_toast(id, toast));
+    };
     #[cfg(target_os = "macos")]
-    let result = app
-        .notification()
-        .builder()
-        .title(title)
-        .body(body)
-        .extra("codenomadClick", id.to_string())
-        .show();
-    #[cfg(target_os = "linux")]
-    let result = linux::show(&routes.linux, id, title, body);
-    result.map_err(|error| {
-        routes.take(id);
-        error.to_string()
-    })
+    {
+        macos::show(host.clone(), routes.remember_macos(target), title, body);
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let id = routes.remember(target);
+        #[cfg(windows)]
+        let result = windows::show(&app.config().identifier, host, id, &title, &body)
+            .map(|toast| routes.retain_toast(id, toast))
+            .map_err(|error| error.to_string());
+        #[cfg(target_os = "linux")]
+        let result = linux::show(&routes.linux, id, title, body);
+        result.inspect_err(|_| {
+            routes.take(id);
+        })
+    }
 }
 
 #[cfg(test)]
@@ -185,15 +205,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn clicks_route_once_to_the_sending_document_and_expire_on_navigation() {
+    fn linux_notification_body_is_escaped_only_for_markup_capable_daemons() {
+        let body = "R&D <test>";
+        assert_eq!(linux_body(body, &[]), body);
+        assert_eq!(linux_body(body, &["body".into()]), body);
+        assert_eq!(
+            linux_body(body, &["body-markup".into()]),
+            "R&amp;D &lt;test&gt;"
+        );
+    }
+
+    #[test]
+    fn macos_tracks_only_actionable_notifications_and_bounds_pending_clicks() {
         let routes = NotificationClicks::default();
-        let target = |label: &str, action| Target {
+        assert!(routes.remember_macos(target("local-a", None)).is_none());
+        let action = Some(Uuid::new_v4());
+        let oldest = routes.remember_macos(target("local-a", action)).unwrap();
+        for _ in 0..MAX_NOTICES {
+            routes.remember_macos(target("local-a", action)).unwrap();
+        }
+        assert_eq!(routes.pending.lock().len(), MAX_NOTICES);
+        assert!(routes.take(oldest).is_none());
+    }
+
+    fn target(label: &str, action: Option<Uuid>) -> Target {
+        Target {
             label: label.into(),
             url: "https://app.test".parse().unwrap(),
             action,
             #[cfg(windows)]
             toast: None,
-        };
+        }
+    }
+
+    #[test]
+    fn clicks_route_once_to_the_sending_document_and_expire_on_navigation() {
+        let routes = NotificationClicks::default();
         let action = Uuid::new_v4();
         let first = routes.remember(target("local-a", None));
         let second = routes.remember(target("remote-b", Some(action)));

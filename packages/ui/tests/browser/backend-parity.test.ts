@@ -169,6 +169,7 @@ for (const host of ["electron", "tauri"] as const) {
       if (host === "electron") {
         w.electronAPI = { showNotification: show, onNotificationClick: (callback: typeof w.clickNative) => { w.clickNative = callback } }
       } else {
+        w.__CODENOMAD_NOTIFICATION_ACTIONS__ = true
         w.__TAURI_INTERNALS__ = { invoke: (command: string, args: typeof notices[number]) =>
           command === "notification_show" ? show(args) : undefined }
         w.clickNative = (id: string) => dispatchEvent(new CustomEvent("codenomad:notification-click", { detail: id }))

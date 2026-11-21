@@ -109,7 +109,7 @@ El permiso del navegador/sistema operativo pertenece al dispositivo y al origen 
 
 El recuento de no leídos de la campana/historial, que solo cuenta las notificaciones dirigidas a Historial, controla el punto del favicon del navegador y el indicador nativo de la aplicación.
 
-En la aplicación de escritorio, al hacer clic en una notificación del sistema, su ventana pasa al primer plano y se abre la conversación si sigue disponible.
+Si el sistema admite acciones de notificación y la conversación sigue abierta, al hacer clic en la notificación, la ventana de la aplicación de escritorio pasa al primer plano y muestra la conversación.
 
 ## Opciones avanzadas {#advanced}
 

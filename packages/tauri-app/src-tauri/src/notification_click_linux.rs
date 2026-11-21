@@ -62,6 +62,8 @@ impl Bus {
     }
 
     fn show(&self, id: Uuid, title: &str, body: &str) -> zbus::Result<()> {
+        let capabilities: Vec<String> = self.proxy.call("GetCapabilities", &()).unwrap_or_default();
+        let body = super::linux_body(body, &capabilities);
         let hints = std::collections::HashMap::from([(
             "desktop-entry",
             Value::from(crate::identity::STABLE_IDENTIFIER),
@@ -75,7 +77,7 @@ impl Bus {
                 0u32,
                 "codenomad-tauri",
                 title,
-                gtk::glib::markup_escape_text(body).as_str(),
+                body.as_ref(),
                 ["default", ""].as_slice(),
                 hints,
                 -1i32,

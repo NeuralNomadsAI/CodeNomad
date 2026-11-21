@@ -9,7 +9,7 @@
 
 - Embedded Missions settings resolve the active qualified project's selected catalog Location before its opened root folder, matching the explicit Location supplied by native Preferences.
 
-- System notification actions stay in the sending renderer. A click focuses that browser page or desktop window and runs its qualified conversation action; local bubbles and history retain their existing presentation. Desktop hosts route a one-shot opaque ID to the sending renderer. Tauri on Linux passes the notification daemon’s activation token to the target GTK window for Wayland focus. Attachment revocation fences retained clicks and closes the browser notification.
+- System notification actions stay in the sending renderer. Where supported, a click focuses that page or window and runs its qualified conversation action. Desktop hosts route a one-shot opaque ID to the sending renderer. Tauri advertises the action command at startup so older hosts can keep using the notification plugin. Windows uses in-process toast events; macOS uses one Notification Center delegate with a bounded table of pending actions; Linux passes the daemon's activation token to GTK for Wayland focus. Attachment revocation fences retained clicks and closes the browser notification.
 
 - Server profile state PATCHes use the [saved-profile relay admission contract](REMOTE_CONTROL.md#saved-profile-relay), including owner replacement and removal.
 

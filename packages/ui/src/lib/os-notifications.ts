@@ -118,7 +118,18 @@ async function requestTauriPermission(): Promise<OsNotificationPermission> {
   }
 }
 
+async function sendTauriPluginNotification({ title, body, signal }: OsNotificationPayload): Promise<void> {
+  const mod = await getTauriNotificationModule()
+  if (signal?.aborted) return
+  if (!mod) throw new Error("Tauri notification plugin unavailable")
+  mod.sendNotification({ title, body })
+}
+
 async function sendNativeNotification(payload: OsNotificationPayload, electron: boolean): Promise<void> {
+  // Older Tauri hosts can reject an unknown command at the ACL before dispatch.
+  if (!electron && !window.__CODENOMAD_NOTIFICATION_ACTIONS__) {
+    return sendTauriPluginNotification(payload)
+  }
   listenForNativeClicks()
   const { title, body, onClick, signal } = payload
   const actionId = onClick ? clicks.remember({ onClick, signal }) : undefined
@@ -131,7 +142,9 @@ async function sendNativeNotification(payload: OsNotificationPayload, electron: 
     }
   } catch (error) {
     if (actionId) clicks.forget(actionId)
-    throw error
+    // An explicit missing-command rejection also guarantees nothing was sent.
+    if (electron || error !== "Command notification_show not found") throw error
+    await sendTauriPluginNotification(payload)
   }
 }
 
