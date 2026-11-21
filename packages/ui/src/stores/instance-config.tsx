@@ -1,6 +1,8 @@
 import { createContext, createMemo, createSignal, onCleanup, type Accessor, type ParentComponent, useContext } from "solid-js"
 import type { InstanceData } from "../../../server/src/api-types"
-import { storage } from "../lib/storage"
+import { backendOf, backends } from "../lib/backend-client"
+import { parseInstanceKey } from "../lib/backend-identity"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { getLogger } from "../lib/logger"
 
 const log = getLogger("api")
@@ -22,10 +24,13 @@ function cloneInstanceData(data?: InstanceData | null): InstanceData {
 
 function attachSubscription(instanceId: string) {
   if (instanceSubscriptions.has(instanceId)) return
-  const unsubscribe = storage.onInstanceDataChanged(instanceId, (data) => {
-    setInstanceData(instanceId, data)
+  const backend = backendOf(instanceId)
+  const operation = captureBackendOperation(instanceId)
+  const unsubscribe = backend.storage.onInstanceDataChanged(parseInstanceKey(instanceId).workspaceId, (data) => {
+    if (operation.current() && backends.get(backend.id) === backend) setInstanceData(instanceId, data)
   })
   instanceSubscriptions.set(instanceId, unsubscribe)
+  operation.signal.addEventListener("abort", () => clearInstanceConfig(instanceId), { once: true })
 }
 
 function detachSubscription(instanceId: string) {
@@ -45,41 +50,55 @@ function setInstanceData(instanceId: string, data: InstanceData) {
 
 async function ensureInstanceConfig(instanceId: string): Promise<void> {
   if (!instanceId) return
+  const backend = backendOf(instanceId)
+  const operation = captureBackendOperation(instanceId)
+  const current = () => operation.current() && backends.get(backend.id) === backend
+  operation.signal.throwIfAborted()
   if (instanceDataMap().has(instanceId)) return
   if (loadPromises.has(instanceId)) {
     await loadPromises.get(instanceId)
     return
   }
-  const promise = storage
-    .loadInstanceData(instanceId)
+  const promise = backend.storage
+    .loadInstanceData(parseInstanceKey(instanceId).workspaceId)
     .then((data) => {
+      if (!current()) return
       setInstanceData(instanceId, data)
       attachSubscription(instanceId)
     })
     .catch((error) => {
+      if (!current()) return
       log.warn("Failed to load instance data", error)
       setInstanceData(instanceId, DEFAULT_INSTANCE_DATA)
       attachSubscription(instanceId)
     })
     .finally(() => {
-      loadPromises.delete(instanceId)
+      if (loadPromises.get(instanceId) === promise) loadPromises.delete(instanceId)
     })
   loadPromises.set(instanceId, promise)
+  operation.signal.addEventListener("abort", () => {
+    if (loadPromises.get(instanceId) === promise) clearInstanceConfig(instanceId)
+  }, { once: true })
   await promise
 }
 
 async function updateInstanceConfig(instanceId: string, mutator: (draft: InstanceData) => void): Promise<void> {
   if (!instanceId) return
+  const backend = backendOf(instanceId)
+  const operation = captureBackendOperation(instanceId)
+  const owns = () => operation.current() && backends.get(backend.id) === backend
+  operation.signal.throwIfAborted()
   await ensureInstanceConfig(instanceId)
+  if (!owns()) return
   const current = instanceDataMap().get(instanceId) ?? DEFAULT_INSTANCE_DATA
   const draft = cloneInstanceData(current)
   mutator(draft)
   try {
-    await storage.saveInstanceData(instanceId, draft)
+    await backend.storage.saveInstanceData(parseInstanceKey(instanceId).workspaceId, draft)
   } catch (error) {
     log.warn("Failed to persist instance data", error)
   }
-  setInstanceData(instanceId, draft)
+  if (owns()) setInstanceData(instanceId, draft)
 }
 
 function getInstanceConfig(instanceId: string): InstanceData {
@@ -95,6 +114,7 @@ function useInstanceConfig(instanceId: string): Accessor<InstanceData> {
 }
 
 function clearInstanceConfig(instanceId: string): void {
+  loadPromises.delete(instanceId)
   setInstanceDataMap((prev) => {
     if (!prev.has(instanceId)) return prev
     const next = new Map(prev)

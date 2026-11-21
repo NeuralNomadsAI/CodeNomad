@@ -449,7 +449,10 @@ test("a full tombstone registry leaves the stopped complete map visible and pres
   assert.equal(saved.deletion!.requestID, input.requestID)
   assert.equal((await f.control.snapshot()).missions[0].id, mission.id)
   assert.equal((await f.control.snapshot()).missions[0].document!.deletion!.expectedRevision, input.expectedRevision)
-  await assert.rejects(f.control.delete({ ...input, requestID: "evade-capacity" }), { code: "request-conflict" })
+  await assert.rejects(f.control.delete({ ...input, requestID: "evade-capacity" }), {
+    name: "MissionControlError", code: "request-conflict", message: "Deletion request differs from the saved intent",
+  })
+  assert.deepEqual(await f.documents.read(mission.id), saved)
   assert.equal((f.values.get(registryKey) as { entries: unknown[] }).entries.length, 4096)
   assert.ok(f.sessions.has(mission.coordinatorSessionId))
 })

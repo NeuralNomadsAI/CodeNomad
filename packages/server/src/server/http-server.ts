@@ -1,9 +1,10 @@
-import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify"
+import Fastify, { type FastifyError, type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify"
 import fastifyStatic from "@fastify/static"
 import replyFrom from "@fastify/reply-from"
 import fs from "fs"
 import { isIP, type Socket } from "net"
 import path from "path"
+import { finished } from "node:stream/promises"
 import { fetch } from "undici"
 import type { Logger } from "../logger"
 import { WorkspaceManager } from "../workspaces/manager"
@@ -43,6 +44,10 @@ import { registerOpenCodeLogsRoutes } from "./routes/opencode-logs"
 import { BinaryResolver } from "../settings/binaries"
 import { registerRemoteControlRoutes } from "./routes/remote-control"
 import { registerRemoteServerRoutes } from "./routes/remote-servers"
+import { registerRemoteServerBrowseRoutes } from "./routes/remote-server-browse"
+import { registerBackendRelayRoutes } from "./routes/backend-relay"
+import { registerRemotePreviewCapabilityRoutes } from "./routes/remote-preview-capabilities"
+import { RemoteServerBrowseManager } from "../codenomad-servers/browse-manager"
 import { registerRemoteProxyRoutes } from "./routes/remote-proxy"
 import { registerSideCarRoutes } from "./routes/sidecars"
 import { registerPreviewRoutes } from "./routes/previews"
@@ -98,9 +103,15 @@ import { proxyWebSocket } from "./proxy-websocket"
 import { guardProxyListener, proxyConnector, ProxyDestinationDenied } from "./proxy-destination"
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
-import { gateRemoteRequest, isHostOnlyPath, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
+import { guardServerPairRequest, isServerPairExchange, SERVER_PAIR_PATH } from "../remote-control/server-pairing"
+import { gateRemoteRequest, isHostOnlyPath, isBackendUiRoute, isMemoryRelayRoute, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
+import { createBackendUiAccess } from "../codenomad-servers/ui-caller"
+import { createRelayPrincipalBinding } from "../codenomad-servers/relay-principal"
 import { isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
+import type { RemotePreviewCapabilities } from "../codenomad-servers/preview-capabilities"
+import { PreviewBodyBudget, previewBodyKind, previewDocumentStream, rewritePreviewText } from "../codenomad-servers/preview-body"
 import { registerDirectOriginPolicy } from "./direct-origin"
+import { verifiedDirectHttpsOrigin } from "../remote-control/direct-https"
 import { createSideCarDirectHttpsAccess, isSideCarContentPath, sidecarsOverDirectHttpsEnabled } from "./sidecar-direct-https"
 import { framesNoBody } from "./bodiless-request"
 import { addProxiedHttpMethods } from "./proxied-http-methods"
@@ -146,6 +157,7 @@ interface HttpServerDeps {
   httpsOptions?: { key: string | Buffer; cert: string | Buffer; ca?: string | Buffer }
   workspaceManager: WorkspaceManager
   settings: SettingsService
+  remoteServerBrowseManager?: RemoteServerBrowseManager
   fileSystemBrowser: FileSystemBrowser
   eventBus: EventBus
   serverMeta: ServerMeta
@@ -188,6 +200,13 @@ export function shouldRetryPreferredPort(error: unknown, autoPortRequested: bool
   return code === "EADDRINUSE" || (platform === "win32" && code === "EACCES")
 }
 
+// One boundary per application listener; plugin routes share this raw server.
+const hostProxyTargets = new WeakMap<object, (target: URL) => boolean>()
+
+function blocksHostProxyTarget(server: object, target: URL): boolean {
+  return hostProxyTargets.get(server)?.(target) ?? true
+}
+
 export function createHttpServer(deps: HttpServerDeps) {
   // Fastify's type-level RawServer inference gets noisy when toggling HTTP vs HTTPS.
   // We keep the runtime behavior correct and cast the instance to a generic FastifyInstance.
@@ -195,6 +214,9 @@ export function createHttpServer(deps: HttpServerDeps) {
     ({
       logger: false,
       routerOptions: ROUTER_OPTIONS,
+      frameworkErrors: (error: FastifyError, _request: FastifyRequest, reply: FastifyReply) => {
+        reply.header("connection", "close").code(error.statusCode ?? (error.code === "FST_ERR_BAD_URL" ? 400 : 500)).send({ error: "Invalid request" })
+      },
       ...(deps.protocol === "https" && deps.httpsOptions ? { https: deps.httpsOptions } : {}),
     } as unknown) as any,
   ) as unknown as FastifyInstance
@@ -226,7 +248,14 @@ export function createHttpServer(deps: HttpServerDeps) {
     socket.once("close", () => upgrades.delete(socket))
     return true
   }
-  app.server.on("upgrade", (_request, socket: Socket) => { trackUpgrade(socket) })
+  app.server.on("upgrade", (request, socket: Socket) => {
+    if (!trackUpgrade(socket)) return
+    const pathname = routedPath(request.url ?? "/")
+    // Only the reviewed content proxies own upgrades; the other control APIs use HTTP/SSE.
+    if (!isLiveVoiceRoute(request.url) && !parsePreviewCapabilityHost(request.headers.host) && (pathname === "/api" || pathname?.startsWith("/api/"))) {
+      rejectUpgrade(socket, 404, "Not Found")
+    }
+  })
   app.addHook("preClose", async () => {
     closing = true
     closeSseClients()
@@ -245,8 +274,35 @@ export function createHttpServer(deps: HttpServerDeps) {
 
   // Remote Control admission runs before CORS, authentication and routing.
   const remoteGate = deps.remoteControlManager.gate()
+  const sidecarOverDirectHttps = createSideCarDirectHttpsAccess({
+    meta: deps.serverMeta, allowedOrigins: deps.allowedOrigins, enabled: () => sidecarsOverDirectHttpsEnabled(deps.settings),
+  })
+  const multiBackendEnabled = () => deps.settings.multiBackendEnabled?.() === true
+  const requestGate = { ...remoteGate, allowsDirectSidecar: sidecarOverDirectHttps, allowsBackendUi: multiBackendEnabled }
+  const getSelfOrigins = (): Set<string> => {
+    const origins = new Set<string>()
+    for (const candidate of [deps.serverMeta.localUrl, deps.serverMeta.remoteUrl, ...(deps.serverMeta.addresses ?? []).map(address => address.remoteUrl)]) {
+      try { if (candidate) origins.add(new URL(candidate).origin) } catch { /* Ignore unavailable metadata. */ }
+    }
+    return origins
+  }
+  hostProxyTargets.set(app.server, target => {
+    // A capability's exclusive origin must never be exposed through another proxy.
+    if (parsePreviewCapabilityHost(target.host)) return true
+    const pathname = routedPath(target.pathname)
+    if (pathname !== null && !pathname.startsWith("/api/") && pathname !== "/api"
+      && !pathname.startsWith("/workspaces/") && !isHostOnlyPath(pathname, "GET")) return false
+    const address = app.server.address()
+    const samePort = address && typeof address === "object"
+      && Number(target.port || (target.protocol === "https:" ? 443 : 80)) === address.port
+    const hostname = target.hostname.replace(/\.$/, "")
+    const loopback = isLoopbackHost(hostname) || isWildcardHost(hostname) || hostname.endsWith(".localhost")
+    return Boolean(samePort && loopback) || getSelfOrigins().has(target.origin)
+      || deps.allowedOrigins?.includes(target.origin) === true
+  })
   app.addHook("onRequest", (request, reply, done) => {
-    if (!gateRemoteRequest(request, reply, remoteGate)) done()
+    if (guardServerPairRequest(request, reply, remoteGate.directHttpsOrigins?.() ?? [])) return
+    if (!gateRemoteRequest(request, reply, requestGate)) done()
   })
 
   const isLivePreview = (request: FastifyRequest) => {
@@ -257,18 +313,18 @@ export function createHttpServer(deps: HttpServerDeps) {
     const pathname = routedPath(request.raw.url ?? "/")
     const token = parsePreviewCapabilityHost(request.headers.host) ?? pathname?.match(/^\/previews\/([^/]+)(?:\/|$)/)?.[1]
     if (!token) return false
-    try { return Boolean(deps.previewManager.get(decodeURIComponent(token))) } catch { return false }
+    try { return Boolean(deps.previewManager.get(decodeURIComponent(token))) || remotePreviews.servesPath(token) } catch { return false }
   }
-  // The host's opt-in exception to host-only SideCars; authentication and the source policy still apply.
-  const sidecarOverDirectHttps = createSideCarDirectHttpsAccess({
-    meta: deps.serverMeta, allowedOrigins: deps.allowedOrigins, enabled: () => sidecarsOverDirectHttpsEnabled(deps.settings),
-  })
   app.addHook("onRequest", (request, reply, done) => {
     if (isLocalRequest(request) || isRemoteRequest(request)) return done()
     const pathname = routedPath(request.raw.url ?? "/")
     if (pathname === null) return reply.header("connection", "close").code(400).send({ error: "Invalid request path" })
+    // Browser pairing also answers on verified direct HTTPS origins; its route rechecks the origin.
+    const directPairing = pathname === PAIR_EXCHANGE_PATH && verifiedDirectHttpsOrigin(request, remoteGate?.directHttpsOrigins?.() ?? []) !== null
+    const backendUi = request.headers["x-codenomad-server-request"] === undefined
+      && multiBackendEnabled() && isBackendUiRoute(pathname, request.method)
     if (isHostOnlyPath(pathname, request.method, true) && !isLivePreview(request)
-      && !(isSideCarContentPath(pathname) && sidecarOverDirectHttps(request))) {
+      && !directPairing && !isServerPairExchange(request, pathname) && !backendUi && !(isSideCarContentPath(pathname) && sidecarOverDirectHttps(request))) {
       return reply.header("connection", "close").code(404).send({ error: "Not found" })
     }
     done()
@@ -277,9 +333,35 @@ export function createHttpServer(deps: HttpServerDeps) {
     meta: deps.serverMeta, allowedOrigins: deps.allowedOrigins, devServerUrl: deps.uiDevServerUrl,
     publicHost: () => remoteGate.publicHost(), isPreview: isLivePreview,
   })
+  const backendUiAccess = createBackendUiAccess({
+    enabled: multiBackendEnabled, selfOrigins: getSelfOrigins, allowsDirectSource,
+    publicHost: () => remoteGate.publicHost(),
+    directHttpsOrigins: () => remoteGate.directHttpsOrigins?.() ?? [],
+  })
+  const remotePrincipals = createRelayPrincipalBinding({
+    auth: deps.authManager, devices: deps.remoteControlManager, local: backendUiAccess.localUiRequest,
+  })
+  app.addHook("onRequest", async (request, reply) => {
+    const pathname = routedPath(request.raw.url ?? "")
+    // Global diagnostics retain local UI authority even behind a loopback reverse proxy.
+    if (pathname === "/api/opencode/logs" && !backendUiAccess.localUiRequest(request))
+      return reply.header("connection", "close").code(404).send({ error: "Not found" })
+    if (pathname && isBackendUiRoute(pathname, request.method)) {
+      // The existing direct server-device memory contract keeps its closed protocol.
+      // Every browser memory call uses the same pre-body channel/provenance guard as the relay.
+      if (isMemoryRelayRoute(pathname, request.method)
+        && !backendUiAccess.localUiRequest(request)
+        && request.headers["x-codenomad-server-request"] !== "1" && backendUiAccess.guard(request, reply)) return
+      remotePrincipals.bind(request, reply)
+    }
+  })
+  app.addHook("onSend", (request, reply, payload, done) => {
+    if (remotePrincipals.signal(request)?.aborted) reply.raw.destroy()
+    done(null, payload)
+  })
   const liveVoice = deps.liveVoice ?? new LiveVoiceGateway(deps.speechService)
   app.server.on("upgrade", (request, socket: Socket, head) => {
-    if (!isLiveVoiceRoute(request.url) || socket.destroyed) return
+    if (!isLiveVoiceRoute(request.url) || socket.destroyed || socket.writableEnded) return
     try {
       const raw = { raw: request, headers: request.headers }
       const origin = voiceSource(request.headers.origin)
@@ -321,8 +403,8 @@ export function createHttpServer(deps: HttpServerDeps) {
       return
     }
 
-    // Pairing routes answer only through the Remote Control ingress.
-    const publicApiPaths = new Set(["/api/auth/login", "/api/auth/token", "/api/auth/status", "/api/auth/logout", PAIR_EXCHANGE_PATH])
+    // Pairing routes answer through the Remote Control ingress and verified direct HTTPS origins.
+    const publicApiPaths = new Set(["/api/auth/login", "/api/auth/token", "/api/auth/status", "/api/auth/logout", PAIR_EXCHANGE_PATH, SERVER_PAIR_PATH])
     const publicPagePaths = new Set(["/login", PAIR_PAGE_PATH])
     if (deps.authManager.isTokenBootstrapEnabled()) {
       publicPagePaths.add("/auth/token")
@@ -409,9 +491,10 @@ export function createHttpServer(deps: HttpServerDeps) {
   const loginStart = createOpenCodeLoginStart(deps.settings, deps.workspaceManager)
   registerOpenCodeLoginStartRoutes(app, { loginStart, auth: deps.authManager, remoteDevices: deps.remoteControlManager })
   const memory = deps.memoryStore ? new MemoryService(deps.memoryStore, deps.settings, deps.workspaceManager, deps.eventBus) : undefined
-  if (memory) registerMemoryRoutes(app, memory)
+  if (memory) registerMemoryRoutes(app, memory, remotePrincipals.signal)
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger, refreshLoginStart: () => loginStart.refresh(),
-    withConfigLock: memory ? action => memory.withSettingsLock(action) : undefined })
+    withConfigLock: memory ? action => memory.withSettingsLock(action) : undefined,
+    guardServerProfiles: backendUiAccess.guardProfiles, principalSignal: remotePrincipals.signal })
   const accounts = new ProviderAccountsService(deps.settings)
   const freeUsage = createOpenCodeFreeUsage()
   const stopQuotaObserver = observeProviderQuotaFailures(deps.eventBus, accounts)
@@ -426,7 +509,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
   registerConfigFileRoutes(app)
   const remotePreviewsAllowed = () => deps.remoteControlManager.previewsAllowed()
-  registerMetaRoutes(app, { serverMeta: deps.serverMeta, remotePreviewsAllowed, sidecarsOverDirectHttps: sidecarOverDirectHttps })
+  registerMetaRoutes(app, { serverMeta: deps.serverMeta, remotePreviewsAllowed, sidecarsOverDirectHttps: sidecarOverDirectHttps,
+    backendUiCapabilities: backendUiAccess.capabilities })
   registerEventRoutes(app, {
     eventBus: deps.eventBus,
     registerClient: registerSseClient,
@@ -440,7 +524,26 @@ export function createHttpServer(deps: HttpServerDeps) {
     eventBus: deps.eventBus,
     workspaceManager: deps.workspaceManager,
   })
-  registerRemoteServerRoutes(app, { logger: apiLogger })
+  registerRemoteServerRoutes(app, { logger: apiLogger, guardCaller: backendUiAccess.guard, principalSignal: remotePrincipals.signal })
+  const remoteServerBrowse = deps.remoteServerBrowseManager ?? new RemoteServerBrowseManager(deps.settings)
+  registerRemoteServerBrowseRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, guardCaller: backendUiAccess.guard,
+    guardSecret: backendUiAccess.guardSecret, principalSignal: remotePrincipals.signal })
+  registerBackendRelayRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, guardCaller: backendUiAccess.guard,
+    guardSecret: backendUiAccess.guardSecret, principalSignal: remotePrincipals.signal })
+  const remotePreviews = registerRemotePreviewCapabilityRoutes(app, { manager: remoteServerBrowse, getSelfOrigins, logger: deps.logger,
+    remote: { local: backendUiAccess.localUiRequest, guard: backendUiAccess.guard, principal: request => {
+      const host = request.headers.host
+      // The Web previews switch governs paired devices, at creation and for every later request.
+      return host ? remotePrincipals.lifetime(request, host) : null
+    } } })
+  const reconcileBackends = () => remoteServerBrowse.reconcile()
+  if (!deps.remoteServerBrowseManager) deps.eventBus.on("storage.stateChanged", reconcileBackends)
+  app.addHook("onClose", async () => {
+    if (!deps.remoteServerBrowseManager) {
+      deps.eventBus.off("storage.stateChanged", reconcileBackends)
+      remoteServerBrowse.close()
+    }
+  })
   registerRemoteProxyRoutes(app, { logger: proxyLogger, sessionManager: deps.remoteProxySessionManager })
   registerRemoteControlRoutes(app, { manager: deps.remoteControlManager })
   registerSpeechRoutes(app, { speechService: deps.speechService })
@@ -487,7 +590,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   if (deps.panelExtensions) registerPanelExtensionWorkItemRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager, forge: forgeWorkItems })
   if (deps.panelExtensions) registerPanelExtensionApi4Routes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager, worktreeDeletionFence, imageSettings, permissionModes })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger, authManager: deps.authManager })
-  registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
+  registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, remotePreviews, logger: proxyLogger })
   setupSideCarWebSocketProxy(app, {
     sidecarManager: deps.sidecarManager,
     authManager: deps.authManager,
@@ -497,6 +600,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
   const previewUpgrade = setupPreviewWebSocketProxy(app, {
     previewManager: deps.previewManager,
+    remotePreviews,
     authManager: deps.authManager,
     logger: proxyLogger,
   })
@@ -529,6 +633,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   return {
     instance: app,
     previewUpgrade,
+    /** Remote Control admits these remote-client path capabilities beside local previews. */
+    servesRemotePreview: (token: string) => remotePreviews.servesPath(token),
     remoteVoiceUpgrade,
     start: async (): Promise<HttpServerStartResult> => {
       const attemptListen = async (requestedPort: number) => {
@@ -626,6 +732,7 @@ interface SideCarWebSocketProxyDeps extends SideCarProxyDeps {
 
 interface PreviewProxyDeps {
   previewManager: PreviewManager
+  remotePreviews: Pick<RemotePreviewCapabilities, "servesPath" | "servePath" | "upgradePath">
   logger: Logger
 }
 
@@ -696,12 +803,21 @@ function registerPreviewProxyRoutes(app: FastifyInstance, deps: PreviewProxyDeps
     }
 
     const config = { previewCapability: true }
+    // Remote clients' capabilities share this path chain through the remote-content adapter.
+    const remote = (request: FastifyRequest, reply: FastifyReply) => {
+      if (deps.previewManager.get((request.params as { token: string }).token) || !deps.remotePreviews.servesPath((request.params as { token: string }).token)) return false
+      reply.hijack()
+      if (!deps.remotePreviews.servePath(request.raw, reply.raw)) reply.raw.writeHead(404, { connection: "close", "content-length": "0" }).end()
+      return true
+    }
     previewApp.all("/", { config, constraints: { host: capabilityHost } }, hostHandler)
     previewApp.all("/*", { config, constraints: { host: capabilityHost } }, hostHandler)
     previewApp.all("/previews/:token", { config }, async (request: FastifyRequest<{ Params: { token: string } }>, reply) => {
+      if (remote(request, reply)) return
       await proxyPreviewRequest({ request, reply, previewManager: deps.previewManager, logger: deps.logger, pathSuffix: "" })
     })
     previewApp.all("/previews/:token/*", { config }, async (request: FastifyRequest<{ Params: { token: string; "*": string } }>, reply) => {
+      if (remote(request, reply)) return
       await proxyPreviewRequest({
         request,
         reply,
@@ -736,6 +852,7 @@ function withoutQuery(target: string): { url: string; query: string } {
 
 function setupSideCarWebSocketProxy(app: FastifyInstance, deps: SideCarWebSocketProxyDeps) {
   app.server.on("upgrade", (request, socket, head) => {
+    if (socket.destroyed || socket.writableEnded) return
     if (parsePreviewCapabilityHost(request.headers.host)) return
     const rawUrl = request.url ?? "/"
     const parsed = parseSideCarUpgradePath(rawUrl)
@@ -762,6 +879,7 @@ function setupSideCarWebSocketProxy(app: FastifyInstance, deps: SideCarWebSocket
       sidecarManager: deps.sidecarManager,
       authManager: deps.authManager,
       logger: deps.logger,
+      server: app.server,
     })
   })
 }
@@ -781,9 +899,11 @@ function setupPreviewWebSocketProxy(app: FastifyInstance, deps: PreviewWebSocket
       previewManager: deps.previewManager,
       authManager: deps.authManager,
       logger: deps.logger,
+      server: app.server,
     })
   }
   app.server.on("upgrade", (request, socket, head) => {
+    if (socket.destroyed || socket.writableEnded) return
     const rawUrl = request.url ?? "/"
     if (isLiveVoiceRoute(rawUrl)) return
     const capabilityToken = parsePreviewCapabilityHost(request.headers.host)
@@ -800,11 +920,13 @@ function setupPreviewWebSocketProxy(app: FastifyInstance, deps: PreviewWebSocket
     if (!parsed) {
       return
     }
+    if (!capabilityToken && !deps.previewManager.get(parsed.token) && deps.remotePreviews.upgradePath(request, socket as Socket, head)) return
     proxy(request, socket as Socket, head, parsed)
   })
   return (request, socket, head) => {
     const parsed = parsePreviewUpgradePath(request.url ?? "/")
     if (!parsed) return false
+    if (!deps.previewManager.get(parsed.token) && deps.remotePreviews.upgradePath(request, socket, head)) return true
     proxy(request, socket, head, parsed)
     return true
   }
@@ -2271,65 +2393,63 @@ function getHeaderValue(headers: Record<string, string | string[] | undefined>, 
   return Array.isArray(value) ? value[0] : value
 }
 
-function isHtmlContentType(contentType: string): boolean {
-  const normalized = contentType.toLowerCase()
-  return normalized.includes("text/html") || normalized.includes("application/xhtml+xml")
-}
+const sourcePreviewRewrites = new PreviewBodyBudget()
 
-function isCssContentType(contentType: string): boolean {
-  return contentType.toLowerCase().includes("text/css")
-}
-
-function isJavaScriptContentType(contentType: string): boolean {
-  const normalized = contentType.toLowerCase()
-  return normalized.includes("javascript") || normalized.includes("ecmascript")
-}
-
-export function rewritePreviewBodyUrls(body: string, publicBase: string, kind: "html" | "css" | "js", targetOrigin = "http://localhost"): string {
+export function rewritePreviewBodyUrls(body: string, publicBase: string, kind: "html" | "css" | "js", targetOrigin = "http://localhost", maxUnits = Infinity): string {
+  let units = body.length
+  const grow = (added: number) => {
+    units += added
+    if (units > maxUnits) throw new Error("Preview document too large")
+  }
   if (kind === "css") {
-    return rewriteCssPreviewUrls(body, publicBase)
+    return rewriteCssPreviewUrls(body, publicBase, grow)
   }
   if (kind === "js") {
-    return rewritePreviewJavaScriptImports(body, publicBase)
+    return rewritePreviewJavaScriptImports(body, publicBase, grow)
   }
 
   const rewritten = rewriteCssPreviewUrls(
     body
       .replace(/\b(src|href|action|poster|data)=(["'])\/(?!\/)([^"']*)\2/gi, (_match, attr: string, quote: string, pathValue: string) => {
+        grow(publicBase.length)
         return `${attr}=${quote}${publicBase}/${pathValue}${quote}`
       })
       .replace(/\bsrcset=(["'])([^"']*)\1/gi, (_match, quote: string, value: string) => {
-        return `srcset=${quote}${rewriteSrcsetPreviewUrls(value, publicBase)}${quote}`
+        return `srcset=${quote}${rewriteSrcsetPreviewUrls(value, publicBase, grow)}${quote}`
       }),
     publicBase,
+    grow,
   )
-  const withInlineModules = rewritten.replace(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi, (script, attributes: string, source: string) => {
+  const withInlineModules = rewritten.replace(/(<script\b([^>]*)>)([\s\S]*?)(<\/script>)/gi, (script, opening: string, attributes: string, source: string, closing: string) => {
     if (/\btype\s*=\s*(["'])module\1/i.test(attributes)) {
-      return script.replace(source, rewritePreviewJavaScriptImports(source, publicBase))
+      return `${opening}${rewritePreviewJavaScriptImports(source, publicBase, grow)}${closing}`
     }
     if (/\btype\s*=\s*(["'])importmap\1/i.test(attributes)) {
-      return script.replace(source, rewritePreviewImportMap(source, publicBase))
+      return `${opening}${rewritePreviewImportMap(source, publicBase, grow)}${closing}`
     }
     return script
   })
   const bridge = buildPreviewRuntimeBridge(publicBase, targetOrigin)
+  grow(bridge.length)
   return /<head(?:\s[^>]*)?>/i.test(withInlineModules)
-    ? withInlineModules.replace(/<head(\s[^>]*)?>/i, `<head$1>${bridge}`)
-    : `${bridge}${withInlineModules}`
+    ? withInlineModules.replace(/<head(?:\s[^>]*)?>/i, head => `${head}${bridge}`)
+    : withInlineModules.startsWith("\ufeff") ? `\ufeff${bridge}${withInlineModules.slice(1)}` : `${bridge}${withInlineModules}`
 }
 
-function rewriteCssPreviewUrls(body: string, publicBase: string): string {
+function rewriteCssPreviewUrls(body: string, publicBase: string, grow: (units: number) => void): string {
   return body.replace(/url\((\s*)(["']?)\/(?!\/)([^"')]+)\2(\s*)\)/gi, (_match, before: string, quote: string, pathValue: string, after: string) => {
+    grow(publicBase.length)
     return `url(${before}${quote}${publicBase}/${pathValue}${quote}${after})`
   })
 }
 
-function rewriteSrcsetPreviewUrls(value: string, publicBase: string): string {
+function rewriteSrcsetPreviewUrls(value: string, publicBase: string, grow: (units: number) => void): string {
   return value
     .split(",")
     .map((entry) => {
       const trimmed = entry.trimStart()
       if (!trimmed.startsWith("/") || trimmed.startsWith("//")) return entry
+      grow(publicBase.length)
       const leading = entry.slice(0, entry.length - trimmed.length)
       return `${leading}${publicBase}${trimmed}`
     })
@@ -2359,6 +2479,9 @@ async function proxySideCarRequest(args: {
   const targetPath = args.sidecarManager.buildTargetPath(sidecarId, requestPath, search)
   const targetOrigin = args.sidecarManager.buildTargetOrigin(sidecar)
   const targetUrl = `${targetOrigin}${targetPath}`
+  if (blocksHostProxyTarget(args.request.server.server, new URL(targetUrl))) {
+    return args.reply.code(404).send({ error: "Not found" })
+  }
   args.logger.debug({ sidecarId: sidecar.id, targetUrl, pathname, prefixMode: sidecar.prefixMode }, "Proxying request to SideCar")
 
   await proxyTargetRequest({
@@ -2457,13 +2580,15 @@ async function proxyPreviewTargetRequest(args: {
   errorMessage: string
   rewriteHeaders: (headers: Record<string, string | string[] | undefined>) => Record<string, string | string[] | undefined>
 }) {
-  let responseKind: "html" | "css" | "js" | null = null
+  if (blocksHostProxyTarget(args.request.server.server, new URL(args.targetUrl))) {
+    return args.reply.code(404).send({ error: "Not found" })
+  }
   const target = withoutQuery(args.targetUrl)
   await args.reply.from(target.url, {
     queryString: () => target.query,
     rewriteRequestHeaders: (_originalRequest, headers) => {
       const next = sanitizeSideCarProxyRequestHeaders(headers as Record<string, string | string[] | undefined>, args.targetOrigin)
-      delete next["accept-encoding"]
+      next["accept-encoding"] = "identity"
       // Like preview upgrades, forward no cookies: a frame's document request
       // carries the app's own (CodeNomad session, SideCar service cookies).
       delete next.cookie
@@ -2471,12 +2596,6 @@ async function proxyPreviewTargetRequest(args: {
     },
     rewriteHeaders: (headers) => {
       const next = args.rewriteHeaders(headers as Record<string, string | string[] | undefined>)
-      const contentType = getHeaderValue(next, "content-type") ?? ""
-      responseKind = isHtmlContentType(contentType) ? "html" : isCssContentType(contentType) ? "css" : isJavaScriptContentType(contentType) ? "js" : null
-      if (responseKind) {
-        delete next["content-length"]
-        delete next["content-encoding"]
-      }
       if (args.request.headers.origin === "null") {
         next["access-control-allow-origin"] = "null"
         delete next["access-control-allow-credentials"]
@@ -2485,18 +2604,59 @@ async function proxyPreviewTargetRequest(args: {
     },
     onResponse: (_proxyRequest, proxyReply, upstreamResponse) => {
       const upstream = upstreamResponse.stream
-      if (!responseKind || args.request.method === "HEAD") {
+      const headers = upstreamResponse.headers as Record<string, string | string[] | undefined>
+      const type = getHeaderValue(headers, "content-type") ?? ""
+      const kind = previewBodyKind(type)
+      if (!kind) {
         proxyReply.send(upstream)
         return
       }
+      const disconnect = new AbortController()
+      const upstreamFailure = new AbortController()
+      const failUpstream = (error: Error) => upstreamFailure.abort(error)
+      // A paused upstream can fail before it receives a rewrite slot.
+      upstream.on("error", failUpstream)
+      const stop = () => disconnect.abort()
+      proxyReply.raw.once("close", stop)
+      if (proxyReply.raw.destroyed) stop()
+      const encoding = getHeaderValue(headers, "content-encoding") ?? ""
+      for (const name of ["content-length", "content-encoding", "etag", "last-modified", "content-range", "accept-ranges", "content-digest", "repr-digest", "digest", "content-md5"]) {
+        proxyReply.removeHeader(name)
+      }
+      let body = upstream
       void (async () => {
         try {
-          const chunks: Buffer[] = []
-          for await (const chunk of upstream) chunks.push(Buffer.from(chunk))
-          proxyReply.send(rewritePreviewBodyUrls(Buffer.concat(chunks).toString(), args.publicBase, responseKind!, args.targetOrigin))
+          if (upstreamResponse.statusCode === 206 || headers["content-range"] !== undefined) throw new Error("Partial preview document")
+          if (args.request.method === "HEAD" || [204, 205, 304].includes(upstreamResponse.statusCode)) {
+            proxyReply.send(upstream)
+            return
+          }
+          const signal = AbortSignal.any([disconnect.signal, upstreamFailure.signal])
+          await sourcePreviewRewrites.run(() => (body = previewDocumentStream(upstream, encoding)), signal, async (bytes, deadline) => {
+            const rewritten = rewritePreviewText(bytes, type,
+              (text, maxUnits) => rewritePreviewBodyUrls(text, args.publicBase, kind, args.targetOrigin, maxUnits),
+              sourcePreviewRewrites.bytes)
+            deadline.throwIfAborted()
+            const abortSend = () => proxyReply.raw.destroy()
+            deadline.addEventListener("abort", abortSend, { once: true })
+            try {
+              const sent = finished(proxyReply.raw, { cleanup: true })
+              proxyReply.send(rewritten)
+              await sent
+            } finally {
+              deadline.removeEventListener("abort", abortSend)
+            }
+          })
         } catch (error) {
-          args.logger.error({ ...args.logContext, err: error, targetUrl: args.targetUrl }, args.errorMessage)
-          if (!proxyReply.sent) proxyReply.code(502).send({ error: args.errorMessage })
+          body.destroy()
+          upstream.destroy()
+          if (disconnect.signal.aborted || proxyReply.sent) return
+          args.logger.debug({ err: error }, args.errorMessage)
+          proxyReply.removeHeader("location")
+          proxyReply.type("application/json").code(502).send({ error: args.errorMessage })
+        } finally {
+          upstream.off("error", failUpstream)
+          proxyReply.raw.removeListener("close", stop)
         }
       })()
     },
@@ -2562,6 +2722,7 @@ export function parsePreviewCapabilityHost(host: string | undefined): string | n
 }
 
 async function proxySideCarWebSocketUpgrade(args: {
+  server: object
   request: import("http").IncomingMessage
   socket: Socket
   head: Buffer
@@ -2597,6 +2758,7 @@ async function proxySideCarWebSocketUpgrade(args: {
   logger.debug({ sidecarId, targetUrl: targetUrl.toString(), prefixMode: sidecar.prefixMode }, "Proxying websocket to SideCar")
 
   proxyTargetWebSocketUpgrade({
+    server: args.server,
     request,
     socket,
     head,
@@ -2609,6 +2771,7 @@ async function proxySideCarWebSocketUpgrade(args: {
 }
 
 async function proxyPreviewWebSocketUpgrade(args: {
+  server: object
   request: import("http").IncomingMessage
   socket: Socket
   head: Buffer
@@ -2640,6 +2803,7 @@ async function proxyPreviewWebSocketUpgrade(args: {
 
   logger.debug({ previewToken: token, targetUrl: targetUrl.toString() }, "Proxying websocket to preview")
   proxyTargetWebSocketUpgrade({
+    server: args.server,
     request,
     socket,
     head,
@@ -2652,6 +2816,7 @@ async function proxyPreviewWebSocketUpgrade(args: {
 }
 
 function proxyTargetWebSocketUpgrade(args: {
+  server: object
   request: import("http").IncomingMessage
   socket: Socket
   head: Buffer
@@ -2662,6 +2827,9 @@ function proxyTargetWebSocketUpgrade(args: {
   stripCookies?: boolean
   sessionCookie?: string
 }) {
+  if (blocksHostProxyTarget(args.server, args.targetUrl)) {
+    return rejectUpgrade(args.socket, 404, "Not Found")
+  }
   const headers = sanitizeSideCarProxyRequestHeaders(args.request.headers, args.targetUrl.origin, args.sessionCookie)
   if (args.stripCookies) delete headers.cookie
   proxyWebSocket({ ...args, headers, responseHeaders: incoming => {

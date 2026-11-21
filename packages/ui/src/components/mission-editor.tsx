@@ -1,12 +1,13 @@
 import { For, Index, Show, createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, untrack } from "solid-js"
 import type { MissionPanelMap } from "../../../server/src/api-types"
 import { compareModelError, freezeCompareProfiles, type MissionProfiles } from "../../../server/src/missions/playbook-profiles"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
 import { generateUUID } from "../lib/client-identity"
 import { useI18n } from "../lib/i18n"
 import { deletionErrorKey, missionCleanupPending, MissionDeletionError } from "../lib/mission-cleanup"
 import { missionStore } from "../stores/missions"
 import { createMissionViewFence } from "../lib/mission-view-fence"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { isDefinitiveCreationRejection, missionMutationErrorKey } from "../lib/mission-mutation"
 import { copyMissionProfiles, holdMissionCreation, missionCreationHold, missionCreationPayloadIdentity, releaseMissionCreation,
   consumeMissionCreation, reconcileMissionCreation, retainUncertainMissionCreation, uncertainMissionCreation } from "../stores/mission-creation-drafts"
@@ -68,13 +69,14 @@ export function MissionEditor(props: {
 }) {
   const { t } = useI18n()
   const ids = { objective: createUniqueId(), objectiveError: createUniqueId(), profilesError: createUniqueId(), followedError: createUniqueId() }
-  const config = useConfig()
+  const config = useConfig(() => props.instanceId)
   // The revision and draft belong to this editor, not to live snapshot refreshes.
   const action = props.action, original = action.mission, kind = action.kind
   // The UI's physical folder fences the view; it must not replace the server's
   // existing native default location (notably on WSL) in the creation request.
   const identity = () => JSON.stringify([props.instanceId, props.viewDirectory ?? props.directory, props.projectID])
-  const captureView = createMissionViewFence(identity, () => props.active?.() ?? true)
+  const captureEditorView = createMissionViewFence(identity, () => props.active?.() ?? true)
+  const captureView = () => captureBackendOperation(props.instanceId, undefined, captureEditorView()).current
   const isActive = () => props.active?.() ?? true
   const scheduleScope = () => JSON.stringify([identity(), kind === "create" ? "create" : action.scheduleID ?? original?.id])
   const scheduleHold = missionScheduleEditorHold(scheduleScope())
@@ -244,12 +246,13 @@ export function MissionEditor(props: {
   createEffect(on([sourceIdentity, sourceLocationRevision, sourceLocationActive], () => {
     if (!sourceLocationActive()) return
     const key = sourceIdentity(), viewCurrent = captureView(), controller = new AbortController()
+    const operation = captureBackendOperation(props.instanceId, controller.signal)
     let alive = true
     setSourceLocation(undefined); setSourceLocationFailed(false)
     const location = createRequestLocation(props.directory)
-    const current = () => alive && viewCurrent() && sourceIdentity() === key
+    const current = () => operation.current() && alive && viewCurrent() && sourceIdentity() === key
     void getRootClient(props.instanceId).location.get({ location: toRequestLocation(location) }, {
-      ...requestLocationOptions(location), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
+      ...requestLocationOptions(location), signal: AbortSignal.any([operation.signal, AbortSignal.timeout(10_000)]),
     }).then(value => {
       if (!current()) return
       if (!value.directory || value.directory.length > 4096 || value.directory.includes("\0")
@@ -291,7 +294,7 @@ export function MissionEditor(props: {
       setDefaults(loaded); setProfiles(missionDefaultsFor(loaded, template())); setTaskMode(missionTaskModeFor(loaded, template()))
       setCustomProfiles(false); setCustomTaskMode(false); setDefaultsReady(true)
     } catch { if (current()) setDefaultsFailed(true) }
-    finally { if (current()) setDefaultsRefreshing(false) }
+    finally { setDefaultsRefreshing(false) }
   }
 
   // A direct creation ACK may continue the captured opt-in through guarded Play.
@@ -341,7 +344,7 @@ export function MissionEditor(props: {
         await schedule.save(payload, requestId, start)
       } catch (error) {
         if (current()) setError(t("missions.control.mutation.error"))
-      } finally { if (current()) setPending(false) }
+      } finally { setPending(false) }
       return
     }
     if (kind === "edit") {
@@ -354,7 +357,7 @@ export function MissionEditor(props: {
       setPending(true); setError("")
       try { await schedule.saveJournalEdit({ objective: objective().trim(), notes: notes(), requestID: requestId }) }
       catch (error) { if (current()) setError(t(missionMutationErrorKey(error))) }
-      finally { if (current()) setPending(false) }
+      finally { setPending(false) }
       return
     }
     // A hold learned after this editor opened still cannot become a new logical
@@ -378,6 +381,7 @@ export function MissionEditor(props: {
     const viewCurrent = captureView()
     const operationCurrent = props.captureOperation?.() ?? (() => true)
     const current = () => viewCurrent() && operationCurrent() && props.action === action
+    if (!current()) return
     const fields = { objective: objective().trim(), notes: notes(), template: template(),
       ...(kind === "create" ? { title: submittedTitle(), watchedConversationIDs: [...watchedIDs()] } : {}),
       ...(kind === "create" && taskMode() !== undefined ? { taskMode: taskMode() } : {}),
@@ -401,7 +405,7 @@ export function MissionEditor(props: {
         // A failed acknowledgement may follow a committed tombstone. Keep its
         // immutable request available for retry even after the list refreshes.
         if (deleteAttempted()) {
-          const snapshot = await serverApi.fetchMission(instanceId, original.id)
+          const snapshot = await backendOf(instanceId).api.fetchMission(instanceId, original.id)
           if (!current()) return
           if (!snapshot.available || snapshot.cleanupUnavailable) throw new MissionDeletionError(503)
           const intent = snapshot.cleanups.find(item => item.missionID === original.id && item.requestID === requestId
@@ -413,14 +417,14 @@ export function MissionEditor(props: {
           // deletion's history. Its durable record answers this exact original request.
         }
         setDeleteAttempted(true)
-        await serverApi.deleteMission(instanceId, original.id, { expectedRevision: original.revision, requestId, deleteManagedSessions: deleteManagedSessions() })
+        await backendOf(instanceId).api.deleteMission(instanceId, original.id, { expectedRevision: original.revision, requestId, deleteManagedSessions: deleteManagedSessions() })
         if (current()) props.onSaved()
       } else {
-        const result = await serverApi.createMission(instanceId, { ...fields, directory, requestId })
+        const result = await backendOf(instanceId).api.createMission(instanceId, { ...fields, directory, requestId })
         if (kind === "create") releaseMissionCreation(origin, creation.requestId)
         if (kind === "create" && result.acknowledgement === "fresh" && current()) await start(result.mission)
         if (current()) props.onSaved(result.mission)
-        else if (identity() === origin && missionStore.demandedInstanceIds().includes(instanceId)) void missionStore.refresh(instanceId)
+        else if (viewCurrent() && identity() === origin && missionStore.demandedInstanceIds().includes(instanceId)) void missionStore.refresh(instanceId)
       }
     } catch (error) {
       const definitive = kind !== "create" || isDefinitiveCreationRejection(error)
@@ -437,7 +441,7 @@ export function MissionEditor(props: {
         // Unknown intent keeps the original option/request fenced until verified.
         let key = deletionErrorKey(error)
         try {
-          const snapshot = await serverApi.fetchMission(instanceId, original.id)
+          const snapshot = await backendOf(instanceId).api.fetchMission(instanceId, original.id)
           if (!current()) return
           const intent = snapshot.available && !snapshot.cleanupUnavailable && snapshot.cleanups.find(item => item.missionID === original.id && item.requestID === requestId
             && item.expectedRevision === original.revision && item.deleteManagedSessions === deleteManagedSessions())
@@ -450,14 +454,14 @@ export function MissionEditor(props: {
         // An unknown create stays visible through its adopted hold, never as a retryable error.
         if (definitive) setError(t(missionMutationErrorKey(error)))
       }
-    } finally { if (current()) setPending(false) }
+    } finally { setPending(false) }
   }
 
   const inlineError = (field: FieldError["field"], id: string) =>
     <Show when={errorFor(field)}>{message => <span id={id} class="mission-create-field-error" role="alert">{message()}</span>}</Show>
 
   const createBody = () => <>
-    <Show when={kind === "create"}><MissionBriefPicker disabled={locked() || !isActive()} active={isActive} value={selectedModel()?.id}
+    <Show when={kind === "create"}><MissionBriefPicker instanceId={props.instanceId} disabled={locked() || !isActive()} active={isActive} value={selectedModel()?.id}
       onUse={model => {
         requestId = generateUUID(); lastPayload = ""; setError(""); setFieldError(undefined)
         const configurationTitle = missionConfigurationTitle(model.name)
@@ -628,7 +632,7 @@ export function MissionEditor(props: {
     <footer class="window-footer">
       <Show when={kind === "create"}>
         {/* An unsent draft beside another request's hold may still be kept as a brief. */}
-        <MissionBriefSave buttonClass="button-secondary" disabled={(otherUncertain() ? !creationReady() || defaultsRefreshing() : locked()) || !isActive()} active={isActive}
+        <MissionBriefSave instanceId={props.instanceId} buttonClass="button-secondary" disabled={(otherUncertain() ? !creationReady() || defaultsRefreshing() : locked()) || !isActive()} active={isActive}
           initialName={submittedTitle}
           draft={() => ({ objective: objective(), notes: notes(), template: template(), ...(customProfiles() ? { profiles: copyMissionProfiles(profiles()) ?? {} } : {}), ...(customTaskMode() ? { taskMode: taskMode() } : {}) })} />
       </Show>

@@ -12,6 +12,7 @@ interface TaskStepCopyOptions {
   loadNewer: (sessionId: string, signal: AbortSignal) => Promise<boolean>
   readSteps: (sessionId: string) => unknown[]
   copy: (chunks: readonly string[], options: ClipboardCopyOptions) => Promise<unknown>
+  captureOperation?: (signal: AbortSignal) => { signal: AbortSignal; current: () => boolean }
 }
 
 /** One explicit full-copy lifetime, independent of the bounded rendered step list. */
@@ -62,10 +63,12 @@ export function useTaskStepCopy(options: TaskStepCopyOptions) {
     const operation: Operation = { id, controller: new AbortController() }
     current = operation
     setPending(true)
-    const signal = operation.controller.signal
+    const authority = options.captureOperation?.(operation.controller.signal)
+    const signal = authority?.signal ?? operation.controller.signal
     const isCurrent = () => !disposed && current === operation && !signal.aborted
       && isActive() && options.childSessionId() === id
     const loadPage = async (load: TaskStepCopyOptions["loadOldest"]) => {
+      if (!isCurrent()) throw new DOMException("View revoked", "AbortError")
       // A superseded native read can resolve without committing a page while
       // this view stays active. Never mistake the resident tail for that page.
       if (!await load(id, signal)) throw new Error("Task step copy page was not committed")

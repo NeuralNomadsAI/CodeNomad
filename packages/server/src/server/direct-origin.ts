@@ -1,7 +1,9 @@
 import type { FastifyInstance, FastifyRequest } from "fastify"
 import cors from "@fastify/cors"
 import type { ServerMeta } from "../api-types"
-import { isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
+import { isDirectHttpsDeviceRequest, isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
+import { isServerPairExchange, SERVER_PAIR_PATH } from "../remote-control/server-pairing"
+import { routedPath } from "./routed-path"
 
 type OriginRequest = Pick<FastifyRequest, "raw" | "headers">
 /** Loopback names that reach a socket bound to each address. */
@@ -46,7 +48,8 @@ export function registerDirectOriginPolicy(app: FastifyInstance, options: {
   isPreview(request: FastifyRequest): boolean
 }) {
   const allows = (request: OriginRequest, origin: string): boolean => {
-    if (isRemoteRequest(request)) return origin === `https://${options.publicHost()}`
+    // Direct HTTPS devices keep the direct listener's origins, without loopback or development aliases.
+    if (isRemoteRequest(request) && !isDirectHttpsDeviceRequest(request)) return origin === `https://${options.publicHost()}`
     const candidates = [options.meta.localUrl, options.meta.remoteUrl,
       ...(options.meta.addresses ?? []).map(address => address.remoteUrl), ...(options.allowedOrigins ?? [])]
     // The listening socket supplies its own port even before startup metadata is published.
@@ -79,11 +82,13 @@ export function registerDirectOriginPolicy(app: FastifyInstance, options: {
 
   app.addHook("onRequest", (request, reply, done) => {
     if (isRemoteRequest(request) || ["GET", "HEAD", "OPTIONS"].includes(request.method) || options.isPreview(request)) return done()
+    if (isServerPairExchange(request, routedPath(request.raw.url ?? "/"))) return done()
     if (allowsSource(request)) return done()
     reply.header("connection", "close").code(403).send({ error: "Cross-origin request rejected" })
   })
 
   app.register(cors, () => (request: FastifyRequest, cb: (error: Error | null, options: object) => void) => {
+    if (routedPath(request.raw.url ?? "/") === SERVER_PAIR_PATH) return cb(null, { origin: false })
     const origin = request.headers.origin
     cb(null, { credentials: true, methods: "GET,HEAD,PUT,PATCH,POST,DELETE", origin: origin !== undefined && (allows(request, origin)
       || (origin === "null" && options.isPreview(request))) })

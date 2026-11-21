@@ -8,25 +8,32 @@ import { OpenCodeSetupPanel } from "./settings/opencode-setup-panel"
 import { OpenCodeSetupProgress } from "./settings/opencode-setup-progress"
 import { OpenCodeExecutableCard } from "./settings/opencode-executable-card"
 import { invalidateOpenCodeSetup, needsOpenCodeSetup, openCodeSetupBusy, openCodeSetupOpen, openCodeSetupStatus,
-  openOpenCodeSetup, refreshOpenCodeSetup, setOpenCodeSetupOpen } from "../stores/opencode-setup"
+   openAutomaticOpenCodeSetup, openOpenCodeSetup, refreshOpenCodeSetup, setOpenCodeSetupOpen } from "../stores/opencode-setup"
 
 export default function OpenCodeSetup(props: { automatic?: boolean } = {}) {
   const { t } = useI18n()
   const { serverSettings } = useConfig()
   createEffect(() => { serverSettings().opencodeBinary; untrack(invalidateOpenCodeSetup) })
   createEffect(() => {
-    sseManager.getStatuses()
+    sseManager.getBackendStatuses()
     untrack(() => { if (!document.hidden) void refreshOpenCodeSetup() })
   })
   let announced = ""
+  let closeAutomatic: (() => void) | undefined
+  onCleanup(() => closeAutomatic?.())
   createEffect(() => {
-    if (props.automatic === false) return
+    if (props.automatic === false) {
+      announced = ""
+      closeAutomatic?.()
+      closeAutomatic = undefined
+      return
+    }
     const status = openCodeSetupStatus()
     if (!status || !needsOpenCodeSetup(status)) { announced = ""; return }
     const key = `${status.binaryPath}:${status.state}:${status.daemonVersion ?? ""}`
     if (announced === key) return
     announced = key
-    setOpenCodeSetupOpen(true)
+    if (!untrack(openCodeSetupOpen)) closeAutomatic = openAutomaticOpenCodeSetup()
   })
   onMount(() => {
     const refresh = () => { if (!document.hidden) void refreshOpenCodeSetup() }

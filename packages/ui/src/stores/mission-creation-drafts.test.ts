@@ -52,8 +52,11 @@ test("replacement client or native generation starts a fresh read and cannot con
       new Promise(resolve => calls.push({ resolve, signal })))
     retainUncertainMissionCreation(scope, operation)
     const first = reconcileMissionCreation(scope, "fixture", original, () => live === original)
+    await Promise.resolve()
+    assert.equal(calls.length, 1)
     live = replacement
     const second = reconcileMissionCreation(scope, "fixture", replacement, () => live === replacement)
+    await Promise.resolve()
     assert.notEqual(second, first)
     assert.equal(calls.length, 2)
     assert.equal(calls[0].signal.aborted, true)

@@ -11,6 +11,18 @@ import { registerRemoteServerRoutes } from "./remote-servers"
 if (process.argv.includes("--probe-child")) {
   await probeEarlyClose()
 } else {
+  test("probe refuses credential and pairing URLs without IO or secret diagnostics", async t => {
+    const records: unknown[] = []
+    const app = Fastify()
+    registerRemoteServerRoutes(app, { logger: { warn(...args: unknown[]) { records.push(args) } } as unknown as Logger })
+    t.after(() => app.close())
+    for (const baseUrl of ["http://user:probe-secret@127.0.0.1:1", "https://127.0.0.1:1/#probe-secret", "http://[probe-secret"]) {
+      const result = await app.inject({ method: "POST", url: "/api/remote-servers/probe", payload: { baseUrl } })
+      assert.equal(result.statusCode, 400, result.body)
+      assert.equal(result.body.includes("probe-secret"), false)
+    }
+    assert.equal(JSON.stringify(records).includes("probe-secret"), false)
+  })
   test("remote probe survives excessive content-encodings and an early upstream close", () => {
     // GHSA-xjj6-f33q-929c can terminate the process after fetch rejects.
     const child = spawnSync(process.execPath, ["--import", "tsx", fileURLToPath(import.meta.url), "--probe-child"], {

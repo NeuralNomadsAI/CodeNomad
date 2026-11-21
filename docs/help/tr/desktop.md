@@ -2,7 +2,7 @@
 
 ## Pencereler, sekmeler ve paylaşılan hizmet {#windows-tabs}
 
-1. Geçerli pencerede başka bir proje/ana sayfa sekmesi açmak için **Yeni instance** öğesini kullanın.
+1. Geçerli pencerede boş bir sekme açmak için **Yeni instance** öğesini kullanıp proje seçin. CodeNomad logosu ana sayfayı açar.
 2. Ayrı bir uygulama penceresi için yerel **Pencere → Yeni pencere** (`Ctrl+Shift+N` veya `Cmd+Shift+N`) kullanın.
 3. **Ayarlar → Gelişmiş** bölümünde, başka bir başlatmanın yeni bir pencere açmak yerine en son kullanılan pencereye odaklanması gerekiyorsa **İkinci başlatmada mevcut pencereye odaklan** öğesini etkinleştirin.
 
@@ -47,6 +47,8 @@ Her proje sekmesi, aynı konuşma için açılan birden fazla sekme dahil, kendi
 Tercihler penceresinin ayrı bir geri yükleme durumu yoktur: bu kontroller, Tercihler'i açan pencereyi hedefler. Bu pencere kapanmışsa veya Tercihler başlangıçta yeniden açıldığı için bilinmiyorsa, kontroller en son kullanılan pencereyi izler; başka bir pencere için hazırlanan değişiklik asla uygulanmaz, kontroller önce yeni pencerenin değerini gösterir. Belirli bir pencereyi yapılandırmak için Tercihler'i o pencereden açın. Proje kapsamlı ayarlar aynı şekilde açıcının Location'sini kullanır; biri olmadan kullanılamaz durumda kalırlar. Tercihler başlangıçta yeniden açıldığında, bu ayarlar ilgili proje açılmayı bitirince yeniden bağlanır; klasör hâlâ başlatılırken veya birkaç sekmede açıkken, Tercihler'i amaçlanan pencereden açana kadar kullanılamaz kalırlar.
 
 Tarayıcı ve uzak istemciler gömülü ayarları kullanır.
+
+[Uzak sekmeleri geri yükleme](projects.md#restore-remote-tabs).
 
 ## Masaüstü veri profilleri {#data-profiles}
 

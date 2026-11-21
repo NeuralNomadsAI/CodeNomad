@@ -361,6 +361,7 @@ impl ClientState {
                     section: request.section.clone(),
                     scroll_top: request.scroll_top,
                     instance_id: None,
+                    server_id: None,
                     workspace_path: None,
                     location: None,
                 });

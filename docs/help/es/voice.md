@@ -69,6 +69,8 @@ La reproducción usa la proyección de texto de CodeNomad, no una captura narrad
 
 ## Conversación por voz {#conversation}
 
+Gemini Live y OpenAI Realtime solo están disponibles para las sesiones del servidor que abrió esta ventana.
+
 En **Conversación**, elige el **Motor de conversación**:
 
 - **Clásico** solo requiere reproducción configurada en un formato compatible. Elige **Activar modo conversación** en **Más acciones**. CodeNomad pide al agente que empiece la respuesta a cada mensaje que envías con un resumen breve `spoken` y solo lee ese bloque completo en la sesión principal activa. Se aplica a la pestaña del proyecto hasta que lo desactives o recargues. Iniciar el dictado detiene la lectura del resumen.

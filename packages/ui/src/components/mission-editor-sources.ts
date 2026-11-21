@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, mapArray, on, onCleanup, untrack } from "solid-js"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { getRootClient } from "../stores/opencode-client"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { buildProjectSessionListOptions, normalizeSessionDirectory } from "../stores/session-list-options"
@@ -51,8 +52,9 @@ export function createMissionEditorSources(props: { instanceId: string; projectI
       const ids = selected().filter(id => !(previousOwner === key && sources()[kind]?.some(row => row.id === id)) && !pins().some(row => row.id === id))
       if (!enabled || !ids.length || kind === "branch-commits") { setPinLoading(new Set<string>()); setPinFailed(new Set<string>()); return }
       const controller = new AbortController(), view = props.captureView(), directory = props.directory()!
-      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)])
-      const current = () => view() && identity() === key && !controller.signal.aborted
+      const operation = captureBackendOperation(props.instanceId, controller.signal)
+      const signal = AbortSignal.any([operation.signal, AbortSignal.timeout(10_000)])
+      const current = () => operation.current() && view() && identity() === key && !controller.signal.aborted
       setPinLoading(new Set(ids)); setPinFailed(new Set<string>())
       void Promise.allSettled(ids.map(id => backgroundReads.run(signal, async () => {
         if (!/^[A-Za-z0-9_.:-]{1,240}$/.test(id)) throw new Error("Invalid source")
@@ -64,7 +66,7 @@ export function createMissionEditorSources(props: { instanceId: string; projectI
             || isReservedMissionScheduleSessionID(id) || kind === "coordinator-session" && source.parentID) throw new Error("Foreign source")
           return { id, label: source.title || id }
         }
-        const read = await serverApi.fetchMissionSchedule(props.instanceId, id, { directory }, signal), { document } = read
+        const read = await backendOf(props.instanceId).api.fetchMissionSchedule(props.instanceId, id, { directory }, signal), { document } = read
         if (!document || document.id !== id
           || !document.configuration.roots.some(root => normalizeSessionDirectory(root.directory) === normalizeSessionDirectory(directory))
           || document.kind !== (kind === "schedule-success" ? "schedule" : "one-time")) throw new Error("Source unavailable")
@@ -94,12 +96,14 @@ export function createMissionEditorSources(props: { instanceId: string; projectI
       const after = cursor()
       if (!enabled || !directory) { setLoading(false); return }
       const controller = new AbortController(), view = props.captureView()
-      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)])
-      const current = () => view() && !controller.signal.aborted && identity() === key
+      const operation = captureBackendOperation(props.instanceId, controller.signal)
+      const signal = AbortSignal.any([operation.signal, AbortSignal.timeout(10_000)])
+      const current = () => operation.current() && view() && !controller.signal.aborted && identity() === key
         && search() === query
         && generation === getOpenCodeInstanceGeneration(props.instanceId)
       setLoading(true); setFailed(false)
       const read = async () => {
+        signal.throwIfAborted()
         if (kind === "conversation-message" || kind === "coordinator-session") {
           const page = await getRootClient(props.instanceId).session.list(buildProjectSessionListOptions(after ? { cursor: after }
             : { directory, search: conversationTitleQuery(query), order: "desc", ...(kind === "coordinator-session" ? { parentID: null } : {}) }), { signal })
@@ -110,12 +114,12 @@ export function createMissionEditorSources(props: { instanceId: string; projectI
             .map(row => ({ id: row.id, label: row.title || row.id })), next: page.cursor?.next }
         }
         if (kind === "branch-commits") {
-          const page = await serverApi.fetchLocalGitBranches(props.instanceId, directory, signal)
+          const page = await backendOf(props.instanceId).api.fetchLocalGitBranches(props.instanceId, directory, signal)
           if (!Array.isArray(page.branches) || page.branches.length > 200
             || page.branches.some(ref => typeof ref !== "string" || !ref.startsWith("refs/heads/") || ref.length > 1024)) throw new Error("Invalid local branch page")
           return { rows: page.branches.map(ref => ({ id: ref, label: ref.slice("refs/heads/".length) })), next: undefined }
         }
-        const page = await serverApi.fetchMissionSchedules(props.instanceId, { directory, after, limit: 8 }, signal)
+        const page = await backendOf(props.instanceId).api.fetchMissionSchedules(props.instanceId, { directory, after, limit: 8 }, signal)
         if (props.projectID && page.projectID !== props.projectID || page.schedules.length > 8) throw new Error("Foreign source page")
         return { rows: page.schedules.filter(row => row.id !== props.target && row.kind === (kind === "schedule-success" ? "schedule" : "one-time"))
           .map(row => ({ id: row.id, label: row.configuration.title })), next: page.next }

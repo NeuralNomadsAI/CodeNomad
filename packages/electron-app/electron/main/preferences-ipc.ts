@@ -3,6 +3,8 @@ import { validateMainFrame } from "./ipc-security"
 import { requirePreferencesRequest, type PreferencesRequest } from "./preferences-window"
 import { requireMemoryCleanup } from "./memory-cleanup"
 import type { MemoryCleanupRequest } from "../../../ui/src/lib/native/memory-cleanup-command"
+import { requireServerSelection } from "./server-selection"
+import type { ServerSelectionIntent } from "../../../ui/src/lib/native/server-selection-intent"
 import {
   requireOpenerEpoch, requireStartupStateCommand,
   type OpenerStartupStateResult, type StartupStateCommand,
@@ -19,6 +21,7 @@ interface PreferencesIPCDependencies {
   openPreferences(request: PreferencesRequest, toggle?: boolean, resume?: boolean, openerId?: string): Promise<void>
   openerStartupState(window: BrowserWindow, command: StartupStateCommand, epoch: number | undefined): Promise<OpenerStartupStateResult>
   memoryCleanup(window: BrowserWindow, request: MemoryCleanupRequest): Promise<void>
+  selectServer(window: BrowserWindow, intent: ServerSelectionIntent, action?: "remove"): Promise<void>
   getRequest(window: BrowserWindow): PreferencesRequest | undefined
   markReady(window: BrowserWindow): void
   acceptRequest(window: BrowserWindow, request: PreferencesRequest): void | Promise<void>
@@ -60,6 +63,14 @@ export function setupPreferencesIPC(ipcMain: IPCRegistrar, dependencies: Prefere
     const window = preferences(event)
     const request = requireMemoryCleanup(value, dependencies.getRequest(window))
     return dependencies.memoryCleanup(window, request)
+  })
+  ipcMain.handle("preferences:selectServer", (event, value: unknown, action: unknown) => {
+    const window = preferences(event)
+    const section = dependencies.getRequest(window)?.section
+    if (action !== undefined && (action !== "remove" || section !== "servers" && section !== "remote")) {
+      throw new Error("Invalid server action")
+    }
+    return dependencies.selectServer(window, requireServerSelection(value, action === "remove" ? "servers" : section), action)
   })
   ipcMain.handle("preferences:getSection", (event) => {
     const window = preferences(event)

@@ -1,7 +1,6 @@
 import type { OutlineEntry } from "../../../server/src/opencode/session-pruning/navigation-contract"
-import { timelineSegmentId, timelineSegmentLabel, type TimelineSegment, type TimelineSegmentType } from "./message-timeline-projection"
+import { sameTimelineList, sameTimelineSegment, timelineSegmentId, type TimelineSegment, type TimelineSegmentType } from "./message-timeline-projection"
 
-type Translate = (key: string, params?: Record<string, unknown>) => string
 const kindTypes: Record<string, TimelineSegmentType> = { U: "user", C: "compaction", S: "system", R: "reasoning", T: "assistant", X: "tool" }
 
 const toolCount = (kinds: string) => kinds.replace(/[^X]/g, "").length
@@ -12,7 +11,7 @@ const toolCount = (kinds: string) => kinds.replace(/[^X]/g, "").length
  * the displayed parts' markers, and markers after the omitted parts skip the
  * native runs that start among them.
  */
-function outlineSegments(entry: OutlineEntry, t: Translate): TimelineSegment[] {
+function outlineSegments(entry: OutlineEntry): TimelineSegment[] {
   let head = entry.type === "user" ? "U" : entry.type === "compaction" ? "C" : entry.type === "system" ? "S" : ""
   let tail: string | undefined
   if (entry.type === "assistant") {
@@ -23,8 +22,8 @@ function outlineSegments(entry: OutlineEntry, t: Translate): TimelineSegment[] {
   }
   const ordinals = new Map<TimelineSegmentType, number>()
   const marker = (type: TimelineSegmentType, ordinal: number, after?: { continued: boolean }): TimelineSegment => ({
-    id: timelineSegmentId(entry.id, type, ordinal, after?.continued), messageId: entry.id, type, label: timelineSegmentLabel(type, t), tooltip: "",
-    totalChars: type === "tool" ? 100 : 0, ...(type === "tool" && entry.toolName?.trim() ? { toolName: entry.toolName.trim() } : {}),
+    id: timelineSegmentId(entry.id, type, ordinal, after?.continued), messageId: entry.id, type,
+    ...(type === "tool" && entry.toolName?.trim() ? { toolName: entry.toolName.trim() } : {}),
     ...(after ? { omittedBefore: true as const } : {}) })
   const next = (type: TimelineSegmentType) => {
     const ordinal = ordinals.get(type) ?? 0
@@ -51,12 +50,13 @@ function outlineSegments(entry: OutlineEntry, t: Translate): TimelineSegment[] {
  * messages outside the window take their place in native sequence around them.
  * Resident messages the transcript hides have no markers.
  */
-function projectSessionOutline(entries: readonly OutlineEntry[], resident: readonly TimelineSegment[], residentIds: ReadonlySet<string>, t: Translate): TimelineSegment[] {
+function projectSessionOutline(entries: readonly OutlineEntry[], resident: TimelineSegment[], residentIds: ReadonlySet<string>): TimelineSegment[] {
+  if (!entries.length) return resident
   const position = new Map(entries.map((entry, index) => [entry.id, index]))
   const result: TimelineSegment[] = []
   let next = 0
   const indexedUntil = (end: number) => {
-    for (; next < end; next++) if (!residentIds.has(entries[next].id)) result.push(...outlineSegments(entries[next], t))
+    for (; next < end; next++) if (!residentIds.has(entries[next].id)) result.push(...outlineSegments(entries[next]))
   }
   for (const segment of resident) {
     const at = position.get(segment.messageId)
@@ -70,48 +70,26 @@ function projectSessionOutline(entries: readonly OutlineEntry[], resident: reado
   return result
 }
 
-// Virtua keys rows by item identity. Keep unchanged historical markers mounted
-// when resident streaming content changes; otherwise a hovered/focused target
-// disappears on every token, even thousands of messages away from that token.
+// The rail keys rows by item identity. Keep unchanged markers mounted when
+// a new block, an authoritative outline or a different window changes the rail.
 export function createSessionOutlineProjection() {
   let previous = new Map<string, TimelineSegment>()
   let previousEntries: readonly OutlineEntry[] | undefined
   let previousResident: readonly TimelineSegment[] = []
   let previousResidentIds: readonly string[] = []
-  let previousLabels: string[] = []
   let previousSegments: TimelineSegment[] = []
-  return (entries: readonly OutlineEntry[], resident: readonly TimelineSegment[], residentIds: readonly string[], t: Translate): TimelineSegment[] => {
-    // Outline snapshots and resident markers are immutable publications. The
-    // resident arrays are rebuilt per token, but the window's ids and its marker
-    // identities only change with its structure. Avoid rescanning all history
-    // for identical markers, and retain locale tracking even on this fast path.
-    const labelKeys = ["messageTimeline.segment.user.label", "messageTimeline.segment.assistant.label",
-      "messageTimeline.segment.compaction.label", "messageTimeline.tool.fallbackLabel", "messageBlock.reasoning.thoughtLabel", "messageBlock.system.label"]
-    const labels = labelKeys.map(key => t(key))
-    if (entries === previousEntries && resident.length === previousResident.length
-      && residentIds.length === previousResidentIds.length && residentIds.every((id, index) => id === previousResidentIds[index])
-      && resident.every((segment, index) => segment === previousResident[index])
-      && labels.every((label, index) => label === previousLabels[index])) return previousSegments
-    const translated = new Map(labelKeys.map((key, index) => [key, labels[index]]))
-    const segments = projectSessionOutline(entries, resident, new Set(residentIds), key => translated.get(key) ?? t(key)).map(segment => {
+  return (entries: readonly OutlineEntry[], resident: TimelineSegment[], residentIds: readonly string[]): TimelineSegment[] => {
+    if (entries === previousEntries && sameTimelineList(residentIds, previousResidentIds)
+      && sameTimelineList(resident, previousResident)) return previousSegments
+    const segments = projectSessionOutline(entries, resident, new Set(residentIds)).map(segment => {
       const cached = previous.get(segment.id)
-      return cached && cached.type === segment.type && cached.label === segment.label
-        && cached.tooltip === segment.tooltip && cached.totalChars === segment.totalChars
-        && cached.toolName === segment.toolName && cached.omittedBefore === segment.omittedBefore
-        && cached.toolPartIds?.length === segment.toolPartIds?.length
-        && (segment.toolPartIds ?? []).every((id, index) => id === cached.toolPartIds?.[index])
-        && cached.partIds?.length === segment.partIds?.length
-        && (segment.partIds ?? []).every((id, index) => id === cached.partIds?.[index])
-        ? cached : segment
+      return cached && sameTimelineSegment(cached, segment) ? cached : segment
     })
     previous = new Map(segments.map(segment => [segment.id, segment]))
     previousEntries = entries
-    previousResident = [...resident]
-    previousResidentIds = [...residentIds]
-    previousLabels = labels
-    if (segments.length !== previousSegments.length || segments.some((segment, index) => segment !== previousSegments[index])) {
-      previousSegments = segments
-    }
+    previousResident = resident
+    previousResidentIds = residentIds
+    if (!sameTimelineList(segments, previousSegments)) previousSegments = segments
     return previousSegments
   }
 }

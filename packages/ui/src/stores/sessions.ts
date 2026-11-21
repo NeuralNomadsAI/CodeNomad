@@ -70,6 +70,7 @@ import {
   clearInstanceSessionExpansionState,
 } from "./session-state"
 import { isSessionBusy } from "./session-status"
+import { backendEvents } from "../lib/server-events"
 
 import { getDefaultModel } from "./session-models"
 import { handleWorktreeReady, reloadWorktrees } from "./worktrees"
@@ -134,8 +135,10 @@ if (!isPreferencesWindow()) {
   sseManager.onPermissionReplied = handlePermissionReplied
   sseManager.onWorktreeReady = handleWorktreeReady
   sseManager.onWorktreeUpdated = async (instanceId) => {
-    await reloadWorktrees(instanceId)
-    await fetchSessions(instanceId, { reset: true })
+    const signal = backendEvents.signalForInstance(instanceId)
+    await reloadWorktrees(instanceId, false, signal)
+    if (signal?.aborted) return
+    await fetchSessions(instanceId, { reset: true, signal })
   }
 }
 

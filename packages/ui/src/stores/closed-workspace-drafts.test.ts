@@ -5,11 +5,17 @@ import toast from "solid-toast"
 import { serverApi } from "../lib/api-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { serverEvents } from "../lib/server-events.ts"
+import { backends, createBackendClient, registerBackendClient } from "../lib/backend-client.ts"
+import { LOCAL_BACKEND_ID, parseInstanceKey } from "../lib/backend-identity.ts"
+import { backendEvents } from "../lib/backend-events.ts"
+import { addRemoteRestoreTab, remoteRestoreTabs, removeRemoteRestoreTab } from "./remote-restore-tabs.ts"
 import { createFileAttachment, createTextAttachment } from "../types/attachment.ts"
 import { addAttachment, clearAttachments, getAttachments } from "./attachments.ts"
 import { hydrateWorkspacePromptState } from "./app-session-prompt-hydration.ts"
 import { clearClosedWorkspaceDrafts, MAX_CLOSED_WORKSPACE_DRAFTS, restoreClosedWorkspaceDrafts } from "./closed-workspace-drafts.ts"
 import { addInstance, instances, removeInstance, updateInstance } from "./instances.ts"
+import { closeInstanceTab, selectInstanceTab } from "./app-tabs.ts"
+import { preferences } from "./preferences"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { clearSessionDraftPrompt, getSessionDraftPrompt, setSessionDraftPrompt, setSessions } from "./session-state.ts"
 import { recoveredDraftIds, switchRecoveredDraft } from "./session-draft-recovery.ts"
@@ -46,9 +52,12 @@ function open(id: string, folder: string, existing: string[] = [], read?: (sessi
   temporary = false, restoringSnapshot = false) {
   const client = { session: { get: ({ sessionID }: { sessionID: string }) =>
     read?.(sessionID) ?? Promise.resolve(existing.includes(sessionID) ? apiSession(sessionID, folder) : null) } } as any
-  ;(sdkManager as any).clients.set(`${id}:/workspaces/${id}/instance`, client)
+  const { backendId, workspaceId } = parseInstanceKey(id)
+  const sdk = backends.get(backendId)?.sdk ?? sdkManager
+  ;(sdk as any).clients.set(`${id}:/workspaces/${workspaceId}/instance`, client)
   opened.push(id)
-  addInstance({ id, folder, port: 0, pid: 0, proxyPath: "", status: "ready", client, ...(temporary ? { temporary } : {}) })
+  addInstance({ id, folder, ...(backendId !== LOCAL_BACKEND_ID ? { backendId } : {}),
+    port: 0, pid: 0, proxyPath: "", status: "ready", client, ...(temporary ? { temporary } : {}) })
   if (!restoringSnapshot) attachInstanceTab(id)
 }
 
@@ -67,7 +76,7 @@ function close(id: string, options?: { authoritative?: boolean; drafts?: "keep" 
   if (messageStoreBus.getInstance(id)) messageStoreBus.unregisterInstance(id)
   removeInstance(id, options)
   setSessions((previous) => { const next = new Map(previous); next.delete(id); return next })
-  sdkManager.destroyClientsForInstance(id)
+  backends.get(parseInstanceKey(id).backendId)?.sdk.destroyClientsForInstance(id)
 }
 
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve))
@@ -75,9 +84,166 @@ const settle = () => new Promise<void>((resolve) => setImmediate(resolve))
 afterEach(() => {
   for (const id of opened.splice(0)) close(id, { drafts: "skip" })
   clearClosedWorkspaceDrafts()
+  for (const tab of remoteRestoreTabs()) removeRemoteRestoreTab(tab.id)
 })
 
 describe("closed project drafts", () => {
+  function remote(t: { after: (run: () => void) => void }, id: string) {
+    const client = createBackendClient({ id, baseUrl: `https://${id}.invalid`, relayProfileId: id,
+      bindRelayAuthority: true, fetcher: async () => Response.json([]) })
+    client.admitRelayAuthority!("d".repeat(43))
+    const remove = registerBackendClient(client), detach = backendEvents.attach(id, client.events)
+    t.after(() => {
+      for (const instance of instances().values()) if (instance.backendId === id) close(instance.id, { drafts: "skip" })
+      detach(); remove(); client.events.dispose()
+    })
+    return client
+  }
+
+  it("restores a remote close on the same server only, including attachments and sessions", async t => {
+    const a = remote(t, "draft-a")
+    remote(t, "draft-b")
+    const multiBackend = preferences().multiBackend
+    preferences().multiBackend = true
+    t.after(() => { preferences().multiBackend = multiBackend })
+    open("draft-a~first", "/same", ["shared"])
+    setSessionDraftPrompt("draft-a~first", NO_SESSION, "server A [pasted #1]")
+    addAttachment("draft-a~first", NO_SESSION, createTextAttachment("A text", "pasted #1 (2 lines)", "paste-1.txt"))
+    setSessionDraftPrompt("draft-a~first", "shared", "session A")
+    selectInstanceTab("draft-a~first")
+    closeInstanceTab("draft-a~first")
+    await settle()
+    ;(a.events as any).dispatch({ type: "workspace.stopped", workspaceId: "first", reason: "deleted" })
+    await settle()
+    assert.equal(instances().has("draft-a~first"), false)
+    open("draft-b~homonym", "/same", ["shared"])
+    open("local-homonym", "/same", ["shared"])
+    assert.equal(getSessionDraftPrompt("draft-b~homonym", NO_SESSION), "")
+    assert.equal(getSessionDraftPrompt("local-homonym", NO_SESSION), "")
+    open("draft-a~again", "/same", ["shared"])
+    await settle()
+    assert.equal(getSessionDraftPrompt("draft-a~again", NO_SESSION), "server A [pasted #1]")
+    assert.equal(getSessionDraftPrompt("draft-a~again", "shared"), "session A")
+    assert.equal(getAttachments("draft-a~again", NO_SESSION).length, 1)
+  })
+
+  it("vaults a normally closed placeholder's complete prompt state without crossing backend identities", async t => {
+    remote(t, "placeholder-a")
+    remote(t, "placeholder-b")
+    const id = "remote-restore:closed-draft"
+    addRemoteRestoreTab({ id, kind: "remote-restore", retry: async () => {}, remove: () => removeRemoteRestoreTab(id),
+      snapshot: { kind: "workspace", backendId: "placeholder-a", folder: "/same", occurrence: 2,
+        drafts: { [NO_SESSION]: "suspended [pasted #1]", shared: "saved session" },
+        attachments: { [NO_SESSION]: [createTextAttachment("suspended text", "pasted #1 (2 lines)", "paste-1.txt")] },
+      } as any })
+    const closed = remoteRestoreTabs().find(tab => tab.id === id)!
+    closed.remove()
+    open("placeholder-b~homonym", "/same", ["shared"])
+    assert.equal(getSessionDraftPrompt("placeholder-b~homonym", NO_SESSION), "")
+    open("placeholder-a~again", "/same", ["shared"])
+    await settle()
+    assert.equal(getSessionDraftPrompt("placeholder-a~again", NO_SESSION), "suspended [pasted #1]")
+    assert.equal(getSessionDraftPrompt("placeholder-a~again", "shared"), "saved session")
+    assert.equal(getAttachments("placeholder-a~again", NO_SESSION).length, 1)
+    closed.remove()
+    open("placeholder-a~later", "/same", ["shared"])
+    assert.equal(getSessionDraftPrompt("placeholder-a~later", NO_SESSION), "", "a stale Close cannot restore consumed drafts")
+  })
+
+  it("keeps an open placeholder's occurrence state out of sibling openings and retry removal", async t => {
+    remote(t, "suspended")
+    open("suspended~first", "/same", ["shared"])
+    setSessionDraftPrompt("suspended~first", NO_SESSION, "owned by suspended occurrence")
+    const id = "remote-restore:reserved"
+    addRemoteRestoreTab({ id, kind: "remote-restore", instanceId: "suspended~first",
+      retry: async () => {}, remove: () => removeRemoteRestoreTab(id),
+      snapshot: { kind: "workspace", backendId: "suspended", folder: "/same", occurrence: 0,
+        drafts: { [NO_SESSION]: "owned by suspended occurrence" }, attachments: {} } as any })
+    close("suspended~first", { authoritative: false })
+    open("suspended~sibling", "/same", ["shared"])
+    assert.equal(getSessionDraftPrompt("suspended~sibling", NO_SESSION), "")
+    removeRemoteRestoreTab(id) // Successful retry removes the placeholder without closing it.
+    open("suspended~later", "/same", ["shared"])
+    assert.equal(getSessionDraftPrompt("suspended~later", NO_SESSION), "")
+  })
+
+  it("does not let a stale placeholder Close vault drafts or remove its same-ID replacement", async t => {
+    remote(t, "replaced-placeholder")
+    const id = "remote-restore:replacement"
+    const add = (draft: string) => addRemoteRestoreTab({
+      id, kind: "remote-restore", retry: async () => {}, remove: () => removeRemoteRestoreTab(id),
+      snapshot: { kind: "workspace", backendId: "replaced-placeholder", folder: "/same", occurrence: 0,
+        drafts: { [NO_SESSION]: draft }, attachments: {} } as any,
+    })
+    add("obsolete")
+    const obsolete = remoteRestoreTabs().find(tab => tab.id === id)!
+    removeRemoteRestoreTab(id)
+    add("replacement")
+    obsolete.remove()
+    assert.equal(remoteRestoreTabs().find(tab => tab.id === id)?.snapshot.drafts[NO_SESSION], "replacement")
+    open("replaced-placeholder~before-close", "/same", [])
+    assert.equal(getSessionDraftPrompt("replaced-placeholder~before-close", NO_SESSION), "")
+    remoteRestoreTabs().find(tab => tab.id === id)!.remove()
+    open("replaced-placeholder~after-close", "/same", [])
+    assert.equal(getSessionDraftPrompt("replaced-placeholder~after-close", NO_SESSION), "replacement")
+  })
+
+  it("lets a remote occurrence's own restored snapshot win over a closed sibling", async t => {
+    remote(t, "occurrence-remote")
+    open("occurrence-remote~sibling", "/same", ["shared"])
+    setSessionDraftPrompt("occurrence-remote~sibling", NO_SESSION, "closed sibling")
+    setSessionDraftPrompt("occurrence-remote~sibling", "shared", "closed session")
+    close("occurrence-remote~sibling")
+    const read = deferred<unknown>()
+    open("occurrence-remote~restored", "/same", [], () => read.promise)
+    hydrateWorkspacePromptState("occurrence-remote~restored", {
+      drafts: { [NO_SESSION]: "own occurrence", shared: "own session" }, attachments: {},
+    }, new Set(["shared"]), NO_SESSION)
+    read.resolve(apiSession("shared", "/same"))
+    await settle()
+    assert.equal(getSessionDraftPrompt("occurrence-remote~restored", NO_SESSION), "own occurrence")
+    assert.equal(getSessionDraftPrompt("occurrence-remote~restored", "shared"), "own session")
+  })
+
+  it("returns unapplied closed drafts when a remote reopening becomes a placeholder", async t => {
+    remote(t, "pending-remote")
+    open("pending-remote~closed", "/same", ["shared"])
+    setSessionDraftPrompt("pending-remote~closed", "shared", "unapplied closed draft")
+    close("pending-remote~closed")
+    const read = deferred<unknown>()
+    open("pending-remote~waiting", "/same", [], () => read.promise)
+    const id = "remote-restore:pending-draft"
+    addRemoteRestoreTab({ id, kind: "remote-restore", instanceId: "pending-remote~waiting",
+      retry: async () => {}, remove: () => removeRemoteRestoreTab(id),
+      snapshot: { kind: "workspace", backendId: "pending-remote", folder: "/same", occurrence: 0,
+        drafts: {}, attachments: {} } as any })
+    close("pending-remote~waiting", { authoritative: false })
+    open("pending-remote~sibling", "/same", ["shared"])
+    read.resolve(apiSession("shared", "/same"))
+    await settle()
+    assert.equal(getSessionDraftPrompt("pending-remote~sibling", "shared"), "unapplied closed draft")
+    assert.equal(getSessionDraftPrompt("pending-remote~waiting", "shared"), "")
+  })
+
+  it("scopes temporary discard authority and reconnect resets to their backend", async t => {
+    const a = remote(t, "temporary-a"), b = remote(t, "temporary-b")
+    registry(["/temporary/shared"])
+    ;(a.events as any).dispatch({ type: "workspace.temporaryChanged", folders: [] })
+    // A reconnect of another backend must preserve the local registry's authority.
+    for (const handler of (b.events as any).openHandlers) handler()
+    open("temporary-local", "/temporary/shared")
+    setSessionDraftPrompt("temporary-local", NO_SESSION, "discarded locally")
+    await stopped("temporary-local", "deleted")
+    open("temporary-a~first", "/temporary/shared")
+    setSessionDraftPrompt("temporary-a~first", NO_SESSION, "kept remotely")
+    ;(a.events as any).dispatch({ type: "workspace.stopped", workspaceId: "first", reason: "deleted" })
+    await settle()
+    open("temporary-local-again", "/temporary/shared")
+    open("temporary-a~again", "/temporary/shared")
+    assert.equal(getSessionDraftPrompt("temporary-local-again", NO_SESSION), "")
+    assert.equal(getSessionDraftPrompt("temporary-a~again", NO_SESSION), "kept remotely")
+  })
+
   for (const simple of [true, false]) it(`carries edited drafts across successive reopenings (${simple ? "folder" : "saved ID"})`, async () => {
     const key = `draft-successor-${simple}`, folder = `/${key}`, original = `${key}-original`, successor = `${key}-successor`
     const file = (byte: number) => createFileAttachment("successor.bin", "successor.bin", "application/octet-stream", new Uint8Array([byte]))

@@ -68,7 +68,8 @@ async function pruneRecoveryMarkers(lock: string, lookup: ProcessLookup): Promis
 }
 
 /** Publish a populated directory atomically; a crash can never leave an ownerless lock. */
-export async function lockMemoryRepository(directory: string, lookup: ProcessLookup = lookupProcess): Promise<() => Promise<void>> {
+export async function lockMemoryRepository(directory: string, lookup: ProcessLookup = lookupProcess, signal?: AbortSignal): Promise<() => Promise<void>> {
+  signal?.throwIfAborted()
   const lock = `${directory}.lock`
   const nonce = randomUUID()
   const candidate = `${lock}.${nonce}`
@@ -89,6 +90,7 @@ export async function lockMemoryRepository(directory: string, lookup: ProcessLoo
     const deadline = Date.now() + WAIT_MS
     let checked: { nonce: string; at: number; state: "live" | "dead" | "unknown" } | undefined
     for (;;) {
+      signal?.throwIfAborted()
       if (Date.now() >= deadline) throw new MemoryError("conflict", "Memory repository is busy")
       try {
         await rename(candidate, lock)
@@ -129,10 +131,10 @@ export async function lockMemoryRepository(directory: string, lookup: ProcessLoo
           if (previous.startIdentity !== undefined) validateOwner(previous as Owner)
         } catch (inspectionError) {
           if ((inspectionError as NodeJS.ErrnoException).code === "ENOENT") {
-            await delay(20)
+            await delay(20, undefined, { signal })
             continue
           }
-          if (sharingViolation(inspectionError)) { await delay(20); continue }
+          if (sharingViolation(inspectionError)) { await delay(20, undefined, { signal }); continue }
           throw new MemoryError("conflict", "Memory repository lock is unavailable")
         }
         if (previous.host !== undefined && (previous.host !== HOST || previous.platform !== process.platform))
@@ -153,7 +155,7 @@ export async function lockMemoryRepository(directory: string, lookup: ProcessLoo
           await rename(lock, `${lock}.dead-${previous.nonce}`).catch(() => undefined)
         }
         if (Date.now() >= deadline) throw new MemoryError("conflict", "Memory repository is busy")
-        await delay(20)
+        await delay(20, undefined, { signal })
       }
     }
   } finally {

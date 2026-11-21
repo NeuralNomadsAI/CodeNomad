@@ -58,6 +58,8 @@ module URLs stable across the daemon's dynamically registered HTML routes.
 - The control plane is plain HTTP over loopback with endpoint secrets passed
   from spawner to borrower through the environment.
 
+Session preview fixtures bind opened project occurrences and use one `SessionPreviewHost` with the active occurrence's `SessionPreviewSlot`. A tab switch moves the foreground slot while live guests retain their documents.
+
 ## Native fixtures
 
 Native product fixtures (`scripts/test-*-native.mjs`) run an isolated OpenCode daemon through
@@ -100,6 +102,7 @@ reference. Review any proposed increase separately.
 
 ## Agent conventions
 
+- History keyboard scenarios await publication of both exact store keys; a controller-held remote response verifies the absence of premature gestures and the actual keydown recipient.
 - Mermaid initialization-deadline checks use the file preview's single renderer
   consumer and await the held Tiny module's evaluation before checking late
   iframe creation. Markdown's deferred highlight pass can remount a fence and
@@ -141,12 +144,18 @@ reference. Review any proposed increase separately.
 - Projection-only fixtures provide a valid empty outline through the API adapter
   before mounting and reject outline HTTP reads.
 - Shell fixtures share `tests/browser/panel-read-fixture.ts` to observe optional
-  panel-extension list cancellations: the exact request identity, its owning
+  panel-extension list cancellations below the registered backend transport,
+  preserving the client's object identity (each operation creates its own API): the exact request identity, its owning
   aborted signal and its native `AbortError` receipt must agree. Drain pending
   classifications before asserting; retain raw failures alongside the classified
   cancellations. Same-URL network aborts and missing, unknown or reused identities
   remain failures. Hold a controller-owned read across a native SSE open to
   exercise supersession with the navigation ownership assertions intact.
+  Empty catalogues answer `/api/panel-extensions` with `[]`. First-open probes
+  retain a persistent native SSE stream, assert its replacement catalogue read
+  after the initial HTTP snapshot, and supersede held reads on that real open.
+  Deferred navigation scenarios have a 60-second
+  timeout and release their barriers in `finally`.
 - Fixtures consuming EventSource serve a persistent `text/event-stream` response
   and let the real connection close with its page. Never answer that path with
   the generic JSON fallback. Composer bootstrap awaits DOM readiness and its

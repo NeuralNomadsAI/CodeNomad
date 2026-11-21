@@ -16,6 +16,7 @@ import SessionExpander from "./session-expander"
 import { useSessionRowOverflow } from "./session-row-overflow"
 import { showToastNotification } from "../lib/notifications"
 import { useI18n } from "../lib/i18n"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { toggleSweepClear, toggleSweepGroup } from "../lib/toggle-sweep"
 import { isSessionInterruptionUnseen, markSessionInterruptionSeen } from "../stores/session-interruption-seen"
 import { showConfirmDialog } from "../stores/alerts"
@@ -217,6 +218,7 @@ const SessionList: Component<SessionListProps> = (props) => {
   let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
   createEffect(() => {
     const query = normalizedQuery()
+    const operation = captureBackendOperation(props.instanceId)
     if (!props.enableFilterBar) {
       clearSessionSearch(props.instanceId)
       return
@@ -235,6 +237,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     // Client-side filtering (filteredThreads) shows instant results from loaded sessions.
     const queryAtDispatch = query
     searchDebounceTimer = setTimeout(() => {
+      if (!operation.current()) return
       void searchSessions(props.instanceId, queryAtDispatch)
         .catch((error) => {
           log.error("Failed to search sessions:", error)
@@ -396,6 +399,8 @@ const SessionList: Component<SessionListProps> = (props) => {
  
   const handleDeleteSession = async (sessionId: string) => {
     if (isSessionDeleting(sessionId)) return
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     const intent = beginGesture({ instanceId: props.instanceId, sessionId: props.activeSessionId ?? null })
     const confirmed = await showConfirmDialog(
       t("sessionList.delete.confirmMessage", { label: normalizeSessionLabel(sessionId) }),
@@ -408,7 +413,7 @@ const SessionList: Component<SessionListProps> = (props) => {
         dismissible: false,
       },
     )
-    if (!confirmed) return
+    if (!confirmed || !operation.current()) return
 
     const shouldSelectFallback = props.activeSessionId === sessionId
     let fallbackSessionId: string | undefined
@@ -445,10 +450,12 @@ const SessionList: Component<SessionListProps> = (props) => {
 
     try {
       await deleteSession(props.instanceId, sessionId)
+      if (!operation.current()) return
       if (fallbackSessionId) {
         setActiveSessionFromList(props.instanceId, fallbackSessionId, intent)
       }
     } catch (error) {
+      if (!operation.current()) return
       log.error(`Failed to delete session ${sessionId}:`, error)
       showToastNotification({ category: "sessions", message: t("sessionList.delete.error"), variant: "error" })
     }
@@ -482,6 +489,8 @@ const SessionList: Component<SessionListProps> = (props) => {
 
   const handleReloadSession = async (sessionId: string) => {
     if (isSessionReloading(sessionId)) return
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
 
     setReloadingSessionIds((prev) => {
       const next = new Set(prev)
@@ -490,8 +499,9 @@ const SessionList: Component<SessionListProps> = (props) => {
     })
 
     try {
-      await loadMessages(props.instanceId, sessionId, { force: true })
+      await loadMessages(props.instanceId, sessionId, { force: true, signal: operation.signal })
     } catch (error) {
+      if (!operation.current()) return
       log.error(`Failed to reload session ${sessionId}:`, error)
       showToastNotification({ category: "sessions", message: t("sessionList.reload.error"), variant: "error" })
     } finally {
@@ -521,12 +531,16 @@ const SessionList: Component<SessionListProps> = (props) => {
   const handleRenameSubmit = async (nextTitle: string) => {
     const target = renameTarget()
     if (!target) return
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
  
     setIsRenaming(true)
     try {
       await renameSession(props.instanceId, target.id, nextTitle)
+      if (!operation.current()) return
       setRenameTarget(null)
     } catch (error) {
+      if (!operation.current()) return
       log.error(`Failed to rename session ${target.id}:`, error)
       showToastNotification({ category: "sessions", message: t("sessionList.rename.error"), variant: "error" })
     } finally {
@@ -569,6 +583,8 @@ const SessionList: Component<SessionListProps> = (props) => {
   }
 
   const handleBulkDelete = async () => {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     const selected = Array.from(selectedSessionIds())
     if (selected.length === 0) return
     const intent = beginGesture({ instanceId: props.instanceId, sessionId: props.activeSessionId ?? null })
@@ -584,7 +600,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       },
     )
 
-    if (!confirmed) return
+    if (!confirmed || !operation.current()) return
 
     const deletedSet = new Set(selected)
     const currentActiveId = props.activeSessionId
@@ -615,6 +631,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     const deletionOrder = sortSessionIdsDeepestFirst(sessionStateSessions().get(props.instanceId) ?? new Map(), selected)
     let failed = 0
     for (const sessionId of deletionOrder) {
+      if (!operation.current()) return
       try {
         // eslint-disable-next-line no-await-in-loop
         await deleteSession(props.instanceId, sessionId)
@@ -624,6 +641,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       }
     }
 
+    if (!operation.current()) return
     setSelectedSessionIds(new Set<string>())
 
     if (fallbackSessionId) {

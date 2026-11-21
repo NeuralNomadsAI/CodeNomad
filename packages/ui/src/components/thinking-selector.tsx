@@ -4,7 +4,7 @@ import { providers, fetchProviders } from "../stores/sessions"
 import { waitForInstanceInitialSessionHydration } from "../stores/instances"
 import { ChevronDown } from "lucide-solid"
 import { getLogger } from "../lib/logger"
-import { getModelThinkingSelection, setModelThinkingSelection } from "../stores/preferences"
+import { preferencesOf } from "../stores/preferences"
 import { useI18n } from "../lib/i18n"
 import { withHotkey } from "../lib/hotkeys"
 
@@ -50,7 +50,7 @@ export default function ThinkingSelector(props: ThinkingSelectorProps) {
   })
 
   const currentValue = createMemo(() => {
-    const selected = getModelThinkingSelection(props.currentModel)
+    const selected = preferencesOf(props.instanceId).getModelThinkingSelection(props.currentModel)
     const keys = variantKeys()
     if (selected && keys.includes(selected)) {
       return options().find((opt) => opt.value === selected)
@@ -60,7 +60,7 @@ export default function ThinkingSelector(props: ThinkingSelectorProps) {
 
   const handleChange = (value: ThinkingOption | null) => {
     if (!value) return
-    setModelThinkingSelection(props.currentModel, value.value)
+    preferencesOf(props.instanceId).setModelThinkingSelection(props.currentModel, value.value)
   }
 
   const triggerValue = createMemo(() => {

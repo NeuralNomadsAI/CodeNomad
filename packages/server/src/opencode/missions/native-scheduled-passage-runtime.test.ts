@@ -256,8 +256,9 @@ test("real SQLite factory fences broken initial/business capabilities but observ
     await invoke(async runtime => {
       assert.equal((await runtime.businessSelection(pending.coordinatorSessionID, entry))?.readSessionID, pending.coordinatorSessionID)
       const result = await runtime.executeBusiness(pending.coordinatorSessionID, entry, control => control.report(pending.coordinatorSessionID,
-        { final: true, outcome: "completed", summary: "The target already contains the source.",
-          artifact: { kind: "no-change" }, evidence: ["Verified source ancestry."], next: [] }))
+        { final: true, outcome: "completed", summary: "The reviewed sync merged without conflicts.",
+          artifact: { kind: "verified-completion" },
+          evidence: ["Independent review and focused tests passed on the frozen merge candidate.", "Verified source ancestry after the merge."], next: [] }))
       assert.equal(result?.value.mission.status, "completed")
     })
     active.clear()

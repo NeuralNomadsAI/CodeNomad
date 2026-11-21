@@ -8,7 +8,8 @@ export const recentFolders = [
   { path: "D:/blender", lastAccessed: now - 7 * 86_400_000, projectName: "Blender tools" },
   ...Array.from({ length: 12 }, (_, i) => ({ path: `D:/archive/project-${i}`, lastAccessed: now - (8 + i) * 86_400_000 })),
 ]
-serverApi.fetchConfigOwner = async () => ({ settings: { locale: "en" } }) as any
+serverApi.fetchConfigOwner = async () => ({ settings: { locale: "en", multiBackend: true } }) as any
+serverApi.patchConfigOwner = async (_owner, patch) => patch as any
 const state = { recentFolders, remoteServers: [{ id: "saved-server", name: "Saved remote", baseUrl: "https://remote.example.test", skipTlsVerify: false, createdAt: now, updatedAt: now }] }
 serverApi.fetchStateOwner = async () => state as any
 // Like the server, a patch merges into the owner's state; `holdStatePatches` leaves them pending.

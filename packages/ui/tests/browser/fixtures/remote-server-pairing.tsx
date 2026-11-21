@@ -3,13 +3,20 @@ import { render } from "solid-js/web"
 import { For } from "solid-js"
 import { RemoteServerDialog } from "../../../src/components/remote-server-dialog"
 import { useRemoteServerProfiles } from "../../../src/lib/hooks/use-remote-server-profiles"
+import { useDesktopConnectionLaunch } from "../../../src/lib/hooks/use-desktop-connection-launch"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
+import { serverApi } from "../../../src/lib/api-client"
+import { getServerMeta } from "../../../src/lib/server-meta"
 import "../../../src/index.css"
+
+serverApi.fetchServerMeta = (async () => ({ localRequest: true })) as typeof serverApi.fetchServerMeta
+await getServerMeta()
 
 // The page's inline script declares a local Electron window that records opened remote windows.
 const Harness = () => {
+  useDesktopConnectionLaunch()
   const { remoteServers, saveServer } = useRemoteServerProfiles()
   return (
     <main style={{ width: "min(900px, 100%)" }}>

@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, on, onCleanup } from "solid-js"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { backgroundReads } from "../lib/background-read-queue"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { repositoryIdentitySchema, type MissionRepositoryIdentity } from "../../../server/src/missions/mission-repository-condition"
@@ -16,11 +17,13 @@ export function createMissionEditorRepository(props: { instanceId: string; direc
   createEffect(on([identity, props.active, refresh], ([key, active]) => {
     if (owner !== key) { owner = key; setRepository(undefined); setFailed(false) }
     if (!active || !props.directory()) { setLoading(false); return }
-    const controller = new AbortController(), signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)])
+    const controller = new AbortController()
+    const operation = captureBackendOperation(props.instanceId, controller.signal)
+    const signal = AbortSignal.any([operation.signal, AbortSignal.timeout(10_000)])
     const view = props.captureView(), directory = props.directory()!
-    const current = () => view() && !controller.signal.aborted && identity() === key
+    const current = () => operation.current() && view() && !controller.signal.aborted && identity() === key
     setLoading(true); setFailed(false)
-    void backgroundReads.run(signal, () => serverApi.fetchRepositorySource(props.instanceId, directory, signal)).then(result => {
+    void backgroundReads.run(signal, () => backendOf(props.instanceId).api.fetchRepositorySource(props.instanceId, directory, signal)).then(result => {
       if (!current()) return
       setRepository(result.status === "ok" ? repositoryIdentitySchema.strict().parse(result.repository) : undefined)
       setFailed(result.status !== "ok" && result.reason !== "no_remote")

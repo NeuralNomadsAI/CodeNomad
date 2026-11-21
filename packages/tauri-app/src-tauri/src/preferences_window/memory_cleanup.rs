@@ -14,6 +14,8 @@ pub(crate) struct CleanupRequest {
     id: String,
     scope: String,
     workspace_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    server_id: Option<String>,
     directory: String,
 }
 impl CleanupRequest {
@@ -26,6 +28,8 @@ impl CleanupRequest {
         if !bounded(&self.id, 128)
             || !bounded(&self.workspace_id, 128)
             || !bounded(&self.directory, 32768)
+            || self.server_id.as_ref().is_some_and(|value| !bounded(value, 512))
+            || context.server_id != self.server_id
             || !matches!(self.scope.as_str(), "global" | "project")
             || context.section != "general"
             || context.instance_id.as_deref() != Some(&self.workspace_id)
@@ -208,6 +212,7 @@ mod tests {
             section: "general".into(),
             scroll_top: None,
             instance_id: Some("a".into()),
+            server_id: None,
             workspace_path: None,
             location: Some(super::super::PreferencesLocation {
                 directory: "/repo".into(),
@@ -217,6 +222,13 @@ mod tests {
         assert!(request.validate(&context).is_ok());
         context.instance_id = Some("b".into());
         assert!(request.validate(&context).is_err());
+        context.instance_id = Some("a".into());
+        context.server_id = Some("server-a".into());
+        assert!(request.validate(&context).is_err());
+        let remote = CleanupRequest { server_id: Some("server-a".into()), ..request };
+        assert!(remote.validate(&context).is_ok());
+        context.server_id = Some("replacement".into());
+        assert!(remote.validate(&context).is_err());
         assert!(serde_json::from_str::<CleanupRequest>(
             r#"{"id":"one","scope":"global","workspaceId":"a","directory":"/repo","prompt":"run"}"#
         )
@@ -234,6 +246,7 @@ mod tests {
                     id: "one".into(),
                     scope: "global".into(),
                     workspace_id: "a".into(),
+                    server_id: None,
                     directory: "/repo".into(),
                 },
                 reply: sender,

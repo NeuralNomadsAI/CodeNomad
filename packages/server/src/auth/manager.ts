@@ -5,7 +5,7 @@ import { AuthStore } from "./auth-store"
 import { TokenManager } from "./token-manager"
 import { SessionManager } from "./session-manager"
 import { parseCookies } from "./http-auth"
-import { isLocalRequest, isRemoteRequest, remoteDeviceOf } from "../remote-control/request-origin"
+import { isLocalRequest, isRefusedDeviceRequest, isRemoteRequest, remoteDeviceOf } from "../remote-control/request-origin"
 
 export const BOOTSTRAP_TOKEN_STDOUT_PREFIX = "CODENOMAD_BOOTSTRAP_TOKEN:" as const
 export const DEFAULT_AUTH_USERNAME = "codenomad" as const
@@ -28,6 +28,7 @@ export class AuthManager {
   private readonly sessionManager: SessionManager
   private readonly cookieName: string
   private readonly authEnabled: boolean
+  private readonly principalLoggedOutListeners = new Set<(id: string) => void>()
 
   constructor(private readonly init: AuthManagerInit, private readonly logger: Logger) {
     this.cookieName = sanitizeCookieName(init.cookieName)
@@ -107,7 +108,26 @@ export class AuthManager {
 
   revokeSession(request: FastifyRequest): void {
     const session = this.getSessionFromRequest(request)
-    if (session) this.sessionManager.revoke(session.sessionId)
+    if (!session) return
+    this.sessionManager.revoke(session.sessionId)
+    const errors: unknown[] = []
+    for (const listener of this.principalLoggedOutListeners) {
+      try { listener(session.sessionId) } catch (error) { errors.push(error) }
+    }
+    if (errors.length) throw errors[0]
+  }
+
+  onPrincipalLoggedOut(listener: (id: string) => void): () => void {
+    this.principalLoggedOutListeners.add(listener)
+    return () => { this.principalLoggedOutListeners.delete(listener) }
+  }
+
+  onSessionInvalidated(sessionId: string, listener: () => void): () => void {
+    return this.authEnabled ? this.sessionManager.onInvalidated(sessionId, listener) : () => {}
+  }
+
+  isSessionValid(id: string): boolean {
+    return this.authEnabled && this.sessionManager.hasSession(id)
   }
 
   /** From this machine's own listeners; tunnelled Remote Control traffic never qualifies. */
@@ -116,11 +136,10 @@ export class AuthManager {
   }
 
   getSessionFromRequest(request: FastifyRequest): { username: string; sessionId: string } | null {
-    // Remote Control authenticates paired devices only, even when local auth is skipped.
-    if (isRemoteRequest(request)) {
-      const deviceId = remoteDeviceOf(request)
-      return deviceId ? { username: this.init.username, sessionId: `remote-device:${deviceId}` } : null
-    }
+    // Device scope applies on both listeners, even when local auth is skipped.
+    const deviceId = remoteDeviceOf(request)
+    if (deviceId) return { username: this.init.username, sessionId: `remote-device:${deviceId}` }
+    if (isRemoteRequest(request) || isRefusedDeviceRequest(request)) return null
     return this.getSessionFromHeaders(request.headers)
   }
 
@@ -145,11 +164,11 @@ export class AuthManager {
   }
 
   setSessionCookie(reply: FastifyReply, sessionId: string) {
-    reply.header("Set-Cookie", buildSessionCookie(this.cookieName, sessionId))
+    this.setSessionCookieWithOptions(reply, sessionId)
   }
 
   setSessionCookieWithOptions(reply: FastifyReply, sessionId: string, options?: { secure?: boolean }) {
-    reply.header("Set-Cookie", buildSessionCookie(this.cookieName, sessionId, options))
+    reply.header("Set-Cookie", buildSessionCookie(this.cookieName, sessionId, { ...options, maxAgeSeconds: this.authEnabled ? 7 * 24 * 60 * 60 : undefined }))
   }
 
   clearSessionCookie(reply: FastifyReply) {

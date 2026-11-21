@@ -1,13 +1,13 @@
 import { createSignal } from "solid-js"
 import type { VoiceConversationEngine } from "../../../server/src/api-types"
-import { CODENOMAD_API_BASE } from "../lib/api-base"
+import { localTransport } from "../lib/backend-transport"
 import { serverApi } from "../lib/api-client"
 import { generateUUID } from "../lib/client-identity"
 import { isDesktopHost, isNativeApplicationWindow } from "../lib/runtime-env"
 import { loadSpeechCapabilities, speechCapabilities, speechCapabilitiesError } from "./speech"
 
 const prefix = "codenomad:voice-conversation-engine:"
-const browserKey = () => `${prefix}${CODENOMAD_API_BASE ?? window.location.origin}`
+const browserKey = () => `${prefix}${localTransport.baseUrl ?? window.location.origin}`
 const useDesktopEngine = () => isDesktopHost() && isNativeApplicationWindow()
   && speechCapabilities()?.desktopVoiceConversationEngine === true
 

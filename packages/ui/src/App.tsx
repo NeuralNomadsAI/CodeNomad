@@ -6,17 +6,19 @@ import { Minimize2 } from "lucide-solid"
 import AlertDialog from "./components/alert-dialog"
 import AuthRecoveryDialog from "./components/auth-recovery-dialog"
 import FolderSelectionView from "./components/folder-selection-view"
+import { selectRemoteServer } from "./stores/remote-project-open"
+import { normalizeServerSelection, sameServerSelection } from "./lib/native/server-selection-intent"
+import { serversManageable } from "./lib/server-meta"
 import NewInstanceLauncher from "./components/new-instance-launcher"
 import { useDesktopFolderLaunch } from "./lib/hooks/use-electron-folder-launch"
 import { useDesktopConnectionLaunch } from "./lib/hooks/use-desktop-connection-launch"
 import { AppViewport } from "./components/app-viewport"
-import { closeTemporaryInstance, openTemporaryInstance } from "./stores/temporary-instances"
+import { openTemporaryInstance } from "./stores/temporary-instances"
 import InstanceTabs from "./components/instance-tabs"
 import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
 import InstanceShell from "./components/instance/instance-shell2"
 import { SettingsScreen } from "./components/settings-screen"
 import { NativeTitlebar, hasNativeTitlebar } from "./components/native-titlebar"
-import { SideCarPickerDialog } from "./components/sidecar-picker-dialog"
 import { SideCarView } from "./components/sidecar-view"
 import { InstanceMetadataProvider } from "./lib/contexts/instance-metadata-context"
 import { showAlertDialog } from "./stores/alerts"
@@ -40,10 +42,12 @@ import { listenMenuActions } from "./lib/native/menu-actions"
 import { useI18n } from "./lib/i18n"
 import { setWakeLockDesired } from "./lib/native/wake-lock"
 import { startNotificationIconBadge } from "./lib/notification-icon-badge"
+import RemoteRestoreView from "./components/remote-restore-view"
 import {
   claimNativeBrowserOpen,
   onNativeBrowserOpen,
   releaseNativeBrowserOpen,
+  selectBrowserOpenOwner,
 } from "./lib/native/browser"
 import { useViewMenu } from "./lib/native/view-menu"
 import {
@@ -52,7 +56,7 @@ import {
   showFolderSelection,
   setShowFolderSelection,
 } from "./stores/ui"
-import { recentFolders, useConfig } from "./stores/preferences"
+import { preferencesForBackend, recentFolders, useConfig } from "./stores/preferences"
 import {
   createInstance,
   instances,
@@ -86,21 +90,23 @@ import { hasWakeLockEligibleWork, getSessionStatus } from "./stores/session-stat
 import { shouldAppHoldWakeLock } from "./stores/wake-lock-eligibility"
 import { openSettings } from "./stores/settings-screen"
 import { showCommandPalette } from "./stores/command-palette"
-import {
-  closeSidecarTab,
-  ensureSidecarsLoaded,
-  openSidecarTab,
-} from "./stores/sidecars"
+import { openSidecarTab } from "./stores/sidecars"
+import { closeAppTab } from "./stores/app-tab-close"
+import { parseInstanceKey, backendIdOf } from "./lib/backend-identity"
+import { captureBackendOperation } from "./lib/backend-operation"
 import {
   activeAppTab,
   activeAppTabId,
+  allowsAutomaticLocalSetup,
   appTabs,
-  closeInstanceTab,
+  activeBlankTabId,
+  closeBlankTab,
+  openBlankTab,
+  replaceBlankTab,
+  getInstanceAppTabId,
+  getSidecarAppTabId,
   detachInstanceTab,
   ensureActiveAppTab,
-  getAdjacentAppTabId,
-  getAppTabById,
-  markAppTabUserInteraction,
   moveAppTab,
   selectAppTab,
   selectInstanceTab,
@@ -113,12 +119,17 @@ async function withForegroundRefreshTimeout<T>(
   promise: Promise<T>,
   label: string,
   onTimeout?: () => void,
+  signal?: AbortSignal,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
+  let abort = () => {}
   try {
     return await Promise.race([
       promise,
       new Promise<never>((_, reject) => {
+        abort = () => { onTimeout?.(); reject(signal?.reason) }
+        signal?.addEventListener("abort", abort, { once: true })
+        if (signal?.aborted) { abort(); return }
         timer = setTimeout(() => {
           onTimeout?.()
           reject(new Error(`${label} timed out`))
@@ -127,10 +138,29 @@ async function withForegroundRefreshTimeout<T>(
     ])
   } finally {
     if (timer !== undefined) clearTimeout(timer)
+    signal?.removeEventListener("abort", abort)
   }
 }
 
 const App: Component = () => {
+  onMount(() => {
+    window.__CODENOMAD_SELECT_SERVER__ = (intent, action) => {
+      if (action !== "remove") return selectRemoteServer(intent)
+      const target = normalizeServerSelection(intent)
+      const host = preferencesForBackend("local")
+      const relay = host.preferences().multiBackend
+      const current = () => relay === host.preferences().multiBackend && (relay !== true || serversManageable())
+      if (!target || !current() || !host.remoteServers().some(profile => sameServerSelection(target, profile))) {
+        throw new Error("Server selection changed")
+      }
+      void host.removeRemoteServerProfile(target.id, current).catch(error => {
+        if (error?.name !== "AbortError") showAlertDialog(t("settings.preferenceSaveFailed"), {
+          title: t("folderSelection.servers.remove"), variant: "warning",
+        })
+      })
+    }
+    onCleanup(() => { delete window.__CODENOMAD_SELECT_SERVER__ })
+  })
   onMount(() => onCleanup(startNotificationIconBadge()))
   useAppSessionRestore()
   const { t } = useI18n()
@@ -152,7 +182,6 @@ const App: Component = () => {
   } = useConfig()
   const [escapeInDebounce, setEscapeInDebounce] = createSignal(false)
   const [instanceTabBarHeight, setInstanceTabBarHeight] = createSignal(0)
-  const [sidecarPickerOpen, setSidecarPickerOpen] = createSignal(false)
   const phoneQuery = useMediaQuery("(max-width: 767px)")
   const isPhoneLayout = createMemo(() => phoneQuery())
 
@@ -256,15 +285,17 @@ const App: Component = () => {
       }
     }, 30_000)
     const openRequestedPreview = async (sessionID: string, url: string, requestID: string) => {
-      const findOwners = () => appTabs().flatMap(tab => tab.kind === "instance"
-        && getSessions(tab.instance.id).some(session => session.id === sessionID) ? [tab.instance] : [])
+      // Host-native requests carry a session id from the local backend only.
+      const localInstances = () => appTabs().flatMap(tab => tab.kind === "instance"
+        && parseInstanceKey(tab.instance.id).backendId === "local" ? [tab.instance] : [])
+      const findOwners = () => localInstances().filter((instance) => getSessions(instance.id).some((session) => session.id === sessionID))
       let owners = findOwners()
       if (owners.length === 0) {
-        await Promise.all([...instances().values()].filter((instance) => instance.client).map((instance) => fetchSessions(instance.id, { reset: true }).catch(() => undefined)))
+        await Promise.all(localInstances().filter((instance) => instance.client).map((instance) => fetchSessions(instance.id, { reset: true }).catch(() => undefined)))
         owners = findOwners()
       }
       const activeTab = activeAppTab()
-      const owner = owners.find(instance => activeTab?.kind === "instance" && instance.id === activeTab.instance.id) ?? owners[0]
+      const owner = selectBrowserOpenOwner(owners, activeTab?.kind === "instance" ? activeTab.instance.id : undefined)
       if (disposed || !owner) {
         if (!disposed) log.warn("Failed to route agent-requested web preview", {
           sessionID,
@@ -273,13 +304,19 @@ const App: Component = () => {
         })
         return
       }
+      const operation = captureBackendOperation(owner.id, undefined, () => !disposed && instances().has(owner.id)
+        && findOwners().some(candidate => candidate.id === owner.id))
       const intent = beginGesture({ instanceId: owner.id, sessionId: sessionID })
       try {
-        if (!await claimNativeBrowserOpen(requestID)) return
+        if (!operation.current() || !intent.current() || !await claimNativeBrowserOpen(requestID)) return
+        if (!operation.current() || !intent.current()) {
+          await releaseNativeBrowserOpen(requestID)
+          return
+        }
         const instance = owner
-        const stillOwned = () => !disposed && findOwners().some(candidate => candidate.id === instance.id)
+        const stillOwned = () => operation.current() && intent.current()
         await openSessionPreview(sessionID, url, instance.id, async () => stillOwned() && await claimNativeBrowserOpen(requestID) && stillOwned(), intent)
-        if (!stillOwned() || !intent.current()) {
+        if (!stillOwned()) {
           await releaseNativeBrowserOpen(requestID)
           return
         }
@@ -316,6 +353,13 @@ const App: Component = () => {
     const tab = activeAppTab()
     return tab?.kind === "instance" ? tab.instance : null
   })
+  const automaticLocalSetup = () => {
+    const tab = activeAppTab()
+    if (tab) return allowsAutomaticLocalSetup(tab)
+    const saved = loadedRestorableSession()
+    const selected = saved?.tabs[saved.activeTabIndex]
+    return selected?.kind !== "workspace" || backendIdOf(selected) === "local"
+  }
   const activeSessionIdForInstance = createMemo(() => {
     const instance = activeInstance()
     if (!instance) return null
@@ -323,9 +367,9 @@ const App: Component = () => {
   })
 
   useForegroundRefresh({
-    onRefresh: async () => {
-      // The SSE transport is global: a reconnect can mean missed events for
-      // EVERY loaded workspace/session, not just the one on screen. So we:
+    onRefresh: async (backendId, signal) => {
+      signal.throwIfAborted()
+      // A reconnect reconciles every loaded workspace/session of its backend:
       //  1. Re-fetch the session list for every instance (status/titles).
       //  2. Force-reload whatever session is active AFTER the fetch settles
       //     (so a session switch during the await still lands on the right
@@ -334,10 +378,11 @@ const App: Component = () => {
       //     re-fetches lazily on next activation instead of returning stale
       //     content (a non-forced load short-circuits once "loaded").
       const instanceIds = Array.from(instances().values())
-        .filter((instance) => instance.status === "ready" && Boolean(instance.client))
+        .filter((instance) => backendIdOf(instance) === backendId && instance.status === "ready" && Boolean(instance.client))
         .map((instance) => instance.id)
       const sessionListResults = await Promise.allSettled(
         instanceIds.map((id) => {
+          signal.throwIfAborted()
           let invalidateSessions = () => {}
           let invalidatePendingRequests = () => {}
           return withForegroundRefreshTimeout(
@@ -345,18 +390,21 @@ const App: Component = () => {
               let sessionError: unknown
               try {
                 await fetchSessions(id, {
+                  signal,
                   strictStatus: true,
                   registerInvalidation: (invalidate) => { invalidateSessions = invalidate },
                 })
               } catch (error) {
                 sessionError = error
               }
+              signal.throwIfAborted()
               await Promise.all([
-                reloadWorktrees(id),
-                syncPendingRequests(id, (invalidate) => { invalidatePendingRequests = invalidate }),
-                refreshVolatileInstanceState(id),
-                syncLoadedSessionInboxes(id),
+                reloadWorktrees(id, false, signal),
+                syncPendingRequests(id, (invalidate) => { invalidatePendingRequests = invalidate }, undefined, signal),
+                refreshVolatileInstanceState(id, undefined, signal),
+                syncLoadedSessionInboxes(id, signal),
               ])
+              signal.throwIfAborted()
               if (sessionError) throw sessionError
             })(),
             `Foreground refresh for ${id}`,
@@ -364,11 +412,14 @@ const App: Component = () => {
               invalidateSessions()
               invalidatePendingRequests()
             },
+            signal,
           )
         }),
       )
+      signal.throwIfAborted()
       const failedInstanceIds: string[] = []
       sessionListResults.forEach((result, i) => {
+        signal.throwIfAborted()
         reconcilePendingSessionIndicators(instanceIds[i])
         if (result.status === "rejected") {
           failedInstanceIds.push(instanceIds[i])
@@ -379,14 +430,17 @@ const App: Component = () => {
       const activeInst = activeInstance()
       const activeSession = activeSessionIdForInstance()
       const hasActive = Boolean(
-        activeInst?.status === "ready" && activeInst.client && activeSession && activeSession !== "info",
+        activeInst?.status === "ready" && backendIdOf(activeInst) === backendId && activeInst.client && activeSession && activeSession !== "info",
       )
       const canReloadActive = hasActive && !failedInstanceIds.includes(activeInst!.id)
 
       // Invalidate every loaded session except the active one (force-reloaded
       // below). Snapshot the map first; invalidate mutates it via setState.
       for (const [instId, sessionSet] of messagesLoaded().entries()) {
+        signal.throwIfAborted()
+        if (parseInstanceKey(instId).backendId !== backendId) continue
         for (const sId of sessionSet) {
+          signal.throwIfAborted()
           if (canReloadActive && instId === activeInst!.id && sId === activeSession) continue
           invalidateSessionMessageLoad(instId, sId)
         }
@@ -394,18 +448,22 @@ const App: Component = () => {
 
       let activeReloadFailed = false
       if (canReloadActive) {
+        signal.throwIfAborted()
         const statusBefore = getSessionStatus(activeInst!.id, activeSession!)
         try {
           let invalidateMessages = () => {}
           await withForegroundRefreshTimeout(
             loadMessages(activeInst!.id, activeSession!, {
+              signal,
               force: true,
               registerInvalidation: (invalidate) => { invalidateMessages = invalidate },
             }),
             `Active-session refresh for ${activeInst!.id}:${activeSession!}`,
             () => invalidateMessages(),
+            signal,
           )
         } catch (error) {
+          signal.throwIfAborted()
           activeReloadFailed = true
           log.error("Foreground refresh: active session reload failed", {
             instanceId: activeInst!.id,
@@ -413,6 +471,7 @@ const App: Component = () => {
             error,
           })
         }
+        signal.throwIfAborted()
         const statusAfter = getSessionStatus(activeInst!.id, activeSession!)
         log.info("Foreground refresh: active session reloaded", {
           instanceId: activeInst!.id,
@@ -451,7 +510,7 @@ const App: Component = () => {
     return recent?.projectName?.trim() || getPathBasename(folderPath)
   }
 
-  async function handleSelectFolder(folderPath: string): Promise<boolean> {
+  async function handleSelectFolder(folderPath: string, blankId: string | null | undefined = activeBlankTabId()): Promise<boolean> {
     if (!folderPath) {
       return false
     }
@@ -466,12 +525,14 @@ const App: Component = () => {
       recordWorkspaceLaunch(instances().get(result.instanceId)?.folder ?? folderPath, folderPath)
       if (result.reused) {
         selectInstanceTab(result.instanceId)
+        replaceBlankTab(blankId ?? undefined, getInstanceAppTabId(result.instanceId))
         setShowFolderSelection(false)
         log.info("Selected reused instance", { instanceId: result.instanceId, folderPath })
         return true
       }
 
       selectInstanceTab(result.instanceId)
+      replaceBlankTab(blankId ?? undefined, getInstanceAppTabId(result.instanceId))
       setShowFolderSelection(false)
 
       log.info("Created instance", {
@@ -488,7 +549,7 @@ const App: Component = () => {
       )
       const missingBinary = isMissingBinaryMessage(message)
       if (missingBinary || message.includes("opencode_update_required")) {
-        openOpenCodeSetup(() => handleSelectFolder(folderPath))
+        openOpenCodeSetup(() => handleSelectFolder(folderPath, blankId))
         return false
       }
       showLaunchError({ source: "create", message, binaryPath: selectedBinary, missingBinary })
@@ -502,11 +563,13 @@ const App: Component = () => {
   useDesktopFolderLaunch(handleSelectFolder)
   useDesktopConnectionLaunch()
 
-  async function handleNewTemporaryInstance(): Promise<void> {
+  async function handleNewTemporaryInstance(blankId: string | null | undefined = activeBlankTabId()): Promise<void> {
     clearLaunchError()
     setIsSelectingFolder(true)
     try {
-      selectInstanceTab(await openTemporaryInstance())
+      const id = await openTemporaryInstance()
+      selectInstanceTab(id)
+      replaceBlankTab(blankId ?? undefined, getInstanceAppTabId(id))
       setShowFolderSelection(false)
     } catch (error) {
       const message = formatLaunchErrorMessage(
@@ -517,7 +580,7 @@ const App: Component = () => {
       )
       const missingBinary = isMissingBinaryMessage(message)
       if (missingBinary || message.includes("opencode_update_required")) {
-        openOpenCodeSetup(() => handleNewTemporaryInstance())
+        openOpenCodeSetup(() => handleNewTemporaryInstance(blankId))
         return
       }
       showLaunchError({ source: "create", message, binaryPath: serverSettings().opencodeBinary || "opencode2", missingBinary })
@@ -527,11 +590,12 @@ const App: Component = () => {
     }
   }
 
-  function handleSelectExistingInstance(instanceId: string, recentPath: string) {
+  function handleSelectExistingInstance(instanceId: string, recentPath: string, blankId: string | null | undefined = activeBlankTabId()) {
     const instance = instances().get(instanceId)
     if (!instance) return
     recordWorkspaceLaunch(instance.folder, recentPath)
     selectInstanceTab(instanceId)
+    if (blankId) closeBlankTab(blankId)
     setShowFolderSelection(false)
     log.info("Selected existing instance", { instanceId, folderPath: instance.folder })
   }
@@ -546,7 +610,8 @@ const App: Component = () => {
   }
 
   function handleNewInstanceRequest() {
-    setShowFolderSelection(true)
+    openBlankTab()
+    setShowFolderSelection(false)
   }
 
   const [launcherOpen, setLauncherOpen] = createSignal(false)
@@ -556,17 +621,13 @@ const App: Component = () => {
     if (showFolderSelection() || appTabs().length === 0) setLauncherOpen(false)
   })
 
-  function handleOpenSidecarPicker() {
-    setSidecarPickerOpen(true)
-    void ensureSidecarsLoaded()
-  }
-
-  async function handleOpenSidecar(sidecarId: string) {
+  async function handleOpenSidecar(sidecarId: string, blankId: string | null | undefined = activeBlankTabId()) {
     try {
       const tab = await openSidecarTab(sidecarId)
       selectSidecarTab(tab.token)
+      replaceBlankTab(blankId ?? undefined, getSidecarAppTabId(tab.token))
       setShowFolderSelection(false)
-      setSidecarPickerOpen(false)
+      preferencesForBackend("local").recordSidecarRecent(sidecarId)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       showAlertDialog(message, {
@@ -611,30 +672,6 @@ const App: Component = () => {
     }
   }
 
-  async function handleCloseAppTab(tabId: string) {
-    const tab = getAppTabById(tabId)
-    if (!tab) return
-    markAppTabUserInteraction()
-
-    const fallbackTabId = activeAppTabId() === tabId ? getAdjacentAppTabId(tabId) : activeAppTabId()
-
-    if (tab.kind === "instance" && tab.instance.temporary) {
-      // Asks to keep or discard unless untouched; a refused discard restores the tab.
-      await closeTemporaryInstance(tab.instance.id)
-      return
-    }
-
-    if (tab.kind === "instance") {
-      closeInstanceTab(tab.instance.id)
-    } else {
-      closeSidecarTab(tab.sidecarTab.token)
-    }
-
-    if (!getAppTabById(tabId)) {
-      ensureActiveAppTab(fallbackTabId)
-    }
-  }
-
   const handleSidebarAgentChange = async (instanceId: string, sessionId: string, agent: string) => {
     if (!instanceId || !sessionId || sessionId === "info") return
     await updateSessionAgent(instanceId, sessionId, agent)
@@ -663,7 +700,7 @@ const App: Component = () => {
     setToolInputsVisibility,
     handleNewInstanceRequest,
     handleNewTemporaryInstance: () => handleNewTemporaryInstance(),
-    handleCloseActiveTab: () => handleCloseAppTab(activeAppTabId() ?? ""),
+    handleCloseActiveTab: () => closeAppTab(activeAppTabId() ?? ""),
     handleNewSession,
     handleCloseSession,
     getActiveInstance: activeInstance,
@@ -675,7 +712,7 @@ const App: Component = () => {
     executeCommand,
     setEscapeInDebounce,
     handleNewInstanceRequest,
-    handleCloseActiveTab: () => handleCloseAppTab(activeAppTabId() ?? ""),
+    handleCloseActiveTab: () => closeAppTab(activeAppTabId() ?? ""),
     handleNewSession,
     handleCloseSession,
     showFolderSelection,
@@ -705,7 +742,7 @@ const App: Component = () => {
 
   return (
     <>
-      <OpenCodeSetup />
+      <OpenCodeSetup automatic={automaticLocalSetup()} />
       <InstanceDisconnectedModal
         open={Boolean(disconnectedInstance())}
         folder={disconnectedInstance()?.folder}
@@ -781,7 +818,7 @@ const App: Component = () => {
                   tabs={appTabs()}
                   activeTabId={activeAppTabId()}
                   onSelect={selectAppTab}
-                  onClose={(tabId) => void handleCloseAppTab(tabId)}
+                  onClose={(tabId) => void closeAppTab(tabId)}
                   onNew={handleNewInstanceRequest}
                   onOpenLauncher={(anchor) => {
                     // The home page already offers everything; a hidden tab bar must not reopen it.
@@ -832,7 +869,14 @@ const App: Component = () => {
                       data-tab-kind={tab.kind}
                       data-tab-visible={isVisible() ? "true" : "false"}
                     >
-                      <SideCarView tab={tab.sidecarTab} />
+                      {tab.kind === "sidecar" ? <SideCarView tab={tab.sidecarTab} /> : tab.kind === "remote-restore" ? <RemoteRestoreView tab={tab} /> :
+                        <FolderSelectionView blank initialServer={tab.server} active={isVisible()} isLoading={isSelectingFolder()}
+                          onSelectFolder={path => void handleSelectFolder(path, tab.id)}
+                          onSelectExistingInstance={handleSelectExistingInstance}
+                          onNewTemporaryInstance={() => void handleNewTemporaryInstance(tab.id)}
+                          onOpenSidecar={id => void handleOpenSidecar(id, tab.id)}
+                          onJoined={() => closeBlankTab(tab.id)}
+                          onRemoteOpened={id => replaceBlankTab(tab.id, getInstanceAppTabId(id))} />}
                     </div>
                   )
                 }}
@@ -846,7 +890,9 @@ const App: Component = () => {
             onSelectExistingInstance={handleSelectExistingInstance}
             onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
             isLoading={isSelectingFolder() || shouldShowAppRestoreLoading(loadedRestorableSession())}
-            onOpenSidecar={handleOpenSidecarPicker}
+            onOpenSidecar={handleOpenSidecar}
+            onJoined={() => setShowFolderSelection(false)}
+            onRemoteOpened={() => setShowFolderSelection(false)}
           />
         </Show>
 
@@ -854,11 +900,13 @@ const App: Component = () => {
           <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
             <div class="w-full h-full relative">
               <FolderSelectionView
-                onSelectFolder={handleSelectFolder}
-                onSelectExistingInstance={handleSelectExistingInstance}
-                onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
+                onSelectFolder={path => void handleSelectFolder(path, null)}
+                onSelectExistingInstance={(id, path) => handleSelectExistingInstance(id, path, null)}
+                onNewTemporaryInstance={() => void handleNewTemporaryInstance(null)}
                 isLoading={isSelectingFolder()}
-                onOpenSidecar={handleOpenSidecarPicker}
+                onOpenSidecar={id => void handleOpenSidecar(id, null)}
+                onJoined={() => setShowFolderSelection(false)}
+                onRemoteOpened={() => setShowFolderSelection(false)}
                 onClose={() => {
                   setShowFolderSelection(false)
                   clearLaunchError()
@@ -873,12 +921,12 @@ const App: Component = () => {
           anchor={launcherAnchor()}
           isLoading={isSelectingFolder()}
           onOpenChange={setLauncherOpen}
-          onSelectFolder={(path) => void handleSelectFolder(path)}
-          onSelectExistingInstance={handleSelectExistingInstance}
-          onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
+          onSelectFolder={(path) => void handleSelectFolder(path, null)}
+          onSelectExistingInstance={(id, path) => handleSelectExistingInstance(id, path, null)}
+          onNewTemporary={() => void handleNewTemporaryInstance(null)}
+          onOpenSidecar={id => void handleOpenSidecar(id, null)}
         />
         <SettingsScreen />
-        <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />
         <AlertDialog />
         <SessionPreviewHost />
         <AuthRecoveryDialog />

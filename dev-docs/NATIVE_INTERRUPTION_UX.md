@@ -195,6 +195,10 @@ global Forms and late-arriving ancestry on desktop and mobile.
 
 ## Agent conventions
 
+- Incomplete recovery claims share a project only within its backend. The
+  unsupported-plugin claim is shared across projects on the same backend;
+  only complete recovery on that backend re-arms it.
+
 - Omit transcript-source and answer-in-dock links. Key selection by request kind/id; hide previous/next navigation for a single request. Keep square, height-bounded dock chrome in `styles/components/interruption-dock.css`, with a token-based accent header and fixed action footer outside the scrolling request content.
 - Keep disclosure chevrons leading without changing their directions, and retain the normal question/permission icon for every source. Collapsed unrelated-conversation requests show the full shared red `session-permission` badge (shield and localized request-status text) at the trailing end of the header, separate from the request icon.
 - Requests from the open conversation and its recursive descendants can expand normally. Other conversations first appear as a compact, explicitly expandable preview; answering stays in place. Keep persistent textual provenance prominent (other conversation, subagent with parent, or sessionless project request), with an explicit View conversation action for session-owned requests. Arrival never replaces the request being edited or navigates sessions. Newly selected external requests after settlement remain compact until explicitly opened. Hidden/inert keyed editors retain drafts, and only an expanded editor compacts the composer. Project badges open the dock in place rather than silently navigating to another conversation.

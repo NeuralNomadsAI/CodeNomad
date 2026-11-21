@@ -16,6 +16,9 @@ export const RemoteControlSettingsSection: Component = () => {
   const { t } = useI18n()
   const [status, setStatus] = createSignal<RemoteControlStatus | null>(null)
   const [pairing, setPairing] = createSignal<RemoteControlPairing | null>(null)
+  // A direct HTTPS link stays valid while the tunnel is off.
+  const [directPairing, setDirectPairing] = createSignal(false)
+  const [directOrigin, setDirectOrigin] = createSignal("")
   const [qrCode, setQrCode] = createSignal<string | null>(null)
   const [devices, setDevices] = createSignal<RemoteControlDevice[]>([])
   const [loading, setLoading] = createSignal(false)
@@ -32,8 +35,8 @@ export const RemoteControlSettingsSection: Component = () => {
   const load = async () => {
     const next = await serverApi.fetchRemoteControlStatus()
     setStatus(next)
-    // The server cancels the code when Remote Control turns off; a reconnect keeps it valid.
-    if (!next.enabled) clearPairing()
+    // The server cancels a tunnel code when Remote Control turns off; a reconnect keeps it valid.
+    if (next.disabledByAdministrator || (!next.enabled && !directPairing())) clearPairing()
     // Paired devices stay listed, and revocable, while Remote Control is off.
     setDevices(next.manageable ? (await serverApi.fetchRemoteControlDevices()).devices : [])
   }
@@ -60,8 +63,9 @@ export const RemoteControlSettingsSection: Component = () => {
   })
   onCleanup(() => clearTimeout(pairingExpiry))
 
-  const showPairing = async (next: RemoteControlPairing) => {
+  const showPairing = async (next: RemoteControlPairing, direct = false) => {
     clearTimeout(pairingExpiry)
+    setDirectPairing(direct)
     pairingExpiry = setTimeout(clearPairing, Math.max(0, Date.parse(next.expiresAt) - Date.now()))
     setPairing(next)
     setQrCode(null)
@@ -95,7 +99,7 @@ export const RemoteControlSettingsSection: Component = () => {
     setError(null)
     try {
       setStatus(await serverApi.stopRemoteControl())
-      clearPairing()
+      if (!directPairing()) clearPairing()
     } catch (cause) {
       setError(message(cause))
     } finally {
@@ -119,17 +123,20 @@ export const RemoteControlSettingsSection: Component = () => {
     }
   }
 
-  const createPairing = async () => {
+  const createPairing = async (origin?: string) => {
     setLoading(true)
     setError(null)
     try {
-      await showPairing(await serverApi.createRemoteControlPairing())
+      await showPairing(await serverApi.createRemoteControlPairing(origin), origin !== undefined)
     } catch (cause) {
       setError(message(cause))
     } finally {
       setLoading(false)
     }
   }
+
+  const directOrigins = createMemo(() => (status()?.manageable ? status()?.directOrigins ?? [] : []))
+  const selectedDirectOrigin = () => (directOrigins().includes(directOrigin()) ? directOrigin() : directOrigins()[0] ?? "")
 
   const copyPairing = async () => {
     const url = pairing()?.url
@@ -215,6 +222,29 @@ export const RemoteControlSettingsSection: Component = () => {
           </div>
         </Show>
 
+        <Show when={directOrigins().length > 0 && !disabled()}>
+          <div class="settings-toggle-row">
+            <div>
+              <div class="settings-toggle-title">{t("remoteControl.direct.title")}</div>
+              <Show when={directOrigins().length === 1}>
+                <div class="settings-toggle-caption">{directOrigins()[0]}</div>
+              </Show>
+            </div>
+            <div class="remote-control-actions">
+              <Show when={directOrigins().length > 1}>
+                <select aria-label={t("remoteControl.direct.origin")} value={selectedDirectOrigin()} disabled={loading()}
+                  onChange={(event) => setDirectOrigin(event.currentTarget.value)}>
+                  <For each={directOrigins()}>{(origin) => <option value={origin}>{origin}</option>}</For>
+                </select>
+              </Show>
+              <button class="selector-button selector-button-secondary w-auto" type="button" onClick={() => void createPairing(selectedDirectOrigin())} disabled={loading()}>
+                <Link2 class="w-4 h-4" />
+                {t("remoteControl.direct.newLink")}
+              </button>
+            </div>
+          </div>
+        </Show>
+
         <Show when={status()?.manageable && !disabled() ? status() : null}>
           {(current) => (
             <div class="settings-toggle-row">
@@ -262,7 +292,6 @@ export const RemoteControlSettingsSection: Component = () => {
               <ShieldCheck class="settings-card-heading-icon" />
               <div>
                 <h3 class="settings-card-title">{t("remoteControl.devices.title")}</h3>
-                <p class="settings-card-subtitle">{t("remoteControl.devices.description")}</p>
               </div>
             </div>
           </div>
@@ -273,6 +302,7 @@ export const RemoteControlSettingsSection: Component = () => {
                   <div class="remote-control-device">
                     <div>
                       <strong>{device.name}</strong>
+                      <p>{device.origin ? t("remoteControl.devices.direct", { origin: device.origin }) : t("remoteControl.devices.tunnel")}</p>
                       <p>{device.revocationPending ? t("remoteControl.devices.revocationPending")
                         : t("remoteControl.devices.lastSeen", { time: new Date(device.lastSeenAt).toLocaleString() })}</p>
                     </div>

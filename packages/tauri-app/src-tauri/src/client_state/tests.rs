@@ -45,7 +45,8 @@ fn preferences_restoration_survives_final_window_removal_and_clears_explicitly()
     let request = crate::preferences_window::PreferencesRequest {
         scroll_top: Some(420),
         section: "providers".into(),
-        instance_id: Some("instance-1".into()),
+        instance_id: Some("remote~instance-1".into()),
+        server_id: Some("remote-server".into()),
         workspace_path: Some("C:\\repo".into()),
         location: Some(crate::preferences_window::PreferencesLocation {
             directory: "/mnt/c/repo".into(),
@@ -61,6 +62,7 @@ fn preferences_restoration_survives_final_window_removal_and_clears_explicitly()
     let bytes = fs::read(directory.path().join(CLIENT_STATE_FILENAME)).unwrap();
     let persisted: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(persisted["preferences"]["section"], "providers");
+    assert_eq!(persisted["preferences"]["serverId"], "remote-server");
     assert_eq!(persisted["preferences"]["workspacePath"], "C:\\repo");
     assert_eq!(persisted["preferences"]["location"]["directory"], "/mnt/c/repo");
     assert_eq!(
@@ -88,6 +90,7 @@ fn preferences_restoration_survives_final_window_removal_and_clears_explicitly()
     assert_eq!(last.section, "providers");
     assert_eq!(last.scroll_top, Some(420));
     assert_eq!(last.instance_id, None);
+    assert_eq!(last.server_id, None);
     assert_eq!(last.location, None);
     assert_eq!(reopened.state.lock().unwrap().preferences_window, Some(NativeWindowState {
         bounds, maximized: true, fullscreen: false, zoom_factor: 1.25,

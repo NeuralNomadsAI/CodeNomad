@@ -16,10 +16,11 @@ interface CompactionEndIdentity {
  */
 export function createCompactionNoticeClaims(limit = REMEMBERED_COMPACTIONS) {
   const claimed = new Set<string>()
-  return (event: CompactionEndIdentity): boolean => {
-    const key = event.durable
+  return (event: CompactionEndIdentity, backendId = "local"): boolean => {
+    const identity = event.durable
       ? `${event.durable.aggregateID}\0${event.durable.seq}`
       : `${event.data.sessionID}\0${event.id}`
+    const key = `${backendId}\0${identity}`
     if (claimed.has(key)) return false
     claimed.add(key)
     if (claimed.size > limit) claimed.delete(claimed.values().next().value!)

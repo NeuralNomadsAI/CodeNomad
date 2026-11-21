@@ -1,4 +1,12 @@
 export const dialogMessages = {
+  "remoteRestore.absent": "Сервер не найден",
+  "remoteRestore.confirmChange": "Изменить подключение к серверу? Сохранённые вкладки в других окнах могут стать недоступны.",
+  "remoteRestore.idle": "Ожидание",
+  "remoteRestore.admitting": "Подключение…",
+  "remoteRestore.compatible": "Проект недоступен",
+  "remoteRestore.refused": "Сервер несовместим",
+  "remoteRestore.unreachable": "Сервер недоступен",
+  "remoteRestore.inUse": "Закройте вкладки этого сервера и откройте Настройки из другого проекта перед изменением его адреса.",
   "authRecovery.title": "Войдите в CodeNomad снова",
   "authRecovery.pairing": "На хосте откройте «Настройки → Удалённый доступ», создайте ссылку для сопряжения, откройте её на этом устройстве и проверьте соединение.",
   "authRecovery.pairingTitle": "Повторно сопрягите это устройство",

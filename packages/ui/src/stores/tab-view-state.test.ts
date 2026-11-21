@@ -3,7 +3,7 @@ import { it } from "node:test"
 import { normalizeRestorableSession, type RestorableWorkspaceTabState } from "./client-state-codec.ts"
 import { canonicalJson, decodeClientSnapshotV2, encodeClientSnapshotV2, sha256 } from "./client-state-partitions.ts"
 import { normalizeTabViewState, MAX_TAB_PREVIEW_STORAGE, type RestorableTabViewState } from "./tab-view-state-codec.ts"
-import { migrateLegacyTabPreviews } from "./tab-view-state-migration.ts"
+import { compactMissionKey, migrateLegacyTabPreviews } from "./tab-view-state-migration.ts"
 import { captureTabViewState, clearTabViewState, getTabViewState, seedTabViewState, updateTabViewState } from "./tab-view-state.ts"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority.ts"
 import {
@@ -92,6 +92,34 @@ it("validates optional fields and trims history before previews within the share
   const previews = (normalized.tabs[0] as RestorableWorkspaceTabState).viewState?.previews ?? {}
   assert.ok(Object.keys(previews).length > 0)
   for (const p of Object.values(previews)) assert.equal(p.history?.urls[p.history.index], p.targetUrl)
+})
+
+it("legacy migration binds qualified backend/folder identities without local or case-folded backend fallback", () => {
+  const tabs = [
+    { ...workspace(0), folder: "C:/Same", backendId: "ServerA" },
+    { ...workspace(1), folder: "c:/same/", backendId: "ServerA" },
+    { ...workspace(0), folder: "C:/Same", backendId: "servera" },
+    { ...workspace(0), folder: "C:/Same" },
+    { ...workspace(0), folder: "C:/OnlyLocal", backendId: "ServerA" },
+  ]
+  const layout = new Map([
+    [`mission-project-${compactMissionKey("ServerA~C:/Same")}`, JSON.stringify({ selected: "remote" })],
+    [`mission-project-${compactMissionKey("C:/Same")}`, JSON.stringify({ selected: "local" })],
+    [`mission-project-${compactMissionKey("C:/OnlyLocal")}`, JSON.stringify({ selected: "must-not-import" })],
+  ])
+  const migration = migrateLegacyTabPreviews(session(tabs), JSON.stringify({
+    [JSON.stringify(["ServerA~c:\\Same", "session"])]: preview("remote"),
+    [JSON.stringify(["servera~C:/Same", "session"])]: preview("case-sensitive-backend"),
+    [JSON.stringify(["C:/Same", "session"])]: preview("local"),
+    "C:/OnlyLocal": preview("must-not-import"),
+  }), key => layout.get(key) ?? null)!
+  const restored = migration.state.tabs as RestorableWorkspaceTabState[]
+  assert.deepEqual(restored.slice(0, 4).map(tab => tab.viewState?.previews?.session.targetUrl),
+    ["remote", "remote", "case-sensitive-backend", "local"].map(path => preview(path).targetUrl))
+  assert.deepEqual(restored.map(tab => tab.viewState?.missions?.selected), ["remote", undefined, undefined, "local", undefined])
+  assert.equal(restored[4].viewState, undefined)
+  assert.deepEqual(Object.keys(JSON.parse(migration.remaining)), ["C:/OnlyLocal"])
+  assert.equal(migration.missions.length, 2)
 })
 
 it("round trips distinct descriptor envelopes through strict partitions and degrades corrupt optional view data", async () => {
