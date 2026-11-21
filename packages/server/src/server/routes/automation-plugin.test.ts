@@ -31,70 +31,77 @@ test("targets the exact inspection independently of the visible conversation or 
   const app = Fastify({ logger: false })
   t.after(() => app.close())
   const nativeCalls: Array<{ method: string; params: unknown }> = []
+  const closedRuns: string[] = []
   let state = "ready"
   let runId = "run-1"
   let focusedWindow = "window-1"
   let firstWindowOpen = true
   let holdStatus: (() => Promise<void>) | undefined
   let restartFailure: Error | undefined
-  const retiredRuns: string[] = []
   let screenshotWindow: string | undefined
   let windowInstance: string | undefined
   let onInspection: (() => void) | undefined
   let visibleSession = "session-1"
+  let owned = true
+  let originalWindow: "missing" | "ready" = "ready"
+  let renderedWindow: string | undefined
   let inspectedIdentity: unknown
   const previewError = { level: "error", text: "browser preview: install navigation starting handler: Paramètre incorrect. (0x80070057)" }
   const inspectOptions: unknown[] = [], actions: Array<Record<string, unknown>> = []
-  registerAutomationPluginRoute(app, {
+  const deps = {
     authManager: { isLoopbackRequest: () => true },
     bridgeToken: "secret",
     nativeParent: {
-      request: async (method: string, params: { windowId?: string; runId?: string; windowInstance?: string }) => {
+      request: async (method: string, params: { windowId?: string; runId?: string; windowInstance?: string; restartId?: string }) => {
         nativeCalls.push({ method, params })
         if (holdStatus && params.windowId === "window-1") {
           const wait = holdStatus
           holdStatus = undefined
           await wait()
         }
-        if (method === "developer.restart") {
+        if (method === "developer.restartScope") {
           if (restartFailure) throw restartFailure
-          runId = "run-2"
-          return { state: "starting", runId }
+          return params
         }
+        const reconnect = method === "developer.reconnect"
         const windowId = params.windowId ?? focusedWindow
         const available = (!params.runId || params.runId === runId && params.windowInstance === windowInstance)
           && (windowId !== "window-1" || firstWindowOpen)
         return {
           status: {
-            state: available ? state : "starting",
+            state: reconnect ? originalWindow : available ? state : "starting",
             runId,
             nativeIdentity: "electron:test",
             cdpUrl: "http://127.0.0.1:9222",
-            windowId: available ? windowId : undefined,
+            windowId: reconnect || available ? windowId : undefined,
             windowInstance,
+            ...(reconnect && { restartId: params.restartId }),
           },
           logs: [previewError],
         }
       },
     },
     developerCdp: {
+      probeContexts: async (_endpoint: string, windows: Map<string, string | undefined>) => new Map(windows),
       context: async (identity: { sessionId?: string; windowId: string }) => {
         assert.equal(identity.sessionId, undefined)
         return { windowId: identity.windowId, instanceId: "workspace-1", sessionId: visibleSession }
       },
-      inspect: async (identity: { windowId: string }, options: unknown) => {
+      inspect: async (identity: { windowId: string; windowInstance?: string }, options: unknown, hooks?: { beforeRead?(): void }) => {
+        hooks?.beforeRead?.()
         onInspection?.()
         inspectedIdentity = identity
         inspectOptions.push(options)
         return {
           target: { id: "page-1", title: "CodeNomad", url: "http://app.test/" },
-          context: { windowId: identity.windowId, instanceId: "workspace-1", sessionId: visibleSession },
+          context: { windowId: renderedWindow ?? identity.windowId, windowInstance: identity.windowInstance,
+            instanceId: "workspace-1", sessionId: visibleSession },
           snapshot: "- button \"Save\" [e1]",
           collapsed: 0,
           diagnostics: [],
         }
       },
-      close: (run: string) => retiredRuns.push(run),
+      close: (runId: string) => { closedRuns.push(runId) },
       screenshot: async (identity: { windowId: string }) => {
         screenshotWindow = identity.windowId
         return { data: "fixture", mediaType: "image/png" }
@@ -109,11 +116,12 @@ test("targets the exact inspection independently of the visible conversation or 
     workspaceManager: {
       getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "D:\\project" } }) } }),
       list: () => [{ id: "workspace-1" }],
-      ownsLocation: async () => true,
+      ownsLocation: async () => owned,
     },
-  } as never)
+  } as never
+  registerAutomationPluginRoute(app, deps)
 
-  const request = async (body: Record<string, unknown>) => app.inject({
+  const request = async (body: Record<string, unknown>, server = app) => server.inject({
     method: "POST",
     url: AUTOMATION_BRIDGE_PATH,
     headers: { "x-codenomad-automation-token": "secret" },
@@ -135,6 +143,8 @@ test("targets the exact inspection independently of the visible conversation or 
   const firstPin = inspect.json().result.pin
   assert.ok(firstPin)
 
+  const target = { runId: "run-1", nativeIdentity: "electron:test", windowId: "window-1" }
+
   visibleSession = "session-2"
   focusedWindow = "window-2"
   assert.equal((await execute({ action: "click", ref: "ax1" }, firstPin)).statusCode, 200)
@@ -147,17 +157,66 @@ test("targets the exact inspection independently of the visible conversation or 
   await execute({ action: "type", ref: "e3", text: "x", clear: false }, firstPin)
   assert.deepEqual(actions.map(action => [action.action, action.ref, action.clear ?? action.values]),
     [["click", "ax1", undefined], ["select", "e2", ["Exploration"]], ["type", "e3", false]])
-  assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "press", key: "Hyper+Q" } })).statusCode, 400,
+  assert.equal((await execute({ action: "press", key: "Hyper+Q" }, firstPin)).statusCode, 400,
     "the backend validates the flat command again")
-
-  const restart = await execute({ action: "restart" }, firstPin)
+  const command = { ...target, restartId: "8d80a777-0085-48c8-b791-d3514bd63f32" }
+  const restartRequest = (command: object, callerPin?: string) =>
+    request({ mode: "developer-restart", sessionID: "session-1", command, pin: callerPin })
+  const beforeUnpinnedRestart = nativeCalls.length
+  const unpinnedRestart = await restartRequest(command)
+  assert.equal(unpinnedRestart.statusCode, 404)
+  assert.equal(unpinnedRestart.json().code, "inspect-required")
+  assert.equal(nativeCalls.length, beforeUnpinnedRestart)
+  assert.equal((await restartRequest(command, "incorrect-pin")).statusCode, 409)
+  assert.equal((await restartRequest({ ...command, nativeIdentity: "other-scope" }, firstPin)).statusCode, 409)
+  assert.equal((await restartRequest({ ...command, runId: "other-run" }, firstPin)).statusCode, 409)
+  assert.equal((await restartRequest({ ...command, windowId: "other-window" }, firstPin)).statusCode, 409)
+  const restart = await restartRequest(command, firstPin)
   assert.equal(restart.statusCode, 200)
   assert.deepEqual(nativeCalls.slice(-2), [
     { method: "developer.status", params: { windowId: "window-1", runId: "run-1" } },
-    { method: "developer.restart", params: { windowId: "window-1", runId: "run-1" } },
+    { method: "developer.restartScope", params: command },
   ])
+  assert.deepEqual(nativeCalls.filter(call => call.method.startsWith("developer.restart")), [{ method: "developer.restartScope", params: command }])
+  assert.deepEqual(restart.json().result, command)
+  assert.deepEqual(closedRuns, ["run-1"])
+  runId = "run-2"
   assert.equal((await request({ mode: "developer-probe", sessionID: "session-2" })).statusCode, 200)
+  assert.equal((await restartRequest(command, firstPin)).statusCode, 409)
   assert.equal((await execute({ action: "restart" }, firstPin)).json().code, "target-gone")
+
+  const successor = Fastify()
+  registerAutomationPluginRoute(successor, deps)
+  const reconnect = () => request({ mode: "developer-reconnect", sessionID: "session-1", command }, successor)
+  const newTarget = { ...target, runId: "run-2" }
+  const receipt = { developerTarget: newTarget, restartId: command.restartId }
+  owned = false
+  originalWindow = "missing"
+  assert.deepEqual((await reconnect()).json(), { ...receipt, windowState: "missing" })
+  originalWindow = "ready"
+  assert.deepEqual((await reconnect()).json(), { ...receipt, windowState: "pending" }, "renderer reads still require ownership")
+  owned = true
+  renderedWindow = "other-focused-window"
+  assert.deepEqual((await reconnect()).json(), { ...receipt, windowState: "pending" }, "never publish a different renderer")
+  renderedWindow = undefined
+  assert.equal((await reconnect()).json().windowState, "inspected")
+  const recovered = (await reconnect()).json()
+  assert.equal(recovered.windowState, "inspected", "retry the same receipt if its bridge response was lost")
+  assert.deepEqual(inspectedIdentity, { runId: "run-2", windowId: "window-1", endpoint: "http://127.0.0.1:9222" })
+  const beforeUnpinnedFollowUps = nativeCalls.length
+  for (const command of [{ action: "press", key: "Enter" }, { action: "inspect", ref: "e1" }, { action: "screenshot" }]) {
+    const response = await request({ mode: "developer-execute", sessionID: "session-1", command }, successor)
+    assert.equal(response.json().code, "inspect-required", command.action)
+  }
+  const noRestartPin = await request({ mode: "developer-restart", sessionID: "session-1",
+    command: { ...command, ...newTarget } }, successor)
+  assert.equal(noRestartPin.json().code, "inspect-required")
+  assert.equal(nativeCalls.length, beforeUnpinnedFollowUps, "a successful reconnect never authorizes implicit follow-ups")
+  const press = await request({ mode: "developer-execute", sessionID: "session-1",
+    command: { action: "press", key: "Enter" }, pin: recovered.result.pin }, successor)
+  assert.equal(press.statusCode, 200)
+  assert.deepEqual(nativeCalls.at(-1), { method: "developer.status", params: { runId: newTarget.runId, windowId: newTarget.windowId } })
+  await successor.close()
 
   focusedWindow = "window-1"
   const fresh = await execute({ action: "inspect" })
@@ -167,7 +226,7 @@ test("targets the exact inspection independently of the visible conversation or 
   const vanished = await execute({ action: "press", key: "Enter" }, fresh.json().result.pin)
   assert.equal(vanished.statusCode, 404)
   assert.equal(vanished.json().code, "target-gone")
-  assert.equal(actions.length, 3, "a vanished window cannot send a key to the newly focused window")
+  assert.equal(actions.length, 4, "a vanished window cannot send a key to the newly focused window")
 
   firstWindowOpen = true
   focusedWindow = "window-1"
@@ -238,26 +297,88 @@ test("targets the exact inspection independently of the visible conversation or 
     target: `electron:test/${runId}/window-2/${windowInstance}`, command: { action: "inspect" } })
   assert.equal(beforeRestart.statusCode, 200)
   const retiringPin = beforeRestart.json().result.pin
+  const lostCommand = { nativeIdentity: target.nativeIdentity, runId, windowId: "window-2", windowInstance,
+    restartId: "f4747d3e-86d2-4c01-8f7a-32489301a945" }
   restartFailure = new NativeRequestRefused("The selected window is no longer available")
-  const refused = await execute({ action: "restart" }, retiringPin)
-  assert.equal(refused.statusCode, 404)
-  assert.equal(refused.json().code, "target-gone")
-  assert.deepEqual(retiredRuns, ["run-1"])
+  const refused = await restartRequest(lostCommand, retiringPin)
+  assert.equal(refused.statusCode, 409)
+  assert.match(refused.json().error, /selected window is no longer available/)
+  assert.deepEqual(closedRuns, ["run-1"])
   const anotherInspection = await request({ mode: "developer-execute", sessionID: "session-1",
     target: `electron:test/${runId}/window-2/${windowInstance}`, command: { action: "inspect" } })
   assert.equal(anotherInspection.statusCode, 200)
   const lostPin = anotherInspection.json().result.pin
   restartFailure = new Error("Native request timed out")
-  const unconfirmed = await execute({ action: "restart" }, lostPin)
+  const unconfirmed = await restartRequest(lostCommand, lostPin)
+  assert.equal(unconfirmed.statusCode, 502)
   assert.equal(unconfirmed.json().code, "restart-outcome-unknown")
-  assert.match(unconfirmed.json().error, /Choose the window.*before retrying/)
-  assert.deepEqual(retiredRuns, ["run-1", "run-3"])
-  assert.equal((await execute({ action: "restart" }, lostPin)).json().code, "target-gone")
-  assert.equal(nativeCalls.filter(({ method }) => method === "developer.restart").length, 3)
+  assert.deepEqual(closedRuns, ["run-1", "run-3"])
+  assert.equal((await restartRequest(lostCommand, lostPin)).statusCode, 409)
+  assert.deepEqual(nativeCalls.filter(({ method }) => method.startsWith("developer.restart")), [
+    { method: "developer.restartScope", params: command },
+    { method: "developer.restartScope", params: lostCommand },
+    { method: "developer.restartScope", params: lostCommand },
+  ])
 
   const unauthorized = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH, payload: { mode: "developer-probe", sessionID: "session-1" } })
   assert.equal(unauthorized.statusCode, 401)
 })
+
+for (const pauseAt of ["native", "CDP"]) {
+  test(`reconnect preserves a newer inspection published during ${pauseAt}`, { timeout: 5_000 }, async t => {
+    const app = Fastify()
+    let reached!: () => void, resume!: () => void
+    const paused = new Promise<void>(resolve => { reached = resolve })
+    const resumed = new Promise<void>(resolve => { resume = resolve })
+    t.after(async () => { resume(); await app.close() })
+    const nativeIdentity = "electron:test", runId = "new-run", restoredWindow = "window-A"
+    const focused = "window-B"
+    const endpoint = "http://127.0.0.1:9222"
+    let restoredReads = 0
+    registerAutomationPluginRoute(app, {
+      authManager: { isLoopbackRequest: () => true }, bridgeToken: "secret",
+      nativeParent: { request: async (method: string, params: { windowId?: string; restartId?: string }) => {
+        if (method === "developer.reconnect" && pauseAt === "native") { reached(); await resumed }
+        return { status: { state: "ready", nativeIdentity, runId, windowId: params.windowId ?? focused,
+          restartId: params.restartId, cdpUrl: endpoint } }
+      } },
+      developerCdp: {
+        context: async () => ({}),
+        inspect: async ({ windowId }: { windowId: string }, _options: unknown, hooks?: { beforeRead?(): void }) => {
+          hooks?.beforeRead?.()
+          if (windowId === restoredWindow) {
+            restoredReads++
+            if (pauseAt === "CDP") { reached(); await resumed }
+          }
+          return { context: { windowId }, diagnostics: [] }
+        },
+        act: async ({ windowId }: { windowId: string }) => ({ windowId }),
+      },
+      workspaceManager: {
+        getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "/repo" } }) } }),
+        list: () => [{ id: "owner" }], ownsLocation: async () => true,
+      },
+    } as never)
+    const request = (mode: string, command: object, pin?: string) => app.inject({
+      method: "POST", url: AUTOMATION_BRIDGE_PATH, headers: { "x-codenomad-automation-token": "secret" },
+      payload: { mode, sessionID: "ses_fixture", command, pin },
+    })
+    const restartId = "8d80a777-0085-48c8-b791-d3514bd63f32"
+    const reconnect = request("developer-reconnect", { nativeIdentity, runId: "old-run", windowId: restoredWindow, restartId })
+    await paused
+    const inspection = await request("developer-execute", { action: "inspect" })
+    assert.equal(inspection.statusCode, 200)
+    assert.equal(inspection.json().result.context.windowId, focused)
+    resume()
+    assert.deepEqual((await reconnect).json(), {
+      developerTarget: { nativeIdentity, runId, windowId: restoredWindow }, restartId, windowState: "superseded",
+    })
+    assert.equal(restoredReads, pauseAt === "native" ? 0 : 1)
+    const act = await request("developer-execute", { action: "press", key: "Enter" }, inspection.json().result.pin)
+    assert.equal(act.statusCode, 200)
+    assert.equal(act.json().result.windowId, focused)
+  })
+}
 
 test("browser works with an unavailable developer target and unrelated inventory failure", async () => {
   const app = Fastify({ logger: false })

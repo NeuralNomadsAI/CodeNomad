@@ -13,6 +13,7 @@ mod client_state;
 mod data_profile;
 mod data_profile_cleanup;
 mod developer_mode;
+mod developer_relaunch;
 mod device_speech;
 mod device_speech_hex;
 mod device_speech_ipc;
@@ -318,7 +319,8 @@ pub(crate) fn handle_native_request(
         "developer.status" | "developer.targets" => state
             .developer_mode
             .native_snapshot(app, params, method == "developer.targets"),
-        "developer.restart" => state.developer_mode.request_restart(app, params),
+        "developer.restartScope" => state.developer_mode.request_restart(app, params, fence),
+        "developer.reconnect" => state.developer_mode.reconnect(app, params),
         _ => Err(format!("Unsupported native request: {method}")),
     }
 }
@@ -1838,8 +1840,19 @@ fn main() {
     let cwd = std::env::current_dir().unwrap_or_default();
     let home = dirs::home_dir().unwrap_or_else(|| cwd.clone());
     let local_data = dirs::data_local_dir().unwrap_or_else(|| home.clone());
-    let cli_config = std::env::var("CLI_CONFIG").ok();
-    let backend_config = identity::resolve_selected_config(cli_config.as_deref(), &cwd, &home);
+    let launch_arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    let handoff = match developer_relaunch::Handoff::take(&launch_arguments) {
+        Ok(handoff) if cfg!(windows) || handoff.is_none() => handoff,
+        _ => {
+            eprintln!("[tauri] invalid CodeNomad automation relaunch");
+            std::process::exit(1);
+        }
+    };
+    let backend_config = if let Some(ref handoff) = handoff {
+        handoff.config.clone()
+    } else {
+        identity::resolve_selected_config(std::env::var("CLI_CONFIG").ok().as_deref(), &cwd, &home)
+    };
     // Native listening/certificate readers and every backend spawn must select
     // this same ORIGINAL source, resolved before any startup cwd can change.
     // Process-wide set_var happens while the process is still single-threaded: before the startup
@@ -1853,27 +1866,40 @@ fn main() {
     configure_developer_environment();
     #[cfg(target_os = "linux")]
     appimage_environment::prefer_x11_display();
-    let identity::LaunchProfile {
-        key: profile,
-        pinned: profile_pinned,
-    } = resolve_launch_profile_or_exit(cli_config.as_deref(), &cwd, &home);
-    let scope = identity::resolve_scope(&profile, cli_config.as_deref(), &cwd, &home, &local_data);
+    let launch_profile = handoff.as_ref().map_or_else(
+        || resolve_launch_profile_or_exit(backend_config.as_deref(), &cwd, &home),
+        |handoff| identity::LaunchProfile {
+            key: handoff.profile.clone(),
+            pinned: handoff.pinned,
+        },
+    );
+    let profile_pinned = launch_profile.pinned;
+    let scope = identity::resolve_scope(
+        &launch_profile.key,
+        backend_config.as_deref(),
+        &cwd,
+        &home,
+        &local_data,
+    );
+    let executable = std::env::current_exe()
+        .ok()
+        .map(|path| std::fs::canonicalize(&path).unwrap_or(path));
+    let developer_identity = executable.as_deref().map_or_else(String::new, |path| {
+        developer_relaunch::native_identity(
+            &scope.profile, &scope.config_identity, backend_config.as_deref(), path,
+        )
+    });
+    if handoff.as_ref().is_some_and(|handoff| handoff.restart.native_identity != developer_identity) {
+        eprintln!("[tauri] CodeNomad automation relaunch scope changed");
+        std::process::exit(1);
+    }
     let (devtools_active_port, webview_data_directory, developer_browser_arguments) =
         configure_developer_webview(&scope).expect("configure native automation browser profile");
-    let executable = std::env::current_exe()
-        .map(|path| std::fs::canonicalize(&path).unwrap_or(path))
-        .unwrap_or_default();
-    let developer_identity =
-        Sha256::digest(format!("{}\0{}", scope.identifier, executable.display()).as_bytes())[..8]
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-    let developer_mode = developer_mode::DeveloperMode::new(
-        format!("tauri:{developer_identity}"),
-        devtools_active_port,
-    );
+    let developer_mode = developer_mode::DeveloperMode::new(developer_identity, devtools_active_port)
+        .with_launch_scope(
+            executable, launch_profile, backend_config.clone(), handoff.map(|handoff| handoff.restart),
+        );
 
-    let launch_arguments = std::env::args().skip(1).collect::<Vec<_>>();
     // Before the single-instance plugin can forward a `|` that would split into other arguments.
     #[cfg(windows)]
     if let Some(message) = launch::pipe_argument_error(&launch_arguments) {
@@ -1891,6 +1917,9 @@ fn main() {
     let single_instance = tauri_plugin_single_instance::init(move |app, args, callback_cwd| {
         let cwd = std::path::PathBuf::from(callback_cwd);
         let arguments = args.into_iter().skip(1).collect::<Vec<_>>();
+        if arguments == [developer_relaunch::MARKER] {
+            return;
+        }
         #[cfg(windows)]
         let intent = launch::parse_windows_forwarded_launch_intent(&arguments, &cwd);
         #[cfg(not(windows))]
@@ -2338,6 +2367,12 @@ fn main() {
             }
             #[cfg(target_os = "linux")]
             tauri::RunEvent::Exit => appimage_exit::stop_mounted_children(),
+            #[cfg(windows)]
+            tauri::RunEvent::Exit => {
+                if let Some(plan) = shutdown::take_automation_restart(app_handle) {
+                    plan.relaunch_and_exit(app_handle);
+                }
+            }
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Exit if shutdown::restart_on_exit() => {
                 macos_relaunch::relaunch_and_exit(&app_handle)

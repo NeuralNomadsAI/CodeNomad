@@ -357,23 +357,103 @@ test("Windows query preflush leaves the app alive until session end is confirmed
   const calls: string[] = []
   const first = windowRecord("one", calls)
   const lifecycle = new MultiwindowLifecycle({
-    app: { on: () => {}, quit: () => {}, exit: () => calls.push("exit") } as never,
+    app: { on: () => {}, quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
     clientStateManager: { isPrimary: true, flush: async () => calls.push("aggregate"), drainAndReleasePrimary: async () => calls.push("release") } as never,
     cliManager: { shutdown: async () => calls.push("stop") } as never,
     getLocalWindows: () => [first], getAllWindows: () => [first.window], removeWindowState: async () => true,
     getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true, isWindows: true, sessionEndCleanupTimeoutMs: 20,
   })
   lifecycle.attach(first)
+  assert.equal(lifecycle.canRelaunchScope(), true)
   let vetoed = false
   first.events.get("query-session-end")?.({ preventDefault: () => { vetoed = true } })
+  assert.equal(lifecycle.canRelaunchScope(), false)
   await (lifecycle as any).sessionEndPreparation
   assert.equal(vetoed, false)
+  assert.equal(lifecycle.canRelaunchScope(), false)
+  lifecycle.requestRelaunch({ args: ["--codenomad-automation-relaunch=fixture"] })
   assert.deepEqual(calls, ["renderer:one", "native:one"])
 
   first.events.get("session-end")?.()
   await (lifecycle as any).sessionEnd
   assert.deepEqual(calls, ["renderer:one", "native:one", "aggregate", "stop", "release", "exit"])
 })
+
+test("cancelling Windows session end restores scoped restart admission", async () => {
+  const calls: string[] = []
+  const first = windowRecord("one", calls)
+  let endSessionMessage: ((wParam: Buffer) => void) | undefined
+  first.window.hookWindowMessage = (message, handler) => {
+    assert.equal(message, 0x0016)
+    endSessionMessage = wParam => handler(wParam, Buffer.alloc(8))
+  }
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: () => {}, quit: () => calls.push("quit") } as never,
+    clientStateManager: { isPrimary: true } as never, cliManager: {} as never,
+    getLocalWindows: () => [first], getAllWindows: () => [first.window], removeWindowState: async () => true,
+    getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true, isWindows: true,
+  })
+  lifecycle.attach(first)
+  first.events.get("query-session-end")?.()
+  await (lifecycle as any).sessionEndPreparation
+  assert.equal(lifecycle.canRelaunchScope(), false)
+  assert.ok(endSessionMessage)
+  endSessionMessage(Buffer.alloc(8))
+  assert.equal(lifecycle.canRelaunchScope(), true)
+})
+
+for (const outcome of ["normal", "query", "before deadline", "late success", "late failure"] as const) {
+  test(`scoped relaunch on Windows: ${outcome}`, { timeout: 2_000 }, async () => {
+    const calls: string[] = []
+    const events = new Map<string, Function>()
+    const local = windowRecord("one", calls)
+    let finishStop!: () => void
+    let failStop!: (error: Error) => void
+    let exit!: () => void
+    const stop = new Promise<void>((resolve, reject) => { finishStop = resolve; failStop = reject })
+    const exited = new Promise<void>((resolve) => { exit = resolve })
+    const lifecycle = new MultiwindowLifecycle({
+      app: {
+        on: (name: string, handler: Function) => events.set(name, handler),
+        quit: () => events.get("before-quit")?.({ preventDefault: () => {} }),
+        relaunch: () => calls.push("relaunch"),
+        exit: () => { calls.push("exit"); exit() },
+      } as never,
+      clientStateManager: { isPrimary: true, flush: async () => {}, drainAndReleasePrimary: async () => calls.push("release") } as never,
+      cliManager: { shutdown: () => { calls.push("stop"); return stop } } as never,
+      getLocalWindows: () => [local], getAllWindows: () => [local.window], removeWindowState: async () => true,
+      getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+      isWindows: true, sessionEndCleanupTimeoutMs: outcome === "before deadline" ? 50 : 5,
+    })
+    lifecycle.attach(local)
+    lifecycle.registerAppEvents()
+    lifecycle.requestRelaunch({ args: ["--codenomad-automation-relaunch=fixture"] })
+    await tick()
+    assert.equal(calls.at(-1), "stop")
+
+    if (outcome === "query") {
+      local.events.get("query-session-end")!()
+    } else if (outcome !== "normal") {
+      local.events.get("session-end")!()
+      if (outcome !== "before deadline") {
+        await exited
+        assert.equal(calls.includes("release"), false)
+      }
+    }
+    if (outcome === "late failure") failStop(new Error("late CLI failure"))
+    else finishStop()
+    await exited
+    await tick()
+    const afterStop = {
+      normal: ["release", "relaunch", "exit"],
+      query: ["release", "exit"],
+      "before deadline": ["release", "exit"],
+      "late success": ["exit", "release"],
+      "late failure": ["exit"],
+    }[outcome]
+    assert.deepEqual(calls.slice(calls.indexOf("stop") + 1), afterStop)
+  })
+}
 
 test("support windows receive session-end cleanup without local close semantics", async () => {
   const calls: string[] = []

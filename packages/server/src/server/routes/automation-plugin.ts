@@ -29,6 +29,7 @@ import { interruptMissionTask, observeMissionTask } from "./mission-task-native"
 import { requestAdmission } from "../request-admission"
 import { MissionCreationHoldError } from "./mission-creation-holds"
 import { DeveloperInspectionTargets } from "../../automation/developer-inspection-targets"
+import { isRestartSuccessor, readDeveloperRestart, readDeveloperTarget, sameDeveloperTarget, type DeveloperTarget } from "../../automation/developer-restart"
 import { missionRecoveryControlError, missionRecoveryRejection } from "../../missions/recovery-error"
 import { verifyMissionHumanAnswer } from "./mission-human-answer"
 import { verifyRecurrenceRequest, type VerifyScheduleAgentCreation } from "./mission-recurrence-proof"
@@ -67,6 +68,7 @@ interface DeveloperNativeStatus {
     cdpUrl?: string
     windowId?: string
     windowInstance?: string
+    restartId?: string
   }
   logs?: DeveloperCdpDiagnostic[]
   windows?: Array<{ windowId: string; windowInstance?: string; focused: boolean }>
@@ -127,15 +129,16 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         }, lifetime.signal) })
       } catch { return reply.code(403).send({ error: "Recurrence human admission unavailable" }) }
     }
-    if (!body || !["developer-probe", "developer-execute", "browser-claim", "browser-probe", "browser-execute", "mission-input", "memory-probe", "memory-input", "memory-context"].includes(String(body.mode))
+    if (!body || !["developer-probe", "developer-execute", "developer-restart", "developer-reconnect", "browser-claim", "browser-probe", "browser-execute", "mission-input", "memory-probe", "memory-input", "memory-context"].includes(String(body.mode))
       || typeof body.sessionID !== "string" || body.sessionID.length > 256) {
       return reply.code(400).send({ error: "Invalid automation bridge request" })
     }
+    const sessionID = body.sessionID
     const rawDeveloper = body.mode === "developer-execute" ? body.command as { action?: unknown; ref?: unknown } : undefined
     const order = typeof body.order === "string" ? /^([a-f0-9-]{36})\/(\d{1,12})$/.exec(body.order) : null
+    const inspectionOrder = order ? { source: order[1], sequence: Number(order[2]) } : undefined
     const selecting = rawDeveloper?.action === "inspect" && (rawDeveloper.ref === undefined || rawDeveloper.ref === "")
-    const publishInspection = selecting ? inspectedTargets.begin(body.sessionID,
-      order ? { source: order[1], sequence: Number(order[2]) } : undefined) : undefined
+    const publishInspection = selecting ? inspectedTargets.begin(sessionID, inspectionOrder) : undefined
     if (selecting && !publishInspection) return reply.code(409).send({ code: "stale-inspection", error: "A newer inspection selected the window" })
     if (body.mode === "memory-probe" || body.mode === "memory-input" || body.mode === "memory-context") {
       if (!deps.memory) return reply.code(503).send({ code: "unreadable", error: "Memory is unavailable" })
@@ -202,6 +205,29 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       ? AbortSignal.any([lifetime.signal, AbortSignal.timeout(lifecycle ? 85_000 : 30_000)]) : readSignal
     const discoveryExpired = () => discoveryDeadline !== undefined && (readSignal.aborted || discoveryDeadline <= Date.now())
 
+    let reconnect: { native: DeveloperNativeStatus; target: DeveloperTarget; restartId: string } | undefined
+    if (body.mode === "developer-reconnect") {
+      const expected = readDeveloperRestart(body.command)
+      if (!expected) return reply.code(400).send({ error: "Invalid developer reconnect target" })
+      let native: DeveloperNativeStatus
+      try { native = await deps.nativeParent.request<DeveloperNativeStatus>("developer.reconnect", expected, 2_000) }
+      catch { return reply.code(404).send({ error: "No matching CodeNomad relaunch" }) }
+      const target = readDeveloperTarget(native?.status)
+      if (!target || !isRestartSuccessor(expected, target, native.status.restartId)) {
+        return reply.code(404).send({ error: "No matching CodeNomad relaunch" })
+      }
+      const result = { developerTarget: target, restartId: expected.restartId }
+      // An absent window may also mean no restored project owns the session.
+      // The native receipt can prove the relaunch without disclosing renderer data.
+      if (native.status.state === "missing") return reply.send({ ...result, windowState: "missing" })
+      if (body.purpose === "confirm" || native.status.state !== "ready" || typeof native.status.cdpUrl !== "string") {
+        return reply.send({ ...result, windowState: "pending" })
+      }
+      reconnect = { native, target, restartId: expected.restartId }
+    }
+    const reconnectWaiting = ({ target, restartId }: NonNullable<typeof reconnect>, windowState: "pending" | "superseded" = "pending") => reply.send({
+      developerTarget: target, restartId, windowState,
+    })
     let location
     try {
       signal.throwIfAborted()
@@ -211,6 +237,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       location = (await lifetime.wait(client.session.get({ sessionID: body.sessionID }, { signal }), readSignal)).location
     } catch (error) {
       if (executionExpired()) return expiredExecution()
+      if (reconnect) return reconnectWaiting(reconnect)
       if (preferenceProbe && (signal.aborted || !isSessionNotFoundError(error))) return preferenceUnavailable()
       if (browserDiscovery && (discoveryExpired() || !isSessionNotFoundError(error) || error.sessionID !== body.sessionID)) return inventoryUnavailable()
       return notOwner("Session not found")
@@ -237,7 +264,77 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     if (executionExpired()) return expiredExecution()
     if (preferenceProbe && (signal.aborted || !owned && ownershipReadFailed)) return preferenceUnavailable()
     if (browserDiscovery && (discoveryExpired() || !owned && ownershipReadFailed)) return inventoryUnavailable()
-    if (!owned) return notOwner("Session is not owned by this CodeNomad instance")
+    if (!owned) return reconnect ? reconnectWaiting(reconnect) : notOwner("Session is not owned by this CodeNomad instance")
+
+    if (body.mode === "developer-restart") {
+      const expected = readDeveloperRestart(body.command)
+      if (!expected) return reply.code(400).send({ error: "Invalid developer restart target" })
+      const identity = inspectedTargets.get(sessionID, body.pin)
+      if (body.pin === undefined) {
+        return reply.code(404).send({ code: "inspect-required", error: "Run codenomad.inspect before restarting this window" })
+      }
+      const current = () => {
+        signal.throwIfAborted()
+        if (!identity || identity.runId !== expected.runId || identity.windowId !== expected.windowId
+          || identity.windowInstance !== expected.windowInstance || !inspectedTargets.isCurrent(sessionID, identity)) {
+          throw new Error("The inspected CodeNomad window changed; inspect again")
+        }
+        return identity
+      }
+      try {
+        const pinned = current()
+        const native = await deps.nativeParent.request<DeveloperNativeStatus>("developer.status", nativeWindowParams(pinned))
+        const target = readDeveloperTarget(native.status)
+        if (!target || !sameDeveloperTarget(expected, target) || !sameNativeWindow(pinned, developerSelection(native.status))) {
+          throw new Error("The inspected CodeNomad window changed; inspect again")
+        }
+        await deps.developerCdp.context(pinned, current)
+        current()
+        inspectedTargets.forgetRun(sessionID, expected.runId)
+        // Older hosts accepted an unscoped restart; a distinct method keeps a mixed build inert.
+        let result: unknown
+        try {
+          result = await deps.nativeParent.request("developer.restartScope", expected)
+        } catch (error) {
+          if (error instanceof NativeRequestRefused) throw error
+          deps.developerCdp.close(expected.runId)
+          return reply.code(502).send({ code: "restart-outcome-unknown", error: "Native restart outcome is unknown" })
+        }
+        deps.developerCdp.close(expected.runId)
+        return reply.send({ result })
+      } catch (error) {
+        return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) })
+      }
+    }
+
+    if (reconnect) {
+      const { native, target, restartId } = reconnect
+      const canReconnect = () => inspectedTargets.canReconnect(sessionID, restartId)
+      const publish = inspectedTargets.begin(sessionID, inspectionOrder, restartId)
+      if (!publish) return reconnectWaiting(reconnect, "superseded")
+      try {
+        const identity = developerSelection(native.status)
+        if (!identity) return reconnectWaiting(reconnect)
+        const result = await deps.developerCdp.inspect(identity, undefined, { beforeRead: () => {
+          signal.throwIfAborted()
+          if (!canReconnect()) throw new Error("A newer inspection is selected")
+        } })
+        signal.throwIfAborted()
+        if (result.context.windowId !== target.windowId || result.context.windowInstance !== target.windowInstance) {
+          return reconnectWaiting(reconnect)
+        }
+        const after = await deps.nativeParent.request<DeveloperNativeStatus>("developer.status", nativeWindowParams(identity))
+        if (!sameNativeWindow(identity, developerSelection(after.status))) return reconnectWaiting(reconnect)
+        signal.throwIfAborted()
+        const { document, ...inspection } = result
+        const pin = publish({ ...identity, ...(document ? { document } : {}) })
+        if (!pin) return reconnectWaiting(reconnect, canReconnect() ? "pending" : "superseded")
+        result.diagnostics.push(...(native.logs ?? []).slice(-32))
+        return reply.send({ result: { ...inspection, pin }, developerTarget: target, restartId, windowState: "inspected" })
+      } catch {
+        return reconnectWaiting(reconnect, canReconnect() ? "pending" : "superseded")
+      }
+    }
 
     if (body.mode === "mission-input") {
       try {
@@ -350,6 +447,12 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     if (command && (command.action !== "inspect" || command.ref) && !pin) {
       return reply.code(404).send({ code: "inspect-required", error: "Run codenomad.inspect before acting on this window" })
     }
+    if (command?.action === "restart") {
+      return reply.code(409).send({ error: "Restart requires a fresh inspection and matching desktop automation version" })
+    }
+    if (command && command.action !== "inspect" && pin && !inspectedTargets.isCurrent(sessionID, pin)) {
+      return reply.code(409).send({ error: "The inspected CodeNomad window changed; inspect again" })
+    }
     const unavailable = (error?: string) => reply.code(404).send(exact
       ? { code: "target-gone", error: "The selected window is unavailable; choose a window in inspect({targets:true})" }
       : { code: "no-window", error: error ?? "No ready local CodeNomad window for this backend" })
@@ -385,7 +488,11 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         } catch { return unavailable() }
       }
       if (!explicit) {
-        try { await deps.developerCdp.context(selection) } catch { return unavailable() }
+        const windows = new Map([[selection.windowId, selection.windowInstance]])
+        try {
+          const contexts = await deps.developerCdp.probeContexts(selection.endpoint, windows)
+          if (!contexts.has(selection.windowId)) return unavailable()
+        } catch { return unavailable() }
       }
       return reply.send({ result: { ...selected, windowId: selection.windowId,
         ...(selection.windowInstance ? { windowInstance: selection.windowInstance } : {}) } })
@@ -400,20 +507,6 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       return sameNativeWindow(identity, after && developerSelection(after.status))
     }
     try {
-      if (command.action === "restart") {
-        await deps.developerCdp.context(identity)
-        inspectedTargets.forgetRun(body.sessionID, selection.runId)
-        let result: DeveloperNativeStatus["status"]
-        try {
-          result = await deps.nativeParent.request<DeveloperNativeStatus["status"]>("developer.restart", nativeWindowParams(identity))
-        } catch (error) {
-          if (error instanceof NativeRequestRefused) throw error
-          deps.developerCdp.close(selection.runId, true)
-          return reply.code(502).send({ code: "restart-outcome-unknown", error: "The restart outcome is unknown. Choose the window in inspect({targets:true}) before retrying." })
-        }
-        deps.developerCdp.close(selection.runId)
-        return reply.send({ result })
-      }
       if (command.action === "inspect") {
         const result = await deps.developerCdp.inspect(identity, { ref: command.ref, query: command.query,
           ...(explicit ? { recoverUncertainRun: true } : {}) })
@@ -424,12 +517,19 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         const { document: _document, ...inspection } = result
         return reply.send({ result: { ...inspection, ...(nextPin ? { pin: nextPin } : {}) } })
       }
+      const checkAdmission = () => {
+        signal.throwIfAborted()
+        if (!inspectedTargets.isCurrent(sessionID, identity)) {
+          throw new Error("The inspected CodeNomad window changed; inspect again")
+        }
+      }
+      checkAdmission()
       if (command.action === "screenshot") {
-        const image = await deps.developerCdp.screenshot(identity)
+        const image = await deps.developerCdp.screenshot(identity, checkAdmission)
         if (!await stillAvailable()) return unavailable()
         return reply.send({ result: { image: { data: image.data, mime: image.mediaType } } })
       }
-      const result = await deps.developerCdp.act(identity, command)
+      const result = await deps.developerCdp.act(identity, command, checkAdmission)
       return reply.send({ result: { ok: true, ...result } })
     } catch (error) {
       if (error instanceof StaleDeveloperDocument) return reply.code(409).send({ code: "stale-document", error: error.message })

@@ -5,21 +5,30 @@ import { randomUUID } from "node:crypto"
  * or conversation. A new native target requires a fresh inspection. */
 export class DeveloperInspectionTargets {
   private readonly targets = new Map<string, {
+    current?: DeveloperCdpIdentity
     issued: Map<string, DeveloperCdpIdentity>
     order?: { source: string; sequence: number }
+    restartId?: string
   }>()
 
-  begin(sessionId: string, order?: { source: string; sequence: number }): ((identity: DeveloperCdpIdentity) => string | undefined) | undefined {
+  canReconnect(sessionId: string, restartId: string): boolean {
+    const entry = this.targets.get(sessionId)
+    return !entry || entry.restartId === restartId
+  }
+
+  begin(sessionId: string, order?: { source: string; sequence: number }, restartId?: string): ((identity: DeveloperCdpIdentity) => string | undefined) | undefined {
     const previous = this.targets.get(sessionId)
+    if (restartId && !this.canReconnect(sessionId, restartId)) return undefined
     if (order && previous?.order?.source === order.source && previous.order.sequence > order.sequence) return undefined
-    const entry = { issued: previous?.issued ?? new Map<string, DeveloperCdpIdentity>(),
-      order: order ?? previous?.order }
+    const entry = { current: previous?.current, issued: previous?.issued ?? new Map<string, DeveloperCdpIdentity>(),
+      order: order ?? previous?.order, restartId }
     this.targets.delete(sessionId)
     this.targets.set(sessionId, entry)
     if (this.targets.size > 128) this.targets.delete(this.targets.keys().next().value!)
     return identity => {
       if (this.targets.get(sessionId) !== entry) return undefined
       const pin = randomUUID()
+      entry.current = identity
       entry.issued.set(pin, identity)
       if (entry.issued.size > 8) entry.issued.delete(entry.issued.keys().next().value!)
       return pin
@@ -30,9 +39,14 @@ export class DeveloperInspectionTargets {
     return typeof pin === "string" ? this.targets.get(sessionId)?.issued.get(pin) : undefined
   }
 
+  isCurrent(sessionId: string, identity: DeveloperCdpIdentity): boolean {
+    return this.targets.get(sessionId)?.current === identity
+  }
+
   forgetRun(sessionId: string, runId: string): void {
     const entry = this.targets.get(sessionId)
     if (!entry) return
+    if (entry.current?.runId === runId) entry.current = undefined
     for (const [pin, identity] of entry.issued) if (identity.runId === runId) entry.issued.delete(pin)
   }
 }

@@ -2,12 +2,13 @@ import "./process-output"
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, session } from "electron"
 import http from "node:http"
 import https from "node:https"
-import { createHash, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
 import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { appendNodeOption, DeveloperMode } from "./developer-mode"
+import { developerNativeIdentity, developerRelaunchOptions, readDeveloperRelaunch, readElectronEntry, type DeveloperRelaunch } from "./developer-relaunch"
 import { BrowserController, handleNativeBrowserRequest } from "./browser-controller"
 import { isBrowserUrlAllowed, secureBrowserWebview } from "./browser-webview-security"
 import { protectBrowserGuest, isBrowserAuxiliaryWindow, configureBrowserGuests } from "./browser-guests"
@@ -51,27 +52,33 @@ import { RemoteRecoveryPages, showRemoteUnavailable } from "./remote-recovery"
 
 const mainDirname = dirname(fileURLToPath(import.meta.url))
 const isMac = process.platform === "darwin"
+// For a direct-file launch getAppPath() is the directory, not the CLI entry.
+const devEntry = process.defaultApp ? readElectronEntry(process.argv) : undefined
+const relaunchArgs = devEntry && app.commandLine.hasSwitch("no-sandbox") && !devEntry.args.includes("--no-sandbox")
+  ? ["--no-sandbox", ...devEntry.args] : devEntry?.args ?? []
+const launchArgs = process.argv.slice(devEntry?.nextIndex ?? 1)
 // The UI draws local application and Preferences title bars. On macOS the native
 // traffic lights keep their standard place at its left and the menus stay in the
 // global menu bar; elsewhere windows are frameless.
 const applicationWindowChrome = isMac ? { titleBarStyle: "hidden" as const } : { frame: false }
 
-function resolveStoragePaths(baseUserDataPath: string, profileKey: string) {
+function resolveStoragePaths(baseUserDataPath: string, profileKey: string, originalConfig: string | undefined, expectedIdentity?: string) {
   const scope = resolveStorageScope({
-    profileKey, cliConfig: process.env.CLI_CONFIG, cwd: process.cwd(), baseUserDataPath, packaged: app.isPackaged,
+    profileKey, cliConfig: originalConfig, cwd: process.cwd(), baseUserDataPath, packaged: app.isPackaged,
   })
+  const nativeIdentity = developerNativeIdentity(scope.profile, scope.configIdentity, originalConfig, process.execPath, devEntry?.path ?? app.getAppPath())
+  if (expectedIdentity !== undefined && expectedIdentity !== nativeIdentity) throw new Error("CodeNomad automation relaunch scope changed")
   // The backend must use the exact desktop data profile for paused Mission metadata. It is
   // handed to the backend command only: in this host CODENOMAD_UPDATE_CHANNEL is a legacy
   // profile alias that a relaunch would read back as an explicit profile.
   setBackendProfileScope({ profile: scope.profile, configIdentity: scope.configIdentity })
-  const originalConfig = resolveSelectedConfig(process.env.CLI_CONFIG, process.cwd())
   if (originalConfig) process.env.CLI_CONFIG = originalConfig
   else delete process.env.CLI_CONFIG
   const browserDataPath = join(scope.userDataPath, "developer-mode-browser-v2")
   const sessionDataPath = join(browserDataPath, "session-data")
   mkdirSync(scope.userDataPath, { recursive: true })
   app.setPath("userData", scope.userDataPath)
-  return { scope, browserDataPath, sessionDataPath }
+  return { scope, browserDataPath, sessionDataPath, nativeIdentity }
 }
 
 function resolveInitialProfile(baseUserDataPath: string): LaunchProfile | undefined {
@@ -111,10 +118,6 @@ function cleanupPackagedChromiumStorage() {
   }
 }
 
-function argvForLaunch(argv: string[]): string[] {
-  return argv.slice(app.isPackaged ? 1 : 2)
-}
-
 app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1")
 app.commandLine.appendSwitch("remote-debugging-port", "0")
 app.commandLine.appendSwitch("enable-logging")
@@ -125,32 +128,39 @@ if (!app.isPackaged) app.setName("CodeNomad")
 let storageScope!: StorageScope
 let profilePinned = false
 let sessionDataPath!: string
-let developerNativeIdentity!: string
 // An older build's profile question may have relaunched into this one: drop its private hand-offs
 // before anything inherits them, and sweep its leftover question folders.
 stripPrivateRelaunchEnvironment(process.env)
 sweepSelectionFolders({ temporaryRoot: tmpdir() })
-const launchProfile = resolveInitialProfile(baseUserDataPath)
-if (launchProfile) startProfile(launchProfile.key, isPinnedLaunch(launchProfile))
+try {
+  if (process.defaultApp && !devEntry) throw new Error("Unable to identify the Electron app entry")
+  const relaunch = readDeveloperRelaunch(launchArgs)
+  if (relaunch) startProfile(relaunch.profile, relaunch.pinned, relaunch)
+  else {
+    const launchProfile = resolveInitialProfile(baseUserDataPath)
+    if (launchProfile) startProfile(launchProfile.key, isPinnedLaunch(launchProfile))
+  }
+} catch (error) {
+  console.error("[electron-startup] failed to relaunch the inspected scope", error)
+  app.exit(1)
+}
 
-function startProfile(profileKey: string, pinned: boolean) {
-  const { scope, browserDataPath, sessionDataPath: profileSessionDataPath } = resolveStoragePaths(baseUserDataPath, profileKey)
+function startProfile(profileKey: string, pinned: boolean, relaunch?: DeveloperRelaunch) {
+  const config = relaunch ? relaunch.config ?? undefined : resolveSelectedConfig(process.env.CLI_CONFIG, process.cwd())
+  const { scope, browserDataPath, sessionDataPath: profileSessionDataPath, nativeIdentity } =
+    resolveStoragePaths(baseUserDataPath, profileKey, config, relaunch?.restart.nativeIdentity)
   storageScope = scope
   profilePinned = pinned
   sessionDataPath = profileSessionDataPath
-  developerNativeIdentity = `electron:${createHash("sha256")
-    .update(`${storageScope.profile}\0${storageScope.configIdentity}\0${process.execPath}\0${app.getAppPath()}`)
-    .digest("hex")
-    .slice(0, 16)}`
-  const initialIntent = parseLaunchIntent(argvForLaunch(process.argv), process.cwd())
+  const initialIntent = parseLaunchIntent(relaunch ? [] : launchArgs, process.cwd())
   // The parsed intent travels with the singleton request: Chromium reorders the forwarded argv.
-  startPrimaryInstance(() => app.requestSingleInstanceLock(forwardedLaunchData(initialIntent)), () => app.quit(), () => {
+  startPrimaryInstance(() => app.requestSingleInstanceLock(relaunch ? { automationRelaunch: true } : forwardedLaunchData(initialIntent)), () => app.quit(), () => {
     configureBrowserStorage(browserDataPath, sessionDataPath)
-    runPrimary(initialIntent)
+    runPrimary(initialIntent, nativeIdentity, config ?? null, relaunch?.restart)
   })
 }
 
-function runPrimary(firstIntent: LaunchIntent) {
+function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, config: string | null, previousRestart?: DeveloperRelaunch["restart"]) {
   cleanupPackagedChromiumStorage()
   const clientState = new ClientStateManager(storageScope.userDataPath, undefined, storageScope.clientStateElectionDirectory
     ? { crossHostElectionDirectory: storageScope.clientStateElectionDirectory }
@@ -159,18 +169,28 @@ function runPrimary(firstIntent: LaunchIntent) {
   let lifecycle: MultiwindowLifecycle
   const developerMode = new DeveloperMode({
     devtoolsDataPath: sessionDataPath,
-    nativeIdentity: developerNativeIdentity,
-    windows: () => registry.automationWindows(BrowserWindow.getFocusedWindow()),
-    requestRelaunch: () => lifecycle.requestRelaunch(),
+    nativeIdentity,
+    previousRestart,
+    windows: () => registry.automationWindows(BrowserWindow.getFocusedWindow())
+      .filter(({ windowId }) => !lifecycle.isWindowClosing(registry.get(windowId)!.window)),
+    hasWindow: (id) => {
+      const record = registry.get(id)
+      return !!record && !record.connectOnly && !record.window.isDestroyed() && !record.window.webContents.isDestroyed()
+        && !lifecycle.isWindowClosing(record.window)
+    },
+    canRelaunch: () => lifecycle.canRelaunchScope(),
+    requestRelaunch: restart => lifecycle.requestRelaunch(developerRelaunchOptions({
+      profile: storageScope.profile, pinned: profilePinned, config, restart,
+    }, process.execPath, relaunchArgs)),
   })
   const browserController = new BrowserController((sessionID, url, requestID) => {
     for (const record of registry.all()) {
       if (!record.window.isDestroyed()) record.window.webContents.send("browser-target:open", { sessionID, url, requestID })
     }
   })
-  const cli = new CliProcessManager((method, params, deadline) => method.startsWith("browser.")
+  const cli = new CliProcessManager((method, params, deadline, checkAdmission) => method.startsWith("browser.")
     ? handleNativeBrowserRequest(browserController, method, params, deadline)
-    : developerMode.handleNativeRequest(method, params))
+    : developerMode.handleNativeRequest(method, params, checkAdmission))
   const remoteOrigins = new Map<number, Set<string>>()
   const insecureOrigins = new Map<number, Set<string>>()
   const navigationLifecycle = new SerializedLifecycle()
@@ -231,6 +251,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     removeWindowState: (id) => clientState.removeWindow(id), getAllowedRendererOrigins: getAllowedOrigins,
     isTrustedRendererOrigin: isAllowedRendererOrigin,
     navigationLifecycle,
+    ...(previousRestart && { defaultRelaunchOptions: { args: relaunchArgs } }),
   })
   const bindClientState = setupClientStateIPC(ipcMain, clientState, (sender) => registry.resolve(sender), getAllowedOrigins)
 
@@ -527,7 +548,11 @@ function runPrimary(firstIntent: LaunchIntent) {
   })
   lifecycle.registerAppEvents()
   app.on("second-instance", (_event, argv, workingDirectory, additionalData) => {
-    const intent = readForwardedLaunchIntent(additionalData) ?? parseLaunchIntent(argvForLaunch(argv), workingDirectory || process.cwd())
+    if ((additionalData as { automationRelaunch?: unknown } | undefined)?.automationRelaunch === true) return
+    const intent = readForwardedLaunchIntent(additionalData) ?? parseLaunchIntent(
+      argv.slice(process.defaultApp ? readElectronEntry(argv)?.nextIndex ?? 2 : 1),
+      workingDirectory || process.cwd(),
+    )
     void intentQueue.enqueue(prepareSecondLaunchIntent(intent, storageScope.configIdentity)).catch(() => {})
   })
   app.on("open-file", (event, path) => {

@@ -72,6 +72,41 @@ fn restart_waits_for_cleanup_and_is_cancelled_when_cleanup_fails() {
 }
 
 #[test]
+fn developer_restart_keeps_the_scoped_plan_through_graceful_shutdown() {
+    use crate::developer_relaunch::{DeveloperRestart, Handoff, RelaunchPlan};
+
+    let coordinator = ShutdownCoordinator::default();
+    let plan = RelaunchPlan {
+        executable: "codenomad.exe".into(),
+        handoff: Handoff {
+            restart: DeveloperRestart {
+                run_id: "old".into(),
+                native_identity: "tauri:test".into(),
+                window_id: "a".into(),
+                window_instance: Some("incarnation".into()),
+                restart_id: "7c3e5066-017d-4ce1-a371-187ac459c4b2".into(),
+            },
+            profile: "dev".into(),
+            pinned: true,
+            config: None,
+        },
+    };
+    let label = "local-a";
+    let requests = coordinator
+        .begin_automation_restart([label.into()], label, plan)
+        .unwrap();
+    coordinator.request_restart();
+    assert!(coordinator.acknowledge_global(label, requests[0].1));
+    assert!(coordinator.begin_cleanup(false));
+    assert!(!coordinator.complete_cleanup(), "the generic restart must not run");
+    assert_eq!(
+        coordinator.state.lock().unwrap().automation_restart.as_ref()
+            .unwrap().handoff.profile,
+        "dev"
+    );
+}
+
+#[test]
 fn failed_shutdown_paths_emit_the_renderer_resume_event() {
     let source = include_str!("shutdown.rs");
     assert_eq!(FLUSH_CANCELLED_EVENT, "client-state:flush-cancelled");

@@ -1,21 +1,26 @@
 import { randomUUID } from "node:crypto"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
+import { readDeveloperRestart, sameDeveloperTarget, type DeveloperRestart } from "../../../server/src/automation/developer-restart"
 
 export interface DeveloperTargetStatus {
-  state: "stopped" | "starting" | "ready"
+  state: "missing" | "starting" | "ready"
   runId?: string
   nativeIdentity?: string
   cdpUrl?: string
   windowId?: string
   windowInstance?: string
+  restartId?: string
 }
 
 interface DeveloperModeOptions {
   devtoolsDataPath: string
   nativeIdentity: string
   windows(): Array<{ windowId: string; windowInstance?: string; focused: boolean }>
-  requestRelaunch(): void
+  hasWindow(id: string): boolean
+  canRelaunch(): boolean
+  requestRelaunch(restart: DeveloperRestart): void
+  previousRestart?: DeveloperRestart
   runId?: string
   schedule?: (callback: () => void) => void
 }
@@ -29,6 +34,7 @@ export function appendNodeOption(value: string | undefined, option: string): str
 export class DeveloperMode {
   private readonly runId: string
   private readonly schedule: (callback: () => void) => void
+  private pendingRestart = false
 
   constructor(private readonly options: DeveloperModeOptions) {
     this.runId = options.runId ?? randomUUID()
@@ -45,7 +51,7 @@ export class DeveloperMode {
       runId: this.runId,
       nativeIdentity: this.options.nativeIdentity,
     }
-    let port: number
+    let port: number | undefined
     try {
       const value = (await readFile(join(this.options.devtoolsDataPath, "DevToolsActivePort"), "utf8")).split(/\r?\n/, 1)[0]
       port = Number(value)
@@ -66,16 +72,40 @@ export class DeveloperMode {
     return { status, windows }
   }
 
-  async handleNativeRequest(method: string, params?: unknown): Promise<unknown> {
+  async handleNativeRequest(method: string, params?: unknown, checkAdmission = () => {}): Promise<unknown> {
     if (method === "developer.status") return { status: await this.status(params), logs: [] }
     if (method === "developer.targets") return { ...await this.inventory(), logs: [] }
-    if (method === "developer.restart") {
-      const status = await this.status(params)
-      if (params && (params as { runId?: unknown }).runId !== undefined && status.state !== "ready") {
-        throw new Error("The selected window is no longer available")
+    if (method === "developer.reconnect") {
+      const expected = readDeveloperRestart(params), previous = this.options.previousRestart
+      if (!expected || !previous || !sameDeveloperTarget(expected, previous) || expected.restartId !== previous.restartId) {
+        throw new Error("No matching CodeNomad relaunch")
       }
-      this.schedule(() => this.options.requestRelaunch())
-      return { ...status, state: "starting", windowId: undefined }
+      // Restoration creates the records before the backend starts; loading records are pending.
+      const window = this.options.windows().find(value => value.windowId === expected.windowId)
+      const status = window
+        ? await this.status({ ...window, runId: this.runId })
+        : { state: this.options.hasWindow(expected.windowId) ? "starting" : "missing",
+            runId: this.runId, nativeIdentity: this.options.nativeIdentity }
+      return { status: { ...status, windowId: expected.windowId, restartId: expected.restartId }, logs: [] }
+    }
+    if (method === "developer.restartScope") {
+      const expected = readDeveloperRestart(params)
+      const hasExactWindow = (target: DeveloperRestart) => this.options.windows().some(window =>
+        window.windowId === target.windowId && window.windowInstance === target.windowInstance)
+      if (!expected || expected.runId !== this.runId || expected.nativeIdentity !== this.options.nativeIdentity
+        || !hasExactWindow(expected)) {
+        throw new Error("The inspected CodeNomad window or run changed")
+      }
+      checkAdmission()
+      if (this.pendingRestart) throw new Error("CodeNomad restart is already pending")
+      if (!this.options.canRelaunch()) throw new Error("The CodeNomad host is shutting down")
+      this.pendingRestart = true
+      this.schedule(() => {
+        this.pendingRestart = false
+        try { checkAdmission() } catch { return }
+        if (hasExactWindow(expected)) this.options.requestRelaunch(expected)
+      })
+      return expected
     }
     throw new Error(`Unsupported native developer request: ${method}`)
   }

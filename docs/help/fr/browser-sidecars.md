@@ -26,6 +26,8 @@ Pour le Contrôle à distance, **Aperçus web** est activé par défaut dans **P
 
 ## Connexions partagées et limites d’automatisation {#signins-automation}
 
+Sur Electron et Tauri pour Windows, le redémarrage automatisé (`codenomad.act`, `restart`) relance le même exécutable avec le profil et la configuration inspectés. Il réinspecte la fenêtre d’origine si elle est restaurée ; sinon, il signale son absence sans inspecter d’autre fenêtre. Une inspection réussie pendant la reconnexion reste prioritaire.
+
 Les aperçus natifs partagent cookies, connexions et stockage de site entre projets/sessions dans le même moteur de bureau et périmètre profil/configuration, séparément du moteur de rendu de confiance CodeNomad. Se déconnecter d’un site dans un aperçu affecte les autres qui utilisent ce stockage. Documents, formulaires, stockage de session, historiques de navigation et rattachements d’automatisation appartiennent à chaque session.
 
 Un agent ouvre le navigateur partagé de la session dans un onglet qui la contient, de préférence l’onglet actif. L’onglet choisi reste fixé pendant l’ouverture ; sa fermeture annule cette ouverture. Les actions sur la page ciblent l’aperçu natif visible de la session ; les aperçus masqués sont exclus.

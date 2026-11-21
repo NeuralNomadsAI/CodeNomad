@@ -141,6 +141,10 @@ export interface DeveloperCdpInspectOptions {
   recoverUncertainRun?: boolean
 }
 
+interface DeveloperCdpInspectionHooks {
+  beforeRead?(): void
+}
+
 export interface DeveloperCdpScreenshot {
   mediaType: "image/png"
   data: string
@@ -228,11 +232,13 @@ export class DeveloperCdp {
     }
   }
 
-  async inspect(identity: DeveloperCdpIdentity, options: DeveloperCdpInspectOptions = {}): Promise<DeveloperCdpInspection> {
+  async inspect(identity: DeveloperCdpIdentity, options: DeveloperCdpInspectOptions = {}, hooks?: DeveloperCdpInspectionHooks): Promise<DeveloperCdpInspection> {
     return this.exclusive(identity, async () => {
+      hooks?.beforeRead?.()
       const retirement = this.retiredRuns.get(identity.runId)
       const recovering = Boolean(options.recoverUncertainRun && !options.ref && retirement?.recoverable)
       const state = await this.ensure(identity, recovering)
+      hooks?.beforeRead?.()
       const generation = this.generation(state)
       const root = options.ref === undefined ? undefined : state.refs.resolve(options.ref, generation)
       let snapshot
@@ -255,9 +261,11 @@ export class DeveloperCdp {
     })
   }
 
-  async act(identity: DeveloperCdpIdentity, action: RefAction): Promise<PageActionResult> {
+  async act(identity: DeveloperCdpIdentity, action: RefAction, checkAdmission?: () => void): Promise<PageActionResult> {
     return this.exclusive(identity, async () => {
+      checkAdmission?.()
       const state = await this.ensure(identity)
+      checkAdmission?.()
       const epoch = state.navigationEpoch, generation = this.generation(state)
       const page = bindRefs(action, ref => state.refs.resolve(ref, generation))
       const monitorForeground = action.action === "scroll" && !action.ref || action.action === "wait"
@@ -344,6 +352,10 @@ export class DeveloperCdp {
           }
           guard()
           if (status === "ready") {
+            if (!release && checkAdmission) {
+              try { checkAdmission() }
+              catch (error) { throw new PageTargetChangedError(error instanceof Error ? error.message : String(error), true) }
+            }
             if (point) pointerReceipt = track ? { ...point, id: track } : undefined
             return this.command(state, method, point ? { ...params, ...point } : params)
           }
@@ -393,9 +405,11 @@ export class DeveloperCdp {
       () => this.assertContextCurrent(state, epoch, message, foreground), true)
   }
 
-  async screenshot(identity: DeveloperCdpIdentity): Promise<DeveloperCdpScreenshot> {
+  async screenshot(identity: DeveloperCdpIdentity, checkAdmission?: () => void): Promise<DeveloperCdpScreenshot> {
     return this.exclusive(identity, async () => {
+      checkAdmission?.()
       const state = await this.ensure(identity)
+      checkAdmission?.()
       const epoch = state.navigationEpoch
       const result = await this.command(state, "Page.captureScreenshot", {
         format: "png",
@@ -427,8 +441,11 @@ export class DeveloperCdp {
     if (!runId) for (const probe of this.probes.keys()) this.disconnect(probe, error)
   }
 
-  async context(selection: DeveloperCdpSelection): Promise<DeveloperCdpContext> {
-    return this.exclusive(selection, async () => (await this.ensure(selection)).context!)
+  async context(selection: DeveloperCdpSelection, beforeRead?: () => void): Promise<DeveloperCdpContext> {
+    return this.exclusive(selection, async () => {
+      beforeRead?.()
+      return (await this.ensure(selection)).context!
+    })
   }
 
   private async inputDestination(state: RunState, objectId: string, point: { x: number; y: number } | null,

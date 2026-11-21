@@ -29,16 +29,18 @@ interface Dependencies {
   sessionEndCleanupTimeoutMs?: number
   isWindows?: boolean
   navigationLifecycle?: SerializedLifecycle
+  defaultRelaunchOptions?: Electron.RelaunchOptions
 }
 
 export class MultiwindowLifecycle {
   private shutdown: Promise<void> | null = null
   private sessionEnd: Promise<void> | null = null
+  private sessionEndQueried = false
   private sessionEndPreparation: Promise<void> | null = null
   private sessionEndPreparationPending = false
   private release: Promise<void> | null = null
   private exitAllowed = false
-  private relaunchRequested = false
+  private relaunchRequested: Electron.RelaunchOptions | true | undefined
   private readonly sessionEndWindows = new WeakSet<BrowserWindow>()
   private readonly pendingWindowCloses = new Set<BrowserWindow>()
 
@@ -99,21 +101,33 @@ export class MultiwindowLifecycle {
     return this.exitAllowed
   }
 
+  isWindowClosing(window: BrowserWindow): boolean {
+    return this.pendingWindowCloses.has(window)
+  }
+
   attachSessionEnd(window: BrowserWindow): void {
     if (!(this.dependencies.isWindows ?? process.platform === "win32") || this.sessionEndWindows.has(window)) return
     this.sessionEndWindows.add(window)
     window.on("query-session-end", () => this.prepareSessionEnd())
     window.on("session-end", () => this.startSessionEnd())
+    // Electron emits session-end only for a positive WM_ENDSESSION.
+    window.hookWindowMessage?.(0x0016, wParam => {
+      if (wParam.length >= 4 && wParam.readUInt32LE() === 0 && !this.sessionEnd) this.sessionEndQueried = false
+    })
   }
 
   registerAppEvents(): void {
     this.dependencies.app.on("before-quit", (event) => {
       if (this.exitAllowed) return
       event.preventDefault()
+      if (this.sessionEnd) return
       const visibleWindows = this.dependencies.getAllWindows().filter((window) => !window.isDestroyed() && window.isVisible())
       for (const window of visibleWindows) window.hide()
-      void this.startShutdown().then(() => this.exit(), (error) => {
-        this.relaunchRequested = false
+      void this.startShutdown().then(() => {
+        if (!this.sessionEnd) this.exit()
+      }, (error) => {
+        if (this.sessionEnd) return
+        this.relaunchRequested = undefined
         this.pendingWindowCloses.clear()
         for (const window of visibleWindows) if (!window.isDestroyed()) window.show()
         console.warn("[client-state] shutdown remains pending", error)
@@ -122,10 +136,18 @@ export class MultiwindowLifecycle {
     this.dependencies.app.on("window-all-closed", () => this.dependencies.app.quit())
   }
 
-  requestRelaunch(): void {
-    if (this.exitAllowed) return
-    this.relaunchRequested = true
+  canRelaunchScope(): boolean {
+    return !this.sessionEndQueried && this.canRelaunch()
+  }
+
+  requestRelaunch(options?: Electron.RelaunchOptions): void {
+    if (!(options ? this.canRelaunchScope() : this.canRelaunch())) return
+    this.relaunchRequested = options ?? true
     this.dependencies.app.quit()
+  }
+
+  private canRelaunch(): boolean {
+    return !this.exitAllowed && !this.shutdown && !this.sessionEnd && !this.relaunchRequested
   }
 
   private hasOtherLocalWindow(localId: string): boolean {
@@ -176,6 +198,9 @@ export class MultiwindowLifecycle {
   }
 
   private prepareSessionEnd(): void {
+    this.sessionEndQueried = true
+    // Revoke a scoped relaunch even if its cleanup is already in flight.
+    if (this.relaunchRequested !== true) this.relaunchRequested = undefined
     if (this.exitAllowed || this.sessionEnd || this.shutdown || this.sessionEndPreparationPending) return
     this.sessionEndPreparationPending = true
     const preparation = this.flushLocalWindows()
@@ -187,6 +212,7 @@ export class MultiwindowLifecycle {
 
   private startSessionEnd(): void {
     if (this.exitAllowed || this.sessionEnd) return
+    this.relaunchRequested = undefined
     const timeoutMs = this.dependencies.sessionEndCleanupTimeoutMs ?? 5_000
     const cleanup = this.shutdown ?? this.startShutdown(this.sessionEndPreparation ?? this.flushLocalWindows())
     this.sessionEnd = Promise.race([
@@ -224,7 +250,9 @@ export class MultiwindowLifecycle {
   private exit(): void {
     if (this.exitAllowed) return
     this.exitAllowed = true
-    if (this.relaunchRequested) this.dependencies.app.relaunch()
+    const options = this.relaunchRequested === true ? this.dependencies.defaultRelaunchOptions : this.relaunchRequested
+    if (options) this.dependencies.app.relaunch(options)
+    else if (this.relaunchRequested === true) this.dependencies.app.relaunch()
     this.dependencies.app.exit(0)
   }
 }

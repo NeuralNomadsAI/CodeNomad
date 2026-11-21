@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { DeveloperCdp } from "./developer-cdp"
+import { DeveloperCdp, StaleDeveloperDocument } from "./developer-cdp"
 
 interface Command {
   id: number
@@ -655,13 +655,19 @@ describe("DeveloperCdp", () => {
     const client = chrome.client()
     const { endpoint, runId, windowId } = identity
     const window = { endpoint, runId, windowId }
+    let selected = true
     try {
       const { document } = await client.inspect(window)
       chrome.onCommand = command => {
         if (command.method === "Input.dispatchKeyEvent" && command.params?.code === "BracketRight"
-          && command.params?.type !== "keyUp") chrome.context = { ...chrome.context, instanceId: "next-tab" }
+          && command.params?.type !== "keyUp") {
+          chrome.context = { ...chrome.context, instanceId: "next-tab" }
+          selected = false
+        }
       }
-      await client.act({ ...window, document }, { action: "press", key: "Control+]" })
+      await client.act({ ...window, document }, { action: "press", key: "Control+]" }, () => {
+        if (!selected) throw new Error("Newer inspection won")
+      })
       const keys = chrome.commands.filter(command => command.method === "Input.dispatchKeyEvent")
       assert.deepEqual(keys.filter(command => command.params?.type === "keyUp").map(command => command.params?.code),
         ["BracketRight", "ControlLeft"])
@@ -859,6 +865,52 @@ describe("DeveloperCdp", () => {
     assert.equal((await client.inspect(identity)).diagnostics[0].text.length, 512)
   })
 
+  it("checks a queued reconnect before reading the same window lane", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    let pinned = false
+    try {
+      chrome.deferred.set("Accessibility.getFullAXTree", undefined as never)
+      const inspecting = client.inspect(identity)
+      while (!chrome.deferred.get("Accessibility.getFullAXTree")) await new Promise<void>(resolve => setImmediate(resolve))
+      const reconnecting = client.inspect(identity, {}, { beforeRead: () => {
+        if (pinned) throw new Error("Newer inspection won")
+      } })
+      const rejected = assert.rejects(reconnecting, /Newer inspection won/)
+      pinned = true
+      const read = chrome.deferred.get("Accessibility.getFullAXTree")!
+      read.socket.respond(read.command, chrome.result("Accessibility.getFullAXTree"))
+      const inspected = await inspecting
+      await rejected
+      assert.equal(chrome.sockets.at(-1)?.closed, false)
+      await client.act(identity, { action: "click", ref: refOf(inspected) })
+    } finally { client.close() }
+  })
+
+  it("checks queued actions and captures before touching a newer inspection's CDP target", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    let replaced = false
+    const checkAdmission = () => { if (replaced) throw new Error("Newer inspection won") }
+    try {
+      chrome.deferred.set("Accessibility.getFullAXTree", undefined as never)
+      const inspection = client.inspect(identity)
+      while (!chrome.deferred.get("Accessibility.getFullAXTree")) await new Promise<void>(resolve => setImmediate(resolve))
+      const failures = Promise.all([
+        assert.rejects(client.act(identity, { action: "press", key: "Enter" }, checkAdmission), /Newer inspection won/),
+        assert.rejects(client.screenshot(identity, checkAdmission), /Newer inspection won/),
+      ])
+      replaced = true
+      const read = chrome.deferred.get("Accessibility.getFullAXTree")!
+      read.socket.respond(read.command, chrome.result("Accessibility.getFullAXTree"))
+      const result = await inspection
+      await failures
+      assert.equal(chrome.sockets.at(-1)?.closed, false)
+      assert.equal(chrome.commands.some(command => command.method.startsWith("Input.") || command.method === "Page.captureScreenshot"), false)
+      await client.act(identity, { action: "click", ref: refOf(result) })
+    } finally { client.close() }
+  })
+
   it("reconnects when the page target is replaced and rejects target-scoped refs", async () => {
     const chrome = new FakeChrome()
     const client = chrome.client()
@@ -959,6 +1011,20 @@ describe("DeveloperCdp", () => {
       client.act(identity, { action: "type", ref: refOf(inspection), text: "hello", clear: true }),
       /stale ref/,
     )
+  })
+
+  it("retires a pinned renderer document only when its main document is reopened", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    try {
+      const { document } = await client.inspect(identity)
+      const pinned = { ...identity, document }
+      const socket = chrome.sockets.at(-1)!
+      socket.emit("Page.documentOpened", { frame: { id: "child", parentId: "main" } })
+      await client.context(pinned)
+      socket.emit("Page.documentOpened", { frame: { id: "main" } })
+      await assert.rejects(client.context(pinned), StaleDeveloperDocument)
+    } finally { client.close() }
   })
 
   it("invalidates refs when the target socket reconnects", async () => {

@@ -26,6 +26,8 @@ For Remote Control, **Web previews** is on by default under **Settings → Remot
 
 ## Shared sign-ins and automation boundaries {#signins-automation}
 
+On Electron and Windows Tauri, the desktop automation restart (`codenomad.act`, `restart`) relaunches the inspected profile, configuration and build. It inspects the original window again if restored; otherwise it reports the missing window and leaves other windows uninspected. A successful inspection during reconnection takes precedence.
+
 Native previews share cookies, sign-ins and site storage across projects/sessions within the same desktop engine and profile/configuration scope, separately from the trusted CodeNomad renderer. Logging out of a site in one preview affects other previews using that store. Documents, forms, session storage, navigation histories and automation attachments belong to each session.
 
 An agent opens the session's shared browser in an owning tab, using the active tab when possible. The chosen tab stays fixed while opening; closing it cancels that open. Page actions target the session's visible native preview; hidden previews are excluded.
