@@ -1,5 +1,4 @@
 import assert from "node:assert/strict"
-import { readFileSync, writeFileSync } from "node:fs"
 import { mkdtemp, mkdir, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises"
 import { createRequire, Module } from "node:module"
 import { tmpdir } from "node:os"
@@ -234,7 +233,7 @@ test("Electron CLI resolves the same app entry for identity, launch intents and 
   }
 })
 
-test("repointing a junction to a direct Electron entry cannot retarget the relaunch", async (context) => {
+test("repointing an Electron app junction cannot retarget the relaunch", async (context) => {
   const root = await mkdtemp(join(tmpdir(), "codenomad-relaunch-"))
   context.after(() => rm(root, { recursive: true, force: true }))
   const [original, replacement, alias] = ["original", "replacement", "current"].map(name => join(root, name))
@@ -247,9 +246,8 @@ test("repointing a junction to a direct Electron entry cannot retarget the relau
   }
   await symlink(original, alias, "junction")
   const executable = join(alias, "electron.exe")
-  const entry = readElectronEntry([executable, "--no-sandbox", join(alias, "index.js")])!
-  const main = resolveElectronMain(entry.path)
-  const artifact = pinElectronRelaunch(executable, dirname(main), entry.args, main)
+  const entry = readElectronEntry([executable, "--no-sandbox", alias])!
+  const artifact = pinElectronRelaunch(executable, entry.path, entry.args, resolveElectronMain(entry.path))
   const identity = (value: typeof artifact) => developerNativeIdentity("dev", "config.yaml", undefined, value)
   const launch = { profile: "dev", pinned: true, config: null, restart: {
     runId: "old", windowId, restartId, nativeIdentity: identity(artifact),
@@ -261,10 +259,9 @@ test("repointing a junction to a direct Electron entry cannot retarget the relau
   const { execPath, args } = developerRelaunchOptions(launch, artifact)
   assert.equal(await realpath(execPath!), await realpath(join(original, "electron.exe")))
   const successor = readElectronEntry([execPath!, ...args!])!
-  assert.equal(successor.path, main)
-  const successorMain = resolveElectronMain(successor.path)
-  assert.equal(dirname(successorMain), artifact.appPath)
-  assert.equal(identity(pinElectronRelaunch(execPath!, dirname(successorMain), successor.args, successorMain)), launch.restart.nativeIdentity)
+  assert.equal(await realpath(successor.path), await realpath(original))
+  assert.equal(createRequire(import.meta.url).resolve(successor.path), join(await realpath(original), "index.js"))
+  assert.equal(identity(pinElectronRelaunch(execPath!, successor.path, successor.args, resolveElectronMain(successor.path))), launch.restart.nativeIdentity)
   assert.notEqual(identity(pinElectronRelaunch(executable, alias, [], join(replacement, "index.js"))), launch.restart.nativeIdentity)
 })
 
@@ -273,53 +270,50 @@ const resolveElectronMain = (path: string) => (Module as typeof Module & {
   _resolveFilename(path: string, parent: null, isMain: true): string
 })._resolveFilename(path, null, true)
 
-for (const packaged of [false, true]) {
-  test(`a ${packaged ? "packaged" : "CLI directory"} launch refuses before shutdown can load a changed package main`, async (context) => {
-    const root = await mkdtemp(join(tmpdir(), "codenomad-package-relaunch-"))
-    context.after(() => rm(root, { recursive: true, force: true }))
-    const appPath = packaged ? join(root, "resources", "app") : root
-    await mkdir(appPath, { recursive: true })
-    const manifest = join(appPath, "package.json")
-    const original = { name: "Fixture", version: "1.0.0", desktopName: "Fixture.desktop", main: "a.js" }
-    writeFileSync(manifest, JSON.stringify(original))
-    for (const name of ["a.js", "b.js"]) await writeFile(join(appPath, name), "")
-    const artifact = pinElectronRelaunch(process.execPath, appPath, packaged ? [] : [appPath], join(appPath, original.main))
-    const nativeIdentity = developerNativeIdentity("dev", "config.yaml", undefined, artifact)
-    const restart = { runId: "old", windowId, restartId, nativeIdentity }
-    let loadedEntry: string | undefined
-    const mode = new DeveloperMode({
-      devtoolsDataPath: root, nativeIdentity, runId: "old",
-      windows: () => [{ windowId, focused: true }],
-      hasWindow: id => id === windowId,
-      relaunchScopeGeneration: () => 0,
-      verifyRelaunch: () => verifyElectronRelaunch(artifact),
-      requestRelaunch: restart => {
-        const { args } = developerRelaunchOptions({ profile: "dev", pinned: true, config: null, restart }, artifact)
-        // The old host shuts down before the successor reads its manifest.
-        writeFileSync(manifest, JSON.stringify({ ...original, main: "b.js" }))
-        const operand = packaged ? appPath : args![0]
-        loadedEntry = operand === appPath || operand === artifact.appPath
-          ? join(operand, JSON.parse(readFileSync(join(operand, "package.json"), "utf8")).main)
-          : operand
-      },
-      schedule: callback => callback(),
-    })
+test("a fixed package root cannot relaunch a different main through a child junction", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "codenomad-package-relaunch-"))
+  context.after(() => rm(root, { recursive: true, force: true }))
+  const [app, original, replacement] = ["app", "original", "replacement"].map(name => join(root, name))
+  for (const folder of [app, original, replacement]) await mkdir(folder)
+  await writeFile(join(app, "package.json"), JSON.stringify({ main: "dist/main.js" }))
+  for (const folder of [original, replacement]) await writeFile(join(folder, "main.js"), "")
+  const dist = join(app, "dist")
+  await symlink(original, dist, "junction")
+  const executable = process.execPath
+  const main = resolveElectronMain(app)
+  assert.equal(main, await realpath(join(original, "main.js")))
+  const artifact = pinElectronRelaunch(executable, app, [app], main)
+  const identity = (value: typeof artifact) => developerNativeIdentity("dev", "config.yaml", undefined, value)
+  const launch = { profile: "dev", pinned: true, config: null, restart: {
+    runId: "old", windowId, restartId, nativeIdentity: identity(artifact),
+  } }
+  assert.equal(developerRelaunchOptions(launch, artifact).args?.[0], artifact.appPath)
+  await verifyElectronRelaunch(artifact)
 
-    const error = await mode.handleNativeRequest("developer.restartScope", restart).catch((error: Error) => error)
-    assert.equal(loadedEntry, undefined, "shutdown must not load an entry from the changed manifest")
-    assert.ok(error instanceof Error)
-    assert.match(error.message, /Restart CodeNomad manually/)
-    assert.deepEqual(JSON.parse(readFileSync(manifest, "utf8")), original)
+  await unlink(dist)
+  await symlink(replacement, dist, "junction")
+  const otherMain = await realpath(join(dist, "main.js"))
+  assert.equal(otherMain, await realpath(join(replacement, "main.js")))
+  assert.equal(resolveElectronMain(app), main, "the original process has a stale resolver cache")
+  assert.notEqual(identity(pinElectronRelaunch(executable, app, [app], otherMain)), identity(artifact))
+  const mode = new DeveloperMode({
+    devtoolsDataPath: root, nativeIdentity: identity(artifact), runId: "old",
+    windows: () => [{ windowId, focused: true }],
+    hasWindow: id => id === windowId,
+    relaunchScopeGeneration: () => 0,
+    verifyRelaunch: () => verifyElectronRelaunch(artifact),
+    requestRelaunch: () => assert.fail("a different main must not trigger native shutdown"),
+    schedule: () => assert.fail("a different main must not be admitted"),
   })
-}
+  await assert.rejects(mode.handleNativeRequest("developer.restartScope", launch.restart), /artifact changed/)
+  await assert.rejects(mode.handleNativeRequest("developer.restartScope", launch.restart), /artifact changed/)
+})
 
 test("a suffixless CLI operand resolves to its physical script without changing the app path", async (context) => {
   const root = await mkdtemp(join(tmpdir(), "codenomad-extensionless-entry-"))
   context.after(() => rm(root, { recursive: true, force: true }))
   const main = join(root, "main.js")
-  for (const name of ["main.js", "other.js"]) await writeFile(join(root, name), "")
-  const manifest = join(root, "package.json")
-  await writeFile(manifest, JSON.stringify({ main: "main.js" }))
+  await writeFile(main, "")
   const entry = readElectronEntry([process.execPath, "--no-sandbox", join(root, "main")])!
   const resolved = resolveElectronMain(entry.path)
   assert.equal(resolved, await realpath(main))
@@ -329,7 +323,6 @@ test("a suffixless CLI operand resolves to its physical script without changing 
   } }
   await verifyElectronRelaunch(artifact)
   const { args } = developerRelaunchOptions(launch, artifact)
-  await writeFile(manifest, JSON.stringify({ main: "other.js" }))
   assert.deepEqual(args?.slice(0, 2), ["--no-sandbox", resolved])
   assert.deepEqual(readDeveloperRelaunch(args!.slice(2)), launch)
   const successor = readElectronEntry([process.execPath, ...args!])!
