@@ -61,6 +61,6 @@ cargo build --release --locked
 
 Behaviour must match `packages/server`: every change runs the matching comparison in `bench/` (`node compare.mjs <mode> <opencode>`). Parity cases are regenerated from the TypeScript sources with `bench/generate-*.mjs`.
 
-Conversation permission modes cover owned unforked roots and family lookup. The backend projects the profile preference on ordinary and paused Mission root creation and refreshes positively owned root blocks before supported sends; ownership shares the private `sessionPermissionBlocks` state with TypeScript. Child/fork provenance, background refresh on native events or reconnect, private-state pruning after deletion, and managed actor-root creation belong to the TypeScript implementation.
+Conversation permission modes cover owned unforked roots and family lookup. The backend applies the profile preference to ordinary, paused Mission and managed actor roots, and refreshes positively owned root blocks before supported sends; ownership shares the private `sessionPermissionBlocks` state with TypeScript. Child/fork provenance, background refresh on native events or reconnect, and private-state pruning after deletion belong to the TypeScript implementation.
 
 Known divergence: when a platform package does not match its registry integrity, the TypeScript server installs it anyway through `@opencode/cli`'s postinstall fallback; Rust refuses it (`bench/opencode-install.mjs`). OpenCode 1.x npm replacement is not ported: such an installation is refused.

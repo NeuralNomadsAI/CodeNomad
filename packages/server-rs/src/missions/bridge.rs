@@ -21,7 +21,7 @@ pub(super) async fn owner(app: &App, sid: &str) -> Result<(Scope, Value), Error>
         return Err(foreign());
     }
     let endpoint = app.native.endpoint().ok_or_else(held)?;
-    let who = crate::opencode::session_record(app, sid).await?;
+    let who = crate::opencode::session_record_at(app, &endpoint, sid).await?;
     let directory = dir(&who)?;
     let mut candidates = app.inner.lock().unwrap().workspaces.clone();
     // Distinct occurrences in this backend share one native connection and profile.
@@ -31,11 +31,14 @@ pub(super) async fn owner(app: &App, sid: &str) -> Result<(Scope, Value), Error>
             if !std::sync::Arc::ptr_eq(&scope.endpoint, &endpoint)
                 || who["projectID"] != scope.project
                 || who["id"] != sid
-                || dir(&session(app, &scope, sid).await?)? != directory
             {
                 return Err(foreign());
             }
-            return Ok((scope, who));
+            let fresh = session(app, &scope, sid).await?;
+            if dir(&fresh)? != directory || fresh["parentID"] != who["parentID"] {
+                return Err(foreign());
+            }
+            return Ok((scope, fresh));
         }
     }
     Err(foreign())

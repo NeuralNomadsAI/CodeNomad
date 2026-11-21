@@ -15,7 +15,7 @@ use crate::{
     auth::{Principal, cookies, remote::BrowserDevice, tls::Channel},
     error,
     missions::recurrence_contract::{self as wire, units},
-    opencode::{Endpoint, proxy::verify_mutation, read_json, session_record, upstream_error},
+    opencode::{Endpoint, proxy::verify_mutation, read_json, session_record_at, upstream_error},
     settings::profile,
     worktrees,
 };
@@ -107,7 +107,7 @@ impl Target {
             && row["location"].get("workspaceID").is_none()
     }
     async fn fresh(&self, app: &App) -> Option<Value> {
-        let row = session_record(app, &self.session).await.ok()?;
+        let row = session_record_at(app, &self.endpoint, &self.session).await.ok()?;
         (self.matches(&row)
             && worktrees::placement(app, &self.workspace, &row["location"]).await.is_ok()
             && self.current(app))
@@ -208,7 +208,7 @@ async fn binding(app: &App, admit: &Admission, form: &str) -> Option<Value> {
         if !admit.current(app) || owned.len() > 32 || !owned.insert(actor.clone()) {
             return None;
         }
-        let record = session_record(app, &actor).await.ok()?;
+        let record = session_record_at(app, &t.endpoint, &actor).await.ok()?;
         if !t.matches(&record) || carrier(&record) {
             return None;
         }
