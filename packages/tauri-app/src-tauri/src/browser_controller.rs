@@ -1034,54 +1034,76 @@ impl BrowserController {
             inner.open_claims.insert(request_id.clone(), claim.clone());
         }
         Self::emit_open_request(app, &request_id, &claim);
-        let result = (|| -> Result<Value, String> {
-            let registration_deadline = deadline.min(Instant::now() + Duration::from_secs(10));
-            let (inner, ready) = &*self.inner;
-            let mut guard = inner.lock().map_err(|error| error.to_string())?;
-            loop {
-                drop(guard);
-                fence.check()?;
-                match self.resolve(app, session_id) {
-                    Ok(registration) => {
-                        let webview = app
-                            .get_webview(&registration.webview_label)
-                            .ok_or_else(|| "Browser preview is no longer available".to_string())?;
-                        if let Some(sequence) =
-                            self.page_load_expectation(&registration.registration_id, url.as_str())?
-                        {
-                            self.wait_for_page_load(
-                                &registration.registration_id,
-                                sequence,
-                                deadline,
-                            )?;
-                            self.check_target(app, &registration, deadline, fence)?;
-                            return Ok(
-                                json!({ "url": webview.url().map_err(|error| error.to_string())? }),
-                            );
-                        }
-                    }
-                    Err(error) if error == no_browser_target_error() => {}
-                    Err(error) => return Err(error),
-                }
-                let remaining = registration_deadline.saturating_duration_since(Instant::now());
-                if remaining.is_zero() {
-                    return Err(
-                        "Timed out waiting for CodeNomad to open the browser preview".to_string(),
-                    );
-                }
-                guard = ready
-                    .wait_timeout(
-                        inner.lock().map_err(|error| error.to_string())?,
-                        remaining.min(Duration::from_millis(50)),
-                    )
-                    .map_err(|error| error.to_string())?
-                    .0;
-            }
-        })();
+        let result = self.wait_for_open(app, &request_id, session_id, &url, deadline, fence);
         if let Ok(mut inner) = self.inner.0.lock() {
             inner.open_claims.remove(&request_id);
         }
         result
+    }
+
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    fn wait_for_open<R: tauri::Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        request_id: &str,
+        session_id: &str,
+        url: &tauri::Url,
+        deadline: Instant,
+        fence: &crate::native_request::RequestFence,
+    ) -> Result<Value, String> {
+        let registration_deadline = deadline.min(Instant::now() + Duration::from_secs(10));
+        let (inner, ready) = &*self.inner;
+        loop {
+            fence.check()?;
+            match self.resolve(app, session_id) {
+                Ok(registration) => {
+                    self.check_open_claim(request_id, &registration)?;
+                    let webview = app
+                        .get_webview(&registration.webview_label)
+                        .ok_or_else(|| "Browser preview is no longer available".to_string())?;
+                    if let Some(sequence) =
+                        self.page_load_expectation(&registration.registration_id, url.as_str())?
+                    {
+                        self.wait_for_page_load(&registration.registration_id, sequence, deadline)?;
+                        self.check_target(app, &registration, deadline, fence)?;
+                        let opened_url = webview.url().map_err(|error| error.to_string())?;
+                        self.check_open_claim(request_id, &registration)?;
+                        return Ok(json!({ "url": opened_url }));
+                    }
+                }
+                Err(error) if error == no_browser_target_error() => {}
+                Err(error) => return Err(error),
+            }
+            let remaining = registration_deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(
+                    "Timed out waiting for CodeNomad to open the browser preview".to_string(),
+                );
+            }
+            drop(
+                ready
+                    .wait_timeout(
+                        inner.lock().map_err(|error| error.to_string())?,
+                        remaining.min(Duration::from_millis(50)),
+                    )
+                    .map_err(|error| error.to_string())?,
+            );
+        }
+    }
+
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    fn check_open_claim(&self, request_id: &str, expected: &Registration) -> Result<(), String> {
+        let inner = self.inner.0.lock().map_err(|error| error.to_string())?;
+        let owner = inner
+            .open_claims
+            .get(request_id)
+            .and_then(|claim| claim.owner.as_deref());
+        if owner != Some(expected.window_label.as_str())
+            || inner.registrations.get(&expected.registration_id) != Some(expected)
+        {
+            return Err(STALE_TARGET.into());
+        }
+        Ok(())
     }
 
     fn emit_open_request<R: tauri::Runtime>(
@@ -1105,6 +1127,20 @@ impl BrowserController {
         app: &AppHandle<R>,
         session_id: &str,
     ) -> Result<Registration, String> {
+        self.resolve_with_visibility(session_id, |label| {
+            let Some(window) = app.get_window(label) else {
+                return Ok(false);
+            };
+            Ok(window.is_visible()? && !window.is_minimized()?)
+        })
+    }
+
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    fn resolve_with_visibility(
+        &self,
+        session_id: &str,
+        mut read_visibility: impl FnMut(&str) -> tauri::Result<bool>,
+    ) -> Result<Registration, String> {
         validate_id(session_id, 256)?;
         let registrations = self
             .inner
@@ -1116,16 +1152,14 @@ impl BrowserController {
             .filter(|registration| registration.session_id == session_id && registration.visible)
             .cloned()
             .collect::<Vec<_>>();
-        let matches = registrations
-            .into_iter()
-            .filter(|registration| {
-                app.get_window(&registration.window_label)
-                    .is_some_and(|window| {
-                        window.is_visible().unwrap_or(false)
-                            && !window.is_minimized().unwrap_or(true)
-                    })
-            })
-            .collect::<Vec<_>>();
+        let mut matches = Vec::new();
+        for registration in registrations {
+            if read_visibility(&registration.window_label)
+                .map_err(|error| preview_error("inventory is incomplete", error))?
+            {
+                matches.push(registration);
+            }
+        }
         match matches.as_slice() {
             [] => Err(no_browser_target_error()),
             [registration] => Ok(registration.clone()),

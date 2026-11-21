@@ -162,6 +162,89 @@ fn controller_with_registration() -> (BrowserController, Registration) {
 }
 
 #[test]
+fn a_window_visibility_read_failure_makes_the_preview_inventory_incomplete() {
+    let (controller, mut registration) = controller_with_registration();
+    let resolve = || {
+        controller.resolve_with_visibility("session", |label| match label {
+            OWNER => Err(std::io::Error::other("visibility read failed").into()),
+            OTHER => Ok(true),
+            _ => unreachable!(),
+        })
+    };
+    let assert_incomplete = || {
+        let error = resolve().err().expect("must not choose an unverified target");
+        assert!(error.contains("inventory is incomplete"), "{error}");
+        assert_ne!(error, no_browser_target_error());
+    };
+    assert_eq!(
+        controller
+            .resolve_with_visibility("session", |_| Ok(false))
+            .err(),
+        Some(no_browser_target_error())
+    );
+    assert_incomplete();
+
+    registration.registration_id = "other".into();
+    registration.window_label = OTHER.into();
+    controller
+        .publish_registration(registration, 0, "https://example.com/")
+        .unwrap();
+    assert_incomplete();
+}
+
+#[test]
+fn an_open_waiter_only_accepts_the_window_that_claimed_its_request() {
+    let (app, _, child) = app_with_preview();
+    let (controller, registration) = controller_with_registration();
+    let url = child.url().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let expires = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+        + 10_000;
+    let fence = crate::native_request::RequestFence::new(expires, || true);
+    controller.inner.0.lock().unwrap().open_claims.insert(
+        "pending".into(),
+        OpenClaim {
+            session_id: registration.session_id.clone(),
+            url: url.to_string(),
+            owner: None,
+            failed_owners: HashSet::new(),
+            fence: Some(fence.clone()),
+        },
+    );
+    assert!(controller.claim_open(OTHER, "pending"));
+    // OWNER's preview opens the same URL for the same session, independently.
+    let id = &registration.registration_id;
+    controller.prepare_page_load(id, url.as_str()).unwrap();
+    controller.mark_page_started(id, registration.generation, 1, url.to_string());
+    controller.mark_page_finished(id, registration.generation, 1, None);
+    let wait = |fence| {
+        controller.wait_for_open(app.handle(), "pending", "session", &url, deadline, fence)
+    };
+    assert_eq!(wait(&fence), Err(STALE_TARGET.into()));
+
+    assert!(controller.release_claim(OTHER, "pending").is_some());
+    assert_eq!(wait(&fence), Err(STALE_TARGET.into()));
+    assert!(controller.claim_open(OWNER, "pending"));
+    assert_eq!(wait(&fence), Ok(json!({"url": url})));
+
+    let release_after_load = {
+        let controller = controller.clone();
+        let checks = AtomicU64::new(0);
+        crate::native_request::RequestFence::new(expires, move || {
+            // The first check starts the waiter; the next one validates the loaded target.
+            if checks.fetch_add(1, Ordering::Relaxed) == 1 {
+                assert!(controller.release_claim(OWNER, "pending").is_some());
+            }
+            true
+        })
+    };
+    assert_eq!(wait(&release_after_load), Err(STALE_TARGET.into()));
+}
+
+#[test]
 fn probe_issues_a_bounded_witness_for_the_current_registration_and_document() {
     let (app, _, _) = app_with_preview();
     let (controller, mut registration) = controller_with_registration();
