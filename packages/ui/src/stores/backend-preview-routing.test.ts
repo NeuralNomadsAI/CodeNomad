@@ -9,7 +9,7 @@ import { backendIdOf, parseInstanceKey } from "../lib/backend-identity"
 import { allowsAutomaticLocalSetup } from "./app-tabs"
 import { selectBrowserOpenOwner, type BrowserOpenResponse } from "../lib/native/browser"
 import { getPreviewFrameSource } from "../components/browser-frame-security"
-import { closeSessionPreview, dismissSessionPreview, getSessionPreview, openSessionPreview, restoreSessionPreview, sessionPreviews, settleSessionPreviewOpen, showSessionChatFor, showSessionPreview, updateSessionPreviewHistory } from "./session-previews"
+import { closeSessionPreview, dismissSessionPreview, getSessionPreview, openSessionPreview, restoreSessionPreview, sessionPreviews, settleSessionPreviewOpen, showSessionChatFor, showSessionPreview, updateSessionPreviewHistory, updateSessionPreviewViewport } from "./session-previews"
 import { detachInstanceTabMembership } from "./app-tab-membership"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { applySurface, beginGesture, getSessionSurface, type CentralSurface } from "./session-surface"
@@ -393,6 +393,46 @@ test("autonomous opens respect newer tab selection and save only the exact nativ
   assert.equal(getSessionPreview(sessionId, instanceId)?.nativeOpen, undefined)
   assert.deepEqual(savedSessionBrowser(sessionId), saved, "a valid but unrecordable URL does not replace saved history")
   await closeSessionPreview(long.storageKey)
+})
+
+test("an interrupted native open preserves viewport changes and keeps long addresses out of saved history", async t => {
+  const instanceId = "preview-admission-tab", sessionId = "preview-admission-session"
+  const context = { instanceId, sessionId }
+  const lifecycle = { instanceId, folder: "/repo", occurrence: 0 }
+  const layout = new Map<string, string>()
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: {
+    getItem: (key: string) => layout.get(key) ?? null,
+    setItem: (key: string, value: string) => layout.set(key, value),
+    removeItem: (key: string) => layout.delete(key),
+  } } })
+  t.after(() => previousWindow ? Object.defineProperty(globalThis, "window", previousWindow) : Reflect.deleteProperty(globalThis, "window"))
+  await initializeClientState()
+  publishInstanceLifecycleAuthority({ ...lifecycle, type: "opened" })
+  t.after(() => publishInstanceLifecycleAuthority({ ...lifecycle, type: "removed" }))
+  let token = 0
+  t.mock.method(localBackend.api, "createPreview", async ({ url }: { url: string }) =>
+    ({ token: String(++token), sessionId, targetUrl: url, proxyUrl: "/preview", createdAt: "" }))
+  t.mock.method(localBackend.api, "deletePreview", async () => {})
+  const prior = "http://localhost:3000/prior", pending = "http://localhost:3000/pending"
+  const long = `http://localhost:3000/report?q=${"a".repeat(2185)}`
+  const preview = await openSessionPreview(sessionId, prior, instanceId)
+  updateSessionPreviewViewport(preview.storageKey, "desktop")
+  const intent = beginGesture(context)
+  await openSessionPreview(sessionId, pending, instanceId, async () => true, intent,
+    { requestID: "slow", instanceId, current: intent.current })
+  updateSessionPreviewViewport(preview.storageKey, "tablet")
+  showSessionChatFor(sessionId, instanceId)
+  settleSessionPreviewOpen(sessionId, instanceId, "slow")
+  await closeSessionPreview(preview.storageKey)
+  const restored = await restoreSessionPreview(sessionId, instanceId)
+  assert.equal(restored?.viewport, "tablet")
+  assert.equal(restored?.targetUrl, prior)
+  const longPreview = await openSessionPreview(sessionId, long, instanceId)
+  assert.equal(longPreview.targetUrl, long)
+  assert.deepEqual(longPreview.history, { urls: [prior], index: 0 })
+  assert.equal(savedSessionBrowser(sessionId)?.targetUrl, prior)
+  await closeSessionPreview(longPreview.storageKey)
 })
 
 test("App native browser claim and preview continuations retain the admitted attachment and owner", async t => {

@@ -334,7 +334,8 @@ Claim and adoption are scoped to the native window incarnation, renderer
 generation and tab; the host waits for that renderer's acknowledgement of its visible native registration
 and checks the same registration after load. Hide, minimize, renderer reload,
 window/occurrence closure or failed adoption retires the request; never reroute it.
-An existing registered preview in another window causes refusal rather than transfer.
+A retained preview in another window blocks guest construction. An existing preview
+can still navigate when it is the only visible guest and belongs to the selected occurrence.
 Page actions require exactly one visible native target for the invoking session.
 Ambiguity, hiding and closure invalidate it. Registrations retain the real native
 session ID on Electron and Tauri Windows/macOS/Linux.

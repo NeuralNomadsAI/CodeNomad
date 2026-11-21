@@ -253,7 +253,7 @@ export class BrowserController {
       if ([...this.openClaims.values()].some(other => other !== claim && other.sessionID === claim.sessionID && other.adopted)) {
         throw new Error("Browser preview open is already in progress")
       }
-      this.checkNoForeignPreview(claim.sessionID, owner)
+      this.checkNoForeignPreview(claim.sessionID, owner, claim.instanceId)
       claim.adopted = true
       return true
     }
@@ -420,17 +420,17 @@ export class BrowserController {
         check()
         if (occurrence === null) continue
         if (occurrence === true) throw new Error("Multiple owning tabs; select one before opening the preview")
-        this.checkNoForeignPreview(sessionID, owner)
+        this.checkNoForeignPreview(sessionID, owner, occurrence)
         claim.instanceId = occurrence
         owner.send("browser-target:open", { sessionID, requestID, instanceId: occurrence, url })
         for (;;) {
           check()
-          this.checkNoForeignPreview(sessionID, owner)
+          this.checkNoForeignPreview(sessionID, owner, occurrence)
           if (claim.target) {
             const expected = claim.target
             const checkRegistration = () => {
               check()
-              this.checkNoForeignPreview(sessionID, owner)
+              this.checkNoForeignPreview(sessionID, owner, occurrence)
               if (this.registrations.get(expected.registrationId) !== expected || !this.registrationVisible(expected)) {
                 throw new Error("Browser open registration changed")
               }
@@ -463,9 +463,14 @@ export class BrowserController {
     return Boolean(window && !window.isDestroyed() && window.isVisible() && !window.isMinimized())
   }
 
-  private checkNoForeignPreview(sessionID: string, owner: WebContents): void {
+  private checkNoForeignPreview(sessionID: string, owner: WebContents, instanceId?: string): void {
     for (const [guest, session] of this.retainedSessions) {
       if (session === sessionID && !guest.isDestroyed() && guest.hostWebContents !== owner) {
+        if (instanceId) {
+          const visible = [...this.registrations.values()].filter(registration =>
+            registration.sessionId === sessionID && this.registrationVisible(registration))
+          if (visible.length === 1 && visible[0].owner === owner && visible[0].instanceId === instanceId) return
+        }
         throw new Error("Browser preview already exists in another window")
       }
     }

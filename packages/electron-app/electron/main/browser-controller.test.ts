@@ -673,6 +673,33 @@ describe("BrowserController preview lifecycle", () => {
     await assert.rejects(h.controller.open("session", "https://example.com/", Infinity, ["tab"]), /another window/)
   })
 
+  it("navigates the exact visible occurrence despite a retained guest in chat in another window", async t => {
+    const h = createHarness((owner, channel, { requestID, instanceId }) => {
+      assert.equal(owner, h.owner)
+      if (channel === "browser-target:discover") {
+        h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
+        return
+      }
+      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId }), true)
+      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId }), true)
+      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "visible" }), true)
+    })
+    const visible = createGuest({ id: 22, owner: h.owner })
+    const hidden = createGuest({ id: 23, owner: h.other, loadURL: async () => assert.fail("hidden guest navigated") })
+    h.add(visible.guest, "visible")
+    h.add(hidden.guest, "hidden", "session", "duplicate")
+    h.controller.unregister(h.other, "hidden")
+    const load = t.mock.method(visible.guest, "loadURL", async (url: string) => {
+      visible.events.emit("did-start-navigation", {}, url, false, true)
+      visible.setUrl(url)
+      visible.events.emit("did-navigate", {}, url)
+      visible.events.emit("did-finish-load")
+    })
+    const url = "https://example.com/new"
+    assert.deepEqual(await h.controller.open("session", url, Infinity, ["tab"]), { url })
+    assert.equal(load.mock.callCount(), 1)
+  })
+
   it("requires occurrence authority for open and invalidates the prior document witness on success", async () => {
     const url = "https://example.com/next"
     const h = createHarness((owner, channel, { requestID, instanceId }) => {

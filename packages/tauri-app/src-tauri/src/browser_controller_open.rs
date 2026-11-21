@@ -119,7 +119,7 @@ impl BrowserController {
                 }) {
                     return Err("Browser preview open is already in progress".into());
                 }
-                check_no_foreign_preview(&inner, &claim.session_id, owner)?;
+                check_no_foreign_preview(&inner, &claim.session_id, owner, claim.instance_id.as_deref())?;
                 None
             }
             OpenResponse::Target {
@@ -228,7 +228,7 @@ impl BrowserController {
         {
             return Err("Browser open construction is no longer current".into());
         }
-        check_no_foreign_preview(&inner, &claim.session_id, owner)?;
+        check_no_foreign_preview(&inner, &claim.session_id, owner, None)?;
         inner.open_claims.get_mut(request_id).unwrap().construction =
             Some((input.registration_id.clone(), generation));
         Ok(())
@@ -248,7 +248,7 @@ impl BrowserController {
         {
             return Err("Browser open construction is no longer current".into());
         }
-        check_no_foreign_preview(inner, &claim.session_id, &claim.owner)
+        check_no_foreign_preview(inner, &claim.session_id, &claim.owner, None)
     }
 
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -341,7 +341,7 @@ impl BrowserController {
                                     let id = id.clone();
                                     guard.open_claims.get_mut(&request_id).unwrap().instance_id =
                                         Some(id.clone());
-                                    check_no_foreign_preview(&guard, session_id, &owner)?;
+                                    check_no_foreign_preview(&guard, session_id, &owner, Some(&id))?;
                                     break id;
                                 }
                             }
@@ -440,10 +440,27 @@ impl BrowserController {
     }
 }
 
-fn check_no_foreign_preview(inner: &Inner, session_id: &str, owner: &str) -> Result<(), String> {
+fn check_no_foreign_preview(
+    inner: &Inner,
+    session_id: &str,
+    owner: &str,
+    instance_id: Option<&str>,
+) -> Result<(), String> {
     if inner.registrations.values().any(|registration| {
         registration.session_id == session_id && registration.window_label != owner
     }) {
+        if let Some(instance_id) = instance_id {
+            let mut visible = inner.registrations.values().filter(|registration| {
+                registration.session_id == session_id && registration.visible
+            });
+            if visible.next().is_some_and(|registration| {
+                registration.window_label == owner
+                    && registration.instance_id.as_deref() == Some(instance_id)
+            }) && visible.next().is_none()
+            {
+                return Ok(());
+            }
+        }
         return Err("Browser preview already exists in another window".into());
     }
     Ok(())
@@ -460,7 +477,12 @@ pub(super) fn check_open_target(
     {
         return Err("Browser open registration changed".into());
     }
-    check_no_foreign_preview(inner, &expected.session_id, &expected.window_label)
+    check_no_foreign_preview(
+        inner,
+        &expected.session_id,
+        &expected.window_label,
+        expected.instance_id.as_deref(),
+    )
 }
 
 pub(super) fn retire_open_for_navigation(
@@ -658,6 +680,10 @@ mod tests {
                 .insert("foreign".into(), foreign.clone());
             assert!(check_open_target(&inner, "request", &expected).is_err());
             assert!(check_open_target(&inner, "request", &foreign).is_err());
+            inner.registrations.get_mut("foreign").unwrap().visible = false;
+            assert!(check_open_target(&inner, "request", &expected).is_ok());
+            assert!(check_no_foreign_preview(&inner, "session", "owner", Some("wrong")).is_err());
+            assert!(check_no_foreign_preview(&inner, "session", "owner", None).is_err());
             inner.registrations.remove("foreign");
             let mut replacement = expected.clone();
             replacement.generation += 1;

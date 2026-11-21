@@ -32,7 +32,7 @@ Yeniden başlatma iptal edilirse `codenomad.inspect` ile `targets: true` kullana
 
 Native önizlemeler aynı masaüstü motoru ve profil/yapılandırma kapsamındaki projeler/oturumlar arasında çerezleri, oturum açma bilgilerini ve site depolamasını paylaşır; bunlar güvenilir CodeNomad arayüzünden ayrıdır. Önizlemede siteden çıkış yapmak aynı depoyu kullanan diğer önizlemeleri etkiler. Belgeler, formlar, oturum depolaması, gezinme geçmişi ve otomasyon bağlantıları her oturuma aittir.
 
-Ajan, önizlemeyi oturumun bir sekmesini içeren odaktaki yerel pencerede, yoksa en son kullanılan uygun pencerede, pencereyi öne getirmeden açar. Etkin sekme uygunsa öncelik onundur. Birden fazla uygun sekme varsa ve hiçbiri etkin değilse birini seçip yeniden deneyin. Önizleme açılırken başka bir sekmeye geçerseniz seçiminiz korunur. Seçilen sekmeyi kapatmak açılışı iptal eder. Başka bir pencerede zaten bir önizleme varsa o pencereyi kullanın. Sayfa eylemleri oturumun görünür yerel önizlemesini hedefler.
+Ajan, önizlemeyi oturumun bir sekmesini içeren odaktaki yerel pencerede, yoksa en son kullanılan uygun pencerede, pencereyi öne getirmeden açar. Etkin sekme uygunsa öncelik onundur. Birden fazla uygun sekme varsa ve hiçbiri etkin değilse birini seçip yeniden deneyin. Önizleme açılırken başka bir sekmeye geçerseniz seçiminiz korunur. Seçilen sekmeyi kapatmak açılışı iptal eder. Başka bir penceredeki önizleme açılışı engelliyorsa o pencereyi kullanın. Sayfa eylemleri oturumun görünür yerel önizlemesini hedefler.
 
 Ajanın önizlemeyi açabilmesi için seçilen sekmedeki açık dosyayı veya görev okuyucusunu kapatın. Kendi gezinmeniz, ajanın bekleyen açma isteğinden önceliklidir. Ajan ilk sayfayı açarken **Yenile** kullanılamaz.
 

@@ -70,7 +70,8 @@ function withLiveMode(record: SessionPreviewRecord): SessionPreviewRecord {
 function storePreview(sessionId: string, instanceId: string, preview: StoredSessionPreview | null) {
   const previews = { ...getTabViewState(instanceId).previews }
   if (preview?.targetUrl && local(instanceId)) {
-    saveSessionBrowser(sessionId, { ...preview, targetUrl: preview.targetUrl, mode: "chat" })
+    const url = historyUrl(preview.targetUrl) ?? historyUrl(preview.history?.urls[preview.history.index])
+    if (url) saveSessionBrowser(sessionId, { ...preview, targetUrl: url, mode: "chat" })
     if (previews[sessionId]) return
   }
   delete previews[sessionId]
@@ -192,7 +193,7 @@ async function createPreview(sessionId: string, url: string, version: PreviewOpe
 async function openSessionPreview(sessionId: string, url: string, instanceId: string, canPublish?: () => Promise<boolean>, intent?: SurfaceGesture,
   nativeOpen?: NonNullable<SessionPreviewRecord["nativeOpen"]>): Promise<SessionPreviewRecord> {
   if (!isInstanceOccurrenceOpen(instanceId)) throw new DOMException("Preview occurrence is closed", "AbortError")
-  if (!historyUrl(url)) throw new TypeError(tGlobal("sessionPreview.open.invalidUrl"))
+  if (!(local(instanceId) ? browserAddress(url) : historyUrl(url))) throw new TypeError(tGlobal("sessionPreview.open.invalidUrl"))
   const surfaceAvailable = () => {
     if (!nativeOpen) return true
     const surface = getSessionSurface({ instanceId, sessionId: null })
@@ -315,7 +316,7 @@ export function updateSessionPreviewViewport(storageKey: string, viewport: NonNu
   const next = withLiveMode({ ...current, viewport })
   setSessionPreviews(previous => new Map(previous).set(storageKey, next))
   const savedUrl = next.history.urls[next.history.index]
-  if (!current.nativeOpen && savedUrl) storePreview(current.sessionId, current.instanceId, { ...next, targetUrl: savedUrl })
+  if (!current.nativeOpen?.created && savedUrl) storePreview(current.sessionId, current.instanceId, { ...next, targetUrl: savedUrl })
 }
 
 export function cancelSessionPreviewNavigation(storageKey: string) { cancelOperation(storageKey) }
