@@ -53,7 +53,7 @@ export class BrowserPage {
     }
     const request = async <T>(method: string, params: Record<string, unknown>): Promise<T> => {
       current()
-      const result = await this.native.request<T>(method, { sessionID, operationID, ...params }, Math.max(1, deadline - Date.now())).catch(error => {
+      const result = await this.native.request<T>(method, { sessionID, operationID, ...params }, { deadline }).catch(error => {
         failure = error instanceof Error ? error : new Error(String(error))
         throw failure
       })

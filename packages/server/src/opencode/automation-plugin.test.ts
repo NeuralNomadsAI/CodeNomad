@@ -1,11 +1,16 @@
 import assert from "node:assert/strict"
+import { EventEmitter } from "node:events"
+import fs from "node:fs/promises"
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import http from "node:http"
 import os from "node:os"
 import path from "node:path"
-import test from "node:test"
+import { PassThrough } from "node:stream"
+import test, { type TestContext } from "node:test"
 import childProcess from "node:child_process"
 import { syncBuiltinESMExports } from "node:module"
+import type { Plugin } from "@opencode/plugin"
+import { desktopPlugin } from "./automation/desktop-plugin"
 import {
   AUTOMATION_BRIDGE_PATH,
   automationBridgeDirectory,
@@ -55,6 +60,26 @@ async function collectTools(): Promise<ToolDefinition[]> {
     tool: { transform: async (callback) => callback({ add: (value) => definitions.push(value as ToolDefinition) }) },
   })
   return definitions
+}
+
+async function browserTool(t: TestContext, leaseDirectory: string) {
+  await writeFile(path.join(leaseDirectory, "01.lease"), "")
+  const tools: Array<ToolDefinition & { options: { namespace: string } }> = []
+  type Transform = Plugin.Context["tool"]["transform"]
+  const editor: Pick<Parameters<Parameters<Transform>[0]>[0], "add"> = {
+    add: value => { tools.push(value as typeof tools[number]) },
+  }
+  const stop = await desktopPlugin(leaseDirectory).setup({
+    tool: { transform: async (callback: Parameters<Transform>[0]) => {
+      callback(editor as never)
+      return { dispose: async () => undefined }
+    } },
+    skill: { transform: async () => ({ dispose: async () => undefined }) },
+  } as unknown as Plugin.Context)
+  t.after(async () => { await stop?.() })
+  const browser = tools.find(tool => tool.name === "browser" && tool.options.namespace === "codenomad")
+  assert.ok(browser)
+  return (input: unknown) => browser.execute(input, { sessionID: "fixture" })
 }
 
 function closeServer(server: http.Server | undefined): Promise<void> {
@@ -268,6 +293,114 @@ test("preview discovery cannot dispatch past unverified profiles", async t => {
     }
   }
   assert.equal(executions, before)
+})
+
+test("preview discovery refuses a redirect to a different, refused HTTP endpoint", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-preview-redirect-"))
+  const restore = isolateAutomationBridgeRegistry(root)
+  t.after(async () => { restore(); await rm(root, { recursive: true, force: true }) })
+  let executions = 0
+  const owner = await listen(async body => {
+    if (body.mode === "browser-execute") executions++
+    return { result: { available: true, target: "document" } }
+  })
+  t.after(() => closeServer(owner.server))
+  const blockedDestination = await listen(async () => ({}))
+  await closeServer(blockedDestination.server)
+  const redirector = await listen(async (_body, reply) => {
+    reply.statusCode = 307
+    reply.setHeader("location", new URL(AUTOMATION_BRIDGE_PATH, blockedDestination.url).href)
+    return {}
+  })
+  t.after(() => closeServer(redirector.server))
+  const browser = await browserTool(t, root)
+  await publishAutomationBridge(createAutomationBridgeRegistration(owner.url))
+  await publishAutomationBridge(createAutomationBridgeRegistration(redirector.url))
+  for (const command of [{ action: "snapshot" }, { action: "open", url: "https://example.test" }]) {
+    await t.test(command.action, async () => {
+      await assert.rejects(browser(command), /inventory could not be verified/)
+      assert.equal(executions, 0)
+    })
+  }
+})
+
+test("WSL preview discovery keeps malformed and redirecting Windows advertisements indeterminate", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-preview-wsl-inventory-"))
+  const restore = isolateAutomationBridgeRegistry(root)
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!
+  t.after(async () => {
+    restore()
+    Object.defineProperty(process, "platform", platform)
+    t.mock.restoreAll()
+    syncBuiltinESMExports()
+    await rm(root, { recursive: true, force: true })
+  })
+  const browser = await browserTool(t, root)
+  Object.defineProperty(process, "platform", { value: "linux" })
+  process.env.WSL_DISTRO_NAME = "fixture-preview-inventory"
+  process.env.XDG_RUNTIME_DIR = "/fixture-linux"
+  const local = createAutomationBridgeRegistration("http://127.0.0.1:1")
+  const foreign = { ...createAutomationBridgeRegistration("http://127.0.0.1:2"), pid: 0x80000000 }
+  const registrationName = ({ startedAt, pid }: typeof local, suffix: string) => `${startedAt}-${pid}-${suffix}.json`
+  const localName = registrationName(local, "local"), foreignName = registrationName(foreign, "windows")
+  let foreignContents = "{unparseable", vanished = false, redirects = true
+  let executions = 0, curlCalls = 0
+  t.mock.method(childProcess, "execFile", (_file: string, _args: string[], _options: unknown, callback: (error: null, stdout: string) => void) =>
+    callback(null, "/fixture-windows"))
+  t.mock.method(fs, "opendir", async (directory: string) => (async function* () {
+    yield { name: directory.startsWith("/fixture-linux/") ? localName : foreignName, isFile: () => true }
+  })())
+  t.mock.method(fs, "open", async (file: string) => {
+    const windows = file.endsWith(foreignName)
+    if (windows && vanished) throw Object.assign(new Error("File vanished"), { code: "ENOENT" })
+    const bytes = Buffer.from(windows ? foreignContents : JSON.stringify(local))
+    return { read: async (buffer: Buffer) => ({ bytesRead: bytes.copy(buffer) }), close: async () => undefined }
+  })
+  t.mock.method(fs, "rm", async () => assert.fail("Windows advertisements are left to their publishers"))
+  t.mock.method(globalThis, "fetch", async (url: string, init: RequestInit) => {
+    assert.equal(url, local.url)
+    if (JSON.parse(String(init.body)).mode === "browser-execute") executions++
+    return Response.json({ result: { available: true, target: "document" } })
+  })
+  t.mock.method(childProcess, "spawn", (command: string, args: string[]) => {
+    curlCalls++
+    assert.equal(command, "curl.exe")
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true,
+    })
+    child.stdin.on("finish", () => {
+      // A user's curl config can enable --location unless the first argument disables it.
+      if (redirects && args[0] === "--disable") {
+        child.stdout.write('{"code":"browser-not-owner"}\n307')
+        child.emit("close", 0)
+      } else {
+        child.stderr.write(`* connect to 127.0.0.1 port ${redirects ? 3 : 2} failed: Connection refused`)
+        child.stdout.write("\n000")
+        child.emit("close", 7)
+      }
+    })
+    return child
+  })
+  syncBuiltinESMExports()
+  await t.test("unreadable JSON", async () => {
+    await assert.rejects(browser({ action: "snapshot" }), /inventory could not be verified/)
+    assert.equal(curlCalls, 0)
+    assert.equal(executions, 0)
+  })
+  await t.test("redirect", async () => {
+    foreignContents = JSON.stringify(foreign)
+    const before = executions
+    await assert.rejects(browser({ action: "open", url: "https://example.test" }), /inventory could not be verified/)
+    assert.equal(curlCalls, 1)
+    assert.equal(executions, before)
+  })
+  redirects = false
+  await browser({ action: "snapshot" })
+  assert.equal(curlCalls, 2, "a direct connection refusal proves absence")
+  vanished = true
+  const before = executions
+  await browser({ action: "snapshot" })
+  assert.equal(executions, before + 1, "a file that vanished before the read is absent")
 })
 
 test("preview discovery refuses a 65-profile inventory rather than dropping the oldest owner", async t => {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import Fastify from "fastify"
-import { NativeParent, NativeRequestRefused, NATIVE_REQUEST_PREFIX } from "../../native-parent"
+import { NativeParent, NativeRequestRefused, NATIVE_REQUEST_PREFIX, NATIVE_RESPONSE_PREFIX } from "../../native-parent"
 import { AUTOMATION_BRIDGE_PATH } from "../../opencode/automation-plugin"
 import { registerAutomationPluginRoute } from "./automation-plugin"
 
@@ -453,6 +453,59 @@ test("the HTTP preview deadline bounds native probe slots after ownership reads"
   const expired = await probe(now + 5_000)
   assert.equal(expired.json().code, "inventory-unavailable")
   assert.equal(deadlines.length, 33)
+})
+
+test("a pause at the native channel cannot extend or revive an HTTP preview deadline", async t => {
+  const now = Date.now()
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now })
+  const app = Fastify()
+  const messages: Array<{ method: string; deadline: number }> = []
+  const parent = new NativeParent({ write: line => {
+    const { id, method, deadline } = JSON.parse(String(line).slice(NATIVE_REQUEST_PREFIX.length))
+    messages.push({ method, deadline })
+    const result = method === "browser.probe" ? { available: true, target: "document" }
+      : method === "browser.page.begin" ? { generation: "document", url: "https://example.test", driver: "cdp", contractVersion: 1 }
+      : method === "browser.page.send" ? { nodes: [] } : { url: "https://example.test" }
+    queueMicrotask(() => parent.handleLine(`${NATIVE_RESPONSE_PREFIX}${JSON.stringify({ v: 1, id, ok: true, result })}`))
+    return true
+  } }, true, false)
+  t.after(async () => { parent.close(); await app.close() })
+  registerAutomationPluginRoute(app, {
+    authManager: { isLoopbackRequest: () => true }, bridgeToken: "secret", nativeParent: parent,
+    workspaceManager: {
+      getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "/repo" } }) } }),
+      list: () => [{ id: "owner" }], ownsLocation: async () => true,
+    },
+  } as never)
+  const request = parent.request.bind(parent)
+  let pauseBefore = "", pause = 0
+  t.mock.method(parent, "request", (...args: Parameters<typeof parent.request>) => {
+    if (args[0] === pauseBefore) t.mock.timers.tick(pause)
+    return request(...args)
+  })
+  for (const [method, payload] of [
+    ["browser.probe", { mode: "browser-probe" }],
+    ["browser.execute", { mode: "browser-execute", command: { action: "open", url: "https://example.test" } }],
+    ["browser.page.begin", { mode: "browser-execute", command: { action: "snapshot" }, target: "document" }],
+  ] as const) {
+    for (const gap of [500, 1_000]) await t.test(`${method}, paused ${gap} ms`, async () => {
+      pauseBefore = method
+      pause = gap
+      messages.length = 0
+      const deadline = Date.now() + 1_000
+      const response = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
+        headers: { "x-codenomad-automation-token": "secret" }, payload: { ...payload, sessionID: "owned", deadline } })
+      const work = messages.filter(message => message.method !== "browser.page.end")
+      if (gap < 1_000) {
+        assert.equal(response.statusCode, 200, response.body)
+        assert.equal(work[0]?.method, method)
+        assert.ok(work.every(message => message.deadline === deadline), JSON.stringify(work))
+      } else {
+        assert.equal(response.statusCode, method === "browser.probe" ? 503 : 409)
+        assert.deepEqual(work, [], "no expired operation is sent to the native host")
+      }
+    })
+  }
 })
 
 test("Mission preference and preparation claims remain available without browser automation", async t => {

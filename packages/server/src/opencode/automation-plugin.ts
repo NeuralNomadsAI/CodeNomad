@@ -355,9 +355,11 @@ export async function verifyHumanAnswerBridge(body: import("../missions/human-an
   return false
 }
 
-async function registrations({ pruneStale = true, strict = false } = {}, signal?: AbortSignal): Promise<DiscoveredBridgeRegistration[]> {
+async function registrations({ pruneStale = true, strict }: { pruneStale?: boolean; strict?: "browser" | "mission" } = {},
+  signal?: AbortSignal): Promise<DiscoveredBridgeRegistration[]> {
   const found: DiscoveredBridgeRegistration[] = []
-  const directories = signal ? await discoverAutomationBridgeDirectories(signal, { strict }) : await automationBridgeDirectories({ strict })
+  const options = { strict: Boolean(strict) }
+  const directories = signal ? await discoverAutomationBridgeDirectories(signal, options) : await automationBridgeDirectories(options)
   for (const [directoryIndex, directory] of directories.entries()) {
     signal?.throwIfAborted()
     let entries: RegistrationFile[] = []
@@ -390,12 +392,12 @@ async function registrations({ pruneStale = true, strict = false } = {}, signal?
         if (pruneStale) await rm(target, { force: true }).catch(() => undefined)
         continue
       }
-      const registration = await readRegistration(target, { throwReadErrors: strict }) as DiscoveredBridgeRegistration | null | undefined
+      const registration = await readRegistration(target, { throwReadErrors: options.strict }) as DiscoveredBridgeRegistration | null | undefined
       if (registration === null) continue
       if (!registration) {
-        // A malformed foreign advertisement supplies no usable bridge contract.
-        // Its PID belongs to Windows; preserve the file for its own publisher.
-        if (strict && directoryIndex === 0) throw new Error("Mission backend registration is unreadable")
+        // Mission discovery treats malformed foreign advertisements as unsupported.
+        if (strict === "browser") throw new Error("Browser backend registration is unreadable")
+        if (strict === "mission" && directoryIndex === 0) throw new Error("Mission backend registration is unreadable")
         continue
       }
       if (directoryIndex === 0 && !isProcessAlive(registration.pid)) {
@@ -435,12 +437,14 @@ async function callBridge(
   signal?: AbortSignal,
 ): Promise<{ status: number; body: BridgeResponse }> {
   signal?.throwIfAborted()
-  if (registration[WINDOWS_INTEROP]) return callWindowsBridge(registration, body, timeoutMs, signal)
+  const browserDiscovery = body.mode === "browser-probe" || body.mode === "browser-claim" && body.purpose === undefined
+  if (registration[WINDOWS_INTEROP]) return callWindowsBridge(registration, body, timeoutMs, signal, browserDiscovery)
   const response = await fetch(registration.url, {
     method: "POST",
     headers: { "content-type": "application/json", "x-codenomad-automation-token": registration.token },
     body: JSON.stringify(body),
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
+    ...(browserDiscovery ? { redirect: "error" } : {}),
   })
   const contentLength = Number(response.headers.get("content-length"))
   if (Number.isFinite(contentLength) && contentLength > MAX_BRIDGE_RESPONSE_BYTES) {
@@ -471,11 +475,14 @@ function callWindowsBridge(
   registration: AutomationBridgeRegistration,
   body: Record<string, unknown>,
   timeoutMs: number,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  browserDiscovery: boolean,
 ): Promise<{ status: number; body: BridgeResponse }> {
   signal?.throwIfAborted()
   return new Promise((resolve, reject) => {
     const child = spawn("curl.exe", [
+      // First argument disables curlrc, which can turn on redirect following.
+      ...(browserDiscovery ? ["--disable"] : []),
       "--verbose", "--silent", "--show-error", "--max-time", String(timeoutMs / 1_000),
       "--noproxy", "*",
       "--request", "POST",
@@ -522,6 +529,10 @@ function callWindowsBridge(
       const output = Buffer.concat(stdout, stdoutBytes).toString("utf8")
       const separator = output.lastIndexOf("\n")
       const status = separator >= 0 ? Number(output.slice(separator + 1)) : NaN
+      if (browserDiscovery && status >= 300 && status < 400) {
+        reject(new Error("Windows native automation bridge redirected discovery"))
+        return
+      }
       if (code !== 0 || !Number.isInteger(status)) {
         // Curl's exit 7 also covers denied sockets. Its connect diagnostic proves
         // refusal; keep verbose headers/private tokens out of the returned error.
@@ -674,7 +685,7 @@ async function callMissionInput(target: DiscoveredBridgeRegistration, sessionID:
 export async function resolveMissionProfileDefaults(sessionID: string, input: unknown): Promise<unknown> {
   try {
     const request = parseMissionCreationDefaultsInput(input)
-    const targets = await probeMissionBridges(await registrations({ strict: true }), sessionID, "mission-preferences")
+    const targets = await probeMissionBridges(await registrations({ strict: "mission" }), sessionID, "mission-preferences")
     if (targets.length === 0) return {
       ...resolveMissionCreationDefaults({ ...request, preferences: undefined }), preferences: MISSION_PREFERENCES_UNAVAILABLE,
     }
@@ -688,7 +699,7 @@ export async function resolveMissionProfileDefaults(sessionID: string, input: un
 
 export async function readMissionConfigurations(sessionID: string): Promise<unknown> {
   try {
-    const targets = await probeMissionBridges(await registrations({ strict: true }), sessionID, "mission-preferences")
+    const targets = await probeMissionBridges(await registrations({ strict: "mission" }), sessionID, "mission-preferences")
     if (targets.length !== 1) throw new Error("Saved configurations require exactly one owning CodeNomad backend")
     return await callMissionInput(targets[0], sessionID, "configurations", {})
   } catch (error) {
@@ -703,7 +714,7 @@ export async function sendMissionInput(sessionID: string,
   const requiresDefaults = kind === "prepare" || kind === "schedule" || kind === "settings" || kind === "project-read" || kind.startsWith("project-control") || kind === "project-update"
   try {
     // A backend without native browsers can still claim the session for dispatch.
-    targets = await probeMissionBridges(await registrations({ strict: requiresDefaults }), sessionID, requiresDefaults ? "mission-prepare" : "mission")
+    targets = await probeMissionBridges(await registrations({ strict: requiresDefaults ? "mission" : undefined }), sessionID, requiresDefaults ? "mission-prepare" : "mission")
     if (targets.length !== 1) throw new Error("Mission dispatch requires exactly one owning CodeNomad backend")
   } catch (error) {
     if (error instanceof MissionControlError && error.code === "mission-preferences-update-required") throw error
@@ -796,7 +807,7 @@ export async function executeBrowserTool(sessionID: string, input: unknown, pins
   }
   const opening = command.action === "open"
   const inventoryUnavailable = () => new Error("browser-unavailable: The preview inventory could not be verified; take a new snapshot")
-  const active = await registrations({ strict: true }, AbortSignal.timeout(remaining())).catch(() => {
+  const active = await registrations({ strict: "browser" }, AbortSignal.timeout(remaining())).catch(() => {
     remaining()
     throw inventoryUnavailable()
   })

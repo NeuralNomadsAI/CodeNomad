@@ -267,10 +267,10 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       return reply.send({ result: { available: true, ...(preferenceProbe ? { missionCreationDefaults: true, missionPreparationStart: true } : {}) } })
     }
     if (body.mode === "browser-probe" && discoveryDeadline !== undefined) {
-      const remaining = discoveryDeadline - Date.now()
-      if (remaining <= 0 || discoverySignal.aborted) return inventoryUnavailable()
+      if (discoveryExpired()) return inventoryUnavailable()
       try {
-        const result = await lifetime.wait(deps.nativeParent.request<{ available: boolean; target?: string }>("browser.probe", { sessionID: body.sessionID }, remaining))
+        const result = await lifetime.wait(deps.nativeParent.request<{ available: boolean; target?: string }>(
+          "browser.probe", { sessionID: body.sessionID }, { deadline: discoveryDeadline }))
         if (discoveryExpired()) return inventoryUnavailable()
         if (result?.available === false) return reply.code(404).send(browserTargetRefusal("No visible browser target"))
         if (result?.available !== true || !isBrowserTarget(result.target)) return reply.code(409).send({ code: "unsupported", error: "The desktop host cannot pin a browser target" })
@@ -295,14 +295,15 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       if (requestedDeadline !== undefined && (typeof requestedDeadline !== "number" || !Number.isSafeInteger(requestedDeadline))) {
         return reply.code(400).send({ code: "invalid-deadline", error: "Invalid browser command deadline" })
       }
-      const deadline = typeof requestedDeadline === "number" ? requestedDeadline : undefined
-      const remaining = deadline === undefined ? undefined : Math.min(90_000, deadline - Date.now())
-      if (remaining !== undefined && remaining <= 0) {
+      const now = Date.now()
+      const deadline = requestedDeadline === undefined ? undefined : Math.min(requestedDeadline, now + 90_000)
+      if (deadline !== undefined && deadline <= now) {
         return reply.code(409).send({ code: "preview-expired", error: "Browser command expired before execution" })
       }
       try {
         const result = command.action === "open" || command.action === "navigate" || command.action === "screenshot"
-          ? await deps.nativeParent.request("browser.execute", { sessionID: body.sessionID, command, ...(target ? { target } : {}) }, remaining)
+          ? await deps.nativeParent.request("browser.execute", { sessionID: body.sessionID, command, ...(target ? { target } : {}) },
+            deadline === undefined ? undefined : { deadline })
           : await browserPage.execute(body.sessionID, command, lifetime.signal, target as string, deadline)
         return reply.send({ result })
       } catch (error) {

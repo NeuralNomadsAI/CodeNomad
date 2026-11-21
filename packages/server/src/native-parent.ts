@@ -32,20 +32,23 @@ export class NativeParent {
     readonly browserAutomationUnavailable = process.env.CODENOMAD_NATIVE_BROWSER_AUTOMATION === "0",
   ) {}
 
-  request<T>(method: string, params: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
+  request<T>(method: string, params: unknown, budget: number | { deadline: number } = DEFAULT_TIMEOUT_MS): Promise<T> {
     if (!this.available) return Promise.reject(new NativeRequestRefused("Native control is unavailable in this host"))
     if (this.closed) return Promise.reject(new NativeRequestRefused("Native parent is shutting down"))
     if (this.pending.size >= MAX_PENDING) return Promise.reject(new NativeRequestRefused("Too many pending native requests"))
 
     const id = randomUUID()
-    const deadline = Date.now() + timeoutMs
+    const deadline = typeof budget === "number" ? Date.now() + budget : budget.deadline
     return new Promise<T>((resolve, reject) => {
+      const line = `${NATIVE_REQUEST_PREFIX}${JSON.stringify({ v: 1, id, method, params, deadline })}\n`
+      const timeoutMs = typeof budget === "number" ? budget : deadline - Date.now()
+      if (typeof budget !== "number" && timeoutMs <= 0) return reject(new NativeRequestRefused("Native request expired before execution"))
       const timeout = setTimeout(() => {
         this.pending.delete(id)
         reject(new Error(`Native request timed out: ${method}`))
       }, timeoutMs)
       this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject, timeout })
-      this.output.write(`${NATIVE_REQUEST_PREFIX}${JSON.stringify({ v: 1, id, method, params, deadline })}\n`)
+      this.output.write(line)
     })
   }
 
