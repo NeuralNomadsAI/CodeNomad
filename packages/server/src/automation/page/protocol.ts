@@ -141,10 +141,17 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (kind
   } finally {
     for (const release of targetLost ? [] : [...held.values()].reverse()) {
       try {
+        if (session.beforeInput) await session.beforeInput()
+        else await session.checkpoint()
         if (session.markAutomation) await session.driver.call("mark-input", undefined, []).catch(() => undefined)
+        if (session.beforeInput) await session.beforeInput()
+        else await session.checkpoint()
         const { text: _text, unmodifiedText: _unmodified, ...params } = release.params
         await sendInput(session, release.kind, { ...params, ...(release.kind === "pointer" ? point : {}) })
-      } catch { /* Exact original driver, best effort; never replay a press. */ }
+      } catch (error) {
+        if (error instanceof PageTargetChangedError) { targetLost = error; break }
+        // Cleanup cannot replay a press or dispatch without a current context.
+      }
     }
     if (session.markAutomation && (!targetLost || targetLost.sameDocument)) {
       await session.driver.call("unmark-input", undefined, []).catch(() => undefined)

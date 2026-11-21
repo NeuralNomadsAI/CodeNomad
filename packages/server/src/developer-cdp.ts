@@ -464,7 +464,8 @@ export class DeveloperCdp {
       else pending.resolve(message.result ?? {})
       return
     }
-    if (message.method === "Page.frameNavigated" && !(message.params?.frame as { parentId?: string } | undefined)?.parentId) {
+    if ((message.method === "Page.frameNavigated" || message.method === "Page.documentOpened")
+      && !(message.params?.frame as { parentId?: string } | undefined)?.parentId) {
       this.invalidateRefs(state)
       return
     }
