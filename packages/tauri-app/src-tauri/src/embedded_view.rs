@@ -578,8 +578,13 @@ impl EmbeddedViews {
                     .map_err(|error| preview_error("finish child creation", error))
             });
         if let Err(error) = configured {
+            // Leave the manager entry intact until the UI thread destroys the
+            // native view. A consumer may be holding an exclusive reservation.
+            let close = webview.clone();
+            let _ = webview.run_on_main_thread(move || {
+                let _ = close.close();
+            });
             self.remove_exact(label, &record);
-            let _ = webview.close();
             return Err(error);
         }
         Ok(webview)
@@ -661,7 +666,19 @@ impl EmbeddedViews {
         let record = {
             let inner = self.0.lock().map_err(|error| error.to_string())?;
             let Some(record) = inner.records.get(label) else {
-                return Ok(());
+                drop(inner);
+                // Creation can fail after add_child, before the child becomes
+                // an owned record. Confirm that any surviving exact child closes.
+                if !label.starts_with("browser-") {
+                    return Ok(());
+                }
+                return match app.get_webview(label) {
+                    Some(webview) if webview.window().label() == owner => {
+                        webview.close().map_err(|error| error.to_string())
+                    }
+                    Some(_) => Err("Embedded view belongs to another window".into()),
+                    None => Ok(()),
+                };
             };
             if record.owner != owner {
                 return Err("Embedded view belongs to another window".into());

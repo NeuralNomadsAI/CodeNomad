@@ -159,6 +159,8 @@ export const sessionMessages = {
   "sessionPreview.open.prompt": "यस सत्रमा पूर्वावलोकन गर्न विश्वासिलो स्थानीय वा स्टेजिंग URL प्रविष्ट गर्नुहोस्।",
   "sessionPreview.open.label": "पूर्वावलोकन URL",
   "sessionPreview.open.invalidUrl": "मान्य HTTP वा HTTPS URL प्रविष्ट गर्नुहोस्।",
+  "sessionPreview.open.alreadyOwned": "यो पूर्वावलोकन अर्को विन्डोमा छ। त्यहीँ प्रयोग गर्नुहोस् वा फेरि प्रयास गर्नुअघि त्यसको ट्याब बन्द गर्नुहोस्।",
+  "sessionPreview.open.rendererUnavailable": "पूर्वावलोकन तयार छैन। फेरि खोल्नुहोस्।",
   "sessionPreview.open.placeholder": "https://staging.example.com",
   "sessionPreview.open.confirm": "पूर्वावलोकन खोल्नुहोस्",
   "sessionPreview.open.cancel": "रद्द गर्नुहोस्",

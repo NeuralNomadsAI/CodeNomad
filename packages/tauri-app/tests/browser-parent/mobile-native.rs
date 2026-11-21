@@ -41,16 +41,22 @@ pub(super) fn handle(
             .navigate(url.parse().map_err(|_| "Invalid fixture URL")?)
             .map_err(|e| e.to_string())?;
         let registration=serde_json::from_value(json!({"sessionId":"mobile-other","registrationId":"mobile-other","url":url,"bounds":bounds(),"visible":false})).unwrap();
-        controller.register(&app.get_window(OTHER).unwrap(), registration)?;
+        controller.register(
+            &app.get_window(OTHER).unwrap(),
+            registration,
+            controller.renderer_version(OTHER)?,
+        )?;
         update(app, controller, OTHER, "mobile-other", true)?;
         std::thread::sleep(Duration::from_millis(200));
         return Ok(Value::Null);
     }
     if method == "fixture.mobile-replace" {
         let registration=serde_json::from_value(json!({"sessionId":SESSION,"registrationId":id,"url":input["url"],"bounds":bounds(),"visible":true})).map_err(|e|e.to_string())?;
+        controller.unregister(app, OWNER, id)?;
         controller.register(
             &app.get_window(OWNER).ok_or("Missing renderer")?,
             registration,
+            controller.renderer_version(OWNER)?,
         )?;
         return Ok(Value::Null);
     }

@@ -309,6 +309,59 @@ test("real shell: creating a session preserves a newer held browser gesture and 
   } finally { await page.close() }
 })
 
+test("a late native preview refusal releases its token without superseding a pending file gesture", { timeout: 90_000 }, async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  try {
+    await prepare(page, "tauri")
+    await page.evaluate(url => {
+      const f = (window as any).fixture
+      f.native.deferRegistration = true
+      return f.openPreview("session", url)
+    }, `${base}/page/a`)
+    await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_register"))
+    const token = (await preview(page, "session")).token
+    await page.evaluate(() => {
+      const f = (window as any).fixture
+      f.captureSurfaceIntent()
+      f.native.settleRegistration("refused")
+    })
+    await page.waitForFunction(() => (window as any).fixture.previewCount() === 0)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.deletedPreviews), [token])
+    assert.equal(await page.evaluate(() => (window as any).fixture.surfaceIntentCurrent()), true, "the late refusal is not a new gesture")
+    assert.equal(await page.evaluate(() => (window as any).fixture.savedPreview("session").mode), "chat")
+    const dialog = page.getByRole("dialog", { name: "Open web preview", exact: true })
+    await dialog.getByText("This preview is in another window.", { exact: false }).waitFor()
+    await dialog.getByRole("button", { name: "OK", exact: true }).click()
+    await page.evaluate(() => (window as any).fixture.completeFileIntent("Pending.md"))
+    await page.locator(".workspace-markdown").getByRole("heading", { name: "Pending.md", exact: true }).waitFor()
+  } finally { await page.close() }
+})
+
+test("a stale Tauri admission refusal keeps the replacement preview", { timeout: 90_000 }, async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  try {
+    await prepare(page, "tauri")
+    await page.evaluate(url => {
+      const f = (window as any).fixture
+      f.native.deferRegistration = true
+      return f.openPreview("session", url)
+    }, `${base}/page/a`)
+    await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_register"))
+    const original = await preview(page, "session")
+    await page.evaluate(url => (window as any).fixture.openPreview("session", url), `${base}/page/b`)
+    const replacement = await preview(page, "session")
+    assert.notEqual(replacement.token, original.token)
+    await page.evaluate(() => {
+      const f = (window as any).fixture
+      f.native.deferRegistration = false
+      f.native.settleRegistration("refused")
+    })
+    await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) =>
+      call.command === "browser_target_register" && call.payload.url.endsWith("/page/b")))
+    assert.equal((await preview(page, "session")).token, replacement.token)
+  } finally { await page.close() }
+})
+
 for (const host of ["web", "tauri", "electron"]) test(`${host}: browser gestures supersede pending surface activation before committing`, { timeout: 120_000 }, async () => {
   const native = host === "electron" ? await launchHistoryElectron() : undefined
   const page = native?.page ?? await browser.newPage({ viewport: { width: 1400, height: 900 } })

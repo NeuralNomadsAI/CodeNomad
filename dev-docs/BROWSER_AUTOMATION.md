@@ -304,12 +304,14 @@ WebKitGTK clipboard writes and native Ctrl+C/V use the engine's user-initiated p
 - WebKit history reads the native back/forward list on the UI thread. Each retained native item gets a monotonic numeric handle, with at most 32 exposed entries; redirects and `replaceState` update that item's URL, while distinct same-URL entries keep distinct handles. Reads and traversal revalidate the registration's owner/generation, reject expired or removed handles and release retained items on replacement, close and primary-renderer reload. GTK observes native URI/list changes. WKWebView samples native lists every 250 ms while visible and every second while hidden because its public list API has no same-URL `pushState` notification. Saved restoration keeps only URLs/cursor and loads the selected URL on explicit reopening.
 - Keep application capabilities confined to primary local webviews. Never apply `linux_tls.rs` remote-window exceptions to browser previews.
 
-Autonomous native opens consider local-backend occurrences containing the session:
+Autonomous native opens without a retained preview consider local-backend occurrences containing the session:
 choose the active occurrence, otherwise its unique open owner; refuse ambiguity.
 Claim for one local window, select that occurrence/session and open its preview.
 Keep that occurrence pinned through claim and creation; revalidate attachment,
 instance and session ownership. Closing it releases its new proxy token; stale
-admitted claims release their exact request. Never reroute to a duplicate.
+admitted claims release their exact request. Once a claim binds a native
+reservation, disposal or abandonment ends that request. A hidden retained
+preview must be revealed by the user in its owning window.
 Page actions require exactly one visible native target for the invoking session.
 Ambiguity, hiding and closure invalidate it. Registrations retain the real native
 session ID on Electron and Tauri Windows/macOS/Linux.
@@ -326,7 +328,9 @@ uses its own occurrence/session operation fence, allocates independently of fore
 authority and preserves the saved foreground mode. Rejected creations release their
 own proxy tokens. SessionView reads the shared typed foreground projection; browser
 resources retain their independent lifetimes. Location/history notifications apply
-immediately while pending gestures retain their generation.
+immediately while pending gestures retain their generation. A native ownership
+refusal releases the live preview and passively clears the active occurrence's web
+mode, preserving saved history and pending gestures.
 
 Native open claims retain their request deadline and backend-generation fence. The UI revalidates the claim after asynchronous preview-record creation and before publishing the preview; a rejected record's token is released. Native-parent stdin preserves UTF-8 across buffer boundaries, and timed-out response IDs stay retired independently of subsequent requests.
 
@@ -362,6 +366,18 @@ Native open claims retain their request deadline and backend-generation fence. T
 - After changing fixed page programs or their signatures, run `node --import tsx scripts/build-page-function-registry.ts` and the driver contract tests. Keep `functions.generated.json` derived from the authored registry. Bump the private driver contract version for incompatible operation/signature changes. Preserve the fixed-program hashes and snapshot goldens when behavior is unchanged. Never accept caller-supplied protocol names or JavaScript source in the page channel.
 
 - Give `embedded_view.rs` child modules explicit `#[path = "embedded_view/..."]` attributes so the native qualification example can include the production layer directly. Keep fixture-only lifecycle controls inside the example executable.
+
+- One local backend and data profile/configuration share one native reservation
+  per real session ID, across all their desktop windows. Electron reserves in
+  `will-attach-webview`, binds in `web-contents-created`, and releases on guest
+  destruction. Tauri injects a fresh nonce at each committed primary renderer
+  load. Registration IPC carries that document's nonce; the host validates it
+  before queuing work and rechecks the generation at reservation and publication.
+  Tauri releases after UI-thread disposal. The reservation covers pending,
+  visible and hidden guests. An open claim bound to a reservation requires that
+  exact reservation for final renderer admission. Agent leases remain
+  visibility-bound. Remote capabilities have their own lifetime and stay out of
+  local automation targeting.
 
 - Native session previews behave as tabs in one browser: share the persistent preview profile's cookies/site storage across sessions and projects within a CodeNomad data profile/config pair, but never with the trusted app renderer, remote-window profiles or the other desktop engine. Each session owns one document, navigation stack, history cursor, device template, proxy token and native registration within a renderer. Native registrations retain the real session ID for ownership and automation authority. Electron uses `persist:codenomad-browser-shared-v1`; Windows/Linux Tauri uses `browser/shared-v1`; macOS Tauri uses its profile/config-derived identified WebKit store. Leave per-session preview profiles found on disk in place and never merge them into the shared profile: they can hold conflicting accounts. Iframe fallbacks keep their sandbox; never grant guests native capabilities.
 - `viewState.previews` retains each occurrence's per-session foreground mode. `session-browser-persistence.ts` saves shared URL/history/template resources by session in `opencode-session-browser-state-v1`. `SessionPreviewHost` keeps opened guests mounted in stable DOM order and follows the active occurrence's slot geometry; the preview's X returns only that occurrence to chat. Inactive transcripts and composers still unmount and the transcript memory budget stays independent. Hidden guests must stop being automation targets (Electron unregisters, Tauri hides). Closing an occurrence invalidates its pending opens/restores; the shared guest and token live until the session's last owning occurrence closes. Late responses and failures honor the originating operation's lifetime; error dialogs appear only in its active view. Across renderer restart, restore URL history/cursor and device template only on explicit browser opening; never eagerly visit saved pages or persist native pageState/forms/POST bodies. Reuse owned CDP history IDs for live traversal and load just the selected saved URL when its native entry no longer exists. History is bounded to 32 credential-free HTTP(S) URLs per session within the 4 KB aggregate window budget; trim history before evicting saved previews.

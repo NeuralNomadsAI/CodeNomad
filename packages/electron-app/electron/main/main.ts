@@ -173,6 +173,7 @@ function runPrimary(firstIntent: LaunchIntent) {
       if (!record.window.isDestroyed()) record.window.webContents.send("browser-target:open", { sessionID, url, requestID })
     }
   })
+  app.on("web-contents-created", (_event, guest) => browserController.guestCreated(guest))
   const cli = new CliProcessManager((method, params, deadline) => method.startsWith("browser.")
     ? handleNativeBrowserRequest(browserController, method, params, deadline)
     : developerMode.handleNativeRequest(method))
@@ -349,6 +350,7 @@ function runPrimary(firstIntent: LaunchIntent) {
         configureBrowserPermissionHandlers(browserSession)
         configureBrowserDownloads(browserSession, app.getPath("downloads"))
       }
+      if (!browserController.permitAttachment(window.webContents, params)) event.preventDefault()
     })
     window.webContents.on("did-attach-webview", (_event, guest) => {
       browserController.observeGuest(window.webContents, guest)

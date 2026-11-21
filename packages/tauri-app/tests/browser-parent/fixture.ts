@@ -43,6 +43,8 @@ try {
     await request("fixture.hide")
     await assert.rejects(request("browser.probe"), /No visible/)
     await assert.rejects(execute("screenshot"), /No visible/)
+    await assert.rejects(execute("open", `${base}/ok`), /reveal the existing/i)
+    await assert.rejects(request("fixture.duplicate"), /local session preview already exists/i)
     await request("fixture.show")
   })
   await check("overlay hides authority", async () => {
@@ -50,10 +52,9 @@ try {
     await assert.rejects(execute("screenshot"), /No visible/)
     await request("fixture.show")
   })
-  await check("duplicate target", async () => {
-    await request("fixture.duplicate")
-    await assert.rejects(request("browser.probe"), /Multiple visible/)
-    await request("fixture.removeDuplicate")
+  await check("second window cannot materialize a visible session preview", async () => {
+    await assert.rejects(request("fixture.duplicate"), /local session preview already exists/i)
+    assert.deepEqual(await request("browser.probe"), { available: true })
   })
   await check("native capture callback after hide", async () => {
     await assert.rejects(request("fixture.capture-hide"), /No visible/)
@@ -70,6 +71,8 @@ try {
   await check("close and reopen", async () => {
     await request("fixture.close")
     await assert.rejects(request("browser.probe"), /No visible/)
+    await request("fixture.duplicate")
+    await request("fixture.removeDuplicate")
     assert.equal((await execute("open", `${base}/ok`)).url, `${base}/ok`)
     await request("fixture.close")
   })

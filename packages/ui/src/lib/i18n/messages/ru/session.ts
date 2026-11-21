@@ -159,6 +159,8 @@ export const sessionMessages = {
   "sessionPreview.open.prompt": "Введите доверенный локальный или staging URL для предпросмотра в этой сессии.",
   "sessionPreview.open.label": "URL предпросмотра",
   "sessionPreview.open.invalidUrl": "Введите корректный URL-адрес HTTP или HTTPS.",
+  "sessionPreview.open.alreadyOwned": "Этот предпросмотр открыт в другом окне. Используйте его там или закройте его вкладку и повторите попытку.",
+  "sessionPreview.open.rendererUnavailable": "Предпросмотр не готов. Откройте его снова.",
   "sessionPreview.open.placeholder": "https://staging.example.com",
   "sessionPreview.open.confirm": "Открыть предпросмотр",
   "sessionPreview.open.cancel": "Отмена",

@@ -96,6 +96,8 @@ interface BrowserFrameProps {
   addressMode?: "path" | "url"
   onNavigate?: (address: string) => Promise<string>
   onNavigationError?: (error: unknown) => void
+  onOwnershipConflict?: () => void
+  previewIdentity?: string
   onFrameLocation?: (path: string) => string | void
   initialHistory?: BrowserHistory
   initialViewport?: BrowserViewportPreset
@@ -464,6 +466,11 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   const reportNativeError = (error: unknown) => {
     if (!disposed && props.active !== false) props.onNavigationError?.(error)
   }
+  const reportOwnershipConflict = () => {
+    if (disposed) return
+    if (props.onOwnershipConflict) props.onOwnershipConflict()
+    else reportNativeError(new Error(t("sessionPreview.open.alreadyOwned")))
+  }
 
   const requestNativeTarget = (address: string) => {
     webviewObservedUrl = undefined
@@ -630,6 +637,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     let registeredSessionId = ""
     let lastBounds = ""
     let syncErrorReported = false
+    let refused = false
     let unlistenNavigation = () => {}
     // Retry on the next layout/visibility event, never recursively on rejection.
     // Reporting an alert also mutates the DOM, so report a failure streak once.
@@ -654,7 +662,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     }
     const syncBounds = () => {
       const sessionId = props.sessionId
-      if (!active || registering || !sessionId) return
+      if (!active || registering || refused || !sessionId) return
       const next = bounds()
       if (!next) {
         lastBounds = ""
@@ -707,6 +715,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       registering = true
       const target = nativeTarget()
       const registrationId = browserRegistrationId
+      const previewIdentity = props.previewIdentity
       // This registration loads the pending address itself (e.g. a retry).
       if (pendingTauriNavigation?.url === target) pendingTauriNavigation = undefined
       let loaded = target
@@ -726,7 +735,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         }
         unlistenNavigation()
         unlistenNavigation = unlisten
-        await registerTauriBrowserTarget({
+        const admitted = await registerTauriBrowserTarget({
           sessionId,
           registrationId,
           url: target,
@@ -734,6 +743,19 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
           bounds: next,
           ...(webkitEmulation ? { presentation: presentation() } : {}),
         })
+        if (!admitted) {
+          if (active && registrationId === browserRegistrationId
+            && (previewIdentity !== props.previewIdentity || target !== nativeTarget())) {
+            registering = false
+            syncBounds()
+            return
+          }
+          refused = true
+          unlistenNavigation()
+          unlistenNavigation = () => {}
+          if (active) reportOwnershipConflict()
+          return
+        }
         registeredSessionId = sessionId
         lastBounds = serialized
         registering = false
@@ -1112,6 +1134,10 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
             {/* Electron's shadow iframe needs its :host display:flex to fill the webview height. */}
             <webview
               ref={bindWebview}
+              webpreferences={props.isolatedSource ? undefined : `codenomadSession=${props.sessionId}`}
+              on:destroyed={() => {
+                if (!webviewReady && !props.isolatedSource) reportOwnershipConflict()
+              }}
               src={nativeTarget()}
               partition="persist:codenomad-browser-shared-v1"
               allowpopups

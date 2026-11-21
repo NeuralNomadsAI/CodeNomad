@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event"
 import type { RuntimeEnvironment } from "../runtime-env"
 import type { BrowserEmulationPreset } from "./browser-emulation"
 import { historyUrl, type NativeBrowserHistory } from "../browser-history"
+import { tGlobal } from "../i18n"
 
 export interface BrowserTargetBounds {
   x: number
@@ -63,8 +64,18 @@ export async function registerTauriBrowserTarget(payload: {
   bounds: BrowserTargetBounds
   presentation?: BrowserPresentation
   logicalAddress?: string
-}): Promise<void> {
-  await invoke("browser_target_register", { payload: { ...payload, visible: false } })
+}): Promise<boolean> {
+  const rendererDocument = window.__CODENOMAD_BROWSER_DOCUMENT__ ?? await new Promise<string>((resolve, reject) => {
+    const signal = AbortSignal.timeout(5_000)
+    const unavailable = () => reject(new Error(tGlobal("sessionPreview.open.rendererUnavailable")))
+    signal.addEventListener("abort", unavailable, { once: true })
+    window.addEventListener("codenomad:browser-document", () => {
+      const document = window.__CODENOMAD_BROWSER_DOCUMENT__
+      if (document) resolve(document)
+      else unavailable()
+    }, { once: true, signal })
+  })
+  return invoke("browser_target_register", { rendererDocument, payload: { ...payload, visible: false } })
 }
 
 export async function updateTauriBrowserTarget(

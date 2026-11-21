@@ -88,6 +88,8 @@ Object.assign(shell, {
   missionStatus: () => missionStore.state(ids[0]).status,
   captureSurfaceIntent: () => { surfaceIntent = beginGesture({ instanceId: ids[0], sessionId: "session" }) },
   surfaceIntentCurrent: () => surfaceIntent.current(),
+  completeFileIntent: (path: string) => openFilePreview(ids[0],
+    { sessionId: "session", kind: "workspace", slug: "root", directory: "/repo", path }, surfaceIntent),
   native: nativeFixture,
   openPreview: (sessionId: string, url: string, instanceId = ids[0]) => openSessionPreview(sessionId, url, instanceId),
   preview: (sessionId: string, instanceId = ids[0]) => {

@@ -159,6 +159,8 @@ export const sessionMessages = {
   "sessionPreview.open.prompt": "このセッションでプレビューする信頼済みのローカルまたはステージング URL を入力してください。",
   "sessionPreview.open.label": "プレビュー URL",
   "sessionPreview.open.invalidUrl": "有効な HTTP または HTTPS URL を入力してください。",
+  "sessionPreview.open.alreadyOwned": "このプレビューは別のウィンドウにあります。そこで使用するか、該当するタブを閉じてから再試行してください。",
+  "sessionPreview.open.rendererUnavailable": "プレビューの準備ができていません。開き直してください。",
   "sessionPreview.open.placeholder": "https://staging.example.com",
   "sessionPreview.open.confirm": "プレビューを開く",
   "sessionPreview.open.cancel": "キャンセル",

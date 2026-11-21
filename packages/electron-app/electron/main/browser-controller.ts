@@ -6,7 +6,7 @@ import { setBrowserEmulation } from "./browser-emulation"
 import { executeCdpOperation } from "../../../server/src/automation/page/cdp-driver"
 import { parsePageOperation, pageEnvelope } from "../../../server/src/automation/page/operations"
 import { PAGE_DRIVER_VERSION } from "../../../server/src/automation/page/protocol"
-import { setBrowserLogicalAddress } from "./browser-presentation"
+import { isPrivatePreviewUrl, setBrowserLogicalAddress } from "./browser-presentation"
 
 const electron = () => createRequire(import.meta.url)("electron") as typeof import("electron")
 
@@ -28,11 +28,15 @@ interface Registration extends RegistrationInput {
   generation: string
 }
 
+type Attachment = { owner: WebContents }
+
 interface OpenClaim {
   sessionID: string
   url: string
   owner?: WebContents
   failedOwners: Set<WebContents>
+  attachment?: Attachment
+  abandoned?: boolean
 }
 
 type BrowserCommand =
@@ -51,6 +55,11 @@ interface PageLease {
 }
 
 export class BrowserController {
+  // One controller for the local backend and data profile. Remote capabilities
+  // are frame-owned, outside this local-session namespace.
+  private readonly attachments = new Map<string, Attachment>()
+  private readonly pendingAttachments = new WeakMap<WebContents, string>()
+  private readonly guestSessions = new WeakMap<WebContents, string>()
   private readonly registrations = new Map<string, Registration>()
   private readonly observedGuests = new Map<number, number>()
   private readonly pageLeases = new Map<string, PageLease>()
@@ -67,6 +76,39 @@ export class BrowserController {
       fromWebContents: (contents) => electron().BrowserWindow.fromWebContents(contents),
     },
   ) {}
+
+  permitAttachment(owner: WebContents, params: Record<string, string>): boolean {
+    if (!params.webpreferences && isPrivatePreviewUrl(params.src)) return true
+    const session = /^codenomadSession=([A-Za-z0-9_-]{1,256})$/.exec(params.webpreferences ?? "")?.[1]
+    if (!session || this.attachments.has(session) || this.pendingAttachments.has(owner)) return false
+    const attachment = { owner }
+    this.attachments.set(session, attachment)
+    this.pendingAttachments.set(owner, session)
+    for (const claim of this.openClaims.values()) {
+      if (claim.sessionID === session && claim.owner === owner) claim.attachment ??= attachment
+    }
+    // Electron emits web-contents-created synchronously after will-attach and
+    // before attaching/loading. If construction aborts, no guest owns the slot.
+    queueMicrotask(() => {
+      if (this.pendingAttachments.get(owner) !== session) return
+      this.pendingAttachments.delete(owner)
+      if (this.attachments.get(session) === attachment) this.attachments.delete(session)
+    })
+    return true
+  }
+
+  guestCreated(guest: WebContents): void {
+    if (guest.getType() !== "webview") return
+    const owner = guest.hostWebContents
+    const session = owner && this.pendingAttachments.get(owner)
+    if (!session) return
+    const attachment = this.attachments.get(session)!
+    this.pendingAttachments.delete(owner)
+    this.guestSessions.set(guest, session)
+    guest.once("destroyed", () => {
+      if (this.attachments.get(session) === attachment) this.attachments.delete(session)
+    })
+  }
 
   observeGuest(owner: WebContents, guest: WebContents): void {
     this.observedGuests.set(guest.id, owner.id)
@@ -112,7 +154,10 @@ export class BrowserController {
       || guest.hostWebContents !== owner || this.observedGuests.get(guest.id) !== owner.id) {
       throw new Error("Browser guest does not belong to this window")
     }
+    const session = this.guestSessions.get(guest)
+    if (session !== undefined && session !== input.sessionId) throw new Error("Browser guest belongs to another session")
     const previous = this.registrations.get(input.registrationId)
+    if (previous && previous.owner !== owner) throw new Error("Browser target belongs to another window")
     setBrowserLogicalAddress(guest, input.logicalAddress)
     if (previous) this.releaseGuest(previous.guest)
     this.registrations.set(input.registrationId, { ...input, owner, guest, generation: randomUUID() })
@@ -170,8 +215,15 @@ export class BrowserController {
   claimOpen(owner: WebContents, requestID: unknown): boolean {
     if (typeof requestID !== "string" || owner.isDestroyed()) return false
     const claim = this.openClaims.get(requestID)
-    if (!claim || claim.failedOwners.has(owner) || (claim.owner && claim.owner !== owner)) return false
+    if (!claim || claim.abandoned || claim.failedOwners.has(owner) || (claim.owner && claim.owner !== owner)) return false
+    const attachment = this.attachments.get(claim.sessionID)
+    if (attachment && attachment.owner !== owner) {
+      if (claim.owner === owner) claim.abandoned = true
+      return false
+    }
+    if (claim.attachment && claim.attachment !== attachment) return false
     claim.owner = owner
+    if (attachment) claim.attachment ??= attachment
     return true
   }
 
@@ -179,6 +231,10 @@ export class BrowserController {
     if (typeof requestID !== "string") return false
     const claim = this.openClaims.get(requestID)
     if (!claim || claim.owner !== owner) return false
+    if (claim.abandoned || claim.attachment || this.attachments.has(claim.sessionID)) {
+      claim.abandoned = true
+      return true
+    }
     claim.owner = undefined
     claim.failedOwners.add(owner)
     this.requestOpen(claim.sessionID, claim.url, requestID)
@@ -207,10 +263,7 @@ export class BrowserController {
       }
     }
     for (const [requestID, claim] of this.openClaims) {
-      if (claim.owner !== owner) continue
-      claim.owner = undefined
-      claim.failedOwners.add(owner)
-      this.requestOpen(claim.sessionID, claim.url, requestID)
+      if (claim.owner === owner) this.releaseOpen(owner, requestID)
     }
   }
 
@@ -262,9 +315,16 @@ export class BrowserController {
     } catch (error) {
       if (!(error instanceof Error) || error.message !== "No visible local browser target for this session") throw error
     }
+    if (this.attachments.has(sessionID)) throw new Error("Reveal the existing session preview before using it")
 
     const requestID = randomUUID()
-    this.openClaims.set(requestID, { sessionID, url, failedOwners: new Set() })
+    const claim: OpenClaim = { sessionID, url, failedOwners: new Set() }
+    this.openClaims.set(requestID, claim)
+    const checkAttachment = () => {
+      if (claim.abandoned || this.attachments.get(sessionID) !== claim.attachment) {
+        throw new Error("Session preview ownership changed during open")
+      }
+    }
     return new Promise<{ url: string }>((resolve, reject) => {
       const requestedAt = Date.now()
       const timeout = setTimeout(() => {
@@ -274,13 +334,16 @@ export class BrowserController {
       const interval = setInterval(() => {
         try {
           ensureDeadline(deadline)
+          checkAttachment()
           const { guest } = this.resolve(sessionID)
           clearInterval(interval)
           clearTimeout(timeout)
           void this.enqueue(guest, async () => {
             ensureDeadline(deadline)
+            checkAttachment()
             this.assertCurrentTarget(sessionID, guest)
             await waitForMainFrameLoad(guest, url, requestedAt, deadline, () => this.loadResults.get(guest))
+            checkAttachment()
             this.assertCurrentTarget(sessionID, guest)
             return { url: guest.getURL() }
           }).then(
@@ -300,10 +363,11 @@ export class BrowserController {
 
   private resolve(sessionID: string): Registration {
     const matches = [...this.registrations.values()].filter((registration) => {
-      if (registration.sessionId !== sessionID || registration.owner.isDestroyed() || registration.guest.isDestroyed()) return false
+      if (registration.logicalAddress || registration.sessionId !== sessionID || registration.owner.isDestroyed() || registration.guest.isDestroyed()) return false
       if (registration.guest.hostWebContents !== registration.owner
         || this.observedGuests.get(registration.guest.id) !== registration.owner.id
         || this.electronApi.fromId(registration.guest.id) !== registration.guest) return false
+      if (!this.guestSessions.has(registration.guest) && isPrivatePreviewUrl(registration.guest.getURL())) return false
       const window = this.electronApi.fromWebContents(registration.owner)
       return Boolean(window && !window.isDestroyed() && window.isVisible() && !window.isMinimized())
     })

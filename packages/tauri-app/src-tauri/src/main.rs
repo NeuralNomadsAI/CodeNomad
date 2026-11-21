@@ -5,6 +5,7 @@ mod appimage_environment;
 #[cfg(target_os = "linux")]
 mod appimage_exit;
 mod browser_controller;
+mod browser_registration_ipc;
 #[allow(dead_code)]
 mod cert_manager;
 mod cli_manager;
@@ -521,21 +522,6 @@ async fn popup_titlebar_menu(
         .await
         .map_err(|error| error.to_string())?
         .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-async fn browser_target_register(
-    webview: tauri::Webview,
-    state: tauri::State<'_, AppState>,
-    payload: browser_controller::BrowserTargetRegistration,
-) -> Result<(), String> {
-    require_local_app_webview(&webview, &state)?;
-    let window = webview.window();
-    let controller = state.browser_controller.clone();
-    tauri::async_runtime::spawn_blocking(move || controller.register(&window, payload))
-        .await
-        .map_err(|error| embedded_view::diagnostics::preview_error("dispatch registration", error))?
-        .map_err(|error| embedded_view::diagnostics::preview_error("register target", error))
 }
 
 #[tauri::command]
@@ -2020,34 +2006,31 @@ fn main() {
                 if !webview.label().starts_with("remote-") {
                     webview.app_handle().state::<device_speech::DeviceSpeech>().revoke(Some(webview.label()));
                 }
-                webview
-                    .app_handle()
-                    .state::<AppState>()
-                    .browser_controller
-                    .renderer_page_started(webview);
-            }
-            if identity::local_window_id(webview.label()).is_ok()
-                && payload.event() == PageLoadEvent::Started
-            {
-                let app = webview.app_handle();
-                let managed_backend = app.state::<AppState>().manager.status().url;
-                if is_allowed_local_origin(payload.url(), managed_backend.as_deref()) {
-                    if let (Ok(window_id), Some(state)) = (
-                        identity::local_window_id(webview.label()),
-                        app.try_state::<client_state::ClientState>(),
-                    ) {
-                        if let Err(error) =
-                            state.stage_renderer_page_load(&window_id, payload.url())
-                        {
-                            eprintln!("[client-state] failed to stage renderer page load: {error}");
+                if let Ok(window_id) = identity::local_window_id(webview.label()) {
+                    let app = webview.app_handle();
+                    let state = app.state::<AppState>();
+                    let document = state.browser_controller.renderer_page_started(webview);
+                    if is_allowed_local_origin(payload.url(), state.manager.status().url.as_deref()) {
+                        if let Some(state) = app.try_state::<client_state::ClientState>() {
+                            if let Err(error) =
+                                state.stage_renderer_page_load(&window_id, payload.url())
+                            {
+                                eprintln!("[client-state] failed to stage renderer page load: {error}");
+                            }
+                        }
+                        if let Some(document) = document {
+                            if let Err(error) =
+                                browser_registration_ipc::publish_renderer_document(webview, &document)
+                            {
+                                eprintln!("[tauri] failed to bind browser registration to the renderer: {error}");
+                            }
                         }
                     }
+                    let _ = app
+                        .state::<local_windows::LocalWindows>()
+                        .set_workspace_menu_enabled(webview.label(), false);
+                    update_workspace_menu_state(app);
                 }
-                let _ = webview
-                    .app_handle()
-                    .state::<local_windows::LocalWindows>()
-                    .set_workspace_menu_enabled(webview.label(), false);
-                update_workspace_menu_state(&webview.app_handle());
             }
             if matches!(
                 payload.event(),
@@ -2108,7 +2091,7 @@ fn main() {
             });
             Ok(())
         })
-        .invoke_handler(remote_dictation::with_relay(tauri::generate_handler![
+        .invoke_handler(browser_registration_ipc::with_registration(remote_dictation::with_relay(tauri::generate_handler![
             clipboard_attachments::read_clipboard_attachments,
             cli_get_status,
             device_speech_ipc::device_speech_request,
@@ -2157,13 +2140,12 @@ fn main() {
             desktop_updater::take_desktop_update_failure,
             workspace_open::open_workspace_target,
             set_workspace_menu_enabled,
-            browser_target_register,
             browser_target_update,
             browser_target_action,
             browser_target_unregister,
             browser_target_claim_open,
             browser_target_release_open
-        ]))
+        ])))
         .on_menu_event(|app_handle, event| {
             if embedded_view::zoom::focused(app_handle, event.id().0.as_str()) {
                 return;
