@@ -75,12 +75,6 @@ impl NotificationClicks {
         pending.remove(index).map(|(_, target)| target)
     }
 
-    #[cfg(any(test, target_os = "macos"))]
-    fn remember_macos(&self, target: Target) -> Option<Uuid> {
-        target.action?;
-        Some(self.remember(target))
-    }
-
     pub(crate) fn forget_window(&self, label: &str) {
         self.pending
             .lock()
@@ -203,18 +197,19 @@ pub(crate) fn notification_show(
         #[cfg(windows)]
         toast: None,
     };
+    // Every notification remembers its window: a click without an action still restores it.
+    let id = routes.remember(target);
     #[cfg(target_os = "macos")]
     {
-        let id = routes.remember_macos(target);
-        routes.macos.show(host, id, title, body).inspect_err(|_| {
-            if let Some(id) = id {
+        routes
+            .macos
+            .show(host, Some(id), title, body)
+            .inspect_err(|_| {
                 routes.take(id);
-            }
-        })
+            })
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let id = routes.remember(target);
         #[cfg(windows)]
         let result = windows::show(&app.config().identifier, host, id, &title, &body)
             .map(|toast| routes.retain_toast(id, toast))
@@ -243,13 +238,11 @@ mod tests {
     }
 
     #[test]
-    fn macos_tracks_only_actionable_notifications_and_bounds_pending_clicks() {
+    fn pending_clicks_are_bounded() {
         let routes = NotificationClicks::default();
-        assert!(routes.remember_macos(target("local-a", None)).is_none());
-        let action = Some(Uuid::new_v4());
-        let oldest = routes.remember_macos(target("local-a", action)).unwrap();
+        let oldest = routes.remember(target("local-a", None));
         for _ in 0..MAX_NOTICES {
-            routes.remember_macos(target("local-a", action)).unwrap();
+            routes.remember(target("local-a", Some(Uuid::new_v4())));
         }
         assert_eq!(routes.pending.lock().len(), MAX_NOTICES);
         assert!(routes.take(oldest).is_none());
