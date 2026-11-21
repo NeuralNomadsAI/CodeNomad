@@ -56,3 +56,17 @@ test("registry removes a closed window without reading its destroyed WebContents
   assert.equal(registry.remove(id1)?.id, id1)
   assert.equal(registry.resolve(webContents as never), undefined)
 })
+
+test("reopening a saved window id creates a different automation target", () => {
+  const registry = new LocalWindowRegistry(() => {})
+  const add = (id: number) => registry.add({ id: id1, persisted: true, window: fakeWindow(id) as never,
+    navigation: {} as never, tracker: null, loading: false, backendUrl: "https://127.0.0.1", pendingFolders: [] })
+  add(1)
+  const first = registry.automationWindows(null)[0]
+  registry.remove(id1)
+  assert.deepEqual(registry.automationWindows(null), [])
+  add(2)
+  const reopened = registry.automationWindows(null)[0]
+  assert.equal(reopened.windowId, first.windowId)
+  assert.notEqual(reopened.windowInstance, first.windowInstance)
+})

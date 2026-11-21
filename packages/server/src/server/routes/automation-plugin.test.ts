@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import Fastify from "fastify"
+import { NativeRequestRefused } from "../../native-parent"
 import { AUTOMATION_BRIDGE_PATH } from "../../opencode/automation-plugin"
 import { registerAutomationPluginRoute } from "./automation-plugin"
 
@@ -26,11 +27,20 @@ test("a slow unrelated workspace cannot hide an already verified automation owne
   assert.equal(response.statusCode, 200, "a supported host can claim a session before opening its first preview")
 })
 
-test("targets the inspected window independently of the visible conversation", async () => {
+test("targets the exact inspection independently of the visible conversation or another client", async t => {
   const app = Fastify({ logger: false })
+  t.after(() => app.close())
   const nativeCalls: Array<{ method: string; params: unknown }> = []
   let state = "ready"
   let runId = "run-1"
+  let focusedWindow = "window-1"
+  let firstWindowOpen = true
+  let holdStatus: (() => Promise<void>) | undefined
+  let restartFailure: Error | undefined
+  const retiredRuns: string[] = []
+  let screenshotWindow: string | undefined
+  let windowInstance: string | undefined
+  let onInspection: (() => void) | undefined
   let visibleSession = "session-1"
   let inspectedIdentity: unknown
   const previewError = { level: "error", text: "browser preview: install navigation starting handler: Paramètre incorrect. (0x80070057)" }
@@ -39,45 +49,60 @@ test("targets the inspected window independently of the visible conversation", a
     authManager: { isLoopbackRequest: () => true },
     bridgeToken: "secret",
     nativeParent: {
-      request: async (method: string, params: unknown) => {
+      request: async (method: string, params: { windowId?: string; runId?: string; windowInstance?: string }) => {
         nativeCalls.push({ method, params })
+        if (holdStatus && params.windowId === "window-1") {
+          const wait = holdStatus
+          holdStatus = undefined
+          await wait()
+        }
         if (method === "developer.restart") {
+          if (restartFailure) throw restartFailure
           runId = "run-2"
           return { state: "starting", runId }
         }
+        const windowId = params.windowId ?? focusedWindow
+        const available = (!params.runId || params.runId === runId && params.windowInstance === windowInstance)
+          && (windowId !== "window-1" || firstWindowOpen)
         return {
           status: {
-            state,
+            state: available ? state : "starting",
             runId,
             nativeIdentity: "electron:test",
             cdpUrl: "http://127.0.0.1:9222",
-            windowId: "window-1",
+            windowId: available ? windowId : undefined,
+            windowInstance,
           },
           logs: [previewError],
         }
       },
     },
     developerCdp: {
-      context: async (identity: { sessionId?: string }) => {
+      context: async (identity: { sessionId?: string; windowId: string }) => {
         assert.equal(identity.sessionId, undefined)
-        return { windowId: "window-1", instanceId: "workspace-1", sessionId: visibleSession }
+        return { windowId: identity.windowId, instanceId: "workspace-1", sessionId: visibleSession }
       },
-      inspect: async (identity: unknown, options: unknown) => {
+      inspect: async (identity: { windowId: string }, options: unknown) => {
+        onInspection?.()
         inspectedIdentity = identity
         inspectOptions.push(options)
         return {
           target: { id: "page-1", title: "CodeNomad", url: "http://app.test/" },
-          context: { windowId: "window-1", instanceId: "workspace-1", sessionId: visibleSession },
+          context: { windowId: identity.windowId, instanceId: "workspace-1", sessionId: visibleSession },
           snapshot: "- button \"Save\" [e1]",
           collapsed: 0,
           diagnostics: [],
         }
       },
-      close: () => undefined,
-      act: async (identity: { sessionId?: string; instanceId?: string }, action: { action: string; values?: string[] }) => {
+      close: (run: string) => retiredRuns.push(run),
+      screenshot: async (identity: { windowId: string }) => {
+        screenshotWindow = identity.windowId
+        return { data: "fixture", mediaType: "image/png" }
+      },
+      act: async (identity: { sessionId?: string; instanceId?: string; windowId: string }, action: { action: string; values?: string[] }) => {
         assert.equal(identity.sessionId, undefined)
         assert.equal(identity.instanceId, undefined)
-        actions.push(action)
+        actions.push({ ...action, windowId: identity.windowId })
         return action.action === "select" ? { selected: action.values } : {}
       },
     },
@@ -94,6 +119,8 @@ test("targets the inspected window independently of the visible conversation", a
     headers: { "x-codenomad-automation-token": "secret" },
     payload: body,
   })
+  const execute = (command: Record<string, unknown>, pin?: string) =>
+    request({ mode: "developer-execute", sessionID: "session-1", command, pin })
 
   assert.equal((await request({ mode: "developer-probe", sessionID: "session-1" })).statusCode, 200)
   const inspect = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "inspect" } })
@@ -105,27 +132,100 @@ test("targets the inspected window independently of the visible conversation", a
   })
   assert.equal(inspect.json().result.context.sessionId, "session-1")
   assert.deepEqual(inspect.json().result.diagnostics, [previewError], "inspection exposes retained native preview errors")
+  const firstPin = inspect.json().result.pin
+  assert.ok(firstPin)
 
   visibleSession = "session-2"
-  assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "click", ref: "ax1" } })).statusCode, 200)
-  assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "inspect", ref: "e1", query: "Save" } })).statusCode, 200)
+  focusedWindow = "window-2"
+  assert.equal((await execute({ action: "click", ref: "ax1" }, firstPin)).statusCode, 200)
+  assert.equal((await execute({ action: "screenshot" }, firstPin)).statusCode, 200)
+  assert.equal(screenshotWindow, "window-1")
+  assert.equal((await execute({ action: "inspect", ref: "e1", query: "Save" }, firstPin)).statusCode, 200)
   assert.deepEqual(inspectOptions, [{ ref: undefined, query: undefined }, { ref: "e1", query: "Save" }])
-  const selected = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "select", ref: "e2", values: ["Exploration"] } })
+  const selected = await execute({ action: "select", ref: "e2", values: ["Exploration"] }, firstPin)
   assert.deepEqual(selected.json(), { result: { ok: true, selected: ["Exploration"] } })
-  await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "type", ref: "e3", text: "x", clear: false } })
+  await execute({ action: "type", ref: "e3", text: "x", clear: false }, firstPin)
   assert.deepEqual(actions.map(action => [action.action, action.ref, action.clear ?? action.values]),
     [["click", "ax1", undefined], ["select", "e2", ["Exploration"]], ["type", "e3", false]])
   assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "press", key: "Hyper+Q" } })).statusCode, 400,
     "the backend validates the flat command again")
 
-  const restart = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "restart" } })
+  const restart = await execute({ action: "restart" }, firstPin)
   assert.equal(restart.statusCode, 200)
   assert.deepEqual(nativeCalls.slice(-2), [
-    { method: "developer.status", params: {} },
-    { method: "developer.restart", params: {} },
+    { method: "developer.status", params: { windowId: "window-1", runId: "run-1" } },
+    { method: "developer.restart", params: { windowId: "window-1", runId: "run-1" } },
   ])
   assert.equal((await request({ mode: "developer-probe", sessionID: "session-2" })).statusCode, 200)
-  assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "restart" } })).statusCode, 404)
+  assert.equal((await execute({ action: "restart" }, firstPin)).json().code, "target-gone")
+
+  focusedWindow = "window-1"
+  const fresh = await execute({ action: "inspect" })
+  assert.equal(fresh.statusCode, 200)
+  firstWindowOpen = false
+  focusedWindow = "window-2"
+  const vanished = await execute({ action: "press", key: "Enter" }, fresh.json().result.pin)
+  assert.equal(vanished.statusCode, 404)
+  assert.equal(vanished.json().code, "target-gone")
+  assert.equal(actions.length, 3, "a vanished window cannot send a key to the newly focused window")
+
+  firstWindowOpen = true
+  focusedWindow = "window-1"
+  const select = (window: string) => request({ mode: "developer-execute", sessionID: "session-1",
+    target: `electron:test/${runId}/${window}`, command: { action: "inspect" } })
+  const firstWindow = await select("window-1")
+  assert.equal(firstWindow.statusCode, 200)
+  let entered!: () => void, release!: () => void
+  const statusEntered = new Promise<void>(resolve => { entered = resolve })
+  const releaseStatus = new Promise<void>(resolve => { release = resolve })
+  holdStatus = () => { entered(); return releaseStatus }
+  const expansion = execute({ action: "inspect", ref: "e1" }, firstWindow.json().result.pin)
+  await statusEntered
+  let secondPin: string
+  try {
+    const secondWindow = await select("window-2")
+    assert.equal(secondWindow.statusCode, 200)
+    assert.equal(secondWindow.json().result.context.windowId, "window-2")
+    secondPin = secondWindow.json().result.pin
+  }
+  finally { release() }
+  assert.equal((await expansion).json().result.context.windowId, "window-1")
+
+  const beforeRefusal = nativeCalls.length
+  for (const command of [{ action: "press", key: "Enter" }, { action: "inspect", ref: "e1" },
+    { action: "screenshot" }, { action: "restart" }]) {
+    const response = await execute(command)
+    assert.equal(response.statusCode, 404, command.action)
+    assert.equal(response.json().code, "inspect-required", command.action)
+  }
+  assert.equal(nativeCalls.length, beforeRefusal, "no command without a receipt reaches the native host")
+
+  assert.equal((await execute({ action: "press", key: "Enter" }, secondPin)).statusCode, 200)
+  assert.equal(actions.at(-1)?.windowId, "window-2")
+  assert.equal((await execute({ action: "screenshot" }, secondPin)).statusCode, 200)
+  assert.equal(screenshotWindow, "window-2", "a late expansion must not switch windows")
+
+  const a = (await select("window-1")).json().result.pin
+  let enteredInspection!: () => void, releaseInspection!: () => void
+  const reading = new Promise<void>(resolve => { enteredInspection = resolve })
+  const paused = new Promise<void>(resolve => { releaseInspection = resolve })
+  holdStatus = () => { enteredInspection(); return paused }
+  const lateInspection = request({ mode: "developer-execute", sessionID: "session-1", pin: a, command: { action: "inspect" } })
+  await reading
+  let b: string
+  try { b = (await select("window-2")).json().result.pin }
+  finally { releaseInspection() }
+  assert.equal((await lateInspection).json().code, "stale-inspection")
+  const capture = (pin: string) => request({ mode: "developer-execute", sessionID: "session-1", pin, command: { action: "screenshot" } })
+  assert.equal((await capture("unissued")).json().code, "target-gone")
+  assert.equal((await capture(b)).statusCode, 200)
+  assert.equal(screenshotWindow, "window-2")
+
+  windowInstance = "old-window"
+  onInspection = () => { windowInstance = "new-window" }
+  const replaced = await request({ mode: "developer-execute", sessionID: "session-1",
+    target: `electron:test/${runId}/window-1/old-window`, command: { action: "inspect" } })
+  assert.equal(replaced.json().code, "target-gone", "closing and reopening a window cannot publish the new outline under the old selector")
 
   state = "stopped"
   assert.equal((await request({ mode: "developer-probe", sessionID: "session-2" })).statusCode, 404)
@@ -133,10 +233,30 @@ test("targets the inspected window independently of the visible conversation", a
   runId = "run-3"
   visibleSession = "session-2"
   assert.equal((await request({ mode: "developer-probe", sessionID: "session-2" })).statusCode, 200)
+  onInspection = undefined
+  const beforeRestart = await request({ mode: "developer-execute", sessionID: "session-1",
+    target: `electron:test/${runId}/window-2/${windowInstance}`, command: { action: "inspect" } })
+  assert.equal(beforeRestart.statusCode, 200)
+  const retiringPin = beforeRestart.json().result.pin
+  restartFailure = new NativeRequestRefused("The selected window is no longer available")
+  const refused = await execute({ action: "restart" }, retiringPin)
+  assert.equal(refused.statusCode, 404)
+  assert.equal(refused.json().code, "target-gone")
+  assert.deepEqual(retiredRuns, ["run-1"])
+  const anotherInspection = await request({ mode: "developer-execute", sessionID: "session-1",
+    target: `electron:test/${runId}/window-2/${windowInstance}`, command: { action: "inspect" } })
+  assert.equal(anotherInspection.statusCode, 200)
+  const lostPin = anotherInspection.json().result.pin
+  restartFailure = new Error("Native request timed out")
+  const unconfirmed = await execute({ action: "restart" }, lostPin)
+  assert.equal(unconfirmed.json().code, "restart-outcome-unknown")
+  assert.match(unconfirmed.json().error, /Choose the window.*before retrying/)
+  assert.deepEqual(retiredRuns, ["run-1", "run-3"])
+  assert.equal((await execute({ action: "restart" }, lostPin)).json().code, "target-gone")
+  assert.equal(nativeCalls.filter(({ method }) => method === "developer.restart").length, 3)
 
   const unauthorized = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH, payload: { mode: "developer-probe", sessionID: "session-1" } })
   assert.equal(unauthorized.statusCode, 401)
-  await app.close()
 })
 
 test("browser works with an unavailable developer target and unrelated inventory failure", async () => {
@@ -195,7 +315,7 @@ test("browser works with an unavailable developer target and unrelated inventory
   assert.equal(nativeCalls.length, count, "a model can never choose protocol methods or scripts")
   const developer = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "inspect" } })
   assert.equal(developer.statusCode, 404)
-  assert.match(developer.json().error, /Native automation has no active/)
+  assert.equal(developer.json().code, "no-window")
   await app.close()
 })
 

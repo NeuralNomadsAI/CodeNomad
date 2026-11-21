@@ -10,6 +10,9 @@ Projekt-Tabs, ausgewählte Unterhaltungen und Layout gehören zum Fenster. OpenC
 
 Native Anwendungsmenüs verwenden die Oberflächensprache von CodeNomad, sobald ein Fenster geladen ist; bis dahin erscheinen sie auf Englisch. **Hilfe → Über CodeNomad** (auch im macOS-Anwendungsmenü) öffnet **Einstellungen → Info** mit Version, Updates und Diagnose. **Hilfe → CodeNomad unterstützen** öffnet die Seite [CodeNomad unterstützen](sponsor.md) im Browser.
 
+Die Desktop-Automatisierung bleibt im vom Agenten geprüften Fenster, auch wenn Sie das Fenster wechseln. Mit `codenomad.inspect({targets:true})` kann der Agent die verfügbaren lokalen Fenster auflisten und ein anderes anhand seiner Kennung prüfen.
+Native Maus- und Tastatureingaben im App-Fenster sind nur auf dessen Hauptseite möglich. Für die Webvorschau einer Unterhaltung gibt es eigene Werkzeuge.
+
 ## Desktop-Startargumente {#desktop-cli}
 
 Geben Sie diese Argumente nach der **Desktop-Programmdatei** (Tauri oder Electron) an, im Terminal oder im Feld **Ziel** einer Windows-Verknüpfung. Ersetzen Sie die Beispielpfade durch Ihren Programmpfad.

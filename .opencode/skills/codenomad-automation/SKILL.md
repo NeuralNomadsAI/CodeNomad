@@ -11,6 +11,6 @@ description: Inspect, modify, rebuild, relaunch, and verify CodeNomad desktop bu
 4. After updated artifacts are ready, call `codenomad.act` with `action: "restart"`. The call gracefully relaunches the host pinned by the latest inspection, waits for the same artifact identity to reconnect to the OpenCode session, and returns a fresh inspection. It never switches to another worktree's build.
 5. Call `codenomad.screenshot` for final visual evidence and report the checks that ran.
 
-If no target is found, open this session's project in a local CodeNomad desktop window: inspection targets the focused (else most recent) local application window of the backend that owns the session. CodeNomad prepares automation at normal startup (`dev-docs/BROWSER_AUTOMATION.md`). Never install a build-specific global OpenCode plugin shim.
+An inspection keeps its window when focus changes. Use `codenomad.inspect({targets:true})` to list eligible local windows, then `codenomad.inspect({target})` with a returned identifier to choose another. If no target is found, open this session's project in a local CodeNomad desktop window. CodeNomad prepares automation at normal startup (`dev-docs/BROWSER_AUTOMATION.md`). Never install a build-specific global OpenCode plugin shim.
 
 For Electron, rebuild before relaunching. For Windows Tauri, stop and launch the rebuilt executable manually only when the Windows linker cannot replace the running binary.

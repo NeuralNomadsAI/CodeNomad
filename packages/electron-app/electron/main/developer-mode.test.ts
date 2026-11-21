@@ -13,7 +13,7 @@ test("normal startup waits for CDP and can restart without an enable marker", as
   const mode = new DeveloperMode({
     devtoolsDataPath: root,
     nativeIdentity: "electron:test",
-    targetWindowId: () => undefined,
+    windows: () => [],
     requestRelaunch: () => { relaunched = true },
     schedule: (callback) => { restart = callback },
   })
@@ -32,10 +32,11 @@ test("reports the current local window and schedules a graceful relaunch", async
   await writeFile(join(root, "DevToolsActivePort"), "43123\n/devtools/browser/test\n")
   let restart: (() => void) | undefined
   let relaunched = false
+  let windows = [{ windowId: "window-1", focused: true }, { windowId: "window-2", focused: false }]
   const mode = new DeveloperMode({
     devtoolsDataPath: root,
     nativeIdentity: "electron:test",
-    targetWindowId: () => "window-1",
+    windows: () => windows,
     requestRelaunch: () => { relaunched = true },
     runId: "run-1",
     schedule: (callback) => { restart = callback },
@@ -51,6 +52,14 @@ test("reports the current local window and schedules a graceful relaunch", async
     },
     logs: [],
   })
+  windows = [{ windowId: "window-2", focused: true }, { windowId: "window-1", focused: false }]
+  assert.deepEqual((await mode.handleNativeRequest("developer.targets") as { windows: unknown }).windows, windows)
+  assert.equal((await mode.status({ windowId: "window-1", runId: "run-1" })).windowId, "window-1")
+  assert.equal((await mode.status({ windowId: "window-1", runId: "old" })).state, "starting")
+  windows.pop()
+  assert.equal((await mode.status({ windowId: "window-1", runId: "run-1" })).state, "starting")
+  await assert.rejects(mode.handleNativeRequest("developer.restart", { windowId: "window-1", runId: "run-1" }), /no longer available/)
+  assert.equal(restart, undefined, "a disappeared window cannot arm the relaunch")
   assert.deepEqual(await mode.handleNativeRequest("developer.restart"), {
     state: "starting",
     runId: "run-1",
