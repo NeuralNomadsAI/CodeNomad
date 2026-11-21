@@ -195,6 +195,31 @@ describe("DeveloperCdp", () => {
     } finally { client.close() }
   })
 
+  it("does not queue a ready window behind a different window in the same run", async () => {
+    const first = new FakeChrome(), second = new FakeChrome()
+    second.target = page("two")
+    second.context = { ...first.context, windowId: "window-2" }
+    first.targets = [first.target, second.target]
+    first.deferred.set("Accessibility.getFullAXTree", undefined as never)
+    const client = first.client({ connect: (url: string) => url.endsWith("/two") ? second.connect(url) : first.connect(url) })
+    const a = client.inspect(identity)
+    let limit: NodeJS.Timeout | undefined
+    try {
+      while (!first.deferred.get("Accessibility.getFullAXTree")) await new Promise<void>(resolve => setImmediate(resolve))
+      const b = client.inspect({ ...identity, windowId: "window-2" })
+      const completed = await Promise.race([b, new Promise<never>((_, reject) => {
+        limit = setTimeout(() => reject(new Error("B waited for A")), 750)
+      })])
+      assert.equal(completed.context.windowId, "window-2")
+    } finally {
+      clearTimeout(limit)
+      const read = first.deferred.get("Accessibility.getFullAXTree")
+      read?.socket.respond(read.command, first.result("Accessibility.getFullAXTree"))
+      await a.catch(() => {})
+      client.close()
+    }
+  })
+
   it("keeps window-scoped tools usable across session/project navigation and empty views", async () => {
     const chrome = new FakeChrome()
     const client = chrome.client()
