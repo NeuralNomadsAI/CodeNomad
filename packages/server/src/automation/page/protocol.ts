@@ -126,6 +126,7 @@ function pageError(ref: string, description: string): Error {
     case "single": return new Error(`${ref} takes exactly one value`)
     case "disabled": return new Error(`${ref} is disabled`)
     case "readonly": return new Error(`${ref} is read-only`)
+    case "delete-refused": return new Error(`The page refused to delete the selection in ${ref}`)
     case "not-editable": return new Error(`${ref} is not a text field`)
     case "not-text": return new Error(`${ref} is not a text field; use click`)
     case "unfocusable": return new Error(`${ref} cannot take focus (hidden, disabled or behind a dialog); reveal it, then inspect again`)

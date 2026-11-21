@@ -355,14 +355,15 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
           result = await deps.nativeParent.request<DeveloperNativeStatus["status"]>("developer.restart", nativeWindowParams(identity))
         } catch (error) {
           if (error instanceof NativeRequestRefused) throw error
-          deps.developerCdp.close(selection.runId)
-          return reply.code(502).send({ code: "restart-outcome-unknown", error: "The restart outcome is unknown. Inspect again before retrying." })
+          deps.developerCdp.close(selection.runId, true)
+          return reply.code(502).send({ code: "restart-outcome-unknown", error: "The restart outcome is unknown. Choose the window in inspect({targets:true}) before retrying." })
         }
         deps.developerCdp.close(selection.runId)
         return reply.send({ result })
       }
       if (command.action === "inspect") {
-        const result = await deps.developerCdp.inspect(identity, { ref: command.ref, query: command.query })
+        const result = await deps.developerCdp.inspect(identity, { ref: command.ref, query: command.query,
+          ...(explicit ? { recoverUncertainRun: true } : {}) })
         if (!await stillAvailable()) return unavailable()
         result.diagnostics.push(...(native.logs ?? []).slice(-32))
         const nextPin = publishInspection?.({ ...identity, ...(result.document ? { document: result.document } : {}) })

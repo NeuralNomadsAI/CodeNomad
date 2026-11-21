@@ -126,7 +126,14 @@ export const ELEMENT_FUNCTIONS = {
   element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
   element.dispatchEvent(new Event("change", { bubbles: true }));
   return null;`,
-  "delete-selection": `document.execCommand("delete"); return null;`,
+  "delete-selection": `const field = element, active = field.getRootNode().activeElement;
+   const editable = !(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement);
+   if (field.matches(":disabled")) throw new Error("codenomad:disabled");
+   if (field.readOnly) throw new Error("codenomad:readonly");
+   if (${FOCUS_MISMATCH}) throw new Error("codenomad:unfocusable");
+   args[0]?.();
+   if (!document.execCommand("delete")) throw new Error("codenomad:delete-refused");
+   return null;`,
   "read-value": `const value = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.value : element.innerText || element.textContent || "";
   if (element instanceof HTMLInputElement && element.type === "password") return "•".repeat(Math.min(value.length, 16));
   return value.length > ${VALUE_LIMIT} ? value.slice(0, ${VALUE_LIMIT - 1}) + "…" : value;`,
@@ -162,10 +169,7 @@ export const FUNCTION_ARGS: Record<PageFunctionId, readonly string[]> = {
 export const handleResult = (id: PageFunctionId) => ["field", "active-element", "document-root"].includes(id)
 export const applicationOnly = (id: PageFunctionId) => id === "mark-input" || id === "unmark-input"
 export function declaration(id: keyof typeof ELEMENT_FUNCTIONS, mark: boolean): string {
-  const body = mark && id === "delete-selection" ? `const field = element, active = field.getRootNode().activeElement;
-    const editable = !(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement);
-    if (${FOCUS_MISMATCH}) throw new Error("codenomad:unfocusable");
-    ${ELEMENT_FUNCTIONS[id]}` : ELEMENT_FUNCTIONS[id]
+  const body = ELEMENT_FUNCTIONS[id]
   const element = `const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;
     if (!(element instanceof Element) || !element.isConnected) throw new Error("codenomad:gone");`
   return mark

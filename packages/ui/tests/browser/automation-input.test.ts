@@ -55,9 +55,9 @@ before(async () => {
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
     plugins: [solid(), shutdown.plugin, { name: "automation-input", configureServer(s) {
       s.middlewares.use("/automation-inputs", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(INPUTS) })
-      s.middlewares.use("/automation-dock", async (_req, res) => {
+      for (const [route, fixture] of [["/automation-dock", "interruption-dock"], ["/automation-tabs", "tab-chrome"]]) s.middlewares.use(route, async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/automation-dock", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/interruption-dock.tsx"></script></body></html>'))
+        res.end(await s.transformIndexHtml(route, `<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/${fixture}.tsx"></script></body></html>`))
       })
     } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } }).catch(async error => { await cache.dispose(); throw error })
   shutdown.own(server)
@@ -189,7 +189,7 @@ test("a scheduled mouse release refuses a substitute inside the inspected button
   } finally { await run.close() }
 })
 
-test("a short drag releases on the source covering the destination only while it holds capture", async () => {
+test("a short drag refuses release when capture loss changes the exact recipient", async () => {
   const run = await openAutomationPage(automation, `${base}/automation-inputs`)
   try {
     const { page, act, refFor } = run
@@ -204,14 +204,42 @@ test("a short drag releases on the source covering the destination only while it
         ;(window as any).moveOnlyAtDrop = moveLate && end
         ;(window as any).dropped = false
         if (loseCapture) source.addEventListener("pointermove", event => {
-          if (event.buttons === 1 && event.clientX === end) source.releasePointerCapture(event.pointerId)
+          if (event.buttons === 1 && event.clientX === end) {
+            source.releasePointerCapture(event.pointerId)
+            source.style.left = "20px"
+          }
         })
       }, { moveLate, loseCapture })
       const drag = act({ action: "drag", ref, to })
-      if (loseCapture) await assert.rejects(drag, /covered by div "Handle".*Input already sent/)
+      if (loseCapture) await assert.rejects(drag, /original pointer recipient changed.*Input already sent/)
       else await drag
       assert.equal(await page.evaluate(() => (window as any).dropped), !loseCapture)
     }
+  } finally { await run.close() }
+})
+
+test("automation reorders real Solid DnD tabs while the uncaptured source follows the pointer", async () => {
+  const run = await openAutomationPage(automation, `${base}/automation-tabs`, async page => {
+    await page.setViewportSize({ width: 1200, height: 800 })
+    await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  })
+  try {
+    const { page, refFor, act } = run
+    const tabs = page.locator('[data-fixture="instances"] [role="tab"]')
+    await tabs.nth(1).waitFor()
+    const first = await tabs.first().innerText()
+    await page.evaluate(() => {
+      const events: unknown[] = []
+      Object.assign(window, { tabDragEvents: events })
+      for (const type of ["gotpointercapture", "pointerup"]) document.addEventListener(type, event => {
+        const tab = (event.target as Element).closest('[role="tab"]')
+        events.push([type, event.isTrusted, tab?.textContent])
+      }, true)
+    })
+    const ref = await refFor(/tab "Project 0/), to = await refFor(/tab "Project 1/)
+    await act({ action: "drag", ref, to })
+    assert.equal(await tabs.nth(1).innerText(), first)
+    assert.deepEqual(await page.evaluate(() => Reflect.get(window, "tabDragEvents")), [["pointerup", true, first]])
   } finally { await run.close() }
 })
 
@@ -291,6 +319,32 @@ test("a value setter refuses the field from the occurrence left during focus", a
     assert.equal(await page.inputValue("#date-a"), "2026-11-21")
     assert.equal(await page.inputValue("#date-b"), "2026-11-22")
     assert.match(String(failure), /active tab changed/i)
+  } finally { await run.close() }
+})
+
+for (const refusal of ["tab", "read-only", "command"] as const) test(`empty type refuses deletion after ${refusal} changes`, async () => {
+  const run = await openAutomationPage(automation, `${base}/automation-inputs`)
+  try {
+    const { page, act, refFor } = run
+    await page.evaluate(refusal => {
+      const field = document.querySelector<HTMLInputElement>("#query")!
+      field.value = "Keep the draft"
+      document.body.insertAdjacentHTML("beforeend", `
+        <section data-tab-id="a" data-instance-id="project" data-tab-visible="true"></section>
+        <section data-tab-id="b" data-instance-id="project" data-tab-visible="false"></section>`)
+      if (refusal === "tab") field.addEventListener("focus", () => {
+        document.querySelector("[data-tab-id=a]")!.setAttribute("data-tab-visible", "false")
+        document.querySelector("[data-tab-id=b]")!.setAttribute("data-tab-visible", "true")
+      }, { once: true })
+      if (refusal === "read-only") field.addEventListener("focus", () => { field.readOnly = true }, { once: true })
+      if (refusal === "command") document.execCommand = () => false
+      field.addEventListener("input", () => (window as any).log.push("deleted"))
+    }, refusal)
+    const ref = await refFor(/textbox "Query"/)
+    await assert.rejects(act({ action: "type", ref, text: "" }),
+      refusal === "tab" ? /active tab changed/ : refusal === "read-only" ? /read-only/ : /refused.*delet/i)
+    assert.equal(await page.inputValue("#query"), "Keep the draft")
+    assert.deepEqual(await log(page), [])
   } finally { await run.close() }
 })
 

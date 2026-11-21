@@ -125,7 +125,14 @@ export const readCalls = {
   element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
   element.dispatchEvent(new Event("change", { bubbles: true }));
   return null; },
-"delete-selection": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); document.execCommand("delete"); return null; },
+"delete-selection": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); const field = element, active = field.getRootNode().activeElement;
+   const editable = !(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement);
+   if (field.matches(":disabled")) throw new Error("codenomad:disabled");
+   if (field.readOnly) throw new Error("codenomad:readonly");
+   if (active !== field && !(editable && active instanceof HTMLElement && active.isContentEditable && active.contains(field))) throw new Error("codenomad:unfocusable");
+   args[0]?.();
+   if (!document.execCommand("delete")) throw new Error("codenomad:delete-refused");
+   return null; },
 "read-value": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); const value = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.value : element.innerText || element.textContent || "";
   if (element instanceof HTMLInputElement && element.type === "password") return "•".repeat(Math.min(value.length, 16));
   return value.length > 200 ? value.slice(0, 199) + "…" : value; },

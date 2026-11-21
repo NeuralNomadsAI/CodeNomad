@@ -171,6 +171,22 @@ const identity = {
 }
 
 describe("DeveloperCdp", () => {
+  it("allows an explicit new inspection after uncertain restart without reviving any old pin", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    try {
+      const previous = await client.inspect(identity)
+      client.close(identity.runId, true)
+      await assert.rejects(client.inspect(identity), /run is closed/)
+      const recovered = await client.inspect(identity, { recoverUncertainRun: true })
+      assert.notEqual(recovered.document, previous.document)
+      await assert.rejects(client.screenshot({ ...identity, document: previous.document }), /Page changed/)
+      await client.screenshot({ ...identity, document: recovered.document })
+      client.close(identity.runId)
+      await assert.rejects(client.inspect(identity, { recoverUncertainRun: true }), /run is closed/)
+    } finally { client.close() }
+  })
+
   it("does not publish an inspection through a partially initialized CDP socket", async () => {
     const chrome = new FakeChrome()
     const client = chrome.client({ timeoutMs: 40 })

@@ -58,7 +58,7 @@
     "scope": "element",
     "args": [],
     "handle": false,
-    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); document.execCommand(\"delete\"); return null; }"
+    "source": "function (...args) { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;\n    if (!(element instanceof Element) || !element.isConnected) throw new Error(\"codenomad:gone\"); const field = element, active = field.getRootNode().activeElement;\n   const editable = !(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement);\n   if (field.matches(\":disabled\")) throw new Error(\"codenomad:disabled\");\n   if (field.readOnly) throw new Error(\"codenomad:readonly\");\n   if (active !== field && !(editable && active instanceof HTMLElement && active.isContentEditable && active.contains(field))) throw new Error(\"codenomad:unfocusable\");\n   args[0]?.();\n   if (!document.execCommand(\"delete\")) throw new Error(\"codenomad:delete-refused\");\n   return null; }"
   },
   "read-value": {
     "scope": "element",

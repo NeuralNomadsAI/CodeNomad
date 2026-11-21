@@ -250,7 +250,7 @@ test("targets the exact inspection independently of the visible conversation or 
   restartFailure = new Error("Native request timed out")
   const unconfirmed = await execute({ action: "restart" }, lostPin)
   assert.equal(unconfirmed.json().code, "restart-outcome-unknown")
-  assert.match(unconfirmed.json().error, /Inspect again before retrying/)
+  assert.match(unconfirmed.json().error, /Choose the window.*before retrying/)
   assert.deepEqual(retiredRuns, ["run-1", "run-3"])
   assert.equal((await execute({ action: "restart" }, lostPin)).json().code, "target-gone")
   assert.equal(nativeCalls.filter(({ method }) => method === "developer.restart").length, 3)

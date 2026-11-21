@@ -34,7 +34,7 @@ const FOREGROUND = `const current = (${CONTEXT_FUNCTION})(null);
   const sameWindow = current.windowId === expected.windowId && current.windowInstance === (expected.windowInstance ?? null);
   const sameTab = current.tabId === (expected.tabId ?? null) && current.instanceId === expected.instanceId && current.sessionId === expected.sessionId;`
 const INPUT_STATE = "({ root: document.documentElement })"
-const GUARDED_CALLS = new Map((["option-click", "programmatic-click", "select", "set-value"] as const).map(id => {
+const GUARDED_CALLS = new Map((["option-click", "programmatic-click", "select", "set-value", "delete-selection"] as const).map(id => {
   const program = declaration(id, true)
   return [program, `function (handle, expected, ...args) {
     const check = () => {
@@ -67,9 +67,10 @@ const INPUT_DESTINATION = `function (point, expected, release, handle, insertTex
     if (point) {
       const cover = (element, ...args) => { ${POINTER_COVER} };
       const blocked = cover(element, target);
-      capturing = Boolean(dragSource?.isConnected) && this.dragPointerId !== undefined &&
-        Element.prototype.hasPointerCapture.call(dragSource, this.dragPointerId);
-      if (blocked !== null && !(capturing && cover(dragSource, target) === null)) return "cover:" + blocked;
+      const dragging = Boolean(dragSource?.isConnected) && this.dragPointerId !== undefined;
+      capturing = dragging && Element.prototype.hasPointerCapture.call(dragSource, this.dragPointerId);
+      // The source can follow the pointer without capture. In that case retain the exact hit.
+      if (blocked !== null && !(dragging && cover(dragSource, target) === null)) return "cover:" + blocked;
     } else {
       const field = element, active = target;
       const editable = insertText && !(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement);
@@ -137,6 +138,7 @@ export interface DeveloperCdpInspection {
 export interface DeveloperCdpInspectOptions {
   ref?: string
   query?: string
+  recoverUncertainRun?: boolean
 }
 
 export interface DeveloperCdpScreenshot {
@@ -211,7 +213,7 @@ export class DeveloperCdp {
   private readonly windows = new Map<string, RunState>()
   private readonly probes = new Map<RunState, RunState | undefined>()
   private readonly operations = new Map<string, Promise<void>>()
-  private readonly retiredRuns = new Set<string>()
+  private readonly retiredRuns = new Map<string, { closed: boolean; recoverable: boolean }>()
   private closed = false
   private readonly refNamespace = BigInt(`0x${randomBytes(8).toString("hex")}`).toString().padStart(20, "0")
   private stamps = 0
@@ -227,8 +229,10 @@ export class DeveloperCdp {
   }
 
   async inspect(identity: DeveloperCdpIdentity, options: DeveloperCdpInspectOptions = {}): Promise<DeveloperCdpInspection> {
-    return this.exclusive(windowKey(identity), async () => {
-      const state = await this.ensure(identity)
+    return this.exclusive(identity, async () => {
+      const retirement = this.retiredRuns.get(identity.runId)
+      const recovering = Boolean(options.recoverUncertainRun && !options.ref && retirement?.recoverable)
+      const state = await this.ensure(identity, recovering)
       const generation = this.generation(state)
       const root = options.ref === undefined ? undefined : state.refs.resolve(options.ref, generation)
       let snapshot
@@ -239,6 +243,7 @@ export class DeveloperCdp {
         if (error instanceof SnapshotScopeError) throw new Error(`${options.ref} is no longer in the page; inspect again`)
         throw error
       }
+      if (recovering && retirement === this.retiredRuns.get(identity.runId) && retirement) retirement.closed = false
       return {
         target: { id: state.target!.id, title: state.target!.title, url: state.target!.url },
         context: this.publicContext(state.context!),
@@ -251,7 +256,7 @@ export class DeveloperCdp {
   }
 
   async act(identity: DeveloperCdpIdentity, action: RefAction): Promise<PageActionResult> {
-    return this.exclusive(windowKey(identity), async () => {
+    return this.exclusive(identity, async () => {
       const state = await this.ensure(identity)
       const epoch = state.navigationEpoch, generation = this.generation(state)
       const page = bindRefs(action, ref => state.refs.resolve(ref, generation))
@@ -389,7 +394,7 @@ export class DeveloperCdp {
   }
 
   async screenshot(identity: DeveloperCdpIdentity): Promise<DeveloperCdpScreenshot> {
-    return this.exclusive(windowKey(identity), async () => {
+    return this.exclusive(identity, async () => {
       const state = await this.ensure(identity)
       const epoch = state.navigationEpoch
       const result = await this.command(state, "Page.captureScreenshot", {
@@ -407,9 +412,9 @@ export class DeveloperCdp {
     })
   }
 
-  close(runId?: string): void {
+  close(runId?: string, recoverable = false): void {
     const error = new Error("Developer CDP controller closed")
-    if (runId) this.retiredRuns.add(runId)
+    if (runId) this.retiredRuns.set(runId, { closed: true, recoverable })
     else {
       this.closed = true
       this.retiredRuns.clear()
@@ -423,7 +428,7 @@ export class DeveloperCdp {
   }
 
   async context(selection: DeveloperCdpSelection): Promise<DeveloperCdpContext> {
-    return this.exclusive(windowKey(selection), async () => (await this.ensure(selection)).context!)
+    return this.exclusive(selection, async () => (await this.ensure(selection)).context!)
   }
 
   private async inputDestination(state: RunState, objectId: string, point: { x: number; y: number } | null,
@@ -477,9 +482,9 @@ export class DeveloperCdp {
     return context
   }
 
-  private async ensure(identity: DeveloperCdpSelection | DeveloperCdpIdentity): Promise<RunState> {
+  private async ensure(identity: DeveloperCdpSelection | DeveloperCdpIdentity, recovering = false): Promise<RunState> {
     if (!identity.runId.trim()) throw new Error("runId is required")
-    if (this.closed || this.retiredRuns.has(identity.runId)) throw new Error("Developer CDP run is closed; inspect again")
+    if (this.closed || !recovering && this.retiredRuns.get(identity.runId)?.closed) throw new Error("Developer CDP run is closed; inspect again")
     const endpoint = discoveryUrl(identity.endpoint)
     const key = windowKey(identity)
     let state = this.windows.get(key)
@@ -767,9 +772,14 @@ export class DeveloperCdp {
     state.context = context
   }
 
-  private exclusive<T>(key: string, operation: () => Promise<T>): Promise<T> {
+  private exclusive<T>(identity: DeveloperCdpSelection, operation: () => Promise<T>): Promise<T> {
+    const key = windowKey(identity)
+    const admission = this.retiredRuns.get(identity.runId)
     const previous = this.operations.get(key) ?? Promise.resolve()
-    const queued = previous.catch(() => undefined).then(operation)
+    const queued = previous.catch(() => undefined).then(() => {
+      if (admission !== this.retiredRuns.get(identity.runId)) throw new Error("Developer CDP run is closed; inspect again")
+      return operation()
+    })
     const tail = queued.then(() => undefined, () => undefined)
     this.operations.set(key, tail)
     return queued.finally(() => {
