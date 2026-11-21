@@ -9,7 +9,7 @@ const histories = new Map<string, { entries: Array<{ id: number; url: string }>;
 let historyId = 0
 let callbackId = 0
 let pendingEmulation: (() => void) | undefined
-let pendingRegistration: { resolve: () => void; reject: (error: Error) => void } | undefined
+let pendingRegistration: { resolve: (admitted: boolean) => void; reject: (error: Error) => void } | undefined
 
 export const nativeFixture = {
   calls,
@@ -20,10 +20,10 @@ export const nativeFixture = {
   deferRegistration: false,
   deferEmulation: false,
   settleEmulation() { pendingEmulation?.(); pendingEmulation = undefined },
-  settleRegistration(reject = false) {
+  settleRegistration(result: boolean | "refused" = false) {
     if (!pendingRegistration) throw new Error("No pending registration")
-    if (reject) pendingRegistration.reject(new Error("Registration failed"))
-    else pendingRegistration.resolve()
+    if (result === true) pendingRegistration.reject(new Error("Registration failed"))
+    else pendingRegistration.resolve(result !== "refused")
     pendingRegistration = undefined
   },
   navigate(registrationId: string, url: string) {
@@ -60,8 +60,9 @@ async function invoke(command: string, args: any = {}) {
     return new Promise<boolean>((resolve, reject) => {
       pendingRegistration = {
         // The Rust controller publishes the target and starts its first load before answering.
-        resolve: () => {
+        resolve: admitted => {
           registering.delete(id)
+          if (!admitted) { histories.delete(id); resolve(false); return }
           for (const callback of callbacks.values()) callback({ payload: { registrationId: id, url: args.payload.url } })
           resolve(true)
         },

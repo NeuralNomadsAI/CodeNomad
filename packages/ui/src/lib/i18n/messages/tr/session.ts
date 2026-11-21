@@ -155,6 +155,7 @@ export const sessionMessages = {
   "sessionPreview.open.label": "Önizleme URL'si",
   "sessionPreview.open.invalidUrl": "Geçerli bir HTTP veya HTTPS URL'si girin.",
   "sessionPreview.open.alreadyOwned": "Bu önizleme başka bir pencerede. Orada kullanın veya yeniden denemeden önce sekmesini kapatın.",
+  "sessionPreview.open.rendererUnavailable": "Önizleme hazır değil. Yeniden açın.",
   "sessionPreview.open.placeholder": "https://staging.example.com",
   "sessionPreview.open.confirm": "Önizlemeyi aç",
   "sessionPreview.open.cancel": "İptal",

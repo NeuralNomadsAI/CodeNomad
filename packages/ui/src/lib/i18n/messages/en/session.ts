@@ -160,6 +160,7 @@ export const sessionMessages = {
   "sessionPreview.open.label": "Preview URL",
   "sessionPreview.open.invalidUrl": "Enter a valid HTTP or HTTPS URL.",
   "sessionPreview.open.alreadyOwned": "This preview is in another window. Use it there or close its owning tab before retrying.",
+  "sessionPreview.open.rendererUnavailable": "The preview is not ready. Open it again.",
   "sessionPreview.open.placeholder": "https://staging.example.com",
   "sessionPreview.open.confirm": "Open preview",
   "sessionPreview.open.cancel": "Cancel",

@@ -160,6 +160,7 @@ export const sessionMessages = {
   "sessionPreview.open.label": "Vorschau-URL",
   "sessionPreview.open.invalidUrl": "Geben Sie eine gültige HTTP- oder HTTPS-URL ein.",
   "sessionPreview.open.alreadyOwned": "Diese Vorschau ist in einem anderen Fenster. Verwenden Sie sie dort oder schließen Sie ihren Tab und versuchen Sie es erneut.",
+  "sessionPreview.open.rendererUnavailable": "Die Vorschau ist nicht bereit. Öffnen Sie sie erneut.",
   "sessionPreview.open.placeholder": "https://staging.beispiel.de",
   "sessionPreview.open.confirm": "Vorschau öffnen",
   "sessionPreview.open.cancel": "Abbrechen",

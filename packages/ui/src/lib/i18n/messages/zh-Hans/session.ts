@@ -160,6 +160,7 @@ export const sessionMessages = {
   "sessionPreview.open.label": "预览 URL",
   "sessionPreview.open.invalidUrl": "请输入有效的 HTTP 或 HTTPS URL。",
   "sessionPreview.open.alreadyOwned": "此预览在另一个窗口中。请在该窗口使用，或关闭其所属标签页后重试。",
+  "sessionPreview.open.rendererUnavailable": "预览尚未就绪，请重新打开。",
   "sessionPreview.open.placeholder": "https://staging.example.com",
   "sessionPreview.open.confirm": "打开预览",
   "sessionPreview.open.cancel": "取消",

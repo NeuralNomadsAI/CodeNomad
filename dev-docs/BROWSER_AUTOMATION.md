@@ -328,7 +328,9 @@ uses its own occurrence/session operation fence, allocates independently of fore
 authority and preserves the saved foreground mode. Rejected creations release their
 own proxy tokens. SessionView reads the shared typed foreground projection; browser
 resources retain their independent lifetimes. Location/history notifications apply
-immediately while pending gestures retain their generation.
+immediately while pending gestures retain their generation. A native ownership
+refusal releases the live preview and passively clears the active occurrence's web
+mode, preserving saved history and pending gestures.
 
 Native open claims retain their request deadline and backend-generation fence. The UI revalidates the claim after asynchronous preview-record creation and before publishing the preview; a rejected record's token is released. Native-parent stdin preserves UTF-8 across buffer boundaries, and timed-out response IDs stay retired independently of subsequent requests.
 

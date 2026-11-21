@@ -160,6 +160,7 @@ export const sessionMessages = {
   "sessionPreview.open.label": "URL de vista previa",
   "sessionPreview.open.invalidUrl": "Introduce una URL HTTP o HTTPS válida.",
   "sessionPreview.open.alreadyOwned": "Esta vista previa está en otra ventana. Úsala allí o cierra su pestaña antes de volver a intentarlo.",
+  "sessionPreview.open.rendererUnavailable": "La vista previa no está lista. Ábrela de nuevo.",
   "sessionPreview.open.placeholder": "https://staging.example.com",
   "sessionPreview.open.confirm": "Abrir vista previa",
   "sessionPreview.open.cancel": "Cancelar",

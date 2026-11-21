@@ -160,6 +160,7 @@ export const sessionMessages = {
   "sessionPreview.open.label": "כתובת URL לתצוגה מקדימה",
   "sessionPreview.open.invalidUrl": "הזן כתובת URL תקינה מסוג HTTP או HTTPS.",
   "sessionPreview.open.alreadyOwned": "התצוגה המקדימה נמצאת בחלון אחר. השתמשו בה שם או סגרו את הלשונית שלה לפני שתנסו שוב.",
+  "sessionPreview.open.rendererUnavailable": "התצוגה המקדימה אינה מוכנה. פתחו אותה שוב.",
   "sessionPreview.open.placeholder": "https://staging.example.com",
   "sessionPreview.open.confirm": "פתח תצוגה מקדימה",
   "sessionPreview.open.cancel": "ביטול",

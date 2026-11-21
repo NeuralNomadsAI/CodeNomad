@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js"
+import { batch, createSignal } from "solid-js"
 import { backendOf, type BackendClient } from "../lib/backend-client"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { tGlobal } from "../lib/i18n"
@@ -97,6 +97,22 @@ export function dismissSessionPreview(storageKey: string, keepalive = false) {
   if (!record) return
   showSessionChatFor(record.sessionId, record.instanceId)
   if (record.capability) void removeLivePreview(storageKey, keepalive)
+}
+
+/** A native refusal retires the live guest, independently of navigation gestures. */
+export function rejectSessionPreviewAdmission(storageKey: string, activeInstanceId?: string) {
+  const record = sessionPreviews().get(storageKey)
+  if (!record) return
+  batch(() => {
+    if (activeInstanceId) {
+      const previews = getTabViewState(activeInstanceId).previews
+      const preview = previews?.[record.sessionId]
+      if (preview?.mode === "preview") {
+        updateTabViewState(activeInstanceId, { previews: { ...previews, [record.sessionId]: { ...preview, mode: "chat" } } })
+      }
+    }
+    void removeLivePreview(storageKey)
+  })
 }
 
 function publishPreview(record: SessionPreviewRecord) {
