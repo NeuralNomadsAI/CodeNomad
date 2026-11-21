@@ -303,9 +303,10 @@ pub async fn catalogue(app: &App, w: &Workspace, refresh: bool) -> Result<Catalo
     if refresh {
         native(app, Method::POST, "/api/worktree/refresh", &[], Some(json!({"projectID":project})), 16384).await?;
     }
-    let entries = native(app, Method::GET, "/api/worktree", &[("projectID", project)], None, 256 * 1024).await?;
-    let entries = entries.as_array().filter(|a| a.len() <= 64).ok_or_else(native_error)?;
-    let annotations = git(&main.root, &["worktree", "list", "--porcelain", "-z"]).await?;
+    // The reference lists every registration; only the response sizes are bounded.
+    let entries = native(app, Method::GET, "/api/worktree", &[("projectID", project)], None, 4 << 20).await?;
+    let entries = entries.as_array().ok_or_else(native_error)?;
+    let annotations = crate::git::run(&main.root, &["worktree", "list", "--porcelain", "-z"], 4 << 20).await?.ok()?.text();
     let snapshot: HashMap<_, _> = annotations
         .split("\0\0")
         .filter_map(|s| Some((physical(s.split('\0').next()?.strip_prefix("worktree ")?)?, s)))
