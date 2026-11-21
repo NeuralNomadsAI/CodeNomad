@@ -28,6 +28,12 @@ Le binaire `codenomad-rune-recovery.exe` sert aux vérifications en arrière-pla
 
 ## Résultats vérifiés
 
+### Vérification de l’intégration du serveur Rust
+
+La branche Rune intègre `origin/feat/rust-server`, dont `4861695bc` pour la lecture de toutes les inscriptions de worktrees sous des bornes de réponse de 4 Mio. La borne concurrente de nombre d’entrées du prototype est retirée. Le contrôle physique ciblé du dossier racine est conservé pour les mutations de session ; le banc à 143 inscriptions vérifie que ces envois évitent l’énumération des autres checkouts.
+
+La fusion est sans conflit. `cargo +1.99.1 check --locked --manifest-path packages/server-rs/Cargo.toml` réussit sur les sources fusionnées ; trace : `evidence/merged-server-check.log`. Le formatage du client et `git diff --check` réussissent également. Les onze tests du client, le parcours d’outils simulés et les sept injections de reprise à 606 lignes sont consignés dans la campagne ci-dessous.
+
 ### Blocs d’outils et qualification interactive du projet réel
 
 Campagne dans `D:\CodeNomad\.codenomad\worktrees\rune-native-chat`. Le projet ouvert depuis Rune est le vrai dossier `D:\CodeNomad`. La conversation longue est une copie créée par le fork natif d’une conversation de travail réelle ; la source conserve ses messages. La première page native de la copie contient 200 messages avec continuation. Les messages de test sont envoyés uniquement dans cette copie et dans une session neuve créée depuis l’interface. Les deux sessions de test interdisent explicitement tous les outils avant les envois.
