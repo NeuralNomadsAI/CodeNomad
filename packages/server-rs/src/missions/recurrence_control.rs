@@ -10,6 +10,7 @@ use crate::{
     missions::recurrence::{Refused, Scope, fail, integer, query, rpc, scope, still},
     missions::recurrence_contract::{self as contract, SAFE, canonical, control_status, manual_result, rid, same_location},
     missions::recurrence_holds::{self as holds, Admission, Binding, Hold, Owner, Refusal, Request, now},
+    missions::schedule_contract::ClaimBinding,
     files,
 };
 use axum::{
@@ -19,7 +20,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 const READ: usize = 512 * 1024;
 const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
@@ -62,15 +63,21 @@ impl Drop for Claim {
         self.0.calendar_claims.lock().unwrap().remove(&self.1);
     }
 }
-pub(crate) fn signed(app: &Shared, mut identity: Value, principal: &Principal, host: &str) -> Option<(Value, Claim)> {
+pub(crate) fn signed(app: &Shared, mut identity: Value, principal: &Principal, scope: &Scope) -> Option<(Value, Claim)> {
     let key = app.mission_bridge.as_ref()?;
+    if !still(app, scope) {
+        return None;
+    }
     let marker = contract::digest(&identity);
     identity["digest"] = json!(marker);
     let proof = contract::sign(&identity, key);
     app.calendar_claims
         .lock()
         .unwrap()
-        .insert(marker.clone(), (identity.clone(), principal.0.clone(), host.to_owned()));
+        .insert(marker.clone(), Arc::new(ClaimBinding {
+            proof: identity.clone(), principal: principal.0.clone(), physical: scope.host.clone(),
+            project: scope.project.clone(), canonical: scope.canonical.clone(), endpoint: scope.endpoint.clone(),
+        }));
     identity["proof"] = json!(proof);
     Some((identity, Claim(app.clone(), marker)))
 }
@@ -109,8 +116,8 @@ fn with_hint(mut v: Value, hint: Option<u64>) -> Value {
     v
 }
 /// Exact control status read (never a resend).
-async fn control_read(app: &App, dir: &str, q: &Request, hint: Option<u64>) -> Option<Value> {
-    let read = rpc(app, dir, "recurrenceControlStatus", with_hint(identity(q), hint), READ);
+async fn control_read(app: &App, scope: &Scope, q: &Request, hint: Option<u64>) -> Option<Value> {
+    let read = rpc(app, scope, "recurrenceControlStatus", with_hint(identity(q), hint), READ);
     let v = tokio::time::timeout(STATUS_TIMEOUT, read).await.ok()?.ok()?;
     (control_status(&v)
         && v["scheduleID"] == q.schedule.as_str()
@@ -129,12 +136,12 @@ fn manual_exact(v: &Value, q: &Request, dir: &str) -> bool {
         && same_location(&v["location"], dir)
 }
 /// `readSupersededRecurrenceIntent`: the old intent's exact status, in control shape.
-async fn superseded_status(app: &App, dir: &str, old: &Request, hint: Option<u64>) -> Option<Value> {
+async fn superseded_status(app: &App, scope: &Scope, old: &Request, hint: Option<u64>) -> Option<Value> {
     if old.action != "run-now" {
-        return control_read(app, dir, old, hint).await;
+        return control_read(app, scope, old, hint).await;
     }
-    let v = rpc(app, dir, "recurrenceRunNowStatus", manual_input(old, hint), READ).await.ok()?;
-    if !manual_exact(&v, old, dir) {
+    let v = rpc(app, scope, "recurrenceRunNowStatus", manual_input(old, hint), READ).await.ok()?;
+    if !manual_exact(&v, old, &scope.dir) {
         return None;
     }
     let mut base = json!({"version":1,"scheduleID":old.schedule,"requestID":old.request,"expectedRevision":old.revision,"action":"run-now"});
@@ -173,13 +180,13 @@ async fn prepare(app: &Shared, workspace: &str, input: &Input, principal: &Princ
     };
     let mut hold = holds::hold(binding, input.retry)?;
     if hold.requires_partial_proof {
-        let status = sent(control_read(app, &s.dir, q, None).await)?;
+        let status = sent(control_read(app, &s, q, None).await)?;
         if !still(app, &s) || !hold.confirm_partial(&status) {
             return Err(NotSent(None));
         }
     }
     if let Some((old, hint)) = hold.superseded.clone() {
-        let status = sent(superseded_status(app, &s.dir, &old, hint).await)?;
+        let status = sent(superseded_status(app, &s, &old, hint).await)?;
         if !still(app, &s) {
             return Err(NotSent(None));
         }
@@ -196,7 +203,7 @@ async fn prepare(app: &Shared, workspace: &str, input: &Input, principal: &Princ
     let issued = now();
     let proof = json!({"sessionID":auth_id(),"workspaceID":s.id,"requestID":q.request,"location":{"directory":s.dir},
         "scheduleID":q.schedule,"action":q.action,"expectedRevision":q.revision,"profileSource":source,"issuedAt":issued});
-    let (mut body, claim) = sent(signed(app, proof, principal, &s.host))?;
+    let (mut body, claim) = sent(signed(app, proof, principal, &s))?;
     hold.issued(issued);
     if input.retry {
         body["retry"] = json!(true);
@@ -208,8 +215,7 @@ fn refusal_code(reason: &Value) -> &'static str {
 }
 /// `dispatchRecurrenceControl`, detached from the client connection.
 async fn dispatch_control(app: Shared, workspace: String, mut p: Prepared, q: Request) -> Option<(Status, Value)> {
-    let dir = p.scope.dir.clone();
-    let result = rpc(&app, &dir, "recurrenceControl", p.body.clone(), READ).await;
+    let result = rpc(&app, &p.scope, "recurrenceControl", p.body.clone(), READ).await;
     drop(p.claim);
     if let Ok(r) = result {
         let mut record = r.clone();
@@ -231,7 +237,7 @@ async fn dispatch_control(app: Shared, workspace: String, mut p: Prepared, q: Re
             return Some((Status::OK, r));
         }
     }
-    let status = control_read(&app, &dir, &q, holds::proof_hint(&workspace, &q)).await?;
+    let status = control_read(&app, &p.scope, &q, holds::proof_hint(&workspace, &q)).await?;
     if status["outcome"] == "rejected" && status["reason"].is_string() {
         p.hold.settled(false);
         let body = json!({"error":"Recurrence control refused; nothing was applied","code":refusal_code(&status["reason"])});
@@ -252,12 +258,12 @@ async fn dispatch_control(app: Shared, workspace: String, mut p: Prepared, q: Re
 /// `dispatchRecurrenceRunNow`, detached from the client connection.
 async fn dispatch_run_now(app: Shared, workspace: String, mut p: Prepared, q: Request) -> Option<(Status, Value)> {
     let dir = p.scope.dir.clone();
-    let result = rpc(&app, &dir, "recurrenceRunNow", p.body.clone(), READ).await;
+    let result = rpc(&app, &p.scope, "recurrenceRunNow", p.body.clone(), READ).await;
     drop(p.claim);
     let raw = match result {
         Ok(r) => r,
         Err(()) => {
-            let read = rpc(&app, &dir, "recurrenceRunNowStatus", manual_input(&q, holds::proof_hint(&workspace, &q)), READ);
+            let read = rpc(&app, &p.scope, "recurrenceRunNowStatus", manual_input(&q, holds::proof_hint(&workspace, &q)), READ);
             tokio::time::timeout(STATUS_TIMEOUT, read).await.ok()?.ok()?
         }
     };
@@ -432,7 +438,7 @@ pub async fn control_status_route(
         Err(r) => return r,
     };
     let hint = holds::held_read(&id, &s.dir, &q).then(|| holds::proof_hint(&id, &q)).flatten();
-    let Some(result) = control_read(&app, &s.dir, &q, hint).await else { return unavailable() };
+    let Some(result) = control_read(&app, &s, &q, hint).await else { return unavailable() };
     if !still(&app, &s) || !human(&principal) {
         return unavailable();
     }
@@ -472,7 +478,7 @@ pub async fn run_now_status(
         Err(r) => return r,
     };
     let hint = holds::held_read(&id, &s.dir, &q).then(|| holds::proof_hint(&id, &q)).flatten();
-    let Ok(result) = rpc(&app, &s.dir, "recurrenceRunNowStatus", manual_input(&q, hint), READ).await else { return unavailable() };
+    let Ok(result) = rpc(&app, &s, "recurrenceRunNowStatus", manual_input(&q, hint), READ).await else { return unavailable() };
     if !manual_exact(&result, &q, &s.dir) || !still(&app, &s) || !human(&principal) {
         return unavailable();
     }

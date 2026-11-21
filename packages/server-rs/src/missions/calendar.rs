@@ -1,8 +1,15 @@
+use crate::missions::schedule_contract::{
+    ACTIONS, ClaimBinding, HOLD_CAPACITY, Hold, activation_pending, bad, config_invalid, exact_refusal, good,
+    human_required, input_invalid, pending, refused, unavailable, unconfirmed, valid_result,
+};
+pub use crate::missions::schedule_contract::{Claims, Holds};
 use crate::{
     App, Error, Shared, Workspace,
-    worktrees::linked::native,
-    missions::run::{directory, project_owner, rpc},
-    files, auth::tls,
+    auth::tls,
+    files,
+    missions::run::{directory, project_owner},
+    opencode::Endpoint,
+    worktrees::fence,
 };
 use axum::{
     Extension, Json,
@@ -10,7 +17,7 @@ use axum::{
         Path, Query, State,
         rejection::{JsonRejection, QueryRejection},
     },
-    http::{Method, StatusCode as Status},
+    http::StatusCode as Status,
 };
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
@@ -18,21 +25,17 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     path::PathBuf,
+    sync::{Arc, atomic::Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
-use crate::missions::schedule_contract::{
-    ACTIONS, HOLD_CAPACITY, Hold, activation_pending, bad, config_invalid, good, human_required,
-    input_invalid, pending, refused, unavailable, unconfirmed, valid_result,
-};
-pub use crate::missions::schedule_contract::{Claims, Holds};
+#[path = "calendar_capability.rs"]
+mod capability;
+use capability::automation_api;
 
 const READ: usize = 512 * 1024;
 
 fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
 }
 fn encoded(v: &Value) -> String {
     serde_json::to_string(v).unwrap_or_default()
@@ -63,14 +66,8 @@ pub fn setup(data: &std::path::Path) -> Result<Option<PathBuf>, Box<dyn std::err
     Ok(Some(dunce::canonicalize(yaml)?))
 }
 fn source(app: &App) -> Result<Value, Error> {
-    let y = app
-        .calendar_profile
-        .as_ref()
-        .and_then(|p| p.to_str())
-        .ok_or_else(unavailable)?;
-    Ok(
-        json!({"profileID":digest(&json!(["cnrs-calendar",y])),"executionHost":"local","configYamlPath":y}),
-    )
+    let y = app.calendar_profile.as_ref().and_then(|p| p.to_str()).ok_or_else(unavailable)?;
+    Ok(json!({"profileID":digest(&json!(["cnrs-calendar",y])),"executionHost":"local","configYamlPath":y}))
 }
 
 #[derive(Deserialize, Default)]
@@ -90,23 +87,77 @@ pub struct ReadQuery {
     #[serde(rename = "requestID")]
     request: Option<String>,
 }
-async fn scope(
-    app: &App,
-    wid: &str,
-    dir: Option<&str>,
-) -> Result<(Workspace, String, String), Error> {
+async fn scope(app: &App, wid: &str, dir: Option<&str>) -> Result<(Workspace, String, String), Error> {
     source(app)?;
     let w = app.workspace(wid)?;
     files::directory(&w, dir)?;
     let (project, canonical) = project_owner(app, &w).await?;
     Ok((w, project, canonical))
 }
+
+fn on_connection(app: &App, endpoint: &Arc<Endpoint>) -> bool {
+    app.native.endpoint().is_some_and(|current| Arc::ptr_eq(&current, endpoint))
+}
+
+pub(crate) async fn rpc(
+    app: &App,
+    endpoint: &Arc<Endpoint>,
+    dir: &str,
+    method: &str,
+    input: Value,
+    max: usize,
+) -> Result<Value, Error> {
+    let url = endpoint.url.join(&format!("/api/rpc/codenomad.missions/{method}")).map_err(|_| unavailable())?;
+    if !on_connection(app, endpoint) {
+        return Err(unavailable());
+    }
+    let response = app
+        .native
+        .client
+        .post(url)
+        .basic_auth("opencode", Some(&endpoint.password))
+        .query(&[("location[directory]", dir)])
+        .json(&json!({"input":input}))
+        .timeout(std::time::Duration::from_secs(100))
+        .send()
+        .await
+        .map_err(|_| unavailable())?;
+    if !response.status().is_success() {
+        return Err(unavailable());
+    }
+    let result = crate::opencode::read_json(response, max).await.map_err(|_| unavailable())?;
+    if !on_connection(app, endpoint) {
+        return Err(unavailable());
+    }
+    result.get("output").cloned().ok_or_else(unavailable)
+}
+
+async fn current(
+    app: &App,
+    w: &Workspace,
+    project: &str,
+    canonical: &str,
+    physical: &str,
+    endpoint: &Arc<Endpoint>,
+) -> bool {
+    let owner = project_owner(app, w).await;
+    owner.is_ok_and(|(p, c)| p == project && c == canonical)
+        && on_connection(app, endpoint)
+        && files::host_identity(&w.path).ok().as_deref() == Some(physical)
+        && app
+            .workspace(&w.id.to_string())
+            .is_ok_and(|fresh| fresh.path == w.path && fresh.location == w.location && fresh.created_at == w.created_at)
+}
 pub async fn list(
     State(app): State<Shared>,
     Path(id): Path<String>,
     Query(q): Query<Filter>,
 ) -> Result<Json<Value>, Error> {
-    let (w, project, _) = scope(&app, &id, q.directory.as_deref()).await?;
+    let endpoint = app.native.endpoint().ok_or_else(unavailable)?;
+    let (w, project, canonical) = scope(&app, &id, q.directory.as_deref()).await?;
+    let physical = files::host_identity(&w.path).map_err(|_| unavailable())?;
+    let dir = directory(&w)?;
+    let display = fence::capture_display(dir);
     let mut args = json!({"limit":q.limit.unwrap_or(8)});
     if !(1..=8).contains(&args["limit"].as_u64().unwrap()) || q.request.is_some() {
         return Err(bad());
@@ -117,80 +168,46 @@ pub async fn list(
         }
         args["after"] = json!(a);
     }
-    let seen = rpc(&app, directory(&w)?, "scheduleList", args, READ).await?;
+    let seen = rpc(&app, &endpoint, dir, "scheduleList", args, READ).await?;
     if seen["projectID"] != project
         || seen["version"] != 1
         || !seen["schedules"].as_array().is_some_and(|a| a.len() <= 8)
+        || !current(&app, &w, &project, &canonical, &physical, &endpoint).await
+        || !display.load(Ordering::Relaxed)
     {
         return Err(unavailable());
     }
     Ok(Json(seen))
 }
-async fn flag(app: &App, w: &Workspace) -> Result<Value, Error> {
-    let flag = rpc(app, directory(w)?, "scheduleFlag", json!({}), 32768).await?;
+async fn flag(app: &App, endpoint: &Arc<Endpoint>, w: &Workspace) -> Result<Value, Error> {
+    let flag = rpc(app, endpoint, directory(w)?, "scheduleFlag", json!({}), 32768).await?;
     if !flag["enabled"].is_boolean() {
         return Err(unavailable());
     }
     Ok(flag)
-}
-async fn automation_api(app: &App) -> Result<Value, Error> {
-    let document = native(
-        app,
-        Method::GET,
-        "/openapi.json",
-        &[],
-        None,
-        4 * 1024 * 1024,
-    )
-    .await?;
-    let base = "/api/experimental/automation";
-    let item = format!("{base}/{{automationID}}");
-    let paths = &document["paths"];
-    let operations = [
-        (base.to_owned(), "post", "create"),
-        (base.to_owned(), "get", "list"),
-        (item.clone(), "get", "get"),
-        (item.clone(), "delete", "delete"),
-        (format!("{item}/pause"), "post", "pause"),
-        (format!("{item}/resume"), "post", "resume"),
-    ];
-    if operations
-        .iter()
-        .any(|(path, method, _)| !paths[path][method].is_object())
-    {
-        return Ok(json!({"available":false,"reason":"missing-api"}));
-    }
-    let expected = &document["components"]["schemas"]["Config.InfoEncoded"]["properties"]["experimental"]
-        ["properties"]["automations"];
-    if expected["type"] != "boolean"
-        || operations.iter().any(|(path, method, action)| {
-            let op = &paths[path][method];
-            op["operationId"] != format!("experimental.automation.{action}")
-                || if *action == "delete" {
-                    !op["responses"]["204"].is_object()
-                } else {
-                    !op["responses"]["200"]["content"]["application/json"]["schema"].is_object()
-                }
-        })
-    {
-        return Ok(json!({"available":false,"reason":"incompatible-contract"}));
-    }
-    Ok(json!({"available":true}))
 }
 pub async fn capabilities(
     State(app): State<Shared>,
     Path(id): Path<String>,
     Query(q): Query<Filter>,
 ) -> Result<Json<Value>, Error> {
-    let (w, _, _) = scope(&app, &id, q.directory.as_deref()).await?;
-    let api = automation_api(&app).await?;
-    let state = flag(&app, &w).await?;
+    let endpoint = app.native.endpoint().ok_or_else(unavailable)?;
+    let (w, project, canonical) = scope(&app, &id, q.directory.as_deref()).await?;
+    let physical = files::host_identity(&w.path).map_err(|_| unavailable())?;
+    let dir = directory(&w)?;
+    let display = fence::capture_display(dir);
+    if q.after.is_some() || q.limit.is_some() || q.request.is_some() {
+        return Err(input_invalid());
+    }
+    let api = automation_api(&app, &endpoint).await?;
+    let state = flag(&app, &endpoint, &w).await?;
+    if !current(&app, &w, &project, &canonical, &physical, &endpoint).await || !display.load(Ordering::Relaxed) {
+        return Err(unavailable());
+    }
     let enabled = state["enabled"] == true;
-    Ok(Json(
-        json!({"location":{"directory":directory(&w)?},"api":api,"enabled":enabled,
+    Ok(Json(json!({"location":{"directory":directory(&w)?},"api":api,"enabled":enabled,
         "origin":null,"provenance":state["provenance"],"activation":if enabled&&api["available"]==true{json!({"available":true,"targets":[]})}
-        else{json!({"available":false,"reason":"explicit-off","targets":[]})}}),
-    ))
+        else{json!({"available":false,"reason":"explicit-off","targets":[]})}})))
 }
 fn schedule_id(project: &str, dir: &str, request: &str) -> String {
     format!("msn_{}", &digest(&json!([project, dir, request]))[..40])
@@ -198,6 +215,7 @@ fn schedule_id(project: &str, dir: &str, request: &str) -> String {
 
 async fn read_exact(
     app: &App,
+    endpoint: &Arc<Endpoint>,
     w: &Workspace,
     id: &str,
     request: Option<&str>,
@@ -211,12 +229,11 @@ async fn read_exact(
     }
     let lost = || unconfirmed(Status::SERVICE_UNAVAILABLE, Some(id));
     let dir = directory(w).map_err(|_| lost())?;
-    let result = rpc(app, dir, "scheduleRead", input, READ).await.map_err(|_| lost())?;
+    let result = rpc(app, endpoint, dir, "scheduleRead", input, READ).await.map_err(|_| lost())?;
     if !valid_result(&result, id) {
         return Err(lost());
     }
-    app.workspace(&w.id.to_string())
-        .map_err(|(status, _)| unconfirmed(status, Some(id)))?;
+    app.workspace(&w.id.to_string()).map_err(|(status, _)| unconfirmed(status, Some(id)))?;
     Ok(result)
 }
 /// Settles the held permit with its exact completed receipt.
@@ -234,9 +251,7 @@ fn settle(app: &App, w: &Workspace, project: &str, canonical: &str, mid: &str, r
 fn read_query(query: Result<Query<ReadQuery>, QueryRejection>) -> Result<ReadQuery, Error> {
     let Query(q) = query.map_err(|_| input_invalid())?;
     if q.request.as_deref().is_some_and(|r| !good(r))
-        || q.directory
-            .as_deref()
-            .is_some_and(|d| d.is_empty() || d.len() > 4096 || d.contains('\0'))
+        || q.directory.as_deref().is_some_and(|d| d.is_empty() || d.len() > 4096 || d.contains('\0'))
     {
         return Err(input_invalid());
     }
@@ -245,28 +260,46 @@ fn read_query(query: Result<Query<ReadQuery>, QueryRejection>) -> Result<ReadQue
 /// Reads never retry or arm work. A held permit is read with its own request.
 async fn read_receipt(
     app: &App,
+    endpoint: &Arc<Endpoint>,
     w: &Workspace,
     project: &str,
     canonical: &str,
     mid: &str,
     request: Option<&str>,
 ) -> Result<Json<Value>, Error> {
+    let lost = || unconfirmed(Status::SERVICE_UNAVAILABLE, Some(mid));
+    let physical = files::host_identity(&w.path).map_err(|_| lost())?;
     let held = app.calendar_holds.lock().unwrap().get(mid).cloned();
-    if let Some(hold) = held {
+    if let Some(hold) = &held {
         if !hold.owned_by(w, project, canonical) || request.is_some_and(|r| r != hold.request) {
             return Err(unconfirmed(Status::CONFLICT, Some(mid)));
         }
-        if !hold.dispatched {
+        if !hold.dispatched || hold.busy {
             return Err(pending(Some(mid), None));
         }
-        let result = read_exact(app, w, mid, Some(&hold.request)).await?;
-        return if settle(app, w, project, canonical, mid, &result) {
+    }
+    let display = held.is_none().then(|| directory(w).map(fence::capture_display)).transpose()?;
+    let original = held.as_ref().map(|h| h.request.as_str()).or(request);
+    let result = read_exact(app, endpoint, w, mid, original).await?;
+    if !current(app, w, project, canonical, &physical, endpoint).await
+        || display.is_some_and(|d| !d.load(Ordering::Relaxed))
+    {
+        return Err(lost());
+    }
+    if let Some(held) = held {
+        let mut holds = app.calendar_holds.lock().unwrap();
+        return if holds.get(mid).is_some_and(|h| {
+            Arc::ptr_eq(&h.permit, &held.permit)
+                && !h.busy
+                && h.owned_by(w, project, canonical)
+                && h.settles(mid, &result)
+        }) {
+            holds.remove(mid);
             Ok(Json(result))
         } else {
             Err(pending(Some(mid), Some(&result)))
         };
     }
-    let result = read_exact(app, w, mid, request).await?;
     if result["pending"] == true {
         return Err(pending(Some(mid), Some(&result)));
     }
@@ -281,10 +314,10 @@ pub async fn read(
     if !good(&mid) {
         return Err(input_invalid());
     }
-    let (w, p, c) = scope(&app, &id, q.directory.as_deref())
-        .await
-        .map_err(|(status, _)| unconfirmed(status, Some(&mid)))?;
-    read_receipt(&app, &w, &p, &c, &mid, q.request.as_deref()).await
+    let endpoint = app.native.endpoint().ok_or_else(|| unconfirmed(Status::SERVICE_UNAVAILABLE, Some(&mid)))?;
+    let (w, p, c) =
+        scope(&app, &id, q.directory.as_deref()).await.map_err(|(status, _)| unconfirmed(status, Some(&mid)))?;
+    read_receipt(&app, &endpoint, &w, &p, &c, &mid, q.request.as_deref()).await
 }
 pub async fn request_read(
     State(app): State<Shared>,
@@ -295,15 +328,15 @@ pub async fn request_read(
     if !good(&request) {
         return Err(input_invalid());
     }
-    let (w, p, canonical) = scope(&app, &id, q.directory.as_deref())
-        .await
-        .map_err(|(status, _)| unconfirmed(status, None))?;
+    let endpoint = app.native.endpoint().ok_or_else(|| unconfirmed(Status::SERVICE_UNAVAILABLE, None))?;
+    let (w, p, canonical) =
+        scope(&app, &id, q.directory.as_deref()).await.map_err(|(status, _)| unconfirmed(status, None))?;
     // A lost reply may hide even the document ID: derive it from the owner.
     let mid = schedule_id(&p, &canonical, &request);
     if q.request.as_deref().is_some_and(|r| r != request) {
         return Err(unconfirmed(Status::CONFLICT, Some(&mid)));
     }
-    read_receipt(&app, &w, &p, &canonical, &mid, Some(&request)).await
+    read_receipt(&app, &endpoint, &w, &p, &canonical, &mid, Some(&request)).await
 }
 pub struct Input {
     request: String,
@@ -318,21 +351,14 @@ pub struct Input {
 fn parse_input(body: Result<Json<Value>, JsonRejection>, creating: bool) -> Result<Input, Error> {
     let Json(raw) = body.map_err(|_| input_invalid())?;
     let obj = raw.as_object().ok_or_else(input_invalid)?;
-    const KEYS: [&str; 7] = [
-        "requestID", "expectedRevision", "action", "configuration", "deleteManagedSessions", "retry", "directory",
-    ];
+    const KEYS: [&str; 7] =
+        ["requestID", "expectedRevision", "action", "configuration", "deleteManagedSessions", "retry", "directory"];
     if obj.keys().any(|k| !KEYS.contains(&k.as_str())) {
         return Err(input_invalid());
     }
     let request = obj.get("requestID").and_then(Value::as_str).filter(|s| good(s));
-    let revision = obj
-        .get("expectedRevision")
-        .and_then(Value::as_u64)
-        .filter(|r| *r <= 9_007_199_254_740_991);
-    let action = obj
-        .get("action")
-        .and_then(Value::as_str)
-        .filter(|a| ACTIONS.contains(a));
+    let revision = obj.get("expectedRevision").and_then(Value::as_u64).filter(|r| *r <= 9_007_199_254_740_991);
+    let action = obj.get("action").and_then(Value::as_str).filter(|a| ACTIONS.contains(a));
     let (Some(request), Some(revision), Some(action)) = (request, revision, action) else {
         return Err(input_invalid());
     };
@@ -420,11 +446,11 @@ fn validate_config(v: &mut Value, dir: &str, profile: &Value, creating: bool) ->
 }
 /// Clears an undispatched permit, or the in-flight mark of a dispatched one,
 /// however the handler ends (the reference `dispose`).
-struct Release(Shared, String);
+struct Release(Shared, String, Arc<fence::Entered>);
 impl Drop for Release {
     fn drop(&mut self) {
         let mut holds = self.0.calendar_holds.lock().unwrap();
-        if let Some(hold) = holds.get_mut(&self.1) {
+        if let Some(hold) = holds.get_mut(&self.1).filter(|h| Arc::ptr_eq(&h.permit, &self.2)) {
             if hold.dispatched {
                 hold.busy = false;
             } else {
@@ -445,29 +471,25 @@ async fn mutate(
     }
     let _gate = app.calendar_slot.lock().await;
     let _path = app.project_mutation.lock().await;
+    let endpoint = app.native.endpoint().ok_or_else(|| unconfirmed(Status::SERVICE_UNAVAILABLE, mid.as_deref()))?;
     let (w, project, canonical) = scope(&app, &id, input.directory.as_deref())
         .await
         .map_err(|(status, _)| unconfirmed(status, mid.as_deref()))?;
     let lost = |status: Status, m: &str| unconfirmed(status, Some(m));
     let mid = mid.unwrap_or_else(|| schedule_id(&project, &canonical, &input.request));
-    let dir = directory(&w)
-        .map_err(|_| lost(Status::SERVICE_UNAVAILABLE, &mid))?
-        .to_owned();
+    let dir = directory(&w).map_err(|_| lost(Status::SERVICE_UNAVAILABLE, &mid))?.to_owned();
     let profile = source(&app).map_err(|_| human_required())?;
     let mut conf = input.configuration.clone();
     if let Some(v) = &mut conf {
         validate_config(v, &dir, &profile, input.action == "create")?;
     }
-    let payload = digest(
-        conf.as_ref()
-            .unwrap_or(&json!({"deleteManagedSessions":input.delete_managed.unwrap_or(false)})),
-    );
+    let payload =
+        digest(conf.as_ref().unwrap_or(&json!({"deleteManagedSessions":input.delete_managed.unwrap_or(false)})));
     let identity = digest(&json!([input.request, input.revision, input.action, payload]));
-    let physical = files::host_identity(&w.path)
-        .map_err(|_| lost(Status::SERVICE_UNAVAILABLE, &mid))?;
+    let physical = files::host_identity(&w.path).map_err(|_| lost(Status::SERVICE_UNAVAILABLE, &mid))?;
     let existing = app.calendar_holds.lock().unwrap().get(&mid).cloned();
     let mut checking = None;
-    if let Some(held) = existing {
+    let (permit, replacement) = if let Some(held) = existing {
         if !held.owned_by(&w, &project, &canonical) {
             return Err(lost(Status::CONFLICT, &mid));
         }
@@ -477,7 +499,10 @@ async fn mutate(
         if input.action != "check" && held.identity != identity {
             return Err(lost(Status::CONFLICT, &mid));
         }
-        let receipt = read_exact(&app, &w, &mid, Some(&held.request)).await?;
+        let receipt = read_exact(&app, &endpoint, &w, &mid, Some(&held.request)).await?;
+        if principal.0.is_cancelled() || !current(&app, &w, &project, &canonical, &physical, &endpoint).await {
+            return Err(lost(Status::SERVICE_UNAVAILABLE, &mid));
+        }
         if settle(&app, &w, &project, &canonical, &mid, &receipt) {
             return Ok(Json(receipt));
         }
@@ -489,16 +514,23 @@ async fn mutate(
         if !(held.exact(&mid, &receipt) && receipt["pending"] == true) {
             return Err(lost(Status::SERVICE_UNAVAILABLE, &mid));
         }
+        let replacement = if Arc::ptr_eq(&held.endpoint, &endpoint) {
+            None
+        } else {
+            Some(Arc::new(fence::enter(std::slice::from_ref(&dir)).ok_or_else(|| lost(Status::CONFLICT, &mid))?))
+        };
         let mut holds = app.calendar_holds.lock().unwrap();
-        let hold = holds.get_mut(&mid).ok_or_else(|| lost(Status::SERVICE_UNAVAILABLE, &mid))?;
+        let hold = holds
+            .get_mut(&mid)
+            .filter(|h| Arc::ptr_eq(&h.permit, &held.permit))
+            .ok_or_else(|| lost(Status::SERVICE_UNAVAILABLE, &mid))?;
         hold.busy = true;
-        if !adopt {
-            hold.retried = true;
-        }
         checking = adopt.then(|| held.request.clone());
+        (held.permit, replacement)
     } else {
+        let permit = Arc::new(fence::enter(std::slice::from_ref(&dir)).ok_or_else(|| lost(Status::CONFLICT, &mid))?);
         let mut holds = app.calendar_holds.lock().unwrap();
-        if holds.len() >= HOLD_CAPACITY {
+        if holds.len() >= HOLD_CAPACITY || holds.contains_key(&mid) {
             return Err(lost(Status::CONFLICT, &mid));
         }
         holds.insert(
@@ -514,18 +546,22 @@ async fn mutate(
                 canonical: canonical.clone(),
                 directory: dir.clone(),
                 physical: physical.clone(),
+                endpoint: endpoint.clone(),
+                permit: permit.clone(),
                 dispatched: false,
                 busy: false,
                 retried: false,
             },
         );
-    }
-    let _release = Release(app.clone(), mid.clone());
+        (permit, None)
+    };
+    let mut release = Release(app.clone(), mid.clone(), permit);
     // Stricter than the reference: arm only with the native Automations API
     // and the enabled flag (the plugin itself requires a ready activation).
     if matches!(input.action.as_str(), "play" | "resume" | "run-now")
-        && (automation_api(&app).await.map_or(true, |a| a["available"] != true)
-            || flag(&app, &w).await.map_or(true, |f| f["enabled"] != true))
+        && (automation_api(&app, &endpoint).await.map_or(true, |a| a["available"] != true)
+            || flag(&app, &endpoint, &w).await.map_or(true, |f| f["enabled"] != true))
+        || !current(&app, &w, &project, &canonical, &physical, &endpoint).await
         || principal.0.is_cancelled()
     {
         return Err(lost(Status::SERVICE_UNAVAILABLE, &mid));
@@ -551,81 +587,95 @@ async fn mutate(
     if input.retry {
         call["retry"] = json!(true);
     }
-    if let Some(hold) = app.calendar_holds.lock().unwrap().get_mut(&mid) {
+    {
+        let mut holds = app.calendar_holds.lock().unwrap();
+        let hold = holds
+            .get_mut(&mid)
+            .filter(|h| Arc::ptr_eq(&h.permit, &release.2))
+            .ok_or_else(|| lost(Status::SERVICE_UNAVAILABLE, &mid))?;
+        if let Some(fresh) = replacement {
+            hold.endpoint = endpoint.clone();
+            hold.permit = fresh.clone();
+            release.2 = fresh;
+        }
+        hold.retried |= hold.dispatched;
         hold.dispatched = true;
         hold.busy = true;
     }
     app.calendar_claims.lock().unwrap().insert(
         marker.clone(),
-        (proof, principal.0.clone(), physical.clone()),
+        Arc::new(ClaimBinding {
+            proof,
+            principal: principal.0.clone(),
+            physical: physical.clone(),
+            project: project.clone(),
+            canonical: canonical.clone(),
+            endpoint: endpoint.clone(),
+        }),
     );
     // An admitted native write runs to completion even if this client leaves;
     // its verification claim lives exactly as long as the write.
     let task = {
-        let (app, dir) = (app.clone(), dir.clone());
+        let app = app.clone();
+        let mid = mid.clone();
         tokio::spawn(async move {
-            let result = rpc(&app, &dir, "scheduleControl", call, READ).await;
+            let _release = release;
+            let result = rpc(&app, &endpoint, &dir, "scheduleControl", call, READ).await;
             app.calendar_claims.lock().unwrap().remove(&marker);
-            result
+            let lost = || unconfirmed(Status::SERVICE_UNAVAILABLE, Some(&mid));
+            let result = result.map_err(|_| lost())?;
+            if !valid_result(&result, &mid)
+                || !current(&app, &w, &project, &canonical, &physical, &endpoint).await
+                || principal.0.is_cancelled()
+            {
+                return Err(lost());
+            }
+            if result["refusal"].is_object() {
+                let exact = exact_refusal(&result, &mid, &input.request, input.revision, &input.action, &payload);
+                if exact && checking.is_some() {
+                    // A refused Check never releases the original permit.
+                    return Err(refused(&mid, &result));
+                }
+                if exact && !input.retry {
+                    let mut holds = app.calendar_holds.lock().unwrap();
+                    if holds.get(&mid).is_some_and(|h| h.dispatched && !h.retried && h.identity == identity) {
+                        holds.remove(&mid);
+                        return Err(refused(&mid, &result));
+                    }
+                }
+                return Err(pending(Some(&mid), Some(&result)));
+            }
+            // Check adopts the saved intent; its own ACK cannot settle the original.
+            let result = match &checking {
+                Some(original) => {
+                    let exact = read_exact(&app, &endpoint, &w, &mid, Some(original)).await?;
+                    if !current(&app, &w, &project, &canonical, &physical, &endpoint).await
+                        || principal.0.is_cancelled()
+                    {
+                        return Err(lost());
+                    }
+                    exact
+                }
+                None => result,
+            };
+            if settle(&app, &w, &project, &canonical, &mid, &result) {
+                Ok(Json(result))
+            } else {
+                Err(pending(Some(&mid), Some(&result)))
+            }
         })
     };
-    let result = task
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .ok_or_else(|| lost(Status::SERVICE_UNAVAILABLE, &mid))?;
-    if principal.0.is_cancelled()
-        || files::host_identity(&w.path).ok().as_ref() != Some(&physical)
-        || !valid_result(&result, &mid)
-    {
-        return Err(lost(Status::SERVICE_UNAVAILABLE, &mid));
-    }
-    if result["refusal"].is_object() {
-        let refusal = &result["refusal"];
-        let exact = result["pending"] == false
-            && refusal["requestID"] == input.request.as_str()
-            && refusal["missionID"] == mid.as_str()
-            && refusal["action"] == input.action.as_str()
-            && refusal["expectedRevision"] == input.revision
-            && refusal["payloadDigest"] == payload.as_str();
-        if exact && checking.is_some() {
-            // A refused Check never releases the original permit.
-            return Err(refused(&mid, &result));
-        }
-        if exact && !input.retry {
-            let mut holds = app.calendar_holds.lock().unwrap();
-            if holds.get(&mid).is_some_and(|h| h.dispatched && !h.retried && h.identity == identity) {
-                holds.remove(&mid);
-                return Err(refused(&mid, &result));
-            }
-        }
-        return Err(pending(Some(&mid), Some(&result)));
-    }
-    // Check adopts the saved intent; its own ACK cannot settle the original.
-    let result = match &checking {
-        Some(original) => read_exact(&app, &w, &mid, Some(original)).await?,
-        None => result,
-    };
-    if settle(&app, &w, &project, &canonical, &mid, &result) {
-        Ok(Json(result))
-    } else {
-        Err(pending(Some(&mid), Some(&result)))
-    }
+    task.await.map_err(|_| unconfirmed(Status::SERVICE_UNAVAILABLE, Some(&mid)))?
 }
 pub async fn verify(app: &App, session: &str, proof: Value) -> Result<Json<Value>, Error> {
     let issued = proof["issuedAt"].as_u64().ok_or_else(bad)?;
     let marker = proof["digest"].as_str().ok_or_else(bad)?;
-    let (record, principal, physical) = app
-        .calendar_claims
-        .lock()
-        .unwrap()
-        .get(marker)
-        .cloned()
-        .ok_or_else(unavailable)?;
+    let claim = app.calendar_claims.lock().unwrap().get(marker).cloned().ok_or_else(unavailable)?;
     let check = || {
-        proof == record
+        proof == claim.proof
             && proof["sessionID"] == session
-            && !principal.is_cancelled()
+            && !claim.principal.is_cancelled()
+            && on_connection(app, &claim.endpoint)
             && issued <= now() + 5000
             && now().saturating_sub(issued) < 30000
     };
@@ -633,8 +683,18 @@ pub async fn verify(app: &App, session: &str, proof: Value) -> Result<Json<Value
         return Err(unavailable());
     }
     let id = proof["workspaceID"].as_str().ok_or_else(bad)?;
-    let (w, _, _) = scope(app, id, proof["location"]["directory"].as_str()).await?;
-    if !check() || files::host_identity(&w.path).ok().as_ref() != Some(&physical) {
+    let dir = proof["location"]["directory"].as_str().ok_or_else(bad)?;
+    let (w, project, canonical) = scope(app, id, Some(dir)).await?;
+    if !check()
+        || directory(&w)? != dir
+        || project != claim.project
+        || canonical != claim.canonical
+        || files::host_identity(&w.path).ok().as_ref() != Some(&claim.physical)
+        || !app
+            .workspace(id)
+            .is_ok_and(|fresh| fresh.path == w.path && fresh.location == w.location && fresh.created_at == w.created_at)
+        || !app.calendar_claims.lock().unwrap().get(marker).is_some_and(|r| Arc::ptr_eq(r, &claim))
+    {
         return Err(unavailable());
     }
     Ok(Json(json!({"result":{"admitted":true}})))
@@ -655,13 +715,26 @@ pub async fn activation_read(
     if !good(&mid) || !good(&q.request) || q.expected_document_revision > 9_007_199_254_740_991 {
         return Err(bad());
     }
-    let (w, _, _) = scope(&app, &id, q.directory.as_deref()).await?;
-    let result = rpc(&app, directory(&w)?, "documentActivation", json!({
-        "missionID":mid, "requestID":q.request, "expectedRevision":q.expected_document_revision, "action":"read"
-    }), READ).await?;
+    let endpoint = app.native.endpoint().ok_or_else(unavailable)?;
+    let (w, project, canonical) = scope(&app, &id, q.directory.as_deref()).await?;
+    let physical = files::host_identity(&w.path).map_err(|_| unavailable())?;
+    let dir = directory(&w)?;
+    let display = fence::capture_display(dir);
+    let result = rpc(
+        &app,
+        &endpoint,
+        dir,
+        "documentActivation",
+        json!({
+            "missionID":mid, "requestID":q.request, "expectedRevision":q.expected_document_revision, "action":"read"
+        }),
+        READ,
+    )
+    .await?;
     if !result["document"]["revision"].is_u64()
-        || !result["document"]["scheduleActivation"].is_object()
-            && !result["document"]["scheduleActivation"].is_null()
+        || !result["document"]["scheduleActivation"].is_object() && !result["document"]["scheduleActivation"].is_null()
+        || !current(&app, &w, &project, &canonical, &physical, &endpoint).await
+        || !display.load(Ordering::Relaxed)
     {
         return Err(unavailable());
     }
@@ -673,54 +746,79 @@ pub async fn activate(
     Extension(principal): Extension<crate::auth::Principal>,
     Json(q): Json<Activation>,
 ) -> Result<Json<Value>, Error> {
-    if !good(&mid) || !good(&q.request) {
+    if !good(&mid) || !good(&q.request) || q.expected_document_revision > 9_007_199_254_740_991 {
         return Err(bad());
     }
     let _gate = app.calendar_slot.lock().await;
     let _path = app.project_mutation.lock().await;
-    let (w, _, _) = scope(&app, &id, q.directory.as_deref()).await?;
-    let old = read_exact(&app, &w, &mid, None).await?;
+    let endpoint = app.native.endpoint().ok_or_else(unavailable)?;
+    let (w, project, canonical) = scope(&app, &id, q.directory.as_deref()).await?;
+    let physical = files::host_identity(&w.path).map_err(|_| unavailable())?;
+    let dir = directory(&w)?;
+    let _permit = fence::enter(&[dir.to_owned()]).ok_or_else(unavailable)?;
+    let guarded =
+        || async { current(&app, &w, &project, &canonical, &physical, &endpoint).await && !principal.0.is_cancelled() };
+    let id = json!({"missionID":mid,"requestID":q.request,"expectedRevision":q.expected_document_revision});
+    let step = |action: &str| {
+        let mut input = id.clone();
+        input["action"] = json!(action);
+        input
+    };
+    let old = rpc(&app, &endpoint, dir, "documentActivation", step("read"), 65536).await?;
     let doc = &old["document"];
     let activation = &doc["scheduleActivation"];
-    if doc["state"] != "paused" || doc["kind"] != "schedule" || principal.0.is_cancelled() {
+    if doc["state"] != "paused"
+        || !crate::missions::configuration::requires_calendar(&doc["launch"])
+        || !guarded().await
+    {
         return Err(unavailable());
     }
-    let exact = activation["requestID"] == q.request
-        && activation["expectedRevision"] == q.expected_document_revision;
-    if activation["state"] == "ready" && (exact || doc["revision"] == q.expected_document_revision)
-    {
-        if flag(&app, &w).await?["enabled"] != true || principal.0.is_cancelled() {
+    let exact = activation["requestID"] == q.request && activation["expectedRevision"] == q.expected_document_revision;
+    if activation["state"] == "ready" && (exact || doc["revision"] == q.expected_document_revision) {
+        if flag(&app, &endpoint, &w).await?["enabled"] != true || !guarded().await {
             return Err(unavailable());
         }
         return Ok(Json(json!({"document":doc})));
     }
-    if !activation.is_null() || doc["revision"] != q.expected_document_revision {
+    let prepared = exact && activation["state"] == "prepared" && activation["targets"] == json!([]);
+    if !prepared
+        && (doc.get("scheduleActivation") != Some(&Value::Null) || doc["revision"] != q.expected_document_revision)
+    {
         return Err(activation_pending());
     }
-    if automation_api(&app).await?["available"] != true || flag(&app, &w).await?["enabled"] != true
+    if automation_api(&app, &endpoint).await?["available"] != true
+        || flag(&app, &endpoint, &w).await?["enabled"] != true
+        || !guarded().await
     {
         return Err(unavailable());
     }
-    let dir = directory(&w)?;
-    let scope = source(&app)?;
-    let authority = digest(&json!(["enabled-fixture", scope, dir]));
-    let mut intent = json!({"missionID":mid,"requestID":q.request,"expectedRevision":q.expected_document_revision,"action":"prepare","authority":authority,"targets":[]});
-    rpc(&app, dir, "documentActivation", intent.clone(), 65536).await?;
-    if principal.0.is_cancelled() || flag(&app, &w).await?["enabled"] != true {
+    let authority = digest(&json!(["enabled-fixture", source(&app)?, dir]));
+    if prepared {
+        if activation["authority"] != authority {
+            return Err(activation_pending());
+        }
+    } else {
+        let mut intent = step("prepare");
+        intent["authority"] = json!(authority);
+        intent["targets"] = json!([]);
+        rpc(&app, &endpoint, dir, "documentActivation", intent, 65536).await?;
+    }
+    if flag(&app, &endpoint, &w).await?["enabled"] != true || !guarded().await {
         return Err(activation_pending());
     }
-    let obj = intent.as_object_mut().ok_or_else(bad)?;
-    obj.remove("authority");
-    obj.remove("targets");
-    obj.insert("action".into(), json!("ready"));
-    obj.insert("effectiveOrigin".into(), Value::Null);
-    let result = rpc(&app, dir, "documentActivation", intent, 65536).await?;
-    if result["document"]["scheduleActivation"]["state"] != "ready" {
+    let mut intent = step("ready");
+    intent["effectiveOrigin"] = Value::Null;
+    let result = rpc(&app, &endpoint, dir, "documentActivation", intent, 65536).await?;
+    let activation = &result["document"]["scheduleActivation"];
+    if activation["requestID"] != q.request
+        || activation["expectedRevision"] != q.expected_document_revision
+        || activation["state"] != "ready"
+        || !guarded().await
+    {
         return Err(activation_pending());
     }
     Ok(Json(result))
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -738,8 +836,14 @@ mod tests {
         assert!(!ok(json!({"requestID":"req_1","expectedRevision":0,"action":"create"}), true));
         assert!(!ok(json!({"requestID":"req_1","expectedRevision":0,"action":"play"}), true), "create path");
         assert!(!ok(json!({"requestID":"req_1","expectedRevision":0,"action":"create","configuration":{}}), false));
-        assert!(ok(json!({"requestID":"req_1","expectedRevision":2,"action":"delete","deleteManagedSessions":false}), false));
-        assert!(!ok(json!({"requestID":"req_1","expectedRevision":2,"action":"stop","deleteManagedSessions":false}), false));
+        assert!(ok(
+            json!({"requestID":"req_1","expectedRevision":2,"action":"delete","deleteManagedSessions":false}),
+            false
+        ));
+        assert!(!ok(
+            json!({"requestID":"req_1","expectedRevision":2,"action":"stop","deleteManagedSessions":false}),
+            false
+        ));
         assert!(ok(json!({"requestID":"req_1","expectedRevision":2,"action":"play","retry":true}), false));
         assert!(!ok(json!({"requestID":"req_1","expectedRevision":2,"action":"play","configuration":{}}), false));
         assert!(ok(json!({"requestID":"req_1","expectedRevision":2,"action":"configure","configuration":{}}), false));
