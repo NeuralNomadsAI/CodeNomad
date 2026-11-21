@@ -235,6 +235,23 @@ test("Tauri: an address typed for one session is never loaded into a replaced se
   } finally { await page.close() }
 })
 
+test("Tauri: an initial URL changed and restored during registration is not loaded twice", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(url)
+    await page.evaluate(() => { (window as any).nativeFixture.deferRegistration = true })
+    await page.evaluate(() => (window as any).nativeFixture.mount(false))
+    await page.evaluate(() => { const f = (window as any).nativeFixture; f.calls.length = 0; f.mount(true) })
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_register"))
+    const original = (await snapshot(page)).calls.find((c: any) => c.command === "browser_target_register").payload.url
+    await page.evaluate((other) => (window as any).nativeFixture.address(other), new URL("/browser-native-guest?other", url).href)
+    await page.evaluate((original) => (window as any).nativeFixture.address(original), original)
+    await page.evaluate(() => (window as any).nativeFixture.settleRegistration())
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_update" && c.payload.visible))
+    assert.equal((await snapshot(page)).calls.filter((c: any) => c.payload?.action === "navigate").length, 0)
+  } finally { await page.close() }
+})
+
 test("Tauri: a registration retry that already carries the typed address does not load it twice", async () => {
   const page = await browser.newPage()
   try {

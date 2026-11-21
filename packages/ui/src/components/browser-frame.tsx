@@ -679,6 +679,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         nativeVisible = false
         registeredSessionId = ""
         tauriRegistered = false
+        pendingTauriNavigation = undefined
         setRegistrationReady(false)
         void unregisterTauriBrowserTarget(previousId).catch(reportNativeError).finally(() => {
           registering = false
@@ -708,8 +709,10 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       const registrationId = browserRegistrationId
       // This registration loads the pending address itself (e.g. a retry).
       if (pendingTauriNavigation?.url === target) pendingTauriNavigation = undefined
+      let loaded = target
       void onTauriBrowserNavigation(registrationId, (url) => {
         if (!active) return
+        loaded = url
         const address = props.isolatedSource ? props.sourceAddress?.(url) : url
         if (!address) { navigateFromGuest(url); return }
         setNativeTarget(url)
@@ -747,11 +750,14 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         syncErrorReported = false
         // Load the address requested before the target existed, under the restored
         // profile, unless a direct action superseded it or this target was replaced.
-        const pending = active && registrationId === browserRegistrationId && pendingTauriNavigation?.sessionId === sessionId
-          && props.sessionId === sessionId ? pendingTauriNavigation : undefined
-        if (pending) {
+        // A replaced target leaves the queue to its successor; an intent of another
+        // session is dropped; the page the target already shows is not requested again.
+        if (active && registrationId === browserRegistrationId) {
+          const pending = pendingTauriNavigation
           pendingTauriNavigation = undefined
-          await controlTauriBrowserTarget(registrationId, "navigate", pending.url, pending.logicalAddress)
+          if (pending && pending.sessionId === sessionId && props.sessionId === sessionId && pending.url !== loaded) {
+            await controlTauriBrowserTarget(registrationId, "navigate", pending.url, pending.logicalAddress)
+          }
         }
         syncBounds()
       }).catch(reportSyncError)
