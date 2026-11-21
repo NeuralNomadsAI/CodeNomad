@@ -32,7 +32,7 @@ If the restart is cancelled, use `codenomad.inspect` with `targets: true` to lis
 
 Native previews share cookies, sign-ins and site storage across projects/sessions within the same desktop engine and profile/configuration scope, separately from the trusted CodeNomad renderer. Logging out of a site in one preview affects other previews using that store. Documents, forms, session storage, navigation histories and automation attachments belong to each session.
 
-An agent opens the preview in the focused local window that has a tab for the session, or the most recently used eligible window, without bringing it forward. In that window, the active eligible tab wins; if several tabs qualify and none is active, select one and try again. Closing the chosen tab cancels the open. If a preview already exists in another window, use that window. Page actions target the session’s visible native preview.
+An agent opens the preview in the focused local window that has a tab for the session, or the most recently used eligible window, without bringing it forward. In that window, the active eligible tab wins; if several tabs qualify and none is active, select one and try again. If you switch tabs while the preview is opening, your selection stays in place. Closing the chosen tab cancels the open. If a preview already exists in another window, use that window. Page actions target the session’s visible native preview.
 
 The agent takes a snapshot before acting on or capturing the preview. If the preview changes, the command stops instead of using a different preview.
 

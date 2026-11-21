@@ -6,7 +6,7 @@ import { backends, createBackendClient, localBackend, type BackendClient } from 
 import { backendEvents } from "../lib/backend-events"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { backendIdOf, parseInstanceKey } from "../lib/backend-identity"
-import { selectBrowserOpenOwner } from "../lib/native/browser"
+import { selectBrowserOpenOwner, type BrowserOpenResponse } from "../lib/native/browser"
 import { getPreviewFrameSource } from "../components/browser-frame-security"
 import { closeSessionPreview, dismissSessionPreview, getSessionPreview, openSessionPreview, restoreSessionPreview, sessionPreviews, settleSessionPreviewOpen, showSessionChatFor, showSessionPreview, updateSessionPreviewHistory } from "./session-previews"
 import { detachInstanceTabMembership } from "./app-tab-membership"
@@ -285,7 +285,7 @@ test("App discovers only admitted local occurrences, reports the active one and 
   ])
 })
 
-test("autonomous opens save only an exact, current native commit across duplicate occurrences", async t => {
+test("autonomous opens respect newer tab selection and save only the exact native commit", async t => {
   const instanceId = "preview-open-tab", duplicate = "preview-duplicate", sessionId = "preview-open-session"
   const url = "https://example.com/request", committed = "https://example.com/committed"
   const deleted: string[] = []
@@ -312,13 +312,49 @@ test("autonomous opens save only an exact, current native commit across duplicat
     return openSessionPreview(sessionId, url, instanceId, async () => true, intent,
       { requestID, instanceId, current: intent.current })
   }
-  await open("first")
+  let selected = duplicate, selectionRevision = 0
+  let adopting!: () => void, resume!: () => void
+  const adoptionStarted = new Promise<void>(resolve => { adopting = resolve })
+  const adoptionGate = new Promise<void>(resolve => { resume = resolve })
+  const claims: BrowserOpenResponse[] = [], released: string[] = [], foreground: string[] = []
+  const openRequested = appCallback("openRequestedPreview", {
+    pendingBrowserOpens: new Map(),
+    disposed: false,
+    localInstances: () => [{ id: instanceId }, { id: duplicate }],
+    appTabSelectionRevision: () => selectionRevision,
+    captureBackendOperation, beginGesture, getSessionPreview, openSessionPreview,
+    getSessions: () => [{ id: sessionId }],
+    claimNativeBrowserOpen: async (requestID: string, response: BrowserOpenResponse) => {
+      claims.push(response)
+      if (requestID === "second" && response.kind === "adopt") { adopting(); await adoptionGate }
+      return true
+    },
+    releaseNativeBrowserOpen: async (requestID: string) => { released.push(requestID) },
+    setShowFolderSelection: () => foreground.push("home"),
+    selectInstanceTab: (id: string) => { selected = id; selectionRevision++ },
+    setActiveSessionFromList: (id: string) => foreground.push(id),
+  })
+  await openRequested({ sessionID: sessionId, url, requestID: "first", instanceId })
+  assert.equal(selected, instanceId)
+  assert.deepEqual(foreground.splice(0), ["home", instanceId])
+  claims.length = 0
   assert.equal(savedSessionBrowser(sessionId), undefined, "an unacknowledged open has no saved destination")
   settleSessionPreviewOpen(sessionId, instanceId, "first")
   assert.equal(getSessionPreview(sessionId, instanceId), null)
   assert.equal(await restoreSessionPreview(sessionId, duplicate), null)
 
-  const second = await open("second")
+  const opening = openRequested({ sessionID: sessionId, url, requestID: "second", instanceId })
+  await adoptionStarted
+  selected = duplicate
+  selectionRevision++
+  resume()
+  await opening
+  assert.equal(selected, duplicate, "a newer tab selection must survive the pending adoption")
+  assert.deepEqual(foreground, [])
+  assert.deepEqual(claims, [{ kind: "claim", instanceId }, { kind: "adopt", instanceId }])
+  assert.deepEqual(released, [], "the exact published claim still belongs to the native host")
+  const second = getSessionPreview(sessionId, instanceId)!
+  assert.equal(second.nativeOpen?.instanceId, instanceId)
   settleSessionPreviewOpen(sessionId, instanceId, "first", committed)
   settleSessionPreviewOpen(sessionId, duplicate, "second", committed)
   updateSessionPreviewHistory(second.storageKey, { urls: [url], index: 0 })
@@ -376,6 +412,7 @@ test("App native browser claim and preview continuations retain the admitted att
       const consumer = appCallback("openRequestedPreview", {
         pendingBrowserOpens,
         localInstances: () => [...projects.values()],
+        appTabSelectionRevision: () => 0,
         getSessions: () => sessions,
         parseInstanceKey, beginGesture: () => { gestures++; return { current: () => true } }, selectBrowserOpenOwner, captureBackendOperation, disposed: false,
         activeAppTab: () => ({ kind: "instance", instance: local }),

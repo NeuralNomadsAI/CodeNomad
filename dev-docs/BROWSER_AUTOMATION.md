@@ -327,7 +327,9 @@ In the first eligible window, the active owning tab wins; otherwise a single
 owning tab wins or ambiguity stops the request. An inconclusive discovery stops.
 
 The host sends the URL to that renderer and occurrence alone, without raising the
-window. Claim and adoption are scoped to the native window incarnation, renderer
+window. Foreground selection respects tab selections made after the renderer
+receives the open; the existing claim still requires its exact visible registration.
+Claim and adoption are scoped to the native window incarnation, renderer
 generation and tab; the host waits for that renderer's acknowledgement of its visible native registration
 and checks the same registration after load. Hide, minimize, renderer reload,
 window/occurrence closure or failed adoption retires the request; never reroute it.

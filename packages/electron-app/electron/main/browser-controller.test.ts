@@ -729,6 +729,45 @@ describe("BrowserController preview lifecycle", () => {
     })
   }
 
+  for (const scenario of ["post-commit fragment", "fragment-only", "replacement after commit"] as const) {
+    it(`keeps the exact navigation receipt: ${scenario}`, async t => {
+      const fragmentOnly = scenario === "fragment-only"
+      const replacement = scenario === "replacement after commit"
+      const url = fragmentOnly ? "https://example.com/#requested" : "https://example.com/next"
+      const committedUrl = fragmentOnly ? url : "https://example.com/redirected"
+      const h = createHarness((owner, channel, { requestID, instanceId }) => {
+        if (channel === "browser-target:discover") {
+          h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
+          return
+        }
+        h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId })
+        h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId })
+        assert.equal(h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "one" }), true)
+      })
+      const { guest, events, setUrl } = createGuest({ id: 22, owner: h.owner })
+      h.add(guest, "one")
+      t.mock.method(guest, "loadURL", async (requested: string) => {
+        assert.equal(requested, url)
+        events.emit("did-start-navigation", {}, requested, fragmentOnly, true)
+        setUrl(committedUrl)
+        if (fragmentOnly) {
+          events.emit("did-navigate-in-page", {}, committedUrl, true)
+          return
+        }
+        events.emit("did-navigate", {}, committedUrl)
+        const next = replacement ? "https://example.com/replacement" : `${committedUrl}#after`
+        events.emit("did-start-navigation", {}, next, !replacement, true)
+        setUrl(next)
+        if (replacement) events.emit("did-navigate", {}, next)
+        else events.emit("did-navigate-in-page", {}, next, true)
+      })
+      const opening = h.controller.open("session", url, Infinity, ["tab"])
+      if (replacement) await assert.rejects(opening, /Browser navigation changed/)
+      else assert.deepEqual(await opening, { url: committedUrl })
+      assert.deepEqual(h.receipts.map(receipt => (receipt as { committedUrl?: string }).committedUrl), [replacement ? undefined : committedUrl])
+    })
+  }
+
   it("reports the native failure from the exact first load", async () => {
     const h = createHarness((owner, channel, { requestID, instanceId }) => {
       if (channel === "browser-target:discover") {

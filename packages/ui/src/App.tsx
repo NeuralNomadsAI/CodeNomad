@@ -102,6 +102,7 @@ import {
   activeAppTab,
   activeAppTabId,
   allowsAutomaticLocalSetup,
+  appTabSelectionRevision,
   appTabs,
   activeBlankTabId,
   closeBlankTab,
@@ -313,6 +314,7 @@ const App: Component = () => {
         pendingBrowserOpens.set(requestID, pending)
         const operation = captureBackendOperation(instanceId, undefined, eligible)
         const intent = beginGesture({ instanceId, sessionId: sessionID })
+        const selectionRevision = appTabSelectionRevision()
         const current = () => !retired && operation.current() && intent.current()
         const loaded = () => getSessions(instanceId).some(session => session.id === sessionID)
         const needsHydration = !loaded()
@@ -324,9 +326,11 @@ const App: Component = () => {
           async () => stillOwned() && await claimNativeBrowserOpen(requestID, { kind: "adopt", instanceId }) && stillOwned(), intent,
           { requestID, instanceId, current: stillOwned })
         if (!stillOwned()) return
-        setShowFolderSelection(false)
-        selectInstanceTab(instanceId)
-        setActiveSessionFromList(instanceId, sessionID, intent)
+        if (appTabSelectionRevision() === selectionRevision) {
+          setShowFolderSelection(false)
+          selectInstanceTab(instanceId)
+          setActiveSessionFromList(instanceId, sessionID, intent)
+        }
         published = true
       } finally {
         if (pendingBrowserOpens.get(requestID) === pending) pendingBrowserOpens.delete(requestID)

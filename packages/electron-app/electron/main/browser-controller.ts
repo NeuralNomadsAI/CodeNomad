@@ -737,6 +737,7 @@ async function loadNavigation(guest: WebContents, url: string, deadline: number,
   const startedNavigation = (_event: Electron.Event, destination: string, inPage: boolean, mainFrame: boolean) => {
     if (!mainFrame) return
     if (!started && destination === expected) { started = true; sameDocument = inPage; return }
+    if (inPage && committed) return
     superseded = true
     rejectLoad(new Error("Browser navigation changed"))
   }
