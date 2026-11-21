@@ -368,11 +368,11 @@ Native open claims retain their request deadline and backend-generation fence. T
 - One local backend and data profile/configuration share one native reservation
   per real session ID, across all their desktop windows. Electron reserves in
   `will-attach-webview`, binds in `web-contents-created`, and releases on guest
-  destruction. Tauri reserves before `add_child`, fences creation against the
-  requesting renderer generation, and releases after UI-thread disposal. The
-  reservation covers pending, visible and hidden guests. Agent leases remain
-  visibility-bound. Remote capabilities have their own lifetime and stay out
-  of local automation targeting.
+  destruction. Tauri captures the requesting renderer generation in the
+  synchronous IPC handler, fences reservation and creation against it, and
+  releases after UI-thread disposal. The reservation covers pending, visible
+  and hidden guests. Agent leases remain visibility-bound. Remote capabilities
+  have their own lifetime and stay out of local automation targeting.
 
 - Native session previews behave as tabs in one browser: share the persistent preview profile's cookies/site storage across sessions and projects within a CodeNomad data profile/config pair, but never with the trusted app renderer, remote-window profiles or the other desktop engine. Each session owns one document, navigation stack, history cursor, device template, proxy token and native registration within a renderer. Native registrations retain the real session ID for ownership and automation authority. Electron uses `persist:codenomad-browser-shared-v1`; Windows/Linux Tauri uses `browser/shared-v1`; macOS Tauri uses its profile/config-derived identified WebKit store. Leave per-session preview profiles found on disk in place and never merge them into the shared profile: they can hold conflicting accounts. Iframe fallbacks keep their sandbox; never grant guests native capabilities.
 - `viewState.previews` retains each occurrence's per-session foreground mode. `session-browser-persistence.ts` saves shared URL/history/template resources by session in `opencode-session-browser-state-v1`. `SessionPreviewHost` keeps opened guests mounted in stable DOM order and follows the active occurrence's slot geometry; the preview's X returns only that occurrence to chat. Inactive transcripts and composers still unmount and the transcript memory budget stays independent. Hidden guests must stop being automation targets (Electron unregisters, Tauri hides). Closing an occurrence invalidates its pending opens/restores; the shared guest and token live until the session's last owning occurrence closes. Late responses and failures honor the originating operation's lifetime; error dialogs appear only in its active view. Across renderer restart, restore URL history/cursor and device template only on explicit browser opening; never eagerly visit saved pages or persist native pageState/forms/POST bodies. Reuse owned CDP history IDs for live traversal and load just the selected saved URL when its native entry no longer exists. History is bounded to 32 credential-free HTTP(S) URLs per session within the 4 KB aggregate window budget; trim history before evicting saved previews.
