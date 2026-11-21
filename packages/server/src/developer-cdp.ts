@@ -2,11 +2,11 @@ import { WebSocket } from "undici"
 import { randomBytes } from "node:crypto"
 import { bindRefs, performAction, snapshotPage, type PageActionResult, type PageSession } from "./automation/page/actions"
 import { cdpSession } from "./automation/page/cdp-driver"
-import { FOCUS_MISMATCH, GLOBAL_FUNCTIONS, POINTER_COVER } from "./automation/page/functions"
+import { declaration, FOCUS_MISMATCH, GLOBAL_FUNCTIONS, POINTER_COVER } from "./automation/page/functions"
 import type { RefAction } from "./automation/page/parse"
 import { RefTable } from "./automation/page/refs"
 import { SnapshotScopeError } from "./automation/page/snapshot"
-import { OBJECT_GROUP, PageDriverUnsupportedError, PageTargetChangedError, type InputTarget } from "./automation/page/protocol"
+import { InputCheckTimeout, OBJECT_GROUP, PageDriverUnsupportedError, PageTargetChangedError, type InputTarget } from "./automation/page/protocol"
 
 const DEFAULT_TIMEOUT_MS = 5_000
 const DEFAULT_MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024
@@ -30,8 +30,20 @@ const CONTEXT_FUNCTION = `(session) => {
       tab => tab.getAttribute('data-tab-session-id') === session && !tab.getAttribute('data-instance-id').includes('~')),
   };
 }`
-const INPUT_DESTINATION = `function (point, expected, release, handle, insertText, confirmed) {
-  if (this !== document.documentElement || window !== window.top) return "root";
+const FOREGROUND = `const current = (${CONTEXT_FUNCTION})(null);
+  const sameWindow = current.windowId === expected.windowId && current.windowInstance === (expected.windowInstance ?? null);
+  const sameTab = current.tabId === (expected.tabId ?? null) && current.instanceId === expected.instanceId && current.sessionId === expected.sessionId;`
+const INPUT_STATE = "({ root: document.documentElement })"
+const SCRIPT_CLICK = (id: "option-click" | "programmatic-click") => `function (handle, expected) {
+  ${FOREGROUND}
+  if (this.root !== document.documentElement || window !== window.top || handle?.ownerDocument !== document || !sameWindow)
+    throw new Error("codenomad:action-root");
+  if (!sameTab) throw new Error("codenomad:action-tab");
+  return (${declaration(id, true)}).call(handle);
+}`
+const CLICK_CALLS = new Map((["option-click", "programmatic-click"] as const).map(id => [declaration(id, true), SCRIPT_CLICK(id)]))
+const INPUT_DESTINATION = `function (point, expected, release, handle, insertText, alternate, track, confirmReceiver, confirmed) {
+  if (this.root !== document.documentElement || window !== window.top) return "root";
   let target = point ? document.elementFromPoint(point.x, point.y) : document.activeElement;
   while (target?.shadowRoot) {
     const root = target.shadowRoot;
@@ -39,17 +51,18 @@ const INPUT_DESTINATION = `function (point, expected, release, handle, insertTex
     if (!inner || inner === target || (!root.contains(inner) && !target.contains(inner))) break;
     target = inner;
   }
-  const current = (${CONTEXT_FUNCTION})(null);
-  if (current.windowId !== expected.windowId || current.windowInstance !== (expected.windowInstance ?? null)) return "root";
-  if (!release && (current.tabId !== (expected.tabId ?? null) || current.instanceId !== expected.instanceId
-    || current.sessionId !== expected.sessionId)) return "tab";
+  ${FOREGROUND}
+  if (!sameWindow) return "root";
+  if (!release && !sameTab) return "tab";
   if (!target || ${FRAME_OWNER}.test(target.localName)) return "frame";
+  if (confirmReceiver && (this.hit?.id !== confirmReceiver || this.hit.target !== target)) return "receiver";
   if (handle && (point || !release)) {
     const element = handle.nodeType === Node.ELEMENT_NODE ? handle : handle.parentElement;
     if (!element?.isConnected || element.ownerDocument !== document) return "element";
     if (point) {
-      const cover = ((...args) => { ${POINTER_COVER} })(target);
-      if (cover !== null) return "cover:" + cover;
+      const cover = (element, ...args) => { ${POINTER_COVER} };
+      const blocked = cover(element, target);
+      if (blocked !== null && !(alternate?.isConnected && cover(alternate, target) === null)) return "cover:" + blocked;
     } else {
       const field = element, active = target;
       const editable = insertText && !(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement);
@@ -59,6 +72,7 @@ const INPUT_DESTINATION = `function (point, expected, release, handle, insertTex
   // A hit retargeted out of a closed shadow root looks like any other host.
   const canHostShadow = /-|^(article|aside|blockquote|body|div|footer|h[1-6]|header|main|nav|p|section|span)$/;
   if (!target.shadowRoot && canHostShadow.test(target.localName) && target !== confirmed) return target;
+  if (track) this.hit = { id: track, target };
   return "ready";
 }`
 
@@ -165,14 +179,14 @@ interface RunState {
   context?: DeveloperCdpContext
   target?: CdpTarget
   socket?: CdpSocket
-  open?: Promise<void>
+  cancelOpen?: (error: Error) => void
   /** Distinguishes this run's refs from an earlier state's on the same target. */
   stamp: number
   refs: RefTable
   nextCommandId: number
   navigationEpoch: number
   mainFrameId?: string
-  mainContextId?: number
+  defaultContexts: Map<string, number>
   pending: Map<number, PendingCommand>
   diagnostics: DeveloperCdpDiagnostic[]
 }
@@ -180,6 +194,7 @@ interface RunState {
 export class DeveloperCdp {
   private readonly dependencies: DeveloperCdpDependencies
   private readonly windows = new Map<string, RunState>()
+  private readonly probes = new Map<RunState, RunState | undefined>()
   private readonly operations = new Map<string, Promise<void>>()
   private readonly retiredRuns = new Set<string>()
   private closed = false
@@ -239,20 +254,33 @@ export class DeveloperCdp {
         guard()
       }
       let inputRoot: string | undefined
+      let pointerSequence = 0, pointerReceipt: { id: number; x: number; y: number } | undefined
+      const getInputRoot = async () => {
+        if (!inputRoot) {
+          const result = await this.command(state, "Runtime.evaluate", { expression: INPUT_STATE, objectGroup: OBJECT_GROUP })
+          inputRoot = (result.result as { objectId?: string } | undefined)?.objectId
+          guard()
+          if (!inputRoot) throw new PageTargetChangedError(message)
+        }
+        return inputRoot
+      }
       const session: PageSession = cdpSession({ send: async (method, params) => {
         guard()
         const expression = params?.expression
+        if (method === "Runtime.callFunctionOn" && typeof params?.functionDeclaration === "string") {
+          const functionDeclaration = CLICK_CALLS.get(params.functionDeclaration)
+          if (functionDeclaration) return this.command(state, method, {
+            ...params, functionDeclaration, objectId: inputRoot,
+            arguments: [{ objectId: params.objectId }, { value: foreground }],
+          })
+        }
         if (method === "Runtime.evaluate" && (expression === GLOBAL_FUNCTIONS["mark-input"] || expression === GLOBAL_FUNCTIONS["unmark-input"])) {
-          if (!inputRoot) {
-            const result = await this.command(state, "Runtime.evaluate", { expression: "document.documentElement", objectGroup: OBJECT_GROUP })
-            inputRoot = (result.result as { objectId?: string } | undefined)?.objectId
-            guard()
-            if (!inputRoot) throw new PageTargetChangedError(message)
-          }
+          const objectId = await getInputRoot()
+          guard()
           try {
             const result = await this.command(state, "Runtime.callFunctionOn", {
-              objectId: inputRoot,
-              functionDeclaration: `function () { if (this !== document.documentElement) return "root"; return ${expression} }`,
+              objectId,
+              functionDeclaration: `function () { if (this.root !== document.documentElement) return "root"; return ${expression} }`,
               returnByValue: true,
             })
             guard()
@@ -263,7 +291,10 @@ export class DeveloperCdp {
             }
             return result
           } catch (error) {
-            if (error instanceof CdpCommandTimeout) throw error
+            if (error instanceof CdpCommandTimeout) {
+              if (expression === GLOBAL_FUNCTIONS["mark-input"]) throw new InputCheckTimeout("The input provenance check timed out; inspect again", true)
+              throw error
+            }
             throw new PageTargetChangedError(message)
           }
         }
@@ -275,21 +306,31 @@ export class DeveloperCdp {
           if (mouse && !point) throw new PageTargetChangedError(message)
           const release = params?.type === "mouseReleased" || params?.type === "keyUp"
           const target = session.inputTarget
+          const confirmReceiver = point && session.inputCleanup && pointerReceipt?.x === point.x && pointerReceipt.y === point.y
+            ? pointerReceipt.id : undefined
+          if (point && session.inputCleanup && !confirmReceiver)
+            throw new PageTargetChangedError("Cannot confirm the original pointer recipient; inspect again", true)
+          const track = point && !release && target ? ++pointerSequence : undefined
           let status
           try {
-            status = await this.inputDestination(state, inputRoot, point, foreground, release, target, method === "Input.insertText", guard)
+            status = await this.inputDestination(state, inputRoot, point, foreground, release, target,
+              method === "Input.insertText", track, confirmReceiver, guard)
           } catch (error) {
             guard()
             if (error instanceof CdpCommandTimeout)
-              throw new PageTargetChangedError("The input destination check timed out; inspect again", true)
+              throw new InputCheckTimeout("The input destination check timed out; inspect again", true)
             throw new PageTargetChangedError(message)
           }
           guard()
-          if (status === "ready") return this.command(state, method, point ? { ...params, ...point } : params)
+          if (status === "ready") {
+            if (point) pointerReceipt = track ? { ...point, id: track } : undefined
+            return this.command(state, method, point ? { ...params, ...point } : params)
+          }
           if (status === "root") throw new PageTargetChangedError(message)
           if (status === "tab") throw new PageTargetChangedError("The active tab changed during the action; inspect again", true)
           if (status === "element") throw new PageTargetChangedError(`${target?.ref} is no longer in the page; inspect again`, true)
           if (status === "focus") throw new PageTargetChangedError(`Keyboard focus changed before input to ${target?.ref}; inspect again`, true)
+          if (status === "receiver") throw new PageTargetChangedError("The original pointer recipient changed; inspect again", true)
           if (typeof status === "string" && status.startsWith("cover:"))
             throw new PageTargetChangedError(`${target?.ref} is covered by ${status.slice(6)}; close or move it first, then inspect again`, true)
           throw new PageTargetChangedError(mouse
@@ -313,6 +354,10 @@ export class DeveloperCdp {
       } }, () => check(monitorForeground ? foreground : undefined), true)
       // The input channel checks the destination; this guard also works when the renderer stalls.
       session.guardInput = guard
+      if (action.action === "click") {
+        try { await getInputRoot() }
+        catch (error) { await session.driver.releaseHandles().catch(() => undefined); throw error }
+      }
       return performAction(session, page)
     })
   }
@@ -347,6 +392,7 @@ export class DeveloperCdp {
   }
 
   close(runId?: string): void {
+    const error = new Error("Developer CDP controller closed")
     if (runId) this.retiredRuns.add(runId)
     else {
       this.closed = true
@@ -354,9 +400,10 @@ export class DeveloperCdp {
     }
     for (const [id, state] of this.windows) {
       if (runId && !id.startsWith(`${runId}\0`)) continue
-      this.disconnect(state, new Error("Developer CDP controller closed"))
+      this.disconnect(state, error)
       this.windows.delete(id)
     }
+    if (!runId) for (const probe of this.probes.keys()) this.disconnect(probe, error)
   }
 
   async context(selection: DeveloperCdpSelection): Promise<DeveloperCdpContext> {
@@ -364,13 +411,16 @@ export class DeveloperCdp {
   }
 
   private async inputDestination(state: RunState, objectId: string, point: { x: number; y: number } | null,
-    context: DeveloperCdpContext, release: boolean, target: InputTarget | undefined, insertText: boolean, guard: () => void): Promise<unknown> {
+    context: DeveloperCdpContext, release: boolean, target: InputTarget | undefined, insertText: boolean,
+    track: number | undefined, confirmReceiver: number | undefined, guard: () => void): Promise<unknown> {
     const read = async (confirmed?: string) => {
       guard()
       const result = await this.command(state, "Runtime.callFunctionOn", {
         objectId, functionDeclaration: INPUT_DESTINATION, objectGroup: OBJECT_GROUP,
         arguments: [{ value: point }, { value: context }, { value: release },
           target ? { objectId: target.handle } : { value: null }, { value: insertText },
+          target?.alternate ? { objectId: target.alternate } : { value: null },
+          { value: track ?? null }, { value: confirmReceiver ?? null },
           ...(confirmed ? [{ objectId: confirmed }] : [])],
       })
       if (result.exceptionDetails) return undefined
@@ -391,7 +441,7 @@ export class DeveloperCdp {
     const source = discoveryUrl(endpoint)
     const pages = await this.listTargets(source)
     const found = new Map<string, DeveloperCdpContext>(), ambiguous = new Set<string>()
-    for (let index = 0; index < pages.length; index += DISCOVERY_PROBE_CONCURRENCY) {
+    for (let index = 0; !this.closed && index < pages.length; index += DISCOVERY_PROBE_CONCURRENCY) {
       const contexts = await Promise.all(pages.slice(index, index + DISCOVERY_PROBE_CONCURRENCY).map(target =>
         this.probePage(source, target, Math.min(this.dependencies.timeoutMs, INVENTORY_PAGE_MS), sessionID)))
       for (const context of contexts) {
@@ -404,7 +454,7 @@ export class DeveloperCdp {
         } else found.set(context.windowId, context)
       }
     }
-    return found
+    return this.closed ? new Map() : found
   }
 
   private publicContext({ sessionOpen: _sessionOpen, ...context }: DeveloperCdpContext): DeveloperCdpContext {
@@ -452,6 +502,7 @@ export class DeveloperCdp {
       refs: new RefTable("inspect again", `e${this.refNamespace}${String(stamp).padStart(10, "0")}`),
       nextCommandId: 0,
       navigationEpoch: 0,
+      defaultContexts: new Map(),
       pending: new Map(),
       diagnostics: [],
     }
@@ -488,7 +539,6 @@ export class DeveloperCdp {
     if (replaced) this.disconnect(state, new Error("Chrome target was replaced"))
     state.target = target
     if (!state.socket) await this.connect(state, target)
-    else await state.open
     guard()
     const context = await this.readContext(state)
     guard()
@@ -506,7 +556,7 @@ export class DeveloperCdp {
     for (let index = 0; index < targets.length && matches.length < 2; index += DISCOVERY_PROBE_CONCURRENCY) {
       guard()
       const batch = await Promise.all(targets.slice(index, index + DISCOVERY_PROBE_CONCURRENCY).map(async (target) => {
-        const context = await this.probePage(state.endpoint, target, Math.min(this.dependencies.timeoutMs, timeoutMs))
+        const context = await this.probePage(state.endpoint, target, Math.min(this.dependencies.timeoutMs, timeoutMs), undefined, state)
         return context && this.matchesContext(state, context) ? target : undefined
       }))
       guard()
@@ -523,8 +573,9 @@ export class DeveloperCdp {
   }
 
   private async probePage(endpoint: string, target: CdpTarget, timeoutMs = this.dependencies.timeoutMs,
-    sessionID?: string): Promise<DeveloperCdpContext | undefined> {
+    sessionID?: string, owner?: RunState): Promise<DeveloperCdpContext | undefined> {
     const probe = this.newState(endpoint, "")
+    this.probes.set(probe, owner)
     const deadline = Date.now() + timeoutMs
     try {
       await this.connect(probe, target, false, timeoutMs)
@@ -532,6 +583,7 @@ export class DeveloperCdp {
     } catch {
       return undefined
     } finally {
+      this.probes.delete(probe)
       this.disconnect(probe, new Error("CDP target probe completed"))
     }
   }
@@ -561,29 +613,31 @@ export class DeveloperCdp {
   private async connect(state: RunState, target: CdpTarget, enable = true, timeoutMs = this.dependencies.timeoutMs): Promise<void> {
     const socket = this.dependencies.connect(target.webSocketDebuggerUrl)
     state.socket = socket
-    state.open = new Promise<void>((resolve, reject) => {
-      const fail = (error: Error) => {
+    const open = new Promise<void>((resolve, reject) => {
+      const fail = (error: Error) => { if (state.socket === socket) this.disconnect(state, error) }
+      const timer = setTimeout(() => fail(new Error("CDP WebSocket connection timed out")), timeoutMs)
+      state.cancelOpen = error => {
         clearTimeout(timer)
-        if (state.socket === socket) {
-          this.disconnect(state, error)
-        } else socket.close()
         reject(error)
       }
-      const timer = setTimeout(() => fail(new Error("CDP WebSocket connection timed out")), timeoutMs)
-      socket.onopen = () => { clearTimeout(timer); resolve() }
+      socket.onopen = () => {
+        if (state.socket !== socket) return
+        clearTimeout(timer)
+        state.cancelOpen = undefined
+        resolve()
+      }
       socket.onerror = () => fail(new Error("CDP WebSocket connection failed"))
     })
     socket.onmessage = (event) => this.onMessage(state, socket, event.data)
     socket.onclose = () => {
       if (state.socket !== socket) return
-      state.socket = undefined
       this.disconnect(state, new Error("CDP WebSocket closed"))
     }
-    await state.open
+    await open
     if (!enable) return
     await this.command(state, "Page.enable")
     const result = await this.command(state, "Page.getFrameTree")
-    state.mainFrameId = (result.frameTree as { frame?: { id?: string } } | undefined)?.frame?.id
+    state.mainFrameId ??= (result.frameTree as { frame?: { id?: string } } | undefined)?.frame?.id
     await this.command(state, "Runtime.enable")
     await this.command(state, "Accessibility.enable")
   }
@@ -625,29 +679,37 @@ export class DeveloperCdp {
       return
     }
     if (message.method === "Runtime.executionContextsCleared") {
-      state.mainContextId = undefined
+      state.defaultContexts.clear()
       this.invalidateRefs(state)
       return
     }
     if (message.method === "Runtime.executionContextCreated") {
       const context = message.params?.context as { id?: number; auxData?: { isDefault?: boolean; frameId?: string } } | undefined
-      if (typeof context?.id === "number" && context.auxData?.isDefault && context.auxData.frameId === state.mainFrameId) {
-        if (state.mainContextId !== undefined && state.mainContextId !== context.id) this.invalidateRefs(state)
-        state.mainContextId = context.id
+      const frameId = context?.auxData?.frameId
+      if (typeof context?.id === "number" && context.auxData?.isDefault && typeof frameId === "string") {
+        const previous = state.defaultContexts.get(frameId)
+        if (frameId === state.mainFrameId && previous !== undefined && previous !== context.id) this.invalidateRefs(state)
+        state.defaultContexts.set(frameId, context.id)
       }
       return
     }
     if (message.method === "Runtime.executionContextDestroyed") {
       const id = message.params?.executionContextId
       if (typeof id !== "number") return
-      if (id === state.mainContextId) {
-        state.mainContextId = undefined
-        this.invalidateRefs(state)
+      for (const [frameId, contextId] of state.defaultContexts) {
+        if (contextId !== id) continue
+        state.defaultContexts.delete(frameId)
+        if (frameId === state.mainFrameId) this.invalidateRefs(state)
+        break
       }
       return
     }
     if (message.method === "Page.frameDetached" || message.method === "Page.frameAttached") {
-      if (state.mainFrameId && message.params?.frameId === state.mainFrameId) this.invalidateRefs(state)
+      const frameId = message.params?.frameId
+      if (typeof frameId === "string") {
+        if (frameId === state.mainFrameId) this.invalidateRefs(state)
+        if (message.method === "Page.frameDetached") state.defaultContexts.delete(frameId)
+      }
       return
     }
     if (message.method === "Page.frameNavigated" || message.method === "Page.documentOpened") {
@@ -701,12 +763,19 @@ export class DeveloperCdp {
   private disconnect(state: RunState, error: Error): void {
     const socket = state.socket
     state.socket = undefined
-    state.open = undefined
+    state.cancelOpen?.(error)
+    state.cancelOpen = undefined
     state.mainFrameId = undefined
-    state.mainContextId = undefined
+    state.defaultContexts.clear()
     this.invalidateRefs(state)
     this.rejectPending(state, error)
     socket?.close()
+    for (const [probe, owner] of this.probes) {
+      if (owner === state) {
+        this.probes.delete(probe)
+        this.disconnect(probe, error)
+      }
+    }
   }
 
   private rejectPending(state: RunState, error: Error): void {

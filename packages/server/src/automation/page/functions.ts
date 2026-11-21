@@ -39,9 +39,12 @@ export const POINTER_COVER = `const hit = args[0] && (args[0].nodeType === Node.
      if (node.nodeType === 9) { try { return node.defaultView && node.defaultView.frameElement; } catch { return null; } }
      return node.assignedSlot || node.parentNode || (node.nodeType === 11 ? node.host : null);
    };
+   const interactive = 'a[href], audio[controls], button, details, embed, iframe, img[usemap], input:not([type="hidden"]), select, textarea, video[controls], [tabindex], [contenteditable]:not([contenteditable="false"]), [role~="button"], [role~="link"], [role~="checkbox"], [role~="radio"], [role~="switch"], [role~="tab"], [role~="menuitem"]';
    for (let node = hit; node; node = parent(node)) {
      if (node === element) return null;
-     if (node.nodeType === 1 && node.localName === "label" && (node.control === element || node.contains(element))) return null;
+     if (node.nodeType !== 1) continue;
+     if (node.localName === "label" && node.control === element) return null;
+     if (node.matches(interactive)) break;
    }
   const name = (hit.getAttribute("aria-label") || hit.getAttribute("title") || hit.innerText || "").replace(/\\s+/g, " ").trim().slice(0, 60);
   return hit.tagName.toLowerCase() + (name ? " " + JSON.stringify(name) : "");`
@@ -53,7 +56,8 @@ export const ELEMENT_FUNCTIONS = {
   if (option && select) return apply(select, [option]);
   if (element instanceof HTMLSelectElement) throw new Error("codenomad:is-select");
   return null;`,
-  "programmatic-click": `if (element instanceof HTMLElement) element.click();
+  "programmatic-click": `if (element.getClientRects().length) throw new Error("codenomad:has-box");
+   if (element instanceof HTMLElement) element.click();
   else element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, composed: true }));
   return null;`,
   select: `${CHOOSE}

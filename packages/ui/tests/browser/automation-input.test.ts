@@ -163,6 +163,36 @@ test("a pointer move can reveal a cover, but the cover receives no click", async
   } finally { await run.close() }
 })
 
+test("a label forwards its own pointer hit, but not one on a different interactive descendant", async () => {
+  const run = await openAutomationPage(automation, `${base}/automation-inputs`)
+  try {
+    const { page, act, refFor } = run
+    await page.evaluate(() => {
+      const label = document.createElement("label")
+      label.style.cssText = "position:relative;display:inline-block;width:120px;height:36px"
+      label.innerHTML = `<input id="labeled-control" type="checkbox" aria-label="Labeled control"
+        style="position:absolute;inset:0;width:100%;height:100%;margin:0;pointer-events:none">
+        <span style="position:absolute;inset:0">Plain label</span>`
+      document.body.prepend(label)
+    })
+    const ref = await refFor(/checkbox "Labeled control"/)
+    await act({ action: "click", ref })
+    const checkbox = page.locator("#labeled-control")
+    assert.equal(await checkbox.isChecked(), true)
+    await page.evaluate(() => {
+      const link = document.createElement("a")
+      link.href = "#wrong"
+      link.textContent = "Different action"
+      link.style.cssText = "position:absolute;inset:0"
+      document.querySelector("#labeled-control")!.parentElement!.append(link)
+    })
+    await log(page)
+    await assert.rejects(act({ action: "click", ref }), /covered by a "Different action"/)
+    assert.equal(await checkbox.isChecked(), true)
+    assert.deepEqual(await log(page), [])
+  } finally { await run.close() }
+})
+
 test("press and type refuse a substitute that takes focus just before native input", async () => {
   const run = await openAutomationPage(automation, `${base}/automation-inputs`)
   try {

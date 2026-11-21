@@ -10,9 +10,10 @@ import { PageDriverUnsupportedError, PageTargetChangedError } from "./protocol"
 const click = { kind: "click", ref: "e1", backendNodeId: 1 } as const
 
 function clickFixture(
-  quads: number[][] | Error,
-  activate: () => Record<string, unknown> = () => ({}),
+  quads: unknown,
+  activate: () => Record<string, unknown> = () => ({ result: { value: null } }),
   overlay = false,
+  layout: unknown = { cssLayoutViewport: { clientWidth: 100, clientHeight: 100 } },
 ) {
   const inputs: string[] = []
   const session = cdpSession({ send: async (method, params = {}) => {
@@ -21,7 +22,10 @@ function clickFixture(
       if (quads instanceof Error) throw quads
       return { quads }
     }
-    if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { clientWidth: 100, clientHeight: 100 } }
+    if (method === "Page.getLayoutMetrics") {
+      if (layout instanceof Error) throw layout
+      return layout as Record<string, unknown>
+    }
     if (method === "DOM.getNodeForLocation") return { backendNodeId: overlay ? 2 : 1 }
     if (method === "Runtime.callFunctionOn") {
       if (params.functionDeclaration === declaration("programmatic-click", true)) {
@@ -29,6 +33,7 @@ function clickFixture(
         return activate()
       }
       if (params.functionDeclaration === declaration("receives", true)) return { result: { value: 'div "Overlay"' } }
+      if (params.functionDeclaration === declaration("option-click", true)) return { result: { value: null } }
     }
     if (method.startsWith("Input.")) inputs.push(String(params.type))
     return { result: { value: 1_700_000_000 } }
@@ -46,6 +51,23 @@ test("a failed geometry read never falls back to programmatic or native input", 
     await assert.rejects(performAction(session, click), error => error === failure)
     assert.deepEqual(inputs, [])
   }
+})
+
+test("invalid geometry, invalid layout, and a clipped box never authorize a click", async () => {
+  const quad = [10, 10, 30, 10, 30, 30, 10, 30]
+  for (const fixture of [
+    clickFixture(undefined), clickFixture([null]), clickFixture([[0, 0]]),
+    clickFixture([[...quad.slice(0, 7), "30"]]), clickFixture([[...quad.slice(0, 7), Infinity]]),
+    clickFixture([[110, 110, 130, 110, 130, 130, 110, 130]]),
+    ...[{}, { cssLayoutViewport: { clientWidth: 100 } }, { cssLayoutViewport: { clientWidth: -1, clientHeight: 100 } },
+      new Error("CDP command Page.getLayoutMetrics timed out")].map(layout => clickFixture([quad], undefined, false, layout)),
+  ]) {
+    await assert.rejects(performAction(fixture.session, click), /invalid|no visible box|timed out/i)
+    assert.deepEqual(fixture.inputs, [])
+  }
+  const missingLayout = clickFixture([], undefined, false, {})
+  await assert.rejects(performAction(missingLayout.session, { kind: "scroll", direction: "down", amount: 1 }), /invalid/i)
+  assert.deepEqual(missingLayout.inputs, [])
 })
 
 test("only the confirmed boxless target uses a programmatic click, not a covered target", async () => {
@@ -173,6 +195,33 @@ test("type reports a sent input when current field value cannot be read", async 
   await assert.rejects(performAction(session, { kind: "type", ref: "e1", backendNodeId: 1, text: "append", clear: false }),
     /Text input was sent.*inspect before retrying/)
   assert.equal(sent, 1)
+})
+
+test("script mutations distinguish a lost execution reply from a lost final check", async () => {
+  for (const action of ["select", "option-click", "set-value", "delete-selection"] as const) {
+    for (const failAt of ["reply", "malformed", "checkpoint"] as const) {
+      let sent = 0
+      const { session } = clickFixture([])
+      const call = session.driver.call
+      session.driver.call = async (id, handle, args) => {
+        if (id === action) {
+          sent++
+          if (failAt === "reply") throw new Error("CDP command Runtime.callFunctionOn timed out")
+          if (failAt === "malformed") return { value: false }
+          return { value: id === "select" || id === "option-click" ? ["A"] : null }
+        }
+        if (id === "field") return { handle: "field" }
+        if (id === "prepare") return { value: action === "set-value" ? "append" : "insert" }
+        return call(id, handle, args)
+      }
+      session.checkpoint = async () => { if (sent) throw new Error("Page changed") }
+      const result = performAction(session, action === "select" ? { ...click, kind: "select", values: ["A"] }
+        : action === "option-click" ? click : { ...click, kind: "type", text: "", clear: true })
+      await assert.rejects(result, failAt !== "checkpoint" ? /outcome is unknown.*inspect before retrying/i
+        : /was sent.*could not be confirmed.*inspect before retrying/i)
+      assert.equal(sent, 1)
+    }
+  }
 })
 
 test("trusted input waits until a freshly navigated page accepts it, within a bounded delay", async () => {

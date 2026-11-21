@@ -6,14 +6,15 @@ import { callOn, Handle, markedInput, resolveElement, PageDriverUnsupportedError
 
 export interface Point { x: number; y: number }
 
-/** The point a user would click, or undefined when geometry shows no visible box. */
-export async function aim(session: PageSession, ref: string, backendNodeId: number, options: { hitTest?: boolean; scroll?: boolean } = {}): Promise<Point | undefined> {
+/** Null means geometry confirmed no box; undefined means there is no usable point. */
+export async function aim(session: PageSession, ref: string, backendNodeId: number, options: { hitTest?: boolean; scroll?: boolean } = {}): Promise<Point | null | undefined> {
   if (options.scroll !== false) await session.driver.scrollIntoView(backendNodeId).catch(error => { if (error instanceof PageDriverUnsupportedError) throw error })
   await session.checkpoint()
   const quads = await session.driver.geometry(backendNodeId)
   await session.checkpoint()
-  const viewport = await layoutViewport(session)
-  const quad = quads.find(item => item.length === 8 && area(item) >= 1)
+  const viewport = await session.driver.viewport()
+  if (quads.length === 0) return null
+  const quad = quads.find(item => { const size = area(item); return Number.isFinite(size) && size >= 1 })
   if (!quad) return undefined
   // The visible part of the box, so a half-clipped element is aimed where it shows.
   const xs = [quad[0], quad[2], quad[4], quad[6]], ys = [quad[1], quad[3], quad[5], quad[7]]
@@ -36,10 +37,6 @@ async function assertReceives(session: PageSession, ref: string, backendNodeId: 
   if (!other) return
   const covered = await callOn(session, ref, target, "receives", [new Handle(other)])
   if (typeof covered === "string") throw new Error(`${ref} is covered by ${covered}; close or move it first, then inspect again`)
-}
-
-async function layoutViewport(session: PageSession): Promise<{ width: number; height: number }> {
-  return session.driver.viewport().catch(error => { if (error instanceof PageDriverUnsupportedError) throw error; return { width: Infinity, height: Infinity } })
 }
 
 function area(quad: number[]): number {
@@ -84,7 +81,8 @@ export async function dragBetween(session: PageSession, from: Point, to: Point, 
       await dispatch("pointer", { type: "mouseMoved", x: from.x + (to.x - from.x) * step / steps,
         y: from.y + (to.y - from.y) * step / steps, button: "left", buttons: 1 }, step === steps ? target : undefined)
     }
-    await dispatch("pointer", { type: "mouseReleased", ...to, button: "left", buttons: 0, clickCount: 1 }, target)
+    await dispatch("pointer", { type: "mouseReleased", ...to, button: "left", buttons: 0, clickCount: 1 },
+      target && { ...target, alternate: source?.handle })
   })
 }
 
@@ -96,8 +94,8 @@ export async function pressKeys(session: PageSession, chord: string, target?: In
 }
 
 async function viewportCentre(session: PageSession): Promise<Point> {
-  const { width, height } = await layoutViewport(session)
-  return { x: Number.isFinite(width) ? width / 2 : 400, y: Number.isFinite(height) ? height / 2 : 300 }
+  const { width, height } = await session.driver.viewport()
+  return { x: width / 2, y: height / 2 }
 }
 
 /** Polls the page for text, in its rendered text or in labels, titles, placeholders and values. */

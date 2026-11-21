@@ -10,8 +10,9 @@ import { parsePageAction } from "../../../server/src/automation/page/parse"
 /** A real Chromium with its DevTools endpoint, driven by the real codenomad.inspect/act
  * controller exactly as it drives the CodeNomad window. */
 export async function launchAutomationBrowser() {
-  const profile = await mkdtemp(path.join(os.tmpdir(), "codenomad-automation-"))
-  const context = await chromium.launchPersistentContext(profile, { executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined, locale: "en-US",
+  const profile = await mkdtemp(path.join(os.tmpdir(), "trial-automation-"))
+  const context = await chromium.launchPersistentContext(profile, { channel: "chromium", headless: true,
+    executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined, locale: "en-US",
     args: ["--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0"] })
   armFixtureNavigationBudget(context)
   let port = ""
@@ -29,11 +30,12 @@ let windows = 0
 export async function openAutomationPage(browser: { context: BrowserContext; endpoint: string }, url: string,
   setup?: (page: Page) => Promise<void>, timeoutMs = 10_000) {
   const windowId = `automation-window-${++windows}`
-  const page = await browser.context.newPage()
+  const page = browser.context.pages().find(page => page.url() === "about:blank") ?? await browser.context.newPage()
   page.setDefaultTimeout(15_000)
   await page.addInitScript(`window.__CODENOMAD_WINDOW_ID__ = ${JSON.stringify(windowId)}`)
   await setup?.(page)
   await page.goto(url)
+  await page.bringToFront()
   const cdp = new DeveloperCdp({ timeoutMs })
   const identity: DeveloperCdpIdentity = { endpoint: browser.endpoint, runId: `run-${windowId}`, windowId }
   const refFor = async (pattern: RegExp, query?: string) => {

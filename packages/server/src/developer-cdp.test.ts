@@ -10,6 +10,10 @@ interface Command {
 
 const isDestination = (command: Command) => command.method === "Runtime.callFunctionOn"
   && String(command.params?.functionDeclaration).includes("document.elementFromPoint")
+const isScriptClick = (command: Command) => command.method === "Runtime.callFunctionOn"
+  && String(command.params?.functionDeclaration).startsWith("function (handle, expected)")
+const isInputState = (command: Command) => command.method === "Runtime.evaluate"
+  && command.params?.expression === "({ root: document.documentElement })"
 
 const page = (id: string) => ({
   id,
@@ -81,8 +85,9 @@ class FakeChrome {
       this.deferred.set(command.method, { socket, command })
       return
     }
-    queueMicrotask(() => socket.respond(command, command.method === "Runtime.evaluate" && command.params?.expression === "document.documentElement"
-      ? { result: { objectId: "input-document" } } : command.method === "Runtime.callFunctionOn"
+    queueMicrotask(() => socket.respond(command, isInputState(command)
+      ? { result: { objectId: "input-document" } } : isScriptClick(command)
+        ? this.scriptClick(command) : command.method === "Runtime.callFunctionOn"
         && command.params?.objectId === "input-document" ? {
           result: { value: !this.inputRootCurrent ? "root" : isDestination(command) ? this.destination(command)
             : String(command.params.functionDeclaration).includes("Math.min") ? true : 1_700_000_000 },
@@ -100,13 +105,31 @@ class FakeChrome {
   inputRootCurrent = true
   mainRef = true
   functionResult: unknown
+  scriptClicks = 0
+  receiver = 1
+  pointerReceipt?: { id: number; receiver: number }
+
+  private scriptClick(command: Command): Record<string, unknown> {
+    const [handle, expected] = command.params!.arguments as [{ objectId: string }, { value: FakeChrome["context"] }]
+    assert.equal(command.params!.objectId, "input-document")
+    assert.equal(handle.objectId, "node-1")
+    const refusal = !this.inputRootCurrent ? "action-root"
+      : (["tabId", "instanceId", "sessionId"] as const).some(key => this.context[key] !== expected.value[key]) ? "action-tab" : null
+    if (refusal) return { exceptionDetails: { text: `Error: codenomad:${refusal}` } }
+    if (String(command.params!.functionDeclaration).includes("codenomad:has-box")) this.scriptClicks++
+    return { result: { value: null } }
+  }
 
   private destination(command: Command): string {
-    const [point, expected, release] = command.params!.arguments as [
+    const [point, expected, release, , , , track, confirm] = command.params!.arguments as [
       { value: { x: number; y: number } | null }, { value: FakeChrome["context"] }, { value: boolean },
+      unknown, unknown, unknown, { value: number | null }, { value: number | null },
     ]
     if (!release.value && (["tabId", "instanceId", "sessionId"] as const).some(key => this.context[key] !== expected.value[key])) return "tab"
-    return (point.value ? this.hitFrame === "main" && this.hitTag !== "iframe" : this.mainFocus) ? "ready" : "frame"
+    if (!(point.value ? this.hitFrame === "main" && this.hitTag !== "iframe" : this.mainFocus)) return "frame"
+    if (confirm.value && (this.pointerReceipt?.id !== confirm.value || this.pointerReceipt.receiver !== this.receiver)) return "receiver"
+    if (track.value) this.pointerReceipt = { id: track.value, receiver: this.receiver }
+    return "ready"
   }
 
   result(method: string): Record<string, unknown> {
@@ -177,6 +200,71 @@ describe("DeveloperCdp", () => {
       socket.emit("Runtime.executionContextDestroyed", { executionContextId: 1 })
       await assert.rejects(client.act({ ...identity, document }, { action: "press", key: "Enter" }), /Page changed/)
       assert.ok(chrome.commands.every(command => !command.method.startsWith("Input.")))
+    } finally { client.close() }
+  })
+
+  it("fences destruction of the future main world announced before frame navigation", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    try {
+      await client.inspect(identity)
+      const socket = chrome.sockets.at(-1)!
+      socket.emit("Runtime.executionContextCreated", { context: { id: 5, auxData: { isDefault: true, frameId: "next-main" } } })
+      socket.emit("Page.frameNavigated", { frame: { id: "next-main" } })
+      const { document } = await client.inspect(identity)
+      socket.emit("Runtime.executionContextDestroyed", { executionContextId: 5 })
+      await assert.rejects(client.screenshot({ ...identity, document }), /Page changed/)
+    } finally { client.close() }
+  })
+
+  for (const run of [true, false]) it(`closes active discovery sockets (run scope: ${run})`, async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    chrome.deferred.set("Runtime.evaluate", undefined as never)
+    try {
+      const inspect = assert.rejects(client.inspect(identity), /retired|closed/i)
+      const inventory = client.probeContexts(identity.endpoint, new Map([[identity.windowId, undefined]]))
+      while (chrome.commands.length < 2) await new Promise<void>(resolve => setImmediate(resolve))
+      client.close(run ? identity.runId : undefined)
+      const sockets = [...chrome.sockets]
+      assert.equal(chrome.sockets.filter(socket => socket.closed).length, run ? 1 : 2)
+      await inspect
+      assert.equal(chrome.sockets.length, sockets.length)
+      if (run) client.close()
+      assert.equal((await inventory).size, 0)
+    } finally { client.close() }
+  })
+
+  it("cancels the discovery connection handshake when the run closes", async () => {
+    const chrome = new FakeChrome()
+    let opening!: () => void
+    const started = new Promise<void>(resolve => { opening = resolve })
+    const socket = { onopen: null, send() { assert.fail("retired probe sent a command") }, close() { closed = true } }
+    let closed = false
+    const client = chrome.client({ connect: () => { opening(); return socket } })
+    try {
+      const inspection = assert.rejects(client.inspect(identity), /retired|closed/i)
+      await started
+      client.close(identity.runId)
+      assert.equal(closed, true)
+      await inspection
+    } finally { client.close() }
+  })
+
+  for (const changed of ["tab", "root"]) it(`refuses boxless activation when the ${changed} changes during the script call`, async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    try {
+      const snapshot = await client.inspect(identity)
+      chrome.onCommand = command => {
+        if (isScriptClick(command) && String(command.params?.functionDeclaration).includes("codenomad:has-box")) {
+          if (changed === "tab") chrome.context.tabId = "another-tab"
+          else chrome.inputRootCurrent = false
+        }
+      }
+      await assert.rejects(client.act({ ...identity, document: snapshot.document }, { action: "click", ref: refOf(snapshot) }),
+        changed === "tab" ? /active tab changed/ : /Page changed during action/)
+      assert.equal(chrome.scriptClicks, 0)
     } finally { client.close() }
   })
 
@@ -265,11 +353,50 @@ describe("DeveloperCdp", () => {
       const window = { endpoint, runId, windowId }
       const { document } = await client.inspect(window)
       chrome.onCommand = command => {
-        if (command.method === "Runtime.evaluate" && command.params?.objectGroup
-          && command.params.expression !== "document.documentElement") chrome.sockets.at(-1)!.close()
+        if (command.method === "Runtime.evaluate" && command.params?.objectGroup && !isInputState(command)) chrome.sockets.at(-1)!.close()
       }
       await assert.rejects(client.act({ ...window, document }, { action: "press", key: "Enter" }), /Key input was sent/)
       assert.equal(chrome.commands.filter(command => command.method === "Input.dispatchKeyEvent").length, 2)
+    } finally { client.close() }
+  })
+
+  for (const receiverChanges of [false, true]) it(`rechecks an unsent release after a timeout (receiver changed: ${receiverChanges})`, async () => {
+    const chrome = new FakeChrome()
+    chrome.quads = [[100, 40, 300, 40, 300, 80, 100, 80]]
+    const client = chrome.client({ timeoutMs: 40 })
+    try {
+      const inspection = await client.inspect(identity)
+      let checks = 0
+      chrome.skipReply = command => {
+        if (!isDestination(command) || !(command.params!.arguments as Array<{ value: unknown }>)[2].value || ++checks !== 1) return false
+        if (receiverChanges) chrome.receiver++
+        return true
+      }
+      await assert.rejects(client.act({ ...identity, document: inspection.document }, {
+        action: "click", ref: refOf(inspection),
+      }), /destination check timed out/)
+      assert.equal(checks, 2)
+      assert.deepEqual(chrome.commands.filter(command => command.method === "Input.dispatchMouseEvent")
+        .map(command => command.params?.type), receiverChanges ? ["mouseMoved", "mousePressed"] : ["mouseMoved", "mousePressed", "mouseReleased"])
+    } finally { client.close() }
+  })
+
+  it("does not release at an unproven intermediate drag point", async () => {
+    const chrome = new FakeChrome()
+    Object.assign(chrome.axNodes[0], { nodeId: "source", parentId: "root" })
+    chrome.axNodes.unshift({ nodeId: "root", role: { value: "RootWebArea" }, childIds: ["source", "drop"] })
+    chrome.axNodes.push({ nodeId: "drop", parentId: "root", backendDOMNodeId: 43, role: { value: "button" }, name: { value: "Drop" } })
+    chrome.hit = 43
+    chrome.quads = [[100, 40, 300, 40, 300, 80, 100, 80]]
+    const client = chrome.client({ timeoutMs: 40 })
+    try {
+      const inspection = await client.inspect(identity)
+      chrome.skipReply = command => command.method === "Input.dispatchMouseEvent"
+        && command.params?.type === "mouseMoved" && command.params?.buttons === 1
+      await assert.rejects(client.act({ ...identity, document: inspection.document }, {
+        action: "drag", ref: refOf(inspection), to: /button "Drop" \[(e\d+)\]/.exec(inspection.snapshot)![1],
+      }), /outcome is unknown/)
+      assert.ok(chrome.commands.every(command => command.params?.type !== "mouseReleased"))
     } finally { client.close() }
   })
 
@@ -533,7 +660,7 @@ describe("DeveloperCdp", () => {
     try {
       const { document } = await client.inspect(window)
       chrome.onCommand = command => {
-        if (command.method === "Runtime.evaluate" && command.params?.expression === "document.documentElement") {
+        if (isInputState(command)) {
           chrome.sockets.at(-1)!.emit("Page.documentOpened", { frame: { id: "main" } })
         }
       }
@@ -719,7 +846,7 @@ describe("DeveloperCdp", () => {
     await client.act(identity, { action: "click", ref: refOf(inspection) })
 
     const sequence = chrome.commands.filter(command => command.method === "Input.dispatchMouseEvent"
-      || (command.method === "Runtime.callFunctionOn" && command.params?.objectId === "input-document" && !isDestination(command)))
+      || (command.method === "Runtime.callFunctionOn" && command.params?.objectId === "input-document" && !isDestination(command) && !isScriptClick(command)))
       .map(command => command.method === "Runtime.callFunctionOn" ? (/Math.min/.test(String(command.params!.functionDeclaration)) ? "unmark" : "mark")
         : `${command.params!.type}@${command.params!.x},${command.params!.y}`)
     assert.deepEqual(sequence, ["mark", "mouseMoved@200,60", "mark", "mousePressed@200,60", "mark", "mouseReleased@200,60", "unmark"],
@@ -742,7 +869,7 @@ describe("DeveloperCdp", () => {
     chrome.commands.length = 0
     await client.act(identity, { action: "click", ref: refOf(inspection) })
     assert.equal(chrome.commands.some((command) => command.method === "Input.dispatchMouseEvent"), false)
-    assert.equal(chrome.commands.filter((command) => command.method === "Runtime.callFunctionOn").at(-1)?.params?.objectId, "node-1")
+    assert.equal(chrome.scriptClicks, 1)
   })
 
   it("retries a failed WebSocket connection", async () => {
