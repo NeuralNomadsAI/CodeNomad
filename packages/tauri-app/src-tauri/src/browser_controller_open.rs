@@ -51,7 +51,7 @@ pub(super) struct OpenClaim {
     adopted: bool,
     revoked: bool,
     keep_guest: bool,
-    dispatched: bool,
+    pub(super) load_sequence: Option<u64>,
     construction: Option<(String, u64)>,
     target: Option<Registration>,
 }
@@ -308,7 +308,7 @@ impl BrowserController {
                 adopted: false,
                 revoked: false,
                 keep_guest: false,
-                dispatched: false,
+                load_sequence: None,
                 construction: None,
                 target: None,
             };
@@ -411,7 +411,12 @@ impl BrowserController {
                     });
                     result = check.and(result);
                 }
-                guard.open_claims.remove(&request_id)
+                guard.open_claims.remove(&request_id).map(|mut claim| {
+                    claim.keep_guest &= claim.target.as_ref().is_some_and(|target| {
+                        guard.registrations.get(&target.registration_id) == Some(target)
+                    });
+                    claim
+                })
             };
             if let Some(claim) = retired.filter(|claim| claim.adopted) {
                 if claim.target.is_none() {
@@ -455,23 +460,23 @@ pub(super) fn check_open_target(
     check_no_foreign_preview(inner, &expected.session_id, &expected.window_label)
 }
 
-pub(super) fn admit_open_dispatch(
+pub(super) fn retire_open_for_navigation(
     inner: &mut Inner,
-    request_id: &str,
-    expected: &Registration,
-) -> Result<(), String> {
-    check_open_target(inner, request_id, expected)?;
-    inner.open_claims.get_mut(request_id).unwrap().dispatched = true;
-    Ok(())
-}
-
-pub(super) fn retire_queued_open(inner: &mut Inner, registration_id: &str, generation: u64) {
+    registration_id: &str,
+    generation: u64,
+    displaced_load: Option<u64>,
+) {
+    let Some(current) = inner
+        .registrations
+        .get(registration_id)
+        .filter(|registration| registration.generation == generation)
+    else {
+        return;
+    };
     for claim in inner.open_claims.values_mut() {
         if !claim.revoked
-            && !claim.dispatched
-            && claim.target.as_ref().is_some_and(|target| {
-                target.registration_id == registration_id && target.generation == generation
-            })
+            && claim.load_sequence == displaced_load
+            && claim.target.as_ref() == Some(current)
         {
             claim.keep_guest = true;
             claim.revoke();
@@ -529,7 +534,7 @@ mod tests {
                     adopted: false,
                     revoked: false,
                     keep_guest: false,
-                    dispatched: false,
+                    load_sequence: None,
                     construction: None,
                     target: None,
                 },
@@ -664,9 +669,13 @@ mod tests {
             expected
         };
         let admit = || {
-            controller.prepare_navigation(&expected, "https://example.com/", None, |inner| {
-                admit_open_dispatch(inner, "request", &expected)
-            })
+            controller.prepare_navigation(
+                &expected,
+                "https://example.com/",
+                None,
+                Some("request"),
+                || Ok(()),
+            )
         };
         assert!(admit().unwrap_err().contains("timed out"));
         {
@@ -702,13 +711,35 @@ mod tests {
             claim.revoked = false;
             claim.keep_guest = false;
         }
-        assert!(admit().is_ok());
-        controller.mark_page_started("right", expected.generation, 3, "https://example.com/".into());
+        let sequence = admit().unwrap();
+        controller.mark_page_started(
+            "right",
+            expected.generation,
+            3,
+            "https://example.com/".into(),
+        );
         {
             let inner = controller.inner.0.lock().unwrap();
             assert!(check_open_target(&inner, "request", &expected).is_ok());
         }
-        assert!(controller.release_open("owner", "request", false));
+        controller.mark_page_committed(
+            "right",
+            expected.generation,
+            3,
+            "https://example.com/".into(),
+        );
+        controller.mark_page_started(
+            "right",
+            expected.generation,
+            4,
+            "https://example.com/manual".into(),
+        );
+        {
+            let inner = controller.inner.0.lock().unwrap();
+            let claim = inner.open_claims.get("request").unwrap();
+            assert!(claim.revoked && claim.keep_guest);
+        }
+        assert!(!controller.take_navigation_stop(&expected, sequence));
         assert!(admit().unwrap_err().contains("target changed"));
         assert!(!report("other", json!({"kind":"claim","instanceId":"tab"})));
         assert!(!report("owner", json!({"kind":"claim","instanceId":"tab"})));

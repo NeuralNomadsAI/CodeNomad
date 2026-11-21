@@ -131,15 +131,15 @@ const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
         active={props.active}
         instanceId={props.preview.capability ? undefined : props.instanceId}
         openRequestId={props.preview.nativeOpen?.requestID}
-        onNativeRegistration={registrationId => {
+        onNativeRegistration={async registrationId => {
           const request = props.preview.nativeOpen
-          if (!request || request === reportedOpen || request.instanceId !== props.instanceId) return
+          if (!request || request === reportedOpen || request.instanceId !== props.instanceId) return false
           reportedOpen = request
-          void (async () => {
-            const admitted = request.current() && await claimNativeBrowserOpen(request.requestID,
-              { kind: "target", instanceId: request.instanceId, registrationId }).catch(() => false)
-            if (!admitted || !request.current()) await retireSessionPreviewOpen(request)
-          })().catch(() => {})
+          const admitted = request.current() && await claimNativeBrowserOpen(request.requestID,
+            { kind: "target", instanceId: request.instanceId, registrationId }).catch(() => false)
+          if (admitted && request.current()) return true
+          await retireSessionPreviewOpen(request).catch(() => {})
+          return false
         }}
         onClose={() => props.preview.capability ? dismissSessionPreview(props.preview.storageKey) : showSessionChatFor(props.preview.sessionId, props.instanceId)}
         sessionId={props.preview.sessionId}

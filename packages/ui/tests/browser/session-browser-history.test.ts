@@ -1128,6 +1128,42 @@ test("user navigation retires the acknowledged open before sending native naviga
   } finally { await page.close() }
 })
 
+test("Enter before the first open's attachment acknowledgement preserves the address draft", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
+  try {
+    await prepare(page, "tauri")
+    const requested = `${base}/page/agent`, manual = `${base}/page/manual`
+    await page.evaluate(url => {
+      const f = (window as any).fixture
+      f.native.deferOpenTarget = true
+      return f.openNativePreview("first", url)
+    }, requested)
+    const claim = await page.waitForFunction(() => (window as any).fixture.native.calls
+      .find((call: any) => call.command === "browser_target_claim_open" && call.response.kind === "target"))
+    const { response: { registrationId, instanceId } } = await claim.jsonValue()
+    const pane = page.locator(`[data-preview-instance="${instanceId}"]`)
+    const address = pane.getByRole("textbox", { name: "Preview URL", exact: true })
+    const submit = address.locator("..").locator('button[type="submit"]')
+    const actions = () => page.evaluate(() => (window as any).fixture.native.calls
+      .filter((call: any) => call.command === "browser_target_release_open" || call.payload?.action === "navigate"))
+    await address.fill(manual)
+    await address.press("Enter")
+    assert.deepEqual(await actions(), [])
+    assert.equal(await submit.isDisabled(), true)
+    assert.equal(await address.inputValue(), manual)
+    await page.evaluate(() => (window as any).fixture.native.settleOpenTarget())
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('[data-preview-instance] button[type="submit"]')?.disabled)
+    assert.equal(await address.inputValue(), manual)
+    await address.press("Enter")
+    await page.waitForFunction(url => (window as any).fixture.savedPreview("session").targetUrl === url, manual)
+    const [release, navigate] = await actions()
+    assert.equal(release.requestId, "first")
+    assert.equal(release.keepGuest, true)
+    assert.equal(navigate.payload.registrationId, registrationId)
+    assert.equal(navigate.payload.url, manual)
+  } finally { await page.close() }
+})
+
 test("Back skips an agent open that committed but was cancelled before finishing", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
   try {
@@ -1161,7 +1197,11 @@ test("a duplicate's explicit preview survives retirement of the agent's first op
   page.on("pageerror", error => errors.push(error.message))
   try {
     await prepare(page, "tauri", "&duplicate=1")
-    await page.evaluate(url => (window as any).fixture.openNativePreview("first", url), `${base}/page/agent`)
+    await page.evaluate(url => {
+      const f = (window as any).fixture
+      f.native.deferOpenTarget = true
+      return f.openNativePreview("first", url)
+    }, `${base}/page/agent`)
     await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_claim_open"))
     await page.evaluate(() => {
       const f = (window as any).fixture
@@ -1169,7 +1209,11 @@ test("a duplicate's explicit preview survives retirement of the agent's first op
       document.querySelector<HTMLButtonElement>('[data-occurrence="header-duplicate"] [aria-label="Open web preview"]')!.click()
     })
     await page.waitForFunction(() => (window as any).fixture.preview("session", "header-duplicate")?.mode === "preview")
-    await page.evaluate(() => (window as any).fixture.settleNativePreview("first"))
+    await page.evaluate(() => {
+      const f = (window as any).fixture
+      f.settleNativePreview("first")
+      f.native.settleOpenTarget()
+    })
     const address = page.locator('[data-preview-instance="header-duplicate"]').getByRole("textbox", { name: "Preview URL" })
     const registrations = await page.waitForFunction(() => {
       const ids = (window as any).fixture.native.calls.filter((call: any) => call.command === "browser_target_register")

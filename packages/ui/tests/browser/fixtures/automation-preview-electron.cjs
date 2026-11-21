@@ -49,6 +49,8 @@ app.whenReady().then(async () => {
   let loaded
   const guestLoaded = new Promise(resolve => { loaded = resolve })
   const guests = new Map()
+  const openGuests = new Map()
+  const settlements = new Map()
   const controller = new BrowserController(() => [window.webContents], {
     fromId: id => guests.get(id),
     fromWebContents: owner => owner === window.webContents ? {
@@ -73,6 +75,7 @@ app.whenReady().then(async () => {
           return
         }
         controller.register(window.webContents, { sessionId: sessionID, registrationId: requestID, instanceId, guestWebContentsId: contents.id })
+        openGuests.set(sessionID, contents)
         if (!controller.claimOpen(window.webContents, requestID, { kind: "target", instanceId, registrationId: requestID })) contents.close()
       })
       return
@@ -102,6 +105,7 @@ app.whenReady().then(async () => {
       })()`)
       return
     }
+    if (channel === "browser-target:open-settled") settlements.set(payload.sessionID, payload)
     return send(channel, payload)
   }
   globalThis.automationPreview = {
@@ -109,6 +113,36 @@ app.whenReady().then(async () => {
     navigate: async url => controller.execute("fixture-session", { action: "navigate", url }, Infinity, (await controller.probe("fixture-session")).target),
     open: (session, url, timeout) => handleNativeBrowserRequest(controller, "browser.execute",
       { sessionID: session, command: { action: "open", url }, workspaceIDs: ["fixture-tab"] }, Date.now() + timeout),
+    followOpenLink: async (session, url, successor) => {
+      const target = openGuests.get(session)
+      await awaitHiddenSurface(target, window, url, performance.now() + PREPARATION_MS)
+      if (!target.isLoading()) throw new Error("The first navigation finished before the click")
+      const deadline = performance.now() + PREPARATION_MS
+      let onLoad
+      const loaded = new Promise(resolve => {
+        onLoad = () => { if (target.getURL() === successor) resolve() }
+        target.on("did-finish-load", onLoad)
+      })
+      // Automation would wait for the pending open's guest slot; manual guest input does not.
+      target.debugger.attach("1.3")
+      try {
+        const { result: { value: point } } = await target.debugger.sendCommand("Runtime.evaluate", {
+          expression: `(() => { const r = document.querySelector('a').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 } })()`,
+          returnByValue: true,
+        })
+        for (const type of ["mousePressed", "mouseReleased"]) {
+          await target.debugger.sendCommand("Input.dispatchMouseEvent", { type, ...point, button: "left", clickCount: 1 })
+        }
+        await withinBudget(loaded, deadline, "the successor did not load")
+        return { url: target.getURL(), sameGuest: openGuests.get(session) === target }
+      } finally {
+        target.removeListener("did-finish-load", onLoad)
+        if (!target.isDestroyed() && target.debugger.isAttached()) target.debugger.detach()
+      }
+    },
+    openState: session => {
+      return { settled: settlements.get(session) }
+    },
     visible: value => { visible = value },
     ready: async () => {
       const deadline = performance.now() + PREPARATION_MS

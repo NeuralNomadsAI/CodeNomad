@@ -10,6 +10,7 @@ let historyId = 0
 let callbackId = 0
 let pendingEmulation: (() => void) | undefined
 let pendingRegistration: { resolve: () => void; reject: (error: Error) => void } | undefined
+let pendingOpenTarget: (() => void) | undefined
 let pendingOpenRelease: (() => void) | undefined
 
 export const nativeFixture = {
@@ -20,7 +21,9 @@ export const nativeFixture = {
   failEmulation: false,
   deferRegistration: false,
   deferEmulation: false,
+  deferOpenTarget: false,
   deferOpenRelease: false,
+  settleOpenTarget() { pendingOpenTarget?.(); pendingOpenTarget = undefined },
   settleOpenRelease() { pendingOpenRelease?.(); pendingOpenRelease = undefined },
   settleEmulation() { pendingEmulation?.(); pendingEmulation = undefined },
   settleRegistration(reject = false) {
@@ -44,7 +47,10 @@ async function invoke(command: string, args: any = {}) {
   calls.push({ command, ...args })
   if (command === "browser_target_action" && registering.has(args.payload.registrationId)) throw new Error("Browser target is not registered")
   if (command === "plugin:event|listen") return args.handler
-  if (command === "browser_target_claim_open") return args.response.kind === "target"
+  if (command === "browser_target_claim_open" && args.response.kind === "target") {
+    if (nativeFixture.deferOpenTarget) await new Promise<void>(resolve => { pendingOpenTarget = resolve })
+    return true
+  }
   if (command === "browser_target_release_open") {
     if (nativeFixture.deferOpenRelease) await new Promise<void>(resolve => { pendingOpenRelease = resolve })
     return true

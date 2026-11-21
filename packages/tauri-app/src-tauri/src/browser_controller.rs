@@ -1164,7 +1164,8 @@ impl BrowserController {
         registration: &Registration,
         url: &str,
         document: Option<u64>,
-        check_admission: impl FnOnce(&mut Inner) -> Result<(), String>,
+        open_request_id: Option<&str>,
+        check_admission: impl FnOnce() -> Result<(), String>,
     ) -> Result<u64, String> {
         let mut inner = self.inner.0.lock().map_err(|error| error.to_string())?;
         let id = &registration.registration_id;
@@ -1173,9 +1174,16 @@ impl BrowserController {
         {
             return Err(STALE_TARGET.into());
         }
-        check_admission(&mut inner)?;
+        check_admission()?;
+        if let Some(request_id) = open_request_id {
+            open::check_open_target(&inner, request_id, registration)?;
+        }
         invalidate_page(&mut inner, id);
-        Ok(record_page_load(&mut inner, id, url, true))
+        let sequence = record_page_load(&mut inner, id, url, true);
+        if let Some(request_id) = open_request_id {
+            inner.open_claims.get_mut(request_id).unwrap().load_sequence = Some(sequence);
+        }
+        Ok(sequence)
     }
 
     fn check_dispatch_document(
@@ -1211,7 +1219,7 @@ impl BrowserController {
             return;
         }
         if let Ok(mut inner) = self.inner.0.lock() {
-            open::retire_queued_open(&mut inner, registration_id, generation);
+            open::retire_open_for_navigation(&mut inner, registration_id, generation, None);
         }
         self.inner.1.notify_all();
     }
@@ -1307,7 +1315,7 @@ impl BrowserController {
                 == Some(generation)
             {
                 if url != "about:blank" {
-                    open::retire_queued_open(&mut inner, registration_id, generation);
+                    open::retire_open_for_navigation(&mut inner, registration_id, generation, None);
                 }
                 if let Some(expectation) = inner.page_load_expectations.get_mut(registration_id) {
                     if expectation
@@ -1320,6 +1328,15 @@ impl BrowserController {
                     {
                         expectation.result =
                             Some(Err("Browser preview navigation is no longer current".into()));
+                        let sequence = expectation.sequence;
+                        if allowed_url(&url).is_ok() {
+                            open::retire_open_for_navigation(
+                                &mut inner,
+                                registration_id,
+                                generation,
+                                Some(sequence),
+                            );
+                        }
                     } else if expectation.url == url && expectation.navigation_id.is_none() {
                         expectation.navigation_id = Some(navigation_id);
                     }

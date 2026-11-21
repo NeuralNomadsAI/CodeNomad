@@ -63,17 +63,19 @@ impl BrowserController {
         let admit = move || {
             dispatch_check()?;
             let mut receipt = receipt.lock().map_err(|error| error.to_string())?;
-            let sequence =
-                controller.prepare_navigation(&expected, &target, document, |inner| {
+            let sequence = controller.prepare_navigation(
+                &expected,
+                &target,
+                document,
+                dispatch_request_id.as_deref(),
+                || {
                     dispatch_fence.check()?;
                     if Instant::now() >= deadline {
                         return Err("Native browser command timed out".into());
                     }
-                    if let Some(id) = &dispatch_request_id {
-                        super::open::admit_open_dispatch(inner, id, &expected)?;
-                    }
                     Ok(())
-                })?;
+                },
+            )?;
             *receipt = Some(sequence);
             Ok(sequence)
         };

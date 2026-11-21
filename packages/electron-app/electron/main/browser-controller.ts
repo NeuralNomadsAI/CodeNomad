@@ -279,6 +279,7 @@ export class BrowserController {
     const claim = this.openClaims.get(requestID)
     if (!claim || claim.owner !== owner) return false
     const preserveGuest = keepGuest && claim.target && this.registrations.get(claim.target.registrationId) === claim.target
+      && this.registrationVisible(claim.target)
     claim.discovery?.reject(new Error("Browser open target changed"))
     this.openClaims.delete(requestID)
     claim.retirement.abort(new Error("Browser open target changed"))
@@ -438,7 +439,10 @@ export class BrowserController {
             return await this.enqueue(guest, async () => {
               checkRegistration()
               claim.dispatched = true
-              const committed = await loadNavigation(guest, url, deadline, checkRegistration)
+              const committed = await loadNavigation(guest, url, deadline, checkRegistration).catch(error => {
+                if (error instanceof MainNavigationSuperseded) this.releaseOpen(owner, requestID, undefined, true)
+                throw error
+              })
               checkRegistration()
               this.releaseOpen(owner, requestID, committed.url)
               return committed
@@ -748,6 +752,8 @@ async function withDeadline<T>(operation: () => Promise<T>, deadline: number, on
   }
 }
 
+class MainNavigationSuperseded extends Error {}
+
 async function loadNavigation(guest: WebContents, url: string, deadline: number, check: () => void): Promise<{ url: string }> {
   const expected = new URL(url).href
   let started = false
@@ -763,7 +769,8 @@ async function loadNavigation(guest: WebContents, url: string, deadline: number,
     if (!started && destination === expected) { started = true; sameDocument = inPage; return }
     if (inPage && committed) return
     superseded = true
-    rejectLoad(new Error("Browser navigation changed"))
+    rejectLoad(!inPage && isBrowserUrlAllowed(destination)
+      ? new MainNavigationSuperseded("Browser navigation changed") : new Error("Browser navigation changed"))
   }
   const document = (_event: Electron.Event, destination: string) => {
     if (started && !committed && !superseded) committed = destination

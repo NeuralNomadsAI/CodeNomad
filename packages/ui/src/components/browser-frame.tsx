@@ -75,7 +75,7 @@ const VIEWPORT_OPTIONS = [
 interface BrowserFrameProps {
   instanceId?: string
   openRequestId?: string
-  onNativeRegistration?: (registrationId: string) => void
+  onNativeRegistration?: (registrationId: string) => Promise<boolean>
   active?: boolean
   onClose?: () => void
   sessionId?: string
@@ -148,9 +148,16 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   const [emulationBusy, setEmulationBusy] = createSignal(false)
   const [registrationReady, setRegistrationReady] = createSignal(false)
   const [visibleRegistration, setVisibleRegistration] = createSignal<{ id: string; instanceId: string }>()
+  const [openAcknowledgement, setOpenAcknowledgement] = createSignal<{ requestId: string; id: string; instanceId: string }>()
   createEffect(() => {
     const target = visibleRegistration()
-    if (target && props.active !== false && props.instanceId === target.instanceId) props.onNativeRegistration?.(target.id)
+    const requestId = props.openRequestId
+    if (requestId && target && props.active !== false && props.instanceId === target.instanceId) {
+      void props.onNativeRegistration?.(target.id).then(admitted => {
+        if (admitted && props.openRequestId === requestId && canNavigate(target.instanceId)
+          && visibleRegistration()?.id === target.id) setOpenAcknowledgement({ requestId, ...target })
+      }).catch(reportNativeError)
+    }
   })
   const [frameSrc, setFrameSrc] = createSignal(props.initialUrl)
   const [liveAddress, setPathInput] = createSignal(props.initialAddress ?? "/")
@@ -1002,6 +1009,13 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   }
 
   const initialOpenPending = () => Boolean(initialOpenRequestId && props.openRequestId === initialOpenRequestId)
+  const addressSubmissionBlocked = () => {
+    if (!initialOpenPending()) return false
+    const attached = openAcknowledgement()
+    const visible = visibleRegistration()
+    return !attached || !visible || attached.requestId !== props.openRequestId
+      || attached.id !== visible.id || attached.instanceId !== props.instanceId || visible.instanceId !== props.instanceId
+  }
   const handleRefresh = async () => {
     if (initialOpenPending()) return
     const instanceId = props.instanceId
@@ -1053,6 +1067,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
 
   const handleGo = async (event?: Event) => {
     event?.preventDefault()
+    if (addressSubmissionBlocked()) return
     if (props.addressMode === "url" && props.onNavigate) {
       if (navigating()) return
       if (props.isolatedSource) { await navigateIsolated(pathInput()); return }
@@ -1141,7 +1156,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
             autocapitalize="off"
             aria-label={props.labels.path}
           />
-          <button type="submit" class="new-tab-button" title={props.labels.go} aria-label={props.labels.go} disabled={navigating()}>
+          <button type="submit" class="new-tab-button" title={props.labels.go} aria-label={props.labels.go} disabled={navigating() || addressSubmissionBlocked()}>
             <ArrowRight class="h-4 w-4" />
           </button>
         </form>

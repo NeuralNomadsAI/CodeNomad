@@ -278,7 +278,7 @@ fn probe_issues_a_bounded_witness_for_the_current_registration_and_document() {
     let url = "https://example.com/next";
     assert_eq!(
         controller
-            .prepare_navigation(&registration, url, Some(document), |_| Ok(()))
+            .prepare_navigation(&registration, url, Some(document), None, || Ok(()))
             .unwrap_err(),
         STALE_TARGET
     );
@@ -295,7 +295,7 @@ fn probe_issues_a_bounded_witness_for_the_current_registration_and_document() {
         .reserve_page_for(registration.clone(), &operation, Some(document))
         .unwrap();
     controller
-        .prepare_navigation(&registration, url, Some(document), |_| Ok(()))
+        .prepare_navigation(&registration, url, Some(document), None, || Ok(()))
         .unwrap();
     let dispatch_document = Some(document.wrapping_add(1));
     controller
@@ -389,7 +389,7 @@ fn webview2_same_url_reopen_revokes_only_the_exact_guest_document() {
         Err(STALE_TARGET.into())
     );
     assert_eq!(
-        controller.prepare_navigation(&registration, url, Some(document), |_| Ok(())),
+        controller.prepare_navigation(&registration, url, Some(document), None, || Ok(())),
         Err(STALE_TARGET.into())
     );
     assert!(controller.check_page_state(&lease, deadline).is_err());
@@ -617,7 +617,9 @@ fn autonomous_load_revocation_stops_only_the_pending_exact_navigation() {
         controller
             .publish_registration(expected.clone(), 0, url, None)
             .unwrap();
-        let sequence = controller.prepare_navigation(&expected, url, None, |_| Ok(())).unwrap();
+        let sequence = controller
+            .prepare_navigation(&expected, url, None, None, || Ok(()))
+            .unwrap();
         controller.mark_page_started(id, expected.generation, 17, url.into());
         if scenario == "superseded" {
             controller.mark_page_started(
@@ -673,7 +675,7 @@ fn autonomous_load_returns_the_completion_url_once_and_rejects_a_later_document(
         .unwrap();
     let document = controller.document_version(&expected).unwrap();
     let sequence = controller
-        .prepare_navigation(&expected, url, Some(document), |_| Ok(()))
+        .prepare_navigation(&expected, url, Some(document), None, || Ok(()))
         .unwrap();
     controller.mark_page_started(id, expected.generation, 17, url.into());
     controller.mark_page_started(id, expected.generation, 17, redirected.into());

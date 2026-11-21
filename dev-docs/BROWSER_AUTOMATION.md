@@ -363,10 +363,11 @@ preview remains available.
 An explicit surface gesture retires the superseded request immediately. A user navigation
 on its acknowledged guest retires the open and retains that guest. Before dispatching
 the user's navigation, the journal excludes the retired native entry by identity.
+A main-frame link navigation that supersedes an in-flight open also retains its exact guest.
 An explicit open from another occurrence can replace the first agent open's provisional
-guest. Refresh is disabled until that first open settles; native location notifications
-leave unsubmitted address edits intact. The native dispatch rechecks the exact
-reservation immediately before navigating.
+guest. Address submission waits for that guest's attachment acknowledgement while the
+address field stays editable. Refresh waits for the first open to settle. The native
+dispatch rechecks the exact reservation immediately before navigating.
 
 The native host issues the URL only after the exact visible registration is admitted.
 It returns that navigation's committed URL, including redirects, after the main document's
