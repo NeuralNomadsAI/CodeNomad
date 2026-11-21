@@ -4,10 +4,12 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::io;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
 const RESTART_DELAY: Duration = Duration::from_millis(100);
+// The client may wait 95 s for a lost ACK before spending 95 s reconnecting.
+const RECONNECT_RECEIPT_TTL: Duration = Duration::from_secs(2 * 95);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -37,7 +39,7 @@ pub(crate) struct DeveloperMode {
     run_id: String,
     native_identity: String,
     devtools_active_port: Option<PathBuf>,
-    previous_restart: Option<DeveloperRestart>,
+    previous_restart: Option<(DeveloperRestart, Instant)>,
     launch_scope: Option<(PathBuf, crate::identity::LaunchProfile, Option<String>)>,
 }
 
@@ -95,7 +97,7 @@ impl DeveloperMode {
         executable: Option<PathBuf>,
         profile: crate::identity::LaunchProfile,
         config: Option<String>,
-        previous_restart: Option<DeveloperRestart>,
+        previous_restart: Option<(DeveloperRestart, Instant)>,
     ) -> Self {
         self.launch_scope = executable.map(|path| (path, profile, config));
         self.previous_restart = previous_restart;
@@ -264,10 +266,35 @@ impl DeveloperMode {
         params: Option<Value>,
     ) -> Result<Value, String> {
         let expected = Self::restart_request(params)?;
-        if !cfg!(windows) || self.previous_restart.as_ref() != Some(&expected) {
+        if !cfg!(windows) {
             return Err("No matching CodeNomad relaunch".into());
         }
-        Ok(self.reconnect_snapshot(app, &expected))
+        self.read_reconnect(&expected, Instant::now, || {
+            self.reconnect_snapshot(app, &expected)
+        })
+    }
+
+    fn read_reconnect(
+        &self,
+        expected: &DeveloperRestart,
+        now: impl Fn() -> Instant,
+        snapshot: impl FnOnce() -> Value,
+    ) -> Result<Value, String> {
+        let no_match = "No matching CodeNomad relaunch";
+        let (_, started_at) = self
+            .previous_restart
+            .as_ref()
+            .filter(|(restart, _)| restart == expected)
+            .ok_or(no_match)?;
+        let expired = || now().duration_since(*started_at) >= RECONNECT_RECEIPT_TTL;
+        if expired() {
+            return Err(no_match.into());
+        }
+        let result = snapshot();
+        if expired() {
+            return Err(no_match.into());
+        }
+        Ok(result)
     }
 
     fn prove_restart(
@@ -301,7 +328,7 @@ impl DeveloperMode {
         self.prove_restart(&expected, |window| Self::exact_window(app, window))?;
         let label = crate::identity::local_window_label(&expected.window_id)?;
         fence.check()?;
-        let generation = crate::shutdown::reserve_automation_restart(app, &label)?;
+        let generation = crate::shutdown::reserve_automation_restart(app, &label, &fence)?;
         let app = app.clone();
         let plan = RelaunchPlan {
             executable: executable.clone(),
@@ -314,8 +341,16 @@ impl DeveloperMode {
         };
         std::thread::spawn(move || {
             std::thread::sleep(RESTART_DELAY);
-            let current = fence.check().is_ok() && Self::exact_window(&app, &plan.handoff.restart);
-            crate::shutdown::finish_automation_restart(app, &label, generation, current.then_some(plan));
+            let current = fence.check().is_ok()
+                && Self::exact_window(&app, &plan.handoff.restart)
+                && fence.check().is_ok();
+            crate::shutdown::finish_automation_restart(
+                app,
+                &label,
+                generation,
+                current.then_some(plan),
+                &fence,
+            );
         });
         Ok(json!(expected))
     }
@@ -474,6 +509,42 @@ mod tests {
         expected.native_identity = "tauri:test".into();
         expected.run_id = "another run".into();
         assert!(mode.prove_restart(&expected, |_| true).is_err());
+    }
+
+    #[test]
+    fn reconnect_receipt_survives_lost_ack_but_expires_even_during_a_snapshot() {
+        use std::cell::Cell;
+
+        let mut mode = DeveloperMode::new("tauri:test".into(), None);
+        let restart = DeveloperRestart {
+            run_id: "old".into(),
+            native_identity: "tauri:test".into(),
+            window_id: "11111111-2222-4333-8444-555555555555".into(),
+            window_instance: Some("old-incarnation".into()),
+            restart_id: "7c3e5066-017d-4ce1-a371-187ac459c4b2".into(),
+        };
+        let started = Instant::now();
+        mode.previous_restart = Some((restart.clone(), started));
+        let clock = Cell::new(started + Duration::from_secs(95));
+        let now = || clock.get();
+        assert_eq!(
+            mode.read_reconnect(&restart, now, || json!("starting")),
+            Ok(json!("starting"))
+        );
+        clock.set(started + Duration::from_millis(189_999));
+        assert_eq!(
+            mode.read_reconnect(&restart, now, || json!("ready")),
+            Ok(json!("ready"))
+        );
+        assert!(mode
+            .read_reconnect(&restart, now, || {
+                clock.set(started + Duration::from_secs(190));
+                json!("late")
+            })
+            .is_err());
+        assert!(mode
+            .read_reconnect(&restart, now, || panic!("expired receipt reached snapshot"))
+            .is_err());
     }
 
     #[test]

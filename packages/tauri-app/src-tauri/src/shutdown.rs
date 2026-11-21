@@ -1,3 +1,4 @@
+use crate::native_request::RequestFence;
 use crate::{client_state, local_windows::LocalWindows, AppState};
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
@@ -174,14 +175,22 @@ impl ShutdownCoordinator {
             && !state.approved_local_closes.contains(label)
     }
 
-    fn reserve_automation_restart(&self, label: &str) -> Result<u64, &'static str> {
-        let mut state = self.state.lock().map_err(|_| "The CodeNomad host is shutting down")?;
+    fn reserve_automation_restart(
+        &self,
+        label: &str,
+        fence: &RequestFence,
+    ) -> Result<u64, String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "The CodeNomad host is shutting down")?;
         if !Self::can_restart_automation(&state, label) {
-            return Err("The CodeNomad host is shutting down");
+            return Err("The CodeNomad host is shutting down".into());
         }
         if state.pending_automation_restart.is_some() {
-            return Err("CodeNomad restart is already pending");
+            return Err("CodeNomad restart is already pending".into());
         }
+        fence.check()?;
         state.next_generation += 1;
         state.pending_automation_restart = Some(state.next_generation);
         Ok(state.next_generation)
@@ -201,6 +210,7 @@ impl ShutdownCoordinator {
         label: &str,
         generation: u64,
         plan: crate::developer_relaunch::RelaunchPlan,
+        fence: &RequestFence,
     ) -> Option<Vec<(String, u64)>> {
         let mut state = self.state.lock().ok()?;
         if state.pending_automation_restart != Some(generation) {
@@ -210,6 +220,7 @@ impl ShutdownCoordinator {
         if !Self::can_restart_automation(&state, label) {
             return None;
         }
+        fence.check().ok()?;
         let requests = Self::begin_shutdown_locked(&mut state, labels)?;
         state.automation_restart = Some(plan);
         Some(requests)
@@ -763,8 +774,12 @@ pub(crate) fn request_restart(app: AppHandle) {
     request(app);
 }
 
-pub(crate) fn reserve_automation_restart(app: &AppHandle, label: &str) -> Result<u64, String> {
-    Ok(app.state::<ShutdownCoordinator>().reserve_automation_restart(label)?)
+pub(crate) fn reserve_automation_restart(
+    app: &AppHandle,
+    label: &str,
+    fence: &RequestFence,
+) -> Result<u64, String> {
+    app.state::<ShutdownCoordinator>().reserve_automation_restart(label, fence)
 }
 
 pub(crate) fn finish_automation_restart(
@@ -772,13 +787,15 @@ pub(crate) fn finish_automation_restart(
     label: &str,
     generation: u64,
     plan: Option<crate::developer_relaunch::RelaunchPlan>,
+    fence: &RequestFence,
 ) {
     let coordinator = app.state::<ShutdownCoordinator>();
     let Some(plan) = plan else {
         coordinator.cancel_automation_restart(generation);
         return;
     };
-    let requests = coordinator.begin_automation_restart(renderer_labels(&app), label, generation, plan);
+    let labels = renderer_labels(&app);
+    let requests = coordinator.begin_automation_restart(labels, label, generation, plan, fence);
     if let Some(requests) = requests {
         flush_shutdown(app, requests, RENDERER_FLUSH_TIMEOUT);
     }

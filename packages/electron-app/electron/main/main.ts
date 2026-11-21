@@ -8,7 +8,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { appendNodeOption, DeveloperMode } from "./developer-mode"
-import { developerNativeIdentity, developerRelaunchOptions, pinElectronRelaunch, readDeveloperRelaunch, readElectronEntry, type DeveloperRelaunch, type ElectronRelaunchArtifact } from "./developer-relaunch"
+import { developerNativeIdentity, developerRelaunchOptions, pinElectronRelaunch, readDeveloperRelaunch, readElectronEntry, verifyElectronRelaunch, type DeveloperRelaunch, type ElectronRelaunchArtifact } from "./developer-relaunch"
 import { BrowserController, handleNativeBrowserRequest } from "./browser-controller"
 import { isBrowserUrlAllowed, secureBrowserWebview } from "./browser-webview-security"
 import { protectBrowserGuest, isBrowserAuxiliaryWindow, configureBrowserGuests } from "./browser-guests"
@@ -50,7 +50,8 @@ import { setupDataProfileCleanupIPC } from "./data-profile-cleanup-ipc"
 import { openExternalWithFeedback } from "./open-external"
 import { RemoteRecoveryPages, showRemoteUnavailable } from "./remote-recovery"
 
-const mainDirname = dirname(fileURLToPath(import.meta.url))
+const mainPath = fileURLToPath(import.meta.url)
+const mainDirname = dirname(mainPath)
 const isMac = process.platform === "darwin"
 // For a direct-file launch getAppPath() is the directory, not the CLI entry.
 const devEntry = process.defaultApp ? readElectronEntry(process.argv) : undefined
@@ -66,7 +67,7 @@ function resolveStoragePaths(baseUserDataPath: string, profileKey: string, origi
   const scope = resolveStorageScope({
     profileKey, cliConfig: originalConfig, cwd: process.cwd(), baseUserDataPath, packaged: app.isPackaged,
   })
-  const artifact = pinElectronRelaunch(process.execPath, devEntry?.path ?? app.getAppPath(), relaunchArgs)
+  const artifact = pinElectronRelaunch(process.execPath, app.getAppPath(), relaunchArgs, mainPath)
   const nativeIdentity = developerNativeIdentity(scope.profile, scope.configIdentity, originalConfig, artifact)
   if (expectedIdentity !== undefined && expectedIdentity !== nativeIdentity) throw new Error("CodeNomad automation relaunch scope changed")
   // The backend must use the exact desktop data profile for paused Mission metadata. It is
@@ -180,6 +181,7 @@ function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, artifact:
         && !lifecycle.isWindowClosing(record.window)
     },
     relaunchScopeGeneration: () => lifecycle.relaunchScopeGeneration(),
+    verifyRelaunch: () => verifyElectronRelaunch(artifact),
     requestRelaunch: restart => lifecycle.requestRelaunch(developerRelaunchOptions({
       profile: storageScope.profile, pinned: profilePinned, config, restart,
     }, artifact)),

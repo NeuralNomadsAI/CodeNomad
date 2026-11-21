@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
-import { realpathSync } from "node:fs"
+import { realpathSync, statSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
+import { Worker } from "node:worker_threads"
 import { readDeveloperRestart, type DeveloperRestart } from "../../../server/src/automation/developer-restart"
 
 const PREFIX = "--codenomad-automation-relaunch="
@@ -12,17 +13,50 @@ export interface DeveloperRelaunch {
   config: string | null
 }
 
-/** Capture at startup: a symlink or junction may move while this process is running. */
-export function pinElectronRelaunch(execPath: string, appPath: string, appArgs: readonly string[]) {
-  const executable = realpathSync.native(execPath)
+/** Capture the running module, not a second resolution of Electron's CLI operand. */
+export function pinElectronRelaunch(execPath: string, appPath: string, appArgs: readonly string[], loadedMain: string) {
   const artifact = realpathSync.native(appPath)
-  return { execPath: executable, appPath: artifact, appArgs: appArgs.length ? [...appArgs.slice(0, -1), artifact] : [] }
+  const mainPath = realpathSync.native(loadedMain)
+  const operand = appArgs.at(-1)
+  // Keep Electron's package launch when the CLI operand is its app root.
+  const cliPackage = operand === appPath ? artifact : undefined
+  return {
+    execPath: realpathSync.native(execPath), appPath: artifact, mainPath, cliPackage,
+    appArgs: operand ? [...appArgs.slice(0, -1), cliPackage ?? mainPath] : [],
+  }
 }
 
 export type ElectronRelaunchArtifact = ReturnType<typeof pinElectronRelaunch>
 
-export function developerNativeIdentity(profile: string, configIdentity: string, config: string | undefined, { execPath, appPath }: ElectronRelaunchArtifact): string {
-  return `electron:${createHash("sha256").update(`${profile}\0${configIdentity}\0${config ?? ""}\0${execPath}\0${appPath}`).digest("hex")}`
+export function developerNativeIdentity(profile: string, configIdentity: string, config: string | undefined, { execPath, appPath, mainPath }: ElectronRelaunchArtifact): string {
+  return `electron:${createHash("sha256").update(`${profile}\0${configIdentity}\0${config ?? ""}\0${execPath}\0${appPath}\0${mainPath}`).digest("hex")}`
+}
+
+export async function verifyElectronRelaunch({ execPath, appPath, mainPath, cliPackage }: ElectronRelaunchArtifact): Promise<void> {
+  try {
+    if (realpathSync.native(execPath) === execPath && realpathSync.native(appPath) === appPath
+      && realpathSync.native(mainPath) === mainPath && statSync(mainPath).isFile()
+      && (!cliPackage || await resolveFreshPackageMain(cliPackage) === mainPath)) return
+  } catch (cause) {
+    throw new Error("The CodeNomad relaunch artifact changed or is unavailable", { cause })
+  }
+  throw new Error("The CodeNomad relaunch artifact changed or is unavailable")
+}
+
+function resolveFreshPackageMain(appPath: string): Promise<string> {
+  // Electron's default_app/main.ts uses Module._resolveFilename(operand, null, true).
+  // A fresh isolate avoids Node's cached package paths and realpaths from the original load.
+  const worker = new Worker(`
+    const { parentPort, workerData } = require("node:worker_threads")
+    const { Module } = require("node:module")
+    const { realpathSync } = require("node:fs")
+    parentPort.postMessage(realpathSync.native(Module._resolveFilename(workerData, null, true)))
+  `, { eval: true, execArgv: [], workerData: appPath })
+  return new Promise<string>((resolve, reject) => {
+    worker.once("message", resolve)
+    worker.once("error", reject)
+    worker.once("exit", () => reject(new Error("Electron entry resolution ended without a result")))
+  })
 }
 
 /** Entry selection follows Electron's default_app/main.ts. Only --no-sandbox carries over. */

@@ -1831,6 +1831,7 @@ fn app_context<R: tauri::Runtime>() -> tauri::Context<R> {
 }
 
 fn main() {
+    let started_at = Instant::now();
     #[cfg(windows)]
     if let Some(code) = cli_manager::run_windows_cli_launcher_if_requested() {
         std::process::exit(code);
@@ -1897,7 +1898,10 @@ fn main() {
         configure_developer_webview(&scope).expect("configure native automation browser profile");
     let developer_mode = developer_mode::DeveloperMode::new(developer_identity, devtools_active_port)
         .with_launch_scope(
-            executable, launch_profile, backend_config.clone(), handoff.map(|handoff| handoff.restart),
+            executable,
+            launch_profile,
+            backend_config.clone(),
+            handoff.map(|handoff| (handoff.restart, started_at)),
         );
 
     // Before the single-instance plugin can forward a `|` that would split into other arguments.

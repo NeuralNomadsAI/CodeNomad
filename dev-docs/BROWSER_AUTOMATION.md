@@ -58,6 +58,8 @@ only a qualified path is retained across calls.
 
 `codenomad.act({ action: "restart" })` relaunches the inspected desktop scope (data profile, original config source, executable and Electron app artifact) through the native graceful shutdown. The bridge verifies the current inspection pin and sends its window UUID, incarnation, native scope and run ID with a fresh restart ID to `developer.restartScope`. The host rechecks the exact window before shutdown. The relaunch uses ordinary window restoration and preserves the profile manager's next choice.
 
+Electron's scope binds the physical main module as well as the package root. Direct CLI launches relaunch the resolved script; directory launches keep the package root and require a fresh Electron-compatible entry resolution before admission. The filesystem can still change between admission and the native loader opening the entry; the next CodeNomad run checks the resulting identity before restoring the scope.
+
 `developer-reconnect` checks a new registration for the one-shot restart handoff in a new run of the same scope. It reports a missing UUID, waits for a loading window, or issues a fresh inspection pin for the original UUID's new incarnation. Reconnection uses the same renderer identity and session-ownership checks as ordinary inspection. Transport uncertainty permits read-only reconnection; never resend the restart. Mixed versions refuse restart.
 
 - The HTTP bridge and CDP endpoint use IPv4 loopback only. The bridge requires its random token. Raw CDP has no authentication and can execute code in authenticated renderer pages, so it trusts local processes; the bridge keeps its token and session/window selection checks.
