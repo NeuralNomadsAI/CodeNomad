@@ -11,7 +11,7 @@ import path from "node:path"
 import { withProductRuntime } from "../../../scripts/native-product-fixture.mjs"
 import { stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
 import { setTimeout as delay } from "node:timers/promises"
-import { dist, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { dist, dropRegistration, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
 
 const exe=process.argv[2]
 assert(path.isAbsolute(exe??""),"usage: node security.mjs <absolute opencode executable>")
@@ -118,7 +118,7 @@ await withProductRuntime(exe,async()=>({}),async ({root:home,env,connection})=>{
       assert(local&&remote,lines)
       return {local,remote}
     }
-    return {child,stopped,origins,close:()=>child.exitCode===null?stopFixtureChild(child,stopped):stopped}
+    return {child,stopped,origins,close:async()=>{await (child.exitCode===null?stopFixtureChild(child,stopped):stopped);await dropRegistration(env,child.pid)}}
   }
   const server=start("risk"),{child,stopped}=server
   const cleanup=[]

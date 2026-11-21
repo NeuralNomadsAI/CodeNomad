@@ -34,13 +34,17 @@ struct Server {
     lines: mpsc::UnboundedReceiver<String>,
     root: PathBuf,
     config: PathBuf,
+    pid: u32,
 }
 
 impl Server {
     /// `exe` with the hosts' variables in a private home; the daemon endpoint is a placeholder.
     fn start(root: PathBuf, exe: &Path, args: &[&str]) -> Self {
         Self::start_with(root, exe, args, |command| {
-            command.env("CODENOMAD_NATIVE_PARENT", "1");
+            command
+                .env("CODENOMAD_NATIVE_PARENT", "1")
+                .env("CNRS_FIXTURE_URL", "http://127.0.0.1:9/")
+                .env("CNRS_FIXTURE_PASSWORD", "placeholder");
         })
     }
 
@@ -85,7 +89,8 @@ impl Server {
                 let _ = tx.send(line);
             }
         });
-        Self { child, lines, root, config }
+        let pid = child.id().unwrap();
+        Self { child, lines, root, config, pid }
     }
     async fn line(&mut self) -> String {
         timeout(Duration::from_secs(60), self.lines.recv()).await.expect("stdout line within the hosts' 60 s").unwrap()
@@ -107,8 +112,35 @@ impl Server {
         while self.line().await != "CODENOMAD_SHUTDOWN_STATUS:complete" {}
         let exit = timeout(Duration::from_secs(30), self.child.wait()).await.expect("exit within 30 s").unwrap();
         assert!(exit.success());
+        assert!(published(&self.bridges(), self.pid).is_empty(), "registration removed on stop");
         let _ = fs::remove_dir_all(&self.root);
     }
+    /// `automationBridgeDirectory` of the child's private environment.
+    fn bridges(&self) -> PathBuf {
+        let home = self.root.join("home");
+        if cfg!(windows) { home.join("AppData/Local/CodeNomad") } else { home.join(".config/codenomad") }
+            .join("automation-bridges")
+    }
+}
+
+/// Registration files of `pid` in `dir`.
+fn published(dir: &Path, pid: u32) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(dir) else { return vec![] };
+    let mark = format!("-{pid}-");
+    entries.flatten().map(|e| e.path()).filter(|p| p.to_string_lossy().contains(&mark)).collect()
+}
+
+/// The user's own `automation-bridges/`, as this test process sees it.
+fn user_bridges() -> Option<PathBuf> {
+    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let base = match var("LOCALAPPDATA").filter(|_| cfg!(windows)) {
+        Some(local) => local.join("CodeNomad"),
+        None => match var("XDG_RUNTIME_DIR") {
+            Some(runtime) => runtime.join("codenomad"),
+            None => var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })?.join(".config").join("codenomad"),
+        },
+    };
+    Some(base.join("automation-bridges"))
 }
 
 fn scratch(name: &str) -> PathBuf {
@@ -229,6 +261,11 @@ async fn desktop_launch_contract() {
     fs::write(server.root.join("cwd/plain.txt"), "outside").unwrap();
     let (token, url, remote) = server.ready().await;
     assert!(remote.starts_with("Remote Connection URL : https://localhost:"), "{remote}");
+    // The plugin bridge is advertised in the private home only, never in the user's registry.
+    assert_eq!(published(&server.bridges(), server.pid).len(), 1);
+    if let Some(user) = user_bridges() {
+        assert!(published(&user, server.pid).is_empty(), "registration in {}", user.display());
+    }
     for file in ["ca-cert.pem", "server-cert.pem", "server-key.pem"] {
         assert!(server.config.join("tls").join(file).is_file(), "{file}");
     }

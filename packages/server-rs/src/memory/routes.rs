@@ -300,7 +300,7 @@ pub async fn sync(app: &Shared, session: &str) {
 /// The memory request carried in this backend's memory leases.
 pub fn lease_requested(app: &crate::App) -> bool {
     static SEEN: Mutex<Option<(Option<(std::time::SystemTime, u64)>, bool)>> = Mutex::new(None);
-    if app.mission_bridge.is_none() {
+    if !crate::automation::published() {
         return false;
     }
     let stamp = std::fs::metadata(&app.settings.location.config).ok().and_then(|m| Some((m.modified().ok()?, m.len())));

@@ -776,7 +776,7 @@ fn resolve_listening_mode() -> String {
 }
 
 /// `server.implementation` in the selected config (YAML, else the legacy JSON).
-fn configured_implementation() -> Option<String> {
+pub(crate) fn configured_implementation() -> Option<String> {
     let (yaml, json) = resolve_config_locations();
     let config = fs::read_to_string(yaml)
         .ok()
@@ -1550,16 +1550,21 @@ impl CliProcessManager {
                     if let Some(request) = crate::native_request::parse(line) {
                         let current = manager.clone();
                         let fence = crate::native_request::RequestFence::new(request.deadline, move || current.is_current_generation(generation));
-                        if let Some(response) = crate::native_request::dispatch(request, fence, |request, fence| {
-                            crate::handle_native_request(
-                                app,
-                                &request.method,
-                                request.params.clone(),
-                                request.deadline,
-                                fence,
-                            )
-                        }) {
-                            manager.write_native_response(generation, &response);
+                        let detached = matches!(request.method.as_str(), "developer.execute" | "browser.execute");
+                        let (app, manager) = (app.clone(), manager.clone());
+                        let answer = move || {
+                            if let Some(response) = crate::native_request::dispatch(request, fence, |request, fence| {
+                                crate::handle_native_request(&app, &request.method, request.params.clone(), request.deadline, fence)
+                            }) {
+                                manager.write_native_response(generation, &response);
+                            }
+                        };
+                        // Page automation can wait up to its 15 s `wait` or a navigation: never on
+                        // this reader, which also carries every other native request and output line.
+                        if detached {
+                            std::thread::spawn(answer);
+                        } else {
+                            answer();
                         }
                     }
                     return;
@@ -1727,7 +1732,7 @@ enum Runner {
 
 /// `rust` from `CODENOMAD_SERVER_IMPL`, else from `server.implementation`, launches the Rust
 /// server binary instead of the Node server.
-fn uses_rust_server(env: Option<&str>, config: Option<&str>) -> bool {
+pub(crate) fn uses_rust_server(env: Option<&str>, config: Option<&str>) -> bool {
     env.filter(|v| !v.trim().is_empty()).or(config).is_some_and(|v| v.trim().eq_ignore_ascii_case("rust"))
 }
 

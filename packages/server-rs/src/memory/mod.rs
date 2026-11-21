@@ -16,6 +16,7 @@ mod tests;
 mod text;
 mod yaml;
 
+pub(crate) use lock::confirmed_absent;
 pub use routes::{bridge, lease_requested, sync};
 
 pub fn routes() -> axum::Router<crate::Shared> {

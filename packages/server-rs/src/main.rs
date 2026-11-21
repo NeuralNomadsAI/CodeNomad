@@ -3,6 +3,7 @@
 //! password session and, with HTTPS configured, behind the paired-device admission.
 mod app;
 mod auth;
+mod automation;
 mod bench;
 mod config;
 mod events;
@@ -39,6 +40,7 @@ use shared::{data_owner, panic_guard};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    automation::diagnostics::install();
     bench::panic_on_start();
     let args: Vec<_> = env::args().skip(1).collect();
     if args.first().is_some_and(|a| a == "opencode") {
@@ -154,14 +156,15 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         .merge(opencode::install::routes());
 
     service::stop_on_terminate(shutdown.clone());
-    if launch.serve {
+    // One stdin reader serves the stop command and native responses (also under a bench host).
+    if launch.serve || host::native_parent::available() {
         host::read_stdin(shutdown.clone());
     } else {
         bench::stop_on_stdin(shutdown.clone());
     }
+    let bridge = automation::publish(&state, shutdown.clone()).await;
     let plugins = extensions::lifecycle::start(&state, shutdown.clone())?;
     tokio::spawn(previews::sweep(state.clone(), shutdown.clone()));
-    missions::serve_bridge(&state, shutdown.clone());
     tokio::spawn(files::watch::run(state.clone(), watch_rx, shutdown.clone()));
     let remote_url = tls.as_ref().map(|tls| tls.origin.clone());
     let remote = tls.map(|tls| {
@@ -219,7 +222,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         })
         .await;
     shutdown.cancel();
-    if let Some(task) = plugins {
+    for task in [plugins, bridge].into_iter().flatten() {
         let _ = task.await;
     }
     let remote = match remote {

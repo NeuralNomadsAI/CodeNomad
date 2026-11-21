@@ -4,9 +4,20 @@ use serde_json::{json, Map, Value};
 use std::sync::OnceLock;
 const GROUP: &str = "codenomad-automation";
 const INVALID: &str = "Unsupported or invalid browser page operation parameters";
-fn registry() -> &'static Value {
-    static REGISTRY: OnceLock<Value> = OnceLock::new();
-    REGISTRY.get_or_init(|| {
+/// The fixed programs: preview guests', or the trusted app window's marked ones with the input
+/// provenance functions (`application`), which never reach a guest.
+fn registry(application: bool) -> &'static Value {
+    static PREVIEW: OnceLock<Value> = OnceLock::new();
+    static APPLICATION: OnceLock<Value> = OnceLock::new();
+    if application {
+        return APPLICATION.get_or_init(|| {
+            serde_json::from_str(include_str!(
+                "../../../server/src/automation/page/functions.application.generated.json"
+            ))
+            .expect("generated application function registry")
+        });
+    }
+    PREVIEW.get_or_init(|| {
         serde_json::from_str(include_str!(
             "../../../server/src/automation/page/functions.generated.json"
         ))
@@ -16,7 +27,7 @@ fn registry() -> &'static Value {
 
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "kebab-case", deny_unknown_fields)]
-pub(super) enum Operation {
+pub(crate) enum Operation {
     Tree,
     Viewport,
     ReleaseHandles,
@@ -93,7 +104,11 @@ pub(super) fn envelope(method: &str, value: &Value) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn parse(value: Value) -> Result<Operation, String> {
+pub(crate) fn parse(value: Value) -> Result<Operation, String> {
+    parse_in(value, false)
+}
+
+pub(crate) fn parse_in(value: Value, application: bool) -> Result<Operation, String> {
     if value.to_string().len() > 256 * 1024 {
         return Err(INVALID.into());
     }
@@ -126,7 +141,7 @@ pub(super) fn parse(value: Value) -> Result<Operation, String> {
             handle: target,
             args,
         } => {
-            let definition = registry().get(function).ok_or(INVALID)?;
+            let definition = registry(application).get(function).ok_or(INVALID)?;
             if definition["scope"] == "element" {
                 if !target.as_ref().is_some_and(|id| handle(&json!(id))) {
                     return Err(INVALID.into());
@@ -275,7 +290,10 @@ pub(super) fn parse(value: Value) -> Result<Operation, String> {
 }
 
 impl Operation {
-    pub(super) fn cdp(&self) -> Option<(&'static str, Value)> {
+    pub(crate) fn cdp(&self) -> Option<(&'static str, Value)> {
+        self.cdp_in(false)
+    }
+    pub(crate) fn cdp_in(&self, application: bool) -> Option<(&'static str, Value)> {
         Some(match self {
             Self::Tree => ("Accessibility.getFullAXTree", json!({})),
             Self::Resolve { node } => (
@@ -296,7 +314,7 @@ impl Operation {
                 handle,
                 args,
             } => {
-                let definition = &registry()[function];
+                let definition = &registry(application)[function];
                 if definition["scope"] == "element" {
                     (
                         "Runtime.callFunctionOn",
@@ -323,7 +341,7 @@ impl Operation {
             Self::Checkpoint => return None,
         })
     }
-    pub(super) fn result(&self, raw: Value) -> Value {
+    pub(crate) fn result(&self, raw: Value) -> Value {
         match self {
             Self::Tree => {
                 json!({"nodes":raw["nodes"].as_array().map(|nodes| nodes.iter().map(semantic_node).collect::<Vec<_>>()).unwrap_or_default()})
@@ -333,7 +351,7 @@ impl Operation {
                 if let Some(error) = raw.get("exceptionDetails") {
                     return json!({"exception":error["exception"]["description"].as_str().or_else(||error["text"].as_str()).unwrap_or("")});
                 }
-                if registry()[function]["handle"] == true {
+                if registry(false)[function]["handle"] == true {
                     optional("handle", raw["result"].get("objectId"))
                 } else {
                     optional("value", raw["result"].get("value"))

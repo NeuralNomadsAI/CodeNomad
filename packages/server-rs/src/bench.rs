@@ -1,6 +1,6 @@
 //! Switches reserved for the qualification bench: the positional launch, the injected native
 //! endpoint, fixture-only features and traces. `serve` never reads them.
-use std::{env, ffi::OsString, net::SocketAddr, path::PathBuf, sync::LazyLock, time::Duration};
+use std::{env, net::SocketAddr, path::PathBuf, sync::LazyLock, time::Duration};
 
 use axum::{body::Body, extract::Request, middleware::Next, response::Response};
 use tokio_util::sync::CancellationToken;
@@ -92,6 +92,26 @@ pub fn provider_fixture() -> Option<reqwest::Url> {
     );
     Some(url)
 }
+
+/// Under the fixture daemon (tests and bench), the automation bridge registry must lie in the
+/// fixture's private home: never the user's real `automation-bridges/`, which their plugins probe.
+pub fn private_registry(dir: &std::path::Path) -> bool {
+    let home = env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);
+    !native_endpoint_set() || home.is_some_and(|home| inside(dir, &home))
+}
+fn inside(dir: &std::path::Path, home: &std::path::Path) -> bool {
+    use std::path::Component::ParentDir;
+    dir.is_absolute() && dir.starts_with(home) && !dir.components().any(|c| c == ParentDir)
+}
+#[cfg(test)]
+#[test]
+fn fixture_registry_stays_in_the_private_home() {
+    let home = std::env::temp_dir().join("fixture-home");
+    assert!(inside(&home.join("AppData/Local/CodeNomad/automation-bridges"), &home));
+    assert!(!inside(&home.join("../real/AppData/Local/CodeNomad/automation-bridges"), &home));
+    assert!(!inside(&std::env::temp_dir().join("real-user/AppData/Local"), &home));
+    assert!(!inside(std::path::Path::new("relative/automation-bridges"), std::path::Path::new("relative")));
+}
 /// `CNRS_FIXTURE_PANIC=1`: panic at startup, to check the backtrace a desktop host logs.
 pub fn panic_on_start() {
     if on("CNRS_FIXTURE_PANIC") {
@@ -114,14 +134,11 @@ pub fn missions_read() -> bool {
 pub fn missions_calendar() -> bool {
     on("CNRS_FIXTURE_MISSIONS_CALENDAR")
 }
-pub fn missions_registry() -> Option<OsString> {
-    env::var_os("CNRS_FIXTURE_MISSIONS_REGISTRY")
-}
 pub fn family_trace() -> bool {
     on("CNRS_FIXTURE_FAMILY_TRACE")
 }
 #[cfg(test)]
-pub fn provision_fixture() -> Option<OsString> {
+pub fn provision_fixture() -> Option<std::ffi::OsString> {
     env::var_os("CNRS_PROVISION_FIXTURE")
 }
 

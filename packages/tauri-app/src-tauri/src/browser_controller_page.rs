@@ -1,7 +1,7 @@
 //! Private backend-only protocol adapter. Never register these methods as Tauri commands.
 use super::*;
 #[path = "browser_page_operation.rs"]
-mod operations;
+pub(crate) mod operations;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[path = "browser_page_webkit.rs"]
 mod webkit;
@@ -348,5 +348,129 @@ impl BrowserController {
             }
         }
         result
+    }
+}
+
+/// Each session's snapshot refs (`b<n>e<k>`), at most 128 sessions; a session's operations queue
+/// behind its table.
+#[derive(Default)]
+pub(crate) struct Refs {
+    tables: Vec<(String, Arc<Mutex<crate::automation::refs::RefTable>>)>,
+    sequence: u64,
+}
+
+impl Refs {
+    fn table(&mut self, session: &str) -> Arc<Mutex<crate::automation::refs::RefTable>> {
+        let table = match self.tables.iter().position(|(s, _)| s == session) {
+            Some(index) => self.tables.remove(index).1,
+            None => {
+                self.sequence += 1;
+                let prefix = format!("b{}e", self.sequence);
+                Arc::new(Mutex::new(crate::automation::refs::RefTable::new(
+                    "take a new snapshot",
+                    prefix,
+                )))
+            }
+        };
+        self.tables.push((session.to_string(), table.clone()));
+        if self.tables.len() > 128 {
+            self.tables.remove(0);
+        }
+        table
+    }
+}
+
+impl BrowserController {
+    /// `BrowserPage`: a snapshot or page action on the session's visible preview through the in-host
+    /// engine, inside one exact page lease (`browser.page.*`), ended even after a failure.
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    pub(super) fn page_action(
+        &self,
+        app: &AppHandle,
+        session_id: &str,
+        command: &Value,
+        deadline: Instant,
+        fence: &crate::native_request::RequestFence,
+    ) -> Result<Value, String> {
+        let deadline = deadline.min(Instant::now() + Duration::from_secs(25));
+        let table = self
+            .page_refs
+            .lock()
+            .map_err(|error| error.to_string())?
+            .table(session_id);
+        let mut refs = table.lock().map_err(|error| error.to_string())?;
+        let base =
+            json!({ "sessionID": session_id, "operationID": uuid::Uuid::new_v4().to_string() });
+        let with = |extra: Value| {
+            let mut input = base.clone();
+            input
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().cloned().unwrap_or_default());
+            input
+        };
+        let outcome = (|| {
+            let begin = self.page_request(app, "browser.page.begin", &base, deadline, fence)?;
+            let generation = begin["generation"]
+                .as_str()
+                .filter(|g| !g.is_empty() && g.len() <= 512)
+                .ok_or("Invalid native browser target")?
+                .to_string();
+            let url = std::cell::RefCell::new(
+                begin["url"]
+                    .as_str()
+                    .ok_or("Invalid native browser target")?
+                    .to_string(),
+            );
+            let checkpoint = || -> Result<(), String> {
+                let checked = self.page_request(
+                    app,
+                    "browser.page.check",
+                    &with(json!({ "generation": generation })),
+                    deadline,
+                    fence,
+                )?;
+                *url.borrow_mut() = checked["url"]
+                    .as_str()
+                    .ok_or("Invalid native browser target")?
+                    .to_string();
+                Ok(())
+            };
+            let send = |operation: Value| {
+                self.page_request(
+                    app,
+                    "browser.page.send",
+                    &with(json!({ "generation": generation, "operation": operation })),
+                    deadline,
+                    fence,
+                )
+            };
+            let driver = if cfg!(windows) { "cdp" } else { "webkit" };
+            let session = crate::automation::page::Session {
+                driver,
+                send: &send,
+                checkpoint: &checkpoint,
+                mark: false,
+            };
+            let mut result = if command["action"] == "snapshot" {
+                crate::automation::page::snapshot(&session, &mut refs, &generation, command, false)
+                    .map(|(snapshot, collapsed)| json!({ "snapshot": snapshot, "collapsed": collapsed }))
+            } else {
+                let refs = &*refs;
+                crate::automation::page::act(&session, command, &|r| refs.resolve(r, &generation))
+            }
+            .map_err(|fail| fail.message)?;
+            result["url"] = json!(url.borrow().clone());
+            Ok(result)
+        })();
+        // Exact and best effort, independent of the outcome; the lease also expires by itself.
+        let _ = self.page_request(
+            app,
+            "browser.page.end",
+            &base,
+            Instant::now() + Duration::from_secs(5),
+            fence,
+        );
+        outcome
     }
 }

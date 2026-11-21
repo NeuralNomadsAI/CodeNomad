@@ -4,6 +4,7 @@
 mod appimage_environment;
 #[cfg(target_os = "linux")]
 mod appimage_exit;
+mod automation;
 mod browser_controller;
 #[allow(dead_code)]
 mod cert_manager;
@@ -96,6 +97,8 @@ const REMOTE_WINDOW_CONTEXT_SCRIPT: &str =
 pub struct AppState {
     pub manager: CliProcessManager,
     pub(crate) developer_mode: developer_mode::DeveloperMode,
+    #[cfg(windows)]
+    pub(crate) window_automation: automation::window::WindowAutomation,
     pub(crate) browser_controller: browser_controller::BrowserController,
     pub wake_lock: Mutex<WakeLockState>,
     remote_navigation: Mutex<HashMap<String, RemoteWindowMetadata>>,
@@ -308,6 +311,14 @@ pub(crate) fn handle_native_request(
             .handle_native(app, method, params, deadline, fence),
         "opencode.service.start" => native_service_start::start(params, deadline),
         "developer.status" => state.developer_mode.native_snapshot(app),
+        #[cfg(windows)]
+        "developer.execute" => state.window_automation.execute(
+            app,
+            state.developer_mode.run_id(),
+            params,
+            browser_controller::request_deadline(deadline)?,
+            &fence,
+        ),
         "developer.restart" => state.developer_mode.request_restart(app),
         _ => Err(format!("Unsupported native request: {method}")),
     }
@@ -1597,9 +1608,11 @@ fn set_windows_app_user_model_id(identifier: &str) {
 #[cfg(not(windows))]
 fn set_windows_app_user_model_id(_identifier: &str) {}
 
+/// `in_process`: the Rust server, whose automation this host serves itself: no debugging port.
 #[cfg(windows)]
 fn configure_developer_webview(
     scope: &identity::IdentityScope,
+    in_process: bool,
 ) -> std::io::Result<(
     Option<std::path::PathBuf>,
     std::path::PathBuf,
@@ -1619,6 +1632,9 @@ fn configure_developer_webview(
     }
 
     std::env::remove_var("WEBVIEW2_USER_DATA_FOLDER");
+    if in_process {
+        return Ok((None, profile, None));
+    }
     let devtools_active_port = Some(
         profile
             .join("local")
@@ -1632,6 +1648,7 @@ fn configure_developer_webview(
 #[cfg(not(windows))]
 fn configure_developer_webview(
     scope: &identity::IdentityScope,
+    _in_process: bool,
 ) -> std::io::Result<(
     Option<std::path::PathBuf>,
     std::path::PathBuf,
@@ -1803,8 +1820,13 @@ fn main() {
         pinned: profile_pinned,
     } = resolve_launch_profile_or_exit(cli_config.as_deref(), &cwd, &home);
     let scope = identity::resolve_scope(&profile, cli_config.as_deref(), &cwd, &home, &local_data);
+    let in_process_automation = cli_manager::uses_rust_server(
+        std::env::var("CODENOMAD_SERVER_IMPL").ok().as_deref(),
+        cli_manager::configured_implementation().as_deref(),
+    );
     let (devtools_active_port, webview_data_directory, developer_browser_arguments) =
-        configure_developer_webview(&scope).expect("configure native automation browser profile");
+        configure_developer_webview(&scope, in_process_automation)
+            .expect("configure native automation browser profile");
     let executable = std::env::current_exe()
         .map(|path| std::fs::canonicalize(&path).unwrap_or(path))
         .unwrap_or_default();
@@ -1816,6 +1838,7 @@ fn main() {
     let developer_mode = developer_mode::DeveloperMode::new(
         format!("tauri:{developer_identity}"),
         devtools_active_port,
+        in_process_automation,
     );
 
     let launch_arguments = std::env::args().skip(1).collect::<Vec<_>>();
@@ -1926,6 +1949,8 @@ fn main() {
                 backend_config.clone(),
             ),
             developer_mode,
+            #[cfg(windows)]
+            window_automation: Default::default(),
             browser_controller,
             wake_lock: Mutex::new(WakeLockState::default()),
             remote_navigation: Mutex::new(HashMap::new()),

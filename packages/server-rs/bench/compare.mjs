@@ -10,12 +10,12 @@ import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { chromium } from "playwright"
 import { stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
-import { fromDist, installMissions, installPruning, measurePair, memory, out, privateGit, productRuntime, provisionEnv, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { dropRegistration, fromDist, installMissions, installPruning, measurePair, memory, out, privateGit, productRuntime, provisionEnv, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
 import { assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
 import { browserFiles, populate } from "./files.mjs"
 import { browserWorktrees } from "./worktrees.mjs"
 
-const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
+const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
 const [mode, exe] = process.argv.slice(2)
 assert(MODES.includes(mode) && path.isAbsolute(exe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)
 const bin = rustBinary()
@@ -56,6 +56,26 @@ async function unusedPort() {
   return port
 }
 
+/** A scripted desktop host on a child's native channel (`native-parent.ts`): every request is recorded
+ * and answered by `answer(method, params)`, by default a refusal. */
+function nativeHost(child) {
+  const native = { requests: [], answer: () => ({ ok: false, error: { code: "fixture", message: "No fixture answer" } }) }
+  let pending = ""
+  child.stdout.on("data", chunk => {
+    pending += chunk
+    for (let at; (at = pending.indexOf("\n")) >= 0;) {
+      const line = pending.slice(0, at).trim()
+      pending = pending.slice(at + 1)
+      if (!line.startsWith("CODENOMAD_NATIVE_REQUEST:")) continue
+      const request = JSON.parse(line.slice("CODENOMAD_NATIVE_REQUEST:".length))
+      native.requests.push({ method: request.method, params: request.params })
+      Promise.resolve(native.answer(request.method, request.params)).then(reply =>
+        child.stdin.write(`CODENOMAD_NATIVE_RESPONSE:${JSON.stringify({ v: 1, id: request.id, ...reply })}\n`))
+    }
+  })
+  return native
+}
+
 async function start(label, fixture, folder, password, trustedCA) {
   const port = await unusedPort()
   const info = await fixture.client.server.info()
@@ -64,10 +84,12 @@ async function start(label, fixture, folder, password, trustedCA) {
   const env = { ...fixture.env, CNRS_FIXTURE_URL: fixture.connection.endpoint.url,
     CNRS_FIXTURE_PASSWORD: fixture.connection.endpoint.auth.password, CNRS_FIXTURE_PID: String(info.pid),
     CNRS_SERVER_PASSWORD: password, CODENOMAD_SERVER_PASSWORD: password }
+  // The automation mode answers each server's native channel as a desktop host does.
+  const scripted = mode === "automation"
+  if (scripted) env.CODENOMAD_NATIVE_PARENT = "1"
   if (label === "ts") Object.assign(env, { CODENOMAD_REMOTE_CONTROL: "disabled", CNRS_FIXTURE_TRUSTED_CA: trustedCA })
   else Object.assign(env, { CNRS_HTTPS_BIND: "127.0.0.1:0", CNRS_HTTPS_NAME: "127.0.0.1", CNRS_FIXTURE_INGRESS: "1",
     CNRS_FIXTURE_MISSIONS_READ: "1", CNRS_FIXTURE_MISSIONS_RUN: "1",
-    CNRS_FIXTURE_MISSIONS_REGISTRY: path.join(fixture.env.LOCALAPPDATA, "CodeNomad", "automation-bridges"),
     ...(mode === "memory" ? provisionEnv(root, "memory") : mode === "design" || mode === "host" ? provisionEnv(root) : {}) })
   // `host`: both servers as the desktop hosts start them, over the whole filesystem, on equal settings.
   if (mode === "host") Object.assign(env, { CLI_UNRESTRICTED_ROOT: "true", CODENOMAD_REMOTE_CONTROL: "disabled" })
@@ -86,15 +108,17 @@ async function start(label, fixture, folder, password, trustedCA) {
   const child = label === "ts"
     ? spawn(process.execPath, [path.join(import.meta.dirname, "ts-server.mjs"), "--http", "true", "--http-port", String(port), "--https", "false",
       "--ui-no-update", "--ui-dir", uiDir, "--config", env.CLI_CONFIG, "--workspace-root", folder],
-      { env, cwd: root, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
-    : spawn(bin, [folder, path.join(root, "rust.json"), String(port), exe], { env, cwd: root, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
+      { env, cwd: root, windowsHide: true, stdio: [scripted ? "pipe" : "ignore", "pipe", "pipe"] })
+    : spawn(bin, [folder, path.join(root, "rust.json"), String(port), exe], { env, cwd: root, windowsHide: true, stdio: [scripted ? "pipe" : "ignore", "pipe", "pipe"] })
   const stopped = new Promise(resolve => child.once("close", resolve))
   let output = "", spawnError
   child.on("error", error => { spawnError = error })
   for (const stream of [child.stdout, child.stderr]) stream.on("data", data => { output += data })
+  const native = scripted ? nativeHost(child) : undefined
   const request = (route, init) => fetch(`${listen}${route}`, { signal: AbortSignal.timeout(HTTP_TIMEOUT), redirect: "manual", ...init })
   const close = async () => {
     if (!spawnError && child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, stopped)
+    await dropRegistration(fixture.env, child.pid)
     const leaked = (bench?.secrets?.() ?? []).filter(secret => output.includes(secret))
     const safe = leaked.reduce((text, secret) => text.replaceAll(secret, "<redacted>"), output)
     await writeFile(path.join(out, `${mode}-${label}.log`), safe.replaceAll(password, "<redacted>").replaceAll(env.CNRS_FIXTURE_PASSWORD, "<redacted>"))
@@ -106,7 +130,7 @@ async function start(label, fixture, folder, password, trustedCA) {
       return (await request("/api/auth/status").catch(() => undefined))?.status === 200 && (label !== "ts" || output.includes("Local Connection URL"))
     }, `${label} startup`, STARTUP_TIMEOUT).catch(error => { throw Error(`${error.message}\n${output.slice(-2500)}`, { cause: error }) })
     const ingress = () => /^CNRS_TEST_INGRESS (http:\/\/127\.0\.0\.1:\d+)$/m.exec(output)?.[1]
-    return { request, close, origin: listen, secureOrigin: /^HTTPS (https:\/\/\S+)$/m.exec(output)?.[1]?.trim(), ingress, pid: child.pid, status: info.version, daemonPID: info.pid }
+    return { request, close, native, origin: listen, secureOrigin: /^HTTPS (https:\/\/\S+)$/m.exec(output)?.[1]?.trim(), ingress, pid: child.pid, status: info.version, daemonPID: info.pid }
   } catch (e) { await close(); throw e }
 }
 
@@ -418,8 +442,8 @@ try {
       }
       if (bench.pair) { result[mode] = await bench.pair(...hosts); return }
       await compareSides([
-        { ...hosts[0], fixture: local, folder: "Local Project", root: tsRoot, other: path.join(tsRoot, "No Repository"), pid: ts.pid },
-        { ...hosts[1], fixture: remote, folder: "Rust Project", root: rsRoot, other: path.join(rsRoot, "No Repository"), pid: rs.pid, data: path.join(remote.root, "rust.data") },
+        { ...hosts[0], fixture: local, folder: "Local Project", root: tsRoot, other: path.join(tsRoot, "No Repository"), pid: ts.pid, native: ts.native },
+        { ...hosts[1], fixture: remote, folder: "Rust Project", root: rsRoot, other: path.join(rsRoot, "No Repository"), pid: rs.pid, native: rs.native, data: path.join(remote.root, "rust.data") },
       ])
     } finally { await Promise.all([ts?.close(), rs?.close(), bench?.close?.()]) }
     assert(!result.leaks, "A server logged a synthetic provider credential")

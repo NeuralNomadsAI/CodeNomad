@@ -44,6 +44,8 @@ UI (Solid) ──HTTP + SSE──▶ codenomad-rs ──HTTP, basic auth, loopba
 | `src/provider_usage/` | Conversation Status usage: native session ownership and credential selection, a bounded provider transport and per-provider cache |
 | `src/previews/` | Preview tokens, cookie-free HTTP/WS proxy and bounded document rewriting; direct HTTP(S) relay generations, isolated loopback origins and paired-device path capabilities |
 | `src/missions/` | Missions and calendar brokering (contract under revision: unchanged here) |
+| `src/automation/` | Plugin bridge `/api/opencode-plugin/automation` and its `automation-bridges/` registration; browser and window requests forwarded to the desktop host; the server's own diagnostics ([design note](docs/automation.md)) |
+| `src/host/` | Desktop host channel (`CODENOMAD_NATIVE_PARENT=1`): native requests over stdout/stdin |
 | `src/shared/` | Cross-domain helpers |
 | `contracts/`, `tests/fixtures/` | Frozen schemas and parity cases generated from the TypeScript server |
 | `bench/` | TS/Rust comparison bench ([README](bench/README.md)) |

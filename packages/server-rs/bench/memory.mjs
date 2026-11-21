@@ -35,6 +35,35 @@ export function loopbackFetch(url, init = {}) {
   })
 }
 
+/** The server's registration in its fixture's `automation-bridges/`, and calls on that bridge:
+ * `bridge(mode, sessionID, command, token)` or a raw `post(body, headers)`. */
+export async function bridgeClient(fixture, pid, timeout = 120000) {
+  const registry = process.platform === "win32" ? path.join(fixture.env.LOCALAPPDATA, "CodeNomad", "automation-bridges")
+    : path.join(fixture.root, ".config", "codenomad", "automation-bridges")
+  let registration, file
+  for (let i = 0; i < 100 && !registration; i++) {
+    for (const name of await readdir(registry).catch(() => [])) {
+      const text = await readFile(path.join(registry, name), "utf8").catch(() => "")
+      let value
+      try { value = JSON.parse(text) } catch {}
+      if (value?.pid === pid) { registration = value; file = { name, text } }
+    }
+    if (!registration) await new Promise(r => setTimeout(r, 100))
+  }
+  assert(registration, `bridge registration of ${pid} in ${registry}`)
+  const post = async (body, headers = { "content-type": "application/json", "x-codenomad-automation-token": registration.token }) => {
+    const r = await loopbackFetch(registration.url, { method: "POST", signal: AbortSignal.timeout(timeout), headers,
+      ...(body === undefined ? {} : { body: typeof body === "string" ? body : JSON.stringify(body) }) })
+    const text = await r.text()
+    let parsed = text
+    try { parsed = JSON.parse(text) } catch {}
+    return { status: r.status, body: parsed }
+  }
+  const bridge = (mode, sessionID, command, token = registration.token) => post({ mode, sessionID, ...(command !== undefined ? { command } : {}) },
+    { "content-type": "application/json", "x-codenomad-automation-token": token })
+  return { registration, file, registry, post, bridge }
+}
+
 async function repo(dir, origin) {
   await mkdir(path.join(dir, "pkg", "app"), { recursive: true })
   await git(path.dirname(dir), "init", "-q", "-b", "main", dir)
@@ -59,26 +88,7 @@ export async function run({ call, fixture, root, pid, data }) {
     try { body = text ? JSON.parse(text) : null } catch {}
     return { status: r.status, body }
   }
-  const registry = process.platform === "win32" ? path.join(fixture.env.LOCALAPPDATA, "CodeNomad", "automation-bridges")
-    : path.join(fixture.root, ".config", "codenomad", "automation-bridges")
-  let registration
-  for (let i = 0; i < 100 && !registration; i++) {
-    for (const name of await readdir(registry).catch(() => [])) {
-      const value = await readFile(path.join(registry, name), "utf8").then(JSON.parse).catch(() => undefined)
-      if (value?.pid === pid) registration = value
-    }
-    if (!registration) await new Promise(r => setTimeout(r, 100))
-  }
-  assert(registration, `bridge registration of ${pid} in ${registry}`)
-  const bridge = async (mode, sessionID, command, token = registration.token) => {
-    const r = await loopbackFetch(registration.url, { method: "POST", signal: AbortSignal.timeout(timeout),
-      headers: { "content-type": "application/json", "x-codenomad-automation-token": token },
-      body: JSON.stringify({ mode, sessionID, ...(command !== undefined ? { command } : {}) }) })
-    const text = await r.text()
-    let body = text
-    try { body = JSON.parse(text) } catch {}
-    return { status: r.status, body }
-  }
+  const { bridge } = await bridgeClient(fixture, pid, timeout)
 
   const a = path.join(root, "Memory A"), b = path.join(root, "Memory B"), outside = path.join(root, "Memory Outside")
   await repo(a, "https://fixture.invalid/memory-study.git")

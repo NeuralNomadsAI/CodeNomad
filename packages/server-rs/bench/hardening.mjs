@@ -14,7 +14,7 @@ import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { withProductRuntime } from "../../../scripts/native-product-fixture.mjs"
 import { stopFixtureChild } from "../../../scripts/native-fixture-guards.mjs"
-import { out, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
+import { dropRegistration, out, rustBinary, useBenchTemp, writeJson } from "./fixtures.mjs"
 
 const cli = process.argv[2]
 assert(path.isAbsolute(cli ?? ""), "usage: node hardening.mjs <absolute opencode executable>")
@@ -311,6 +311,7 @@ await withProductRuntime(cli, async () => ({}), async ({ root: home, env, connec
     for (const s of open) s.destroy()
     child.stdin.write("shutdown\n")
     await stopFixtureChild(child, stopped).catch(() => child.kill())
+    await dropRegistration(env, child.pid)
     await writeJson("hardening.json", { binary: bin, failures, results })
     await writeFile(path.join(out, "hardening-rs.log"), lines)
   }

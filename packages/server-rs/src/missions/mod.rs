@@ -21,7 +21,6 @@ use axum::{
     extract::DefaultBodyLimit,
     routing::{get, post},
 };
-use tokio_util::sync::CancellationToken;
 
 use crate::Shared;
 
@@ -64,17 +63,4 @@ pub fn routes() -> Router<Shared> {
         .route("/api/workspaces/{id}/missions/{mission}/content", get(reads::content))
         .route("/api/workspaces/{id}/missions/{mission}/tasks", get(reads::tasks))
         .route("/api/workspaces/{id}/missions/panel-page", post(reads::panel).layer(DefaultBodyLimit::max(16 * 1024)))
-}
-
-/// The private bridge the native plugin calls back, when this backend hosts Missions.
-pub fn serve_bridge(app: &Shared, stop: CancellationToken) {
-    if app.mission_bridge.is_none() {
-        return;
-    }
-    let app = app.clone();
-    tokio::spawn(async move {
-        if run::serve(app, stop).await.is_err() {
-            eprintln!("Private Mission bridge unavailable");
-        }
-    });
 }

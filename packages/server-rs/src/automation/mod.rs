@@ -1,0 +1,303 @@
+//! The loopback bridge the bundled OpenCode plugins call (`routes/automation-plugin.ts`): its
+//! registration, token, session ownership and the desktop host's browser and window requests.
+//! Memory and Missions modes are answered by their domains.
+pub mod actions;
+pub mod diagnostics;
+mod registry;
+
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
+
+use axum::{
+    Json, Router,
+    body::{Body, Bytes},
+    extract::{Request, State},
+    http::{HeaderMap, StatusCode as Status, request::Parts},
+    middleware::from_fn,
+    response::{IntoResponse, Response},
+    routing::post,
+};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use serde_json::{Value, json};
+use subtle::ConstantTimeEq;
+use tokio_util::sync::CancellationToken;
+
+use crate::{Shared, host::native_parent, shared::fastify};
+
+pub const PATH: &str = "/api/opencode-plugin/automation";
+const LIMIT: usize = 512 * 1024;
+const NATIVE: Duration = native_parent::DEFAULT_DEADLINE;
+static PUBLISHED: AtomicBool = AtomicBool::new(false);
+
+/// 32 random bytes, base64url (`createAutomationBridgeRegistration`).
+pub fn new_token() -> Option<String> {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).ok()?;
+    Some(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+/// The Missions and memory plugins are provisioned only once the bridge is advertised.
+pub fn published() -> bool {
+    PUBLISHED.load(Ordering::Relaxed)
+}
+
+/// Binds the private IPv4 loopback listener and writes its registration before the plugins are
+/// provisioned, as `publishAutomationBridge` does; serves until `stop`, then removes it.
+pub async fn publish(app: &Shared, stop: CancellationToken) -> Option<tokio::task::JoinHandle<()>> {
+    let token = app.bridge_token.clone()?;
+    let opened = async {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
+        let url = format!("http://127.0.0.1:{}{PATH}", listener.local_addr()?.port());
+        let dir = crate::config::automation_bridges().ok_or_else(|| std::io::Error::other("No home directory"))?;
+        if !crate::bench::private_registry(&dir) {
+            return Err(std::io::Error::other("Fixture bridge registry outside the private home"));
+        }
+        Ok::<_, std::io::Error>((listener, registry::publish(&dir, &url, &token)?))
+    };
+    let (listener, record) = match opened.await {
+        Ok(opened) => opened,
+        Err(e) => {
+            eprintln!("Failed to publish the local automation bridge; Missions are unavailable: {e}");
+            return None;
+        }
+    };
+    PUBLISHED.store(true, Ordering::Relaxed);
+    let router =
+        Router::new().route(PATH, post(handle)).layer(from_fn(crate::panic_guard::catch)).with_state(app.clone());
+    Some(tokio::spawn(async move {
+        let _record = record;
+        let _ = axum::serve(listener, router).with_graceful_shutdown(stop.cancelled_owned()).await;
+    }))
+}
+
+fn refuse(status: Status, message: &str) -> Response {
+    crate::error(status, message).into_response()
+}
+fn invalid() -> Response {
+    refuse(Status::BAD_REQUEST, "Invalid automation bridge request")
+}
+fn result(value: Value) -> Response {
+    Json(json!({ "result": value })).into_response()
+}
+
+/// The private token, and no browser-origin, cookie or forwarding header.
+fn authorized(app: &Shared, headers: &HeaderMap) -> bool {
+    let Some(secret) = app.bridge_token.as_deref() else { return false };
+    let got = headers.get("x-codenomad-automation-token").map_or(&[][..], |v| v.as_bytes());
+    got.len() == secret.len()
+        && bool::from(secret.as_bytes().ct_eq(got))
+        && !headers.keys().any(|k| {
+            matches!(k.as_str(), "origin" | "referer" | "cookie" | "forwarded" | "x-forwarded-for")
+                || k.as_str().starts_with("sec-")
+        })
+}
+
+async fn handle(State(app): State<Shared>, request: Request) -> Response {
+    let (parts, body) = request.into_parts();
+    if !authorized(&app, &parts.headers) {
+        // The reference's session guard answers before its route sees the request.
+        return refuse(Status::UNAUTHORIZED, "Unauthorized");
+    }
+    let Ok(bytes) = axum::body::to_bytes(body, LIMIT).await else {
+        return fastify::error(Status::PAYLOAD_TOO_LARGE, "FST_ERR_CTP_BODY_TOO_LARGE", "Request body is too large")
+            .into_response();
+    };
+    let body = match fastify::body(&parts.headers, &bytes) {
+        Ok(Some(fastify::Body::Json(value))) => value,
+        Ok(_) => return invalid(),
+        Err(refusal) => return refusal.into_response(),
+    };
+    match body["mode"].as_str().unwrap_or_default() {
+        "human-answer-verify" => refuse(Status::FORBIDDEN, "Human answer admission unavailable"),
+        "recurrence-control-verify" => missions(app, parts, bytes).await,
+        mode @ ("memory-probe" | "memory-input" | "memory-context") => match body["sessionID"].as_str() {
+            Some(session) => {
+                crate::memory::bridge(&app, mode, session, body.get("command").cloned()).await.into_response()
+            }
+            None => invalid(),
+        },
+        _ => session(app, parts, bytes, body).await,
+    }
+}
+
+/// The Missions bridge, unchanged while its contract is revised.
+async fn missions(app: Shared, parts: Parts, bytes: Bytes) -> Response {
+    crate::missions::run::dispatch(State(app), Request::from_parts(parts, Body::from(bytes))).await.into_response()
+}
+
+/// Modes of one OpenCode session owned by an open workspace.
+async fn session(app: Shared, parts: Parts, bytes: Bytes, body: Value) -> Response {
+    const MODES: [&str; 6] =
+        ["developer-probe", "developer-execute", "browser-claim", "browser-probe", "browser-execute", "mission-input"];
+    let mode = body["mode"].as_str().unwrap_or_default();
+    let Some(id) = body["sessionID"].as_str().filter(|s| s.encode_utf16().count() <= 256 && MODES.contains(&mode))
+    else {
+        return invalid();
+    };
+    let (purpose, kind) = (body["purpose"].as_str(), body["command"]["kind"].as_str());
+    let mission_claim =
+        mode == "browser-claim" && matches!(purpose, Some("mission" | "mission-preferences" | "mission-prepare"));
+    // A Missions preference read distinguishes "not this backend" from "cannot tell".
+    let preference = mode == "browser-claim" && matches!(purpose, Some("mission-preferences" | "mission-prepare"))
+        || mode == "mission-input" && matches!(kind, Some("profile-defaults" | "configurations" | "settings"));
+    let not_owner = |message: &str| {
+        let mut refusal = json!({ "error": message });
+        if preference {
+            refusal["code"] = json!("mission-not-owner");
+        }
+        (Status::NOT_FOUND, Json(refusal)).into_response()
+    };
+    let record = match crate::opencode::session_record(&app, id).await {
+        Ok(record) => record,
+        Err((status, Json(e)))
+            if preference && !(status == Status::NOT_FOUND && e["_tag"] == "SessionNotFoundError") =>
+        {
+            return preferences_unavailable();
+        }
+        Err(_) => return not_owner("Session not found"),
+    };
+    match owned(&app, &record["location"], preference).await {
+        Some(true) => {}
+        Some(false) => return not_owner("Session is not owned by this CodeNomad instance"),
+        None => return preferences_unavailable(),
+    }
+    if mode == "mission-input" || mission_claim {
+        return missions(app, parts, bytes).await;
+    }
+    let native = native_parent::available();
+    if mode.starts_with("browser-") && crate::config::native_browser_automation_unavailable() {
+        let refusal = json!({ "code": "unsupported", "error": "Browser automation is unavailable in this host" });
+        return (Status::CONFLICT, Json(refusal)).into_response();
+    }
+    match mode {
+        "browser-claim" if !native => refuse(Status::NOT_FOUND, "Browser automation is unavailable in this host"),
+        "browser-claim" => result(json!({ "available": true })),
+        "browser-probe" => match native_parent::request("browser.probe", json!({ "sessionID": id }), NATIVE).await {
+            Ok(found) if found["available"] == true => result(found),
+            Ok(_) => refuse(Status::NOT_FOUND, "No visible browser target"),
+            Err(e) => refuse(Status::NOT_FOUND, &e),
+        },
+        "browser-execute" => {
+            let command = match actions::browser(&body["command"]) {
+                Ok(command) => command,
+                Err(e) => return refuse(Status::BAD_REQUEST, &e),
+            };
+            // The host runs open, navigate and screenshot itself, and snapshots and page actions
+            // through its in-host engine.
+            match native_parent::request("browser.execute", json!({ "sessionID": id, "command": command }), NATIVE)
+                .await
+            {
+                Ok(done) => result(done),
+                Err(e) => refuse(Status::CONFLICT, &e),
+            }
+        }
+        _ => developer(&app, id, mode, &body["command"]).await,
+    }
+}
+
+fn preferences_unavailable() -> Response {
+    let refusal = json!({ "error": "CodeNomad backend discovery, ownership or preference reading failed; restore the backend and reload Missions preferences", "code": "mission-preferences-unavailable" });
+    (Status::SERVICE_UNAVAILABLE, Json(refusal)).into_response()
+}
+
+/// `ownsLocation` of any open workspace: linked worktrees and subfolders included, or the strict
+/// read of a preference probe, where an unreadable location answers `None` instead of "not owned".
+async fn owned(app: &Shared, location: &Value, strict: bool) -> Option<bool> {
+    let Some(directory) = location["directory"].as_str().filter(|_| location.get("workspaceID").is_none()) else {
+        return Some(false);
+    };
+    let workspaces = app.inner.lock().unwrap().workspaces.clone();
+    let mut unreadable = false;
+    for w in workspaces {
+        if !strict && crate::worktrees::ownership::resolve(app, &w, directory).await.is_some() {
+            return Some(true);
+        }
+        if strict {
+            match crate::worktrees::placement(app, &w, location).await {
+                Ok(_) => return Some(true),
+                Err(proven_foreign) => unreadable |= !proven_foreign,
+            }
+        }
+    }
+    (!unreadable).then_some(false)
+}
+
+/// The CodeNomad window, driven by the host itself (`developer.execute`): the focused window's
+/// status, the run and window an inspection pins for later actions, the command's validity.
+async fn developer(app: &Shared, session: &str, mode: &str, command: &Value) -> Response {
+    let native = match native_parent::request("developer.status", json!({}), NATIVE).await {
+        Ok(native) => native,
+        Err(e) => return refuse(Status::NOT_FOUND, &e),
+    };
+    let status = &native["status"];
+    let ready =
+        status["state"] == "ready" && ["runId", "nativeIdentity", "windowId"].iter().all(|key| status[key].is_string());
+    if !ready {
+        return refuse(Status::NOT_FOUND, "Native automation has no active CodeNomad session");
+    }
+    let current = (status["runId"].as_str().unwrap_or_default(), status["windowId"].as_str().unwrap_or_default());
+    if mode == "developer-probe" {
+        return result(
+            json!({ "available": true, "nativeIdentity": status["nativeIdentity"], "runId": status["runId"] }),
+        );
+    }
+    let command = match actions::developer(command) {
+        Ok(command) => command,
+        Err(e) => return refuse(Status::BAD_REQUEST, &e),
+    };
+    let action = command["action"].as_str().unwrap_or_default();
+    let target = if action == "inspect" { Some(current) } else { app.automation_pins.get(session, current) };
+    let Some((run, window)) = target else {
+        app.automation_pins.forget(session);
+        return refuse(Status::NOT_FOUND, "Run codenomad.inspect before acting on or restarting this CodeNomad window");
+    };
+    if action == "restart" {
+        app.automation_pins.forget(session);
+        return match native_parent::request("developer.restart", json!({}), NATIVE).await {
+            Ok(restarted) => result(restarted),
+            Err(e) => refuse(Status::CONFLICT, &e),
+        };
+    }
+    let request = json!({ "runId": run, "windowId": window, "command": command });
+    let mut done = match native_parent::request("developer.execute", request, NATIVE).await {
+        Ok(done) => done,
+        Err(e) => return refuse(Status::CONFLICT, &e),
+    };
+    if let Some(error) = done["error"].as_str() {
+        let target = done["stage"] == "target";
+        if target {
+            app.automation_pins.forget(session);
+        }
+        return refuse(if target { Status::NOT_FOUND } else { Status::CONFLICT }, error);
+    }
+    if action == "inspect" {
+        diagnostics::extend(&mut done, &native["logs"]);
+        app.automation_pins.remember(session, (run.to_string(), window.to_string()));
+    }
+    result(done)
+}
+
+/// `DeveloperInspectionTargets`: per conversation, the native run and window its last inspection
+/// targeted; another window or run requires a fresh inspection.
+#[derive(Default)]
+pub struct Pins(std::sync::Mutex<Vec<(String, (String, String))>>);
+
+impl Pins {
+    fn remember(&self, session: &str, target: (String, String)) {
+        let mut pins = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        pins.retain(|(s, _)| s != session);
+        pins.push((session.to_string(), target));
+        if pins.len() > 128 {
+            pins.remove(0);
+        }
+    }
+    fn get<'a>(&self, session: &str, current: (&'a str, &'a str)) -> Option<(&'a str, &'a str)> {
+        let pins = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        pins.iter().any(|(s, (run, window))| s == session && run == current.0 && window == current.1).then_some(current)
+    }
+    fn forget(&self, session: &str) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).retain(|(s, _)| s != session);
+    }
+}

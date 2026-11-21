@@ -2,7 +2,7 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import { register } from "node:module"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -23,6 +23,13 @@ export async function useBenchTemp() {
 
 export { assertPrivateHost } from "./private-profile.mjs"
 const assertFixtureRoot = root => assert(path.resolve(root).startsWith(path.join(out, "tmp", "opencode")), `Not a bench fixture: ${root}`)
+
+/** A forced stop skips a server's own removal: drop `pid`'s bridge registration from its fixture registry. */
+export async function dropRegistration(env, pid) {
+  const registry = path.join(env.LOCALAPPDATA, "CodeNomad", "automation-bridges")
+  assert(path.resolve(registry).startsWith(path.join(out, "tmp")), `Not a bench registry: ${registry}`)
+  for (const name of await readdir(registry).catch(() => [])) if (name.includes(`-${pid}-`)) await rm(path.join(registry, name), { force: true })
+}
 
 export function rustBinary() {
   const bin = process.env.CODENOMAD_RS_BINARY ?? process.env.CNRS_RUST_BINARY
