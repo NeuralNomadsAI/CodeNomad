@@ -186,11 +186,11 @@ export class DeveloperCdp {
       const state = await this.ensure(identity)
       const epoch = state.navigationEpoch, generation = this.generation(state)
       const page = bindRefs(action, ref => state.refs.resolve(ref, generation))
-      const refFree = (action.action === "press" || action.action === "scroll") && !action.ref || action.action === "wait"
+      const monitorForeground = action.action === "scroll" && !action.ref || action.action === "wait"
       const foreground = state.context
       const message = "Page changed during action; inspect again"
-      const session = this.session(state, epoch, message, refFree ? foreground : undefined)
-      if (!refFree) session.beforeInput = () => this.assertContextCurrent(state, epoch, message, foreground)
+      const session = this.session(state, epoch, message, monitorForeground ? foreground : undefined)
+      if (!monitorForeground) session.beforeInput = () => this.assertContextCurrent(state, epoch, message, foreground)
       return performAction(session, page)
     })
   }

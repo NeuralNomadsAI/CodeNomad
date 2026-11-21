@@ -120,6 +120,24 @@ const identity = {
 }
 
 describe("DeveloperCdp", () => {
+  it("completes key releases in the same document after a tab-switch chord", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    const { endpoint, runId, windowId } = identity
+    const window = { endpoint, runId, windowId }
+    try {
+      const { document } = await client.inspect(window)
+      chrome.onCommand = command => {
+        if (command.method === "Input.dispatchKeyEvent" && command.params?.code === "BracketRight"
+          && command.params?.type !== "keyUp") chrome.context = { ...chrome.context, instanceId: "next-tab" }
+      }
+      await client.act({ ...window, document }, { action: "press", key: "Control+]" })
+      const keys = chrome.commands.filter(command => command.method === "Input.dispatchKeyEvent")
+      assert.deepEqual(keys.filter(command => command.params?.type === "keyUp").map(command => command.params?.code),
+        ["BracketRight", "ControlLeft"])
+    } finally { client.close() }
+  })
+
   it("refuses a key without a ref when the foreground tab changes before input", async () => {
     const chrome = new FakeChrome()
     const client = chrome.client()

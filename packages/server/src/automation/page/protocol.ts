@@ -113,11 +113,12 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (kind
   let targetLost: PageTargetChangedError | undefined
   const dispatch = async (kind: InputKind, params: Record<string, unknown>) => {
     let timestamp: number | undefined
+    const keyRelease = kind === "keyboard" && params.type === "keyUp"
     if (session.markAutomation) {
       const stamp = (await session.driver.call("mark-input", undefined, [])).value
       if (typeof stamp !== "number" || !Number.isFinite(stamp) || stamp <= 0) throw new Error("Cannot establish automation input provenance")
       timestamp = stamp
-      if (session.beforeInput) await session.beforeInput()
+      if (session.beforeInput && !keyRelease) await session.beforeInput()
       else await session.checkpoint()
     }
     const mouse = kind === "pointer" || kind === "wheel"
