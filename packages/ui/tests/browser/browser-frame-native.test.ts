@@ -183,10 +183,32 @@ test("Tauri: an address entered before registration completes loads once the tar
     const next = new URL("/browser-native-guest?typed", url).href
     await page.getByRole("textbox", { name: "Address" }).fill(next)
     await page.getByRole("textbox", { name: "Address" }).press("Enter")
+    // The initial load's navigation event arrives before registration answers.
+    await page.waitForTimeout(50)
     await page.evaluate(() => (window as any).nativeFixture.settleRegistration())
     await page.waitForFunction((next) => (window as any).nativeFixture.calls.some((c: any) =>
       c.command === "browser_target_action" && c.payload.action === "navigate" && c.payload.url === next), next)
     assert.deepEqual((await snapshot(page)).errors, [], "the first Enter loads instead of reporting an unregistered target")
+  } finally { await page.close() }
+})
+
+test("Tauri: a viewport chosen before registration completes applies once the target exists", async () => {
+  const page = await browser.newPage({ userAgent: "Windows fixture" })
+  try {
+    await page.goto(url)
+    await page.evaluate(() => { (window as any).nativeFixture.deferRegistration = true })
+    await page.evaluate(() => (window as any).nativeFixture.mount(false))
+    await page.evaluate(() => { const f = (window as any).nativeFixture; f.calls.length = 0; f.mount(true) })
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_register"))
+    await page.getByRole("button", { name: "Viewport" }).click()
+    await page.getByRole("menuitemradio", { name: /^Desktop/ }).click()
+    assert.deepEqual((await snapshot(page)).errors, [], "choosing a viewport while registering reports nothing")
+    await page.evaluate(() => (window as any).nativeFixture.settleRegistration())
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) =>
+      c.command === "browser_target_update" && c.payload.visible))
+    await page.getByRole("button", { name: "Viewport" }).click()
+    assert.equal(await page.getByRole("menuitemradio", { name: /^Desktop/ }).getAttribute("aria-checked"), "true")
+    assert.deepEqual((await snapshot(page)).errors, [])
   } finally { await page.close() }
 })
 

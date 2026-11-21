@@ -170,6 +170,14 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   let cleanupWebviewListeners: (() => void) | null = null
   let cleanupTauriTarget: (() => void) | null = null
   let tauriRegistered = false
+  // Latest navigation requested while the Tauri target registers. Kept apart from
+  // nativeTarget, which navigation events of the initial load can overwrite.
+  let pendingTauriNavigation: { url: string; logicalAddress?: string } | undefined
+  const navigateTauri = (url: string, logicalAddress?: string) => {
+    if (tauriRegistered) return controlTauriBrowserTarget(browserRegistrationId, "navigate", url, logicalAddress)
+    pendingTauriNavigation = { url, logicalAddress }
+    return Promise.resolve()
+  }
   let browserRegistrationId = nativeBrowserAvailable ? generateUUID() : ""
   let disposed = false
   const loadFrameSource = (source: string) => {
@@ -273,7 +281,9 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     setViewportMenuOpen(false)
     const previous = appliedEmulation?.registrationId === browserRegistrationId ? appliedEmulation.preset : undefined
     const next = emulationProfile(preset)
-    if ((previous === next && !webkitEmulation) || !nativeMode() || !capabilities.emulation) { commitViewport(preset); return }
+    // A Tauri target still registering applies the committed preset when it is ready.
+    if ((previous === next && !webkitEmulation) || !nativeMode() || !capabilities.emulation
+      || (browserHost === "tauri" && !tauriRegistered)) { commitViewport(preset); return }
     setEmulationBusy(true)
     const generation = ++emulationGeneration
     const registrationId = browserRegistrationId
@@ -727,9 +737,10 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         await restoreEmulation(registrationId)
         void captureHistory()
         syncErrorReported = false
-        if (nativeTarget() !== target) {
-          await controlTauriBrowserTarget(registrationId, "navigate", nativeTarget())
-        }
+        const pending = pendingTauriNavigation
+        pendingTauriNavigation = undefined
+        if (pending) await controlTauriBrowserTarget(registrationId, "navigate", pending.url, pending.logicalAddress)
+        else if (nativeTarget() !== target) await controlTauriBrowserTarget(registrationId, "navigate", nativeTarget())
         syncBounds()
       }).catch(reportSyncError)
     }
@@ -761,6 +772,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       registered = false
       nativeVisible = false
       tauriRegistered = false
+      pendingTauriNavigation = undefined
       setRegistrationReady(false)
     }
   }
@@ -786,8 +798,8 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       const previousTarget = nativeTarget()
       requestNativeTarget(source)
       const nextNativeMode = nativeBrowserAvailable
-      if (nextNativeMode && browserHost === "tauri" && tauriRegistered && previousTarget !== source) {
-        void controlTauriBrowserTarget(browserRegistrationId, "navigate", source, props.isolatedSource ? address : undefined).catch(reportNativeError)
+      if (nextNativeMode && browserHost === "tauri" && previousTarget !== source) {
+        void navigateTauri(source, props.isolatedSource ? address : undefined).catch(reportNativeError)
       }
       setNativeMode(nextNativeMode)
     })
@@ -848,7 +860,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       else if (nativeMode()) {
         const source = props.isolatedSource ? await props.onNavigate!(target.url) : target.url
         if (disposed || version !== historyTravelVersion) return
-        if (browserHost === "tauri") await controlTauriBrowserTarget(browserRegistrationId, "navigate", source, props.isolatedSource ? target.url : undefined)
+        if (browserHost === "tauri") await navigateTauri(source, props.isolatedSource ? target.url : undefined)
         else if (webviewReady) await webviewRef?.loadURL(source)
       } else {
         const source = await props.onNavigate!(target.url)
@@ -899,7 +911,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       if (journal) publishHistory(journal.visitUrl(target))
       if (nativeMode()) {
         requestNativeTarget(source)
-        if (browserHost === "tauri" && tauriRegistered) await controlTauriBrowserTarget(browserRegistrationId, "navigate", source, target)
+        if (browserHost === "tauri") await navigateTauri(source, target)
       } else {
         loadFrameSource(source)
         props.onFrameLocation?.(target)
@@ -924,8 +936,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
           } else {
             requestNativeTarget(target)
             if (nativeMode() && browserHost === "tauri") {
-              // Before registration completes, the target loads nativeTarget() once it exists.
-              if (tauriRegistered) void controlTauriBrowserTarget(browserRegistrationId, "navigate", target).catch(reportNativeError)
+              void navigateTauri(target).catch(reportNativeError)
             } else setNativeMode(true)
           }
           if (!journal) props.onFrameLocation?.(target)
