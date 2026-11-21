@@ -305,6 +305,9 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
           ? await deps.nativeParent.request("browser.execute", { sessionID: body.sessionID, command, ...(target ? { target } : {}) },
             deadline === undefined ? undefined : { deadline })
           : await browserPage.execute(body.sessionID, command, lifetime.signal, target as string, deadline)
+        if (deadline !== undefined && Date.now() >= deadline) {
+          return reply.code(409).send({ code: "preview-expired", error: "Browser command timed out; inspect before another action" })
+        }
         return reply.send({ result })
       } catch (error) {
         return reply.code(409).send(browserTargetRefusal(error instanceof Error ? error.message : String(error)))

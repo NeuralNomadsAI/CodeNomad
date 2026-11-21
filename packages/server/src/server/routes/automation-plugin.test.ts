@@ -459,10 +459,10 @@ test("a pause at the native channel cannot extend or revive an HTTP preview dead
   const now = Date.now()
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now })
   const app = Fastify()
-  const messages: Array<{ method: string; deadline: number }> = []
+  const messages: Array<{ method: string; deadline: number; operationID?: string }> = []
   const parent = new NativeParent({ write: line => {
-    const { id, method, deadline } = JSON.parse(String(line).slice(NATIVE_REQUEST_PREFIX.length))
-    messages.push({ method, deadline })
+    const { id, method, deadline, params } = JSON.parse(String(line).slice(NATIVE_REQUEST_PREFIX.length))
+    messages.push({ method, deadline, operationID: params.operationID })
     const result = method === "browser.probe" ? { available: true, target: "document" }
       : method === "browser.page.begin" ? { generation: "document", url: "https://example.test", driver: "cdp", contractVersion: 1 }
       : method === "browser.page.send" ? { nodes: [] } : { url: "https://example.test" }
@@ -479,10 +479,15 @@ test("a pause at the native channel cannot extend or revive an HTTP preview dead
   } as never)
   const request = parent.request.bind(parent)
   let pauseBefore = "", pause = 0
+  let afterReply: ((method: string) => void) | undefined
   t.mock.method(parent, "request", (...args: Parameters<typeof parent.request>) => {
     if (args[0] === pauseBefore) t.mock.timers.tick(pause)
-    return request(...args)
+    const response = request(...args)
+    return afterReply ? response.then(result => { afterReply?.(args[0]); return result }) : response
   })
+  const inject = (payload: Record<string, unknown>, deadline: number) =>
+    app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
+      headers: { "x-codenomad-automation-token": "secret" }, payload: { ...payload, sessionID: "owned", deadline } })
   for (const [method, payload] of [
     ["browser.probe", { mode: "browser-probe" }],
     ["browser.execute", { mode: "browser-execute", command: { action: "open", url: "https://example.test" } }],
@@ -493,8 +498,7 @@ test("a pause at the native channel cannot extend or revive an HTTP preview dead
       pause = gap
       messages.length = 0
       const deadline = Date.now() + 1_000
-      const response = await app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
-        headers: { "x-codenomad-automation-token": "secret" }, payload: { ...payload, sessionID: "owned", deadline } })
+      const response = await inject(payload, deadline)
       const work = messages.filter(message => message.method !== "browser.page.end")
       if (gap < 1_000) {
         assert.equal(response.statusCode, 200, response.body)
@@ -506,6 +510,34 @@ test("a pause at the native channel cannot extend or revive an HTTP preview dead
       }
     })
   }
+  pauseBefore = ""
+  for (const [budget, label] of [[1_000, "HTTP deadline"], [90_000, "page deadline"]] as const) {
+    await t.test(`snapshot publication waits for page.end within the ${label}`, async () => {
+      messages.length = 0
+      afterReply = method => {
+        if (method === "browser.page.check") t.mock.timers.setTime(messages.at(-1)!.deadline - 1)
+        if (method === "browser.page.end") t.mock.timers.tick(2)
+      }
+      const response = await inject({ mode: "browser-execute", command: { action: "snapshot" }, target: "document" }, Date.now() + budget)
+      assert.deepEqual(messages.map(message => message.method), ["browser.page.begin", "browser.page.send", "browser.page.check", "browser.page.end"])
+      assert.ok(messages[0].operationID && messages.every(message => message.operationID === messages[0].operationID))
+      assert.equal(response.statusCode, 409, response.body)
+      assert.match(response.json().error, /timed out/)
+      assert.equal(response.json().result, undefined)
+    })
+  }
+  await t.test("an expired browser.execute result cannot be published", async () => {
+    messages.length = 0
+    const deadline = Date.now() + 1_000
+    afterReply = method => {
+      if (method === "browser.execute") t.mock.timers.setTime(deadline + 1)
+    }
+    const response = await inject({ mode: "browser-execute", command: { action: "screenshot" }, target: "document" }, deadline)
+    assert.deepEqual(messages.map(message => message.method), ["browser.execute"])
+    assert.equal(response.statusCode, 409, response.body)
+    assert.equal(response.json().code, "preview-expired")
+    assert.equal(response.json().result, undefined)
+  })
 })
 
 test("Mission preference and preparation claims remain available without browser automation", async t => {

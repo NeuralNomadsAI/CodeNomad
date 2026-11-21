@@ -45,11 +45,14 @@ export class BrowserPage {
     stopAt: number): Promise<Record<string, unknown>> {
     const operationID = randomUUID(), deadline = Math.min(stopAt, Date.now() + OPERATION_MS)
     let failure: Error | undefined
+    const checkDeadline = () => {
+      if (Date.now() >= deadline) throw new Error("Browser operation timed out; inspect before another action")
+    }
     const current = () => {
       if (failure) throw failure
       signal?.throwIfAborted()
       if (this.closed) throw new Error("Browser automation is shutting down")
-      if (Date.now() >= deadline) throw new Error("Browser operation timed out; inspect before another action")
+      checkDeadline()
     }
     const request = async <T>(method: string, params: Record<string, unknown>): Promise<T> => {
       current()
@@ -60,6 +63,7 @@ export class BrowserPage {
       current()
       return result
     }
+    let result: Record<string, unknown>
     try {
       const target = await request<{ generation: string; url: string; driver: unknown; contractVersion: unknown }>(
         "browser.page.begin", expectedTarget === undefined ? {} : { target: expectedTarget })
@@ -78,15 +82,18 @@ export class BrowserPage {
       if (action.action === "snapshot") {
         const rootBackendNodeId = action.ref ? refs.resolve(action.ref, generation) : undefined
         const snapshot = await snapshotPage(page, () => refs.issuer(generation), { rootBackendNodeId, query: action.query, refLength: refs.refLength })
-        return { url, snapshot: snapshot.text, collapsed: snapshot.collapsed }
+        result = { url, snapshot: snapshot.text, collapsed: snapshot.collapsed }
+      } else {
+        const actionResult = await performAction(page, bindRefs(action, ref => refs.resolve(ref, generation)))
+        result = { url, ...actionResult }
       }
-      const result = await performAction(page, bindRefs(action, ref => refs.resolve(ref, generation)))
-      return { url, ...result }
     } finally {
       // Cleanup is exact, best effort and independent of cancellation/navigation. A lost
       // reply never replays the operation; the native lease also expires on its own.
       await this.native.request("browser.page.end", { sessionID, operationID }, 5_000).catch(() => undefined)
     }
+    checkDeadline()
+    return result
   }
 
   private table(sessionID: string): RefTable {
