@@ -50,10 +50,16 @@ async function invoke(command: string, args: any = {}) {
   if (command === "browser_target_register" && nativeFixture.deferRegistration) {
     const id = args.payload.registrationId
     registering.add(id)
-    // The Rust controller publishes the target and starts its first load before answering.
-    queueMicrotask(() => { for (const callback of callbacks.values()) callback({ payload: { registrationId: id, url: args.payload.url } }) })
     return new Promise<void>((resolve, reject) => {
-      pendingRegistration = { resolve: () => { registering.delete(id); resolve() }, reject: (error) => { registering.delete(id); reject(error) } }
+      pendingRegistration = {
+        // The Rust controller publishes the target and starts its first load before answering.
+        resolve: () => {
+          registering.delete(id)
+          for (const callback of callbacks.values()) callback({ payload: { registrationId: id, url: args.payload.url } })
+          resolve()
+        },
+        reject: (error) => { registering.delete(id); reject(error) },
+      }
     })
   }
   if (command === "browser_target_update" && nativeFixture.failUpdates) {

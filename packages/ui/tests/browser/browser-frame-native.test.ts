@@ -183,12 +183,40 @@ test("Tauri: an address entered before registration completes loads once the tar
     const next = new URL("/browser-native-guest?typed", url).href
     await page.getByRole("textbox", { name: "Address" }).fill(next)
     await page.getByRole("textbox", { name: "Address" }).press("Enter")
-    // The initial load's navigation event arrives before registration answers.
-    await page.waitForTimeout(50)
+    // Settling announces the initial load first, as Rust does, after the typed Enter.
     await page.evaluate(() => (window as any).nativeFixture.settleRegistration())
+    const navigations = (next: string) => page.evaluate((next) => (window as any).nativeFixture.calls.filter((c: any) =>
+      c.command === "browser_target_action" && c.payload.action === "navigate" && c.payload.url === next).length, next)
     await page.waitForFunction((next) => (window as any).nativeFixture.calls.some((c: any) =>
       c.command === "browser_target_action" && c.payload.action === "navigate" && c.payload.url === next), next)
+    await page.waitForTimeout(200)
+    assert.equal(await navigations(next), 1, "the typed address loads exactly once")
     assert.deepEqual((await snapshot(page)).errors, [], "the first Enter loads instead of reporting an unregistered target")
+  } finally { await page.close() }
+})
+
+test("Tauri: a registration retry that already carries the typed address does not load it twice", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(url)
+    await page.evaluate(() => { (window as any).nativeFixture.deferRegistration = true })
+    await page.evaluate(() => (window as any).nativeFixture.mount(false))
+    await page.evaluate(() => { const f = (window as any).nativeFixture; f.calls.length = 0; f.mount(true) })
+    const registrations = () => page.evaluate(() => (window as any).nativeFixture.calls.filter((c: any) => c.command === "browser_target_register").map((c: any) => c.payload.url))
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_register"))
+    const next = new URL("/browser-native-guest?typed", url).href
+    await page.getByRole("textbox", { name: "Address" }).fill(next)
+    await page.getByRole("textbox", { name: "Address" }).press("Enter")
+    await page.evaluate(() => (window as any).nativeFixture.settleRegistration(true))
+    // The failure's alert hides the target; dismissing it lets registration retry.
+    await page.getByRole("alertdialog").waitFor()
+    await page.evaluate(() => (window as any).nativeFixture.overlay(false))
+    await page.waitForFunction((next) => (window as any).nativeFixture.calls.some((c: any) =>
+      c.command === "browser_target_register" && c.payload.url === next), next)
+    await page.evaluate(() => (window as any).nativeFixture.settleRegistration())
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_update" && c.payload.visible))
+    assert.equal((await registrations()).at(-1), next)
+    assert.equal((await snapshot(page)).calls.filter((c: any) => c.payload?.action === "navigate").length, 0, "the retry's own load is not requested again")
   } finally { await page.close() }
 })
 
