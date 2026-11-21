@@ -514,7 +514,7 @@ fn legacy(v: &Value) -> R<Value> {
     Ok(json!({"timing":timing,"condition":condition,"ends":{
         "maxLaunches":nullable_int("maxLaunches", 1)?,"afterMs":nullable_int("afterMs", 1)?,"at":nullable_int("at", 0)?}}))
 }
-fn launch(v: &Value) -> R<Value> {
+pub(super) fn launch(v: &Value) -> R<Value> {
     criteria(v).or_else(|_| legacy(v))
 }
 /// Stored schedules and watched events of a launch policy (`missionLaunchModel`).

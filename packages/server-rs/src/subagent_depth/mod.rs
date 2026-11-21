@@ -2,8 +2,8 @@
 //! `opencode/subagent-depth-settings.ts` and the `plugin-controls.ts` document acquisition they use
 //! (owned Location, native `config.get`, Global/Project targets, strict layers, atomic replacement).
 
-mod document;
-mod jsonc;
+pub(crate) mod document;
+pub(crate) mod jsonc;
 mod jsonc_edit;
 mod jsonc_value;
 mod rules;
@@ -125,10 +125,10 @@ fn workspace(app: &App, id: &str) -> Option<Workspace> {
 }
 
 #[derive(Clone, Debug)]
-struct Target {
-    project: bool,
-    path: String,
-    io: String,
+pub(crate) struct Target {
+    pub(crate) project: bool,
+    pub(crate) path: String,
+    pub(crate) io: String,
     // The reference publishes it with Plugin controls only; tests read it.
     #[cfg_attr(not(test), allow(dead_code))]
     exists: bool,
@@ -177,7 +177,7 @@ async fn read_context(app: &App, w: &Workspace, requested: &str, strict: bool) -
         .map_err(|_| Fail::Generic)??;
     Ok(Located { location, entries, targets })
 }
-fn resolve_targets(
+pub(crate) fn resolve_targets(
     style: Style,
     global: &str,
     project: &str,

@@ -15,6 +15,7 @@ pub struct ClaimBinding {
     pub project: String,
     pub canonical: String,
     pub endpoint: Arc<Endpoint>,
+    pub(super) agent: Option<Arc<super::calendar::Agent>>,
 }
 pub type Claims = Mutex<HashMap<String, Arc<ClaimBinding>>>;
 pub type Holds = Mutex<HashMap<String, Hold>>;

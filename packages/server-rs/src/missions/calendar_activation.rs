@@ -6,13 +6,21 @@ use axum::{Json, http::StatusCode as Status};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
+#[path = "calendar_activation_files.rs"]
+pub(super) mod files;
 
 pub(super) async fn settings(app: &App, endpoint: &Arc<Endpoint>, w: &Workspace, dir: &str) -> Result<Settings, Error> {
+    Ok(view(app, endpoint, w, dir).await?.settings)
+}
+
+pub(super) async fn view(app: &App, endpoint: &Arc<Endpoint>, w: &Workspace, dir: &str) -> Result<files::View, Error> {
     let flag = async {
         tokio::time::timeout(Duration::from_secs(5), flag(app, endpoint, w)).await.map_err(|_| unavailable())?
     };
     let (flag, entries) = tokio::try_join!(flag, capability::config_entries(app, endpoint, dir))?;
-    Settings::from_native(&entries, &flag, dir).ok_or_else(unavailable)
+    let settings = Settings::from_native(&entries.entries, &flag, dir).ok_or_else(unavailable)?;
+    let dir = dir.to_owned();
+    tokio::task::spawn_blocking(move || files::View::load(dir, entries, settings)).await.map_err(|_| unavailable())?
 }
 
 pub(super) struct Settings {
@@ -20,6 +28,7 @@ pub(super) struct Settings {
     pub provenance: String,
     pub origin: Option<String>,
     refusal: Option<Value>,
+    target: Option<String>,
 }
 
 impl Settings {
@@ -81,8 +90,8 @@ impl Settings {
         } else if !enabled && provenance == "environment" {
             Some(refusal("explicit-off", "environment", "environment", None))
         } else if !enabled {
-            let target = project_file.unwrap_or_else(|| style.join(&nested, "opencode.jsonc"));
-            let first_above = after_target(style, entries, &target, directory);
+            let target = project_file.clone().unwrap_or_else(|| style.join(&nested, "opencode.jsonc"));
+            let first_above = target_position(style, entries, &target, directory).map(|(_, after)| after);
             first_above
                 .and_then(|i| entries[i..].iter().find(|e| capability::experimental(e).is_some()))
                 .map(|entry| refusal("masked", "experimental-block", "imposed", path(entry)))
@@ -94,6 +103,7 @@ impl Settings {
             provenance: provenance.into(),
             origin: capability::origin(entries, provenance).map(str::to_owned),
             refusal,
+            target: None,
         })
     }
 
@@ -107,12 +117,22 @@ impl Settings {
         }
         if self.enabled {
             json!({"available":true,"targets":[]})
+        } else if let Some(path) = &self.target {
+            json!({"available":true,"targets":[{"scope":"project","path":path}]})
         } else {
             json!({"available":false,"reason":"unavailable","targets":[]})
         }
     }
 
     pub fn require_enabled(&self, not_applied: Option<&Activation>) -> Result<(), Error> {
+        self.check_refusal(not_applied)?;
+        if !self.enabled {
+            return Err(if not_applied.is_some() { disabled() } else { activation_pending() });
+        }
+        Ok(())
+    }
+
+    pub fn check_refusal(&self, not_applied: Option<&Activation>) -> Result<(), Error> {
         if let Some(refusal) = &self.refusal {
             let mut body = json!({"error":"Mission schedule configuration remains unconfirmed",
                 "code":"schedule-activation-refused","refusal":refusal});
@@ -122,9 +142,6 @@ impl Settings {
             }
             return Err((Status::FORBIDDEN, Json(body)));
         }
-        if !self.enabled {
-            return Err(if not_applied.is_some() { disabled() } else { activation_pending() });
-        }
         Ok(())
     }
 }
@@ -133,7 +150,7 @@ fn path(entry: &Value) -> Option<&str> {
     entry["path"].as_str()
 }
 
-fn after_target(style: Style, entries: &[Value], target: &str, directory: &str) -> Option<usize> {
+fn target_position(style: Style, entries: &[Value], target: &str, directory: &str) -> Option<(usize, usize)> {
     let parent = style.dirname(target);
     let matches = |entry: &Value, kind: &str, path: &str| {
         entry["type"] == kind && entry["path"].as_str().is_some_and(|p| style.same(p, path))
@@ -141,8 +158,8 @@ fn after_target(style: Style, entries: &[Value], target: &str, directory: &str) 
     entries
         .iter()
         .position(|e| matches(e, "document", target))
-        .map(|i| i + 1)
-        .or_else(|| entries.iter().position(|e| matches(e, "directory", &parent)))
+        .map(|i| (i, i + 1))
+        .or_else(|| entries.iter().position(|e| matches(e, "directory", &parent)).map(|i| (i, i)))
         .or_else(|| {
             if style.basename(&parent) != ".opencode" || !style.same(&style.dirname(&parent), directory) {
                 return None;
@@ -156,7 +173,7 @@ fn after_target(style: Style, entries: &[Value], target: &str, directory: &str) 
                     style.contains(&root, directory)
                 })
                 .or_else(|| entries.iter().position(|e| e["type"] == "directory"))
-                .map(|i| i + 1)
+                .map(|i| (i + 1, i + 1))
         })
 }
 
@@ -182,8 +199,8 @@ fn refusal(reason: &str, provenance: &str, layer: &str, path: Option<&str>) -> V
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Activation {
     #[serde(rename = "requestID")]
-    request: String,
-    expected_document_revision: u64,
+    pub(super) request: String,
+    pub(super) expected_document_revision: u64,
 }
 
 impl Activation {
@@ -228,7 +245,6 @@ impl Journal<'_> {
             && self.input.exact(intent)
             && intent["state"] == state
             && intent["authority"] == authority
-            && intent["targets"] == json!([])
     }
 }
 
@@ -284,7 +300,7 @@ pub(super) fn admit(doc: &Value, input: &Activation, authority: &str) -> Result<
     let exact = input.exact(intent);
     let current = doc["revision"] == input.expected_document_revision;
     if intent["state"] == "ready" && (exact || current) {
-        return if intent["authority"] == authority && intent["targets"] == json!([]) {
+        return if intent["authority"] == authority {
             Ok(Admission::VerifyReady)
         } else {
             Err(activation_pending())
@@ -292,8 +308,7 @@ pub(super) fn admit(doc: &Value, input: &Activation, authority: &str) -> Result<
     }
     if exact {
         return if intent["authority"] == authority
-            && intent["targets"] == json!([])
-            && matches!(intent["state"].as_str(), Some("prepared" | "failed"))
+            && matches!(intent["state"].as_str(), Some("prepared" | "partial" | "failed"))
         {
             Ok(Admission::Resume)
         } else {
@@ -321,6 +336,142 @@ pub(super) fn disabled() -> Error {
         Status::CONFLICT,
         Json(json!({"error":"Mission schedule preparation unavailable","code":"schedule-activation-unavailable"})),
     )
+}
+
+pub(super) async fn execute<F: Future<Output = bool> + Send>(
+    journal: Journal<'_>, w: &Workspace, legacy_authority: &str, guarded: impl Fn() -> F + Sync,
+) -> Result<Value, Error> {
+    let result = apply(&journal, w, legacy_authority, &guarded).await;
+    if result.is_err() && guarded().await
+        && let Ok(seen) = journal.phase("read", Value::Null).await
+    {
+        let intent = &seen["document"]["scheduleActivation"];
+        if journal.input.exact(intent) && intent["state"] != "ready" && guarded().await {
+            let _ = journal.phase("failed", json!({"errorCode":"configuration-unconfirmed"})).await;
+        }
+    }
+    result
+}
+
+async fn apply<F: Future<Output = bool> + Send>(
+    journal: &Journal<'_>, w: &Workspace, legacy_authority: &str, guarded: &(impl Fn() -> F + Sync),
+) -> Result<Value, Error> {
+    let Journal { app, endpoint, dir, input, .. } = journal;
+    if !guarded().await {
+        return Err(unavailable());
+    }
+    let old = journal.phase("read", Value::Null).await?;
+    let (api, initial) = tokio::try_join!(super::automation_api(app, endpoint), view(app, endpoint, w, dir))?;
+    if !guarded().await {
+        return Err(activation_pending());
+    }
+    let authority = initial.authority();
+    let saved = &old["document"]["scheduleActivation"];
+    let saved_legacy = saved["authority"] == legacy_authority && saved["targets"] == json!([]);
+    let journal_authority = if saved_legacy { legacy_authority } else { &authority };
+    let admission = admit(&old["document"], input, journal_authority)?;
+    let fresh = admission == Admission::Fresh;
+    if api["available"] != true {
+        return Err(if fresh { disabled() } else { activation_pending() });
+    }
+    initial.settings.check_refusal(fresh.then_some(input))?;
+    if admission == Admission::VerifyReady {
+        initial.settings.require_enabled(None)?;
+        let seen = journal.phase("read", Value::Null).await?;
+        if seen != old || !guarded().await {
+            return Err(activation_pending());
+        }
+        return Ok(seen);
+    }
+    let mut edit = initial.planned()?;
+    let targets = if fresh {
+        let targets: Vec<_> = edit.iter().map(|e| e.target.clone()).collect();
+        let seen = journal.phase("prepare", json!({"authority":journal_authority,"targets":targets})).await?;
+        if !journal.confirms(&seen, "prepared", journal_authority)
+            || seen["document"]["scheduleActivation"]["targets"] != json!(targets)
+        {
+            return Err(activation_pending());
+        }
+        targets
+    } else {
+        saved["targets"].as_array().ok_or_else(activation_pending)?.clone()
+    };
+    if let Some(proposed) = edit.take().filter(|_| {
+        targets.len() == 1 && targets[0]["scope"] == "project" && targets[0]["attempted"] == false
+    }) {
+        let target = &targets[0];
+        if !files::same_target(&proposed.target, target) {
+            return Err(activation_pending());
+        }
+        let prepared = files::prepare(proposed).await?;
+        let live = view(app, endpoint, w, dir).await?;
+        live.settings.check_refusal(None)?;
+        if live.authority() != authority || !guarded().await
+            || !live.planned()?.is_some_and(|change| files::same_target(&change.target, target))
+        {
+            return Err(activation_pending());
+        }
+        let attempting = journal.phase("attempting", json!({"scope":"project","resultDigest":target["resultDigest"]})).await?;
+        let seen = &attempting["document"]["scheduleActivation"]["targets"][0];
+        if !journal.confirms(&attempting, "partial", journal_authority)
+            || !files::same_target(seen, target) || seen["attempted"] != true || !guarded().await
+        {
+            return Err(activation_pending());
+        }
+        let before_commit = view(app, endpoint, w, dir).await?;
+        before_commit.settings.check_refusal(None)?;
+        if before_commit.authority() != authority || !guarded().await
+            || !before_commit.planned()?.is_some_and(|change| files::same_target(&change.target, target))
+        {
+            return Err(activation_pending());
+        }
+        // Keep the lock and this request's lifetime through the rename.
+        prepared.commit().map_err(|_| activation_pending())?;
+    }
+    if !targets.is_empty() {
+        let live = view(app, endpoint, w, dir).await?;
+        if live.authority() != authority || !guarded().await {
+            return Err(activation_pending());
+        }
+        let exact = journal.phase("read", Value::Null).await?;
+        let seen = &exact["document"]["scheduleActivation"];
+        if !input.exact(seen) || seen["authority"] != journal_authority {
+            return Err(activation_pending());
+        }
+        for target in &targets {
+            let recorded = seen["targets"].as_array().and_then(|a| a.iter().find(|x| files::same_target(x, target)));
+            if !recorded.is_some_and(|x| x["attempted"] == true) || !live.confirms(target) || !guarded().await {
+                return Err(activation_pending());
+            }
+            if recorded.is_some_and(|x| x["acknowledged"] == false) {
+                let ack = journal.phase("acknowledged", json!({"scope":target["scope"],"resultDigest":target["resultDigest"]})).await?;
+                if !ack["document"]["scheduleActivation"]["targets"].as_array().is_some_and(|a|
+                    a.iter().any(|x| files::same_target(x, target) && x["acknowledged"] == true)) {
+                    return Err(activation_pending());
+                }
+            }
+        }
+    }
+    let origin = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let live = view(app, endpoint, w, dir).await?;
+            live.settings.check_refusal(None)?;
+            if live.authority() != authority || !guarded().await || !targets.iter().all(|t| live.confirms(t)) {
+                return Err(activation_pending());
+            }
+            if live.settings.enabled {
+                return Ok(live.settings.origin);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }).await.map_err(|_| activation_pending())??;
+    let result = journal.phase("ready", json!({"effectiveOrigin":origin})).await?;
+    if !journal.confirms(&result, "ready", journal_authority) || !guarded().await
+        || result["document"]["scheduleActivation"]["effectiveOrigin"] != json!(origin)
+    {
+        return Err(activation_pending());
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -433,7 +584,7 @@ mod tests {
         ));
         assert!(valid_intent(attempted.get("scheduleActivation")));
         assert!(admit(&attempted, &new, AUTHORITY).is_err());
-        assert!(admit(&attempted, &exact, AUTHORITY).is_err());
+        assert_eq!(admit(&attempted, &exact, AUTHORITY).unwrap(), Admission::Resume);
         let mut ready = intent("ready", json!([]));
         ready["effectiveOrigin"] = json!(PROJECT);
         assert!(valid_intent(Some(&ready)));

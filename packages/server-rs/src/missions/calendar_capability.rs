@@ -31,7 +31,12 @@ pub(super) async fn automation_api(app: &App, endpoint: &Arc<Endpoint>) -> Resul
     })
 }
 
-pub(super) async fn config_entries(app: &App, endpoint: &Arc<Endpoint>, dir: &str) -> Result<Vec<Value>, Error> {
+pub(super) struct ConfigEntries {
+    pub entries: Vec<Value>,
+    pub experimental: Vec<Option<crate::subagent_depth::jsonc::J>>,
+}
+
+pub(super) async fn config_entries(app: &App, endpoint: &Arc<Endpoint>, dir: &str) -> Result<ConfigEntries, Error> {
     if !on_connection(app, endpoint) {
         return Err(unavailable());
     }
@@ -47,14 +52,19 @@ pub(super) async fn config_entries(app: &App, endpoint: &Arc<Endpoint>, dir: &st
         .map_err(|_| unavailable())?
         .error_for_status()
         .map_err(|_| unavailable())?;
-    let entries = crate::opencode::read_json(response, 2 * 1024 * 1024).await.map_err(|_| unavailable())?;
+    let bytes = crate::opencode::read_bytes(response, 2 * 1024 * 1024).await.map_err(|_| unavailable())?;
     if !on_connection(app, endpoint) {
         return Err(unavailable());
     }
-    match entries {
-        Value::Array(entries) if entries.len() <= 256 => Ok(entries),
-        _ => Err(unavailable()),
+    use crate::subagent_depth::jsonc::{self, J};
+    let entries: Vec<Value> = serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
+    let text = std::str::from_utf8(&bytes).map_err(|_| unavailable())?;
+    let (Some(J::Arr(ordered)), false) = jsonc::parse(&jsonc::utf16(text), false) else { return Err(unavailable()) };
+    if entries.len() > 256 || ordered.len() != entries.len() {
+        return Err(unavailable());
     }
+    let experimental = ordered.iter().map(|entry| entry.get("info").and_then(|info| info.get("experimental")).cloned()).collect();
+    Ok(ConfigEntries { entries, experimental })
 }
 
 pub(super) fn experimental(entry: &Value) -> Option<&Value> {

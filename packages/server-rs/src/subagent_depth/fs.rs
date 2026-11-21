@@ -211,43 +211,40 @@ fn set_mode(path: &str, mode: u32) -> std::io::Result<()> {
 }
 /// `replaceHostDocument`: temporary file, lock, unchanged-source checks, then one rename.
 pub fn replace(d: &Document, updated: &[u16]) -> R<()> {
-    let style = Style::host();
-    let failed = DocError::Filesystem("Unable to atomically replace OpenCode configuration");
-    let temporary = format!("{}.{}.{}.tmp", d.write, std::process::id(), hex(8)?);
-    let mut created = false;
-    let mut lock: Option<Lock> = None;
-    let result = (|| -> R<()> {
-        std::fs::create_dir_all(style.dirname(&d.write)).map_err(|_| failed.clone())?;
-        if d.exists {
-            if d.mode & 0o222 == 0 {
-                return Err(DocError::Filesystem("OpenCode configuration is read-only"));
-            }
-            if std::fs::metadata(&d.write).map_err(|_| failed.clone())?.permissions().readonly() {
-                return Err(failed.clone());
-            }
+    prepare(d, updated)?.commit()
+}
+
+pub(crate) struct Prepared {
+    source: Document,
+    temporary: String,
+    lock: Option<Lock>,
+}
+
+impl Drop for Prepared {
+    fn drop(&mut self) {
+        if let Some(lock) = &mut self.lock {
+            lock.release();
         }
-        let mut file =
-            std::fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(|_| failed.clone())?;
-        created = true;
-        use std::io::Write;
-        file.write_all(crate::subagent_depth::jsonc::string(updated).as_bytes()).map_err(|_| failed.clone())?;
-        file.sync_all().map_err(|_| failed.clone())?;
-        drop(file);
-        set_mode(&temporary, d.mode).map_err(|_| failed.clone())?;
-        lock = Some(acquire(&d.write)?);
-        let verify = |lock: &Option<Lock>| -> R<()> {
-            assert_unchanged(d)?;
-            if !lock.as_ref().is_some_and(Lock::verify) {
-                return Err(DocError::Conflict("OpenCode configuration is being updated by another process"));
-            }
-            Ok(())
-        };
-        verify(&lock)?;
-        verify(&lock)?;
-        verify(&lock)?;
-        match std::fs::rename(&temporary, &d.write) {
+        if !self.temporary.is_empty() {
+            let _ = std::fs::remove_file(&self.temporary);
+        }
+    }
+}
+
+impl Prepared {
+    fn verify(&self) -> R<()> {
+        assert_unchanged(&self.source)?;
+        if !self.lock.as_ref().is_some_and(Lock::verify) {
+            return Err(DocError::Conflict("OpenCode configuration is being updated by another process"));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn commit(mut self) -> R<()> {
+        self.verify()?;
+        match std::fs::rename(&self.temporary, &self.source.write) {
             Ok(()) => {
-                created = false;
+                self.temporary.clear();
                 Ok(())
             }
             Err(e)
@@ -261,14 +258,36 @@ pub fn replace(d: &Document, updated: &[u16]) -> R<()> {
             {
                 Err(DocError::Conflict("OpenCode configuration changed during the update"))
             }
-            Err(_) => Err(failed.clone()),
+            Err(_) => Err(DocError::Filesystem("Unable to atomically replace OpenCode configuration")),
         }
-    })();
-    if let Some(l) = lock.as_mut() {
-        l.release();
     }
-    if created {
-        let _ = std::fs::remove_file(&temporary);
+}
+
+/// A caller may await a durable attempt while holding the exact replacement.
+/// Dropping the prepared edit discards its temporary bytes without publishing them.
+pub(crate) fn prepare(d: &Document, updated: &[u16]) -> R<Prepared> {
+    let style = Style::host();
+    let failed = DocError::Filesystem("Unable to atomically replace OpenCode configuration");
+    let temporary = format!("{}.{}.{}.tmp", d.write, std::process::id(), hex(8)?);
+    let mut prepared = Prepared { source: d.clone(), temporary: String::new(), lock: None };
+    std::fs::create_dir_all(style.dirname(&d.write)).map_err(|_| failed.clone())?;
+    if d.exists {
+        if d.mode & 0o222 == 0 {
+            return Err(DocError::Filesystem("OpenCode configuration is read-only"));
+        }
+        if std::fs::metadata(&d.write).map_err(|_| failed.clone())?.permissions().readonly() {
+            return Err(failed.clone());
+        }
     }
-    result
+    let mut file =
+        std::fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(|_| failed.clone())?;
+    prepared.temporary = temporary.clone();
+    use std::io::Write;
+    file.write_all(crate::subagent_depth::jsonc::string(updated).as_bytes()).map_err(|_| failed.clone())?;
+    file.sync_all().map_err(|_| failed.clone())?;
+    drop(file);
+    set_mode(&temporary, d.mode).map_err(|_| failed.clone())?;
+    prepared.lock = Some(acquire(&d.write)?);
+    prepared.verify()?;
+    Ok(prepared)
 }

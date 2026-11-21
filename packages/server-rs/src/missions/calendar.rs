@@ -23,6 +23,7 @@ use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tokio_util::sync::CancellationToken;
 use std::{
     path::PathBuf,
     sync::{Arc, atomic::Ordering},
@@ -30,12 +31,63 @@ use std::{
 };
 #[path = "calendar_activation.rs"]
 mod activation;
+#[path = "calendar_agent.rs"]
+mod agent;
 #[path = "calendar_capability.rs"]
 mod capability;
 pub use activation::Activation;
+pub(super) use agent::{agent_command, prepare_agent_schedule};
+use agent::same_creation;
 use capability::automation_api;
 
 const READ: usize = 512 * 1024;
+
+pub(super) struct Agent {
+    pub(super) scope: super::creation_admission::Scope,
+    row: Value,
+    cancel: CancellationToken,
+    creation: Option<Value>,
+}
+
+impl Agent {
+    fn id(&self) -> &str {
+        self.row["id"].as_str().unwrap_or_default()
+    }
+    async fn current(&self, app: &App) -> bool {
+        !self.cancel.is_cancelled() && self.scope.refresh(app).await.is_ok()
+            && super::bridge::session(app, &self.scope, self.id()).await
+                .is_ok_and(|row| row["location"] == self.row["location"] && row["parentID"] == self.row["parentID"])
+            && !self.cancel.is_cancelled() && self.scope.current(app)
+    }
+}
+
+pub(super) enum Principal {
+    Human(crate::auth::Principal),
+    Agent(Arc<Agent>),
+}
+
+impl Principal {
+    pub(super) fn token(&self) -> &CancellationToken {
+        match self { Self::Human(p) => &p.0, Self::Agent(agent) => &agent.cancel }
+    }
+    pub(super) async fn current(&self, app: &App) -> bool {
+        match self { Self::Human(p) => app.auth.human(p), Self::Agent(agent) => agent.current(app).await }
+    }
+    pub(super) fn transport(&self, identity: &mut Value) {
+        match self {
+            Self::Human(_) => identity["sessionID"] = json!(super::recurrence_control::auth_id()),
+            Self::Agent(agent) => {
+                identity["principal"] = match &agent.creation {
+                    Some(c) => json!({"kind":"agent","author":c["author"],"creationRequestID":c["requestID"],"creationDigest":c["digest"]}),
+                    None => json!({"kind":"agent","author":{"coordinatorSessionID":agent.id()}}),
+                };
+            }
+        }
+    }
+    pub(super) fn agent(&self) -> Option<Arc<Agent>> {
+        match self { Self::Human(_) => None, Self::Agent(agent) => Some(agent.clone()) }
+    }
+}
 
 fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
@@ -351,46 +403,6 @@ pub async fn request_read(
     read_receipt(&app, &endpoint, &w, &p, &canonical, &mid, Some(&request)).await
 }
 
-/// Observations through the authenticated agent bridge reuse the HTTP receipt and ownership checks.
-pub(super) async fn agent_read(app: Shared, scope: &super::creation_admission::Scope, raw: Value) -> Result<Value, Error> {
-    let invalid = || input_invalid();
-    let input = raw.as_object().ok_or_else(invalid)?;
-    let action = raw["action"].as_str().ok_or_else(invalid)?;
-    let id = scope.workspace.id.to_string();
-    let directory = Some(scope.dir.clone());
-    let fields = |names: &[&str]| input.keys().all(|k| names.contains(&k.as_str()));
-    scope.refresh(&app).await?;
-    let result = match action {
-        "list" if fields(&["action", "after", "limit"]) => {
-            let after = input.get("after").map(|a| a.as_str().filter(|v| good(v)).map(str::to_owned).ok_or_else(invalid)).transpose()?;
-            let limit = input.get("limit").map(|v| v.as_u64().filter(|n| (1..=8).contains(n)).ok_or_else(invalid)).transpose()?;
-            let Json(mut page) = list(State(app.clone()), Path(id), Query(Filter { directory, after, limit, request: None })).await?;
-            let schedules = page["schedules"].as_array().ok_or_else(unavailable)?;
-            page["schedules"] = Value::Array(schedules.iter().map(|doc| {
-                let mut summary = json!({"missionID":doc["id"],"title":doc["configuration"]["title"]});
-                for name in ["kind","revision","state","observation","availableActions","blockReason"] {
-                    if let Some(value) = doc.get(name) { summary[name] = value.clone(); }
-                }
-                summary
-            }).collect());
-            page
-        }
-        "capabilities" if fields(&["action"]) => {
-            capabilities(State(app.clone()), Path(id), Query(Filter { directory, ..Filter::default() })).await?.0
-        }
-        "read" if fields(&["action", "missionID", "requestID"]) => {
-            let mid = raw["missionID"].as_str().filter(|v| good(v)).ok_or_else(invalid)?.to_owned();
-            let request = input.get("requestID").map(|r| r.as_str().filter(|v| good(v)).map(str::to_owned).ok_or_else(invalid)).transpose()?;
-            match read(State(app.clone()), Path((id, mid)), Ok(Query(ReadQuery { directory, request }))).await {
-                Ok(Json(mut body)) => { body["status"] = json!(200); body }
-                Err((status, Json(mut body))) => { body["status"] = json!(status.as_u16()); body }
-            }
-        }
-        _ => return Err(crate::error(Status::NOT_IMPLEMENTED, "Mission schedule operation unavailable")),
-    };
-    scope.refresh(&app).await?;
-    Ok(result)
-}
 pub struct Input {
     request: String,
     revision: u64,
@@ -458,7 +470,7 @@ pub async fn create(
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<Json<Value>, Error> {
     let input = parse_input(body, true)?;
-    mutate(app, id, None, principal, input).await
+    mutate(app, id, None, Principal::Human(principal), input).await
 }
 pub async fn control(
     State(app): State<Shared>,
@@ -470,7 +482,7 @@ pub async fn control(
     if !good(&mid) {
         return Err(input_invalid());
     }
-    mutate(app, id, Some(mid), principal, input).await
+    mutate(app, id, Some(mid), Principal::Human(principal), input).await
 }
 fn validate_config(v: &mut Value, dir: &str, profile: &Value, creating: bool) -> Result<(), Error> {
     // Reference body schema: the user configuration omits the server-owned fields.
@@ -516,10 +528,10 @@ async fn mutate(
     app: Shared,
     id: String,
     mid: Option<String>,
-    principal: crate::auth::Principal,
+    principal: Principal,
     input: Input,
 ) -> Result<Json<Value>, Error> {
-    if !app.auth.human(&principal) || app.mission_bridge.is_none() || app.calendar_profile.is_none() {
+    if !principal.current(&app).await || app.mission_bridge.is_none() || app.calendar_profile.is_none() {
         return Err(human_required());
     }
     let _gate = app.calendar_slot.lock().await;
@@ -535,9 +547,21 @@ async fn mutate(
     let mut conf = input.configuration.clone();
     if let Some(v) = &mut conf {
         validate_config(v, &dir, &profile, input.action == "create")?;
+        if let Principal::Agent(agent) = &principal
+            && agent.creation.is_none()
+        {
+            v["coordinatorSelectionAuthor"] = json!({"coordinatorSessionID":agent.id()});
+        }
     }
-    let payload =
-        digest(conf.as_ref().unwrap_or(&json!({"deleteManagedSessions":input.delete_managed.unwrap_or(false)})));
+    let creation = match &principal {
+        Principal::Agent(agent) if input.action == "create" => Some(agent.creation.as_ref().ok_or_else(unavailable)?.clone()),
+        _ => None,
+    };
+    let payload = if let Some(c) = &creation {
+        digest(&json!({"configuration":conf,"creation":c}))
+    } else {
+        digest(conf.as_ref().unwrap_or(&json!({"deleteManagedSessions":input.delete_managed.unwrap_or(false)})))
+    };
     let identity = digest(&json!([input.request, input.revision, input.action, payload]));
     let physical = files::host_identity(&w.path).map_err(|_| lost(Status::SERVICE_UNAVAILABLE, &mid))?;
     let existing = app.calendar_holds.lock().unwrap().get(&mid).cloned();
@@ -553,7 +577,7 @@ async fn mutate(
             return Err(lost(Status::CONFLICT, &mid));
         }
         let receipt = read_exact(&app, &endpoint, &w, &mid, Some(&held.request)).await?;
-        if principal.0.is_cancelled() || !current(&app, &w, &project, &canonical, &physical, &endpoint).await {
+        if !principal.current(&app).await || !current(&app, &w, &project, &canonical, &physical, &endpoint).await {
             return Err(lost(Status::SERVICE_UNAVAILABLE, &mid));
         }
         if settle(&app, &w, &project, &canonical, &mid, &receipt) {
@@ -618,12 +642,12 @@ async fn mutate(
             return Err(lost(Status::SERVICE_UNAVAILABLE, &mid));
         }
     }
-    if !current(&app, &w, &project, &canonical, &physical, &endpoint).await || principal.0.is_cancelled() {
+    if !current(&app, &w, &project, &canonical, &physical, &endpoint).await || !principal.current(&app).await {
         return Err(lost(Status::SERVICE_UNAVAILABLE, &mid));
     }
-    let auth_id = format!("cnrs-{}", uuid::Uuid::new_v4());
-    let mut proof = json!({"sessionID":auth_id,"workspaceID":id,"requestID":input.request,"location":{"directory":dir},
+    let mut proof = json!({"workspaceID":id,"requestID":input.request,"location":{"directory":dir},
         "scheduleID":mid,"expectedRevision":input.revision,"action":input.action,"profileSource":profile,"issuedAt":now()});
+    principal.transport(&mut proof);
     if matches!(input.action.as_str(), "create" | "configure" | "delete") {
         proof["configDigest"] = json!(payload);
     }
@@ -635,6 +659,9 @@ async fn mutate(
     let mut call = json!({"missionID":mid,"requestID":input.request,"expectedRevision":input.revision,"action":input.action,"transport":transport});
     if let Some(v) = conf {
         call["configuration"] = v;
+    }
+    if let Some(v) = creation {
+        call["creation"] = v;
     }
     if let Some(v) = input.delete_managed {
         call["deleteManagedSessions"] = json!(v);
@@ -661,11 +688,12 @@ async fn mutate(
         marker.clone(),
         Arc::new(ClaimBinding {
             proof,
-            principal: principal.0.clone(),
+            principal: principal.token().clone(),
             physical: physical.clone(),
             project: project.clone(),
             canonical: canonical.clone(),
             endpoint: endpoint.clone(),
+            agent: principal.agent(),
         }),
     );
     // An admitted native write runs to completion even if this client leaves;
@@ -681,7 +709,7 @@ async fn mutate(
             let result = result.map_err(|_| lost())?;
             if !valid_result(&result, &mid)
                 || !current(&app, &w, &project, &canonical, &physical, &endpoint).await
-                || principal.0.is_cancelled()
+                || !principal.current(&app).await
             {
                 return Err(lost());
             }
@@ -705,7 +733,7 @@ async fn mutate(
                 Some(original) => {
                     let exact = read_exact(&app, &endpoint, &w, &mid, Some(original)).await?;
                     if !current(&app, &w, &project, &canonical, &physical, &endpoint).await
-                        || principal.0.is_cancelled()
+                        || !principal.current(&app).await
                     {
                         return Err(lost());
                     }
@@ -728,7 +756,7 @@ pub async fn verify(app: &App, session: &str, proof: Value) -> Result<Json<Value
     let claim = app.calendar_claims.lock().unwrap().get(marker).cloned().ok_or_else(unavailable)?;
     let check = || {
         proof == claim.proof
-            && proof["sessionID"] == session
+            && claim.agent.as_ref().map_or(proof["sessionID"] == session, |agent| agent.id() == session)
             && !claim.principal.is_cancelled()
             && on_connection(app, &claim.endpoint)
             && issued <= now() + 5000
@@ -740,6 +768,37 @@ pub async fn verify(app: &App, session: &str, proof: Value) -> Result<Json<Value
     let id = proof["workspaceID"].as_str().ok_or_else(bad)?;
     let dir = proof["location"]["directory"].as_str().ok_or_else(bad)?;
     let (w, project, canonical) = scope(app, id, Some(dir)).await?;
+    if let Some(agent) = &claim.agent {
+        if agent.scope.project != project || !agent.current(app).await {
+            return Err(unavailable());
+        }
+        if let Some(c) = &agent.creation {
+            match proof["action"].as_str() {
+                Some("create") if proof["requestID"] == c["requestID"]
+                    && proof["scheduleID"] == schedule_id(&project, &canonical, c["requestID"].as_str().ok_or_else(bad)?) =>
+                {
+                    let binding = rpc(app, &claim.endpoint, dir, "schedulePreparationRead",
+                        json!({"creationRequestID":c["requestID"]}), 64 * 1024).await?;
+                    if binding["binding"] != json!({"author":c["author"],"creationRequestID":c["requestID"],"creationDigest":c["digest"]}) {
+                        return Err(unavailable());
+                    }
+                }
+                Some("play") => {
+                    let mid = proof["scheduleID"].as_str().ok_or_else(bad)?;
+                    let seen = read_exact(app, &claim.endpoint, &w, mid, None).await?;
+                    let doc = &seen["document"];
+                    if !same_creation(&doc["creation"], c) || doc["state"] != "paused" || !doc["firstPlayedAt"].is_null()
+                        || doc["revision"] != proof["expectedRevision"]
+                        || doc["creation"]["automaticStart"]["requestID"] != proof["requestID"]
+                        || doc["creation"]["automaticStart"]["attempted"] != false
+                    {
+                        return Err(unavailable());
+                    }
+                }
+                _ => return Err(unavailable()),
+            }
+        }
+    }
     if !check()
         || directory(&w)? != dir
         || project != claim.project
@@ -754,6 +813,7 @@ pub async fn verify(app: &App, session: &str, proof: Value) -> Result<Json<Value
     }
     Ok(Json(json!({"result":{"admitted":true}})))
 }
+
 pub async fn activation_read(
     State(app): State<Shared>,
     Path((id, mid)): Path<(String, String)>,
@@ -780,6 +840,10 @@ pub async fn activate(
     Extension(principal): Extension<crate::auth::Principal>,
     Json(q): Json<Activation>,
 ) -> Result<Json<Value>, Error> {
+    activate_for(&app, &id, &mid, &q, Principal::Human(principal)).await.map(Json)
+}
+
+async fn activate_for(app: &App, id: &str, mid: &str, q: &Activation, principal: Principal) -> Result<Value, Error> {
     if !good(&mid) || !q.valid() {
         return Err(bad());
     }
@@ -791,51 +855,10 @@ pub async fn activate(
     let dir = directory(&w)?;
     let _permit = fence::enter(&[dir.to_owned()]).ok_or_else(unavailable)?;
     let guarded =
-        || async { current(&app, &w, &project, &canonical, &physical, &endpoint).await && !principal.0.is_cancelled() };
-    if !guarded().await {
-        return Err(unavailable());
-    }
+        || async { current(&app, &w, &project, &canonical, &physical, &endpoint).await && principal.current(app).await };
     let journal = activation::Journal { app: &app, endpoint: &endpoint, dir, mission: &mid, input: &q };
-    let old = journal.phase("read", Value::Null).await?;
-    // Retain the established authority tuple for zero-target proofs; a file
-    // transaction will need the native target/path authority before it can write.
-    let authority = digest(&json!(["enabled-fixture", source(&app)?, dir]));
-    let admission = activation::admit(&old["document"], &q, &authority)?;
-    let fresh = admission == activation::Admission::Fresh;
-    if automation_api(&app, &endpoint).await?["available"] != true {
-        return Err(if fresh { activation::disabled() } else { activation_pending() });
-    }
-    let settings = activation::settings(&app, &endpoint, &w, dir).await?;
-    if !guarded().await {
-        return Err(activation_pending());
-    }
-    settings.require_enabled(fresh.then_some(&q))?;
-    if admission == activation::Admission::VerifyReady {
-        let seen = journal.phase("read", Value::Null).await?;
-        if seen != old || !guarded().await {
-            return Err(activation_pending());
-        }
-        return Ok(Json(seen));
-    }
-    if fresh {
-        let prepared = journal.phase("prepare", json!({"authority":authority,"targets":[]})).await?;
-        if !journal.confirms(&prepared, "prepared", &authority) {
-            return Err(activation_pending());
-        }
-    }
-    let settings = activation::settings(&app, &endpoint, &w, dir).await.map_err(|_| activation_pending())?;
-    if !guarded().await {
-        return Err(activation_pending());
-    }
-    settings.require_enabled(None)?;
-    let result = journal.phase("ready", json!({"effectiveOrigin":settings.origin})).await?;
-    if !journal.confirms(&result, "ready", &authority)
-        || result["document"]["scheduleActivation"]["effectiveOrigin"] != json!(settings.origin)
-        || !guarded().await
-    {
-        return Err(activation_pending());
-    }
-    Ok(Json(result))
+    let legacy = digest(&json!(["enabled-fixture", source(&app)?, dir]));
+    activation::execute(journal, &w, &legacy, guarded).await
 }
 
 #[cfg(test)]

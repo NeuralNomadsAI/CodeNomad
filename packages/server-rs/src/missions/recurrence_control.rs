@@ -21,6 +21,7 @@ use axum::{
 };
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
+use super::calendar::{self, Principal as CalendarPrincipal};
 
 const READ: usize = 512 * 1024;
 const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
@@ -68,11 +69,12 @@ impl Drop for Claim {
         self.0.calendar_claims.lock().unwrap().remove(&self.1);
     }
 }
-pub(crate) fn signed(app: &Shared, mut identity: Value, principal: &Principal, scope: &Scope) -> Option<(Value, Claim)> {
+pub(super) fn signed(app: &Shared, mut identity: Value, principal: &CalendarPrincipal, scope: &Scope) -> Option<(Value, Claim)> {
     let key = app.mission_bridge.as_ref()?;
     if !still(app, scope) {
         return None;
     }
+    principal.transport(&mut identity);
     let marker = contract::digest(&identity);
     identity["digest"] = json!(marker);
     let proof = contract::sign(&identity, key);
@@ -80,14 +82,120 @@ pub(crate) fn signed(app: &Shared, mut identity: Value, principal: &Principal, s
         .lock()
         .unwrap()
         .insert(marker.clone(), Arc::new(ClaimBinding {
-            proof: identity.clone(), principal: principal.0.clone(), physical: scope.host.clone(),
-            project: scope.project.clone(), canonical: scope.canonical.clone(), endpoint: scope.endpoint.clone(),
+             proof: identity.clone(), principal: principal.token().clone(), physical: scope.host.clone(),
+             project: scope.project.clone(), canonical: scope.canonical.clone(), endpoint: scope.endpoint.clone(),
+             agent: principal.agent(),
         }));
     identity["proof"] = json!(proof);
     Some((identity, Claim(app.clone(), marker)))
 }
 pub(crate) fn auth_id() -> String {
     format!("cnrs-{}", uuid::Uuid::new_v4())
+}
+
+pub(super) async fn agent_daily(app: &Shared, agent: Arc<calendar::Agent>, input: Value) -> Result<Value, crate::Error> {
+    let invalid = || crate::error(Status::BAD_REQUEST, "Invalid daily Mission action");
+    let unavailable = || crate::error(Status::SERVICE_UNAVAILABLE, "Daily Mission unavailable");
+    let action = input["action"].as_str().ok_or_else(invalid)?;
+    let fields: &[&str] = match action {
+        "list" => &["after", "limit"],
+        "create" => &["creation", "requestID"],
+        "read" if input.get("creation").is_some() => &["creation", "requestID"],
+        "read" if input.get("requestID").is_none() => &["missionID"],
+        "read" => &["missionID", "requestID", "expectedRevision", "receiptAction"],
+        "pause" | "stop" => &["missionID", "requestID", "expectedRevision", "retry"],
+        "play" | "resume" | "run-now" | "check" => &["missionID", "requestID", "expectedRevision"],
+        _ => return Err(invalid()),
+    };
+    if !input.as_object().is_some_and(|o| o.keys().all(|k| matches!(k.as_str(), "action" | "owner") || fields.contains(&k.as_str())))
+        || input.get("retry").is_some_and(|v| v != &Value::Bool(true))
+    {
+        return Err(invalid());
+    }
+    let wid = agent.scope.workspace.id.to_string();
+    let s = scope(app, &wid, true).await.map_err(|_| unavailable())?;
+    let principal = CalendarPrincipal::Agent(agent.clone());
+    if s.dir != agent.scope.dir || s.project != agent.scope.project || !principal.current(app).await {
+        return Err(unavailable());
+    }
+    let as_value = async |response: Response| {
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024).await.map_err(|_| unavailable())?;
+        let mut output: Value = serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
+        if !output.is_object() { return Err(unavailable()); }
+        output["status"] = json!(status.as_u16());
+        Ok(output)
+    };
+    if action == "create" || action == "read" && input.get("creation").is_some() {
+        let request = input["requestID"].as_str().filter(|s| rid(s)).ok_or_else(invalid)?;
+        let mut raw = input["creation"].as_object().cloned().ok_or_else(invalid)?;
+        if raw.contains_key("requestID") || raw.contains_key("directory") || input.get("missionID").is_some() || input.get("expectedRevision").is_some() {
+            return Err(invalid());
+        }
+        raw.insert("requestID".into(), json!(request));
+        raw.insert("directory".into(), json!(s.dir));
+        let response = super::recurrence_create::create_for(app.clone(), wid, principal, Value::Object(raw), action == "read").await;
+        let mut result = as_value(response).await?;
+        result["requestID"] = json!(request);
+        if let Some(id) = result["schedule"]["id"].as_str() { result["missionID"] = json!(id); }
+        return Ok(result);
+    }
+    let snapshot = async |mid: &str| {
+        let raw = rpc(app, &s, "recurrenceSnapshot", json!({"scheduleID":mid}), READ).await.map_err(|_| unavailable())?;
+        if !contract::snapshot(&raw) || raw["projectID"] != s.project || raw["projectCanonical"] != s.canonical
+            || !same_location(&raw["location"], &s.dir) {
+            return Err(unavailable());
+        }
+        Ok(raw["schedules"].as_array().and_then(|a| a.iter().find(|r| r["id"] == mid)).cloned())
+    };
+    if action == "list" {
+        let limit = input.get("limit").map(|v| v.as_u64().filter(|n| (1..=8).contains(n)).ok_or_else(invalid)).transpose()?.unwrap_or(8);
+        let mut query = json!({"limit":limit});
+        if let Some(after) = input.get("after") {
+            query["after"] = json!(after.as_str().filter(|id| rid(id)).ok_or_else(invalid)?);
+        }
+        let page = rpc(app, &s, "recurrenceList", query, READ).await.map_err(|_| unavailable())?;
+        if page["projectID"] != s.project || page["projectCanonical"] != s.canonical {
+            return Err(unavailable());
+        }
+        let rows = page["schedules"].as_array().filter(|a| a.len() <= 8).ok_or_else(unavailable)?;
+        let mut summaries = vec![];
+        for item in rows {
+            let mid = item["id"].as_str().filter(|r| rid(r)).ok_or_else(unavailable)?;
+            if item["directory"] != s.dir { return Err(unavailable()); }
+            let row = snapshot(mid).await?.ok_or_else(unavailable)?;
+            let mut item = json!({"missionID":mid});
+            for key in ["title", "revision", "state", "clock", "nextDueAt", "actions"] {
+                if let Some(value) = row.get(key) { item[key] = value.clone(); }
+            }
+            summaries.push(item);
+        }
+        let mut out = json!({"projectID":s.project,"schedules":summaries});
+        if let Some(next) = page.get("next") { out["next"] = next.clone(); }
+        return Ok(out);
+    }
+    let mid = input["missionID"].as_str().filter(|r| rid(r)).ok_or_else(invalid)?;
+    if action == "read" && input.get("requestID").is_none() {
+        return Ok(json!({"schedule":snapshot(mid).await?}));
+    }
+    let request = input["requestID"].as_str().filter(|r| rid(r)).ok_or_else(invalid)?;
+    let revision = revision(input.get("expectedRevision")).ok_or_else(invalid)?;
+    let selected = if action == "read" { input["receiptAction"].as_str().ok_or_else(invalid)? } else { action };
+    if !contract::ACTIONS.contains(&selected) { return Err(invalid()); }
+    let q = Request { schedule:mid.into(), request:request.into(), action:selected.into(), revision };
+    if action == "read" {
+        let hint = holds::held_read(&wid, &s.dir, &q).then(|| holds::proof_hint(&wid, &q)).flatten();
+        let mut result = control_read(app, &s, &q, hint).await.ok_or_else(unavailable)?;
+        if !principal.current(app).await { return Err(unavailable()); }
+        holds::reconcile(&wid, &s.dir, &q, hint, &result);
+        result["status"] = json!(200);
+        return Ok(result);
+    }
+    let retry = input["retry"] == true;
+    if retry && !matches!(action, "pause" | "stop") { return Err(invalid()); }
+    let response = admit(app.clone(), wid, Input { request:q, directory:Some(s.dir), retry }, principal,
+        "Daily Mission control uncertain; read exact status before another action").await;
+    as_value(response).await
 }
 
 pub(crate) struct Input {
@@ -164,13 +272,13 @@ async fn superseded_status(app: &App, scope: &Scope, old: &Request, hint: Option
     Some(base)
 }
 /// `prepareRecurrenceControl`: physical admission, permit, proofs, signed body.
-async fn prepare(app: &Shared, workspace: &str, input: &Input, principal: &Principal) -> Result<Prepared, NotSent> {
+async fn prepare(app: &Shared, workspace: &str, input: &Input, principal: &CalendarPrincipal) -> Result<Prepared, NotSent> {
     let (_, source) = sent(profile(app))?;
     sent(app.mission_bridge.as_ref())?;
     let s = scope(app, workspace, false).await.map_err(|_| NotSent(None))?;
     files::directory(&s.w, input.directory.as_deref()).map_err(|_| NotSent(None))?;
     let root = sent(git_root(&s).await)?;
-    if principal.0.is_cancelled() || !still(app, &s) {
+    if !principal.current(app).await || !still(app, &s) {
         return Err(NotSent(None));
     }
     let q = &input.request;
@@ -202,11 +310,11 @@ async fn prepare(app: &Shared, workspace: &str, input: &Input, principal: &Princ
             return Err(NotSent(None));
         }
     }
-    if git_root(&s).await.as_ref() != Some(&root) || !still(app, &s) || principal.0.is_cancelled() {
+    if git_root(&s).await.as_ref() != Some(&root) || !still(app, &s) || !principal.current(app).await {
         return Err(NotSent(None));
     }
     let issued = now();
-    let proof = json!({"sessionID":auth_id(),"workspaceID":s.id,"requestID":q.request,"location":{"directory":s.dir},
+    let proof = json!({"workspaceID":s.id,"requestID":q.request,"location":{"directory":s.dir},
         "scheduleID":q.schedule,"action":q.action,"expectedRevision":q.revision,"profileSource":source,"issuedAt":issued});
     let (mut body, claim) = sent(signed(app, proof, principal, &s))?;
     hold.issued(issued);
@@ -290,7 +398,7 @@ fn reply((status, body): (Status, Value)) -> Response {
 }
 /// Admit, dispatch once and settle; the write and its settlement run to
 /// completion even if this client leaves (the reference never aborts them).
-async fn admit(app: Shared, workspace: String, input: Input, principal: Principal, uncertain: &'static str) -> Response {
+async fn admit(app: Shared, workspace: String, input: Input, principal: CalendarPrincipal, uncertain: &'static str) -> Response {
     let not_dispatched = |e: NotSent| match holds::not_dispatched(e.0.as_ref(), &workspace, &input.request.schedule, &input.request.request, input.retry) {
         Some(code) => (
             Status::from_u16(code).unwrap(),
@@ -303,7 +411,7 @@ async fn admit(app: Shared, workspace: String, input: Input, principal: Principa
         Ok(p) => p,
         Err(e) => return not_dispatched(e),
     };
-    if principal.0.is_cancelled() || !still(&app, &p.scope) || !p.hold.dispatched() {
+    if !principal.current(&app).await || !still(&app, &p.scope) || !p.hold.dispatched() {
         drop(p);
         return not_dispatched(NotSent(None));
     }
@@ -363,7 +471,7 @@ pub async fn control(
         return invalid();
     }
     let request = Request { schedule, request: request.unwrap().to_owned(), action: action.to_owned(), revision: rev };
-    admit(app, id, Input { request, directory: dir, retry }, principal, "Recurrence control uncertain; read exact status before another action").await
+    admit(app, id, Input { request, directory: dir, retry }, CalendarPrincipal::Human(principal), "Recurrence control uncertain; read exact status before another action").await
 }
 /// `POST /missions/recurrence/:s/run-now`.
 pub async fn run_now(
@@ -393,7 +501,7 @@ pub async fn run_now(
             .into_response();
     }
     let request = Request { schedule, request: request.to_owned(), action: "run-now".into(), revision: rev };
-    admit(app, id, Input { request, directory: dir, retry: false }, principal, "Manual admission uncertain; read status, do not resend").await
+    admit(app, id, Input { request, directory: dir, retry: false }, CalendarPrincipal::Human(principal), "Manual admission uncertain; read status, do not resend").await
 }
 
 /// Ownership and directory of a status read, with the reference refusals.

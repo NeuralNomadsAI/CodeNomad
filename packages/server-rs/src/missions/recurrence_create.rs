@@ -9,7 +9,7 @@ use crate::{
     worktrees::linked::native,
     missions::recurrence::{Refused, Scope, rpc, scope, still},
     missions::recurrence_contract::{self as contract, canonical, clock, nid, rid, schedule_id, units},
-    missions::recurrence_control::{auth_id, git_root, profile, signed},
+    missions::recurrence_control::{git_root, profile, signed},
     missions::recurrence_holds::now,
     files,
 };
@@ -235,8 +235,8 @@ async fn watched_current(app: &App, s: &Scope, watched: &[String]) -> Option<boo
 }
 
 /// `assertPhysicalCurrent`: same Git root, workspace, physical root and principal.
-async fn physical(app: &App, s: &Scope, root: &Value, principal: &Principal) -> bool {
-    git_root(s).await.as_ref() == Some(root) && still(app, s) && !principal.0.is_cancelled()
+async fn physical(app: &App, s: &Scope, root: &Value, principal: &super::calendar::Principal) -> bool {
+    git_root(s).await.as_ref() == Some(root) && still(app, s) && principal.current(app).await
 }
 
 /// `mission-creation-holds.ts` for recurrence creations: one bounded permit per
@@ -310,11 +310,16 @@ pub async fn create(
     Extension(principal): Extension<Principal>,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Response {
-    if !app.auth.human(&principal) || app.mission_bridge.is_none() {
+    let Ok(Json(raw)) = body else { return fail(Status::BAD_REQUEST, "Invalid recurrence creation request") };
+    create_for(app, id, super::calendar::Principal::Human(principal), raw, false).await
+}
+pub(super) async fn create_for(
+    app: Shared, id: String, principal: super::calendar::Principal, raw: Value, observe: bool,
+) -> Response {
+    if !principal.current(&app).await || app.mission_bridge.is_none() {
         return fail(Status::UNAUTHORIZED, "Human authentication required");
     }
     let invalid = || fail(Status::BAD_REQUEST, "Invalid recurrence creation request");
-    let Ok(Json(raw)) = body else { return invalid() };
     let watched = &raw["watchedConversationIDs"];
     if !watched.as_array().is_some_and(|w| w.len() <= 32 && w.iter().all(Value::is_string)) {
         return invalid();
@@ -397,8 +402,7 @@ pub async fn create(
             || old["projectID"] != s.project.as_str()
             || old["projectCanonical"] != s.canonical.as_str()
             || old["digest"] != digest.as_str()
-            || old["state"] != "paused"
-            || old["revision"] != 0
+            || !observe && (old["state"] != "paused" || old["revision"] != 0)
         {
             return fail(Status::CONFLICT, "Recurrence request conflict");
         }
@@ -410,6 +414,10 @@ pub async fn create(
     if !previous.as_object().is_some_and(|o| o.len() == 1) {
         return unavailable("Recurrence creation unavailable");
     }
+    if observe {
+        return (Status::SERVICE_UNAVAILABLE, Json(json!({"missionID":sid,"requestID":input.request,
+            "schedule":null,"pending":true}))).into_response();
+    }
     let hold_scope = canonical(&json!({"key":key,"workspaceID":id,"projectID":s.project,"missionID":sid,"requestDigest":hold_digest,
         "directory":s.dir,"identity":s.host}));
     let mut admission = match Creation::hold(&key, &hold_scope, &hold_digest) {
@@ -419,7 +427,7 @@ pub async fn create(
     if !physical(&app, &s, &root, &principal).await || watched_current(&app, &s, &input.watched).await != Some(true) {
         return unavailable("Recurrence creation unavailable");
     }
-    let proof = json!({"sessionID":auth_id(),"workspaceID":s.id,"requestID":input.request,"location":{"directory":s.dir},
+    let proof = json!({"workspaceID":s.id,"requestID":input.request,"location":{"directory":s.dir},
         "scheduleID":sid,"expectedRevision":0,"action":"create","configDigest":digest,"profileSource":source,"issuedAt":now()});
     let Some((transport, claim)) = signed(&app, proof, &principal, &s) else { return unavailable("Recurrence creation unavailable") };
     admission.dispatched();

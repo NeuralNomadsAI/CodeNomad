@@ -207,7 +207,7 @@ fn recovered(m: Value, request: &str) -> Value {
 }
 
 pub(super) async fn prepare(
-    app: &App,
+    app: &crate::Shared,
     scope: Scope,
     author: Value,
     raw: Value,
@@ -222,13 +222,13 @@ pub(super) async fn prepare(
     let objective = js_trim(&q.objective);
     let title = q.title.as_deref().map(js_trim);
     let size = |v: &str, n| (1..=n).contains(&v.chars().count());
-    // Calendar writes need the dedicated signed project-agent principal; never
-    // submit an agent preparation through the human calendar route.
-    if q.launch
-        .as_ref()
-        .is_some_and(|launch| launch != &json!({"when":[]}) && launch != &json!({"when":[{"kind":"now"}]}))
-        || q.coordinator.is_some()
-        || q.observe_only.is_some()
+    let launch = q.launch.as_ref().map(|launch| {
+        if !launch["when"].is_array() { return Err(invalid()); }
+        configuration::launch(launch).map_err(|_| invalid())
+    }).transpose()?;
+    let schedule = launch.as_ref().is_some_and(configuration::requires_calendar);
+    if (!schedule && (q.coordinator.is_some() || q.observe_only.is_some()))
+        || q.observe_only == Some(false)
         || !size(request, 128)
         || !size(objective, 20_000)
         || title.is_some_and(|s| !size(s, 60) || s.contains(['\r', '\n']))
@@ -238,7 +238,7 @@ pub(super) async fn prepare(
     {
         return Err(invalid());
     }
-    let mut watched = q.watched.unwrap_or_default();
+    let mut watched = q.watched.clone().unwrap_or_default();
     if watched.len() > 64 || watched.iter().any(|id| !creation_admission::native_id(id)) {
         return Err(invalid());
     }
@@ -247,6 +247,61 @@ pub(super) async fn prepare(
         return Err(invalid());
     }
     let author_sid = author["id"].as_str().ok_or_else(invalid)?;
+    if schedule {
+        let mode = q.task_mode.as_deref().ok_or_else(invalid)?;
+        let launch = launch.ok_or_else(invalid)?;
+        if q.coordinator.as_deref().is_some_and(|id| !creation_admission::native_id(id)) {
+            return Err(invalid());
+        }
+        let profiles = creation_profiles(&q.template, q.profiles.clone())?.ok_or_else(invalid)?;
+        let (status, caps) = scope.call(app, "documentCapabilities", &json!({}), 10, 65_536).await?;
+        if !status.is_success() || !document_capabilities(&caps["output"])
+            || caps["output"]["agentSchedulePreparation"] != true || caps["output"]["automaticStart"] != true
+        {
+            return Err(invalid());
+        }
+        let initial_source = source(app, &scope, &author).await?;
+        if q.observe_only != Some(true) && initial_source != q.mission {
+            return Err(invalid());
+        }
+        let mut by = json!({"coordinatorSessionID":author_sid});
+        if let Some(mid) = &q.mission { by["missionID"] = json!(mid); }
+        let mut config = json!({"title":title.map(str::to_owned).unwrap_or_else(||
+                objective.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(60).collect()),
+            "objective":objective,"template":q.template,"profiles":profiles,"taskMode":mode,
+            "launch":launch,"watchedConversationIDs":watched});
+        if let Some(notes) = &q.notes { config["notes"] = json!(notes); }
+        if let Some(coordinator) = &q.coordinator { config["coordinatorSessionID"] = json!(coordinator); }
+        let start = q.start_on_creation == Some(true);
+        let mut original = json!({"objective":objective,"template":q.template,"launch":launch,
+            "watchedConversationIDs":watched,"startOnCreation":start});
+        if let Some(title) = title { original["title"] = json!(title); }
+        for name in ["notes","coordinatorSessionID"] {
+            if let Some(value) = config.get(name) { original[name] = value.clone(); }
+        }
+        let defaults = q.creation_defaults.unwrap_or(Value::Null);
+        if !defaults.is_null() && (defaults["profiles"] != profiles || defaults["taskMode"] != mode
+            || !defaults["request"].as_object().is_some_and(|r| r.keys().all(|k| matches!(k.as_str(), "profiles" | "taskMode"))))
+        {
+            return Err(invalid());
+        }
+        if defaults.is_null() {
+            original["profiles"] = profiles;
+            original["taskMode"] = json!(mode);
+        } else {
+            for (key, value) in defaults["request"].as_object().unwrap() {
+                original[key] = value.clone();
+            }
+        }
+        let digest = token(&json!({"author":by,"input":original,"creationDefaults":defaults}).to_string(), 64);
+        let mut creation = json!({"requestID":request,"author":by,"input":original,"digest":digest});
+        if !defaults.is_null() { creation["creationDefaults"] = defaults; }
+        if start {
+            creation["automaticStart"] = json!({"requestID":format!("start_{}", token(&format!("creation\0{request}"), 24)),
+                "attempted":false});
+        }
+        return super::calendar::prepare_agent_schedule(app, scope, author, lifetime, config, creation, q.observe_only == Some(true)).await;
+    }
     let owner = format!("prepare:{}:{author_sid}", scope.project);
     let key = (owner, request.to_owned());
     let request_start = format!("start_{}", token(&format!("creation\0{request}"), 24));

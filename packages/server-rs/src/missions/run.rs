@@ -551,14 +551,7 @@ pub async fn dispatch(State(app): State<Shared>, request: axum::extract::Request
         "create-root" => super::inputs::create_root(&app, scope, co, command.input).await,
         "cleanup" => super::cleanup::remove(&app, scope, co, command.input).await,
         "task-sessions" => super::task_sessions::observe(&app, scope, co, command.input).await,
-        "schedule" => {
-            let result = super::calendar::agent_read(app.clone(), &scope, command.input).await?;
-            let fresh = super::bridge::session(&app, &scope, &req.session_id).await?;
-            if ["location", "parentID"].iter().any(|k| fresh[*k] != co[*k]) {
-                return Err(foreign());
-            }
-            Ok(result)
-        }
+        "schedule" => super::calendar::agent_command(app.clone(), scope, co, command.input).await,
         "prompt" | "synthetic" => super::inputs::admit(&app, scope, co, &command.kind, command.input).await,
         "lifecycle" => lifecycle(&app, scope, co, command.input).await,
         _ => Err(error(Status::NOT_IMPLEMENTED, "Mission bridge operation unavailable")),

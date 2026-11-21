@@ -222,11 +222,17 @@ fn host_replacement_is_atomic_and_fenced() {
     assert_eq!((write.as_str(), exists), (file.as_str(), false));
     let absent = fs::load(&file).unwrap();
     assert_eq!((absent.exists, absent.mode, string(&absent.text)), (false, 0o600, "{}\n".into()));
+    let unconfirmed = fs::prepare(&absent, &utf16("{\"only\":\"staged\"}\n")).unwrap();
+    assert!(!std::path::Path::new(&file).exists());
+    drop(unconfirmed);
+    assert!(!std::path::Path::new(&file).exists());
     fs::replace(&absent, &utf16("{\n  \"a\": 1\n}\n")).unwrap();
     let present = fs::load(&file).unwrap();
     assert!(present.exists && string(&present.text) == "{\n  \"a\": 1\n}\n");
     // A stale document (changed on disk after reading) is refused without writing.
+    let staged = fs::prepare(&present, &utf16("{}\n")).unwrap();
     std::fs::write(&file, "{ \"b\": 2 }\n").unwrap();
+    assert!(staged.commit().is_err());
     assert_eq!(
         fs::replace(&present, &utf16("{}\n")),
         Err(DocError::Conflict("OpenCode configuration changed during the update"))
