@@ -17,7 +17,7 @@ import { MemoryError } from "../memory/model"
 import type { MemoryErrorCode } from "../memory/model"
 import type { MemoryOperation, MemoryResult } from "../memory/api"
 import { formatDeveloperTarget, parseDeveloperTarget } from "../automation/developer-target-selector"
-import { isRestartSuccessor, readDeveloperRestart, readDeveloperTarget, sameDeveloperTarget,
+import { isRestartSuccessor, readDeveloperTarget,
   type DeveloperRestart } from "../automation/developer-restart"
 
 export const AUTOMATION_BRIDGE_PATH = "/api/opencode-plugin/automation"
@@ -465,7 +465,8 @@ async function callBridge(
   signal?.throwIfAborted()
   const browser = body.mode === "browser-execute" || body.mode === "browser-probe"
     || body.mode === "browser-claim" && body.purpose === undefined
-  if (registration[WINDOWS_INTEROP]) return callWindowsBridge(registration, body, timeoutMs, signal, browser)
+  const rejectRedirects = browser || body.mode === "developer-restart" || body.mode === "developer-reconnect"
+  if (registration[WINDOWS_INTEROP]) return callWindowsBridge(registration, body, timeoutMs, signal, rejectRedirects)
   const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)
   if (browser) return callLocalBrowserBridge(registration, body, requestSignal)
   const response = await fetch(registration.url, {
@@ -473,6 +474,7 @@ async function callBridge(
     headers: { "content-type": "application/json", "x-codenomad-automation-token": registration.token },
     body: JSON.stringify(body),
     signal: requestSignal,
+    redirect: rejectRedirects ? "error" : "follow",
   })
   const contentLength = Number(response.headers.get("content-length"))
   if (Number.isFinite(contentLength) && contentLength > MAX_BRIDGE_RESPONSE_BYTES) {
@@ -1066,16 +1068,10 @@ async function restartDesktop(inspectedTargets: Map<string, ProbedBridge>, sessi
     // Admission can close the reply channel. Read the successor; never send the command again.
     return reconnect()
   }
-  if (response.status === 502 && response.body?.code === "restart-outcome-unknown") return reconnect()
-  if (response.status !== 200) {
-    const message = response.body.error || `Native restart failed (${response.status})`
-    throw typeof response.body.code === "string" ? targetError(response.body.code, message) : new Error(message)
-  }
-  const admitted = readDeveloperRestart(response.body.result)
-  if (!admitted || !sameDeveloperTarget(expected, admitted) || expected.restartId !== admitted.restartId) {
-    throw new Error("The CodeNomad restart was not confirmed. Inspect again before retrying.")
-  }
-  return reconnect()
+  // Only the successor can confirm the restart, even if its predecessor acknowledged it.
+  if (response.status === 200 || response.status === 502 && response.body?.code === "restart-outcome-unknown") return reconnect()
+  const message = response.body?.error || `Native restart failed (${response.status})`
+  throw typeof response.body?.code === "string" ? targetError(response.body.code, message) : new Error(message)
 }
 
 async function waitForRestart(
@@ -1089,7 +1085,7 @@ async function waitForRestart(
   const deadline = Date.now() + REQUEST_TIMEOUT_MS
   const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
   let reconnected = false
-  const superseded = { content: "CodeNomad restarted; the newer window selection was kept." }
+  const superseded = { content: "CodeNomad restarted; a newer inspection superseded reconnection." }
   while (!signal.aborted && Date.now() < deadline) {
     const active = (await registrations({}, signal).catch(() => [])).filter(({ token }) => !existingTokens.has(token))
     for (let index = 0; index < active.length && !signal.aborted; index += PROBE_CONCURRENCY) {

@@ -8,8 +8,9 @@ import { NativeParent, NATIVE_REQUEST_PREFIX, NATIVE_RESPONSE_PREFIX } from "../
 import { registerAutomationPluginRoute } from "../server/routes/automation-plugin"
 import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, createDeveloperToolTransform, publishAutomationBridge } from "./automation-plugin"
 
-for (const lost of [true, false]) {
-  test(lost ? "a lost restart ACK pins the restored window and refuses actions after a competing inspection" : "an explicit native restart refusal skips reconnect", { timeout: 15_000 }, async t => {
+for (const outcome of ["lost", "refused", "invalid-ack", "null-ack", "redirect"]) {
+  const lost = outcome !== "refused"
+  test(`restart acknowledgement: ${outcome}`, { timeout: 15_000 }, async t => {
     const root = await mkdtemp(join(tmpdir(), "codenomad-restart-ack-"))
     const envKeys = ["LOCALAPPDATA", "XDG_RUNTIME_DIR", "WSL_DISTRO_NAME"] as const
     const previous = envKeys.map(key => process.env[key])
@@ -100,6 +101,7 @@ for (const lost of [true, false]) {
     } }, true)
     await bridge(11001, old)
     const status: number[] = []
+    const redirectRules: Array<RequestRedirect | undefined> = []
     let originalOffline = false
     t.mock.method(globalThis, "fetch", (async (url, init) => {
       const payload = JSON.parse(String(init?.body))
@@ -107,7 +109,16 @@ for (const lost of [true, false]) {
       const response = await apps.get(String(url))!.inject({
         method: "POST", url: new URL(String(url)).pathname, headers: init?.headers as Record<string, string>, payload,
       })
-      if (payload.mode === "developer-restart") status.push(response.statusCode)
+       if (payload.mode === "developer-restart") {
+         status.push(response.statusCode)
+         if (outcome === "invalid-ack") return new Response('{"result":null}')
+         if (outcome === "null-ack") return new Response("null")
+         if (outcome === "redirect") {
+           redirectRules.push(init?.redirect)
+           if (init?.redirect === "error") throw new TypeError("redirect disallowed")
+           return new Response("{}", { status: 307, headers: { Location: "http://127.0.0.1:11002" } })
+         }
+       }
       return new Response(response.body, { status: response.statusCode })
     }) satisfies typeof fetch)
     type Tool = { name: string; execute(input: unknown, context: { sessionID: string }): Promise<{ content: unknown }> }
@@ -126,6 +137,7 @@ for (const lost of [true, false]) {
     assert.equal(attempts.length, 1)
     assert.deepEqual(reconnects, lost ? attempts : [])
     assert.deepEqual(status, [lost ? 502 : 409])
+    if (outcome === "redirect") assert.deepEqual(redirectRules, ["error"])
     assert.equal(successorInventory, 0, "reconnect cannot use the focused window inventory")
     if (lost) {
       const press = (owner = tools) => owner.get("act")!.execute({ action: "press", key: "Enter" }, context)
