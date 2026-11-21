@@ -14,8 +14,8 @@ Browser previews are an ordinary desktop feature and must work in user projects 
 - `packages/server/src/server/routes/automation-plugin.ts` serves the `/api/opencode-plugin/automation` endpoint with the per-process token.
 - `browser-claim` verifies exactly one browser-capable backend owning the session before an `open` action asks the UI to select a project-tab occurrence under the targeting rule below.
 - `browser-probe` requires exactly one visible native preview registered to that session. The native probe returns a bounded opaque `target` for its registration and document generation.
-- Browser claims and probes require a complete bounded profile inventory. Only a confirmed connection refusal or an explicit bridge response proving absence excludes a candidate. Unreadable registrations, including Windows registrations found through WSL, redirects, authentication failures and untyped 404s block dispatch. Each discovery request carries its absolute HTTP deadline (at most 5 seconds) through session and ownership checks to the native probe.
-- `browser-execute` validates the action and passes the witness to `browser.execute` or `browser.page.begin` over the fenced native-parent channel. A hidden, replaced or ambiguous preview fails rather than redirecting the command. Opening the first preview uses `browser-claim`.
+- Browser claims and probes require a complete bounded profile inventory. Only a confirmed connection refusal or an explicit bridge response proving absence excludes a candidate. Unreadable registrations, including Windows registrations found through WSL, redirects, authentication failures and untyped 404s block dispatch. Each discovery request carries its absolute HTTP deadline (at most 5 seconds) through session and ownership checks to the native probe; native responses must arrive before that deadline.
+- `browser-execute` sends the action only to the selected registration and refuses bridge HTTP redirects. The validated action and witness pass to `browser.execute` or `browser.page.begin` over the fenced native-parent channel. A hidden, replaced or ambiguous preview fails rather than redirecting the command. Opening the first preview uses `browser-claim`.
 - An unscoped `browser(snapshot)` selects the preview and document for following calls, including operations without an element reference. Take a fresh snapshot after opening, navigation or a stale-target refusal.
 
 An active backend publishes an ephemeral registration with a per-process 256-bit
@@ -27,8 +27,9 @@ filename or parsed PID establishes absence. A file removed between enumeration
 and open is absent. Windows PIDs belong to their host namespace, so WSL discovery
 uses endpoint evidence for Windows registrations and leaves their files in place.
 Windows path lookup is asynchronous, shares an in-flight lookup for the effective
-distro/PATH, and ordinary discovery retains its cached result. Missions' strict
-ownership and retry rules are in the [creation recovery contract](MISSIONS.md#mission-profile-selection-and-creation-recovery).
+distro/PATH, and ordinary discovery retains its cached result. Strict browser
+discovery requires successful path translation once `cmd.exe` has responded.
+Missions' strict ownership and retry rules are in the [creation recovery contract](MISSIONS.md#mission-profile-selection-and-creation-recovery).
 
 ## Desktop instrumentation
 

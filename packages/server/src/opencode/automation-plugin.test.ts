@@ -35,13 +35,13 @@ type ToolDefinition = {
 }
 const oneWindow = [{ windowId: "window-1", focused: true, session: "elsewhere" }]
 
-function listen(handler: (body: Record<string, unknown>, response: http.ServerResponse) => Promise<Record<string, unknown>>) {
+function listen(handler: (body: Record<string, unknown>, response: http.ServerResponse, request: http.IncomingMessage) => Promise<Record<string, unknown>>) {
   return new Promise<{ server: http.Server; url: string }>((resolve) => {
     const server = http.createServer((request, response) => {
       const chunks: Buffer[] = []
       request.on("data", (chunk) => chunks.push(Buffer.from(chunk)))
       request.on("end", () => {
-        void handler(JSON.parse(Buffer.concat(chunks).toString("utf8")), response).then((body) => {
+        void handler(JSON.parse(Buffer.concat(chunks).toString("utf8")), response, request).then((body) => {
           response.setHeader("content-type", "application/json")
           response.end(JSON.stringify(body))
         })
@@ -324,6 +324,42 @@ test("preview discovery refuses a redirect to a different, refused HTTP endpoint
   }
 })
 
+test("browser execution keeps its exact fetch destination and never replays a redirected action", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-browser-execute-redirect-"))
+  const restore = isolateAutomationBridgeRegistry(root)
+  t.after(async () => { restore(); await rm(root, { recursive: true, force: true }) })
+  const received: unknown[] = []
+  const other = await listen(async (body, reply, request) => {
+    if (body.mode === "browser-probe") {
+      reply.statusCode = 404
+      return { code: "browser-not-owner" }
+    }
+    received.push(["other", request.headers["x-codenomad-automation-token"], body])
+    return { result: { text: "unexpected replay" } }
+  })
+  t.after(() => closeServer(other.server))
+  const command = { action: "press", key: "Enter" }
+  const owner = await listen(async (body, reply, request) => {
+    if (body.mode === "browser-probe") return { result: { available: true, target: "exact-document" } }
+    if ((body.command as { action: string }).action === "snapshot") return { result: { text: "snapshot" } }
+    received.push(["owner", request.headers["x-codenomad-automation-token"], body.mode, body.sessionID, body.target, body.command])
+    reply.statusCode = 307
+    reply.setHeader("location", new URL(AUTOMATION_BRIDGE_PATH, other.url).href)
+    return {}
+  })
+  t.after(() => closeServer(owner.server))
+  const registration = createAutomationBridgeRegistration(owner.url)
+  await publishAutomationBridge(registration)
+  await publishAutomationBridge(createAutomationBridgeRegistration(other.url))
+  const browser = createBrowserToolExecutor()
+  await browser("exact-session", { action: "snapshot" })
+  const result = await browser("exact-session", command).then(() => "accepted", () => "refused")
+  assert.deepEqual({ result, received }, {
+    result: "refused",
+    received: [["owner", registration.token, "browser-execute", "exact-session", "exact-document", command]],
+  })
+})
+
 test("WSL preview discovery keeps malformed and redirecting Windows advertisements indeterminate", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-preview-wsl-inventory-"))
   const restore = isolateAutomationBridgeRegistry(root)
@@ -343,10 +379,13 @@ test("WSL preview discovery keeps malformed and redirecting Windows advertisemen
   const foreign = { ...createAutomationBridgeRegistration("http://127.0.0.1:2"), pid: 0x80000000 }
   const registrationName = ({ startedAt, pid }: typeof local, suffix: string) => `${startedAt}-${pid}-${suffix}.json`
   const localName = registrationName(local, "local"), foreignName = registrationName(foreign, "windows")
-  let foreignContents = "{unparseable", vanished = false, redirects = true
+  let foreignContents = "{unparseable", vanished = false, redirects = true, windowsOwner = false
   let executions = 0, curlCalls = 0
-  t.mock.method(childProcess, "execFile", (_file: string, _args: string[], _options: unknown, callback: (error: null, stdout: string) => void) =>
-    callback(null, "/fixture-windows"))
+  let missing: { file: string; code: string } | undefined
+  t.mock.method(childProcess, "execFile", (file: string, _args: string[], _options: unknown, callback: (error: Error | null, stdout?: string) => void) => {
+    if (missing?.file === file) callback(Object.assign(new Error("Fixture command unavailable"), { code: missing.code }))
+    else callback(null, file === "cmd.exe" ? "C:/fixture-windows" : "/fixture-windows")
+  })
   t.mock.method(fs, "opendir", async (directory: string) => (async function* () {
     yield { name: directory.startsWith("/fixture-linux/") ? localName : foreignName, isFile: () => true }
   })())
@@ -360,15 +399,37 @@ test("WSL preview discovery keeps malformed and redirecting Windows advertisemen
   t.mock.method(globalThis, "fetch", async (url: string, init: RequestInit) => {
     assert.equal(url, local.url)
     if (JSON.parse(String(init.body)).mode === "browser-execute") executions++
+    if (windowsOwner) return Response.json({ code: "browser-not-owner" }, { status: 404 })
     return Response.json({ result: { available: true, target: "document" } })
   })
+  const windowsActions: unknown[] = [], forwarded: unknown[] = []
   t.mock.method(childProcess, "spawn", (command: string, args: string[]) => {
     curlCalls++
     assert.equal(command, "curl.exe")
     const child = Object.assign(new EventEmitter(), {
       stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true,
     })
+    let input = ""
+    child.stdin.on("data", chunk => { input += chunk.toString() })
     child.stdin.on("finish", () => {
+      if (windowsOwner) {
+        const body = JSON.parse(input)
+        if (body.mode === "browser-probe") child.stdout.write('{"result":{"available":true,"target":"windows-document"}}\n200')
+        else if (body.command.action === "snapshot") child.stdout.write('{"result":{"text":"snapshot"}}\n200')
+        else {
+          const request = [args.at(-1), args.find(arg => arg.startsWith("x-codenomad-automation-token: ")),
+            body.mode, body.sessionID, body.target, body.command]
+          windowsActions.push(request)
+          // Model a curlrc with --location: the redirected POST carries the same payload and custom header.
+          if (args[0] === "--disable") child.stdout.write('{"result":{"text":"redirect response"}}\n307')
+          else {
+            forwarded.push(request)
+            child.stdout.write('{"result":{"text":"redirect destination"}}\n200')
+          }
+        }
+        child.emit("close", 0)
+        return
+      }
       // A user's curl config can enable --location unless the first argument disables it.
       if (redirects && args[0] === "--disable") {
         child.stdout.write('{"code":"browser-not-owner"}\n307')
@@ -382,10 +443,30 @@ test("WSL preview discovery keeps malformed and redirecting Windows advertisemen
     return child
   })
   syncBuiltinESMExports()
+  await t.test("missing cmd.exe still proves absence for browser discovery", async () => {
+    missing = { file: "cmd.exe", code: "ENOENT" }
+    const before = executions
+    await browser({ action: "snapshot" })
+    assert.equal(executions, before + 1)
+  })
+  for (const code of ["ENOENT", "ENOEXEC"]) {
+    await t.test(`${code} from wslpath after cmd.exe succeeds prevents any browser dispatch`, async () => {
+      missing = { file: "wslpath", code }
+      assert.deepEqual(await automationBridgeDirectories({ strict: true }), ["/fixture-linux/codenomad/automation-bridges"],
+        "the Missions rule still permits local discovery")
+      const before = executions
+      const result = await browser({ action: "snapshot" }).then(() => "accepted", error => error.message)
+      assert.deepEqual({ result, executions }, {
+        result: "browser-unavailable: The preview inventory could not be verified; take a new snapshot", executions: before,
+      })
+    })
+  }
+  missing = undefined
   await t.test("unreadable JSON", async () => {
+    const before = executions
     await assert.rejects(browser({ action: "snapshot" }), /inventory could not be verified/)
     assert.equal(curlCalls, 0)
-    assert.equal(executions, 0)
+    assert.equal(executions, before)
   })
   await t.test("redirect", async () => {
     foreignContents = JSON.stringify(foreign)
@@ -401,6 +482,19 @@ test("WSL preview discovery keeps malformed and redirecting Windows advertisemen
   const before = executions
   await browser({ action: "snapshot" })
   assert.equal(executions, before + 1, "a file that vanished before the read is absent")
+  await t.test("redirected execution cannot leak its token or replay on another destination", async () => {
+    vanished = false
+    windowsOwner = true
+    const before = executions
+    await browser({ action: "snapshot" })
+    const command = { action: "press", key: "Enter" }
+    const result = await browser(command).then(() => "accepted", () => "refused")
+    assert.deepEqual({ result, executions, windowsActions, forwarded }, {
+      result: "refused", executions: before, forwarded: [],
+      windowsActions: [[foreign.url, `x-codenomad-automation-token: ${foreign.token}`,
+        "browser-execute", "fixture", "windows-document", command]],
+    })
+  })
 })
 
 test("preview discovery refuses a 65-profile inventory rather than dropping the oldest owner", async t => {

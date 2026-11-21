@@ -16,6 +16,8 @@ interface NativeResponse {
 interface PendingRequest {
   resolve(value: unknown): void
   reject(error: Error): void
+  expire(): void
+  absoluteDeadline?: number
   timeout: NodeJS.Timeout
 }
 
@@ -39,15 +41,17 @@ export class NativeParent {
 
     const id = randomUUID()
     const deadline = typeof budget === "number" ? Date.now() + budget : budget.deadline
+    const absoluteDeadline = typeof budget === "number" ? undefined : deadline
     return new Promise<T>((resolve, reject) => {
       const line = `${NATIVE_REQUEST_PREFIX}${JSON.stringify({ v: 1, id, method, params, deadline })}\n`
       const timeoutMs = typeof budget === "number" ? budget : deadline - Date.now()
       if (typeof budget !== "number" && timeoutMs <= 0) return reject(new NativeRequestRefused("Native request expired before execution"))
-      const timeout = setTimeout(() => {
+      const expire = () => {
         this.pending.delete(id)
         reject(new Error(`Native request timed out: ${method}`))
-      }, timeoutMs)
-      this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject, timeout })
+      }
+      const timeout = setTimeout(expire, timeoutMs)
+      this.pending.set(id, { resolve: resolve as (value: unknown) => void, reject, expire, absoluteDeadline, timeout })
       this.output.write(line)
     })
   }
@@ -64,8 +68,12 @@ export class NativeParent {
     if (!response || response.v !== 1 || typeof response.id !== "string" || typeof response.ok !== "boolean") return true
     const pending = this.pending.get(response.id)
     if (!pending) return true
-    this.pending.delete(response.id)
     clearTimeout(pending.timeout)
+    if (pending.absoluteDeadline !== undefined && Date.now() >= pending.absoluteDeadline) {
+      pending.expire()
+      return true
+    }
+    this.pending.delete(response.id)
     if (response.ok) pending.resolve(response.result)
     else pending.reject(new NativeRequestRefused(response.error?.message || response.error?.code || "Native request failed"))
     return true

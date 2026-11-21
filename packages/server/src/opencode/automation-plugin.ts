@@ -96,7 +96,7 @@ type BridgeDirectoryOptions = {
   env?: NodeJS.ProcessEnv
   home?: string
   windowsLocalAppData?: WindowsDiscovery
-  strict?: boolean
+  strict?: boolean | "browser"
 }
 
 export function automationBridgeDirectory(options: BridgeDirectoryOptions = {}): string {
@@ -117,7 +117,9 @@ export async function automationBridgeDirectories(options: BridgeDirectoryOption
   const primary = automationBridgeDirectory(options)
   if (platform !== "linux" || !env.WSL_DISTRO_NAME) return [primary]
   const windowsLocalAppData = options.windowsLocalAppData !== undefined ? options.windowsLocalAppData : await resolveWslWindowsLocalAppData(env, { strict: options.strict })
-  if (options.strict && !windowsLocalAppData && windowsLocalAppData !== false) throw new Error("Windows mission backend discovery is unavailable")
+  if (options.strict && !windowsLocalAppData && windowsLocalAppData !== false) {
+    throw new Error(`Windows ${options.strict === "browser" ? "browser" : "mission"} backend discovery is unavailable`)
+  }
   return windowsLocalAppData
     ? [...new Set([primary, path.posix.join(windowsLocalAppData, "CodeNomad", "automation-bridges")])]
     : [primary]
@@ -138,27 +140,34 @@ function windowsDiscoveryOutput(file: string, args: string[], env: NodeJS.Proces
     (error, stdout) => error ? reject(error) : resolve(stdout.trim())))
 }
 
-function resolveWslWindowsLocalAppData(env: NodeJS.ProcessEnv, { strict = false, signal, cacheFailures = true }: { strict?: boolean; signal?: AbortSignal; cacheFailures?: boolean } = {}): Promise<WindowsDiscovery> {
+function resolveWslWindowsLocalAppData(env: NodeJS.ProcessEnv, { strict = false, signal, cacheFailures = true }: {
+  strict?: BridgeDirectoryOptions["strict"]; signal?: AbortSignal; cacheFailures?: boolean
+} = {}): Promise<WindowsDiscovery> {
   const key = `${env.WSL_DISTRO_NAME}\0${env.PATH}`
+  const rememberFailures = cacheFailures && strict !== "browser"
   if (cachedWslWindowsLocalAppData?.key === key && (typeof cachedWslWindowsLocalAppData.value === "string"
-    || cacheFailures && (!strict || cachedWslWindowsLocalAppData.expiresAt > Date.now()))) return Promise.resolve(cachedWslWindowsLocalAppData.value)
-  if (cacheFailures && !signal && pendingWslWindowsLocalAppData?.key === key) return pendingWslWindowsLocalAppData.promise
+    || rememberFailures && (!strict || cachedWslWindowsLocalAppData.expiresAt > Date.now()))) return Promise.resolve(cachedWslWindowsLocalAppData.value)
+  if (rememberFailures && !signal && pendingWslWindowsLocalAppData?.key === key) return pendingWslWindowsLocalAppData.promise
   const promise = (async (): Promise<WindowsDiscovery> => {
+    let interopAvailable = false
     try {
       const windowsPath = await windowsDiscoveryOutput("cmd.exe", ["/d", "/s", "/c", "echo %LOCALAPPDATA%"], env, signal)
+      interopAvailable = true
       signal?.throwIfAborted()
       const translated = await windowsDiscoveryOutput("wslpath", ["-u", windowsPath], env, signal)
       signal?.throwIfAborted()
       return path.posix.isAbsolute(translated) ? translated : null
     } catch (error) {
       signal?.throwIfAborted()
+      // A browser inventory is incomplete if Windows responded but its registry path could not be translated.
+      if (strict === "browser" && interopAvailable) return null
       return ["ENOENT", "ENOEXEC"].includes((error as NodeJS.ErrnoException).code ?? "") ? false : null
     }
   })().then(value => {
-    if (cacheFailures || typeof value === "string") cachedWslWindowsLocalAppData = { key, value, expiresAt: typeof value === "string" ? Infinity : Date.now() + 2_000 }
+    if (rememberFailures || typeof value === "string") cachedWslWindowsLocalAppData = { key, value, expiresAt: typeof value === "string" ? Infinity : Date.now() + 2_000 }
     return value
   }).finally(() => { if (pendingWslWindowsLocalAppData?.promise === promise) pendingWslWindowsLocalAppData = undefined })
-  if (cacheFailures && !signal) pendingWslWindowsLocalAppData = { key, promise }
+  if (rememberFailures && !signal) pendingWslWindowsLocalAppData = { key, promise }
   return promise
 }
 
@@ -358,7 +367,7 @@ export async function verifyHumanAnswerBridge(body: import("../missions/human-an
 async function registrations({ pruneStale = true, strict }: { pruneStale?: boolean; strict?: "browser" | "mission" } = {},
   signal?: AbortSignal): Promise<DiscoveredBridgeRegistration[]> {
   const found: DiscoveredBridgeRegistration[] = []
-  const options = { strict: Boolean(strict) }
+  const options: BridgeDirectoryOptions = { strict: strict === "browser" ? "browser" : Boolean(strict) }
   const directories = signal ? await discoverAutomationBridgeDirectories(signal, options) : await automationBridgeDirectories(options)
   for (const [directoryIndex, directory] of directories.entries()) {
     signal?.throwIfAborted()
@@ -392,7 +401,7 @@ async function registrations({ pruneStale = true, strict }: { pruneStale?: boole
         if (pruneStale) await rm(target, { force: true }).catch(() => undefined)
         continue
       }
-      const registration = await readRegistration(target, { throwReadErrors: options.strict }) as DiscoveredBridgeRegistration | null | undefined
+      const registration = await readRegistration(target, { throwReadErrors: Boolean(strict) }) as DiscoveredBridgeRegistration | null | undefined
       if (registration === null) continue
       if (!registration) {
         // Mission discovery treats malformed foreign advertisements as unsupported.
@@ -437,14 +446,15 @@ async function callBridge(
   signal?: AbortSignal,
 ): Promise<{ status: number; body: BridgeResponse }> {
   signal?.throwIfAborted()
-  const browserDiscovery = body.mode === "browser-probe" || body.mode === "browser-claim" && body.purpose === undefined
-  if (registration[WINDOWS_INTEROP]) return callWindowsBridge(registration, body, timeoutMs, signal, browserDiscovery)
+  const rejectRedirects = body.mode === "browser-execute" || body.mode === "browser-probe"
+    || body.mode === "browser-claim" && body.purpose === undefined
+  if (registration[WINDOWS_INTEROP]) return callWindowsBridge(registration, body, timeoutMs, signal, rejectRedirects)
   const response = await fetch(registration.url, {
     method: "POST",
     headers: { "content-type": "application/json", "x-codenomad-automation-token": registration.token },
     body: JSON.stringify(body),
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
-    ...(browserDiscovery ? { redirect: "error" } : {}),
+    ...(rejectRedirects ? { redirect: "error" } : {}),
   })
   const contentLength = Number(response.headers.get("content-length"))
   if (Number.isFinite(contentLength) && contentLength > MAX_BRIDGE_RESPONSE_BYTES) {
@@ -476,13 +486,13 @@ function callWindowsBridge(
   body: Record<string, unknown>,
   timeoutMs: number,
   signal: AbortSignal | undefined,
-  browserDiscovery: boolean,
+  rejectRedirects: boolean,
 ): Promise<{ status: number; body: BridgeResponse }> {
   signal?.throwIfAborted()
   return new Promise((resolve, reject) => {
     const child = spawn("curl.exe", [
       // First argument disables curlrc, which can turn on redirect following.
-      ...(browserDiscovery ? ["--disable"] : []),
+      ...(rejectRedirects ? ["--disable"] : []),
       "--verbose", "--silent", "--show-error", "--max-time", String(timeoutMs / 1_000),
       "--noproxy", "*",
       "--request", "POST",
@@ -529,8 +539,8 @@ function callWindowsBridge(
       const output = Buffer.concat(stdout, stdoutBytes).toString("utf8")
       const separator = output.lastIndexOf("\n")
       const status = separator >= 0 ? Number(output.slice(separator + 1)) : NaN
-      if (browserDiscovery && status >= 300 && status < 400) {
-        reject(new Error("Windows native automation bridge redirected discovery"))
+      if (rejectRedirects && status >= 300 && status < 400) {
+        reject(new Error("Windows native automation bridge redirected the request"))
         return
       }
       if (code !== 0 || !Number.isInteger(status)) {
