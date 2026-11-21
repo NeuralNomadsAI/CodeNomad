@@ -526,6 +526,11 @@ fn remote_request(
         .ok_or("Dictation requires a registered remote document")?;
     let document = &mut registered.dictation_document;
     let speech = app.state::<DeviceSpeech>();
+    let read_choice = || {
+        speech
+            .remote_choice()
+            .map_err(|_| "Device speech preference unavailable")
+    };
     match request {
         Request::ClaimMicrophone { .. } | Request::ReleaseMicrophone { .. } => {
             if !is_microphone_document(registered, &current) || !focused {
@@ -606,9 +611,7 @@ fn remote_request(
             resolver.clone().resolve(Value::Null);
         }
         Request::Read {} => {
-            let choice = speech
-                .preferred_engine()
-                .map_err(|_| "Device speech preference unavailable")?;
+            let choice = read_choice()?;
             drop(metadata);
             resolver.clone().resolve(choice);
         }
@@ -640,11 +643,7 @@ fn remote_request(
             let (target, generation) =
                 backend_target(&state, &locale, &registered.dictation_destination)
                     .ok_or("Local dictation backend unavailable")?;
-            if speech
-                .preferred_engine()
-                .map_err(|_| "Device speech preference unavailable")?
-                == Engine::Api
-            {
+            if !matches!(read_choice()?, Some(Engine::System | Engine::Hex)) {
                 return Err("Select native dictation in local Preferences");
             }
             let relay = app.state::<RemoteDictation>();

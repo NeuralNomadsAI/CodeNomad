@@ -29,7 +29,8 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
           holdRead: false, releaseRead: () => {}, holdCancelReceipt: false, releaseCancelReceipt: () => {},
         }
         const tauriApi = kind === "tauri-api" || kind === "tauri-preferences" || kind === "tauri-remote-api"
-        const bridge = { requests, choice: kind === "remote-api" || kind === "remote-api-legacy" || tauriApi ? "api" : "hex", operation: "recording",
+        const bridge = { requests, choice: kind === "remote" && systemUnsupported ? null
+          : kind === "remote-api" || kind === "remote-api-legacy" || tauriApi ? "api" : "hex", operation: "recording",
           resolve: (_: string) => {}, holdMicrophone: false, admitMicrophone: () => {},
           denyMicrophone: false, microphoneState: "recording", readFails: false, denyLease: false,
           recordingText: undefined as string | undefined }
@@ -621,6 +622,16 @@ test("an unsupported saved system engine requires an explicit change and is not 
   await engine.locator('option[value="system"]').waitFor({ state: "detached" })
   assert.equal(await engine.inputValue(), "api")
 }, false, "hex-setup", false, "en", false, false, { systemUnsupported: true }))
+
+test("an unsupported remote system choice opens Dictation settings without starting a capture", () => withComposer(async page => {
+  await page.getByRole("button", { name: "More actions", exact: true }).click()
+  const dictate = page.getByRole("menuitem").filter({ hasText: "Local dictation is unavailable." })
+  await dictate.click()
+  await page.waitForFunction(() => document.activeElement?.id === "voice-dictation")
+  await page.getByText("System recognition unsupported on this platform", { exact: true }).waitFor()
+  assert.equal(await page.evaluate(() => (window as any).native.requests.some(({ action }: any) => action === "begin")), false)
+  assert.equal(await page.evaluate(() => (window as any).capture.starts), 0)
+}, false, "remote", false, "en", false, false, { systemUnsupported: true }))
 
 test("typing during a System preview preserves the draft and saves only the final text for insertion", () => withComposer(async page => {
   await start(page)

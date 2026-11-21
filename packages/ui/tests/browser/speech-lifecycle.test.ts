@@ -151,3 +151,23 @@ test("stop and disposal fence buffered responses and capabilities still loading"
   assert.deepEqual(stopped.aborted, [true, true])
   assert.equal(stopped.audios.length, 0)
 }))
+
+test("buffered playback starts and cancels without AbortSignal.any", () => withPage(async page => {
+  await page.evaluate(() => {
+    const f = (window as any).fixture
+    f.mount("a", "buffered")
+    const original = AbortSignal.any
+    try {
+      Object.defineProperty(AbortSignal, "any", { value: undefined, configurable: true })
+      f.toggle("a")
+    } finally {
+      Object.defineProperty(AbortSignal, "any", { value: original, configurable: true })
+    }
+  })
+  await page.waitForFunction(() => (window as any).fixture.snapshot().pending === 1)
+  await page.evaluate(() => { const f = (window as any).fixture; f.toggle("a"); f.resolve(0) })
+  await state(page, "a", "idle")
+  const stopped = await snapshot(page)
+  assert.deepEqual(stopped.aborted, [true])
+  assert.equal(stopped.audios.length, 0)
+}))

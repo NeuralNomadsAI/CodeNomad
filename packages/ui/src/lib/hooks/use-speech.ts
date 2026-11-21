@@ -76,7 +76,7 @@ export function useSpeech(options: UseSpeechOptions) {
     if (!text || playback) return
     // Speech is served by the renderer's local backend, independently of the conversation.
     const controller = new AbortController()
-    const operation = captureBackendOperation("", controller.signal, () => options.id() === ownerId)
+    const operation = captureBackendOperation("", undefined, () => options.id() === ownerId)
     if (!operation.current()) return
 
     if (!isSupported()) {
@@ -90,12 +90,12 @@ export function useSpeech(options: UseSpeechOptions) {
     stopActivePlayback()
     playback = controller
     activePlayback = stop
-    setState("loading")
     const detached = () => { if (playback === controller) stop() }
-    operation.signal.addEventListener("abort", detached, { once: true })
+    operation.signal.addEventListener("abort", detached, { once: true, signal: controller.signal })
+    setState("loading")
     try {
       const capabilities = (await loadSpeechCapabilities()) ?? speechCapabilities()
-      if (!operation.current()) return
+      if (controller.signal.aborted || !operation.current()) return
       const settings = resolvedSettings()
       const support = getSpeechPlaybackSupport({ ...settings, capabilities })
       const configured = capabilities?.available && capabilities.ttsConfigured && capabilities.supportsTts
@@ -112,16 +112,17 @@ export function useSpeech(options: UseSpeechOptions) {
         })
         return
       }
-      await playSpeech(text, settings, operation.signal, () => setState("playing"))
+      await playSpeech(text, settings, controller.signal, () => setState("playing"))
     } catch (error) {
-      if (!operation.current()) return
-      showAlertDialog(t("messageItem.actions.speak.error.generate"), {
+      if (controller.signal.aborted || !operation.current()) return
+      const message = t("messageItem.actions.speak.error.generate")
+      const detail = error instanceof Error ? error.message : String(error)
+      showAlertDialog(message, {
         title: t("messageItem.actions.speak.error.title"),
-        detail: error instanceof Error ? error.message : String(error),
+        detail: detail !== message ? detail : undefined,
         variant: "error",
       })
     } finally {
-      operation.signal.removeEventListener("abort", detached)
       if (playback === controller) stop()
     }
   }

@@ -160,7 +160,10 @@ export function setupRemoteDictationIPC(ipc: Pick<IpcMain, "handle">, dependenci
     }
 
     const readChoice = () => {
-      try { return dependencies.readChoice() } catch { throw new Error("Device speech choice is unavailable") }
+      try {
+        const engine = dependencies.readChoice()
+        return engine === "system" && process.platform !== "darwin" ? null : engine
+      } catch { throw new Error("Device speech choice is unavailable") }
     }
     if (input.action === "read" && hasFields(input)) return readChoice()
     if (typeof input.id !== "string" || input.id.length !== 36 || !uuidV4.test(input.id)) {
@@ -173,7 +176,9 @@ export function setupRemoteDictationIPC(ipc: Pick<IpcMain, "handle">, dependenci
     if (input.action !== "begin" || !hasFields(input, "id", "locale") || !isSpeechLocale(input.locale)) {
       throw new Error("Invalid remote dictation request")
     }
-    if (dialogWindow || !opener.isFocused() || readChoice() === "api") throw new Error("Remote dictation is unavailable")
+    if (dialogWindow || !opener.isFocused()) throw new Error("Remote dictation is unavailable")
+    const engine = readChoice()
+    if (!engine || engine === "api") throw new Error("Remote dictation is unavailable")
     const localUrl = dependencies.localUrl()
     if (!localUrl) throw new Error("Local CodeNomad is unavailable")
     const target = requireHttpUrl(localUrl, "Local renderer")

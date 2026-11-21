@@ -132,6 +132,7 @@ fn unsupported_system_choice_requires_explicit_reselection() {
     let read = device.request("local", Request::Read {}).unwrap();
     assert_eq!(read["engine"], "system");
     assert_eq!(read["systemReason"], "platformUnsupported");
+    assert_eq!(device.remote_choice().unwrap(), None);
     assert_eq!(
         device.request(
             "local",
@@ -157,6 +158,7 @@ fn unsupported_system_choice_requires_explicit_reselection() {
         .request("local", Request::Select { engine: Engine::Api })
         .unwrap();
     assert_eq!(device.preferred_engine().unwrap(), Engine::Api);
+    assert_eq!(device.remote_choice().unwrap(), Some(Engine::Api));
 }
 
 fn operation(device: &DeviceSpeech, owner: &str, input: Request) -> String {

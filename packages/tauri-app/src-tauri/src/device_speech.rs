@@ -464,6 +464,13 @@ impl DeviceSpeech {
         self.store.read().map(|preference| preference.engine)
     }
 
+    pub(crate) fn remote_choice(&self) -> Result<Option<Engine>, SpeechError> {
+        Ok(match self.preferred_engine()? {
+            Engine::System if !cfg!(target_os = "macos") => None,
+            engine => Some(engine),
+        })
+    }
+
     pub(crate) fn request(&self, owner: &str, input: Request) -> Result<Value, SpeechError> {
         self.request_with_microphone_scope(owner, input, false)
     }

@@ -157,7 +157,7 @@ test("admission requires a focused remote opener, device mode, live local backen
   const f = fixture()
   f.choice("api")
   assert.throws(() => f.request(f.opener.event(), begin), /unavailable/)
-  f.choice("system")
+  f.choice("hex")
   for (const url of [null, "http://127.0.0.1:9948/login", "http://127.0.0.1.example:9948/"]) {
     f.localUrl(url)
     assert.throws(() => f.request(f.opener.event(), begin), /Local CodeNomad is unavailable/)
@@ -166,6 +166,16 @@ test("admission requires a focused remote opener, device mode, live local backen
   assert.throws(() => f.request(f.opener.event(), begin), /Remote dictation is unavailable/)
   f.shutdown()
   assert.throws(() => f.request(f.opener.event(), begin), /shutting down/)
+})
+
+test("an unsupported saved system choice cannot open the dictation sheet", { skip: process.platform === "darwin" }, () => {
+  const f = fixture()
+  f.choice("system")
+  assert.equal(f.request(f.opener.event(), { action: "read" }), null)
+  assert.throws(() => f.request(f.opener.event(), begin), /Remote dictation is unavailable/)
+  assert.equal(f.dialog().target(), undefined)
+  f.choice("hex")
+  assert.equal(f.request(f.opener.event(), { action: "read" }), "hex")
 })
 
 test("failed remote reuse restores only the unchanged original document and never its cancelled dialog", async () => {

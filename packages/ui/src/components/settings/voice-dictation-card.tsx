@@ -27,6 +27,7 @@ export function VoiceDictationCard(props: {
   const visibleEngine = () => {
     if (!remote) return t("settings.speech.device.api")
     const choice = remoteChoice()
+    if (choice === null) return t("settings.speech.device.platformUnsupported")
     return choice ? t(`settings.speech.device.${choice}`) : t("settings.voice.unavailable")
   }
   let testButton: HTMLButtonElement | undefined
