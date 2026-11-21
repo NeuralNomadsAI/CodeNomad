@@ -172,6 +172,24 @@ for (const platform of ["macos", "linux"]) {
   })
 }
 
+test("Tauri: an address entered before registration completes loads once the target exists", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(url)
+    await page.evaluate(() => { (window as any).nativeFixture.deferRegistration = true })
+    await page.evaluate(() => (window as any).nativeFixture.mount(false))
+    await page.evaluate(() => { const f = (window as any).nativeFixture; f.calls.length = 0; f.mount(true) })
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_register"))
+    const next = new URL("/browser-native-guest?typed", url).href
+    await page.getByRole("textbox", { name: "Address" }).fill(next)
+    await page.getByRole("textbox", { name: "Address" }).press("Enter")
+    await page.evaluate(() => (window as any).nativeFixture.settleRegistration())
+    await page.waitForFunction((next) => (window as any).nativeFixture.calls.some((c: any) =>
+      c.command === "browser_target_action" && c.payload.action === "navigate" && c.payload.url === next), next)
+    assert.deepEqual((await snapshot(page)).errors, [], "the first Enter loads instead of reporting an unregistered target")
+  } finally { await page.close() }
+})
+
 test("viewport menu distinguishes size from device emulation and restores desktop overrides", async () => {
   const page = await browser.newPage({ userAgent: "Windows fixture" })
   try {

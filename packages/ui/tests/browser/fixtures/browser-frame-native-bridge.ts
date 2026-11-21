@@ -31,8 +31,12 @@ export const nativeFixture = {
   listenerCount: () => callbacks.size,
 }
 
+// Like the Rust controller, a target answers actions only once its registration completed.
+const registering = new Set<string>()
+
 async function invoke(command: string, args: any = {}) {
   calls.push({ command, ...args })
+  if (command === "browser_target_action" && registering.has(args.payload.registrationId)) throw new Error("Browser target is not registered")
   if (command === "plugin:event|listen") return args.handler
   if (command === "browser_target_register") histories.set(args.payload.registrationId, { entries: [{ id: ++historyId, url: args.payload.url }], index: 0 })
   if (command === "browser_target_action" && args.payload.action === "history") return histories.get(args.payload.registrationId)
@@ -44,7 +48,11 @@ async function invoke(command: string, args: any = {}) {
   }
   if (command === "browser_target_action" && args.payload.action === "emulate" && nativeFixture.failEmulation) throw new Error("Emulation failed")
   if (command === "browser_target_register" && nativeFixture.deferRegistration) {
-    return new Promise<void>((resolve, reject) => { pendingRegistration = { resolve, reject } })
+    const id = args.payload.registrationId
+    registering.add(id)
+    return new Promise<void>((resolve, reject) => {
+      pendingRegistration = { resolve: () => { registering.delete(id); resolve() }, reject: (error) => { registering.delete(id); reject(error) } }
+    })
   }
   if (command === "browser_target_update" && nativeFixture.failUpdates) {
     // IPC completes asynchronously. Avoid starving Chromium's event loop even
