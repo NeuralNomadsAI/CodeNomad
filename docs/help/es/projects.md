@@ -36,7 +36,7 @@ Tab permite buscar, las flechas y Enter seleccionan y Escape devuelve el foco a 
 
 Si otra ventana muestra la misma conexión de proyecto, su pestaña también se cierra y esa ventana muestra una notificación. Los borradores y adjuntos sin enviar de la pestaña cerrada vuelven al reabrir la misma carpeta en esa ventana; la ventana los conserva para sus 16 últimos proyectos cerrados hasta que se recarga o se cierra. No forman parte de la restauración al iniciar.
 
-Cerrar una ventana entera, salir o recargar no cierra sus conexiones de proyecto; se sigue aplicando la restauración normal al iniciar. Detén explícitamente las ejecuciones relevantes si necesitas verificar que la ejecución terminó. CodeNomad nunca descarga las Locations nativas; el mantenimiento del servicio compartido se describe en [configuración de OpenCode](opencode.md).
+Cerrar una ventana entera, salir o recargar no cierra sus conexiones de proyecto; se sigue aplicando la restauración normal al iniciar. Detén explícitamente las ejecuciones relevantes si necesitas verificar que la ejecución terminó. CodeNomad nunca descarga las Locations nativas; el mantenimiento del servicio compartido se describe en [configuración de OpenCode](opencode.md). Una conexión que quedó de una ventana cerrada sin restauración se reutiliza la próxima vez que se abra esa carpeta.
 
 Con la restauración al iniciar activada, cada pestaña restante recupera sus propias opciones de paneles, selección y lector de Misión, y elección entre chat y vista previa web. Las URL y el historial del navegador se comparten por sesión; las páginas guardadas se cargan solo al reabrir explícitamente la vista previa web. Cerrar una instancia elimina solo su vista guardada; reabrir la carpeta crea una instancia nueva.
 

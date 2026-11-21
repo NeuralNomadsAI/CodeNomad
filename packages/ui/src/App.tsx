@@ -62,6 +62,7 @@ import {
   instances,
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
+  hasTabInstanceForFolder,
   reconcilePendingSessionIndicators,
   reconcilePendingRequestLiveness,
   refreshVolatileInstanceState,
@@ -521,7 +522,12 @@ const App: Component = () => {
 
     setIsSelectingFolder(true)
     try {
-      const result = await createInstance(folderPath, projectName)
+      // A folder this window shows in a tab opens as another occurrence of it;
+      // one it does not show adopts the folder's existing backend record
+      // instead of leaving the previous connection behind as a duplicate.
+      const result = await createInstance(folderPath, projectName, {
+        reuse: !hasTabInstanceForFolder(folderPath),
+      })
       recordWorkspaceLaunch(instances().get(result.instanceId)?.folder ?? folderPath, folderPath)
       if (result.reused) {
         selectInstanceTab(result.instanceId)

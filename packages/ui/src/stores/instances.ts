@@ -1486,6 +1486,7 @@ async function refreshWorkspaceList(
       if (!workspace) continue
       if (!active()) return false
       if (!workspaceListReconciliationFence.allows(requestFence, workspace.id)) continue
+      if (!workspaceListReconciliationFence.allows(requestFence, workspace.id)) continue
       restoreCreatedWorkspaceCleanup.trackPendingRequest(workspace)
       if (restoreCreationCommitGates.deferRefreshWorkspace(workspace)) continue
       if (restoreCreatedWorkspaceCleanup.owns(workspace.id)) {
@@ -1981,6 +1982,8 @@ async function createInstance(
   options?: {
     backend?: BackendClient
     signal?: AbortSignal
+    /** Bind to the folder's existing backend record instead of appending one. */
+    reuse?: boolean
     shouldCreateCommit?: (instanceId: string) => boolean
     onBeforeCreateCommit?: (instanceId: string) => void
     onCreateCommit?: (instanceId: string) => void
@@ -2047,6 +2050,7 @@ async function createInstance(
       path: folder,
       name: projectName,
       requestId: restoreRequestId,
+      reuse: options?.reuse,
     }, { signal })
     const id = instanceKey(receipt.backendId, response.id)
     const responseReceipt = Object.freeze({ ...receipt, rawId: response.id, instanceId: id })
@@ -2173,6 +2177,19 @@ function getExistingInstanceForFolder(folder: string, backendId: BackendId = LOC
 
   const activeId = activeInstanceId()
   return matches.find((instance) => instance.id === activeId) ?? matches.find((instance) => instance.status === "ready") ?? matches[0] ?? null
+}
+
+/** Whether an attached tab displays this local-backend folder. Only a shown
+ * occurrence justifies appending another record; an instantiated-but-untabbed
+ * one adopts the folder's existing record. */
+export function hasTabInstanceForFolder(folder: string): boolean {
+  if (!folder) return false
+  const target = normalizeInstanceFolderPath(folder)
+  return Array.from(instances().values()).some((instance) => (
+    backendIdOf(instance) === LOCAL_BACKEND_ID
+    && normalizeInstanceFolderPath(instance.folder) === target
+    && openInstanceTabIds().has(instance.id)
+  ))
 }
 
 function updateProjectNameForFolder(folder: string, projectName: string, backendId: BackendId = LOCAL_BACKEND_ID): void {

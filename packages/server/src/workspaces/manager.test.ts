@@ -957,3 +957,177 @@ describe("workspace manager shared service lifecycle", () => {
   })
 
 })
+
+describe("workspace folder reuse", () => {
+  it("reuses a published record for the same folder when asked", async () => {
+    const harness = createHarness()
+    const first = await harness.manager.create(process.cwd())
+    const second = await harness.manager.create(process.cwd(), undefined, { reuse: true })
+
+    assert.equal(second.workspace.id, first.workspace.id)
+    assert.equal(second.created, false)
+    assert.equal(second.workspace.requestId, undefined)
+    assert.deepEqual(harness.manager.list().map((workspace) => workspace.id), [first.workspace.id])
+    assert.equal(harness.service.validationCalls.length, 1)
+    assert.deepEqual(harness.stopped, [])
+    await harness.manager.shutdown()
+  })
+
+  it("creates separate records for the same folder without the reuse option", async () => {
+    const harness = createHarness()
+    const first = await harness.manager.create(process.cwd())
+    const second = await harness.manager.create(process.cwd())
+
+    assert.notEqual(first.workspace.id, second.workspace.id)
+    assert.equal(second.created, true)
+    assert.equal(harness.manager.list().length, 2)
+    await harness.manager.shutdown()
+  })
+
+  it("keeps duplicate records of a reused folder", async () => {
+    const harness = createHarness()
+    const first = await harness.manager.create(process.cwd())
+    const second = await harness.manager.create(process.cwd())
+    const third = await harness.manager.create(process.cwd())
+    const reused = await harness.manager.create(process.cwd(), undefined, { reuse: true })
+
+    // Deletion stays with each record's own closer; adoption never deletes.
+    assert.equal(reused.workspace.id, first.workspace.id)
+    assert.deepEqual(harness.manager.list().map((workspace) => workspace.id),
+      [first.workspace.id, second.workspace.id, third.workspace.id])
+    assert.deepEqual(harness.stopped, [])
+    assert.equal(harness.service.evictionCalls.length, 0)
+    await harness.manager.shutdown()
+  })
+
+  it("keeps restore-claimed siblings when reusing a folder", async () => {
+    const harness = createHarness()
+    const first = await harness.manager.create(process.cwd())
+    const claimed = await harness.manager.create(process.cwd(), undefined, { requestId: "restore-claim" })
+    const reused = await harness.manager.create(process.cwd(), undefined, { reuse: true })
+
+    assert.equal(reused.workspace.id, first.workspace.id)
+    assert.deepEqual(new Set(harness.manager.list().map((workspace) => workspace.id)),
+      new Set([first.workspace.id, claimed.workspace.id]))
+    assert.ok(!harness.stopped.includes(claimed.workspace.id))
+    await harness.manager.shutdown()
+  })
+
+  it("creates a fresh record when only restore-claimed records exist for the folder", async () => {
+    const harness = createHarness()
+    const claimed = await harness.manager.create(process.cwd(), undefined, { requestId: "restore-claim" })
+    const reused = await harness.manager.create(process.cwd(), undefined, { reuse: true })
+
+    assert.notEqual(reused.workspace.id, claimed.workspace.id)
+    assert.equal(reused.created, true)
+    assert.deepEqual(new Set(harness.manager.list().map((workspace) => workspace.id)),
+      new Set([claimed.workspace.id, reused.workspace.id]))
+    assert.ok(!harness.stopped.includes(claimed.workspace.id))
+    await harness.manager.shutdown()
+  })
+
+  it("attaches a creation request claim to a reused record", async () => {
+    const harness = createHarness()
+    const first = await harness.manager.create(process.cwd())
+    const reused = await harness.manager.create(process.cwd(), undefined, { requestId: "restore-adopt", reuse: true })
+
+    assert.equal(reused.workspace.id, first.workspace.id)
+    assert.equal(reused.created, false)
+    assert.equal(reused.workspace.requestId, "restore-adopt")
+    assert.equal(harness.manager.list().length, 1)
+    await harness.manager.cancelCreationRequest("restore-adopt")
+    // The reused record stays: its original creation retained it for the user.
+    assert.deepEqual(harness.manager.list().map((workspace) => workspace.id), [first.workspace.id])
+    await harness.manager.shutdown()
+  })
+
+  it("joins an in-flight launch for the same folder when reusing", async () => {
+    const messages: string[] = []
+    const harness = createHarness(undefined, { logger: {
+      info: (_obj: unknown, message: string) => { if (message) messages.push(message) },
+      warn: () => {}, error: () => {}, debug: () => {},
+    } as never })
+    harness.service.validationGate = deferred<void>()
+    const leader = harness.manager.create(process.cwd(), undefined, { reuse: true })
+    await harness.service.validationStarted.promise
+    const joiner = harness.manager.create(process.cwd(), undefined, { reuse: true })
+    for (let i = 0; i < 200 && !messages.includes("Joining in-flight workspace creation"); i += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+    }
+    harness.service.validationGate.resolve()
+
+    const [leaderResult, joinerResult] = await Promise.all([leader, joiner])
+    assert.equal(joinerResult.workspace.id, leaderResult.workspace.id)
+    assert.equal(leaderResult.created, true)
+    assert.equal(joinerResult.created, false)
+    assert.equal(harness.service.validationCalls.length, 1)
+    assert.deepEqual(harness.manager.list().map((workspace) => workspace.id), [leaderResult.workspace.id])
+    await harness.manager.shutdown()
+  })
+
+  it("adopts an in-flight restore launch when reusing", async () => {
+    const messages: string[] = []
+    const harness = createHarness(undefined, { logger: {
+      info: (_obj: unknown, message: string) => { if (message) messages.push(message) },
+      warn: () => {}, error: () => {}, debug: () => {},
+    } as never })
+    harness.service.validationGate = deferred<void>()
+    const restore = harness.manager.create(process.cwd(), undefined, { requestId: "restore-race" })
+    await harness.service.validationStarted.promise
+    const adoption = harness.manager.create(process.cwd(), undefined, { reuse: true })
+    for (let i = 0; i < 200 && !messages.includes("Joining in-flight workspace creation"); i += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+    }
+    harness.service.validationGate.resolve()
+
+    const [restoreResult, adoptionResult] = await Promise.all([restore, adoption])
+    assert.equal(adoptionResult.workspace.id, restoreResult.workspace.id)
+    assert.equal(adoptionResult.created, false)
+    assert.equal(adoptionResult.workspace.requestId, undefined)
+    assert.equal(harness.service.validationCalls.length, 1)
+    assert.equal(harness.manager.list().length, 1)
+    await harness.manager.shutdown()
+  })
+
+  it("keeps a joined launch when its restore request is cancelled", async () => {
+    const messages: string[] = []
+    const harness = createHarness(undefined, { logger: {
+      info: (_obj: unknown, message: string) => { if (message) messages.push(message) },
+      warn: () => {}, error: () => {}, debug: () => {},
+    } as never })
+    harness.service.validationGate = deferred<void>()
+    const restore = harness.manager.create(process.cwd(), undefined, { requestId: "restore-join-cancel" })
+    await harness.service.validationStarted.promise
+    const manual = harness.manager.create(process.cwd(), undefined, { reuse: true })
+    for (let i = 0; i < 200 && !messages.includes("Joining in-flight workspace creation"); i += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+    }
+    harness.service.validationGate.resolve()
+    const restoreResult = await restore
+    const manualResult = await manual
+    assert.equal(manualResult.workspace.id, restoreResult.workspace.id)
+
+    // The manual joiner took user ownership; cancelling the restore must not
+    // delete the shared record out from under the joined caller.
+    await harness.manager.cancelCreationRequest("restore-join-cancel")
+    assert.deepEqual(harness.manager.list().map((workspace) => workspace.id), [manualResult.workspace.id])
+    assert.deepEqual(harness.stopped, [])
+    assert.equal(harness.service.evictionCalls.length, 0)
+    await harness.manager.shutdown()
+  })
+
+  it("does not reuse or join in-flight launches for restore occurrences", async () => {
+    const harness = createHarness()
+    harness.service.validationGate = deferred<void>()
+    const first = harness.manager.create(process.cwd(), undefined, { requestId: "restore-first" })
+    await harness.service.validationStarted.promise
+    const second = harness.manager.create(process.cwd(), undefined, { requestId: "restore-second" })
+    harness.service.validationGate.resolve()
+
+    const [firstResult, secondResult] = await Promise.all([first, second])
+    assert.notEqual(firstResult.workspace.id, secondResult.workspace.id)
+    assert.equal(firstResult.created && secondResult.created, true)
+    assert.equal(harness.service.validationCalls.length, 2)
+    await harness.manager.shutdown()
+  })
+})

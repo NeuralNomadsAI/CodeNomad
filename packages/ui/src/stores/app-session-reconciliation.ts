@@ -38,6 +38,7 @@ export function getUnavailableWorkspaceIds(
 ): string[] {
   return [...localIds].filter((id) => !remoteIds.has(id) && !isProtected(id))
 }
+
 export function reconcileWorkspaceTabs(
   tabs: readonly ReconcileTabDescriptor[],
   liveWorkspaces: readonly LiveWorkspaceDescriptor[],

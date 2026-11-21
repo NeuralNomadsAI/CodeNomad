@@ -150,6 +150,8 @@ export interface WorkspaceCreateRequest {
   path: string
   name?: string
   requestId?: string
+  /** Bind to the folder's existing published record instead of appending one. */
+  reuse?: boolean
 }
 
 export interface WorkspaceCloneRequest {
