@@ -25,6 +25,10 @@ export function matchesHotkey(id: string, event: KeyboardEvent): boolean {
     && effectiveHotkeyBindings(id).some(binding => matchesHotkeyBinding(binding, event))
 }
 
+export function allowsPlainNavigation(event: KeyboardEvent): boolean {
+  return !event.defaultPrevented && !event.isComposing && event.keyCode !== 229 && !event.altKey && !event.ctrlKey && !event.metaKey
+}
+
 export async function saveHotkeyOverride(id: string, bindings?: HotkeyBinding[]): Promise<boolean> {
   try { return await patchHotkeyPreferences(hotkeyOverridePatch(id, bindings)) }
   catch { return false }

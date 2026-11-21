@@ -1,4 +1,5 @@
 import { createSignal, untrack } from "solid-js"
+import { parseInstanceKey } from "../lib/backend-identity"
 import { goalChangedSchema, goalStateSchema, type SessionGoalResponse } from "../../../server/src/opencode/goal-contract"
 
 /** A Session's `/goal` as last heard: `loading` until the first answer. */
@@ -10,6 +11,8 @@ interface Entry {
   demand: number
   /** Bumped by every published change; a read dispatched before it is older. */
   version: number
+  authority?: AbortSignal
+  releaseAuthority?: () => void
   reading?: { dirty: boolean; promise: Promise<void>; controller: AbortController }
 }
 
@@ -23,7 +26,9 @@ interface Entry {
  * never queues reads for hidden ones; the next demand reads again. A failed read
  * keeps the last goal shown. Nothing reads on a timer.
  */
-export function createSessionGoalStore(read: (instanceId: string, sessionId: string, signal: AbortSignal) => Promise<SessionGoalResponse>) {
+export function createSessionGoalStore(read: (instanceId: string, sessionId: string, signal: AbortSignal) => Promise<SessionGoalResponse>, options: {
+  signal?: (instanceId: string) => AbortSignal | undefined
+} = {}) {
   const [snapshots, setSnapshots] = createSignal<ReadonlyMap<string, SessionGoalSnapshot>>(new Map())
   const [busy, setBusy] = createSignal<ReadonlySet<string>>(new Set())
   const entries = new Map<string, Entry>()
@@ -40,16 +45,27 @@ export function createSessionGoalStore(read: (instanceId: string, sessionId: str
     const stateKey = key(instanceId, sessionId)
     const entry = entries.get(stateKey)
     if (!entry || entry.demand === 0) return Promise.resolve()
+    const authority = options.signal?.(instanceId)
+    if (entry.authority !== authority || !entry.releaseAuthority) {
+      entry.releaseAuthority?.()
+      cancel(entry)
+      entry.authority = authority
+      const abort = () => { if (entry.authority === authority) { entry.version++; cancel(entry) } }
+      authority?.addEventListener("abort", abort, { once: true })
+      entry.releaseAuthority = () => { authority?.removeEventListener("abort", abort); entry.releaseAuthority = undefined }
+    }
+    if (authority?.aborted) return Promise.resolve()
     if (entry.reading) {
       entry.reading.dirty = true
       return entry.reading.promise
     }
     const reading = { dirty: false, promise: Promise.resolve(), controller: new AbortController() }
-    const { signal } = reading.controller
+    const signal = authority ? AbortSignal.any([authority, reading.controller.signal]) : reading.controller.signal
     entry.reading = reading
     reading.promise = (async () => {
       try {
         do {
+          if (signal.aborted) return
           reading.dirty = false
           const version = entry.version
           const answer = await read(instanceId, sessionId, signal).catch((): SessionGoalResponse => ({ status: "unavailable" }))
@@ -86,19 +102,21 @@ export function createSessionGoalStore(read: (instanceId: string, sessionId: str
         if (released) return
         released = true
         tracked.demand -= 1
-        if (tracked.demand === 0) cancel(tracked)
+        if (tracked.demand === 0) { cancel(tracked); tracked.releaseAuthority?.() }
       }
     },
     refresh,
     /** Re-reads the demanded Sessions (of one instance), after a reconnect missed changes. */
-    refreshDemanded(instanceId?: string): Promise<void> {
+    refreshDemanded(instanceId?: string, backendId?: string): Promise<void> {
       return Promise.all(Array.from(entries, ([stateKey, entry]) => {
         const [owner, sessionId] = stateKey.split("\0") as [string, string]
-        return entry.demand > 0 && (instanceId === undefined || owner === instanceId) ? refresh(owner, sessionId) : undefined
+        return entry.demand > 0 && (instanceId === undefined || owner === instanceId)
+          && (backendId === undefined || parseInstanceKey(owner).backendId === backendId) ? refresh(owner, sessionId) : undefined
       })).then(() => undefined)
     },
     /** `rpc.opencode.goal.changed`: the new value of a tracked Session's goal. */
     applyChanged(instanceId: string, data: unknown): void {
+      if (options.signal?.(instanceId)?.aborted) return
       const sessionId = goalChangedSchema.shape.sessionID.safeParse((data as { sessionID?: unknown } | null)?.sessionID)
       if (!sessionId.success) return
       const stateKey = key(instanceId, sessionId.data)
@@ -114,6 +132,7 @@ export function createSessionGoalStore(read: (instanceId: string, sessionId: str
     forget(instanceId: string, sessionId: string): void {
       const stateKey = key(instanceId, sessionId)
       cancel(entries.get(stateKey))
+      entries.get(stateKey)?.releaseAuthority?.()
       entries.delete(stateKey)
       setSnapshots(current => {
         if (!current.has(stateKey)) return current
@@ -127,12 +146,15 @@ export function createSessionGoalStore(read: (instanceId: string, sessionId: str
       for (const [stateKey, entry] of [...entries]) {
         if (!stateKey.startsWith(prefix)) continue
         cancel(entry)
+        entry.releaseAuthority?.()
         entries.delete(stateKey)
       }
       setSnapshots(current => new Map([...current].filter(([stateKey]) => !stateKey.startsWith(prefix))))
     },
     /** Runs one command for the Session (refusing a second meanwhile), then reads its outcome while it is shown. */
     async run(instanceId: string, sessionId: string, command: () => Promise<void>): Promise<void> {
+      const authority = options.signal?.(instanceId)
+      if (authority?.aborted) return
       const stateKey = key(instanceId, sessionId)
       if (untrack(busy).has(stateKey)) return
       setBusy(current => new Set(current).add(stateKey))
@@ -144,7 +166,7 @@ export function createSessionGoalStore(read: (instanceId: string, sessionId: str
           next.delete(stateKey)
           return next
         })
-        void refresh(instanceId, sessionId)
+        if (!authority?.aborted && authority === options.signal?.(instanceId)) void refresh(instanceId, sessionId)
       }
     },
   }

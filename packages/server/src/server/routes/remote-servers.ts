@@ -1,11 +1,14 @@
 import { Agent, fetch } from "undici"
-import type { FastifyInstance } from "fastify"
+import type { FastifyInstance, FastifyRequest } from "fastify"
 import { z } from "zod"
 import type { Logger } from "../../logger"
 import type { RemoteServerProbeResponse } from "../../api-types"
+import type { BackendCallerGuard } from "../../codenomad-servers/ui-caller"
 
 interface RouteDeps {
   logger: Logger
+  guardCaller?: BackendCallerGuard
+  principalSignal?: (request: FastifyRequest) => AbortSignal | undefined
 }
 
 const ProbeSchema = z.object({
@@ -16,10 +19,16 @@ const ProbeSchema = z.object({
 const PROBE_TIMEOUT_MS = 8_000
 
 export function registerRemoteServerRoutes(app: FastifyInstance, deps: RouteDeps) {
-  app.post("/api/remote-servers/probe", async (request, reply) => {
+  app.post("/api/remote-servers/probe", {
+    onRequest: async (request, reply) => { deps.guardCaller?.(request, reply) },
+  }, async (request, reply) => {
     try {
       const body = ProbeSchema.parse(request.body ?? {})
-      return await probeRemoteServer(body.baseUrl, Boolean(body.skipTlsVerify))
+      const signal = deps.principalSignal?.(request)
+      signal?.throwIfAborted()
+      const result = await probeRemoteServer(body.baseUrl, Boolean(body.skipTlsVerify), signal)
+      signal?.throwIfAborted()
+      return result
     } catch (error) {
       deps.logger.warn({ err: error }, "Failed to probe remote server")
       reply.code(400)
@@ -28,10 +37,11 @@ export function registerRemoteServerRoutes(app: FastifyInstance, deps: RouteDeps
   })
 }
 
-async function probeRemoteServer(baseUrl: string, skipTlsVerify: boolean): Promise<RemoteServerProbeResponse> {
+async function probeRemoteServer(baseUrl: string, skipTlsVerify: boolean, principal?: AbortSignal): Promise<RemoteServerProbeResponse> {
   const normalizedUrl = normalizeBaseUrl(baseUrl)
   const probeUrl = new URL("./api/auth/status", `${normalizedUrl}/`)
   const controller = new AbortController()
+  const signal = principal ? AbortSignal.any([principal, controller.signal]) : controller.signal
   const timeout = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
   const dispatcher = skipTlsVerify ? new Agent({ connect: { rejectUnauthorized: false } }) : undefined
 
@@ -39,7 +49,7 @@ async function probeRemoteServer(baseUrl: string, skipTlsVerify: boolean): Promi
     const response = await fetch(probeUrl, {
       method: "GET",
       dispatcher,
-      signal: controller.signal,
+      signal,
       headers: {
         Accept: "application/json",
       },
@@ -59,6 +69,7 @@ async function probeRemoteServer(baseUrl: string, skipTlsVerify: boolean): Promi
     }
 
     const payload = (await response.json()) as { authenticated?: unknown }
+    signal.throwIfAborted()
     if (typeof payload?.authenticated !== "boolean") {
       return {
         ok: false,
@@ -99,7 +110,9 @@ async function probeRemoteServer(baseUrl: string, skipTlsVerify: boolean): Promi
 }
 
 function normalizeBaseUrl(input: string): string {
-  const parsed = new URL(input.trim())
+  let parsed: URL
+  try { parsed = new URL(input.trim()) } catch { throw new Error("Invalid server URL") }
+  if (parsed.username || parsed.password || parsed.hash) throw new Error("Server URL must not contain credentials or pairing data")
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("Server URL must use http:// or https://")
   }
@@ -122,7 +135,8 @@ function describeProbeError(error: unknown): { code: string; message: string } {
   const code = (detailed?.code ?? "").toString()
   const exactMessage = detailed?.message?.trim() || chain.find((entry) => entry.message?.trim())?.message?.trim()
 
-  if (code === "DEPTH_ZERO_SELF_SIGNED_CERT" || code === "SELF_SIGNED_CERT_IN_CHAIN" || code === "CERT_HAS_EXPIRED") {
+  if (["DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN", "CERT_HAS_EXPIRED", "CERT_NOT_YET_VALID",
+    "UNABLE_TO_GET_ISSUER_CERT", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "UNABLE_TO_VERIFY_LEAF_SIGNATURE"].includes(code)) {
     return {
       code: "tls_error",
       message: "Certificate check failed while connecting to the remote server.",

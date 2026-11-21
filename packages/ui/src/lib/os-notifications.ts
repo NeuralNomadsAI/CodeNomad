@@ -13,6 +13,8 @@ export type OsNotificationCapability = {
 export type OsNotificationPayload = {
   title: string
   body: string
+  signal?: AbortSignal
+  onClick?: () => void | Promise<void>
 }
 
 const log = getLogger("actions")
@@ -50,8 +52,16 @@ async function sendWebNotification(payload: OsNotificationPayload): Promise<void
   // Routed notifications wait for permission: until it is granted nothing is sent, silently.
   if (getWebPermission() !== "granted") return
 
-  // eslint-disable-next-line no-new
-  new (window as any).Notification(payload.title, { body: payload.body })
+  const notification: Notification = new window.Notification(payload.title, { body: payload.body })
+  notification.onclick = () => {
+    if (payload.signal?.aborted) return
+    window.focus()
+    notification.close()
+    void Promise.resolve(payload.onClick?.()).catch(error => log.warn("[os-notifications] action failed", error))
+  }
+  const revoke = () => notification.close()
+  payload.signal?.addEventListener("abort", revoke, { once: true })
+  notification.addEventListener("close", () => payload.signal?.removeEventListener("abort", revoke), { once: true })
 }
 
 function hasElectronNotifier(): boolean {
@@ -65,7 +75,7 @@ async function sendElectronNotification(payload: OsNotificationPayload): Promise
   if (!api || typeof api.showNotification !== "function") {
     throw new Error("Electron notification bridge unavailable")
   }
-  await api.showNotification(payload)
+  await api.showNotification({ title: payload.title, body: payload.body })
 }
 
 async function getTauriNotificationModule(): Promise<any | null> {
@@ -107,6 +117,7 @@ async function requestTauriPermission(): Promise<OsNotificationPermission> {
 
 async function sendTauriNotification(payload: OsNotificationPayload): Promise<void> {
   const mod = await getTauriNotificationModule()
+  if (payload.signal?.aborted) return
   if (!mod) {
     throw new Error("Tauri notification plugin unavailable")
   }
@@ -173,6 +184,7 @@ export async function requestOsNotificationPermission(): Promise<OsNotificationP
 }
 
 export async function sendOsNotification(payload: OsNotificationPayload): Promise<void> {
+  if (payload.signal?.aborted) return
   if (typeof window === "undefined") {
     return
   }

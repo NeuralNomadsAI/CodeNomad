@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use url::Url;
 pub(crate) mod memory_cleanup;
+pub(crate) mod server_selection;
 
 pub(crate) const LABEL: &str = "preferences";
 pub(crate) const SECTION_EVENT: &str = "preferences:section";
@@ -20,6 +21,7 @@ const SECTIONS: &[&str] = &[
     "notifications",
     "speech",
     "remote",
+    "servers",
     "opencode",
     "providers",
     "missions",
@@ -46,6 +48,8 @@ pub(crate) struct PreferencesRequest {
     pub(crate) scroll_top: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) instance_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) server_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) workspace_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -90,6 +94,7 @@ struct PreferencesTransitionRequest {
 }
 
 pub(crate) struct PreferencesWindow {
+    selection: server_selection::SelectionCommands,
     cleanup: memory_cleanup::CleanupCommands,
     operation: Mutex<()>,
     state: Mutex<PreferencesState>,
@@ -98,6 +103,7 @@ pub(crate) struct PreferencesWindow {
 impl Default for PreferencesWindow {
     fn default() -> Self {
         Self {
+            selection: server_selection::SelectionCommands::default(),
             cleanup: memory_cleanup::CleanupCommands::default(),
             operation: Mutex::new(()),
             state: Mutex::new(PreferencesState {
@@ -105,6 +111,7 @@ impl Default for PreferencesWindow {
                     section: DEFAULT_SECTION.to_string(),
                     scroll_top: None,
                     instance_id: None,
+                    server_id: None,
                     workspace_path: None,
                     location: None,
                 },
@@ -171,6 +178,9 @@ fn validate_section(section: &str) -> Result<(), String> {
 
 pub(crate) fn validate_request(request: PreferencesRequest) -> Result<PreferencesRequest, String> {
     validate_section(&request.section)?;
+    if request.server_id.as_ref().is_some_and(|value| value.is_empty() || value.len() > 512) {
+        return Err("Invalid Preferences server ID".to_string());
+    }
     if request.scroll_top.is_some_and(|top| top > 10_000_000) {
         return Err("Invalid Preferences scroll position".to_string());
     }
@@ -308,6 +318,7 @@ pub(crate) fn open_speech(app: &AppHandle) -> Result<(), String> {
             section: "speech".into(),
             scroll_top: None,
             instance_id: None,
+            server_id: None,
             workspace_path: None,
             location: None,
         },
@@ -443,7 +454,7 @@ pub(crate) fn navigate_backend(app: &AppHandle) {
         {
             let app_state = app.state::<AppState>();
             let preferences = app.state::<PreferencesWindow>();
-            // A restored window has no host-observed opener: the most recent local window answers startup state.
+            // A restored window has no host-observed opener.
             if let Err(error) =
                 open_preferences(app, &app_state, &preferences, request, false, None)
             {
@@ -551,15 +562,15 @@ fn effective_startup_command(
     }
 }
 
-/// Startup state is each window's own. When the opener is unknown (Preferences
-/// restored at launch) or closed, the most recently used local window is
-/// adopted as the opener, with a new epoch fencing changes prepared before.
-fn startup_state_target(
+/// Prefer the original opener over a more recently used window.
+fn opener_or_recent(
     opener: Option<String>,
     is_live: impl Fn(&str) -> bool,
-    recent: Option<String>,
+    recent: impl FnOnce() -> Option<String>,
 ) -> Option<String> {
-    opener.filter(|label| is_live(label)).or(recent)
+    opener
+        .filter(|label| is_live(label))
+        .or_else(|| recent().filter(|label| is_live(label)))
 }
 
 #[tauri::command]
@@ -577,11 +588,13 @@ pub(crate) async fn preferences_opener_startup_state(
     }
     let command = crate::client_state::startup_state_command(&command)?;
     let current = preferences.opener();
-    let target = startup_state_target(
+    let target = opener_or_recent(
         current.label.clone(),
         |label| app.get_webview_window(label).is_some(),
-        app.state::<crate::local_windows::LocalWindows>()
-            .mru_label(),
+        || {
+            app.state::<crate::local_windows::LocalWindows>()
+                .mru_label()
+        },
     );
     if target.is_some() && target != current.label {
         preferences.set_opener(target, false);
@@ -732,6 +745,7 @@ mod tests {
     fn validates_sections_and_builds_an_explicit_preferences_target() {
         assert!(validate_section("general").is_ok());
         assert!(validate_section("speech").is_ok());
+        assert!(validate_section("servers").is_ok());
         assert!(validate_section("workspace").is_err());
 
         let target = target_url("http://127.0.0.1:3000/", "chat").unwrap();
@@ -743,7 +757,8 @@ mod tests {
         let request = validate_request(PreferencesRequest {
             scroll_top: None,
             section: "providers".into(),
-            instance_id: Some("workspace-1".into()),
+            instance_id: Some("remote~workspace-1".into()),
+            server_id: Some("remote-server".into()),
             workspace_path: Some("C:\\repo".into()),
             location: Some(PreferencesLocation {
                 directory: "/mnt/c/repo".into(),
@@ -757,6 +772,7 @@ mod tests {
         );
         let serialized = serde_json::to_value(&request).unwrap();
         assert_eq!(serialized["workspacePath"], "C:\\repo");
+        assert_eq!(serialized["serverId"], "remote-server");
         assert_eq!(serialized["location"]["directory"], "/mnt/c/repo");
         assert_eq!(
             serde_json::from_value::<PreferencesRequest>(serialized).unwrap(),
@@ -863,7 +879,7 @@ mod tests {
     fn startup_state_targets_a_live_opener_otherwise_the_most_recent_window() {
         let live = |label: &str| label != "closed";
         let target = |opener: Option<&str>, recent: Option<&str>| {
-            startup_state_target(opener.map(str::to_string), live, recent.map(str::to_string))
+            opener_or_recent(opener.map(str::to_string), live, || recent.map(str::to_string))
         };
         assert_eq!(
             target(Some("window-a"), Some("window-b")).as_deref(),

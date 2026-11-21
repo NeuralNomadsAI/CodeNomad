@@ -82,7 +82,7 @@ declare global {
     deleteOtherDataProfiles?: (ids: string[]) => Promise<unknown>
     setNextLaunchDataProfile?: (name: string) => Promise<unknown>
     relaunchIntoNextDataProfile?: () => Promise<unknown>
-    registerBrowserTarget?: (payload: { sessionId: string; registrationId: string; guestWebContentsId: number }) => Promise<{ ok: true }>
+    registerBrowserTarget?: (payload: { sessionId: string; registrationId: string; guestWebContentsId: number; logicalAddress?: string }) => Promise<{ ok: true }>
     unregisterBrowserTarget?: (registrationId: string) => Promise<{ ok: true }>
     emulateBrowserTarget?: (registrationId: string, preset: import("../lib/native/browser-emulation").BrowserEmulationPreset) => Promise<void>
     browserTargetHistory?: (guestWebContentsId: number, entryId?: number) => Promise<import("../lib/browser-history").NativeBrowserHistory | undefined>
@@ -100,7 +100,7 @@ declare global {
       skipTlsVerify: boolean
       requireLoad?: boolean
     }) => Promise<{ ok: boolean }>
-    openPreferences?: (section: SettingsSectionId, context?: { instanceId?: string; workspacePath?: string; location?: LocationRef }, toggle?: boolean, resume?: boolean) => Promise<unknown>
+    openPreferences?: (section: SettingsSectionId, context?: { instanceId?: string; serverId?: string; workspacePath?: string; location?: LocationRef }, toggle?: boolean, resume?: boolean) => Promise<unknown>
     getPreferencesRequest?: () => Promise<unknown>
     getPreferencesSection?: () => Promise<unknown>
     preferencesReady?: () => Promise<unknown>
@@ -108,6 +108,7 @@ declare global {
     resolvePreferencesTransition?: (id: number, approved: boolean) => Promise<unknown>
     openerStartupState?: (command: string, epoch?: number) => Promise<unknown>
     memoryCleanup?: (request: import("../lib/native/memory-cleanup-command").MemoryCleanupRequest) => Promise<unknown>
+    selectServer?: (intent: import("../lib/native/server-selection-intent").ServerSelectionIntent, action?: "remove") => Promise<unknown>
     onPreferencesSection?: (callback: (request: unknown) => void) => () => void
     onPreferencesCloseRequested?: (callback: () => void) => () => void
     onPreferencesTransitionRequested?: (callback: (value: unknown) => void) => () => void
@@ -148,6 +149,7 @@ declare global {
        __CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?: () => Promise<void>
        __CODENOMAD_STARTUP_STATE_COMMAND__?: (command: unknown) => Promise<unknown>
        __CODENOMAD_MEMORY_CLEANUP__?: (request: unknown) => Promise<void>
+       __CODENOMAD_SELECT_SERVER__?: (intent: unknown, action?: "remove") => void
        electronAPI?: ElectronAPI
       __TAURI__?: TauriBridge
       codenomadLogger?: LoggerControls

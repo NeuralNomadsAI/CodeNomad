@@ -45,6 +45,8 @@ import { sessionListRestored } from "../../../../../stores/session-list-restorat
 import { createMissionScheduleList } from "../../../../mission-schedule-list"
 import { MissionPanelScope, MissionViewScope } from "../../../../mission-panel-scope"
 import { MissionPanelPaging } from "../../../../mission-panel-paging"
+import { projectScope } from "../../../../../lib/backend-identity"
+import { captureBackendOperation } from "../../../../../lib/backend-operation"
 import { MissionListPaging } from "../../../../mission-list-paging"
 
 interface MissionControlProps {
@@ -66,7 +68,7 @@ const UNAVAILABLE_DETAIL: Record<MissionUnavailableReason, string> = {
 
 const MissionControl: Component<MissionControlProps> = (props) => {
   const { locale } = useI18n()
-  const scope = () => instances().get(props.instanceId)?.folder ?? props.instanceId
+  const scope = () => { const instance = instances().get(props.instanceId); return instance ? projectScope(instance) : props.instanceId }
   const view = () => missionProjectView(props.instanceId)
   const updateView = (patch: Parameters<typeof updateMissionProjectView>[1]) => updateMissionProjectView(props.instanceId, patch)
   const selectedMissionId = () => view().selected
@@ -213,7 +215,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const passageSchedule = () => selectedSchedule() ?? selectedScheduled()
   const [scheduledCurrent, setScheduledCurrent] = createSignal<string>()
   const currentPassage = useMissionCurrentPassage({ instanceId: () => props.instanceId, projectID,
-    directory: scope, scheduleID: () => selectedSchedule() ?? scheduledCurrent(), owner: () => selectedScheduled() ? "scheduled" : "daily", active: () => props.isActive?.() ?? true, refresh: recurrenceRefresh })
+    directory: () => directory() ?? "", scheduleID: () => selectedSchedule() ?? scheduledCurrent(), owner: () => selectedScheduled() ? "scheduled" : "daily", active: () => props.isActive?.() ?? true, refresh: recurrenceRefresh })
   const passageStore = () => currentPassage.inventory() ?? missionStore
   const mission = createMemo(() => passageSchedule() ? currentPassage.snapshot()?.scheduleID === passageSchedule() ? currentPassage.snapshot()?.mission : undefined
     : missions().find((candidate) => candidate.id === selectedMissionId()))
@@ -250,10 +252,11 @@ const MissionControl: Component<MissionControlProps> = (props) => {
 
   const navigationOrigin = (discoverPassage = false, surfaceIntent = beginGesture({ instanceId: props.instanceId, sessionId: props.activeSessionId() ?? null })) => {
     const instanceId = props.instanceId, viewScope = scope(), viewCurrent = captureView(), operation = ++intent
+    const backend = captureBackendOperation(instanceId)
     const schedule = passageSchedule()
     let passage = discoverPassage ? undefined : currentPassage.snapshot()?.passageID
-    return { instanceId, scope: viewScope, surfaceIntent,
-      current: () => surfaceIntent.current() && viewCurrent() && operation === intent && scope() === viewScope
+    return { instanceId, scope: viewScope, signal: backend.signal, surfaceIntent,
+      current: () => backend.current() && surfaceIntent.current() && viewCurrent() && operation === intent && scope() === viewScope
         && passageSchedule() === schedule && (!schedule || discoverPassage && passage === undefined || currentPassage.snapshot()?.passageID === passage),
       bindPassage: () => { passage = currentPassage.snapshot()?.passageID },
     }
@@ -267,7 +270,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       && (scheduleID ? Boolean(mission()?.id === missionId && includesSession(mission()!, sessionId, passageStore(), selectedFamily()))
         : missions().some(value => value.id === missionId && includesSession(value, sessionId))
           || rows().some(row => row.id === missionId && includesSession({ ...row, projectID: projectID() ?? "", actors: row.actorSessionIds.map(id => ({ sessionId: id })) }, sessionId)))
-    const admitted = () => origin.current() && authorized()
+    const backend = captureBackendOperation(origin.instanceId, origin.signal)
+    const admitted = () => backend.current() && origin.current() && authorized()
       && instances().get(origin.instanceId)?.client === client && getOpenCodeInstanceGeneration(origin.instanceId) === generation
       && !getAuthoritativelyDeletedSessionIdsForInstance(origin.instanceId).has(sessionId)
     if (!admitted()) return false
@@ -275,7 +279,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     // Targeted native hydration preserves authoritative locations and parent
     // metadata, including a cold descendant absent from the display catalog.
     try {
-      await hydrateRestoredSessionChain(origin.instanceId, [sessionId], undefined, admitted)
+      await hydrateRestoredSessionChain(origin.instanceId, [sessionId], backend.signal, admitted)
     } catch {
       if (admitted()) setNavigationError(true)
       return false
@@ -557,7 +561,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   // The saved Mission ID survives ownership conversion in another window, including
   // cold restoration. Point-read that selection; absence never triggers an inventory scan.
   const unifiedSelection = () => selectedScheduled() ?? (selectedSchedule() ? undefined : selectedMissionId())
-  const scheduled = createMissionScheduleList({ get instanceId() { return props.instanceId }, get directory() { return scope() },
+  const scheduled = createMissionScheduleList({ get instanceId() { return props.instanceId }, get directory() { return directory() ?? "" },
     get selectedRequests() { return selectedScheduled() ? currentRequests() : undefined },
     onPassage: setScheduledCurrent,
     onNoPassage: id => {
@@ -588,13 +592,16 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     get selected() { return unifiedSelection() }, detailId, onEdit: id => openEditor({ kind: "edit", scheduleID: id }),
     onDeleted: id => { if (selectedScheduled() === id) updateView({ selectedScheduled: undefined }) },
     onOpenConversation: id => void (async () => {
-      const origin = navigationOrigin(), selected = selectedScheduled(), instanceId = props.instanceId
+      const origin = navigationOrigin(), selected = selectedScheduled(), instanceId = origin.instanceId
+      const client = instances().get(instanceId)?.client
       const generation = getOpenCodeInstanceGeneration(instanceId)
       const current = () => origin.current() && selectedScheduled() === selected && scheduled.ownsSession(id)
+        && instances().get(instanceId)?.client === client
         && getOpenCodeInstanceGeneration(instanceId) === generation
+        && !getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(id)
+      if (!current()) return
       try {
-        if (!current()) return
-        await hydrateRestoredSessionChain(instanceId, [id], undefined, current)
+        await hydrateRestoredSessionChain(instanceId, [id], origin.signal, current)
         if (!current() || !sessions().get(instanceId)?.has(id)) return
         batch(() => { setActiveSessionFromList(instanceId, id, origin.surfaceIntent); applySurface({ instanceId, sessionId: id }, { kind: "conversation" }, origin.surfaceIntent) })
         if (!current()) return
@@ -638,10 +645,13 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const refresh = async () => {
     if (refreshing()) return
     const retry = controlRetry(), instanceId = props.instanceId
+    const operation = captureBackendOperation(instanceId, undefined, captureView())
+    if (!operation.current()) return
     setRefreshing(true)
     try {
       const mapRead = missionStore.refresh(instanceId)
       const [, read] = await Promise.allSettled([mapRead, retry?.reconcile(mapRead)])
+      if (!operation.current()) return
       setRecurrenceRefresh(value => value + 1)
       // A skipped, failed or superseded read never leads to a resend.
       const witnessed = read.status === "fulfilled" && read.value === true
@@ -687,15 +697,15 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         active={() => (props.isActive?.() ?? true) && editor() === action}
         onDispose={draft => settleMissionEditor(action, draft === null ? action : draft && { ...action, draft })}
         captureOperation={() => {
-          const origin = captureView(), operation = intent
-          completionCurrent = () => origin() && operation === intent
+          const origin = captureView(), operation = intent, backend = captureBackendOperation(props.instanceId)
+          completionCurrent = () => backend.current() && origin() && operation === intent
           return completionCurrent
         }}
         onCancel={closeEditor} onOpenPreferences={openPreferences} onShowPlaybook={showPlaybook}
         onReopen={() => {
           // The edit reopens on the newest map, read first: the one it opened on is outdated.
           // The form stays as it opened until this settles; a failed read rejects, so it says so.
-          const view = captureView()
+          const view = captureBackendOperation(props.instanceId, undefined, captureView()).current
           return missionStore.refresh(props.instanceId).then(() => {
             if (!view() || editor() !== action) return
             if (missionStore.state(props.instanceId).status !== "ready") throw new Error("The mission map could not be read")

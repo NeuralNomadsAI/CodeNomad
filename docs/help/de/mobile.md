@@ -4,11 +4,13 @@ Verwenden Sie die Browseroberfläche auf Telefon oder Tablet, um Arbeit auf dem 
 
 ## Mit Telefon oder Tablet verbinden {#connect}
 
+Gespeicherte Server sind über die Startseite und Einstellungen → Server verfügbar. [Remote-Tabs wiederherstellen](projects.md#restore-remote-tabs).
+
 1. Öffnen Sie auf dem Host **Einstellungen → Remote-Zugriff → Fernsteuerung** und wählen Sie **Fernsteuerung starten**.
 2. Scannen Sie den Kopplungs-QR-Code mit Ihrem Mobilgerät und öffnen Sie den Link im Browser, den Sie weiterverwenden möchten.
 3. Alternativ konfigurieren Sie [Direktzugriff](remote-access.md), öffnen die erreichbare vertrauenswürdige HTTPS-URL des Hosts und melden sich mit dessen Serverpasswort an.
 
-Fernsteuerung erfordert Gerätekopplung; Direktverbindungen benötigen Routing, erreichbaren Listener und Authentifizierung. Verwenden Sie auf dem Telefon nicht `localhost`, um Ihren Arbeitsplatzrechner zu erreichen. Verlust von Websitedaten oder Profilwechsel kann erneute Anmeldung/Kopplung erfordern; siehe [Fernsteuerung](remote-control.md).
+Fernsteuerung erfordert Gerätekopplung; Direktverbindungen benötigen Routing, erreichbaren Listener und Authentifizierung. Verwenden Sie auf dem Telefon nicht `localhost`, um Ihren Arbeitsplatzrechner zu erreichen. Verlust von Websitedaten oder Profilwechsel kann erneute Anmeldung/Kopplung erfordern; siehe [Fernsteuerung](remote-control.md). Ist der Tunnel blockiert, koppeln Sie stattdessen über eine vertrauenswürdige HTTPS-Adresse; siehe [Über direktes HTTPS koppeln](remote-control.md#direct-https).
 
 ## PWA installieren {#install-pwa}
 

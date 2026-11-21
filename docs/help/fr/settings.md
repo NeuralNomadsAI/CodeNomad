@@ -1,5 +1,7 @@
 # Paramètres et disposition
 
+Preferences utilise le serveur du projet sélectionné pour ses réglages, fournisseurs, statistiques et sa mémoire, y compris **Ranger**. Si le serveur est indisponible, les commandes du projet restent inactives. Les réglages de l’appareil et les SideCars restent locaux. Les réglages Images et Recherche web suivent le serveur du projet, y compris ses valeurs globales.
+
 ## Ouvrir les paramètres et identifier leur portée {#open-settings}
 
 1. Ouvrez **Paramètres** avec l’engrenage **Ouvrir les paramètres** de la barre d’onglets (de la barre de titre dans l’application de bureau macOS) ou de l’accueil. Des raccourcis comme **Gérer les fournisseurs** dans le sélecteur de modèle, l’engrenage du panneau Missions ou l’engrenage **Paramètres** de l’historique des notifications ouvrent directement la section correspondante.
@@ -43,6 +45,8 @@ Dans **Paramètres → Général**, **Garder l’ordinateur éveillé tant que C
 Dans **Paramètres → Général → Permissions des nouvelles conversations**, choisissez **Autonome** (par défaut) ou **Supervisé** pour les nouvelles conversations principales que vous créez dans CodeNomad. Les conversations existantes restent inchangées. Pour en modifier une, ouvrez son panneau [Statut → Permissions](permissions.md#conversation-mode).
 
 ## Mémoire persistante de l’agent {#agent-memory}
+
+Les utilisateurs authentifiés via le Contrôle à distance, HTTPS vérifié, le réseau local ou une PWA installée peuvent consulter et modifier la mémoire du projet local ou distant sélectionné, et utiliser **Ranger**.
 
 CodeNomad tente de retirer les instructions mémoire périmées de la session ; si ce nettoyage échoue aussi, les instructions précédentes peuvent rester jusqu’à une actualisation réussie.
 
@@ -90,6 +94,8 @@ La chronologie a un marqueur pour chaque réponse, réflexion, outil, compactage
 Le réglage manuel prend pour référence la hauteur de la conversation sans le clavier à l’écran : au moins 8 % avec un plancher de 44 px, au plus 60 %. Une largeur réduite ou un long texte n’augmentent pas ces limites. Lorsque le clavier s’ouvre, le champ peut rétrécir temporairement pour laisser de la place aux commandes et aux messages, sans modifier la proportion enregistrée. Une autorisation/question développée réduit temporairement la saisie sans changer sa hauteur enregistrée ni son brouillon. Repliez ou réglez la demande pour reprendre le redimensionnement.
 
 ## Notifications et badges {#notifications}
+
+Pour un onglet de projet sur un autre serveur CodeNomad, les notifications indiquent le nom du serveur. **Voir la conversation** ouvre ce projet et cette conversation précis ; détacher le serveur efface ses notifications.
 
 La compaction des sessions techniques des Missions reste silencieuse.
 

@@ -1,5 +1,7 @@
 # Ayarlar ve düzen
 
+Tercihler, proje ayarları, sağlayıcılar, istatistikler ve bellek düzenleme için seçili projenin sunucusunu kullanır. Sunucu kullanılamıyorsa proje denetimleri devre dışı kalır. Cihaz ayarları ve SideCars yerel kalır. Görseller ve Web araması ayarları, genel varsayılanlar dahil projenin sunucusuna aittir.
+
 ## Ayarları açın ve kapsamını belirleyin {#open-settings}
 
 1. Sekme çubuğundaki (macOS masaüstü uygulamasında başlık çubuğundaki) veya ana sayfadaki **Ayarları aç** dişli simgesiyle **Ayarlar** öğesini açın. Model seçicideki **Provider'ları yönet**, Görevler panelinin dişli simgesi veya bildirim geçmişindeki **Ayarlar** dişli simgesi gibi kısayollar ilgili bölümü doğrudan açar.
@@ -43,6 +45,8 @@ Renklerin okunması zorlaşırsa **Kontrast → Açık** seçin. Yerleşik bir p
 CodeNomad’da oluşturduğunuz yeni ana konuşmalar için **Ayarlar → Genel → Yeni konuşmaların izinleri** bölümünden **Özerk** (varsayılan) veya **Denetimli** modunu seçin. Mevcut konuşmalar değişmez. Bir konuşmanın modunu değiştirmek için o konuşmada [Durum → İzinler](permissions.md#conversation-mode) bölümünü açın.
 
 ## Kalıcı ajan belleği {#agent-memory}
+
+Uzaktan Kontrol, doğrulanmış HTTPS, LAN veya yüklü PWA üzerinden kimliği doğrulanmış kullanıcılar seçili yerel ya da uzak projenin belleğini inceleyebilir, değiştirebilir ve **Düzenle** işlemini kullanabilir.
 
 CodeNomad oturumun eski bellek talimatlarını kaldırmayı dener; temizleme de başarısız olursa önceki talimatlar başarılı bir yenilemeye kadar kalabilir.
 
@@ -90,6 +94,8 @@ Zaman çizelgesinde, konuşmada gösterilen her yanıt, akıl yürütme, araç, 
 İleti düzenleyicisinin yüksekliğini elle ayarlarken ekran klavyesi kapalıyken konuşma alanının yüksekliği esas alınır: en az %8 (44 pikselden az olamaz), en çok %60. Dar bir düzen veya uzun metin bu sınırları yükseltmez. Klavye açıldığında kontroller ve mesajlar için yer bırakmak üzere alan geçici olarak küçülebilir; kayıtlı yükseklik oranı değişmez. Genişletilmiş izin/soru, kayıtlı yüksekliği veya taslağı değiştirmeden düzenleyiciyi geçici küçültür. Yeniden boyutlandırmaya dönmek için isteği daraltın veya sonuçlandırın.
 
 ## Bildirimler ve rozetler {#notifications}
+
+Başka bir CodeNomad sunucusundaki proje sekmesinin bildirimleri sunucu adını içerir. **Sohbeti görüntüle** tam olarak o projeyi ve konuşmayı açar; sunucuyu ayırmak bildirimlerini temizler.
 
 Görevlerin teknik oturumları sıkıştırıldığında bildirim gösterilmez.
 

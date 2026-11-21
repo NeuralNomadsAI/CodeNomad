@@ -9,7 +9,7 @@ export interface SessionInfo {
 
 export class SessionManager {
   private sessions = new Map<string, SessionInfo>()
-  private revocations = new Map<string, Set<() => void>>()
+  private invalidations = new Map<string, Set<() => void>>()
 
   constructor(private readonly options: { idleMs?: number; absoluteMs?: number; now?: () => number } = {}) {}
 
@@ -42,37 +42,50 @@ export class SessionManager {
     return session
   }
 
-  /** Track an open stream without renewing the password session's idle limit. */
-  watch(id: string, revoked: () => void): () => void {
+  /** Check validity without activity updates or revocation side effects. */
+  hasSession(id: string): boolean {
     const session = this.sessions.get(id)
-    if (!session || this.now() >= this.deadline(session)) {
-      revoked()
-      return () => {}
-    }
-    const listeners = this.revocations.get(id) ?? new Set<() => void>()
-    this.revocations.set(id, listeners)
-    let timer: ReturnType<typeof setTimeout>
-    const stop = () => {
+    return session !== undefined && this.now() < this.deadline(session)
+  }
+
+  /** Observe the captured session without refreshing its idle lifetime. */
+  onInvalidated(id: string, listener: () => void): () => void {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let active = true
+    const release = () => {
+      active = false
       clearTimeout(timer)
-      listeners.delete(notify)
-      if (!listeners.size && this.revocations.get(id) === listeners) this.revocations.delete(id)
+      const listeners = this.invalidations.get(id)
+      listeners?.delete(invalidate)
+      if (listeners?.size === 0) this.invalidations.delete(id)
     }
-    const notify = () => { stop(); revoked() }
+    const invalidate = () => { if (active) { release(); listener() } }
+    const listeners = this.invalidations.get(id) ?? new Set<() => void>()
+    listeners.add(invalidate)
+    this.invalidations.set(id, listeners)
     const check = () => {
-      const remaining = this.deadline(session) - this.now()
-      if (remaining <= 0) this.revoke(id)
-      else timer = setTimeout(check, Math.min(remaining, 0x7fff_ffff)).unref()
+      if (!active) return
+      const session = this.sessions.get(id), now = this.now()
+      if (!session || now >= this.deadline(session)) { this.revoke(id); return }
+      const remaining = this.deadline(session) - now
+      timer = setTimeout(check, Math.min(remaining, 2_147_483_647))
+      timer.unref?.()
     }
-    listeners.add(notify)
     check()
-    return stop
+    return release
+  }
+
+  watch(id: string, revoked: () => void): () => void {
+    return this.onInvalidated(id, revoked)
   }
 
   revoke(id: string): void {
     this.sessions.delete(id)
-    const listeners = this.revocations.get(id)
-    this.revocations.delete(id)
-    if (listeners) for (const notify of listeners) notify()
+    const listeners = this.invalidations.get(id)
+    this.invalidations.delete(id)
+    for (const listener of listeners ?? []) {
+      try { listener() } catch { /* Each invalidation observer has its own failure boundary. */ }
+    }
   }
 
   revokeUser(username: string): void {

@@ -71,6 +71,8 @@ Playback uses CodeNomad's text projection, not a narrated screenshot: binary/ima
 
 ## Voice conversation {#conversation}
 
+Gemini Live and OpenAI Realtime are available only for sessions on the server that opened this window.
+
 In **Conversation**, choose a **Conversation engine**:
 
 - **Classic** needs only configured playback in a supported format. In the composer's **More actions**, choose **Enable conversation mode**. CodeNomad asks the agent to start each reply to a prompt you send with a short `spoken` summary and reads only that completed block in the active main session. The mode applies to the project tab until you disable it or reload. Starting dictation stops the spoken summary.

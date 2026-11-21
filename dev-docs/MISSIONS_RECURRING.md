@@ -478,6 +478,8 @@ Each technical wake enters an exact-file, own-process HTTP RPC with an eight-sec
 deadline. A read-only preflight freezes complete fan-in coverage before a dispatch
 claim. Technical high-water advances at durable reservation; the pending business
 reference remains separate, so auxiliary observation can reconcile the last passage.
+When recent carrier context omits the next unconsumed wake, the context hook
+reads that exact native message by ID before dispatch.
 Native persisted schedules load their owning Location on wake after service startup.
 Pause/Stop, failures, unqualified observations and uncertain effects retain their
 admission barriers. Never resend an attempted original whose proof is missing.

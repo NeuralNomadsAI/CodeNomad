@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
 import { Dynamic } from "solid-js/web"
+import { captureBackendOperation } from "../../../lib/backend-operation"
 import { Copy } from "lucide-solid"
 import type { ToolState } from "../../../types/tool-state"
 import type { ToolRenderer } from "../types"
@@ -8,8 +9,8 @@ import { MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT } from "../../../lib/render-text-w
 import { messageStoreBus } from "../../../stores/message-v2/bus"
 import { beginMessageHistoryTraversal, isLatestMessageWindow, loadMessages, loadNewerMessageWindow, loadOldestMessageWindow } from "../../../stores/session-api"
 import { getSessionMessagesLoadError, messagesLoaded, sessions } from "../../../stores/session-state"
-import { setSessionTranscriptVisible } from "../../../stores/session-transcript-memory"
-import { waitForInstanceWorkspaceMetadataHydration } from "../../../stores/instances"
+import { sessionTranscriptBinding, setSessionTranscriptVisible } from "../../../stores/session-transcript-memory"
+import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../../stores/instances"
 import { useActiveSessionMessageLoad } from "../../../lib/hooks/use-active-session-message-load"
 import { getMessageContentIcon } from "../../message-content-icons"
 import { getTaskToolSearchText } from "../search-text"
@@ -245,10 +246,13 @@ export const taskRenderer: ToolRenderer = {
     function retryChildSessionLoad() {
       const id = childSessionId()
       if (!id || isActive?.() === false) return
-      void loadMessages(instanceId, id, { force: true }).catch(() => {})
+      const operation = captureBackendOperation(instanceId)
+      if (!operation.current()) return
+      void loadMessages(instanceId, id, { force: true, signal: operation.signal }).catch(() => {})
     }
 
     useActiveSessionMessageLoad({
+      captureOperation: captureBackendOperation,
       isActive: () => Boolean(childSessionId()) && isActive?.() !== false,
       instanceId: () => instanceId,
       session: () => {
@@ -268,11 +272,14 @@ export const taskRenderer: ToolRenderer = {
       waitForHydration: waitForInstanceWorkspaceMetadataHydration,
     })
 
+    const childTranscriptBinding = createMemo(() => sessionTranscriptBinding(instanceId, childSessionId()))
+    const childOwner = createMemo(() => instances().get(instanceId)?.client)
     createEffect(() => {
       const id = childSessionId()
-      if (!id || isActive?.() === false) return
-      untrack(() => setSessionTranscriptVisible(instanceId, id, true))
-      onCleanup(() => setSessionTranscriptVisible(instanceId, id, false))
+      const client = childOwner()
+      if (!id || !client || !childTranscriptBinding() || isActive?.() === false) return
+      const operation = captureBackendOperation(instanceId, undefined, () => instances().get(instanceId)?.client === client)
+      onCleanup(untrack(() => setSessionTranscriptVisible(instanceId, id, operation)))
     })
 
     const [childToolKeys, setChildToolKeys] = createSignal<string[]>([])
@@ -451,6 +458,7 @@ export const taskRenderer: ToolRenderer = {
     const stepCount = () => stepsTruncated() ? `${TASK_STEP_RENDER_LIMIT}+` : childSourceActive() ? childToolKeys().length : legacyItems().length
 
     const childTaskCopy = useTaskStepCopy({
+      captureOperation: signal => captureBackendOperation(instanceId, signal),
       childSessionId,
       isActive: () => isActive?.() ?? true,
       beginTraversal: id => beginMessageHistoryTraversal(instanceId, id),

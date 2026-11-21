@@ -2,10 +2,15 @@ import type { ScrollSnapshot } from "./message-v2/types"
 import { normalizeSessionCatalog, type PersistedSessionCatalogEntry } from "./session-catalog-persistence"
 import { normalizeRestorableAttachmentRecord, type RestorableAttachment } from "./client-state-attachments-codec"
 import type { PersistedGenerationRecovery } from "./session-generation-recovery"
+import { isBackendId, LOCAL_BACKEND_ID } from "../lib/backend-identity"
+import type { BackendId } from "../lib/backend-transport"
 import { normalizeOutlineIndexes, outlineBudget, type OutlineBudget, type PersistedOutline } from "./session-outline-persistence"
 import { MAX_TAB_PREVIEW_STORAGE, normalizeTabViewState, type RestorableTabViewState } from "./tab-view-state-codec"
 
 export interface RestorableWorkspaceTabState {
+  /** Absent for the local backend, so states saved before backend ids decode unchanged. */
+  backendId?: BackendId
+  serverId?: string
   kind: "workspace"; folder: string; occurrence?: number; projectName?: string; binaryPath?: string
   /** The backend workspace record it showed; preferred over `occurrence` while that record exists. */
   workspaceId?: string
@@ -190,6 +195,8 @@ function normalizeWorkspaceTab(
 
   const result: RestorableWorkspaceTabState = {
     kind: "workspace", folder: identity.folder,
+    ...(identity.backendId ? { backendId: identity.backendId } : {}),
+    ...(identity.serverId ? { serverId: identity.serverId } : {}),
     drafts: attachmentResult.drafts,
     attachments: { ...identity.priorityAttachments, ...attachmentResult.attachments },
     scrollSnapshots, unseenIdleSince, generationRecovery,
@@ -220,7 +227,8 @@ function normalizeWorkspaceTab(
 }
 
 interface WorkspaceIdentity {
-  kind: "workspace"; value: Record<string, unknown>; folder: string
+  kind: "workspace"; value: Record<string, unknown>; folder: string; backendId?: BackendId
+  serverId?: string
   activeParentSessionId?: string; activeSessionId?: string
   prioritySessionIds: string[]; priorityDrafts: Record<string, string>
   priorityAttachments: Record<string, RestorableAttachment[]>
@@ -239,6 +247,11 @@ function normalizeIdentity(value: unknown, budget: StringBudget): TabIdentity | 
     .every((key) => isRecord(value[key] ?? {}))) return null
   const folder = takeString(value.folder, MAX_PATH, budget)
   if (folder === undefined) return null
+  // A tab of a malformed backend id is dropped rather than reopened on the local backend.
+  const savedBackendId = value.backendId === LOCAL_BACKEND_ID ? undefined : value.backendId
+  if (savedBackendId !== undefined && (!isBackendId(savedBackendId) || takeString(savedBackendId, MAX_ID, budget) === undefined)) return null
+  const backendId = savedBackendId as BackendId | undefined
+  const serverId = backendId ? takeString(value.serverId, MAX_ID, budget) : undefined
   const activeParentSessionId = value.activeParentSessionId === undefined ? undefined
     : takeString(value.activeParentSessionId, MAX_ID, budget)
   const activeSessionId = value.activeSessionId === undefined ? undefined : takeString(value.activeSessionId, MAX_ID, budget)
@@ -247,7 +260,7 @@ function normalizeIdentity(value: unknown, budget: StringBudget): TabIdentity | 
   const prioritySessionIds = [activeSessionId, NO_SESSION_DRAFT_SESSION_ID, ...recoveredIds]
     .filter((id): id is string => Boolean(id))
   return {
-    kind: "workspace", value, folder, activeParentSessionId, activeSessionId,
+    kind: "workspace", value, folder, backendId, serverId, activeParentSessionId, activeSessionId,
     prioritySessionIds, priorityDrafts: Object.create(null), priorityAttachments: Object.create(null),
   }
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { getUnavailableRestoredSessionIds, getUnavailableWorkspaceIds, reconcileWorkspaceTabs, resolveRestoredActiveTabId, resolveRestoredSessionSelection, shouldRestoreSessionState } from "./app-session-reconciliation.ts"
+import { getUnavailableRestoredSessionIds, getUnavailableWorkspaceIds, mayCreateRestoredWorkspace, reconcileWorkspaceTabs, resolveRestoredActiveTabId, resolveRestoredSessionSelection, shouldRestoreSessionState } from "./app-session-reconciliation.ts"
 describe("app session reconciliation", () => {
   const workspaceCases = [
     ["matches duplicate workspace folders by normalized path occurrence", [
@@ -22,10 +22,35 @@ describe("app session reconciliation", () => {
     ["matches a saved id only within the same folder", [
       { kind: "workspace" as const, folderPath: "/code/other", occurrence: 0, workspaceId: "a" },
     ], [{ id: "a", folderPath: "/code/nomad" }, { id: "c", folderPath: "/code/other" }], ["c"]],
+    ["prefers surviving remote records within their backend after sibling closure", [
+      { kind: "workspace" as const, folderPath: "/same", occurrence: 1, workspaceId: "a~survivor", backendId: "a", serverId: "installation-a" },
+      { kind: "workspace" as const, folderPath: "/same", occurrence: 0 },
+      { kind: "workspace" as const, folderPath: "/same", occurrence: 0, backendId: "b", workspaceId: "a~survivor" },
+    ], [
+      { id: "survivor", folderPath: "/same" },
+      { id: "a~survivor", folderPath: "/same", backendId: "a", serverId: "installation-a" },
+    ], ["a~survivor", "survivor", null]],
   ] as const
   for (const [label, saved, live, expected] of workspaceCases) it(label, () => assert.deepEqual(
     reconcileWorkspaceTabs([...saved], [...live]).map(({ existingWorkspaceId }) => existingWorkspaceId), expected,
   ))
+  it("only explicit Open can create a missing remote project, on desktop or web", () => {
+    for (const web of [false, true]) {
+      assert.equal(mayCreateRestoredWorkspace(true, web, false), false)
+      assert.equal(mayCreateRestoredWorkspace(true, web, true), true)
+    }
+    assert.equal(mayCreateRestoredWorkspace(false, false, false), true)
+    assert.equal(mayCreateRestoredWorkspace(false, true, false), false)
+  })
+  it("rejects both saved-id and occurrence matches from another installation or an unverified snapshot", () => {
+    const live = { id: "a~record", folderPath: "/same", backendId: "a", serverId: "installation-new" }
+    for (const workspaceId of [live.id, "a~closed"]) {
+      for (const serverId of ["installation-old", undefined, live.serverId]) {
+        const tabs = [{ kind: "workspace", folderPath: live.folderPath, backendId: live.backendId, workspaceId, serverId }]
+        assert.equal(reconcileWorkspaceTabs(tabs, [live])[0]?.existingWorkspaceId, serverId === live.serverId ? live.id : null)
+      }
+    }
+  })
   it("keeps saved order while a restored workspace is still starting", () => {
     const saved = [
       { kind: "workspace", folderPath: "D:/DreamX-World" },

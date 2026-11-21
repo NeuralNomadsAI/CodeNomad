@@ -45,6 +45,7 @@ async function open(context: BrowserContext, options: { nativeHints?: boolean } 
     window.electronAPI = { setWorkspaceMenuEnabled: async () => ({ ok: true }) }
   ` })
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/panel-extensions", route => route.fulfill({ json: [] }))
   await page.goto(options.nativeHints ? `${url}?shortcutHints=1` : url)
   await page.waitForFunction(() => Boolean((window as any).fixture))
   return { page, errors }

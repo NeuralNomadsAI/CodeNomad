@@ -414,6 +414,7 @@ jobs:
         run: >-
           node --import tsx --test --test-force-exit
           packages/ui/src/components/browser-frame-security.test.ts
+          packages/ui/src/lib/remote-preview-address.test.ts
           packages/ui/src/components/panel-extensions/work-items-channel.test.ts
           packages/ui/src/components/message-history-pagination.test.ts
           packages/ui/src/components/message-timeline-v2.test.ts
@@ -446,6 +447,14 @@ jobs:
           packages/ui/src/lib/height-delta.test.ts
           packages/ui/src/lib/scroll-gesture-routing.test.ts
           packages/ui/src/lib/client-identity.test.ts
+          packages/ui/src/lib/backend-identity.test.ts
+          packages/ui/src/lib/backend-client.test.ts
+          packages/ui/src/lib/backend-meta-contract.test.ts
+          packages/ui/src/lib/passive-image.test.ts
+          packages/ui/src/lib/backend-usage-routing.test.ts
+          packages/ui/src/lib/backend-transport.test.ts
+          packages/ui/src/lib/backend-route-joining.test.ts
+          packages/ui/src/lib/local-route-joining.test.ts
           packages/ui/src/lib/filesystem-events.test.ts
           packages/ui/src/lib/global-cache.test.ts
           packages/ui/src/lib/monaco/model-cache.test.ts
@@ -490,10 +499,12 @@ jobs:
           packages/ui/src/stores/plugin-controls-demand.test.ts
           packages/ui/src/stores/plugin-controls-events.test.ts
           packages/ui/src/stores/plugin-sources.test.ts
+          packages/ui/src/lib/backend-plugin-routing.test.ts
           packages/ui/src/stores/integrations-store.test.ts
           packages/ui/src/stores/integration-bindings-store.test.ts
           packages/ui/src/lib/integration-rows.test.ts
           packages/ui/src/lib/integrations-api.test.ts
+          packages/ui/src/lib/backend-integration-routing.test.ts
           packages/ui/src/stores/message-prompt-display.test.ts
           packages/ui/src/stores/message-v2/instance-store.test.ts
           packages/ui/src/stores/message-v2/message-hydration-authority.test.ts
@@ -511,11 +522,13 @@ jobs:
           packages/ui/src/stores/session-pending-state.test.ts
           packages/ui/src/stores/session-tree.test.ts
           packages/ui/src/stores/session-previews.test.ts
+          packages/ui/src/stores/backend-preview-routing.test.ts
           packages/ui/src/stores/session-browser-persistence.test.ts
           packages/ui/src/stores/session-surface-passive.test.ts
           packages/ui/src/stores/session-deletion-reconciliation.test.ts
           packages/ui/src/components/instance/shell/right-panel/useGitChanges.test.ts
           packages/ui/src/stores/tab-view-state.test.ts
+          packages/ui/src/stores/tab-view-state-local.test.ts
           packages/ui/src/stores/mission-view-state-migration.test.ts
           packages/ui/src/lib/browser-history.test.ts
           packages/ui/src/lib/keyboard-offset.test.ts
@@ -526,6 +539,11 @@ jobs:
       - name: Test Missions UI units
         run: >-
           node --conditions=browser --import tsx --test --test-force-exit
+          packages/ui/src/lib/backend-missions-routing.test.ts
+          packages/ui/src/lib/mission-coordinator-routing.test.ts
+          packages/ui/src/components/mission-backend-consumers.test.ts
+          packages/ui/src/stores/mission-backend-routing.test.ts
+          packages/ui/src/stores/mission-store-ownership.test.ts
           packages/ui/src/components/mission-attention.test.ts
           packages/ui/src/stores/mission-store.test.ts
           packages/ui/src/stores/mission-task-pages.test.ts
@@ -572,6 +590,11 @@ jobs:
       - name: Test restore ownership integration
         run: >-
           node --conditions=browser --import tsx --test --test-force-exit
+          packages/ui/src/stores/backend-preferences.test.ts
+          packages/ui/src/stores/recent-projects.test.ts
+          packages/ui/src/stores/backend-registry.test.ts
+          packages/ui/tests/backend-relay-authority.test.ts
+          packages/ui/src/stores/preferences-multi-backend.test.ts
           packages/ui/src/components/panel-extensions/api4-notes-channel.test.ts
           packages/ui/src/components/form-request-tool-target.test.ts
           packages/ui/src/components/form-request.test.ts
@@ -587,6 +610,7 @@ jobs:
           packages/ui/src/components/tool-call/renderers/execute-data.test.ts
           packages/ui/src/components/tool-call/renderers/bash-data.test.ts
           packages/ui/src/components/prompt-input/usePromptState.test.ts
+          packages/ui/src/components/prompt-input/backend-history.test.ts
           packages/ui/src/components/session/provider-usage-panel.test.ts
           packages/ui/src/lib/hooks/use-active-session-message-load.test.ts
           packages/ui/src/lib/assistant-meta.test.ts
@@ -597,10 +621,36 @@ jobs:
           packages/ui/src/stores/instance-startup-priority.test.ts
           packages/ui/src/stores/session-list-startup.test.ts
           packages/ui/src/stores/app-tabs.test.ts
+          packages/ui/src/stores/backend-instance-identity.test.ts
+          packages/ui/src/lib/backend-events.test.ts
+          packages/ui/src/lib/backend-session-routing.test.ts
+          packages/ui/src/lib/backend-files-routing.test.ts
+          packages/ui/src/lib/backend-event-lifecycle.test.ts
+          packages/ui/src/lib/backend-event-authority.test.ts
+          packages/ui/src/lib/backend-consumer-lifetime.test.ts
+          packages/ui/src/lib/backend-async-inventory.test.ts
+          packages/ui/src/stores/backend-demand-lifetime.test.ts
+          packages/ui/src/stores/backend-action-lifetime.test.ts
+          packages/ui/src/stores/backend-runtime-lifetime.test.ts
+          packages/ui/src/stores/backend-session-flags.test.ts
+          packages/ui/src/stores/backend-session-read-flags.test.ts
+          packages/ui/src/stores/backend-store-indicators.test.ts
+          packages/ui/src/components/backend-view-indicators.test.ts
+          packages/ui/src/lib/backend-panel-deadline.test.ts
+          packages/ui/src/lib/backend-panel-extensions-routing.test.ts
+          packages/ui/tests/contracts/mission-current-body-attachment.test.ts
+          packages/ui/tests/contracts/mission-current-body-lifetime.test.ts
           packages/ui/src/stores/app-session-workspace-hydration.test.ts
+          packages/ui/src/stores/mission-schedules.test.ts
+          packages/ui/src/components/backend-view-lifetime.test.ts
+          packages/ui/src/lib/backend-view-io.test.ts
+          packages/ui/src/components/panel-extensions/extension-manager-lifetime.test.ts
+          packages/ui/src/stores/backend-workspace-list-refresh.test.ts
           packages/ui/src/stores/forms.test.ts
           packages/ui/src/stores/preferences-favorites-mode.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts
+          packages/ui/src/stores/instances-cancellation-flight.test.ts
+          packages/ui/src/stores/instances-backend-lifecycle.test.ts
           packages/ui/src/stores/instances-pending-compaction.test.ts
           packages/ui/src/stores/instances-pending-requests.test.ts
           packages/ui/src/stores/pending-recovery-cause.test.ts
@@ -650,11 +700,11 @@ jobs:
           packages/ui/src/stores/session-request-authority.test.ts
           packages/ui/src/stores/session-default-agent.test.ts
           packages/ui/src/stores/session-default-model.test.ts
-          packages/ui/src/stores/session-create-pending.test.ts
           packages/ui/src/stores/history-search-sessions.test.ts
           packages/ui/src/stores/session-git-degraded.test.ts
           packages/ui/src/stores/session-send-lifecycle.test.ts
           packages/ui/src/stores/blank-session-cleanup.test.ts
+          packages/ui/src/stores/instance-reconnect-reconciliation.test.ts
           packages/ui/src/stores/session-status.test.ts
           packages/ui/src/stores/session-subsession-activity.test.ts
           packages/ui/src/stores/worktree-ready.test.ts
@@ -818,6 +868,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Test concurrent server identity and crash recovery
+        run: node --import tsx --test packages/server/src/settings/server-identity.test.ts
 
       - name: Restore the Electron download
         if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}

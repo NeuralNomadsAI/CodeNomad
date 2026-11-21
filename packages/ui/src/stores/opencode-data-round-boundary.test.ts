@@ -40,8 +40,8 @@ type Page = { data: unknown[]; cursor: Record<string, string> }
 
 function fixture(instanceId: string) {
   const sessionId = "s"
-  const statuses = sseManager.getStatuses
-  sseManager.getStatuses = () => new Map([[instanceId, "connected"]])
+  const status = sseManager.getRawStatus
+  sseManager.getRawStatus = id => id === instanceId ? "connected" : null
   const active = deferred<Record<string, unknown>>()
   const reads: ReturnType<typeof deferred<Page>>[] = []
   const client = {
@@ -106,7 +106,7 @@ function fixture(instanceId: string) {
       destroyOpenCodeData(instanceId)
       active.resolve({})
       for (const read of reads) read.resolve({ data: [], cursor: {} })
-      sseManager.getStatuses = statuses
+      sseManager.getRawStatus = status
       removeInstance(instanceId, { authoritative: false })
       sdkManager.destroyClientsForInstance(instanceId)
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)

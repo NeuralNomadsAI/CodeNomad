@@ -190,6 +190,26 @@ test("activity invalidations without linked conversations never fan out an activ
   assert.equal(state.activeReads, 0)
 })
 
+for (const change of ["connection", "generation"] as const)
+test(`a replacement ${change} reads independently and old cleanup cannot release its flight`, async () => {
+  const gates = [deferred<unknown>(), deferred<unknown>()]
+  let connection = {}, generation = 1, calls = 0
+  const root = { message: { list: () => gates[calls++].promise }, session: {} }
+  const store = createMissionTaskSessions({ connection: () => connection, generation: () => generation,
+    root: () => root as never, warn: () => assert.fail("unexpected native read failure") })
+  const done = { ...mission, tasks: [] }
+  const first = store.demand("inst", done, 1, "preview")
+  if (change === "connection") connection = {}
+  else generation++
+  const second = store.demand("inst", done, 2, "preview")
+  assert.equal(calls, 2, "new ownership never waits for the obsolete native read")
+  gates[0].resolve({ data: [], cursor: {} }); await first
+  const third = store.demand("inst", done, 3, "preview")
+  assert.equal(calls, 2, "old finally preserves the replacement's coalescence lane")
+  gates[1].resolve({ data: [], cursor: {} }); await Promise.all([second, third])
+  assert.equal(calls, 2)
+})
+
 test("releasing the last owner stops a read in flight and drops its queued rerun; another owner keeps it", async () => {
   const { state, store, hold } = harness()
   state.first = [{ type: "user", text: assignment("msn_one", "build") }]

@@ -7,6 +7,7 @@ import type {
   RecentFolder,
 } from "./config/schema"
 import type { FormInfo, OpenCodeEvent, PermissionRequest } from "@opencode/client"
+import type { ServerContractMeta } from "./meta-contract"
 export type { MemoryScope, MemoryEntryType, MemoryContent, MemoryEntryHeader, MemoryEntry, MemoryErrorCode, MemoryOperation, MemoryContext, MemorySettings, MemoryVersionedEntry, MemoryUIEntry, MemoryListEntry, MemoryUIListResult, MemoryResult, MemoryApiError } from "./memory/contract"
 export type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionContext, PanelExtensionCatalog, PanelExtensionCatalogEntry } from "./panel-extensions/contract"
 export type { OpenCodeLogsResponse } from "./opencode/logs"
@@ -672,6 +673,11 @@ export interface PreviewSession {
   createdAt: string
 }
 
+export interface RemotePreviewCapability extends PreviewSession {
+  capability: string
+  contentUrl: string
+}
+
 export interface BinaryRecord {
   id: string
   path: string
@@ -807,6 +813,8 @@ export interface RemoteServerProfile {
   name: string
   baseUrl: string
   skipTlsVerify: boolean
+  /** Reach `baseUrl` from this OpenSSH destination, through a forward the local backend owns. */
+  ssh?: { host: string }
   createdAt: string
   updatedAt: string
   lastConnectedAt?: string
@@ -815,6 +823,11 @@ export interface RemoteServerProfile {
 export interface RemoteServerProbeRequest {
   baseUrl: string
   skipTlsVerify?: boolean
+}
+
+export interface RemoteServerBrowseResponse {
+  listing: FileSystemListResponse
+  recents: Array<{ path: string; projectName?: string; lastAccessed: number }>
 }
 
 export interface RemoteServerProbeResponse {
@@ -854,6 +867,8 @@ export interface RemoteControlStatus {
   pairedDevices: number
   lastConnectedAt?: string
   error?: string
+  /** Verified direct HTTPS origins where the host can pair devices without the tunnel; host only. */
+  directOrigins?: string[]
 }
 
 export interface RemoteControlPairing {
@@ -866,6 +881,8 @@ export interface RemoteControlDevice {
   name: string
   createdAt: string
   lastSeenAt: string
+  /** Verified direct HTTPS origin the device paired on; absent for Remote Control tunnel devices. */
+  origin?: string
   revocationPending?: true
 }
 
@@ -970,9 +987,16 @@ export interface SupportMeta {
   latestServerUrl?: string
 }
 
-export interface ServerMeta {
+/** Contract fields are optional on the wire for servers predating their introduction. */
+export interface ServerMeta extends Partial<ServerContractMeta> {
   /** Whether this request has host-local privileges (loopback, outside Remote Control). */
   localRequest?: boolean
+  /** Whether this client may use the host's saved server profiles. */
+  serversUsable?: boolean
+  /** Whether this client may add, edit or remove the host's server profiles. */
+  serversManageable?: boolean
+  /** Whether this client may submit new remote-server credentials. */
+  secretEntryAllowed?: boolean
   /** Whether this request may open SideCars: local, or a verified direct HTTPS origin the host opted in. */
   sidecarsAllowed?: boolean
   /** URL desktop apps should use to connect (prefers loopback HTTP when enabled). */

@@ -23,8 +23,10 @@ test("a read that fails while the file is locked is retried on the next call", t
   })
   const reader = new ServerFlagReader(file)
   assert.equal(reader.enabled("sidecarsOverDirectHttps"), false)
+  assert.equal(reader.enabled("multiBackend", ["ui", "settings"], true), false)
   locked = false
   assert.equal(reader.enabled("sidecarsOverDirectHttps"), true)
+  assert.equal(reader.enabled("multiBackend", ["ui", "settings"], true), true)
 })
 
 test("an invalid document reads as false until the file changes", t => {
@@ -33,4 +35,23 @@ test("an invalid document reads as false until the file changes", t => {
   assert.equal(reader.enabled("sidecarsOverDirectHttps"), false)
   fs.writeFileSync(file, "server:\n  sidecarsOverDirectHttps: true\n")
   assert.equal(reader.enabled("sidecarsOverDirectHttps"), true)
+})
+
+test("nested UI admission flags follow authoritative strict boolean changes", t => {
+  const file = configFile(t, "ui:\n  settings:\n    locale: en\n")
+  const reader = new ServerFlagReader(file)
+  const enabled = () => reader.enabled("multiBackend", ["ui", "settings"], true)
+  assert.equal(enabled(), true)
+  for (const [value, expected] of [["true", true], ["false", false], ["'true'", false], ["null", false]] as const) {
+    fs.writeFileSync(file, `ui:\n  settings:\n    multiBackend: ${value}\n`)
+    assert.equal(enabled(), expected)
+  }
+  fs.writeFileSync(file, "ui: [unclosed\n")
+  assert.equal(enabled(), false)
+  fs.writeFileSync(file, "null\n")
+  assert.equal(enabled(), false)
+  fs.writeFileSync(file, "# empty settings\n")
+  assert.equal(enabled(), true)
+  fs.unlinkSync(file)
+  assert.equal(enabled(), true)
 })

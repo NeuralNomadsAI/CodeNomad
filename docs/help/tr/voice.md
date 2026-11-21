@@ -71,6 +71,8 @@ Oynatma, anlatımlı bir ekran görüntüsünü değil, CodeNomad'in metin proje
 
 ## Sesli sohbet {#conversation}
 
+Gemini Live ve OpenAI Realtime yalnızca bu pencereyi açan sunucudaki oturumlarda kullanılabilir.
+
 **Sohbet** kartında bir **Sohbet motoru** seçin:
 
 - **Klasik** yalnızca desteklenen bir formatta oynatma ayarı gerektirir. **Diğer eylemler** menüsünden **Konuşma modunu etkinleştir** seçeneğini kullanın. CodeNomad, gönderdiğiniz her istemin yanıtına kısa bir `spoken` özetiyle başlamasını ajandan ister ve etkin ana oturumda yalnızca tamamlanan özeti seslendirir. Mod, kapatılana veya sayfa yeniden yüklenene kadar proje sekmesinde geçerlidir. Dikte başlatıldığında özetin oynatılması durur.

@@ -3,6 +3,7 @@ import { runtimeEnv } from "../lib/runtime-env"
 import { openNativePreferences, type NativePreferencesRequest } from "../lib/native/preferences-window"
 import { getLogger } from "../lib/logger"
 import { confirmSettingsDiscard } from "./settings-dirty-guard"
+import { parseInstanceKey } from "../lib/backend-identity"
 
 export type SettingsSectionId =
   | "general"
@@ -11,6 +12,7 @@ export type SettingsSectionId =
   | "notifications"
   | "speech"
   | "remote"
+  | "servers"
   | "opencode"
   | "providers"
   | "missions"
@@ -41,6 +43,12 @@ export async function openSettings(section?: SettingsSectionId, toggle = false) 
       const instanceId = activeInstanceId() ?? undefined
       const request: NativePreferencesRequest = { section: section ?? "general", instanceId }
       if (instanceId) {
+        const { backendId } = parseInstanceKey(instanceId)
+        if (backendId !== "local") {
+          const { backendRegistry } = await import("./remote-backends")
+          request.serverId = backendRegistry.serverId(backendId)
+          if (!request.serverId) throw new Error("Project backend identity unavailable")
+        }
         request.workspacePath = instances().get(instanceId)?.folder
         const { getActiveCatalogLocation } = await import("./sessions")
         request.location = getActiveCatalogLocation(instanceId)
@@ -62,6 +70,7 @@ export const toggleSettings = (section?: SettingsSectionId) => openSettings(sect
 const SETTINGS_ROWS = {
   "opencode-login-start": "opencode",
   "server-diagnostics": "info",
+  "sidecar-add": "sidecars",
   "voice-dictation": "speech",
   "voice-playback": "speech",
   "voice-conversation": "speech",

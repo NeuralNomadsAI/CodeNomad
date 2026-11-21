@@ -210,6 +210,12 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
     nativeMessages.push({ id: assistantId, type: "assistant", agent: "build", model, time: { created: time }, content: [{ type: "text", text }] })
     await loadMessages(instanceId, sessionId, { force: true })
   },
+  setAssistantContent: (content: unknown[]) => {
+    const row = nativeMessages.find(message => message.id === assistantId)
+    if (row) row.content = content
+    else nativeMessages.push({ id: assistantId, type: "assistant", agent: "build", model, time: { created: ++time, completed: time }, content })
+    return loadMessages(instanceId, sessionId, { force: true })
+  },
   switchAway: () => { setActiveSession(instanceId, "other"); setVisible(false) },
   return: () => { setActiveSession(instanceId, sessionId); setVisible(true) },
   // Keeps the SessionView mounted, as a project tab or session switch does.

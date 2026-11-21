@@ -91,7 +91,9 @@ export function nativeMissionScheduleWakeContext(ctx: Plugin.Context, event: Ses
       scheduleID = [...ids][0]
     }
     const mapping = { missionID: original.id, generation: original.timeGeneration, sessionID: event.sessionID, scheduleID }
-    const candidates = nativeScheduleCarrierWakes(mapping, calendar?.highWater ?? 0, messages)
+    // A recent context can omit older unconsumed messages. Classify everything
+    // it does contain, then point-read the exact next run if it isn't visible.
+    const candidates = nativeScheduleCarrierWakes(mapping, calendar?.highWater ?? 0, messages, "next")
     const next = calendar?.highWater ?? 0
     const candidate = candidates[0] ?? { ...mapping, run: next + 1, messageID: `msg_${scheduleID}_${next + 1}` }
     yield* Effect.promise(async () => {

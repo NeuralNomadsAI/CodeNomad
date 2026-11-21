@@ -1,15 +1,16 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import { RefreshCw } from "lucide-solid"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { useI18n } from "../lib/i18n"
 import { createMissionViewFence } from "../lib/mission-view-fence"
 import { instances } from "../stores/instances"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { showConfirmDialog } from "../stores/alerts"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { SettingsInfoTip } from "./settings/settings-info-tip"
 
-type SubagentDepthSnapshot = Awaited<ReturnType<typeof serverApi.getSubagentDepth>>
+type SubagentDepthSnapshot = Awaited<ReturnType<ReturnType<typeof backendOf>["api"]["getSubagentDepth"]>>
 
 interface DepthDraft {
   snapshot?: SubagentDepthSnapshot
@@ -36,7 +37,8 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
   const identity = () => JSON.stringify([props.instanceId, props.directory])
   const entry = () => depthDraft(identity()), state = () => entry().state[0]()
   const busy = () => ["confirming", "reading", "saving"].includes(state().phase)
-  const capture = createMissionViewFence(identity, props.active)
+  const captureView = createMissionViewFence(identity, props.active)
+  const capture = () => captureBackendOperation(props.instanceId, undefined, captureView()).current
   const [refreshPending, setRefreshPending] = createSignal(false)
   let readEpoch = 0
   const invalidate = () => { if (props.active()) { readEpoch++; setRefreshPending(true) } }
@@ -44,7 +46,7 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
     if (event.type === "instance.event" && event.instanceId === props.instanceId
       && ["config.updated", "server.connected"].includes(event.event.type)) invalidate()
   })
-  const reconnect = serverEvents.onOpen(invalidate)
+  const reconnect = serverEvents.forInstance(() => props.instanceId).onOpen(invalidate)
   let controller: AbortController | undefined, menu: HTMLSelectElement | undefined
   onCleanup(() => { controller?.abort(); events(); reconnect() })
   const read = async (explicit: boolean) => {
@@ -65,7 +67,7 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
     controller?.abort(); controller = new AbortController()
     target.state[1]({ ...previous, phase: "reading", error: false })
     try {
-      const snapshot = await serverApi.getSubagentDepth(instanceId, directory, controller.signal)
+      const snapshot = await backendOf(instanceId).api.getSubagentDepth(instanceId, directory, controller.signal)
       if (!admitted()) return
       if (!snapshot.location || typeof snapshot.location.directory !== "string" || snapshot.capability === undefined || snapshot.project === undefined) throw new Error("Unconfirmed depth contract")
       const fresh = snapshot.project?.depth == null ? "" : String(snapshot.project.depth)
@@ -75,12 +77,13 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
       target.state[1]({ snapshot, draft: fresh, dirty: false, phase: "ready", error: false, saved: previous.saved, queued })
       if (queued && entry() === target) apply(queued.value)
       // The recovery button leaves with the problem it fixed; keep keyboard focus in the group.
-      if (explicit) queueMicrotask(() => { if (!document.activeElement || document.activeElement === document.body) menu?.focus() })
+      if (explicit) queueMicrotask(() => { if (admitted() && (!document.activeElement || document.activeElement === document.body)) menu?.focus() })
     } catch { if (admitted()) target.state[1]({ ...previous, phase: "ready", error: true, queued: undefined }) }
     finally { if (target.request === request && target.state[0]().phase === "reading") target.state[1]({ ...target.state[0](), phase: previous.phase }) }
   }
   createEffect(() => {
     identity()
+    captureBackendOperation(props.instanceId)
     instances().get(props.instanceId)?.client
     const active = props.active()
     readEpoch++
@@ -90,7 +93,8 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
   createEffect(() => {
     if (!refreshPending() || !props.active() || busy()) return
     if (state().dirty || state().phase === "uncertain") { setRefreshPending(false); return }
-    const timer = setTimeout(() => { setRefreshPending(false); void read(false) }, 50)
+    const operation = captureBackendOperation(props.instanceId)
+    const timer = setTimeout(() => { if (operation.current()) { setRefreshPending(false); void read(false) } }, 50)
     onCleanup(() => clearTimeout(timer))
   })
   const depth = () => state().draft === "" ? null : Number(state().draft)
@@ -142,12 +146,14 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
     if (disabled() || locked() || !state().dirty || !valid()) return
     const target = entry(), previous = target.state[0](), project = previous.snapshot!.project!, instanceId = props.instanceId
     const location = previous.snapshot!.location, value = depth(), current = capture(), request = ++target.request
+    const operation = captureBackendOperation(instanceId)
+    if (!current() || !operation.current()) return
     const owner = instances().get(instanceId)?.client, generation = getOpenCodeInstanceGeneration(instanceId)
     // The reply belongs to this Location's state even if the view changed meanwhile; only another runtime makes it unknown.
-    const admitted = () => target.request === request && instances().get(instanceId)?.client === owner && getOpenCodeInstanceGeneration(instanceId) === generation
+    const admitted = () => operation.current() && target.request === request && instances().get(instanceId)?.client === owner && getOpenCodeInstanceGeneration(instanceId) === generation
     target.state[1]({ ...previous, phase: "saving", error: false, saved: false })
     try {
-      await serverApi.setSubagentDepth(instanceId, { location: { directory: location.directory }, depth: value, expectation: project.expectation })
+      await backendOf(instanceId).api.setSubagentDepth(instanceId, { location: { directory: location.directory }, depth: value, expectation: project.expectation })
       if (!admitted()) { target.state[1]({ ...previous, phase: "uncertain" }); return }
       target.state[1]({ ...previous, queued: target.state[0]().queued, dirty: false, phase: "ready", saved: true })
       // An acknowledged write is followed only by a bounded read, never replay. A hidden

@@ -42,8 +42,11 @@ test("built preloads run autonomously in sandboxed guests and preserve applicati
     assert.deepEqual(result.security, Array.from({ length: 4 }, () => ({
       sandbox: true, contextIsolation: true, nodeIntegration: false,
     })))
-    assert.deepEqual(result.preview, {
-      prompt: "function", appBridge: "undefined", node: "undefined", promptResult: "native answer",
+    assert.deepEqual(result.remote, {
+      copyAllowed: false, printConfigurable: false, prompt: "function", appBridge: "undefined", node: "undefined", promptResult: "native answer",
+    })
+    assert.deepEqual(result.local, {
+      copyAllowed: true, printConfigurable: true, prompt: "function", appBridge: "undefined", node: "undefined", promptResult: "native answer",
     })
     assert.deepEqual(result.contexts, ["local", "preferences", "remote"].map(context => ({
       context, host: "electron", bridge: "object", node: "undefined",

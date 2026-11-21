@@ -11,6 +11,7 @@ import { MissionTaskReader } from "./mission-task-reader"
 import { openMissionTask } from "./mission-task-open"
 import { MissionReportNotification } from "./mission-native-execution"
 import { createMissionViewFence } from "../lib/mission-view-fence"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { instances } from "../stores/instances"
 import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "../stores/sessions"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
@@ -158,7 +159,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   const [technicalOpen, setTechnicalOpen] = createMissionDisclosure(() => props.instanceId, () => target()?.missionId ?? "", () => `report:${target()?.itemId}:technical`)
   const projectID = () => instances().get(props.instanceId)?.metadata?.project?.id ?? projectMissionStore.state(props.instanceId).projectID
   const currentPassage = useMissionCurrentPassage({ instanceId: () => props.instanceId, projectID,
-    directory: () => props.scope, scheduleID: () => target()?.recurrence?.scheduleID,
+    directory: () => instances().get(props.instanceId)?.folder ?? "", scheduleID: () => target()?.recurrence?.scheduleID,
     owner: () => target()?.recurrence?.owner ?? "daily",
     active: () => target()?.recurrence?.instanceId === props.instanceId && target()?.recurrence?.projectID === projectID() })
   const panel = () => currentPassage.inventory() ?? projectMissionStore
@@ -188,12 +189,12 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   }
   const recurrenceProjectID = () => instances().get(props.instanceId)?.metadata?.project?.id ?? missionStore.state(props.instanceId).projectID
   const recurrenceState = useMissionRecurrence({ instanceId: () => props.instanceId, projectID: recurrenceProjectID,
-    directory: () => props.scope, active: () => target()?.kind === "recurrence" && target()?.scheduleOwner !== "scheduled"
+    directory: () => instances().get(props.instanceId)?.folder ?? "", active: () => target()?.kind === "recurrence" && target()?.scheduleOwner !== "scheduled"
       && target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID() })
   const recurrence = () => target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID()
     ? recurrenceState.snapshot()?.schedules.find(schedule => schedule.id === target()?.missionId) : undefined
   const scheduledState = useMissionSchedules({ instanceId: () => props.instanceId, projectID: recurrenceProjectID,
-    directory: () => props.scope, refresh: () => 0, active: () => target()?.kind === "recurrence" && target()?.scheduleOwner === "scheduled"
+    directory: () => instances().get(props.instanceId)?.folder ?? "", refresh: () => 0, active: () => target()?.kind === "recurrence" && target()?.scheduleOwner === "scheduled"
       && target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID(), selected: () => target()?.missionId })
   const scheduled = () => target()?.scheduleOwner === "scheduled" && target()?.instanceId === props.instanceId && target()?.projectID === recurrenceProjectID()
     ? scheduledState.rows().find(row => row.id === target()?.missionId) : undefined
@@ -229,25 +230,35 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     return request && { key: JSON.stringify([props.instanceId, props.scope, value.projectID, value.id, page.order, request]), missionId: value.id, request }
   }, undefined, { equals: (left, right) => left?.key === right?.key })
   const [targetReads, setTargetReads] = createSignal(new Map<string, "loading" | "failed" | "read">())
+  let targetAttachment: AbortSignal | undefined
+  createComputed(() => {
+    const signal = captureBackendOperation(props.instanceId).signal
+    if (targetAttachment !== signal) { targetAttachment = signal; setTargetReads(new Map()) }
+  })
   const changeRequest = createMemo(() => {
     const value = mission(), current = target()
     if (!value || current?.kind !== "change" || current.recurrence && !value.panelPassage || change() || !("panelCollections" in value)) return
     return { key: JSON.stringify([props.instanceId, props.scope, value.id, value.panelCollections?.history?.digest, current.itemId]), lane: `field:${value.id}:history` }
   })
   const readChange = (wanted: NonNullable<ReturnType<typeof changeRequest>>) => {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     setTargetReads(current => new Map(current).set(wanted.key, "loading"))
     void missionStore.more(props.instanceId, wanted.lane, true).then(() => {
+      if (!operation.current() || changeRequest()?.key !== wanted.key) return
       const result = missionStore.progress(props.instanceId, wanted.lane)
       setTargetReads(current => new Map(current).set(wanted.key, result.total !== undefined && !result.failure ? "read" : "failed"))
     })
   }
   createEffect(() => { const wanted = changeRequest(); if (wanted && !untrack(targetReads).has(wanted.key)) untrack(() => readChange(wanted)) })
   const readTarget = (wanted: NonNullable<ReturnType<typeof targetRequest>>) => {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     const settle = (status: "loading" | "failed" | "read") => setTargetReads(current => new Map(current).set(wanted.key, status))
     settle("loading")
     // Another order changes the target's key, whose read follows the list read.
     void missionStore.loadTasks(props.instanceId, wanted.missionId, wanted.request)
-      .then(result => settle(result === "read" ? "read" : "failed"))
+      .then(result => { if (operation.current() && targetRequest()?.key === wanted.key) settle(result === "read" ? "read" : "failed") })
   }
   createEffect(() => {
     const wanted = targetRequest()
@@ -271,13 +282,15 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     return failure?.reason === "changed" && JSON.stringify(failure.request) === JSON.stringify(wanted?.request)
   }
   const retryTarget = async () => {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     const history = changeRequest()
     if (history) { readChange(history); return }
     const wanted = targetRequest()
     if (wanted) { readTarget(wanted); return }
     const identity = JSON.stringify([props.instanceId, props.scope, target()])
     await missionStore.refresh(props.instanceId)
-    if (JSON.stringify([props.instanceId, props.scope, target()]) !== identity) return
+    if (!operation.current() || JSON.stringify([props.instanceId, props.scope, target()]) !== identity) return
     const refreshed = targetRequest()
     if (refreshed) readTarget(refreshed)
   }
@@ -304,6 +317,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   useMissionTaskSessionDemand({ instanceId: () => props.instanceId, mission: () => target()?.kind === "task" ? mission() : undefined,
     active: () => true, pulse: () => undefined })
   const openActor = async (sessionId: string) => {
+    const operation = captureBackendOperation(props.instanceId)
     const current = captureNavigation(), intent = ++navigationIntent
     const instanceId = props.instanceId
     const surfaceIntent = beginGesture({ instanceId, sessionId: activeSessionId().get(instanceId) ?? null })
@@ -318,14 +332,14 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
           && (value.coordinatorSessionId === sessionId || missionIncludesSession([...value.actors, ...missionStore.observedActors(instanceId, value.id)], sessionId, family)
             || missionDerivedSessionIncludes(props.instanceId, value, sessionId))
       }
-      const admitted = () => surfaceIntent.current() && current() && intent === navigationIntent && authorized()
+      const admitted = () => operation.current() && surfaceIntent.current() && current() && intent === navigationIntent && authorized()
         && instances().get(instanceId)?.client === client && getOpenCodeInstanceGeneration(instanceId) === generation
         && !getAuthoritativelyDeletedSessionIdsForInstance(instanceId).has(sessionId)
       if (!admitted()) return
       setNavigationError(false)
       // Native session.get resolves the owned location; the catalog reads only
       // agents/models/commands. Hydrate this ID and its parents, never list all sessions.
-      try { await hydrateRestoredSessionChain(instanceId, [sessionId], undefined, admitted) }
+      try { await hydrateRestoredSessionChain(instanceId, [sessionId], operation.signal, admitted) }
       catch { if (admitted()) setNavigationError(true); return }
       if (!admitted()) return
       if (!sessions().get(instanceId)?.has(sessionId)) { setNavigationError(true); return }

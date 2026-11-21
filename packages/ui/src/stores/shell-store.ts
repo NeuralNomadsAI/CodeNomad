@@ -1,6 +1,7 @@
 import { createSignal, untrack } from "solid-js"
 import type { OpenCodeClient, ShellInfo } from "@opencode/client"
 import { requestLocationOptions } from "./request-locations"
+import { parseInstanceKey } from "../lib/backend-identity"
 
 const MAX_SHELL_OUTPUT_DISPLAY_CHARS = 4 * 1024 * 1024
 
@@ -51,9 +52,9 @@ export function appendShellOutput(current: string, chunk: string): { output: str
 }
 
 export interface ShellApi {
-  list(directory: string, workspaceID?: string): Promise<{ data: ShellInfo[]; location?: { directory: string } }>
+  list(directory: string, workspaceID?: string, signal?: AbortSignal): Promise<{ data: ShellInfo[]; location?: { directory: string } }>
   remove(directory: string, shellId: string, workspaceID?: string): Promise<void>
-  output(directory: string, shellId: string, cursor?: number, workspaceID?: string): Promise<{ output: string; cursor: number; size: number; truncated: boolean }>
+  output(directory: string, shellId: string, cursor?: number, workspaceID?: string, signal?: AbortSignal): Promise<{ output: string; cursor: number; size: number; truncated: boolean }>
 }
 
 export interface ShellState {
@@ -76,43 +77,49 @@ const SHELL_EVENTS = new Set(["shell.created", "shell.exited", "shell.deleted", 
 export function createShellApi(client: OpenCodeClient, listBackground?: ShellApi["list"]): ShellApi {
   const location = (directory: string) => ({ directory })
   return {
-    list: listBackground ?? ((directory, workspaceID) => client.shell.list({ location: location(directory) }, requestLocationOptions({ directory, workspaceID }))),
+    list: listBackground ?? ((directory, workspaceID, signal) => client.shell.list({ location: location(directory) }, { ...requestLocationOptions({ directory, workspaceID }), signal })),
     remove: (directory, shellId, workspaceID) => client.shell.remove({ id: shellId, location: location(directory) }, requestLocationOptions({ directory, workspaceID })),
-    output: async (directory, shellId, cursor = 0, workspaceID) => (await client.shell.output({
+    output: async (directory, shellId, cursor = 0, workspaceID, signal) => (await client.shell.output({
       id: shellId,
       location: location(directory),
       cursor,
       limit: 1024 * 1024,
-    }, requestLocationOptions({ directory, workspaceID }))).data,
+    }, { ...requestLocationOptions({ directory, workspaceID }), signal })).data,
   }
 }
 
-export function createShellStore(apiForInstance: (instanceId: string) => ShellApi) {
+export function createShellStore(apiForInstance: (instanceId: string) => ShellApi, signalForInstance?: (id: string) => AbortSignal) {
   const [states, setStates] = createSignal<Map<string, ShellState>>(new Map())
-  const requests = new Map<string, { promise: Promise<void>; dirty: boolean }>()
+  const requests = new Map<string, { promise: Promise<void>; dirty: boolean; signal?: AbortSignal }>()
   const demands = new Map<string, number>()
   const key = (instanceId: string, directory: string, workspaceID?: string) => JSON.stringify([instanceId, directory, workspaceID])
   const setState = (stateKey: string, state: ShellState) => setStates((current) => new Map(current).set(stateKey, state))
   const readState = (stateKey: string): ShellState => untrack(() => states().get(stateKey) ?? EMPTY_STATE)
 
-  const load = async (instanceId: string, directory: string, workspaceID?: string, refresh = false): Promise<void> => {
+  const load = async (instanceId: string, directory: string, workspaceID?: string, refresh = false, signal = signalForInstance?.(instanceId)): Promise<void> => {
     if (!instanceId || !directory) return
     const stateKey = key(instanceId, directory, workspaceID)
+    if (signal?.aborted) { setState(stateKey, { ...readState(stateKey), loading: false }); return }
     const pending = requests.get(stateKey)
-    if (pending) {
+    if (pending && pending.signal === signal) {
       if (refresh) pending.dirty = true
       return pending.promise
     }
-    const request = { promise: Promise.resolve(), dirty: false }
+    let api: ShellApi
+    try { api = apiForInstance(instanceId) }
+    catch { setState(stateKey, { ...readState(stateKey), loading: false, failed: true }); return }
+    const request = { promise: Promise.resolve(), dirty: false, signal }
+    const current = () => !signal?.aborted && requests.get(stateKey) === request
     requests.set(stateKey, request)
     setState(stateKey, { ...readState(stateKey), loading: true, failed: false })
     request.promise = Promise.resolve().then(async () => {
       do {
+        if (!current()) return
         request.dirty = false
         try {
-          const inventory = await apiForInstance(instanceId).list(directory, workspaceID)
+          const inventory = await api.list(directory, workspaceID, signal)
           const items = inventory.data
-          if (!request.dirty) {
+          if (current() && !request.dirty) {
             const previous = new Map(readState(stateKey).items.map(item => [item.id, item]))
             const stable = items.map(item => {
               const old = previous.get(item.id)
@@ -121,10 +128,14 @@ export function createShellStore(apiForInstance: (instanceId: string) => ShellAp
             setState(stateKey, { items: stable, nativeDirectory: inventory.location?.directory ?? directory, loading: false, failed: false })
           }
         } catch {
-          if (!request.dirty) setState(stateKey, { ...readState(stateKey), loading: false, failed: true })
+          if (current() && !request.dirty) setState(stateKey, { ...readState(stateKey), loading: false, failed: true })
         }
-      } while (request.dirty)
-    }).finally(() => requests.delete(stateKey))
+      } while (current() && request.dirty)
+    }).finally(() => {
+      if (requests.get(stateKey) !== request) return
+      requests.delete(stateKey)
+      if (signal?.aborted) setState(stateKey, { ...readState(stateKey), loading: false })
+    })
     return request.promise
   }
 
@@ -149,16 +160,28 @@ export function createShellStore(apiForInstance: (instanceId: string) => ShellAp
   }
 
   const remove = async (instanceId: string, directory: string, shellId: string, workspaceID?: string): Promise<boolean> => {
+    const signal = signalForInstance?.(instanceId)
     try {
+      signal?.throwIfAborted()
       await apiForInstance(instanceId).remove(directory, shellId, workspaceID)
-      await load(instanceId, directory, workspaceID, true)
+      if (!signal?.aborted) await load(instanceId, directory, workspaceID, true, signal)
       return true
     } catch { return false }
   }
 
-  const output = (instanceId: string, directory: string, shellId: string, cursor?: number, workspaceID?: string) =>
-    apiForInstance(instanceId).output(directory, shellId, cursor, workspaceID)
+  const output = async (instanceId: string, directory: string, shellId: string, cursor?: number, workspaceID?: string, parent?: AbortSignal) => {
+    const attachment = signalForInstance?.(instanceId)
+    const signal = parent && attachment ? AbortSignal.any([parent, attachment]) : parent ?? attachment
+    signal?.throwIfAborted()
+    const result = await apiForInstance(instanceId).output(directory, shellId, cursor, workspaceID, signal)
+    signal?.throwIfAborted()
+    return result
+  }
   const getState = (instanceId: string, directory: string, workspaceID?: string): ShellState => states().get(key(instanceId, directory, workspaceID)) ?? EMPTY_STATE
+  const refreshBackend = (backendId: string) => {
+    const ids = new Set([...untrack(states).keys()].map(value => (JSON.parse(value) as string[])[0]))
+    for (const id of ids) if (parseInstanceKey(id).backendId === backendId) void refreshForEvent(id, { type: "server.connected" })
+  }
   const watch = (instanceId: string, directory: string, workspaceID?: string) => {
     const stateKey = key(instanceId, directory, workspaceID)
     demands.set(stateKey, (demands.get(stateKey) ?? 0) + 1)
@@ -168,7 +191,7 @@ export function createShellStore(apiForInstance: (instanceId: string) => ShellAp
       else demands.delete(stateKey)
     }
   }
-  return { getState, load, watch, refreshForEvent, remove, output }
+  return { getState, load, watch, refreshForEvent, refreshBackend, remove, output }
 }
 
 function sameDirectory(left: string, right: string): boolean {

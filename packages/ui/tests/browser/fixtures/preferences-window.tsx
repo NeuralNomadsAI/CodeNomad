@@ -9,7 +9,7 @@ import "../../../src/index.css"
 
 ;(window as any).preferencesFixture = {
   dispatch: (events: unknown[]) => (serverEvents as any).dispatchBatch(events),
-  status: (instanceId: string) => sseManager.getStatuses().get(instanceId) ?? null,
+  status: (instanceId: string) => sseManager.getRawStatus(instanceId),
 }
 
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>

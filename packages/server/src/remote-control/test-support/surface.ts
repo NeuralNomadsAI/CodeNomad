@@ -9,14 +9,16 @@ import { createLogger } from "../../logger"
 import { PreviewManager } from "../../previews/manager"
 import { createHttpServer } from "../../server/http-server"
 import type { PanelExtensionStore } from "../../panel-extensions/store"
+import type { MemoryStore } from "../../memory/store"
 import { RemoteDeviceRegistry } from "../devices"
+import { verifiedHttpsOrigins } from "../direct-https"
 import { RemoteControlManager } from "../manager"
 import type { LiveVoiceGateway } from "../../speech/live-voice-gateway"
 import type { Logger } from "../../logger"
 
 export const FAKE_TUNNEL_HOST = "codenomad-test.device.tunnel.test"
 // Each logger pipes to stdout, so fixtures share one.
-const logger = createLogger({ level: "silent" } as never)
+const defaultLogger = createLogger({ level: "silent" } as never)
 
 /**
  * The real CodeNomad HTTP application behind a Remote Control manager, with
@@ -24,7 +26,12 @@ const logger = createLogger({ level: "silent" } as never)
  * ingress target directly; tests then speak plain HTTP as the TLS terminator does.
  */
 export async function startRemoteSurface(t: TestContext, options: {
+  sessionIdleMs?: number
+  sessionAbsoluteMs?: number
+  password?: string | null
   skipAuth?: boolean
+  now?: () => number
+  browse?: boolean
   bindHost?: string
   allowedOrigins?: string[]
   liveVoice?: LiveVoiceGateway
@@ -32,6 +39,9 @@ export async function startRemoteSurface(t: TestContext, options: {
   logger?: Logger
   /** Settings service in place of the stub, such as one that reads the host's SideCar opt-in. */
   settings?: unknown
+  memoryStore?: MemoryStore
+  workspaceManager?: unknown
+  serverIdentity?: { serverId: string; apiContract: number }
   sidecarManager?: unknown
   configureApp?: (app: ReturnType<typeof createHttpServer>["instance"]) => void
   openTunnel?: (options: OpenRemoteTunnelOptions) => Promise<RemoteTunnel>
@@ -40,7 +50,7 @@ export async function startRemoteSurface(t: TestContext, options: {
   /** Declares extra test routes on the application before it starts. */
   routes?: (app: ReturnType<typeof createHttpServer>["instance"]) => void
 } = {}) {
-  const serverLogger = options.logger ?? logger
+  const serverLogger = options.logger ?? defaultLogger
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-remote-surface-"))
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
   const uiDir = path.join(directory, "ui")
@@ -50,9 +60,11 @@ export async function startRemoteSurface(t: TestContext, options: {
   const authManager = new AuthManager({
     configPath: path.join(directory, "config.yaml"),
     username: "codenomad",
-    password: "local-password",
+    password: options.password === null ? undefined : options.password ?? "local-password",
     generateToken: true,
     dangerouslySkipAuth: options.skipAuth,
+    sessionIdleMs: options.sessionIdleMs,
+    sessionAbsoluteMs: options.sessionAbsoluteMs,
   }, serverLogger)
 
   let target = ""
@@ -61,13 +73,15 @@ export async function startRemoteSurface(t: TestContext, options: {
   let previewUpgrade: ReturnType<typeof createHttpServer>["previewUpgrade"] | null = null
   let voiceUpgrade: ReturnType<typeof createHttpServer>["remoteVoiceUpgrade"] | null = null
   const previewManager = new PreviewManager()
+  const serverMeta = { localUrl: "http://localhost:0", eventsUrl: "/api/events", host: "127.0.0.1", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [], ...options.serverIdentity }
   const registryPath = path.join(directory, "remote-control-devices.json")
   const manager = new RemoteControlManager({
-    registry: new RemoteDeviceRegistry(registryPath),
+    directHttpsOrigins: () => verifiedHttpsOrigins(serverMeta, options.allowedOrigins),
+    registry: new RemoteDeviceRegistry(registryPath, options.now),
     router: () => (app ? (request, response) => app!.routing(request, response) : null),
     previewUpgrade: () => previewUpgrade,
     voiceUpgrade: () => voiceUpgrade,
-    hasPreview: (token) => previewManager.get(token) !== undefined,
+    hasPreview: (token) => previewManager.get(token) !== undefined || server.servesRemotePreview(token),
     logger: serverLogger,
     openTunnel: async (tunnelOptions) => {
       target = tunnelOptions.target
@@ -93,12 +107,14 @@ export async function startRemoteSurface(t: TestContext, options: {
     defaultPort: 0,
     protocol: options.httpsOptions ? "https" : "http",
     httpsOptions: options.httpsOptions,
-    workspaceManager: (options.panelExtensions?.workspaceManager ?? stub) as never,
+    workspaceManager: (options.workspaceManager ?? options.panelExtensions?.workspaceManager ?? stub) as never,
+    memoryStore: options.memoryStore,
     panelExtensions: options.panelExtensions?.store,
-    settings: (options.settings ?? stub) as never,
-    fileSystemBrowser: stub,
+    settings: (options.settings ?? (options.browse ? { getOwner: () => ({ recentFolders: [] }) } : stub)) as never,
+    fileSystemBrowser: options.browse ? { browse: () => ({ entries: [{ name: "app", path: "/srv/app", type: "directory" }],
+      metadata: { scope: "unrestricted", pathKind: "absolute", currentPath: "/srv", rootPath: "/", homePath: "/srv", displayPath: "/srv" } }) } as never : stub,
     eventBus: new EventBus(),
-    serverMeta: { localUrl: "http://localhost:0", eventsUrl: "/api/events", host: "127.0.0.1", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,
+    serverMeta: serverMeta as never,
     instanceStore: stub,
     speechService: stub,
     liveVoice: options.liveVoice,

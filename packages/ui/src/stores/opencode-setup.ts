@@ -19,6 +19,7 @@ export const [openCodeSetupChecking, setOpenCodeSetupChecking] = createSignal(fa
 export const [openCodeSetupFeedback, setOpenCodeSetupFeedback] = createSignal<"checked" | "reloaded">()
 let generation = 0
 let notifiedGeneration = -1
+let presentation = 0
 let pending: { promise: Promise<void>; again: boolean; announce: boolean } | undefined
 const [resume, setResume] = createSignal<(() => Promise<unknown>)>()
 const [resumeRestore, setResumeRestore] = createSignal<(() => Promise<void>)>()
@@ -62,10 +63,18 @@ export function needsOpenCodeSetup(status = openCodeSetupStatus()): boolean {
 }
 
 export function openOpenCodeSetup(retry?: () => Promise<unknown>) {
+  presentation++
   if (retry) setResume(() => retry)
   setOpenCodeSetupFeedback(undefined)
   setOpenCodeSetupOpen(true)
   void refreshOpenCodeSetup()
+}
+
+/** Release only this automatic presentation; explicit maintenance owns its dialog. */
+export function openAutomaticOpenCodeSetup(): () => void {
+  const owner = ++presentation
+  setOpenCodeSetupOpen(true)
+  return () => { if (presentation === owner) setOpenCodeSetupOpen(false) }
 }
 
 export function reportOpenCodeSetupRequired() {
@@ -88,6 +97,7 @@ export function invalidateOpenCodeSetup() {
 }
 
 export function refreshOpenCodeSetup(afterMutation = false, announce = false): Promise<void> {
+  if (announce) presentation++
   if (openCodeSetupBusy() && !afterMutation) return Promise.resolve()
   if (pending) {
     pending.again = true
@@ -127,6 +137,7 @@ export function refreshOpenCodeSetup(afterMutation = false, announce = false): P
 
 export async function runOpenCodeSetup(action: OpenCodeSetupAction, options: { resumeWorkspace?: boolean; replaceLegacy?: { path: string; version: string } } = {}): Promise<OpenCodeUpdateStatus | undefined> {
   if (openCodeSetupBusy()) return
+  presentation++
   const epoch = ++generation
   pending = undefined
   setOpenCodeSetupBusy(true)

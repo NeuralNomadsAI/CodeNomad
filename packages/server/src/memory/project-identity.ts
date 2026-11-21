@@ -17,13 +17,13 @@ export interface MemoryProjectIdentity {
 
 /** An already-authorized session directory in its execution host's namespace. */
 export interface MemoryProjectTarget { directory: string; distro?: string }
-type ExecuteWsl = (distro: string, executable: "git" | "realpath", args: string[]) => Promise<string>
+type ExecuteWsl = (distro: string, executable: "git" | "realpath", args: string[], signal?: AbortSignal) => Promise<string>
 const executeFile = promisify(execFile)
-const executeWsl: ExecuteWsl = async (distro, executable, args) => {
+const executeWsl: ExecuteWsl = async (distro, executable, args, signal) => {
   const clean = memoryGitEnvironment()
   const { stdout } = await executeFile("wsl.exe", ["--distribution", distro, "--exec", "env",
     ...Object.keys(clean).flatMap(key => ["-u", key]), "LC_ALL=C", "LANGUAGE=C", executable, ...args], {
-    env: { ...process.env, ...clean }, windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024, encoding: "utf8",
+    env: { ...process.env, ...clean }, windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024, encoding: "utf8", signal,
   })
   return stdout.replace(/\r?\n$/, "")
 }
@@ -47,7 +47,8 @@ function notRepository(error: unknown): boolean {
  * Only an explicit non-repository answer falls back to the real session folder.
  * WSL uses Linux Git/realpath; UNC aliases share the same distro/path identity.
  */
-export async function resolveMemoryProjectIdentity(target: MemoryProjectTarget, runWsl: ExecuteWsl = executeWsl): Promise<MemoryProjectIdentity> {
+export async function resolveMemoryProjectIdentity(target: MemoryProjectTarget, runWsl: ExecuteWsl = executeWsl, signal?: AbortSignal): Promise<MemoryProjectIdentity> {
+  signal?.throwIfAborted()
   const unc = parseWslUncPath(target.directory)
   if (unc && target.distro && unc.distro.toLowerCase() !== target.distro.toLowerCase()) {
     throw new MemoryError("invalid", "Memory project host mismatch")
@@ -60,17 +61,21 @@ export async function resolveMemoryProjectIdentity(target: MemoryProjectTarget, 
   const paths = distro ? path.posix : path
   const git = async (args: string[]) => {
     try {
-      return await (distro ? runWsl(distro, "git", ["-C", directory, ...args])
+      signal?.throwIfAborted()
+      const result = await (distro ? runWsl(distro, "git", ["-C", directory, ...args], signal)
         : runWorktreeGit(directory, args, 10_000, { ...memoryGitEnvironment(), LC_ALL: "C", LANGUAGE: "C" }))
+      signal?.throwIfAborted()
+      return result
     } catch (error) {
       const code = (error as NodeJS.ErrnoException)?.code as string | number | undefined
       if (code === "ENOENT" || (distro && code === 127)) throw new MemoryError("git_unavailable", "Memory project Git is unavailable")
       throw error
     }
   }
-  const physical = (value: string) => distro ? runWsl(distro, "realpath", ["-e", value]) : realpath(value)
+  const physical = (value: string) => distro ? runWsl(distro, "realpath", ["-e", value], signal) : realpath(value)
   const local = async (value: string) => {
     const resolved = await physical(value)
+    signal?.throwIfAborted()
     if (!paths.isAbsolute(resolved) || /[\x00-\x1f\x7f]/.test(resolved)) throw new MemoryError("unreadable", "Invalid memory project path")
     return identity("local", distro ? `wsl:${distro.toLowerCase()}:${resolved}` : process.platform === "win32" ? resolved.toLowerCase() : resolved)
   }
@@ -93,6 +98,7 @@ export async function resolveMemoryProjectIdentity(target: MemoryProjectTarget, 
     const root = paths.basename(common) === ".git" ? paths.dirname(common) : common
     return await local(root)
   } catch (error) {
+    signal?.throwIfAborted()
     if (error instanceof MemoryError) throw error
     throw new MemoryError("unreadable", "Cannot resolve memory project")
   }

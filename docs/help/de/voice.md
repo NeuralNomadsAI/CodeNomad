@@ -71,6 +71,8 @@ Wiedergabe verwendet CodeNomads Textprojektion, keinen vorgelesenen Screenshot: 
 
 ## Sprachgespräch {#conversation}
 
+Gemini Live und OpenAI Realtime sind nur für Sitzungen auf dem Server verfügbar, der dieses Fenster geöffnet hat.
+
 Wählen Sie in **Gespräch** eine **Gesprächs-Engine**:
 
 - **Klassisch** benötigt nur eine eingerichtete Wiedergabe in einem unterstützten Format. Wählen Sie **Konversationsmodus aktivieren** unter **Weitere Aktionen**. CodeNomad bittet den Agenten, jede Antwort auf einen gesendeten Prompt mit einer kurzen `spoken`-Zusammenfassung zu beginnen, und liest nur diesen fertigen Block in der aktiven Hauptsitzung vor. Der Modus gilt für den Projekt-Tab bis zur Deaktivierung oder zum Neuladen. Der Beginn eines Diktats stoppt das Vorlesen der Zusammenfassung.

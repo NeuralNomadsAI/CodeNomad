@@ -1,0 +1,7 @@
+.remote-server-browser { display: flex; flex-direction: column; min-height: 0; }
+.remote-server-signin { display: grid; gap: var(--space-sm); padding: var(--space-sm); }
+.remote-server-signin label { display: grid; gap: var(--space-xs); color: var(--text-secondary); font-size: var(--font-size-sm); }
+.remote-server-navigation { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs) var(--space-sm); }
+.remote-server-path { margin: var(--space-xs) var(--space-sm); }
+.remote-server-path input { width: 100%; }
+[data-remote-view-session] { width: 100%; }

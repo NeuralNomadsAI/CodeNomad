@@ -13,6 +13,7 @@ import { agents, executeCustomCommand, sessions } from "../stores/sessions"
 import { getCommands } from "../stores/commands"
 import { showAlertDialog } from "../stores/alerts"
 import { useI18n } from "../lib/i18n"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
 import { createAttachmentPlaceholderRegex, getAttachmentPlaceholder } from "../lib/attachment-placeholders"
@@ -26,6 +27,7 @@ import { sessionPromptAwaitingExecution } from "../stores/session-prompt-ack"
 import type { PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
 import type { Attachment } from "../types/attachment"
 import { usePromptState } from "./prompt-input/usePromptState"
+import { backendScoped, parseInstanceKey } from "../lib/backend-identity"
 import { usePromptAttachments } from "./prompt-input/usePromptAttachments"
 import { usePromptPicker } from "./prompt-input/usePromptPicker"
 import { usePromptKeyDown } from "./prompt-input/usePromptKeyDown"
@@ -168,6 +170,7 @@ export default function PromptInput(props: PromptInputProps) {
     instanceId: () => props.instanceId,
     sessionId: () => props.sessionId,
     instanceFolder: () => props.instanceFolder,
+    historyKey: () => backendScoped(parseInstanceKey(props.instanceId).backendId, props.instanceFolder),
   })
 
   const {
@@ -463,6 +466,8 @@ export default function PromptInput(props: PromptInputProps) {
   )
 
   async function handleSend(alternate = false) {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     const draftText = prompt()
     const text = draftText.trim()
     const currentAttachments = attachments()
@@ -573,6 +578,7 @@ export default function PromptInput(props: PromptInputProps) {
       } else {
         await props.onSend(submitPrompt, currentAttachments, resolvedDelivery, restoredPayload, admitDelivery)
       }
+      if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
       restoredQueuedPayload = undefined
     } catch (error) {
       log.error("Failed to send message:", error)
@@ -585,6 +591,7 @@ export default function PromptInput(props: PromptInputProps) {
           if (!existingIds.has(attachment.id)) addAttachment(props.instanceId, props.sessionId, attachment)
         }
       }
+      if (!operation.current()) return
       showAlertDialog(t("promptInput.send.errorFallback"), {
         title: t("promptInput.send.errorTitle"),
         detail: getOpencodeErrorMessage(error, t("promptInput.send.errorFallback")),
@@ -768,12 +775,13 @@ export default function PromptInput(props: PromptInputProps) {
     directory: () => props.instanceFolder,
     captureOwner: () => {
       const id = props.instanceId
+      const operation = captureBackendOperation(id)
       const source = instances().get(id)
       const folder = source?.folder
       const proxyPath = source?.proxyPath
       return () => {
         const current = instances().get(id)
-        return Boolean(source && current && folder === current.folder && proxyPath === current.proxyPath)
+        return operation.current() && Boolean(source && current && folder === current.folder && proxyPath === current.proxyPath)
       }
     },
     active: () => props.isActive !== false,
@@ -814,6 +822,7 @@ export default function PromptInput(props: PromptInputProps) {
     const unavailable = liveVoice.unavailable()
     if (unavailable === "missingKey") return { text: t(voiceConversationEngine() === "gemini-live"
       ? "voice.command.setupGemini" : "voice.command.setupOpenAI"), row: "voice-conversation" } as const
+    if (unavailable === "composerUnavailable") return { text: t("voice.command.composerUnavailable") } as const
     if (unavailable) return { text: t(`voice.command.${unavailable}`), row: "voice-conversation" } as const
     const purpose = microphoneUse()
     return purpose ? { text: t(`voice.microphone.${purpose}`), row: "voice-conversation" } as const : undefined
@@ -876,9 +885,10 @@ export default function PromptInput(props: PromptInputProps) {
         : t(running ? "promptInput.conversationMode.disable.title" : "promptInput.conversationMode.enable.title"),
       icon: <Volume2 class="h-4 w-4" aria-hidden="true" />,
       checked: reason || liveEngine ? undefined : running,
+      disabled: Boolean(reason && !reason.row),
       selectBeforeClose: liveEngine && !reason && !running && !retained && !liveVoice.needsConsent(),
       focusAfterSelect: focusLiveWindow,
-      onSelect: reason ? () => openSettingsRow("speech", reason.row)
+      onSelect: reason ? () => { if (reason.row) openSettingsRow("speech", reason.row) }
         : !liveEngine ? () => toggleConversationMode(props.instanceId)
         : running ? liveVoice.stop
         : retained ? () => focusLiveWindow()?.focus()

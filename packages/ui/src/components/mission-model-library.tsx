@@ -1,24 +1,36 @@
-import { createEffect, createMemo, createSignal, createUniqueId, For, Show, onCleanup } from "solid-js"
+import { createEffect, createMemo, createSignal, createUniqueId, For, Show, on, onCleanup } from "solid-js"
 import { generateUUID } from "../lib/client-identity"
 import { Bookmark } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { MAX_MISSION_MODELS, parseMissionModel, type UserMissionModel } from "../lib/mission-model-library"
-import { useConfig } from "../stores/preferences"
+import { useConfig, preferencesOf } from "../stores/preferences"
 import { showConfirmDialog } from "../stores/alerts"
 import { ConfigOwnerReconciliationPendingError } from "../lib/storage"
+import { captureBackendOperation } from "../lib/backend-operation"
+import { parseInstanceKey } from "../lib/backend-identity"
+import { backendEvents } from "../lib/backend-events"
 import ActionOverflowMenu from "./action-overflow-menu"
 import { MissionBodyPending } from "./mission-reader-body"
 
 export type MissionModelBrief = Pick<UserMissionModel, "objective" | "notes" | "template" | "profiles" | "taskMode">
 
-interface LibraryProps { disabled?: boolean; active?: () => boolean }
+interface LibraryProps { instanceId?: string; disabled?: boolean; active?: () => boolean }
 
 /** Shared saved-brief mutations: CAS-checked writes, explicit reload/reset, no replay. */
 function createMissionModelActions(props: LibraryProps) {
-  const { t } = useI18n(), config = useConfig()
+  const { t } = useI18n(), config = useConfig(() => props.instanceId)
   const [pending, setPending] = createSignal(false), [failed, setFailed] = createSignal(false)
   const [pendingLabel, setPendingLabel] = createSignal("")
   const [reconciliationPending, setReconciliationPending] = createSignal(false)
+  const owner = () => parseInstanceKey(props.instanceId ?? "").backendId
+  let generation = 0
+  createEffect(on(() => [owner(), backendEvents.signal(owner())], () => {
+    generation++; setPending(false); setFailed(false); setReconciliationPending(false)
+  }, { defer: true }))
+  const capture = () => {
+    const instanceId = props.instanceId ?? "", backendId = owner(), admitted = generation
+    return { target: preferencesOf(instanceId), operation: captureBackendOperation(instanceId, undefined, () => owner() === backendId && admitted === generation) }
+  }
   let alive = true
   onCleanup(() => { alive = false })
   const active = () => props.active?.() ?? true
@@ -27,53 +39,64 @@ function createMissionModelActions(props: LibraryProps) {
   const settle = (error: unknown) => { if (alive) { if (error instanceof ConfigOwnerReconciliationPendingError) setReconciliationPending(true); else setFailed(true) } }
   /** Resolves the saved ID once acknowledged (including an unreadable-owner acknowledgement), never retrying. */
   const save = async (name: string, draft: MissionModelBrief): Promise<string | undefined> => {
+    const { target, operation } = capture()
+    if (!operation.current()) return
     if (disabled() || !name.trim()) return
     begin("missions.models.saving")
     let acknowledged: string | undefined
     try {
       const record = parseMissionModel({ version: 1, id: generateUUID(), name, ...draft })
-      try { await config.saveUserMissionModel(record) }
+      try { await target.saveUserMissionModel(record) }
       catch (error) {
         if (error instanceof ConfigOwnerReconciliationPendingError) acknowledged = record.id
         throw error
       }
       acknowledged = record.id
-    } catch (error) { settle(error) }
-    finally { if (alive) setPending(false) }
-    return alive ? acknowledged : undefined
+    } catch (error) { if (operation.current()) settle(error) }
+    finally { if (operation.current() && alive) setPending(false) }
+    return operation.current() && alive ? acknowledged : undefined
   }
   const remove = async (model: UserMissionModel): Promise<boolean> => {
+    const { target, operation } = capture()
+    if (!operation.current()) return false
     if (disabled()) return false
-    const expected = config.missionPreferenceSnapshot("missionModels")
+    const expected = target.missionPreferenceSnapshot("missionModels")
     begin()
     try {
       const confirmed = await showConfirmDialog(t("missions.models.removeConfirm", { name: model.name }), {
         variant: "warning", confirmLabel: t("missions.models.remove"), cancelLabel: t("missions.control.cancel"), dismissible: false,
       })
-      if (!confirmed || !alive || props.disabled) return false
+      if (!confirmed || !operation.current() || !alive || props.disabled) return false
       setPendingLabel("missions.models.removing")
-      await config.removeUserMissionModel(model.id, expected)
-      return alive
-    } catch (error) { settle(error); return false }
-    finally { if (alive) setPending(false) }
+      await target.removeUserMissionModel(model.id, expected)
+      return operation.current() && alive
+    } catch (error) { if (operation.current()) settle(error); return false }
+    finally { if (operation.current() && alive) setPending(false) }
   }
   const reload = async () => {
+    const { target, operation } = capture()
+    if (!operation.current()) return
     if (pending() || !active()) return
     begin("missions.models.reloading")
-    try { await config.reloadMissionPreferences() } catch { if (alive) setFailed(true) }
-    finally { if (alive) setPending(false) }
+    try { await target.reloadMissionPreferences() } catch { if (operation.current() && alive) setFailed(true) }
+    finally { if (operation.current() && alive) setPending(false) }
   }
   const reset = async () => {
+    const { target, operation } = capture()
+    if (!operation.current()) return
     if (pending() || props.disabled || !config.isUiConfigLoaded()) return
-    const expected = config.missionPreferenceSnapshot("missionModels")
+    const expected = target.missionPreferenceSnapshot("missionModels")
     begin()
     try {
       const confirmed = await showConfirmDialog(t("missions.models.resetConfirm"), {
         variant: "warning", confirmLabel: t("missions.models.reset"), cancelLabel: t("missions.control.cancel"), dismissible: false,
       })
-      if (confirmed && alive && !props.disabled) { setPendingLabel("missions.models.resetting"); await config.resetMissionModels(expected) }
-    } catch (error) { settle(error) }
-    finally { if (alive) setPending(false) }
+      if (operation.current() && confirmed && alive && !props.disabled) {
+        setPendingLabel("missions.models.resetting")
+        await target.resetMissionModels(expected)
+      }
+    } catch (error) { if (operation.current()) settle(error) }
+    finally { if (operation.current() && alive) setPending(false) }
   }
   /** Inline recovery offers only an explicit authoritative reload, never a replayed write. */
   const status = () => <>
@@ -91,7 +114,7 @@ function createMissionModelActions(props: LibraryProps) {
 
 /** Preferences: manage the saved-brief library (select, remove, repair); reloading is offered only after a failure. */
 export function MissionModelLibrary(props: LibraryProps) {
-  const { t } = useI18n(), config = useConfig(), actions = createMissionModelActions(props)
+  const { t } = useI18n(), config = useConfig(() => props.instanceId), actions = createMissionModelActions(props)
   const [selected, setSelected] = createSignal("")
   const selection = () => config.preferences().missionModels.find(model => model.id === selected())
   return <section class="mission-model-library" aria-label={t("missions.models.title")}>
@@ -120,7 +143,7 @@ export function MissionModelLibrary(props: LibraryProps) {
 
 /** Creation: one "Start from a brief" select that loads on selection; Remove/Reload sit in its small overflow. */
 export function MissionBriefPicker(props: LibraryProps & { value?: string; onUse: (model: UserMissionModel) => void }) {
-  const { t } = useI18n(), config = useConfig(), actions = createMissionModelActions(props)
+  const { t } = useI18n(), config = useConfig(() => props.instanceId), actions = createMissionModelActions(props)
   const [selected, setSelected] = createSignal(props.value ?? ""), selectId = createUniqueId()
   const selection = () => config.preferences().missionModels.find(model => model.id === selected())
   const items = createMemo(() => [
@@ -166,7 +189,7 @@ export interface MissionBriefSaveTrigger {
 export function MissionBriefSave(props: LibraryProps & { draft: () => MissionModelBrief; initialName?: () => string; buttonClass?: string
   onOpen?: (open: boolean) => void; reading?: () => { failed: boolean; changed?: boolean; onRetry: () => void } | undefined
   trigger?: (trigger: MissionBriefSaveTrigger) => void }) {
-  const { t } = useI18n(), config = useConfig(), actions = createMissionModelActions(props)
+  const { t } = useI18n(), config = useConfig(() => props.instanceId), actions = createMissionModelActions(props)
   const buttonClass = () => props.buttonClass ?? "window-action"
   const [open, setOpen] = createSignal(false), [name, setName] = createSignal("")
   createEffect(() => props.onOpen?.(open()))
