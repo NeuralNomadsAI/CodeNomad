@@ -55,8 +55,8 @@ const mainDirname = dirname(mainPath)
 const isMac = process.platform === "darwin"
 // For a direct-file launch getAppPath() is the directory, not the CLI entry.
 const devEntry = process.defaultApp ? readElectronEntry(process.argv) : undefined
-const relaunchArgs = devEntry && app.commandLine.hasSwitch("no-sandbox") && !devEntry.args.includes("--no-sandbox")
-  ? ["--no-sandbox", ...devEntry.args] : devEntry?.args ?? []
+const relaunchArgs = (app.commandLine.hasSwitch("no-sandbox") && !devEntry?.args.includes("--no-sandbox"))
+  ? ["--no-sandbox", ...(devEntry?.args ?? [])] : devEntry?.args ?? []
 const launchArgs = process.argv.slice(devEntry?.nextIndex ?? 1)
 // The UI draws local application and Preferences title bars. On macOS the native
 // traffic lights keep their standard place at its left and the menus stay in the

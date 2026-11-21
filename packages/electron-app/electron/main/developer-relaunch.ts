@@ -22,7 +22,7 @@ export function pinElectronRelaunch(execPath: string, appPath: string, appArgs: 
   const cliPackage = operand === appPath ? artifact : undefined
   return {
     execPath: realpathSync.native(execPath), appPath: artifact, mainPath, cliPackage,
-    appArgs: operand ? [...appArgs.slice(0, -1), cliPackage ?? mainPath] : [],
+    appArgs: operand && operand !== "--no-sandbox" ? [...appArgs.slice(0, -1), cliPackage ?? mainPath] : [...appArgs],
   }
 }
 
@@ -85,6 +85,7 @@ export function developerRelaunchOptions(launch: DeveloperRelaunch, { execPath, 
 
 /** The relaunch is one-shot: consume it before interpreting ordinary launch intents. */
 export function readDeveloperRelaunch(args: string[]): DeveloperRelaunch | undefined {
+  if (args[0] === "--no-sandbox") args = args.slice(1)
   const marker = args.find(arg => arg.startsWith(PREFIX))
   if (!marker) return
   if (args.length === 1) {
