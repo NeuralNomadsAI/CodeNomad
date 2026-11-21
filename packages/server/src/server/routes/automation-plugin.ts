@@ -314,15 +314,15 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       }
       if (executionExpired()) return expiredExecution()
       try {
-        const result = command.action === "open" || command.action === "navigate" || command.action === "screenshot"
-          ? await deps.nativeParent.request("browser.execute", { sessionID: body.sessionID, command, ...(target ? { target } : {}) },
+        const work = command.action === "open" || command.action === "navigate" || command.action === "screenshot"
+          ? deps.nativeParent.request("browser.execute", { sessionID: body.sessionID, command, ...(target ? { target } : {}) },
             { deadline: executionDeadline })
-          : await browserPage.execute(body.sessionID, command, lifetime.signal, target as string, executionDeadline)
-        if (Date.now() >= executionDeadline) {
-          return reply.code(409).send({ code: "preview-expired", error: "Browser command timed out; inspect before another action" })
-        }
+          : browserPage.execute(body.sessionID, command, readSignal, target as string, executionDeadline)
+        const result = await lifetime.wait(work, readSignal)
+        if (executionExpired()) return expiredExecution()
         return reply.send({ result })
       } catch (error) {
+        if (executionExpired()) return reply.code(409).send({ code: "preview-expired", error: "Browser command timed out; inspect before another action" })
         return reply.code(409).send(browserTargetRefusal(error instanceof Error ? error.message : String(error)))
       }
     }

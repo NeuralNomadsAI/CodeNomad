@@ -512,6 +512,53 @@ test("browser execution stops waiting at its HTTP deadline during each ownership
   })
 })
 
+test("preview HTTP responses expire while exact lease cleanup is still pending", async t => {
+  const now = Date.now()
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now })
+  const app = Fastify()
+  t.after(() => app.close())
+  let ending!: () => void, release!: () => void
+  const endStarted = new Promise<void>(resolve => { ending = resolve })
+  const endPending = new Promise<void>(resolve => { release = resolve })
+  const methods: string[] = []
+  registerAutomationPluginRoute(app, {
+    authManager: { isLoopbackRequest: () => true }, bridgeToken: "secret",
+    nativeParent: { request: async (method: string) => {
+      methods.push(method)
+      if (method === "browser.page.end") { ending(); await endPending }
+      if (method === "browser.page.begin") return { generation: "document", url: "https://example.test", driver: "cdp", contractVersion: 1 }
+      if (method === "browser.page.send") return { nodes: [] }
+      return {}
+    } },
+    workspaceManager: {
+      getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "/repo" } }) } }),
+      list: () => [{ id: "owner" }], ownsLocation: async () => true,
+    },
+  } as never)
+  const snapshot = (deadline: number) => app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
+    headers: { "x-codenomad-automation-token": "secret" },
+    payload: { mode: "browser-execute", sessionID: "owned", command: { action: "snapshot" }, target: "document", deadline } }).then(response => response)
+  const first = snapshot(now + 300)
+  let second: ReturnType<typeof snapshot> | undefined
+  try {
+    await endStarted
+    second = snapshot(now + 125)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    t.mock.timers.tick(300)
+    for (const pending of [first, second]) {
+      const response = await Promise.race([pending, new Promise<void>(resolve => setImmediate(resolve))])
+      assert.ok(response, "HTTP must expire independently of lease cleanup")
+      assert.equal(response.statusCode, 409)
+      assert.equal(response.json().code, "preview-expired")
+    }
+  } finally {
+    release()
+    await Promise.all([first, second])
+  }
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.deepEqual(methods, ["browser.page.begin", "browser.page.send", "browser.page.check", "browser.page.end"])
+})
+
 test("a pause at the native channel cannot extend or revive an HTTP preview deadline", async t => {
   const now = Date.now()
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now })
