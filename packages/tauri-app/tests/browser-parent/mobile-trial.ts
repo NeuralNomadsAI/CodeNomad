@@ -6,7 +6,7 @@ installShutdownStdinHandler(process.stdin,async()=>{},line=>parent.handleLine(li
 const [base,output]=process.argv.slice(2)
 const request=(method:string,input:object={})=>parent.request<any>(method,{sessionID:'fixture-session',...input},20000)
 async function main(){
- await request('browser.execute',{command:{action:'open',url:base+'/mobile'}})
+ await request('browser.execute',{workspaceIDs:["fixture-tab"],command:{action:'open',url:base+'/mobile'}})
  await request('fixture.mobile-init',{url:base+'/mobile'})
  const rows=[]
  for(const [name,settings] of Object.entries({baseline:{},zoom:{zoom:1.5},density:{dpr:2.75},combined:{zoom:1.5,dpr:2.75},fixed:{mode:1,cssWidth:390,cssHeight:844},viewScale:{mode:2},mobileUA:{ua:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1'}})) {

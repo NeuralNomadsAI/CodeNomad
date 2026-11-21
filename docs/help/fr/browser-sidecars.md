@@ -32,7 +32,9 @@ Si le redémarrage est annulé, listez les fenêtres ouvertes avec `codenomad.in
 
 Les aperçus natifs partagent cookies, connexions et stockage de site entre projets/sessions dans le même moteur de bureau et périmètre profil/configuration, séparément du moteur de rendu de confiance CodeNomad. Se déconnecter d’un site dans un aperçu affecte les autres qui utilisent ce stockage. Documents, formulaires, stockage de session, historiques de navigation et rattachements d’automatisation appartiennent à chaque session.
 
-Un agent ouvre le navigateur partagé de la session dans un onglet qui la contient, de préférence l’onglet actif. L’onglet choisi reste fixé pendant l’ouverture ; sa fermeture annule cette ouverture. Les actions sur la page ciblent l’aperçu natif visible de la session ; les aperçus masqués sont exclus.
+Un agent ouvre l’aperçu dans la fenêtre locale active si elle contient un onglet pour la session, sinon dans la dernière fenêtre admissible utilisée, sans la mettre au premier plan. L’onglet actif est prioritaire s’il convient ; si plusieurs onglets conviennent et qu’aucun n’est actif, sélectionnez-en un et réessayez. Si vous changez d’onglet pendant l’ouverture, votre sélection est conservée. Fermer l’onglet choisi annule l’ouverture. Si l’aperçu existe déjà dans une autre fenêtre, utilisez cette fenêtre. Les actions sur la page ciblent l’aperçu natif visible de la session.
+
+Fermez le fichier ou le lecteur de mission dans l'onglet choisi avant que l'agent y ouvre un aperçu. Votre navigation est prioritaire sur une ouverture en attente. **Actualiser** est indisponible pendant l’ouverture de la première page par l’agent.
 
 L’agent prend un instantané avant d’agir sur l’aperçu ou de le capturer. Si l’aperçu change, la commande s’arrête au lieu de viser un autre aperçu.
 

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
+import { getCurrentWebview } from "@tauri-apps/api/webview"
 import type { RuntimeEnvironment } from "../runtime-env"
 import type { BrowserEmulationPreset } from "./browser-emulation"
 import { historyUrl, type NativeBrowserHistory } from "../browser-history"
@@ -58,6 +59,8 @@ export function physicalBrowserBounds(rect: Pick<DOMRect, "x" | "y" | "width" | 
 
 export async function registerTauriBrowserTarget(payload: {
   sessionId: string
+  openRequestId?: string
+  instanceId?: string
   registrationId: string
   url: string
   bounds: BrowserTargetBounds
@@ -72,8 +75,9 @@ export async function updateTauriBrowserTarget(
   bounds: BrowserTargetBounds | undefined,
   visible = true,
   presentation?: BrowserPresentation,
+  instanceId?: string,
 ): Promise<void> {
-  await invoke("browser_target_update", { payload: { registrationId, bounds, visible, ...(presentation ? { presentation } : {}) } })
+  await invoke("browser_target_update", { payload: { registrationId, bounds, visible, presentation, instanceId } })
 }
 
 export async function controlTauriBrowserTarget(registrationId: string, action: "back" | "reload" | "navigate", url?: string, logicalAddress?: string): Promise<void> {
@@ -104,26 +108,48 @@ export async function emulateBrowserTarget(registrationId: string, preset: Brows
   await invoke("browser_target_action", { payload: { registrationId, action: "emulate", preset, ...(viewport ? { viewport } : {}) } })
 }
 
+export type BrowserOpenDiscovery = { requestID: string; workspaceIDs: string[] }
+export type BrowserOpenRequest = { sessionID: string; requestID: string; url: string; instanceId: string }
+export type BrowserOpenSettled = Omit<BrowserOpenRequest, "url"> & { committedUrl?: string | null; keepGuest?: boolean }
+export type BrowserOpenResponse =
+  | { kind: "discover"; instanceId: string | null }
+  | { kind: "discover"; ambiguous: true }
+  | { kind: "claim" | "adopt"; instanceId: string }
+  | { kind: "target"; instanceId: string; registrationId: string }
+
 export async function onNativeBrowserOpen(
-  callback: (payload: { sessionID: string; url: string; requestID: string }) => void,
+  discover: (payload: BrowserOpenDiscovery) => void,
+  open: (payload: BrowserOpenRequest) => void,
+  settled: (payload: BrowserOpenSettled) => void,
 ): Promise<() => void> {
-  const electronUnsubscribe = window.electronAPI?.onBrowserOpenRequest?.(callback)
-  if (electronUnsubscribe) return electronUnsubscribe
   const environment = { host: window.__CODENOMAD_RUNTIME_HOST__ ?? "web", windowContext: window.__CODENOMAD_WINDOW_CONTEXT__ ?? "remote" }
-  if (nativeBrowserHost(environment) !== "tauri") {
-    return () => {}
+  const host = nativeBrowserHost(environment)
+  if (host === "electron") {
+    const cleanupDiscovery = window.electronAPI?.onBrowserOpenDiscovery?.(discover)
+    const cleanupOpen = window.electronAPI?.onBrowserOpenRequest?.(open)
+    const cleanupSettled = window.electronAPI?.onBrowserOpenSettled?.(settled)
+    return () => { cleanupDiscovery?.(); cleanupOpen?.(); cleanupSettled?.() }
   }
-  return listen<{ sessionID: string; url: string; requestID: string }>("browser-target:open", (event) => callback(event.payload))
+  if (host !== "tauri") return () => {}
+  const webview = getCurrentWebview()
+  const cleanups: Array<() => void> = []
+  const cleanup = () => cleanups.forEach(stop => stop())
+  try {
+    cleanups.push(await webview.listen<BrowserOpenSettled>("browser-target:open-settled", event => settled(event.payload)))
+    cleanups.push(await webview.listen<BrowserOpenRequest>("browser-target:open", event => open(event.payload)))
+    cleanups.push(await webview.listen<BrowserOpenDiscovery>("browser-target:discover", event => discover(event.payload)))
+    return cleanup
+  } catch (error) { cleanup(); throw error }
 }
 
-export async function claimNativeBrowserOpen(requestID: string): Promise<boolean> {
-  if (window.electronAPI?.claimBrowserOpen) return window.electronAPI.claimBrowserOpen(requestID)
-  return invoke<boolean>("browser_target_claim_open", { requestId: requestID })
+export async function claimNativeBrowserOpen(requestID: string, response: BrowserOpenResponse): Promise<boolean> {
+  if (window.electronAPI?.claimBrowserOpen) return window.electronAPI.claimBrowserOpen(requestID, response)
+  return invoke<boolean>("browser_target_claim_open", { requestId: requestID, response })
 }
 
-export async function releaseNativeBrowserOpen(requestID: string): Promise<boolean> {
-  if (window.electronAPI?.releaseBrowserOpen) return window.electronAPI.releaseBrowserOpen(requestID)
-  return invoke<boolean>("browser_target_release_open", { requestId: requestID })
+export async function releaseNativeBrowserOpen(requestID: string, keepGuest?: boolean): Promise<boolean> {
+  if (window.electronAPI?.releaseBrowserOpen) return window.electronAPI.releaseBrowserOpen(requestID, keepGuest)
+  return invoke<boolean>("browser_target_release_open", { requestId: requestID, keepGuest })
 }
 
 export function onTauriBrowserNavigation(
