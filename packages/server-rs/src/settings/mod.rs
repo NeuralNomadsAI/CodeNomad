@@ -93,12 +93,11 @@ fn normalize_config(mut doc: Doc) -> Doc {
 fn sanitize_server(mut server: Doc) -> Doc {
     let Some(Value::Object(speech)) = server.get_mut("speech") else { return server };
     let hide = |owner: &mut Doc| {
-        if owner.get("apiKey").and_then(Value::as_str).is_some_and(|key| !key.trim().is_empty()) {
-            owner.remove("apiKey");
-            owner.insert("hasApiKey".into(), json!(true));
-        } else if !owner.contains_key("hasApiKey") {
-            owner.insert("hasApiKey".into(), json!(false));
-        }
+        let key = owner.remove("apiKey");
+        owner.insert(
+            "hasApiKey".into(),
+            json!(key.as_ref().and_then(Value::as_str).is_some_and(|s| !s.trim().is_empty())),
+        );
     };
     hide(speech);
     for direction in ["stt", "tts"] {
@@ -373,7 +372,7 @@ mod tests {
         assert_eq!(
             Value::Object(sanitize_server(normalized))["speech"],
             json!({"hasApiKey": true,
-            "stt": {"apiKey": "", "hasApiKey": false}, "tts": {"hasApiKey": true}})
+            "stt": {"hasApiKey": false}, "tts": {"hasApiKey": false}})
         );
     }
 

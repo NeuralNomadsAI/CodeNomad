@@ -302,7 +302,7 @@ async function solid({ ts, rs, local, remote, tsRoot, rsRoot, password }) {
   async function journey(page) {
     await page.getByRole("button", { name: "Open settings", exact: true }).filter({ visible: true }).first().click()
     await page.getByRole("button", { name: "Servers", exact: true }).click()
-    const field = page.locator("[data-server-add-field]")
+    const field = page.locator(".settings-screen-content [data-server-add-field]")
     await field.fill(pairingLink)
     const [connected] = await Promise.all([page.waitForResponse(res => new URL(res.url()).pathname === "/api/remote-servers/rust2/connect"), field.press("Enter")])
     assert.equal(connected.status(), 200)
@@ -311,18 +311,18 @@ async function solid({ ts, rs, local, remote, tsRoot, rsRoot, password }) {
     const device = (await (await rs.request("/api/remote-control/devices", withCookie(await signIn(rs, password)))).json()).devices[0]
     assert(device && !device.origin)
     result.browser.pairedThroughSolid = true
-    await page.getByRole("button", { name: "Remotes", exact: true }).click()
-    const remotes = page.getByRole("group", { name: "Remotes" })
-    await remotes.getByRole("button", { name: `Open a project on ${profile.name}` }).click()
+    await page.getByRole("tab", { name: "Browse", exact: true }).click()
+    await page.getByRole("button", { name: `Open a project on ${profile.name}`, exact: true }).click()
+    const remotes = page.locator(".remote-server-browser")
     await capture(page, "01-serveur")
     const folder = remotes.getByRole("button", { name: "Rust Project", exact: true })
     await folder.waitFor()
     await capture(page, "02-dossiers")
     await folder.click()
-    await page.waitForFunction(() => document.querySelector(".remote-project-path")?.textContent?.trim().endsWith("Rust Project"))
+    await page.waitForFunction(() => document.querySelector(".remote-server-browser [data-can-go]")?.value?.trim().endsWith("Rust Project"))
     const admitted = page.waitForResponse(res => new URL(res.url()).pathname === "/api/backends/rust2/api/meta" && res.status() === 200)
     const released = page.waitForResponse(res => /^\/api\/backends\/rust2\/api\/workspaces\/[^/]+\/creation\/release$/.test(new URL(res.url()).pathname))
-    await remotes.getByRole("button", { name: "Open", exact: true }).click()
+    await remotes.locator("[data-remote-open]").click()
     assert.match((await (await admitted).allHeaders())["x-codenomad-backend-authority"], /^[A-Za-z0-9_-]{43}$/)
     assert.equal((await released).status(), 204)
     result.browser.admitted = true
