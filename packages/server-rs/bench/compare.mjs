@@ -15,7 +15,7 @@ import { assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
 import { browserFiles, populate } from "./files.mjs"
 import { browserWorktrees } from "./worktrees.mjs"
 
-const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "missions", "missions-family", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
+const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "missions", "missions-family", "missions-calendar", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
 const [mode, exe] = process.argv.slice(2)
 assert(MODES.includes(mode) && path.isAbsolute(exe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)
 const bin = rustBinary()
@@ -448,7 +448,7 @@ try {
       ])
     } finally { await Promise.all([ts?.close(), rs?.close(), bench?.close?.()]) }
     assert(!result.leaks, "A server logged a synthetic provider credential")
-  }))
+  }, bench?.runtime), bench?.runtime)
 } catch (error) {
   result.error = String(error.stack)
   console.error(result.error)
