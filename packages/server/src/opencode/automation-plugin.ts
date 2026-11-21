@@ -1,6 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto"
 import { execFile, spawn } from "node:child_process"
 import { mkdir, open, opendir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
+import http from "node:http"
 import os from "node:os"
 import path from "node:path"
 import type { Plugin } from "@opencode/plugin"
@@ -135,9 +136,10 @@ export async function discoverAutomationBridgeDirectories(signal?: AbortSignal, 
   return automationBridgeDirectories({ ...options, windowsLocalAppData })
 }
 
-function windowsDiscoveryOutput(file: string, args: string[], env: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<string> {
-  return new Promise((resolve, reject) => execFile(file, args, { env, signal, encoding: "utf8", timeout: 2_000, maxBuffer: MAX_REGISTRATION_BYTES, windowsHide: true },
-    (error, stdout) => error ? reject(error) : resolve(stdout.trim())))
+function windowsDiscoveryOutput(file: string, args: string[], encoding: "utf8" | "utf16le",
+  env: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<string> {
+  return new Promise((resolve, reject) => execFile(file, args, { env, signal, encoding, timeout: 2_000, maxBuffer: MAX_REGISTRATION_BYTES, windowsHide: true },
+    (error, stdout) => error ? reject(error) : resolve(stdout)))
 }
 
 function resolveWslWindowsLocalAppData(env: NodeJS.ProcessEnv, { strict = false, signal, cacheFailures = true }: {
@@ -150,9 +152,11 @@ function resolveWslWindowsLocalAppData(env: NodeJS.ProcessEnv, { strict = false,
   if (rememberFailures && !signal && pendingWslWindowsLocalAppData?.key === key) return pendingWslWindowsLocalAppData.promise
   const promise = (async (): Promise<WindowsDiscovery> => {
     try {
-      const windowsPath = await windowsDiscoveryOutput("cmd.exe", ["/d", "/s", "/c", "echo %LOCALAPPDATA%"], env, signal)
+      const variables = await windowsDiscoveryOutput("cmd.exe", ["/d", "/s", "/u", "/c", "set LOCALAPPDATA"], "utf16le", env, signal)
       signal?.throwIfAborted()
-      const translated = await windowsDiscoveryOutput("wslpath", ["-u", windowsPath], env, signal)
+      const windowsPath = /^LOCALAPPDATA=([^\r\n]+)\r?$/im.exec(variables)?.[1]
+      if (!windowsPath) return null
+      const translated = (await windowsDiscoveryOutput("wslpath", ["-u", windowsPath], "utf8", env, signal)).replace(/\r?\n$/, "")
       signal?.throwIfAborted()
       return path.posix.isAbsolute(translated) ? translated : null
     } catch (error) {
@@ -243,17 +247,21 @@ function registrationFile(name: string, local: boolean) {
 
 type RegistrationFile = NonNullable<ReturnType<typeof registrationFile>>
 
-async function readRegistration(target: string, { throwReadErrors = false } = {}): Promise<AutomationBridgeRegistration | null | undefined> {
+async function readRegistration(target: string, { throwReadErrors = false, checkCurrent }: {
+  throwReadErrors?: boolean; checkCurrent?: () => void
+} = {}): Promise<AutomationBridgeRegistration | null | undefined> {
   const buffer = Buffer.alloc(MAX_REGISTRATION_BYTES + 1)
   let bytesRead = 0
   try {
     const file = await open(target, "r")
     try {
+      checkCurrent?.()
       bytesRead = (await file.read(buffer, 0, buffer.length, 0)).bytesRead
     } finally {
       await file.close()
     }
   } catch (error) {
+    checkCurrent?.()
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null
     if (throwReadErrors) throw error
     return undefined
@@ -362,18 +370,20 @@ export async function verifyHumanAnswerBridge(body: import("../missions/human-an
 }
 
 async function registrations({ pruneStale = true, strict }: { pruneStale?: boolean; strict?: "browser" | "mission" } = {},
-  signal?: AbortSignal): Promise<DiscoveredBridgeRegistration[]> {
+  signal?: AbortSignal, checkCurrent = () => signal?.throwIfAborted()): Promise<DiscoveredBridgeRegistration[]> {
   const found: DiscoveredBridgeRegistration[] = []
   const options: BridgeDirectoryOptions = { strict: strict === "browser" ? "browser" : Boolean(strict) }
   const directories = signal ? await discoverAutomationBridgeDirectories(signal, options) : await automationBridgeDirectories(options)
   for (const [directoryIndex, directory] of directories.entries()) {
-    signal?.throwIfAborted()
+    checkCurrent()
     let entries: RegistrationFile[] = []
     const entryLimit = directoryIndex === 0 ? MAX_LOCAL_REGISTRY_FILES : MAX_REGISTRATIONS
     try {
       const stream = await opendir(directory)
+      try { checkCurrent() }
+      catch (error) { await stream.close().catch(() => undefined); throw error }
       for await (const entry of stream) {
-        signal?.throwIfAborted()
+        checkCurrent()
         if (!entry.isFile()) continue
         const file = registrationFile(entry.name, directoryIndex === 0)
         if (!file) continue
@@ -385,7 +395,7 @@ async function registrations({ pruneStale = true, strict }: { pruneStale?: boole
         }
       }
     } catch (error) {
-      signal?.throwIfAborted()
+      checkCurrent()
       if (strict && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error
       if (strict === "browser" && directoryIndex > 0) {
         // An absent registry is meaningful only on a readable Windows profile mount.
@@ -396,13 +406,14 @@ async function registrations({ pruneStale = true, strict }: { pruneStale?: boole
     entries.sort((left, right) => right.startedAt - left.startedAt)
     entries.length = Math.min(entries.length, entryLimit)
     for (const entry of entries) {
-      signal?.throwIfAborted()
+      checkCurrent()
       const target = path.join(directory, entry.name)
       if (entry.deadPublisher) {
         if (pruneStale) await rm(target, { force: true }).catch(() => undefined)
         continue
       }
-      const registration = await readRegistration(target, { throwReadErrors: Boolean(strict) }) as DiscoveredBridgeRegistration | null | undefined
+      const registration = await readRegistration(target, { throwReadErrors: Boolean(strict), checkCurrent }) as DiscoveredBridgeRegistration | null | undefined
+      checkCurrent()
       if (registration === null) continue
       if (!registration) {
         // Mission discovery treats malformed foreign advertisements as unsupported.
@@ -418,6 +429,7 @@ async function registrations({ pruneStale = true, strict }: { pruneStale?: boole
       found.push(registration)
     }
   }
+  checkCurrent()
   if (strict && found.length > MAX_REGISTRATIONS) throw new Error("Mission backend discovery exceeded its bound")
   return found.sort((left, right) => right.startedAt - left.startedAt).slice(0, MAX_REGISTRATIONS)
 }
@@ -447,15 +459,16 @@ async function callBridge(
   signal?: AbortSignal,
 ): Promise<{ status: number; body: BridgeResponse }> {
   signal?.throwIfAborted()
-  const rejectRedirects = body.mode === "browser-execute" || body.mode === "browser-probe"
+  const browser = body.mode === "browser-execute" || body.mode === "browser-probe"
     || body.mode === "browser-claim" && body.purpose === undefined
-  if (registration[WINDOWS_INTEROP]) return callWindowsBridge(registration, body, timeoutMs, signal, rejectRedirects)
+  if (registration[WINDOWS_INTEROP]) return callWindowsBridge(registration, body, timeoutMs, signal, browser)
+  const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)
+  if (browser) return callLocalBrowserBridge(registration, body, requestSignal)
   const response = await fetch(registration.url, {
     method: "POST",
     headers: { "content-type": "application/json", "x-codenomad-automation-token": registration.token },
     body: JSON.stringify(body),
-    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
-    ...(rejectRedirects ? { redirect: "error" } : {}),
+    signal: requestSignal,
   })
   const contentLength = Number(response.headers.get("content-length"))
   if (Number.isFinite(contentLength) && contentLength > MAX_BRIDGE_RESPONSE_BYTES) {
@@ -480,6 +493,36 @@ async function callBridge(
     status: response.status,
     body: JSON.parse(Buffer.concat(chunks, bytes).toString("utf8")) as BridgeResponse,
   }
+}
+
+async function callLocalBrowserBridge(registration: AutomationBridgeRegistration, body: Record<string, unknown>, signal: AbortSignal) {
+  const url = new URL(registration.url)
+  if (url.username || url.password) throw new Error("Invalid native automation bridge URL")
+  const json = JSON.stringify(body)
+  signal.throwIfAborted()
+  const response = await new Promise<http.IncomingMessage>((resolve, reject) => {
+    // A private socket bypasses the proxy configured on Node's global agent.
+    const request = http.request(url, { agent: false, signal, method: "POST", headers: {
+      "content-type": "application/json", "content-length": Buffer.byteLength(json), "x-codenomad-automation-token": registration.token,
+    } }, resolve)
+    request.once("error", reject)
+    request.end(json)
+  })
+  const status = response.statusCode ?? 0
+  const redirected = status >= 300 && status < 400
+  if (redirected || Number(response.headers["content-length"]) > MAX_BRIDGE_RESPONSE_BYTES) {
+    response.destroy()
+    throw new Error(redirected ? "Native automation bridge redirected" : "Native automation bridge response is too large")
+  }
+  const chunks: Buffer[] = []
+  let bytes = 0
+  for await (const chunk of response) {
+    bytes += chunk.length
+    if (bytes > MAX_BRIDGE_RESPONSE_BYTES) throw new Error("Native automation bridge response is too large")
+    chunks.push(chunk)
+  }
+  signal.throwIfAborted()
+  return { status, body: JSON.parse(Buffer.concat(chunks, bytes).toString("utf8")) as BridgeResponse }
 }
 
 function callWindowsBridge(
@@ -803,9 +846,10 @@ export function createBrowserToolExecutor() {
 
 export async function executeBrowserTool(sessionID: string, input: unknown, pins?: Map<string, BrowserPin>, deadline = Date.now() + REQUEST_TIMEOUT_MS,
   submitted?: { pin?: BrowserPin }) {
+  const expired = () => new Error("preview-expired: Browser command expired before execution")
   const remaining = (now = Date.now()) => {
     const ms = deadline - now
-    if (ms <= 0) throw new Error("preview-expired: Browser command expired before execution")
+    if (ms <= 0) throw expired()
     return ms
   }
   remaining()
@@ -822,10 +866,19 @@ export async function executeBrowserTool(sessionID: string, input: unknown, pins
   }
   const opening = command.action === "open"
   const inventoryUnavailable = () => new Error("browser-unavailable: The preview inventory could not be verified; take a new snapshot")
-  const active = await registrations({ strict: "browser" }, AbortSignal.timeout(remaining())).catch(() => {
-    remaining()
-    throw inventoryUnavailable()
+  const signal = AbortSignal.timeout(remaining())
+  const checkDiscovery = () => { if (signal.aborted) throw expired(); remaining() }
+  let abort!: () => void
+  const timeout = new Promise<never>((_resolve, reject) => {
+    abort = () => reject(expired())
+    signal.addEventListener("abort", abort, { once: true })
   })
+  // Stop waiting on uncancellable filesystem calls and fence their continuations.
+  const discovery = registrations({ strict: "browser" }, signal, checkDiscovery)
+  const active = await Promise.race([discovery, timeout]).catch(() => {
+    checkDiscovery()
+    throw inventoryUnavailable()
+  }).finally(() => signal.removeEventListener("abort", abort))
   const owners: Array<{ bridge: DiscoveredBridgeRegistration; witness?: string }> = []
   let incomplete = false, unsupported = false, stale = false
   for (let index = 0; index < active.length && owners.length < 2; index += PROBE_CONCURRENCY) {
