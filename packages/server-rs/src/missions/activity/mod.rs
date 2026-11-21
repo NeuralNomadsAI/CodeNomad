@@ -92,7 +92,14 @@ async fn observe_panel(app: Shared, id: String, input: Value, passage: Option<Va
         Err(refused) => return refused,
     };
     let source = if request.activity { "activity" } else { "marks" };
-    let expected_passage = passage.as_ref().and_then(|value| ojson::parse(value.to_string().as_bytes()));
+    let expected_passage = match passage.as_ref() {
+        Some(value) => {
+            let Some(identity) = ojson::parse(value.to_string().as_bytes()).as_ref().and_then(context::passage)
+            else { return foreign() };
+            Some(identity)
+        }
+        None => None,
+    };
 
     // Persisted context, in digest-pinned slices of one exact text.
     let mut cursor: Option<J> = None;
@@ -126,7 +133,7 @@ async fn observe_panel(app: Shared, id: String, input: Value, passage: Option<Va
             || result.get("source").and_then(J::str) != Some(source)
             || result.get("phase").and_then(J::str) != Some("context")
             || result.get("missionID").and_then(J::str) != request.mission.as_deref()
-            || result.get("passage") != expected_passage.as_ref()
+            || result.get("passage").and_then(context::passage) != expected_passage
             || result.get("field").is_some()
             || result.get("observedAt").is_some()
             || result.get("revision").is_some() != request.activity

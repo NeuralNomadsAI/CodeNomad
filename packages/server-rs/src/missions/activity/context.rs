@@ -257,7 +257,7 @@ const REASONS: [&str; 7] = [
 fn integer(v: &J, min: u64) -> Option<J> {
     v.count().filter(|n| *n >= min).map(|_| v.clone())
 }
-fn passage(v: &J) -> Option<J> {
+pub(super) fn passage(v: &J) -> Option<J> {
     shape(
         v,
         &[
