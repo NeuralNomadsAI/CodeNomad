@@ -3,6 +3,7 @@ import { test } from "node:test"
 import { clickAt, dragBetween, pressKeys } from "./input"
 import type { PageSession } from "./protocol"
 import { cdpSession } from "./cdp-driver"
+import { performAction } from "./actions"
 
 test("failed pointer and key sequences release potentially held inputs without replaying the action", async () => {
   for (const kind of ["click", "drag", "keys"] as const) {
@@ -47,6 +48,40 @@ test("a frozen mark write cannot suppress release, and late input effects are re
     queuedRelease?.()
     assert.equal(clicks, 1, "cleanup can complete the admitted click after a timeout, but never replays its press")
   }
+})
+
+test("a release with an unknown outcome is never sent twice", async () => {
+  for (const kind of ["mouseReleased", "keyUp"]) {
+    const calls: string[] = []
+    const session = cdpSession({ send: async (method, params = {}) => {
+      if (method === "Runtime.evaluate") return { result: { value: 1_700_000_000 } }
+      calls.push(String(params.type))
+      if (params.type === kind) throw new Error("CDP release timed out")
+      return {}
+    } }, async () => {}, true)
+    await assert.rejects(kind === "mouseReleased" ? clickAt(session, { x: 10, y: 20 }) : pressKeys(session, "Enter"),
+      /outcome is unknown/)
+    assert.equal(calls.filter(type => type === kind).length, 1)
+  }
+})
+
+test("type reports a sent input when current field value cannot be read", async () => {
+  let sent = 0
+  const session = cdpSession({ send: async (method) => {
+    if (method === "DOM.resolveNode") return { object: { objectId: "field" } }
+    if (method === "Input.insertText") sent++
+    return {}
+  } }, async () => {}, true)
+  session.driver.call = async (id) => {
+    if (id === "field") return { handle: "field" }
+    if (id === "prepare") return { value: "insert" }
+    if (id === "mark-input") return { value: 1_700_000_000 }
+    if (id === "read-value") throw new Error("Page changed")
+    return {}
+  }
+  await assert.rejects(performAction(session, { kind: "type", ref: "e1", backendNodeId: 1, text: "append", clear: false }),
+    /Text input was sent.*inspect before retrying/)
+  assert.equal(sent, 1)
 })
 
 test("trusted input waits until a freshly navigated page accepts it, within a bounded delay", async () => {

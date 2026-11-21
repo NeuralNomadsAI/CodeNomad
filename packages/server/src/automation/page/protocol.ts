@@ -133,9 +133,9 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (kind
     const down = mouse ? params.type === "mousePressed" : params.type === "keyDown" || params.type === "rawKeyDown"
     if (down) held.set(id, { kind, params: { ...params, type: mouse ? "mouseReleased" : "keyUp", buttons: 0, modifiers: 0,
       ...(timestamp === undefined ? {} : { timestamp }) } })
+    if (up) held.delete(id)
     attempted = true
     await sendInput(session, kind, { ...params, ...(timestamp === undefined || kind === "insert-text" ? {} : { timestamp }) })
-    if (up) held.delete(id)
     await session.checkpoint()
   }
   await awaitInputAcceptance(session)

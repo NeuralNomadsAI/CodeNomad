@@ -102,7 +102,11 @@ async function type(session: PageSession, action: Target & { text: string; clear
   if (mode === "value" || mode === "append") await callOn(session, action.ref, field, "set-value", [action.text, mode === "append"])
   else if (action.text) await markedInput(session, dispatch => dispatch("insert-text", { text: action.text }))
   else if (action.clear) await callOn(session, action.ref, field, "delete-selection", [])
-  return { value: String(await callOn(session, action.ref, field, "read-value", [])) }
+  try { return { value: String(await callOn(session, action.ref, field, "read-value", [])) } }
+  catch (error) {
+    if (!action.text && !action.clear && mode !== "value" && mode !== "append") throw error
+    throw new Error("Text input was sent, but the field value could not be read; inspect before retrying.", { cause: error })
+  }
 }
 async function focusedElement(session: PageSession): Promise<string | undefined> {
   const active = await session.driver.call("active-element", undefined, [])
