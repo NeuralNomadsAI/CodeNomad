@@ -133,7 +133,10 @@ pub(super) async fn sync_environment(app: &App, scope: &Scope, sid: &str) -> Res
     }
     let settings = app.settings.raw_config_owner("server").map_err(|_| held())?;
     let configured = settings.get("environmentVariables").map(|v| v.as_object().ok_or_else(held)).transpose()?;
-    let variables = environment(crate::opencode::launch::daemon_environment(), configured, cfg!(windows))?;
+    let mut variables = environment(crate::opencode::launch::daemon_environment(), configured, cfg!(windows))?;
+    // A launcher may carry the daemon's credential under its own variable
+    // name; the authenticated connection supplies the exact value to exclude.
+    variables.retain(|_, value| value.as_str() != Some(scope.endpoint.password.as_str()));
     send(app, scope, Method::PUT, &format!("/api/session/{sid}/environment"), &json!({"variables":variables})).await?;
     Ok(())
 }
