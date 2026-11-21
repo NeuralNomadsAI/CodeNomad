@@ -16,9 +16,11 @@ const originalCount = (state, id) => state.start.filter(message => message.id ==
 const principalRows = state => state.schedules.filter(row => row.role === "principal")
 const removed = rows => rows.every(row => !row.sessionPresent && !row.schedulePresent && !row.reverseIndexPresent)
 
-function terminal(fixture, sessionID) {
+function terminal(fixture, sessionID, afterMessageID) {
   return fixture.readSQL(db => {
-    const row = db.prepare("SELECT id,data FROM session_message WHERE session_id=? AND type='idle' ORDER BY seq DESC LIMIT 1").get(sessionID)
+    const row = db.prepare(`SELECT id,data FROM session_message WHERE session_id=? AND type='idle'
+      AND (? IS NULL OR seq > (SELECT seq FROM session_message WHERE session_id=? AND id=?))
+      ORDER BY seq DESC LIMIT 1`).get(sessionID, afterMessageID ?? null, sessionID, afterMessageID ?? null)
     return row && { id: row.id, outcome: JSON.parse(row.data).outcome }
   })
 }
@@ -40,7 +42,7 @@ async function waitBusinessSuccess(fixture, id, count) {
   const pending = admitted.document.pending
   assert.equal(originalCount(admitted, pending.messageID), 1)
   await fixture.until(async () => {
-    if (terminal(fixture, pending.coordinatorSessionID)?.outcome !== "succeeded") return false
+    if (terminal(fixture, pending.coordinatorSessionID, pending.messageID)?.outcome !== "succeeded") return false
     const journal = await fixture.business(admitted.document)
     return journal.missions[0]?.status === "completed"
   })
