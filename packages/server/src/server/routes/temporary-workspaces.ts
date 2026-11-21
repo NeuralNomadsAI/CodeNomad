@@ -42,7 +42,7 @@ export function registerTemporaryWorkspaceRoutes(app: FastifyInstance, deps: Rou
     if (!temporary) return unavailable(reply)
     try {
       reply.code(201)
-      return { path: await temporary.createFolder() }
+      return { path: await temporary.createFolder(), supportsCancelAndAbandon: true }
     } catch (error) {
       return fail(request, reply, error, "Unable to create a temporary folder")
     }

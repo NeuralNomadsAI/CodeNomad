@@ -553,7 +553,7 @@ export function createServerApi(ctx: BackendHttp) {
       id = parseInstanceKey(id).workspaceId
       return request(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE", keepalive })
     },
-    createTemporaryFolder(): Promise<{ path: string }> {
+    createTemporaryFolder(): Promise<{ path: string; supportsCancelAndAbandon?: boolean }> {
       return request("/api/workspaces/temporary", { method: "POST" })
     },
     abandonTemporaryFolder(path: string, requestId?: string): Promise<void> {

@@ -180,7 +180,10 @@ test("abandon cancels the pending creation before removing only its empty folder
   const h = await harness(), app = Fastify()
   registerTemporaryWorkspaceRoutes(app, { workspaceManager: h.manager, worktreeDeletionFence: new WorktreeDeletionFence(), eventBus: new EventBus() })
   try {
-    const pending = await h.temporary.createFolder()
+    const created = await app.inject({ method: "POST", url: "/api/workspaces/temporary" })
+    assert.equal(created.statusCode, 201, created.body)
+    const { path: pending, supportsCancelAndAbandon } = created.json<{ path: string; supportsCancelAndAbandon: boolean }>()
+    assert.equal(supportsCancelAndAbandon, true)
     const captured = await h.temporary.createFolder()
     h.workspaces.set("pending", { id: "pending", path: pending })
     h.workspaces.set("captured", { id: "captured", path: captured })

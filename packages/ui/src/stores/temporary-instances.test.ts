@@ -328,8 +328,15 @@ test("a failed launch removes the folder it just created", async () => {
   } finally { reset() }
 })
 
-test("release abandons only the newly allocated folder of the unattached temporary opening", async t => {
+for (const supportsCancelAndAbandon of [true, undefined]) test(
+  supportsCancelAndAbandon ? "release abandons only the newly allocated folder" : "release only cancels creation on an older server",
+  async t => {
   openEmpty("captured")
+  const path = "D:\\temp\\20261009-120000-dead"
+  t.mock.method(serverApi, "createTemporaryFolder", async () => {
+    calls.push("create")
+    return { path, supportsCancelAndAbandon }
+  })
   let markPosted!: (id: string) => void
   const posted = new Promise<string>(resolve => { markPosted = resolve })
   t.mock.method(serverApi, "createWorkspace", (...[payload, options]: Parameters<typeof serverApi.createWorkspace>) => {
@@ -345,7 +352,7 @@ test("release abandons only the newly allocated folder of the unattached tempora
     const requestId = await posted
     await cancelUnattachedWorkspaceCreations(new Set(["captured"]))
     await opening
-    assert.deepEqual(calls, ["create", `abandon:D:\\temp\\20261009-120000-dead:${requestId}`])
+    assert.deepEqual(calls, ["create", supportsCancelAndAbandon ? `abandon:${path}:${requestId}` : `cancel:${requestId}:true`])
     assert.ok(tabOpen("captured"))
   } finally {
     resumeWorkspaceCreations()

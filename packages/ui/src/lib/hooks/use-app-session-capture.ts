@@ -4,7 +4,7 @@ import { getLogger } from "../logger"
 import { acknowledgeNativeClientStateNavigationFlush, acknowledgeNativeClientStateRendererFlush } from "../native/client-state"
 import { isElectronHost, isLocalWindow, isTauriHost, isWebHost } from "../runtime-env"
 import {
-  clientStateIsPrimary, flushClientState, restorePreviousStateEnabled, updateRestorableSession,
+  clientStateIsPrimary, flushClientState, loadedRestorableSession, restorePreviousStateEnabled, updateRestorableSession,
   type RestorableSessionState, type RestorableTabState, type RestorableWorkspaceTabState,
 } from "../../stores/client-state"
 import { storage } from "../storage"
@@ -216,6 +216,11 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
       currentTabIds: captured.tabIds, currentTabAuthorities: captured.authorities,
     })
   }
+  const recoveryState = () => {
+    if (enabled()) return mergedState()
+    if (!started() && clientStateIsPrimary() && restorePreviousStateEnabled()) return loadedRestorableSession() ?? undefined
+    return captureState(scrollAuthority).state
+  }
   let nativeShutdownGeneration: number | null = null
   let releasing: Promise<unknown> | undefined
   let preparedTabs: RestorableSessionState | undefined
@@ -252,7 +257,8 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   }
   const resumeCapture = () => {
     resumeWorkspaceCreations()
-    if (releasing && preparedTabs) recoverReleasedTabs?.(preparedTabs)
+    // If startup has not begun, it can still restore directly from the loaded snapshot.
+    if (releasing && preparedTabs && started()) recoverReleasedTabs?.(preparedTabs)
     preparedTabs = undefined
     preparedRecords = undefined
     nativeShutdownGeneration = null
@@ -294,7 +300,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
       updateRestorableSession(state)
       if (nativeShutdown) preparedTabs = state
     } else if (nativeShutdown && !releasing && recoverReleasedTabs) {
-      preparedTabs = captureState(scrollAuthority).state
+      preparedTabs = recoveryState()
     }
     if (nativeShutdown && !releasing) preparedRecords = captureWorkspaceRecords()
     await Promise.all([
@@ -318,7 +324,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     lockInput()
     // The local backend also carries the remote relay. Quit has to send
     // releases before stopping it, and must be able to recover on refusal.
-    if (recoverReleasedTabs) preparedTabs ??= captureState(scrollAuthority).state
+    if (recoverReleasedTabs) preparedTabs ??= recoveryState()
     const pending = release()
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
