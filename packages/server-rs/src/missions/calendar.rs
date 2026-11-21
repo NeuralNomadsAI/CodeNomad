@@ -28,8 +28,11 @@ use std::{
     sync::{Arc, atomic::Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
+#[path = "calendar_activation.rs"]
+mod activation;
 #[path = "calendar_capability.rs"]
 mod capability;
+pub use activation::Activation;
 use capability::automation_api;
 
 const READ: usize = 512 * 1024;
@@ -188,7 +191,10 @@ pub async fn list(
 async fn flag(app: &App, endpoint: &Arc<Endpoint>, w: &Workspace) -> Result<Value, Error> {
     let flag = rpc(app, endpoint, directory(w)?, "scheduleFlag", json!({}), 32768).await?;
     if !flag["enabled"].is_boolean()
-        || !matches!(flag["provenance"].as_str(), Some("environment" | "experimental-block" | "all-flags" | "channel-default"))
+        || !matches!(
+            flag["provenance"].as_str(),
+            Some("environment" | "experimental-block" | "all-flags" | "channel-default")
+        )
     {
         return Err(unavailable());
     }
@@ -207,16 +213,13 @@ pub async fn capabilities(
     if q.after.is_some() || q.limit.is_some() || q.request.is_some() {
         return Err(input_invalid());
     }
-    let api = automation_api(&app, &endpoint).await?;
-    let state = flag(&app, &endpoint, &w).await?;
-    let origin = capability::flag_origin(&app, &endpoint, dir, state["provenance"].as_str().unwrap()).await?;
+    let (api, settings) =
+        tokio::try_join!(automation_api(&app, &endpoint), activation::settings(&app, &endpoint, &w, dir),)?;
     if !current(&app, &w, &project, &canonical, &physical, &endpoint).await || !display.load(Ordering::Relaxed) {
         return Err(unavailable());
     }
-    let enabled = state["enabled"] == true;
-    Ok(Json(json!({"location":{"directory":directory(&w)?},"api":api,"enabled":enabled,
-        "origin":origin,"provenance":state["provenance"],"activation":if enabled&&api["available"]==true{json!({"available":true,"targets":[]})}
-        else{json!({"available":false,"reason":"explicit-off","targets":[]})}})))
+    Ok(Json(json!({"location":{"directory":dir},"api":api,"enabled":settings.enabled,
+        "origin":settings.origin,"provenance":settings.provenance,"activation":settings.diagnostic(api["available"] == true)})))
 }
 fn schedule_id(project: &str, dir: &str, request: &str) -> String {
     format!("msn_{}", &digest(&json!([project, dir, request]))[..40])
@@ -606,14 +609,16 @@ async fn mutate(
         (permit, None)
     };
     let mut release = Release(app.clone(), mid.clone(), permit);
-    // Stricter than the reference: arm only with the native Automations API
-    // and the enabled flag (the plugin itself requires a ready activation).
-    if matches!(input.action.as_str(), "play" | "resume" | "run-now")
-        && (automation_api(&app, &endpoint).await.map_or(true, |a| a["available"] != true)
-            || flag(&app, &endpoint, &w).await.map_or(true, |f| f["enabled"] != true))
-        || !current(&app, &w, &project, &canonical, &physical, &endpoint).await
-        || principal.0.is_cancelled()
-    {
+    // The native owner additionally requires its ready activation proof.
+    if matches!(input.action.as_str(), "play" | "resume" | "run-now") {
+        let (api, settings) =
+            tokio::try_join!(automation_api(&app, &endpoint), activation::settings(&app, &endpoint, &w, &dir),)
+                .map_err(|_| lost(Status::SERVICE_UNAVAILABLE, &mid))?;
+        if api["available"] != true || settings.require_enabled(None).is_err() {
+            return Err(lost(Status::SERVICE_UNAVAILABLE, &mid));
+        }
+    }
+    if !current(&app, &w, &project, &canonical, &physical, &endpoint).await || principal.0.is_cancelled() {
         return Err(lost(Status::SERVICE_UNAVAILABLE, &mid));
     }
     let auth_id = format!("cnrs-{}", uuid::Uuid::new_v4());
@@ -749,43 +754,22 @@ pub async fn verify(app: &App, session: &str, proof: Value) -> Result<Json<Value
     }
     Ok(Json(json!({"result":{"admitted":true}})))
 }
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Activation {
-    #[serde(rename = "requestID")]
-    request: String,
-    expected_document_revision: u64,
-    directory: Option<String>,
-}
 pub async fn activation_read(
     State(app): State<Shared>,
     Path((id, mid)): Path<(String, String)>,
     Query(q): Query<Activation>,
 ) -> Result<Json<Value>, Error> {
-    if !good(&mid) || !good(&q.request) || q.expected_document_revision > 9_007_199_254_740_991 {
+    if !good(&mid) || !q.valid() {
         return Err(bad());
     }
     let endpoint = app.native.endpoint().ok_or_else(unavailable)?;
-    let (w, project, canonical) = scope(&app, &id, q.directory.as_deref()).await?;
+    let (w, project, canonical) = scope(&app, &id, None).await?;
     let physical = files::host_identity(&w.path).map_err(|_| unavailable())?;
     let dir = directory(&w)?;
     let display = fence::capture_display(dir);
-    let result = rpc(
-        &app,
-        &endpoint,
-        dir,
-        "documentActivation",
-        json!({
-            "missionID":mid, "requestID":q.request, "expectedRevision":q.expected_document_revision, "action":"read"
-        }),
-        READ,
-    )
-    .await?;
-    if !result["document"]["revision"].is_u64()
-        || !result["document"]["scheduleActivation"].is_object() && !result["document"]["scheduleActivation"].is_null()
-        || !current(&app, &w, &project, &canonical, &physical, &endpoint).await
-        || !display.load(Ordering::Relaxed)
-    {
+    let journal = activation::Journal { app: &app, endpoint: &endpoint, dir, mission: &mid, input: &q };
+    let result = journal.phase("read", Value::Null).await?;
+    if !current(&app, &w, &project, &canonical, &physical, &endpoint).await || !display.load(Ordering::Relaxed) {
         return Err(unavailable());
     }
     Ok(Json(result))
@@ -796,73 +780,57 @@ pub async fn activate(
     Extension(principal): Extension<crate::auth::Principal>,
     Json(q): Json<Activation>,
 ) -> Result<Json<Value>, Error> {
-    if !good(&mid) || !good(&q.request) || q.expected_document_revision > 9_007_199_254_740_991 {
+    if !good(&mid) || !q.valid() {
         return Err(bad());
     }
     let _gate = app.calendar_slot.lock().await;
     let _path = app.project_mutation.lock().await;
     let endpoint = app.native.endpoint().ok_or_else(unavailable)?;
-    let (w, project, canonical) = scope(&app, &id, q.directory.as_deref()).await?;
+    let (w, project, canonical) = scope(&app, &id, None).await?;
     let physical = files::host_identity(&w.path).map_err(|_| unavailable())?;
     let dir = directory(&w)?;
     let _permit = fence::enter(&[dir.to_owned()]).ok_or_else(unavailable)?;
     let guarded =
         || async { current(&app, &w, &project, &canonical, &physical, &endpoint).await && !principal.0.is_cancelled() };
-    let id = json!({"missionID":mid,"requestID":q.request,"expectedRevision":q.expected_document_revision});
-    let step = |action: &str| {
-        let mut input = id.clone();
-        input["action"] = json!(action);
-        input
-    };
-    let old = rpc(&app, &endpoint, dir, "documentActivation", step("read"), 65536).await?;
-    let doc = &old["document"];
-    let activation = &doc["scheduleActivation"];
-    if doc["state"] != "paused"
-        || !crate::missions::configuration::requires_calendar(&doc["launch"])
-        || !guarded().await
-    {
+    if !guarded().await {
         return Err(unavailable());
     }
-    let exact = activation["requestID"] == q.request && activation["expectedRevision"] == q.expected_document_revision;
-    if activation["state"] == "ready" && (exact || doc["revision"] == q.expected_document_revision) {
-        if flag(&app, &endpoint, &w).await?["enabled"] != true || !guarded().await {
-            return Err(unavailable());
-        }
-        return Ok(Json(json!({"document":doc})));
+    let journal = activation::Journal { app: &app, endpoint: &endpoint, dir, mission: &mid, input: &q };
+    let old = journal.phase("read", Value::Null).await?;
+    // Retain the established authority tuple for zero-target proofs; a file
+    // transaction will need the native target/path authority before it can write.
+    let authority = digest(&json!(["enabled-fixture", source(&app)?, dir]));
+    let admission = activation::admit(&old["document"], &q, &authority)?;
+    let fresh = admission == activation::Admission::Fresh;
+    if automation_api(&app, &endpoint).await?["available"] != true {
+        return Err(if fresh { activation::disabled() } else { activation_pending() });
     }
-    let prepared = exact && activation["state"] == "prepared" && activation["targets"] == json!([]);
-    if !prepared
-        && (doc.get("scheduleActivation") != Some(&Value::Null) || doc["revision"] != q.expected_document_revision)
-    {
+    let settings = activation::settings(&app, &endpoint, &w, dir).await?;
+    if !guarded().await {
         return Err(activation_pending());
     }
-    if automation_api(&app, &endpoint).await?["available"] != true
-        || flag(&app, &endpoint, &w).await?["enabled"] != true
-        || !guarded().await
-    {
-        return Err(unavailable());
-    }
-    let authority = digest(&json!(["enabled-fixture", source(&app)?, dir]));
-    if prepared {
-        if activation["authority"] != authority {
+    settings.require_enabled(fresh.then_some(&q))?;
+    if admission == activation::Admission::VerifyReady {
+        let seen = journal.phase("read", Value::Null).await?;
+        if seen != old || !guarded().await {
             return Err(activation_pending());
         }
-    } else {
-        let mut intent = step("prepare");
-        intent["authority"] = json!(authority);
-        intent["targets"] = json!([]);
-        rpc(&app, &endpoint, dir, "documentActivation", intent, 65536).await?;
+        return Ok(Json(seen));
     }
-    if flag(&app, &endpoint, &w).await?["enabled"] != true || !guarded().await {
+    if fresh {
+        let prepared = journal.phase("prepare", json!({"authority":authority,"targets":[]})).await?;
+        if !journal.confirms(&prepared, "prepared", &authority) {
+            return Err(activation_pending());
+        }
+    }
+    let settings = activation::settings(&app, &endpoint, &w, dir).await.map_err(|_| activation_pending())?;
+    if !guarded().await {
         return Err(activation_pending());
     }
-    let mut intent = step("ready");
-    intent["effectiveOrigin"] = Value::Null;
-    let result = rpc(&app, &endpoint, dir, "documentActivation", intent, 65536).await?;
-    let activation = &result["document"]["scheduleActivation"];
-    if activation["requestID"] != q.request
-        || activation["expectedRevision"] != q.expected_document_revision
-        || activation["state"] != "ready"
+    settings.require_enabled(None)?;
+    let result = journal.phase("ready", json!({"effectiveOrigin":settings.origin})).await?;
+    if !journal.confirms(&result, "ready", &authority)
+        || result["document"]["scheduleActivation"]["effectiveOrigin"] != json!(settings.origin)
         || !guarded().await
     {
         return Err(activation_pending());
