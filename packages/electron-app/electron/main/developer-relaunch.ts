@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { realpathSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
 import { readDeveloperRestart, type DeveloperRestart } from "../../../server/src/automation/developer-restart"
 
@@ -11,8 +12,17 @@ export interface DeveloperRelaunch {
   config: string | null
 }
 
-export function developerNativeIdentity(profile: string, configIdentity: string, config: string | undefined, execPath: string, appPath: string): string {
-  return `electron:${createHash("sha256").update(`${profile}\0${configIdentity}\0${config ?? ""}\0${execPath}\0${resolve(appPath)}`).digest("hex")}`
+/** Capture at startup: a symlink or junction may move while this process is running. */
+export function pinElectronRelaunch(execPath: string, appPath: string, appArgs: readonly string[]) {
+  const executable = realpathSync.native(execPath)
+  const artifact = realpathSync.native(appPath)
+  return { execPath: executable, appPath: artifact, appArgs: appArgs.length ? [...appArgs.slice(0, -1), artifact] : [] }
+}
+
+export type ElectronRelaunchArtifact = ReturnType<typeof pinElectronRelaunch>
+
+export function developerNativeIdentity(profile: string, configIdentity: string, config: string | undefined, { execPath, appPath }: ElectronRelaunchArtifact): string {
+  return `electron:${createHash("sha256").update(`${profile}\0${configIdentity}\0${config ?? ""}\0${execPath}\0${appPath}`).digest("hex")}`
 }
 
 /** Entry selection follows Electron's default_app/main.ts. Only --no-sandbox carries over. */
@@ -35,7 +45,7 @@ export function readElectronEntry(argv: readonly string[]) {
   }
 }
 
-export function developerRelaunchOptions(launch: DeveloperRelaunch, execPath: string, appArgs: readonly string[]): Electron.RelaunchOptions {
+export function developerRelaunchOptions(launch: DeveloperRelaunch, { execPath, appArgs }: ElectronRelaunchArtifact): Electron.RelaunchOptions {
   return { execPath, args: [...appArgs, PREFIX + Buffer.from(JSON.stringify(launch)).toString("base64url")] }
 }
 

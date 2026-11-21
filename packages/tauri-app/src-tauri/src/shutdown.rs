@@ -46,6 +46,7 @@ struct ShutdownState {
     cleanup_started: bool,
     exit_allowed: bool,
     restart_requested: bool,
+    pending_automation_restart: Option<u64>,
     automation_restart: Option<crate::developer_relaunch::RelaunchPlan>,
     update: Option<crate::desktop_updater::PreparedUpdate>,
     #[cfg(windows)]
@@ -164,19 +165,49 @@ impl ShutdownCoordinator {
         Some(requests)
     }
 
+    fn can_restart_automation(state: &ShutdownState, label: &str) -> bool {
+        !state.shutdown_started
+            && !state.exit_allowed
+            && !state.restart_requested
+            && !state.local_closes.contains_key(label)
+            && !state.committed_local_closes.contains_key(label)
+            && !state.approved_local_closes.contains(label)
+    }
+
+    fn reserve_automation_restart(&self, label: &str) -> Result<u64, &'static str> {
+        let mut state = self.state.lock().map_err(|_| "The CodeNomad host is shutting down")?;
+        if !Self::can_restart_automation(&state, label) {
+            return Err("The CodeNomad host is shutting down");
+        }
+        if state.pending_automation_restart.is_some() {
+            return Err("CodeNomad restart is already pending");
+        }
+        state.next_generation += 1;
+        state.pending_automation_restart = Some(state.next_generation);
+        Ok(state.next_generation)
+    }
+
+    fn cancel_automation_restart(&self, generation: u64) {
+        if let Ok(mut state) = self.state.lock() {
+            if state.pending_automation_restart == Some(generation) {
+                state.pending_automation_restart.take();
+            }
+        }
+    }
+
     fn begin_automation_restart(
         &self,
         labels: impl IntoIterator<Item = String>,
         label: &str,
+        generation: u64,
         plan: crate::developer_relaunch::RelaunchPlan,
     ) -> Option<Vec<(String, u64)>> {
         let mut state = self.state.lock().ok()?;
-        if state.exit_allowed
-            || state.restart_requested
-            || state.local_closes.contains_key(label)
-            || state.committed_local_closes.contains_key(label)
-            || state.approved_local_closes.contains(label)
-        {
+        if state.pending_automation_restart != Some(generation) {
+            return None;
+        }
+        state.pending_automation_restart.take();
+        if !Self::can_restart_automation(&state, label) {
             return None;
         }
         let requests = Self::begin_shutdown_locked(&mut state, labels)?;
@@ -359,6 +390,7 @@ impl ShutdownCoordinator {
         let session_deadline = Instant::now() + WINDOWS_SESSION_END_TIMEOUT;
         state.windows_session_end_generation = Some(session_generation);
         state.windows_session_end_deadline = Some(session_deadline);
+        state.pending_automation_restart.take();
         state.automation_restart.take();
         if state.update.take().is_some() {
             state.restart_requested = false;
@@ -731,16 +763,22 @@ pub(crate) fn request_restart(app: AppHandle) {
     request(app);
 }
 
-pub(crate) fn request_automation_restart(
+pub(crate) fn reserve_automation_restart(app: &AppHandle, label: &str) -> Result<u64, String> {
+    Ok(app.state::<ShutdownCoordinator>().reserve_automation_restart(label)?)
+}
+
+pub(crate) fn finish_automation_restart(
     app: AppHandle,
-    plan: crate::developer_relaunch::RelaunchPlan,
+    label: &str,
+    generation: u64,
+    plan: Option<crate::developer_relaunch::RelaunchPlan>,
 ) {
-    let Ok(label) = crate::identity::local_window_label(&plan.handoff.restart.window_id) else {
+    let coordinator = app.state::<ShutdownCoordinator>();
+    let Some(plan) = plan else {
+        coordinator.cancel_automation_restart(generation);
         return;
     };
-    let requests = app.state::<ShutdownCoordinator>().begin_automation_restart(
-        renderer_labels(&app), &label, plan,
-    );
+    let requests = coordinator.begin_automation_restart(renderer_labels(&app), label, generation, plan);
     if let Some(requests) = requests {
         flush_shutdown(app, requests, RENDERER_FLUSH_TIMEOUT);
     }

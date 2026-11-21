@@ -1,12 +1,12 @@
 import assert from "node:assert/strict"
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises"
 import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { join, relative } from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 import { appendNodeOption, DeveloperMode } from "./developer-mode"
-import { developerNativeIdentity, developerRelaunchOptions, readDeveloperRelaunch, readElectronEntry } from "./developer-relaunch"
+import { developerNativeIdentity, developerRelaunchOptions, pinElectronRelaunch, readDeveloperRelaunch, readElectronEntry } from "./developer-relaunch"
 
 const restartId = "8d80a777-0085-48c8-b791-d3514bd63f32"
 const windowId = "11111111-2222-4333-8444-555555555555"
@@ -21,7 +21,7 @@ test("native restart refuses an absent pinned window even in the right run and s
     nativeIdentity: "electron:test",
     windows: () => [],
     hasWindow: () => false,
-    canRelaunch: () => true,
+    relaunchScopeGeneration: () => 0,
     requestRelaunch: () => { relaunched = true },
     schedule: (callback) => { restart = callback },
   })
@@ -52,7 +52,7 @@ test("admits only the inspected run, scope and exact window after focus changes"
     nativeIdentity: "electron:test",
     windows: () => windows,
     hasWindow: id => windows.some(window => window.windowId === id),
-    canRelaunch: () => canRelaunch,
+    relaunchScopeGeneration: () => canRelaunch ? 0 : undefined,
     requestRelaunch: (restart) => { relaunched = restart },
     runId: "run-1",
     schedule: (callback) => { restart = callback },
@@ -105,7 +105,7 @@ test("reconnect proves the one-shot handoff and never substitutes a focused wind
     windows: () => [{ windowId: "focused", focused: true }, ...(restored === "ready"
       ? [{ windowId, windowInstance: "restored-incarnation", focused: false }] : [])],
     hasWindow: id => id === windowId && restored !== "missing",
-    canRelaunch: () => true,
+    relaunchScopeGeneration: () => 0,
     requestRelaunch: () => assert.fail("read-only"),
   })
   await assert.rejects(mode.handleNativeRequest("developer.reconnect", { ...previousRestart, windowId: "focused" }))
@@ -129,7 +129,7 @@ test("superseding the native backend before shutdown cancels an admitted restart
     devtoolsDataPath: ".", nativeIdentity: "electron:test", runId: "run",
     windows: () => [{ windowId, focused: true }],
     hasWindow: () => true,
-    canRelaunch: () => true,
+    relaunchScopeGeneration: () => 0,
     requestRelaunch: () => assert.fail("a retired backend must not relaunch the host"),
     schedule: (callback) => { scheduled = callback },
   })
@@ -141,29 +141,33 @@ test("superseding the native backend before shutdown cancels an admitted restart
 
 test("the relaunch arguments pin only the original profile, config and artifact", () => {
   const config = join(tmpdir(), "A config", "legacy.json")
-  const executable = "/bin/electron"
-  const artifact = join(tmpdir(), "worktree-a", "electron")
+  const executable = process.execPath
+  const entryPath = fileURLToPath(new URL("./main.ts", import.meta.url))
+  const artifact = pinElectronRelaunch(executable, entryPath, [entryPath])
   const launch = {
     profile: "default", pinned: true, config,
-    restart: { runId: "old", windowId, restartId, nativeIdentity: developerNativeIdentity("default", "config.yaml", config, executable, artifact) },
+    restart: { runId: "old", windowId, restartId, nativeIdentity: developerNativeIdentity("default", "config.yaml", config, artifact) },
   }
-  const options = developerRelaunchOptions(launch, executable, readElectronEntry([executable, artifact])!.args)
-  assert.equal(options.execPath, executable)
-  assert.equal(options.args![0], artifact)
+  const options = developerRelaunchOptions(launch, artifact)
+  assert.equal(options.execPath, artifact.execPath)
+  assert.equal(options.args![0], artifact.appPath)
   assert.deepEqual(readDeveloperRelaunch(options.args!.slice(1)), launch)
   assert.throws(() => readDeveloperRelaunch([...options.args!.slice(1), "--new-window"]))
-  assert.notEqual(developerNativeIdentity("stable", "config.yaml", config, executable, artifact), launch.restart.nativeIdentity)
-  assert.notEqual(developerNativeIdentity("default", "config.yaml", undefined, executable, artifact), launch.restart.nativeIdentity)
-  assert.notEqual(developerNativeIdentity("default", "config.yaml", config, executable, join(tmpdir(), "worktree-b", "electron")), launch.restart.nativeIdentity)
+  assert.notEqual(developerNativeIdentity("stable", "config.yaml", config, artifact), launch.restart.nativeIdentity)
+  assert.notEqual(developerNativeIdentity("default", "config.yaml", undefined, artifact), launch.restart.nativeIdentity)
+  assert.notEqual(developerNativeIdentity("default", "config.yaml", config,
+    pinElectronRelaunch(executable, fileURLToPath(import.meta.url), [])), launch.restart.nativeIdentity)
 })
 
 test("a relative Electron CLI file entry relaunches as the same absolute file with only the handoff", () => {
   const executable = process.execPath
   const entry = fileURLToPath(new URL("./main.ts", import.meta.url))
   const appEntry = relative(process.cwd(), entry)
-  const identity = (path: string) => developerNativeIdentity("dev", "config.yaml", undefined, executable, path)
+  const current = readElectronEntry([executable, appEntry, "--new-window", "--connect-server=local", "--folder=."])!
+  const artifact = pinElectronRelaunch(executable, current.path, current.args)
+  const identity = (path: string) => developerNativeIdentity("dev", "config.yaml", undefined, pinElectronRelaunch(executable, path, []))
   const launch = { profile: "dev", pinned: true, config: null, restart: { runId: "old", windowId, restartId, nativeIdentity: identity(appEntry) } }
-  const { args } = developerRelaunchOptions(launch, executable, readElectronEntry([executable, appEntry, "--new-window", "--connect-server=local", "--folder=."])!.args)
+  const { args } = developerRelaunchOptions(launch, artifact)
   assert.ok(args)
   assert.equal(args[0], entry)
   assert.equal(createRequire(import.meta.url).resolve(args[0]), entry)
@@ -175,7 +179,7 @@ test("Electron CLI resolves the same app entry for identity, launch intents and 
   const executable = process.execPath
   const entry = fileURLToPath(new URL("./main.ts", import.meta.url))
   const relativeEntry = relative(process.cwd(), entry)
-  const identity = (path: string) => developerNativeIdentity("dev", "config.yaml", undefined, executable, path)
+  const identity = (path: string) => developerNativeIdentity("dev", "config.yaml", undefined, pinElectronRelaunch(executable, path, []))
   const intents = ["--new-window", "--connect-server=local", "--folder=."]
   for (const prefix of [
     ["--require", "init.js", "--no-sandbox", relativeEntry],
@@ -190,13 +194,43 @@ test("Electron CLI resolves the same app entry for identity, launch intents and 
     const launch = { profile: "dev", pinned: true, config: null, restart: {
       runId: "old", windowId, restartId, nativeIdentity: identity(current.path),
     } }
-    const { args } = developerRelaunchOptions(launch, executable, current.args)
+    const { args } = developerRelaunchOptions(launch, pinElectronRelaunch(executable, current.path, current.args))
     assert.deepEqual(args?.slice(0, 2), ["--no-sandbox", entry])
     const successorArgv = [executable, ...args!]
     const successor = readElectronEntry(successorArgv)!
     assert.equal(identity(successor.path), launch.restart.nativeIdentity)
     assert.deepEqual(readDeveloperRelaunch(successorArgv.slice(successor.nextIndex)), launch)
   }
+})
+
+test("repointing an Electron app junction cannot retarget the relaunch", async (context) => {
+  const root = await mkdtemp(join(tmpdir(), "codenomad-relaunch-"))
+  context.after(() => rm(root, { recursive: true, force: true }))
+  const [original, replacement, alias] = ["original", "replacement", "current"].map(name => join(root, name))
+  await mkdir(original)
+  await mkdir(replacement)
+  for (const folder of [original, replacement]) {
+    await writeFile(join(folder, "electron.exe"), "")
+    await writeFile(join(folder, "index.js"), "")
+  }
+  await symlink(original, alias, "junction")
+  const executable = join(alias, "electron.exe")
+  const entry = readElectronEntry([executable, "--no-sandbox", alias])!
+  const artifact = pinElectronRelaunch(executable, entry.path, entry.args)
+  const identity = (value: typeof artifact) => developerNativeIdentity("dev", "config.yaml", undefined, value)
+  const launch = { profile: "dev", pinned: true, config: null, restart: {
+    runId: "old", windowId, restartId, nativeIdentity: identity(artifact),
+  } }
+
+  await unlink(alias)
+  await symlink(replacement, alias, "junction")
+  const { execPath, args } = developerRelaunchOptions(launch, artifact)
+  assert.equal(await realpath(execPath!), await realpath(join(original, "electron.exe")))
+  const successor = readElectronEntry([execPath!, ...args!])!
+  assert.equal(await realpath(successor.path), await realpath(original))
+  assert.equal(createRequire(import.meta.url).resolve(successor.path), join(await realpath(original), "index.js"))
+  assert.equal(identity(pinElectronRelaunch(execPath!, successor.path, successor.args)), launch.restart.nativeIdentity)
+  assert.notEqual(identity(pinElectronRelaunch(executable, alias, [])), launch.restart.nativeIdentity)
 })
 
 test("normal Electron startup always provisions isolated loopback instrumentation", async () => {

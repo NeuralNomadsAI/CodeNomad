@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { DeveloperMode } from "./developer-mode"
 import { MultiwindowLifecycle, type LifecycleWindow } from "./multiwindow-lifecycle"
 
 const tick = () => new Promise((resolve) => setImmediate(resolve))
@@ -364,13 +365,13 @@ test("Windows query preflush leaves the app alive until session end is confirmed
     getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true, isWindows: true, sessionEndCleanupTimeoutMs: 20,
   })
   lifecycle.attach(first)
-  assert.equal(lifecycle.canRelaunchScope(), true)
+  assert.equal(lifecycle.relaunchScopeGeneration(), 0)
   let vetoed = false
   first.events.get("query-session-end")?.({ preventDefault: () => { vetoed = true } })
-  assert.equal(lifecycle.canRelaunchScope(), false)
+  assert.equal(lifecycle.relaunchScopeGeneration(), undefined)
   await (lifecycle as any).sessionEndPreparation
   assert.equal(vetoed, false)
-  assert.equal(lifecycle.canRelaunchScope(), false)
+  assert.equal(lifecycle.relaunchScopeGeneration(), undefined)
   lifecycle.requestRelaunch({ args: ["--codenomad-automation-relaunch=fixture"] })
   assert.deepEqual(calls, ["renderer:one", "native:one"])
 
@@ -379,7 +380,7 @@ test("Windows query preflush leaves the app alive until session end is confirmed
   assert.deepEqual(calls, ["renderer:one", "native:one", "aggregate", "stop", "release", "exit"])
 })
 
-test("cancelling Windows session end restores scoped restart admission", async () => {
+test("Windows query and cancellation revoke an unarmed native restart without blocking a new one", async () => {
   const calls: string[] = []
   const first = windowRecord("one", calls)
   let endSessionMessage: ((wParam: Buffer) => void) | undefined
@@ -394,12 +395,28 @@ test("cancelling Windows session end restores scoped restart admission", async (
     getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true, isWindows: true,
   })
   lifecycle.attach(first)
+  const target = { nativeIdentity: "electron:test", runId: "run", windowId: "one", windowInstance: "instance" }
+  const scheduled: Array<() => void> = []
+  const mode = new DeveloperMode({
+    ...target, devtoolsDataPath: ".", windows: () => [{ ...target, focused: true }], hasWindow: () => true,
+    relaunchScopeGeneration: () => lifecycle.relaunchScopeGeneration(),
+    requestRelaunch: restart => lifecycle.requestRelaunch({ args: [restart.restartId] }),
+    schedule: callback => scheduled.push(callback),
+  })
+  const admit = (restartId: string) => mode.handleNativeRequest("developer.restartScope", { ...target, restartId })
+  const old = "8d80a777-0085-48c8-b791-d3514bd63f32", fresh = "7c3e5066-017d-4ce1-a371-187ac459c4b2"
+  await admit(old)
   first.events.get("query-session-end")?.()
   await (lifecycle as any).sessionEndPreparation
-  assert.equal(lifecycle.canRelaunchScope(), false)
+  await assert.rejects(admit(fresh), /shutting down/)
   assert.ok(endSessionMessage)
   endSessionMessage(Buffer.alloc(8))
-  assert.equal(lifecycle.canRelaunchScope(), true)
+  await admit(fresh)
+  scheduled[0]()
+  assert.equal(calls.includes("quit"), false)
+  await assert.rejects(admit(old), /already pending/)
+  scheduled[1]()
+  assert.equal(calls.filter(call => call === "quit").length, 1)
 })
 
 for (const outcome of ["normal", "query", "before deadline", "late success", "late failure"] as const) {

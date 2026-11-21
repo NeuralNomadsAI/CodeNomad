@@ -36,6 +36,7 @@ export class MultiwindowLifecycle {
   private shutdown: Promise<void> | null = null
   private sessionEnd: Promise<void> | null = null
   private sessionEndQueried = false
+  private scopeRelaunchGeneration = 0
   private sessionEndPreparation: Promise<void> | null = null
   private sessionEndPreparationPending = false
   private release: Promise<void> | null = null
@@ -136,12 +137,12 @@ export class MultiwindowLifecycle {
     this.dependencies.app.on("window-all-closed", () => this.dependencies.app.quit())
   }
 
-  canRelaunchScope(): boolean {
-    return !this.sessionEndQueried && this.canRelaunch()
+  relaunchScopeGeneration(): number | undefined {
+    if (!this.sessionEndQueried && this.canRelaunch()) return this.scopeRelaunchGeneration
   }
 
   requestRelaunch(options?: Electron.RelaunchOptions): void {
-    if (!(options ? this.canRelaunchScope() : this.canRelaunch())) return
+    if (options ? this.relaunchScopeGeneration() === undefined : !this.canRelaunch()) return
     this.relaunchRequested = options ?? true
     this.dependencies.app.quit()
   }
@@ -198,6 +199,7 @@ export class MultiwindowLifecycle {
   }
 
   private prepareSessionEnd(): void {
+    if (!this.sessionEndQueried) this.scopeRelaunchGeneration++
     this.sessionEndQueried = true
     // Revoke a scoped relaunch even if its cleanup is already in flight.
     if (this.relaunchRequested !== true) this.relaunchRequested = undefined

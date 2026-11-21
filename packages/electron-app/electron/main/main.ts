@@ -8,7 +8,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { appendNodeOption, DeveloperMode } from "./developer-mode"
-import { developerNativeIdentity, developerRelaunchOptions, readDeveloperRelaunch, readElectronEntry, type DeveloperRelaunch } from "./developer-relaunch"
+import { developerNativeIdentity, developerRelaunchOptions, pinElectronRelaunch, readDeveloperRelaunch, readElectronEntry, type DeveloperRelaunch, type ElectronRelaunchArtifact } from "./developer-relaunch"
 import { BrowserController, handleNativeBrowserRequest } from "./browser-controller"
 import { isBrowserUrlAllowed, secureBrowserWebview } from "./browser-webview-security"
 import { protectBrowserGuest, isBrowserAuxiliaryWindow, configureBrowserGuests } from "./browser-guests"
@@ -66,7 +66,8 @@ function resolveStoragePaths(baseUserDataPath: string, profileKey: string, origi
   const scope = resolveStorageScope({
     profileKey, cliConfig: originalConfig, cwd: process.cwd(), baseUserDataPath, packaged: app.isPackaged,
   })
-  const nativeIdentity = developerNativeIdentity(scope.profile, scope.configIdentity, originalConfig, process.execPath, devEntry?.path ?? app.getAppPath())
+  const artifact = pinElectronRelaunch(process.execPath, devEntry?.path ?? app.getAppPath(), relaunchArgs)
+  const nativeIdentity = developerNativeIdentity(scope.profile, scope.configIdentity, originalConfig, artifact)
   if (expectedIdentity !== undefined && expectedIdentity !== nativeIdentity) throw new Error("CodeNomad automation relaunch scope changed")
   // The backend must use the exact desktop data profile for paused Mission metadata. It is
   // handed to the backend command only: in this host CODENOMAD_UPDATE_CHANNEL is a legacy
@@ -78,7 +79,7 @@ function resolveStoragePaths(baseUserDataPath: string, profileKey: string, origi
   const sessionDataPath = join(browserDataPath, "session-data")
   mkdirSync(scope.userDataPath, { recursive: true })
   app.setPath("userData", scope.userDataPath)
-  return { scope, browserDataPath, sessionDataPath, nativeIdentity }
+  return { scope, browserDataPath, sessionDataPath, nativeIdentity, artifact }
 }
 
 function resolveInitialProfile(baseUserDataPath: string): LaunchProfile | undefined {
@@ -147,7 +148,7 @@ try {
 
 function startProfile(profileKey: string, pinned: boolean, relaunch?: DeveloperRelaunch) {
   const config = relaunch ? relaunch.config ?? undefined : resolveSelectedConfig(process.env.CLI_CONFIG, process.cwd())
-  const { scope, browserDataPath, sessionDataPath: profileSessionDataPath, nativeIdentity } =
+  const { scope, browserDataPath, sessionDataPath: profileSessionDataPath, nativeIdentity, artifact } =
     resolveStoragePaths(baseUserDataPath, profileKey, config, relaunch?.restart.nativeIdentity)
   storageScope = scope
   profilePinned = pinned
@@ -156,11 +157,11 @@ function startProfile(profileKey: string, pinned: boolean, relaunch?: DeveloperR
   // The parsed intent travels with the singleton request: Chromium reorders the forwarded argv.
   startPrimaryInstance(() => app.requestSingleInstanceLock(relaunch ? { automationRelaunch: true } : forwardedLaunchData(initialIntent)), () => app.quit(), () => {
     configureBrowserStorage(browserDataPath, sessionDataPath)
-    runPrimary(initialIntent, nativeIdentity, config ?? null, relaunch?.restart)
+    runPrimary(initialIntent, nativeIdentity, artifact, config ?? null, relaunch?.restart)
   })
 }
 
-function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, config: string | null, previousRestart?: DeveloperRelaunch["restart"]) {
+function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, artifact: ElectronRelaunchArtifact, config: string | null, previousRestart?: DeveloperRelaunch["restart"]) {
   cleanupPackagedChromiumStorage()
   const clientState = new ClientStateManager(storageScope.userDataPath, undefined, storageScope.clientStateElectionDirectory
     ? { crossHostElectionDirectory: storageScope.clientStateElectionDirectory }
@@ -178,10 +179,10 @@ function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, config: s
       return !!record && !record.connectOnly && !record.window.isDestroyed() && !record.window.webContents.isDestroyed()
         && !lifecycle.isWindowClosing(record.window)
     },
-    canRelaunch: () => lifecycle.canRelaunchScope(),
+    relaunchScopeGeneration: () => lifecycle.relaunchScopeGeneration(),
     requestRelaunch: restart => lifecycle.requestRelaunch(developerRelaunchOptions({
       profile: storageScope.profile, pinned: profilePinned, config, restart,
-    }, process.execPath, relaunchArgs)),
+    }, artifact)),
   })
   const browserController = new BrowserController((sessionID, url, requestID) => {
     for (const record of registry.all()) {
@@ -251,7 +252,7 @@ function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, config: s
     removeWindowState: (id) => clientState.removeWindow(id), getAllowedRendererOrigins: getAllowedOrigins,
     isTrustedRendererOrigin: isAllowedRendererOrigin,
     navigationLifecycle,
-    ...(previousRestart && { defaultRelaunchOptions: { args: relaunchArgs } }),
+    ...(previousRestart && { defaultRelaunchOptions: { execPath: artifact.execPath, args: artifact.appArgs } }),
   })
   const bindClientState = setupClientStateIPC(ipcMain, clientState, (sender) => registry.resolve(sender), getAllowedOrigins)
 

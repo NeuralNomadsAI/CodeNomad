@@ -73,10 +73,27 @@ fn restart_waits_for_cleanup_and_is_cancelled_when_cleanup_fails() {
 
 #[test]
 fn developer_restart_keeps_the_scoped_plan_through_graceful_shutdown() {
+    let coordinator = ShutdownCoordinator::default();
+    let label = "local-a";
+    let generation = coordinator.reserve_automation_restart(label).unwrap();
+    let requests = coordinator
+        .begin_automation_restart([label.into()], label, generation, developer_restart_plan())
+        .unwrap();
+    coordinator.request_restart();
+    assert!(coordinator.acknowledge_global(label, requests[0].1));
+    assert!(coordinator.begin_cleanup(false));
+    assert!(!coordinator.complete_cleanup(), "the generic restart must not run");
+    assert_eq!(
+        coordinator.state.lock().unwrap().automation_restart.as_ref()
+            .unwrap().handoff.profile,
+        "dev"
+    );
+}
+
+fn developer_restart_plan() -> crate::developer_relaunch::RelaunchPlan {
     use crate::developer_relaunch::{DeveloperRestart, Handoff, RelaunchPlan};
 
-    let coordinator = ShutdownCoordinator::default();
-    let plan = RelaunchPlan {
+    RelaunchPlan {
         executable: "codenomad.exe".into(),
         handoff: Handoff {
             restart: DeveloperRestart {
@@ -90,20 +107,27 @@ fn developer_restart_keeps_the_scoped_plan_through_graceful_shutdown() {
             pinned: true,
             config: None,
         },
-    };
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_query_and_cancel_revoke_unarmed_developer_restart() {
+    let coordinator = ShutdownCoordinator::default();
     let label = "local-a";
-    let requests = coordinator
-        .begin_automation_restart([label.into()], label, plan)
-        .unwrap();
-    coordinator.request_restart();
-    assert!(coordinator.acknowledge_global(label, requests[0].1));
-    assert!(coordinator.begin_cleanup(false));
-    assert!(!coordinator.complete_cleanup(), "the generic restart must not run");
-    assert_eq!(
-        coordinator.state.lock().unwrap().automation_restart.as_ref()
-            .unwrap().handoff.profile,
-        "dev"
-    );
+    let old = coordinator.reserve_automation_restart(label).unwrap();
+    coordinator.begin_windows_session_end([label.into()]);
+    assert!(coordinator.reserve_automation_restart(label).is_err());
+    coordinator.cancel_windows_session_end();
+    let fresh = coordinator.reserve_automation_restart(label).unwrap();
+    let arm = |generation| coordinator.begin_automation_restart([label.into()], label, generation, developer_restart_plan());
+    assert!(arm(old).is_none(), "a delayed restart admitted before query is revoked");
+    coordinator.cancel_automation_restart(old);
+    assert!(coordinator.reserve_automation_restart(label).is_err());
+    assert!(arm(fresh).is_some());
+    coordinator.begin_windows_session_end([label.into()]);
+    coordinator.cancel_windows_session_end();
+    assert!(coordinator.state.lock().unwrap().automation_restart.is_none());
 }
 
 #[test]

@@ -18,7 +18,7 @@ interface DeveloperModeOptions {
   nativeIdentity: string
   windows(): Array<{ windowId: string; windowInstance?: string; focused: boolean }>
   hasWindow(id: string): boolean
-  canRelaunch(): boolean
+  relaunchScopeGeneration(): number | undefined
   requestRelaunch(restart: DeveloperRestart): void
   previousRestart?: DeveloperRestart
   runId?: string
@@ -34,7 +34,7 @@ export function appendNodeOption(value: string | undefined, option: string): str
 export class DeveloperMode {
   private readonly runId: string
   private readonly schedule: (callback: () => void) => void
-  private pendingRestart = false
+  private pendingRestart: number | undefined
 
   constructor(private readonly options: DeveloperModeOptions) {
     this.runId = options.runId ?? randomUUID()
@@ -97,11 +97,14 @@ export class DeveloperMode {
         throw new Error("The inspected CodeNomad window or run changed")
       }
       checkAdmission()
-      if (this.pendingRestart) throw new Error("CodeNomad restart is already pending")
-      if (!this.options.canRelaunch()) throw new Error("The CodeNomad host is shutting down")
-      this.pendingRestart = true
+      const generation = this.options.relaunchScopeGeneration()
+      if (generation === undefined) throw new Error("The CodeNomad host is shutting down")
+      if (this.pendingRestart === generation) throw new Error("CodeNomad restart is already pending")
+      this.pendingRestart = generation
       this.schedule(() => {
-        this.pendingRestart = false
+        if (this.pendingRestart !== generation) return
+        this.pendingRestart = undefined
+        if (this.options.relaunchScopeGeneration() !== generation) return
         try { checkAdmission() } catch { return }
         if (hasExactWindow(expected)) this.options.requestRelaunch(expected)
       })

@@ -39,7 +39,6 @@ pub(crate) struct DeveloperMode {
     devtools_active_port: Option<PathBuf>,
     previous_restart: Option<DeveloperRestart>,
     launch_scope: Option<(PathBuf, crate::identity::LaunchProfile, Option<String>)>,
-    pending_restart: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 pub(crate) fn append_node_option(value: Option<&str>, option: &str) -> String {
@@ -88,7 +87,6 @@ impl DeveloperMode {
             devtools_active_port,
             previous_restart: None,
             launch_scope: None,
-            pending_restart: Default::default(),
         }
     }
 
@@ -301,13 +299,10 @@ impl DeveloperMode {
             .as_ref()
             .ok_or("The inspected CodeNomad executable is unavailable")?;
         self.prove_restart(&expected, |window| Self::exact_window(app, window))?;
+        let label = crate::identity::local_window_label(&expected.window_id)?;
         fence.check()?;
-        use std::sync::atomic::Ordering;
-        if self.pending_restart.swap(true, Ordering::AcqRel) {
-            return Err("CodeNomad restart is already pending".into());
-        }
+        let generation = crate::shutdown::reserve_automation_restart(app, &label)?;
         let app = app.clone();
-        let pending = self.pending_restart.clone();
         let plan = RelaunchPlan {
             executable: executable.clone(),
             handoff: Handoff {
@@ -319,10 +314,8 @@ impl DeveloperMode {
         };
         std::thread::spawn(move || {
             std::thread::sleep(RESTART_DELAY);
-            if fence.check().is_ok() && Self::exact_window(&app, &plan.handoff.restart) {
-                crate::shutdown::request_automation_restart(app, plan);
-            }
-            pending.store(false, Ordering::Release);
+            let current = fence.check().is_ok() && Self::exact_window(&app, &plan.handoff.restart);
+            crate::shutdown::finish_automation_restart(app, &label, generation, current.then_some(plan));
         });
         Ok(json!(expected))
     }
