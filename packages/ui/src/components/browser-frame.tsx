@@ -105,7 +105,7 @@ interface BrowserFrameProps {
   onViewportChange?: (viewport: BrowserViewportPreset) => void
   onHistoryChange?: (history: BrowserHistory) => void
   onCancelNavigation?: () => void
-  onNavigationStart?: () => void | Promise<void>
+  onNavigationStart?: () => Promise<boolean> | undefined
   commentBridge?: boolean
   commentMode?: boolean
   onToggleCommentMode?: () => void
@@ -153,7 +153,9 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     if (target && props.active !== false && props.instanceId === target.instanceId) props.onNativeRegistration?.(target.id)
   })
   const [frameSrc, setFrameSrc] = createSignal(props.initialUrl)
-  const [pathInput, setPathInput] = createSignal(props.initialAddress ?? "/")
+  const [liveAddress, setPathInput] = createSignal(props.initialAddress ?? "/")
+  const [addressDraft, setAddressDraft] = createSignal<string>()
+  const pathInput = () => addressDraft() ?? liveAddress()
   const [viewportPreset, setViewportPreset] = createSignal<BrowserViewportPreset>(props.initialViewport ?? "responsive")
   const commitViewport = (preset: BrowserViewportPreset) => { setViewportPreset(preset); props.onViewportChange?.(preset) }
   const [viewportMenuOpen, setViewportMenuOpen] = createSignal(false)
@@ -212,7 +214,10 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   const [historyBusy, setHistoryBusy] = createSignal(false)
   let historyRead = 0
   let historyTravelVersion = 0
+  let retiringOpenHistory: Promise<void> | undefined
+  let nativeLocation: { requestId?: string; url: string } | undefined
   const historyGuestId = () => webviewReady ? webviewRef?.getWebContentsId() : undefined
+  const recordNativeLocation = (url: string) => { nativeLocation = { requestId: props.openRequestId, url } }
   const logicalHistory = (value: NativeBrowserHistory): NativeBrowserHistory => {
     if (!props.isolatedSource) return value
     const current = value.entries[value.index]?.id
@@ -240,14 +245,14 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     setHistoryBusy(journal?.traversing ?? false)
   }
   const captureHistory = async (confirmedUrl?: string) => {
-    if (props.openRequestId || !journal || !capabilities.history || disposed
+    if (props.openRequestId || retiringOpenHistory || !journal || !capabilities.history || disposed
       || !(browserHost === "electron" ? webviewReady : untrack(registrationReady))) return
     const sequence = ++historyRead
     const registration = browserRegistrationId
     const guestId = historyGuestId()
     try {
       const value = await readBrowserHistory(registration, guestId)
-      if (props.openRequestId || disposed || sequence !== historyRead || registration !== browserRegistrationId || guestId !== historyGuestId()) return
+      if (props.openRequestId || retiringOpenHistory || disposed || sequence !== historyRead || registration !== browserRegistrationId || guestId !== historyGuestId()) return
       // CDP can report the destination cursor before Chromium emits its commit
       // event. Publishing that intent as a prop would start a second navigation.
       const currentUrl = confirmedUrl ?? (browserHost === "electron" ? webviewObservedUrl : nativeTarget())
@@ -262,6 +267,26 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         reportNativeError(error)
       }
     }
+  }
+
+  const startNavigation = () => {
+    const requestId = props.openRequestId
+    const location = nativeLocation
+    const retirement = props.onNavigationStart?.()
+    if (retiringOpenHistory) return retiringOpenHistory
+    if (!requestId || location?.requestId !== requestId || !retirement || !journal || !capabilities.history) return retirement
+    const registration = browserRegistrationId
+    const guestId = historyGuestId()
+    return retiringOpenHistory = retirement.then(async released => {
+      if (!released || disposed || props.openRequestId || registration !== browserRegistrationId || guestId !== historyGuestId()) return
+      // Keep the cancelled open's native entry out of the journal, even when a
+      // subsequent snapshot includes it between two real visits.
+      const value = await readBrowserHistory(registration, guestId).catch(() => undefined)
+      if (!value) return
+      const entry = value.entries[value.index]
+      if (!disposed && !props.openRequestId && registration === browserRegistrationId && guestId === historyGuestId()
+        && nativeLocation === location && entry?.url === location.url) journal.retireEntry(entry.id)
+    }).finally(() => { retiringOpenHistory = undefined })
   }
 
   const framePolicy = getBrowserFramePolicy(runtimeEnv, { trustedSameOrigin: props.trustedSameOrigin, isolatedOrigin: props.isolatedSource && !props.opaqueSource })
@@ -520,6 +545,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       const address = props.isolatedSource ? props.sourceAddress?.(url) : url
       if (!address) { navigateFromGuest(url); return }
       webviewObservedUrl = url
+      recordNativeLocation(url)
       setPathInput(address)
       props.onFrameLocation?.(address)
       void captureHistory()
@@ -745,6 +771,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         const address = props.isolatedSource ? props.sourceAddress?.(url) : url
         if (!address) { navigateFromGuest(url); return }
         setNativeTarget(url)
+        recordNativeLocation(url)
         setPathInput(address)
         props.onFrameLocation?.(address)
         void captureHistory()
@@ -841,7 +868,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       if (pending) {
         openSource = untrack(() => props.proxyBasePath)
         historyBeforeOpen = untrack(() => props.initialHistory)
-        addressBeforeOpen = untrack(pathInput)
+        addressBeforeOpen = untrack(liveAddress)
         ++historyTravelVersion
         journal?.cancel()
         setHistoryBusy(false)
@@ -859,7 +886,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
             void captureHistory(address)
           }
         }
-        if (initialAddress && pathInput() === addressBeforeOpen) setPathInput(initialAddress)
+        if (initialAddress && liveAddress() === addressBeforeOpen) setPathInput(initialAddress)
         appliedInitialSource = initialUrl
         appliedInitialAddress = initialAddress
         return
@@ -918,7 +945,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     if (journal) { void traverseHistory(-1); return }
     const instanceId = props.instanceId
     try {
-      const retirement = props.onNavigationStart?.()
+      const retirement = startNavigation()
       if (retirement) await retirement
     } catch (error) { reportNativeError(error); return }
     if (!canNavigate(instanceId)) return
@@ -939,7 +966,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     const index = journal.value.index + offset
     if (index < 0 || index >= journal.value.urls.length) return
     const instanceId = props.instanceId
-    const retirement = props.onNavigationStart?.()
+    const retirement = startNavigation()
     pendingTauriNavigation = undefined
     setHistoryBusy(true)
     const version = ++historyTravelVersion
@@ -974,12 +1001,14 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     }
   }
 
+  const initialOpenPending = () => Boolean(initialOpenRequestId && props.openRequestId === initialOpenRequestId)
   const handleRefresh = async () => {
+    if (initialOpenPending()) return
     const instanceId = props.instanceId
     supersedeHistoryTraversal()
     const version = historyTravelVersion
     try {
-      const retirement = props.onNavigationStart?.()
+      const retirement = startNavigation()
       if (retirement) await retirement
     } catch (error) { reportNativeError(error); return }
     if (version !== historyTravelVersion || !canNavigate(instanceId)) return
@@ -1030,13 +1059,15 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       if (nativeBrowserAvailable) {
         try {
           const target = normalizeBrowserPreviewUrl(pathInput())
+          const submittedDraft = addressDraft()
           const instanceId = props.instanceId
           supersedeHistoryTraversal()
           const version = historyTravelVersion
-          const retirement = props.onNavigationStart?.()
+          const retirement = startNavigation()
           if (retirement) await retirement
           if (version !== historyTravelVersion || !canNavigate(instanceId)) return
           setPathInput(target)
+          setAddressDraft(current => current === submittedDraft ? undefined : current)
           if (nativeMode() && webviewReady && webviewRef?.getURL() === target) {
             webviewRef.reload()
           } else {
@@ -1085,7 +1116,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
             <ArrowRight class="h-4 w-4" />
           </button>
         </Show>
-        <button type="button" class="new-tab-button" onClick={handleRefresh} title={props.labels.refresh} aria-label={props.labels.refresh}>
+        <button type="button" class="new-tab-button" onClick={handleRefresh} disabled={initialOpenPending()} title={props.labels.refresh} aria-label={props.labels.refresh}>
           <RefreshCw class="h-4 w-4" />
         </button>
         <Show when={props.lockedBaseLabel}>
@@ -1100,7 +1131,10 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
             style={{ background: "var(--surface-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-base)" }}
             value={pathInput()}
             disabled={navigating()}
-            onInput={(event) => setPathInput(event.currentTarget.value)}
+            onInput={(event) => {
+              if (nativeBrowserAvailable && !props.isolatedSource) setAddressDraft(event.currentTarget.value)
+              else setPathInput(event.currentTarget.value)
+            }}
             spellcheck={false}
             autocomplete="off"
             autocorrect="off"

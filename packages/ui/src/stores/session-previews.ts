@@ -124,10 +124,11 @@ export function retireSessionPreviewOpen(request: NonNullable<SessionPreviewReco
   return retirement
 }
 
-export function startSessionPreviewNavigation(sessionId: string, instanceId: string): Promise<void> | undefined {
+export function startSessionPreviewNavigation(sessionId: string, instanceId: string): Promise<boolean> | undefined {
   const request = getSessionPreview(sessionId, instanceId)?.nativeOpen
   const retirement = request?.instanceId === instanceId && retireSessionPreviewOpen(request, true).then(released => {
     if (released) settleSessionPreviewOpen(sessionId, instanceId, request.requestID, undefined, true)
+    return released
   })
   beginGesture({ sessionId, instanceId })
   return retirement || undefined
@@ -216,6 +217,7 @@ async function openSessionPreview(sessionId: string, url: string, instanceId: st
       history: nativeOpen ? baseHistory : new BrowserHistoryJournal(baseHistory).visitUrl(preview.targetUrl) }
     if (nativeOpen || record.nativeOpen) record = { ...record, nativeOpen: nativeOpen && { ...nativeOpen, created: preview !== existing } }
     if (record !== existing) publishPreview(record)
+    if (!nativeOpen && existing?.nativeOpen) void retireSessionPreviewOpen(existing.nativeOpen).catch(() => {})
     if (nativeOpen) showSessionPreview(sessionId, instanceId, operation)
     else {
       storePreview(sessionId, instanceId, { ...record, mode: "preview" })
@@ -230,7 +232,7 @@ function restoreSessionPreview(sessionId: string, instanceId: string): Promise<S
   if (!isInstanceOccurrenceOpen(instanceId)) return Promise.reject(new DOMException("Preview occurrence is closed", "AbortError"))
   const storageKey = previewKey(sessionId, instanceId)
   const current = getSessionPreview(sessionId, instanceId)
-  if (current) return Promise.resolve(current)
+  if (current && !current.nativeOpen?.created) return Promise.resolve(current)
   adoptLegacyTabPreview(instanceId, sessionId)
   const stored = savedPreview(sessionId, instanceId)
   if (!stored?.targetUrl) return Promise.resolve(null)
@@ -248,7 +250,14 @@ function restoreSessionPreview(sessionId: string, instanceId: string): Promise<S
     const record: SessionPreviewRecord = { ...preview, sessionId, mode: tabPreview(sessionId, instanceId)?.mode ?? "chat", storageKey, instanceId,
       owner: { client: operation.client, signal: operation.signal },
       viewport: stored.viewport, history: parseBrowserHistory(stored.history, preview.targetUrl) }
+    const superseded = getSessionPreview(sessionId, instanceId)
+    if (superseded && !superseded.nativeOpen?.created) {
+      void releasePreview(operation.client, preview)
+      return superseded
+    }
     publishPreview(record)
+    if (superseded?.nativeOpen) void retireSessionPreviewOpen(superseded.nativeOpen).catch(() => {})
+    if (superseded) void releasePreview(superseded.owner.client, superseded)
     return record
   }).finally(() => {
     finishOperation(storageKey, operation)

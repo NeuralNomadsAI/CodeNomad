@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, type Component } from "solid-js"
+import { createEffect, createMemo, createSignal, For, onCleanup, untrack, type Component } from "solid-js"
 import { Portal } from "solid-js/web"
 import { useI18n } from "../lib/i18n"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
@@ -57,7 +57,7 @@ export const SessionPreviewHost: Component = () => {
     onCleanup(() => { observer.disconnect(); drawers.disconnect(); window.removeEventListener("resize", measure); window.removeEventListener("scroll", measure, true) })
   })
   return <Portal><For each={ids()}>{id => {
-    const preview = () => sessionPreviews().get(id)!
+    const preview = createMemo<SessionPreviewRecord>(previous => sessionPreviews().get(id) ?? previous, untrack(() => sessionPreviews().get(id)!))
     const activeSlot = () => {
       const current = slot()
       return !covered() && current && previewKey(current.sessionId, current.instanceId) === id ? current : undefined
@@ -91,6 +91,12 @@ function buildCommentMarkdown(target: BrowserFrameElementTarget, comment: string
 const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
   const { t } = useI18n()
   let reportedOpen: SessionPreviewRecord["nativeOpen"]
+  const frame = createMemo<{ key: string; token: string; provisional?: boolean }>(previous => {
+    const { token, nativeOpen } = props.preview
+    // A fresh agent guest may still be owned by a native construction claim.
+    const replaced = previous?.provisional && previous.token !== token
+    return { key: replaced ? token : previous?.key ?? token, token, provisional: nativeOpen?.created }
+  })
   const [commentMode, setCommentMode] = createSignal(false)
   function showNavigationError(error: unknown) {
     if (props.active === false || props.preview.owner.signal.aborted) return
@@ -121,7 +127,7 @@ const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
 
   return (
     <div class="window-shell flex flex-1 min-h-0 flex-col bg-surface-canvas" style={{ display: props.active === false ? "none" : "flex" }} inert={props.active === false} aria-hidden={props.active === false}>
-      <BrowserFrame
+      <For each={[frame().key]}>{() => <BrowserFrame
         active={props.active}
         instanceId={props.preview.capability ? undefined : props.instanceId}
         openRequestId={props.preview.nativeOpen?.requestID}
@@ -182,7 +188,7 @@ const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
         commentMode={commentMode()}
         onToggleCommentMode={() => setCommentMode((value) => !value)}
         onCommentTarget={(target) => void handleCommentTarget(target)}
-      />
+      />}</For>
     </div>
   )
 }

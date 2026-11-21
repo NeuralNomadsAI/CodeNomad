@@ -361,8 +361,12 @@ claim before attachment; Tauri checks it before construction and at publication.
 Retirement before acknowledgement releases the abandoned guest and record; a prior
 preview remains available.
 An explicit surface gesture retires the superseded request immediately. A user navigation
-on its acknowledged guest retires a queued open and retains that guest. The native
-dispatch rechecks the exact reservation immediately before navigating.
+on its acknowledged guest retires the open and retains that guest. Before dispatching
+the user's navigation, the journal excludes the retired native entry by identity.
+An explicit open from another occurrence can replace the first agent open's provisional
+guest. Refresh is disabled until that first open settles; native location notifications
+leave unsubmitted address edits intact. The native dispatch rechecks the exact
+reservation immediately before navigating.
 
 The native host issues the URL only after the exact visible registration is admitted.
 It returns that navigation's committed URL, including redirects, after the main document's

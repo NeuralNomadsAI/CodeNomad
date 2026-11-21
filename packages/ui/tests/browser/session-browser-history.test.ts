@@ -1128,6 +1128,83 @@ test("user navigation retires the acknowledged open before sending native naviga
   } finally { await page.close() }
 })
 
+test("Back skips an agent open that committed but was cancelled before finishing", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
+  try {
+    await prepare(page, "tauri")
+    const [a, b, c] = ["a", "b", "c"].map(path => `${base}/page/${path}`)
+    await page.evaluate(url => (window as any).fixture.openPreview("session", url), a)
+    await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.payload?.action === "history"))
+    await page.evaluate(url => (window as any).fixture.openNativePreview("pending-load", url), b)
+    await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_claim_open"))
+    await page.evaluate(url => {
+      const { native } = (window as any).fixture
+      const { registrationId } = native.calls.find((call: any) => call.command === "browser_target_claim_open").response
+      native.navigate(registrationId, url) // Main document committed, but the agent's load receipt is still pending.
+    }, b)
+    const address = page.getByRole("textbox", { name: "Preview URL", exact: true })
+    assert.equal(await address.inputValue(), b)
+    assert.deepEqual((await preview(page, "session")).history, { urls: [a], index: 0 })
+    await address.fill(c)
+    await address.press("Enter")
+    await page.waitForFunction(url => (window as any).fixture.savedPreview("session").targetUrl === url, c)
+    assert.deepEqual((await preview(page, "session")).history, { urls: [a, c], index: 1 })
+    await page.locator('[data-preview-instance="header-windows"]').getByRole("button", { name: "Back", exact: true }).click()
+    await page.waitForFunction(url => (window as any).fixture.preview("session").targetUrl === url, a)
+    assert.deepEqual((await preview(page, "session")).history, { urls: [a, c], index: 0 })
+  } finally { await page.close() }
+})
+
+test("a duplicate's explicit preview survives retirement of the agent's first open", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  try {
+    await prepare(page, "tauri", "&duplicate=1")
+    await page.evaluate(url => (window as any).fixture.openNativePreview("first", url), `${base}/page/agent`)
+    await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_claim_open"))
+    await page.evaluate(() => {
+      const f = (window as any).fixture
+      f.selectOccurrence("header-duplicate")
+      document.querySelector<HTMLButtonElement>('[data-occurrence="header-duplicate"] [aria-label="Open web preview"]')!.click()
+    })
+    await page.waitForFunction(() => (window as any).fixture.preview("session", "header-duplicate")?.mode === "preview")
+    await page.evaluate(() => (window as any).fixture.settleNativePreview("first"))
+    const address = page.locator('[data-preview-instance="header-duplicate"]').getByRole("textbox", { name: "Preview URL" })
+    const registrations = await page.waitForFunction(() => {
+      const ids = (window as any).fixture.native.calls.filter((call: any) => call.command === "browser_target_register")
+        .map((call: any) => call.payload.registrationId)
+      return ids.length === 2 && ids
+    })
+    assert.equal(new Set(await registrations.jsonValue()).size, 2, "the replacement owns its native registration")
+    assert.equal(await address.inputValue(), "http://localhost:3000")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("the first agent open cannot refresh the neutral document or erase an address draft", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
+  try {
+    await prepare(page, "tauri")
+    const requested = `${base}/page/agent`, draft = `${base}/page/draft`
+    await page.evaluate(url => (window as any).fixture.openNativePreview("first", url), requested)
+    await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_claim_open"))
+    const refresh = page.locator('[data-preview-instance="header-windows"]').getByRole("button", { name: "Refresh", exact: true })
+    assert.equal(await refresh.isDisabled(), true)
+    const address = page.getByRole("textbox", { name: "Preview URL", exact: true })
+    await address.fill(draft)
+    await page.evaluate(url => {
+      const f = (window as any).fixture
+      const { registrationId } = f.native.calls.find((call: any) => call.command === "browser_target_claim_open").response
+      f.native.navigate(registrationId, url)
+      f.settleNativePreview("first", url)
+    }, requested)
+    assert.equal(await refresh.isEnabled(), true)
+    assert.equal(await address.inputValue(), draft)
+    assert.equal((await preview(page, "session")).targetUrl, requested)
+  } finally { await page.close() }
+})
+
 test("Tauri retains hidden native registrations and restores the correct session target", async () => {
   const page = await browser.newPage({ userAgent: "Windows fixture", viewport: { width: 1200, height: 900 } })
   const errors: string[] = []
