@@ -111,7 +111,7 @@ struct Inner {
     // pending creation, hidden ownership and native disposal.
     attachments: HashMap<String, (String, u64)>,
     published_generations: HashMap<String, (String, u64)>,
-    renderer_versions: HashMap<String, u64>,
+    renderer_versions: HashMap<String, (u64, Option<String>)>,
     page_leases: HashMap<String, page::PageLease>,
     navigation_versions: HashMap<String, u64>,
     page_load_sequence: u64,
@@ -120,6 +120,12 @@ struct Inner {
 }
 
 impl Inner {
+    fn renderer_version(&self, window_label: &str) -> u64 {
+        self.renderer_versions
+            .get(window_label)
+            .map_or(0, |(version, _)| *version)
+    }
+
     fn open_attachment(&self, request_id: &str, session_id: &str) -> Result<Option<u64>, String> {
         let claim = self
             .open_claims
@@ -208,13 +214,7 @@ impl BrowserController {
         renderer_version: u64,
     ) -> Result<(), String> {
         let mut inner = self.inner.0.lock().map_err(|error| error.to_string())?;
-        if inner
-            .renderer_versions
-            .get(&registration.window_label)
-            .copied()
-            .unwrap_or(0)
-            != renderer_version
-        {
+        if inner.renderer_version(&registration.window_label) != renderer_version {
             return Err("Browser preview renderer is no longer current".into());
         }
         if !registration.isolated {
@@ -338,13 +338,24 @@ impl BrowserController {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "browser-parent-qualification"))]
     pub(crate) fn renderer_version(&self, window_label: &str) -> Result<u64, String> {
         let inner = self.inner.0.lock().map_err(|error| error.to_string())?;
-        Ok(inner
+        Ok(inner.renderer_version(window_label))
+    }
+
+    pub(crate) fn renderer_version_for_document(
+        &self,
+        window_label: &str,
+        document: &str,
+    ) -> Result<u64, String> {
+        let inner = self.inner.0.lock().map_err(|error| error.to_string())?;
+        inner
             .renderer_versions
             .get(window_label)
-            .copied()
-            .unwrap_or(0))
+            .filter(|(_, nonce)| nonce.as_deref() == Some(document))
+            .map(|(version, _)| *version)
+            .ok_or_else(|| "Browser preview renderer is no longer current".into())
     }
 
     fn publish_registration(
@@ -355,13 +366,7 @@ impl BrowserController {
     ) -> Result<Option<Registration>, String> {
         let (inner, ready) = &*self.inner;
         let mut inner = inner.lock().map_err(|error| error.to_string())?;
-        if inner
-            .renderer_versions
-            .get(&registration.window_label)
-            .copied()
-            .unwrap_or(0)
-            != renderer_version
-        {
+        if inner.renderer_version(&registration.window_label) != renderer_version {
             return Err("Browser preview renderer is no longer current".to_string());
         }
         let id = registration.registration_id.clone();
@@ -711,6 +716,10 @@ impl BrowserController {
         if attachment.is_some_and(|(owner, _)| owner != window_label) {
             return false;
         }
+        let generation = attachment.map(|(_, generation)| *generation);
+        if claim.attachment.is_some() && claim.attachment != generation {
+            return false;
+        }
         if claim
             .fence
             .as_ref()
@@ -726,7 +735,6 @@ impl BrowserController {
         {
             return false;
         }
-        let generation = attachment.map(|(_, generation)| *generation);
         let claim = inner.open_claims.get_mut(request_id).unwrap();
         claim.owner = Some(window_label.to_string());
         claim.attachment = claim.attachment.or(generation);
@@ -768,23 +776,39 @@ impl BrowserController {
         Some(claim.clone())
     }
 
-    pub(crate) fn renderer_page_started<R: tauri::Runtime>(&self, webview: &tauri::Webview<R>) {
+    pub(crate) fn renderer_page_started<R: tauri::Runtime>(
+        &self,
+        webview: &tauri::Webview<R>,
+    ) -> Option<String> {
         // A child navigation never ends the owning renderer's lifetime. A full
         // primary-renderer load does: its native children otherwise survive reload.
         if webview.label() == webview.window().label()
             && crate::identity::local_window_id(webview.label()).is_ok()
         {
-            self.remove_window(webview.app_handle(), webview.label());
+            let document = uuid::Uuid::new_v4().to_string();
+            self.replace_renderer(webview.app_handle(), webview.label(), Some(document.clone()));
+            return Some(document);
         }
+        None
     }
 
     pub(crate) fn remove_window<R: tauri::Runtime>(&self, app: &AppHandle<R>, window_label: &str) {
+        self.replace_renderer(app, window_label, None);
+    }
+
+    fn replace_renderer<R: tauri::Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        window_label: &str,
+        document: Option<String>,
+    ) {
         let (retries, children) = if let Ok(mut inner) = self.inner.0.lock() {
-            let version = inner
+            let (version, current_document) = inner
                 .renderer_versions
                 .entry(window_label.to_string())
                 .or_default();
             *version = version.wrapping_add(1);
+            *current_document = document;
             inner
                 .published_generations
                 .retain(|_, (owner, _)| owner != window_label);

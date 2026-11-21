@@ -1,8 +1,11 @@
 use super::*;
+use crate::browser_registration_ipc::{route, RegistrationRequest};
 use std::collections::BTreeMap;
+use tauri::ipc::CallbackFn;
 use tauri::test::{mock_builder, mock_context, noop_assets, MockRuntime};
 use tauri::utils::acl::{capability::Capability, manifest::Manifest, resolved::Resolved};
-use tauri::{Webview, WebviewUrl, WebviewWindowBuilder};
+use tauri::webview::InvokeRequest;
+use tauri::{Webview, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 const OWNER: &str = "local-11111111-1111-4111-8111-111111111111";
 const OTHER: &str = "local-22222222-2222-4222-8222-222222222222";
@@ -318,6 +321,32 @@ fn native_open_claim_cannot_be_reclaimed_after_deadline_or_backend_retirement() 
 }
 
 #[test]
+fn native_open_claim_cannot_be_reclaimed_after_its_exact_attachment_is_disposed() {
+    let controller = BrowserController::new(std::path::PathBuf::new());
+    let mut registration = registration();
+    controller.inner.0.lock().unwrap().open_claims.insert(
+        "pending".into(),
+        OpenClaim {
+            session_id: registration.session_id.clone(),
+            url: "https://example.com/".into(),
+            owner: None,
+            failed_owners: HashSet::new(),
+            attachment: None,
+            fence: None,
+        },
+    );
+
+    assert!(controller.claim_open(OWNER, "pending"));
+    controller.reserve_attachment(&registration, 0).unwrap();
+    assert!(controller.claim_open(OWNER, "pending"));
+    controller.release_attachment(&registration);
+    assert!(!controller.claim_open(OWNER, "pending"));
+    registration.generation += 1;
+    controller.reserve_attachment(&registration, 0).unwrap();
+    assert!(!controller.claim_open(OWNER, "pending"));
+}
+
+#[test]
 fn a_different_native_navigation_supersedes_a_bound_load_even_if_it_finishes_late() {
     let (controller, expected) = controller_with_registration();
     let sequence = controller
@@ -418,14 +447,14 @@ fn reserves_the_session_until_native_close_and_fences_stale_renderers() {
     controller.release_attachment(&other);
 
     // A queued old-renderer request cannot claim under the next renderer.
-    controller.renderer_page_started(&owner);
+    let _ = controller.renderer_page_started(&owner);
     assert!(controller.reserve_attachment(&current, 0).is_err());
     let version = controller.renderer_version(OWNER).unwrap();
     controller
         .reserve_attachment(&current, version)
         .unwrap();
     // Reload invalidates an in-flight creation, but keeps its slot until rollback.
-    controller.renderer_page_started(&owner);
+    let _ = controller.renderer_page_started(&owner);
     assert!(controller
         .publish_registration(current.clone(), version, "https://example.com/")
         .is_err());
@@ -437,12 +466,14 @@ fn reserves_the_session_until_native_close_and_fences_stale_renderers() {
     controller.reserve_attachment(&other, 0).unwrap();
 }
 
-#[test]
-fn registration_ipc_keeps_the_issuing_renderer_version_through_the_queue() {
-    use crate::browser_registration_ipc::{route, RegistrationRequest};
-    use tauri::ipc::CallbackFn;
-    use tauri::webview::InvokeRequest;
+struct RegistrationIpc {
+    _app: tauri::App<MockRuntime>,
+    window: WebviewWindow<MockRuntime>,
+    controller: BrowserController,
+    queued: Arc<Mutex<Option<RegistrationRequest<MockRuntime>>>>,
+}
 
+fn registration_ipc() -> RegistrationIpc {
     let controller = BrowserController::new(std::path::PathBuf::new());
     let queued = Arc::new(Mutex::new(None::<RegistrationRequest<MockRuntime>>));
     let app = mock_builder()
@@ -463,52 +494,97 @@ fn registration_ipc_keeps_the_issuing_renderer_version_through_the_queue() {
         ))
         .build(crate::app_context())
         .unwrap();
-    let url = tauri::Url::parse("http://127.0.0.1:32123/").unwrap();
-    let ipc = |owner, registration_id| {
-        let window = WebviewWindowBuilder::new(&app, owner, WebviewUrl::External(url.clone()))
-            .build()
-            .unwrap();
-        tauri::test::get_ipc_response(
-            &window,
-            InvokeRequest {
-                cmd: "browser_target_register".into(),
-                callback: CallbackFn(0),
-                error: CallbackFn(1),
-                url: url.clone(),
-                body: json!({ "payload": {
+    let window = WebviewWindowBuilder::new(
+        &app,
+        OWNER,
+        WebviewUrl::External("http://127.0.0.1:32123/".parse().unwrap()),
+    )
+    .build()
+    .unwrap();
+    RegistrationIpc {
+        _app: app,
+        window,
+        controller,
+        queued,
+    }
+}
+
+impl RegistrationIpc {
+    fn request(&self, registration_id: &str, document: &str) -> InvokeRequest {
+        InvokeRequest {
+            cmd: "browser_target_register".into(),
+            callback: CallbackFn(0),
+            error: CallbackFn(1),
+            url: self.window.url().unwrap(),
+            body: json!({
+                "rendererDocument": document,
+                "payload": {
                     "sessionId": "session",
                     "registrationId": registration_id,
                     "url": "https://example.com/",
                     "visible": false,
                     "bounds": { "x": 0, "y": 0, "width": 300, "height": 200 }
-                }})
-                .into(),
-                headers: Default::default(),
-                invoke_key: tauri::test::INVOKE_KEY.into(),
-            },
-        )
-        .unwrap();
-        queued.lock().unwrap().take().unwrap()
-    };
-    let reserve = |request: RegistrationRequest<MockRuntime>| {
-        let registration = Registration {
-            window_label: request.window.label().into(),
-            session_id: request.payload.session_id,
-            registration_id: request.payload.registration_id,
-            ..registration()
-        };
-        request
-            .controller
-            .reserve_attachment(&registration, request.renderer_version)
-    };
+                }
+            })
+            .into(),
+            headers: Default::default(),
+            invoke_key: tauri::test::INVOKE_KEY.into(),
+        }
+    }
 
-    let old = ipc(OWNER, "old-preview");
-    controller.renderer_page_started(&app.get_webview(OWNER).unwrap());
+    fn deliver(&self, request: InvokeRequest) -> Result<RegistrationRequest<MockRuntime>, Value> {
+        tauri::test::get_ipc_response(&self.window, request)?;
+        Ok(self.queued.lock().unwrap().take().unwrap())
+    }
+
+    fn load_document(&self) -> String {
+        self.controller
+            .renderer_page_started(self.window.as_ref())
+            .unwrap()
+    }
+}
+
+fn reserve_ipc(request: RegistrationRequest<MockRuntime>) -> Result<(), String> {
+    let registration = Registration {
+        window_label: request.window.label().into(),
+        session_id: request.payload.session_id,
+        registration_id: request.payload.registration_id,
+        ..registration()
+    };
+    request
+        .controller
+        .reserve_attachment(&registration, request.renderer_version)
+}
+
+#[test]
+fn registration_ipc_keeps_the_issuing_renderer_version_through_the_queue() {
+    let ipc = registration_ipc();
+    let old = ipc
+        .deliver(ipc.request("old-preview", &ipc.load_document()))
+        .unwrap();
+    let current = ipc.load_document();
     assert_eq!(
-        reserve(old).unwrap_err(),
+        reserve_ipc(old).unwrap_err(),
         "Browser preview renderer is no longer current"
     );
-    reserve(ipc(OTHER, "new-preview")).unwrap();
+    reserve_ipc(ipc.deliver(ipc.request("new-preview", &current)).unwrap()).unwrap();
+}
+
+#[test]
+fn registration_ipc_delivered_after_reload_must_not_reserve() {
+    let ipc = registration_ipc();
+    let old = ipc.request("old-preview", &ipc.load_document());
+    let current = ipc.load_document();
+
+    assert_eq!(
+        ipc.deliver(old)
+            .err()
+            .expect("old document reached the worker"),
+        "Browser preview renderer is no longer current"
+    );
+    assert!(ipc.queued.lock().unwrap().is_none());
+    assert!(ipc.controller.inner.0.lock().unwrap().attachments.is_empty());
+    reserve_ipc(ipc.deliver(ipc.request("new-preview", &current)).unwrap()).unwrap();
 }
 
 #[test]
@@ -532,7 +608,7 @@ fn only_primary_renderer_reload_disposes_its_native_browser_children() {
             .registrations
             .insert(unrelated.registration_id.clone(), unrelated);
     }
-    controller.renderer_page_started(&child);
+    assert!(controller.renderer_page_started(&child).is_none());
     assert!(app.get_webview(child.label()).is_some());
     assert!(controller
         .inner
@@ -542,7 +618,7 @@ fn only_primary_renderer_reload_disposes_its_native_browser_children() {
         .registrations
         .contains_key("preview"));
 
-    controller.renderer_page_started(&owner);
+    let _ = controller.renderer_page_started(&owner);
     assert!(controller
         .check_page_state(&lease, Instant::now() + Duration::from_secs(1))
         .is_err());

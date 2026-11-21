@@ -144,6 +144,7 @@ declare global {
       __CODENOMAD_EVENTS_URL__?: string
        __CODENOMAD_RUNTIME_HOST__?: "electron" | "tauri" | "web"
        __CODENOMAD_BROWSER_CAPABILITIES__?: import("../lib/native/browser").BrowserHostCapabilities
+       readonly __CODENOMAD_BROWSER_DOCUMENT__?: string
        __CODENOMAD_WINDOW_CONTEXT__?: "local" | "remote" | "preferences"
        readonly __CODENOMAD_WINDOW_ID__?: string | null
        __CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?: () => Promise<void>

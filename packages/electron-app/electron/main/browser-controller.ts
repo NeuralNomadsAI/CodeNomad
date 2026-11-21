@@ -218,6 +218,7 @@ export class BrowserController {
     if (!claim || claim.abandoned || claim.failedOwners.has(owner) || (claim.owner && claim.owner !== owner)) return false
     const attachment = this.attachments.get(claim.sessionID)
     if (attachment && attachment.owner !== owner) return false
+    if (claim.attachment && claim.attachment !== attachment) return false
     claim.owner = owner
     if (attachment) claim.attachment ??= attachment
     return true

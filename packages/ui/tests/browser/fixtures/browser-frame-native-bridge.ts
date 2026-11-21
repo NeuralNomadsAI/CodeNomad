@@ -86,6 +86,7 @@ window.__CODENOMAD_BROWSER_CAPABILITIES__ = { embedding: true, history: true,
   ...(["macos","linux"].includes(new URLSearchParams(location.search).get("platform")??"") ? {reason:"webkit" as const}: {}) }
 Object.assign(window, {
   nativeFixture,
+  __CODENOMAD_BROWSER_DOCUMENT__: "fixture-renderer",
   __TAURI_INTERNALS__: {
     invoke,
     transformCallback(callback: (event: unknown) => void) {

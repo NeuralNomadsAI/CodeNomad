@@ -380,18 +380,24 @@ describe("BrowserController preview lifecycle", () => {
     assert.equal(h.controller.permitAttachment(other, params), true)
   })
 
-  it("does not reroute an agent after its native guest starts construction", async () => {
+  it("cannot reclaim or reroute an open after its exact guest is destroyed", async () => {
     const requests: string[] = []
     const h = createHarness((_session, _url, id) => requests.push(id))
     const url = "https://example.com/"
     const open = h.controller.execute("session", { action: "open", url })
+    const rejected = assert.rejects(open, /ownership changed/)
     assert.equal(h.controller.claimOpen(h.owner, requests[0]), true)
-    assert.equal(h.controller.permitAttachment(h.owner, { src: url, webpreferences: "codenomadSession=session" }), true)
+    const params = { src: url, webpreferences: "codenomadSession=session" }
+    assert.equal(h.controller.permitAttachment(h.owner, params), true)
     const { guest, events } = createGuest({ id: 81, owner: h.owner })
     h.controller.guestCreated(guest)
+    assert.equal(h.controller.claimOpen(h.owner, requests[0]), true)
     events.emit("destroyed")
+    assert.equal(h.controller.claimOpen(h.owner, requests[0]), false)
+    assert.equal(h.controller.permitAttachment(h.owner, params), true)
+    assert.equal(h.controller.claimOpen(h.owner, requests[0]), false)
     assert.equal(h.controller.releaseOpen(h.owner, requests[0]), true)
-    await assert.rejects(open, /ownership changed/)
+    await rejected
     assert.equal(requests.length, 1)
   })
 

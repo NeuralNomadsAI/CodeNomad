@@ -2006,34 +2006,31 @@ fn main() {
                 if !webview.label().starts_with("remote-") {
                     webview.app_handle().state::<device_speech::DeviceSpeech>().revoke(Some(webview.label()));
                 }
-                webview
-                    .app_handle()
-                    .state::<AppState>()
-                    .browser_controller
-                    .renderer_page_started(webview);
-            }
-            if identity::local_window_id(webview.label()).is_ok()
-                && payload.event() == PageLoadEvent::Started
-            {
-                let app = webview.app_handle();
-                let managed_backend = app.state::<AppState>().manager.status().url;
-                if is_allowed_local_origin(payload.url(), managed_backend.as_deref()) {
-                    if let (Ok(window_id), Some(state)) = (
-                        identity::local_window_id(webview.label()),
-                        app.try_state::<client_state::ClientState>(),
-                    ) {
-                        if let Err(error) =
-                            state.stage_renderer_page_load(&window_id, payload.url())
-                        {
-                            eprintln!("[client-state] failed to stage renderer page load: {error}");
+                if let Ok(window_id) = identity::local_window_id(webview.label()) {
+                    let app = webview.app_handle();
+                    let state = app.state::<AppState>();
+                    let document = state.browser_controller.renderer_page_started(webview);
+                    if is_allowed_local_origin(payload.url(), state.manager.status().url.as_deref()) {
+                        if let Some(state) = app.try_state::<client_state::ClientState>() {
+                            if let Err(error) =
+                                state.stage_renderer_page_load(&window_id, payload.url())
+                            {
+                                eprintln!("[client-state] failed to stage renderer page load: {error}");
+                            }
+                        }
+                        if let Some(document) = document {
+                            if let Err(error) =
+                                browser_registration_ipc::publish_renderer_document(webview, &document)
+                            {
+                                eprintln!("[tauri] failed to bind browser registration to the renderer: {error}");
+                            }
                         }
                     }
+                    let _ = app
+                        .state::<local_windows::LocalWindows>()
+                        .set_workspace_menu_enabled(webview.label(), false);
+                    update_workspace_menu_state(app);
                 }
-                let _ = webview
-                    .app_handle()
-                    .state::<local_windows::LocalWindows>()
-                    .set_workspace_menu_enabled(webview.label(), false);
-                update_workspace_menu_state(&webview.app_handle());
             }
             if matches!(
                 payload.event(),

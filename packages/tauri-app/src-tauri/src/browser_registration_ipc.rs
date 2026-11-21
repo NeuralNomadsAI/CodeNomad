@@ -7,8 +7,10 @@ use tauri::ipc::{Invoke, InvokeBody, InvokeResolver};
 use tauri::{Manager, Runtime, Webview, Window};
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Arguments {
     payload: BrowserTargetRegistration,
+    renderer_document: String,
 }
 
 pub(super) struct RegistrationRequest<R: Runtime> {
@@ -44,6 +46,15 @@ pub(crate) fn with_registration(generated: impl Fn(Invoke) -> bool) -> impl Fn(I
     )
 }
 
+pub(crate) fn publish_renderer_document(webview: &Webview, document: &str) -> tauri::Result<()> {
+    // Called from the committed-document load event (ContentLoading on WebView2).
+    webview.eval(format!(
+        "Object.defineProperty(window, '__CODENOMAD_BROWSER_DOCUMENT__', {{ value: {}, configurable: true }}); \
+         window.dispatchEvent(new Event('codenomad:browser-document'));",
+        serde_json::json!(document),
+    ))
+}
+
 pub(super) fn route<R: Runtime>(
     generated: impl Fn(Invoke<R>) -> bool,
     controller: impl Fn(&Webview<R>) -> BrowserController,
@@ -60,15 +71,17 @@ pub(super) fn route<R: Runtime>(
             if window.label() != webview.label() {
                 return Err("Browser registration requires a primary renderer".into());
             }
-            let controller = controller(webview);
-            // Bind the request before sending any work to the async pool.
-            let renderer_version = controller.renderer_version(webview.label())?;
             authorize(webview)?;
             let InvokeBody::Json(body) = invoke.message.payload() else {
                 return Err("Expected a browser registration payload".into());
             };
-            let Arguments { payload } =
-                Arguments::deserialize(body).map_err(|error| error.to_string())?;
+            let Arguments {
+                payload,
+                renderer_document,
+            } = Arguments::deserialize(body).map_err(|error| error.to_string())?;
+            let controller = controller(webview);
+            let renderer_version =
+                controller.renderer_version_for_document(webview.label(), &renderer_document)?;
             Ok::<_, String>(RegistrationRequest {
                 controller,
                 window,
