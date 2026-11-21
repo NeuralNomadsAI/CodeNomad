@@ -1220,7 +1220,10 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
             <MessageSquarePlus class="h-4 w-4" />
           </button>
         </Show>
-        <Show when={props.onClose}>{close => <WindowCloseButton onClose={close()} />}</Show>
+        <Show when={props.onClose}>{close => <WindowCloseButton onClose={() => {
+          setAddressDraft(undefined)
+          close()()
+        }} />}</Show>
       </div>
       <div ref={frameWrapRef} class="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         <div

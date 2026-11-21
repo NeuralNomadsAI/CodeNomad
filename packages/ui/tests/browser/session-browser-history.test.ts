@@ -1164,6 +1164,45 @@ test("Enter before the first open's attachment acknowledgement preserves the add
   } finally { await page.close() }
 })
 
+test("a link commit received before the interrupted agent open settles is saved without the cancelled page", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
+  try {
+    await prepare(page, "tauri")
+    const [prior, loading, help] = ["prior", "loading", "help"].map(path => `${base}/page/${path}`)
+    await page.evaluate(url => (window as any).fixture.openPreview("session", url), prior)
+    await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.payload?.action === "history"))
+    await page.evaluate(url => (window as any).fixture.openNativePreview("pending-link", url), loading)
+    await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_claim_open"))
+    await page.evaluate(({ loading, help }) => {
+      const f = (window as any).fixture
+      const { registrationId } = f.native.calls.find((call: any) => call.command === "browser_target_claim_open").response
+      f.native.navigate(registrationId, loading)
+      f.native.navigate(registrationId, help)
+      f.settleNativePreview("pending-link", undefined, true, help)
+    }, { loading, help })
+    assert.equal((await preview(page, "session")).targetUrl, help)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.savedPreview("session").history), { urls: [prior, help], index: 1 })
+    assert.equal(await page.evaluate(() => (window as any).fixture.native.calls.some((call: any) => call.payload?.action === "navigate")), false)
+  } finally { await page.close() }
+})
+
+test("closing the preview drops its unsubmitted address before opening a conversation link", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
+  try {
+    await prepare(page, "tauri", "&assistant=1&links=1")
+    await page.evaluate(url => (window as any).fixture.openPreview("session", url), `${base}/page/prior`)
+    const pane = page.locator('[data-preview-instance="header-windows"]')
+    const address = pane.getByRole("textbox", { name: "Preview URL", exact: true })
+    await address.fill(`${base}/page/unused-draft`)
+    await pane.getByRole("button", { name: "Close", exact: true }).click()
+    const link = page.getByRole("link", { name: "Local preview", exact: true })
+    const expected = await link.getAttribute("href")
+    await link.click()
+    await page.waitForFunction(url => (window as any).fixture.preview("session")?.targetUrl === url, expected)
+    assert.equal(await address.inputValue(), expected)
+  } finally { await page.close() }
+})
+
 test("Back skips an agent open that committed but was cancelled before finishing", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
   try {

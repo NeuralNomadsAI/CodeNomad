@@ -769,7 +769,11 @@ describe("BrowserController preview lifecycle", () => {
       if (replacement || fragmentAborted) await assert.rejects(opening, /Browser navigation changed/)
       else assert.deepEqual(await opening, { url: committedUrl })
       assert.deepEqual(h.receipts.map(receipt => (receipt as { committedUrl?: string }).committedUrl), [replacement || fragmentAborted ? undefined : committedUrl])
-      if (fragmentAborted) assert.equal((h.receipts[0] as { keepGuest?: boolean }).keepGuest, true)
+      if (replacement || fragmentAborted) {
+        const receipt = h.receipts[0] as { keepGuest?: boolean; successorUrl?: string }
+        assert.equal(receipt.keepGuest, true)
+        assert.equal(receipt.successorUrl, replacement ? "https://example.com/replacement" : `${committedUrl}#after`)
+      }
     })
   }
 

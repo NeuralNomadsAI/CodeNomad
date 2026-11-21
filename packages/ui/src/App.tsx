@@ -340,9 +340,9 @@ const App: Component = () => {
       void discoverPreviewOwner(request)?.catch(error => log.warn("Failed to discover the owning preview tab", { error }))
     }, (request) => {
       void openRequestedPreview(request).catch(error => log.warn("Failed to open agent-requested web preview", { sessionID: request.sessionID, error }))
-    }, ({ requestID, sessionID, instanceId, committedUrl, keepGuest }) => {
+    }, ({ requestID, sessionID, instanceId, committedUrl, keepGuest, successorUrl }) => {
       if (!committedUrl) pendingBrowserOpens.get(requestID)?.retire()
-      settleSessionPreviewOpen(sessionID, instanceId, requestID, committedUrl, keepGuest)
+      settleSessionPreviewOpen(sessionID, instanceId, requestID, committedUrl, keepGuest, successorUrl)
     }).then((cleanup) => {
       if (disposed) cleanup()
       else browserOpenUnsubscribe = cleanup

@@ -95,7 +95,8 @@ Object.assign(shell, {
     const intent = beginGesture({ instanceId, sessionId })
     return openSessionPreview(sessionId, url, instanceId, async () => true, intent, { requestID, instanceId, current: intent.current })
   },
-  settleNativePreview: (requestID: string, committedUrl?: string) => settleSessionPreviewOpen("session", ids[0], requestID, committedUrl),
+  settleNativePreview: (requestID: string, committedUrl?: string, keepGuest?: boolean, successorUrl?: string) =>
+    settleSessionPreviewOpen("session", ids[0], requestID, committedUrl, keepGuest, successorUrl),
   preview: (sessionId: string, instanceId = ids[0]) => {
     if (!isInstanceOccurrenceOpen(instanceId)) return null
     const preview = getSessionPreview(sessionId)

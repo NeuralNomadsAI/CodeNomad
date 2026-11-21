@@ -1219,7 +1219,7 @@ impl BrowserController {
             return;
         }
         if let Ok(mut inner) = self.inner.0.lock() {
-            open::retire_open_for_navigation(&mut inner, registration_id, generation, None);
+            open::retire_open_for_navigation(&mut inner, registration_id, generation, None, Some(url));
         }
         self.inner.1.notify_all();
     }
@@ -1315,7 +1315,13 @@ impl BrowserController {
                 == Some(generation)
             {
                 if url != "about:blank" {
-                    open::retire_open_for_navigation(&mut inner, registration_id, generation, None);
+                    open::retire_open_for_navigation(
+                        &mut inner,
+                        registration_id,
+                        generation,
+                        None,
+                        Some(&url),
+                    );
                 }
                 if let Some(expectation) = inner.page_load_expectations.get_mut(registration_id) {
                     if expectation
@@ -1329,12 +1335,15 @@ impl BrowserController {
                         expectation.result =
                             Some(Err("Browser preview navigation is no longer current".into()));
                         let sequence = expectation.sequence;
+                        let successor = expectation.url != url
+                            && expectation.completed_url.as_deref() != Some(url.as_str());
                         if allowed_url(&url).is_ok() {
                             open::retire_open_for_navigation(
                                 &mut inner,
                                 registration_id,
                                 generation,
                                 Some(sequence),
+                                successor.then_some(url.as_str()),
                             );
                         }
                     } else if expectation.url == url && expectation.navigation_id.is_none() {

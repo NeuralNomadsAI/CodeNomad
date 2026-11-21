@@ -274,7 +274,7 @@ export class BrowserController {
       && claim.owner.mainFrame === claim.frame && Date.now() < (claim.target ? claim.deadline : claim.attachDeadline)
   }
 
-  releaseOpen(owner: WebContents, requestID: unknown, committedUrl?: string, keepGuest?: boolean): boolean {
+  releaseOpen(owner: WebContents, requestID: unknown, committedUrl?: string, keepGuest?: boolean, successorUrl?: string): boolean {
     if (typeof requestID !== "string") return false
     const claim = this.openClaims.get(requestID)
     if (!claim || claim.owner !== owner) return false
@@ -286,7 +286,7 @@ export class BrowserController {
     if (!claim.target && claim.guest && !claim.guest.isDestroyed()) claim.guest.close()
     if (claim.adopted && !owner.isDestroyed() && owner.mainFrame === claim.frame) {
       owner.send("browser-target:open-settled", { requestID, sessionID: claim.sessionID, instanceId: claim.instanceId, committedUrl,
-        ...(preserveGuest && { keepGuest: true }) })
+        ...(preserveGuest && { keepGuest: true, ...(successorUrl && { successorUrl }) }) })
     }
     return !keepGuest || Boolean(preserveGuest)
   }
@@ -440,7 +440,7 @@ export class BrowserController {
               checkRegistration()
               claim.dispatched = true
               const committed = await loadNavigation(guest, url, deadline, checkRegistration).catch(error => {
-                if (error instanceof MainNavigationSuperseded) this.releaseOpen(owner, requestID, undefined, true)
+                if (error instanceof MainNavigationSuperseded) this.releaseOpen(owner, requestID, undefined, true, error.successorUrl)
                 throw error
               })
               checkRegistration()
@@ -752,7 +752,11 @@ async function withDeadline<T>(operation: () => Promise<T>, deadline: number, on
   }
 }
 
-class MainNavigationSuperseded extends Error {}
+class MainNavigationSuperseded extends Error {
+  constructor(readonly successorUrl: string | undefined, cause?: unknown) {
+    super("Browser navigation changed", { cause })
+  }
+}
 
 async function loadNavigation(guest: WebContents, url: string, deadline: number, check: () => void): Promise<{ url: string }> {
   const expected = new URL(url).href
@@ -771,7 +775,8 @@ async function loadNavigation(guest: WebContents, url: string, deadline: number,
     if (inPage && committed) return
     superseded = true
     rejectLoad(!inPage && isBrowserUrlAllowed(destination)
-      ? new MainNavigationSuperseded("Browser navigation changed") : new Error("Browser navigation changed"))
+      ? new MainNavigationSuperseded(committed === destination || expected === destination ? undefined : destination)
+      : new Error("Browser navigation changed"))
   }
   const document = (_event: Electron.Event, destination: string) => {
     if (started && !committed && !superseded) committed = destination
@@ -815,7 +820,7 @@ async function loadNavigation(guest: WebContents, url: string, deadline: number,
     return { url: committed }
   } catch (error) {
     if (laterFragment && !guest.isDestroyed() && guest.getURL() === laterFragment) {
-      throw new MainNavigationSuperseded("Browser navigation changed", { cause: error })
+      throw new MainNavigationSuperseded(laterFragment, error)
     }
     throw error
   } finally {

@@ -51,6 +51,7 @@ pub(super) struct OpenClaim {
     adopted: bool,
     revoked: bool,
     keep_guest: bool,
+    successor_url: Option<String>,
     pub(super) load_sequence: Option<u64>,
     construction: Option<(String, u64)>,
     target: Option<Registration>,
@@ -308,6 +309,7 @@ impl BrowserController {
                 adopted: false,
                 revoked: false,
                 keep_guest: false,
+                successor_url: None,
                 load_sequence: None,
                 construction: None,
                 target: None,
@@ -427,7 +429,8 @@ impl BrowserController {
                 let committed_url = result.as_ref().ok().and_then(|url| url.as_deref());
                 let _ = app.emit_to(tauri::EventTarget::webview(&owner), "browser-target:open-settled",
                     json!({ "requestID": request_id, "sessionID": session_id, "instanceId": claim.instance_id,
-                        "committedUrl": committed_url, "keepGuest": claim.keep_guest }));
+                        "committedUrl": committed_url, "keepGuest": claim.keep_guest,
+                        "successorUrl": claim.successor_url }));
             }
             if let Some(url) = result? {
                 return Ok(json!({ "url": url }));
@@ -465,6 +468,7 @@ pub(super) fn retire_open_for_navigation(
     registration_id: &str,
     generation: u64,
     displaced_load: Option<u64>,
+    successor_url: Option<&str>,
 ) {
     let Some(current) = inner
         .registrations
@@ -479,6 +483,7 @@ pub(super) fn retire_open_for_navigation(
             && claim.target.as_ref() == Some(current)
         {
             claim.keep_guest = true;
+            claim.successor_url = successor_url.map(str::to_owned);
             claim.revoke();
         }
     }
@@ -534,6 +539,7 @@ mod tests {
                     adopted: false,
                     revoked: false,
                     keep_guest: false,
+                    successor_url: None,
                     load_sequence: None,
                     construction: None,
                     target: None,
@@ -708,8 +714,10 @@ mod tests {
             let mut inner = controller.inner.0.lock().unwrap();
             let claim = inner.open_claims.get_mut("request").unwrap();
             assert!(claim.keep_guest);
+            assert_eq!(claim.successor_url.as_deref(), Some("https://example.com/manual"));
             claim.revoked = false;
             claim.keep_guest = false;
+            claim.successor_url = None;
         }
         let sequence = admit().unwrap();
         controller.mark_page_started(
@@ -738,6 +746,7 @@ mod tests {
             let inner = controller.inner.0.lock().unwrap();
             let claim = inner.open_claims.get("request").unwrap();
             assert!(claim.revoked && claim.keep_guest);
+            assert_eq!(claim.successor_url.as_deref(), Some("https://example.com/manual"));
         }
         assert!(!controller.take_navigation_stop(&expected, sequence));
         assert!(admit().unwrap_err().contains("target changed"));

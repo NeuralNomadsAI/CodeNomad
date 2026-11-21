@@ -93,7 +93,8 @@ function removeLivePreview(storageKey: string, keepalive = false) {
   if (record) return releasePreview(record.owner.client, record, keepalive)
 }
 
-export function settleSessionPreviewOpen(sessionId: string, instanceId: string, requestID: string, committedUrl?: string | null, keepGuest?: boolean) {
+export function settleSessionPreviewOpen(sessionId: string, instanceId: string, requestID: string, committedUrl?: string | null,
+  keepGuest?: boolean, successorUrl?: string | null) {
   const record = getSessionPreview(sessionId, instanceId)
   const request = record?.nativeOpen
   if (!record || request?.requestID !== requestID || request.instanceId !== instanceId) return
@@ -104,9 +105,12 @@ export function settleSessionPreviewOpen(sessionId: string, instanceId: string, 
     return
   }
   const next = { ...record, nativeOpen: undefined }
-  if (confirmed) {
-    next.targetUrl = request.observedAddress ?? confirmed
-    const savedUrl = historyUrl(confirmed)
+  const successor = keepGuest ? browserAddress(successorUrl) : undefined
+  // A native start alone is not a commit; require the retained guest's location event.
+  const committed = confirmed ?? (successor === request.observedAddress ? successor : undefined)
+  if (committed) {
+    next.targetUrl = request.observedAddress ?? committed
+    const savedUrl = historyUrl(committed)
     if (savedUrl) {
       next.history = { ...new BrowserHistoryJournal(record.history).visitUrl(savedUrl) }
       storePreview(sessionId, instanceId, { ...next, targetUrl: savedUrl })

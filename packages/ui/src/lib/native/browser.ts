@@ -110,7 +110,7 @@ export async function emulateBrowserTarget(registrationId: string, preset: Brows
 
 export type BrowserOpenDiscovery = { requestID: string; workspaceIDs: string[] }
 export type BrowserOpenRequest = { sessionID: string; requestID: string; url: string; instanceId: string }
-export type BrowserOpenSettled = Omit<BrowserOpenRequest, "url"> & { committedUrl?: string | null; keepGuest?: boolean }
+export type BrowserOpenSettled = Omit<BrowserOpenRequest, "url"> & { committedUrl?: string | null; keepGuest?: boolean; successorUrl?: string | null }
 export type BrowserOpenResponse =
   | { kind: "discover"; instanceId: string | null }
   | { kind: "discover"; ambiguous: true }

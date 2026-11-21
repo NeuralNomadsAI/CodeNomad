@@ -364,6 +364,8 @@ An explicit surface gesture retires the superseded request immediately. A user n
 on its acknowledged guest retires the open and retains that guest. Before dispatching
 the user's navigation, the journal excludes the retired native entry by identity.
 A main-frame link navigation that supersedes an in-flight open also retains its exact guest.
+When its location arrives before the open settles, a matching native successor receipt
+saves the new visit without saving the interrupted load.
 An explicit open from another occurrence can replace the first agent open's provisional
 guest. Address submission waits for that guest's attachment acknowledgement while the
 address field stays editable. Refresh waits for the first open to settle. The native
