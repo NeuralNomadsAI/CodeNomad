@@ -262,15 +262,19 @@ describe("DeveloperCdp", () => {
     chrome.deferred.set("Runtime.evaluate", undefined as never)
     try {
       const inspect = assert.rejects(client.inspect(identity), /retired|closed/i)
-      const inventory = client.probeContexts(identity.endpoint, new Map([[identity.windowId, undefined]]))
-      while (chrome.commands.length < 2) await new Promise<void>(resolve => setImmediate(resolve))
+      const windows = new Map([[identity.windowId, undefined]])
+      const inventory = client.probeContexts(identity, windows)
+      const otherInventory = client.probeContexts({ ...identity, runId: "other-run" }, windows)
+      while (chrome.commands.length < 3) await new Promise<void>(resolve => setImmediate(resolve))
       client.close(run ? identity.runId : undefined)
       const sockets = [...chrome.sockets]
-      assert.equal(chrome.sockets.filter(socket => socket.closed).length, run ? 1 : 2)
+      assert.equal(sockets.filter(socket => socket.closed).length, run ? 2 : 3)
       await inspect
+      assert.equal((await inventory).size, 0)
+      assert.equal((await client.probeContexts(identity, windows)).size, 0, "a retired inventory cannot reopen its sockets")
       assert.equal(chrome.sockets.length, sockets.length)
       if (run) client.close()
-      assert.equal((await inventory).size, 0)
+      assert.equal((await otherInventory).size, 0)
     } finally { client.close() }
   })
 
@@ -754,14 +758,14 @@ describe("DeveloperCdp", () => {
     const client = chrome.client({ connect: (url: string) => url.endsWith("/stalled") ? stalled.connect(url) : chrome.connect(url) })
     try {
       const windows = new Map([[identity.windowId, "current"]])
-      assert.equal((await client.probeContexts(identity.endpoint, windows)).size, 1)
+      assert.equal((await client.probeContexts(identity, windows)).size, 1)
       const retired = new FakeChrome()
       retired.target = page("retired")
       retired.context.windowInstance = "retired"
       const reopened = chrome.client({ connect: (url: string) => url.endsWith("/retired") ? retired.connect(url) : chrome.connect(url) })
       chrome.targets = [retired.target, chrome.target]
       try {
-        assert.equal((await reopened.probeContexts(identity.endpoint, windows)).get(identity.windowId)?.windowInstance, "current")
+        assert.equal((await reopened.probeContexts(identity, windows)).get(identity.windowId)?.windowInstance, "current")
       } finally { reopened.close() }
       chrome.targets = [stalled.target, chrome.target]
       await assert.rejects(client.inspect({ ...identity, windowInstance: "retired" }), /No CodeNomad page matches/)

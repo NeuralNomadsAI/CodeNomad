@@ -484,7 +484,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       if (inventory) {
         const local = (native.windows ?? []).slice(0, 16)
         try {
-          const contexts = await deps.developerCdp.probeContexts(selection.endpoint,
+          const contexts = await deps.developerCdp.probeContexts(selection,
             new Map(local.map(window => [window.windowId, window.windowInstance])), body.sessionID)
           const windows = local.map(window => {
             const context = contexts.get(window.windowId)
@@ -500,7 +500,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       if (!explicit) {
         const windows = new Map([[selection.windowId, selection.windowInstance]])
         try {
-          const contexts = await deps.developerCdp.probeContexts(selection.endpoint, windows)
+          const contexts = await deps.developerCdp.probeContexts(selection, windows)
           if (!contexts.has(selection.windowId)) return unavailable()
         } catch { return unavailable() }
       }

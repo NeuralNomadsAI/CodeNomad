@@ -85,7 +85,10 @@ test("targets the exact inspection independently of the visible conversation or 
       },
     },
     developerCdp: {
-      probeContexts: async (_endpoint: string, windows: Map<string, string | undefined>) => new Map(windows),
+      probeContexts: async (selection: { runId: string }, windows: Map<string, string | undefined>) => {
+        assert.equal(selection.runId, runId)
+        return new Map(windows)
+      },
       context: async (identity: { sessionId?: string; windowId: string }) => {
         assert.equal(identity.sessionId, undefined)
         return { windowId: identity.windowId, instanceId: "workspace-1", sessionId: visibleSession }

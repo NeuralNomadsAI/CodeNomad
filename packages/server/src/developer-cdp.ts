@@ -215,7 +215,7 @@ interface RunState {
 export class DeveloperCdp {
   private readonly dependencies: DeveloperCdpDependencies
   private readonly windows = new Map<string, RunState>()
-  private readonly probes = new Map<RunState, RunState | undefined>()
+  private readonly probes = new Map<RunState, RunState | string>()
   private readonly operations = new Map<string, Promise<void>>()
   private readonly retiredRuns = new Map<string, { closed: boolean; recoverable: boolean }>()
   private closed = false
@@ -438,7 +438,9 @@ export class DeveloperCdp {
       this.disconnect(state, error)
       this.windows.delete(id)
     }
-    if (!runId) for (const probe of this.probes.keys()) this.disconnect(probe, error)
+    for (const [probe, owner] of this.probes) {
+      if (!runId || owner === runId) this.disconnect(probe, error)
+    }
   }
 
   async context(selection: DeveloperCdpSelection, beforeRead?: () => void): Promise<DeveloperCdpContext> {
@@ -474,14 +476,17 @@ export class DeveloperCdp {
     return (await read(hit.objectId))?.value ?? "frame"
   }
 
-  async probeContexts(endpoint: string, windowIds: ReadonlyMap<string, string | undefined>,
+  async probeContexts(selection: Pick<DeveloperCdpSelection, "endpoint" | "runId">, windowIds: ReadonlyMap<string, string | undefined>,
     sessionID?: string): Promise<Map<string, DeveloperCdpContext>> {
+    const { endpoint, runId } = selection
+    const current = () => !this.closed && !this.retiredRuns.has(runId)
+    if (!current()) return new Map()
     const source = discoveryUrl(endpoint)
     const pages = await this.listTargets(source)
     const found = new Map<string, DeveloperCdpContext>(), ambiguous = new Set<string>()
-    for (let index = 0; !this.closed && index < pages.length; index += DISCOVERY_PROBE_CONCURRENCY) {
+    for (let index = 0; current() && index < pages.length; index += DISCOVERY_PROBE_CONCURRENCY) {
       const contexts = await Promise.all(pages.slice(index, index + DISCOVERY_PROBE_CONCURRENCY).map(target =>
-        this.probePage(source, target, Math.min(this.dependencies.timeoutMs, INVENTORY_PAGE_MS), sessionID)))
+        this.probePage(source, target, Math.min(this.dependencies.timeoutMs, INVENTORY_PAGE_MS), runId, sessionID)))
       for (const context of contexts) {
         if (!context || !windowIds.has(context.windowId) || ambiguous.has(context.windowId)) continue
         const expected = windowIds.get(context.windowId)
@@ -492,7 +497,7 @@ export class DeveloperCdp {
         } else found.set(context.windowId, context)
       }
     }
-    return this.closed ? new Map() : found
+    return current() ? found : new Map()
   }
 
   private publicContext({ sessionOpen: _sessionOpen, ...context }: DeveloperCdpContext): DeveloperCdpContext {
@@ -594,7 +599,7 @@ export class DeveloperCdp {
     for (let index = 0; index < targets.length && matches.length < 2; index += DISCOVERY_PROBE_CONCURRENCY) {
       guard()
       const batch = await Promise.all(targets.slice(index, index + DISCOVERY_PROBE_CONCURRENCY).map(async (target) => {
-        const context = await this.probePage(state.endpoint, target, Math.min(this.dependencies.timeoutMs, timeoutMs), undefined, state)
+        const context = await this.probePage(state.endpoint, target, Math.min(this.dependencies.timeoutMs, timeoutMs), state)
         return context && this.matchesContext(state, context) ? target : undefined
       }))
       guard()
@@ -610,8 +615,8 @@ export class DeveloperCdp {
     return matches[0]
   }
 
-  private async probePage(endpoint: string, target: CdpTarget, timeoutMs = this.dependencies.timeoutMs,
-    sessionID?: string, owner?: RunState): Promise<DeveloperCdpContext | undefined> {
+  private async probePage(endpoint: string, target: CdpTarget, timeoutMs: number,
+    owner: RunState | string, sessionID?: string): Promise<DeveloperCdpContext | undefined> {
     const probe = this.newState(endpoint, "")
     this.probes.set(probe, owner)
     const deadline = Date.now() + timeoutMs
