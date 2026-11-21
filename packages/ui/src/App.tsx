@@ -48,6 +48,8 @@ import {
   onNativeBrowserOpen,
   releaseNativeBrowserOpen,
   selectBrowserOpenOwner,
+  type BrowserOpenDiscovery,
+  type BrowserOpenRequest,
 } from "./lib/native/browser"
 import { useViewMenu } from "./lib/native/view-menu"
 import {
@@ -72,13 +74,15 @@ import {
   activeSessionId,
   clearSelectedSession,
   fetchSessions,
+  hydrateRestoredSessionChain,
   loadMessages,
   setActiveSessionFromList,
   startNewSession,
   updateSessionAgent,
   updateSessionModel,
 } from "./stores/sessions"
-import { openSessionPreview } from "./stores/session-previews"
+import { getSessionPreview, openSessionPreview, settleSessionPreviewOpen } from "./stores/session-previews"
+import { isInstanceOccurrenceOpen } from "./stores/instance-lifecycle-authority"
 import { SessionPreviewHost } from "./components/session-preview-view"
 import { beginGesture } from "./stores/session-surface"
 import { useForegroundRefresh } from "./lib/hooks/use-foreground-refresh"
@@ -96,6 +100,7 @@ import {
   activeAppTab,
   activeAppTabId,
   allowsAutomaticLocalSetup,
+  appTabSelectionRevision,
   appTabs,
   activeBlankTabId,
   closeBlankTab,
@@ -271,6 +276,7 @@ const App: Component = () => {
   onMount(() => {
     let disposed = false
     let browserOpenUnsubscribe = () => {}
+    const pendingBrowserOpens = new Map<string, { sessionID: string; retire: () => void }>()
     void initGithubStars()
     updateInstanceTabBarHeight()
     const handleResize = () => updateInstanceTabBarHeight()
@@ -282,53 +288,61 @@ const App: Component = () => {
         })
       }
     }, 30_000)
-    const openRequestedPreview = async (sessionID: string, url: string, requestID: string) => {
-      // Host-native requests carry a session id from the local backend only.
-      const localInstances = () => appTabs().flatMap(tab => tab.kind === "instance"
-        && parseInstanceKey(tab.instance.id).backendId === "local" ? [tab.instance] : [])
-      const findOwners = () => localInstances().filter((instance) => getSessions(instance.id).some((session) => session.id === sessionID))
-      let owners = findOwners()
-      if (owners.length === 0) {
-        await Promise.all(localInstances().filter((instance) => instance.client).map((instance) => fetchSessions(instance.id, { reset: true }).catch(() => undefined)))
-        owners = findOwners()
-      }
+    const localInstances = () => appTabs().flatMap(tab => tab.kind === "instance"
+      && parseInstanceKey(tab.instance.id).backendId === "local" && isInstanceOccurrenceOpen(tab.instance.id)
+      && tab.instance.status === "ready" && tab.instance.client ? [tab.instance] : [])
+    const discoverPreviewOwner = ({ workspaceIDs, requestID }: BrowserOpenDiscovery) => {
+      if (disposed) return
+      const eligible = new Set(workspaceIDs)
+      const owners = localInstances().filter(instance => eligible.has(parseInstanceKey(instance.id).workspaceId))
       const activeTab = activeAppTab()
       const owner = selectBrowserOpenOwner(owners, activeTab?.kind === "instance" ? activeTab.instance.id : undefined)
-      if (disposed || !owner) {
-        if (!disposed) log.warn("Failed to route agent-requested web preview", {
-          sessionID,
-          owners: owners.map((instance) => instance.id),
-          activeInstanceID: activeTab?.kind === "instance" ? activeTab.instance.id : undefined,
-        })
-        return
-      }
-      const operation = captureBackendOperation(owner.id, undefined, () => !disposed && instances().has(owner.id)
-        && findOwners().some(candidate => candidate.id === owner.id))
-      const intent = beginGesture({ instanceId: owner.id, sessionId: sessionID })
+      return claimNativeBrowserOpen(requestID, !owner && owners.length > 1
+        ? { kind: "discover", ambiguous: true } : { kind: "discover", instanceId: owner?.id ?? null })
+    }
+    const openRequestedPreview = async ({ sessionID, url, requestID, instanceId }: BrowserOpenRequest) => {
+      const eligible = () => !disposed && localInstances().some(instance => instance.id === instanceId)
+      let published = false
+      let retired = false
+      const pending = { sessionID, retire: () => { retired = true } }
       try {
-        if (!operation.current() || !intent.current() || !await claimNativeBrowserOpen(requestID)) return
-        if (!operation.current() || !intent.current()) {
-          await releaseNativeBrowserOpen(requestID)
-          return
+        if (!eligible()) return
+        if (getSessionPreview(sessionID, instanceId)?.nativeOpen
+          || [...pendingBrowserOpens.values()].some(open => open.sessionID === sessionID)) return
+        pendingBrowserOpens.set(requestID, pending)
+        const operation = captureBackendOperation(instanceId, undefined, eligible)
+        const intent = beginGesture({ instanceId, sessionId: sessionID })
+        const selectionRevision = appTabSelectionRevision()
+        const current = () => !retired && operation.current() && intent.current()
+        const loaded = () => getSessions(instanceId).some(session => session.id === sessionID)
+        const needsHydration = !loaded()
+        if (!current() || !await claimNativeBrowserOpen(requestID, { kind: "claim", instanceId }) || !current()) return
+        if (needsHydration && !loaded()) await hydrateRestoredSessionChain(instanceId, [sessionID], operation.signal, current)
+        if (!current() || !loaded()) return
+        const stillOwned = () => current() && loaded()
+        await openSessionPreview(sessionID, url, instanceId,
+          async () => stillOwned() && await claimNativeBrowserOpen(requestID, { kind: "adopt", instanceId }) && stillOwned(), intent,
+          { requestID, instanceId, current: stillOwned })
+        if (!stillOwned()) return
+        if (appTabSelectionRevision() === selectionRevision) {
+          selectInstanceTab(instanceId)
+          setActiveSessionFromList(instanceId, sessionID, intent)
         }
-        const instance = owner
-        const stillOwned = () => operation.current() && intent.current()
-        await openSessionPreview(sessionID, url, instance.id, async () => stillOwned() && await claimNativeBrowserOpen(requestID) && stillOwned(), intent)
-        if (!stillOwned()) {
-          await releaseNativeBrowserOpen(requestID)
-          return
-        }
-        selectInstanceTab(instance.id)
-        setActiveSessionFromList(instance.id, sessionID, intent)
-      } catch (error) {
-        await releaseNativeBrowserOpen(requestID).catch((releaseError) => {
+        published = true
+      } finally {
+        if (pendingBrowserOpens.get(requestID) === pending) pendingBrowserOpens.delete(requestID)
+        if (!published) await releaseNativeBrowserOpen(requestID).catch((releaseError) => {
           log.warn("Failed to release agent-requested web preview", { sessionID, releaseError })
         })
-        throw error
       }
     }
-    void onNativeBrowserOpen(({ sessionID, url, requestID }) => {
-      void openRequestedPreview(sessionID, url, requestID).catch((error) => log.warn("Failed to open agent-requested web preview", { sessionID, error }))
+    void onNativeBrowserOpen((request) => {
+      void discoverPreviewOwner(request)?.catch(error => log.warn("Failed to discover the owning preview tab", { error }))
+    }, (request) => {
+      void openRequestedPreview(request).catch(error => log.warn("Failed to open agent-requested web preview", { sessionID: request.sessionID, error }))
+    }, ({ requestID, sessionID, instanceId, committedUrl, keepGuest, successorUrl }) => {
+      if (!committedUrl) pendingBrowserOpens.get(requestID)?.retire()
+      settleSessionPreviewOpen(sessionID, instanceId, requestID, committedUrl, keepGuest, successorUrl)
     }).then((cleanup) => {
       if (disposed) cleanup()
       else browserOpenUnsubscribe = cleanup

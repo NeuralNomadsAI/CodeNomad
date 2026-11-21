@@ -402,6 +402,7 @@ for (const pauseAt of ["native", "CDP"]) {
 test("browser works with an unavailable developer target and unrelated inventory failure", async () => {
   const app = Fastify({ logger: false })
   const nativeCalls: Array<{ method: string; params: unknown }> = []
+  let inventory: "unavailable" | "missing-root" | "missing-other" = "unavailable"
   registerAutomationPluginRoute(app, {
     authManager: { isLoopbackRequest: () => true },
     bridgeToken: "secret",
@@ -419,9 +420,14 @@ test("browser works with an unavailable developer target and unrelated inventory
     },
     workspaceManager: {
       getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "D:\\project" } }) } }),
-      list: () => [{ id: "unrelated-worktree" }, { id: "workspace-1" }],
+      list: () => [{ id: "unrelated-worktree", path: "D:/unrelated" }, { id: "workspace-1" }, { id: "workspace-2" }],
       ownsLocation: async (id: string) => {
-        if (id === "unrelated-worktree") throw new Error("Native worktree inventory is unavailable")
+        if (id === "unrelated-worktree") {
+          if (inventory === "unavailable") throw new Error("Native worktree inventory is unavailable")
+          throw Object.assign(new Error("Directory not found"), {
+            code: "ENOENT", syscall: "realpath", path: inventory === "missing-root" ? "D:/unrelated" : "D:/other",
+          })
+        }
         return true
       },
     },
@@ -438,13 +444,21 @@ test("browser works with an unavailable developer target and unrelated inventory
   assert.equal(nativeCalls.length, 0)
   const probe = await request({ mode: "browser-probe", sessionID: "session-1" })
   assert.deepEqual(probe.json().result, { available: true, target: "preview-document" })
+  const uncertain = await request({ mode: "browser-execute", sessionID: "session-1", command: { action: "open", url: "https://example.com" } })
+  assert.equal(uncertain.statusCode, 409)
+  assert.match(uncertain.json().error, /verify the owning project tabs/)
+  assert.equal(nativeCalls.length, 1)
+  inventory = "missing-other"
+  assert.equal((await request({ mode: "browser-execute", sessionID: "session-1", command: { action: "open", url: "https://example.com" } })).statusCode, 409)
+  assert.equal(nativeCalls.length, 1)
+  inventory = "missing-root"
   const open = await request({ mode: "browser-execute", sessionID: "session-1", command: { action: "open", url: "https://example.com" } })
   assert.equal(open.statusCode, 200)
   assert.deepEqual(nativeCalls, [
     { method: "browser.probe", params: { sessionID: "session-1" } },
     {
       method: "browser.execute",
-      params: { sessionID: "session-1", command: { action: "open", url: "https://example.com" } },
+      params: { sessionID: "session-1", command: { action: "open", url: "https://example.com" }, workspaceIDs: ["workspace-1", "workspace-2"] },
     },
   ])
   const snapshot = await request({ mode: "browser-execute", sessionID: "session-1", target: probe.json().result.target, command: { action: "snapshot", query: "Preview" } })

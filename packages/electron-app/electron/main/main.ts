@@ -187,13 +187,14 @@ function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, artifact:
       profile: storageScope.profile, pinned: profilePinned, config, storageRoot: baseUserDataPath, restart,
     }, artifact)),
   })
-  const browserController = new BrowserController((sessionID, url, requestID) => {
-    for (const record of registry.all()) {
-      if (!record.window.isDestroyed()) record.window.webContents.send("browser-target:open", { sessionID, url, requestID })
-    }
-  })
+  const browserController = new BrowserController(() => registry.browserOpenCandidates(BrowserWindow.getFocusedWindow())
+    .filter(contents => {
+      const owner = registry.resolve(contents)
+      return owner && !lifecycle.isWindowClosing(owner.window)
+    }))
+  app.on("web-contents-created", (_event, contents) => browserController.guestCreated(contents))
   const cli = new CliProcessManager((method, params, deadline, checkAdmission) => method.startsWith("browser.")
-    ? handleNativeBrowserRequest(browserController, method, params, deadline)
+    ? handleNativeBrowserRequest(browserController, method, params, deadline, checkAdmission)
     : developerMode.handleNativeRequest(method, params, checkAdmission))
   const remoteOrigins = new Map<number, Set<string>>()
   const insecureOrigins = new Map<number, Set<string>>()
@@ -360,7 +361,7 @@ function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, artifact:
     installWindowZoomInput(window, (level) => tracker ? tracker.setZoomLevel(level) : setWindowZoomLevel(window, level))
     setupNavigationGuards(window, navigation, getAllowedOrigins, getLoadingUrl)
     window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
-      if (!secureBrowserWebview(webPreferences, params)) {
+      if (!secureBrowserWebview(webPreferences, params, () => browserController.permitOpenAttachment(window.webContents, params))) {
         event.preventDefault()
         return
       }

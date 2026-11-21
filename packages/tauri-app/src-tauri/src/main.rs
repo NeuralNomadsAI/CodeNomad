@@ -593,31 +593,29 @@ fn browser_target_unregister(
 #[tauri::command]
 fn browser_target_claim_open(
     webview: tauri::Webview,
-    app: AppHandle,
     state: tauri::State<'_, AppState>,
     request_id: String,
+    response: browser_controller::OpenResponse,
 ) -> Result<bool, String> {
     require_local_app_webview(&webview, &state)?;
-    let claimed = state
+    state
         .browser_controller
-        .claim_open(webview.label(), &request_id);
-    if claimed {
-        crate::local_windows::focus(&app, webview.label());
-    }
-    Ok(claimed)
+        .claim_open(webview.app_handle(), webview.label(), &request_id, response)
 }
 
 #[tauri::command]
 fn browser_target_release_open(
     webview: tauri::Webview,
-    app: AppHandle,
     state: tauri::State<'_, AppState>,
     request_id: String,
+    keep_guest: Option<bool>,
 ) -> Result<bool, String> {
     require_local_app_webview(&webview, &state)?;
-    Ok(state
-        .browser_controller
-        .release_open(&app, webview.label(), &request_id))
+    Ok(state.browser_controller.release_open(
+        webview.label(),
+        &request_id,
+        keep_guest.unwrap_or(false),
+    ))
 }
 
 fn release_remote_proxy_session_cleanup(app: &AppHandle, session_id: &str) {

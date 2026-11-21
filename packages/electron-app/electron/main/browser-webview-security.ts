@@ -32,10 +32,11 @@ export function isBrowserDownloadUrlAllowed(rawUrl: string, openerUrl: string): 
   } catch { return false }
 }
 
-export function secureBrowserWebview(webPreferences: WebPreferences, params: Record<string, string>): boolean {
+export function secureBrowserWebview(webPreferences: WebPreferences, params: Record<string, string>, admitAttachment?: () => boolean): boolean {
   if (!params.partition.startsWith(browserPartitionPrefix)
     || !/^[A-Za-z0-9_-]{1,256}$/.test(params.partition.slice(browserPartitionPrefix.length))
-    || !isBrowserUrlAllowed(params.src)) return false
+    || !(isBrowserUrlAllowed(params.src) || (params.src === "about:blank" && admitAttachment))
+    || (admitAttachment && !admitAttachment())) return false
   delete webPreferences.preload
   webPreferences.nodeIntegration = false
   webPreferences.nodeIntegrationInWorker = false

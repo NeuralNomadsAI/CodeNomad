@@ -89,12 +89,22 @@ const localElectronAPI = {
   emulateBrowserTarget: (registrationId, preset) => ipcRenderer.invoke("browser-target:emulate", registrationId, preset),
   browserTargetHistory: (guestWebContentsId, entryId) => ipcRenderer.invoke("browser-target:history", guestWebContentsId, entryId),
   unregisterBrowserTarget: (registrationId) => ipcRenderer.invoke("browser-target:unregister", registrationId),
-  claimBrowserOpen: (requestId) => ipcRenderer.invoke("browser-target:claimOpen", requestId),
-  releaseBrowserOpen: (requestId) => ipcRenderer.invoke("browser-target:releaseOpen", requestId),
+  claimBrowserOpen: (requestId, response) => ipcRenderer.invoke("browser-target:claimOpen", requestId, response),
+  releaseBrowserOpen: (requestId, keepGuest) => ipcRenderer.invoke("browser-target:releaseOpen", requestId, keepGuest),
+  onBrowserOpenDiscovery: (callback) => {
+    const handler = (_event, payload) => callback(payload)
+    ipcRenderer.on("browser-target:discover", handler)
+    return () => ipcRenderer.removeListener("browser-target:discover", handler)
+  },
   onBrowserOpenRequest: (callback) => {
     const handler = (_event, payload) => callback(payload)
     ipcRenderer.on("browser-target:open", handler)
     return () => ipcRenderer.removeListener("browser-target:open", handler)
+  },
+  onBrowserOpenSettled: (callback) => {
+    const handler = (_event, payload) => callback(payload)
+    ipcRenderer.on("browser-target:open-settled", handler)
+    return () => ipcRenderer.removeListener("browser-target:open-settled", handler)
   },
 }
 

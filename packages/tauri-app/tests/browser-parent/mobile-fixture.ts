@@ -11,7 +11,7 @@ const browserTarget=async():Promise<string>=>(await request('browser.probe')).ta
 async function until(check:(v:any)=>boolean,target?:string){const end=Date.now()+8000;let last;do{try{last=await probe(target);if(check(last))return last}catch{}await new Promise(r=>setTimeout(r,40))}while(Date.now()<end);throw new Error('Mobile observation did not settle: '+JSON.stringify(last))}
 async function main(){
  assert.equal(parent.browserAutomationUnavailable,false)
- await request('browser.execute',{command:{action:'open',url:base+'/mobile'}})
+ await request('browser.execute',{workspaceIDs:["fixture-tab"],command:{action:'open',url:base+'/mobile'}})
  await request('fixture.mobile-init',{url:base+'/mobile'})
  const primary=await until(v=>v.ua===v.httpUA,'primary'),other=await until(v=>v.ua===v.httpUA,'other'),baseline=await until(v=>v.ua===v.httpUA)
  const rows=[]
