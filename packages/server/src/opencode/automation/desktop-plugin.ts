@@ -1,11 +1,11 @@
 import type { Plugin, Skill } from "@opencode/plugin"
 import { fileURLToPath } from "node:url"
-import { createDeveloperToolTransform, executeBrowserTool } from "../automation-plugin"
+import { createBrowserToolExecutor, createDeveloperToolTransform } from "../automation-plugin"
 import { followPresence } from "../desktop-plugin-presence"
 import { PAGE_ACTIONS, PAGE_ACTION_PROPERTIES } from "../../automation/page/parse"
 
 const instructions = `Control the visible CodeNomad browser attached to this session with codenomad.browser.
-Use open with an HTTP(S) URL to create the preview, then snapshot before acting.
+Use open with an HTTP(S) URL to create the preview, then snapshot before acting or capturing it.
 The snapshot is an indented outline: ref expands a subtree and query finds text or an exact role.
 type replaces a field's text by default; clear:false appends. select chooses native options by labels or values.
 click, hover, scroll, drag, press (keys/chords) and wait (text appearing/disappearing) use the same actions as codenomad.act.
@@ -25,6 +25,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[]): Pl
       // Keep inspected host identity across backend restart/presence reconciliation.
       // In-flight native tool snapshots may still finish their reconnect wait.
       const addDeveloperTools = createDeveloperToolTransform()
+      const executeBrowserTool = createBrowserToolExecutor()
       return followPresence(presenceDirectory, async () => {
         const tools = await ctx.tool.transform((editor) => {
           addDeveloperTools(editor)

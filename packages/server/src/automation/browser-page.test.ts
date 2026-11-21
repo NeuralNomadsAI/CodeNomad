@@ -8,6 +8,7 @@ class Native {
   generation = "run/guest/document-1"
   hidden = false
   failMethod?: string
+  loseBeginReply = false
   calls: Array<{ method: string; input: Record<string, any> }> = []
   protocol: Array<{method: string; params: Record<string, unknown>}> = []
   gate?: () => Promise<void>
@@ -19,6 +20,7 @@ class Native {
     if (this.hidden) throw new Error("No visible browser")
     if (method === "browser.page.begin") {
       this.leases.set(input.operationID, this.generation)
+      if (this.loseBeginReply) throw new Error("Begin reply lost")
       return { generation: this.generation, url: "https://example.test/", driver: "cdp", contractVersion: 1 } as T
     }
     if (input.generation !== this.generation || this.leases.get(input.operationID) !== this.generation) throw new Error("Browser document changed")
@@ -41,7 +43,7 @@ const firstRef = (snapshot: unknown) => /\[(b\d+e\d+)\]/.exec(String(snapshot))!
 test("preview operations use the shared outline/actions without a CodeNomad input mark, and release their exact lease", async () => {
   const native = new Native(), page = new BrowserPage(native)
   const first = await page.execute("session", { action: "snapshot" })
-  assert.match(String(first.snapshot), /- button "Save" \[b1e1\]/)
+  assert.match(String(first.snapshot), /- button "Save" \[b\d+e1\]/)
   const ref = firstRef(first.snapshot)
   assert.deepEqual(await page.execute("session", { action: "click", ref }), { url: "https://example.test/" })
   const functions = native.protocol.filter(call => call.method === "Runtime.callFunctionOn")
@@ -61,6 +63,9 @@ test("preview operations use the shared outline/actions without a CodeNomad inpu
 test("scoped snapshots preserve refs and a new document or another session cannot reuse them", async () => {
   const native = new Native(), page = new BrowserPage(native)
   const ref = firstRef((await page.execute("a", { action: "snapshot" })).snapshot)
+  const otherBackend = new BrowserPage(new Native())
+  await otherBackend.execute("a", { action: "snapshot" })
+  await assert.rejects(otherBackend.execute("a", { action: "click", ref }), /stale ref/)
   assert.match(String((await page.execute("a", { action: "snapshot", ref })).snapshot), new RegExp(`\\[${ref}\\]`))
   await page.execute("b", { action: "snapshot" })
   await assert.rejects(page.execute("b", { action: "click", ref }), /stale ref/)
@@ -98,9 +103,52 @@ test("queued cancellation and shutdown perform no later input; aborted in-flight
   await assert.rejects(first, /abort/i)
   await assert.rejects(queued, /abort/i)
   assert.equal(native.calls.filter(call => call.method === "browser.page.begin").length, 1)
+  assert.equal(native.calls.filter(call => call.method === "browser.page.end").length, 1)
   assert.equal(native.leases.size, 0)
   page.close()
   await assert.rejects(page.execute("a", { action: "snapshot" }), /shutting down/)
+})
+
+test("an expired queued command cannot delay the next command with cleanup for a lease it never started", async t => {
+  const native = new Native(), page = new BrowserPage(native)
+  const now = Date.now()
+  t.mock.timers.enable({ apis: ["Date"], now })
+  let entered!: () => void, release!: () => void, releaseStrayEnd!: () => void
+  const enteredRead = new Promise<void>(resolve => { entered = resolve })
+  const blockedRead = new Promise<void>(resolve => { release = resolve })
+  const blockedEnd = new Promise<void>(resolve => { releaseStrayEnd = resolve })
+  native.gate = async () => { entered(); await blockedRead }
+  const request = native.request
+  t.mock.method(native, "request", (...args: Parameters<typeof request>) => {
+    if (args[0] === "browser.page.end" && !native.leases.has(args[1].operationID)) return blockedEnd
+    return request(...args)
+  })
+  const first = page.execute("a", { action: "snapshot" })
+  await enteredRead
+  const expired = assert.rejects(page.execute("a", { action: "snapshot" }, undefined, undefined, now + 1_000), /timed out/)
+  const next = page.execute("a", { action: "snapshot" })
+  t.mock.timers.tick(1_000)
+  release()
+  await first
+  try {
+    const result = await Promise.race([next, new Promise<void>(resolve => setImmediate(resolve))])
+    assert.ok(result, "a command that never sent begin must not block the next command with cleanup")
+    assert.match(String(result.snapshot), /Save/)
+  } finally {
+    releaseStrayEnd()
+    await Promise.all([expired, next])
+  }
+})
+
+test("a lost begin reply still cleans up the exact lease before the next command", async () => {
+  const native = new Native(), page = new BrowserPage(native)
+  native.loseBeginReply = true
+  await assert.rejects(page.execute("a", { action: "snapshot" }), /Begin reply lost/)
+  assert.deepEqual(native.calls.map(call => call.method), ["browser.page.begin", "browser.page.end"])
+  assert.equal(native.calls[1].input.operationID, native.calls[0].input.operationID)
+  assert.equal(native.leases.size, 0)
+  native.loseBeginReply = false
+  assert.match(String((await page.execute("a", { action: "snapshot" })).snapshot), /Save/)
 })
 
 test("a failed native mutation is never replayed, and queue admission is bounded", async () => {
