@@ -32,24 +32,26 @@ export function createAuthRecovery(base: string | undefined | Pick<BackendHttp, 
     const probe = ++nextProbe
     const lifetime = new AbortController()
     const cancel = () => lifetime.abort()
-    signal?.addEventListener("abort", cancel, { once: true })
+    const combined = signal && AbortSignal.any?.([signal, lifetime.signal])
+    const transportSignal = combined ?? lifetime.signal
+    if (!combined) signal?.addEventListener("abort", cancel, { once: true })
     const timeout = setTimeout(cancel, 8000)
     const pending = (async () => {
       try {
         const response = await fetcher(url("/api/auth/status"), {
-          credentials: "include", cache: "no-store", signal: lifetime.signal,
+          credentials: "include", cache: "no-store", signal: transportSignal,
         })
         if (!response.ok) return
         const status = await response.json()
-        if (current !== generation || lifetime.signal.aborted || probe < publishedProbe) return
+        if (current !== generation || transportSignal.aborted || probe < publishedProbe) return
         if (typeof status?.authenticated !== "boolean") return
         publishedProbe = probe
         if (status?.authenticated === false) {
           setPairingRequired(status.pairingRequired === true)
-          if (current !== generation || lifetime.signal.aborted) return
+          if (current !== generation || transportSignal.aborted) return
           setRequired(true)
         }
-        else if (status?.authenticated === true) authenticated(lifetime.signal)
+        else if (status?.authenticated === true) authenticated(transportSignal)
       } catch { /* Offline/unreachable is not evidence of an expired login. */ }
       finally {
         clearTimeout(timeout)
