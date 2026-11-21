@@ -66,19 +66,19 @@ export async function pair(ts,rs){
   return proof
 }
 
-export async function browserWorktrees(page,capture){
+export async function browserWorktrees(page,capture,timeout){
   const branch="browser-worktree"
   const trigger=page.locator("button.selector-trigger").filter({hasText:/Worktree:/i}).filter({visible:true}).first()
   const rust=(r,method,suffix)=>r.request().method()===method&&new URL(r.url()).pathname.startsWith("/api/backends/rust2/")&&new URL(r.url()).pathname.endsWith(suffix)
   const awaitAction=async(method,suffix,status,action)=>{
-    const [result]=await Promise.all([page.waitForResponse(r=>rust(r,method,suffix),{timeout:28000}),action()])
+    const [result]=await Promise.all([page.waitForResponse(r=>rust(r,method,suffix),{timeout}),action()])
     assert.equal(result.status(),status,`${method} ${suffix}: ${await result.text()}`)
     return result
   }
   await trigger.click()
   await page.getByText("New from current branch",{exact:true}).click()
   await page.getByPlaceholder("worktree-name").fill(branch)
-  const placing=page.waitForResponse(r=>rust(r,"POST","/worktree"),{timeout:30000})
+  const placing=page.waitForResponse(r=>rust(r,"POST","/worktree"),{timeout})
   void placing.catch(()=>{})
   const created=await awaitAction("POST","/worktrees",201,()=>page.getByRole("button",{name:"Create and use worktree",exact:true}).click())
   const tree=await created.json()

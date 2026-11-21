@@ -372,7 +372,8 @@ async function solid({ ts, rs, local, remote, tsRoot, rsRoot, password }) {
     result.browser.providerCalls = { local: local.requests.length - localBaseline, remote: remote.requests.length - remoteBaseline }
     await capture(page, "06-deuxieme-message")
     await page.getByRole("button", { name: "New instance", exact: true }).click()
-    await page.getByRole("button", { name: "Local Project", exact: true }).first().click()
+    await page.locator(".folder-home-recent-primary-action").filter({ visible: true })
+      .and(page.getByRole("button", { name: /^Local Project · This computer · / })).click({ timeout: STARTUP_TIMEOUT })
     await page.getByRole("tab", { name: /Local Project/, selected: true }).waitFor()
     await page.getByRole("tab", { name: "Files", exact: true }).waitFor()
     await page.getByRole("tab", { name: "Missions", exact: true }).waitFor()
@@ -384,7 +385,7 @@ async function solid({ ts, rs, local, remote, tsRoot, rsRoot, password }) {
     await page.getByText("FIXTURE_ANSWER", { exact: true }).first().waitFor()
     result.browser.twoTabsIsolated = true
     await capture(page, "07-deux-backends")
-    result.browser.worktrees = await browserWorktrees(page, capture)
+    result.browser.worktrees = await browserWorktrees(page, capture, STARTUP_TIMEOUT)
     result.browser.files = await browserFiles(page, capture, path.join(rsRoot, "Rust Project"))
     result.samples.afterFullPath = await measurePair(ts, rs)
     for (const key of ["privateBytes", "workingSet"]) assert(result.samples.afterFullPath.rust[key] < 48 * 1048576,
