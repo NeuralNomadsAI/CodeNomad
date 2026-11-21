@@ -32,7 +32,7 @@ UI (Solid) ──HTTP + SSE──▶ codenomad-rs ──HTTP, basic auth, loopba
 | `src/settings/` | `config.yaml` / `state.yaml` owners shared with the TypeScript server (merge patches, Missions conditions), server identity, OpenCode config file editor |
 | `src/auth/` | Local password session (`auth.json`, bootstrap token, `/login`); paired devices, HTTPS admission, TLS |
 | `src/opencode/` | Shared daemon connection, `/instance` relay, executable validation and update status, OpenCode installation and updates without Node or npm (`install/`) |
-| `src/events/` | SSE to the UI, bridge from the daemon stream |
+| `src/events/` | Per-session daemon event routing and per-subscriber SSE queues (4 MiB each, 32 MiB shared). Backlogs fold superseding events; overflow triggers workspace resynchronization. |
 | `src/files/`, `search/`, `git/` | Project files and links, folder browser (any local folder with `--unrestricted-root`), file search, Git status/diff/history/mutations |
 | `src/worktrees/` | Owned checkouts, linked worktrees, location ownership, deletion fence |
 | `src/sessions/` | Pending requests, permission receipts, favorites, history navigation |

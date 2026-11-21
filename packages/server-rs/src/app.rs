@@ -14,7 +14,7 @@ use axum::{
 use chrono::{SecondsFormat, Utc};
 use serde::Serialize;
 use serde_json::{Value, json};
-use tokio::sync::{Notify, Semaphore, broadcast};
+use tokio::sync::{Notify, Semaphore};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -37,8 +37,7 @@ pub struct App {
     pub native: Native,
     pub binary: PathBuf,
     pub inner: Lock<Inventory>,
-    pub events: broadcast::Sender<Option<Arc<events::Frame>>>,
-    pub event_budget: Arc<Semaphore>,
+    pub events: events::Hub,
     pub extension_jobs: Arc<Semaphore>,
     pub devices: Option<Lock<auth::devices::Devices>>,
     pub opened: Notify,
@@ -118,8 +117,7 @@ impl App {
             native,
             binary,
             inner: Default::default(),
-            events: broadcast::channel(128).0,
-            event_budget: Arc::new(Semaphore::new(32 * 1024 * 1024)),
+            events: Default::default(),
             extension_jobs: Arc::new(Semaphore::new(2)),
             devices,
             opened: Notify::new(),
