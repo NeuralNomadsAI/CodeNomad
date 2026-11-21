@@ -30,24 +30,31 @@ export function createAuthRecovery(base: string | undefined | Pick<BackendHttp, 
     if (existing) return existing
     const current = generation
     const probe = ++nextProbe
+    const lifetime = new AbortController()
+    const cancel = () => lifetime.abort()
+    signal?.addEventListener("abort", cancel, { once: true })
+    const timeout = setTimeout(cancel, 8000)
     const pending = (async () => {
       try {
-        const timeout = AbortSignal.timeout(8000)
         const response = await fetcher(url("/api/auth/status"), {
-          credentials: "include", cache: "no-store", signal: signal ? AbortSignal.any?.([signal, timeout]) ?? timeout : timeout,
+          credentials: "include", cache: "no-store", signal: lifetime.signal,
         })
         if (!response.ok) return
         const status = await response.json()
-        if (current !== generation || signal?.aborted || probe < publishedProbe) return
+        if (current !== generation || lifetime.signal.aborted || probe < publishedProbe) return
         if (typeof status?.authenticated !== "boolean") return
         publishedProbe = probe
         if (status?.authenticated === false) {
           setPairingRequired(status.pairingRequired === true)
-          if (current !== generation || signal?.aborted) return
+          if (current !== generation || lifetime.signal.aborted) return
           setRequired(true)
         }
-        else if (status?.authenticated === true) authenticated(signal)
+        else if (status?.authenticated === true) authenticated(lifetime.signal)
       } catch { /* Offline/unreachable is not evidence of an expired login. */ }
+      finally {
+        clearTimeout(timeout)
+        signal?.removeEventListener("abort", cancel)
+      }
     })()
     checking.set(signal, pending)
     void pending.finally(() => { if (checking.get(signal) === pending) checking.delete(signal) })
