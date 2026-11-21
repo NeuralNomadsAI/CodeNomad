@@ -156,7 +156,9 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
     tabIds: tabs.map(({ id }) => id), authorities,
   }
 }
-export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: RestorableSessionState) => void) {
+export type WorkspaceReleaseResults = ReadonlyMap<string, Promise<"released" | "unconfirmed">>
+
+export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: RestorableSessionState, results: WorkspaceReleaseResults) => void) {
   const [started, setStarted] = createSignal(false)
   const enabled = () => started() && clientStateIsPrimary() && restorePreviousStateEnabled()
   // Snapshot the scalar inputs of catalog/runtime capture and prompt hydration.
@@ -223,6 +225,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   }
   let nativeShutdownGeneration: number | null = null
   let releasing: Promise<unknown> | undefined
+  let releaseResults: WorkspaceReleaseResults = new Map()
   let preparedTabs: RestorableSessionState | undefined
   const captureWorkspaceRecords = () => {
     const records = new Map<string, Pick<RestorableWorkspaceTabState, "backendId" | "serverId">>()
@@ -258,11 +261,12 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   const resumeCapture = () => {
     resumeWorkspaceCreations()
     // If startup has not begun, it can still restore directly from the loaded snapshot.
-    if (releasing && preparedTabs && started()) recoverReleasedTabs?.(preparedTabs)
+    if (releasing && preparedTabs && started()) recoverReleasedTabs?.(preparedTabs, releaseResults)
     preparedTabs = undefined
     preparedRecords = undefined
     nativeShutdownGeneration = null
     releasing = undefined
+    releaseResults = new Map()
     unlockInput?.()
     schedule()
   }
@@ -312,12 +316,15 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     if (releasing) return releasing
     // Only occurrences owned at capture can be released by record ID.
     const records = preparedRecords ?? captureWorkspaceRecords()
+    const cancellations = cancelUnattachedWorkspaceCreations(new Set(records.keys()))
+    const results = new Map<string, Promise<"released" | "unconfirmed">>()
+    if (deleteTabs) for (const [id, tab] of records) {
+      if (tab.backendId && !matchesRestoredServer(tab, backendRegistry.serverId(tab.backendId))) continue
+      results.set(id, closeWorkspace(id, { keepalive: true, silent: true }).then(() => "released", () => "unconfirmed"))
+    }
+    releaseResults = results
     return releasing = Promise.allSettled([
-      cancelUnattachedWorkspaceCreations(new Set(records.keys())),
-      ...(deleteTabs ? [...records].flatMap(([id, tab]) => {
-        if (tab.backendId && !matchesRestoredServer(tab, backendRegistry.serverId(tab.backendId))) return []
-        return [closeWorkspace(id, { keepalive: true, silent: true })]
-      }) : []),
+      cancellations, ...results.values(),
     ])
   }
   const awaitRelease = async () => {

@@ -3,7 +3,7 @@ import { render } from "solid-js/web"
 import { initializeClientState, setRestorePreviousStateEnabled } from "../../../src/stores/client-state"
 import { decodeClientSnapshotV2 } from "../../../src/stores/client-state-partitions"
 import { useAppSessionRestore } from "../../../src/lib/hooks/use-app-session-restore"
-import { activeAppTabId, appTabs, ensureActiveAppTab, selectAppTab } from "../../../src/stores/app-tabs"
+import { activeAppTabId, appTabs, ensureActiveAppTab, getSidecarAppTabId, selectAppTab, setAppTabOrder } from "../../../src/stores/app-tabs"
 import { appSessionRestoreGateActive } from "../../../src/stores/app-session-restore-gate"
 import { activeInstanceId, createInstance, instances, refreshWorkspaceList, updateInstance } from "../../../src/stores/instances"
 import { closeInstanceTab, selectInstanceTab } from "../../../src/stores/app-tabs"
@@ -25,6 +25,7 @@ import { updateMissionProjectView } from "../../../src/stores/mission-view-state
 import { moveAppTab } from "../../../src/stores/app-tabs"
 import { savedSessionBrowser } from "../../../src/stores/session-browser-persistence"
 import { getToastHistory } from "../../../src/lib/notifications"
+import { openSidecarTab } from "../../../src/stores/sidecars"
 
 ;(window as any).tabViews = {
   ids: () => appTabs().filter(tab => tab.kind === "instance").map(tab => tab.instance.id),
@@ -33,6 +34,15 @@ import { getToastHistory } from "../../../src/lib/notifications"
   mission: (id: string) => updateMissionProjectView(id, { selected: "mission-b", reader: { kind: "playbook", missionId: "debug" } }),
   reorder: (a: string, b: string) => moveAppTab(`instance:${a}`, `instance:${b}`, "before"),
   close: closeInstanceTab,
+  openDuplicateSidecars: async () => {
+    const first = await openSidecarTab("demo", { activate: false })
+    const second = await openSidecarTab("demo", { activate: false })
+    const ids = [first, second].map(tab => getSidecarAppTabId(tab.token))
+    setAppTabOrder([...appTabs().filter(tab => tab.kind === "instance").map(tab => tab.id), ...ids])
+    selectAppTab(ids[1])
+    return ids
+  },
+  active: activeAppTabId,
   disableRestore: () => setRestorePreviousStateEnabled(false),
   draft: (id: string) => getSessionDraftPromptsForInstance(id).same,
   writeDraft: (id: string, text: string) => setSessionDraftPrompt(id, "same", text),
@@ -96,6 +106,7 @@ function Fixture() {
       role="tab"
       aria-selected={activeAppTabId() === tab.id}
       data-tab-kind={tab.kind}
+      data-app-tab-id={tab.id}
       data-session-selection={tab.kind === "instance" ? activeSessionId().get(tab.instance.id) : undefined}
       onClick={() => selectAppTab(tab.id)}
      >{tab.kind === "instance" ? tab.instance.folder : tab.kind === "sidecar" ? tab.sidecarTab.sidecarId : tab.kind === "remote-restore" ? tab.snapshot.folder : ""}

@@ -202,6 +202,11 @@ for (const remote of [false, true]) test(`${remote ? "desktop remote" : "storage
 
 const viewCases = [
   { web: false, close: false }, { web: false, close: false, tauri: true }, { web: false, close: true },
+  ...[false, true].flatMap(tauri => [
+    { web: false, close: false, tauri, refusedDeletes: 2 },
+    { web: false, close: false, tauri, refusedDeletes: 1, heldRelease: true },
+    { web: false, close: false, tauri, duplicateSidecars: true },
+  ]),
   { web: false, close: false, reloadDuringQuit: true },
   { web: false, close: false, tauri: true, reloadDuringQuit: true },
   { web: false, close: false, reloadDuringQuit: true, earlyRelease: true },
@@ -210,7 +215,8 @@ const viewCases = [
   { web: true, close: true, late: true }, { web: true, close: false, discard: true },
   { web: true, close: false, delayedCopy: true },
 ]
-for (const { web, close, late, unsupportedDiscard, discard, tauri, delayedCopy, reloadDuringQuit, earlyRelease } of viewCases) test(`${web ? "browser-session" : "native"} production capture/restore binds duplicate UUIDs after ${close ? "closure" : "reorder"} (${late ? "late DELETE" : discard ? "discard" : delayedCopy ? "delayed copy" : unsupportedDiscard ? "no discard signal" : tauri ? "Tauri navigation" : "navigation"}${reloadDuringQuit ? ", reload during quit" : ""}${earlyRelease ? ", release before tabs attach" : ""})`, async () => {
+for (const { web, close, late, unsupportedDiscard, discard, tauri, delayedCopy, reloadDuringQuit, earlyRelease,
+  refusedDeletes = 0, heldRelease, duplicateSidecars } of viewCases) test(`${web ? "browser-session" : "native"} production capture/restore binds duplicate UUIDs after ${close ? "closure" : "reorder"} (${late ? "late DELETE" : discard ? "discard" : delayedCopy ? "delayed copy" : unsupportedDiscard ? "no discard signal" : tauri ? "Tauri navigation" : "navigation"}${reloadDuringQuit ? ", reload during quit" : ""}${earlyRelease ? ", release before tabs attach" : ""}${refusedDeletes ? `, ${refusedDeletes} refused DELETEs${heldRelease ? " with one still pending at cancel" : ""}` : ""}${duplicateSidecars ? ", duplicate SideCars" : ""})`, async () => {
   const context = await browser.newContext()
   const page = await context.newPage()
   const restoredDocument = (candidate: Page) => candidate.locator('[data-restoring="false"]').waitFor({ timeout: 60_000 })
@@ -282,6 +288,7 @@ for (const { web, close, late, unsupportedDiscard, discard, tauri, delayedCopy, 
   const finishDelete = Promise.withResolvers<void>()
   const explicitDeleteCompleted = Promise.withResolvers<boolean>()
   let sourceIds: string[] = []
+  let quitIds: string[] = []
   const deletes: string[] = []
   const mock = (method: string, path: string, input: any) => {
     let body: any = {}
@@ -296,7 +303,8 @@ for (const { web, close, late, unsupportedDiscard, discard, tauri, delayedCopy, 
       const id = path.split("/").at(-1)!
       if (!late || id !== sourceIds[1]) inventory = inventory.filter(candidate => candidate !== id)
       return undefined
-    } else if (path === "/api/previews") {
+    } else if (path === "/api/sidecars") body = { sidecars: [{ id: "demo", name: "Demo", status: "running" }] }
+    else if (path === "/api/previews") {
       loads.push(input.url)
       body = { sessionId: input.sessionId, targetUrl: input.url, token: "preview", proxyUrl: input.url, createdAt: new Date().toISOString() }
     } else if (path.endsWith("/worktrees")) body = { isGitRepo: true, worktrees: [{ slug: "root", directory: "/same", kind: "root" }] }
@@ -326,6 +334,11 @@ for (const { web, close, late, unsupportedDiscard, discard, tauri, delayedCopy, 
     if (req.method === "DELETE" && target.pathname.startsWith("/api/workspaces/")) {
       const id = target.pathname.split("/").at(-1)!
       deletes.push(id)
+      const quitIndex = quitIds.indexOf(id)
+      if (quitIndex >= 0 && quitIndex < refusedDeletes) {
+        if (heldRelease) await finishNativeRelease.promise
+        return res.writeHead(503).end()
+      }
       const explicit = late && id === sourceIds[0]
       if (explicit || delayedCopy && sourceIds.includes(id)) {
         if (explicit) res.on("close", () => explicitDeleteCompleted.resolve(res.writableFinished))
@@ -470,6 +483,15 @@ for (const { web, close, late, unsupportedDiscard, discard, tauri, delayedCopy, 
     assert.deepEqual(restored.map((v: any) => v.view), captured.map((v: any) => v.viewState))
     assert.equal(loads.length, count, "restoration allocates zero preview records and loads zero saved pages")
     if (!web && !close) {
+      const sidecars = page.locator('[role="tab"][data-tab-kind="sidecar"]')
+      const sidecarOrder = () => sidecars.evaluateAll(tabs => tabs.map(tab => tab.getAttribute("data-app-tab-id")))
+      const active = () => page.evaluate(() => (window as any).tabViews.active())
+      let beforeSidecars: string[] = []
+      if (duplicateSidecars) {
+        beforeSidecars = await page.evaluate(() => (window as any).tabViews.openDuplicateSidecars())
+        assert.deepEqual(await sidecarOrder(), beforeSidecars)
+        assert.equal(await active(), beforeSidecars[1], "select the second SideCar before quit")
+      }
       const flush = (generation: number, phase: "prepare" | "release" | "cancel") => page.evaluate(async ({ phase, generation, tauri }) => {
         if (tauri) (window as any).emitFlush(phase === "cancel", generation, phase === "release" ? 1 : undefined)
         else await window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__!(phase)
@@ -487,6 +509,7 @@ for (const { web, close, late, unsupportedDiscard, discard, tauri, delayedCopy, 
         if (!earlyRelease) await page.evaluate(() => window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__!())
       }
       const released = await page.evaluate(() => (window as any).tabViews.ids()) as string[]
+      quitIds = released
       assert.equal(released.length, earlyRelease ? 0 : 2)
       if (earlyRelease) {
         const navigatedIds = restored.map(({ id }: { id: string }) => id)
@@ -505,7 +528,7 @@ for (const { web, close, late, unsupportedDiscard, discard, tauri, delayedCopy, 
         await flush(2, "cancel")
         assert.equal(await page.evaluate(() => document.documentElement.inert), true, "the release ACK generation cannot cancel prepare")
       }
-      if (!earlyRelease) {
+      if (!earlyRelease && !refusedDeletes && !duplicateSidecars) {
         await page.evaluate(ids => { for (const id of ids) (window as any).tabViews.remove(id) }, released)
         await page.waitForFunction(() => (window as any).tabViews.ids().length === 0)
         await page.evaluate(() => window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__!())
@@ -515,15 +538,29 @@ for (const { web, close, late, unsupportedDiscard, discard, tauri, delayedCopy, 
       await flush(1, "cancel")
       restorePosts.resolve()
       assert.equal(await page.evaluate(() => document.documentElement.inert), false, "refused quit unlocks input")
+      if (heldRelease) {
+        assert.ok(!(await page.evaluate(() => (window as any).tabViews.ids())).includes(quitIds[0]),
+          "do not reuse a record with DELETE still in flight")
+        finishNativeRelease.resolve()
+      }
       await restoredDocument(page)
       await page.waitForFunction(() => (window as any).tabViews.ids().length === 2, undefined, { timeout: 5_000 })
       const recovered = await page.evaluate(() => (window as any).tabViews.ids().map((id: string) => ({ id, view: (window as any).tabViews.view(id) })))
-      assert.ok(recovered.every((row: any) => !restored.some((previous: any) => previous.id === row.id) && !released.includes(row.id)))
+      const recoveredIds = recovered.map((row: any) => row.id)
+      assert.deepEqual(recoveredIds.slice(0, refusedDeletes), released.slice(0, refusedDeletes), "reuse the exact surviving occurrences")
+      assert.ok(recoveredIds.slice(refusedDeletes).every((id: string) => !restored.some((previous: any) => previous.id === id) && !released.includes(id)))
+      if (refusedDeletes) {
+        assert.equal(new Set(recoveredIds).size, 2)
+        assert.deepEqual(inventory.filter(id => id.startsWith("uuid-")).sort(), [...recoveredIds].sort(), "no orphaned records")
+      }
       assert.deepEqual(recovered.map((row: any) => row.view), restored.map((row: any) => row.view))
       await page.waitForFunction(id => (window as any).tabViews.draft(id) === "restored draft", recovered[0].id)
-      await page.locator('[role="tab"][aria-selected="true"][data-session-selection="same"]').waitFor()
+      if (duplicateSidecars) {
+        assert.deepEqual(await sidecarOrder(), beforeSidecars)
+        assert.equal(await active(), beforeSidecars[1], "keep the selected SideCar occurrence")
+      } else await page.locator('[role="tab"][aria-selected="true"][data-session-selection="same"]').waitFor()
       await page.waitForFunction(ids => JSON.parse(sessionStorage.getItem("snapshot")!).session.tabs
-        .map((tab: any) => tab.workspaceId).join() === ids.join(), recovered.map((row: any) => row.id))
+        .filter((tab: any) => tab.kind === "workspace").map((tab: any) => tab.workspaceId).join() === ids.join(), recoveredIds)
     }
     assert.deepEqual(errors, [])
     if (late) {

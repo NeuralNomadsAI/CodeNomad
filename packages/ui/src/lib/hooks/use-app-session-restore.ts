@@ -2,7 +2,7 @@ import { batch, createEffect, onCleanup, onMount, untrack } from "solid-js"
 import { getLogger } from "../logger"
 import { isWebHost } from "../runtime-env"
 import { backendIdOf, LOCAL_BACKEND_ID } from "../backend-identity"
-import { captureState, useAppSessionCapture, type AppSessionCaptureController } from "./use-app-session-capture"
+import { captureState, useAppSessionCapture, type AppSessionCaptureController, type WorkspaceReleaseResults } from "./use-app-session-capture"
 import {
   clientStateIsPrimary, loadedRestorableSession, restorePreviousStateEnabled,
   type RestorableSessionState,
@@ -49,12 +49,14 @@ function startupTimeout(snapshot: RestorableSessionState): number {
   return Math.max(MINIMUM_STARTUP_TIMEOUT_MS,
     INITIAL_LOAD_TIMEOUT_MS + Math.max(1, workspaceCount) * (CREATE_TIMEOUT_MS + CLEANUP_TIMEOUT_MS) + 5_000)
 }
-function createRestoreContext(snapshot: RestorableSessionState, signal: AbortSignal, capture: AppSessionCaptureController, onUpdateRequired: () => void) {
+function createRestoreContext(snapshot: RestorableSessionState, signal: AbortSignal, capture: AppSessionCaptureController,
+  onUpdateRequired: () => void, releases?: WorkspaceReleaseResults) {
   const orderRevision = appTabOrderRevision()
   const selectionRevision = appTabSelectionRevision()
   let ownedActiveTabId: string | null = null
   return {
-    snapshot, signal, capture, onUpdateRequired,
+    snapshot, signal, capture, onUpdateRequired, releases,
+    reusableReleasedIds: new Set<string>(),
     deferredWorkspaces: new Map<number, () => boolean>(),
     attemptedCreates: new Set<number>(),
     selectActive(tabId: string | null, requested: boolean) {
@@ -72,12 +74,33 @@ function createRestoreContext(snapshot: RestorableSessionState, signal: AbortSig
   }
 }
 type RestoreContext = ReturnType<typeof createRestoreContext>
+
+async function refreshRestoreInventory(backendId: string, signal: AbortSignal) {
+  if (backendId === LOCAL_BACKEND_ID) {
+    if (!await refreshWorkspaceList(LOCAL_BACKEND_ID, undefined, signal)) throw new Error("Primary inventory superseded")
+  } else {
+    if (!await backendRegistry.ensure(backendId)) throw new Error("Remote inventory unavailable")
+    await backendRegistry.retryWorkspaces(backendId)
+  }
+}
+
+async function checkReleaseResults(context: RestoreContext, backendId: string): Promise<boolean> {
+  if (!context.releases?.size) return false
+  const results = await runAbortable(() => Promise.all(context.snapshot.tabs.flatMap(tab => {
+    if (tab.kind !== "workspace" || backendIdOf(tab) !== backendId || !tab.workspaceId) return []
+    const result = context.releases?.get(tab.workspaceId)
+    return result ? [result.then(outcome => outcome === "unconfirmed" ? tab.workspaceId : undefined)] : []
+  })), { signal: context.signal, timeoutMs: OPERATION_TIMEOUT_MS })
+  for (const id of results) if (id) context.reusableReleasedIds.add(id)
+  // A failed DELETE might have taken effect; only a subsequent inventory can confirm presence.
+  return results.some(Boolean)
+}
 function hasLocalRestoredTab(capture: AppSessionCaptureController, index: number): boolean {
   const tabId = capture.restoredTabIds()[index]
   return Boolean(tabId && appTabs().some(tab => tab.id === tabId && tab.kind !== "remote-restore"))
 }
 const waitForWorkspaceMountAdoption = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
-function reconcileRestoredWorkspaces({ snapshot, capture }: RestoreContext) {
+function reconcileRestoredWorkspaces({ snapshot, capture, reusableReleasedIds }: RestoreContext) {
   const tabs = appTabs()
   const bindings = capture.restoredTabIds().map(id => {
     const tab = tabs.find(tab => tab.id === id)
@@ -90,7 +113,7 @@ function reconcileRestoredWorkspaces({ snapshot, capture }: RestoreContext) {
     id: instance.id, folderPath: instance.folder, status: instance.status, backendId: instance.backendId, serverId: instance.serverId,
   }))
   return reconcileWorkspaceTabs(snapshot.tabs.map(tab => tab.kind === "workspace"
-    ? { ...tab, workspaceId: isWebHost() ? tab.workspaceId : undefined, folderPath: tab.folder }
+    ? { ...tab, workspaceId: isWebHost() || tab.workspaceId && reusableReleasedIds.has(tab.workspaceId) ? tab.workspaceId : undefined, folderPath: tab.folder }
     : { kind: tab.kind }), live).map(match => {
       const saved = snapshot.tabs[match.tabIndex]
       const bound = live.find(instance => saved.kind === "workspace" && matchesRestoredServer(saved, instance.serverId)
@@ -293,14 +316,9 @@ export function useAppSessionRestore(): void {
     const flight = (async () => {
       await initialRestore
       if (!context || disposed) return
-      if (backendId === LOCAL_BACKEND_ID) {
-        if (!await refreshWorkspaceList(LOCAL_BACKEND_ID, undefined, controller.signal)) throw new Error("Primary inventory superseded")
-      } else {
-        if (preferences().multiBackend !== true) return
-        const backend = await backendRegistry.ensure(backendId)
-        if (!backend) return
-        await backendRegistry.retryWorkspaces(backendId)
-      }
+      if (backendId !== LOCAL_BACKEND_ID && preferences().multiBackend !== true) return
+      await checkReleaseResults(context, backendId)
+      await refreshRestoreInventory(backendId, controller.signal)
       const indexes = new Map(context.snapshot.tabs.flatMap((tab, index) => {
         const placeholder = remoteRestoreTabs().find(value => value.snapshot === tab)
         if (!placeholder || tab.kind !== "workspace" || backendIdOf(tab) !== backendId) return []
@@ -328,11 +346,12 @@ export function useAppSessionRestore(): void {
     })
     return id
   }
-  function recoverReleasedTabs(snapshot: RestorableSessionState) {
+  function recoverReleasedTabs(snapshot: RestorableSessionState, releases: WorkspaceReleaseResults) {
     if (disposed || !snapshot.tabs.some(tab => tab.kind === "workspace")) return
     const live = appTabs()
-    const recovery = createRestoreContext(snapshot, controller.signal, capture, offerRecovery)
-    const indexes = new Map<number, () => boolean>()
+    const recovery = createRestoreContext(snapshot, controller.signal, capture, offerRecovery, releases)
+    const indexes = new Map<string, Map<number, () => boolean>>()
+    const sidecars = live.filter(tab => tab.kind === "sidecar")
     batch(() => {
       capture.start(snapshot)
       context = recovery
@@ -342,19 +361,30 @@ export function useAppSessionRestore(): void {
       }
       snapshot.tabs.forEach((tab, index) => {
         if (tab.kind === "sidecar") {
-          capture.recordRestoredTab(index, live.find(candidate =>
-            candidate.kind === "sidecar" && candidate.sidecarTab.sidecarId === tab.sidecarId)?.id ?? null)
+          const match = sidecars.findIndex(candidate => candidate.sidecarTab.sidecarId === tab.sidecarId)
+          capture.recordRestoredTab(index, match < 0 ? null : sidecars.splice(match, 1)[0].id)
           return
         }
         addPlaceholder(tab, index)
-        indexes.set(index, capture.createRestoredTabCommitGuard(index))
+        const backendId = backendIdOf(tab)
+        const group = indexes.get(backendId) ?? new Map<number, () => boolean>()
+        group.set(index, capture.createRestoredTabCommitGuard(index))
+        indexes.set(backendId, group)
       })
       recovery.applyOrder()
       recovery.selectActive(capture.restoredTabIds()[snapshot.activeTabIndex] ?? null, true)
     })
     // Use the same attempt/Retry path as startup, without reopening live SideCars.
-    initialRestore = initialRestore.then(() => restoreTabs(recovery, indexes)).catch(error => {
-      if (!disposed) log.error("Failed to restore projects after cancelled shutdown", error)
+    initialRestore = initialRestore.then(async () => {
+      await Promise.all([...indexes].map(async ([backendId, group]) => {
+        try {
+          const refresh = await checkReleaseResults(recovery, backendId)
+          if (refresh) await refreshRestoreInventory(backendId, controller.signal)
+          await restoreTabs(recovery, group, refresh && backendId === LOCAL_BACKEND_ID)
+        } catch (error) {
+          if (!disposed) log.error("Failed to restore projects after cancelled shutdown", error)
+        }
+      }))
     })
   }
   const stopLifecycle = onInstanceLifecycleAuthority(event => {
