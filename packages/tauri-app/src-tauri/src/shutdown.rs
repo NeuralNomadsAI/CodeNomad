@@ -719,6 +719,9 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
         speech.revoke(None);
     }
     std::thread::spawn(move || {
+        if let Some(speech) = app.try_state::<crate::device_speech::DeviceSpeech>() {
+            speech.stop_hex();
+        }
         client_state::capture_and_flush_all_windows(&app);
         let result = if let Some(state) = app.try_state::<AppState>() {
             retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
@@ -953,6 +956,9 @@ fn cancel_windows_session_end(app: &AppHandle) {
 #[cfg(windows)]
 pub(crate) fn request_windows_session_end(app: AppHandle) {
     let (generation, session_deadline) = prepare_windows_session_end(&app);
+    if let Some(speech) = app.try_state::<crate::device_speech::DeviceSpeech>() {
+        speech.revoke(None);
+    }
     if !app
         .state::<ShutdownCoordinator>()
         .windows_session_end_owns_shutdown(generation)
@@ -990,6 +996,9 @@ pub(crate) fn request_windows_session_end(app: AppHandle) {
     let (finished_tx, finished_rx) = std::sync::mpsc::sync_channel(1);
     let cleanup_app = app.clone();
     std::thread::spawn(move || {
+        if let Some(speech) = cleanup_app.try_state::<crate::device_speech::DeviceSpeech>() {
+            speech.stop_hex();
+        }
         let result = {
             cleanup_app
                 .try_state::<AppState>()
