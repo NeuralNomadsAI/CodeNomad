@@ -17,7 +17,7 @@ import { SettingsScreen } from "../../../src/components/settings-screen"
 import { openSettings } from "../../../src/stores/settings-screen"
 import { selectInstanceTab } from "../../../src/stores/app-tabs"
 import { setActiveSessionId } from "../../../src/stores/session-selection-state"
-import { remoteServerSelection } from "../../../src/stores/remote-project-open"
+import { activeAppTab } from "../../../src/stores/app-tabs"
 import "../../../src/stores/sessions"
 import { applyUiSettings } from "./ui-settings"
 import "../../../src/index.css"
@@ -72,7 +72,9 @@ await applyUiSettings({ locale: "en", notificationRouting: {
   sessionDone: { screen: true, history: true, system: false },
   sessions: { screen: true, history: true, system: false },
 } as never })
-localBackend.api.patchStateOwner = async (_owner, patch) => patch as any
+let uiState: Record<string, unknown> = {}
+localBackend.api.fetchStateOwner = async () => uiState as any
+localBackend.api.patchStateOwner = async (_owner, patch) => (uiState = { ...uiState, ...(patch as object) }) as any
 const host = preferencesForBackend("local")
 await host.ensureLoaded()
 for (const id of ["A", "B"]) await host.saveRemoteServerProfile({ id, name: `Server ${id}`, baseUrl: `http://${id.toLowerCase()}.invalid` })
@@ -128,9 +130,9 @@ let retainedAction: any
       location: { directory: `/${owner}` }, data: type === "session.compaction.ended"
         ? { sessionID: "ses_homonym", reason: "auto", text: "Summary" } : { sessionID: "ses_homonym" } })
   },
-  history: () => getToastHistory().map(({ title, message, action }) => ({ title, message, target: action?.target })),
-  action: async (owner: string) => {
-    const action = getToastHistory().find(item => item.action?.target?.backendId === owner)?.action
+  history: () => getToastHistory().map(({ title, message }) => ({ title, message })),
+  action: async (title: string) => {
+    const action = getToastHistory().find(item => item.title === title)?.action
     if (action) { retainedAction ??= action; await runToastAction(action) }
   },
   staleAction: () => retainedAction && runToastAction(retainedAction),
@@ -142,7 +144,10 @@ let retainedAction: any
     setShowSettings(true)
     await openSettings("servers")
   },
-  serverSelection: remoteServerSelection,
+  serverSelection: () => {
+    const tab = activeAppTab()
+    return tab?.kind === "blank" ? tab.server : undefined
+  },
   addServer: () => host.saveRemoteServerProfile({ name: "LAN server", baseUrl: "http://lan.invalid" }),
   openMissions: async (owner: string) => {
     const id = `${owner}~same`
@@ -157,5 +162,10 @@ let retainedAction: any
     setShowSettings(true)
     await openSettings("missions")
   },
+  clearSelection: (owner: string) => setActiveSessionId(previous => {
+    const next = new Map(previous)
+    next.delete(`${owner}~same`)
+    return next
+  }),
   selected: () => ({ instance: activeInstanceId(), sessionA: activeSessionId().get("A~same"), sessionB: activeSessionId().get("B~same") }),
 }

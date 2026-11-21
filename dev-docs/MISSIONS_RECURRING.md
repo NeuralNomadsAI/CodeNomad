@@ -186,12 +186,16 @@ Each reservation retains its distinct passage, execution Mission and original me
 IDs and isolated journal, with `coordinatorReused` identifying the explicit selection.
 Adoption applies the frozen agent/model through public native switches and merges only
 the Missions metadata key. Existing transcript, title, permissions and unrelated metadata
-remain. The user's choice authorizes ordinary Mission controls over that conversation
+remain. After admission the coordinator conversation's agent and model stay its user's
+choice: Mission tools keep working after a switch, while task roots keep their role profile. The user's choice authorizes ordinary Mission controls over that conversation
 and its work, including Stop cancellation of existing queued user/synthetic inputs.
-For human-authored choices, never add busy-work or other-Mission-membership vetoes to the explicitly adopted root.
-Agent-authored preparations and configurations restrict explicit adoption to an idle eligible root:
-the author, followed/event sources, active family work, queued inputs, durable claims,
-open requests and active or uncertain ownership by another Mission refuse adoption.
+For human-authored choices, never add other-Mission-membership vetoes to the explicitly adopted root.
+An agent can explicitly select its own eligible root when saving a schedule.
+Selection and adoption check placement, source and ownership only: never add a busy-work veto.
+An active, queued or waiting family is adopted as is; the passage prompt queues natively
+behind its current turn, and its baseline records that turn as inherited work.
+Deterministic coordinator selection refusals before a write return an exact
+request-bound refusal; incomplete or ambiguous writes retain their recovery hold.
 Preparation, configuration and every authoritative adoption revalidate this boundary before native
 profile, metadata, environment or input effects; the current passage's own marker is allowed.
 A missing chosen root stays missing; attempted admission retains its original proof rules.
@@ -199,7 +203,9 @@ A missing chosen root stays missing; attempted admission retains its original pr
 Before adoption, one immutable `coordinatorBaseline` checkpoint captures the bounded
 native family and its per-session message high-water, boundary, in-flight input and durable
 aggregate sequence under document CAS and native-state fencing. Existing quiet histories
-are separated from new descendants and later child inputs. A native prompt hook records
+are separated from new descendants and later child inputs. A quiet inherited descendant
+keeps its existing Location, such as an earlier worktree; passage-owned sessions and
+inherited sessions with new activity must stay in the coordinator's Location. A native prompt hook records
 the first actual child-input identity in `codenomad.passage-input` metadata for that passage;
 later inputs retain it through pruning and restarts. Inherited running work keeps its actual
 captured input and failures after the ownership boundary. Idle ancestors of inherited
@@ -232,7 +238,8 @@ The durable auxiliary reconciliation calendar remains until that passage settles
 A Mission whose calendar OpenCode migrated keeps its durable calendar and wake IDs.
 The native adapter resolves that calendar to the matching `aut_` row, checks the
 exact owned session, project, timing and fixed action, and verifies each pending
-wake against its unique durable native message. An absent or conflicting row
+wake against its unique durable native message, or a code row's durable preparation.
+An absent or conflicting row
 does not authorize a new calendar, wake or passage.
 OpenCode migrates active or paused timer rows that have a next due time and no
 native condition or run count limit. Mission conditions and passage limits are
@@ -317,7 +324,7 @@ stale, blocked or unresolved observation keeps **State unconfirmed**. Successful
 attention and exact passage acknowledgement follow the shared marks contract in
 `MISSIONS.md` (Agent conventions): accent icon with a static neutral underline for
 confirmed waiting, accent alone for prepared, orange Pause or warning triangle for
-pause/interruption, yellow pulse during a passage and green for a new successful
+pause/interruption, yellow during a passage and green for a new successful
 passage awaiting review. Explicit attentive selection or **Mark as read** acknowledges
 that exact passage and returns an armed schedule to waiting. The context menu captures
 its passage identity when opened; a result arriving while it is open stays unread.
@@ -339,7 +346,7 @@ active native principal's saved date; events label it as a check. Paused
 rows contribute their counter but have no active next wake. `nativeStatus`
 separately exposes active/paused/done/mixed principals beside the document's
 desired state. `wakeCount` sums
-native principal prompt admissions in the current `timeGeneration`; auxiliary
+native principal runs (prompt admissions or returned code programs) in the current `timeGeneration`; auxiliary
 wakes, source-verification counts and lifetime business launch/success totals
 have separate meanings. Available actions are durable-state candidates; the
 authenticated mutation rechecks capabilities, source/actor proofs and CAS.
@@ -396,7 +403,7 @@ explicit unavailable response. UI reads use the shared secondary HTTP budget.
 
 Explicit events share the native source preparation boundary:
 another schedule's successful passage, a completed one-time Mission, commits on
-a local branch, stable new messages in a followed conversation, and an explicit
+a local or remote branch, stable new messages in a followed conversation, and an explicit
 file set; repository pull/merge request creation and merging, issue creation, GitHub account
 notifications and Dependabot alerts.
 One reader call per event key (`native-mission-condition-reader.ts`)
@@ -424,6 +431,11 @@ event-specific fields stay in that card. `mission-editor-repository.ts` demands 
 owned `repository-source` read only while such a card is shown. Detection never rewrites
 a draft: selecting a forge event pins its provider, authority and repository path.
 Stored GitHub and branch criteria keep their exact policy and source keys on unchanged saves.
+`remote-branch-commits` pins the detected forge repository and exact `refs/heads/`
+reference. The branch reader uses the forge's direct branch endpoint and the
+existing account and repository checks. A changed remote tip triggers one
+passage per observation, including force-updates. A missing branch blocks the
+read. The tip is checked again before publishing a pending passage.
 
 `mission-repository-source.ts` reads `repository-activity` through Contribute's
 `ForgeWorkItems.openRepository`: shared remote selection, CLI discovery, anonymous
@@ -467,6 +479,8 @@ Each technical wake enters an exact-file, own-process HTTP RPC with an eight-sec
 deadline. A read-only preflight freezes complete fan-in coverage before a dispatch
 claim. Technical high-water advances at durable reservation; the pending business
 reference remains separate, so auxiliary observation can reconcile the last passage.
+When recent carrier context omits the next unconsumed wake, the context hook
+reads that exact native message by ID before dispatch.
 Native persisted schedules load their owning Location on wake after service startup.
 Pause/Stop, failures, unqualified observations and uncertain effects retain their
 admission barriers. Never resend an attempted original whose proof is missing.
@@ -480,6 +494,9 @@ can prepare a separate one-time or calendar-backed Mission through `mission.prep
 owns its preparation and read-only target access in the ordinary project journal.
 An explicitly requested `startOnCreation` continues only fresh creation through the
 guarded first-Play contract in [Missions](MISSIONS.md#mission-profile-selection-and-creation-recovery).
+New calendars run a fixed Code Mode program that calls the wake tool, with no model
+turn and no carrier message ([code wakes](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#code-wakes)).
+Rows created with the carrier prompt keep that action until they retire.
 Technical carriers use the reserved `ses_cn_schedule_` namespace, local provider,
 local title/compaction hooks and authoritative ordinary-input guards.
 Context classification and recovery follow the schedule transport's
@@ -487,12 +504,13 @@ Context classification and recovery follow the schedule transport's
 Ordinary sidebar browsing/search and Mission criterion conversation-source pickers
 exclude this namespace through the shared carrier-identity predicate; native
 observations remain available to ownership and reconciliation readers.
-Technical turns keep native model-selection events/statistics while making zero
+The compaction notifier uses the same predicate to keep carrier compaction silent.
+Prompt-row technical turns keep native model-selection events/statistics while making zero
 provider HTTP requests. Their compaction preserves the carrier/calendar identity
 and bounds processed context. Persisted native messages and events follow native
 retention and may grow until explicit terminal cleanup; the thirty Mission result
 receipts have their own independent bound.
-Technical wake conversations use a zero-token local model, so OpenCode's background precompaction never applies to them; their automatic local compaction does.
+Prompt-row wake conversations use a zero-token local model, so OpenCode's background precompaction never applies to them; their automatic local compaction does.
 
 Implementation contracts and isolated qualification commands:
 [native contracts](MISSIONS_NATIVE_CONTRACTS.md) and
@@ -989,10 +1007,10 @@ poses as a cookie session. When the mark cannot be prepared before forwarding
 (no authenticated principal, plugin/binding unavailable, revocation or a
 session move), the answer falls back to the ordinary reply without a mark; the
 user is never blocked from answering. The human-answer header alone (automation,
-Yolo, SDK) never mints a mark. The dock sends `x-codenomad-human-answer` only for a
+SDK) never mints a mark. The dock sends `x-codenomad-human-answer` only for a
 real pointer click or submit keydown on that exact question, never for
 `element.click()`, `requestSubmit()`, synthetic events, developer automation,
-Auto/Yolo or SDK calls (`tests/browser/interruption-dock.test.ts`,
+automatic or SDK calls (`tests/browser/interruption-dock.test.ts`,
 `automation-input.test.ts`). The input captures a one-use token bound to the exact
 request, schema and answer (`lib/form-answer-interaction.ts`); it expires with that
 input task and is consumed at the SDK send in `stores/instances.ts`. Only a dispatched mark reply with a lost outcome is

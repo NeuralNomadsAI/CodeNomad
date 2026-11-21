@@ -3,14 +3,15 @@ import { generateUUID } from "../lib/client-identity"
 import type { MissionCondition, MissionCriteriaLaunchPolicy, MissionLaunchPolicy } from "../../../server/src/missions/launch-policy"
 import { previewMissionCalendars } from "../../../server/src/missions/mission-calendar-preview"
 import { missionCriteriaStructure, type MissionCriterionConnector } from "../../../server/src/missions/mission-launch-kind"
-import { missionGithubKinds, isMissionGithubKind, missionGithubConditionSchema } from "../../../server/src/missions/mission-github-condition"
-import { missionRepositoryConditionSchema, type MissionRepositoryCondition, type MissionRepositoryIdentity } from "../../../server/src/missions/mission-repository-condition"
+import { missionGithubKinds, isMissionGithubKind, missionGithubConditionSchema, type MissionGithubKind } from "../../../server/src/missions/mission-github-condition"
+import { branchHeadRefSchema, missionRemoteBranchConditionSchema, missionRepositoryConditionSchema, type MissionRepositoryCondition, type MissionRepositoryIdentity } from "../../../server/src/missions/mission-repository-condition"
 
 /** Schedule shortcuts write a cron; advanced cron is written directly. */
 export const missionScheduleShortcuts = ["now", "hours", "daily", "weekly", "monthly", "cron"] as const
-export const missionEventKinds = ["branch-commits", "conversation-message", "files-changed", "schedule-success", "mission-completed", "repository-activity", ...missionGithubKinds] as const
-export const isRepositoryCriterion = (kind: string) => kind === "branch-commits" || kind === "repository-activity" || isMissionGithubKind(kind)
+export const missionEventKinds = ["branch-commits", "remote-branch-commits", "conversation-message", "files-changed", "schedule-success", "mission-completed", "repository-activity", ...missionGithubKinds] as const
+export const isRepositoryCriterion = (kind: string) => kind === "branch-commits" || kind === "remote-branch-commits" || kind === "repository-activity" || isMissionGithubKind(kind)
 export type MissionConditionKind = MissionCondition["kind"]
+export type MissionPickerSource = Exclude<MissionConditionKind, "files-changed" | "repository-activity" | "remote-branch-commits" | MissionGithubKind>
 export type MissionCriterionKind = typeof missionScheduleShortcuts[number] | MissionConditionKind
 export const MISSION_CRITERIA_LIMIT = 16
 /** Divisors of a day, so "every N hours" keeps the same gap across midnight. */
@@ -31,6 +32,8 @@ export interface MissionSchedulingDraft extends MissionSchedulingFields {
 }
 export const isMissionEventKind = (kind: MissionCriterionKind): kind is MissionConditionKind =>
   (missionEventKinds as readonly string[]).includes(kind)
+export const isMissionPickerSource = (kind: MissionCriterionKind): kind is MissionPickerSource =>
+  isMissionEventKind(kind) && kind !== "files-changed" && kind !== "repository-activity" && kind !== "remote-branch-commits" && !isMissionGithubKind(kind)
 /** The connector between each pair of adjacent cards, with the codec's own parser. */
 export const missionCardConnectors = (rows: readonly MissionCriterionDraft[]): MissionCriterionConnector[] =>
   missionCriteriaStructure(rows, kind => !isMissionEventKind(kind as MissionCriterionKind)).connectors
@@ -74,6 +77,10 @@ export function missionCriterionCron(row: MissionCriterionDraft, index = 0): str
 }
 function eventCriterion(row: MissionCriterionDraft & { kind: MissionConditionKind }, index: number, directory?: string): MissionCondition {
   const source = row.source.trim()
+  if (row.kind === "remote-branch-commits") {
+    const parsed = missionRemoteBranchConditionSchema.safeParse({ ...row.repository, kind: row.kind, ref: `refs/heads/${source}` })
+    return parsed.success ? parsed.data : fail("source", index)
+  }
   if (row.kind === "repository-activity") {
     const parsed = missionRepositoryConditionSchema.safeParse({ kind: row.kind, ...row.repository, event: row.event,
       ...(row.author?.trim() ? { author: row.author.trim() } : {}) })
@@ -94,9 +101,7 @@ function eventCriterion(row: MissionCriterionDraft & { kind: MissionConditionKin
       if (!/^[A-Za-z0-9_.:-]{1,240}$/.test(source)) return fail("source", index)
       return { kind: row.kind, conversationID: source }
     case "branch-commits":
-      if (!directory || !source.startsWith("refs/heads/") || source.length < 12 || source.length > 1024
-        || /[\s~^:?*\[\\\x00-\x1f\x7f]/.test(source) || source.includes("..") || source.includes("@{")
-        || source.split("/").some(part => !part || part.startsWith(".") || part.endsWith(".") || part.endsWith(".lock"))) return fail("source", index)
+      if (!directory || !branchHeadRefSchema.safeParse(source).success) return fail("source", index)
       return { kind: row.kind, directory, ref: source }
     case "files-changed": {
       const paths = [...new Set(row.files.split(/\r?\n/).map(value => value.trim()).filter(Boolean))]

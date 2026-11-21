@@ -478,10 +478,6 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   // A schedule's current passage: its selected task takes the toolbar from the schedule's.
   const passageTask = createMemo(() => passageSchedule() ? taskSelection(mission(), observedActivity(), passageStore()) : undefined)
   const tracking = () => <>
-    <Show when={passageSchedule()}>
-      <Show when={currentPassage.loading() && !currentPassage.snapshot()?.mission}><p role="status">{props.t("missions.control.loading")}</p></Show>
-      <Show when={currentPassage.error()}><p role="status">{props.t(currentPassage.snapshot()?.mission ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
-    </Show>
     <MissionPanelScope value={passageStore}><Show when={mission()}>{selected => <>
       <Show when={passageTask()?.task.key} keyed>{_key => <MissionTaskActions readOnly instanceId={props.instanceId} mission={selected()}
         selection={passageTask()!} disabled onAdmitted={refreshVisible}
@@ -682,7 +678,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           <button type="button" class="mission-control-icon-button" aria-label={refreshLabel()}
             title={refreshLabel()} disabled={state().status === "loading" || refreshing()} onClick={() => void refresh()}>
             <Show when={reading()} fallback={<RefreshCw class="h-4 w-4" />}>
-              <Loader2 class="h-4 w-4 animate-spin" />
+              <span class="inline-flex animate-spin"><Loader2 class="h-4 w-4" /></span>
             </Show>
           </button>
         </>} />
@@ -832,7 +828,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
 
       <Show when={!selectedSchedule() && !selectedScheduled() && scheduled.entries().length === 0 && recurrence.entries().length === 0}><Switch>
         <Match when={state().status === "loading" && rows().length === 0}>
-          <StateMessage icon={<Loader2 class="h-5 w-5 animate-spin" />} title={props.t("missions.control.loading")} />
+          <StateMessage icon={<span class="inline-flex animate-spin"><Loader2 class="h-5 w-5" /></span>} title={props.t("missions.control.loading")} />
         </Match>
         <Match when={state().status === "unavailable"}>
           <StateMessage

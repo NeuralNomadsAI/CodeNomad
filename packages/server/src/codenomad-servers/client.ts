@@ -90,6 +90,7 @@ export class CodeNomadServerClient {
     return createExplicitTransport({
       origin: this.origin, signal: this.#signal,
       omitFetchMetadata: true,
+      sendOwnOriginOnMutation: this.secret?.kind === "password",
       skipTlsVerify: this.options.skipTlsVerify,
       dial: this.options.dial,
       headers: (): Record<string, string> => { check(); return { ...(this.#cookies.size ? { cookie: [...this.#cookies].map(([name, value]) => `${name}=${value}`).join("; ") } : {}),

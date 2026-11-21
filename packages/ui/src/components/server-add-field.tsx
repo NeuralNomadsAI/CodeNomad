@@ -4,17 +4,16 @@ import { useI18n } from "../lib/i18n"
 import { carriesCredentials, classifyCodeNomadLink, codeNomadLinkName, serverDisplayName } from "../lib/codenomad-link"
 import { RemoteServerProbeError, remoteServerErrorKey, useRelayServerProfiles } from "../lib/hooks/use-remote-server-profiles"
 import type { RemoteServerProfile } from "../../../server/src/api-types"
-import { SettingsInfoTip } from "./settings/settings-info-tip"
 import { captureRequestFocus } from "../lib/request-focus"
 import { secretEntryAllowed, serversManageable } from "../lib/server-meta"
+import { serverApi } from "../lib/api-client"
 
 interface ServerAddFieldProps {
   disabled?: boolean
   onAdded?: (id: string, mayFocus?: () => boolean) => void
   onPairingFailure?: (id: string) => void
-  navAttribute?: string
+  browseNav?: boolean
   pairingProfile?: RemoteServerProfile
-  compact?: boolean
 }
 
 export default function ServerAddField(props: ServerAddFieldProps) {
@@ -23,33 +22,33 @@ export default function ServerAddField(props: ServerAddFieldProps) {
   const [address, setAddress] = createSignal("")
   const [busy, setBusy] = createSignal(false)
   const [error, setError] = createSignal<string>()
-  const [diagnostic, setDiagnostic] = createSignal<string>()
   const [errorServer, setErrorServer] = createSignal("")
   const [tlsFailedFor, setTlsFailedFor] = createSignal<string>()
   const [skipTls, setSkipTls] = createSignal(false)
   const errorId = createUniqueId()
   let generation = 0, alive = true
+  let request: AbortController | undefined
   let releaseFocus = () => {}
-  const invalidate = () => { generation++; releaseFocus(); setBusy(false) }
+  const invalidate = () => { generation++; request?.abort(); releaseFocus(); setBusy(false) }
   createEffect(() => { props.pairingProfile; if (!enabled() || props.disabled) { invalidate(); reset() } })
   createEffect(on(() => props.pairingProfile && `${props.pairingProfile.id}|${props.pairingProfile.baseUrl}|${props.pairingProfile.skipTlsVerify}|${props.pairingProfile.ssh?.host}`, () => { invalidate(); reset() }, { defer: true }))
-  onCleanup(() => { alive = false; generation++; releaseFocus(); setAddress("") })
+  onCleanup(() => { alive = false; request?.abort(); releaseFocus(); setAddress("") })
 
   function reset() {
-    setAddress(""); setError(undefined); setDiagnostic(undefined); setErrorServer(""); setTlsFailedFor(undefined); setSkipTls(false)
+    setAddress(""); setError(undefined); setErrorServer(""); setTlsFailedFor(undefined); setSkipTls(false)
   }
   function changed(value: string) {
     invalidate()
     if (classifyCodeNomadLink(value)?.kind === "pairing" && !secretEntryAllowed()) {
       setAddress(""); setError("remoteBrowse.secretEntryForbidden"); return
     }
-    setAddress(value); setError(undefined); setDiagnostic(undefined); setErrorServer("")
+    setAddress(value); setError(undefined); setErrorServer("")
     if (classifyCodeNomadLink(value)?.baseUrl !== tlsFailedFor()) { setTlsFailedFor(undefined); setSkipTls(false) }
   }
   async function add(text: string) {
     const value = text.trim()
     if (!value || busy() || props.disabled || !enabled()) return
-    setError(undefined); setDiagnostic(undefined); setErrorServer("")
+    setError(undefined); setErrorServer("")
     const link = classifyCodeNomadLink(value)
     if (link?.kind === "pairing" && !secretEntryAllowed()) {
       setAddress(""); setError("remoteBrowse.secretEntryForbidden"); return
@@ -70,12 +69,14 @@ export default function ServerAddField(props: ServerAddFieldProps) {
     const flight = ++generation, focus = captureRequestFocus()
     releaseFocus = focus.dispose
     const current = () => alive && flight === generation && enabled() && !props.disabled
-      && (!props.compact || !!target || serversManageable())
+      && (!!target || serversManageable())
       && (!target || props.pairingProfile?.id === target.id && props.pairingProfile.baseUrl === target.baseUrl && props.pairingProfile.skipTlsVerify === target.skipTlsVerify && props.pairingProfile.ssh?.host === target.ssh?.host)
     if (link.kind === "pairing") setAddress("")
     setBusy(true)
     try {
-      const profile = await submitServer(input, false, current)
+      const profile = target && !target.skipTlsVerify && link.kind === "pairing"
+        ? await serverApi.connectRemoteServer(target.id, { pairingLink: link.entryUrl }, (request = new AbortController()).signal).then(() => target)
+        : await submitServer(input, current)
       if (!current()) return
       reset()
       props.onAdded?.(profile.id, () => current() && focus.retained())
@@ -91,8 +92,6 @@ export default function ServerAddField(props: ServerAddFieldProps) {
       }
       const tls = failure instanceof RemoteServerProbeError && failure.code === "tls_error"
       setError(remoteServerErrorKey(failure))
-      // Diagnostics use reviewed localized reasons, never exception text or remote bodies.
-      setDiagnostic(t(remoteServerErrorKey(failure)))
       setTlsFailedFor(tls ? link.baseUrl : undefined)
       if (!tls) setSkipTls(false)
     } finally {
@@ -100,15 +99,14 @@ export default function ServerAddField(props: ServerAddFieldProps) {
       if (current()) { setBusy(false); if (link.kind === "pairing") setAddress("") }
     }
   }
-  const nav = () => props.navAttribute ? { [props.navAttribute]: "" } : {}
-  const keepBusyFocus = () => !!props.navAttribute && busy()
+  const keepBusyFocus = () => !!props.browseNav && busy()
   const fieldDisabled = () => props.disabled || !!props.pairingProfile && !secretEntryAllowed()
   return (
     <div class="server-add-field">
       <form class="server-add-field-row" onSubmit={event => { event.preventDefault(); void add(address()) }}>
-        <input type="text" class="server-add-field-input" autocomplete="off" spellcheck={false} {...nav()} data-server-add-field
-          aria-label={t(props.pairingProfile ? "remoteBrowse.pairingLink" : props.compact ? "folderSelection.remoteProject.add" : "folderSelection.browseMenu.addField")}
-          placeholder={t(props.pairingProfile ? "remoteBrowse.pairingLink" : props.compact ? "folderSelection.remoteProject.addPlaceholder" : "folderSelection.browseMenu.addField")}
+        <input type="text" class="server-add-field-input" dir="ltr" autocomplete="off" spellcheck={false} data-browse-nav={props.browseNav ? "" : undefined} data-server-add-field
+          aria-label={t(props.pairingProfile ? "remoteBrowse.pairingLink" : "folderSelection.browseMenu.addField")}
+          placeholder={t(props.pairingProfile ? "remoteBrowse.pairingLink" : "folderSelection.browseMenu.addField")}
           aria-describedby={error() ? errorId : undefined} aria-invalid={error() ? "true" : undefined}
           value={address()} readonly={keepBusyFocus()} disabled={fieldDisabled() || busy() && !keepBusyFocus()}
           onKeyDown={event => { if (event.isComposing && event.key === "Enter") event.preventDefault() }}
@@ -121,13 +119,12 @@ export default function ServerAddField(props: ServerAddFieldProps) {
           }} />
         <button type="submit" class="window-icon-button" disabled={fieldDisabled() || !keepBusyFocus() && (busy() || !address().trim())}
           aria-disabled={keepBusyFocus() || undefined}
-          aria-label={t(props.compact ? "folderSelection.remoteProject.add" : "folderSelection.browseMenu.add")}
-          title={t(props.compact ? "folderSelection.remoteProject.add" : "folderSelection.browseMenu.add")}>
+          aria-label={t("folderSelection.browseMenu.add")} title={t("folderSelection.browseMenu.add")}>
           <Show when={busy()} fallback={<Plus class="w-4 h-4" aria-hidden="true" />}><Loader2 class="w-4 h-4 animate-spin" aria-hidden="true" /></Show>
         </button>
       </form>
       <Show when={props.pairingProfile && !secretEntryAllowed()}><p class="server-add-field-error" role="alert">{t("remoteBrowse.secretEntryForbidden")}</p></Show>
-      <Show when={error()}>{message => <p id={errorId} class="server-add-field-error" role="alert"><Show when={errorServer() && message() !== "remoteBrowse.pairAgain"}><bdi>{errorServer()}</bdi>{" — "}</Show><span>{t(message(), { name: errorServer() })}</span> <Show when={diagnostic()}>{detail => <SettingsInfoTip text={detail()} />}</Show></p>}</Show>
+      <Show when={error()}>{message => <p id={errorId} class="server-add-field-error" role="alert"><Show when={errorServer() && message() !== "remoteBrowse.pairAgain"}><bdi>{errorServer()}</bdi>{" · "}</Show><span>{t(message(), { name: errorServer() })}</span></p>}</Show>
       <Show when={tlsFailedFor()}><label class="server-add-field-option">
         <input type="checkbox" checked={skipTls()} disabled={busy()} onChange={event => setSkipTls(event.currentTarget.checked)} />
         <span>{t("folderSelection.browseMenu.skipTls")}</span>

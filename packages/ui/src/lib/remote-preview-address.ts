@@ -3,6 +3,15 @@ import { historyUrl } from "./browser-history"
 
 type Capability = Pick<RemotePreviewCapability, "token" | "capability" | "contentUrl" | "targetUrl">
 
+/** A native commit without a logical mapping may request a new capability only for a site URL. */
+export function remotePreviewNavigationTarget(source: string, opaqueOrigin?: string): string | undefined {
+  const safe = historyUrl(source)
+  if (!safe) return
+  const url = new URL(safe)
+  if (url.hostname.endsWith(".preview.localhost") || url.origin === opaqueOrigin && url.pathname.startsWith("/previews/")) return
+  return safe
+}
+
 /**
  * Where a remote capability's content loads. Local desktop UIs receive an exclusive
  * `<capability>.preview.localhost` origin (prefix: the remote token). Remote clients

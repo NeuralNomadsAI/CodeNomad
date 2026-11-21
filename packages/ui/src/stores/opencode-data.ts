@@ -9,6 +9,8 @@ import { messageStoreBus } from "./message-v2/bus"
 import { sseManager } from "../lib/sse-manager"
 import { backendEvents } from "../lib/server-events"
 import { captureBackendOperation } from "../lib/backend-operation"
+import { sessions, withSession } from "./session-state"
+import { idleReadAdmissionEpoch } from "./session-generation-recovery"
 import { getLogger } from "../lib/logger"
 import { isExecutionTerminalEvent } from "../lib/native-execution-events"
 import { createCompactionDeltaBuffer } from "./compaction-delta-buffer"
@@ -269,7 +271,7 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
       directory,
       event: event as any,
       connection: {
-        status: () => sseManager.getStatuses().get(instanceId) === "connected" ? "connected" : "reconnecting",
+        status: () => sseManager.getRawStatus(instanceId) === "connected" ? "connected" : "reconnecting",
       },
       onError: (error) => log.warn("Failed to refresh OpenCode projection", { instanceId, error }),
     })
@@ -325,6 +327,7 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
       async syncAuthoritative(sessionId: string, isCurrent: () => boolean) {
         if (!operation.current() || !isCurrent()) return false
         const client = getRootClient(instanceId)
+        const baseline = sessions().get(instanceId)?.get(sessionId)
         const activeRequest = client.session.active({ signal: operation.signal })
         data.session.invalidate(sessionId)
         data.session.pending.invalidate(sessionId)
@@ -341,6 +344,13 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
         ])
         if (!operation.current() || !isCurrent()) return false
         data.session.setStatus(sessionId, sessionId in active ? "running" : "idle")
+        if (!(sessionId in active) && baseline?.generationAdmissionEpoch !== undefined) {
+          withSession(instanceId, sessionId, session => {
+            const epoch = idleReadAdmissionEpoch(baseline, session)
+            if (session.idleReadAdmissionEpoch === epoch) return false
+            session.idleReadAdmissionEpoch = epoch
+          })
+        }
         return true
       },
       dispose() {

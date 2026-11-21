@@ -4,7 +4,7 @@ Ana bilgisayarda çalışmayı sürdürmek için telefon veya tabletin tarayıc�
 
 ## Bir telefon veya tabletten bağlanın {#connect}
 
-Ana bilgisayarda çoklu sunucu etkinleştirildiğinde kayıtlı sunucular Ana sayfa ve Ayarlar → Sunucular üzerinden kullanılabilir. Birincil arka uç dahil her arka ucun proje sekmeleri, yeniden yüklemeden sonra taslakları ve görünümleri geri yükler. Kullanılamayan proje sekmesini korur: **Yeniden dene** mevcut kayda bağlanır; **Aç** eksik projeyi açıkça açar.
+Kayıtlı sunucular Ana sayfa ve Ayarlar → Sunucular üzerinden kullanılabilir. [Uzak sekmeleri geri yükleme](projects.md#restore-remote-tabs).
 
 1. Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** öğesini açın, ardından **Uzaktan Kontrolü başlat** öğesini seçin.
 2. Eşleştirme QR kodunu mobil cihazınızla tarayın ve bağlantıyı kullanmaya devam etmek istediğiniz tarayıcıda açın.
@@ -30,7 +30,7 @@ Kurulumu düzeltmek için kimlik doğrulamayı veya TLS doğrulamayı kapatmayı
 
 Gezinmeyi ve araçları açmak için **Sol panel** ve **Sağ panel** kontrollerini kullanın. Dar düzenlerde paneller, masaüstü genişliğinde bir tuvali zorlamak yerine konuşmayı üst üste bindirir; bir yüzer panelin açılması diğerini kapatır. Yüzer oturum panelinde bir oturum seçmek, zaten gösterilen oturum olsa bile seçiminizi göstermek için paneli kapatır; **Geri** ve **İleri** paneli açık tutar. Konuşma başlığı eylemleri, alan sınırlı olduğunda taşma menüsüne taşınır.
 
-İleti düzenleyicisi Ajan, Model ve Düşünme kontrollerini alt satırında tutar. Alan, ekran klavyesi dahil görünür konuşmaya göre boyutlanır; uzun taslaklar kaydırılabilir. Yalnızca dokunmatik cihazlarda gönderme ekran klavyesini yeniden açmaz; böylece yanıtı okuyabilirsiniz, devam etmek için ileti düzenleyicisine dokunun. Bir oturum çalışırken ileti düzenleyicisinin **Diğer eylemler** menüsü, normal gönderiminizin yapmadığı davranışı (**Mesajı kuyruğa ekle** veya **Şimdi yönlendir**) donanım klavyesi kısayolu gerektirmeden sunar. İstek açmak kayıtlı yükseklik veya taslağı değiştirmeden ileti düzenleyicisini geçici küçültür. İzin/soruları üstündeki istek panelinde, yanıt eylemlerinin bulunduğu sabit alt bölüm erişilebilir kalacak şekilde yanıtlayın. Bkz. [Konuşmalar](conversations.md) ve [İzinler](permissions.md).
+İleti düzenleyicisi Ajan, Model ve Düşünme kontrollerini alt satırında tutar. Alanın yüksekliği, ekran klavyesi kapalıyken konuşma alanının yüksekliğine göre belirlenir. Klavye açıldığında kontroller ve mesajlar için yer bırakmak üzere alan geçici olarak küçülebilir; kayıtlı yükseklik oranı değişmez. Uzun taslaklar yine kaydırılabilir. Yalnızca dokunmatik cihazlarda gönderme ekran klavyesini yeniden açmaz; böylece yanıtı okuyabilirsiniz, devam etmek için ileti düzenleyicisine dokunun. Bir oturum çalışırken ileti düzenleyicisinin **Diğer eylemler** menüsü, normal gönderiminizin yapmadığı davranışı (**Mesajı kuyruğa ekle** veya **Şimdi yönlendir**) donanım klavyesi kısayolu gerektirmeden sunar. İstek açmak kayıtlı yükseklik veya taslağı değiştirmeden ileti düzenleyicisini geçici küçültür. İzin/soruları üstündeki istek panelinde, yanıt eylemlerinin bulunduğu sabit alt bölüm erişilebilir kalacak şekilde yanıtlayın. Bkz. [Konuşmalar](conversations.md) ve [İzinler](permissions.md).
 
 ## Yetenek ve bağlantı sınırları {#limits}
 

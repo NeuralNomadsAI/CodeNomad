@@ -4,7 +4,7 @@ Use the browser UI on a phone or tablet to continue work on the backend host. In
 
 ## Connect from a phone or tablet {#connect}
 
-With multi-server enabled on the host, saved servers are available from Home and Settings → Servers. Project tabs on every backend, including the primary backend, restore their drafts and views after reload. An unavailable project keeps its tab: **Retry** reconnects to an existing record; **Open** explicitly opens a missing project.
+Saved servers are available from Home and Settings → Servers. [Restore remote tabs](projects.md#restore-remote-tabs).
 
 1. On the host, open **Settings → Remote Access → Remote Control**, then choose **Start Remote Control**.
 2. Scan the pairing QR code with your mobile device and open the link in the browser you intend to keep using.
@@ -30,7 +30,7 @@ Do not turn off authentication or TLS verification to fix installation.
 
 Use **Left panel** and **Right panel** controls to open navigation and tools. On narrow layouts, panels overlay the conversation rather than forcing a desktop-width canvas; opening one floating panel closes the other. Choosing a session in the floating session panel closes it to show your choice, even the session already shown; **Back** and **Forward** keep it open. Conversation-header actions move into their overflow menu when space is limited.
 
-The composer keeps Agent, Model and Thinking in its footer. The field resizes with the visible conversation, including the on-screen keyboard; long drafts remain scrollable. On touch-only devices, sending does not reopen the on-screen keyboard, so you can read the reply; tap the composer to continue. While a session runs, the composer's **More actions** menu offers **Queue message** or **Steer now**, whichever your normal send does not do, without needing a hardware-keyboard shortcut. Opening an interruption temporarily compacts the composer without changing its saved height or draft. Answer permissions/questions in the dock above it, keeping the dock's action footer reachable. See [Conversations](conversations.md) and [Permissions](permissions.md).
+The composer keeps Agent, Model and Thinking in its footer. The field is sized relative to the conversation height without the on-screen keyboard. When the keyboard opens, the field can shrink temporarily to leave room for controls and messages, without changing your saved height proportion. Long drafts still scroll. On touch-only devices, sending does not reopen the on-screen keyboard, so you can read the reply; tap the composer to continue. While a session runs, the composer's **More actions** menu offers **Queue message** or **Steer now**, whichever your normal send does not do, without needing a hardware-keyboard shortcut. Opening an interruption temporarily compacts the composer without changing its saved height or draft. Answer permissions/questions in the dock above it, keeping the dock's action footer reachable. See [Conversations](conversations.md) and [Permissions](permissions.md).
 
 ## Capability and connectivity limits {#limits}
 

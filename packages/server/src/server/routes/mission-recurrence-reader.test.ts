@@ -278,7 +278,7 @@ test("authenticated backend GET forwards only exact archive selectors and owned 
   const f = await fixture(), app = Fastify({ logger: false }), fence = new WorktreeDeletionFence()
   const sessions = new SessionManager(), session = sessions.createSession("offline-reader")
   app.addHook("preHandler", async (request, reply) => {
-    if (!sessions.getSession(parseCookies(request.headers.cookie).codenomad_session)) sendUnauthorized(request, reply)
+    if (!sessions.getSession(parseCookies(request.headers.cookie)?.codenomad_session)) sendUnauthorized(request, reply)
   })
   const cookie = { cookie: `codenomad_session=${session.id}` }
   let connected = true, owned = true, workspace = { id: "workspace" }, connections = 0

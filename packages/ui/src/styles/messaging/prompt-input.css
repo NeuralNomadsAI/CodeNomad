@@ -5,6 +5,21 @@
   background-color: var(--surface-field);
 }
 
+/* When even one line and the controls cannot fit, let the session scroll
+   rather than clipping the field or its actions. */
+.session-view:has(> .prompt-input-container[data-keyboard-crowded]) {
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+
+.prompt-input-container[data-keyboard-crowded] {
+  flex-shrink: 0;
+}
+
+.session-view > .mission-transcript-surface {
+  margin-top: var(--keyboard-transcript-inset, 0px);
+}
+
 .prompt-resize-handle {
   position: absolute;
   top: -4px;

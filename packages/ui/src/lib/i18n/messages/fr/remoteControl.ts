@@ -15,7 +15,7 @@ export const remoteControlMessages = {
   "remoteControl.newLink": "Créer un nouveau lien d’appairage",
   "remoteControl.stop": "Arrêter le contrôle à distance",
   "remoteControl.previews.title": "Aperçus web",
-  "remoteControl.previews.caption": "Les appareils appairés peuvent ouvrir l’aperçu web. Chaque adresse d’aperçu ouvre sa page sans appairage : gardez-la privée.",
+  "remoteControl.previews.info": "Gardez les adresses d’aperçu privées.",
   "remoteControl.pairing.title": "Connecter un autre appareil",
   "remoteControl.pairing.description": "Scannez ce QR code ou ouvrez le lien à usage unique sur l’autre appareil.",
   "remoteControl.pairing.qrAlt": "QR code d’appairage du contrôle à distance",
@@ -23,7 +23,6 @@ export const remoteControlMessages = {
   "remoteControl.pairing.copied": "Copié",
   "remoteControl.pairing.expires": "Ce lien expire à {time}.",
   "remoteControl.devices.title": "Appareils appairés",
-  "remoteControl.devices.description": "Ces appareils peuvent accéder à cet hôte CodeNomad via le contrôle à distance ou leur adresse HTTPS.",
   "remoteControl.devices.empty": "Aucun appareil n’est encore appairé.",
   "remoteControl.devices.lastSeen": "Dernière activité : {time}",
   "remoteControl.devices.revoke": "Révoquer",
@@ -32,4 +31,5 @@ export const remoteControlMessages = {
   "remoteControl.direct.title": "Appairage HTTPS direct",
   "remoteControl.direct.origin": "Adresse HTTPS",
   "remoteControl.direct.newLink": "Créer un lien d’appairage HTTPS",
+  "remoteControl.devices.revocationPending": "Révocation en attente",
 } as const

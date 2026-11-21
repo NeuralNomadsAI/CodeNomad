@@ -18,7 +18,6 @@ type ToastPosition = "top-left" | "top-right" | "top-center" | "bottom-left" | "
 export type ToastAction = {
   label: string
   href?: string
-  target?: { backendId: string; instanceId: string; sessionId?: string }
   onClick?: () => void | Promise<void>
 }
 

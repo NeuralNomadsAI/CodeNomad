@@ -15,7 +15,7 @@ export const remoteControlMessages = {
   "remoteControl.newLink": "Neuen Kopplungslink erstellen",
   "remoteControl.stop": "Fernsteuerung beenden",
   "remoteControl.previews.title": "Web-Vorschauen",
-  "remoteControl.previews.caption": "Gekoppelte Geräte können die Web-Vorschau öffnen. Jede Vorschauadresse öffnet ihre Seite ohne Kopplung, halte sie daher privat.",
+  "remoteControl.previews.info": "Halten Sie Vorschauadressen privat.",
   "remoteControl.pairing.title": "Weiteres Gerät verbinden",
   "remoteControl.pairing.description": "QR-Code scannen oder den einmaligen Link auf dem anderen Gerät öffnen.",
   "remoteControl.pairing.qrAlt": "QR-Code zur Kopplung der Fernsteuerung",
@@ -23,7 +23,6 @@ export const remoteControlMessages = {
   "remoteControl.pairing.copied": "Kopiert",
   "remoteControl.pairing.expires": "Dieser Link läuft um {time} ab.",
   "remoteControl.devices.title": "Gekoppelte Geräte",
-  "remoteControl.devices.description": "Diese Geräte können über die Fernsteuerung oder ihre HTTPS-Adresse auf diesen CodeNomad-Host zugreifen.",
   "remoteControl.devices.empty": "Noch keine Geräte gekoppelt.",
   "remoteControl.devices.lastSeen": "Zuletzt gesehen: {time}",
   "remoteControl.devices.revoke": "Widerrufen",
@@ -32,4 +31,5 @@ export const remoteControlMessages = {
   "remoteControl.direct.title": "Direkte HTTPS-Kopplung",
   "remoteControl.direct.origin": "HTTPS-Adresse",
   "remoteControl.direct.newLink": "HTTPS-Kopplungslink erstellen",
+  "remoteControl.devices.revocationPending": "Widerruf ausstehend",
 } as const

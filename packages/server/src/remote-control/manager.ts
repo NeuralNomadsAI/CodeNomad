@@ -9,9 +9,10 @@ import type {
 } from "../api-types"
 import type { Logger } from "../logger"
 import { deviceNameFromUserAgent, pairingFromCode, type RemoteDeviceRegistry } from "./devices"
-import { admitRemoteUpgrade, type RemoteGateDeps } from "./gate"
+import { admitRemoteUpgrade, admitRemoteVoiceUpgrade, type RemoteGateDeps } from "./gate"
 import { RemoteIngress } from "./ingress"
 import type { RemoteControlOwnerLease } from "./owner-lease"
+import { isLiveVoiceRoute, refuseVoiceUpgrade } from "../speech/live-voice-gateway"
 
 type OpenTunnel = (options: OpenRemoteTunnelOptions) => Promise<RemoteTunnel>
 
@@ -21,6 +22,7 @@ interface ManagerOptions {
   router: () => ((request: IncomingMessage, response: ServerResponse) => void) | null
   /** Proxies an admitted web preview WebSocket upgrade; false when no preview path matched. */
   previewUpgrade?: () => ((request: IncomingMessage, socket: Socket, head: Buffer) => boolean) | null
+  voiceUpgrade?: () => ((request: IncomingMessage, socket: Socket, head: Buffer, deviceId: string) => void) | null
   /** Whether a web preview capability token is live. */
   hasPreview?: (token: string) => boolean
   logger: Logger
@@ -51,7 +53,6 @@ export class RemoteControlManager {
   private enabled = false
   private error: string | undefined
   private lastConnectedAt: string | undefined
-  private readonly pushRevokedListeners = new Set<(deviceId: string | null, channel?: "tunnel") => void>()
   private readonly previewInvalidations = new Set<(deviceId?: string, tunnelOnly?: boolean) => void>()
 
   constructor(private readonly options: ManagerOptions) {
@@ -60,8 +61,16 @@ export class RemoteControlManager {
       if (route) route(request, response)
       else response.writeHead(503).end()
     }, (request, socket, head) => {
+      if (isLiveVoiceRoute(request.url)) {
+        const device = admitRemoteVoiceUpgrade(request, this.gate())
+        const upgrade = options.voiceUpgrade?.()
+        if (!device) refuseVoiceUpgrade(socket, "403 Forbidden")
+        else if (!upgrade) refuseVoiceUpgrade(socket, "404 Not Found")
+        else upgrade(request, socket, head, device.id)
+        return "voice"
+      }
       const upgrade = admitRemoteUpgrade(request, this.gate()) ? options.previewUpgrade?.() : null
-      return upgrade ? upgrade(request, socket, head) : false
+      return upgrade?.(request, socket, head) ? "preview" : false
     })
   }
 
@@ -81,7 +90,7 @@ export class RemoteControlManager {
       previews: this.options.registry.previewsAllowed(),
       state,
       ...(tunnel ? { remoteUrl: tunnel.url } : {}),
-      pairedDevices: this.options.registry.list().length,
+      pairedDevices: this.options.registry.pairedCount(),
       ...(this.lastConnectedAt ? { lastConnectedAt: this.lastConnectedAt } : {}),
       ...(this.error ? { error: this.error } : {}),
       ...(this.directHttpsOrigins().length ? { directOrigins: this.directHttpsOrigins() } : {}),
@@ -90,18 +99,6 @@ export class RemoteControlManager {
 
   directHttpsOrigins(): string[] {
     return [...(this.options.directHttpsOrigins?.() ?? [])]
-  }
-
-  tunnelPushEpoch(): string {
-    return this.options.registry.tunnelPushEpoch()
-  }
-
-  devicePushEpoch(id: string): string {
-    return this.options.registry.devicePushEpoch(id)
-  }
-
-  invalidatePushConsent(id: string): void {
-    this.options.registry.invalidatePushConsent(id)
   }
 
   async start(): Promise<RemoteControlStartResponse> {
@@ -134,7 +131,6 @@ export class RemoteControlManager {
 
   async stop(): Promise<RemoteControlStatus> {
     this.options.registry.setStartsOnLaunch(false)
-    this.notifyPushRevoked(null, "tunnel")
     this.enabled = false
     this.error = undefined
     this.generation += 1
@@ -163,10 +159,10 @@ export class RemoteControlManager {
     return pairingFromCode(origin, this.options.registry.createPairing(origin))
   }
 
-  exchangeDirectPairing(code: string, origin: string, userAgent: string | undefined): { device: RemoteControlDevice; token: string } | null {
+  exchangeDirectPairing(code: string, origin: string, userAgent: string | undefined, serverHostName?: string): { device: RemoteControlDevice; token: string } | null {
     if (this.options.disabledByAdministrator) return null
     if (!this.directHttpsOrigins().includes(origin)) return null
-    const paired = this.options.registry.exchange(code, deviceNameFromUserAgent(userAgent), origin)
+    const paired = this.options.registry.exchange(code, serverHostName === undefined ? deviceNameFromUserAgent(userAgent) : `CodeNomad · ${serverHostName}`, origin)
     if (!paired) return null
     if (paired.evictedId) this.disconnectDevice(paired.evictedId)
     return { device: paired.device, token: paired.token }
@@ -207,28 +203,12 @@ export class RemoteControlManager {
     }
   }
 
-  pushAuthority(id: string, channel: "tunnel" | "https", origin: string): "active" | "suspended" | "revoked" {
-    if (this.options.disabledByAdministrator || !this.options.registry.isPaired(id, channel === "https" ? origin : undefined)) return "revoked"
-    if (channel === "https") return this.directHttpsOrigins().includes(origin) ? "active" : "revoked"
-    if (!this.enabled && !this.options.registry.startsOnLaunch()) return "revoked"
-    return this.tunnel?.status().state === "connected" ? "active" : "suspended"
-  }
-
   revokeDevice(id: string): boolean {
-    const revoked = this.options.registry.revoke(id)
-    // Revocation also ends live HTTP and SSE connections already admitted.
-    this.disconnectDevice(id)
-    return revoked
-  }
-
-  onPushRevoked(listener: (deviceId: string | null, channel?: "tunnel") => void): () => void {
-    this.pushRevokedListeners.add(listener)
-    return () => { this.pushRevokedListeners.delete(listener) }
-  }
-
-  private notifyPushRevoked(id: string | null, channel?: "tunnel"): void {
-    for (const listener of this.pushRevokedListeners) {
-      try { listener(id, channel) } catch { /* Revocation observers have independent failure boundaries. */ }
+    try {
+      return this.options.registry.revoke(id)
+    } finally {
+      // In-memory revocation still applies if the registry cannot be saved.
+      this.disconnectDevice(id)
     }
   }
 
@@ -241,7 +221,7 @@ export class RemoteControlManager {
     this.options.registry.setPreviewsAllowed(allowed)
     if (!allowed) {
       this.invalidatePreviews()
-      this.ingress.disconnectUpgrades()
+      this.ingress.disconnectPreviews()
     }
     return this.status()
   }
@@ -335,7 +315,6 @@ export class RemoteControlManager {
 
   private disconnectDevice(id: string): void {
     this.invalidatePreviews(id)
-    this.notifyPushRevoked(id)
     for (const sockets of [this.deviceSockets, this.directDeviceSockets]) {
       for (const [socket, devices] of sockets) {
         if (devices.has(id)) socket.destroy()

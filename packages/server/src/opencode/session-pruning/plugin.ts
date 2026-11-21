@@ -14,7 +14,7 @@ import { readNavigationWindow, readSessionOutline } from "./navigation-store"
 import { withHistoryDatabase } from "./history-database"
 import { assetsInputSchema, assetsResultSchema, assetReadInputSchema, assetReadResultSchema } from "./assets-contract"
 import { listSessionAssets, readSessionAsset } from "./assets-store"
-import { imageReadInputSchema, imageReadResultSchema, imageReferenceInputSchema, imageReferenceResultSchema, imagesConversationInputSchema,
+import { imageReadInputSchema, imageReadResultSchema, imageReferenceInputSchema, imageReferenceResultSchema, imagesConversationNativeInputSchema,
   imagesConversationResultSchema, imagesInputSchema, imagesResultSchema } from "./assets-gallery-contract"
 import { galleryImageReference, listGalleryImages, readGalleryImage } from "./assets-gallery"
 import { imagesConversationRpc } from "./assets-conversation"
@@ -36,7 +36,7 @@ export const SessionPruningRpc = Rpc.define({ ...pruningRpcDefinition, methods: 
   images: { input: imagesInputSchema, output: imagesResultSchema },
   imageRead: { input: imageReadInputSchema, output: imageReadResultSchema },
   imageReference: { input: imageReferenceInputSchema, output: imageReferenceResultSchema },
-  imagesConversation: { input: imagesConversationInputSchema, output: imagesConversationResultSchema },
+  imagesConversation: { input: imagesConversationNativeInputSchema, output: imagesConversationResultSchema },
 } })
 
 // Native local-plugin entry point. Only a user's pruning RPC changes content.

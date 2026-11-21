@@ -28,7 +28,7 @@ async function fixture(t: TestContext, surface: string, initial: Meta) {
   const events = await fixtureEventStream(borrowed.url)
   page.setDefaultTimeout(10_000)
   let meta = initial
-  let profiles = [{ id: "a", name: "Alpha", baseUrl: surface === "browser" ? "https://password-host.test" : "https://fixture.opentunnel.xyz", skipTlsVerify: false, createdAt: "", updatedAt: "" }]
+  let profiles = [{ id: "a", name: "Alpha", baseUrl: ["browser", "restore"].includes(surface) ? "https://password-host.test" : "https://fixture.opentunnel.xyz", skipTlsVerify: false, createdAt: "", updatedAt: "" }]
   let patchGate: ReturnType<typeof deferred> | undefined
   const gates = new Set<ReturnType<typeof deferred>>()
   const requests: Array<{ method: string; path: string; body: string }> = []
@@ -206,15 +206,15 @@ for (const surface of ["restore", "browser"]) test(`${surface} sign-in disables 
   if (surface === "restore") await f.page.getByRole("button", { name: "Connect", exact: true }).click()
   const passwords = f.page.locator('input[type="password"]')
   await passwords.first().waitFor()
-  assert.equal(await passwords.count(), surface === "restore" ? 2 : 1)
+  assert.equal(await passwords.count(), 1)
   for (const password of await passwords.all()) assert.equal(await password.isDisabled(), true)
-  await f.page.getByText(refusal, { exact: true }).waitFor()
+  await f.page.getByText(refusal, { exact: true }).first().waitFor()
   await passwords.first().evaluate((element, value) => {
     const input = element as HTMLInputElement
     input.value = value
     input.dispatchEvent(new Event("input", { bubbles: true }))
   }, sentinel)
-  await submitForm(f.page, surface === "restore" ? "[data-remote-restore] form" : ".remote-server-signin")
+  await submitForm(f.page, ".remote-server-signin")
   assert.equal(f.requests.filter(request => request.path.endsWith("/connect") || request.path.endsWith("/auth/login")).length, 0)
   await f.check()
 })
@@ -250,7 +250,7 @@ test("captured relay hook rechecks secret capability after a held profile PATCH,
   await f.check()
 })
 
-for (const api of ["connectRemoteServer", "connectRemoteBackend", "relaySignIn"] as const) {
+for (const api of ["connectRemoteServer", "relaySignIn"] as const) {
   test(`captured ${api} refuses typed credentials after revocation at the dispatch boundary`, { timeout: 60_000 }, async t => {
     const f = await fixture(t, "dispatch", { localRequest: false, secretEntryAllowed: true })
     await f.page.evaluate(async api => {
@@ -268,8 +268,7 @@ for (const api of ["connectRemoteServer", "connectRemoteBackend", "relaySignIn"]
           return { accepted: false, typed: error instanceof RemoteServerRequestError, code: (error as any).code }
         }
       }
-      ;(window as any).capturedSecretFreeDispatch = () => (api === "connectRemoteBackend"
-        ? captured("a", {}) : serverApi.connectRemoteServer("a", {}))
+      ;(window as any).capturedSecretFreeDispatch = () => serverApi.connectRemoteServer("a", {})
     }, api)
     await f.revoke()
     for (const value of api === "relaySignIn" ? [sentinel] : [sentinel, pairing]) {

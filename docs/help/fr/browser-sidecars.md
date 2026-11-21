@@ -12,15 +12,17 @@ Les service workers restent désactivés dans les aperçus distants.
 
 Cliquer sur un lien `localhost` ou `127.0.0.1` dans une conversation l'ouvre dans l'aperçu web de cette session, sur tout client où les aperçus sont disponibles. Via Remote Control lorsque l'hôte garde les aperçus web désactivés, ou sur un client où les aperçus sont autrement indisponibles, ces liens conservent leur comportement normal dans le navigateur. Ctrl+clic (⌘-clic sur macOS) ou clic milieu ouvre le lien dans votre navigateur à la place.
 
-Chaque session possède un aperçu dans la fenêtre. Les onglets dupliqués choisissent indépendamment entre le chat et ce même aperçu actif, partageant page, URL, historique et modèle de viewport. Le bouton de fermeture ramène seulement son onglet au chat. Changer d’onglet, de conversation, de projet ou d’Info conserve le document ; fermer un doublon le conserve tant qu’une autre occurrence de la session reste ouverte. Fermer la dernière occurrence ou la fenêtre, ou redémarrer le moteur de rendu, termine le document actif.
+Fermer l’aperçu local ramène au chat. Les onglets en double partagent la page active jusqu’à la fermeture du dernier onglet ou au rechargement de la fenêtre.
 
 Chaque onglet enregistre son choix chat/aperçu ; la session enregistre l’URL, le modèle de viewport et l’historique partagés. Les pages enregistrées se chargent seulement à la réouverture explicite du navigateur de session. La persistance conserve les URL et un curseur ; formulaires actifs, DOM, corps POST et mémoire JavaScript disparaissent avec le document. L’historique est limité à 32 URL par session et à un budget partagé par fenêtre ; les anciennes entrées peuvent être retirées. Restaurer une URL peut recharger la page.
 
-Dans un onglet de projet distant, l’aperçu passe par le serveur CodeNomad de ce projet. La barre d’adresse et l’historique enregistré affichent l’URL de l’application. Fermer l’aperçu ou l’onglet du projet, déconnecter/supprimer le serveur ou quitter termine la page et ses connexions ; la réouverture recharge l’adresse enregistrée avec son historique. Les identifiants de connexion au serveur restent sur le backend ; les cookies applicatifs relayés sont filtrés. Gardez les adresses internes de chargement des aperçus dans CodeNomad. Sur un client distant avec `multiBackend` expérimental, l’aperçu se charge via l’adresse de cet hôte ; les appareils appairés suivent l’interrupteur **Aperçus web** de l’hôte, et la déconnexion ou la révocation de l’appareil y met fin.
+L’aperçu distant passe par le serveur du projet et affiche l’URL de l’application. Fermer l’aperçu ou l’onglet, déconnecter le serveur ou quitter termine la page active. À la réouverture, l’adresse et l’historique reviennent, sans le travail non enregistré. Gardez les adresses internes privées.
 
 Les commandes d’aperçu s’affichent lorsque l’hôte et le serveur du projet distant confirment que les aperçus sont disponibles.
 
 Les aperçus distants natifs désactivent les menus contextuels, l’export vers le presse-papiers, le glisser de liens, l’impression, les fenêtres surgissantes, les téléchargements, les dialogues de page et les demandes de permission afin de garder les adresses internes privées. Enregistrez le travail de la page avant de fermer.
+
+Pour le Contrôle à distance, **Aperçus web** est activé par défaut dans **Paramètres → Accès distant → Contrôle à distance** sur l’hôte. Désactiver l’interrupteur arrête les aperçus et leurs WebSockets ; le rechargement masque **Ouvrir l'aperçu web**. Se déconnecter ou révoquer un appareil appairé arrête ses aperçus et leurs WebSockets.
 
 ## Connexions partagées et limites d’automatisation {#signins-automation}
 
@@ -66,7 +68,9 @@ Sur Electron et Tauri Windows, les modèles mobiles définissent identité Andro
 1. Démarrez l’outil web séparément sur l’hôte backend CodeNomad, en écoute sur `127.0.0.1:<port>`.
 2. Ouvrez **Paramètres → SideCars**. Saisissez **Nom** et **Port** ; vérifiez le **Chemin de base** dérivé (`/sidecars/<id>`).
 3. Réglez **Protocole** selon le service amont et choisissez **Mode de préfixe**.
-4. Choisissez **Ajouter un SideCar**, puis **Ouvrir SideCar** depuis l’accueil pour ouvrir son onglet.
+4. Choisissez **Ajouter un SideCar**, puis ouvrez-le depuis **Parcourir**. [onglets de projet](projects.md#open-project).
+
+Un SideCar en cours d’exécution reste dans **Onglets récents** après la fermeture de son onglet.
 
 | Choix | Effet exact |
 | --- | --- |
@@ -81,7 +85,7 @@ Si le service est inaccessible, vérifiez le processus et le port sur le backend
 
 Un SideCar est une extension de confiance de CodeNomad, pas un aperçu en bac à sable : sa page s’exécute avec l’origine même de CodeNomad, si bien que ses scripts peuvent utiliser CodeNomad avec votre accès connecté. N’enregistrez que des services dont vous jugez le code fiable. CodeNomad ne transmet pas ses propres cookies de connexion au service, tandis que les cookies propres au service sont conservés.
 
-Le contenu SideCar (`/sidecars/`) et les WebSockets SideCar exigent une connexion en boucle locale sur l’hôte. Pour les ouvrir aussi depuis d’autres appareils, activez **Ouvrir les SideCars en HTTPS** dans **Paramètres → SideCars** sur l’hôte : les navigateurs connectés via les adresses HTTPS de ce serveur ou une origine HTTPS de `CODENOMAD_ALLOWED_ORIGINS`, comme un proxy inverse TLS, peuvent alors ouvrir les SideCars. HTTP simple, les adresses `localhost` et le Contrôle à distance restent réservés à l’hôte. L’enregistrement via `/api/sidecars` est accessible aux appareils appairés et aux clients LAN directs authentifiés. Le contenu des aperçus actifs (`/previews/`) est accessible directement depuis le LAN avec un jeton de capacité valide ; les aperçus web du [Contrôle à distance](remote-control.md#remote-surface) restent accessibles avec leur jeton de capacité lorsqu’ils sont activés. Voir [Mise à niveau](remote-access.md#upgrading) pour les conditions de l’accès direct.
+Le contenu SideCar (`/sidecars/`) et les WebSockets SideCar exigent une connexion en boucle locale sur l’hôte. Pour les ouvrir aussi depuis d’autres appareils, activez **Ouvrir les SideCars en HTTPS** dans **Paramètres → SideCars** sur l’hôte : les navigateurs connectés via les adresses HTTPS de ce serveur ou une origine HTTPS de `CODENOMAD_ALLOWED_ORIGINS`, comme un proxy inverse TLS, peuvent alors ouvrir les SideCars. HTTP simple, les adresses `localhost` et le Contrôle à distance restent réservés à l’hôte. L’enregistrement via `/api/sidecars` est accessible aux appareils appairés et aux clients LAN directs authentifiés. Le contenu des aperçus actifs (`/previews/`) est accessible directement depuis le LAN avec un jeton de capacité valide ; les aperçus web du [Contrôle à distance](remote-control.md#remote-surface) restent accessibles avec leur jeton de capacité lorsqu’ils sont activés. Voir [Origines autorisées](remote-access.md#upgrading) pour les conditions de l’accès direct.
 
 ## Recette OpenVSCode Server {#openvscode}
 

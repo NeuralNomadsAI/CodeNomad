@@ -6,8 +6,9 @@ import { backendEvents } from "../lib/backend-events"
 import { tGlobal } from "../lib/i18n"
 import { parseInstanceKey } from "../lib/backend-identity"
 import { generateUUID } from "../lib/client-identity"
+import { sameServerSelection } from "../lib/native/server-selection-intent"
 import { readRemoteProjectHistory, RECENT_PROJECT_LIMIT, type RemoteProjectRecentEdit } from "../lib/remote-project-recent-data"
-import type { RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
+import type { ConversationPermissionMode, RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
 import {
   ensureInstanceConfigLoaded,
   getInstanceConfig,
@@ -129,6 +130,7 @@ export interface UiSettings {
   promptSubmitOnEnter: boolean
   hotkeyOverrides: HotkeyOverrides
   followUpBehavior: FollowUpBehavior
+  newConversationPermissions: ConversationPermissionMode
   showPromptVoiceInput: boolean
   locale?: string
   diffViewMode: DiffViewMode
@@ -209,6 +211,7 @@ interface UiStateBucket {
   colorSchemePresets?: unknown
   activeColorSchemePresetId?: string
   recentFolders?: RecentFolder[]
+  sidecarRecents?: Record<string, number>
   remoteProjectRecents?: unknown
   remoteProjectHistory?: unknown
   /** The folder the last clone was created in, where the next clone is suggested. */
@@ -247,7 +250,7 @@ const defaultToolCallExpansionDefaults: ToolCallExpansionDefaults = {
 }
 
 const defaultUiSettings: UiSettings = {
-  multiBackend: false,
+  multiBackend: true,
   highContrast: "auto",
   showThinkingBlocks: false,
   thinkingBlocksExpansion: "collapsed",
@@ -257,6 +260,7 @@ const defaultUiSettings: UiSettings = {
   promptSubmitOnEnter: true,
   hotkeyOverrides: {},
   followUpBehavior: "steer",
+  newConversationPermissions: "autonomous",
   showPromptVoiceInput: true,
   diffViewMode: "split",
   hideDiffWhitespaceChanges: true,
@@ -364,7 +368,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       ? "collapsed"
       : "expanded"
   return {
-    multiBackend: sanitized.multiBackend === true,
+    multiBackend: sanitized.multiBackend === undefined ? defaultUiSettings.multiBackend : sanitized.multiBackend === true,
     highContrast: normalizeHighContrastPreference(sanitized.highContrast),
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultUiSettings.showThinkingBlocks,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultUiSettings.thinkingBlocksExpansion,
@@ -377,6 +381,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       sanitized.followUpBehavior === "queue" || sanitized.followUpBehavior === "steer"
         ? sanitized.followUpBehavior
         : defaultUiSettings.followUpBehavior,
+    newConversationPermissions: sanitized.newConversationPermissions === "supervised" ? "supervised" : defaultUiSettings.newConversationPermissions,
     showPromptVoiceInput: sanitized.showPromptVoiceInput ?? defaultUiSettings.showPromptVoiceInput,
     locale: sanitized.locale ?? defaultUiSettings.locale,
     diffViewMode: sanitized.diffViewMode ?? defaultUiSettings.diffViewMode,
@@ -741,6 +746,15 @@ const uiState: Accessor<NormalizedUiState> = createMemo<NormalizedUiState>(() =>
 
 const preferences = uiSettings
 const recentFolders: Accessor<RecentFolder[]> = createMemo<RecentFolder[]>(() => uiState().recentFolders)
+const sidecarRecents = createMemo(() => Object.entries(uiStateBucket().sidecarRecents ?? {})
+  .filter((entry): entry is [string, number] => Number.isFinite(entry[1]))
+  .sort((a, b) => b[1] - a[1]))
+function recordSidecarRecent(id: string): void {
+  const overflow = sidecarRecents().filter(([key]) => key !== id).slice(MAX_RECENT_FOLDERS - 1)
+  const patch = Object.fromEntries(overflow.map(([key]) => [key, null] as const))
+  void patchStateOwner("ui", { sidecarRecents: { ...patch, [id]: Date.now() } })
+    .catch(error => log.warn("Failed to record recent SideCar", error))
+}
 const opencodeBinaries = createMemo<OpenCodeBinary[]>(() => uiState().opencodeBinaries)
 const remoteServers: Accessor<RemoteServerProfile[]> = createMemo<RemoteServerProfile[]>(() => uiState().remoteServers)
 
@@ -1339,8 +1353,7 @@ async function saveRemoteServerProfile(input: RemoteServerProfileInput, current?
 
 async function confirmRemoteServerPolicy(profile: RemoteServerProfile): Promise<RemoteServerProfile | undefined> {
   const previous = remoteServers().find(value => value.id === profile.id)
-  if (preferences().multiBackend === true && previous && (previous.baseUrl !== profile.baseUrl
-    || previous.skipTlsVerify !== profile.skipTlsVerify || previous.ssh?.host !== profile.ssh?.host)) {
+  if (preferences().multiBackend === true && previous && !sameServerSelection(previous, profile)) {
     if (!await (await import("./remote-server-usage")).confirmRemoteServerChange(profile.id)) return previous
   }
 }
@@ -1357,18 +1370,18 @@ async function markRemoteServerConnected(id: string): Promise<void> {
   await patchStateOwner("ui", { remoteServers: buildRemoteServerList(updated, remoteServers()) })
 }
 
-async function removeRemoteServerProfile(id: string): Promise<void> {
-  if (preferences().multiBackend === true && !await (await import("./remote-server-usage")).confirmRemoteServerChange(id)) return
-  const next = remoteServers().filter((entry) => entry.id !== id)
-  await patchStateOwner("ui", { remoteServers: next })
-}
-
-function removeRemoteServerProfileAsync(id: string, current: () => boolean, beforeRemove?: () => Promise<void>): Promise<void> {
-  return queueRemoteServerEdit(current, async () => {
-    if (preferences().multiBackend === true && !await (await import("./remote-server-usage")).confirmRemoteServerChange(id)) return
-    if (!current()) throw new DOMException("Obsolete server edit", "AbortError")
-    await beforeRemove?.()
-    await patchStateOwner("ui", { remoteServers: remoteServers().filter(entry => entry.id !== id) }, current)
+function removeRemoteServerProfile(id: string, current: () => boolean = () => true, signal?: AbortSignal): Promise<void> {
+  const target = remoteServers().find(entry => entry.id === id)
+  if (!target) return Promise.resolve()
+  const isCurrent = () => {
+    const saved = remoteServers().find(entry => entry.id === id)
+    return current() && !signal?.aborted && !!saved && sameServerSelection(target, saved)
+  }
+  return queueRemoteServerEdit(isCurrent, async () => {
+    const { confirmAndCloseServerTabs } = await import("./remote-server-removal")
+    if (!await confirmAndCloseServerTabs(id, isCurrent, signal)) return
+    if (preferences().multiBackend === true) await backend.api.forgetRemoteServer(id, signal)
+    await patchStateOwner("ui", { remoteServers: remoteServers().filter(entry => entry.id !== id) }, isCurrent)
   })
 }
 
@@ -1621,7 +1634,6 @@ interface ConfigContextValue {
   saveRemoteServerProfile: typeof saveRemoteServerProfile
   markRemoteServerConnected: typeof markRemoteServerConnected
   removeRemoteServerProfile: typeof removeRemoteServerProfile
-  removeRemoteServerProfileAsync: typeof removeRemoteServerProfileAsync
   recordWorkspaceLaunch: typeof recordWorkspaceLaunch
   addRecentModelPreference: typeof addRecentModelPreference
   isFavoriteModelPreference: typeof isFavoriteModelPreference
@@ -1707,7 +1719,6 @@ const configContextValue: ConfigContextValue = {
   saveRemoteServerProfile,
   markRemoteServerConnected,
   removeRemoteServerProfile,
-  removeRemoteServerProfileAsync,
   recordWorkspaceLaunch,
   addRecentModelPreference,
   isFavoriteModelPreference,
@@ -1751,7 +1762,7 @@ function subscribe() {
       unsubStateUi()
     }
 }
-return { ...configContextValue, lastCloneParent, rememberCloneParent, addNamedRecentFolder, remoteProjectHistory, editRemoteProjectRecents, patchHotkeyPreferences, setUpdateFeed, setSidecarsOverDirectHttps, subscribe, ensureEditDocument,
+return { ...configContextValue, lastCloneParent, rememberCloneParent, addNamedRecentFolder, sidecarRecents, recordSidecarRecent, remoteProjectHistory, editRemoteProjectRecents, patchHotkeyPreferences, setUpdateFeed, setSidecarsOverDirectHttps, subscribe, ensureEditDocument,
   settleStateWrite: async () => { await Promise.all([favoritesOnlyWriteQueue, cloneParentSaves]); await stateWrite } }
 }
 
@@ -1770,7 +1781,7 @@ const hostPreferenceMethods = [
   "customColorSchemePreference", "colorSchemeOverrides", "colorSchemePresets", "activeColorSchemePresetId",
   "setColorSchemePreference", "selectColorSchemePreset", "saveColorSchemeOverride", "resetColorSchemeOverride",
   "saveColorSchemePreset", "deleteColorSchemePreset", "remoteServers", "saveRemoteServerProfile",
-  "markRemoteServerConnected", "removeRemoteServerProfile", "removeRemoteServerProfileAsync", "patchHotkeyPreferences", "setUpdateFeed",
+  "markRemoteServerConnected", "removeRemoteServerProfile", "patchHotkeyPreferences", "setUpdateFeed",
   "toggleShowThinkingBlocks", "toggleShowMessageTimeline", "toggleUsageMetrics", "toggleAutoCleanupBlankSessions",
   "toggleShowPromptVoiceInput", "setDiffViewMode", "setToolOutputExpansion", "setDiagnosticsExpansion",
   "setThinkingBlocksExpansion", "setToolInputsVisibility",

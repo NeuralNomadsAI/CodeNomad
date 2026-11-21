@@ -255,9 +255,7 @@ Closing a project tab deletes its logical CodeNomad workspace record without evi
 
 ### Server Metadata
 
-`GET /api/meta` includes `serverId` (public UUID persisted once as `server.serverId` in the selected config YAML), `apiContract` (CodeNomad UI/server contract integer, initially `1`) and `capabilities` (implemented route families: `workspaces`, `workspace-files`, `workspace-git`, `events`). Existing metadata fields keep their meanings. First initialization creates `<config-target>.server-id` exclusively with the `wx` flag, writes the UUID, then rereads the YAML and stores that UUID. Concurrent processes share the winning claim, waiting at most one second for an incomplete write. A complete claim survives a crash or failed config write for retry. Keep the claim alongside its config. An incomplete or invalid claim stays untouched: stop all servers using the config before explicitly restoring the known UUID, or removing an incomplete claim after confirming no stable identity was advertised. Config read, identity validation and persistence failures log a warning; the server starts with `serverId` omitted. An existing valid YAML identity supports read-only startup.
-
-Clients cache metadata per backend and require exact `apiContract` equality plus a stable `serverId` for native compatibility, with fallback otherwise. The current UI keeps its existing opening behavior. See the [metadata contract](../../dev-docs/architecture.md#server-metadata-contract) for capability semantics and contract maintenance.
+`GET /api/meta` reports the API contract version (`apiContract`), implemented route families (`capabilities`) and `serverId` when a stable installation identity exists. Registry admission requires an exact contract match and a stable identity. Keep the identity claim with the config; see the [metadata contract](../../dev-docs/architecture.md#server-metadata-contract) for initialization and repair.
 
 ### Event Delivery
 

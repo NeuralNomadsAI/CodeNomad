@@ -25,7 +25,7 @@ Do not replace the shared network service with `@opencode-ai/sdk` unless CodeNom
 | Sessions | `list/get/create/fork/remove/update/prompt/command/shell/interrupt` | UI session stores |
 | Session environment | `client.session.environment({ sessionID, variables })` replaces a complete snapshot before prompt/command/shell admission | guarded server proxy; `workspaces/session-environment.ts` builds host/WSL values |
 | Instructions | `client.session.instructions.entry.put/remove` | conversation-mode prompt setup |
-| Permissions | `permission.request.list`, `permission.reply` | UI and server Yolo replier |
+| Permissions | `permission.request.list`, `permission.reply`, session `permissions` on create/get/update | UI, guarded permission mode and receipts routes |
 | Forms | `client.form.list`, `client.session.form.reply`, `client.session.form.cancel` | `packages/ui/src/stores/instances.ts`, `forms.ts` |
 
 Native methods return decoded Promise values. Follow the installed declarations and existing callers; never wrap calls in response-unwrapping helpers.
@@ -50,7 +50,7 @@ Do not look for these in the OpenCode client:
 
 - Workspace create/delete and worktree workflow routes (native OpenCode owns worktree discovery/create/remove; CodeNomad supplies directory/branch policy and verified session-family moves)
 - Git status/diff/stage/unstage/commit
-- Yolo toggle, persistence and auto-accept policy
+- Conversation permission mode and ownership of appended session rules
 - Authentication, storage, speech, sidecars and previews
 - Multiplexed browser SSE at `/api/events`
 

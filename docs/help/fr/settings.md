@@ -1,6 +1,6 @@
 # Paramètres et disposition
 
-Lorsque le mode multi-serveur expérimental est activé, Preferences utilise le serveur du projet sélectionné pour ses réglages, fournisseurs, statistiques et sa mémoire, y compris **Ranger**. Si le serveur est indisponible, les commandes du projet restent inactives. Les réglages de l’appareil et les SideCars restent locaux.
+Preferences utilise le serveur du projet sélectionné pour ses réglages, fournisseurs, statistiques et sa mémoire, y compris **Ranger**. Si le serveur est indisponible, les commandes du projet restent inactives. Les réglages de l’appareil et les SideCars restent locaux. Les réglages Images et Recherche web suivent le serveur du projet, y compris ses valeurs globales.
 
 ## Ouvrir les paramètres et identifier leur portée {#open-settings}
 
@@ -8,11 +8,12 @@ Lorsque le mode multi-serveur expérimental est activé, Preferences utilise le 
 2. Sélectionnez une section. Les fenêtres locales Electron et Tauri ouvrent ou focalisent une unique fenêtre native Preferences ; les vues navigateur et distantes utilisent l’écran de paramètres intégré.
 3. Vérifiez la portée du réglage et toute action **Enregistrer** avant de quitter.
 
-La plupart des choix s’appliquent immédiatement, y compris les préférences de Missions, qui enregistrent chaque changement au fur et à mesure. La voix, les couleurs de palette personnalisées et les fichiers de configuration gardent un **Enregistrer** explicite. Survolez ou focalisez le **i** à côté du titre d’un réglage pour une courte explication. S’il mène à l’aide, cliquez, appuyez sur Entrée ou touchez-le pour ouvrir la section pertinente dans la langue de l’interface, dans le navigateur système ou un onglet séparé. Les icônes limitées à une infobulle affichent leur explication au toucher. **Paramètres → Info** contient aussi la carte **Soutenir CodeNomad** : **Parrainer ou contribuer** ouvre la page [Soutenir CodeNomad](sponsor.md).
+La plupart des choix s’appliquent immédiatement, y compris les préférences de Missions, qui enregistrent chaque changement au fur et à mesure. Les réglages des API vocales, les couleurs de palette personnalisées et les fichiers de configuration gardent un bouton **Enregistrer**. Survolez ou focalisez le **i** à côté du titre d’un réglage pour une courte explication. S’il mène à l’aide, cliquez, appuyez sur Entrée ou touchez-le pour ouvrir la section pertinente dans la langue de l’interface, dans le navigateur système ou un onglet séparé. Les icônes limitées à une infobulle affichent leur explication au toucher. **Paramètres → Info** contient aussi la carte **Soutenir CodeNomad** : **Parrainer ou contribuer** ouvre la page [Soutenir CodeNomad](sponsor.md).
 
 | État | Ce qu’il contrôle |
 | --- | --- |
-| Configuration CodeNomad | Préférences d’interface, voix, SideCars et paramètres serveur pour les clients de cette configuration. Les préférences sans badge ne sont pas non plus enregistrées par appareil ; **Paramètre serveur** signale une configuration côté serveur comme la voix, les SideCars, le Contrôle à distance et les variables d’environnement. |
+| Configuration CodeNomad | Préférences d’interface partagées et commandes signalées par **Paramètre serveur**, dont l’API vocale, les SideCars, le Contrôle à distance et les variables d’environnement. |
+| Moteurs vocaux | Le [moteur de dictée](voice.md#desktop-dictation) vaut pour tous les projets sur cet appareil. Le [moteur de conversation](voice.md#conversation) est choisi pour le profil de bureau ou pour le profil du navigateur et le serveur connecté. |
 | Disposition de fenêtre/d’onglet de projet | Panneaux ouverts, onglets sélectionnés, état du lecteur et brouillons/disposition restaurables. Ce n’est pas de la configuration OpenCode. |
 | Paramètres OpenCode Global/Projet | Changements de plugins/configuration natifs à la portée affichée. Les commandes Projet nécessitent un projet/une Location actif. |
 | Profil de données de bureau | Fenêtres natives, état de restauration et stockage navigateur, indépendamment du fichier de configuration et du service OpenCode partagé. Voir [Fenêtres de bureau et données](desktop.md). |
@@ -39,9 +40,13 @@ Si les couleurs deviennent difficiles à lire, choisissez **Contraste → Activ�
 
 Dans **Paramètres → Général**, **Garder l’ordinateur éveillé tant que CodeNomad tourne** est désactivé par défaut. Activez cette option pour empêcher la mise en veille tant qu’une fenêtre locale CodeNomad est ouverte (même minimisée), même sans session au travail ; l’écran peut toujours s’éteindre. Lorsque cette option est désactivée, CodeNomad garde l’ordinateur éveillé uniquement pendant qu’une session travaille. Cette option apparaît uniquement dans les fenêtres locales de l’application de bureau et dans Preferences ; elle est masquée dans les vues navigateur et distantes.
 
+## Permissions des nouvelles conversations {#new-conversation-permissions}
+
+Dans **Paramètres → Général → Permissions des nouvelles conversations**, choisissez **Autonome** (par défaut) ou **Supervisé** pour les nouvelles conversations principales que vous créez dans CodeNomad. Les conversations existantes restent inchangées. Pour en modifier une, ouvrez son panneau [Statut → Permissions](permissions.md#conversation-mode).
+
 ## Mémoire persistante de l’agent {#agent-memory}
 
-Lorsque le multi-backend expérimental (`multiBackend`) est activé, les utilisateurs authentifiés via le Contrôle à distance, HTTPS vérifié, le réseau local ou une PWA installée peuvent consulter et modifier la mémoire du projet local ou distant sélectionné, et utiliser **Ranger**. Le projet sélectionné détermine le backend qui gère la mémoire.
+Les utilisateurs authentifiés via le Contrôle à distance, HTTPS vérifié, le réseau local ou une PWA installée peuvent consulter et modifier la mémoire du projet local ou distant sélectionné, et utiliser **Ranger**.
 
 CodeNomad tente de retirer les instructions mémoire périmées de la session ; si ce nettoyage échoue aussi, les instructions précédentes peuvent rester jusqu’à une actualisation réussie.
 
@@ -73,7 +78,7 @@ Faites glisser le bord intérieur d’un panneau ancré pour le redimensionner.
 
 Réordonnez toute section Statut par glisser-déposer ou avec les touches Haut/Bas. Le masquage et l’ordre persistent aux rechargements.
 
-Statut inclut les informations de tokens, le mode Yolo, l’utilisation fournisseur, les shells en arrière-plan, MCP et Plugins. Tant que la conversation a un [objectif](conversations.md#goal), une ligne d’objectif au-dessus de ces sections l’affiche ; cette ligne n’est pas une section et ne peut être ni masquée ni déplacée. Masquer une section ne désactive pas son service et ne révoque pas de permissions. Les dispositions étroites ferment les panneaux qui ne tiennent plus au lieu de comprimer la conversation ; un panneau ouvert alors flotte au-dessus d’elle, et ouvrir un panneau flottant ferme l’autre.
+Statut inclut les informations de tokens, Permissions, l’utilisation fournisseur, les shells en arrière-plan, MCP et Plugins. Tant que la conversation a un [objectif](conversations.md#goal), une ligne d’objectif au-dessus de ces sections l’affiche ; cette ligne n’est pas une section et ne peut être ni masquée ni déplacée. Masquer une section ne désactive pas son service et ne révoque pas de permissions. Les dispositions étroites ferment les panneaux qui ne tiennent plus au lieu de comprimer la conversation ; un panneau ouvert alors flotte au-dessus d’elle, et ouvrir un panneau flottant ferme l’autre.
 
 La disposition intégrée est propre à la fenêtre, pas une modification du projet. Les cases d’extension sont différentes : elles activent du code dans tous les projets utilisant la configuration. **Réinitialiser** ne change pas le consentement aux extensions. Voir [Extensions de panneau](extensions.md).
 
@@ -86,11 +91,13 @@ La disposition intégrée est propre à la fenêtre, pas une modification du pro
 
 La chronologie a un marqueur pour chaque réponse, réflexion, outil, compactage et contexte système affiché dans la conversation, dans le même ordre. Ses marqueurs suivent **Contenu des messages** : masquer à cet endroit un type d’outil, la réflexion ou les messages système masque aussi leurs marqueurs, sauf celui d’un outil avec une autorisation en attente, et **Rien** masque tous les marqueurs d’outils. Les réglages de visibilité et de développement changent seulement la présentation. Ils ne retirent pas les outils/raisonnements enregistrés et ne compactent pas le contexte du modèle. Voir [Historique et nettoyage](history.md) pour les opérations destructrices.
 
-La hauteur de saisie suit la conversation visible, y compris le clavier logiciel : minimum 8 % avec un plancher de 44 px, maximum 60 %. La hauteur manuelle est mémorisée proportionnellement ; une largeur étroite et un long texte n’augmentent pas ces limites. Une autorisation/question développée réduit temporairement la saisie sans changer sa hauteur enregistrée ni son brouillon. Repliez ou réglez la demande pour reprendre le redimensionnement.
+Le réglage manuel prend pour référence la hauteur de la conversation sans le clavier à l’écran : au moins 8 % avec un plancher de 44 px, au plus 60 %. Une largeur réduite ou un long texte n’augmentent pas ces limites. Lorsque le clavier s’ouvre, le champ peut rétrécir temporairement pour laisser de la place aux commandes et aux messages, sans modifier la proportion enregistrée. Une autorisation/question développée réduit temporairement la saisie sans changer sa hauteur enregistrée ni son brouillon. Repliez ou réglez la demande pour reprendre le redimensionnement.
 
 ## Notifications et badges {#notifications}
 
-Pour un onglet de projet sur un autre serveur CodeNomad, les notifications indiquent le nom du serveur. **Voir la conversation** ouvre ce projet et cette conversation précis ; détacher le serveur efface ses notifications. Les réglages Images et Recherche web suivent le serveur du projet, y compris ses valeurs globales.
+Pour un onglet de projet sur un autre serveur CodeNomad, les notifications indiquent le nom du serveur. **Voir la conversation** ouvre ce projet et cette conversation précis ; détacher le serveur efface ses notifications.
+
+La compaction des sessions techniques des Missions reste silencieuse.
 
 1. Ouvrez **Notifications**. Pour chaque type de notification, cochez où elle apparaît : **À l'écran** (une bulle temporaire), **Historique** (conservée dans l’historique des notifications de la cloche de la barre d’onglets, ou de la barre de titre dans l’application de bureau macOS) et **Système** (une notification du système d’exploitation). Faites glisser le pointeur sur une ligne ou une colonne de cases pour en régler plusieurs d'un coup.
 2. Cocher une case **Système** demande l’autorisation si nécessaire. Sous **Notifications système**, **Demander l'autorisation** relance la demande tant que l’autorisation manque.
@@ -117,4 +124,4 @@ Le nombre de non-lus de la cloche/de l’historique, qui ne compte que les notif
 | Retenir les longues réponses de l’assistant | Arrête le suivi automatique lorsqu’une réponse en cours dépasse la zone visible. |
 | Variables d’environnement | Appliquées côté serveur avant chaque prompt ou commande de session ; les lectures ne mettent pas à jour une exécution déjà active. Voir [Configuration d’OpenCode](opencode.md). |
 
-Pour configurer le clavier, voir [Raccourcis clavier](shortcuts.md) ; pour les commandes vocales, voir [Saisie et lecture vocales](voice.md). La restauration au démarrage et les profils de données de bureau sont décrits dans [Fenêtres de bureau et données](desktop.md).
+Pour configurer le clavier, voir [Raccourcis clavier](shortcuts.md). **Voix** regroupe [Dictée, Lecture et Conversation](voice.md). La restauration au démarrage et les profils de données de bureau sont décrits dans [Fenêtres de bureau et données](desktop.md).

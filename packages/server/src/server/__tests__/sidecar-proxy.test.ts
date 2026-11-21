@@ -182,7 +182,7 @@ async function startServer(options: UpstreamOptions & { cookieName?: string; pre
       return `${stripped || "/"}${search}`
     },
   }
-  const stub = new Proxy({}, { get: (_target, key) => key === "onPushRevoked" ? () => () => {} : () => undefined }) as never
+  const stub = new Proxy({}, { get: () => () => undefined }) as never
   const configYamlPath = resolveConfigLocation(path.join(directory, "settings")).configYamlPath
   await fs.mkdir(path.dirname(configYamlPath), { recursive: true })
   const realSettings = options.realSettings ? new SettingsService(resolveConfigLocation(path.dirname(configYamlPath)), undefined, logger) : undefined
@@ -194,7 +194,7 @@ async function startServer(options: UpstreamOptions & { cookieName?: string; pre
     workspaceManager: stub, settings, fileSystemBrowser: stub, eventBus: new EventBus(),
     serverMeta: { localUrl: "http://localhost:0", eventsUrl: "/api/events", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,
     instanceStore: stub, speechService: stub, sidecarManager: sidecarManager as never, previewManager,
-    clientConnectionManager: stub, remoteProxySessionManager: stub, yoloManager: stub,
+    clientConnectionManager: stub, remoteProxySessionManager: stub,
     authManager, logger, nativeParent: stub, automationBridgeToken: "fixture-token",
     remoteControlManager: stub, uiStaticDir: directory,
     allowedOrigins: options.allowedOrigins, uiDevServerUrl: options.devServerUrl,

@@ -71,6 +71,62 @@ jobs:
       actions_artifacts_name_prefix: pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-
       set_versions: false
 
+  performance-guard:
+    name: Renderer performance guard
+    needs: authorize
+    if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .perf-base
+          persist-credentials: false
+          sparse-checkout: scripts/perf/perf-budgets.json
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node --test scripts/perf/budget-report.test.mjs scripts/perf/seed.test.mjs
+      - run: npm run build --workspace @neuralnomads/codenomad
+      - name: Install Chromium and the pinned benchmark tools
+        run: |
+          npx --workspace @codenomad/ui playwright install --with-deps chromium
+          npm install --prefix scripts/perf/tools --ignore-scripts --no-audit --no-fund \
+            @lydell/node-pty@1.2.0-beta.18 @xterm/headless@6.0.0 @opencode/cli-linux-x64@2.3.2
+      - run: node --test scripts/perf/page-probe.test.mjs
+      - name: Measure renderer work and latency against the TUI
+        run: |
+          node scripts/perf/bench.mjs "$PWD/scripts/perf/tools/node_modules/@opencode/cli-linux-x64/bin/opencode"
+      - name: Check budgets
+        run: |
+          results=(scripts/perf/run/perf-*/results)
+          test "${#results[@]}" = 1
+          node scripts/perf/perf-check.mjs "${results[0]}" --calibrate > "${results[0]}/budget-candidate.json"
+          base=.perf-base/scripts/perf/perf-budgets.json
+          args=()
+          if test -f "$base"; then args=(--base "$base"); fi
+          node scripts/perf/perf-check.mjs "${results[0]}" --summary "$GITHUB_STEP_SUMMARY" "${args[@]}"
+      - name: Upload performance evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: renderer-performance
+          path: |
+            scripts/perf/run/perf-*/results/*.json
+            scripts/perf/run/perf-*/**/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
   tests-session-pruning-native:
     needs: authorize
     if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
@@ -360,6 +416,7 @@ jobs:
             libgtk-3-dev \
             libglib2.0-dev \
             libwebkit2gtk-4.1-dev \
+            libgstreamer-plugins-base1.0-dev \
             libsoup-3.0-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev
@@ -595,6 +652,7 @@ jobs:
           packages/ui/src/stores/backend-registry.test.ts
           packages/ui/tests/backend-relay-authority.test.ts
           packages/ui/src/stores/preferences-multi-backend.test.ts
+          packages/ui/src/components/panel-extensions/api4-notes-channel.test.ts
           packages/ui/src/components/form-request-tool-target.test.ts
           packages/ui/src/components/form-request.test.ts
           packages/ui/src/components/instance/shell/useSessionCache.test.ts
@@ -1042,7 +1100,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config zsh libgtk-3-dev \
-            libglib2.0-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev \
+            libglib2.0-dev libwebkit2gtk-4.1-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-good libsoup-3.0-dev \
             libayatana-appindicator3-dev librsvg2-dev
       - run: npm ci --workspaces --include=optional
       - name: Test WebKit qualification workflow contract

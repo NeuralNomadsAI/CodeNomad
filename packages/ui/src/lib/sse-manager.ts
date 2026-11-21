@@ -215,10 +215,13 @@ export class SSEManager {
     return deriveDisplayConnectionStatus(manager.connection[0]().get(instanceId) ?? null, manager.transport[0]())
   }
 
-  getStatuses() {
+  getBackendStatuses() {
+    return this.connection[0]()
+  }
+
+  getRawStatus(instanceId: string): ConnectionStatus | null {
     managerRevision()
-    if (this !== sseManager) return this.connection[0]()
-    return new Map([...managers.values()].flatMap(manager => [...manager.connection[0]()]))
+    return managers.get(parseInstanceKey(instanceId).backendId)?.getBackendStatuses().get(instanceId) ?? null
   }
 }
 

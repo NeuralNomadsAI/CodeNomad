@@ -1,21 +1,15 @@
 import assert from "node:assert/strict"
-import { createServer } from "node:http"
-import { once } from "node:events"
 import { test, type TestContext } from "node:test"
-import { backendOf, backends, createBackendClient, localBackend, type BackendClient } from "./backend-client"
-import { backendEvents } from "./backend-events"
+import { backendOf, createBackendClient, localBackend } from "./backend-client"
+import { attachBackend, loopbackBackend } from "../../tests/test-support/backend"
 import { getRootClient, buildRootProxyPath, type OpenCodeClient } from "../stores/opencode-client"
 import { readHistoryWindow } from "../stores/history-window"
 import { SDKManager } from "./sdk-manager"
 
 type Wire = { path: string; method: string; body: string; media?: string }
-const registry = backends as Map<string, BackendClient>
-
 async function fixture(t: TestContext, id: string) {
   const requests: Wire[] = []
-  const server = createServer(async (request, response) => {
-    let body = ""
-    for await (const chunk of request) body += chunk
+  const owner = await loopbackBackend(t, id, (request, response, body) => {
     requests.push({ path: request.url!, method: request.method!, body,
       ...(request.headers["x-codenomad-media"] ? { media: String(request.headers["x-codenomad-media"]) } : {}) })
     response.setHeader("Content-Type", "application/json")
@@ -27,18 +21,7 @@ async function fixture(t: TestContext, id: string) {
       response.end(JSON.stringify({ status: "window", messages: [], latest: true, resume: { kind: "latest" } }))
     } else response.end(JSON.stringify({ enabled: false, receipts: [] }))
   })
-  server.listen(0, "127.0.0.1")
-  await once(server, "listening")
-  const address = server.address() as { port: number }
-  const backend = createBackendClient({ id, baseUrl: `http://127.0.0.1:${address.port}` })
-  registry.set(id, backend)
-  const detach = backendEvents.attach(id, backend.events)
-  t.after(async () => {
-    detach(); backend.events.dispose(); registry.delete(id)
-    server.closeAllConnections()
-    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
-  })
-  return { backend, requests, detach }
+  return { ...owner, requests }
 }
 
 const nativeCalls: [string, (client: OpenCodeClient) => Promise<unknown>][] = [
@@ -89,8 +72,8 @@ test("conversation API boundaries strip the prefix, including a real history-win
   await api.pruneSessionMessage(key, { sessionID: "s", messageID: "m", indexes: [0], revision: "a".repeat(64) })
   await api.fetchSessionGoal(key, "s")
   await api.getPendingRequests(key, ["/repo"], undefined, ["/old"])
-  await api.getYoloState(key, "s")
-  await api.toggleYolo(key, "s")
+  await api.readConversationPermissionMode(key, "s", new AbortController().signal)
+  await api.setConversationPermissionMode(key, "s", "supervised")
   assert.deepEqual(requests.map(r => r.path), [
     "/api/workspaces/w%2F1/session-history/window",
     "/api/workspaces/w%2F1/sessions/s/permission-receipts?unanchored=true",
@@ -99,7 +82,7 @@ test("conversation API boundaries strip the prefix, including a real history-win
     "/api/workspaces/w%2F1/session-history/prune", "/api/workspaces/w%2F1/session-pruning/prune",
     "/api/workspaces/w%2F1/sessions/s/goal",
     "/api/workspaces/w%2F1/pending-requests?directories=%2Frepo&optionalDirectories=%2Fold",
-    "/workspaces/w%2F1/yolo/sessions/s", "/workspaces/w%2F1/yolo/sessions/s/toggle",
+    "/api/workspaces/w%2F1/sessions/s/permission-mode", "/api/workspaces/w%2F1/sessions/s/permission-mode",
   ])
   assert.equal(requests[0].media, "deferred")
   assert.equal(requests.some(r => r.body.includes("chat~")), false)
@@ -147,13 +130,13 @@ test("local conversation HTTP routes preserve literal baseline requests", async 
   await api.fetchHistoryWindow("w/1", "s", { kind: "latest" })
   await api.fetchPermissionReceipts("w/1", "s", { messageId: "m/1" }, "next")
   await api.getPendingRequests("w/1", ["/repo"], undefined, ["/old"])
-  await api.toggleYolo("w/1", "s")
+  await api.setConversationPermissionMode("w/1", "s", "supervised")
   assert.deepEqual(wire, [
     { url: "/api/workspaces/w%2F1/session-history/window", method: "POST", body: '{"sessionID":"s","target":{"kind":"latest"}}',
       headers: [["content-type", "application/json"], ["x-codenomad-media", "deferred"]], credentials: "include" },
     { url: "/api/workspaces/w%2F1/sessions/s/permission-receipts?messageId=m%2F1&cursor=next", method: "GET", body: undefined, headers: [], credentials: "include" },
     { url: "/api/workspaces/w%2F1/pending-requests?directories=%2Frepo&optionalDirectories=%2Fold", method: "GET", body: undefined, headers: [], credentials: "include" },
-    { url: "/workspaces/w%2F1/yolo/sessions/s/toggle", method: "POST", body: undefined, headers: [], credentials: "include" },
+    { url: "/api/workspaces/w%2F1/sessions/s/permission-mode", method: "PUT", body: '{"mode":"supervised"}', headers: [["content-type", "application/json"]], credentials: "include" },
   ])
 })
 
@@ -161,14 +144,12 @@ test("a detached SDK response cannot settle on the replacement attachment", asyn
   let release!: (response: Response) => void
   const backend = createBackendClient({ id: "revoked", baseUrl: "https://revoked.invalid",
     fetcher: () => new Promise<Response>(resolve => { release = resolve }) })
-  registry.set(backend.id, backend)
-  const detach = backendEvents.attach(backend.id, backend.events)
-  t.after(() => { backend.events.dispose(); registry.delete(backend.id) })
+  const owner = attachBackend(t, backend)
   const pending = getRootClient("revoked~w").session.get({ sessionID: "s" })
   const rejected = assert.rejects(pending, error => error instanceof Error && /abort/i.test(error.message))
   assert.ok(release, "request dispatched under A")
-  detach()
-  t.after(backendEvents.attach(backend.id, backend.events))
+  owner.detach()
+  owner.reattach()
   release(Response.json({}))
   await rejected
 })

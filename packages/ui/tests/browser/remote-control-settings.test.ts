@@ -53,6 +53,9 @@ test("the host switches web previews for paired devices; paired devices only see
     await page.goto(`${url}?scenario=connected`)
     const previews = page.getByRole("switch", { name: "Web previews" })
     await previews.waitFor()
+    await previews.focus()
+    await page.keyboard.press("Shift+Tab")
+    await page.getByRole("tooltip").filter({ hasText: "Keep preview addresses private." }).waitFor()
     assert.equal(await previews.isChecked(), true)
     await previews.click()
     await page.waitForFunction(() => !(document.querySelector('[role="switch"][aria-label="Web previews"]') as HTMLInputElement).checked)
@@ -73,6 +76,26 @@ test("a backend that did not resume offers no Stop that would clear the owner's 
     await page.getByText("Remote Control is off", { exact: true }).waitFor()
     await page.getByRole("button", { name: "Start Remote Control" }).waitFor()
     assert.equal(await page.getByRole("button", { name: "Stop Remote Control" }).count(), 0)
+  } finally { await page.close() }
+})
+
+test("a pending revocation stays visible and retryable after refreshing the device list", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  try {
+    await page.goto(`${url}?scenario=connected`)
+    const device = page.locator(".remote-control-device")
+    const revoke = device.getByRole("button", { name: "Revoke", exact: true })
+    const pending = device.getByText("Revocation pending", { exact: true })
+    await revoke.click()
+    await pending.waitFor()
+    const reads = await page.evaluate(() => (window as unknown as { statusReads: () => number }).statusReads())
+    await page.getByRole("button", { name: "Refresh", exact: true }).click()
+    await page.waitForFunction(before => (window as unknown as { statusReads: () => number }).statusReads() > before
+      && !document.querySelector<HTMLButtonElement>('button[aria-label="Refresh"]')?.disabled, reads)
+    await pending.waitFor()
+    await revoke.click()
+    await device.waitFor({ state: "detached" })
+    await page.getByText("No devices are paired yet.", { exact: true }).waitFor()
   } finally { await page.close() }
 })
 
@@ -115,7 +138,7 @@ test("a pairing link survives a reconnect and disappears once Remote Control sto
   } finally { await page.close() }
 })
 
-test("the host creates a direct HTTPS link with the tunnel off, and devices show how they connect", async () => {
+test("direct HTTPS pairing works with the tunnel off until administrator policy disables it", async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -123,17 +146,29 @@ test("the host creates a direct HTTPS link with the tunnel off, and devices show
     await page.goto(`${url}?scenario=direct`)
     await page.getByText("Remote Control is off", { exact: true }).waitFor()
     await page.getByText("Direct HTTPS pairing", { exact: true }).waitFor()
+    const create = page.getByRole("button", { name: "Create HTTPS pairing link" })
+    await create.click()
+    await page.getByText("https://code.example.test/remote-pair#fixture-code", { exact: true }).waitFor()
     await page.getByLabel("HTTPS address", { exact: true }).selectOption("https://ui.example.test:8443")
-    await page.getByRole("button", { name: "Create HTTPS pairing link" }).click()
+    await create.click()
     const link = page.getByText("https://ui.example.test:8443/remote-pair#fixture-code", { exact: true })
     await link.waitFor()
-    assert.deepEqual(await page.evaluate(() => (window as unknown as { pairingOrigins: unknown[] }).pairingOrigins), ["https://ui.example.test:8443"])
+    assert.deepEqual(await page.evaluate(() => (window as unknown as { pairingOrigins: unknown[] }).pairingOrigins),
+      ["https://code.example.test", "https://ui.example.test:8443"])
     // A direct link does not depend on the tunnel, so a refresh while it is off keeps it.
-    await page.getByRole("button", { name: "Refresh" }).click()
-    await page.waitForTimeout(200)
+    const refresh = page.getByRole("button", { name: "Refresh" })
+    await refresh.click()
+    await refresh.and(page.locator(":enabled")).waitFor()
     assert.equal(await link.isVisible(), true)
     await page.getByText("HTTPS · https://code.example.test", { exact: true }).waitFor()
     assert.equal(await page.getByText("Remote Control", { exact: true }).count(), 2, "card title and the tunnel device's label")
+
+    await page.evaluate(() => (window as unknown as { setRemoteState: (state: string) => void }).setRemoteState("disabled"))
+    await refresh.click()
+    await page.getByText("Disabled by administrator", { exact: true }).waitFor()
+    await link.waitFor({ state: "detached" })
+    assert.equal(await create.count(), 0)
+    assert.equal(await page.getByRole("button", { name: "Revoke" }).count(), 2)
 
     await page.goto(`${url}?scenario=remote`)
     await page.getByText("Ready for remote connections", { exact: true }).waitFor()
@@ -155,21 +190,5 @@ test("a resuming tunnel updates by itself until it can create pairing links", as
     const reads = await page.evaluate(() => (window as unknown as { statusReads: () => number }).statusReads())
     await page.waitForTimeout(4_000)
     assert.equal(await page.evaluate(() => (window as unknown as { statusReads: () => number }).statusReads()), reads)
-  } finally { await page.close() }
-})
-
-test("administrator policy clears an existing direct HTTPS pairing link on refresh", async () => {
-  const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
-  try {
-    await page.goto(`${url}?scenario=direct`)
-    await page.getByRole("button", { name: "Create HTTPS pairing link" }).click()
-    const link = page.getByText("https://code.example.test/remote-pair#fixture-code", { exact: true })
-    await link.waitFor()
-    await page.evaluate(() => (window as unknown as { setRemoteState: (state: string) => void }).setRemoteState("disabled"))
-    await page.getByRole("button", { name: "Refresh" }).click()
-    await page.getByText("Disabled by administrator", { exact: true }).waitFor()
-    await link.waitFor({ state: "detached" })
-    assert.equal(await page.getByRole("button", { name: "Create HTTPS pairing link" }).count(), 0)
-    assert.equal(await page.getByRole("button", { name: "Revoke" }).count(), 2)
   } finally { await page.close() }
 })

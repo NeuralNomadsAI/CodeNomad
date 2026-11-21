@@ -13,10 +13,14 @@ test("every packed plugin entrypoint resolves without sibling checkout sources",
   await mkdir(temporaryRoot, { recursive: true })
   const isolated = await mkdtemp(path.join(temporaryRoot, "pruning-package-"))
   try {
+    const { name } = JSON.parse(await readFile(path.join(source, "package.json"), "utf8")) as { name: string }
     const output = execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", [
       "pack", "--dry-run", "--json", "--ignore-scripts",
     ], { cwd: source, encoding: "utf8", shell: process.platform === "win32" })
-    const [archive] = JSON.parse(output) as { files: { path: string }[] }[]
+    type PackResult = { files: { path: string }[] }
+    const packed = JSON.parse(output) as PackResult[] | Record<string, PackResult>
+    const archive = Array.isArray(packed) ? packed[0] : packed[name]
+    assert.ok(Array.isArray(archive?.files) && archive.files.length, "npm pack must list the packed plugin's files")
     for (const file of archive.files) {
       const destination = path.join(isolated, file.path)
       await mkdir(path.dirname(destination), { recursive: true })

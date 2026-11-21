@@ -106,25 +106,19 @@ test("Preferences IPC rejects unregistered, subframe, and cross-origin senders",
   assert.throws(() => minimize(h.event(h.preferencesContents)), /allowed renderer origin/)
 })
 
-test("server selection requires the current Preferences section, saved policy and trusted frame", async () => {
-  const h = harness({ section: "servers" })
-  const handler = h.handlers.get("preferences:selectServer")!
-  const intent = { id: "a", baseUrl: "https://a.test", skipTlsVerify: false }
-  await handler(h.event(h.preferencesContents), intent)
-  assert.throws(() => handler(h.event(h.localContents), intent), /Preferences window/)
-  assert.throws(() => handler(h.event(h.preferencesContents), { ...intent, password: "secret" }), /Invalid server selection/)
-  assert.throws(() => handler(h.event(h.preferencesContents, { url: h.frame.url }), intent), /registered main frame/)
-  const other = harness({ section: "general" })
-  assert.throws(() => other.handlers.get("preferences:selectServer")!(other.event(other.preferencesContents), intent), /Invalid server selection/)
-  assert.deepEqual(h.calls, ["server:a:https://a.test"])
-})
-
-test("server selection preserves the qualified Preferences request on its separate channel", async () => {
+test("server selection checks its Preferences authority and preserves the qualified request", async () => {
   const request: PreferencesRequest = { section: "servers", instanceId: "b~w", serverId: "server-b",
     workspacePath: "/same", location: { directory: "/worktree" } }
   const h = harness(request)
+  const handler = h.handlers.get("preferences:selectServer")!
+  const intent = { id: "a", baseUrl: "https://a.test", skipTlsVerify: false }
   const event = h.event(h.preferencesContents)
-  await h.handlers.get("preferences:selectServer")!(event, { id: "a", baseUrl: "https://a.test", skipTlsVerify: false })
+  await handler(event, intent)
   assert.deepEqual(h.handlers.get("preferences:getSection")!(event), request)
+  assert.throws(() => handler(h.event(h.localContents), intent), /Preferences window/)
+  assert.throws(() => handler(event, { ...intent, password: "secret" }), /Invalid server selection/)
+  assert.throws(() => handler(h.event(h.preferencesContents, { url: h.frame.url }), intent), /registered main frame/)
+  const other = harness({ section: "general" })
+  assert.throws(() => other.handlers.get("preferences:selectServer")!(other.event(other.preferencesContents), intent), /Invalid server selection/)
   assert.deepEqual(h.calls, ["server:a:https://a.test"])
 })

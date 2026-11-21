@@ -2,7 +2,7 @@
 
 ## Ventanas, pestañas y servicio compartido {#windows-tabs}
 
-1. Usa **Nueva instancia** para abrir otra pestaña de proyecto/inicio en la ventana actual.
+1. Usa **Nueva instancia** para abrir una pestaña vacía en la ventana actual y elige un proyecto. El logotipo CodeNomad abre Inicio.
 2. Usa **Ventana → Nueva ventana** nativo (`Ctrl+Shift+N` o `Cmd+Shift+N`) para una ventana de aplicación separada.
 3. En **Configuración → Avanzado**, activa **Enfocar la ventana existente en el segundo inicio** si otro inicio debe enfocar la ventana usada más recientemente en lugar de abrir una nueva.
 
@@ -16,12 +16,12 @@ Añade estos argumentos después del **ejecutable de escritorio** (Tauri o Elect
 
 | Argumento | Efecto |
 | --- | --- |
-| `--connect-server <server>` | Abre un servidor CodeNomad remoto mediante su URL HTTP(S), nombre guardado o ID guardado. Consulta [conexión e inicio de sesión](remote-access.md#saved-servers). |
+| `--connect-server <name-or-url>` | Abre una ventana remota independiente, sea cual sea el valor de `multiBackend`, con una URL HTTP(S), un nombre o un ID guardado. Consulta [conexiones remotas](remote-access.md#connect-server). |
 | `--folder <path>` | Abre una carpeta de proyecto existente. Repite el argumento para varias carpetas; las rutas relativas parten del directorio de inicio. |
 | `<path> ...` | Abre carpetas de proyecto sin escribir `--folder`. **Tauri en Windows, si ya está abierto:** usa `--folder` para cada carpeta. Mezclar rutas posicionales con `--folder` también descarta toda la solicitud de apertura de carpetas. |
 | `--new-window` | Solicita una ventana nueva, incluso si otro inicio normalmente enfocaría la existente. |
 
-También funcionan `--connect-server=<server>` y `--folder=<path>`. Entrecomilla rutas o nombres con espacios. Para abrir solo la ventana remota, usa únicamente `--connect-server`, sin carpetas ni `--new-window`; la restauración local se aplaza salvo que falle la conexión.
+También funcionan `--connect-server=<name-or-url>` y `--folder=<path>`. Entrecomilla rutas o nombres con espacios. Para abrir solo la ventana remota, usa únicamente `--connect-server`, sin carpetas ni `--new-window`. Si ya hay una ventana local abierta, esta gestiona la solicitud; al iniciar, la restauración local se aplaza salvo que falle la conexión.
 
 En **PowerShell**:
 
@@ -47,6 +47,8 @@ Cada pestaña de proyecto restaura su propia selección del panel derecho, modo 
 La ventana de Preferencias no tiene un estado de restauración independiente: estos controles apuntan a la ventana que la abrió. Si esa ventana se cerró, o es desconocida porque Preferencias se reabrió al iniciar, siguen la ventana usada más recientemente; un cambio preparado para otra ventana nunca se aplica, y los controles muestran primero el valor de la nueva ventana. Para configurar una ventana concreta, abre Preferencias desde ella. Los ajustes con ámbito de proyecto usan igualmente la Location de origen; sin ella no están disponibles. Cuando Preferencias se reabre al iniciar, se vuelven a conectar en cuanto ese proyecto termina de abrirse; mientras la carpeta sigue iniciándose, o está abierta en varias pestañas, permanecen no disponibles hasta que abras Preferencias desde la ventana deseada.
 
 Los clientes de navegador y remotos usan la configuración integrada.
+
+[Restaurar pestañas remotas](projects.md#restore-remote-tabs).
 
 ## Perfiles de datos de escritorio {#data-profiles}
 

@@ -59,7 +59,7 @@ const CLI_SHUTDOWN_COMMAND: &[u8] = b"codenomad:shutdown\n";
 
 #[cfg(windows)]
 #[derive(Debug)]
-struct WindowsJobObject {
+pub(crate) struct WindowsJobObject {
     // The desktop wrapper may observe only a short-lived Node wrapper PID while the real
     // server and workspace descendants continue running below it. KILL_ON_JOB_CLOSE gives
     // Tauri an OS-owned handle for the whole subtree instead of relying on a single PID.
@@ -68,7 +68,7 @@ struct WindowsJobObject {
 
 #[cfg(windows)]
 impl WindowsJobObject {
-    fn create() -> anyhow::Result<Self> {
+    pub(crate) fn create() -> anyhow::Result<Self> {
         let handle = unsafe { CreateJobObjectW(std::ptr::null_mut(), std::ptr::null()) };
         if handle.is_null() {
             return Err(anyhow::anyhow!(
@@ -99,7 +99,7 @@ impl WindowsJobObject {
         Ok(Self { handle })
     }
 
-    fn assign_child(&self, child: &Child) -> anyhow::Result<()> {
+    pub(crate) fn assign_child(&self, child: &Child) -> anyhow::Result<()> {
         let process_handle = child.as_raw_handle() as HANDLE;
         let ok = unsafe { AssignProcessToJobObject(self.handle, process_handle) };
         if ok == 0 {
@@ -112,7 +112,7 @@ impl WindowsJobObject {
         Ok(())
     }
 
-    fn active_processes(&self) -> anyhow::Result<u32> {
+    pub(crate) fn active_processes(&self) -> anyhow::Result<u32> {
         let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { zeroed() };
         let ok = unsafe {
             QueryInformationJobObject(
@@ -132,7 +132,7 @@ impl WindowsJobObject {
         Ok(info.ActiveProcesses)
     }
 
-    fn terminate(&self) -> anyhow::Result<()> {
+    pub(crate) fn terminate(&self) -> anyhow::Result<()> {
         if unsafe { TerminateJobObject(self.handle, 1) } == 0 {
             return Err(anyhow::anyhow!(
                 "TerminateJobObject failed: {}",
@@ -908,6 +908,7 @@ impl CliProcessManager {
         let _lifecycle = self.lifecycle.lock();
         self.accepting_spawns.store(true, Ordering::SeqCst);
         let generation = self.advance_generation();
+        crate::remote_dictation::revoke(&app, None);
         *self.bootstrap_token.lock() = None;
         *self.local_access.lock() = None;
         log_line(&format!("start requested (dev={dev})"));
@@ -920,7 +921,7 @@ impl CliProcessManager {
             status.error = None;
             status.pid = None;
         }
-        Self::emit_status(&app, &self.status.lock());
+        Self::emit_status(&app, &self.status());
 
         let manager = self.clone();
         thread::spawn(move || {
@@ -995,8 +996,16 @@ impl CliProcessManager {
         (Instant::now() < deadline).then(|| self.generation.fetch_add(1, Ordering::SeqCst) + 1)
     }
 
-    fn is_current_generation(&self, generation: u64) -> bool {
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn is_current_generation(&self, generation: u64) -> bool {
         self.accepting_spawns.load(Ordering::SeqCst) && self.generation_matches(generation)
+    }
+
+    pub(crate) fn is_ready_generation(&self, generation: u64) -> bool {
+        self.status.lock().state == CliState::Ready && self.is_current_generation(generation)
     }
 
     fn generation_matches(&self, generation: u64) -> bool {
@@ -1377,7 +1386,7 @@ impl CliProcessManager {
         ) else {
             return Ok(());
         };
-        Self::emit_status(&app, &manager.status.lock());
+        Self::emit_status(&app, &manager.status());
 
         let ready = Arc::new(AtomicBool::new(false));
         let mut readers = Vec::new();
@@ -1507,12 +1516,14 @@ impl CliProcessManager {
                         let message = cli_exit_error(&status, &code);
                         status.state = CliState::Error;
                         status.error = Some(message.clone());
+                        let snapshot = status.clone();
+                        drop(status);
                         crate::local_windows::emit_all(
                             &app,
                             "cli:error",
                             json!({"message": message}),
                         );
-                        Self::emit_status(&app, &status);
+                        Self::emit_status(&app, &snapshot);
                     });
                     return;
                 }
@@ -1691,6 +1702,7 @@ impl CliProcessManager {
 
     fn emit_status(app: &AppHandle, status: &CliStatus) {
         if status.state != CliState::Ready {
+            crate::remote_dictation::revoke(app, None);
             crate::local_windows::show_loading_all(app);
             crate::preferences_window::show_loading(app);
         }

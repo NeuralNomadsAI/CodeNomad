@@ -4,7 +4,7 @@ use super::*;
 pub(super) fn page_permission_subject(raw: &str) -> Option<String> {
     let url = tauri::Url::parse(raw).ok()?;
     if is_allowed_url(&url) {
-        return Some(presentation_title(&url, None));
+        return Some(presentation_title(&url));
     }
     if url.scheme() == "about" && url.path() == "blank" {
         return Some("about:blank".into());
@@ -12,19 +12,15 @@ pub(super) fn page_permission_subject(raw: &str) -> Option<String> {
     if url.scheme() == "blob" {
         let inner = tauri::Url::parse(url.path()).ok()?;
         if is_allowed_url(&inner) {
-            return Some(presentation_title(&inner, None));
+            return Some(presentation_title(&inner));
         }
     }
     None
 }
 
-fn presentation_title(url: &tauri::Url, logical: Option<&str>) -> String {
+fn presentation_title(url: &tauri::Url) -> String {
     if private_preview_url(url) {
-        return logical
-            .and_then(|value| tauri::Url::parse(value).ok())
-            .filter(|value| is_allowed_url(value) && !private_preview_url(value))
-            .map(|value| value.origin().ascii_serialization())
-            .unwrap_or_else(|| "CodeNomad".into());
+        return "CodeNomad".into();
     }
     url.origin().ascii_serialization()
 }
@@ -155,7 +151,7 @@ impl EmbeddedViews {
         let Ok(opener_record) = self.owned(owner, opener) else {
             return NewWindowResponse::Deny;
         };
-        if opener_record.logical_address.is_some() || private_preview_url(&url) {
+        if opener_record.restricted || private_preview_url(&url) {
             return NewWindowResponse::Deny;
         }
         if !opener.starts_with("browser-")
@@ -211,10 +207,7 @@ impl EmbeddedViews {
             tauri::WebviewUrl::External("about:blank".parse().unwrap()),
         )
         .window_features(features)
-        .title(presentation_title(
-            &url,
-            opener_record.logical_address.as_deref(),
-        ))
+        .title(presentation_title(&url))
         .inner_size(520.0, 680.0)
         .disable_drag_drop_handler()
         .zoom_hotkeys_enabled(cfg!(windows))
@@ -388,19 +381,11 @@ mod tests {
     }
 }
 #[test]
-fn private_preview_titles_use_a_logical_or_neutral_origin() {
+fn private_preview_permission_subject_is_neutral() {
     assert_eq!(
         page_permission_subject(
             "http://aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.preview.localhost:9999/path"
         ),
         Some("CodeNomad".into())
-    );
-    let url = tauri::Url::parse(
-        "http://aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.preview.localhost:9999/path",
-    )
-    .unwrap();
-    assert_eq!(
-        presentation_title(&url, Some("https://app.example/path?q=secret")),
-        "https://app.example"
     );
 }

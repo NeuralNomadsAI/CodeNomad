@@ -24,6 +24,9 @@ fn update_claim_includes_restart_and_waits_for_every_renderer() {
     assert!(!coordinator.acknowledge_global(&requests[0].0, requests[0].1));
     assert!(!coordinator.begin_cleanup(false));
     assert_eq!(installed.load(Ordering::SeqCst), 0);
+    // An update gives background windows and queued persistence more time than
+    // an ordinary close, but still needs the final matching acknowledgement.
+    assert!(UPDATE_RENDERER_FLUSH_TIMEOUT > RENDERER_FLUSH_TIMEOUT);
     assert!(coordinator.acknowledge_global(&requests[1].0, requests[1].1));
     assert!(coordinator.begin_cleanup(false));
     let update = coordinator.state.lock().unwrap().update.take().unwrap();

@@ -20,14 +20,12 @@
 7. The proxy checks directory/session ownership, applies the profile's session environment before prompt/command/shell sends (`workspaces/session-environment.ts`) and forwards to the shared service's `/api/*` route.
 8. One upstream event subscription feeds `InstanceEventBridge`, then CodeNomad `/api/events`, then UI stores.
 
-## Permission And Yolo
+## Conversation Permissions
 
 1. OpenCode emits a location-scoped permission event.
 2. `InstanceEventBridge` publishes it as `instance.event`.
-3. `AutoAcceptManager` checks CodeNomad-owned Yolo state.
-4. If enabled, `createOpencodePermissionReplier` calls native `client.permission.reply` and emits `yolo.autoAccepted`.
-5. Otherwise the UI queues the permission and replies with the native client.
-6. Yolo toggle/persistence remains in CodeNomad; `/api/events` distributes `yolo.stateChanged`.
+3. The UI queues permission questions and sends the explicit decision through the native client.
+4. `session.permissions` triggers a mode read; the backend checks the current rules against its private ownership record.
 
 ## Git Changes
 
@@ -40,7 +38,7 @@ Never replace mutation routes with OpenCode file/status calls; CodeNomad owns th
 ## Events
 
 - OpenCode events: shared `client.event.subscribe()` -> `InstanceEventBridge` -> `EventBus`.
-- CodeNomad events: workspace/Git-adjacent policy/Yolo producers -> `EventBus`.
+- CodeNomad events: workspace, filesystem and storage producers -> `EventBus`.
 - Browser transport: `GET /api/events` with heartbeat/pong via `/api/client-connections/pong`.
 - The native stream is volatile. On reconnect, refetch authoritative session/pending-request/file/config state.
 - Invalidations use `filesystem.changed` and `config.updated`; session lifecycle/output uses `session.created`, `session.renamed`, `session.moved`, `session.execution.*` (OpenCode never publishes the declared `session.status`/`session.idle`), `session.compaction.*`, `session.text.*`, `session.reasoning.*`, and `session.tool.*`.

@@ -99,6 +99,15 @@ setSessions(previous => new Map(previous).set(instanceId, new Map(["s", "other"]
   status: "idle", agent: "build", model: { providerId: "fixture", modelId: "fixture" }, time: { created: 1, updated: 1 },
 } as any]))))
 setProviders(previous => new Map(previous).set(instanceId, [{ id: "fixture", name: "Fixture", models: [{ id: "fixture", name: "Fixture", providerId: "fixture", limit: { context: 10000, output: 1000 } }] }] as any))
+// Activating the initial session scans its directory once: answer that scan
+// complete and current, then hand later scans back to the routed broker.
+const routedPendingRequests = serverApi.getPendingRequests
+serverApi.getPendingRequests = async () => {
+  serverApi.getPendingRequests = routedPendingRequests
+  return { supported: true, directories: [{ directory: "/fixture", status: "ok", locations: [{
+    location: { directory: "/fixture" }, permissions: getPermissionQueue(instanceId), forms: getFormQueue(instanceId),
+  }] }] } as any
+}
 setActiveSession(instanceId, sessionId)
 const form = (id = "question", sid = sessionId) => ({ id, sessionID: sid, title: id === "question" ? "Questions" : "Other question",
   metadata: id === "question" ? { kind: "question", tool: { messageID: messageId, id: toolId } } : {},

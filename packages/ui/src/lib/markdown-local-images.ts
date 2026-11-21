@@ -1,5 +1,5 @@
 import { untrack } from "solid-js"
-import { isToolImageContent, toolImageSource, toolImageReference } from "./tool-content"
+import { isToolImageContent, toolImageReference } from "./tool-content"
 import { restrictMediaImage } from "./media-image-interaction"
 
 const decode = (value: string) => { try { return decodeURIComponent(value) } catch { return value } }
@@ -105,14 +105,14 @@ export function resolveLocalImages(container: ParentNode, candidates: readonly S
 type PartData = { type?: string; state?: { status?: string; input?: Record<string, unknown>; content?: unknown } }
 export interface MessageImageSource { revision: number; partIds: string[]; parts: Record<string, { data: unknown }> }
 
-function* scanMessage(message: MessageImageSource, raw: boolean): Generator<SessionImageCandidate> {
+function* scanMessage(message: MessageImageSource): Generator<SessionImageCandidate> {
   for (const partId of [...message.partIds].reverse()) {
     const data = message.parts[partId]?.data as PartData | undefined
     if (data?.type !== "tool" || data.state?.status !== "completed" || !Array.isArray(data.state.content)) continue
     const images = data.state.content.filter(isToolImageContent)
     const input = data.state.input?.filePath ?? data.state.input?.path
     for (const image of images) {
-      const source = raw ? toolImageReference(image) : toolImageSource(image)
+      const source = toolImageReference(image)
       if (!source) continue
       const paths = [image.name, images.length === 1 ? input : undefined].filter((value): value is string => typeof value === "string" && value.length > 0)
       if (paths.length) yield { paths, source }
@@ -121,16 +121,14 @@ function* scanMessage(message: MessageImageSource, raw: boolean): Generator<Sess
 }
 
 const scanned = new WeakMap<object, { revision: number; candidates: SessionImageCandidate[] }>()
-const scannedRaw = new WeakMap<object, { revision: number; candidates: SessionImageCandidate[] }>()
 
 /** One message's tool-result images, newest first, keyed by file name and the single-image tool's file path.
  * Tracks only the message's revision; its parts are rescanned once per revision and shared by every reader. */
-export function messageImageCandidates(message: MessageImageSource, raw = false): SessionImageCandidate[] {
-  const cache = raw ? scannedRaw : scanned
+export function messageImageCandidates(message: MessageImageSource): SessionImageCandidate[] {
   const revision = message.revision
-  const cached = cache.get(message)
+  const cached = scanned.get(message)
   if (cached?.revision === revision) return cached.candidates
-  const candidates = untrack(() => [...scanMessage(message, raw)])
-  cache.set(message, { revision, candidates })
+  const candidates = untrack(() => [...scanMessage(message)])
+  scanned.set(message, { revision, candidates })
   return candidates
 }

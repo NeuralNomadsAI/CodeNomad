@@ -22,7 +22,7 @@ function pairingCode(link: string, origin: string): string {
   } catch { /* Return a stable error without the caller's link. */ }
   throw new CodeNomadServerError("pairing_expired")
 }
-export const BrowseBody = z.object({ path: z.string().max(8192).optional(), foldersOnly: z.literal(true).optional() }).strict()
+export const BrowseBody = z.object({ path: z.string().max(8192).optional() }).strict()
 export const ConnectBody = z.object({ username: z.string().min(1).max(1024).optional(), password: z.string().min(1).max(8192).optional(),
   pairingLink: z.string().max(8192).optional() }).strict()
 
@@ -189,8 +189,8 @@ export class RemoteServerBrowseManager {
       const entry = this.client(profile)
       const suffix = body.path === undefined ? "" : `?path=${encodeURIComponent(body.path)}`
       if (!this.credentials.has(id, profile.scope, profile.skipTlsVerify)) {
-        const status = await entry.client.json<{ pairingRequired?: unknown }>("/api/auth/status", { signal }, observeStatus ? "observe-status" : undefined)
-        if (status.body?.pairingRequired === true) throw new CodeNomadServerError("needs_credentials")
+        const status = await entry.client.json<{ authenticated?: unknown; pairingRequired?: unknown }>("/api/auth/status", { signal }, observeStatus ? "observe-status" : undefined)
+        if (status.body?.authenticated === false || status.body?.pairingRequired === true) throw new CodeNomadServerError("needs_credentials")
       }
       const folders = await entry.client.json<unknown>(`/api/filesystem${suffix}`, { signal }, observeStatus ? "observe-status" : undefined)
       this.assertCurrent(profile)
@@ -199,7 +199,6 @@ export class RemoteServerBrowseManager {
       if (folders.status === 426) throw new CodeNomadServerError("refused")
       if (folders.status !== 200) throw new CodeNomadServerError("unreachable")
       const listing = relayedFolderListing(folders.body)
-      if (body.foldersOnly) return { listing, recents: [] }
       const state = await entry.client.json<{ recentFolders?: unknown }>("/api/storage/state/ui", { signal }, observeStatus ? "observe-status" : undefined)
       this.assertCurrent(profile)
       if (state.status === 426) throw new CodeNomadServerError("refused")

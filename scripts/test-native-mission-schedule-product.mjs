@@ -29,7 +29,10 @@ const { positionals: [cli, scratch], values } = parseArgs({ allowPositionals: tr
   "diagnose-product-stop": { type: "boolean" },
   "convert-preparation": { type: "boolean" },
   "existing-coordinator": { type: "boolean" },
+  // Absolute plugin.mjs of an earlier release: arm with it, then wake on the current bundle.
+  "legacy-bundle": { type: "string" },
 } })
+assert(!values["legacy-bundle"] || path.isAbsolute(values["legacy-bundle"]) && existsSync(values["legacy-bundle"]), "Legacy bundle must be an absolute existing plugin.mjs")
 assert(values["parent-ready"], "Explicit product qualification requires --parent-ready")
 assert(cli && scratch && path.isAbsolute(cli) && path.isAbsolute(scratch) && !existsSync(scratch), "Absolute CLI and fresh approved scratch child required")
 const approved = [path.resolve(process.env.TEMP, "opencode")]
@@ -92,7 +95,7 @@ async function journey(kind) {
   ])
   const bundled = new URL("../packages/server/dist/plugins/missions/plugin.mjs", import.meta.url)
   const providerBundle = new URL("../packages/server/dist/plugins/missions/provider.mjs", import.meta.url)
-  const result = { kind, root, status: "running", armOnly: !!values["arm-only"], firstAdmissionRaceMode: !!values["first-admission-race"], crashPendingMode: !!values["crash-pending"], productBundleSHA256: hash(await readFile(bundled)), providerBundleSHA256: hash(await readFile(providerBundle)), serviceStarts: [], http: [] }
+  const result = { kind, root, status: "running", armOnly: !!values["arm-only"], firstAdmissionRaceMode: !!values["first-admission-race"], crashPendingMode: !!values["crash-pending"], productBundleSHA256: hash(await readFile(values["legacy-bundle"] ?? bundled)), providerBundleSHA256: hash(await readFile(providerBundle)), serviceStarts: [], http: [] }
   if (values["diagnose-stop"]) assert.equal(result.productBundleSHA256, "3578b0357396e1834221a0f37159a8fe2d6a8a63f81fcad11b3d364b1dca0c10", "Diagnostic requires the unchanged failing qualification bundle")
   receipt.cases.push(result)
   const prefix = `plugin:${Array.from("codenomad.missions").map(char => char.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
@@ -101,8 +104,8 @@ async function journey(kind) {
   const maintenanceLog = path.join(root, "maintenance-events.jsonl")
   let ownedTechnical = []
   let controlTrace
-  let child, client, endpoint, manager, app, plugin, removeBridge, baseURL, workspace, providerError, holdBusiness = true
-  const calls = [], reported = new Set(), providerOpen = new Set(), secrets = new Set(["fixture-only"])
+  let child, client, endpoint, manager, app, plugin, removeBridge, baseURL, workspace, providerError, configureSelf, holdBusiness = true
+  const calls = [], reportedInputs = new Set(), providerOpen = new Set(), secrets = new Set(["fixture-only"])
   const barrierToken = randomUUID(); secrets.add(barrierToken)
   let heldOriginal, pendingHandoff, releaseOriginal, barrierDone = false
   const releaseBarrier = reason => { if (heldOriginal && !heldOriginal.releasedAt) { heldOriginal.releasedAt = Date.now(); heldOriginal.releaseReason = reason }; releaseOriginal?.() }
@@ -133,14 +136,18 @@ async function journey(kind) {
       const input = JSON.parse(raw), sessionID = request.headers["x-fixture-session"]
       assert.equal(request.headers["x-fixture-kind"], "primary", "A technical/auxiliary turn reached the business provider")
       assert.equal(typeof sessionID, "string")
-      const tools = (input.tools ?? []).map(tool => tool.function?.name), first = !reported.has(sessionID)
+      const original = readSQL(db => db.prepare(`SELECT id FROM session_message
+        WHERE session_id=? AND type='synthetic' AND json_extract(data,'$.metadata."codenomad.mission".kind')='lifecycle'
+        ORDER BY seq DESC LIMIT 1`).get(sessionID))
+      assert(original, "Provider call has no scheduled input")
+      const tools = (input.tools ?? []).map(tool => tool.function?.name), first = !reportedInputs.has(original.id)
       if (first) assert(tools.includes("mission_report"), "Actual native mission_report tool unavailable")
       callRecord = { sessionID, first, at: Date.now() }; calls.push(callRecord)
       if (holdBusiness) await new Promise(resolve => { releases.add(resolve); response.once("close", resolve) })
       if (response.destroyed) { callRecord.closedBeforeResponse = true; return }
       const call = { index: 0, id: `fixture_${randomUUID().replaceAll("-", "")}`, type: "function", function: { name: "mission_report",
         arguments: JSON.stringify({ outcome: "completed", summary: "Owned native product passage completed", final: true }) } }
-      reported.add(sessionID)
+      reportedInputs.add(original.id)
       callRecord.reportStreamed = first
       response.writeHead(200, { "content-type": "text/event-stream" })
       for (const [delta, finish_reason] of [[first ? { role: "assistant", tool_calls: [call] } : { role: "assistant", content: "Done" }, null], [{}, first ? "tool_calls" : "stop"]])
@@ -303,7 +310,8 @@ async function journey(kind) {
     const configuration = {
       title: `Native ${label}`, objective: "Use the actual mission_report tool to finalize this owned fixture passage. No helpers or other effects.",
       template: "custom", taskMode: "native", profiles: { coordinator: selected, roles: { specialist: selected } }, watchedConversationIDs: [],
-      launch: { timing, condition: null, ends: { at: null, afterMs: null, maxLaunches } },
+      launch: existing && kind === "paused-manual" ? { when: [{ kind: "cron", expression: "0 0 * * *", zone: "UTC" }] }
+        : { timing, condition: null, ends: { at: null, afterMs: null, maxLaunches } },
       ...(existing ? { coordinatorSessionID: existing.id } : {}),
     }
     let response
@@ -322,6 +330,12 @@ async function journey(kind) {
       assert.equal(calls.length, 0)
       result.conversions ??= []; result.conversions.push({ id: original.mission.id, before, converted })
     } else response = await http("/scheduled", { requestID: `create_${label}_${randomUUID().replaceAll("-", "")}`, expectedRevision: 0, action: "create", configuration })
+    if (existing && kind === "paused-manual") {
+      const updated = await configureSelf(existing.id, response.document)
+      assert.equal(updated.status, 200, "The existing coordinator must be able to save its selection")
+      assert.equal(updated.document.configuration.coordinatorSelectionAuthor?.coordinatorSessionID, existing.id)
+      response = updated
+    }
     assert.equal(response.document.state, "paused"); assert.equal(response.document.launchedCount, 0)
     if (existing) { result.existingCoordinators ??= []; result.existingCoordinators.push({ missionID: response.document.id, id: existing.id, title: existing.title }) }
     return response.document.id
@@ -351,6 +365,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
   state.wrapper=new Proxy(state.original,{apply(target,thisArg,args){
    const [input,init]=args;let match=false;try{const url=new URL(input instanceof Request?input.url:String(input));const own=["127.0.0.1","localhost","[::1]"].includes(url.hostname)&&(init?.method??input?.method)==="POST";
     if(own&&url.pathname===wakeMethod&&typeof init?.body==="string"&&init.body.length<=32768){const body=JSON.parse(init.body);if(typeof body.input?.wake?.missionID==="string"&&state.wakes.size<32){state.wakes.set(body.input.wake.missionID,structuredClone(body.input));state.log({kind:"genuine-wake-captured",missionID:body.input.wake.missionID,sessionID:body.input.wake.sessionID})}}
+    const hold=state.holdWake;if(own&&url.pathname===wakeMethod&&hold&&!hold.used&&typeof init?.body==="string"&&init.body.length<=32768){const wake=JSON.parse(init.body).input?.wake;if(wake?.sessionID===hold.sessionID){hold.used=true;state.log({kind:"code-wake-held",sessionID:wake.sessionID});return Promise.resolve(Reflect.apply(state.original,globalThis,[hold.url,{method:"POST",headers:{"content-type":"application/json","x-fixture-barrier":hold.token},body:JSON.stringify({sessionID:wake.sessionID,messageID:wake.messageID,schedule:{id:wake.scheduleID,run:wake.run}})}])).catch(()=>undefined).then(()=>Reflect.apply(target,thisArg,args))}}
     match=own&&url.pathname===method}catch{}
    if(!match)return Reflect.apply(target,thisArg,args);
    let sessionID;try{if(typeof init?.body==="string"&&init.body.length<=32768){const body=JSON.parse(init.body);if(typeof body.input?.sessionID==="string"&&/^[A-Za-z0-9_.:-]{1,240}$/.test(body.input.sessionID))sessionID=body.input.sessionID}}catch{}
@@ -380,8 +395,8 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
   yield*ctx.rpc.register(preparingRpc,{armPreparing:raw=>Effect.gen(function*(){
    const target=raw,session=yield*ctx.session.get({sessionID:target.sessionID}),marker=session.metadata?.["codenomad.schedule-carrier"];
    const url=new URL(target.url);if(url.protocol!=="http:"||url.hostname!=="127.0.0.1"||url.pathname!=="/hold-preparing"||url.port==="28894"||url.username||url.password||url.search||url.hash||marker?.missionID!==target.missionID||marker.role!=="principal")throw Error("fixture-preparing-target");
-   let used=false;yield*ctx.session.hook("prompt",event=>Effect.gen(function*(){
-    if(used||event.sessionID!==target.sessionID)return;used=true;const schedule=event.metadata?.automation;
+   const hold={sessionID:target.sessionID,url:url.href,token:target.token,used:false};state.holdWake=hold;yield*ctx.session.hook("prompt",event=>Effect.gen(function*(){
+    if(hold.used||event.sessionID!==target.sessionID)return;hold.used=true;const schedule=event.metadata?.automation;
     if(typeof schedule?.id!=="string"||event.messageID!=="msg_"+schedule.id+"_"+schedule.run)throw Error("fixture-preparing-wake");
     yield*Effect.tryPromise({try:async signal=>{const response=await Reflect.apply(state.original,globalThis,[url.href,{method:"POST",headers:{"content-type":"application/json","x-fixture-barrier":target.token},body:JSON.stringify({sessionID:event.sessionID,messageID:event.messageID,schedule}),signal:AbortSignal.any([signal,AbortSignal.timeout(6500)])}]);if(!response.ok)throw Error("fixture-preparing-refused");await response.json()},catch:()=>Error("fixture-preparing-aborted")}).pipe(Effect.orDie);
    })).pipe(Effect.provideService(Scope.Scope,ownerScope));return{armed:true,sessionID:target.sessionID};
@@ -447,15 +462,27 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     registerAutomationPluginRoute(app, { workspaceManager: manager, worktreeDeletionFence: fence, authManager: auth, settings, bridgeToken: registration.token, nativeParent: {}, developerCdp: {} })
     await app.listen({ host: "127.0.0.1", port: 0 }); baseURL = `http://127.0.0.1:${app.server.address().port}`; assert.notEqual(app.server.address().port, 28894)
     registration.url = `${baseURL}/api/opencode-plugin/automation`; removeBridge = await publishAutomationBridge(registration)
-    plugin = controlTrace ? new DesktopPluginLifecycle("missions", () => readFile(controlTrace.file)) : new DesktopPluginLifecycle("missions"); await plugin.start(paths)
+    const legacy = values["legacy-bundle"]
+    plugin = controlTrace ? new DesktopPluginLifecycle("missions", () => readFile(controlTrace.file))
+      : legacy ? new DesktopPluginLifecycle("missions", () => readFile(legacy)) : new DesktopPluginLifecycle("missions"); await plugin.start(paths)
     await until(async () => (await client.plugin.list({ location: { directory: project } })).data.some(item => item.id === "codenomad.missions" && item.state.status === "active"))
     if (controlsKinds.includes(kind)) {
+      if (kind === "paused-manual" && values["existing-coordinator"]) {
+        const { controlAgentMissionSchedule } = await import("../packages/server/src/server/routes/mission-agent-schedule.ts")
+        configureSelf = (sessionID, doc) => {
+          const { roots: _roots, profileID: _profile, executionHost: _host, ...configuration } = doc.configuration
+          return controlAgentMissionSchedule({ workspaceManager: manager, worktreeDeletionFence: fence, settings, bridgeToken: registration.token },
+            sessionID, { kind: "schedule", input: { action: "configure", missionID: doc.id,
+              requestID: `select_${randomUUID().replaceAll("-", "")}`, expectedRevision: doc.revision, configuration } },
+            AbortSignal.timeout(20_000))
+        }
+      }
       const { runProductControlJourney } = await import("./native-mission-schedule-product-controls.mjs")
       await runProductControlJourney(kind, { result, project, delayMs, create, activate, control, snapshot, save, until, readSQL,
         diagnoseStop: !!values["diagnose-stop"],
         controlTrace,
         technicalRows, learnTechnical, maintenanceEvents, client: () => client, calls, providerOpen: () => providerOpen.size,
-        reported: id => reported.has(id), secret: value => secrets.add(value), hold: enabled => { holdBusiness = enabled; if (!enabled) { for (const release of releases) release(); releases.clear() } },
+         reported: id => calls.some(call => call.sessionID === id && call.reportStreamed), secret: value => secrets.add(value), hold: enabled => { holdBusiness = enabled; if (!enabled) { for (const release of releases) release(); releases.clear() } },
         business: doc => missionDocumentPassage(readOnlyStorage, doc, () => true).journal.snapshot(),
         nativeFlag: async enabled => {
           const response = await fetch(`${baseURL}/fixture/native-schedules`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ enabled }), signal: AbortSignal.timeout(15000) })
@@ -476,7 +503,9 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
       result.deletedConvertedID = deletedID
     }
     const timing = kind === "every" ? { kind, intervalMs: 900000 } : kind === "at" ? { kind, at: Date.now() + delayMs, zone: "UTC" } : { kind, delayMs }
-    const id = await create(kind, timing); await activate(id)
+    // A natural recurring journey keeps launch budget after any later natural launch, so it stays running and armed.
+    const launches = kind === "every" && !values["controlled-settlement"] ? 10 : 1
+    const id = await create(kind, timing, launches); await activate(id)
     if (kind === "at") {
       // Creation and activation may take longer than the actual wake delay.
       timing.at = Date.now() + delayMs
@@ -503,6 +532,14 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
       assert(result.arming.activationReady && result.arming.noBusinessAdmission)
       result.status = "passed"
       return result // finally closes backend/leases/bridge and waits for every owned child.
+    }
+    const actionTypes = () => readSQL(db => db.prepare("SELECT json_extract(action,'$.type') AS type FROM automation").all().map(row => row.type))
+    if (values["legacy-bundle"]) {
+      // Calendars armed by an earlier bundle keep their prompt rows; the current bundle must serve them to their end.
+      assert(actionTypes().length && actionTypes().every(type => type === "prompt"), "The legacy bundle arms prompt rows")
+      await plugin.stop(); plugin = new DesktopPluginLifecycle("missions"); await plugin.start(paths)
+      result.upgradedBundleSHA256 = hash(await readFile(bundled))
+      assert.notEqual(result.upgradedBundleSHA256, result.productBundleSHA256)
     }
     await closeBackend(); if (!values.live) await stop()
     result.initialWakeMode = values.live ? "live-same-process" : "cold-restart"
@@ -556,7 +593,8 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     const positive = await until(() => {
       const state = snapshot(id), pending = state.document.pending
       return state.document.launchedCount === 1 && state.start.length === 1 && pending?.admittedAt != null
-        && state.schedules.filter(item => item.role === "principal").every(item => item.status !== "active") ? state : false
+        // A spent launch budget retires the principal; a recurring one with launches left stays armed.
+        && (launches > 1 || state.schedules.filter(item => item.role === "principal").every(item => item.status !== "active")) ? state : false
     })
     assert.equal(positive.sessions.length, 1); assert.equal(positive.sessions[0].id, positive.document.pending.coordinatorSessionID)
     assert.equal(positive.start[0].id, positive.document.pending.messageID)
@@ -594,12 +632,12 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
         return state.document.pending?.id === pending.id && state.document.launchedCount === 1 && state.start.length === 1
           && Number.isSafeInteger(claim?.time_suspended) && claim.time_suspended > 0 && providerOpen.size > 0 ? state : false
       })
-      assert(!reported.has(pending.coordinatorSessionID)); assert(holdBusiness)
+      assert(!reportedInputs.has(pending.messageID)); assert(holdBusiness)
       await save("before-pending-crash", beforeCrash)
       const killedPID = child.pid, owned = children.find(entry => entry.child === child)
       child.kill("SIGKILL"); await owned.closed; client = undefined; endpoint = undefined
       for (const deadline = Date.now() + 5000; providerOpen.size > 0;) { assert(Date.now() < deadline, "Killed provider connection did not close"); await delay(10) }
-      assert(!reported.has(pending.coordinatorSessionID), "The disconnected original HTTP handler must not emit a report")
+      assert(!reportedInputs.has(pending.messageID), "The disconnected original HTTP handler must not emit a report")
       const afterKill = snapshot(id)
       assert.equal(afterKill.document.pending.id, pending.id); assert.equal(afterKill.document.launchedCount, 1)
       assert.deepEqual(afterKill.start, beforeCrash.start); assert.deepEqual(afterKill.sessions, beforeCrash.sessions)
@@ -635,10 +673,16 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     await until(() => readSQL(db => db.prepare("SELECT 1 AS idle FROM session_message WHERE session_id=? AND type='idle' AND json_extract(data,'$.outcome')='succeeded' LIMIT 1").get(pending.coordinatorSessionID)))
     const business = await missionDocumentPassage(readOnlyStorage, positive.document, () => true).journal.snapshot()
     assert.equal(business.missions[0]?.status, "completed"); result.businessFinalReport = true
-    const completedStarts = snapshot(id).start
+    let completedStarts = snapshot(id).start, completedLaunches = 1
     result.stage = "second-cold-reboot"
     await stop(); await launch(true); await delay(8000)
     const rebooted = snapshot(id); assert.equal(rebooted.document.launchedCount, 1); assert.deepEqual(rebooted.start, completedStarts); assert.deepEqual(rebooted.sessions, positive.sessions)
+    // A code row counts its run only once its program returns a valid result; a failure would pause it.
+    const nativeRows = readSQL(db => db.prepare("SELECT id,status,run_count,last_outcome,json_extract(action,'$.type') AS type FROM automation").all())
+    result.nativeRows = nativeRows
+    const expectedType = values["legacy-bundle"] ? "prompt" : "code"
+    assert(nativeRows.length && nativeRows.every(row => row.type === expectedType && row.last_outcome !== "failed"), `Every calendar runs its ${expectedType} wake without failure`)
+    assert(nativeRows.some(row => row.id === principal.id && row.run_count >= 1), "The principal counted its admitted run")
     await save("second-cold-reboot", rebooted)
     // Natural no-client proof is already saved. Authenticated exact replay is a
     // separate mutation-dedupe stage, using a genuine native persisted wake.
@@ -660,6 +704,11 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
       result.stage = "after-idle-maintenance"
       // No fixture maintenance call and no replay may perform this cleanup.
       // Observe the real terminal hint -> fixed product HTTP RPC -> exact row removal.
+      // A code auxiliary has no carrier turn: its own wake settles and cleans up, within its run.
+      if (!values["legacy-bundle"]) {
+        const cleaned = await until(() => { const rows = technicalRows(); return rows.every(item => !item.sessionPresent && !item.schedulePresent && !item.reverseIndexPresent) ? { rows, observedAt: Date.now() } : false })
+        result.codeWakeCleanup = true; await save("code-wake-cleanup", cleaned)
+      } else {
       const afterIdle = await until(async () => {
         const rows = technicalRows(), events = await maintenanceEvents(), settledAt = settled.document.history[0].settledAt
         const terminal = events.find(event => event.kind === "terminal" && event.sessionID === auxiliary.session_id && event.at >= settledAt)
@@ -671,12 +720,52 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
           ? { rows, terminal, request, response, observedAt: Date.now() } : false
       })
       result.afterIdleMaintenance = true; await save("after-idle-maintenance", afterIdle)
+      }
+    } else if (kind === "every") {
+      // Two successive real due times, each admitted once and settled by natural wakes only,
+      // with the backend connected but never asked to wake or reconcile.
+      const interval = 900_000, sessionOf = state => state.document.pending?.coordinatorSessionID
+      result.stage = "natural-first-settlement"
+      // The durable archive entry, which a fast second reservation cannot hide between polls.
+      const first = await until(() => { const state = snapshot(id); return state.document.history.length >= 1 ? state : false }, interval + graceMs)
+      assert.equal(first.document.history[0].outcome, "completed"); await save("natural-first-settled", first)
+      result.stage = "natural-second-due"
+      // An admitted start message can still be queued for a moment.
+      const second = await until(() => { const state = snapshot(id); return state.document.launchedCount === 2 && sessionOf(state) && state.start.length === 1 ? state : false }, interval + graceMs)
+      const secondSession = sessionOf(second)
+      assert.notEqual(secondSession, pending.coordinatorSessionID)
+      // Two natural launches keep the run/due-time mapping: the second launch's run is k runs and exactly
+      // k intervals after the first (k > 1 when the timing policy consumed earlier slots without a launch).
+      const firstWake = first.document.history[0].origin.wakes?.[0], secondWake = second.document.pending.origin.wakes?.[0]
+      assert.equal(second.document.pending.origin.kind, "wake"); assert(firstWake && secondWake)
+      const slots = (secondWake.dueAt - firstWake.dueAt) / interval
+      assert(Number.isSafeInteger(slots) && slots >= 1 && secondWake.run - firstWake.run === slots, "Successive principal runs map to successive due times")
+      result.secondDueSlots = slots
+      await until(() => readSQL(db => db.prepare("SELECT 1 AS idle FROM session_message WHERE session_id=? AND type='idle' AND json_extract(data,'$.outcome')='succeeded' LIMIT 1").get(secondSession)), interval)
+      result.stage = "natural-second-settlement"
+      const secondID = second.document.pending.id
+      // The second passage's durable archive entry; a third natural launch may already follow it.
+      const settledTwice = await until(() => { const state = snapshot(id); return state.document.history.some(item => item.id === secondID) ? state : false }, interval + graceMs)
+      assert.deepEqual(settledTwice.document.history.slice(0, 2).map(item => [item.id, item.outcome]),
+        [[first.document.history[0].id, "completed"], [secondID, "completed"]])
+      assert(settledTwice.document.launchedCount >= 2); assert.equal(settledTwice.document.state, "running")
+      const rows = readSQL(db => db.prepare("SELECT id,status,run_count,last_outcome,json_extract(action,'$.type') AS type FROM automation WHERE id=?").all(principal.id))
+      assert(rows[0]?.run_count >= 2 && rows[0].last_outcome !== "failed" && rows[0].status === "active", "The principal counted both runs and stays armed")
+      result.secondNaturalDue = { passages: settledTwice.document.history.map(item => item.id), principal: rows[0] }
+      completedLaunches = undefined // A recurring Mission may launch again; the replay check below targets its own passage.
+      await save("natural-second-settled", settledTwice)
     } else result.settlementGate = "Natural auxiliary settlement may require up to 15 minutes; use separate --controlled-settlement qualification"
     result.stage = "after-purge-replay"
     const payload = { wake, registrationFile, incarnation: readNativeScheduleIncarnation(registrationFile) }
     const replay = await Promise.allSettled(Array.from({ length: 8 }, () => client.rpc(NativeScheduleTransportRpc).wake(payload, { location: { directory: project }, signal: AbortSignal.timeout(15000) })))
     result.concurrentReplay = replay.map(entry => entry.status === "fulfilled" ? { status: entry.status, state: entry.value.state } : { status: entry.status })
-    const deduped = snapshot(id); assert.equal(deduped.document.launchedCount, 1); assert.deepEqual(deduped.start, completedStarts)
+    const deduped = snapshot(id)
+    if (completedLaunches === undefined) {
+      // Exactly one passage, ever, carries the replayed wake.
+      const carriers = [...deduped.document.history, ...deduped.document.pending ? [deduped.document.pending] : []]
+        .filter(item => item.origin.wakes?.some(origin => origin.scheduleID === wake.scheduleID && origin.run === wake.run))
+      assert.equal(carriers.length, 1)
+    } else { assert.equal(deduped.document.launchedCount, completedLaunches); assert.deepEqual(deduped.start, completedStarts) }
     result.calls = calls; result.status = "passed"; result.stage = "completed"
   } catch (error) {
     result.status = "failed"

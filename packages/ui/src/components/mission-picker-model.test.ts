@@ -70,6 +70,9 @@ test("unified documents share daily priorities and require current positive cale
   const latestResult = { id: "A", outcome: "completed" } as NonNullable<UnifiedMissionSchedule["latestResult"]>
   assert.equal(mark({ latestResult }, false), "done")
   assert.equal(mark({ latestResult }), "waiting")
+  const reportless = { id: "B", outcome: "ended-without-report" } as NonNullable<UnifiedMissionSchedule["latestResult"]>
+  assert.equal(mark({ latestResult: reportless }), "waiting", "a resumed schedule no longer shows its archived reportless passage")
+  assert.equal(mark({ latestResult: reportless, blockReason: "ended-without-report" }), "interrupted")
   assert.equal(mark({ state: "finished", latestResult }, false), "done")
   assert.equal(mark({ state: "finished", latestResult }), "idle")
   assert.equal(mark({ state: "stopped", latestResult }, false), "idle")

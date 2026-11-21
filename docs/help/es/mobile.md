@@ -4,7 +4,7 @@ Usa la interfaz de navegador en un teléfono o tableta para continuar trabajando
 
 ## Conectarse desde un teléfono o tableta {#connect}
 
-Con varios servidores activados en el anfitrión, los servidores guardados están disponibles en Inicio y Configuración → Servidores. Las pestañas de proyecto de cada backend, incluido el principal, recuperan sus borradores y vistas tras recargar. Un proyecto no disponible conserva su pestaña: **Reintentar** recupera un registro existente; **Abrir** abre explícitamente un proyecto ausente.
+Los servidores guardados están disponibles en Inicio y Configuración → Servidores. [Restaurar pestañas remotas](projects.md#restore-remote-tabs).
 
 1. En el anfitrión, abre **Configuración → Acceso remoto → Control remoto** y elige **Iniciar control remoto**.
 2. Escanea el QR de emparejamiento con tu dispositivo móvil y abre el enlace en el navegador que quieras seguir usando.
@@ -30,7 +30,7 @@ No desactives la autenticación ni la verificación TLS para arreglar la instala
 
 Usa los controles **Panel izquierdo** y **Panel derecho** para abrir la navegación y las herramientas. En disposiciones estrechas, los paneles se superponen a la conversación en lugar de imponer un lienzo de anchura de escritorio; abrir un panel flotante cierra el otro. Elegir una sesión en el panel flotante de sesiones lo cierra para mostrar tu elección, incluso la sesión ya mostrada; **Atrás** y **Adelante** lo mantienen abierto. Las acciones de la cabecera de conversación pasan al menú de desbordamiento cuando falta espacio.
 
-El editor de mensajes mantiene Agente, Modelo y Razonamiento en su pie. El campo cambia de tamaño con la conversación visible, incluido el teclado en pantalla; los borradores largos siguen siendo desplazables. En dispositivos solo táctiles, enviar no vuelve a abrir el teclado en pantalla, para que puedas leer la respuesta; toca el editor para continuar. Mientras una sesión se ejecuta, el menú **Más acciones** del editor ofrece **Poner mensaje en cola** o **Intervenir ahora**, lo que no haga tu envío normal, sin necesitar un atajo de teclado físico. Abrir una interrupción compacta temporalmente el editor sin cambiar su altura guardada ni su borrador. Responde permisos/preguntas en el panel superior, manteniendo accesible su pie de acciones. Consulta [Conversaciones](conversations.md) y [Permisos](permissions.md).
+El editor de mensajes mantiene Agente, Modelo y Razonamiento en su pie. El tamaño del campo se calcula a partir de la altura de la conversación sin el teclado en pantalla. Al abrirse el teclado, el campo puede reducirse temporalmente para dejar espacio a los controles y mensajes, sin cambiar la proporción de altura guardada. Los borradores largos se pueden seguir desplazando. En dispositivos solo táctiles, enviar no vuelve a abrir el teclado en pantalla, para que puedas leer la respuesta; toca el editor para continuar. Mientras una sesión se ejecuta, el menú **Más acciones** del editor ofrece **Poner mensaje en cola** o **Intervenir ahora**, lo que no haga tu envío normal, sin necesitar un atajo de teclado físico. Abrir una interrupción compacta temporalmente el editor sin cambiar su altura guardada ni su borrador. Responde permisos/preguntas en el panel superior, manteniendo accesible su pie de acciones. Consulta [Conversaciones](conversations.md) y [Permisos](permissions.md).
 
 ## Límites de capacidades y conectividad {#limits}
 

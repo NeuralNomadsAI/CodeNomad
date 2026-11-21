@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import { z } from "zod"
 import { REMOTE_CONTROL_DISABLED, type RemoteControlManager } from "../../remote-control/manager"
 import { deviceCookie, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../../remote-control/gate"
-import { verifiedDirectHttpsOrigin } from "../../remote-control/direct-https"
+import { verifiedDirectHttpsOrigin, verifiedDirectServerOrigin } from "../../remote-control/direct-https"
 import { isLocalRequest, isRemoteRequest, isRemoteSocket } from "../../remote-control/request-origin"
 import { SERVER_PAIR_PATH, validServerPairRequest } from "../../remote-control/server-pairing"
 
@@ -36,12 +36,15 @@ export function registerRemoteControlRoutes(app: FastifyInstance, deps: RouteDep
 
   app.post(SERVER_PAIR_PATH, { bodyLimit: 4096, config: { cors: false } }, async (request, reply) => {
     reply.header("Cache-Control", "no-store")
-    if (!isRemoteSocket(request.raw.socket)) return reply.code(404).send({ error: "Not found" })
+    const origin = verifiedDirectServerOrigin(request, deps.manager.directHttpsOrigins?.() ?? [])
+    if (!origin && !isRemoteSocket(request.raw.socket)) return reply.code(404).send({ error: "Not found" })
     if (!validServerPairRequest(request)) return reply.code(403).send({ error: "Server pairing request rejected" })
     const parsed = ServerPairBody.safeParse(request.body)
     // The 192-bit code is checked and consumed atomically before throttling failures;
     // unauthenticated guesses must never lock out a holder of the valid code.
-    const paired = parsed.success ? deps.manager.exchangePairing(parsed.data.code, undefined, parsed.data.hostName) : null
+    const paired = !parsed.success ? null : origin
+      ? deps.manager.exchangeDirectPairing(parsed.data.code, origin, undefined, parsed.data.hostName)
+      : deps.manager.exchangePairing(parsed.data.code, undefined, parsed.data.hostName)
     if (paired) return { device: paired.device, credential: paired.token }
     if (rateLimited(reply)) return reply
     if (!parsed.success) return reply.code(400).send({ error: "Invalid server pairing body" })

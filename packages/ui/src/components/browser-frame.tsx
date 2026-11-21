@@ -21,6 +21,7 @@ import {
   goToBrowserHistoryEntry,
 } from "../lib/native/browser"
 import { getBrowserFramePolicy, normalizeBrowserPreviewUrl } from "./browser-frame-security"
+import { remotePreviewNavigationTarget } from "../lib/remote-preview-address"
 import WindowCloseButton from "./window-close-button"
 import { BrowserHistoryJournal, type BrowserHistory, type NativeBrowserHistory } from "../lib/browser-history"
 
@@ -461,6 +462,12 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     }
   }
 
+  const navigateFromGuest = (source: string) => {
+    // A late commit for a previous capability (or a guest placeholder) is not user input.
+    const target = remotePreviewNavigationTarget(source, props.opaqueSource ? window.location.origin : undefined)
+    if (target) void navigateIsolated(target)
+  }
+
   const bindWebview = (webview: ElectronBrowserWebviewElement) => {
     cleanupWebviewListeners?.()
     webviewRef = webview
@@ -475,11 +482,13 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     let retryTimer: ReturnType<typeof setTimeout> | undefined
     const syncLocation = (event: Event) => {
       if (!active || webviewRef !== webview) return
-      const url = (event as Event & { url?: string }).url ?? (webviewReady ? webview.getURL() : undefined)
+      const navigation = event as Event & { url?: string; isMainFrame?: boolean }
+      if (navigation.isMainFrame === false) return
+      const url = navigation.url ?? (webviewReady ? webview.getURL() : undefined)
       if (!url) return
-      webviewObservedUrl = url
       const address = props.isolatedSource ? props.sourceAddress?.(url) : url
-      if (!address) { void navigateIsolated(url); return }
+      if (!address) { navigateFromGuest(url); return }
+      webviewObservedUrl = url
       setPathInput(address)
       props.onFrameLocation?.(address)
       void captureHistory()
@@ -683,9 +692,9 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       const registrationId = browserRegistrationId
       void onTauriBrowserNavigation(registrationId, (url) => {
         if (!active) return
-        setNativeTarget(url)
         const address = props.isolatedSource ? props.sourceAddress?.(url) : url
-        if (!address) { void navigateIsolated(url); return }
+        if (!address) { navigateFromGuest(url); return }
+        setNativeTarget(url)
         setPathInput(address)
         props.onFrameLocation?.(address)
         void captureHistory()
@@ -1064,6 +1073,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
               }}
               referrerPolicy="same-origin"
               sandbox={framePolicy.sandbox}
+              allow="microphone 'none'; camera 'none'"
               onLoad={syncPathInputFromFrame}
             />
           </Show>

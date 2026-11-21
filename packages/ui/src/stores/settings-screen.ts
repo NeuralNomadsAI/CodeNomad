@@ -67,8 +67,20 @@ export async function openSettings(section?: SettingsSectionId, toggle = false) 
 export const toggleSettings = (section?: SettingsSectionId) => openSettings(section, true)
 
 /** Stable setting-row anchors (the row's `id`), independent of their labels. */
-export type SettingsRowId = "opencode-login-start" | "server-diagnostics" | `config-file:${string}`
-const SETTINGS_ROWS = new Set<SettingsRowId>(["opencode-login-start", "server-diagnostics"])
+const SETTINGS_ROWS = {
+  "opencode-login-start": "opencode",
+  "server-diagnostics": "info",
+  "sidecar-add": "sidecars",
+  "voice-dictation": "speech",
+  "voice-playback": "speech",
+  "voice-conversation": "speech",
+} as const satisfies Record<string, SettingsSectionId>
+export type VoiceSettingsRowId = Extract<keyof typeof SETTINGS_ROWS, `voice-${string}`>
+export type SettingsRowId = keyof typeof SETTINGS_ROWS | `config-file:${string}`
+const validRow = (section: SettingsSectionId, row: unknown): row is SettingsRowId =>
+  typeof row === "string" && (Object.hasOwn(SETTINGS_ROWS, row)
+    ? SETTINGS_ROWS[row as keyof typeof SETTINGS_ROWS] === section
+    : section === "config-files" && row.startsWith("config-file:") && row.length <= 2048)
 const ROW_HINT_KEY = "codenomad.settings.rowTarget", ROW_HINT_MS = 15_000
 const [settingsRowTarget, setSettingsRowTarget] = createSignal<SettingsRowId>()
 const [rowTargetSection, setRowTargetSection] = createSignal<SettingsSectionId>()
@@ -79,6 +91,7 @@ export const settingsRowPending = () => !!settingsRowTarget() && rowTargetSectio
  * native Preferences window is another same-origin document: hosts carry only the
  * section, so the row travels as a short-lived localStorage hint it consumes. */
 export async function openSettingsRow(section: SettingsSectionId, row: SettingsRowId) {
+  if (!validRow(section, row)) return
   const native = (runtimeEnv.host === "electron" || runtimeEnv.host === "tauri") && runtimeEnv.windowContext === "local"
   if (!native) {
     if (settingsOpen() && activeSettingsSection() !== section && !(await confirmSettingsDiscard())) return
@@ -94,11 +107,10 @@ export const openSettingsConfigFile = (id: string) => openSettingsRow("config-fi
 export function adoptSettingsRowHint(section: SettingsSectionId) {
   let hint: { section?: unknown; row?: unknown; at?: unknown } | undefined
   try { hint = JSON.parse(localStorage.getItem(ROW_HINT_KEY) ?? "null") ?? undefined } catch { hint = undefined }
-  if (!hint || hint.section !== section || !(SETTINGS_ROWS.has(hint.row as SettingsRowId)
-    || section === "config-files" && typeof hint.row === "string" && hint.row.startsWith("config-file:") && hint.row.length <= 2048)
+  if (!hint || hint.section !== section || !validRow(section, hint.row)
     || typeof hint.at !== "number" || Math.abs(Date.now() - hint.at) > ROW_HINT_MS) return
   try { localStorage.removeItem(ROW_HINT_KEY) } catch { /* consumed by the signal below */ }
-  targetRow(hint.row as SettingsRowId, section)
+  targetRow(hint.row, section)
 }
 export const SETTINGS_ROW_HINT_KEY = ROW_HINT_KEY
 /** The row claims its pending target once, then scrolls and focuses itself. */

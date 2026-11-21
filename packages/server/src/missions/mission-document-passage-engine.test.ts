@@ -189,6 +189,16 @@ test("suppression survives fast settlement: remaining old principal wakes cannot
   assert.equal((await f.read()).launchedCount, 1)
 })
 
+test("a principal wake counts its run consumed before the slow admission of a new or pending passage", async () => {
+  const f = await fixture(), admit = f.ports.admit, seen: number[] = []
+  let consumed = 0
+  f.ports.admit = async (doc, locked) => { seen.push(consumed); return admit(doc, locked) }
+  await f.engine.wake({ missionID: "review", wake: f.wake(), consumed: () => { consumed++ } })
+  f.tick()
+  await f.engine.wake({ missionID: "review", wake: f.wake(0, 2), consumed: () => { consumed++ } })
+  assert.deepEqual(seen, [1, 2])
+})
+
 test("overlapping same-calendar occurrences advance HWM while retaining the pending correlation", async () => {
   const f = await fixture(), first = f.wake()
   await f.engine.wake({ missionID: "review", wake: first })

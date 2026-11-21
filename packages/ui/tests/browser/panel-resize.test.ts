@@ -42,8 +42,6 @@ async function openPage(hasTouch = false) {
     await diagnostics.install()
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await events!.route(page)
-    await page.route("**/workspaces/header-windows/yolo/sessions/session", route => route.request().method() === "GET"
-      ? route.fulfill({ json: { enabled: false } }) : route.continue())
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture))
     ready = true

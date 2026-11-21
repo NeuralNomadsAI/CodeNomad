@@ -11,11 +11,13 @@ Remote Control lets a paired browser or desktop client use your running CodeNoma
 
 The link is valid for **five minutes** and succeeds **once**. Treat it as a credential: anyone who consumes it can become a paired device. The code lives in the URL fragment, not the query string. **Create new pairing link** immediately invalidates the preceding unused link. Backend shutdown cancels an outstanding pairing link; Stop and tunnel failure cancel a tunnel link.
 
-To pair another desktop CodeNomad, choose **Connect CodeNomad Server** on its home page, paste the link into **Server URL**, and choose **Connect**. A pairing link opens its window even from **Save**, because opening it consumes the code. Only the tunnel origin is saved as the bookmark; the code is not retained. TLS verification stays enabled for pairing links.
+On another desktop running CodeNomad, paste the pairing link into **Settings → Servers → Server address or link**.
+
+To pair again, paste the new link into the connection form on the server or project row.
 
 ## Pair over direct HTTPS {#direct-https}
 
-Where the tunnel is blocked but the backend is reachable over trusted HTTPS, for example through a reverse proxy with a real certificate, devices can pair on that address instead. Eligible addresses are this backend's own HTTPS addresses and the HTTPS origins in `CODENOMAD_ALLOWED_ORIGINS` (see [Upgrading](remote-access.md#upgrading)); loopback names and plain HTTP never pair. Remote Control need not be started.
+Where the tunnel is blocked but the backend is reachable over trusted HTTPS, for example through a reverse proxy with a real certificate, devices can pair on that address instead. Eligible addresses are this backend's own HTTPS addresses and the HTTPS origins in `CODENOMAD_ALLOWED_ORIGINS` (see [Allowed origins](remote-access.md#upgrading)); loopback names and plain HTTP never pair. Remote Control need not be started.
 
 1. On the host, open **Settings → Remote Access → Remote Control**.
 2. Under **Direct HTTPS pairing**, pick the **HTTPS address** when several are listed, then choose **Create HTTPS pairing link**.
@@ -25,15 +27,13 @@ The link follows the same five-minute, one-use rules and replaces any unused lin
 
 Such a device connects only through its HTTPS address, never through the tunnel, and **Paired devices** shows that address under its name. Stopping Remote Control neither cancels the link nor disconnects these devices; **Revoke**, 30 days without use, the 32-device limit or removing the address from the configuration ends their access. A browser presenting a revoked or expired device credential on that address cannot fall back to the server password: pair again, or clear the site's data to sign in with the password.
 
-These devices have the same [surface](#remote-surface) as tunnel devices and never gain loopback privileges, even through a proxy on the host.
+See [available surfaces](#remote-surface), including the direct HTTPS exception for SideCar content. Pairing grants no loopback privileges, even through a proxy on the host.
 
 ## Manage paired devices {#paired-devices}
 
-With experimental multi-backend settings, paste the desktop pairing link into **Settings → Servers → Server address or link**. The field clears before the request; only the origin is saved. The local backend retains its private device identity across launches, and **Remove saved server** forgets that profile's connection before removing it. Pairing keeps TLS verification enabled and does not open a project. The desktop-window instructions above apply to the default mode.
-
 1. On the host, return to **Settings → Remote Access → Remote Control**.
 2. Review **Paired devices** and their **Last seen** time. Each device is named after the platform and browser that paired it, such as `iPhone · Safari`.
-3. Choose **Revoke** for a device that should no longer connect.
+3. Choose **Revoke** for a device that should no longer connect. If it shows **Revocation pending**, retry **Revoke** before restarting the host.
 
 Revocation ends that device's current HTTP/SSE connections as well as future access. Pair again with a new link to restore access. A device expires after **30 days without use**. At the **32-device limit**, a new pairing replaces the least recently seen device and closes its connections.
 
@@ -44,7 +44,7 @@ Changing the direct-access password does **not** revoke devices. **Stop Remote C
 ### Re-pair without losing your place {#re-pair}
 
 1. If the client shows **Pair this device again**, leave that page open.
-2. On the host, choose **Create new pairing link** and open it in the **same client browser/profile**. For a saved desktop server, reconnect using the fresh pairing link so its existing remote-window storage is reused.
+2. On the host, create a link for the original connection: **Create new pairing link** for the tunnel, or select the original **HTTPS address** under **Direct HTTPS pairing** and choose **Create HTTPS pairing link**. Open it in the **same client browser/profile**. A fresh link for a separate remote window reuses that window's storage.
 3. Return to the waiting page and choose **Check connection**; it also checks again when the page regains focus.
 
 Recovery preserves the open page and drafts; it does not replay a failed action. Check whether a send, answer or delete took effect before retrying it. A direct-access password cannot recover Remote Control pairing.
@@ -70,14 +70,15 @@ Paired devices can use ordinary project/conversation APIs, send prompts, inspect
 | Normal authenticated UI, workspaces, conversations and SSE | Available to a paired device. |
 | Password login/logout, password changes, local token bootstrap | Unavailable; device credentials are required even if direct authentication is disabled. |
 | Remote Control status | Readable by a paired device; management is unavailable. Start/Stop, pairing creation, device list and revocation stay on the host access path. |
-| Experimental saved servers and backend relay | Authenticated remote clients can use/manage all host-saved servers when the feature and host capabilities allow it. New server passwords/pairing links require Remote Control or HTTPS, not plain LAN HTTP. See [saved servers](remote-access.md#saved-servers). |
+| Saved servers and backend relay | Authenticated remote clients can use/manage all host-saved servers when the feature and host capabilities allow it. New server passwords/pairing links require Remote Control or HTTPS, not plain LAN HTTP. See [saved servers](remote-access.md#saved-servers). |
 | Desktop remote windows and window proxy | Host-only (`/api/remote-proxy/`). |
-| SideCar **content proxy** | Requires loopback (`/sidecars/`), as do SideCar WebSockets. The `/api/sidecars` registration APIs are available to paired devices and authenticated direct LAN clients. |
-| Web preview content | Available while **Web previews** is on (the default) under **Settings → Remote Access → Remote Control** on the host. Each preview address opens its page without pairing, so keep it private. Turning the switch off stops served previews and their WebSockets; paired devices hide **Open web preview** once they reload. |
+| SideCar content and WebSockets (`/sidecars/`) | Unavailable through the tunnel. Use loopback or enable [direct HTTPS access to SideCars](browser-sidecars.md#register-sidecar) on the host. |
+| SideCar registration (`/api/sidecars`) | Available to paired devices and authenticated direct clients. |
+| Web preview content | [Open a session browser](browser-sidecars.md#session-browser) |
 | Automation bridge | Unavailable (`/api/opencode-plugin/`). Native desktop capabilities do not become browser capabilities. |
-| WebSocket upgrades | Available for web previews only. |
+| WebSocket upgrades | Available for web previews and, on paired devices, [live voice conversations](voice.md#conversation). |
 
-Use a loopback connection on the host for host-only proxy/WebSocket surfaces and Remote Control management (`/api/remote-control/`). Direct LAN access also requires loopback for these operations; see [Upgrading](remote-access.md#upgrading). Remote Control web previews use a capability token in the preview address and remain available while enabled on the host; keep that address private.
+Use a loopback connection on the host for host-only proxy/WebSocket surfaces and Remote Control management (`/api/remote-control/`). Direct LAN access also requires loopback for these operations; see [Allowed origins](remote-access.md#upgrading).
 
 ## Relay and privacy {#relay-privacy}
 

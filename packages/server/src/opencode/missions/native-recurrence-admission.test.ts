@@ -14,6 +14,18 @@ test("original admission checks native session/message before starting its reser
   } finally { await f.dispose() }
 })
 
+test("an admitted coordinator may switch model without blocking its passage", async () => {
+  const f = await passageFixture()
+  try {
+    await f.start()
+    assert.notEqual((await f.calendar.read("schedule"))!.pending!.admission, null)
+    const [id, coordinator] = [...f.sessions].find(([, session]) => !session.parentID)!
+    f.sessions.set(id, { ...coordinator, model: { providerID: "other", id: "chat", variant: "high" } } as typeof coordinator)
+    await f.start()
+    assert.deepEqual(f.counts(), { creates: 1, sends: 1, environments: 1 })
+  } finally { await f.dispose() }
+})
+
 test("lost native ACK reconciles delivered message without sending twice", async () => {
   const f = await passageFixture()
   try {

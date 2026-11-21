@@ -15,6 +15,7 @@ const resourcesRoot = path.resolve(root, "src-tauri", "resources")
 const { prepareBundledNodeRuntime } = require(path.join(workspaceRoot, "scripts", "prepare-node-runtime.cjs"))
 const { copyPackagedServerResources, stagePackagedServer } = require(path.join(workspaceRoot, "scripts", "desktop-server-resources.cjs"))
 const { stageRustServer } = require(path.join(workspaceRoot, "scripts", "rust-server-binary.cjs"))
+const { buildTauriSystemSpeech } = require(path.join(workspaceRoot, "scripts", "desktop-system-speech.cjs"))
 
 const serverPrepareUiCommand = "npm run prepare-ui --workspace @neuralnomads/codenomad"
 
@@ -177,6 +178,14 @@ async function main() {
       target: staged.target,
       log: (message) => console.log(`[prebuild] ${message}`),
     })
+    const speechRoot = path.join(workspaceRoot, "packages", "desktop-speech")
+    const speechDest = path.join(serverDest, "desktop-speech")
+    fs.mkdirSync(speechDest, { recursive: true })
+    for (const module of ["cache", "download", "files", "macos", "manifest", "process", "worker"]) {
+      const name = `hex-${module}.mjs`
+      fs.copyFileSync(path.join(speechRoot, name), path.join(speechDest, name))
+    }
+    buildTauriSystemSpeech(resourcesRoot, staged.target)
   } finally {
     fs.rmSync(staged.stagingRoot, { recursive: true, force: true })
   }

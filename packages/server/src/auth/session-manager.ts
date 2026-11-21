@@ -15,15 +15,15 @@ export class SessionManager {
 
   private now() { return this.options.now?.() ?? Date.now() }
 
-  private expired(session: SessionInfo, now: number): boolean {
-    return now - session.lastSeenAt >= (this.options.idleMs ?? 24 * 60 * 60 * 1000)
-      || now - session.createdAt >= (this.options.absoluteMs ?? 7 * 24 * 60 * 60 * 1000)
+  private deadline(session: SessionInfo): number {
+    return Math.min(session.lastSeenAt + (this.options.idleMs ?? 24 * 60 * 60 * 1000),
+      session.createdAt + (this.options.absoluteMs ?? 7 * 24 * 60 * 60 * 1000))
   }
 
   createSession(username: string): SessionInfo {
     const id = crypto.randomBytes(32).toString("base64url")
     const now = this.now()
-    for (const [id, session] of this.sessions) if (this.expired(session, now)) this.revoke(id)
+    for (const [id, session] of this.sessions) if (now >= this.deadline(session)) this.revoke(id)
     const info: SessionInfo = { id, createdAt: now, lastSeenAt: now, username }
     this.sessions.set(id, info)
     return info
@@ -34,7 +34,7 @@ export class SessionManager {
     const session = this.sessions.get(id)
     if (!session) return undefined
     const now = this.now()
-    if (this.expired(session, now)) {
+    if (now >= this.deadline(session)) {
       this.revoke(id)
       return undefined
     }
@@ -45,7 +45,7 @@ export class SessionManager {
   /** Check validity without activity updates or revocation side effects. */
   hasSession(id: string): boolean {
     const session = this.sessions.get(id)
-    return session !== undefined && !this.expired(session, this.now())
+    return session !== undefined && this.now() < this.deadline(session)
   }
 
   /** Observe the captured session without refreshing its idle lifetime. */
@@ -66,16 +66,17 @@ export class SessionManager {
     const check = () => {
       if (!active) return
       const session = this.sessions.get(id), now = this.now()
-      if (!session || this.expired(session, now)) { this.revoke(id); return }
-      const remaining = Math.min(
-        session.lastSeenAt + (this.options.idleMs ?? 24 * 60 * 60 * 1000),
-        session.createdAt + (this.options.absoluteMs ?? 7 * 24 * 60 * 60 * 1000),
-      ) - now
+      if (!session || now >= this.deadline(session)) { this.revoke(id); return }
+      const remaining = this.deadline(session) - now
       timer = setTimeout(check, Math.min(remaining, 2_147_483_647))
       timer.unref?.()
     }
     check()
     return release
+  }
+
+  watch(id: string, revoked: () => void): () => void {
+    return this.onInvalidated(id, revoked)
   }
 
   revoke(id: string): void {

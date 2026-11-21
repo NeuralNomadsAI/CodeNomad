@@ -708,7 +708,7 @@ for (const firstMatch of [false, true]) test(`filtered search pages require expl
   } finally { await page.close() }
 })
 
-for (const held of [false, true]) test(`source keyboard navigation scrolls the real popup and selecting with Enter never submits the form (held scroll: ${held})`, async t => {
+for (const held of [false, true]) test(`source keyboard navigation scrolls the real popup and selecting with Enter never submits the form (held scroll: ${held})`, async () => {
   const page = await browser.newPage(), consoleErrors: string[] = [], failed: string[] = [], posts: string[] = []
   page.on("console", message => { if (message.type() === "error") consoleErrors.push(message.text()) })
   page.on("requestfailed", request => failed.push(`${request.url()}: ${request.failure()?.errorText}`))
@@ -742,37 +742,23 @@ for (const held of [false, true]) test(`source keyboard navigation scrolls the r
       const released = await page.evaluate(() => window.sourceScrollDelivery.release())
       assert.ok(released.retained > 0); assert.equal(released.pending, 0)
     }
-    let geometryError: unknown
-    try { await page.waitForFunction(() => {
+    await page.waitForFunction(() => {
       const field = document.querySelector<HTMLInputElement>('.mission-source-popover input[role="combobox"]')!
       const option = document.getElementById(field.getAttribute("aria-activedescendant") ?? ""), list = document.querySelector('.mission-source-popover [role="listbox"]')!
       if (!option) return false
       const box = option.getBoundingClientRect(), port = list.getBoundingClientRect()
       return list.scrollTop > 0 && box.top >= port.top - 1 && box.bottom <= port.bottom + 1
-    }) } catch (error) { geometryError = error }
+    })
     const snapshot = await page.evaluate(() => {
       const field = document.querySelector<HTMLInputElement>('.mission-source-popover input[role="combobox"]')!
       const list = document.querySelector('.mission-source-popover [role="listbox"]')!
       const focused = list.querySelector<HTMLElement>('[data-highlighted]')
-      const box = focused?.getBoundingClientRect(), port = list.getBoundingClientRect()
       return { aria: field.getAttribute("aria-activedescendant"), focusedKey: focused?.getAttribute("data-key"),
-        actualID: focused?.id, connected: focused?.isConnected, visible: Boolean(box && box.top >= port.top - 1 && box.bottom <= port.bottom + 1),
-        scrollTop: list.scrollTop, selected: list.querySelectorAll('[aria-selected="true"]').length,
-        focus: document.activeElement === field, barrier: window.sourceScrollDelivery?.state() }
+        actualID: focused?.id, selected: list.querySelectorAll('[aria-selected="true"]').length,
+        focus: document.activeElement === field }
     })
-    t.diagnostic(JSON.stringify(snapshot))
     assert.equal(snapshot.focusedKey, "ses_23"); assert.equal(snapshot.selected, 0); assert.equal(snapshot.focus, true)
     assert.equal(nativeReads, beforeReads)
-    if (geometryError) {
-      // Preserve the original oracle failure after observing the same single Enter.
-      await page.keyboard.press("Enter")
-      assert.equal(await form(page).getByRole("button", { name: "Criterion 1 source", exact: true }).getAttribute("data-source-id"), snapshot.focusedKey)
-      assert.equal((await page.evaluate(() => (window as any).sourceSubmitCount)), 0)
-      assert.equal(f.posts.length, 0); assert.deepEqual(f.errors, [])
-      assert.deepEqual(posts, [])
-      assert.deepEqual(consoleErrors, []); assert.deepEqual(failed, [])
-      throw geometryError
-    }
     assert.equal(snapshot.aria, snapshot.actualID)
     assert.deepEqual(await page.locator('.mission-source-select input[role="combobox"], .mission-source-popover input[role="combobox"]').evaluateAll(fields => fields.map(field => field.getAttribute("aria-activedescendant"))), [snapshot.actualID, snapshot.actualID])
     const id = await search.evaluate(field => document.getElementById(field.getAttribute("aria-activedescendant")!)!.getAttribute("data-source-id"))
@@ -1228,6 +1214,25 @@ for (const provider of ["github", "gitlab", "gitea"] as const) test(`repository 
     await form(page).getByRole("button", { name: "Créer", exact: true }).click()
     await form(page).waitFor({ state: "detached" })
     assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "repository-activity", ...repository, event: "pull-request-merged", author: "alice" }] })
+    assert.deepEqual(f.errors, [])
+  } finally { await page.close() }
+})
+
+test("a remote branch criterion saves the detected repository and exact branch", async () => {
+  const page = await browser.newPage(), f = await setup(page)
+  const repository = { provider: "github", host: "github.com", repository: "team/project" }
+  await page.route("**/api/workspaces/fixture/repository-source?*", route => route.fulfill({ json: { status: "ok", repository } }))
+  await branches(page)
+  try {
+    await page.evaluate(() => window.schedulingEditor.create())
+    await form(page).getByLabel(objective, { exact: true }).fill("Watch remote dev")
+    await form(page).getByLabel("Criterion 1 type", { exact: true }).selectOption("repository-activity")
+    await form(page).getByLabel("Criterion 1 event", { exact: true }).selectOption("remote-branch-commits")
+    await form(page).getByLabel("Criterion 1 source", { exact: true }).fill("release/dev")
+    await ready(page)
+    await form(page).getByRole("button", { name: "Create", exact: true }).click()
+    await form(page).waitFor({ state: "detached" })
+    assert.deepEqual(f.posts[0].configuration.launch, { when: [{ kind: "remote-branch-commits", ...repository, ref: "refs/heads/release/dev" }] })
     assert.deepEqual(f.errors, [])
   } finally { await page.close() }
 })

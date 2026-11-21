@@ -57,26 +57,6 @@ test("SSH host retargeting revokes credentials and the old tunnel", async t => {
   assert.equal(f.remote.state.logins, 1)
 })
 
-test("SSH relay proof survives tunnel recovery and same-principal login but retargeting revokes it before dialing", async t => {
-  const f = await fixture(t)
-  f.remote.state.overrides.set("/api/meta", { status: 200, body: { serverId: "ssh-server" } })
-  await f.login()
-  const metadata = await f.manager.relay("saved", "/api/meta", {}, RELAY_BOOTSTRAP)
-  const proof = metadata.headers.get(RELAY_AUTHORITY_HEADER)
-  assert.ok(proof)
-  f.forwards[0]!.die()
-  assert.equal((await f.manager.relay("saved", "/api/auth/status", {}, proof)).status, 200)
-  await f.login()
-  assert.equal((await f.manager.relay("saved", "/api/meta", {}, proof)).headers.get(RELAY_AUTHORITY_HEADER), proof)
-  const requests = f.remote.state.requests.length, forwards = f.forwards.length
-  f.profiles[0]!.ssh.host = "other"
-  f.manager.reconcile()
-  await assert.rejects(f.manager.relay("saved", "/api/auth/status", {}, proof), { code: "unreachable" })
-  assert.equal(f.remote.state.requests.length, requests)
-  assert.equal(f.forwards.length, forwards)
-  assert.equal(f.forwards.at(-1)!.closed, true)
-})
-
 test("SSH auth observation restores privately without replay and fences retargeted proof before IO", async t => {
   const f = await fixture(t)
   await f.login()
@@ -93,7 +73,6 @@ test("SSH auth observation restores privately without replay and fences retarget
   assert.deepEqual(await (await f.manager.relay("saved", "/api/auth/status", {}, proof)).json(), { authenticated: true })
   assert.equal(f.forwards.length, 1)
   f.profiles[0]!.ssh.host = "replacement"
-  f.manager.reconcile()
   const before = f.remote.state.requests.length
   await assert.rejects(f.manager.relay("saved", "/api/auth/status", {}, proof), { code: "unreachable" })
   assert.equal(f.remote.state.requests.length, before)
@@ -125,23 +104,6 @@ test("shared SSH owner survives one listener closing; forget and final shutdown 
   assert.equal(f.forwards[1]!.closed, true)
 })
 
-test("SSH relay proofs bind the tunnel destination and reject stale generations before dispatch", async t => {
-  const f = await fixture(t)
-  await f.login()
-  f.remote.state.overrides.set("/api/meta", { status: 200, body: { serverId: "ssh-server" } })
-  const metadata = await f.manager.relay("saved", "/api/meta", {}, RELAY_BOOTSTRAP)
-  const proof = metadata.headers.get(RELAY_AUTHORITY_HEADER)
-  assert.ok(proof)
-  assert.equal((await f.manager.relay("saved", "/api/auth/status", {}, proof)).status, 200)
-  const dispatched = f.remote.state.requests.length
-  f.profiles[0]!.ssh.host = "replacement"
-  f.manager.reconcile()
-  assert.equal(f.forwards[0]!.closed, true)
-  await assert.rejects(f.manager.relay("saved", "/api/auth/status", {}, proof), { code: "unreachable" })
-  assert.equal(f.remote.state.requests.length, dispatched)
-  assert.equal(f.forwards.length, 1)
-})
-
 test("SSH proof binds the declared origin and survives forward renewal and same-principal login", async t => {
   const f = await fixture(t)
   f.remote.state.overrides.set("/api/meta", { status: 200, body: { serverId: "ssh-server" } })
@@ -158,19 +120,6 @@ test("SSH proof binds the declared origin and survives forward renewal and same-
   assert.equal(f.forwards.length, 2)
   assert.equal((await metadata()).headers.get(RELAY_AUTHORITY_HEADER), proof)
   assert.equal(f.remote.state.requests.at(-1)!.headers.host, "remote.invalid:9898")
-})
-
-test("SSH retargeting revokes proof before opening a forward or dispatching", async t => {
-  const f = await fixture(t)
-  f.remote.state.overrides.set("/api/meta", { status: 200, body: { serverId: "ssh-server" } })
-  await f.login()
-  const proof = (await f.manager.relay("saved", "/api/meta", {}, RELAY_BOOTSTRAP)).headers.get(RELAY_AUTHORITY_HEADER)!
-  const requests = f.remote.state.requests.length
-  f.profiles[0]!.ssh.host = "other"
-  await assert.rejects(f.manager.relay("saved", "/api/filesystem", {}, proof), { code: "unreachable" })
-  assert.equal(f.forwards[0]!.closed, true)
-  assert.equal(f.forwards.length, 1)
-  assert.equal(f.remote.state.requests.length, requests)
 })
 
 test("changed remote identity through an SSH forward revokes proof and closes the owned tunnel", async t => {

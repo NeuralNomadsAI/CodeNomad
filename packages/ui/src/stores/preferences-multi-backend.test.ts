@@ -13,21 +13,23 @@ serverApi.patchConfigOwner = async (_owner, patch) => {
 }
 const { preferencesForBackend } = await import("./preferences")
 
-test("host multiBackend defaults off, strictly normalizes edits and owns remote settings", async () => {
+test("host multiBackend defaults on, strictly normalizes edits and owns remote settings", async () => {
   const host = preferencesForBackend("local")
   await host.ensureLoaded()
-  assert.equal(host.preferences().multiBackend, false)
+  assert.equal(host.preferences().multiBackend, true)
   const client = createBackendClient({ id: "other", baseUrl: "http://unused.test",
-    fetcher: async input => Response.json(String(input).includes("/storage/config/") ? { settings: { multiBackend: true } } : {}) })
+    fetcher: async input => Response.json(String(input).includes("/storage/config/") ? { settings: { multiBackend: false } } : {}) })
   const remove = registerBackendClient(client), detach = backendEvents.attach(client.id, client.events)
   try {
     const remote = preferencesForBackend(client.id)
     await remote.ensureLoaded()
+    assert.equal(remote.preferences().multiBackend, true)
     for (const value of [undefined, false, "true", 1, null, {}, [], true]) {
       assert.equal(await remote.updatePreferences({ multiBackend: value } as never), true)
-      assert.equal(host.preferences().multiBackend, value === true)
-      assert.equal(remote.preferences().multiBackend, value === true)
-      assert.equal(settings.multiBackend, value === true)
+      const expected = value === undefined || value === true
+      assert.equal(host.preferences().multiBackend, expected)
+      assert.equal(remote.preferences().multiBackend, expected)
+      assert.equal(settings.multiBackend, expected)
     }
   } finally { detach(); client.events.dispose(); remove() }
 })

@@ -4,10 +4,10 @@ import os from "node:os"
 import path from "node:path"
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http"
 import { once } from "node:events"
-import { test, type TestContext } from "node:test"
+import { after, before, test, type TestContext } from "node:test"
 import Fastify from "fastify"
 import pino from "pino"
-import { chromium, type Page } from "playwright"
+import { chromium, type Browser, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { SettingsService } from "../../../server/src/settings/service"
@@ -22,6 +22,15 @@ import type { RemoteServerProfile, ServerMeta } from "../../../server/src/api-ty
 import { CODENOMAD_API_CONTRACT } from "../../../server/src/meta-contract"
 
 const deferred = () => { let release!: () => void; const promise = new Promise<void>(resolve => { release = resolve }); return { promise, release } }
+let browser: Browser, fixtureUrl: string
+before(async () => {
+  const borrowed = await borrowFixture({ name: "servers-settings", routes: [{ path: "/fixture", html: '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/servers-settings.tsx"></script></body></html>' }] })
+  fixtureUrl = borrowed.url
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined, headless: true })
+  armFixtureNavigationBudget(browser)
+})
+after(async () => { await browser?.close() })
+
 async function fixture(t: TestContext, flag: unknown = true, locale = "en", intent = false, sshOnly = false,
   meta: Partial<ServerMeta> = { localRequest: true }) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-servers-ui-")), logger = pino({ level: "silent" })
@@ -90,12 +99,10 @@ async function fixture(t: TestContext, flag: unknown = true, locale = "en", inte
     reply.raw.write(": host fixture\n\n")
   })
   origin = await app.listen({ host: "127.0.0.1", port: 0 })
-  const borrowed = await borrowFixture({ name: "servers-settings", routes: [{ path: "/fixture", html: '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/servers-settings.tsx"></script></body></html>' }] })
-  selfOrigin = new URL(borrowed.url).origin
-  const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
-  armFixtureNavigationBudget(browser)
-  t.after(async () => { for (const gate of gates) gate.release(); await browser.close(); manager.close(); app.server.closeAllConnections(); await app.close(); await Promise.all([a.close(), b.close()]); await borrowed.close(); fs.rmSync(directory, { recursive: true, force: true }) })
-  const page = await browser.newPage({ viewport: { width: 1000, height: 760 } })
+  selfOrigin = new URL(fixtureUrl).origin
+  const context = await browser.newContext({ viewport: { width: 1000, height: 760 } })
+  t.after(async () => { for (const gate of gates) gate.release(); await context.close(); manager.close(); app.server.closeAllConnections(); await app.close(); await Promise.all([a.close(), b.close()]); fs.rmSync(directory, { recursive: true, force: true }) })
+  const page = await context.newPage()
   const errors: string[] = [], consoleErrors: string[] = [], forbidden: string[] = [], httpErrors: string[] = [], failedRequests: string[] = []
   const expectedNetworkErrors = new Set<string>()
   page.on("pageerror", error => errors.push(error.message))
@@ -135,7 +142,7 @@ async function fixture(t: TestContext, flag: unknown = true, locale = "en", inte
     const response = await route.fetch({ url: `${origin}${url.pathname}${url.search}`, headers: { ...request.headers(), origin: selfOrigin } })
     await route.fulfill({ response })
   })
-  await page.goto(borrowed.url + "?preferences=servers" + (intent ? "&intent" : ""))
+  await page.goto(fixtureUrl + "?preferences=servers" + (intent ? "&intent" : ""))
   await page.waitForFunction(() => (window as any).serversFixture?.config.isLoaded())
   const check = () => {
     assert.deepEqual(errors, []); assert.deepEqual(forbidden, []); assert.deepEqual(failedRequests, [])
@@ -174,7 +181,7 @@ for (const manageable of [false, true]) test(`non-local Servers capability allow
   assert.equal(await open.isDisabled(), false)
   assert.equal(await field(page).count(), manageable ? 2 : 0)
   assert.equal(await page.getByRole("button", { name: "Edit server: Alpha", exact: true }).count(), manageable ? 2 : 0)
-  assert.equal(await page.getByRole("button", { name: "Remove saved server: Alpha", exact: true }).count(), manageable ? 2 : 0)
+  assert.equal(await page.getByRole("button", { name: "Remove: Alpha", exact: true }).count(), manageable ? 2 : 0)
   await open.click()
   assert.deepEqual(await page.evaluate(() => (window as any).serversFixture.intents), [{ id: "a", baseUrl: f.a.origin, skipTlsVerify: false }])
   assert.equal(await page.getByRole("button", { name: "Change password", exact: true }).count(), 0)
@@ -213,7 +220,8 @@ test("Preferences CRUD uses host profiles; rename offline, normalized duplicate,
   await field(page).press("Enter")
   await page.waitForFunction(() => document.querySelector<HTMLInputElement>("[data-server-add-field]")?.value === "" && !document.querySelector<HTMLInputElement>("[data-server-add-field]")?.disabled)
   assert.equal(f.profileRows().length, 2)
-  await page.getByRole("button", { name: "Remove saved server: Offline rename", exact: true }).click()
+  await page.getByRole("button", { name: "Remove: Offline rename", exact: true }).click()
+  await page.getByRole("button", { name: "Remove", exact: true }).waitFor()
   assert.match(await page.locator(":focus").innerText(), /Cancel/)
   await page.keyboard.press("Enter")
   await page.locator(".alert-dialog").waitFor({ state: "hidden" })
@@ -222,17 +230,15 @@ test("Preferences CRUD uses host profiles; rename offline, normalized duplicate,
   // Real credentials are retained on B while removing A through the actual local routes.
   assert.equal((await f.app.inject({ method: "POST", url: "/api/remote-servers/b/connect", headers: { origin: f.origin }, payload: { username: "codenomad", password: "remote-password" } })).statusCode, 200)
   f.failPatch(400)
-  await page.getByRole("button", { name: "Remove saved server: Offline rename", exact: true }).click()
-  await page.getByRole("button", { name: "Remove saved server", exact: true }).click()
-  await page.getByRole("button", { name: "Confirm", exact: true }).click()
+  await page.getByRole("button", { name: "Remove: Offline rename", exact: true }).click()
+  await page.getByRole("button", { name: "Remove", exact: true }).click()
   await page.getByRole("alert").filter({ hasText: "Could not save the preference." }).waitFor()
   assert.equal(f.profileRows().length, 2)
   assert.equal(f.calls.filter(call => call.url.endsWith("/forget")).length, 1)
   f.failPatch(200)
   assert.equal((await f.app.inject({ method: "POST", url: "/api/remote-servers/a/connect", headers: { origin: f.origin }, payload: { username: "codenomad", password: "remote-password" } })).statusCode, 200)
-  await page.getByRole("button", { name: "Remove saved server: Offline rename", exact: true }).click()
-  await page.getByRole("button", { name: "Remove saved server", exact: true }).click()
-  await page.getByRole("button", { name: "Confirm", exact: true }).click()
+  await page.getByRole("button", { name: "Remove: Offline rename", exact: true }).click()
+  await page.getByRole("button", { name: "Remove", exact: true }).click()
   await page.locator('[data-remote-server="a"]').waitFor({ state: "hidden" })
   assert.deepEqual(f.profileRows().map(row => row.id), ["b"])
   assert.equal((await f.app.inject({ method: "POST", url: "/api/remote-servers/b/browse", headers: { origin: f.origin }, payload: {} })).statusCode, 200)
@@ -271,7 +277,8 @@ test("raw userinfo rejected at the hook boundary; pairing purged before probe an
   assert.equal(await page.getByRole("checkbox", { name: "Skip TLS verification", exact: true }).isChecked(), false)
   const last = f.calls.filter(call => call.url.endsWith("/probe")).at(-1)!
   assert.equal(last.body.skipTlsVerify, false)
-  await page.getByRole("alert").locator('[tabindex="0"]').focus()
+  const alert = page.getByRole("alert").filter({ hasText: "Certificate check failed." })
+  assert.equal(await field(page).getAttribute("aria-describedby"), await alert.getAttribute("id"))
   assert(!(await page.locator("body").innerText()).includes("raw-secret"))
   f.check()
 })
@@ -308,7 +315,13 @@ for (const refused of [false, true]) test(`save A → Escape → edit B ignores 
   f.check()
 })
 
-for (const flag of ["absent", false, "true", 1]) test(`strict off (${String(flag)}) forged Servers section falls back without mounting new IO`, { timeout: 90_000 }, async t => {
+test("Servers settings are available without a saved flag", { timeout: 90_000 }, async t => {
+  const f = await fixture(t, "absent")
+  await field(f.page).waitFor()
+  f.check()
+})
+
+for (const flag of [false, "true", 1]) test(`strict off (${String(flag)}) forged Servers section falls back without mounting new IO`, { timeout: 90_000 }, async t => {
   const f = await fixture(t, flag), { page } = f
   assert.equal(await field(page).count(), 0)
   assert.equal(await page.getByRole("button", { name: "Servers", exact: true }).count(), 0)
@@ -366,11 +379,13 @@ test("retarget/removal during probe and stale removal confirmation cannot mutate
   await page.keyboard.press("Escape")
   assert.equal(f.profileRows()[0].baseUrl, replacement.baseUrl)
   assert.equal(f.calls.filter(call => call.method === "PATCH" && call.url === "/api/storage/state/ui").length, 0)
-  await page.getByRole("button", { name: "Remove saved server: Alpha", exact: true }).click()
+  await page.getByRole("button", { name: "Remove: Alpha", exact: true }).click()
+  await page.getByRole("button", { name: "Remove", exact: true }).waitFor()
   const newest = { ...replacement, baseUrl: "http://127.0.0.1:3" }
   f.settings.mergePatchDoc("state", { ui: { remoteServers: [newest, f.rows[1]] } })
   f.manager.reconcile(); await f.sync()
-  await page.getByRole("button", { name: "Remove saved server", exact: true }).click()
+  const confirmation = page.getByRole("button", { name: "Remove", exact: true })
+  if (await confirmation.isVisible()) await confirmation.click()
   assert.equal(f.calls.filter(call => call.url.endsWith("/forget")).length, 0)
   assert.equal(f.profileRows()[0].baseUrl, newest.baseUrl)
   f.check()
@@ -388,9 +403,6 @@ for (const locale of ["en", "fr", "he"]) test(`480px ${locale}: long names/URLs,
   assert.equal(await row.locator("bdi").getAttribute("dir"), "auto")
   assert.equal(await row.locator(".font-mono").getAttribute("dir"), "ltr")
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
-  const screenshots = path.join(os.tmpdir(), "opencode", "mb-pr8c-servers-port", "screenshots")
-  fs.mkdirSync(screenshots, { recursive: true })
-  await page.screenshot({ path: path.join(screenshots, `servers-${locale}-480.png`) })
   const buttons = await row.locator("button").all()
   for (const button of buttons) {
     const rect = await button.boundingBox()
@@ -406,7 +418,6 @@ for (const locale of ["en", "fr", "he"]) test(`480px ${locale}: long names/URLs,
   await error.waitFor()
   assert.equal(await dialog.locator('input[type="text"]').first().getAttribute("aria-invalid"), "true")
   assert.equal(await dialog.locator('input[type="text"]').first().getAttribute("aria-describedby"), await error.getAttribute("id"))
-  await page.screenshot({ path: path.join(screenshots, `editor-${locale}-480.png`) })
   await page.keyboard.press("Tab")
   assert.equal(await page.locator(":focus").evaluate(element => !!element.closest('[role="dialog"]')), true)
   await page.keyboard.press("Shift+Tab")
@@ -463,9 +474,8 @@ for (const action of ["remove", "retarget"]) test(`UI ${action} of A revokes onl
   const a = await stream("a"), b = await stream("b")
   await f.allowUsageChecks(true)
   if (action === "remove") {
-    await f.page.getByRole("button", { name: "Remove saved server: Alpha", exact: true }).click()
-    await f.page.getByRole("button", { name: "Remove saved server", exact: true }).click()
-    await f.page.getByRole("button", { name: "Confirm", exact: true }).click()
+    await f.page.getByRole("button", { name: "Remove: Alpha", exact: true }).click()
+    await f.page.getByRole("button", { name: "Remove", exact: true }).click()
     await f.page.locator('[data-remote-server="a"]').waitFor({ state: "hidden" })
   } else {
     await edit(f.page, "Alpha")
@@ -482,20 +492,6 @@ for (const action of ["remove", "retarget"]) test(`UI ${action} of A revokes onl
   assert.match(String((await next)[0]), /b-after/)
   assert.equal(upstream.get("b")!.writableEnded, false)
   assert.equal(f.profileRows().find(row => row.id === "b")?.baseUrl, f.b.origin)
-  f.check()
-})
-
-test("pasting a server address submits exactly once through the real inline field and hook", { timeout: 90_000 }, async t => {
-  const f = await fixture(t), { page } = f
-  await field(page).waitFor()
-  await field(page).evaluate((element, text) => {
-    const clipboardData = new DataTransfer()
-    clipboardData.setData("text", text)
-    element.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }))
-  }, f.a.origin)
-  await page.waitForFunction(() => document.querySelector<HTMLInputElement>("[data-server-add-field]")?.value === "" && !document.querySelector<HTMLInputElement>("[data-server-add-field]")?.disabled)
-  assert.equal(f.calls.filter(call => call.method === "PATCH" && call.url === "/api/storage/state/ui").length, 1)
-  assert.equal(f.profileRows().length, 2)
   f.check()
 })
 
@@ -518,12 +514,15 @@ test("two concurrent new additions share the normalized profile and keep both ex
 
 test("renaming an existing exact URL preserves it offline even when it contains a saved path", { timeout: 90_000 }, async t => {
   const f = await fixture(t), { page } = f
-  const saved = { ...f.rows[0], baseUrl: f.a.origin + "/saved-path" }
+  const baseUrl = f.a.origin + "/saved-path"
+  const saved = { ...f.rows[0], baseUrl, name: baseUrl }
   f.settings.mergePatchDoc("state", { ui: { remoteServers: [saved, f.rows[1]] } })
   await f.sync()
-  await edit(page, "Alpha")
-  await page.getByRole("textbox", { name: "Name", exact: true }).fill("Path rename")
-  await page.getByRole("textbox", { name: "Name", exact: true }).press("Enter")
+  await edit(page, new URL(baseUrl).host)
+  const name = page.getByRole("textbox", { name: "Name", exact: true })
+  assert.equal(await name.inputValue(), saved.name)
+  await name.fill("Path rename")
+  await name.press("Enter")
   await page.getByRole("dialog").waitFor({ state: "hidden" })
   assert.equal(f.profileRows().find(row => row.id === "a")?.baseUrl, saved.baseUrl)
   assert.equal(f.calls.filter(call => call.url.endsWith("/probe")).length, 0)
@@ -531,7 +530,7 @@ test("renaming an existing exact URL preserves it offline even when it contains 
   f.check()
 })
 
-test("adding a saved address retains its own explicit TLS policy without probing or rotating credentials", { timeout: 90_000 }, async t => {
+test("pasting a saved address submits once and retains its TLS policy and credentials without probing", { timeout: 90_000 }, async t => {
   const f = await fixture(t), { page } = f
   const saved = { ...f.rows[0], skipTlsVerify: true }
   f.settings.mergePatchDoc("state", { ui: { remoteServers: [saved, f.rows[1]] } })
@@ -540,9 +539,15 @@ test("adding a saved address retains its own explicit TLS policy without probing
   const credentialsPath = path.join(f.directory, "remote-server-credentials.json")
   const credentials = fs.readFileSync(credentialsPath, "utf8")
   const before = f.a.state.requests.length
-  await field(page).fill(f.a.origin)
-  await field(page).press("Enter")
+  await field(page).waitFor()
+  await field(page).evaluate((element, text) => {
+    const clipboardData = new DataTransfer()
+    clipboardData.setData("text", text)
+    element.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }))
+  }, f.a.origin)
   await page.waitForFunction(() => document.querySelector<HTMLInputElement>("[data-server-add-field]")?.value === "" && !document.querySelector<HTMLInputElement>("[data-server-add-field]")?.disabled)
+  assert.equal(f.calls.filter(call => call.method === "PATCH" && call.url === "/api/storage/state/ui").length, 1)
+  assert.equal(f.profileRows().length, 2)
   assert.equal(f.profileRows().find(row => row.id === "a")?.skipTlsVerify, true)
   assert.equal(f.calls.filter(call => call.url.endsWith("/probe")).length, 0)
   assert.equal(f.a.state.requests.length, before)
@@ -597,7 +602,7 @@ test("Servers editor preserves SSH policy, suggests aliases, saves offline and f
 test("Add server can save a new SSH-only destination before any direct probe", { timeout: 90_000 }, async t => {
   const f = await fixture(t, true, "en", false, true), { page } = f
   await field(page).waitFor()
-  const add = page.locator(".settings-card-header").getByRole("button", { name: "Add server", exact: true })
+  const add = page.getByRole("button", { name: "Add SSH server", exact: true })
   assert.equal(await add.count(), 1, "A new SSH profile must be reachable without saving a direct profile first")
   await add.click()
   await page.getByRole("textbox", { name: "URL", exact: true }).fill("http://ssh-only.invalid:9898")

@@ -55,7 +55,7 @@ test("load consumes legacy removal markers without bringing back a removed short
   const removed = { policy: first, path: "/removed", lastAccessed: 10 }
   const marker = { ...removed, removed: true }
   const last = { policy: second, path: "/last", lastAccessed: 42 }
-  const f = fixture(t, { remoteServers, remoteProjectRecents: [removed], remoteProjectHistoryExplicitOnly: true,
+  const f = fixture(t, { remoteServers, remoteProjectRecents: [removed],
     remoteProjectHistory: history([marker, last]) })
   const settings = f.open()
   assert.deepEqual(settings.getOwner("state", "ui"), { remoteServers, remoteProjectHistory: history([last]) })

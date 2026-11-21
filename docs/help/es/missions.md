@@ -86,9 +86,13 @@ Los eventos iniciales se comprueban cada 15 minutos. El primer inicio fija la re
 
 **Sesión del coordinador** usa por defecto una **Nueva sesión** por pase. Con un horario o evento, **Sesión existente** permite elegir una conversación raíz del proyecto y de la misma Location de ejecución. Cada pase continúa allí con el agente y modelo configurados, conservando historial, título y permisos. Los controles de la misión también afectan al trabajo existente allí. Cada pase mantiene su propio resultado y diario en el historial.
 
+Puedes pedir a un agente que prepare la programación con su conversación raíz actual. Los pases esperan a que la conversación esté inactiva.
+
 La programación seleccionada muestra estado, próximo despertar o comprobación, pasadas lanzadas/exitosas e historial. Se conservan 30 resultados y los contadores acumulados. **Ejecutar ahora** cuenta al admitirse. Una política guardada no representable se conserva hasta sustituirla explícitamente; revisa finales y límites antes de editar.
 
 En **Conversaciones seguidas**, usa **Añadir conversación** y elige una conversación, también para una Misión inmediata. Antes de iniciar, cambia una selección o quítala con ×.
+
+Elige **Nuevos commits en una rama local** para seguir una referencia Git local o **Nuevos commits en una rama remota** e introduce el nombre de la rama (por ejemplo, `dev`). La comprobación consulta directamente el repositorio detectado, sin un fetch local. Varios commits entre comprobaciones generan un solo pase.
 
 ### Programaciones diarias existentes {#existing-daily-schedules}
 
@@ -108,7 +112,7 @@ Más entradas y tareas se cargan automáticamente al acercarse al final. Si fall
 
 ### Colores y estados {#status-colours}
 
-La bandera muestra la Misión y el chevrón la atención de sus tareas; las recurrentes usan repetición. Rojo pide respuesta y amarillo pulsante indica trabajo observado. Un símbolo de pausa naranja indica pausa; un triángulo de advertencia naranja, interrupción. Verde indica una Misión, tarea o ejecución correcta pendiente de revisión.
+La bandera muestra la Misión y el chevrón la atención de sus tareas; las recurrentes usan repetición. Rojo pide respuesta y amarillo indica trabajo observado. Un símbolo de pausa naranja indica pausa; un triángulo de advertencia naranja, interrupción. Verde indica una Misión, tarea o ejecución correcta pendiente de revisión.
 
 Un icono de acento con una pequeña línea neutra estática debajo significa **Esperando ejecución programada**: la próxima activación está confirmada. El acento sigue la paleta. El icono de acento solo indica preparación o una tarea sin iniciar. Los resultados revisados, las programaciones detenidas y **Estado sin confirmar** son neutros; consulta el texto de estado.
 

@@ -19,18 +19,14 @@ function joinRemote(root: string, relative: string): string {
 /** The remote's folder listing with absolute paths only (a restricted root answers relative ones),
  * folders only, in the shape the folder browser reads. */
 export function relayedFolderListing(input: unknown): FileSystemListResponse {
-  const value = Listing.parse(input)
-  const metadata = value?.metadata
-  if (!metadata || typeof metadata.currentPath !== "string" || !Array.isArray(value.entries)) throw new Error("Invalid remote folder listing")
+  const { metadata, entries: remoteEntries } = Listing.parse(input)
   const relative = metadata.pathKind === "relative"
-  const currentPath = relative ? (typeof metadata.displayPath === "string" ? metadata.displayPath : joinRemote(metadata.rootPath, metadata.currentPath)) : metadata.currentPath
+  const currentPath = relative ? metadata.displayPath : metadata.currentPath
   const parentPath = metadata.parentPath === undefined ? undefined : relative ? joinRemote(metadata.rootPath, metadata.parentPath) : metadata.parentPath
   const entries: FileSystemEntry[] = []
-  for (const entry of value.entries) {
-    if (entries.length >= MAX_ENTRIES) break
-    if (entry?.type !== "directory" || typeof entry.name !== "string") continue
-    const absolute = typeof entry.absolutePath === "string" ? entry.absolutePath : relative ? joinRemote(metadata.rootPath, entry.path) : entry.path
-    if (typeof absolute !== "string") continue
+  for (const entry of remoteEntries) {
+    if (entry.type !== "directory") continue
+    const absolute = entry.absolutePath ?? (relative ? joinRemote(metadata.rootPath, entry.path) : entry.path)
     entries.push({ name: entry.name, path: absolute, absolutePath: absolute, type: "directory" })
   }
   return {

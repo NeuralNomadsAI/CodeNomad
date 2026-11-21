@@ -178,6 +178,19 @@ test("product context surfaces over-bound deterministic proof reads instead of s
   assert.equal(f.queries[0].bytes, 0)
 })
 
+test("product context point-reads the next unconsumed wake even when the recent window starts later", async t => {
+  const owner = await ownerFixture(t), doc = await owner.control("play")
+  const calendar = doc.calendars.find(item => item.role === "reconciliation")!
+  const f = nativeReads(t, owner.directory)
+  const next = `msg_${calendar.scheduleID}_1`, recent = `msg_${calendar.scheduleID}_30`
+  f.put(next, "user", nativeWake(calendar.scheduleID, 1), calendar.sessionID)
+  f.put(recent, "user", nativeWake(calendar.scheduleID, 30), calendar.sessionID)
+  await f.run(nativeMissionScheduleWakeContext({ ...owner.ctx, location: f.location } as Plugin.Context,
+    { sessionID: calendar.sessionID, model: NATIVE_SCHEDULE_CARRIER_MODEL, messages: [hint(recent)], tools: {} } as unknown as SessionContext))
+  assert.ok(f.queries.some(q => q.params[0] === next), "retry the original, not the later projected occurrence")
+  assert.deepEqual(await owner.read(), doc) // No receiver is registered in this fixture.
+})
+
 test("near-full classification bytes leave a separate native proof byte budget", async t => {
   const f = nativeReads(t), reader = await f.reader()
   for (let index = 0; index < 4; index++) f.put(`msg_large_${index}`, "synthetic", { ...restart, text: "x".repeat(240_000) })

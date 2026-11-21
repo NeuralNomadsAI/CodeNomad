@@ -109,7 +109,8 @@ export function hasLiveTauriClient(
   }
   return entries.some((name) => {
     const match = /^client-state\.running\.(\d+)\..+\.lock$/.exec(name)
-    if (!match) return false
+    // An election-aware Tauri is arbitrated by the election, even before its participant appears.
+    if (!match || name.includes(".cross-host.")) return false
     const pid = Number(match[1])
     if (!Number.isInteger(pid) || pid <= 0 || !pidAlive(pid)) return false
     const liveIdentity = processStartIdentity(pid)
@@ -167,7 +168,8 @@ export function createRunningMarker(
   primaryOwner?: ProcessOwner,
 ): string {
   const markerPath = getRunningMarkerPath(userDataPath, owner)
-  publishProcessFile(markerPath, JSON.stringify(primaryOwner ? { ...owner, primaryOwner } : owner))
+  // crossHost tells Tauri this marker belongs to an election-aware host, never a legacy one.
+  publishProcessFile(markerPath, JSON.stringify({ ...owner, crossHost: true, ...(primaryOwner ? { primaryOwner } : {}) }))
   return markerPath
 }
 

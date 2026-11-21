@@ -1,35 +1,27 @@
 # Projects and worktrees
 
-With multi-backend enabled, expand **REMOTES** on Home or in the `+` launcher. Select **+ Project** beside a saved CodeNomad server, browse its folders in place and choose **Open**. To add a server, paste its pairing link or address into the field below the server list. Recent projects you open here stay in the mixed list with a server icon and name, even while their server is offline. Browse, Clone and Temporary act on this computer.
-
 A project tab connects CodeNomad to a folder on the backend computer. Opening a tab, browsing a checkout and moving a conversation family are different operations.
-
-**+ Project** starts at the server's last known project path. If it was moved or removed, choose **Server root**. While a recent project is opening, **Cancel** returns to the server list.
-
-A remote project appears in Recents only after you successfully open it here. Browsing folders adds nothing. Saved shortcuts stay available offline for the exact saved connection (profile, address, TLS verification setting and SSH target). If the remote folder already has a waiting tab, opening it selects that tab, keeps its drafts and lets you choose when to retry.
-
-A shortcut you remove stays hidden from Recents until you open that folder again.
 
 ## Open a project {#open-project}
 
-1. Click **New instance** (`+`) to open the home page.
-2. Choose **Browse Folders**, select the backend folder and open it; or choose an entry under **Recent Folders**.
-3. For a repository copy, choose **Clone Git Repo**, enter **Repository URL** and **Destination folder**, then **Clone**. **Destination folder** is prefilled with the repository name in the folder that holds your last clone, or next to your most recent project. **Browse** chooses the folder that contains the clone; you can also edit the path, including the clone's folder name.
+Click **New instance** (`+`) or press `Ctrl/Cmd+N` to open an empty tab. Pick a project from **Recent tabs** or **Browse**. The CodeNomad logo opens Home. Clone and Temporary target the local backend.
+
+[Open a remote project in a tab](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
+
+For a repository copy, choose **Clone Git Repo**, enter **Repository URL** and **Destination folder**, then **Clone**. **Destination folder** is prefilled with the repository name in the folder that holds your last clone, or next to your most recent project. **Browse** chooses the folder that contains the clone; you can also edit the path, including the clone's folder name.
 
 Browsing a remote server means browsing that server's filesystem, not your phone or laptop. Opening a project does not create a separate OpenCode daemon for each tab. Conversations are native OpenCode sessions; their lifetime is not the tab's lifetime.
 
-Cloning writes a repository to the destination. **Remove the destination folder first if it already exists.** is destructive: enable it only when everything already there can be deleted. Use a fresh destination if unsure.
+Cloning writes a repository to the destination. **Remove the destination folder first if it already exists.** is destructive: enable it only when everything already there can be deleted. Use a fresh destination if unsure. A failed clone is not a reason to delete an existing project; inspect the reported destination and error before retrying.
 
-Recent entries are shortcuts. **Rename workspace** changes its displayed name; **Remove from recent** removes the shortcut, not its files or conversations. Clicking an already-open recent project opens a new tab; its **Open** button (**Switch to open project**) selects the existing tab instead.
+Recent entries are shortcuts. Home's inline controls and empty tabs' project-actions menu offer **Rename workspace** and **Remove from recent** where available; removal keeps files and conversations. Across Home, empty tabs and the quick launcher, clicking a local project, remote project or SideCar creates a new occurrence, even when already open. Its separate **Open** action (**Switch to open project**) selects the existing occurrence instead.
 
-Open the same folder twice and select the same conversation in both tabs to keep chat in one and a web preview, file or Mission report in the other. Each tab keeps its own view, conversation scroll position, right-panel selection and Files mode; messages, execution and project data stay shared.
+The **Open** action also selects a tab waiting for its server and closes the originating empty tab.
 
 ## Use the new-instance launcher {#new-instance-launcher}
 
-1. Long-press or right-click `+`; with keyboard focus there, use **Alt+Down**, **Shift+F10** or the Menu key.
-2. Search recent projects, or select **Browse…**, **Temporary** or **Clone…**.
-
-A normal click opens the full home page. The launcher switches to the matching open project; Home opens a new tab unless it selects a waiting tab. In **REMOTES**, Escape returns to the servers, folds the list, then closes the launcher and returns focus to `+`.
+Long-press or right-click `+`; with keyboard focus there, use **Alt+Down**, **Shift+F10** or the Menu key.
+Tab searches, arrows and Enter select, and Escape returns focus to `+`.
 
 ## Close a project tab {#close-stop}
 
@@ -50,15 +42,15 @@ With startup restoration enabled, each remaining tab restores its own panel choi
 
 ## Restore remote tabs {#restore-remote-tabs}
 
-With multi-backend enabled, saved remote projects retain tab order, selection and per-tab drafts. An unavailable server leaves a waiting tab: choose **Retry** when it returns, or **Connect** with its username/password or a fresh **Pairing link**. Other servers remain usable.
+When you reload with restoration enabled, remote tabs keep their order, selection and drafts. An unavailable server leaves a waiting tab: choose **Retry** when it returns, or **Connect** with its username/password or a fresh link in **New pairing link**. Other servers remain usable. **Server not found** means the saved server is missing.
+
+**Retry** reconnects to an existing project. If the server is reachable but the project is missing, choose **Open**.
 
 **Retry** also recovers waiting tabs when automatic startup restoration is off. Notifications select the existing waiting tab. Check an unconfirmed conversation action's outcome before sending it again.
 
-Before removing a server or changing its address, close its project tabs in every window and reopen **Settings** from another project if it still targets that server. An unreachable project inventory blocks the change until checked.
-
 ## Temporary workspaces {#temporary-workspaces}
 
-1. Choose **Temporary** in the launcher or **New temporary instance** on the home page.
+1. Choose **New temporary tab** on Home or **Temporary** above the columns in an empty tab.
 2. Work in the empty CodeNomad-managed folder; Git is not initialized automatically.
 3. On closing the tab, choose **Keep**, **Discard** or **Cancel**. The tab menu also offers **Keep as project**.
 

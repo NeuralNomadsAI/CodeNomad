@@ -13,6 +13,8 @@ import type { GitHistoryPage, GitCommitDetails, GitCommitDiff } from "../../../s
 import type { NavigationTarget, NavigationWindowResult, OutlineResult, OutlinePreviewResult, OutlineCheckpoint } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import type {
   PruneRequest,
+  ConversationPermissionMode,
+  ConversationPermissionModeResponse,
   PermissionReceiptPage,
   PruneResult,
   BinaryValidationResult,
@@ -21,7 +23,6 @@ import type {
   ConfigFileListResponse,
   FileSystemEntry,
   FileSystemCreateFolderResponse,
-  FileSystemFileContentResponse,
   FileSystemListResponse,
   InstanceData,
   MissionListResponse,
@@ -33,6 +34,7 @@ import type {
   SpeechCapabilitiesResponse,
   SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
+  VoiceConversationEngine,
   SideCar,
   PreviewSession,
   RemotePreviewCapability,
@@ -51,7 +53,6 @@ import type {
   RemoteControlPairing,
   RemoteControlStartResponse,
   RemoteControlStatus,
-  YoloStateResponse,
   WorkspaceCloneRequest,
   WorkspaceCloneResponse,
   WorktreeGitCommitRequest,
@@ -248,6 +249,14 @@ export function createServerApi(ctx: BackendHttp) {
   const requestRaw = (path: string, init?: RequestInit) => sendRawRequest(ctx, path, init)
 
   return {
+    readConversationPermissionMode(instanceId: string, sessionId: string, signal: AbortSignal): Promise<ConversationPermissionModeResponse> {
+      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/sessions/${encodeURIComponent(sessionId)}/permission-mode`, { signal }))
+    },
+    setConversationPermissionMode(instanceId: string, sessionId: string, mode: ConversationPermissionMode): Promise<ConversationPermissionModeResponse> {
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/sessions/${encodeURIComponent(sessionId)}/permission-mode`, {
+        method: "PUT", body: JSON.stringify({ mode }),
+      })
+    },
     fetchPermissionReceipts(instanceId: string, sessionId: string, scope: { messageId: string } | { unanchored: true }, cursor?: string, signal?: AbortSignal): Promise<PermissionReceiptPage> {
       const params = new URLSearchParams("messageId" in scope ? { messageId: scope.messageId } : { unanchored: "true" })
       if (cursor) params.set("cursor", cursor)
@@ -426,8 +435,8 @@ export function createServerApi(ctx: BackendHttp) {
     connectRemoteServer(id: string, input: RemoteServerConnectInput, signal?: AbortSignal) {
       return remoteServerRequest(ctx, id, "connect", input, signal)
     },
-    browseRemoteServer(id: string, path?: string, signal?: AbortSignal, options?: { foldersOnly: true }) {
-      return remoteServerRequest(ctx, id, "browse", { path, ...options }, signal)
+    browseRemoteServer(id: string, path?: string, signal?: AbortSignal) {
+      return remoteServerRequest(ctx, id, "browse", { path }, signal)
     },
     forgetRemoteServer(id: string, signal?: AbortSignal) {
       return remoteServerRequest(ctx, id, "forget", {}, signal)
@@ -438,10 +447,6 @@ export function createServerApi(ctx: BackendHttp) {
         body: JSON.stringify(payload),
         signal,
       })
-    },
-    async connectRemoteBackend(id: string, payload: { username?: string; password?: string; pairingLink?: string }, signal?: AbortSignal): Promise<{ ok: boolean }> {
-      assertRemoteServerCredentials(payload)
-      return request(`/api/backends/${encodeURIComponent(id)}/api/auth/login`, { method: "POST", body: JSON.stringify(payload), signal })
     },
     listSshHosts(signal?: AbortSignal): Promise<{ hosts: string[] }> {
       return request("/api/remote-servers/ssh-hosts", { signal })
@@ -554,10 +559,10 @@ export function createServerApi(ctx: BackendHttp) {
       return request("/api/workspaces/temporary/abandon", { method: "POST", body: JSON.stringify({ path }) })
     },
     keepTemporaryWorkspace(id: string): Promise<void> {
-      return request(`/api/workspaces/${encodeURIComponent(id)}/keep`, { method: "POST" })
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(id).workspaceId)}/keep`, { method: "POST" })
     },
     discardTemporaryWorkspace(id: string, options: { onlyIfEmpty?: boolean } = {}): Promise<void> {
-      return request(`/api/workspaces/${encodeURIComponent(id)}/discard`, { method: "POST", body: JSON.stringify(options) })
+      return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(id).workspaceId)}/discard`, { method: "POST", body: JSON.stringify(options) })
     },
     getPendingRequests(id: string, directories: string[], signal?: AbortSignal, optionalDirectories: string[] = []): Promise<WorkspacePendingRequestsResponse> {
       const query = new URLSearchParams(directories.map((directory) => ["directories", directory]))
@@ -779,22 +784,32 @@ export function createServerApi(ctx: BackendHttp) {
     fetchSpeechCapabilities(): Promise<SpeechCapabilitiesResponse> {
       return request<SpeechCapabilitiesResponse>("/api/speech/capabilities")
     },
+    getDesktopVoiceConversationEngine() {
+      return request<{ engine: VoiceConversationEngine }>("/api/speech/conversation/engine")
+    },
+    setDesktopVoiceConversationEngine(engine: VoiceConversationEngine) {
+      return request<{ engine: VoiceConversationEngine }>("/api/speech/conversation/engine", {
+        method: "PATCH", body: JSON.stringify({ engine }),
+      })
+    },
     transcribeAudio(payload: {
       audioBase64: string
       mimeType: string
       filename?: string
       language?: string
       prompt?: string
-    }): Promise<SpeechTranscriptionResponse> {
+    }, signal?: AbortSignal): Promise<SpeechTranscriptionResponse> {
       return request<SpeechTranscriptionResponse>("/api/speech/transcribe", {
         method: "POST",
         body: JSON.stringify(payload),
+        signal,
       })
     },
-    synthesizeSpeech(payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" }): Promise<SpeechSynthesisResponse> {
+    synthesizeSpeech(payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" }, signal?: AbortSignal): Promise<SpeechSynthesisResponse> {
       return request<SpeechSynthesisResponse>("/api/speech/synthesize", {
         method: "POST",
         body: JSON.stringify(payload),
+        signal,
       })
     },
     synthesizeSpeechStream(
@@ -824,13 +839,6 @@ export function createServerApi(ctx: BackendHttp) {
         method: "POST",
         body: JSON.stringify({ parentPath, name }),
       })
-    },
-    readFileSystemFile(path: string, options?: { encoding?: "utf-8" | "base64" }): Promise<FileSystemFileContentResponse> {
-      const params = new URLSearchParams({ path })
-      if (options?.encoding) {
-        params.set("encoding", options.encoding)
-      }
-      return request<FileSystemFileContentResponse>(`/api/filesystem/files/content?${params.toString()}`)
     },
     readInstanceData(id: string): Promise<InstanceData> {
       return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`)
@@ -1029,17 +1037,6 @@ export function createServerApi(ctx: BackendHttp) {
     },
     deleteInstanceData(id: string): Promise<void> {
       return request(`/api/storage/instances/${encodeURIComponent(id)}`, { method: "DELETE" })
-    },
-    getYoloState(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
-      return request<YoloStateResponse>(
-        `/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/yolo/sessions/${encodeURIComponent(sessionId)}`,
-      )
-    },
-    toggleYolo(instanceId: string, sessionId: string): Promise<YoloStateResponse> {
-      return request<YoloStateResponse>(
-        `/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/yolo/sessions/${encodeURIComponent(sessionId)}/toggle`,
-        { method: "POST" },
-      )
     },
     sendClientConnectionPong(payload: { clientId: string; connectionId: string; pingTs?: number }, signal?: AbortSignal): Promise<void> {
       const init: RequestInit = {

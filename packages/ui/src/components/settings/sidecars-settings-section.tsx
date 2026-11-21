@@ -5,6 +5,7 @@ import { serverApi } from "../../lib/api-client"
 import { ensureSidecarsLoaded, sidecars, sidecarsLoading } from "../../stores/sidecars"
 import { SideCarsDirectHttpsCard } from "./sidecars-direct-https-card"
 import { SettingsInfoTip } from "./settings-info-tip"
+import { useSettingsRowTarget } from "./settings-row-target"
 
 function deriveSidecarId(value: string): string {
   return value
@@ -25,6 +26,8 @@ export const SideCarsSettingsSection: Component = () => {
   const [creating, setCreating] = createSignal(false)
   const [formError, setFormError] = createSignal<string | null>(null)
   const [actionError, setActionError] = createSignal<string | null>(null)
+  let nameInput: HTMLInputElement | undefined
+  useSettingsRowTarget("sidecar-add", () => nameInput, () => true)
 
   onMount(() => {
     void ensureSidecarsLoaded()
@@ -94,6 +97,9 @@ export const SideCarsSettingsSection: Component = () => {
               <div class="settings-toggle-caption">{t("sidecars.basePath")}: <code>/sidecars/{derivedId()}</code></div>
             </div>
             <input
+              id="sidecar-add"
+              ref={nameInput}
+              aria-label={t("sidecars.form.name")}
               class="selector-input w-full max-w-xs"
               value={name()}
               onInput={(event) => {
@@ -145,7 +151,7 @@ export const SideCarsSettingsSection: Component = () => {
           <div class="flex justify-end">
             <button type="button" class="selector-button selector-button-primary w-auto" disabled={creating()} onClick={() => void handleCreate()}>
               <Show when={creating()} fallback={<Plus class="w-4 h-4" />}>
-                <Loader2 class="w-4 h-4 animate-spin" />
+                <span class="inline-flex animate-spin"><Loader2 class="w-4 h-4" /></span>
               </Show>
               <span>{t("sidecars.form.add")}</span>
             </button>

@@ -6,13 +6,14 @@ import { HttpResponseError } from "../lib/retryable-file-search"
 import { serverApi } from "../lib/api-client.ts"
 import type { Instance } from "../types/instance.ts"
 import {
-  activeAppTabId,
+  activeAppTab, activeAppTabId, allowsAutomaticLocalSetup,
   appTabs,
   attachInstanceTab,
   closeInstanceTab,
   detachInstanceTab,
   setAppTabOrder,
   selectInstanceTab,
+  openBlankTab, closeBlankTab, replaceBlankTab,
 } from "./app-tabs.ts"
 import {
   createRestorableSessionPreservation,
@@ -30,6 +31,7 @@ import { clearToastHistory, getToastHistory } from "../lib/notifications.tsx"
 import { tGlobal } from "../lib/i18n"
 import { serverEvents } from "../lib/server-events.ts"
 import { createTextAttachment } from "../types/attachment.ts"
+import { captureState } from "../lib/hooks/use-app-session-capture"
 import { getAttachments, hydrateSessionAttachments } from "./attachments.ts"
 import {
   activeSessionId,
@@ -60,10 +62,11 @@ function workspace(folder: string): RestorableWorkspaceTabState {
 }
 
 function captureTabs(): RestorableSessionState {
-  const tabs = appTabs().map((tab) => tab.kind === "instance"
+  const restorable = appTabs().filter(tab => tab.kind !== "blank")
+  const tabs = restorable.map((tab) => tab.kind === "instance"
     ? workspace(tab.instance.folder)
     : tab.kind === "remote-restore" ? tab.snapshot : { kind: "sidecar" as const, sidecarId: tab.sidecarTab.sidecarId })
-  return { tabs, activeTabIndex: appTabs().findIndex((tab) => tab.id === activeAppTabId()) }
+  return { tabs, activeTabIndex: restorable.findIndex((tab) => tab.id === activeAppTabId()) }
 }
 
 describe("renderer-local workspace tabs", () => {
@@ -76,6 +79,53 @@ describe("renderer-local workspace tabs", () => {
     toast.custom = () => "test-toast"
   })
   afterEach(() => { serverApi.deleteWorkspace = originalDelete; toast.custom = originalToast })
+  it("allows automatic local setup only in a blank tab not browsing a saved server", () => {
+    openBlankTab()
+    const tab = activeAppTab()!
+    try {
+      assert.equal(allowsAutomaticLocalSetup(tab), true)
+      openBlankTab({ id: "remote", baseUrl: "https://server.example", skipTlsVerify: false })
+      assert.equal(activeAppTab()?.id, tab.id)
+      assert.equal(allowsAutomaticLocalSetup(activeAppTab()!), false)
+    } finally { closeBlankTab(tab.id) }
+  })
+  it("reselects a single blank until it is filled, excludes it from capture, and closes it locally", () => {
+    const existing = instance("before-blank")
+    const chosen = instance("blank-choice")
+    addInstance(existing)
+    addInstance(chosen)
+    let deletes = 0
+    serverApi.deleteWorkspace = async () => { deletes++ }
+    selectInstanceTab(existing.id)
+    openBlankTab()
+    const first = activeAppTabId()!
+    let second: string | undefined
+    try {
+      selectInstanceTab(existing.id)
+      openBlankTab()
+      assert.equal(activeAppTabId(), first)
+      assert.equal(appTabs().filter(tab => tab.kind === "blank").length, 1)
+      assert.deepEqual(captureState(new Map()).tabIds, [`instance:${existing.id}`])
+      selectInstanceTab(chosen.id)
+      replaceBlankTab(first, `instance:${chosen.id}`)
+      assert.deepEqual(appTabs().map(tab => tab.id), [`instance:${existing.id}`, `instance:${chosen.id}`])
+      const captured = captureState(new Map())
+      assert.equal(captured.state.activeTabIndex, 1)
+      assert.equal(captured.authorities.length, 2)
+      openBlankTab()
+      second = activeAppTabId()!
+      assert.notEqual(second, first)
+      replaceBlankTab(first, `instance:${existing.id}`)
+      assert.deepEqual(appTabs().map(tab => tab.id), [`instance:${existing.id}`, `instance:${chosen.id}`, second])
+      closeBlankTab(second)
+      assert.equal(deletes, 0)
+    } finally {
+      closeBlankTab(first)
+      if (second) closeBlankTab(second)
+      removeInstance(chosen.id, { authoritative: false })
+      removeInstance(existing.id, { authoritative: false })
+    }
+  })
   it("keeps catalog additions and updates closed until explicitly attached", () => {
     const first = instance("catalog-first")
     const second = instance("catalog-second")

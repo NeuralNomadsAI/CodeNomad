@@ -11,13 +11,13 @@ test("raw credentials are rejected before destructive pairing normalization", ()
   assert.deepEqual(classifyCodeNomadLink(" https://SERVER.test:443/path "), { kind: "address", baseUrl: "https://server.test" })
   assert.deepEqual(classifyCodeNomadLink("https://server.test/remote-pair#code"), { kind: "pairing", baseUrl: "https://server.test", entryUrl: "https://server.test/remote-pair#code" })
 })
-test("P2 host naming preserves explicit names and disambiguates ports", () => {
+test("host naming preserves explicit names and disambiguates ports", () => {
   const a = { id: "a", name: "example.test:444", baseUrl: "https://example.test:444" }
   assert.equal(serverDisplayName(a), "example.test")
   assert.equal(serverDisplayName(a, [a, { id: "b", name: "", baseUrl: "https://example.test:445" }]), "example.test:444")
   assert.equal(serverDisplayName({ ...a, name: "Build" }), "Build")
 })
-test("20 consumed messages match P2 in ten locales and four legacy values stay unchanged", () => {
+test("server editor and separate-window labels retain their translations in ten locales", () => {
   const snapshots: Record<string, [string, string]> = {
     "en": ["7f472d66d82b686a2ba2a52b888fc614437f2802b9ad395e5ea914e05e807b3b", "f4611f6dc68e5530d23c4ef6f6449c0997ddee3d8f63260095032ba4160346e7"],
     "fr": ["1dd8c4b3d9e0c4946f3aff3e5cd97f9e4a8588be4934d7322f169f0b40cc4dfc", "976b44d1586371a336060266db5ddcd74d79fbb886780d8b22533ecca837e0a1"],
@@ -35,14 +35,20 @@ test("20 consumed messages match P2 in ten locales and four legacy values stay u
     const directory = new URL(`./i18n/messages/${locale}/`, import.meta.url)
     const read = (text: string) => new Map([...text.matchAll(/"([\w.]+)":\s*("(?:[^"\\]|\\.)*"),/g)].map(m => [m[1], JSON.parse(m[2])]))
     const current = read(readFileSync(new URL("folderSelection.ts", directory), "utf8") + readFileSync(new URL("settings.ts", directory), "utf8"))
+    const restore = read(readFileSync(new URL("dialogs.ts", directory), "utf8"))
+    assert.ok(restore.get("remoteRestore.absent")?.trim(), `${locale}/missing saved server`)
     const variants = ["name", "url", "skipTls", "errorRequired"]
-    const keys = [...current.keys()].filter(key => key !== "remoteBrowse.incompatible" && /^(remoteBrowse\.|folderSelection\.browseMenu\.|folderSelection\.remoteProject\.)/.test(key)).sort()
-      .concat(["settings.nav.servers", "settings.servers.open", ...variants.map(key => `settings.servers.dialog.${key}`)])
-    assert.equal(keys.length, 20)
+    const keys = [
+      "folderSelection.browseMenu.add", "folderSelection.browseMenu.addField", "folderSelection.browseMenu.errorCredentials",
+      "folderSelection.browseMenu.errorInvalid", "folderSelection.browseMenu.skipTls", "folderSelection.remoteProject.edit",
+      "folderSelection.remoteProject.removeConfirm", "remoteBrowse.pairAgain", "remoteBrowse.pairingExpired", "remoteBrowse.pairingLink",
+      "remoteBrowse.pairingRateLimited", "remoteBrowse.pairingUnavailable", "remoteBrowse.tlsError", "remoteBrowse.unreachable",
+      "settings.nav.servers", "settings.servers.open", ...variants.map(key => `settings.servers.dialog.${key}`),
+    ]
     assert.ok(current.get("remoteBrowse.incompatible")?.trim(), `${locale}/incompatible server`)
     assert(keys.every(key => typeof current.get(key) === "string"))
-    assert.equal(hash(keys.map(key => current.get(key))), snapshots[locale][0], `${locale}/P2`)
-    assert.equal(hash(variants.map(key => current.get(`folderSelection.servers.dialog.${key}`))), snapshots[locale][1], `${locale}/legacy`)
+    assert.equal(hash(keys.map(key => current.get(key))), snapshots[locale][0], `${locale}/server editor`)
+    assert.equal(hash(variants.map(key => current.get(`folderSelection.servers.dialog.${key}`))), snapshots[locale][1], `${locale}/separate window`)
     for (const key of ["sshHost", "sshHint"]) assert.ok(current.get(`folderSelection.servers.dialog.${key}`)?.trim(), `${locale}/SSH ${key}`)
   }
 })

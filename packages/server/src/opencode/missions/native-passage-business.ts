@@ -53,9 +53,10 @@ async function restorePendingBusiness(context: MissionsPluginContext, session: N
     || snapshot.notificationUnavailable || snapshot.missions[0].coordinatorSessionId !== isolated.coordinatorSessionID)
     throw new Error("Pending passage journal unavailable")
   const actor = snapshot.missions[0].actors.find(actor => actor.sessionId === session.id && sameLocation(actor.location, session.location))
-  const selection = session.id === isolated.coordinatorSessionID ? doc.config.profiles?.coordinator
-    : doc.config.profiles?.roles?.[actor?.roles[0] ?? ""]
-  if (!actor || !selection || !matchesExecution(selection, session)) throw new Error("Pending passage actor differs")
+  // Admission applies the coordinator profile; the conversation's model is its user's choice afterwards.
+  const selection = doc.config.profiles?.roles?.[actor?.roles[0] ?? ""]
+  if (!actor || session.id !== isolated.coordinatorSessionID && (!selection || !matchesExecution(selection, session)))
+    throw new Error("Pending passage actor differs")
   const unavailable = async (): Promise<never> => { throw new Error("Resume the schedule before new passage admission") }
   const control = new MissionControl({ project: { id: doc.projectID, canonical: doc.projectCanonical, location: session.location },
     storage: isolated.storage, humanGate, sessions: { get: input => context.session.get(input), create: unavailable,
@@ -123,8 +124,8 @@ export async function selectNativePassageBusiness(context: MissionsPluginContext
       passages.delete(id)
       throw new Error("Passage no longer pending")
     }
-    if (id === passage.coordinatorSessionID && (!matchesExecution(doc.config.profiles?.coordinator, session)
-      || canonicalAuthority(marker?.recurrence) !== canonicalAuthority({ scheduleID: doc.id, passageID: doc.pending.passage.id })))
+    if (id === passage.coordinatorSessionID
+      && canonicalAuthority(marker?.recurrence) !== canonicalAuthority({ scheduleID: doc.id, passageID: doc.pending.passage.id }))
       throw new Error("Passage coordinator changed")
     return { control: passage.control, readSessionID: id, current: passage.current,
       beforeTool: async (_name, raw) => {

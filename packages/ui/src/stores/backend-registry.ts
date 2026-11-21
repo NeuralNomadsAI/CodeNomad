@@ -1,13 +1,14 @@
 import { createComputed, createRoot, untrack } from "solid-js"
 import { createStore } from "solid-js/store"
 import type { RemoteServerProfile, ServerMeta } from "../../../server/src/api-types"
-import { createRemoteBackendClient, registerBackendClient, type BackendClient } from "../lib/backend-client"
+import { admittedServerIds, createRemoteBackendClient, registerBackendClient, type BackendClient } from "../lib/backend-client"
 import { backendCompatibility } from "../lib/backend-compatibility"
 import { declaresCapability } from "../lib/backend-capabilities"
 import type { CodeNomadCapability } from "../../../server/src/meta-contract"
 import { backendEvents, type BackendEvents } from "../lib/backend-events"
 import { isBackendId, LOCAL_BACKEND_ID } from "../lib/backend-identity"
 import { RELAY_AUTHORITY_HEADER } from "../../../server/src/codenomad-servers/relay-authority"
+import { sameServerSelection } from "../lib/native/server-selection-intent"
 
 export type BackendAdmissionState = "idle" | "admitting" | "compatible" | "refused" | "unauthorized" | "unreachable"
 type Entry = {
@@ -15,7 +16,6 @@ type Entry = {
   client: BackendClient
   controller: AbortController
   pending: Promise<BackendClient | undefined>
-  serverId?: string
   detach?: () => void
   remove?: () => void
   revoked: boolean
@@ -46,7 +46,7 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
   let disposed = false
   const profileFor = (id: string) => options.enabled() === true ? options.profiles().find(p => p.id === id) : undefined
   const sameTarget = (a: RemoteServerProfile, b?: RemoteServerProfile) =>
-    b !== undefined && a.baseUrl === b.baseUrl && a.skipTlsVerify === b.skipTlsVerify && a.ssh?.host === b.ssh?.host
+    b !== undefined && sameServerSelection(a, b)
   const current = (id: string, entry: Entry) => !disposed && !entry.revoked && entries.get(id) === entry
     && !entry.controller.signal.aborted && sameTarget(entry.profile, profileFor(id))
 
@@ -105,15 +105,16 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
       const meta: ServerMeta | null = await response.json()
       if (!active()) return superseded()
       signal.throwIfAborted()
-      if (backendCompatibility(meta) !== "compatible" || entry.serverId && entry.serverId !== meta?.serverId) {
+      const admittedId = admittedServerIds.get(entry.client)
+      if (backendCompatibility(meta) !== "compatible" || admittedId && admittedId !== meta?.serverId) {
         detach(id, "refused")
         return false
       }
-      entry.serverId = meta!.serverId
       if (entry.client.admitRelayAuthority && !entry.client.admitRelayAuthority(response.headers.get(RELAY_AUTHORITY_HEADER))) {
         detach(id, "refused")
         return false
       }
+      admittedServerIds.set(entry.client, meta!.serverId!)
       // Each revalidation reads the families again; an unchanged list keeps its subscribers quiet.
       const declared = Array.isArray(meta!.capabilities) ? [...meta!.capabilities] : undefined
       if (declared?.join() !== capabilities[id]?.join()) setCapabilities(id, declared)
@@ -234,7 +235,10 @@ export function createBackendRegistry(options: BackendRegistryOptions) {
       }
     },
     state: (id: string): BackendAdmissionState => states[id] ?? "idle",
-    serverId: (id: string) => entries.get(id)?.serverId,
+    serverId: (id: string) => {
+      const entry = entries.get(id)
+      return entry && admittedServerIds.get(entry.client)
+    },
     /** Route families from the latest admitted metadata; an unadmitted backend has no live consumer. */
     supports: (id: string, capability: CodeNomadCapability) => declaresCapability({ capabilities: capabilities[id] }, capability),
     dispose() {

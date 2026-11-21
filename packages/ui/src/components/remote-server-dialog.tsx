@@ -11,20 +11,15 @@ import { SettingsInfoTip } from "./settings/settings-info-tip"
 import { serverApi } from "../lib/api-client"
 import { secretEntryAllowed } from "../lib/server-meta"
 
-interface RemoteServerDialogProps {
+interface DialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSubmit: (input: RemoteServerInput, openWindow: boolean) => Promise<unknown>
-  onEditSubmit?: (input: RemoteServerInput, current: () => boolean) => Promise<unknown>
+}
+
+export const ServerEditor: Component<DialogProps & {
+  onSubmit: (input: RemoteServerInput, current: () => boolean) => Promise<unknown>
   initial?: RemoteServerInput
-}
-
-export const RemoteServerDialog: Component<RemoteServerDialogProps> = (props) => {
-  const config = useConfig()
-  return <Show when={config.preferences().multiBackend === true && props.onEditSubmit} fallback={<LegacyRemoteServerDialog {...props} />}><ServerEditor {...props} /></Show>
-}
-
-const ServerEditor: Component<RemoteServerDialogProps> = (props) => {
+}> = (props) => {
   const { t } = useI18n()
   const config = useConfig()
   const [sshHost, setSshHost] = createSignal("")
@@ -73,8 +68,7 @@ const ServerEditor: Component<RemoteServerDialogProps> = (props) => {
     if (link.kind === "pairing") setBaseUrl("")
     setBusy(true); setError(undefined)
     try {
-      if (props.onEditSubmit) await props.onEditSubmit(input, current)
-      else await props.onSubmit(input, false)
+      await props.onSubmit(input, current)
       if (current()) { returnFocus = focus.retained(); props.onOpenChange(false) }
     } catch (failure) { if (current() && !(failure instanceof DOMException && failure.name === "AbortError")) setError(remoteServerErrorKey(failure)) }
     finally { focus.dispose(); if (current()) setBusy(false) }
@@ -141,14 +135,10 @@ const ServerEditor: Component<RemoteServerDialogProps> = (props) => {
   )
 }
 
-const LegacyRemoteServerDialog: Component<RemoteServerDialogProps> = (props) => {
+export const RemoteServerDialog: Component<DialogProps & {
+  onSubmit: (input: RemoteServerInput, openWindow: boolean) => Promise<unknown>
+}> = (props) => {
   const { t } = useI18n()
-  const { preferences } = useConfig()
-  const [sshHost, setSshHost] = createSignal("")
-  const [sshHosts, setSshHosts] = createSignal<string[]>([])
-  const sshListId = createUniqueId()
-  const sshHintId = createUniqueId()
-  const usesSsh = () => preferences().multiBackend && Boolean(sshHost().trim())
   const [name, setName] = createSignal("")
   const [baseUrl, setBaseUrl] = createSignal("")
   const [skipTlsVerify, setSkipTlsVerify] = createSignal(false)
@@ -161,16 +151,7 @@ const LegacyRemoteServerDialog: Component<RemoteServerDialogProps> = (props) => 
     setName("")
     setBaseUrl("")
     setSkipTlsVerify(false)
-    setSshHost("")
     setError(null)
-  })
-
-  createEffect(() => {
-    if (!props.open || !preferences().multiBackend) return
-    let current = true
-    onCleanup(() => { current = false })
-    setSshHosts([])
-    void serverApi.listSshHosts().then(result => { if (current) setSshHosts(result.hosts) }).catch(() => {})
   })
 
   const submit = async (openWindow: boolean) => {
@@ -181,8 +162,7 @@ const LegacyRemoteServerDialog: Component<RemoteServerDialogProps> = (props) => 
     setBusy(true)
     setError(null)
     try {
-      await props.onSubmit({ name: name(), baseUrl: baseUrl(), skipTlsVerify: skipTlsVerify(),
-        ...(usesSsh() ? { ssh: { host: sshHost().trim() } } : {}) }, openWindow)
+      await props.onSubmit({ name: name(), baseUrl: baseUrl(), skipTlsVerify: skipTlsVerify() }, openWindow)
       props.onOpenChange(false)
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : String(submitError))
@@ -217,14 +197,6 @@ const LegacyRemoteServerDialog: Component<RemoteServerDialogProps> = (props) => 
               </label>
               <span id={urlHintId} class="text-xs">{t("folderSelection.servers.dialog.urlHint")}</span>
             </div>
-            <Show when={preferences().multiBackend}>
-              <label class="flex flex-col gap-2 text-sm text-secondary">
-                <span>{t("folderSelection.servers.dialog.sshHost")}</span>
-                <input class="selector-input w-full" value={sshHost()} onInput={event => setSshHost(event.currentTarget.value)} list={sshListId} aria-describedby={sshHintId} />
-                <datalist id={sshListId}><For each={sshHosts()}>{host => <option value={host} />}</For></datalist>
-                <span id={sshHintId} class="text-xs">{t("folderSelection.servers.dialog.sshHint")}</span>
-              </label>
-            </Show>
             <label class="flex items-start gap-3 text-sm text-secondary">
               <input type="checkbox" checked={skipTlsVerify()} onChange={(event) => setSkipTlsVerify(event.currentTarget.checked)} />
               <span>{t("folderSelection.servers.dialog.skipTls")}</span>
@@ -233,9 +205,9 @@ const LegacyRemoteServerDialog: Component<RemoteServerDialogProps> = (props) => 
             <div class="flex items-center justify-end gap-3">
               <button type="button" class="selector-button selector-button-secondary w-auto px-4" onClick={() => props.onOpenChange(false)}>{t("folderSelection.servers.dialog.cancel")}</button>
               <button type="button" class="selector-button selector-button-secondary w-auto px-4" disabled={busy()} onClick={() => void submit(false)}>{t("folderSelection.servers.dialog.save")}</button>
-              <button type="button" class="selector-button selector-button-secondary w-auto px-4" disabled={busy() || usesSsh()} onClick={() => void submit(true)}>
+              <button type="button" class="selector-button selector-button-secondary w-auto px-4" disabled={busy()} onClick={() => void submit(true)}>
                 <Show when={busy()} fallback={<span>{t("folderSelection.servers.dialog.connect")}</span>}>
-                  <span class="inline-flex items-center gap-2"><Loader2 class="w-4 h-4 animate-spin" />{t("folderSelection.servers.dialog.connecting")}</span>
+                  <span class="inline-flex items-center gap-2"><span class="inline-flex animate-spin"><Loader2 class="w-4 h-4" /></span>{t("folderSelection.servers.dialog.connecting")}</span>
                 </Show>
               </button>
             </div>

@@ -12,15 +12,17 @@ Los service workers permanecen desactivados en las vistas previas remotas.
 
 Pulsar un enlace `localhost` o `127.0.0.1` en una conversación lo abre en la vista previa web de esa sesión, en cualquier cliente donde las vistas previas estén disponibles. A través de Remote Control cuando el host mantiene las vistas previas web desactivadas, o en un cliente donde las vistas previas no están disponibles de otro modo, esos enlaces conservan su comportamiento normal del navegador. Ctrl+clic (⌘-clic en macOS) o clic central abre el enlace en tu navegador en su lugar.
 
-Cada sesión tiene una vista previa en la ventana. Las pestañas duplicadas eligen independientemente entre el chat y esa misma vista previa activa, compartiendo página, URL, historial y plantilla de viewport. El botón de cierre devuelve solo su pestaña al chat. Cambiar de pestaña, conversación, proyecto o Info conserva el documento; cerrar un duplicado lo conserva mientras otra instancia de la sesión siga abierta. Cerrar la última instancia o la ventana, o reiniciar el renderer, termina el documento activo.
+Cerrar la vista previa local devuelve la pestaña al chat. Las pestañas duplicadas comparten la página activa hasta cerrar la última o recargar la ventana.
 
 Cada pestaña guarda su elección de chat/vista previa; la sesión guarda la URL, la plantilla de viewport y el historial compartidos. Las páginas guardadas se cargan solo al reabrir explícitamente el navegador de sesión. Se conservan URL y un cursor; formularios activos, DOM, cuerpos POST y memoria JavaScript terminan con el documento. El historial se limita a 32 URL por sesión y a un presupuesto compartido por ventana; las entradas antiguas pueden recortarse. Restaurar una URL puede cargar de nuevo la página.
 
-Las pestañas de proyectos remotos cargan las vistas previas mediante el servidor CodeNomad del proyecto. La barra de direcciones y el historial guardado muestran la URL de la aplicación. Cerrar la vista previa o la pestaña, desconectar/eliminar el servidor o salir termina la página activa y sus conexiones; al reabrirla se carga la dirección guardada con su historial. Las credenciales del servidor permanecen en el backend; las cookies de aplicación transmitidas se filtran. Mantén las direcciones internas de carga dentro de CodeNomad. En un cliente remoto con `multiBackend` experimental, la vista previa se carga a través de la dirección de este host; los dispositivos emparejados siguen el interruptor **Vistas previas web** del host, y cerrar sesión o revocar el dispositivo la termina.
+Las vistas previas remotas usan el servidor del proyecto y muestran la URL de la aplicación. Cerrar la vista previa o su pestaña, desconectar el servidor o salir termina la página activa. Al reabrir se cargan la dirección y el historial, no los cambios sin guardar. Mantén privadas las direcciones internas.
 
 Las vistas previas remotas nativas desactivan menús contextuales, exportación al portapapeles, arrastre de enlaces, impresión, ventanas emergentes, descargas, diálogos de página y solicitudes de permisos para mantener privadas las direcciones internas. Guarda el trabajo de la página antes de cerrarla.
 
 Los controles aparecen cuando el anfitrión y el servidor del proyecto remoto confirman que las vistas previas están disponibles.
+
+En Control remoto, **Vistas previas web** está activado por defecto en **Configuración → Acceso remoto → Control remoto** en el equipo anfitrión. Al desactivarlo se cierran las vistas previas y sus WebSockets; al recargar se oculta **Abrir vista previa web**. Cerrar sesión o revocar un dispositivo emparejado cierra sus vistas previas y sus WebSockets.
 
 ## Inicios de sesión compartidos y límites de automatización {#signins-automation}
 
@@ -66,7 +68,9 @@ En Electron y Tauri para Windows, las plantillas móviles establecen identidad A
 1. Inicia la herramienta web por separado en el equipo del backend de CodeNomad, escuchando en `127.0.0.1:<port>`.
 2. Abre **Configuración → SideCars**. Introduce **Nombre** y **Puerto**; comprueba la **Ruta base** derivada (`/sidecars/<id>`).
 3. Establece **Protocolo** para que coincida con el servicio de destino y elige **Modo de prefijo**.
-4. Elige **Añadir SideCar** y después **Abrir SideCar** desde la página de inicio para abrir su pestaña.
+4. Elige **Añadir SideCar** y ábrelo desde **Explorar**. [pestañas de proyecto](projects.md#open-project).
+
+Un SideCar en ejecución permanece en las pestañas recientes tras cerrar su pestaña.
 
 | Opción | Efecto exacto |
 | --- | --- |
@@ -81,7 +85,7 @@ Si no es accesible, comprueba el proceso y el puerto en el backend. Si carga el 
 
 Un SideCar es una extensión de confianza de CodeNomad, no una vista previa aislada: su página se ejecuta con el propio origen de CodeNomad, por lo que sus scripts pueden usar CodeNomad con tu acceso de sesión iniciada. Registra solo servicios cuyo código sea de tu confianza. CodeNomad no reenvía al servicio sus propias cookies de inicio de sesión, mientras que las cookies propias del servicio se conservan.
 
-El contenido de SideCar (`/sidecars/`) y sus WebSockets requieren una conexión loopback en el anfitrión. Para abrirlos también desde otros dispositivos, activa **Abrir SideCars por HTTPS** en **Configuración → SideCars** en el anfitrión: los navegadores con sesión iniciada a través de las direcciones HTTPS de este servidor o de un origen HTTPS de `CODENOMAD_ALLOWED_ORIGINS`, como un proxy inverso TLS, podrán abrir SideCars. HTTP sin cifrar, las direcciones `localhost` y Control remoto siguen reservados al anfitrión. El registro mediante `/api/sidecars` está disponible para dispositivos emparejados y clientes directos de LAN autenticados. El contenido de las vistas previas activas (`/previews/`) está disponible mediante acceso directo por LAN con un token de capacidad válido; las vistas previas web de [Control remoto](remote-control.md#remote-surface) siguen disponibles con su token de capacidad mientras estén activadas. Consulta [Actualizar](remote-access.md#upgrading) para los requisitos del acceso directo.
+El contenido de SideCar (`/sidecars/`) y sus WebSockets requieren una conexión loopback en el anfitrión. Para abrirlos también desde otros dispositivos, activa **Abrir SideCars por HTTPS** en **Configuración → SideCars** en el anfitrión: los navegadores con sesión iniciada a través de las direcciones HTTPS de este servidor o de un origen HTTPS de `CODENOMAD_ALLOWED_ORIGINS`, como un proxy inverso TLS, podrán abrir SideCars. HTTP sin cifrar, las direcciones `localhost` y Control remoto siguen reservados al anfitrión. El registro mediante `/api/sidecars` está disponible para dispositivos emparejados y clientes directos de LAN autenticados. El contenido de las vistas previas activas (`/previews/`) está disponible mediante acceso directo por LAN con un token de capacidad válido; las vistas previas web de [Control remoto](remote-control.md#remote-surface) siguen disponibles con su token de capacidad mientras estén activadas. Consulta [Orígenes permitidos](remote-access.md#upgrading) para los requisitos del acceso directo.
 
 ## Ejemplo de OpenVSCode Server {#openvscode}
 

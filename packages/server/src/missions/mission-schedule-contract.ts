@@ -45,7 +45,7 @@ export const missionSchedulePayloadDigest = (input: Pick<MissionScheduleRequest,
     : { configuration: input.configuration, creation: input.creation }), 64)
 export const missionScheduleRefusalSchema = z.object({ missionID: documentID, requestID: documentID,
   expectedRevision: documentCounter, action: z.enum(missionScheduleActions), payloadDigest: z.string().regex(/^[a-f0-9]{64}$/),
-  reason: z.enum(["revision-conflict", "control-conflict", "date-passed"]),
+  reason: z.enum(["revision-conflict", "control-conflict", "date-passed", "coordinator-busy", "coordinator-owned", "coordinator-is-source"]),
 }).strict()
 
 const text = { type: "string" } as const
@@ -119,7 +119,7 @@ const result = { type: "object", properties: { document: { ...summary, type: ["o
   acknowledgement: { type: "string", enum: ["fresh", "recovered"] },
   refusal: { type: "object", properties: { missionID: text, requestID: text, expectedRevision: counter,
     action: { type: "string", enum: missionScheduleActions }, payloadDigest: text,
-    reason: { type: "string", enum: ["revision-conflict", "control-conflict", "date-passed"] } },
+    reason: { type: "string", enum: ["revision-conflict", "control-conflict", "date-passed", "coordinator-busy", "coordinator-owned", "coordinator-is-source"] } },
     required: ["missionID", "requestID", "expectedRevision", "action", "payloadDigest", "reason"], additionalProperties: false },
   deletionReceipt: { type: "object", properties: { id: text, requestID: text, expectedRevision: counter, deleteManagedSessions: { type: "boolean" } },
     required: ["id", "requestID", "expectedRevision", "deleteManagedSessions"], additionalProperties: false },

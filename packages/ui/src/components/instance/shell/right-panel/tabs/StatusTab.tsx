@@ -10,7 +10,6 @@ import {
 } from "@thisbeyond/solid-dnd"
 import { Accordion } from "@kobalte/core"
 import { Tooltip } from "@kobalte/core/tooltip"
-import Switch from "@suid/material/Switch"
 
 import { ChevronRight, GripVertical, Info } from "lucide-solid"
 
@@ -20,10 +19,9 @@ import type { Session } from "../../../../../types/session"
 import ContextUsagePanel from "../../../../session/context-usage-panel"
 import ProviderUsagePanel from "../../../../session/provider-usage-panel"
 import SessionGoalLine from "../../../../session/session-goal-line"
+import { ConversationPermissions, ConversationPermissionsInfo, ConversationPermissionsSummary, createConversationPermissionsState } from "../../../../session/conversation-permissions"
 import InstanceServiceStatus from "../../../../instance-service-status"
-import { togglePermissionAutoAcceptForSession } from "../../../../../stores/instances"
-import { isPermissionAutoAcceptEnabled } from "../../../../../stores/permission-auto-accept"
-import { applyRightPanelItemCustomization, reorderStatusSections, type RightPanelCustomization, type RightPanelSectionModule } from "../registry"
+import { applyRightPanelItemCustomization, CONVERSATION_PERMISSIONS_SECTION_ID, reorderStatusSections, type RightPanelCustomization, type RightPanelSectionModule } from "../registry"
 import { createCoreStatusSectionManifest } from "../core-plugin"
 import { supportsStatusSection } from "../status-capabilities"
 import { supportsWorkspaceCapability } from "../../../../../stores/workspace-capabilities"
@@ -104,6 +102,15 @@ const autoExpandedKeys = new WeakMap<Accessor<string[]>, Map<string, string>>()
 const StatusTab: Component<StatusTabProps> = (props) => {
   let escaping = false
   const isSectionExpanded = (id: string) => props.expandedItems().includes(id)
+  const permissionSession = createMemo(() =>
+    props.isActive() && !props.customization().hiddenStatusSectionIds.includes(CONVERSATION_PERMISSIONS_SECTION_ID)
+      && supportsStatusSection(props.instanceId, CONVERSATION_PERMISSIONS_SECTION_ID)
+      ? props.activeSession()?.id : undefined,
+  )
+  const permissions = createMemo(() => {
+    const sessionId = permissionSession()
+    if (sessionId) return createConversationPermissionsState(props.instanceId, sessionId)
+  })
   const shellLocation = createMemo(() => props.activeSession()?.location ?? { directory: props.instance.folder })
   const shellState = createMemo(() => shellStore.getState(props.instanceId, shellLocation().directory, shellLocation().workspaceID))
   const shellsById = createMemo(() => new Map(shellState().items.map(shell => [shell.id, shell])))
@@ -117,36 +124,6 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     onCleanup(shellStore.watch(props.instanceId, directory, workspaceID))
     void shellStore.load(props.instanceId, directory, workspaceID)
   })
-
-  const renderYoloModeSection = () => {
-    const session = props.activeSession()
-    if (!session) {
-      return (
-        <div class="right-panel-empty right-panel-empty--left">
-          <span class="text-xs">{props.t("instanceShell.yoloMode.noSessionSelected")}</span>
-        </div>
-      )
-    }
-
-    return (
-      <div class="flex items-center justify-between gap-2 border border-base bg-surface-secondary px-3 py-2">
-        <p class="min-w-0 text-xs leading-5 text-secondary">{props.t("instanceShell.yoloMode.description")}</p>
-        <div class="-mr-2 shrink-0">
-          <Switch
-            class="yolo-mode-switch"
-            checked={isPermissionAutoAcceptEnabled(props.instanceId, session.id)}
-            size="small"
-            sx={{
-              "& .MuiSwitch-switchBase.Mui-checked": { color: "var(--session-yolo-accent)" },
-              "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": { backgroundColor: "var(--session-yolo-accent)" },
-            }}
-            inputProps={{ "aria-label": props.t("instanceShell.yoloMode.title") }}
-            onChange={() => togglePermissionAutoAcceptForSession(props.instanceId, session.id)}
-          />
-        </div>
-      </div>
-    )
-  }
 
   const removeShell = async (shellId: string, command: string, running: boolean, source: HTMLButtonElement) => {
     const instanceId = props.instanceId
@@ -236,7 +213,13 @@ const StatusTab: Component<StatusTabProps> = (props) => {
           <ContextUsagePanel instanceId={props.instanceId} sessionId={props.activeSession()!.id} summary expanded={isSectionExpanded("tokens")} />
         </Show>
       ),
-      renderYoloModeSection,
+      renderPermissions: () => (
+        <Show when={permissions()} keyed>{state => <ConversationPermissions state={state} />}</Show>
+      ),
+      renderPermissionsSummary: () => (
+        <Show when={permissions()} keyed>{state => <ConversationPermissionsSummary state={state} />}</Show>
+      ),
+      renderPermissionsInfo: () => <ConversationPermissionsInfo />,
       renderProviderUsage,
       renderBackgroundProcesses,
       renderMcpStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["mcp"]} showSectionHeadings={false} class="space-y-2" />,

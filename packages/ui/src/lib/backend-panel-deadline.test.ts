@@ -22,7 +22,7 @@ for (const detachFirst of [false, true]) test(`panel deadline aborts IO and ${de
   let receive!: ReturnType<typeof useApi4Channel>
   createRoot(dispose => {
     t.after(dispose)
-    receive = useApi4Channel({ instanceId: `${id}~ws`, id: "example.gallery", digest: "d", permissions: ["session.images.read"], sessionId: "s",
+    receive = useApi4Channel({ instanceId: `${id}~ws`, id: "example.gallery", name: "Gallery", digest: "d", permissions: ["session.images.read"], sessionId: "s",
       send: value => { answers.push(value) }, host: { activeSessionId: () => "s", promptInputApi: () => null, isPhoneLayout: () => false, closePanel() {} } })
   })
   const run = receive({ type: "api4:request", id: 1, capability: "images", method: "list", input: {} })

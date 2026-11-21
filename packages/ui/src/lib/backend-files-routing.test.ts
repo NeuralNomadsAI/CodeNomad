@@ -1,10 +1,8 @@
 import assert from "node:assert/strict"
-import { once } from "node:events"
-import { createServer } from "node:http"
 import { test, type TestContext } from "node:test"
 import { createRoot } from "solid-js"
 import toast from "solid-toast"
-import { backendOf, backends, createBackendClient, type BackendClient } from "./backend-client"
+import { backendOf } from "./backend-client"
 import type { ServerApi } from "./api-client"
 import { backendEvents } from "./backend-events"
 import { captureBackendOperation } from "./backend-operation"
@@ -14,18 +12,15 @@ import { useGitHistory } from "../components/instance/shell/right-panel/useGitHi
 import { useWorkspaceFileEditor } from "../components/workspace-file-editor"
 import { useGitChanges } from "../components/instance/shell/right-panel/useGitChanges"
 import { reloadWorktrees, createWorktree, deleteWorktree, setWorktreeSlugForParentSession, clearPendingWorktreeMoves } from "../stores/worktrees"
+import { loopbackBackend, requestWire } from "../../tests/test-support/backend"
 
-type Wire = { url: string; method: string; body: string; headers: [string, string][]; credentials?: RequestCredentials }
-const registry = backends as Map<string, BackendClient>
 const directory = "/repo"
 const image = { mime: "image/png", before: "YQ==", after: "Yg==" }
 
 async function fixture(t: TestContext, id: string) {
   const requests: { url: string; method: string; body: string }[] = []
   let fail = false, gate: Promise<void> | undefined, entered: (() => void) | undefined
-  const server = createServer(async (request, response) => {
-    let body = ""
-    for await (const chunk of request) body += chunk
+  const owner = await loopbackBackend(t, id, async (request, response, body) => {
     requests.push({ url: request.url!, method: request.method!, body })
     entered?.()
     await gate
@@ -43,15 +38,7 @@ async function fixture(t: TestContext, id: string) {
       : { worktrees: [{ slug: "root", directory }], isGitRepo: true }
     response.end(JSON.stringify(value))
   })
-  server.listen(0, "127.0.0.1"); await once(server, "listening")
-  const backend = createBackendClient({ id, baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}` })
-  registry.set(id, backend)
-  const detach = backendEvents.attach(id, backend.events)
-  t.after(async () => {
-    detach(); backend.events.dispose(); registry.delete(id); server.closeAllConnections()
-    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
-  })
-  return { backend, requests, detach, deny: () => { fail = true },
+  return { ...owner, requests, deny: () => { fail = true },
     hold: (wait: Promise<void>, notify: () => void) => { gate = wait; entered = notify } }
 }
 
@@ -101,14 +88,13 @@ test("real Files/Git HTTP boundaries isolate A and B and strip only the instance
 
 test("local Files/Git requests preserve the literal baseline contract", async t => {
   await new Promise<void>(resolve => setImmediate(resolve))
-  const wire: Wire[] = []
+  const wire: ReturnType<typeof requestWire>[] = []
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-    wire.push({ url: String(input), method: init?.method ?? "GET", body: String(init?.body ?? ""),
-      headers: [...new Headers(init?.headers)], credentials: init?.credentials })
+    wire.push(requestWire(input, init))
     return Response.json({})
   })
   for (const item of cases) await item.call(backendOf("w/1").api, "w/1")
-  assert.deepEqual(wire, cases.map(item => ({ url: `/api/workspaces/w%2F1${item.path}`, method: item.method ?? "GET", body: item.body ?? "",
+  assert.deepEqual(wire, cases.map(item => ({ url: `/api/workspaces/w%2F1${item.path}`, method: item.method ?? "GET", body: item.body,
     headers: item.body ? [["content-type", "application/json"]] : [], credentials: "include" })))
   assert.throws(() => backendOf("missing~w").api.listWorkspaceFiles("missing~w"), /Backend unavailable/)
   assert.equal(wire.length, cases.length, "an absent backend sends nothing")

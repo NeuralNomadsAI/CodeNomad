@@ -15,7 +15,7 @@ export const remoteControlMessages = {
   "remoteControl.newLink": "Crear nuevo enlace de emparejamiento",
   "remoteControl.stop": "Detener control remoto",
   "remoteControl.previews.title": "Vistas previas web",
-  "remoteControl.previews.caption": "Los dispositivos emparejados pueden abrir la vista previa web. Cada dirección de vista previa abre su página sin emparejamiento, así que mantenla privada.",
+  "remoteControl.previews.info": "Mantén privadas las direcciones de vista previa.",
   "remoteControl.pairing.title": "Conectar otro dispositivo",
   "remoteControl.pairing.description": "Escanea este código QR o abre el enlace de un solo uso en el otro dispositivo.",
   "remoteControl.pairing.qrAlt": "Código QR de emparejamiento del control remoto",
@@ -23,7 +23,6 @@ export const remoteControlMessages = {
   "remoteControl.pairing.copied": "Copiado",
   "remoteControl.pairing.expires": "Este enlace caduca a las {time}.",
   "remoteControl.devices.title": "Dispositivos emparejados",
-  "remoteControl.devices.description": "Estos dispositivos pueden acceder a este host mediante el control remoto o su dirección HTTPS.",
   "remoteControl.devices.empty": "Todavía no hay dispositivos emparejados.",
   "remoteControl.devices.lastSeen": "Última actividad: {time}",
   "remoteControl.devices.revoke": "Revocar",
@@ -32,4 +31,5 @@ export const remoteControlMessages = {
   "remoteControl.direct.title": "Emparejamiento HTTPS directo",
   "remoteControl.direct.origin": "Dirección HTTPS",
   "remoteControl.direct.newLink": "Crear enlace de emparejamiento HTTPS",
+  "remoteControl.devices.revocationPending": "Revocación pendiente",
 } as const

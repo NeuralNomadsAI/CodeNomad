@@ -1,4 +1,5 @@
-import { createMemo } from "solid-js"
+import { createMemo, createSignal } from "solid-js"
+import type { RemoteServerBrowseResponse, RemoteServerProfile } from "../../../server/src/api-types"
 import { LOCAL_BACKEND_ID } from "../lib/backend-identity"
 import { qualifiedServerDisplayName } from "../lib/codenomad-link"
 import { getLogger } from "../lib/logger"
@@ -27,11 +28,38 @@ export function savedProjectProfile(policy: ServerSelectionIntent) {
   if (profile && sameServerSelection(profile, policy)) return profile
 }
 
-/** Display data only: never admits a backend or reads its inventory. */
-const eligibleRemoteRecents = createMemo(() => remoteProjectHistory().recents.filter(item => savedProjectProfile(item.policy)))
+const [pendingLaunches, setPendingLaunches] = createSignal<{ recent: RemoteProjectRecentData; aliasKey: string }[]>([])
+
+/** Display data only: show a selected occurrence while its history write settles. */
+const eligibleRemoteRecents = createMemo(() => {
+  const rows = new Map(remoteProjectHistory().recents.map(item => [remoteProjectRecentKey(item), item]))
+  for (const { recent, aliasKey } of pendingLaunches()) {
+    const key = remoteProjectRecentKey(recent)
+    const previous = rows.get(key)
+    const projectName = previous?.projectName ?? recent.projectName ?? rows.get(aliasKey)?.projectName
+    rows.delete(aliasKey)
+    rows.set(key, { ...recent, projectName, lastAccessed: Math.max(previous?.lastAccessed ?? 0, recent.lastAccessed) })
+  }
+  return [...rows.values()].filter(item => savedProjectProfile(item.policy)).sort((a, b) => b.lastAccessed - a.lastAccessed)
+})
 
 export function latestRemoteProjectPath(policy: ServerSelectionIntent): string | undefined {
   return eligibleRemoteRecents().find(item => sameServerSelection(item.policy, policy))?.path
+}
+
+/** Browse combines destination shortcuts with this host's opens for the exact saved profile. */
+export function browsedRemoteRecents(profile: RemoteServerProfile, shortcuts: RemoteServerBrowseResponse["recents"]): RemoteRecentProject[] {
+  const serverLabel = qualifiedServerDisplayName(profile, remoteServers())
+  const rows = new Map<string, RemoteRecentProject>()
+  const opened = eligibleRemoteRecents().filter(item => sameServerSelection(item.policy, profile))
+  for (const recent of [...opened, ...shortcuts]) {
+    const key = JSON.stringify([profile.id, normalizeWorkspacePath(recent.path)])
+    const before = rows.get(key)
+    rows.set(key, { ...recent, ...before, projectName: before?.projectName ?? recent.projectName,
+      lastAccessed: Math.max(before?.lastAccessed ?? recent.lastAccessed, recent.lastAccessed),
+      kind: "remote", backendId: profile.id, serverLabel, policy: profile, key })
+  }
+  return [...rows.values()].sort((a, b) => b.lastAccessed - a.lastAccessed)
 }
 
 export const recentProjects = createMemo<readonly RecentProject[]>((previous = []) => {
@@ -62,17 +90,20 @@ export const recentProjects = createMemo<readonly RecentProject[]>((previous = [
 
 export function recordRemoteProjectLaunch(policy: ServerSelectionIntent, path: string, alias = path, projectName?: string): void {
   const recent = normalizeRemoteProjectRecent({ policy, path, lastAccessed: Date.now(), projectName })
-  if (!recent) return
+  if (!recent || !savedProjectProfile(policy)) return
+  const key = remoteProjectRecentKey(recent)
+  const aliasKey = remoteProjectRecentKey({ policy, path: alias })
+  const pending = { recent, aliasKey }
+  setPendingLaunches(previous => [...previous, pending])
   void editRemoteProjectRecents(({ recents }) => {
     if (!savedProjectProfile(policy)) return
-    const key = remoteProjectRecentKey(recent)
-    const aliasKey = remoteProjectRecentKey({ policy, path: alias })
     const aliasRecord = aliasKey === key ? undefined : recents.find(item => remoteProjectRecentKey(item) === aliasKey)
     const { projectName: openedName = aliasRecord?.projectName, ...record } = recent
     const patch: Record<string, RemoteProjectRecentEdit | null> = { [key]: { ...record, ...(openedName ? { openedName } : {}) } }
     if (aliasKey !== key) patch[aliasKey] = null
     return patch
   }).catch(error => log.error("Failed to remember remote project", error))
+    .finally(() => setPendingLaunches(previous => previous.filter(candidate => candidate !== pending)))
 }
 
 export async function removeRecentProject(recent: RecentProject): Promise<void> {

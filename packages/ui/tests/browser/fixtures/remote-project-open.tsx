@@ -1,14 +1,14 @@
-import { For, Show, createSignal } from "solid-js"
+import { For, Show, createEffect, createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import FolderSelectionView from "../../../src/components/folder-selection-view"
-import RemoteServerProjectDialog from "../../../src/components/remote-server-browser"
 import NewInstanceLauncher from "../../../src/components/new-instance-launcher"
 import InstanceTab from "../../../src/components/instance-tab"
 import { SettingsScreen } from "../../../src/components/settings-screen"
 import { ConfigProvider, preferencesForBackend, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider, preloadLocaleMessages } from "../../../src/lib/i18n"
 import { instances, refreshWorkspaceList } from "../../../src/stores/instances"
-import { appTabs, activeAppTabId, selectInstanceTab } from "../../../src/stores/app-tabs"
+import { appTabs, activeAppTabId, closeBlankTab, ensureActiveAppTab, replaceBlankTab, selectInstanceTab } from "../../../src/stores/app-tabs"
+import { releaseAppSessionRestoreGate } from "../../../src/stores/app-session-restore-gate"
 import { selectRemoteServer } from "../../../src/stores/remote-project-open"
 import { backendRegistry } from "../../../src/stores/remote-backends"
 import { setActiveSettingsSection } from "../../../src/stores/settings-screen"
@@ -18,28 +18,44 @@ import "../../../src/index.css"
 await preferencesForBackend("local").ensureLoaded()
 await preloadLocaleMessages("en")
 await refreshWorkspaceList()
-selectInstanceTab("w")
+const startsWithoutTabs = !instances().has("w")
+if (startsWithoutTabs) releaseAppSessionRestoreGate()
+else selectInstanceTab("w")
 const [home, setHome] = createSignal(true)
 const [launcherOpen, setLauncherOpen] = createSignal(false)
 let launcherAnchor!: HTMLButtonElement
 const native = new URL(location.href).searchParams.has("preferences")
 setActiveSettingsSection("servers")
 window.__CODENOMAD_SELECT_SERVER__ = selectRemoteServer
-render(() => <ConfigProvider><I18nProvider>
+render(() => {
+  createEffect(() => {
+    appTabs()
+    ensureActiveAppTab()
+  })
+  return <ConfigProvider><I18nProvider>
   <Show when={native} fallback={<>
-    <div role="tablist"><For each={appTabs()}>{tab => <Show when={tab.kind === "instance" && tab.instance}>
+    <div role="tablist" data-project-tabs><For each={appTabs()}>{tab => <Show when={tab.kind === "instance" && tab.instance}>
       {instance => <InstanceTab instance={instance()} active={activeAppTabId() === tab.id} onSelect={() => selectInstanceTab(instance().id)}
         onClose={() => {}} onRename={() => {}} />}
     </Show>}</For></div>
     <button type="button" ref={launcherAnchor} onClick={() => setLauncherOpen(true)}>Fixture launcher</button>
     <NewInstanceLauncher open={launcherOpen()} anchor={launcherAnchor} isLoading={false} onOpenChange={setLauncherOpen}
       onSelectFolder={() => { throw new Error("Unexpected local opening") }}
-      onSelectExistingInstance={id => selectInstanceTab(id)} onNewTemporaryInstance={() => {}} />
-    <Show when={home()}><FolderSelectionView onSelectFolder={() => { throw new Error("Unexpected local opening") }}
+      onSelectExistingInstance={id => selectInstanceTab(id)} onNewTemporary={() => {}} />
+    <Show when={startsWithoutTabs ? appTabs().length === 0 : home() && !appTabs().some(tab => tab.kind === "blank" && tab.id === activeAppTabId())}><FolderSelectionView onSelectFolder={() => { throw new Error("Unexpected local opening") }}
       onSelectExistingInstance={() => {}} onRemoteOpened={() => setHome(false)} onClose={() => setHome(false)} /></Show>
-    <RemoteServerProjectDialog onOpened={() => setHome(false)} />
+    <For each={appTabs()}>{tab => tab.kind === "blank" &&
+      <div data-fixture-blank hidden={tab.id !== activeAppTabId()}>
+        <button onClick={() => closeBlankTab(tab.id)}>Close new tab</button>
+        <FolderSelectionView blank initialServer={tab.server} active={tab.id === activeAppTabId()}
+          onSelectFolder={() => { throw new Error("Unexpected local opening") }} onSelectExistingInstance={() => {}}
+          onJoined={() => closeBlankTab(tab.id)}
+          onRemoteOpened={id => { replaceBlankTab(tab.id, `instance:${id}`); setHome(false) }} />
+      </div>
+    }</For>
   </>}><SettingsScreen standalone /></Show>
-</I18nProvider></ConfigProvider>, document.getElementById("root")!)
+</I18nProvider></ConfigProvider>
+}, document.getElementById("root")!)
 ;(window as any).remoteOpenFixture = {
   snapshot: () => ({ tabs: appTabs().map(tab => ({ id: tab.id, kind: tab.kind })), active: activeAppTabId() }),
   records: () => [...instances().keys()],

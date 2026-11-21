@@ -30,13 +30,19 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
       Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: host, __CODENOMAD_WINDOW_CONTEXT__: "local" })
       window.EventSource = class extends EventTarget { close() {} } as any
       const session = { activeTabIndex: 2, tabs: [
-        { folder: "/local" }, { folder: "/same", backendId: "a", occurrence: 0 }, { folder: "/same", backendId: "a", occurrence: 1 },
+        { folder: "/local" }, { folder: "/same", backendId: "a", serverId: "a", occurrence: 0 },
+        { folder: "/same", backendId: "a", serverId: "a", occurrence: 1 },
       ].map((value, index) => ({ kind: "workspace", ...value, drafts: { __no_session_draft__: `draft-${index}` },
         attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {} })) }
       const snapshot = { version: 1, revision: 1, savedAt: 1, layout: {}, session }
       const persisted = JSON.parse(sessionStorage.getItem("restored-state") || "null")
       const load = () => ({ isPrimary: true, restoreEnabled: true, snapshot: persisted?.snapshot || snapshot, partitionProtocolVersion: 1 })
-      const commit = (value: any) => { (window as any).committedState = value; sessionStorage.setItem("restored-state", JSON.stringify(value)); return true }
+      const commit = (value: any) => {
+        if ((window as any).holdSnapshotCommit) return new Promise(() => {})
+        ;(window as any).committedState = value
+        sessionStorage.setItem("restored-state", JSON.stringify(value))
+        return true
+      }
       ;(window as any).electronAPI = { claimClientStateAccess: async () => true, loadClientState: async () => load(),
         loadClientStatePartition: async (_token: any, key: string) => persisted?.partitions[key] ?? null, commitClientStatePartitions: async (_token: any, value: any) => commit(value),
         saveClientState: async () => true, setClientStateRestoreEnabled: async () => true }
@@ -51,7 +57,11 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
     let generation = 0
     let profileWrites = 0
     let forgets = 0
-    const projects: any[] = mode === "reuse" ? [0, 1].map(index => descriptor(`existing-${index}`, "/same")) : []
+    let savedServers = mode === "absent" ? [] : [
+      { id: "a", name: "Server A", baseUrl: "https://a.test", skipTlsVerify: false, createdAt: "", updatedAt: "" },
+    ]
+    const explicitlyOpen = ["create", "closed", "uncertain", "partial-refusal"].includes(mode)
+    const projects: any[] = explicitlyOpen ? [] : [0, 1].map(index => descriptor(`existing-${index}`, "/same"))
     let releaseCreate!: () => void
     const createGate = new Promise<void>(resolve => { releaseCreate = resolve })
     let markCreate!: () => void
@@ -61,15 +71,16 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
       const remote = pathname.startsWith("/api/backends/a/")
       const path = remote ? pathname.slice("/api/backends/a".length) : pathname
       let body: any = {}
-      if (path === "/api/remote-servers/a/forget") forgets++
-      if (path.startsWith("/api/storage/")) {
-        if (!remote && path.endsWith("/state/ui") && request.method() !== "GET") profileWrites++
+      if (path === "/api/remote-servers/a/forget") { forgets++; body = { ok: true } }
+      else if (path.startsWith("/api/storage/")) {
+        if (!remote && path.endsWith("/state/ui") && request.method() !== "GET") {
+          profileWrites++
+          savedServers = request.postDataJSON().remoteServers ?? savedServers
+        }
         body = remote ? {} : path.endsWith("/config/ui") ? { settings: { multiBackend: mode !== "disabled" } }
-          : path.endsWith("/state/ui") ? { remoteServers: mode === "absent" ? [] : [
-            { id: "a", name: "Server A", baseUrl: "https://a.test", skipTlsVerify: false, createdAt: "", updatedAt: "" },
-          ] } : {}
-      } else if (path === "/api/auth/login") {
-        assert.equal(remote, true)
+          : path.endsWith("/state/ui") ? { remoteServers: savedServers } : {}
+      } else if (path === "/api/remote-servers/a/connect") {
+        assert.equal(remote, false)
         assert.deepEqual(request.postDataJSON(), mode === "pairing" ? { pairingLink: `https://a.test/remote-pair#${"p".repeat(32)}` } : { username: "user", password: "secret" })
         healthy = true; body = { ok: true }
       }
@@ -103,46 +114,69 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
     })
     try {
       await page.goto(url)
+      await page.locator('[data-restoring="false"]').waitFor()
+      await page.waitForFunction(() => (window as any).restoreFixture.tabs().some((tab: any) => tab.id === "instance:local"))
+      assert.equal(creates.filter(value => value === "a:/same").length, 0, "startup only reads remote inventory")
+      const openSaved = (index: number) => page.evaluate(index => (window as any).restoreFixture.openSaved(index), index)
       if (mode === "closed") {
+        const opening = openSaved(2)
         await createStarted
         await page.waitForFunction(() => (window as any).restoreFixture?.tabs().filter((tab: any) => tab.kind === "remote-restore").length === 2)
         await page.evaluate(() => { const f = (window as any).restoreFixture; for (const tab of f.tabs().filter((tab: any) => tab.kind === "remote-restore")) f.close(tab.id) })
         releaseCreate()
+        await opening
+      } else if (explicitlyOpen) {
+        // Keep the successful binding on the selected tab in the partial-refusal case.
+        const order = mode === "partial-refusal" ? [2, 1] : [1, 2]
+        for (const index of order) await openSaved(index)
       }
-      await page.locator('[data-restoring="false"]').waitFor()
-      await page.waitForFunction(() => (window as any).restoreFixture.tabs().some((tab: any) => tab.id === "instance:local"))
       if (mode === "partial-refusal") {
         const before = await page.evaluate(() => (window as any).restoreFixture.tabs())
         assert.equal(before.length, 3)
         assert.equal(before[1].kind, "remote-restore")
         assert.equal(before[2].drafts.__no_session_draft__, "draft-2")
         await page.evaluate(() => (window as any).restoreFixture.retry())
+        assert.equal(creates.filter(value => value === "a:/same").length, 2, "Retry must not resend the refused create")
+        await openSaved(1)
         const after = await page.evaluate(() => (window as any).restoreFixture.tabs())
         assert.equal(after.length, 3, "Retry must retain both occurrences")
         assert.equal(after[2].id, before[2].id, "the successful active occurrence keeps its binding")
         assert.deepEqual(after.map((tab: any) => tab.drafts.__no_session_draft__), ["draft-0", "draft-1", "draft-2"])
-        assert.equal(creates.filter(value => value === "a:/same").length, 3, "only the definitively refused occurrence is recreated")
+        assert.equal(creates.filter(value => value === "a:/same").length, 3, "a new explicit Open can create the refused occurrence")
       }
       if (["offline", "auth", "pairing", "refused", "absent"].includes(mode)) {
         assert.equal(await page.getByRole("tab").count(), 3)
         assert.equal(await page.locator('[data-remote-restore="a"]').count(), 1)
+        if (mode === "absent") {
+          const restore = page.locator('[data-remote-restore="a"]')
+          assert.equal(await restore.getByRole("status").textContent(), "Server not found")
+          assert.ok(await restore.getByRole("button", { name: "Retry" }).isDisabled())
+          assert.ok(await restore.getByRole("button", { name: "Connect" }).isDisabled())
+        }
         const snapshot = await page.evaluate(() => (window as any).restoreFixture.snapshot())
         assert.equal(snapshot.tabs[2].drafts.__no_session_draft__, "draft-2")
         if (mode === "offline") {
           const writes = profileWrites
-          assert.equal(await page.evaluate(() => (window as any).restoreFixture.removeServerQueued().then(() => false, () => true)), true)
-          assert.equal(forgets, 0, "queued removal must reject occupied tabs before Forget")
-          assert.equal(await page.evaluate(() => (window as any).restoreFixture.retargetServerQueued().then(() => false, () => true)), true)
-          assert.equal(profileWrites, writes, "queued retarget/removal must preserve the saved profile")
+          for (const action of ["retargetServerQueued"]) {
+            const editing = page.evaluate(action => (window as any).restoreFixture[action](), action)
+            await page.getByRole("button", { name: "Cancel", exact: true }).click()
+            await editing
+          }
+          assert.equal(forgets, 0, "cancelling an address change keeps the saved connection")
+          assert.equal(profileWrites, writes, "cancelling keeps the saved profile")
         }
         if (mode === "auth" || mode === "pairing") {
           await page.getByRole("button", { name: "Connect", exact: true }).click()
-          if (mode === "pairing") await page.getByLabel("Pairing link", { exact: true }).fill(`https://a.test/remote-pair#${"p".repeat(32)}`)
-          else {
+          if (mode === "pairing") {
+            const field = page.locator('[data-remote-restore="a"]').getByLabel("New pairing link", { exact: true })
+            await field.fill(`https://a.test/remote-pair#${"p".repeat(32)}`)
+            await field.press("Enter")
+          } else {
+            assert.equal(await page.getByLabel("Username", { exact: true }).inputValue(), "codenomad")
             await page.getByLabel("Username", { exact: true }).fill("user")
             await page.getByLabel("Password", { exact: true }).fill("secret")
+            await page.getByRole("button", { name: "Sign in", exact: true }).click()
           }
-          await page.getByRole("button", { name: "Connect", exact: true }).first().click()
         } else if (mode !== "absent") {
           healthy = true
           await page.evaluate(() => Promise.all([(window as any).restoreFixture.retry(), (window as any).restoreFixture.retry()]))
@@ -164,23 +198,45 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
         assert.deepEqual(tabs.map((tab: any) => tab.folder), ["/local", "/same", "/same"])
         assert.deepEqual(tabs.map((tab: any) => tab.drafts.__no_session_draft__), ["draft-0", "draft-1", "draft-2"])
         assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), tabs[2].id)
-        assert.equal(creates.filter(value => value === "a:/same").length, mode === "reuse" ? 0 : mode === "partial-refusal" ? 3 : 2)
+        const expectedCreates = mode === "partial-refusal" ? 3 : explicitlyOpen ? 2 : 0
+        assert.equal(creates.filter(value => value === "a:/same").length, expectedCreates)
         const before = creates.length
         await page.waitForFunction(() => Boolean((window as any).committedState))
+        const immediateReload = host === "electron" && mode === "reuse"
+        if (immediateReload) {
+          await page.waitForFunction(async () => (await (window as any).restoreFixture.saved())?.session?.tabs[1]?.workspaceId === "a~existing-0")
+          await page.evaluate(() => { (window as any).holdSnapshotCommit = true })
+          await page.getByRole("tab").nth(1).click()
+          assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), tabs[1].id)
+          assert.equal(await page.evaluate(async () => (await (window as any).restoreFixture.saved()).session.activeTabIndex), 2)
+          healthy = false
+        }
         await page.reload()
+        if (immediateReload) {
+          await page.locator('[data-restoring="false"]').waitFor()
+          const pending = await page.evaluate(() => (window as any).restoreFixture.tabs())
+          assert.equal(pending[1].kind, "remote-restore")
+          assert.equal(pending[1].drafts.__no_session_draft__, "draft-1")
+          assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), pending[1].id)
+          healthy = true
+          await page.evaluate(() => (window as any).restoreFixture.retry())
+        }
         await page.waitForFunction(() => (window as any).restoreFixture?.tabs().filter((tab: any) => tab.kind === "instance").length === 3)
+        assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), tabs[immediateReload ? 1 : 2].id)
         assert.deepEqual((await page.evaluate(() => (window as any).restoreFixture.tabs())).map((tab: any) => tab.drafts.__no_session_draft__), ["draft-0", "draft-1", "draft-2"])
         const secondWindow = await context.newPage()
         await secondWindow.goto(url)
         await secondWindow.waitForFunction(() => (window as any).restoreFixture?.tabs().filter((tab: any) => tab.kind === "instance").length === 3)
         assert.equal((await secondWindow.evaluate(() => (window as any).restoreFixture.tabs()))[2].drafts.__no_session_draft__, "draft-2")
-        assert.equal(creates.filter(value => value === "a:/same").length, mode === "reuse" ? 0 : mode === "partial-refusal" ? 3 : 2, "restart and another window reuse remote occurrences")
+        assert.equal(creates.filter(value => value === "a:/same").length, expectedCreates, "restart and another window reuse remote occurrences")
         assert.equal(creates.length, before + 2, "only the mock local inventory is empty on restart and in the second window")
         await secondWindow.close()
-        // A backend restart replaces UUIDs; Retry recreates the same logical tabs.
+        // Missing records stay unavailable until explicitly opened.
         projects.splice(0); generation++
         await page.evaluate(() => (window as any).restoreFixture.restartBackend())
         await page.evaluate(() => (window as any).restoreFixture.retry())
+        assert.equal(creates.filter(value => value === "a:/same").length, expectedCreates)
+        for (const index of [1, 2]) await openSaved(index)
         await page.waitForFunction(() => (window as any).restoreFixture.tabs().filter((tab: any) => tab.id.includes("remote-1")).length === 2)
         const restored = await page.evaluate(() => (window as any).restoreFixture.tabs())
         assert.equal(restored[2].drafts.__no_session_draft__, "draft-2")
@@ -199,8 +255,9 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
           assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), suspended[2].id)
           if (mode === "pairing") {
             await page.getByRole("button", { name: "Connect", exact: true }).click()
-            await page.getByLabel("Pairing link", { exact: true }).fill(`https://a.test/remote-pair#${"p".repeat(32)}`)
-            await page.getByRole("button", { name: "Connect", exact: true }).first().click()
+            const field = page.locator('[data-remote-restore="a"]').getByLabel("New pairing link", { exact: true })
+            await field.fill(`https://a.test/remote-pair#${"p".repeat(32)}`)
+            await field.press("Enter")
           } else {
             healthy = true
             await page.evaluate(() => (window as any).restoreFixture.retry())
@@ -209,19 +266,17 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
           assert.equal(creates.filter(value => value.startsWith("a:")).length, count, "reconnect reuses the retained occurrences")
           assert.deepEqual((await page.evaluate(() => (window as any).restoreFixture.tabs())).map((tab: any) => tab.drafts.__no_session_draft__), ["draft-0", "draft-1", "draft-2"])
         }
-        assert.equal(await page.evaluate(() => (window as any).restoreFixture.removeServer().then(() => false, () => true)), true)
         if (mode === "create") {
-          await page.evaluate(() => { const f = (window as any).restoreFixture; for (const tab of f.tabs().filter((tab: any) => tab.id.includes("a~"))) f.close(tab.id) })
-          await page.waitForFunction(() => (window as any).restoreFixture.snapshot().tabs.every((tab: any) => !tab.backendId))
-          const beforeWrites = profileWrites
-          const cancelled = page.evaluate(() => (window as any).restoreFixture.removeServer())
-          await page.getByRole("button", { name: "Cancel", exact: true }).click()
-          await cancelled
-          assert.equal(profileWrites, beforeWrites)
-          const accepted = page.evaluate(() => (window as any).restoreFixture.removeServer())
-          await page.getByRole("button", { name: "Confirm", exact: true }).click()
-          await accepted
+          const beforeWrites = profileWrites, beforeForgets = forgets, beforeRecords = projects.length
+          await page.evaluate(() => { (window as any).__removedServer = (window as any).restoreFixture.removeServerQueued() })
+          await page.getByText(/closing 2 open tabs/).waitFor()
+          await page.getByRole("button", { name: "Remove", exact: true }).click()
+          await page.evaluate(() => (window as any).__removedServer)
+          await page.waitForFunction(() => (window as any).restoreFixture.tabs().length === 1)
+          assert.equal(await page.getByRole("tab").count(), 1, "forgetting a server closes only its tabs")
+          assert.equal(forgets, beforeForgets + 1)
           assert.equal(profileWrites, beforeWrites + 1)
+          assert.equal(projects.length, beforeRecords, "forgetting a server does not delete its records")
         }
       }
       assert.equal(creates.filter(value => value.startsWith("local:")).every(value => value === "local:/local"), true)

@@ -54,13 +54,13 @@ Setzen Sie Port 9898 oder 9899 nicht voraus: Nicht angegebene Ports können bei 
 
 Ein Administrator kann die Abhöradresse festlegen: Setzen Sie `CODENOMAD_LOCKED_HOST` systemweit auf die Adresse, die der Server verwenden muss, und starten Sie CodeNomad neu. Sie hat Vorrang vor `--host`, `CLI_HOST` und **Verbindungen von anderen IPs zulassen**, das das Ergebnis anzeigt, es aber nicht ändern kann. Verwenden Sie eine Intranetadresse, damit Kollegen den Server über das Firmennetz erreichen, oder `127.0.0.1`, um ihn auf diesem Computer zu halten. Damit jeder Zugriff im Firmennetz bleibt, setzen Sie zusätzlich `CODENOMAD_REMOTE_CONTROL=disabled` ([Fernsteuerung](remote-control.md#administrator-policy)).
 
-## Aktualisieren {#upgrading}
+## Erlaubte Ursprünge {#upgrading}
 
-Melden Sie sich nach der Aktualisierung erneut an. Setzen Sie für einen Hostnamen-Alias, Reverse-Proxy oder eine separat gehostete Oberfläche `CODENOMAD_ALLOWED_ORIGINS` im Backend auf die vertrauenswürdigen Origins der Oberfläche (Schema, Hostname und Port). Native LAN-Clients müssen bei schreibenden Anfragen einen erlaubten `Origin`-Header mitsenden. Seine HTTPS-Origins erlauben dem Host außerdem, Geräte ohne Tunnel zu koppeln; siehe [Über direktes HTTPS koppeln](remote-control.md#direct-https).
+Setzen Sie für einen Hostnamen-Alias, Reverse-Proxy oder eine separat gehostete Oberfläche `CODENOMAD_ALLOWED_ORIGINS` im Backend auf die vertrauenswürdigen Origins der Oberfläche (Schema, Hostname und Port). Native LAN-Clients müssen bei schreibenden Anfragen einen erlaubten `Origin`-Header mitsenden. Seine HTTPS-Origins erlauben dem Host außerdem, Geräte ohne Tunnel zu koppeln; siehe [Über direktes HTTPS koppeln](remote-control.md#direct-https).
 
-Verwenden Sie eine Loopback-Verbindung für dem Host vorbehaltene Vorgänge: SideCar-Inhalte (`/sidecars/`) und WebSockets, Fernsteuerungsverwaltung (`/api/remote-control/`), Plugin-Brücke (`/api/opencode-plugin/`), Remote-Proxys (`/api/remote-proxy/`), Verwaltung gespeicherter Server (`/api/remote-servers/`), Passwortänderungen und Token-Ersteinrichtung. Diese Vorgänge erfordern auch bei angemeldetem direktem LAN-Zugriff Loopback. Nur SideCars haben eine Ausnahme: Die Host-Einstellung **SideCars über HTTPS öffnen** gibt ihre Inhalte und WebSockets für Browser frei, die über einen vertrauenswürdigen HTTPS-Origin angemeldet sind ([SideCars](browser-sidecars.md#register-sidecar)). Inhalte aktiver Vorschauen (`/previews/`) sind mit einem gültigen Berechtigungstoken über direkten LAN-Zugriff verfügbar.
+Verwenden Sie eine Loopback-Verbindung für dem Host vorbehaltene Vorgänge: SideCar-Inhalte (`/sidecars/`) und WebSockets, Fernsteuerungsverwaltung (`/api/remote-control/`), Plugin-Brücke (`/api/opencode-plugin/`), Remote-Proxys (`/api/remote-proxy/`), Passwortänderungen und Token-Ersteinrichtung. Diese Vorgänge erfordern auch bei angemeldetem direktem LAN-Zugriff Loopback. Nur SideCars haben eine Ausnahme: Die Host-Einstellung **SideCars über HTTPS öffnen** gibt ihre Inhalte und WebSockets für Browser frei, die über einen vertrauenswürdigen HTTPS-Origin angemeldet sind ([SideCars](browser-sidecars.md#register-sidecar)). Inhalte aktiver Vorschauen (`/previews/`) sind mit einem gültigen Berechtigungstoken über direkten LAN-Zugriff verfügbar.
 
-Die Registrierungs-APIs `/api/sidecars` bleiben für authentifizierte direkte LAN-Clients und gekoppelte Geräte verfügbar. Web-Vorschauen der Fernsteuerung bleiben mit ihrem Berechtigungstoken verfügbar, solange sie auf dem Host aktiviert sind.
+Die Registrierungs-APIs `/api/sidecars` bleiben für authentifizierte direkte LAN-Clients und gekoppelte Geräte verfügbar. Web-Vorschauen der Fernsteuerung bleiben mit ihrem Berechtigungstoken verfügbar, solange sie auf dem Host aktiviert sind. Hinweise zur Serververwaltung und zur sicheren Eingabe von Zugangsdaten: [Remote-Server speichern](remote-access.md#saved-servers).
 
 ## Vertrauenswürdiges TLS konfigurieren {#tls}
 
@@ -93,24 +93,32 @@ Meldet ein Client eine Zertifikatswarnung, halten Sie an und prüfen Sie Hostnam
 
 ## Remote-Server speichern {#saved-servers}
 
-Das experimentelle `multiBackend` ist standardmäßig aus und hat keinen sichtbaren Aktivierungsschalter. Bei Aktivierung können authentifizierte Remote-Clients alle auf dem Host gespeicherten Server nutzen und verwalten; Startseite und **Einstellungen → Server** zeigen die vom Host erlaubten Aktionen. Unverschlüsseltes LAN-HTTP deaktiviert die Eingabe neuer Serverpasswörter und Kopplungslinks: „Verwenden Sie HTTPS oder Remote Control, um Zugangsdaten einzugeben.“ Verbindungen mit gespeicherten Zugangsdaten sowie das Hinzufügen, Bearbeiten und Entfernen von Profilen ohne Geheimnisse bleiben verfügbar.
+Authentifizierte Remote-Clients können dieselben gespeicherten Server nutzen und verwalten wie lokale Clients. Für neue Serverpasswörter oder Kopplungslinks ist HTTPS oder Fernsteuerung erforderlich.
 
-Für ein ausschließlich über SSH erreichbares Ziel wählen Sie in den experimentellen **Einstellungen → Server** die Aktion **Server hinzufügen**, geben **URL** und **SSH-Host (optional)** ein und wählen **Speichern**. Das Profil wird offline gespeichert; die Verbindung nutzt das SSH-Relay des Backends.
+Öffnen Sie **Einstellungen → Server**: Fügen Sie eine Adresse oder einen Kopplungslink in **Serveradresse oder -link** ein oder bestätigen Sie die Eingabe mit Enter. Das speichert den Server, ohne ein Projekt zu öffnen. **Server bearbeiten** ändert **URL** oder den optionalen **Name**; Umbenennen bei gleicher URL und TLS-Richtlinie funktioniert offline. Nach der Bestätigung schließt **Entfernen** die Tabs des Servers in diesem Fenster und entfernt seine Einträge aus der Liste der zuletzt verwendeten Projekte. Bei temporären Projekten wählen Sie **Behalten** oder **Verwerfen**; **Verwerfen** löscht ihre Dateien und Unterhaltungen. Andere Projekte und Unterhaltungen bleiben auf dem Server.
 
-Mit der experimentellen Multi-Backend-Einstellung verwenden Sie **Einstellungen → Server**: Fügen Sie eine Adresse oder einen Kopplungslink in **Serveradresse oder -link** ein oder bestätigen Sie mit Enter. Das Hinzufügen speichert ein Profil auf dem Host, ohne ein Projekt zu öffnen. **Server bearbeiten** ändert **URL** oder den optionalen **Name**; Umbenennen bei gleicher URL und TLS-Richtlinie funktioniert offline. **Gespeicherten Server entfernen** fragt nach Bestätigung, vergisst die Verbindung und speichert die Entfernung; bei einem Speicherfehler bleibt das Profil für einen neuen Versuch erhalten. Andere Verbindungen bleiben bestehen.
+Auf dem CodeNomad-Host muss OpenSSH installiert sein, und am Ziel muss CodeNomad bereits laufen. Wählen Sie unter **Einstellungen → Server** die Option **SSH-Server hinzufügen**. Geben Sie die CodeNomad-**URL** aus Sicht des SSH-Hosts und den **SSH-Host (optional)** oder Alias ein, dann **Speichern**. Das Profil lässt sich offline speichern. OpenSSH benötigt Schlüsselauthentifizierung und einen geprüften Hostschlüssel in `known_hosts`. Melden Sie sich am CodeNomad-Server an; HTTPS-Zertifikate werden geprüft.
 
-**TLS-Prüfung überspringen** erscheint nach einem Zertifikatsfehler für diese Adresse; eine neue Adresse löscht die Zustimmung. Kopplung prüft TLS immer. **Öffnen** zeigt die Projekte des Servers. Die folgenden Schritte gelten für den Standardmodus.
+Der Servereditor enthält das Kontrollkästchen **TLS-Prüfung überspringen**. Das Feld **Serveradresse oder -link** bietet die Option erst nach einem Zertifikatsfehler für diese Adresse an; eine neue Adresse setzt die Auswahl zurück. Bei der Kopplung wird TLS immer geprüft.
 
-Bei aktiviertem experimentellem Multi-Backend speichert **SSH-Host (optional)** einen OpenSSH-Host oder Alias für das Backend-Relay. Vorschläge stammen aus `~/.ssh/config` des lokalen Backend-Kontos. Geben Sie die CodeNomad-Adresse aus Sicht dieses Hosts ein (etwa `https://127.0.0.1:9898` mit dem tatsächlichen Port) und wählen Sie **Speichern**. SSH-Profile nutzen das Relay; **Verbinden** öffnet direkte Serverfenster und ist für diese Profile deaktiviert. CodeNomad muss dort bereits installiert sein und laufen. Lokal werden OpenSSH, Schlüsselauthentifizierung und ein geprüfter Hostschlüssel in `known_hosts` benötigt; CodeNomad-Authentifizierung und HTTPS-Zertifikatsprüfungen gelten weiterhin.
+Nur wenn `multiBackend` auf `false` gesetzt ist, gelten die folgenden Schritte für separate Desktop-Fenster:
 
-1. Wählen Sie auf der Desktop-Startseite **CodeNomad-Server verbinden**. Dieselbe Schaltfläche erscheint auf einem leeren Tab **Server** und unter **Einstellungen → Remote-Zugriff → Server**.
+1. **Einstellungen → Remote-Zugriff → Server** → **CodeNomad-Server verbinden**.
 2. Geben Sie in **Mit Server verbinden** **Servername** und **Server-URL** mit einer vertrauenswürdigen HTTPS-Origin ein. Lassen Sie **TLS-Verifizierung für selbstsignierte Zertifikate überspringen.** deaktiviert; richten Sie stattdessen Vertrauen ein.
 3. Wählen Sie **Speichern** für ein Lesezeichen oder **Verbinden** zum Speichern und Öffnen. Melden Sie sich auf diesem Server an.
-
-Wählen Sie einen gespeicherten Server auf dem Tab **Server** der Startseite, um ihn erneut zu öffnen. Lesezeichen gehören zu dieser CodeNomad-Konfiguration, nicht den Projekten des Remote-Servers. Eine URL zu speichern startet keinen Server und gewährt keinen Zugriff. **Gespeicherten Server entfernen** entfernt das Lesezeichen, nicht entfernte Unterhaltungen, Backend oder Zugangsdaten.
-
-Um einen gespeicherten Server direkt von der Befehlszeile zu öffnen, starten Sie die Desktop-App mit `--connect-server <name>` (oder `--connect-server=<name>`) und dem gespeicherten Namen des Servers oder seiner `https://`-URL. CodeNomad öffnet nur das Remote-Fenster, mit denselben Prüfungen und derselben Anmeldung wie **Verbinden**; läuft CodeNomad bereits, öffnet sein aktuelles Fenster den Server statt eines neuen Fensters. Eine URL, die zu keinem gespeicherten Server passt, wird unter ihrem Hostnamen gespeichert. Startwerte enthalten nie Zugangsdaten: Eine URL mit Benutzername, Passwort oder Kopplungscode wird abgelehnt. Unter Windows startet der Tauri-Build nicht, wenn ein Startargument `|` enthält; verwenden Sie stattdessen die URL des Servers oder benennen Sie den Server um.
 
 Wenn Sie das letzte lokale Fenster schließen, während Remote-Fenster geöffnet bleiben, behält es seine Tabs: **Fenster → Neues Fenster** in einem Remote-Fenster oder ein erneuter Start von CodeNomad öffnet es wieder.
 
 Fügen Sie für Fernsteuerung stattdessen einen frischen Kopplungslink in **Server-URL** ein. Das Lesezeichen behält nur die Tunnel-Origin, nie den Einmal-Kopplungscode; siehe [Fernsteuerung](remote-control.md) zur erneuten Kopplung nach Verlust des Geräte-Cookies.
+
+## Ein Remote-Projekt in einem Tab öffnen {#remote-project-tabs}
+
+Wählen Sie auf der Startseite oder in einem neuen Tab **Durchsuchen** und dann einen Server. Fügen Sie eine Adresse oder einen Kopplungslink in **Serveradresse oder -link** ein. Melden Sie sich bei Bedarf an. Klicken Sie auf einen Ordner, um ihn zu durchsuchen. Drücken Sie im Pfadfeld die Eingabetaste oder wählen Sie **Öffnen**, um ihn zu öffnen. Mit **Zurück zu Durchsuchen** gelangen Sie zur Serverliste.
+
+Lokale und entfernte Projekte teilen sich das Fenster. **Zuletzt verwendete Tabs** zeigt beim Durchsuchen die Einträge des ausgewählten Servers. In der gemischten Liste stehen Serversymbol und Servername bei den hier geöffneten Projekten. [Remote-Tabs wiederherstellen](projects.md#restore-remote-tabs).
+
+Unter **Einstellungen → Server** wählt **Öffnen** den Server in **Durchsuchen** und verwendet den leeren Tab, falls vorhanden.
+
+### `--connect-server` {#connect-server}
+
+`--connect-server <name-or-url>` öffnet unabhängig von `multiBackend` ein separates Remote-Fenster. Geben Sie einen gespeicherten Namen, eine gespeicherte ID oder eine HTTP(S)-URL an. Eine neue URL wird unter ihrem Hostnamen gespeichert. Die URL darf weder Benutzername noch Passwort oder Kopplungscode enthalten. Syntax und Start ohne lokales Fenster stehen in der [Tabelle der Desktop-Startargumente](desktop.md#desktop-cli).

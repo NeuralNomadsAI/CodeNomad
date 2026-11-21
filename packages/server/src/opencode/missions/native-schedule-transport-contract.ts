@@ -44,9 +44,10 @@ const output = { type: "object", additionalProperties: false, required: ["key", 
   properties: { key: { type: "string", maxLength: 32768 }, state: { enum: ["applied", "pending", "rejected", "unknown"] },
     messagePresent: { type: "boolean" }, ready: { type: "boolean" }, abandoned: { type: "boolean" }, preflight } } as const
 
-/** Internal service-owned adapter. Register wake with CAS and status as a pure read. */
+/** Internal service-owned adapter. Register wake with CAS, status as a pure read, and
+ * admit for a code wake whose program is still running (see `native-mission-schedule-code-wake.ts`). */
 export const NativeScheduleTransportRpc = {
-  id: "codenomad.missions.schedule", methods: { wake: { input, output }, status: { input, output } }, events: {},
+  id: "codenomad.missions.schedule", methods: { wake: { input, output }, status: { input, output }, admit: { input, output } }, events: {},
 } as const
 
 /** `abandoned`: status found an unsettled claim on this unconsumed wake whose receiver ended. */

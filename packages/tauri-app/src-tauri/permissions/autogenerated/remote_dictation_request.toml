@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-remote-dictation-request"
+description = "Enables the remote_dictation_request command without any pre-configured scope."
+commands.allow = ["remote_dictation_request"]
+
+[[permission]]
+identifier = "deny-remote-dictation-request"
+description = "Denies the remote_dictation_request command without any pre-configured scope."
+commands.deny = ["remote_dictation_request"]

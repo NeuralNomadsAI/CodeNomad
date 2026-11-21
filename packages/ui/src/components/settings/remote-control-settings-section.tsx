@@ -123,11 +123,11 @@ export const RemoteControlSettingsSection: Component = () => {
     }
   }
 
-  const createPairing = async () => {
+  const createPairing = async (origin?: string) => {
     setLoading(true)
     setError(null)
     try {
-      await showPairing(await serverApi.createRemoteControlPairing())
+      await showPairing(await serverApi.createRemoteControlPairing(origin), origin !== undefined)
     } catch (cause) {
       setError(message(cause))
     } finally {
@@ -137,18 +137,6 @@ export const RemoteControlSettingsSection: Component = () => {
 
   const directOrigins = createMemo(() => (status()?.manageable ? status()?.directOrigins ?? [] : []))
   const selectedDirectOrigin = () => (directOrigins().includes(directOrigin()) ? directOrigin() : directOrigins()[0] ?? "")
-
-  const createDirectPairing = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      await showPairing(await serverApi.createRemoteControlPairing(selectedDirectOrigin()), true)
-    } catch (cause) {
-      setError(message(cause))
-    } finally {
-      setLoading(false)
-    }
-  }
 
   const copyPairing = async () => {
     const url = pairing()?.url
@@ -168,6 +156,7 @@ export const RemoteControlSettingsSection: Component = () => {
       await serverApi.revokeRemoteControlDevice(id)
       setDevices((current) => current.filter((device) => device.id !== id))
     } catch (cause) {
+      await refresh()
       setError(message(cause))
     }
   }
@@ -189,7 +178,7 @@ export const RemoteControlSettingsSection: Component = () => {
             <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
             <button class="window-icon-button disabled:opacity-50 disabled:cursor-not-allowed" type="button"
               aria-label={t("remoteControl.refresh")} title={t("remoteControl.refresh")} onClick={() => void refresh()} disabled={loading()}>
-              <RefreshCw class={`w-4 h-4 ${loading() ? "remote-spin" : ""}`} aria-hidden="true" />
+              <span class="inline-flex" classList={{ "animate-spin": loading() }}><RefreshCw class="w-4 h-4" aria-hidden="true" /></span>
             </button>
           </div>
         </div>
@@ -248,7 +237,7 @@ export const RemoteControlSettingsSection: Component = () => {
                   <For each={directOrigins()}>{(origin) => <option value={origin}>{origin}</option>}</For>
                 </select>
               </Show>
-              <button class="selector-button selector-button-secondary w-auto" type="button" onClick={() => void createDirectPairing()} disabled={loading()}>
+              <button class="selector-button selector-button-secondary w-auto" type="button" onClick={() => void createPairing(selectedDirectOrigin())} disabled={loading()}>
                 <Link2 class="w-4 h-4" />
                 {t("remoteControl.direct.newLink")}
               </button>
@@ -259,10 +248,7 @@ export const RemoteControlSettingsSection: Component = () => {
         <Show when={status()?.manageable && !disabled() ? status() : null}>
           {(current) => (
             <div class="settings-toggle-row">
-              <div>
-                <div class="settings-toggle-title">{t("remoteControl.previews.title")}</div>
-                <div class="settings-toggle-caption">{t("remoteControl.previews.caption")}</div>
-              </div>
+              <div class="settings-toggle-title">{t("remoteControl.previews.title")} <SettingsInfoTip text={t("remoteControl.previews.info")} /></div>
               <SettingsSwitch
                 checked={current().previews}
                 label={t("remoteControl.previews.title")}
@@ -283,7 +269,7 @@ export const RemoteControlSettingsSection: Component = () => {
               <h3 class="settings-card-title">{t("remoteControl.pairing.title")}</h3>
               <p class="settings-card-subtitle">{t("remoteControl.pairing.description")}</p>
             </div>
-            <Show when={qrCode()} fallback={<Loader2 class="remote-control-qr-loading remote-spin" />}>
+            <Show when={qrCode()} fallback={<span class="remote-control-qr-loading"><span class="inline-flex animate-spin"><Loader2 class="h-9 w-9" /></span></span>}>
               {(source) => <img class="remote-control-qr" src={source()} alt={t("remoteControl.pairing.qrAlt")} />}
             </Show>
             <code class="remote-control-link">{value().url}</code>
@@ -303,7 +289,6 @@ export const RemoteControlSettingsSection: Component = () => {
               <ShieldCheck class="settings-card-heading-icon" />
               <div>
                 <h3 class="settings-card-title">{t("remoteControl.devices.title")}</h3>
-                <p class="settings-card-subtitle">{t("remoteControl.devices.description")}</p>
               </div>
             </div>
           </div>
@@ -315,7 +300,8 @@ export const RemoteControlSettingsSection: Component = () => {
                     <div>
                       <strong>{device.name}</strong>
                       <p>{device.origin ? t("remoteControl.devices.direct", { origin: device.origin }) : t("remoteControl.devices.tunnel")}</p>
-                      <p>{t("remoteControl.devices.lastSeen", { time: new Date(device.lastSeenAt).toLocaleString() })}</p>
+                      <p>{device.revocationPending ? t("remoteControl.devices.revocationPending")
+                        : t("remoteControl.devices.lastSeen", { time: new Date(device.lastSeenAt).toLocaleString() })}</p>
                     </div>
                     <button class="selector-button selector-button-secondary w-auto" type="button" onClick={() => void revoke(device.id)}>
                       {t("remoteControl.devices.revoke")}

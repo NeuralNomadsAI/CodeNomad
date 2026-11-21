@@ -1,35 +1,27 @@
 # Proyectos y worktrees
 
-Con múltiples backends activados, despliega **REMOTOS** en el inicio o en el lanzador `+`. Elige **+ Proyecto** junto a un servidor CodeNomad guardado, navega por sus carpetas y elige **Abrir**. Para añadir un servidor, pega su enlace de emparejamiento o dirección debajo de la lista. Los proyectos abiertos aquí quedan en la lista mixta con el icono y el nombre del servidor, incluso sin conexión. Explorar, Clonar y Temporal usan este equipo.
-
 Una pestaña de proyecto conecta CodeNomad a una carpeta del equipo del backend. Abrir una pestaña, explorar una copia de trabajo y mover una familia de conversaciones son operaciones distintas.
-
-**+ Proyecto** empieza en la última ruta conocida del servidor. Si la carpeta se movió o se eliminó, elige **Raíz del servidor**. Mientras se abre un proyecto reciente, **Cancelar** vuelve a la lista de servidores.
-
-En los recientes solo aparecen los proyectos remotos que abras aquí correctamente. Explorar carpetas no añade accesos. Los accesos guardados siguen disponibles sin conexión para la conexión exacta (perfil, dirección, ajuste de verificación TLS y destino SSH). Si la carpeta remota ya tiene una pestaña en espera, se selecciona y conserva sus borradores. Tú decides cuándo reintentar.
-
-Un acceso que quites seguirá oculto en los recientes hasta que vuelvas a abrir esa carpeta.
 
 ## Abrir un proyecto {#open-project}
 
-1. Haz clic en **Nueva instancia** (`+`) para abrir la página de inicio.
-2. Elige **Buscar carpetas**, selecciona la carpeta del backend y ábrela; o elige una entrada de **Carpetas recientes**.
-3. Para obtener una copia de un repositorio, elige **Clonar repo Git**, introduce la **URL del repositorio** y la **Carpeta de destino** y pulsa **Clonar**. La **Carpeta de destino** se rellena con el nombre del repositorio en la carpeta que contiene tu último clon, o junto a tu proyecto más reciente. **Buscar** elige la carpeta que contendrá el clon; también puedes editar la ruta, incluido el nombre de la carpeta del clon.
+Pulsa **Nueva instancia** (`+`) o `Ctrl/Cmd+N` para abrir una pestaña vacía. Elige un proyecto en **Pestañas recientes** o **Explorar**. El logotipo de CodeNomad abre Inicio. La clonación y las pestañas temporales usan el servidor local.
+
+[Abrir un proyecto remoto en una pestaña](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
+
+Para obtener una copia de un repositorio, elige **Clonar repo Git**, introduce la **URL del repositorio** y la **Carpeta de destino** y pulsa **Clonar**. La **Carpeta de destino** se rellena con el nombre del repositorio en la carpeta que contiene tu último clon, o junto a tu proyecto más reciente. **Buscar** elige la carpeta que contendrá el clon; también puedes editar la ruta, incluido el nombre de la carpeta del clon.
 
 Explorar un servidor remoto significa explorar el sistema de archivos de ese servidor, no el de tu teléfono o portátil. Abrir un proyecto no crea un daemon de OpenCode distinto para cada pestaña. Las conversaciones son sesiones nativas de OpenCode; su duración no es la de la pestaña.
 
-La clonación escribe un repositorio en el destino. **Eliminar primero la carpeta de destino si ya existe.** es destructivo: actívalo solo si se puede borrar todo lo que ya haya allí. Usa un destino nuevo si tienes dudas.
+La clonación escribe un repositorio en el destino. **Eliminar primero la carpeta de destino si ya existe.** es destructivo: actívalo solo si se puede borrar todo lo que ya haya allí. Usa un destino nuevo si tienes dudas. Una clonación fallida no es motivo para eliminar un proyecto existente; inspecciona el destino y el error indicados antes de reintentar.
 
-Las entradas recientes son accesos directos. **Renombrar workspace** cambia su nombre visible; **Eliminar de recientes** elimina el acceso directo, no sus archivos ni conversaciones. Hacer clic en un proyecto reciente que ya esté abierto abre una pestaña nueva; su botón **Abierta** (**Cambiar al proyecto abierto**) selecciona en cambio la pestaña existente.
+Los recientes son accesos directos. Los botones en línea de Inicio y el menú de acciones de las pestañas vacías ofrecen **Renombrar workspace** y **Eliminar de recientes** cuando corresponde; conserva archivos y conversaciones. En Inicio, pestañas vacías y lanzador rápido, pulsar un proyecto local, remoto o SideCar crea una nueva instancia aunque ya esté abierto. La acción separada **Abierta** (**Cambiar al proyecto abierto**) selecciona la existente.
 
-Abre la misma carpeta dos veces y selecciona la misma conversación en ambas pestañas para mantener el chat en una y una vista previa web, un archivo o un informe de Misión en la otra. Cada pestaña conserva su propia vista, posición de desplazamiento de la conversación, selección del panel derecho y modo de Archivos; los mensajes, la ejecución y los datos del proyecto siguen compartidos.
+La acción para cambiar de pestaña también selecciona una pestaña que espera a su servidor y cierra la pestaña vacía de origen.
 
 ## Usar el lanzador de nuevas instancias {#new-instance-launcher}
 
-1. Mantén pulsado `+` o haz clic derecho; con el foco del teclado allí, usa **Alt+Down**, **Shift+F10** o la tecla Menú.
-2. Busca proyectos recientes o selecciona **Examinar…**, **Temporal** o **Clonar…**.
-
-Un clic normal abre el inicio completo. El lanzador selecciona el proyecto si ya está abierto; el inicio abre otra pestaña salvo que seleccione una en espera. En **REMOTOS**, Escape vuelve a los servidores, pliega la lista y después cierra el lanzador y devuelve el foco a `+`.
+Mantén pulsado `+` o haz clic derecho; con el foco del teclado allí, usa **Alt+Down**, **Shift+F10** o la tecla Menú.
+Tab permite buscar, las flechas y Enter seleccionan y Escape devuelve el foco a `+`.
 
 ## Cerrar una pestaña de proyecto {#close-stop}
 
@@ -50,15 +42,15 @@ Con la restauración al iniciar activada, cada pestaña restante recupera sus pr
 
 ## Restaurar pestañas remotas {#restore-remote-tabs}
 
-Con multi-backend activado, los proyectos remotos guardados conservan el orden de pestañas, la selección y los borradores de cada pestaña. Un servidor no disponible deja una pestaña en espera: elige **Reintentar** cuando vuelva, o **Conectar** con su usuario/contraseña o un nuevo **Enlace de emparejamiento**. Los demás servidores siguen disponibles.
+Al recargar con la restauración activada, las pestañas remotas conservan su orden, selección y borradores. Un servidor no disponible deja una pestaña en espera: elige **Reintentar** cuando vuelva, o **Conectar** con su usuario/contraseña o un enlace en **Nuevo enlace de emparejamiento**. Los demás servidores siguen disponibles. **Servidor no encontrado** indica que falta el servidor guardado.
+
+**Reintentar** vuelve a conectar con un proyecto existente. Si se puede acceder al servidor pero falta el proyecto, elige **Abrir**.
 
 **Reintentar** también recupera pestañas en espera con la restauración automática al iniciar desactivada. Las notificaciones seleccionan la pestaña en espera existente. Comprueba el resultado de una acción de conversación no confirmada antes de enviarla otra vez.
 
-Antes de eliminar un servidor o cambiar su dirección, cierra sus pestañas de proyecto en todas las ventanas y vuelve a abrir **Configuración** desde otro proyecto si sigue usando ese servidor. Un inventario de proyectos inaccesible bloquea el cambio hasta que pueda comprobarse.
-
 ## Espacios de trabajo temporales {#temporary-workspaces}
 
-1. Elige **Temporal** en el lanzador o **Nueva instancia temporal** en la página de inicio.
+1. Elige **Nueva pestaña temporal** en Inicio o **Temporal** sobre las columnas de una pestaña vacía.
 2. Trabaja en la carpeta vacía gestionada por CodeNomad; Git no se inicializa automáticamente.
 3. Al cerrar la pestaña, elige **Conservar**, **Descartar** o **Cancelar**. El menú de la pestaña también ofrece **Conservar como proyecto**.
 

@@ -1,11 +1,9 @@
-import { isHiddenSyntheticTextPart, partHasRenderableText, type ClientPart } from "../types/message"
+import { isHiddenSyntheticTextPart, type ClientPart } from "../types/message"
 import type { MessageRecord } from "../stores/message-v2/types"
-import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
+import { getRecordPartDisplayWindow } from "../stores/message-v2/record-display-cache"
 import { extractReasoningTextForRender } from "../lib/message-render-cache"
-import { getPartCharCount } from "../lib/token-utils"
 import { groupTranscriptRows, toolGroupKind, type TranscriptRowKind } from "../lib/message-part-grouping"
 
-const STREAMED_TEXT_SIGNATURE_BUCKET = 128
 const MAX_TOOLTIP_LENGTH = 220
 const SEGMENT_TYPES = new Set(["user", "assistant", "tool", "compaction", "reasoning", "system"])
 
@@ -18,14 +16,11 @@ export interface TimelineSegment {
   id: string
   messageId: string
   type: TimelineSegmentType
-  label: string
-  tooltip: string
   toolName?: string
   variant?: "auto" | "manual"
   toolPartIds?: string[]
   partIds?: string[]
   partId?: string
-  totalChars: number
   /** The message's omitted parts render just before this marker's block. */
   omittedBefore?: true
 }
@@ -56,30 +51,25 @@ export function survivingTimelineSegmentId(id: string, exists: (id: string) => b
   return exists(id) || !parsed?.continued ? id : timelineSegmentId(parsed.messageId, parsed.type, parsed.ordinal)
 }
 
-export function timelineSegmentLabel(type: TimelineSegmentType, t: (key: string, params?: Record<string, unknown>) => string): string {
+export function timelineSegmentLabel({ type, toolName, toolPartIds }: TimelineSegment, t: Translate): string {
   if (type === "user") return t("messageTimeline.segment.user.label")
   if (type === "assistant") return t("messageTimeline.segment.assistant.label")
   if (type === "compaction") return t("messageTimeline.segment.compaction.label")
   if (type === "reasoning") return t("messageBlock.reasoning.thoughtLabel")
   if (type === "system") return t("messageBlock.system.label")
-  return t("messageTimeline.tool.fallbackLabel").slice(0, 4)
+  return ((toolPartIds?.length && toolName) || t("messageTimeline.tool.fallbackLabel")).slice(0, 4)
 }
 
-export function getTimelineRecordSignature(record: MessageRecord): string {
-  const parts = record.partIds.map((partId) => {
-    const part = record.parts[partId]
-    const data = part?.data
-    const structuralRevision = data?.type === "tool"
-      ? part.revision
-      : 0
-    const fileName = data?.type === "file" && typeof data.filename === "string" ? data.filename : ""
-    const textLength = (data?.type === "text" || data?.type === "reasoning" || data?.type === "compaction") && typeof data.text === "string"
-      ? data.text.length
-      : 0
-    const textBucket = Math.ceil(textLength / STREAMED_TEXT_SIGNATURE_BUCKET)
-    return `${partId}:${data?.type ?? "unknown"}:${data && partHasRenderableText(data) ? 1 : 0}:${structuralRevision}:${fileName}:${textBucket}`
-  }).join("|")
-  return `${record.status}|${parts}`
+export function sameTimelineList<T>(a: readonly T[], b: readonly T[]) {
+  return a === b || (a.length === b.length && a.every((item, index) => item === b[index]))
+}
+
+export function sameTimelineSegment(a: TimelineSegment, b: TimelineSegment) {
+  const sameParts = (x?: string[], y?: string[]) => x === y || Boolean(x && y && sameTimelineList(x, y))
+  return a === b || (a.id === b.id && a.messageId === b.messageId && a.type === b.type
+    && a.toolName === b.toolName && a.variant === b.variant
+    && a.omittedBefore === b.omittedBefore && a.partId === b.partId
+    && sameParts(a.partIds, b.partIds) && sameParts(a.toolPartIds, b.toolPartIds))
 }
 
 function truncateText(value: string): string {
@@ -133,14 +123,38 @@ export function getToolTitle(part: ToolCallPart, t: Translate): string {
   return t("messageTimeline.tool.fallbackLabel")
 }
 
-function getToolTypeLabel(part: ToolCallPart, t: Translate): string {
-  if (typeof part.tool === "string" && part.tool.trim().length > 0) return part.tool.trim().slice(0, 4)
-  return t("messageTimeline.tool.fallbackLabel").slice(0, 4)
+function hasTimelineProse(part: ClientPart): boolean {
+  if (isHiddenSyntheticTextPart(part)) return false
+  if (typeof part.text === "string") return /\S/.test(part.text)
+  if (Array.isArray(part.content)) return part.content.some(entry => typeof entry === "string" && /\S/.test(entry))
+  return part.type === "file"
 }
 
-function formatTextsTooltip(texts: string[], fallback: string): string {
-  const combined = texts.map((text) => text.trim()).filter((text) => text.length > 0).join("\n\n")
-  return combined.length > 0 ? truncateText(combined) : fallback
+/** Accessible excerpt, computed only for a mounted marker or an open preview. */
+export function timelineSegmentTooltip(segment: TimelineSegment, record: MessageRecord | undefined, t: Translate): string {
+  if (segment.variant) return t(segment.variant === "auto" ? "messageTimeline.tooltip.compaction.auto" : "messageTimeline.tooltip.compaction.manual")
+  if (!record) return ""
+  if (segment.toolPartIds?.length) {
+    const part = record.parts[segment.toolPartIds[0]]?.data
+    if (part?.type === "tool") return truncateText(`${t("messageTimeline.tool.fallbackLabel")}: ${getToolTitle(part, t)}`)
+  }
+  if (segment.partId) {
+    const part = record.parts[segment.partId]?.data
+    if (part?.type === "system") return truncateText(part.description?.trim() || part.text.trim() || timelineSegmentLabel(segment, t))
+  }
+  if (!segment.partIds?.length) return ""
+  let excerpt = ""
+  for (const id of segment.partIds) {
+    const part = record.parts[id]?.data
+    if (!part) continue
+    const text = collectTextFromPart(part, t).trim()
+    if (!text) continue
+    if (excerpt) excerpt += "\n\n"
+    excerpt += text.slice(0, Math.max(0, MAX_TOOLTIP_LENGTH + 1 - excerpt.length))
+    if (excerpt.length > MAX_TOOLTIP_LENGTH) return truncateText(excerpt)
+  }
+  return excerpt || (segment.type === "user" ? t("messageTimeline.tooltip.userFallback")
+    : segment.type === "reasoning" ? t("messageBlock.reasoning.thoughtsFallback") : t("messageTimeline.tooltip.assistantFallback"))
 }
 
 /**
@@ -148,7 +162,7 @@ function formatTextsTooltip(texts: string[], fallback: string): string {
  * text (or thinking) parts form one run, each tool, compaction and system part
  * its own; blank parts belong to none. Ordinals count runs per type.
  */
-function nativeTimelineRuns(record: MessageRecord, t: Translate): Array<{ type: TimelineSegmentType; ordinal: number } | undefined> {
+function nativeTimelineRuns(record: MessageRecord): Array<{ type: TimelineSegmentType; ordinal: number } | undefined> {
   const contentType = record.role === "user" ? "user" : "assistant"
   const ordinals = new Map<TimelineSegmentType, number>()
   let previous: { type: TimelineSegmentType; ordinal: number } | undefined
@@ -156,8 +170,8 @@ function nativeTimelineRuns(record: MessageRecord, t: Translate): Array<{ type: 
     const part = record.parts[partId]?.data as ClientPart | undefined
     if (!part) return undefined
     const type: TimelineSegmentType | undefined = part.type === "tool" || part.type === "compaction" || part.type === "system" ? part.type
-      : part.type === "reasoning" ? (extractReasoningTextForRender(part).trim() ? "reasoning" : undefined)
-        : collectTextFromPart(part, t).trim() ? contentType : undefined
+      : part.type === "reasoning" ? (extractReasoningTextForRender(part) ? "reasoning" : undefined)
+        : hasTimelineProse(part) ? contentType : undefined
     if (!type) return undefined
     if (previous?.type === type && (type === "reasoning" || type === contentType)) return previous
     const ordinal = ordinals.get(type) ?? 0
@@ -167,20 +181,19 @@ function nativeTimelineRuns(record: MessageRecord, t: Translate): Array<{ type: 
 }
 
 /** Index in `record.partIds` where a marker's native run starts, if it exists. */
-export function timelineRunStart(record: MessageRecord, segmentId: string, t: Translate): number | undefined {
+export function timelineRunStart(record: MessageRecord, segmentId: string): number | undefined {
   const parsed = parseTimelineSegmentId(segmentId)
   // A continuation stands for its run's part after the omitted ones.
   if (!parsed || parsed.messageId !== record.id || parsed.continued) return undefined
-  const index = nativeTimelineRuns(record, t).findIndex((run) => run?.type === parsed.type && run.ordinal === parsed.ordinal)
+  const index = nativeTimelineRuns(record).findIndex((run) => run?.type === parsed.type && run.ordinal === parsed.ordinal)
   return index < 0 ? undefined : index
 }
 
 /** The markers of a message's displayed parts, one per text or thinking run and per tool, compaction and system part. */
-export function buildTimelineSegments(instanceId: string, record: MessageRecord, t: Translate): TimelineSegment[] {
-  if (!record) return []
-  const { orderedParts, hiddenCount, hiddenStart } = buildRecordDisplayData(instanceId, record)
-  if (!orderedParts || orderedParts.length === 0) return []
-  const runs = nativeTimelineRuns(record, t)
+export function buildTimelineSegments(instanceId: string, record: MessageRecord | undefined): TimelineSegment[] {
+  if (!record?.partIds.length) return []
+  const { hiddenCount, headCount } = getRecordPartDisplayWindow(instanceId, record)
+  const runs = nativeTimelineRuns(record)
   const result: TimelineSegment[] = []
   const emitted = new Set<string>()
   let omittedBefore = false
@@ -190,67 +203,43 @@ export function buildTimelineSegments(instanceId: string, record: MessageRecord,
     result.push({ id, messageId: record.id, type, ...segment, ...(omittedBefore ? { omittedBefore: true as const } : {}) })
     omittedBefore = false
   }
-  let pending: { type: TimelineSegmentType; ordinal: number; texts: string[]; partIds: string[]; totalChars: number } | null = null
+  let pending: { type: TimelineSegmentType; ordinal: number; partIds: string[] } | null = null
   const flushPending = () => {
     if (!pending) return
-    const { type, ordinal, texts, partIds, totalChars } = pending
+    const { type, ordinal, partIds } = pending
     pending = null
-    const fallback = type === "user" ? t("messageTimeline.tooltip.userFallback")
-      : type === "reasoning" ? t("messageBlock.reasoning.thoughtsFallback") : t("messageTimeline.tooltip.assistantFallback")
-    push(type, ordinal, { label: timelineSegmentLabel(type, t), tooltip: formatTextsTooltip(texts, fallback), partIds, totalChars })
-  }
-  const appendRun = (run: { type: TimelineSegmentType; ordinal: number }, text: string, part: ClientPart) => {
-    if (pending?.type !== run.type || pending.ordinal !== run.ordinal) {
-      flushPending()
-      pending = { ...run, texts: [], partIds: [], totalChars: 0 }
-    }
-    pending.texts.push(text)
-    if (typeof part.id === "string" && part.id.length > 0) pending.partIds.push(part.id)
-    pending.totalChars += getPartCharCount(part)
+    push(type, ordinal, { partIds })
   }
 
   // Displayed parts follow `record.partIds` order, omitting the hidden range.
-  let cursor = 0
   for (let index = 0; index < record.partIds.length; index++) {
-    if (hiddenCount > 0 && index === hiddenStart) {
+    if (hiddenCount > 0 && index === headCount) {
       // Omitted parts render as a placeholder between the runs around them.
       flushPending()
       omittedBefore = true
       index += hiddenCount - 1
       continue
     }
-    if (!record.parts[record.partIds[index]]?.data) continue
-    const part = orderedParts[cursor++]
+    const part = record.parts[record.partIds[index]]?.data
     const run = runs[index]
     if (!part || !run) continue
     const partId = typeof part.id === "string" ? part.id : ""
 
-    if (run.type === "tool") {
+    if (part.type === "tool") {
       flushPending()
-      const toolPart = part as ToolCallPart
       push("tool", run.ordinal, {
-        label: getToolTypeLabel(toolPart, t) || timelineSegmentLabel("tool", t),
-        tooltip: truncateText(`${t("messageTimeline.tool.fallbackLabel")}: ${getToolTitle(toolPart, t)}`),
-        toolName: typeof toolPart.tool === "string" ? toolPart.tool.trim() : "",
+        toolName: typeof part.tool === "string" ? part.tool.trim() : "",
         toolPartIds: partId ? [partId] : undefined,
-        totalChars: getPartCharCount(part),
       })
-    } else if (run.type === "compaction") {
+    } else if (part.type === "compaction" || part.type === "system") {
       flushPending()
-      const isAuto = Boolean((part as any)?.auto)
-      push("compaction", run.ordinal, {
-        label: timelineSegmentLabel("compaction", t),
-        tooltip: isAuto ? t("messageTimeline.tooltip.compaction.auto") : t("messageTimeline.tooltip.compaction.manual"),
-        variant: isAuto ? "auto" : "manual",
-        partId,
-        totalChars: 0,
-      })
-    } else if (run.type === "system" && part.type === "system") {
-      flushPending()
-      push("system", run.ordinal, { label: timelineSegmentLabel("system", t), tooltip: truncateText(part.description?.trim() || part.text.trim() || timelineSegmentLabel("system", t)),
-        partId, totalChars: getPartCharCount(part) })
+      push(part.type, run.ordinal, part.type === "compaction" ? { partId, variant: part.auto ? "auto" : "manual" } : { partId })
     } else {
-      appendRun(run, run.type === "reasoning" ? collectReasoningText(part) : collectTextFromPart(part, t), part)
+      if (pending?.type !== run.type || pending.ordinal !== run.ordinal) {
+        flushPending()
+        pending = { ...run, partIds: [] }
+      }
+      if (partId) pending.partIds.push(partId)
     }
   }
   flushPending()

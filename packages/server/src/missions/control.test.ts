@@ -991,6 +991,41 @@ test("enforces Debugging evidence gates even when the coordinator omits dependen
   }), (error: unknown) => error instanceof MissionControlError && error.code === "invalid-role-policy")
 })
 
+test("Debugging can finish with a verified no-change result before any task is declared", async () => {
+  const { create } = harness()
+  const control = create()
+  await control.inspect("ses_coordinator", {
+    start: { objective: "Check whether the branches need syncing", template: "debug" },
+  }, "debug-no-change")
+
+  const report = {
+    outcome: "completed" as const, summary: "The target already contains the source.",
+    evidence: ["Verified both remote heads and confirmed source ancestry."],
+    next: [], final: true, artifact: { kind: "no-change" },
+  }
+  await assert.rejects(control.report("ses_coordinator", { ...report, evidence: [" "] }), /requires completed diagnostician evidence/)
+  const withTask = harness().create()
+  const started = await withTask.inspect("ses_coordinator", {
+    start: { objective: "Investigate the failing check", template: "debug" },
+  }, "debug-existing-task")
+  const diagnosis = await withTask.declare("ses_coordinator", {
+    taskKey: "diagnose", role: "diagnostician", title: "Diagnose", brief: "Investigate the failure.",
+    blockedBy: [], executionMode: { kind: "native", parentTaskKey: null },
+  })
+  await withTask.revise("ses_coordinator", {
+    missionID: started.mission!.id, expectedRevision: diagnosis.mission.revision, requestID: "retire-diagnosis",
+    reason: "Withdraw the diagnosis", retireTasks: [{ taskKey: "diagnose" }], addTasks: [], dependencyUpdates: [],
+  })
+  await assert.rejects(withTask.report("ses_coordinator", report), /requires the latest live implementation/)
+  const verified = { ...report, artifact: { kind: "verified-completion" } }
+  await assert.rejects(withTask.report("ses_coordinator", verified), /requires the latest live implementation/)
+  await assert.rejects(control.report("ses_coordinator", { ...verified, evidence: [" "] }), /requires completed diagnostician evidence/)
+  const result = await control.report("ses_coordinator", report)
+  assert.equal(result.disposition, "finished")
+  assert.equal(result.mission.status, "completed")
+  assert.equal(result.mission.tasks.length, 0)
+})
+
 test("charts a Wayfinder frontier breadth-first without auto-dispatching work in the fog", async () => {
   const { create } = harness()
   const control = create()

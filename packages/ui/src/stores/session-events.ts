@@ -62,6 +62,7 @@ import { locationAuthorityKey } from "./request-locations"
 import { workspaceSessionPlacementHeaders } from "../lib/sdk-manager"
 import { prioritizedRead } from "../lib/prioritized-read"
 import { SESSION_LOCATED_ELSEWHERE_REASON } from "../../../server/src/opencode/session-access-contract"
+import { isReservedMissionScheduleSessionID } from "../../../server/src/missions/mission-schedule-carrier-identity"
 import {
   setSessionRevertV2,
 } from "./message-v2/bridge"
@@ -219,8 +220,12 @@ function advanceNativeLifecycle(instanceId: string, sessionId: string): number {
   return generation
 }
 
+export function nativeSessionLifecycleGeneration(instanceId: string, sessionId: string): number {
+  return nativeLifecycleGenerations.get(`${instanceId}\0${sessionId}`) ?? 0
+}
+
 function isCurrentNativeLifecycle(instanceId: string, sessionId: string, generation: number): boolean {
-  return nativeLifecycleGenerations.get(`${instanceId}\0${sessionId}`) === generation
+  return nativeSessionLifecycleGeneration(instanceId, sessionId) === generation
 }
 
 function dismissRetryToast(instanceId: string, sessionId: string): void {
@@ -693,9 +698,8 @@ function getInstanceDisplayName(instanceId: string, detail?: string): string {
 function showInstanceToast(instanceId: string, sessionId: string | undefined | null, payload: ToastPayload): ToastHandle {
   if (parseInstanceKey(instanceId).backendId === "local") return showToastNotification(payload)
   const authority = captureEventAuthority(instanceId)
-  const target = { backendId: parseInstanceKey(instanceId).backendId, instanceId, ...(sessionId ? { sessionId } : {}) }
   return showToastNotification({ ...payload, signal: authority.signal, action: {
-    label: tGlobal(sessionId ? "interruption.viewConversation" : "folderSelection.recent.switchToOpenProject"), target,
+    label: tGlobal(sessionId ? "interruption.viewConversation" : "folderSelection.recent.switchToOpenProject"),
     onClick: async () => {
       if (!authority.current()) return
       const { appTabs, selectAppTab, selectInstanceTab } = await import("./app-tabs")
@@ -1041,6 +1045,7 @@ function handleSessionCompacted(instanceId: string, event: SessionCompactionEnde
 
 function announceCompaction(instanceId: string, event: SessionCompactionEnded): void {
   const sessionID = event.data.sessionID
+  if (isReservedMissionScheduleSessionID(sessionID)) return
   // Announced by the project whose list shows the session, not by an owning parent.
   if (sessions().get(instanceId)?.has(sessionID) && !isSessionInWorkspaceScope(instanceId, sessionID)) return
   const { backendId } = parseInstanceKey(instanceId)

@@ -741,6 +741,9 @@ fn build_local_window(
         return Err(error);
     }
     crate::notification_badge::bind_webview(window.as_ref(), badge_binding);
+    crate::remote_dictation::bind_termination(window.as_ref(), None);
+    #[cfg(target_os = "linux")]
+    crate::device_speech_ipc::bind_microphone(&window, false);
     #[cfg(windows)]
     if let Err(error) = crate::shutdown::schedule_windows_session_end_handler(&window) {
         app.state::<LocalWindows>().remove_runtime(&record.label);

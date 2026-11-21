@@ -146,6 +146,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.shortcut.cron": "מתקדם (cron)",
   "missions.scheduling.condition.schedule-success": "הצלחה של תזמון אחר",
   "missions.scheduling.condition.branch-commits": "קומיטים חדשים בענף מקומי",
+  "missions.scheduling.condition.remote-branch-commits": "קומיטים חדשים בענף מרוחק",
+  "missions.scheduling.repository.branch": "ענף",
   "missions.scheduling.condition.mission-completed": "משימה חד־פעמית מסתיימת בהצלחה",
   "missions.scheduling.condition.conversation-message": "הודעה חדשה בשיחה במעקב",
   "missions.scheduling.condition.files-changed": "שינוי בקבצים מפורשים",

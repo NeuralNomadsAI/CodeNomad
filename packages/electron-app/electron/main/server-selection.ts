@@ -8,13 +8,13 @@ export function requireServerSelection(value: unknown, section?: string): Server
   return intent
 }
 
-export async function selectServerInWindow(window: RendererFlushWindow | undefined, intent: ServerSelectionIntent, trusted: (url: string) => boolean): Promise<void> {
+export async function selectServerInWindow(window: RendererFlushWindow | undefined, intent: ServerSelectionIntent, trusted: (url: string) => boolean, action?: "remove"): Promise<void> {
   if (!window || window.isDestroyed() || window.webContents.isDestroyed()) throw new Error("Server selection opener unavailable")
   const url = window.webContents.getURL()
   if (!trusted(url)) throw new Error("Server selection opener untrusted")
   await withTimeout(window.webContents.executeJavaScript(`(() => {
     if (window.location.origin !== ${JSON.stringify(new URL(url).origin)}) throw new Error("Server selection origin changed");
     if (typeof window.__CODENOMAD_SELECT_SERVER__ !== "function") throw new Error("Server selection unavailable");
-    window.__CODENOMAD_SELECT_SERVER__(${JSON.stringify(intent)});
+    window.__CODENOMAD_SELECT_SERVER__(${JSON.stringify(intent)}, ${JSON.stringify(action)});
   })()`), 5000, "Server selection")
 }

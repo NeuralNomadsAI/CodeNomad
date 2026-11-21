@@ -198,15 +198,15 @@ def smoke(app, source, node, private, runner_arch):
     require(translated in ("", "0"), "Rosetta process")
     exe, resources = app / "Contents/MacOS/CodeNomad", app / "Contents/Resources"
     require(exe.is_file() and os.access(exe, os.X_OK) and resources.is_dir(), "missing bundle runtime")
-    for required in ("app.asar", "server/dist/bin.js", "node/darwin-arm64/npm/bin/npm-cli.js"):
-        require((resources / required).is_file(), "missing bundle resource: " + required)
+    require((resources / "app.asar").is_file(), "missing bundle resource: app.asar")
+    require((resources / "server/dist/bin.js").is_file()
+            and (resources / "node/darwin-arm64/npm/bin/npm-cli.js").is_file(),
+            "missing bundle runtime files")
     run(["/usr/bin/codesign", "--verify", "--deep", "--strict", app], env, private)
     require(run(["/usr/bin/lipo", "-archs", exe], env, private) == "arm64", "non-ARM executable slice")
-    run(["/usr/bin/file", exe], env, private)
     require(run([exe, "-p", "process.platform + '/' + process.arch"], env, private) == "darwin/arm64",
             "non-ARM packaged process")
     script = source / "scripts/smoke-packaged-resources.cjs"
-    print(f"smoke source={script} electron={exe} resources={resources}", flush=True)
     output = run([node, script, "--resources", resources, "--target", "darwin-arm64", "--electron", exe],
                  env, private)
     require("skipping executable smoke" not in output, "executable smoke skipped")

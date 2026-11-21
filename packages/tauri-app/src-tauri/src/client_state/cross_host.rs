@@ -33,6 +33,9 @@ struct LegacyOwner {
     pid: u32,
     run_token: String,
     process_start_identity: Option<String>,
+    /// Set by Electron builds that join the cross-host election; absent in legacy ones.
+    #[serde(default)]
+    cross_host: bool,
 }
 
 pub(super) struct Registration {
@@ -745,6 +748,11 @@ fn has_live_legacy_electron_with(
         if marker.pid != pid || marker.run_token != run_token {
             return Ok(true);
         }
+        // An election-aware host is arbitrated by the election, even before its
+        // participant appears; only markers without the flag can be legacy.
+        if marker.cross_host {
+            continue;
+        }
         let live_identity = identity(pid);
         if let Some(marker_identity) = marker.process_start_identity.as_deref() {
             let Some(live_identity) = live_identity.as_deref() else {
@@ -1446,6 +1454,20 @@ mod tests {
         fs::write(
             legacy.path().join("client-state.running.701.electron.json"),
             serialize_owner(&upgraded).unwrap(),
+        )
+        .unwrap();
+        assert!(!has_live_legacy_electron_with(
+            legacy.path(),
+            election.path(),
+            |_| true,
+            |_| Some("electron-start".to_string()),
+            |_| Some(true),
+        )
+        .unwrap());
+        // An election-aware Electron does not veto before its participant appears.
+        fs::write(
+            legacy.path().join("client-state.running.703.starting.json"),
+            r#"{"pid":703,"runToken":"starting","processStartIdentity":"electron-start","crossHost":true}"#,
         )
         .unwrap();
         assert!(!has_live_legacy_electron_with(

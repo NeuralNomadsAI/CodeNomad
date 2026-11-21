@@ -127,6 +127,8 @@ export function registerNativeScheduleCarrierFoundation(ctx: Plugin.Context, opt
 
     yield* ctx.rpc.register(Rpc.define(NativeScheduleTransportRpc), {
       wake: raw => invocation.capture(handler("wake", raw)), status: raw => invocation.capture(handler("status", raw)),
+      // This composition creates prompt rows only; code admission belongs to the product runtime.
+      admit: () => Effect.die(new Error("schedule-foundation-admit")),
     }).pipe(Effect.orDie)
     yield* ctx.aisdk.hook("language", event => Effect.sync(() => hooks.language(event)))
     const owned = (sessionID: string) => readNativeScheduleCarrierBinding(ctx, sessionID).pipe(Effect.tap(binding =>

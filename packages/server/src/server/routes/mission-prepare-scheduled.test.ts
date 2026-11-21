@@ -35,7 +35,7 @@ async function fixture(t: test.TestContext) {
   const profile = canonicalScope("stable", yaml, root, root), workspace = {}, fence = new WorktreeDeletionFence(5000)
   const state = { capability: true, agentSchedulePreparation: true, owned: true, authorDirectory: root, profile, loseCreate: false, losePlay: false,
     activation: "ready" as "ready" | "off" | "unknown", activationCalls: 0, activationWrites: 0,
-    readPending: false, sourceMissionID: undefined as string | undefined,
+    readPending: false, refuseCoordinator: false, sourceMissionID: undefined as string | undefined,
     writes: [] as MissionScheduleRequest[], reads: [] as { missionID: string; requestID?: string }[],
     documents: new Map<string, any>(), receipts: new Map<string, any>(),
     beforeWrite: undefined as (() => Promise<void>) | undefined }
@@ -73,6 +73,8 @@ async function fixture(t: test.TestContext) {
       await state.beforeWrite?.()
       state.writes.push(request)
       const control = { requestID: request.requestID, action: request.action, expectedRevision: request.expectedRevision }
+      if (request.action === "create" && state.refuseCoordinator) return { document: null, pending: false,
+        refusal: { ...control, missionID: request.missionID, payloadDigest: identity.configDigest, reason: "coordinator-busy" } }
       state.receipts.set(request.requestID, control)
       if (request.action === "create") {
         const previous = state.documents.get(request.missionID)
@@ -166,6 +168,19 @@ test("scheduled preparation stores its signed author, exact input and automatic 
   assert.equal(request.configuration?.coordinatorSessionID, "ses_existing")
   assert.equal(f.state.activationCalls, 0)
   assert.equal(scheduledMissionHold(f.fence, f.missionID), undefined)
+})
+
+test("an exact coordinator refusal releases the creation hold so a later attempt can prepare", async t => {
+  const f = await fixture(t)
+  f.state.refuseCoordinator = true
+  assert.deepEqual(await f.prepare({ coordinatorSessionID: "ses_author" }),
+    { outcome: "refused", phase: "creation", code: "coordinator-busy" })
+  assert.equal(scheduledMissionHold(f.fence, f.missionID), undefined)
+  assert.equal(f.state.documents.size, 0)
+  f.state.refuseCoordinator = false
+  const result = await f.prepare({ coordinatorSessionID: "ses_author", requestID: "prepare_second" })
+  assert.equal(result.outcome, "prepared")
+  assert.equal(f.state.writes.length, 2)
 })
 
 for (const lost of ["create", "play"] as const) test(`domain recovery of lost ${lost} ACK settles the backend hold through observation only`, async t => {

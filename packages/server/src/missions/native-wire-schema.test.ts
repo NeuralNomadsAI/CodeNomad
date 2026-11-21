@@ -10,7 +10,19 @@ import { MISSION_BRIEFING_RESPONSES_MAX, missionBriefingResponsesSchema, mission
 import { scheduleToolWire } from "./schedule-tool"
 import { projectReadWire } from "./project-read-tool"
 import { projectControlWire, projectConfigureWire, projectDeleteWire } from "./project-control-tool"
-import { missionSettingsWire } from "./settings-tool"
+import { missionSettingsInput, missionSettingsWire } from "./settings-tool"
+
+test("Missions settings advertises a portable tool schema and still rejects mixed scopes", () => {
+  assert.equal(Reflect.get(missionSettingsWire, "type"), "object")
+  for (const key of ["oneOf", "anyOf", "allOf"]) assert.equal(Object.hasOwn(missionSettingsWire, key), false, key)
+  const expectation = "a".repeat(64)
+  assert.equal(missionSettingsInput.safeParse({ scope: "configurations", action: "read" }).success, true)
+  assert.equal(missionSettingsInput.safeParse({ scope: "preferences", action: "read", field: "missionDeleteSessions" }).success, true)
+  assert.equal(missionSettingsInput.safeParse({ scope: "depth", action: "save", expectation, depth: null }).success, true)
+  assert.equal(missionSettingsInput.safeParse({ scope: "depth", action: "save", expectation, depth: 2, deleteSessions: true }).success, false)
+  assert.equal(missionSettingsInput.safeParse({ scope: "preferences", action: "read" }).success, false)
+  assert.equal(missionSettingsInput.safeParse({ scope: "depth", action: "save", depth: 2 }).success, false)
+})
 
 test("Missions native RPC schemas avoid unsupported not and pattern keywords", () => {
   const visit = (value: unknown, path = "rpc") => {

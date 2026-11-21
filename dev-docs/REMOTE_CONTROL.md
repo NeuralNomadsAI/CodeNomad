@@ -62,11 +62,9 @@ override them. An unknown value refuses startup.
 
 - `ingress.ts` marks every accepted socket as remote before any request is
   parsed and routes requests into the same Fastify application, with the
-  local listener's timeouts (no request timeout, 72 s keep-alive). Its only
-  WebSocket endpoints are web previews: `gate.ts` `admitRemoteUpgrade()` parses
-  the target as the preview proxy does, then the manager hands the socket to the
-  application's path-preview upgrade handler, never to the shared upgrade event.
-  Every other upgrade gets 404.
+   local listener's timeouts (no request timeout, 72 s keep-alive). Its two
+   WebSocket surfaces are live web preview capabilities and voice. The manager
+   routes each to its dedicated handler; other upgrades get 404.
 - `request-origin.ts` is the only authority for local privileges:
   `isLocalRequest()` requires a loopback peer **and** a non-ingress socket.
 - The direct listener applies the shared host-only paths to every non-local
@@ -134,17 +132,19 @@ override them. An unknown value refuses startup.
   only once Remote Control is used.
 - Remote devices authenticate even with `--dangerously-skip-auth`, and the
   local session cookie is never accepted on the ingress.
-- A desktop CodeNomad pairs as a device: pasting a pairing link into Add server
-  saves only the tunnel origin and opens the remote window once on the link
-  (`lib/remote-pairing-link.ts`). The profile keeps TLS verification on, since
-  a Tauri TLS-proxy window uses an incognito store without the device cookie.
-  The code is never stored with the server;
-  re-pairing a saved server reuses its window storage, which keeps the device
-  cookie across launches. Covered by `tests/browser/remote-server-pairing.test.ts`.
-- `--connect-server` opens a saved server or URL at launch through that same
-  connect flow ([architecture.md](architecture.md#native-profiles-windows-and-client-state)).
+- With `multiBackend` enabled, paste a pairing link into the server address field
+  in Browse or Settings → Servers. The host relay pairs as a device, keeps TLS
+  verification on and retains the device credential in its private store. The
+  profile saves the origin; the one-use code is cleared before network dispatch.
+- With `multiBackend` off, paste the link into the separate-window server dialog
+  (`lib/remote-pairing-link.ts`). It saves the origin and opens the link once in
+  the remote window. TLS verification stays on; a Tauri TLS-proxy window uses an
+  incognito store. Re-pairing against the same origin reuses that window's
+  device-cookie storage. See `tests/browser/remote-server-pairing.test.ts`.
+- `--connect-server` opens a saved server or URL at launch through the separate
+  desktop-window flow regardless of `multiBackend` ([architecture.md](architecture.md#native-profiles-windows-and-client-state)).
   It refuses URLs with user info or a fragment, so a pairing code or password
-  never travels on a command line; pair from Add server instead.
+  never travels on a command line; use the pairing field instead.
 
 ## Saved-profile relay
 
@@ -164,19 +164,16 @@ An originless native caller keeps local UI authority on a loopback target Host. 
 | Probe, SSH-host/profile inventory, Forget and profile-state mutations | Common capture; probe IO inherits the signal; synchronous administration checks before mutation | None; explicit administration retains its profile-wide effects | Common pre-publication check |
 | Host `/api/memory` and `/api/memory/settings` | Common pre-body channel guard and principal capture; signal follows project identity, repository-lock waits, reads and locked decisions | The repository lock serializes transactions; each waiter retains its own signal | Recheck after awaits and immediately before the journal temporary file's atomic rename; published journals complete durably; acknowledgement uses the original principal |
 | Relayed memory and Tidy up preflight | Same relay capture, current destination proof and request signal | Existing backend client and borrower-aware authentication | Memory replies retain the relay header filter and publication fence; Tidy up retains its selected backend/project context |
-| `/api/push/status`, `PUT/DELETE /api/push/subscription` | Strict host multi-backend flag; authenticated browser device on its tunnel/direct HTTPS channel, or password session on verified direct HTTPS | One host-owned private registry across HTTP/HTTPS listeners | Consent creates VAPID keys; subscription endpoint, keys and owner binding stay in mode-0600 storage beside configuration |
-| `/api/push/routes/:token` | Exact authenticated subscription owner, live channel and five-minute expiry; `Cache-Control: no-store` | Opaque tokens resolve to an existing local project and session | Generic notifications carry only an opaque route; resolved targets require authentication |
-| Local background push dispatch | Original subscription principal rechecked at queue entry and before every send; logout/expiry, device revoke/eviction, password replacement and tunnel Stop revoke queued/active work | Shared local instance-event bus; four concurrent sends, 256 pending jobs, three attempts and twenty-second total send budget | RFC 8291 `aes128gcm`, VAPID, five-minute TTL; event × subscription dedupe; 404/410 removes consent |
-| Browser-device `POST /api/auth/logout` | Paired browser principal and channel mutation-Origin checks; explicit server-device protocol keeps its closed catalog | Logout purges this principal's push consent | Clears the Secure device cookie before returning |
+| Browser-device `POST /api/auth/logout` | Paired browser principal and channel mutation-Origin checks; explicit server-device protocol keeps its closed catalog | Ends the current browser login | Clears the Secure device cookie before returning |
 | Request logging, including rejected/malformed targets | Independent of admission | None | Static route template, method, status and duration only; raw paths, params, queries and bodies stay private |
 
 Registered wildcard families retain their static template, including `/api/backends/:id/*`. Only global `*` / `/*` fallbacks use `<catchall>`; unmatched routes use `<unmatched>`.
 
-Experimental Settings → Servers uses the host client for `POST /api/remote-servers/:id/connect` and `forget`, with caller cancellation and stable typed errors. Pairing keeps verified TLS, clears its field before waiting and saves only the origin. Its private device identity persists beside the host configuration across launches. Same-origin/TLS renames keep that identity. Removal captures the profile policy, awaits Forget and then awaits profile persistence; a refused persistence leaves an actionable save error and the registered row. Mounting, adding and editing profiles are independent of backend attachment and project creation. View cancellation fences continuations while already dispatched durable mutations retain their result.
+Settings → Servers uses the host client for `POST /api/remote-servers/:id/connect` and `forget`, with caller cancellation and stable typed errors. Pairing keeps verified TLS, clears its field before waiting and saves only the origin. Its private device identity persists beside the host configuration across launches. Same-origin/TLS renames keep that identity. Address changes and removal check known tabs and use a known tab or recent project in the confirmation. Removal captures the profile policy, awaits Forget and then awaits profile persistence; a refused persistence leaves an actionable save error and the registered row. Mounting, adding and editing profiles are independent of backend attachment and project creation. View cancellation fences continuations while already dispatched durable mutations retain their result.
 
 An optional saved `ssh.host` routes the profile through a backend-owned OpenSSH local forward to its remote-visible `baseUrl`. The destination is part of credential scope and profile generation. Relay proofs bind that declared origin, SSH host and TLS policy. Each new forward with an admitted identity gates all waiting operations on one shared, bounded metadata check through that exact forward, using the saved TLS policy and declared server hostname. A matching `serverId` preserves the proof; a changed, missing or unreadable identity revokes it, removes credentials and closes the forward before business dispatch. Host retargeting also revokes the generation. SSH uses strict known-host verification and batch key authentication; the remote CodeNomad instance is already running. `GET /api/remote-servers/ssh-hosts` shares the authenticated UI relay guard and suggests concrete aliases from the backend account's `~/.ssh/config` and Includes. Stable failures are `ssh_unavailable`, `ssh_host_key` and `ssh_auth`. Tests in `codenomad-servers/ssh.test.ts` and `ssh-manager.test.ts` cover parsing, process readiness, authentication failure, credential scope, relay proof lifetime, concurrent renewal gates and shared tunnel ownership.
 
-The host connects to saved CodeNomad profiles through `codenomad-servers/`. Local relay callers retain exact loopback Origin provenance, or a loopback self Referer with `Sec-Fetch-Site: same-origin` for GET/HEAD. With the authoritative `config.ui.settings.multiBackend === true`, `createBackendUiAccess()` also admits authenticated UI clients for the reviewed `isBackendUiRoute()` method/path catalog: saved-profile browse/connect/forget, probe, SSH-host suggestions and backend business relays. All host profiles share this authority. SideCars share the local UI's application privileges and remain trusted extensions.
+The host connects to saved CodeNomad profiles through `codenomad-servers/`. Local relay callers retain exact loopback Origin provenance, or a loopback self Referer with `Sec-Fetch-Site: same-origin` for GET/HEAD. With the authoritative `config.ui.settings.multiBackend` setting enabled (the default), `createBackendUiAccess()` also admits authenticated UI clients for the reviewed `isBackendUiRoute()` method/path catalog: saved-profile browse/connect/forget, probe, SSH-host suggestions and backend business relays. All host profiles share this authority. SideCars share the local UI's application privileges and remain trusted extensions.
 
 | UI channel | Saved-server admission |
 |---|---|
@@ -189,11 +186,12 @@ The host connects to saved CodeNomad profiles through `codenomad-servers/`. Loca
 
 Shared state writes that replace `ui.remoteServers`, delete that key or replace/delete its owner apply the same admission before persistence. Local preference writes retain their direct source policy. Non-loopback HTTP/HTTPS provenance through a loopback proxy retains its remote UI class and the strict feature flag. Probe URLs reject userinfo and pairing fragments before IO; malformed URL diagnostics omit the submitted value.
 
-The saved profile alone selects the destination and TLS verification policy. The explicit transport pins validated DNS answers to the connection, keeps the saved hostname for TLS verification and SNI, never follows redirects and never manufactures Origin or browser Fetch Metadata. Caller cookies, authorization and forwarding headers stay local; private session/device cookies stay in the backend's mode-0600 store beside its configuration. Response cookies and authentication headers remain private. Response documents receive sandbox CSP and `nosniff`; the relay publishes a small response-header allowlist. Log records retain fixed relay route names and completion metadata, excluding request payloads and target queries.
+The saved profile alone selects the destination and TLS verification policy. The explicit transport pins validated DNS answers to the connection, keeps the saved hostname for TLS verification and SNI, and never follows redirects. Password login and password-backed writes send the exact saved destination as `Origin` for its direct-listener CSRF check. Reads, server pairing and device traffic stay originless. Caller Origin, cookies, authorization and forwarding headers stay local; private session/device cookies stay in the backend's mode-0600 store beside its configuration. Response cookies and authentication headers remain private. Response documents receive sandbox CSP and `nosniff`; the relay publishes a small response-header allowlist. Log records retain fixed relay route names and completion metadata, excluding request payloads and target queries.
 
 `relay-principal.ts` captures each remote UI relay's authenticated principal before body parsing. Its signal spans queued work, upstream dispatch and response publication. Session logout, idle/absolute expiry and successful password replacement synchronously invalidate the captured session through `SessionManager.onInvalidated()`; watched sessions retain their ordinary activity deadlines. Device revocation and tunnel Stop close their tracked sockets; a 250 ms read-only device validity check also covers idle expiry and origin removal. Invalidation aborts the upstream and client response, while other principals retain their transfers and the host's saved connection. Local-loopback UI relays retain their local authority.
 
 Principal-bound relays use the shared client's borrower-aware status observation even for calls without a relay proof. Each authenticated waiter owns its cancellation; a departing waiter releases only its share of a pending private login. Local legacy callers retain their recovery contract.
+Browse without a saved credential turns a confirmed unauthenticated destination status into `409 needs_credentials` before any folder request, so the caller can sign in inline.
 
 HTTP, HTTPS and the private bridge share the backend's connection authority and private credential cache. Admission captures the profile id, exact origin, TLS policy and revocable generation before entering a queue; dispatch and publication recheck that owner. Retargeting or changing TLS invalidates pending and queued operations and the stored identity. Stored identities include their TLS policy; entries without that field bind to verified TLS. Forget through any listener closes all of that profile's streams and removes its identity for every listener. The backend owns shutdown; a standalone listener releases its shared lease without closing another listener's owner.
 
@@ -205,21 +203,21 @@ Proof-bearing and bootstrap transfers select status observation per call. On a b
 
 Direct opted-in status reads join the same client/principal flight across caller signals. Its eight-second monotonic deadline is checked at dispatch, cookie effects and verdict publication, covering headers, body validation and cancellation, with at most two status GETs and one password login, including any preliminary or already-running login. Status JSON requires UTF-8, a matching schema and at most 4096 decoded bytes checked during streaming. Cancelling one follower releases only its wait; the last follower cancels its privately owned exchange, while a legacy-owned login retains its own cancellation. Completion releases the active observation by identity; later calls observe afresh, while already-admitted business calls retain their original deadline and quotas. Shared login IO and cookie effects belong to its live borrowing flights and any legacy owner, within the login's original ten-second limit. Legacy promotion carries the right to publish confirmed login rejection once; departed or expired borrowers lose their rights. Legacy calls keep their existing recovery contract on the same cached client.
 
-`POST /api/remote-control/server-pair` is a dedicated ingress-only, cookie-free protocol with `X-CodeNomad-Server-Pairing: 1`, a strict JSON body and no Origin, Referer, authorization or browser metadata. It atomically consumes the ordinary five-minute pairing code and returns one revocable device credential to the local backend. Invalid attempts have a backend-wide failure bucket; a valid high-entropy code remains usable. Servers without this route yield a stable `pairing_unavailable` result. Password connections use the direct listener's existing login policy and private session cookies.
+`POST /api/remote-control/server-pair` is a dedicated cookie-free protocol on the ingress or a verified direct HTTPS target with `X-CodeNomad-Server-Pairing: 1`, a strict JSON body and no Origin, Referer, authorization or browser metadata. It atomically consumes the five-minute pairing code for the targeted channel and returns one revocable device credential to the local backend. Invalid attempts have a backend-wide failure bucket; a valid high-entropy code remains usable. Servers without this route yield a stable `pairing_unavailable` result. Password connections use the direct listener's existing login policy and private session cookies.
 
-An authenticated device request carrying `X-CodeNomad-Server-Request: 1` can mutate through the ingress or direct listener while carrying no browser context: Origin, Referer, Fetch Metadata, client hints and preflight headers, including empty ones, exclude this admission. Browser requests continue to require the public Origin. Device scope applies on both listeners, with host-only paths and nested backend relays denied. Invalid explicit device credentials never fall back to password sessions or skipped authentication. Revocation, eviction, Stop, shutdown and tunnel failure destroy admitted device sockets on both listeners. Profile removal or retargeting similarly aborts local uploads/SSE and deletes its private identity; pending connection results check their captured owner before saving.
+An authenticated device request carrying `X-CodeNomad-Server-Request: 1` can mutate through the ingress or direct listener while carrying no browser context: Origin, Referer, Fetch Metadata, client hints and preflight headers, including empty ones, exclude this admission. Browser requests continue to require the public Origin. Device scope applies on both listeners, with host-only paths and nested backend relays denied. Invalid explicit device credentials never fall back to password sessions or skipped authentication. Revocation, eviction and shutdown close admitted device sockets on both listeners. Stop and tunnel failure close only ingress sockets. Profile removal or retargeting similarly aborts local uploads/SSE and deletes its private identity; pending connection results check their captured owner before saving.
 
-`gate.ts` maintains the closed `SERVER_DEVICE_ROUTES` catalog of method/path pairs for the relay's existing backend API contracts. Additions require review of the caller and remote route together; unknown paths and unlisted methods return 404. Direct requests using the explicit device protocol stay within this catalog even when they carry browser headers, and never reach browser pairing. Server pairing judges the physical ingress socket before device attachment, and its route handler also requires ingress membership. Browser pairing (`/remote-pair`, `/api/remote-control/pair`) requires ingress membership or a [verified direct HTTPS origin](#direct-https-devices).
+`gate.ts` maintains the closed `SERVER_DEVICE_ROUTES` catalog of method/path pairs for the relay's existing backend API contracts. Additions require review of the caller and remote route together; unknown paths and unlisted methods return 404. Direct requests using the explicit device protocol stay within this catalog even when they carry browser headers, and never reach browser pairing. Server pairing checks the physical ingress or the exact verified direct HTTPS Host before handling the exchange. Browser pairing (`/remote-pair`, `/api/remote-control/pair`) requires ingress membership or a [verified direct HTTPS origin](#direct-https-devices).
 
 | Reviewed device-route family | Admission surface |
 |---|---|
 | Identity and connection | GET auth status, metadata, events and read-only Remote Control status; POST connection pong. |
 | Backend data and preferences | Explicit filesystem, config-file, storage owner/instance, usage, runtime, speech, SideCar/previews and panel-extension method/path pairs in `SERVER_DEVICE_ROUTES`; existing host-only exclusions still apply. |
-| Project operations | Workspace inventory/lifecycle, repository-source discovery, directory-owned background Shell inventory (GET), worktrees, files/Git, plugin/integration settings, accounts/usage, session media/history/pruning preview and mutation, pending requests, Missions and Yolo method/path pairs. |
+| Project operations | Workspace inventory/lifecycle, repository-source discovery, directory-owned background Shell inventory (GET), worktrees, files/Git, plugin/integration settings, accounts/usage, session media/history/pruning preview and mutation, pending requests, Missions and conversation permission-mode reads/writes. |
 | Agent memory | UI clients use exact POST `/api/memory` and GET/PUT `/api/memory/settings`; remote browser admission requires the strict host flag and channel provenance. Relayed memory requires its current proof. The explicit server-device catalog retains its authenticated direct transport and ingress boundary. Project-directory ownership and strict schemas apply at the destination. |
 | Native workspace API | `/workspaces/:id/instance/api/…` under the existing `isAllowedInstanceApiRoute()` allowlist and workspace/location ownership checks in `http-server.ts`. |
 
-The Mission creation receipt uses `GET /api/workspaces/:id/missions/creation/:requestId` on the original backend. The destination reads the original request in its captured project/Location; an uncertain receipt retains the hold without resending creation.
+Read the creation receipt on its original backend and project Location. See [Missions](MISSIONS.md#backend-routing) for request ownership and reconciliation.
 
 Browser traffic on the ingress retains its existing public-Origin and device admission. Browser-pairing authority comes from physical ingress membership or a verified direct HTTPS origin.
 
@@ -242,69 +240,18 @@ Authenticated browser admission retains these method/path boundaries:
 
 ## Direct HTTPS devices
 
-### Background push host capability
-
-The experimental host capability requires `ui.settings.multiBackend === true`.
-`CODENOMAD_WEB_PUSH=disabled` refuses consent and dispatch;
-`CODENOMAD_WEB_PUSH_SUBJECT` overrides the VAPID contact (default
-`https://github.com/NeuralNomadsAI/CodeNomad`). Contact values accept HTTPS or
-`mailto:`. Invalid policy/contact values refuse listener creation.
-
-The browser API first sends `PUT /api/push/subscription` with `{ "consent": true }`
-to obtain the public VAPID key after explicit consent. It then submits
-`{ subscription, projects, preferences: { v: 1, needsInput, sessionDone } }`.
-Projects are existing local workspace IDs. Preferences snapshot the device's
-existing notification routing System column; later project/preference changes
-replace that subscription's snapshot. DELETE removes this principal's subscriptions.
-GET status reports capability, subscription state and the public key when initialized.
-
-The host keeps revocation observers active while push is dormant. Push storage loads
-only with the feature and administrator policy enabled, after all listener metadata
-and direct HTTPS origins are published. Restored devices are then revalidated;
-revoked devices are purged by the ordinary sweep. Device logout rotates a private
-registry consent epoch, including while push is dormant.
-After a successful load, any dropped entry causes one atomic rewrite of the filtered document, making credential and channel/device-epoch purges durable across restarts.
-
-Unreadable or invalid private push storage disables push alone: status reports
-`enabled: false, unavailable: true`, consent/subscription writes return 503, and
-the existing file stays untouched. Reads retry at most once every five seconds;
-repairing the file or clearing a transient file lock restores availability.
-
-Push endpoints use qualified FCM, Mozilla and Apple HTTPS hosts, validated key
-sizes and public DNS answers pinned to the connection. Redirects are refused.
-Private storage contains VAPID keys, bounded subscriptions and expiring opaque routes;
-password session bindings use a hash and are dropped at restart. Device bindings
-are revalidated at restart and dispatch. The private document binds consent to
-the authentication credential epoch, so password replacement also invalidates
-persisted consent when a purge write fails. A failed logout purge returns 503
-and retains the browser cookie for retry. Password replacement purges every
-subscription, including device subscriptions. Explicit Remote Control Stop purges
-tunnel subscriptions and rotates their durable registry epoch; transient tunnel loss
-suspends them. Direct HTTPS devices
-retain their independent origin binding.
-
-Local permission/question and root-conversation completion events use the existing
-instance-event bus. Qualification starts only for live, opted-in subscriptions;
-registered-only event worktree inventory keeps it on existing connections.
-Authoritative unavailable session/status reads abandon delivery. Opaque-route
-resolution revalidates the session's current project ownership.
-Payloads contain only version, generic title/body, random notification ID, opaque
-route and expiry; endpoint or payload failures retain silent, bounded delivery.
-
-Where the tunnel is blocked but a direct HTTPS deployment exists (a TLS-terminating reverse proxy with a real certificate, or the backend's own HTTPS listener), browsers pair and authenticate as devices on that origin. Plain-HTTP and loopback pages stay password-only.
+Where the tunnel is blocked but a direct HTTPS deployment exists (a TLS-terminating reverse proxy with a real certificate, or the backend's own HTTPS listener), browsers and saved servers pair and authenticate as devices on that origin. Plain-HTTP and loopback pages stay password-only.
 
 - **Verified direct HTTPS origins** (`remote-control/direct-https.ts` `verifiedHttpsOrigins()`) are the `https:` origins the direct listener already trusts for mutations: the advertised `localUrl`, `remoteUrl` and reachable addresses, plus `CODENOMAD_ALLOWED_ORIGINS`. Loopback (`localhost`, `*.localhost`, `127/8`, `[::1]`, mapped IPv4 loopback) and unspecified hosts never qualify, nor do the UI development origin and same-origin loopback aliases. Removing an origin from the configuration ends its devices' authority at the next request.
-- `verifiedDirectHttpsOrigin()` is the only request predicate. It never accepts an ingress socket. Unsafe methods need their own `Origin`; safe methods use `Origin`, else the `Referer` origin, else the targeted `Host` as `https`, because same-origin navigations and fetches send neither header. Opaque (`null`), empty, `http:` and unlisted values give null. The listener's transport is deliberately ignored: behind a TLS-terminating proxy the request reaches a plain-HTTP socket, so the configured public origin, which the proxy forwards in `Host`/`Origin`, is the evidence. Browsers send the `Secure`, host-only `__Host-` cookie only over TLS to the host that received it, and pairing sets it only in response to a verified origin. The proxy must forward the public `Host` and `Origin` and reach the backend over loopback or a protected hop.
+- `verifiedDirectHttpsOrigin()` checks browser provenance. It never accepts an ingress socket. Unsafe methods need their own `Origin`; safe methods use `Origin`, else the `Referer` origin, else the targeted `Host` as `https`, because same-origin navigations and fetches send neither header. Opaque (`null`), empty, `http:` and unlisted values give null. The listener's transport is deliberately ignored: behind a TLS-terminating proxy the request reaches a plain-HTTP socket, so the configured public origin, which the proxy forwards in `Host`/`Origin`, is the evidence. Browsers send the `Secure`, host-only `__Host-` cookie only over TLS to the host that received it, and pairing sets it only in response to a verified origin. The proxy must forward the public `Host` and `Origin` and reach the backend over loopback or a protected hop.
 - `gate.ts` `gateDirectHttpsDevice()` judges a direct request carrying the device cookie only on a verified origin; elsewhere the cookie is ignored and password rules apply unchanged. Pairing paths and `/previews/<token>/…` capability paths pass through untouched. A valid device of that origin (`registry.authenticate(token, origin)`) is attached with `attachRemoteDevice()`, so `isRemoteRequest()`, `isLocalRequest()` and the auth manager treat it like an ingress device: no loopback privileges, even through a proxy on loopback; host-only paths return 404 except for the reviewed authenticated UI catalog under `multiBackend`; forwarding headers are stripped. `isDirectHttpsDeviceRequest()` marks it separately; the direct origin policy uses it to keep the direct listener's CORS origins instead of the tunnel origin. An invalid, revoked, expired or other-channel credential marks the request refused (`isRefusedDeviceRequest()`): the auth manager returns no session, so it never falls back to a password session or skipped authentication; `/api/auth/status` reports `pairingRequired`, the static bundle stays public, HTML navigations redirect to `/remote-pair` and everything else gets 401.
 - The host creates a link with `POST /api/remote-control/pairings` and body `{ "origin": "https://…" }` (host-only; 409 for an unverified origin). `GET /api/remote-control/status` lists `directOrigins` for local requests only, and Remote Access settings offer **Direct HTTPS pairing** in the Remote Control card, with a native select when several origins exist; the tunnel need not run. The direct exchange requires its own verified `Origin`, redeems only that origin's code, counts failures in the backend-wide bucket shared with server pairing (a valid code is checked first) and sets the same `__Host-codenomad_device` cookie. The direct listener's host-only hook admits `/api/remote-control/pair` only on a verified origin. The pairing page refuses to post a code from a non-`https:` page.
 - Direct devices are independent of the tunnel: Stop, tunnel failure and resume neither cancel their codes nor close their sockets (`directDeviceSockets` in `manager.ts`). Revocation, eviction at the device limit and shutdown destroy them. `isDeviceAuthorized()` accepts a direct device while its origin remains verified, so Missions human-answer and recurrence proofs keep working. The inventory exposes `origin` for direct devices; Settings labels each device with its HTTPS origin or Remote Control.
-- `verifiedDirectHttpsOrigin()` and the explicit server-device protocol stay separate: `X-CodeNomad-Server-Request: 1` keeps its tunnel-bound admission and catalog, and a tunnel device's credential is refused on direct HTTPS origins as a direct device's is on the ingress.
+- `verifiedDirectHttpsOrigin()` and the explicit server-device protocol stay separate: `X-CodeNomad-Server-Request: 1` uses the same closed catalog on either channel. Direct server requests carry no browser context and match the credential to the verified HTTPS Host.
 
 ### Isolated remote preview capabilities
 
-See [Browser Automation](BROWSER_AUTOMATION.md#remote-preview-content-transport)
-for capability APIs, exclusive content origins, sandbox/resource policy,
-revocation, original-client cleanup, logical history and service-worker refusal.
+The [Browser Automation contract](BROWSER_AUTOMATION.md#remote-preview-content-transport) defines capability APIs and lifetime.
 Local management requires the host's local-origin guard and current relay proof;
 ingress content follows Remote Control's **Web previews** switch. Remote clients
 receive host path capabilities instead, bound to their principal, channel and
@@ -329,6 +276,9 @@ their private lifetimes and bindings; a local relay operation leaves the Remote
 Control administrator policy unchanged.
 
 ## Direct listener origins and password sessions
+
+The password session cookie persists for seven days across browser restarts.
+The backend enforces idle and absolute deadlines and revokes the session on sign-out.
 
 The direct listener grants credentialed CORS to its advertised local and remote
 origins, reachable interface addresses and explicit `CODENOMAD_ALLOWED_ORIGINS`.
@@ -379,8 +329,38 @@ password change revokes every session for that user, including the caller.
 A failed password change preserves the existing sessions. Remote Control device
 credentials follow their separate registry lifetime and revocation rules.
 
+- Desktop remote windows delegate [device-engine dictation](DESKTOP_SPEECH.md#remote-server-windows)
+   to the client without sending capture audio through the tunnel. Paired
+   browsers can use the configured API path.
+
+### Live voice upgrades
+
+- `/api/speech/conversation/live?engine=…` accepts only the canonical URL
+  for Gemini Live or OpenAI Realtime. It requires an exact secure-context
+  `Origin` (HTTPS or loopback HTTP). The direct listener uses its normal
+  origin policy and password session; when direct authentication is explicitly
+  disabled, voice is limited to loopback peers and loopback origins. Opaque
+  documents and preview capability hosts cannot upgrade. Logout, password
+  changes, session expiry and listener shutdown terminate those connections.
+- Remote Control checks the exact tunnel `Host` and HTTPS `Origin`, plus its
+  paired-device cookie on every voice upgrade. It binds the socket to the
+  device, independently of the local authentication setting. The gateway's
+  single-conversation slot is keyed by paired device at this ingress and by
+  username on the direct listener. Device revocation or tunnel shutdown ends
+  voice; the preview switch affects previews alone. A failed revocation write
+  denies the device in memory and keeps its row marked as pending so the host
+  can retry Revoke. Any successful registry write also commits the removal.
+- The Tauri TLS-exception proxy accepts this one upgrade from its exact window
+  origin and checks a per-window HttpOnly credential from bootstrap. The proxy
+  connects only to that window's configured HTTPS target via the pinned DNS
+  destination guard, sending the target's origin and its rewritten login cookies.
+  It relays bounded WebSocket messages without forwarding handshake headers or
+  provider credentials. The target performs voice admission as usual. Disposing
+  the window proxy ends both streams.
+
 ## Validation
 
+- `remote-control/password-relay.test.ts` exercises HTTPS browser admission, private sign-in, folder browsing and project creation/reload against a password-protected destination on a non-loopback interface.
 - `remote-control/logs-host-only.test.ts` uses the production global-log reader
   with synthetic credentials and private paths. Remote browser/device channels
   and relays refuse before host binary discovery or upstream IO; native loopback
@@ -392,12 +372,12 @@ credentials follow their separate registry lifetime and revocation rules.
   with colliding raw IDs over ingress, a TLS reverse proxy and non-loopback LAN,
   including destination-owned Tidy up eligibility and strict mutation revisions.
 - `remote-control/security-sentinels.test.ts` scans admitted Remote Control, TLS reverse-proxy and non-loopback LAN flows over direct and injected SSH TCP-forward transports. Controlled A/B destinations exercise stored password/device identities, private SSH/TLS material, pairing tokens and relay proofs. Captured response bodies/headers, redirect failures, rejected raw targets, exposed URL carriers, persisted state and trace-level application logs are checked together. Relay proofs retain their authorized bootstrap-header/resource-query contract; every other response, state/log field and upstream request keeps them private. Rejected targets retain the fixed namespace log treatment even when path admission refuses their syntax.
-- `remote-control/remote-client-previews.test.ts` exercises remote-client path previews over RC, TLS reverse proxy and real LAN against A/B remotes with identical tokens: content, rewriting, SSE/WS, hostile and cross-channel refusals before remote IO, trace logs, and revocation by logout, password change, idle expiry, device revocation, the Web previews switch, Stop, Forget and owner deletion.
+- Remote preview coverage: [Browser Automation](BROWSER_AUTOMATION.md#focused-validation).
 - `codenomad-servers/relay-principal.test.ts` drives real HTTP streams through logout, idle/absolute session expiry, persistent password replacement, device revocation/expiry and tunnel Stop, checking bounded upstream/client closure and isolation of other principals and local-loopback authority.
 
 - `codenomad-servers/ssh-manager.test.ts` exercises private authentication restoration through the owned SSH dial, single business dispatch and stale-proof refusal before IO after SSH retargeting. Concurrent mutations, direct status reads and post-401 observations share the renewal identity gate; a changed, missing or refused identity prevents status dispatch through the replacement forward.
 
-- `codenomad-servers/review-regressions.test.ts` covers queued credentials across address/TLS changes, persisted TLS binding, cross-listener Forget, shared-owner shutdown and direct browser-pairing refusal. `remote-control/device-relay-r1.test.ts` exercises the closed route/method catalog and preserves browser pairing on the ingress.
+- `codenomad-servers/review-regressions.test.ts` covers queued credentials across address/TLS changes, persisted TLS binding, cross-listener Forget, and shared-owner shutdown. `remote-control/device-relay-admission.test.ts` exercises the closed route/method catalog and preserves browser pairing on the ingress.
 
 - `remote-surface.test.ts` drives the real `createHttpServer` through the
   ingress. It covers unpaired access, pairing, `Origin`/`Host` checks,
@@ -407,6 +387,8 @@ credentials follow their separate registry lifetime and revocation rules.
 - `remote-control/direct-https.test.ts` covers verified-origin pairing from
   loopback/LAN, channel and device scope, no credential fallback, failure limits,
   origin revocation, and socket lifetimes across Stop, revocation and eviction.
+- `speech/live-voice-gateway.test.ts` uses both simulated providers over the
+  direct listener, the Remote Control ingress and a TLS-exception window proxy.
 - `server/preview-proxy-boundary.test.ts` uses simulated DNS and local listeners
   to check refusal before upstream contact, password-enabled and skipped-auth
   previews, capability hosts, Referer fallback, SideCar HTTP and both WebSocket

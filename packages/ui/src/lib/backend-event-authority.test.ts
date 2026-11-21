@@ -22,6 +22,7 @@ import { sessions, setSessions } from "../stores/session-state"
 import type { Session } from "../types/session"
 import { reconcileSessionModel } from "../stores/session-model-reconciliation"
 import { integrationBindings } from "../stores/integrations"
+import { deferred } from "../../tests/test-support/deferred"
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve))
 function renderer(t: TestContext) {
@@ -48,16 +49,25 @@ function owner(t: TestContext) {
 const changed = { type: "workspace.worktreesChanged", workspaceId: "ws" } as const
 const emitStatus = (events: ServerEvents, status: string) => Reflect.get(events, "emitTransportStatus").call(events, status)
 
-test("detach during wildcard delivery fences remaining and typed callbacks of the old attachment", async t => {
+for (const reattach of [false, true]) test(`wildcard detach fences remaining callbacks (same-source reattachment=${reattach})`, async t => {
   const a = owner(t), bus = new BackendEvents(), seen: string[] = []
+  let first = true
   const detach = bus.attach("race", a.events)
   t.after(detach)
-  bus.on("*", () => { seen.push("wildcard"); detach() })
-  bus.on("*", () => seen.push("late-wildcard"))
-  bus.on("workspace.worktreesChanged", () => seen.push("late-typed"))
+  bus.on("*", () => {
+    seen.push("wildcard")
+    if (!first) return
+    first = false
+    detach()
+    if (reattach) t.after(bus.attach("race", a.events))
+  })
+  bus.on("*", () => seen.push("next-wildcard"))
+  bus.on("workspace.worktreesChanged", () => seen.push("typed"))
   a.events.start(); await tick()
   a.event(changed)
   assert.deepEqual(seen, ["wildcard"])
+  a.event(changed)
+  assert.deepEqual(seen, reattach ? ["wildcard", "wildcard", "next-wildcard", "typed"] : ["wildcard"])
 })
 
 test("detach during connected delivery never publishes old connected after final disconnected", t => {
@@ -196,7 +206,7 @@ test("SSE invalidation can revoke its manager before its specialized callback", 
   a.event({ type: "instance.event", instanceId: "ws", event: { id: "e", type: "session.deleted", created: 1,
     durable: { aggregateID: "s", seq: 1, version: 2 }, data: { sessionID: "s" } } })
   assert.deepEqual(seen, ["invalidate"])
-  assert.equal(manager.getStatuses().size, 0)
+  assert.equal(manager.getBackendStatuses().size, 0)
   assert.equal(sseManager.getStatus("nested~ws"), null)
 })
 
@@ -220,16 +230,19 @@ test("auth probes coalesce within an owner while another owner's cancellation st
 })
 
 test("revoking a native resync stops trailing passes without deleting a replacement's lane", async () => {
-  let release!: () => void, calls = 0
-  const wait = new Promise<void>(resolve => { release = resolve })
-  const coordinator = new TrailingResyncCoordinator(async () => { calls++; if (calls === 1) await wait }, () => assert.fail("obsolete error"))
+  const old = deferred<void>(), fresh = deferred<void>()
+  let calls = 0
+  const coordinator = new TrailingResyncCoordinator(async () => (++calls === 1 ? old : fresh).promise, () => assert.fail("obsolete error"))
   const a = new AbortController(), b = new AbortController()
-  const first = coordinator.request("ws", a.signal)
-  await tick()
-  void coordinator.request("ws", a.signal)
+  const first = coordinator.request("ws", a.signal); await tick()
+  assert.equal(coordinator.request("ws", a.signal), first)
   a.abort()
-  await coordinator.request("ws", b.signal)
-  release(); await first
+  const current = coordinator.request("ws", b.signal); await tick()
+  old.resolve(); await first
+  // The old finally must not drop B while B is still in flight.
+  const joined = coordinator.request("ws", b.signal)
+  try { assert.equal(joined, current) }
+  finally { b.abort(); fresh.resolve(); await Promise.all([current, joined]) }
   assert.equal(calls, 2)
 })
 
@@ -300,32 +313,6 @@ test("a detached terminal-session activity read cannot settle or notify the reta
   detach()
   release({}); await read
   assert.equal(sessions().get(instanceId)?.get("s")?.status, "working")
-})
-
-test("reattaching the same source inside a wildcard cannot deliver the old event to its new subscription", async t => {
-  const a = owner(t), bus = new BackendEvents(), seen: string[] = []
-  let first = true
-  const detach = bus.attach("race", a.events)
-  bus.on("*", () => {
-    seen.push("wildcard")
-    if (first) { first = false; detach(); t.after(bus.attach("race", a.events)) }
-  })
-  bus.on("workspace.worktreesChanged", () => seen.push("typed"))
-  a.events.start(); await tick()
-  a.event(changed)
-  assert.deepEqual(seen, ["wildcard"])
-  a.event(changed)
-  assert.deepEqual(seen, ["wildcard", "wildcard", "typed"])
-})
-
-test("reattachment from abort still delivers cleanup of the old token without revoking its replacement", t => {
-  const a = owner(t), b = owner(t), bus = new BackendEvents(), removed: AbortSignal[] = []
-  const detach = bus.attach("race", a.events), signal = bus.signal("race")!
-  signal.addEventListener("abort", () => { t.after(bus.attach("race", b.events)) }, { once: true })
-  bus.onDetach((_id, token) => { removed.push(token) })
-  detach()
-  assert.deepEqual(removed, [signal])
-  assert.equal(bus.signal("race")!.aborted, false)
 })
 
 test("a recovery requested synchronously from cancellation starts under its replacement authority", async () => {
@@ -442,7 +429,7 @@ test("reentrant manager replacement adopts the owner installed during old-state 
   createRoot(dispose => {
     t.after(dispose)
     createComputed(() => {
-      if (old.getStatuses().size) return
+      if (old.getBackendStatuses().size) return
       nested = getSseManager(id)
       nested.seedStatus(`${id}~ws`, "connected")
     })
@@ -451,5 +438,5 @@ test("reentrant manager replacement adopts the owner installed during old-state 
   assert.ok(nested)
   assert.equal(replacement, nested)
   assert.equal(getSseManager(id), nested)
-  assert.equal(sseManager.getStatuses().get(`${id}~ws`), "connected")
+  assert.equal(sseManager.getRawStatus(`${id}~ws`), "connected")
 })

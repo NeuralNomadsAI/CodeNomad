@@ -78,7 +78,7 @@ for (const surface of ["recovery", "settings"]) test(`${surface} shows sustained
     const progress = page.locator(".opencode-setup-progress")
     await progress.getByText("Installing OpenCode…", { exact: true }).waitFor()
     assert.equal(await progress.getByText(/Keep CodeNomad open/).count(), 1)
-    assert.equal(await progress.locator("svg.animate-spin").count(), 1)
+    assert.equal(await progress.locator(".animate-spin svg").count(), 1)
     assert.equal(await progress.evaluate(el => el.closest('[aria-busy="true"]') === null), true, "live progress must not be suppressed by a busy ancestor")
     await page.clock.fastForward(65_000)
     await progress.getByRole("timer").filter({ hasText: "1:05" }).waitFor()

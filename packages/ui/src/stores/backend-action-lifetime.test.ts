@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
 import { test } from "node:test"
 import ts from "typescript"
+import { productionModule, readSource } from "../../tests/test-support/production-ast"
+import { deferred } from "../../tests/test-support/deferred"
 import { BackendEvents } from "../lib/backend-events.ts"
 import { createSignal } from "solid-js"
 
@@ -9,21 +10,7 @@ import { createSignal } from "solid-js"
 // SDK connection, UI mount or replacement action implementation runs here.
 function production(path: string, bindings: Record<string, unknown>, expose: string[] = []) {
   if (bindings.serverApi) bindings = { ...bindings, backendOf: () => ({ api: bindings.serverApi }) }
-  const source = readFileSync(new URL(path, import.meta.url), "utf8")
-  const parsed = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true)
-  const stripped = ts.factory.updateSourceFile(parsed, parsed.statements.filter(node => !ts.isImportDeclaration(node)))
-  const code = ts.transpileModule(ts.createPrinter().printFile(stripped), {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText
-  const exports = {}
-  new Function("exports", ...Object.keys(bindings), `${code}\nObject.assign(exports, { ${expose.join(",")} })`)(exports, ...Object.values(bindings))
-  return exports as Record<string, (...args: any[]) => any>
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>(done => { resolve = done })
-  return { promise, resolve }
+  return productionModule(new URL(path, import.meta.url), bindings, expose)
 }
 
 function lifetime() {
@@ -193,7 +180,7 @@ test("transcript frames and compaction buffers never merge or publish across att
 
 test("MissionControl actor and scheduled navigation reject late hydration on an identical reattachment", async () => {
   const path = "../components/instance/shell/right-panel/tabs/MissionControl.tsx"
-  const source = ts.createSourceFile(path, readFileSync(new URL(path, import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const source = readSource(new URL(path, import.meta.url))
   const variables = (statements: ts.NodeArray<ts.Statement>) => statements.filter(ts.isVariableStatement)
     .flatMap(statement => statement.declarationList.declarations.map(declaration => ({ statement, declaration })))
   const component = variables(source.statements).find(entry => entry.declaration.name.getText(source) === "MissionControl")!.declaration.initializer as ts.ArrowFunction

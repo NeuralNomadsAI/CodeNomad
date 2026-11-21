@@ -5,7 +5,7 @@ import type { Instance } from "../types/instance.ts"
 import { attachInstanceTab } from "./app-tabs.ts"
 import { appTabs } from "./app-tabs.ts"
 import { onInstanceLifecycleAuthority, type InstanceLifecycleAuthorityEvent } from "./instance-lifecycle-authority.ts"
-import { addInstance, getExistingInstanceForFolder, instances, refreshWorkspaceList, removeInstance, updateInstance } from "./instances.ts"
+import { addInstance, getExistingInstanceForFolder, instances, refreshWorkspaceList, removeInstance, updateInstance, waitForInitialWorkspaceLoad } from "./instances.ts"
 import { captureState } from "../lib/hooks/use-app-session-capture.ts"
 import { renameProject } from "./project-names"
 import { missionProjectView, updateMissionProjectView } from "./mission-view-state"
@@ -25,6 +25,34 @@ const descriptor = (id: string): WorkspaceDescriptor => ({
 })
 
 describe("workspace lists of two backends", () => {
+  it("keeps local restore readiness independent of a pending or failed remote reconnect", async t => {
+    const localResult = () => waitForInitialWorkspaceLoad().then(() => ({}), error => ({ error }))
+    const initial = await localResult()
+    const backend = createBackendClient({ id: "remoteRefresh", baseUrl: "https://remote.invalid" })
+    ;(backends as Map<string, BackendClient>).set(backend.id, backend)
+    let open!: () => void
+    const ignore = () => () => {}
+    const detach = backendEvents.attach(backend.id, {
+      on: ignore, onDispose: ignore, onTransportStatus: ignore,
+      onOpen: callback => { open = callback; return () => {} },
+    })
+    t.after(() => { detach(); backend.events.dispose(); (backends as Map<string, BackendClient>).delete(backend.id) })
+    t.mock.method(backend.events, "connectionGuard", () => () => true)
+    let rejectRemote!: (error: Error) => void, enter!: () => void
+    const remote = new Promise<WorkspaceDescriptor[]>((_resolve, reject) => { rejectRemote = reject })
+    const entered = new Promise<void>(resolve => { enter = resolve })
+    t.mock.method(backend.api, "fetchWorkspaces", async () => { enter(); return remote })
+    open()
+    await entered
+    try {
+      assert.deepEqual(await Promise.race([localResult(), new Promise(resolve => setImmediate(resolve, "blocked"))]), initial)
+    } finally {
+      rejectRemote(new Error("remote inventory failed"))
+    }
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(await localResult(), initial)
+  })
+
   it("reconciles cold and loaded environment from the workspace's own backend", async t => {
     let release!: () => void
     const loading = new Promise<void>(resolve => { release = resolve })

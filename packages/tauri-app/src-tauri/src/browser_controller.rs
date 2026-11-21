@@ -480,19 +480,6 @@ impl BrowserController {
             }
             return bounded_history(result);
         }
-        if input.action == "navigate" {
-            let url = allowed_url(
-                input
-                    .url
-                    .as_deref()
-                    .ok_or("Browser navigation URL is required")?,
-            )?;
-            self.embedded_views.configure_browser_presentation(
-                &webview,
-                &url,
-                input.logical_address.as_deref(),
-            )?;
-        }
         match input.action.as_str() {
             "emulate" => self.emulate(app, window_label, &input),
             "back" => webview
@@ -502,13 +489,26 @@ impl BrowserController {
                 .reload()
                 .map_err(|error| preview_error("reload document", error)),
             "navigate" => webview
-                .navigate(allowed_url(input.url.as_deref().ok_or_else(|| {
-                    "Browser navigation URL is required".to_string()
-                })?)?)
+                .navigate(self.navigation_url(&webview, &input)?)
                 .map_err(|error| preview_error("navigate document", error)),
             _ => Err("Unsupported browser target action".to_string()),
         }
         .map(|()| Value::Null)
+    }
+
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    fn navigation_url(
+        &self,
+        webview: &tauri::Webview,
+        input: &BrowserTargetAction,
+    ) -> Result<tauri::Url, String> {
+        let url = allowed_url(input.url.as_deref().ok_or("Browser navigation URL is required")?)?;
+        self.embedded_views.configure_browser_presentation(
+            webview,
+            &url,
+            input.logical_address.as_deref(),
+        )?;
+        Ok(url)
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -541,19 +541,6 @@ impl BrowserController {
         let webview = app
             .get_webview(&registration.webview_label)
             .ok_or("Browser preview is no longer available")?;
-        if input.action == "navigate" {
-            let url = allowed_url(
-                input
-                    .url
-                    .as_deref()
-                    .ok_or("Browser navigation URL is required")?,
-            )?;
-            self.embedded_views.configure_browser_presentation(
-                &webview,
-                &url,
-                input.logical_address.as_deref(),
-            )?;
-        }
         match input.action.as_str() {
             "emulate" => self
                 .emulate(app, window_label, &input)
@@ -574,12 +561,7 @@ impl BrowserController {
                 .map(|()| Value::Null)
                 .map_err(|error| error.to_string()),
             "navigate" => webview
-                .navigate(allowed_url(
-                    input
-                        .url
-                        .as_deref()
-                        .ok_or("Browser navigation URL is required")?,
-                )?)
+                .navigate(self.navigation_url(&webview, &input)?)
                 .map(|()| Value::Null)
                 .map_err(|error| error.to_string()),
             _ => Err("Unsupported browser target action".into()),
