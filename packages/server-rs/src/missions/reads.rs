@@ -338,10 +338,10 @@ pub async fn content(
             "digest" if digest(&value) => input[key] = json!(value),
             "offset" | "change" if value.len() <= 15 => {
                 input[key] = json!(
-                    value.parse::<u64>().map_err(|_| bad("Invalid mission content selector"))?
+                    value.parse::<u64>().map_err(|_| bad("Invalid mission content request"))?
                 )
             }
-            _ => return Err(bad("Invalid mission content selector")),
+            _ => return Err(bad("Invalid mission content request")),
         }
     }
     if input["kind"].is_null()
@@ -349,7 +349,7 @@ pub async fn content(
         || input["offset"].is_null()
         || input["offset"] != 0 && input["digest"].is_null()
     {
-        return Err(bad("Invalid mission content selector"));
+        return Err(bad("Invalid mission content request"));
     }
     Ok(read(app, id, "content", input, 512 * 1024).await)
 }
@@ -368,7 +368,7 @@ pub async fn tasks(
             "order" if digest(&value) => input[key] = json!(value),
             "offset" | "attention" if value.len() <= 15 => {
                 input[key] =
-                    json!(value.parse::<u64>().map_err(|_| bad("Invalid mission task selector"))?)
+                    json!(value.parse::<u64>().map_err(|_| bad("Invalid mission task request"))?)
             }
             "keys" | "ids" | "reports" => {
                 let items = value.split(',').filter(|v| !v.is_empty()).collect::<Vec<_>>();
@@ -376,11 +376,11 @@ pub async fn tasks(
                 if names > 50
                     || items.iter().any(|v| !valid(v, if key == "keys" { 64 } else { 240 }))
                 {
-                    return Err(bad("Invalid mission task selector"));
+                    return Err(bad("Invalid mission task request"));
                 }
                 input[if key == "reports" { "reportIds".into() } else { key }] = json!(items);
             }
-            _ => return Err(bad("Invalid mission task selector")),
+            _ => return Err(bad("Invalid mission task request")),
         }
     }
     let named = ["keys", "ids", "reportIds"].iter().any(|key| input.get(key).is_some());
