@@ -126,8 +126,17 @@ describe("DeveloperCdp", () => {
     chrome.context.windowInstance = "current"
     const client = chrome.client({ connect: (url: string) => url.endsWith("/stalled") ? stalled.connect(url) : chrome.connect(url) })
     try {
-      assert.equal((await client.probeContexts(identity.endpoint, new Set([identity.windowId]))).size, 1)
-      chrome.targets = [chrome.target]
+      const windows = new Map([[identity.windowId, "current"]])
+      assert.equal((await client.probeContexts(identity.endpoint, windows)).size, 1)
+      const retired = new FakeChrome()
+      retired.target = page("retired")
+      retired.context.windowInstance = "retired"
+      const reopened = chrome.client({ connect: (url: string) => url.endsWith("/retired") ? retired.connect(url) : chrome.connect(url) })
+      chrome.targets = [retired.target, chrome.target]
+      try {
+        assert.equal((await reopened.probeContexts(identity.endpoint, windows)).get(identity.windowId)?.windowInstance, "current")
+      } finally { reopened.close() }
+      chrome.targets = [stalled.target, chrome.target]
       await assert.rejects(client.inspect({ ...identity, windowInstance: "retired" }), /No CodeNomad page matches/)
       assert.ok(chrome.commands.every(command => command.method !== "Accessibility.getFullAXTree"))
       assert.equal((await client.inspect({ ...identity, windowInstance: "current" })).context.windowId, identity.windowId)

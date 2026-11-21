@@ -14,20 +14,19 @@ const DISCOVERY_TEXT_LIMIT = 256 * 1024
 const DISCOVERY_TARGET_LIMIT = 64
 const DISCOVERY_PROBE_CONCURRENCY = 4
 const INVENTORY_PAGE_MS = 250
-const CONTEXT_EXPRESSION = `(() => {
+const CONTEXT_FUNCTION = `(session) => {
   const root = document.querySelector('[data-tab-visible="true"][data-instance-id]');
   const pane = root?.querySelector('.session-cache-pane[data-session-active="true"][data-session-id]');
-  const localTabs = Array.from(document.querySelectorAll('[data-tab-id][data-instance-id]'))
-    .filter(tab => !tab.getAttribute('data-instance-id').includes('~')).slice(0, 64);
   return {
     windowId: window.__CODENOMAD_WINDOW_ID__ ?? null,
     windowInstance: window.__CODENOMAD_WINDOW_INSTANCE__ ?? null,
     instanceId: root?.getAttribute('data-instance-id') ?? null,
     sessionId: pane?.getAttribute('data-session-id') ?? null,
     tabId: root?.getAttribute('data-tab-id') ?? null,
-    localSessions: localTabs.map(tab => tab.getAttribute('data-tab-session-id')).filter(Boolean),
+    sessionOpen: session !== null && Array.prototype.some.call(document.querySelectorAll('[data-tab-id][data-instance-id]'),
+      tab => tab.getAttribute('data-tab-session-id') === session && !tab.getAttribute('data-instance-id').includes('~')),
   };
-})()`
+}`
 
 export interface DeveloperCdpSelection {
   endpoint: string
@@ -48,7 +47,7 @@ export interface DeveloperCdpContext {
   instanceId: string | null
   sessionId: string | null
   tabId?: string | null
-  localSessions?: string[]
+  sessionOpen?: boolean
 }
 
 export interface DeveloperCdpDiagnostic {
@@ -227,15 +226,18 @@ export class DeveloperCdp {
     return this.exclusive(selection.runId, async () => (await this.ensure(selection)).context!)
   }
 
-  async probeContexts(endpoint: string, windowIds: ReadonlySet<string>): Promise<Map<string, DeveloperCdpContext>> {
+  async probeContexts(endpoint: string, windowIds: ReadonlyMap<string, string | undefined>,
+    sessionID?: string): Promise<Map<string, DeveloperCdpContext>> {
     const source = discoveryUrl(endpoint)
     const pages = await this.listTargets(source)
     const found = new Map<string, DeveloperCdpContext>(), ambiguous = new Set<string>()
     for (let index = 0; index < pages.length; index += DISCOVERY_PROBE_CONCURRENCY) {
       const contexts = await Promise.all(pages.slice(index, index + DISCOVERY_PROBE_CONCURRENCY).map(target =>
-        this.probePage(source, target, Math.min(this.dependencies.timeoutMs, INVENTORY_PAGE_MS))))
+        this.probePage(source, target, Math.min(this.dependencies.timeoutMs, INVENTORY_PAGE_MS), sessionID)))
       for (const context of contexts) {
         if (!context || !windowIds.has(context.windowId) || ambiguous.has(context.windowId)) continue
+        const expected = windowIds.get(context.windowId)
+        if (expected && expected !== context.windowInstance) continue
         if (found.has(context.windowId)) {
           found.delete(context.windowId)
           ambiguous.add(context.windowId)
@@ -245,7 +247,7 @@ export class DeveloperCdp {
     return found
   }
 
-  private publicContext({ localSessions: _localSessions, ...context }: DeveloperCdpContext): DeveloperCdpContext {
+  private publicContext({ sessionOpen: _sessionOpen, ...context }: DeveloperCdpContext): DeveloperCdpContext {
     return context
   }
 
@@ -304,7 +306,7 @@ export class DeveloperCdp {
     let candidates: unknown
     try { candidates = JSON.parse(text) } catch { throw new Error("Chrome target discovery returned invalid JSON") }
     if (!Array.isArray(candidates)) throw new Error("Chrome target discovery returned invalid JSON")
-    return candidates.slice(0, DISCOVERY_TARGET_LIMIT).filter(isTarget).filter((target) => target.type === "page")
+    return candidates.filter(isTarget).filter((target) => target.type === "page").slice(0, DISCOVERY_TARGET_LIMIT)
   }
 
   private async ensureTarget(state: RunState): Promise<RunState> {
@@ -335,7 +337,7 @@ export class DeveloperCdp {
     const matches: CdpTarget[] = []
     for (let index = 0; index < targets.length && matches.length < 2; index += DISCOVERY_PROBE_CONCURRENCY) {
       const batch = await Promise.all(targets.slice(index, index + DISCOVERY_PROBE_CONCURRENCY).map(async (target) => {
-        const context = await this.probePage(state.endpoint, target)
+        const context = await this.probePage(state.endpoint, target, Math.min(this.dependencies.timeoutMs, INVENTORY_PAGE_MS))
         return context && this.matchesContext(state, context) ? target : undefined
       }))
       matches.push(...batch.filter((target): target is CdpTarget => Boolean(target)))
@@ -345,12 +347,13 @@ export class DeveloperCdp {
     return matches[0]
   }
 
-  private async probePage(endpoint: string, target: CdpTarget, timeoutMs = this.dependencies.timeoutMs): Promise<DeveloperCdpContext | undefined> {
+  private async probePage(endpoint: string, target: CdpTarget, timeoutMs = this.dependencies.timeoutMs,
+    sessionID?: string): Promise<DeveloperCdpContext | undefined> {
     const probe = this.newState(endpoint, "")
     const deadline = Date.now() + timeoutMs
     try {
       await this.connect(probe, target, false, timeoutMs)
-      return await this.readContext(probe, Math.max(1, deadline - Date.now()))
+      return await this.readContext(probe, Math.max(1, deadline - Date.now()), sessionID)
     } catch {
       return undefined
     } finally {
@@ -358,9 +361,9 @@ export class DeveloperCdp {
     }
   }
 
-  private async readContext(state: RunState, timeoutMs?: number): Promise<DeveloperCdpContext> {
+  private async readContext(state: RunState, timeoutMs?: number, sessionID?: string): Promise<DeveloperCdpContext> {
     const response = await this.command(state, "Runtime.evaluate", {
-      expression: CONTEXT_EXPRESSION,
+      expression: `(${CONTEXT_FUNCTION})(${JSON.stringify(sessionID ?? null)})`,
       returnByValue: true,
     }, timeoutMs)
     const value = (response.result as { value?: unknown } | undefined)?.value as Partial<DeveloperCdpContext> | undefined
@@ -369,11 +372,9 @@ export class DeveloperCdp {
       || !optionalId(value.instanceId) || !optionalId(value.sessionId)) {
       throw new Error("CodeNomad page has no valid window context")
     }
-    const localSessions = Array.isArray(value.localSessions)
-      ? value.localSessions.slice(0, 64).filter((id): id is string => typeof id === "string" && id.length <= 256) : undefined
     return { windowId: value.windowId, instanceId: value.instanceId!, sessionId: value.sessionId!,
       ...(typeof value.windowInstance === "string" && optionalId(value.windowInstance) ? { windowInstance: value.windowInstance } : {}),
-      ...(optionalId(value.tabId) ? { tabId: value.tabId } : {}), ...(localSessions ? { localSessions } : {}) }
+      ...(optionalId(value.tabId) ? { tabId: value.tabId } : {}), ...(value.sessionOpen === true ? { sessionOpen: true } : {}) }
   }
 
   private matchesContext(state: RunState, context: DeveloperCdpContext): boolean {

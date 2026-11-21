@@ -313,14 +313,15 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       if (inventory) {
         const local = (native.windows ?? []).slice(0, 16)
         try {
-          const contexts = await deps.developerCdp.probeContexts(selection.endpoint, new Set(local.map(window => window.windowId)))
+          const contexts = await deps.developerCdp.probeContexts(selection.endpoint,
+            new Map(local.map(window => [window.windowId, window.windowInstance])), body.sessionID)
           const windows = local.flatMap(window => {
             const context = contexts.get(window.windowId)
             if (!context || window.windowInstance && context.windowInstance !== window.windowInstance) return []
             const visible = context.sessionId === body.sessionID && !context.instanceId?.includes("~")
             return [{ windowId: context.windowId, focused: window.focused === true,
               ...(window.windowInstance ? { windowInstance: window.windowInstance } : {}),
-              session: visible ? "visible" : context.localSessions?.includes(body.sessionID as string) ? "open" : "elsewhere",
+              session: visible ? "visible" : context.sessionOpen ? "open" : "elsewhere",
               ...(visible && context.tabId ? { tabId: context.tabId } : {}) }]
           })
           return reply.send({ result: { ...selected, windows } })

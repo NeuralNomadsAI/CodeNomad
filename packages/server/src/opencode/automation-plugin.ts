@@ -930,8 +930,12 @@ export function createDeveloperToolTransform() {
         }
         const command = parseDeveloperAction({ ...value, action: "inspect" })
         const session = tool.sessionID
-        if (value.targets === true || value.ref !== undefined) {
-          return executeDeveloperTool(inspectedTargets, session, command, { inventory: value.targets === true })
+        if (value.targets === true) return executeDeveloperTool(inspectedTargets, session, command, { inventory: true })
+        if (value.ref !== undefined) {
+          const before = inspectedTargets.get(session)
+          const inspection = await executeDeveloperTool(inspectedTargets, session, command)
+          if (inspectedTargets.get(session) !== before) throw targetError("stale-inspection", "A newer inspection selected the window")
+          return inspection
         }
         return selectWindow(session, command, selector)
       },
