@@ -30,13 +30,13 @@ URL.createObjectURL = blob => { const url = create(blob); created.push({ url, ty
 const client = createBackendClient({ id: "security", baseUrl: "https://media.example.invalid", fetcher: async () => {
   backendCalls++
   const blob = new Blob([body], { type: declared })
-  const arrayBuffer = blob.arrayBuffer.bind(blob)
-  blob.arrayBuffer = async () => {
+  const response = new Response(blob, { headers: { "Content-Type": declared, "Content-Security-Policy": "sandbox; default-src 'none'" } })
+  const arrayBuffer = response.arrayBuffer.bind(response)
+  response.arrayBuffer = async () => {
+    transferred++
     if (holdSignature) await new Promise<void>(resolve => pending.push(resolve))
     return arrayBuffer()
   }
-  const response = new Response(null, { headers: { "Content-Type": declared, "Content-Security-Policy": "sandbox; default-src 'none'" } })
-  response.blob = async () => { transferred++; return blob }
   return response
 } })
 ;(backends as Map<string, BackendClient>).set("security", client)

@@ -93,13 +93,13 @@ Si un cliente muestra una advertencia de certificado, detente y comprueba el nom
 
 ## Guardar un servidor remoto {#saved-servers}
 
-Los clientes remotos autenticados pueden usar y administrar todos los servidores guardados en el anfitrión; el inicio y **Configuración → Servidores** muestran las acciones permitidas por las capacidades del anfitrión. HTTP sin cifrar en la LAN desactiva la entrada de nuevas contraseñas de servidor y enlaces de vinculación: «Usa HTTPS o Control remoto para introducir credenciales.» Las conexiones con credenciales guardadas y la adición, edición o eliminación de perfiles sin secretos siguen disponibles.
+Los clientes remotos autenticados pueden usar y administrar los mismos servidores guardados que los clientes locales. Introducir una nueva contraseña de servidor o un enlace de emparejamiento requiere HTTPS o Control remoto.
 
-Abre **Configuración → Servidores**: pega una dirección o enlace de vinculación en **Dirección o enlace del servidor**, o pulsa Intro. Añadir guarda un perfil en el anfitrión sin abrir un proyecto. **Editar servidor** cambia la **URL** o el **Nombre** opcional; renombrar con la misma URL y política TLS funciona sin conexión. Tras confirmar, **Eliminar** cierra las pestañas de ese servidor en esta ventana y quita sus accesos recientes. Los proyectos y las conversaciones siguen en el servidor.
+En **Configuración → Servidores**, pega una dirección o enlace de emparejamiento en **Dirección o enlace del servidor**, o escríbelo y pulsa Intro. Esto guarda el servidor sin abrir un proyecto. **Editar servidor** cambia la **URL** o el **Nombre** opcional; renombrar con la misma URL y política TLS funciona sin conexión. Tras confirmar, **Eliminar** cierra las pestañas de ese servidor en esta ventana y quita sus accesos recientes. Para los proyectos temporales, elige **Conservar** o **Descartar**; **Descartar** borra sus archivos y conversaciones. Los demás proyectos y conversaciones siguen en el servidor.
 
 El anfitrión de CodeNomad necesita OpenSSH y CodeNomad ya debe estar en ejecución en el destino. En **Configuración → Servidores**, elige **Añadir servidor SSH**. Introduce la **URL** de CodeNomad vista desde el host SSH, el **Host SSH (opcional)** o alias y pulsa **Guardar**. El perfil se guarda sin conexión. OpenSSH requiere autenticación por clave y una clave de host verificada en `known_hosts`. Inicia sesión en CodeNomad en ese servidor; se comprueban los certificados HTTPS.
 
-**Omitir la verificación TLS** aparece tras un fallo de certificado para esa dirección; cambiar la dirección borra el consentimiento. La vinculación siempre verifica TLS.
+El editor del servidor tiene la casilla **Omitir la verificación TLS**. El campo **Dirección o enlace del servidor** solo ofrece esta opción tras un fallo de certificado para esa dirección; cambiar la dirección borra la elección. El emparejamiento siempre verifica TLS.
 
 Solo si `multiBackend` está en `false`, usa el flujo de ventanas de escritorio separadas que se indica a continuación:
 
@@ -117,8 +117,8 @@ En Inicio o en una pestaña nueva, elige **Explorar** y selecciona un servidor. 
 
 Los proyectos locales y remotos comparten ventana. **Pestañas recientes** muestra los accesos directos del servidor seleccionado mientras exploras. Los proyectos abiertos aquí conservan el icono y el nombre del servidor en la lista mixta. [Restaurar pestañas remotas](projects.md#restore-remote-tabs).
 
-En **Configuración → Servidores**, **Abrir** selecciona el servidor en **Explorar** y reutiliza la pestaña vacía si existe. Se mantienen las opciones de cierre de pestañas temporales.
+En **Configuración → Servidores**, **Abrir** selecciona el servidor en **Explorar** y reutiliza la pestaña vacía si existe.
 
 ### `--connect-server` {#connect-server}
 
-Este comando abre una ventana remota independiente. Si CodeNomad ya se está ejecutando, su ventana local gestiona la solicitud. Para abrir un servidor guardado directamente desde la línea de comandos, inicia la aplicación de escritorio con `--connect-server <nombre>` (o `--connect-server=<nombre>`), usando el nombre guardado del servidor o su URL `https://`. Una URL que no coincide con ningún servidor guardado se guarda con su nombre de host. Los valores de inicio nunca llevan credenciales: se rechaza una URL con nombre de usuario, contraseña o código de emparejamiento. En Windows, la compilación Tauri no se inicia si un argumento de inicio contiene `|`; usa en su lugar la URL del servidor o cambia el nombre del servidor.
+`--connect-server <name-or-url>` abre una ventana remota independiente, sea cual sea el valor de `multiBackend`. Usa un nombre o ID guardado, o una URL HTTP(S). Las URL nuevas se guardan con su nombre de host. La URL de inicio no puede incluir usuario, contraseña ni código de emparejamiento. Consulta la [tabla de argumentos de escritorio](desktop.md#desktop-cli) para ver la sintaxis y cómo abrir solo la ventana remota.

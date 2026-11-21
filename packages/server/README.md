@@ -255,7 +255,7 @@ Closing a project tab deletes its logical CodeNomad workspace record without evi
 
 ### Server Metadata
 
-`GET /api/meta` reports the persisted installation identity (`serverId`), API contract version (`apiContract`) and implemented route families (`capabilities`). Registry admission requires an exact contract match and a stable identity. Keep the identity claim with the config; see the [metadata contract](../../dev-docs/architecture.md#server-metadata-contract) for initialization and repair.
+`GET /api/meta` reports the API contract version (`apiContract`), implemented route families (`capabilities`) and `serverId` when a stable installation identity exists. Registry admission requires an exact contract match and a stable identity. Keep the identity claim with the config; see the [metadata contract](../../dev-docs/architecture.md#server-metadata-contract) for initialization and repair.
 
 ### Event Delivery
 

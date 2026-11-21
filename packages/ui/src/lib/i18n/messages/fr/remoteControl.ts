@@ -15,7 +15,7 @@ export const remoteControlMessages = {
   "remoteControl.newLink": "Créer un nouveau lien d’appairage",
   "remoteControl.stop": "Arrêter le contrôle à distance",
   "remoteControl.previews.title": "Aperçus web",
-  "remoteControl.previews.caption": "Les appareils appairés peuvent ouvrir l’aperçu web. Chaque adresse d’aperçu ouvre sa page sans appairage : gardez-la privée.",
+  "remoteControl.previews.info": "Gardez les adresses d’aperçu privées.",
   "remoteControl.pairing.title": "Connecter un autre appareil",
   "remoteControl.pairing.description": "Scannez ce QR code ou ouvrez le lien à usage unique sur l’autre appareil.",
   "remoteControl.pairing.qrAlt": "QR code d’appairage du contrôle à distance",

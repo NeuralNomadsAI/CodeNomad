@@ -15,7 +15,7 @@ export const remoteControlMessages = {
   "remoteControl.newLink": "Neuen Kopplungslink erstellen",
   "remoteControl.stop": "Fernsteuerung beenden",
   "remoteControl.previews.title": "Web-Vorschauen",
-  "remoteControl.previews.caption": "Gekoppelte Geräte können die Web-Vorschau öffnen. Jede Vorschauadresse öffnet ihre Seite ohne Kopplung, halte sie daher privat.",
+  "remoteControl.previews.info": "Halten Sie Vorschauadressen privat.",
   "remoteControl.pairing.title": "Weiteres Gerät verbinden",
   "remoteControl.pairing.description": "QR-Code scannen oder den einmaligen Link auf dem anderen Gerät öffnen.",
   "remoteControl.pairing.qrAlt": "QR-Code zur Kopplung der Fernsteuerung",

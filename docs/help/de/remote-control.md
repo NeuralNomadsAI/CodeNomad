@@ -27,7 +27,7 @@ Für den Link gelten dieselben Regeln (fünf Minuten, einmalig); er ersetzt jede
 
 Ein solches Gerät verbindet sich nur über seine HTTPS-Adresse, nie über den Tunnel, und **Gekoppelte Geräte** zeigt diese Adresse unter seinem Namen. Das Beenden der Fernsteuerung storniert den Link nicht und trennt diese Geräte nicht; **Widerrufen**, 30 Tage ohne Nutzung, das Limit von 32 Geräten oder das Entfernen der Adresse aus der Konfiguration beenden ihren Zugriff. Ein Browser mit widerrufenen oder abgelaufenen Gerätezugangsdaten für diese Adresse kann nicht auf das Serverpasswort ausweichen: Koppeln Sie erneut oder löschen Sie die Websitedaten, um sich mit dem Passwort anzumelden.
 
-Diese Geräte haben dieselbe [Oberfläche](#remote-surface) wie Tunnel-Geräte und erhalten nie Loopback-Rechte, auch nicht über einen Proxy auf dem Host.
+Siehe [verfügbare Funktionen](#remote-surface), einschließlich der direkten HTTPS-Ausnahme für SideCar-Inhalte. Die Kopplung erteilt keine Loopback-Rechte, auch nicht über einen Proxy auf dem Host.
 
 ## Gekoppelte Geräte verwalten {#paired-devices}
 
@@ -44,7 +44,7 @@ Eine Änderung des Direktzugriffspassworts widerruft Geräte **nicht**. **Fernst
 ### Ohne Positionsverlust erneut koppeln {#re-pair}
 
 1. Zeigt der Client **Dieses Gerät erneut koppeln**, lassen Sie diese Seite offen.
-2. Wählen Sie auf dem Host **Neuen Kopplungslink erstellen** und öffnen Sie ihn im **selben Client-Browser/-Profil**. Für ein separates Remote-Fenster verwendet ein neuer Link dessen vorhandenen Speicher.
+2. Erstellen Sie auf dem Host einen Link für die ursprüngliche Verbindung: **Neuen Kopplungslink erstellen** für den Tunnel oder unter **Direkte HTTPS-Kopplung** die ursprüngliche **HTTPS-Adresse** wählen und dann **HTTPS-Kopplungslink erstellen**. Öffnen Sie den Link im **selben Client-Browser/-Profil**. Ein separates Remote-Fenster verwendet seinen vorhandenen Speicher.
 3. Kehren Sie zur wartenden Seite zurück und wählen Sie **Verbindung prüfen**; sie prüft auch erneut, wenn die Seite wieder den Fokus erhält.
 
 Die Wiederherstellung bewahrt die geöffnete Seite und Entwürfe; sie wiederholt keine fehlgeschlagene Aktion. Prüfen Sie vor Wiederholung, ob Senden, Antworten oder Löschen wirksam war. Ein Direktzugriffspasswort kann die Fernsteuerungskopplung nicht wiederherstellen.
@@ -72,7 +72,8 @@ Gekoppelte Geräte können normale Projekt-/Unterhaltungs-APIs verwenden, Prompt
 | Fernsteuerungsstatus | Für gekoppelte Geräte lesbar; Verwaltung nicht verfügbar. Start/Stop, Kopplungserstellung, Geräteliste und Widerruf bleiben auf dem Host-Zugriffsweg. |
 | Gespeicherte Server und Backend-Relay | Authentifizierte Remote-Clients können alle Host-Server nutzen/verwalten, wenn Funktion und Host-Fähigkeiten dies erlauben. Neue Serverpasswörter/Kopplungslinks erfordern Fernsteuerung oder HTTPS statt unverschlüsseltem LAN-HTTP. Siehe [gespeicherte Server](remote-access.md#saved-servers). |
 | Desktop-Remote-Fenster und Fenster-Proxy | Nur auf dem Host (`/api/remote-proxy/`). |
-| SideCar-**Inhaltsproxy** | Erfordert Loopback (`/sidecars/`), ebenso wie SideCar-WebSockets. Die Registrierungs-APIs `/api/sidecars` sind für gekoppelte Geräte und authentifizierte direkte LAN-Clients verfügbar. |
+| SideCar-Inhalte und WebSockets (`/sidecars/`) | Über den Tunnel nicht verfügbar. Nutzen Sie Loopback oder aktivieren Sie den [direkten HTTPS-Zugriff auf SideCars](browser-sidecars.md#register-sidecar) auf dem Host. |
+| SideCar-Registrierung (`/api/sidecars`) | Für gekoppelte Geräte und authentifizierte direkt verbundene Clients verfügbar. |
 | Inhalt der Web-Vorschau | [Sitzungsbrowser öffnen](browser-sidecars.md#session-browser) |
 | Automatisierungsbrücke | Nicht verfügbar (`/api/opencode-plugin/`). Native Desktop-Fähigkeiten werden nicht zu Browserfähigkeiten. |
 | WebSocket-Upgrades | Für Web-Vorschauen und auf gekoppelten Geräten für [Live-Sprachgespräche](voice.md#conversation) verfügbar. |
