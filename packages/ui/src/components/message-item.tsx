@@ -10,7 +10,7 @@ import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { backendOf } from "../lib/backend-client"
-import { createMediaSource } from "../lib/media-source"
+import { createMediaSource, fetchRemoteAttachment } from "../lib/media-source"
 import { blockMediaInteraction } from "../lib/media-image-interaction"
 import { isTauriHost } from "../lib/runtime-env"
 import { useSpeech } from "../lib/hooks/use-speech"
@@ -220,7 +220,7 @@ export default function MessageItem(props: MessageItemProps) {
     return typeof part.url === "string" && part.url.startsWith("data:image/")
   }
 
-  const handleAttachmentDownload = async (part: FilePart, resolvedSource: () => string | undefined) => {
+  const handleAttachmentDownload = async (part: FilePart, resolvedSource: () => string | undefined, signal: AbortSignal) => {
     const url = part.url
     if (!url) return
 
@@ -235,13 +235,22 @@ export default function MessageItem(props: MessageItemProps) {
       anchor.click()
       document.body.removeChild(anchor)
     }
+    const downloadBlob = (blob: Blob) => {
+      const objectUrl = URL.createObjectURL(blob)
+      try { directDownload(objectUrl) } finally { URL.revokeObjectURL(objectUrl) }
+    }
 
     let backend
     try { backend = backendOf(props.instanceId) } catch { return }
     if (backend.id !== "local") {
-      const operation = captureBackendOperation(props.instanceId)
+      const operation = captureBackendOperation(props.instanceId, signal)
+      if (!operation.current()) return
       const source = resolvedSource()
-      if (operation.current() && source) directDownload(source)
+      if (source) { directDownload(source); return }
+      try {
+        const blob = await fetchRemoteAttachment(backend, url, operation.signal)
+        if (blob && operation.current()) downloadBlob(blob)
+      } catch { /* The owner or attachment is unavailable. */ }
       return
     }
 
@@ -259,10 +268,7 @@ export default function MessageItem(props: MessageItemProps) {
     try {
       const response = await fetch(url)
       if (!response.ok) throw new Error(`Failed to fetch attachment: ${response.status}`)
-      const blob = await response.blob()
-      const objectUrl = URL.createObjectURL(blob)
-      directDownload(objectUrl)
-      URL.revokeObjectURL(objectUrl)
+      downloadBlob(await response.blob())
     } catch (error) {
       directDownload(url)
     }
@@ -762,7 +768,9 @@ export default function MessageItem(props: MessageItemProps) {
               {(attachment) => {
                 const name = getAttachmentName(attachment)
                 const isImage = isImageAttachment(attachment)
-                const source = createMediaSource(() => props.instanceId, () => attachment.url, false)
+                const source = createMediaSource(() => props.instanceId, () => isImage ? attachment.url : undefined, false)
+                const lifetime = new AbortController()
+                onCleanup(() => lifetime.abort())
                 return (
                   <div
                     class={`attachment-chip ${isImage ? "attachment-chip-image" : ""}`}
@@ -793,7 +801,7 @@ export default function MessageItem(props: MessageItemProps) {
                     <Show when={!attachment.url?.startsWith("file://")}>
                       <button
                         type="button"
-                        onClick={() => void handleAttachmentDownload(attachment, source)}
+                        onClick={() => void handleAttachmentDownload(attachment, source, lifetime.signal)}
                         class="attachment-download"
                         aria-label={t("messageItem.attachment.downloadAriaLabel", { name })}
                         title={t("messageItem.attachment.downloadAriaLabel", { name })}

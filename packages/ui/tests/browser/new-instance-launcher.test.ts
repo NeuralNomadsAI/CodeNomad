@@ -469,9 +469,11 @@ test("recent hover clears on pointer exit and keyboard highlighting is limited t
     assert.equal(await option.evaluate(node => getComputedStyle(node).outlineStyle), 'none')
     await quick.page.keyboard.press('ArrowDown')
     assert.equal(await option.evaluate(node => node.matches(':focus-visible')), true)
+    assert.equal(await option.evaluate(node => getComputedStyle(node).outlineStyle), 'solid')
     await option.hover()
     await quick.page.mouse.move(1090, 700)
     assert.equal(await optionBackground(), optionIdle)
+    assert.equal(await option.evaluate(node => getComputedStyle(node).outlineStyle), 'solid')
     assert.deepEqual([...home.errors, ...quick.errors], [])
   } finally { await home.page.close(); await quick.page.close() }
 })

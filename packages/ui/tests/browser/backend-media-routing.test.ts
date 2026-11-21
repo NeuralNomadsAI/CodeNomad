@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { readFile } from "node:fs/promises"
 import { after, before, test } from "node:test"
 import { chromium, type Browser, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
@@ -167,4 +168,17 @@ test("local tool, Markdown and attachment consumers preserve exact data and publ
     }
     assert.equal(await page.evaluate(() => (window as any).media.calls.length), calls)
   }
+}))
+
+test("remote non-image attachment downloads its inline bytes without backend credentials", async () => fixturePage(async page => {
+  const calls = await page.evaluate(() => (window as any).media.calls.length)
+  await page.evaluate(() => (window as any).media.textAttachment())
+  const pendingDownload = page.waitForEvent("download")
+  await page.locator('[data-consumer="text-attachment"] .attachment-download').click()
+  const download = await pendingDownload
+  assert.equal(download.suggestedFilename(), "attachment.txt")
+  assert.equal(await readFile(await download.path(), "utf8"), "Remote attachment bytes")
+  assert.equal(await page.evaluate(() => (window as any).media.calls.length), calls)
+  assert.deepEqual(await page.evaluate(() => (window as any).media.plainCalls.filter(({ url }: any) => url.startsWith("data:text/plain,"))),
+    [{ url: "data:text/plain,Remote%20attachment%20bytes", credentials: "omit" }])
 }))

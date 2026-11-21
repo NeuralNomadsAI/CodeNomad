@@ -16,12 +16,12 @@ Geben Sie diese Argumente nach der **Desktop-Programmdatei** (Tauri oder Electro
 
 | Argument | Wirkung |
 | --- | --- |
-| `--connect-server <server>` | Öffnet einen entfernten CodeNomad-Server über seine HTTP(S)-URL, seinen gespeicherten Namen oder seine gespeicherte ID. Siehe [Verbindung und Anmeldung](remote-access.md#saved-servers). |
+| `--connect-server <name-or-url>` | Öffnet unabhängig von `multiBackend` ein separates Remote-Fenster über eine HTTP(S)-URL, einen gespeicherten Namen oder eine gespeicherte ID. Siehe [Remote-Verbindungen](remote-access.md#connect-server). |
 | `--folder <path>` | Öffnet ein vorhandenes Projektverzeichnis. Für mehrere Verzeichnisse wiederholen; relative Pfade beziehen sich auf das Startverzeichnis. |
 | `<path> ...` | Öffnet Projektverzeichnisse ohne ausdrückliches `--folder`. **Bereits laufendes Windows Tauri:** Verwenden Sie für jedes Verzeichnis `--folder`. Werden Positionspfade mit `--folder` gemischt, entfällt ebenfalls die gesamte Ordneranforderung. |
 | `--new-window` | Fordert ein neues Anwendungsfenster an, auch wenn ein weiterer Start sonst das vorhandene Fenster fokussieren würde. |
 
-Auch `--connect-server=<server>` und `--folder=<path>` funktionieren. Pfade und Namen mit Leerzeichen müssen in Anführungszeichen stehen. Für ausschließlich das entfernte Fenster verwenden Sie nur `--connect-server`, ohne Ordner oder `--new-window`; lokale Fenster werden erst bei einem Verbindungsfehler wiederhergestellt.
+Auch `--connect-server=<name-or-url>` und `--folder=<path>` funktionieren. Pfade und Namen mit Leerzeichen müssen in Anführungszeichen stehen. Für ausschließlich das Remote-Fenster verwenden Sie nur `--connect-server`, ohne Ordner oder `--new-window`. Ein bereits geöffnetes lokales Fenster verarbeitet die Anfrage; beim Start werden lokale Fenster erst bei einem Verbindungsfehler wiederhergestellt.
 
 In **PowerShell**:
 

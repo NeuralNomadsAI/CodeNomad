@@ -15,7 +15,7 @@ export const remoteControlMessages = {
   "remoteControl.newLink": "Crear nuevo enlace de emparejamiento",
   "remoteControl.stop": "Detener control remoto",
   "remoteControl.previews.title": "Vistas previas web",
-  "remoteControl.previews.caption": "Los dispositivos emparejados pueden abrir la vista previa web. Cada dirección de vista previa abre su página sin emparejamiento, así que mantenla privada.",
+  "remoteControl.previews.info": "Mantén privadas las direcciones de vista previa.",
   "remoteControl.pairing.title": "Conectar otro dispositivo",
   "remoteControl.pairing.description": "Escanea este código QR o abre el enlace de un solo uso en el otro dispositivo.",
   "remoteControl.pairing.qrAlt": "Código QR de emparejamiento del control remoto",

@@ -459,7 +459,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
           <div class="folder-home-content flex-1 min-h-0 flex flex-col gap-4">
             <Show when={props.blank}>
               <div class="folder-home-blank-actions window-shell">
-                <NewTabActions blank isLoading={isLoading()} onClone={openCloneDialog} onNewTemporary={props.onNewTemporaryInstance} hideSidecar />
+                <NewTabActions blank isLoading={isLoading()} onClone={openCloneDialog} onNewTemporary={props.onNewTemporaryInstance} />
               </div>
             </Show>
             <div class="folder-home-main flex-1 gap-4">
@@ -467,7 +467,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                 <div class="folder-home-create-column flex flex-col gap-4">
                   <div class="panel shrink-0">
                     <div class="folder-home-creation-actions panel-body flex flex-col gap-3">
-                      <NewTabActions home isLoading={isLoading()} onClone={openCloneDialog} onNewTemporary={props.onNewTemporaryInstance} />
+                      <NewTabActions isLoading={isLoading()} onClone={openCloneDialog} onNewTemporary={props.onNewTemporaryInstance} />
                     </div>
                     <div class="panel-section w-full">
                       <button type="button" onClick={() => openSettings("opencode")} class="panel-section-header w-full justify-between">

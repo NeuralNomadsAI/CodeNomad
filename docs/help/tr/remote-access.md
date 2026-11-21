@@ -93,13 +93,13 @@ Bir istemci bir sertifika uyarısı bildirirse, durdurun ve ana bilgisayar adın
 
 ## Uzak sunucuyu kaydedin {#saved-servers}
 
-Kimliği doğrulanmış uzak istemciler ana bilgisayarda kayıtlı tüm sunucuları kullanabilir ve yönetebilir; ana sayfa ve **Ayarlar → Sunucular**, ana bilgisayarın yeteneklerinin izin verdiği eylemleri gösterir. Düz LAN HTTP, yeni sunucu parolası ve eşleştirme bağlantısı girişini devre dışı bırakır: “Kimlik bilgilerini girmek için HTTPS veya Uzaktan Kontrol kullanın.” Kayıtlı kimlik bilgileriyle bağlantı kurma ve gizli bilgi içermeyen profilleri ekleme, düzenleme veya kaldırma kullanılabilir.
+Kimliği doğrulanmış uzak istemciler, yerel istemcilerle aynı kayıtlı sunucuları kullanabilir ve yönetebilir. Yeni bir sunucu parolası veya eşleştirme bağlantısı girmek için HTTPS ya da Uzaktan Kontrol gerekir.
 
-**Ayarlar → Sunucular** bölümünü kullanın: **Sunucu adresi veya bağlantısı** alanına adres ya da eşleştirme bağlantısı yapıştırın veya Enter tuşuna basın. Ekleme, proje açmadan ana bilgisayarda bir profil kaydeder. **Sunucuyu düzenle**, **URL** veya isteğe bağlı **Ad** alanını değiştirir; aynı URL ve TLS ilkesiyle ad değiştirme çevrimdışı çalışır. Onaydan sonra **Kaldır**, bu pencerede o sunucunun sekmelerini kapatır ve son kullanılan kısayollarını kaldırır. Projeler ve sohbetler sunucuda kalır.
+**Ayarlar → Sunucular** bölümünde **Sunucu adresi veya bağlantısı** alanına adres ya da eşleştirme bağlantısı yapıştırın veya yazıp Enter tuşuna basın. Bu işlem proje açmadan sunucuyu kaydeder. **Sunucuyu düzenle**, **URL** veya isteğe bağlı **Ad** alanını değiştirir; aynı URL ve TLS ilkesiyle ad değiştirme çevrimdışı çalışır. Onaydan sonra **Kaldır**, bu pencerede o sunucunun sekmelerini kapatır ve son kullanılan kısayollarını kaldırır. Geçici projeler için **Sakla** veya **At** seçeneğini kullanın; **At**, dosyalarını ve sohbetlerini siler. Diğer projeler ve sohbetler sunucuda kalır.
 
 CodeNomad ana bilgisayarında OpenSSH gerekir; hedefte de CodeNomad zaten çalışıyor olmalıdır. **Ayarlar → Sunucular** bölümünde **SSH sunucusu ekle** öğesini seçin. CodeNomad **URL** adresini SSH sunucusundan göründüğü biçimde girin, **SSH sunucusu (isteğe bağlı)** ya da takma adını girip **Kaydet** düğmesine basın. Profil çevrimdışı kaydedilebilir. OpenSSH için anahtar doğrulaması ve `known_hosts` içinde doğrulanmış sunucu anahtarı gerekir. Sunucuda CodeNomad oturumu açın; HTTPS sertifikaları doğrulanır.
 
-**TLS doğrulamasını atla**, o adresin sertifika hatasından sonra sunulur; adres değişince onay silinir. Eşleştirme her zaman TLS doğrular.
+Sunucu düzenleyicisinde **TLS doğrulamasını atla** onay kutusu vardır. **Sunucu adresi veya bağlantısı** alanı bu seçeneği yalnızca o adres için bir sertifika hatasından sonra sunar; adres değişince seçim silinir. Eşleştirme her zaman TLS doğrular.
 
 Yalnızca `multiBackend` değeri `false` ise aşağıdaki ayrı masaüstü penceresi adımlarını kullanın:
 
@@ -117,8 +117,8 @@ Ana sayfada veya yeni sekmede **Gözat** bölümünden sunucuyu seçin. Sunucuyu
 
 Yerel ve uzak projeler aynı pencerede açılır. Gezinirken **Son sekmeler** seçili sunucunun kısayollarını gösterir. Karma listede burada açtığınız projelerin sunucu simgesi ve adı görünür. [Uzak sekmeleri geri yükleme](projects.md#restore-remote-tabs).
 
-**Ayarlar → Sunucular** bölümünde **Aç**, sunucuyu **Gözat** içinde seçer ve varsa boş sekmeyi kullanır. Geçici sekmelerin kapatma seçenekleri değişmez.
+**Ayarlar → Sunucular** bölümünde **Aç**, sunucuyu **Gözat** içinde seçer ve varsa boş sekmeyi kullanır.
 
 ### `--connect-server` {#connect-server}
 
-Bu komut ayrı bir uzak pencere açar. CodeNomad zaten çalışıyorsa isteği yerel penceresi işler. Kayıtlı bir sunucuyu doğrudan komut satırından açmak için masaüstü uygulamasını sunucunun kayıtlı adıyla veya `https://` URL'siyle `--connect-server <ad>` (ya da `--connect-server=<ad>`) seçeneğiyle başlatın. Hiçbir kayıtlı sunucuyla eşleşmeyen bir URL, ana bilgisayar adıyla kaydedilir. Başlatma değerleri hiçbir zaman kimlik bilgisi taşımaz: kullanıcı adı, parola veya eşleştirme kodu içeren bir URL reddedilir. Windows'ta bir başlatma bağımsız değişkeni `|` içerdiğinde Tauri derlemesi başlamaz; bunun yerine sunucunun URL'sini kullanın veya sunucuyu yeniden adlandırın.
+`--connect-server <name-or-url>`, `multiBackend` değerinden bağımsız olarak ayrı bir uzak pencere açar. Kayıtlı bir ad, kayıtlı kimlik veya HTTP(S) URL’si kullanın. Yeni URL’ler ana bilgisayar adıyla kaydedilir. Başlatma URL’si kullanıcı adı, parola veya eşleştirme kodu içeremez. Sözdizimi ve yalnızca uzak pencereyle başlatma için [masaüstü başlatma tablosuna](desktop.md#desktop-cli) bakın.

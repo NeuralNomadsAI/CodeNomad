@@ -15,7 +15,7 @@ export const remoteControlMessages = {
   "remoteControl.newLink": "צור קישור צימוד חדש",
   "remoteControl.stop": "עצור שליטה מרחוק",
   "remoteControl.previews.title": "תצוגות מקדימות של אתרים",
-  "remoteControl.previews.caption": "מכשירים מצומדים יכולים לפתוח את התצוגה המקדימה של אתר. כל כתובת של תצוגה מקדימה פותחת את הדף שלה ללא צימוד, ולכן יש לשמור אותה פרטית.",
+  "remoteControl.previews.info": "שמרו על פרטיות כתובות התצוגה המקדימה.",
   "remoteControl.pairing.title": "חיבור מכשיר נוסף",
   "remoteControl.pairing.description": "סרוק את קוד ה-QR או פתח את הקישור החד-פעמי במכשיר האחר.",
   "remoteControl.pairing.qrAlt": "קוד QR לצימוד שליטה מרחוק",

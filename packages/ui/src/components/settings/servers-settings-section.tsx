@@ -9,7 +9,6 @@ import ServerAddField from "../server-add-field"
 import { serversUsable, serversManageable } from "../../lib/server-meta"
 
 import type { ServerSelectionIntent } from "../../lib/native/server-selection-intent"
-export type { ServerSelectionIntent } from "../../lib/native/server-selection-intent"
 export const ServersSettingsSection: Component<{ onSelectServer?: (profile: ServerSelectionIntent) => Promise<void> }> = (props) => {
   const { t } = useI18n()
   const { remoteServers, enabled, capture, submitServer, removeServer } = useRelayServerProfiles()
