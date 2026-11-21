@@ -15,7 +15,7 @@ use crate::{
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Source {
-    directory: String,
+    pub(super) directory: String,
 }
 
 pub(super) async fn list(

@@ -1,6 +1,7 @@
 // One-time Missions through both HTTP backends, using their shared native plugin.
 import assert from "node:assert/strict"
 import path from "node:path"
+import { execFileSync } from "node:child_process"
 import { setTimeout as delay } from "node:timers/promises"
 
 export async function run({ call, fixture: { client }, root, folder }) {
@@ -36,6 +37,17 @@ export async function run({ call, fixture: { client }, root, folder }) {
     const local = await read("branches", branches + encodeURIComponent(location.directory), 200)
     assert(local.branches.length > 0 && local.branches.every(ref => ref.startsWith("refs/heads/")))
     await read("branches-foreign", branches + encodeURIComponent(path.join(root, "Rich")), 403, refusal)
+    const forge = `/api/workspaces/${workspace.id}/repository-source`
+    const selected = `${forge}?directory=${encodeURIComponent(location.directory)}`
+    const checkout = path.join(root, folder)
+    const git = (...args) => execFileSync("git", ["-C", checkout, ...args], { windowsHide: true })
+    await read("repository-source-no-remote", selected, 200)
+    git("remote", "add", "origin", "https://gitlab.com/fixture/fork.git")
+    git("remote", "add", "upstream", "git@github.com:fixture/project.git")
+    const detected = await read("repository-source-upstream", selected, 200)
+    assert.deepEqual(detected, { status: "ok", repository: { provider: "github", host: "github.com", repository: "fixture/project" } })
+    await read("repository-source-invalid", forge, 400)
+    await read("repository-source-foreign", `${forge}?directory=${encodeURIComponent(path.join(root, "Rich"))}`, 403)
     await read("playbooks", "/api/missions/playbooks", 200, v => Object.keys(v).sort())
     await read("receipt-missing", `${base}/creation/${requestId}`, 200)
     await post("create-invalid", base, {}, 400)
