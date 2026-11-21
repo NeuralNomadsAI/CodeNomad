@@ -1079,7 +1079,7 @@ for (const windowState of ["inspected", "superseded"]) {
       ? (await collectTools()).find(definition => definition.name === "inspect")! : inspect
     assert.match(String((await inspector.execute({}, context)).content), /New inspection B/)
     resume()
-    assert.match(String((await restart).content), /^CodeNomad restarted; a newer inspection superseded reconnection\.$/)
+    assert.match(String((await restart).content), /^CodeNomad restarted; the original inspection was not restored\. Inspect again\.$/)
     if (windowState === "inspected") {
       assert.match(JSON.stringify((await act.execute({ action: "press", key: "Enter" }, context)).content), /window-B/)
     } else {

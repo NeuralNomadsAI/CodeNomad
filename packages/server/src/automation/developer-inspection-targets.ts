@@ -10,21 +10,26 @@ export class DeveloperInspectionTargets {
     order?: { source: string; sequence: number }
     restartId?: string
   }>()
+  private evicted = false
 
   canReconnect(sessionId: string, restartId: string): boolean {
     const entry = this.targets.get(sessionId)
-    return !entry || entry.restartId === restartId
+    return entry ? entry.restartId === restartId : !this.evicted
   }
 
   begin(sessionId: string, order?: { source: string; sequence: number }, restartId?: string): ((identity: DeveloperCdpIdentity) => string | undefined) | undefined {
     const previous = this.targets.get(sessionId)
     if (restartId && !this.canReconnect(sessionId, restartId)) return undefined
     if (order && previous?.order?.source === order.source && previous.order.sequence > order.sequence) return undefined
-    const entry = { current: previous?.current, issued: previous?.issued ?? new Map<string, DeveloperCdpIdentity>(),
+    const entry = { current: undefined as DeveloperCdpIdentity | undefined, issued: previous?.issued ?? new Map<string, DeveloperCdpIdentity>(),
       order: order ?? previous?.order, restartId }
     this.targets.delete(sessionId)
     this.targets.set(sessionId, entry)
-    if (this.targets.size > 128) this.targets.delete(this.targets.keys().next().value!)
+    if (this.targets.size > 128) {
+      this.targets.delete(this.targets.keys().next().value!)
+      // An absent record could be a newer selection that was evicted.
+      this.evicted = true
+    }
     return identity => {
       if (this.targets.get(sessionId) !== entry) return undefined
       const pin = randomUUID()

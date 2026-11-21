@@ -1085,7 +1085,7 @@ async function waitForRestart(
   const deadline = Date.now() + REQUEST_TIMEOUT_MS
   const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
   let reconnected = false
-  const superseded = { content: "CodeNomad restarted; a newer inspection superseded reconnection." }
+  const superseded = { content: "CodeNomad restarted; the original inspection was not restored. Inspect again." }
   while (!signal.aborted && Date.now() < deadline) {
     const active = (await registrations({}, signal).catch(() => [])).filter(({ token }) => !existingTokens.has(token))
     for (let index = 0; index < active.length && !signal.aborted; index += PROBE_CONCURRENCY) {
