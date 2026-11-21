@@ -320,8 +320,10 @@ test("restart waits for a new native generation and returns a fresh inspection",
       tool: { transform: async (callback) => callback({ add: (value) => definitions.push(value as typeof definitions[number]) }) },
     })
     const replacement = await listen(async (body) => body.mode === "developer-probe"
-      ? { result: { available: true, nativeIdentity: "electron:test", runId: "run-new" } }
-      : { result: { target: { id: "page-new", title: "Restarted", url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } })
+      ? { result: { available: true, nativeIdentity: "electron:test", runId: "run-new",
+          windows: [{ windowId: "window-2", focused: true, session: "visible" }, oneWindow[0]] } }
+      : { result: { target: { id: "page-new", title: body.target === "electron:test/run-new/window-1" ? "Restarted" : "Wrong window", url: "http://app.test" },
+          context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } })
     newServer = replacement.server
     const preexisting = await listen(async (body) => body.mode === "developer-probe" && restarting
       ? { result: { available: true, nativeIdentity: "electron:test", runId: "run-preexisting" } }

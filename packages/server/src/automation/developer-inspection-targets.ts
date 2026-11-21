@@ -33,7 +33,10 @@ export class DeveloperInspectionTargets {
     return pin === undefined ? entry?.identity : typeof pin === "string" ? entry?.issued.get(pin) : undefined
   }
 
-  forget(sessionId: string): void {
-    this.targets.delete(sessionId)
+  forgetRun(sessionId: string, runId: string): void {
+    const entry = this.targets.get(sessionId)
+    if (!entry) return
+    if (entry.identity?.runId === runId) entry.identity = undefined
+    for (const [pin, identity] of entry.issued) if (identity.runId === runId) entry.issued.delete(pin)
   }
 }

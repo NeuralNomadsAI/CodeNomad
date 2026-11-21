@@ -128,7 +128,7 @@ describe("DeveloperCdp", () => {
       const window = { endpoint, runId, windowId }
       const { document } = await client.inspect(window)
       chrome.onCommand = command => {
-        if (command.method === "Runtime.evaluate" && String(command.params?.expression).includes("inputDelayMs")) {
+        if (command.method === "Runtime.evaluate" && String(command.params?.expression).includes("__codenomadAutomationInputUntil")) {
           chrome.context = { ...chrome.context, instanceId: "duplicate" }
         }
       }

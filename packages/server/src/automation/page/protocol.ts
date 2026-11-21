@@ -112,6 +112,7 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (kind
       const stamp = (await session.driver.call("mark-input", undefined, [])).value
       if (typeof stamp !== "number" || !Number.isFinite(stamp) || stamp <= 0) throw new Error("Cannot establish automation input provenance")
       timestamp = stamp
+      await session.checkpoint()
     }
     const mouse = kind === "pointer" || kind === "wheel"
     if (mouse && typeof params.x === "number" && typeof params.y === "number") point = { x: params.x, y: params.y }

@@ -840,7 +840,7 @@ async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
     throw typeof response.body.code === "string" ? targetError(response.body.code, message) : new Error(message)
   }
   if (command.action === "restart") {
-    return waitForRestart(sessionID, target.nativeIdentity, target.runId, existingTokens!, options.publish!)
+    return waitForRestart(sessionID, target.nativeIdentity, target.runId, target.windowId, existingTokens!, options.publish!)
   }
   if (options.publish && !options.publish(inspectedBridge(target, response.body.result))) {
     throw targetError("stale-inspection", "A newer inspection selected the window")
@@ -850,36 +850,46 @@ async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
 
 function inspectedBridge(target: ProbedBridge, result: unknown): ProbedBridge {
   const pin = (result as { pin?: unknown } | undefined)?.pin
-  return { ...target, pin: typeof pin === "string" ? pin : undefined }
+  const context = (result as Partial<InspectionResult> | undefined)?.context
+  return { ...target, pin: typeof pin === "string" ? pin : undefined, windowId: context?.windowId }
 }
 
 async function waitForRestart(
   sessionID: string,
   nativeIdentity: string,
   previousRunId: string,
+  windowId: string | undefined,
   existingTokens: ReadonlySet<string>,
   publish: (target: ProbedBridge) => boolean,
 ) {
   const deadline = Date.now() + REQUEST_TIMEOUT_MS
+  let reconnected = false
   while (Date.now() < deadline) {
     const active = await registrations()
     const candidates = await probeBridges(
       active.filter((registration) => !existingTokens.has(registration.token)),
       sessionID,
       {
-        limit: 1,
+        limit: 2,
+        inventory: true,
         accept: (candidate) => candidate.nativeIdentity === nativeIdentity && candidate.runId !== previousRunId,
       },
     )
+    if (candidates.length > 1) throw targetError("ambiguous-target", "Several backends claimed the restarted desktop scope")
     for (const candidate of candidates) {
+      reconnected = true
+      const restored = candidate.windows?.find(window => window.windowId === windowId)
+      if (!restored) continue
       try {
         const inspection = await callBridge(candidate.registration, {
           mode: "developer-execute",
           sessionID,
           command: { action: "inspect" },
+          target: windowSelector(candidate, restored.windowId, restored.windowInstance),
         }, INSPECTION_TIMEOUT_MS)
-        if (inspection.status === 200) {
-          if (!publish(inspectedBridge(candidate, inspection.body.result))) {
+        const inspected = inspectedBridge(candidate, inspection.body.result)
+        if (inspection.status === 200 && inspected.windowId === windowId) {
+          if (!publish(inspected)) {
             return { content: "CodeNomad restarted; the newer window selection was kept." }
           }
           return formatBridgeResult(inspection.body.result)
@@ -890,6 +900,7 @@ async function waitForRestart(
     }
     await new Promise((resolve) => setTimeout(resolve, Math.min(RECONNECT_INTERVAL_MS, Math.max(0, deadline - Date.now()))))
   }
+  if (reconnected) return { content: "CodeNomad restarted, but the inspected window could not be inspected again." }
   throw new Error("CodeNomad did not reconnect to the persistent OpenCode session after restart")
 }
 

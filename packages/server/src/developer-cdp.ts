@@ -15,7 +15,7 @@ const DISCOVERY_TARGET_LIMIT = 64
 const DISCOVERY_PROBE_CONCURRENCY = 4
 const INVENTORY_PAGE_MS = 250
 const CONTEXT_FUNCTION = `(session) => {
-  const root = document.querySelector('[data-tab-visible="true"][data-instance-id]');
+  const root = document.querySelector('[data-tab-visible="true"][data-tab-id]');
   const pane = root?.querySelector('.session-cache-pane[data-session-active="true"][data-session-id]');
   return {
     windowId: window.__CODENOMAD_WINDOW_ID__ ?? null,
