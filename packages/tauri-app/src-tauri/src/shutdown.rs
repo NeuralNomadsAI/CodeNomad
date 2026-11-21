@@ -1,12 +1,13 @@
 use crate::{client_state, local_windows::LocalWindows, AppState};
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 #[cfg(windows)]
 use tauri::WebviewWindow;
 use tauri::{AppHandle, Emitter, Manager};
 
 const RENDERER_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
+const CLOSE_CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
 const UPDATE_RENDERER_FLUSH_TIMEOUT: Duration = Duration::from_secs(10);
 const SHUTDOWN_STOP_ATTEMPTS: usize = 2;
 const FLUSH_CANCELLED_EVENT: &str = "client-state:flush-cancelled";
@@ -63,6 +64,7 @@ struct ShutdownState {
 #[derive(Default)]
 pub(crate) struct ShutdownCoordinator {
     state: Mutex<ShutdownState>,
+    release_acknowledged: Condvar,
 }
 
 impl ShutdownCoordinator {
@@ -140,10 +142,12 @@ impl ShutdownCoordinator {
         state.shutdown_started = true;
         state.local_closes.clear();
         state.committed_local_closes.clear();
-        state.releasing_local_closes.clear();
         state.global_requests.clear();
         let mut requests = Vec::new();
         for label in labels {
+            if state.releasing_local_closes.contains_key(&label) || state.approved_local_closes.contains(&label) {
+                continue;
+            }
             state.next_generation += 1;
             let generation = state.next_generation;
             state.global_pending.insert(label.clone(), generation);
@@ -172,7 +176,34 @@ impl ShutdownCoordinator {
             return false;
         }
         state.global_pending.remove(label);
+        self.release_acknowledged.notify_all();
         state.global_pending.is_empty()
+    }
+
+    fn begin_workspace_releases(&self) -> Vec<(String, u64)> {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let labels: Vec<_> = state
+            .global_requests
+            .keys()
+            .filter(|label| label.as_str() != crate::preferences_window::LABEL)
+            .cloned()
+            .collect();
+        labels
+            .into_iter()
+            .map(|label| {
+                state.next_generation += 1;
+                let generation = state.next_generation;
+                state.global_pending.insert(label.clone(), generation);
+                (label, generation)
+            })
+            .collect()
+    }
+
+    fn wait_for_workspace_releases(&self, timeout: Duration) {
+        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let _result = self
+            .release_acknowledged
+            .wait_timeout_while(state, timeout, |state| !state.global_pending.is_empty());
     }
 
     fn begin_cleanup(&self, deadline_reached: bool) -> bool {
@@ -376,6 +407,9 @@ impl ShutdownCoordinator {
         state.global_requests.clear();
         let mut requests = Vec::new();
         for label in labels {
+            if state.releasing_local_closes.contains_key(&label) || state.approved_local_closes.contains(&label) {
+                continue;
+            }
             state.next_generation += 1;
             let generation = state.next_generation;
             state.global_pending.insert(label.clone(), generation);
@@ -492,7 +526,6 @@ fn awaits_renderer_flush(url: Option<&tauri::Url>) -> bool {
 #[derive(Clone, Copy)]
 enum RendererFlush {
     Prepare,
-    Shutdown,
     Release,
 }
 
@@ -504,7 +537,6 @@ fn emit_flush(app: &AppHandle, label: &str, generation: u64, phase: RendererFlus
         if label.starts_with("remote-") {
             let argument = match phase {
                 RendererFlush::Prepare => "\"prepare\"",
-                RendererFlush::Shutdown => "true",
                 RendererFlush::Release => "\"release\"",
             };
             return webview.eval(format!(
@@ -512,9 +544,8 @@ fn emit_flush(app: &AppHandle, label: &str, generation: u64, phase: RendererFlus
                     .finally(() => window.__TAURI_INTERNALS__.invoke("client_state_renderer_flushed", {{ generation: {generation}, accessToken: "" }}));"#
             )).is_ok();
         }
-        webview.emit("client-state:flush-requested", client_state::RendererFlushRequest {
+        webview.emit_to(label, "client-state:flush-requested", client_state::RendererFlushRequest {
             generation,
-            release_workspaces: matches!(phase, RendererFlush::Shutdown),
             release_only: matches!(phase, RendererFlush::Release),
         }).is_ok()
     })
@@ -526,9 +557,9 @@ fn emit_flush_cancelled(app: &AppHandle, label: &str, generation: u64) {
             let _ = webview.eval(r#"window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?.("cancel")"#);
             return;
         }
-        let _ = webview.emit(
-            FLUSH_CANCELLED_EVENT,
-            client_state::RendererFlushRequest { generation, release_workspaces: false, release_only: false },
+        let _ = webview.emit_to(
+            label, FLUSH_CANCELLED_EVENT,
+            client_state::RendererFlushRequest { generation, release_only: false },
         );
     }
 }
@@ -562,7 +593,7 @@ pub(crate) fn request_local_window_close(app: AppHandle, label: String) {
         return;
     }
     std::thread::spawn(move || {
-        std::thread::sleep(RENDERER_FLUSH_TIMEOUT);
+        std::thread::sleep(if remote { RENDERER_FLUSH_TIMEOUT } else { CLOSE_CAPTURE_TIMEOUT });
         if remote {
             finish_local_close(app, label, window_id, generation);
         } else if app
@@ -633,7 +664,7 @@ pub(crate) fn request(app: AppHandle) {
         start_cleanup(app, false);
         return;
     };
-    flush_shutdown(app, requests, RENDERER_FLUSH_TIMEOUT);
+    flush_shutdown(app, requests, CLOSE_CAPTURE_TIMEOUT);
 }
 
 pub(crate) fn request_update(
@@ -650,7 +681,7 @@ pub(crate) fn request_update(
 fn flush_shutdown(app: AppHandle, requests: Vec<(String, u64)>, timeout: Duration) {
     crate::remote_dictation::revoke(&app, None);
     for (label, generation) in &requests {
-        if !emit_flush(&app, label, *generation, RendererFlush::Shutdown) {
+        if !emit_flush(&app, label, *generation, RendererFlush::Prepare) {
             app.state::<ShutdownCoordinator>()
                 .acknowledge_global(label, *generation);
         } else if label.starts_with("remote-") {
@@ -719,6 +750,7 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
     }
     std::thread::spawn(move || {
         client_state::capture_and_flush_all_windows(&app);
+        release_workspaces(&app, RENDERER_FLUSH_TIMEOUT);
         let result = if let Some(state) = app.try_state::<AppState>() {
             retry_bounded(SHUTDOWN_STOP_ATTEMPTS, || {
                 state.manager.stop().map_err(|error| error.to_string())
@@ -851,6 +883,16 @@ pub(crate) fn consume_local_window_close(app: &AppHandle, label: &str) -> Option
     Some(false)
 }
 
+fn release_workspaces(app: &AppHandle, timeout: Duration) {
+    let coordinator = app.state::<ShutdownCoordinator>();
+    for (label, generation) in coordinator.begin_workspace_releases() {
+        if !emit_flush(app, &label, generation, RendererFlush::Release) {
+            coordinator.acknowledge_global(&label, generation);
+        }
+    }
+    coordinator.wait_for_workspace_releases(timeout);
+}
+
 pub(crate) fn finish_local_release(app: &AppHandle, label: &str, generation: u64) -> bool {
     if !app
         .state::<ShutdownCoordinator>()
@@ -973,6 +1015,10 @@ pub(crate) fn request_windows_session_end(app: AppHandle) {
     let (finished_tx, finished_rx) = std::sync::mpsc::sync_channel(1);
     let cleanup_app = app.clone();
     std::thread::spawn(move || {
+        release_workspaces(
+            &cleanup_app,
+            session_deadline.saturating_duration_since(Instant::now()).min(RENDERER_FLUSH_TIMEOUT),
+        );
         let result = {
             cleanup_app
                 .try_state::<AppState>()

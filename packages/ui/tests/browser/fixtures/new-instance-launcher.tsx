@@ -14,6 +14,10 @@ import "../../../src/index.css"
 const open: Instance = { id: "codenomad-tab", folder: "D:/CodeNomad", port: 0, pid: 0, proxyPath: "/fixture", status: "ready", client: null, projectName: "CodeNomad" }
 addInstance(open)
 attachInstanceTab(open.id)
+addInstance({ ...open, id: "other-codenomad", projectName: undefined })
+addInstance({ ...open, id: "other-blender", folder: "D:\\blender", projectName: undefined })
+addInstance({ ...open, id: "remote-unsloth", folder: "D:/unsloth", backendId: "saved-server" })
+addInstance({ ...open, id: "starting", folder: "D:/archive/project-0", status: "starting" })
 const tabs: AppTabRecord[] = [{ id: `instance:${open.id}`, kind: "instance", instance: open }]
 
 const calls: string[] = []

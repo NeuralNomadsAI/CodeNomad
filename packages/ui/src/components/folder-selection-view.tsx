@@ -10,6 +10,7 @@ import EntryCount from "./entry-count"
 import RemoteRecentSession from "./remote-recent-session"
 import ActionOverflowMenu from "./action-overflow-menu"
 import { joinRecentOpenTarget, recentAccessibleName, recentOpenTarget, launchableRecents, type LaunchableRecent } from "../lib/recent-open-target"
+import RecentOpenElsewhere from "./recent-open-elsewhere"
 import { helpUrl } from "../lib/help-url"
 import { Heart } from "lucide-solid"
 import NewTabActions from "./new-tab-actions"
@@ -640,6 +641,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                         <span class="flex-shrink-0">{formatRelativeTime(t, folder.lastAccessed)}</span>
                                       </div>
                                     </div>
+                                    <RecentOpenElsewhere recent={folder} />
                                   </div>
                                 </div>
                                 <Show when={!remoteSource() && folder.kind !== "sidecar"}><Show when={props.blank} fallback={

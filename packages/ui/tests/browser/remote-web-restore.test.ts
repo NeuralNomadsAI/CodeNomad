@@ -21,7 +21,7 @@ after(async () => { await browser?.close() })
 for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"]) test(`web mobile HTTP: ${mode}, A/B identities and explicit recovery`, { timeout: 120_000 }, async () => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
     userAgent: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/130.0.0.0 Mobile Safari/537.36" })
-  let page = await context.newPage()
+  const page = await context.newPage()
   page.setDefaultTimeout(15_000)
   page.setDefaultNavigationTimeout(60_000)
   const errors: string[] = [], creates: string[] = [], requestIds: string[] = []
@@ -33,6 +33,7 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
     Object.defineProperty(navigator, "clipboard", { value: undefined })
     window.EventSource = class extends EventTarget { close() {} } as any
     if (!sessionStorage.getItem("codenomad.client-state.v1")) {
+      sessionStorage.setItem("codenomad.client-state.page", "fixture-page")
       sessionStorage.setItem("codenomad.client-state.v1", JSON.stringify({
         version: 1, revision: 1, savedAt: 1, layout: {}, session: { activeTabIndex: 1, tabs: ["a", "b"].map((backendId, index) => ({
           kind: "workspace", folder: "/same", backendId, serverId: backendId, workspaceId: `${backendId}~same`, occurrence: 0,
@@ -68,7 +69,7 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
         if (creates.length === 1 && ["rate-limited", "uncertain"].includes(mode)) {
           return route.fulfill({ status: mode === "rate-limited" ? 429 : 499, json: { error: "refused" } })
         }
-        body = { ...descriptor("opened", "/same"), requestId: request.postDataJSON().requestId }
+        body = { ...descriptor(`opened-${creates.length}`, "/same"), requestId: request.postDataJSON().requestId }
         inventories.get(owner)!.push(body)
       } else body = owner ? inventories.get(owner) : []
     } else if (path.endsWith("/worktrees")) body = { isGitRepo: false, worktrees: [] }
@@ -121,20 +122,11 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
     })
     await page.reload()
     await page.locator('[data-restoring="false"]').waitFor()
-    assert.deepEqual(await tabs(), state, "reload keeps backend binding, order and drafts")
+    const reloaded = await tabs()
+    assert.deepEqual(reloaded.map((tab: any) => tab.drafts), state.map((tab: any) => tab.drafts))
+    assert.ok(reloaded.every((tab: any, index: number) => tab.id !== state[index].id))
     assert.deepEqual(await views(), ["status", "files"])
-    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: false })))
-    // A fresh renderer receives only the browser-cloned sessionStorage, as after mobile discard.
-    const replacement = page.waitForEvent("popup")
-    await page.evaluate(() => window.open(location.href))
-    const discarded = page
-    page = await replacement
-    page.on("pageerror", error => errors.push(error.message))
-    await discarded.close()
-    await page.locator('[data-restoring="false"]').waitFor()
-    assert.deepEqual(await tabs(), state, "discarded page restores its tab-owned snapshot")
-    assert.deepEqual(await views(), ["status", "files"])
-    assert.deepEqual(creates, expectedCreates)
+    assert.deepEqual(creates.sort(), [...expectedCreates, "a", "b"].sort())
     assert.deepEqual(errors, [])
   } finally { await context.close() }
 })
@@ -144,10 +136,10 @@ function descriptor(id: string, path: string) {
 }
 
 for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "failed-reconnect"
-  ? "web reload keeps failed reconnect status after a deferred first-open inventory"
+  ? "web discard keeps failed reconnect status after a deferred first-open inventory"
   : mode === "disappears"
-  ? "web reload preserves the active remote tab when the next inventory omits its project during hydration"
-  : "web reload restores the active remote tab when SSE opens during its inventory", { timeout: 90_000 }, async () => {
+  ? "web discard preserves the active remote tab for Retry when inventory omits its project during hydration"
+  : "web discard restores the active remote tab when SSE opens during its inventory", { timeout: 90_000 }, async () => {
   const context = await browser.newContext(), page = await context.newPage()
   const creates: string[] = []
   const disappears = mode === "disappears", failedReconnect = mode === "failed-reconnect"
@@ -156,6 +148,8 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
   await context.addInitScript(disappears => {
     ;(window as any).__name = (value: unknown) => value
     Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: "web", __CODENOMAD_WINDOW_CONTEXT__: "remote" })
+    window.addEventListener("pagehide", event => event.stopImmediatePropagation(), { capture: true })
+    sessionStorage.setItem("codenomad.client-state.page", "fixture-page")
     let openRemote: () => void
     let connections = 0
     Object.assign(window, { openRemoteEvents: () => openRemote(), remoteConnections: () => connections })
@@ -289,13 +283,16 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
       assert.deepEqual(state[1].drafts, { __no_session_draft__: "/remote", "held-session": "unsent conversation draft" })
       assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), state[1].id)
       releaseHydration.resolve()
+      await restored()
+      assert.deepEqual(creates, [])
+      await page.getByRole("button", { name: "Retry", exact: true }).click()
       await page.locator('[data-ready]').filter({ hasText: "instance:a~recreated" }).waitFor()
       await page.waitForFunction(() => (window as any).restoreFixture.tabs()[1]?.drafts["held-session"] === "unsent conversation draft")
       assert.deepEqual((await tabs()).map((tab: any) => tab.id), ["instance:same", "instance:a~recreated"])
       assert.deepEqual((await tabs())[1].drafts, state[1].drafts)
       assert.equal(await page.evaluate(() => (window as any).restoreFixture.view("a~recreated")?.rightPanelTab), "files")
       assert.equal(reads, 3)
-      assert.deepEqual(creates, ["/api/backends/a/api/workspaces"], "inventory loss replaces a reused record without Retry")
+      assert.deepEqual(creates, ["/api/backends/a/api/workspaces"], "Retry replaces the unavailable record")
       return
     }
     assert.deepEqual(await restored(), expected, "both existing occurrences must rebind without Retry")
@@ -347,7 +344,7 @@ for (const { multiBackend, initiallyUnavailable } of primaryCases) {
       else if (path === "/api/workspaces") {
         if (request.method() === "POST") {
           creates.push(request.postDataJSON().path)
-          body = { ...descriptor("opened", "/same"), requestId: request.postDataJSON().requestId }
+          body = { ...descriptor(`opened-${creates.length}`, "/same"), requestId: request.postDataJSON().requestId }
           projects.push(body)
         } else {
           reads++
@@ -379,9 +376,9 @@ for (const { multiBackend, initiallyUnavailable } of primaryCases) {
       assert.deepEqual(creates, ["/same"])
       await page.reload()
       await waitReady()
-      assert.equal((await tabs())[0].id, "instance:opened")
+      assert.equal((await tabs())[0].id, "instance:opened-2")
       assert.equal((await tabs())[0].drafts.__no_session_draft__, "primary-backend-draft")
-      assert.deepEqual(creates, ["/same"])
+      assert.deepEqual(creates, ["/same", "/same"])
       assert.deepEqual(errors, [])
     } finally { await context.close() }
   })

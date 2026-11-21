@@ -52,7 +52,7 @@ export async function flushRendererClientStateBeforeShutdown(
   isPrimary: boolean,
   isTrustedOrigin: (url: string) => boolean,
   timeoutMs = RENDERER_CLIENT_STATE_FLUSH_TIMEOUT_MS,
-  closing: boolean | "cancel" | "prepare" | "release" = false,
+  closing: false | "cancel" | "prepare" | "release" = false,
   optional = false,
 ): Promise<RendererFlushResult> {
   if (!isPrimary) return "not-primary"

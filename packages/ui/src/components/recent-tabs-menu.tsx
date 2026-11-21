@@ -5,6 +5,7 @@ import { filterRecents, formatRelativeTime, getDisplayPath, getProjectDisplayNam
 import { joinRecentOpenTarget, recentAccessibleName, recentOpenTarget, launchableRecents, type LaunchableRecent } from "../lib/recent-open-target"
 import RemoteRecentSession from "./remote-recent-session"
 import RecentTabIcon from "./recent-tab-icon"
+import RecentOpenElsewhere from "./recent-open-elsewhere"
 import { remoteRecentProjectsUsable, type RemoteRecentProject } from "../stores/recent-projects"
 import { ensureSidecarsLoaded } from "../stores/sidecars"
 import { sidecarsAllowed } from "../lib/server-meta"
@@ -95,7 +96,9 @@ export default function RecentTabsMenu(props: {
                   </span>
                 </span>
               </button>
-              <Show when={recentOpenTarget(recent)} fallback={<span class="new-instance-launcher-recent-meta">{formatRelativeTime(t, recent.lastAccessed)}</span>}>
+              <Show when={recentOpenTarget(recent)} fallback={<span class="new-instance-launcher-recent-meta inline-flex items-center gap-2">
+                {formatRelativeTime(t, recent.lastAccessed)}<RecentOpenElsewhere recent={recent} />
+              </span>}>
                 <button type="button" class="folder-home-open-instance-button" disabled={props.isLoading}
                   title={t("folderSelection.recent.switchToOpenProject")}
                   aria-label={`${t("folderSelection.recent.switchToOpenProject")} · ${recentAccessibleName(recent)}`}

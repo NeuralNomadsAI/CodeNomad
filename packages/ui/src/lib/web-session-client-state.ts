@@ -7,8 +7,9 @@ import { generateUUID } from "./client-identity"
 const SNAPSHOT_KEY = "codenomad.client-state.v1"
 const RESTORE_DISABLED_KEY = "codenomad.client-state.restore-disabled"
 const PAGE_KEY = "codenomad.client-state.page"
+const RELEASED_KEY = "codenomad.client-state.records-released"
 
-export type WebSessionClientState = { restoreEnabled: boolean; snapshot: unknown | null }
+export type WebSessionClientState = { restoreEnabled: boolean; snapshot: unknown | null; recordsReleased: boolean }
 
 function sessionStore(): Storage | null {
   try {
@@ -20,6 +21,8 @@ function sessionStore(): Storage | null {
 
 let recordClaim: Promise<boolean> | undefined
 let copiedPageId: string | undefined
+let departing = false
+let restored = false
 
 /** Web Locks require a secure context; on LAN HTTP, ask the live same-origin page. */
 function claimBroadcastPage(id: string): Promise<boolean> {
@@ -70,12 +73,11 @@ export function claimWebSessionRecords(): Promise<boolean> {
     const existing = storage.getItem(PAGE_KEY)
     if (existing && await acquire(existing)) return true
     const id = generateUUID()
-    if (!existing) storage.setItem(PAGE_KEY, id)
+    // A copied snapshot must still create fresh records if this page is discarded during restore.
+    if (existing) storage.setItem(RELEASED_KEY, "1")
     if (!await acquire(id)) return false
-    // A duplicate keeps the inherited name until its own snapshot replaces
-    // the copied IDs, so reloading during restoration still detects the copy.
-    if (existing) copiedPageId = id
-    return !existing
+    copiedPageId = id
+    return false
   })().catch(() => false)
 }
 
@@ -87,7 +89,8 @@ export function loadWebSessionClientState(): WebSessionClientState | null {
     const raw = storage.getItem(SNAPSHOT_KEY)
     let snapshot: unknown = null
     try { snapshot = raw ? JSON.parse(raw) : null } catch { /* An unreadable snapshot restores nothing. */ }
-    return { restoreEnabled: storage.getItem(RESTORE_DISABLED_KEY) !== "true", snapshot }
+    return { restoreEnabled: storage.getItem(RESTORE_DISABLED_KEY) !== "true", snapshot,
+      recordsReleased: storage.getItem(RELEASED_KEY) !== null }
   } catch {
     return null
   }
@@ -112,7 +115,19 @@ export const saveWebSessionClientState = (snapshot: unknown): boolean =>
       storage.setItem(PAGE_KEY, copiedPageId)
       copiedPageId = undefined
     }
+    if (restored && !departing) storage.removeItem(RELEASED_KEY)
   })
+
+export function markWebSessionRecordsReleased(): boolean {
+  departing = true
+  if (!sessionStore()) return true
+  return write(storage => storage.setItem(RELEASED_KEY, "1"))
+    || write(storage => storage.removeItem(PAGE_KEY)) // Quota can prevent a new key.
+}
+
+export function completeWebSessionRestore(): void {
+  restored = true
+}
 
 export const clearWebSessionClientState = (): boolean =>
   write(storage => storage.removeItem(SNAPSHOT_KEY))

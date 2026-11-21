@@ -39,10 +39,11 @@ test("capture defers only busy usage through both real-store effects and keeps f
         w.electronAPI = { claimClientStateAccess: async () => true, loadClientState: async () => load(),
           loadClientStatePartition: async () => null, commitClientStatePartitions: async (token: string, payload: unknown) => commit(token, payload) }
         w.__TAURI_INTERNALS__ = {
+          metadata: { currentWindow: { label: "local-fixture" }, currentWebview: { label: "local-fixture" } },
           transformCallback: (fn: Function) => { callbacks.set(++sequence, fn); return sequence },
           unregisterCallback: (id: number) => callbacks.delete(id),
           invoke: async (command: string, args: any) => {
-            if (command === "plugin:event|listen") { listeners.set(args.event, args.handler); return args.handler }
+            if (command === "plugin:event|listen") { listeners.set(args.event, args); return args.handler }
             if (command === "plugin:event|unlisten") { listeners.delete(args.event); return }
             if (command === "client_state_load") return load()
             if (command === "client_state_load_partition") return null
@@ -52,10 +53,19 @@ test("capture defers only busy usage through both real-store effects and keeps f
           },
         }
         w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} }
-        w.emit = (event: string, generation: number) => callbacks.get(listeners.get(event))?.({ payload: { generation } })
+        w.emit = (event: string, generation: number, label = "local-fixture", releaseOnly = false) => {
+          const listener = listeners.get(event)
+          if (listener && (listener.target.kind === "Any" || listener.target.label === label)) {
+            callbacks.get(listener.handler)?.({ payload: { generation, releaseOnly } })
+          }
+        }
       }, { host })
+      const deletes: string[] = []
       // Production imports may subscribe to SSE; keep that boundary local and inert.
-      await page.route("**/api/**", route => route.fulfill({ json: {} }))
+      await page.route("**/api/**", route => {
+        if (route.request().method() === "DELETE") deletes.push(new URL(route.request().url()).pathname)
+        return route.fulfill({ json: {} })
+      })
       await page.route("**/api/events", route => route.fulfill({ contentType: "text/event-stream", body: ": ready\n\n" }))
       await page.goto(fixture.url)
       await page.waitForFunction(() => Boolean((window as any).fixture))
@@ -180,6 +190,10 @@ test("capture defers only busy usage through both real-store effects and keeps f
       assert.deepEqual(decoded.state.session, await state())
       assert.equal(new Set(decoded.tokens).size, 1, "one native owner token")
       if (host === "tauri") {
+        await page.evaluate(() => (window as any).emit("client-state:flush-requested", 6, "local-other", true))
+        await settle()
+        assert.deepEqual(deletes, [], "approving another Tauri window's close cannot release this window's records")
+        assert.equal(await page.evaluate(() => (window as any).acks.some((ack: any) => ack.generation === 6)), false)
         await page.evaluate(() => (window as any).emit("client-state:flush-requested", 8))
         await page.waitForFunction(() => (window as any).acks.some((ack: any) => ack.generation === 8))
         before = await count()

@@ -56,7 +56,7 @@ test("closing a remote window awaits only that window's workspace release", asyn
   const local = windowRecord("local", calls), remote = windowRecord("remote", calls)
   let finish!: () => void
   remote.window.webContents.executeJavaScript = async source => {
-    assert.match(source, /flush\(true\)/)
+    assert.match(source, /flush\("release"\)/)
     calls.push("remote release")
     await new Promise<void>(resolve => { finish = resolve })
   }
@@ -259,7 +259,7 @@ test("persisted local close waits for confirmed removal and remains retryable", 
   const second = windowRecord("two", calls)
   let removals = 0
   first.window.webContents.executeJavaScript = async source => {
-    if (source.includes("flush(true)") || source.includes('flush("release")')) calls.push("release-workspaces")
+    if (source.includes('flush("release")')) calls.push("release-workspaces")
   }
   const lifecycle = new MultiwindowLifecycle({
     app: { on: () => {}, quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
@@ -336,7 +336,7 @@ test("quitting with a hidden launch window pending flushes and exits without ask
   lifecycle.registerAppEvents()
   events.get("before-quit")?.({ preventDefault: () => {} })
   for (let index = 0; index < 5; index++) await tick()
-  assert.deepEqual(calls.filter((call) => !call.startsWith("hide:")), ["renderer:local", "native:local", "aggregate", "stop", "release", "exit"])
+  assert.deepEqual(calls.filter((call) => !call.startsWith("hide:")), ["renderer:local", "native:local", "aggregate", "workspace-release:local", "stop", "release", "exit"])
 })
 
 test("global shutdown asks all renderers concurrently before aggregate persistence", async () => {
@@ -367,6 +367,67 @@ test("global shutdown asks all renderers concurrently before aggregate persisten
   assert.ok(calls.indexOf("release") > calls.indexOf("native:preferences"))
 })
 
+test("quit commits a slow snapshot before attempting release, then ignores an expired release", async () => {
+  const calls: string[] = []
+  const events = new Map<string, Function>()
+  const record = windowRecord("one", calls)
+  record.window.webContents.executeJavaScript = async source => {
+    if (source.includes('flush("prepare")')) {
+      await new Promise(resolve => setTimeout(resolve, 1_100))
+      calls.push("snapshot")
+    } else if (source.includes('flush("release")')) {
+      calls.push("release attempted")
+      await new Promise(() => {})
+    }
+  }
+  let resolve!: () => void
+  const exit = new Promise<void>(done => { resolve = done })
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: (name: string, handler: Function) => events.set(name, handler), exit: resolve } as never,
+    clientStateManager: { isPrimary: true, flush: async () => calls.push("aggregate"), drainAndReleasePrimary: async () => {} } as never,
+    cliManager: { shutdown: async () => calls.push("stop") } as never,
+    getLocalWindows: () => [record], getAllWindows: () => [record.window], removeWindowState: async () => true,
+    getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.registerAppEvents()
+  events.get("before-quit")?.({ preventDefault: () => {} })
+  let deadline: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([exit, new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error("quit did not finish")), 4_000) })])
+  } finally { clearTimeout(deadline) }
+  assert.deepEqual(calls, ["hide:one", "snapshot", "native:one", "aggregate", "release attempted", "stop"])
+})
+
+test("quit does not preflush a forgotten window still releasing its records", async () => {
+  const calls: string[] = []
+  const events = new Map<string, Function>()
+  const first = windowRecord("one", calls), second = windowRecord("two", calls)
+  let finish!: () => void
+  let forgotten = false
+  first.window.webContents.executeJavaScript = async source => {
+    if (source.includes('flush("release")')) return new Promise<void>(resolve => { finish = resolve })
+    if (forgotten) throw new Error("Unknown client state window")
+  }
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: (name: string, handler: Function) => events.set(name, handler), exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true, flush: async () => {}, drainAndReleasePrimary: async () => {} } as never,
+    cliManager: { shutdown: async () => {} } as never,
+    getLocalWindows: () => [first, second], getAllWindows: () => [first.window, second.window],
+    removeWindowState: async () => { forgotten = true; return true },
+    getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.attach(first)
+  lifecycle.registerAppEvents()
+  first.events.get("close")?.({ preventDefault: () => {} })
+  await tick()
+  assert.equal(forgotten, true)
+  try {
+    events.get("before-quit")?.({ preventDefault: () => {} })
+    await tick()
+    assert.ok(calls.includes("exit"))
+  } finally { finish?.() }
+})
+
 test("final close retains its record and shutdown stops/releases once", async () => {
   const calls: string[] = []
   const events = new Map<string, Function>()
@@ -394,7 +455,7 @@ test("Windows query preflush leaves the app alive until session end is confirmed
   const calls: string[] = []
   const first = windowRecord("one", calls)
   first.window.webContents.executeJavaScript = async source => {
-    calls.push(source.includes("flush(true)") ? "renderer:release" : "renderer:one")
+    calls.push(source.includes('flush("release")') ? "renderer:release" : "renderer:one")
   }
   const lifecycle = new MultiwindowLifecycle({
     app: { on: () => {}, quit: () => {}, exit: () => calls.push("exit") } as never,
@@ -412,7 +473,7 @@ test("Windows query preflush leaves the app alive until session end is confirmed
 
   first.events.get("session-end")?.()
   await (lifecycle as any).sessionEnd
-  assert.deepEqual(calls, ["renderer:one", "native:one", "renderer:release", "native:one", "aggregate", "stop", "release", "exit"])
+  assert.deepEqual(calls, ["renderer:one", "native:one", "renderer:one", "native:one", "aggregate", "renderer:release", "stop", "release", "exit"])
 })
 
 test("support windows receive session-end cleanup without local close semantics", async () => {
@@ -607,14 +668,14 @@ test("failed primary release is retried by the next shutdown attempt", async () 
   await tick(); await tick()
   assert.equal(releases, 1)
   assert.equal(calls.includes("exit"), false)
-  assert.deepEqual(calls, ["hide:one", "renderer:one", "native:one", "stop", "recover", "show:one"])
+  assert.deepEqual(calls, ["hide:one", "renderer:one", "native:one", "workspace-release:one", "stop", "recover", "show:one"])
 
   events.get("before-quit")?.({ preventDefault: () => {} })
   await tick(); await tick()
   assert.equal(releases, 2)
   assert.equal(calls.filter((call) => call === "exit").length, 1)
   assert.deepEqual(calls, [
-    "hide:one", "renderer:one", "native:one", "stop", "recover", "show:one",
-    "hide:one", "renderer:one", "native:one", "stop", "exit",
+    "hide:one", "renderer:one", "native:one", "workspace-release:one", "stop", "recover", "show:one",
+    "hide:one", "renderer:one", "native:one", "workspace-release:one", "stop", "exit",
   ])
 })

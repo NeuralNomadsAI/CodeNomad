@@ -6,6 +6,8 @@ Ein Projekt-Tab verbindet CodeNomad mit einem Ordner auf dem Backend-Rechner. Da
 
 Klicken Sie auf **Neue Instanz** (`+`) oder drücken Sie `Ctrl/Cmd+N` für einen leeren Tab. Wählen Sie ein Projekt unter **Zuletzt verwendete Tabs** oder **Durchsuchen**. Das CodeNomad-Logo öffnet die Startseite. Klonen und temporäre Tabs verwenden das lokale Backend.
 
+Unter den zuletzt verwendeten Tabs wechselt **Offen** zu einem Tab in diesem Fenster. Der grüne Punkt **Anderswo geöffnet** zeigt eine Verbindung auf dem Projektserver außerhalb dieses Fensters an. Ein Klick auf die Zeile öffnet einen eigenen Tab.
+
 [Ein Remote-Projekt in einem Tab öffnen](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
 
 Für eine Repository-Kopie wählen Sie **Git-Repo klonen**, geben **Repository-URL** und **Zielordner** ein und wählen **Klonen**. **Zielordner** wird mit dem Repository-Namen im Ordner, der Ihren letzten Klon enthält vorbelegt, sonst neben Ihrem zuletzt geöffneten Projekt. **Durchsuchen** wählt den Ordner, der den Klon enthält; Sie können den Pfad auch bearbeiten, einschließlich des Ordnernamens des Klons.
@@ -34,9 +36,9 @@ Tab öffnet die Suche, Pfeiltasten und Enter wählen aus, Escape setzt den Fokus
 | Tab schließen | Entfernt die CodeNomad-Projektverbindung dieses Tabs; ein anderer, separat geöffneter Tab desselben Ordners bleibt unberührt | Löscht weder Projektdateien noch nativen Verlauf, stoppt keine Sitzungen und entlädt nicht die OpenCode-Location |
 | Sitzung stoppen | Ausführung der ausgewählten Unterhaltung | Schließt weder Projekt noch löscht es dessen Verlauf |
 
-Zeigt ein anderes Fenster dieselbe Projektverbindung, schließt sich dessen Tab ebenfalls und dieses Fenster zeigt eine Benachrichtigung. Ungesendete Entwürfe und Anhänge des geschlossenen Tabs kehren zurück, wenn Sie denselben Ordner in diesem Fenster erneut öffnen; das Fenster behält sie für seine 16 zuletzt geschlossenen Projekte, bis es neu geladen oder geschlossen wird. Sie gehören nicht zur Startwiederherstellung.
+Ungesendete Entwürfe und Anhänge des geschlossenen Tabs kehren zurück, wenn Sie denselben Ordner in diesem Fenster erneut öffnen; das Fenster behält sie für seine 16 zuletzt geschlossenen Projekte, bis es neu geladen oder geschlossen wird. Sie gehören nicht zur Startwiederherstellung.
 
-Beim Schließen eines Fensters oder Browser-Tabs, beim Beenden oder beim Neuladen werden die Projektverbindungen dieses Fensters freigegeben. Andere Fenster behalten ihre Tabs. Die Startwiederherstellung verbindet gespeicherte Tabs erneut und behält offene temporäre Ordner. Stoppen Sie Ausführungen ausdrücklich, wenn Sie sie beenden möchten. Hinweise zur Wartung des gemeinsamen Dienstes finden Sie unter [OpenCode-Einrichtung](opencode.md).
+Beim Schließen eines Fensters oder Browser-Tabs, beim Beenden der App oder beim Neuladen einer Browserseite werden die jeweiligen Projektverbindungen freigegeben. Andere Fenster behalten ihre Tabs. Die Startwiederherstellung verbindet gespeicherte Tabs erneut und behält offene temporäre Ordner. Stoppen Sie Ausführungen ausdrücklich, wenn Sie sie beenden möchten. Hinweise zur Wartung des gemeinsamen Dienstes finden Sie unter [OpenCode-Einrichtung](opencode.md).
 
 Bei aktivierter Startwiederherstellung stellt jeder verbleibende Tab seine eigenen Panel-Auswahlen, Missionsauswahl und -leseansicht sowie die Wahl zwischen Chat und Web-Vorschau wieder her. Browser-URLs und Verlauf werden pro Sitzung geteilt; gespeicherte Seiten laden erst beim ausdrücklichen erneuten Öffnen der Web-Vorschau. Das Schließen einer Instanz entfernt nur ihre gespeicherte Ansicht; erneutes Öffnen des Ordners erzeugt eine neue Instanz.
 

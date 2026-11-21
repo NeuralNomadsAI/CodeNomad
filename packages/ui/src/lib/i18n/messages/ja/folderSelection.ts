@@ -34,6 +34,7 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "ワークスペース名を変更",
   "folderSelection.recent.remove": "履歴から削除",
   "folderSelection.recent.openBadge": "開いています",
+  "folderSelection.recent.openElsewhere": "別のウィンドウで開いています",
   "newInstanceLauncher.searchLabel": "最近のプロジェクトを検索",
   "newInstanceLauncher.searchPlaceholder": "最近のタブを検索…",
   "newInstanceLauncher.recentTitle": "最近のタブ",

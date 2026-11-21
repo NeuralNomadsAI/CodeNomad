@@ -108,7 +108,7 @@ import { clearInstanceAttachments } from "./attachments"
 import { retainClosedWorkspaceDrafts } from "./closed-workspace-drafts"
 import { remoteRestoreTabs } from "./remote-restore-tabs"
 import { clearInstanceSeenInterruptions } from "./session-interruption-seen"
-import { isInstanceOccurrenceReused, publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
+import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { getUnavailableWorkspaceIds } from "./app-session-reconciliation"
 import { getAbortReason } from "./app-session-restore-timeout"
 import { AbortCreatedWorkspaceCleanup } from "./abort-created-workspace-cleanup"
@@ -1501,8 +1501,7 @@ async function refreshWorkspaceList(
     )) {
       if (!active()) return false
       releaseInstanceResources(instanceId)
-      removeInstance(instanceId, { authoritative: false,
-        windowRelease: openInstanceTabIds().has(instanceId) && isInstanceOccurrenceReused(instanceId) ? true : undefined })
+      removeInstance(instanceId, { authoritative: false })
     }
     const published = active() && workspaceListReconciliationFence.isCurrent(requestFence)
     if (published) inventoryPublished?.()
@@ -1641,15 +1640,14 @@ function handleWorkspaceEvent(event: BackendEventPayload) {
     case "workspace.stopped": {
       const instance = instances().get(event.workspaceId)
       const locallyClosed = locallyRequestedWorkspaceCloses.delete(event.workspaceId)
-      const windowRelease = event.reason === "deleted" && event.windowRelease === true && openInstanceTabIds().has(event.workspaceId)
-      if (event.reason === "deleted" && !event.windowRelease && instance && openInstanceTabIds().has(event.workspaceId)
+      if (event.reason === "deleted" && instance && openInstanceTabIds().has(event.workspaceId)
         && !locallyClosed) {
         showToastNotification({ category: "projects",
           message: tGlobal("app.closeInstance.toast.otherWindow", { project: getInstanceLabel(instance) }),
           variant: "info",
         })
       }
-      if (!windowRelease) requestInstanceTabClose(event.workspaceId)
+      requestInstanceTabClose(event.workspaceId)
       const tracked = restoreCreatedWorkspaceCleanup.get(event.workspaceId, true)
       if (tracked?.receipt?.attached()) restoreCreatedWorkspaceCleanup.release(event.workspaceId, tracked.receipt.requestKey)
       // Clear the instance after this event batch has unmounted its tab: clearing
@@ -1664,9 +1662,8 @@ function handleWorkspaceEvent(event: BackendEventPayload) {
         pendingWorkspaceStops.delete(event.workspaceId)
         if (!operation.current()) return
         releaseInstanceResources(event.workspaceId)
-        removeInstance(event.workspaceId, { authoritative: event.reason === "deleted" && !windowRelease,
-          drafts: discarded ? "discard" : "keep", ...(windowRelease ? { windowRelease: true } : {}) })
-        if (windowRelease) requestInstanceTabClose(event.workspaceId)
+        removeInstance(event.workspaceId, { authoritative: event.reason === "deleted",
+          drafts: discarded ? "discard" : "keep" })
       })
       break
     }
@@ -1798,7 +1795,7 @@ function updateInstance(id: string, updates: Partial<Instance>) {
   syncHasInstancesFlag()
 }
 
-function removeInstance(id: string, options: { authoritative?: boolean; drafts?: "keep" | "skip" | "discard"; windowRelease?: true } = {}) {
+function removeInstance(id: string, options: { authoritative?: boolean; drafts?: "keep" | "skip" | "discard" } = {}) {
   clearSessionListView(id)
   locallyRequestedWorkspaceCloses.delete(id)
   deferredPendingDiscovery.delete(id)
@@ -1816,7 +1813,6 @@ function removeInstance(id: string, options: { authoritative?: boolean; drafts?:
       instanceId: id,
       folder: removedInstance.folder,
       occurrence: removedOccurrence,
-      ...(options.windowRelease ? { windowRelease: true } : {}),
       ...(removedInstance.backendId ? { backendId: removedInstance.backendId } : {}),
       ...(removedInstance.serverId ? { serverId: removedInstance.serverId } : {}),
     })

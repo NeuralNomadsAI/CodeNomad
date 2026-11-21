@@ -6,6 +6,8 @@ Una pestaña de proyecto conecta CodeNomad a una carpeta del equipo del backend.
 
 Pulsa **Nueva instancia** (`+`) o `Ctrl/Cmd+N` para abrir una pestaña vacía. Elige un proyecto en **Pestañas recientes** o **Explorar**. El logotipo de CodeNomad abre Inicio. La clonación y las pestañas temporales usan el servidor local.
 
+En las pestañas recientes, **Abierta** cambia a una pestaña de esta ventana. El punto verde **Abierto en otra ventana** indica una conexión en el servidor del proyecto fuera de esta ventana. Seleccionar la fila abre una pestaña independiente.
+
 [Abrir un proyecto remoto en una pestaña](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
 
 Para obtener una copia de un repositorio, elige **Clonar repo Git**, introduce la **URL del repositorio** y la **Carpeta de destino** y pulsa **Clonar**. La **Carpeta de destino** se rellena con el nombre del repositorio en la carpeta que contiene tu último clon, o junto a tu proyecto más reciente. **Buscar** elige la carpeta que contendrá el clon; también puedes editar la ruta, incluido el nombre de la carpeta del clon.
@@ -34,9 +36,9 @@ Tab permite buscar, las flechas y Enter seleccionan y Escape devuelve el foco a 
 | Cerrar pestaña | Retira la conexión de proyecto de CodeNomad de esa pestaña; otra pestaña abierta por separado en la misma carpeta no se ve afectada | No elimina archivos del proyecto ni el historial nativo, no detiene sesiones ni descarga la Location de OpenCode |
 | Detener sesión | Ejecución de la conversación seleccionada | No cierra el proyecto ni elimina su historial |
 
-Si otra ventana muestra la misma conexión de proyecto, su pestaña también se cierra y esa ventana muestra una notificación. Los borradores y adjuntos sin enviar de la pestaña cerrada vuelven al reabrir la misma carpeta en esa ventana; la ventana los conserva para sus 16 últimos proyectos cerrados hasta que se recarga o se cierra. No forman parte de la restauración al iniciar.
+Los borradores y adjuntos sin enviar de la pestaña cerrada vuelven al reabrir la misma carpeta en esa ventana; la ventana los conserva para sus 16 últimos proyectos cerrados hasta que se recarga o se cierra. No forman parte de la restauración al iniciar.
 
-Al cerrar una ventana o una pestaña del navegador, salir o recargar, se liberan las conexiones de proyecto de esa ventana. Las demás ventanas conservan sus pestañas. La restauración al iniciar vuelve a conectar las pestañas guardadas y conserva las carpetas temporales abiertas. Detén las ejecuciones explícitamente si quieres terminarlas; consulta la [configuración de OpenCode](opencode.md) para el mantenimiento del servicio compartido.
+Al cerrar una ventana o pestaña del navegador, salir de la aplicación o recargar una página del navegador, se liberan las conexiones correspondientes. Las demás ventanas conservan sus pestañas. La restauración al iniciar vuelve a conectar las pestañas guardadas y conserva las carpetas temporales abiertas. Detén las ejecuciones explícitamente si quieres terminarlas; consulta la [configuración de OpenCode](opencode.md) para el mantenimiento del servicio compartido.
 
 Con la restauración al iniciar activada, cada pestaña restante recupera sus propias opciones de paneles, selección y lector de Misión, y elección entre chat y vista previa web. Las URL y el historial del navegador se comparten por sesión; las páginas guardadas se cargan solo al reabrir explícitamente la vista previa web. Cerrar una instancia elimina solo su vista guardada; reabrir la carpeta crea una instancia nueva.
 

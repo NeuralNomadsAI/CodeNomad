@@ -277,6 +277,28 @@ fn failed_global_shutdown_cancels_the_exact_renderer_generations() {
 }
 
 #[test]
+fn shutdown_release_has_its_own_bounded_wait_after_persistence() {
+    let coordinator = ShutdownCoordinator::default();
+    let closing = coordinator.approve_local_close("local-closing".into(), Ok(())).unwrap().unwrap();
+    let requests = coordinator.begin_shutdown(["local-a".into(), "remote-b".into(), "local-closing".into()]).unwrap();
+    assert_eq!(requests.len(), 2, "the already approved close must not preflush a forgotten record");
+    assert!(coordinator.finish_local_release("local-closing", closing));
+    for (label, generation) in &requests {
+        coordinator.acknowledge_global(label, *generation);
+    }
+    assert!(coordinator.begin_cleanup(false));
+    let releases = coordinator.begin_workspace_releases();
+    assert_eq!(releases.len(), 2);
+    for (label, generation) in &requests {
+        assert!(!coordinator.acknowledge_global(label, *generation));
+    }
+    assert!(!coordinator.acknowledge_global(&releases[0].0, releases[0].1));
+    coordinator.wait_for_workspace_releases(Duration::ZERO);
+    assert!(coordinator.shutdown_started());
+    assert!(coordinator.acknowledge_global(&releases[1].0, releases[1].1));
+}
+
+#[test]
 fn timed_out_global_shutdown_reopens_navigation_authority() {
     let coordinator = ShutdownCoordinator::default();
     let mut requests = coordinator

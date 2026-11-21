@@ -66,8 +66,9 @@ export async function loadNativeClientState(): Promise<NativeClientStateLoadResu
   const web = loadWebSessionClientState()
   if (!web) return SECONDARY_CLIENT_STATE
   webSessionOwned = true
-  const reuseRecords = await claimWebSessionRecords()
-  return { isPrimary: true, ...web, webSession: true, ...(reuseRecords ? {} : { recreateWebRecords: true }) }
+  const { recordsReleased, ...state } = web
+  const claimed = await claimWebSessionRecords()
+  return { isPrimary: true, ...state, webSession: true, ...(claimed && !recordsReleased ? {} : { recreateWebRecords: true }) }
 }
 // A plain browser tab persists in its own sessionStorage (`web-session-client-state.ts`).
 const persistClientState = (web: () => boolean, native: () => Promise<boolean>): Promise<boolean> =>

@@ -75,7 +75,6 @@ const RENDERER_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RendererFlushRequest {
     pub(crate) generation: u64,
-    pub(crate) release_workspaces: bool,
     pub(crate) release_only: bool,
 }
 
@@ -952,9 +951,10 @@ impl ClientState {
             state.0 += 1;
             state.0
         };
-        if let Err(err) = webview.emit(
+        if let Err(err) = webview.emit_to(
+            window_label,
             "client-state:navigation-flush-requested",
-            RendererFlushRequest { generation, release_workspaces: false, release_only: false },
+            RendererFlushRequest { generation, release_only: false },
         ) {
             eprintln!("[client-state] failed to request renderer flush: {err}");
             return;

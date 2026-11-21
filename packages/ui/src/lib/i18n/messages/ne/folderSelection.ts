@@ -36,6 +36,7 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "कार्यस्थान पुन: नामकरण गर्नुहोस्",
   "folderSelection.recent.remove": "भर्खरको सूचीबाट हटाउनुहोस्",
   "folderSelection.recent.openBadge": "खोल्नुहोस्",
+  "folderSelection.recent.openElsewhere": "अर्को विन्डोमा खुला छ",
   "newInstanceLauncher.searchLabel": "हालका परियोजनाहरू खोज्नुहोस्",
   "newInstanceLauncher.searchPlaceholder": "हालका ट्याबहरू खोज्नुहोस्…",
   "newInstanceLauncher.recentTitle": "हालका ट्याबहरू",

@@ -48,7 +48,9 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
         loadClientStatePartition: async (_token: any, key: string) => persisted?.partitions[key] ?? null, commitClientStatePartitions: async (_token: any, value: any) => commit(value),
         saveClientState: async () => true, setClientStateRestoreEnabled: async () => true }
       if (host === "tauri") {
-        ;(window as any).__TAURI_INTERNALS__ = { transformCallback: () => 1, invoke: async (command: string, args: any) =>
+        ;(window as any).__TAURI_INTERNALS__ = {
+          metadata: { currentWindow: { label: "local-fixture" }, currentWebview: { label: "local-fixture" } },
+          transformCallback: () => 1, invoke: async (command: string, args: any) =>
           command === "client_state_load" ? load() : command === "client_state_load_partition" ? persisted?.partitions[args.key] ?? null
             : command === "client_state_commit_partitions" ? commit(args.payload) : true }
         ;(window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} }
@@ -104,8 +106,7 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
           if (remote) projects.push(body)
         } else body = remote ? projects : []
       } else if (path.endsWith("/worktrees")) body = { isGitRepo: false, worktrees: [] }
-      else if (remote && path.startsWith("/api/workspaces/") && request.method() === "DELETE"
-        && !new URL(request.url()).searchParams.has("windowRelease")) {
+      else if (remote && path.startsWith("/api/workspaces/") && request.method() === "DELETE") {
         const id = path.slice("/api/workspaces/".length)
         const index = projects.findIndex(project => project.id === id)
         if (index >= 0) projects.splice(index, 1)
@@ -190,13 +191,13 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
         assert.deepEqual(tabs.map((tab: any) => tab.folder), ["/local", "/same", "/same"])
         assert.deepEqual(tabs.map((tab: any) => tab.drafts.__no_session_draft__), ["draft-0", "draft-1", "draft-2"])
         assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), tabs[2].id)
-        const expectedCreates = mode === "partial-refusal" ? 3 : explicitlyOpen ? 2 : 0
+        const expectedCreates = mode === "partial-refusal" ? 3 : 2
         assert.equal(creates.filter(value => value === "a:/same").length, expectedCreates)
         const before = creates.length
         await page.waitForFunction(() => Boolean((window as any).committedState))
         const immediateReload = host === "electron" && mode === "reuse"
         if (immediateReload) {
-          await page.waitForFunction(async () => (await (window as any).restoreFixture.saved())?.session?.tabs[1]?.workspaceId === "a~existing-0")
+          await page.waitForFunction(async id => (await (window as any).restoreFixture.saved())?.session?.tabs[1]?.workspaceId === id, tabs[1].id.slice("instance:".length))
           await page.evaluate(() => { (window as any).holdSnapshotCommit = true })
           await page.getByRole("tab").nth(1).click()
           assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), tabs[1].id)
@@ -214,20 +215,22 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
           await page.evaluate(() => (window as any).restoreFixture.retry())
         }
         await page.waitForFunction(() => (window as any).restoreFixture?.tabs().filter((tab: any) => tab.kind === "instance").length === 3)
-        assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), tabs[immediateReload ? 1 : 2].id)
-        assert.deepEqual((await page.evaluate(() => (window as any).restoreFixture.tabs())).map((tab: any) => tab.drafts.__no_session_draft__), ["draft-0", "draft-1", "draft-2"])
+        const reloaded = await page.evaluate(() => (window as any).restoreFixture.tabs())
+        assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), reloaded[immediateReload ? 1 : 2].id)
+        assert.deepEqual(reloaded.map((tab: any) => tab.drafts.__no_session_draft__), ["draft-0", "draft-1", "draft-2"])
+        assert.ok(reloaded.slice(1).every((tab: any) => tabs.every((original: any) => tab.id !== original.id)))
         const secondWindow = await context.newPage()
         await secondWindow.goto(`${url}?fresh`)
         await secondWindow.waitForFunction(() => (window as any).restoreFixture?.tabs().filter((tab: any) => tab.kind === "instance").length === 3)
         assert.equal((await secondWindow.evaluate(() => (window as any).restoreFixture.tabs()))[2].drafts.__no_session_draft__, "draft-2")
-        assert.equal(creates.filter(value => value === "a:/same").length, expectedCreates + 2, "a second window opens independent occurrences")
-        assert.equal(creates.length, before + 4)
+        assert.equal(creates.filter(value => value === "a:/same").length, expectedCreates + 4, "reload and a second window open independent occurrences")
+        assert.equal(creates.length, before + 6)
         await secondWindow.close()
         // Retry recreates the unavailable occurrences.
         projects.splice(0); generation++
         await page.evaluate(() => (window as any).restoreFixture.restartBackend())
         await page.evaluate(() => (window as any).restoreFixture.retry())
-        assert.equal(creates.filter(value => value === "a:/same").length, expectedCreates + 4)
+        assert.equal(creates.filter(value => value === "a:/same").length, expectedCreates + 6)
         await page.waitForFunction(() => (window as any).restoreFixture.tabs().filter((tab: any) => tab.id.includes("remote-1")).length === 2)
         const restored = await page.evaluate(() => (window as any).restoreFixture.tabs())
         assert.equal(restored[2].drafts.__no_session_draft__, "draft-2")

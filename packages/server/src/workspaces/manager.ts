@@ -45,7 +45,7 @@ const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
 const MAX_ACTIVE_WORKSPACE_CREATIONS = 32
 const WORKSPACE_STATE = Symbol("workspaceState")
 type ManagerTimeout = number | NodeJS.Timeout
-type WorkspaceStopDetails = { temporaryRetained?: true; windowRelease?: true }
+type WorkspaceStopDetails = { temporaryRetained?: true }
 
 async function ownershipRealpath(directory: string, strict = false): Promise<string | undefined> {
   try { return await realpath(directory) }

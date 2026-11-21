@@ -937,7 +937,7 @@ export type WorkspaceEventPayload =
   | { type: "workspace.created"; workspace: WorkspaceDescriptor }
   | { type: "workspace.started"; workspace: WorkspaceDescriptor }
   | { type: "workspace.error"; workspace: WorkspaceDescriptor }
-  | { type: "workspace.stopped"; workspaceId: string; reason?: "deleted" | "stopped"; temporaryRetained?: true; windowRelease?: true }
+  | { type: "workspace.stopped"; workspaceId: string; reason?: "deleted" | "stopped"; temporaryRetained?: true }
   | { type: "workspace.log"; entry: WorkspaceLogEntry }
   | { type: "workspace.worktreesChanged"; workspaceId: string }
   | { type: "workspace.filesChanged"; workspaceId: string; changes: WorkspaceDirectoryChange[] }

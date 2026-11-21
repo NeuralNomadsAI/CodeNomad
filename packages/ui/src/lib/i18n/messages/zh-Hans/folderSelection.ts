@@ -34,6 +34,7 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "重命名工作区",
   "folderSelection.recent.remove": "从最近列表移除",
   "folderSelection.recent.openBadge": "已打开",
+  "folderSelection.recent.openElsewhere": "已在其他窗口打开",
   "newInstanceLauncher.searchLabel": "搜索最近的项目",
   "newInstanceLauncher.searchPlaceholder": "搜索最近的标签页…",
   "newInstanceLauncher.recentTitle": "最近的标签页",

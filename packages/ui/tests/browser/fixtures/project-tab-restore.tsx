@@ -38,8 +38,8 @@ import { getToastHistory } from "../../../src/lib/notifications"
   writeDraft: (id: string, text: string) => setSessionDraftPrompt(id, "same", text),
   temporary: (id: string) => instances().get(id)?.temporary,
   refresh: () => refreshWorkspaceList(),
-  remove: (id: string, windowRelease = true) => (serverEvents as any).dispatch({
-    type: "workspace.stopped", workspaceId: id, reason: "deleted", temporaryRetained: true, windowRelease,
+  remove: (id: string) => (serverEvents as any).dispatch({
+    type: "workspace.stopped", workspaceId: id, reason: "deleted", temporaryRetained: true,
   }),
   noticeCount: () => getToastHistory().length,
   saved: savedSessionBrowser,

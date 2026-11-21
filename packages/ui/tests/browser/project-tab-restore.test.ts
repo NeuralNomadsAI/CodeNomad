@@ -62,6 +62,7 @@ test(`${host} restores the active project and saved session identity before hydr
     }
     if (${JSON.stringify(host)} === 'tauri') {
       window.__TAURI_INTERNALS__ = {
+        metadata: { currentWindow: { label: 'local-fixture' }, currentWebview: { label: 'local-fixture' } },
         transformCallback: () => 1,
         invoke: async (command, args) => {
            if (command === 'client_state_load') return load()
@@ -252,6 +253,7 @@ test(`${host} restores the active project and saved session identity before hydr
       assert.equal(creations.filter(folder => folder === "D:/second").length, ["foreground-runtime-refused-again", "foreground-runtime-concurrent-continue"].includes(mode) ? 3 : 2)
       assert.equal(creations.filter(folder => folder === "D:/first").length, manualPending ? 3 : mode === "foreground-runtime-failure" ? 1 : 2,
         "never duplicate a manually reopened tab or replay a non-426 failure")
+      if (mode === "foreground-runtime-user" || manualPending) await second.click()
       if (mode !== "foreground-runtime-closed") await page.getByText("Saved transcript visible before secondary hydration", { exact: true }).first().waitFor()
       const count = creations.length
       assert.equal(await page.evaluate(() => (window as any).runtimeRecovery.canContinueOpenCodeSetup()), false,

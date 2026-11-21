@@ -17,7 +17,7 @@ before(async () => {
 })
 after(async () => { await browser?.close() })
 
-for (const offline of [false, true]) test(`web reload retains backend-owned records and placeholders (offline=${offline})`, async () => {
+for (const offline of [false, true]) test(`web reload recreates backend-owned records and keeps placeholders (offline=${offline})`, async () => {
   const context = await browser.newContext()
   const page = await context.newPage()
   page.setDefaultTimeout(15_000)
@@ -29,6 +29,7 @@ for (const offline of [false, true]) test(`web reload retains backend-owned reco
     Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: "web", __CODENOMAD_WINDOW_CONTEXT__: "remote" })
     window.EventSource = class extends EventTarget { close() {} } as any
     if (sessionStorage.getItem("codenomad.client-state.v1")) return
+    sessionStorage.setItem("codenomad.client-state.page", "fixture-page")
     sessionStorage.setItem("codenomad.client-state.v1", JSON.stringify({
       version: 1, revision: 1, savedAt: 1, layout: {}, session: { activeTabIndex: 1, tabs: [
         { workspaceId: "survivor", occurrence: 0 },
@@ -55,9 +56,10 @@ for (const offline of [false, true]) test(`web reload retains backend-owned reco
       body = { apiContract: CODENOMAD_API_CONTRACT, serverId: backend ?? "local" }
     } else if (path === "/api/workspaces") {
       if (request.method() === "POST") creates.push(`${backend ?? "local"}:${request.postData()}`)
+      const id = request.method() === "POST" && creates.length > 1 ? `fresh-${creates.length}` : "survivor"
       const descriptor = {
-        id: "survivor", path: "/same", status: "ready", port: 1234,
-        proxyPath: "/workspaces/survivor/instance", binaryId: "fixture", createdAt: "", updatedAt: "",
+        id, path: "/same", status: "ready", port: 1234,
+        proxyPath: `/workspaces/${id}/instance`, binaryId: "fixture", createdAt: "", updatedAt: "",
       }
       body = request.method() === "POST" ? { ...descriptor, requestId: request.postDataJSON().requestId }
         : backend === "b" ? [] : [descriptor]
@@ -92,18 +94,22 @@ for (const offline of [false, true]) test(`web reload retains backend-owned reco
     })
     await page.reload()
     await page.locator('[data-restoring="false"]').waitFor()
-    assert.deepEqual(await read(), expected)
-    assert.equal(creates.length, 2, "browser restores the missing remote record once per mock inventory")
-    await page.evaluate(() => {
+    const reloaded = await read()
+    assert.deepEqual(reloaded.map((row: string[]) => row.slice(1)), expected.map(row => row.slice(1)))
+    assert.ok(reloaded.every((row: string[], index: number) => row[0] !== expected[index][0]))
+    assert.equal(creates.length, 4, "the first load restores one missing record; reload recreates all three")
+    const localId = reloaded[0][0]
+    await page.evaluate(id => {
       const fixture = (window as any).restoreFixture
-      fixture.close("instance:b~survivor")
-    })
+      fixture.close(id)
+      fixture.stopped(id)
+    }, reloaded[2][0])
     await page.evaluate(() => (window as any).restoreFixture.reopen("local"))
-    const local = (await read()).find((tab: string[]) => tab[0] === "instance:survivor")
+    const local = (await read()).find((tab: string[]) => tab[0] === localId)
     assert.equal(local[2], "owner-0", "local homonym never consumes the closed remote draft")
     await page.evaluate(() => (window as any).restoreFixture.reopen("b"))
     await page.waitForFunction(() => (window as any).restoreFixture.tabs().some((tab: any) =>
-      tab.id === "instance:b~survivor" && tab.drafts.__no_session_draft__ === "owner-2"))
+      tab.id.startsWith("instance:b~") && tab.drafts.__no_session_draft__ === "owner-2"))
     assert.deepEqual(errors, [])
   } finally { await context.close() }
 })

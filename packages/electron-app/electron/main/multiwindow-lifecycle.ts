@@ -5,6 +5,9 @@ import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-
 import type { SerializedLifecycle } from "./serialized-lifecycle"
 import type { WindowStateTracker } from "./window-state"
 
+// Durable snapshot publication can outlast the best-effort release budget.
+const CLOSE_CAPTURE_TIMEOUT_MS = 5_000
+
 export interface LifecycleWindow {
   id: string
   persisted?: boolean
@@ -42,6 +45,7 @@ export class MultiwindowLifecycle {
   private relaunchRequested = false
   private readonly sessionEndWindows = new WeakSet<BrowserWindow>()
   private readonly pendingWindowCloses = new Set<BrowserWindow>()
+  private readonly approvedWindowCloses = new WeakSet<BrowserWindow>()
 
   constructor(private readonly dependencies: Dependencies) {}
 
@@ -68,6 +72,11 @@ export class MultiwindowLifecycle {
         const launch = this.dependencies.isLaunchWindow?.(record.window)
         const remote = this.dependencies.isRemoteWindow?.(record.window) === true
         if (!launch && !remote) await this.flushWindow(record, "prepare")
+        if (this.shutdown) {
+          closing = false
+          this.pendingWindowCloses.delete(record.window)
+          return
+        }
         // The last local window keeps its saved state beside remote windows, as when it quits CodeNomad:
         // the next local window (New Window, a later launch or the next start) reopens it.
         if (record.persisted !== false && this.hasOtherLocalWindow(record.id)
@@ -77,7 +86,8 @@ export class MultiwindowLifecycle {
           this.pendingWindowCloses.delete(record.window)
           return
         }
-        if (!launch) await this.run("workspace release", () => this.flushRenderer(record.window, remote ? true : "release"))
+        this.approvedWindowCloses.add(record.window)
+        if (!launch) await this.releaseWorkspaces(record.window)
         approved = true
         record.window.close()
       })().catch((error) => {
@@ -155,8 +165,13 @@ export class MultiwindowLifecycle {
     if (this.shutdown) return this.shutdown
     const cleanup = async () => {
       if (preparedFlush) await preparedFlush
-      await this.flushApplicationWindows(true)
+      await this.flushApplicationWindows("prepare")
       await this.run("aggregate state flush", () => this.dependencies.clientStateManager.flush())
+      await Promise.all([
+        ...this.dependencies.getLocalWindows().map(record => record.window),
+        ...this.dependencies.getAllWindows().filter(window => this.dependencies.isRemoteWindow?.(window)),
+      ].filter(window => this.needsShutdownFlush(window))
+        .map(window => this.releaseWorkspaces(window)))
       await this.dependencies.cliManager.shutdown()
       try {
         await this.releasePrimary()
@@ -175,15 +190,15 @@ export class MultiwindowLifecycle {
     return shutdown
   }
 
-  private flushApplicationWindows(closing = false): Promise<void> {
+  private flushApplicationWindows(closing: false | "prepare" = false): Promise<void> {
     // A hidden launch window holds no state to preserve, and its pending connection ends with the app.
     return Promise.all([
       ...this.dependencies.getLocalWindows()
-        .filter((record) => !this.dependencies.isLaunchWindow?.(record.window))
+        .filter((record) => this.needsShutdownFlush(record.window))
         .map((record) => this.flushWindow(record, closing)),
       ...(closing ? this.dependencies.getAllWindows()
-        .filter(window => this.dependencies.isRemoteWindow?.(window) && !this.dependencies.isLaunchWindow?.(window))
-        .map(window => this.flushWindow({ id: "", window, tracker: null }, true)) : []),
+        .filter(window => this.dependencies.isRemoteWindow?.(window) && this.needsShutdownFlush(window))
+        .map(window => this.flushWindow({ id: "", window, tracker: null }, closing)) : []),
       this.dependencies.flushSupportWindows?.(),
     ]).then(() => undefined)
   }
@@ -210,19 +225,19 @@ export class MultiwindowLifecycle {
     }).then(() => this.exit())
   }
 
-  private flushRenderer(window: BrowserWindow, closing: boolean | "cancel" | "prepare" | "release") {
+  private flushRenderer(window: BrowserWindow, closing: false | "cancel" | "prepare" | "release") {
     const remote = this.dependencies.isRemoteWindow?.(window) === true
     return flushRendererClientStateBeforeShutdown(
       window,
       Boolean(closing) || remote || this.dependencies.clientStateManager.isPrimary,
       (url) => this.dependencies.isTrustedRendererOrigin(url, this.dependencies.getAllowedRendererOrigins(window)),
-      this.dependencies.rendererFlushTimeoutMs,
+      this.dependencies.rendererFlushTimeoutMs ?? (closing === "prepare" && !remote ? CLOSE_CAPTURE_TIMEOUT_MS : undefined),
       closing,
       remote || !this.dependencies.clientStateManager.isPrimary,
     )
   }
 
-  private async flushWindow(record: LifecycleWindow, closing: boolean | "prepare"): Promise<void> {
+  private async flushWindow(record: LifecycleWindow, closing: false | "prepare"): Promise<void> {
     const flush = () => this.flushRenderer(record.window, closing)
     if (this.dependencies.isRemoteWindow?.(record.window)) await this.run("remote window flush", flush)
     else await flush()
@@ -231,6 +246,14 @@ export class MultiwindowLifecycle {
 
   private resumeCapture(window: BrowserWindow): void {
     void this.run("renderer resume", () => this.flushRenderer(window, "cancel"))
+  }
+
+  private needsShutdownFlush(window: BrowserWindow): boolean {
+    return !this.approvedWindowCloses.has(window) && !this.dependencies.isLaunchWindow?.(window)
+  }
+
+  private releaseWorkspaces(window: BrowserWindow): Promise<void> {
+    return this.run("workspace release", () => this.flushRenderer(window, "release"))
   }
 
   private releasePrimary(): Promise<void> {
