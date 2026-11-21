@@ -59,7 +59,8 @@ fn guarded(route: &str, method: &Method) -> bool {
     (*method == Method::POST && route == "/api/session")
         || (*method == Method::POST
             && route.starts_with("/api/session/")
-            && ["/prompt", "/agent", "/model"].iter().any(|suffix| route.ends_with(suffix)))
+            && ["/prompt", "/agent", "/model", "/fork"].iter().any(|suffix| route.ends_with(suffix)))
+        || (*method == Method::PATCH && route.strip_prefix("/api/session/").is_some_and(|r| !r.contains('/')))
         || (matches!(*method, Method::PUT | Method::DELETE)
             && route.starts_with("/api/experimental/session/")
             && route.contains("/instructions/entries/"))
@@ -290,9 +291,11 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
     }
     let create = route == "/api/session" && head.method == Method::POST;
+    let fork = session.is_some() && route.ends_with("/fork") && head.method == Method::POST;
+    let permissions_patch = session.is_some() && head.method == Method::PATCH;
     let mut root_permissions = None;
     let mut input = None;
-    if matches!(head.method, Method::POST | Method::PUT) {
+    if matches!(head.method, Method::POST | Method::PUT | Method::PATCH) {
         let contents =
             to_bytes(body, 1024 * 1024).await.map_err(|_| error(Status::PAYLOAD_TOO_LARGE, "Request too large"))?;
         let data: Value = if contents.is_empty() {
@@ -317,6 +320,10 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
         let fields: &[&str] = if create {
             &["title", "location", "agent", "model"]
+        } else if fork {
+            &["before"]
+        } else if permissions_patch {
+            &["permissions"]
         } else if form.is_some() {
             &["answer"]
         } else if route.ends_with("/agent") {
@@ -343,6 +350,20 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
         input = Some(Value::Object(data));
     }
+    let _rules_lock = if permissions_patch {
+        let id = session.ok_or_else(upstream_error)?;
+        let lock = crate::sessions::permission_mode::lock_patch(id, input.as_ref().ok_or_else(upstream_error)?).await?;
+        let fresh = super::session_record_at(&app, &endpoint, id).await?;
+        let prior = actual.as_ref().ok_or_else(upstream_error)?;
+        if ["location", "projectID", "parentID", "fork"].iter().any(|key| fresh[*key] != prior[*key])
+            || fresh["time"]["created"] != prior["time"]["created"]
+        {
+            return Err(foreign());
+        }
+        Some(lock)
+    } else {
+        None
+    };
     if head.method == Method::POST && route.ends_with("/prompt") {
         let session = session.ok_or_else(upstream_error)?;
         let url = endpoint.url.join(&format!("/api/session/{session}/environment")).map_err(|_| upstream_error())?;
@@ -426,6 +447,20 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     }
     principal.live()?;
     let response = upstream.send().await.map_err(|_| upstream_error())?;
+    if fork && response.status().is_success() {
+        let builder = relayed(&response);
+        let native = read_json(response, 2 * 1024 * 1024).await.map_err(|_| upstream_error())?;
+        let row = native.get("data").unwrap_or(&native);
+        let source = actual.as_ref().ok_or_else(upstream_error)?;
+        if row["projectID"] != source["projectID"]
+            || row["fork"]["sessionID"] != source["id"]
+            || row["location"] != source["location"]
+        {
+            return Err(foreign());
+        }
+        let _ = crate::sessions::permission_mode::observe_fork(&app, &endpoint, &workspace, row, source).await;
+        return builder.extension(NativeBody).body(Body::from(native.to_string())).map_err(|_| upstream_error());
+    }
     if let Some(block) = root_permissions.filter(|_| response.status().is_success()) {
         let builder = relayed(&response);
         let native = read_json(response, 2 * 1024 * 1024).await.map_err(|_| upstream_error())?;

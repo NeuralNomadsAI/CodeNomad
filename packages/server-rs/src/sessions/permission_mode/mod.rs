@@ -1,6 +1,8 @@
 //! Native ordered rules; only the exact block owned in the CodeNomad profile is mutable.
+mod observed;
 pub(super) mod routes;
 mod rules;
+pub(crate) use observed::{RefreshQueue, observe_fork};
 pub(crate) use routes::workspace_current;
 
 use crate::{
@@ -44,6 +46,13 @@ async fn session_lock(id: &str) -> tokio::sync::OwnedMutexGuard<()> {
     crate::worktrees::fence::serialize(format!("permission-mode\n{id}")).await
 }
 
+pub(crate) async fn lock_patch(id: &str, input: &Value) -> Result<tokio::sync::OwnedMutexGuard<()>, Error> {
+    if !input["permissions"].is_array() || rules::parse(&input["permissions"]).is_err() {
+        return Err(error(Status::BAD_REQUEST, "Invalid conversation permissions"));
+    }
+    Ok(session_lock(id).await)
+}
+
 fn directory(session: &Value) -> Option<&str> {
     let location = session["location"].as_object()?;
     (location.len() == 1).then(|| location["directory"].as_str()).flatten()
@@ -71,9 +80,20 @@ fn saved(settings: &Settings, key: &str) -> Result<Option<Value>, Error> {
 }
 
 fn record(session: &Value, active: &[Rule], pending: Option<&[Rule]>) -> Value {
+    recorded(session, active, pending, &Value::Null)
+}
+
+fn recorded(session: &Value, active: &[Rule], pending: Option<&[Rule]>, fork: &Value) -> Value {
     json!({"active":active,"pending":pending,
         "target":{"id":session["id"],"created":session["time"]["created"],"directory":session["location"]["directory"],"distro":null},
-        "child":false,"fork":null,"previous":null,"revisions":null})
+        "child":!root(session),"fork":fork,"previous":null,"revisions":null})
+}
+
+fn root(session: &Value) -> bool {
+    !session["fork"].is_null() || session["parentID"].is_null()
+}
+fn owns_root(session: &Value, saved: Option<&Value>) -> bool {
+    root(session) && (session["fork"].is_null() || saved.is_some_and(|p| p["fork"].is_object()))
 }
 
 fn remember(settings: &Settings, key: &str, base: Option<&Value>, next: Option<Value>) -> Result<(), Error> {
@@ -272,7 +292,7 @@ pub(crate) async fn refresh_before_send(
     authority: impl Fn() -> bool + Sync,
 ) -> Result<(), Error> {
     let initial = rules::parse(&session["permissions"]).map_err(|_| unavailable())?;
-    if !maybe_supervised(&initial) || !session["parentID"].is_null() || !session["fork"].is_null() {
+    if !maybe_supervised(&initial) {
         return Ok(());
     }
     let _lock = session_lock(session["id"].as_str().ok_or_else(unavailable)?).await;
@@ -280,21 +300,44 @@ pub(crate) async fn refresh_before_send(
     let key = key(session)?;
     let prior = saved(&app.settings, &key)?;
     let blocks = Blocks::read(prior.as_ref())?;
-    if !blocks.exists() {
+    if !blocks.exists() || !root(session) && !prior.as_ref().is_some_and(|p| p["child"] == true) {
         return Ok(());
     }
+    let add_only = !owns_root(session, prior.as_ref());
+    let refresh = refresh_block(&target, &key, prior.as_ref(), blocks, add_only).await;
+    if refresh.is_err() && add_only && !session["fork"].is_null() {
+        target.read().await?;
+        return Ok(());
+    }
+    refresh
+}
+
+async fn refresh_block(
+    target: &Target<'_>,
+    key: &str,
+    prior: Option<&Value>,
+    blocks: Blocks,
+    add_only: bool,
+) -> Result<(), Error> {
+    let Target { app, endpoint, session, .. } = *target;
+    let fork = prior.and_then(|p| p.get("fork")).unwrap_or(&Value::Null);
     let original = target.read().await?;
-    let Some((i, len)) = blocks.span(&original).map_err(|_| conflict())? else { return Ok(()) };
+    let Ok(Some((i, len))) = blocks.span(&original) else { return Ok(()) };
     let known = &original[i..i + len];
     let dir = directory(session).ok_or_else(unavailable)?;
     let mut replacement = config(app, endpoint, dir).await?;
-    rules::project(&mut replacement, &original[..i], cfg!(windows), false).map_err(|_| unavailable())?;
+    if add_only {
+        replacement.retain(|r| r.deny() && !known.contains(r));
+        replacement.splice(..0, known.iter().cloned());
+    } else {
+        rules::project(&mut replacement, &original[..i], cfg!(windows), false).map_err(|_| unavailable())?;
+    }
     if known == replacement {
         if target.read().await? != original {
             return Err(conflict());
         }
-        if blocks.pending.is_some() || prior.as_ref().and_then(|p| p["target"]["directory"].as_str()) != Some(dir) {
-            remember(&app.settings, &key, prior.as_ref(), Some(record(session, known, None)))?;
+        if blocks.pending.is_some() || prior.and_then(|p| p["target"]["directory"].as_str()) != Some(dir) {
+            remember(&app.settings, key, prior, Some(recorded(session, known, None, fork)))?;
         }
         return Ok(());
     }
@@ -306,9 +349,9 @@ pub(crate) async fn refresh_before_send(
         return Err(conflict());
     }
     // Keep both revisions if readback fails or the process dies mid-write.
-    let intent = record(session, known, Some(&replacement));
-    target.replace(&original, &updated, || remember(&app.settings, &key, prior.as_ref(), Some(intent.clone()))).await?;
-    remember(&app.settings, &key, Some(&intent), Some(record(session, &replacement, None)))
+    let intent = recorded(session, known, Some(&replacement), fork);
+    target.replace(&original, &updated, || remember(&app.settings, key, prior, Some(intent.clone()))).await?;
+    remember(&app.settings, key, Some(&intent), Some(recorded(session, &replacement, None, fork)))
 }
 
 pub(crate) async fn refresh_coordinator(
@@ -349,25 +392,34 @@ async fn mode(target: &Target<'_>, requested: Option<routes::Mode>) -> Result<ro
     let prior = saved(settings, &key)?;
     let blocks = Blocks::read(prior.as_ref())?;
     let original = target.read().await?;
-    let span = blocks.span(&original);
     let fork = !session["fork"].is_null();
+    let owns = owns_root(session, prior.as_ref());
+    let span = if owns || requested.is_none() { blocks.span(&original) } else { Ok(None) };
+    let inherited = prior.as_ref().map(|p| p["fork"]["copy"].clone()).filter(Value::is_array);
     match requested {
         None => Ok(if !matches!(span, Ok(None)) || (fork || blocks.exists()) && maybe_supervised(&original) {
             Supervised
         } else {
             Autonomous
         }),
-        // Copied blocks require their own provenance and mutation rules.
-        Some(Autonomous) if fork => Err(unverified()),
-        Some(Supervised) if fork => Err(conflict()),
         Some(Autonomous) => {
             if let Some((i, len)) = span.map_err(|_| unverified())? {
                 let updated = [&original[..i], &original[i + len..]].concat();
-                if maybe_supervised(&updated) {
+                if !fork && maybe_supervised(&updated) {
                     return Err(unverified());
                 }
                 target.replace(&original, &updated, || Ok(())).await?;
-            } else if blocks.exists() && maybe_supervised(&original) {
+                if prior.is_some() {
+                    let keep = inherited
+                        .as_ref()
+                        .map(rules::parse)
+                        .transpose()
+                        .map_err(|_| unavailable())?
+                        .map(|copy| record(session, &copy, None));
+                    remember(settings, &key, prior.as_ref(), keep)?;
+                }
+                return Ok(if fork && maybe_supervised(&updated) { Supervised } else { Autonomous });
+            } else if (fork || blocks.exists()) && maybe_supervised(&original) {
                 return Err(unverified());
             }
             if prior.is_some() {
@@ -380,7 +432,7 @@ async fn mode(target: &Target<'_>, requested: Option<routes::Mode>) -> Result<ro
                 return Ok(Supervised);
             }
             let mut block = config(target.app, target.endpoint, directory(session).ok_or_else(unavailable)?).await?;
-            if rules::positions(&original, &block).next().is_some() {
+            if !fork && rules::positions(&original, &block).next().is_some() {
                 return Err(conflict());
             }
             rules::project(&mut block, &original, cfg!(windows), false).map_err(|_| unavailable())?;
@@ -388,9 +440,17 @@ async fn mode(target: &Target<'_>, requested: Option<routes::Mode>) -> Result<ro
             if rules::positions(&updated, &block).count() != 1 || target.read().await? != original {
                 return Err(conflict());
             }
+            let copy = inherited.or_else(|| {
+                if fork && !owns {
+                    blocks.span(&original).ok().flatten().map(|(i, len)| json!(&original[i..i + len]))
+                } else {
+                    None
+                }
+            });
+            let fork = if fork { json!({"copy":copy}) } else { Value::Null };
             target
                 .replace(&original, &updated, || {
-                    remember(settings, &key, prior.as_ref(), Some(record(session, &block, None)))
+                    remember(settings, &key, prior.as_ref(), Some(recorded(session, &block, None, &fork)))
                 })
                 .await?;
             Ok(Supervised)

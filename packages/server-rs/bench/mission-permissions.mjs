@@ -92,19 +92,29 @@ export async function run({ call, fixture, root, folder, data }) {
   const launch = requestId => ({ requestId, objective: "Prepare a supervised fixture", template: "custom" })
   const lookup = sessionID => client.session.get({ sessionID })
   const prefs = value => send("/api/storage/config/ui", "PATCH", { settings: { newConversationPermissions: value } })
-  const readState = async (session, own = true) => {
+  const stored = async session => {
     const key = createHash("sha256").update(JSON.stringify([`host:${process.platform}`, session.id, session.time.created])).digest("hex")
     const { parse } = await import("yaml")
     const state = parse(await readFile(path.join(data ?? fixture.root, "state.yaml"), "utf8"))
-    const saved = state.sessionPermissionBlocks[key]
+    return [state.sessionPermissionBlocks?.[key], state.sessionPermissionBlocks]
+  }
+  const readState = async (session, own = true) => {
+    const [saved, state] = await stored(session)
     if (!own) return assert.equal(saved, undefined)
     assert.deepEqual(saved.active, expected)
     assert.equal(saved.target.id, session.id)
     assert.equal(saved.target.created, session.time.created)
     assert.equal(saved.target.directory, session.location.directory)
     const { SessionPermissionModes } = await fromDist("permissions/session-mode.js")
-    const modes = new SessionPermissionModes({ getPrivateSessionPermissionState: () => state.sessionPermissionBlocks })
+    const modes = new SessionPermissionModes({ getPrivateSessionPermissionState: () => state })
     assert.deepEqual(await modes.read({ sessionID: session.id, read: () => Promise.resolve(session), current() {} }), { mode: "supervised" })
+  }
+  const until = async (name, read) => {
+    for (const deadline = Date.now() + 24_000; Date.now() < deadline; await delay(100)) {
+      const value = await read()
+      if (value) return value
+    }
+    throw new Error(`Timed out: ${name}`)
   }
   try {
     const end = Date.now() + 30_000
@@ -120,9 +130,24 @@ export async function run({ call, fixture, root, folder, data }) {
     assert.deepEqual(fresh.permissions, expected)
     await readState(fresh)
     assert.equal((await mode(fresh.id)).mode, "supervised")
+    const history = async sessionID => {
+      await client.session.prompt({ sessionID, text: "Fixture history for fork" })
+      await client.session.wait({ sessionID }, { signal: AbortSignal.timeout(20_000) })
+    }
+    await history(fresh.id)
     const child = await client.session.create({ parentID: fresh.id, location })
     assert.deepEqual(await mode(child.id), { mode: "supervised", rootSessionID: fresh.id })
     assert.deepEqual(child.permissions, expected)
+    await until("direct child copy", async () => (await stored(child))[0]?.child)
+    await history(child.id)
+    const copied = await send(`/workspaces/${w.id}/instance/api/session/${fresh.id}/fork`, "POST", {})
+    const ownedFork = copied.data ?? copied
+    const unownedFork = await client.session.fork({ sessionID: child.id })
+    await until("fork ownership does not come from a child", async () => {
+      const storedRoot = (await stored(ownedFork))[0]
+      const storedChild = (await stored(unownedFork))[0]
+      return storedRoot?.fork && storedChild && !storedChild.fork
+    })
     const before = await client.session.create({ permissions: [trailing], location })
     await mode(before.id, "supervised")
     assert.deepEqual((await lookup(before.id)).permissions, [trailing, ...expected])
@@ -159,14 +184,24 @@ export async function run({ call, fixture, root, folder, data }) {
     const ambiguousRoot = await lookup(ambiguous.mission.coordinatorSessionId)
     assert.deepEqual(ambiguousRoot.permissions, [...expected, trailing, ...expected])
     await readState(ambiguousRoot, false)
+    const preparationTurns = fixture.requests.length
     const starting = (await send(missions, "POST", launch("permissions-start"))).mission
-    assert.equal(fixture.requests.length, 0, "Preparation must not start a provider turn")
+    assert.equal(fixture.requests.length, preparationTurns, "Preparation must not start a provider turn")
     for (const sessionID of [fresh.id, starting.coordinatorSessionId]) {
       await client.session.update({ sessionID, permissions: [prefix, ...expected, trailing] })
     }
     await writeFile(path.join(fixture.env.OPENCODE_CONFIG_DIR, "opencode.json"), JSON.stringify({ permissions: [...configured, later] }))
-    await client.location.reload({ location })
-    assert((await client.config.get({ location })).some(entry => entry.info?.permissions?.some(rule => rule.resource === later.resource)))
+    await until("OpenCode configuration watcher", async () =>
+      (await client.config.get({ location })).some(entry => entry.info?.permissions?.some(rule => rule.resource === later.resource)))
+    await until("background copied denies on child and both forks", async () => {
+      const rows = await Promise.all([child.id, ownedFork.id, unownedFork.id].map(lookup))
+      return rows.every(row => row.permissions?.some(r => r.action === later.action && r.effect === later.effect && r.resource === later.resource))
+    })
+    const ownedResult = await mode(ownedFork.id, "autonomous")
+    const unownedResult = await mode(unownedFork.id, "autonomous", 409)
+    assert.equal(ownedResult.mode, "autonomous")
+    assert.equal(unownedResult.code, "PERMISSION_BLOCK_UNVERIFIED")
+    assert.deepEqual((await lookup(unownedFork.id)).permissions, [...expected, later])
     await send(`/workspaces/${w.id}/instance/api/session/${fresh.id}/prompt`, "POST", { text: "Fixture: check refreshed permissions" })
     const refreshed = (await lookup(fresh.id)).permissions
     assert.deepEqual(refreshed, [prefix, ...expected, later, prefix, trailing])
@@ -177,7 +212,8 @@ export async function run({ call, fixture, root, folder, data }) {
     assert.deepEqual((await lookup(starting.coordinatorSessionId)).permissions, refreshed)
     const decision = await client.permission.create({ sessionID: fresh.id, agent: "build", action: "shell", resources: [later.resource] })
     assert.equal(decision.effect, "deny")
-    return { paused: normal.mission.runState, projected: expected, recovered, preparationTurns: 0, refreshed }
+    return { paused: normal.mission.runState, projected: expected, recovered, preparationTurns: 0, refreshed,
+      childRefresh: (await lookup(child.id)).permissions, ownedFork: ownedResult.mode, unownedFork: unownedResult.code }
   } finally {
     await call(workspace, { method: "DELETE" })
   }

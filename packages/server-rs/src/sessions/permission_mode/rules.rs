@@ -9,6 +9,12 @@ pub(super) struct Rule {
     effect: Effect,
 }
 
+impl Rule {
+    pub(super) fn deny(&self) -> bool {
+        self.effect == Effect::Deny
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 enum Effect {

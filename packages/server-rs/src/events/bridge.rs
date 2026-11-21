@@ -222,6 +222,7 @@ pub async fn bridge(app: Shared) {
                 mark.store(now(), Relaxed)
             }));
             let lanes = Arc::new(Lanes::default());
+            let permissions = Arc::new(crate::sessions::permission_mode::RefreshQueue::default());
             let mut connected = false;
             loop {
                 let next = tokio::select! {
@@ -246,6 +247,7 @@ pub async fn bridge(app: Shared) {
                     // Reference: bundled plugins are provisioned on every OpenCode connection.
                     crate::extensions::lifecycle::connected();
                 }
+                permissions.enqueue(&app, &endpoint, &lanes.failed, &event);
                 if kind == "server.connected" {
                     if !event["data"].is_object() {
                         event["data"] = json!({});
