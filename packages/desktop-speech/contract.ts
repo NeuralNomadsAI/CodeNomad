@@ -28,8 +28,11 @@ export interface DeviceSpeechSnapshot extends DeviceSpeechCapabilities {
 export type DeviceSpeechError =
   | "unavailable" | "localeUnavailable" | "busy" | "notOwned" | "planChanged" | "permissionDenied" | "failed"
 
+export const maxDeviceSpeechTextBytes = 64 * 1024
+
 export type DeviceSpeechOperation =
-  | { state: "starting" | "recording" | "transcribing" | "verifying" | "stopping" }
+  | { state: "starting" | "transcribing" | "verifying" | "stopping" }
+  | { state: "recording"; text?: string }
   | { state: "downloading"; downloadedBytes: number }
   | { state: "prepared" | "cancelled" }
   | { state: "transcribed"; text: string }

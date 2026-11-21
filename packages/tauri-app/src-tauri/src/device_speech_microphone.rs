@@ -34,7 +34,7 @@ impl DeviceSpeech {
             || slot.microphone_claimed
             || now >= slot.expires
             || now >= slot.deadline
-            || !matches!(slot.state, Operation::Starting | Operation::Recording)
+            || !matches!(slot.state, Operation::Starting | Operation::Recording { .. })
         {
             return false;
         }

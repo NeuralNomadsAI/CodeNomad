@@ -184,7 +184,7 @@ test("dispatch is status-only when fan-in is incomplete or the exact original al
   const wake = { missionID: "mission", generation: 1, scheduleID: "sch_main", sessionID: "ses_main", run: 1, messageID: "msg_sch_main_1" }
   for (const [ready, held] of [[false, false], [true, true]]) {
     const calls: string[] = []
-    const transport: ReturnType<typeof createNativeScheduleTransport> = {
+    const transport: Pick<ReturnType<typeof createNativeScheduleTransport>, "status" | "wake"> = {
       status: async () => { calls.push("status"); return { state: "received", reply: { key: nativeScheduleWakeKey(wake), state: "unknown", ready,
         messagePresent: true, preflight: nativeSchedulePreflight(wake, "native", Date.now()) } } },
       wake: async () => { calls.push("wake"); throw new Error("must remain read-only") },
@@ -199,7 +199,7 @@ test("dispatch is status-only when fan-in is incomplete or the exact original al
 test("dispatch forwards the frozen receipt and shares one cancellation signal across status and wake", async () => {
   const wake = { missionID: "mission", generation: 1, scheduleID: "sch_main", sessionID: "ses_main", run: 1, messageID: "msg_sch_main_1" }
   const preflight = nativeSchedulePreflight(wake, "native", Date.now()), signals: AbortSignal[] = []
-  const transport: ReturnType<typeof createNativeScheduleTransport> = {
+  const transport: Pick<ReturnType<typeof createNativeScheduleTransport>, "status" | "wake"> = {
     status: async input => { signals.push(input.signal!); return { state: "received", reply: { key: nativeScheduleWakeKey(wake), state: "unknown", messagePresent: true, ready: true, preflight } } },
     wake: async input => {
       signals.push(input.signal!); assert.deepEqual(input.preflight, preflight)
@@ -216,7 +216,7 @@ test("dispatch forwards the frozen receipt and shares one cancellation signal ac
 test("cancellation after preflight cannot publish a claim or dispatch a mutation", async () => {
   const wake = { missionID: "mission", generation: 1, scheduleID: "sch_main", sessionID: "ses_main", run: 1, messageID: "msg_sch_main_1" }
   const abort = new AbortController(), calls: string[] = []
-  const transport: ReturnType<typeof createNativeScheduleTransport> = {
+  const transport: Pick<ReturnType<typeof createNativeScheduleTransport>, "status" | "wake"> = {
     status: async () => { abort.abort(); return { state: "received", reply: { key: nativeScheduleWakeKey(wake), state: "unknown", messagePresent: true, ready: true,
       preflight: nativeSchedulePreflight(wake, "native", Date.now()) } } },
     wake: async () => { calls.push("wake"); throw new Error("cancelled") },
@@ -273,7 +273,7 @@ test("dispatch replays only an abandoned original, passing retry to its claim", 
   const wake = { missionID: "mission", generation: 1, scheduleID: "sch_main", sessionID: "ses_main", run: 1, messageID: "msg_sch_main_1" }
   for (const abandoned of [false, true]) {
     const calls: unknown[] = []
-    const transport: ReturnType<typeof createNativeScheduleTransport> = {
+    const transport: Pick<ReturnType<typeof createNativeScheduleTransport>, "status" | "wake"> = {
       status: async () => ({ state: "received", reply: { key: nativeScheduleWakeKey(wake), state: "pending", messagePresent: true, ready: true,
         ...(abandoned ? { abandoned: true } : {}), preflight: nativeSchedulePreflight(wake, "native", Date.now()) } }),
       wake: async input => {

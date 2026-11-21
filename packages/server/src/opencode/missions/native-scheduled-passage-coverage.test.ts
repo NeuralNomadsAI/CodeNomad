@@ -9,6 +9,7 @@ import { acquireNativeScheduledPassageCoverage } from "./native-scheduled-passag
 import { NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
 import { NATIVE_SCHEDULE_CARRIER_MARKER, NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
 import type { MissionNativeService } from "./native-service-adapter"
+import { MISSION_WAKE_CODE } from "./native-mission-automation"
 
 const current = () => true as const, at = 1000, signal = new AbortController().signal
 async function fixture(count = 2) {
@@ -132,4 +133,29 @@ test("eight principal native ACKs must advance past the frozen cutoff before ful
   const covered = await f.coverage.coverage(f.doc, f.window, current, signal)
   assert.equal(covered.complete, true); assert.equal(covered.wakes.length, 8)
   assert.deepEqual(f.doc, before)
+})
+
+test("a code run is covered by its admission alone, while its program runs and once OpenCode counts it", async () => {
+  const f = await fixture(2), [running, idle] = f.doc.calendars
+  for (const calendar of f.doc.calendars) {
+    const info = f.infos.get(calendar.scheduleID)!
+    f.infos.set(info.id, { ...info, action: { type: "code", code: MISSION_WAKE_CODE }, runCount: 0,
+      nextDueAt: calendar === running ? info.time.created : info.nextDueAt })
+    f.messages.delete(`msg_${calendar.scheduleID}_1`)
+  }
+  assert.equal((await f.coverage.coverage(f.doc, f.window, current, signal)).complete, false, "a due run Missions has not admitted")
+  running.wakePreparing = { scheduleID: running.scheduleID, run: 1, messageID: `msg_${running.scheduleID}_1`, dueAt: at }
+  let covered = await f.coverage.coverage(f.doc, f.window, current, signal)
+  assert.equal(covered.complete, true); assert.deepEqual(covered.wakes, [running.wakePreparing])
+  const wake = { missionID: "review", generation: 1, scheduleID: running.scheduleID, sessionID: running.sessionID, run: 1, messageID: `msg_${running.scheduleID}_1` }
+  assert.deepEqual((await f.coverage.verifyWake(f.doc, wake, current, signal)).wake, running.wakePreparing)
+  const info = f.infos.get(running.scheduleID)!
+  f.infos.set(info.id, { ...info, runCount: 1, nextDueAt: f.infos.get(idle.scheduleID)!.nextDueAt })
+  covered = await f.coverage.coverage(f.doc, f.window, current, signal)
+  assert.equal(covered.complete, true); assert.deepEqual(covered.wakes, [running.wakePreparing])
+  f.infos.set(info.id, { ...info, runCount: 2 })
+  await assert.rejects(f.coverage.coverage(f.doc, f.window, current, signal), /wake proof unavailable/, "a run counted without admission")
+  running.wakePreparing = null
+  f.infos.set(info.id, { ...info, runCount: 1 })
+  await assert.rejects(f.coverage.verifyWake(f.doc, wake, current, signal), /wake proof unavailable/)
 })

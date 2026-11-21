@@ -2,6 +2,8 @@
 #import <Foundation/Foundation.h>
 #import <Speech/Speech.h>
 
+static const NSUInteger MaxText = 64 * 1024;
+
 static void Emit(NSDictionary *frame) {
     NSData *data = [NSJSONSerialization dataWithJSONObject:frame options:0 error:NULL];
     fwrite(data.bytes, 1, data.length, stdout);
@@ -107,13 +109,18 @@ static int Dictate(SFSpeechRecognizer *recognizer, NSString *clip) {
         request = session.stream;
     }
     request.requiresOnDeviceRecognition = YES;
-    request.shouldReportPartialResults = NO;
+    request.shouldReportPartialResults = YES;
     request.taskHint = SFSpeechRecognitionTaskHintDictation;
     session.task = [recognizer recognitionTaskWithRequest:request resultHandler:^(SFSpeechRecognitionResult *result, NSError *error) {
         dispatch_async(dispatch_get_main_queue(), ^{
             if (session.done) return;
             if (result.isFinal) session.text = result.bestTranscription.formattedString;
             else if (error) session.error = @"failed";
+            else if (result && !session.finishing) {
+                NSString *text = result.bestTranscription.formattedString;
+                if (text && [text lengthOfBytesUsingEncoding:NSUTF8StringEncoding] <= MaxText)
+                    Emit(@{@"progress": @{@"state": @"recording", @"text": text}});
+            }
             if (result.isFinal || error) session.done = YES;
         });
     }];
@@ -154,7 +161,7 @@ static int Dictate(SFSpeechRecognizer *recognizer, NSString *clip) {
         [session.task cancel];
         return Error(session.error ?: @"failed");
     }
-    if ([session.text lengthOfBytesUsingEncoding:NSUTF8StringEncoding] > 64 * 1024) return Error(@"failed");
+    if ([session.text lengthOfBytesUsingEncoding:NSUTF8StringEncoding] > MaxText) return Error(@"failed");
     Emit(@{@"value": session.text ?: @""});
     return 0;
 }

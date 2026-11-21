@@ -31,7 +31,8 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
         const tauriApi = kind === "tauri-api" || kind === "tauri-preferences" || kind === "tauri-remote-api"
         const bridge = { requests, choice: kind === "remote-api" || kind === "remote-api-legacy" || tauriApi ? "api" : "hex", operation: "recording",
           resolve: (_: string) => {}, holdMicrophone: false, admitMicrophone: () => {},
-          denyMicrophone: false, microphoneState: "recording", readFails: false, denyLease: false }
+          denyMicrophone: false, microphoneState: "recording", readFails: false, denyLease: false,
+          recordingText: undefined as string | undefined }
         const mic = (action: unknown) => action === "claimMicrophone" ? { ok: true, value: { busy: bridge.denyLease ? "test" : null } }
           : action === "releaseMicrophone" ? { ok: true, value: null } : undefined
         const relay = async (request: Record<string, unknown>) => {
@@ -97,7 +98,8 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
             switch (request.action) {
               case "read": return { ok: true, value: { engine: "system", system: "ready", systemLocales: [systemLocale], hex: { state: "unavailable" } } }
               case "start": return { ok: true, value: { id: "00000000-0000-4000-8000-000000000001" } }
-              case "status": return { ok: true, value: { state: bridge.operation, text: "WSL text" } }
+              case "status": return { ok: true, value: { state: bridge.operation,
+                text: bridge.operation === "recording" ? bridge.recordingText : "WSL text" } }
               case "finish": bridge.operation = "transcribed"; return { ok: true, value: null }
               case "cancel": bridge.operation = "cancelled"; return { ok: true, value: null }
             }
@@ -579,13 +581,20 @@ test("permission granted after the composer closes releases the new stream witho
   }), [0, 0])
 }))
 
-test("a WSL draft captures and finishes on the local host without uploading audio", () => withComposer(async page => {
+test("System dictation previews on the local host before inserting only the final text into a WSL draft", () => withComposer(async page => {
   await field(page).fill("before replace after")
   await select(page, 7, 14)
   await start(page)
   await page.waitForFunction(() => (window as any).native.requests.some((event: any) => event.action === "start"))
+  await page.evaluate(() => { (window as any).native.recordingText = "Early result" })
+  const preview = page.getByRole("status").getByText("Early result", { exact: true })
+  await preview.waitFor()
+  assert.equal(await field(page).inputValue(), "before replace after")
+  await page.evaluate(() => { (window as any).native.recordingText = "a".repeat(150) + " latest words" })
+  await page.getByRole("status").getByText(/^…a+ latest words$/).waitFor()
   await action(page, "Stop recording and transcribe")
   await page.waitForFunction(() => document.querySelector("textarea")?.value === "before WSL text after")
+  assert.equal(await page.getByRole("status").getByText(/latest words$/).count(), 0)
   const { native, capture } = await page.evaluate(() => ({ native: (window as any).native.requests, capture: (window as any).capture }))
   const lease = native.find((event: any) => event.action === "claimMicrophone")
   assert.equal(lease.purpose, "dictation")
@@ -593,6 +602,19 @@ test("a WSL draft captures and finishes on the local host without uploading audi
     { action: "start", engine: "system", locale: "en", microphoneLeaseId: lease.id })
   assert.equal(capture.starts, 0)
   assert.deepEqual(capture.requests, [])
+}, false, "wsl"))
+
+test("typing during a System preview preserves the draft and saves only the final text for insertion", () => withComposer(async page => {
+  await start(page)
+  await page.evaluate(() => { (window as any).native.recordingText = "Early result" })
+  await page.getByRole("status").getByText("Early result", { exact: true }).waitFor()
+  await field(page).pressSequentially("My draft")
+  await action(page, "Stop recording and transcribe")
+  await page.getByRole("button", { name: "Insert transcript" }).waitFor()
+  assert.equal(await field(page).inputValue(), "My draft")
+  assert.equal(await page.getByText("Early result", { exact: true }).count(), 0)
+  await page.getByRole("button", { name: "Insert transcript" }).click()
+  assert.equal(await field(page).inputValue(), "My draft WSL text ")
 }, false, "wsl"))
 
 test("Simplified Chinese can start System dictation with the installed zh-CN recognizer", () => withComposer(async page => {

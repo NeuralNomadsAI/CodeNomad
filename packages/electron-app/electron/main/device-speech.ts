@@ -6,7 +6,7 @@ import { decodeHexAudio } from "./device-speech-hex"
 import { SystemSpeechFailure } from "./device-speech-system"
 import { HexFailure } from "../../../desktop-speech/hex-files.mjs"
 import {
-  isSpeechEngine, resolveSystemSpeechLocale, type DeviceSpeechCapabilities, type DeviceSpeechError,
+  isSpeechEngine, maxDeviceSpeechTextBytes, resolveSystemSpeechLocale, type DeviceSpeechCapabilities, type DeviceSpeechError,
   type DeviceSpeechOperation, type DeviceSpeechRequest, type DeviceSpeechResponses,
   type DeviceSpeechResult, type HexPlan, type LocalSpeechEngine, type MicrophonePurpose, type SpeechEngine,
 } from "../../../desktop-speech/contract"
@@ -22,8 +22,8 @@ export interface SpeechOperationControl {
   finish: AbortSignal
   waitForAudio(): Promise<Buffer | undefined>
   revokePermission(): void
-  progress(value: Extract<DeviceSpeechOperation, { state: "downloading" }> |
-    { state: "recording" | "transcribing" | "verifying" }): void
+  progress(value: Extract<DeviceSpeechOperation, { state: "downloading" | "recording" }> |
+    { state: "transcribing" | "verifying" }): void
 }
 export interface DeviceSpeechDriver {
   // Read-only discovery. A plan id covers the exact components, retained partial bytes and approved sources.
@@ -166,7 +166,7 @@ export class DeviceSpeech {
             return error("localeUnavailable")
           return ok(this.begin(owner, "start", async (control) => {
             const text = await driver.dictate(engine, input.locale, control)
-            return Buffer.byteLength(text) <= 64 * 1024 ? { state: "transcribed", text } : { state: "error", error: "failed" }
+            return Buffer.byteLength(text) <= maxDeviceSpeechTextBytes ? { state: "transcribed", text } : { state: "error", error: "failed" }
           }, engine === "hex" && !!this.hexDriver))
         }
         default: {
@@ -187,6 +187,7 @@ export class DeviceSpeech {
             if (slot.expectsAudio) {
               if (!(slot.audio = decodeHexAudio(input.wav))) return error("failed")
             } else if (input.wav !== undefined) return error("unavailable")
+            if (slot.state.state === "recording") slot.state = { state: "recording" }
             slot.finish.abort()
           }
           return ok(null)
@@ -252,7 +253,7 @@ export class DeviceSpeech {
       progress: (value) => {
         if (!slot.abort.signal.aborted && !terminal(slot.state.state) &&
             (operation === "prepare" ? value.state === "downloading" || value.state === "verifying" :
-              value.state === "recording" || value.state === "transcribing")) slot.state = value
+              (value.state === "recording" && !slot.finish.signal.aborted) || value.state === "transcribing")) slot.state = value
       },
     }, settle)).then(settle, cause => settle({ state: "error", error: cause instanceof HexFailure || cause instanceof SystemSpeechFailure ? cause.code : "failed" }))
     return { id: slot.id }

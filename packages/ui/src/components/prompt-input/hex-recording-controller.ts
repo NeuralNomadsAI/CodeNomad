@@ -29,6 +29,8 @@ export function createNativeRecordingController(
   let timer: number | undefined
   let stopping = false
   let nativeRecording = false
+  let lastPreview: string | undefined
+  let lastPreviewAt = -Infinity
   let starting = false
   let lease: Awaited<ReturnType<typeof claimMicrophone>> | undefined
   let nativeCancellation: Promise<unknown> | undefined
@@ -69,9 +71,20 @@ export function createNativeRecordingController(
       case "cancelled":
       case "stopping": settle(); return
       case "recording":
-        if (engine === "system" && !nativeRecording && !stopping) {
-          nativeRecording = true
-          callbacks.onStateChange("recording")
+        if (engine === "system" && !stopping) {
+          if (!nativeRecording) {
+            nativeRecording = true
+            callbacks.onStateChange("recording")
+          }
+          const text = result.value.text
+          // Coalesce changing hypotheses for the polite live region.
+          const now = performance.now()
+          if (callbacks.onRecordingPreview && text !== undefined && text !== lastPreview && now - lastPreviewAt >= 1000) {
+            lastPreview = text
+            lastPreviewAt = now
+            const characters = Array.from(text.trim())
+            callbacks.onRecordingPreview(characters.length > 120 ? `…${characters.slice(-120).join("")}` : characters.join(""))
+          }
         }
         break
       case "transcribing":
