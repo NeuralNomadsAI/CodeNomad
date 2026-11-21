@@ -385,7 +385,7 @@ pub async fn create(
     if !physical(&app, &s, &root, &principal).await {
         return unavailable("Recurrence creation unavailable");
     }
-    let Ok(previous) = rpc(&app, &s.dir, "recurrenceRead", json!({"id":sid}), 64 * 1024).await else {
+    let Ok(previous) = rpc(&app, &s, "recurrenceRead", json!({"id":sid}), 64 * 1024).await else {
         return unavailable("Recurrence creation unavailable");
     };
     if !physical(&app, &s, &root, &principal).await {
@@ -421,7 +421,7 @@ pub async fn create(
     }
     let proof = json!({"sessionID":auth_id(),"workspaceID":s.id,"requestID":input.request,"location":{"directory":s.dir},
         "scheduleID":sid,"expectedRevision":0,"action":"create","configDigest":digest,"profileSource":source,"issuedAt":now()});
-    let Some((transport, claim)) = signed(&app, proof, &principal, &s.host) else { return unavailable("Recurrence creation unavailable") };
+    let Some((transport, claim)) = signed(&app, proof, &principal, &s) else { return unavailable("Recurrence creation unavailable") };
     admission.dispatched();
     let call = json!({"id":sid,"requestID":input.request,"digest":digest,"config":config,"directory":s.dir,
         "scope":profile_scope,"executionHost":"local","transport":transport});
@@ -429,7 +429,7 @@ pub async fn create(
     let task = {
         let (app, s) = (app.clone(), s.clone());
         tokio::spawn(async move {
-            let created = rpc(&app, &s.dir, "recurrenceCreate", call, 64 * 1024).await;
+            let created = rpc(&app, &s, "recurrenceCreate", call, 64 * 1024).await;
             drop(claim);
             let uncertain = || fail(Status::SERVICE_UNAVAILABLE, "Recurrence creation unavailable or uncertain");
             let Ok(created) = created else { return uncertain() };

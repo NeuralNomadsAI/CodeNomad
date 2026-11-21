@@ -20,6 +20,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::{Map, Value, json};
+use std::sync::Arc;
 
 pub(crate) fn fail(status: Status, text: &str) -> Response {
     (status, Json(json!({ "error": text }))).into_response()
@@ -33,6 +34,7 @@ pub(crate) struct Scope {
     pub project: String,
     pub canonical: String,
     pub host: String,
+    pub endpoint: Arc<crate::opencode::Endpoint>,
 }
 #[derive(Debug, PartialEq)]
 pub(crate) enum Refused {
@@ -48,6 +50,7 @@ pub(crate) fn workspace(app: &App, id: &str) -> Option<Workspace> {
 /// Workspace, owned native Location and project, then the active Missions plugin.
 pub(crate) async fn scope(app: &App, id: &str, plugin: bool) -> Result<Scope, Refused> {
     let w = workspace(app, id).ok_or(Refused::NotFound)?;
+    let endpoint = app.native.endpoint().ok_or(Refused::Unavailable)?;
     let dir = w.location["directory"].as_str().ok_or(Refused::NotFound)?.to_owned();
     let host = files::host_identity(&w.path).map_err(|_| Refused::NotOwned)?;
     files::root(&w).map_err(|_| Refused::NotOwned)?;
@@ -75,16 +78,22 @@ pub(crate) async fn scope(app: &App, id: &str, plugin: bool) -> Result<Scope, Re
             return Err(Refused::Plugin);
         }
     }
-    Ok(Scope { id: w.id.to_string(), w, dir, project, canonical, host })
+    let owner = Scope { id: w.id.to_string(), w, dir, project, canonical, host, endpoint };
+    still(app, &owner).then_some(owner).ok_or(Refused::Unavailable)
 }
 /// The workspace, its Location and physical root are still those admitted.
 pub(crate) fn still(app: &App, s: &Scope) -> bool {
-    app.workspace(&s.id).is_ok_and(|w| w.path == s.w.path && w.location == s.w.location)
+    app.native.endpoint().is_some_and(|endpoint| Arc::ptr_eq(&endpoint, &s.endpoint))
+        && app.workspace(&s.id).is_ok_and(|w| w.path == s.w.path && w.location == s.w.location && w.created_at == s.w.created_at)
         && files::host_identity(&s.w.path).ok().as_deref() == Some(s.host.as_str())
 }
 /// One native Missions RPC; any refusal or transport failure is opaque.
-pub(crate) async fn rpc(app: &App, dir: &str, method: &str, input: Value, max: usize) -> Result<Value, ()> {
-    crate::missions::run::rpc(app, dir, method, input, max).await.map_err(|_| ())
+pub(crate) async fn rpc(app: &App, scope: &Scope, method: &str, input: Value, max: usize) -> Result<Value, ()> {
+    if !still(app, scope) {
+        return Err(());
+    }
+    let result = crate::missions::calendar::rpc(app, &scope.endpoint, &scope.dir, method, input, max).await.map_err(|_| ())?;
+    still(app, scope).then_some(result).ok_or(())
 }
 /// Fastify-style strict query: each key once, `None` on a repeat or bad encoding.
 pub(crate) fn query(raw: Option<&str>) -> Option<Map<String, Value>> {
@@ -172,7 +181,7 @@ async fn read(app: Shared, id: String, page: Option<(String, String)>, raw: Opti
         Some(i) => ("recurrencePassageRead", i.clone()),
         None => ("recurrenceSnapshot", json!({})),
     };
-    let Ok(out) = rpc(&app, &s.dir, method, body, 4 * 1024 * 1024).await else { return unavailable() };
+    let Ok(out) = rpc(&app, &s, method, body, 4 * 1024 * 1024).await else { return unavailable() };
     let valid = if input.is_some() { contract::read_page(&out) } else { contract::snapshot(&out) };
     if !valid || !still(&app, &s) {
         return unavailable();
@@ -285,7 +294,7 @@ async fn current(app: Shared, id: String, schedule: String, passage: Option<Stri
         Err(_) => return unavailable(),
     };
     let identity = || async {
-        let v = rpc(&app, &s.dir, "recurrenceCurrent", json!({"scheduleID":schedule,"owner":kind}), PANEL_PAGE_BYTES + 256).await?;
+        let v = rpc(&app, &s, "recurrenceCurrent", json!({"scheduleID":schedule,"owner":kind}), PANEL_PAGE_BYTES + 256).await?;
         let exact = bytes(&v) <= PANEL_PAGE_BYTES
             && current_identity(&v)
             && v["projectID"] == s.project.as_str()
@@ -319,7 +328,7 @@ async fn current(app: Shared, id: String, schedule: String, passage: Option<Stri
         // refuse with the reference's own observation refusal.
         Mode::Page(input) if input["selector"]["source"] == "activity" => json!({"available":false,"reason":"observation-unavailable"}),
         Mode::Page(input) => {
-            let Ok(v) = rpc(&app, &s.dir, "recurrenceCurrentPage", input.clone(), PANEL_PAGE_BYTES + 256).await else {
+            let Ok(v) = rpc(&app, &s, "recurrenceCurrentPage", input.clone(), PANEL_PAGE_BYTES + 256).await else {
                 return unavailable();
             };
             if !contract::panel_page(&v)
@@ -332,7 +341,7 @@ async fn current(app: Shared, id: String, schedule: String, passage: Option<Stri
             v
         }
         Mode::Content(c) => {
-            let Ok(v) = rpc(&app, &s.dir, "recurrenceCurrentContent", c.clone(), PANEL_PAGE_BYTES + 256).await else {
+            let Ok(v) = rpc(&app, &s, "recurrenceCurrentContent", c.clone(), PANEL_PAGE_BYTES + 256).await else {
                 return unavailable();
             };
             let exact = bytes(&v) <= PANEL_PAGE_BYTES
