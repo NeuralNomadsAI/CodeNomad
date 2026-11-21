@@ -519,7 +519,7 @@ async fn mutate(
     principal: crate::auth::Principal,
     input: Input,
 ) -> Result<Json<Value>, Error> {
-    if app.mission_bridge.is_none() || app.calendar_profile.is_none() {
+    if !app.auth.human(&principal) || app.mission_bridge.is_none() || app.calendar_profile.is_none() {
         return Err(human_required());
     }
     let _gate = app.calendar_slot.lock().await;

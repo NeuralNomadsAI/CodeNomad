@@ -329,9 +329,6 @@ fn directory(v: Option<&Value>) -> Result<Option<String>, ()> {
 fn revision(v: Option<&Value>) -> Option<u64> {
     v?.as_u64().filter(|n| *n <= SAFE)
 }
-fn human(principal: &Principal) -> bool {
-    !principal.0.is_cancelled()
-}
 /// `POST /missions/recurrence/:s/control` (`recurrenceControlRouteSchema`).
 pub async fn control(
     State(app): State<Shared>,
@@ -339,7 +336,7 @@ pub async fn control(
     Extension(principal): Extension<Principal>,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Response {
-    if !human(&principal) {
+    if !app.auth.human(&principal) {
         return fail(Status::UNAUTHORIZED, "Authenticated human session required");
     }
     let invalid = || fail(Status::BAD_REQUEST, "Invalid exact recurrence control request");
@@ -375,7 +372,7 @@ pub async fn run_now(
     Extension(principal): Extension<Principal>,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Response {
-    if !human(&principal) {
+    if !app.auth.human(&principal) {
         return fail(Status::UNAUTHORIZED, "Human authentication required");
     }
     let invalid = || fail(Status::BAD_REQUEST, "Invalid manual passage request");
@@ -422,7 +419,7 @@ pub async fn control_status_route(
     Extension(principal): Extension<Principal>,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Response {
-    if !human(&principal) {
+    if !app.auth.human(&principal) {
         return fail(Status::UNAUTHORIZED, "Human authentication required");
     }
     let invalid = || fail(Status::BAD_REQUEST, "Invalid exact control status request");
@@ -444,7 +441,7 @@ pub async fn control_status_route(
     };
     let hint = holds::held_read(&id, &s.dir, &q).then(|| holds::proof_hint(&id, &q)).flatten();
     let Some(result) = control_read(&app, &s, &q, hint).await else { return unavailable() };
-    if !still(&app, &s) || !human(&principal) {
+    if !still(&app, &s) || !app.auth.human(&principal) {
         return unavailable();
     }
     holds::reconcile(&id, &s.dir, &q, hint, &result);
@@ -457,7 +454,7 @@ pub async fn run_now_status(
     Extension(principal): Extension<Principal>,
     RawQuery(raw): RawQuery,
 ) -> Response {
-    if !human(&principal) {
+    if !app.auth.human(&principal) {
         return fail(Status::UNAUTHORIZED, "Human authentication required");
     }
     let invalid = || fail(Status::BAD_REQUEST, "Invalid manual status request");
@@ -484,7 +481,7 @@ pub async fn run_now_status(
     };
     let hint = holds::held_read(&id, &s.dir, &q).then(|| holds::proof_hint(&id, &q)).flatten();
     let Ok(result) = rpc(&app, &s, "recurrenceRunNowStatus", manual_input(&q, hint), READ).await else { return unavailable() };
-    if !manual_exact(&result, &q, &s.dir) || !still(&app, &s) || !human(&principal) {
+    if !manual_exact(&result, &q, &s.dir) || !still(&app, &s) || !app.auth.human(&principal) {
         return unavailable();
     }
     if result["outcome"] != "unknown" {

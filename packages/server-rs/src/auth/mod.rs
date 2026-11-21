@@ -175,8 +175,8 @@ impl Auth {
         &self.settings.cookie
     }
 
-    pub(crate) fn enabled(&self) -> bool {
-        !self.settings.skip
+    pub(crate) fn human(&self, principal: &Principal) -> bool {
+        !self.settings.skip && principal.live().is_ok()
     }
     pub(crate) fn cookie_user(&self, key: &str) -> Option<String> {
         if self.settings.skip {

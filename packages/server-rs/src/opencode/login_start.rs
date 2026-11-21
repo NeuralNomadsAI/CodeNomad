@@ -24,7 +24,7 @@ pub(super) async fn set(
     Extension(principal): Extension<Principal>,
     input: Result<Json<Input>, JsonRejection>,
 ) -> Result<Json<Value>, Error> {
-    refuse(input.is_ok(), app.auth.enabled() && principal.live().is_ok())
+    refuse(input.is_ok(), app.auth.human(&principal))
 }
 
 fn refuse(valid: bool, authenticated: bool) -> Result<Json<Value>, Error> {

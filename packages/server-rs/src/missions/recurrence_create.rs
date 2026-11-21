@@ -310,7 +310,7 @@ pub async fn create(
     Extension(principal): Extension<Principal>,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Response {
-    if principal.0.is_cancelled() || app.mission_bridge.is_none() {
+    if !app.auth.human(&principal) || app.mission_bridge.is_none() {
         return fail(Status::UNAUTHORIZED, "Human authentication required");
     }
     let invalid = || fail(Status::BAD_REQUEST, "Invalid recurrence creation request");
