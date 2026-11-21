@@ -2,6 +2,8 @@ import { batch, createEffect, onCleanup, onMount, untrack } from "solid-js"
 import { getLogger } from "../logger"
 import { isWebHost } from "../runtime-env"
 import { backendIdOf, LOCAL_BACKEND_ID } from "../backend-identity"
+import { backends } from "../backend-client"
+import { backendEvents } from "../server-events"
 import { captureState, useAppSessionCapture, type AppSessionCaptureController, type WorkspaceReleaseResults } from "./use-app-session-capture"
 import {
   clientStateIsPrimary, loadedRestorableSession, restorePreviousStateEnabled,
@@ -56,6 +58,7 @@ function createRestoreContext(snapshot: RestorableSessionState, signal: AbortSig
   let ownedActiveTabId: string | null = null
   return {
     snapshot, signal, capture, onUpdateRequired, releases,
+    recoveryPasses: new Map<string, Promise<void>>(),
     reusableReleasedIds: new Set<string>(),
     deferredWorkspaces: new Map<number, () => boolean>(),
     attemptedCreates: new Set<number>(),
@@ -75,25 +78,42 @@ function createRestoreContext(snapshot: RestorableSessionState, signal: AbortSig
 }
 type RestoreContext = ReturnType<typeof createRestoreContext>
 
-async function refreshRestoreInventory(backendId: string, signal: AbortSignal) {
-  if (backendId === LOCAL_BACKEND_ID) {
-    if (!await refreshWorkspaceList(LOCAL_BACKEND_ID, undefined, signal)) throw new Error("Primary inventory superseded")
-  } else {
-    if (!await backendRegistry.ensure(backendId)) throw new Error("Remote inventory unavailable")
-    await backendRegistry.retryWorkspaces(backendId)
-  }
+function refreshRestoreInventory(backendId: string, signal: AbortSignal, releaseCheck = false) {
+  return runAbortable(async operationSignal => {
+    if (backendId === LOCAL_BACKEND_ID) {
+      if (!await refreshWorkspaceList(backendId, undefined, operationSignal)) throw new Error("Primary inventory superseded")
+    } else if (releaseCheck && backendRegistry.state(backendId) === "compatible") {
+      // An optional reuse probe must not mark a compatible backend unavailable on failure.
+      const backend = backends.get(backendId)
+      const attachment = backendEvents.signal(backendId)
+      if (!backend || !attachment || !await refreshWorkspaceList(backendId, backend.api,
+        AbortSignal.any([attachment, operationSignal]))) throw new Error("Remote inventory superseded")
+    } else {
+      if (!await backendRegistry.ensure(backendId)) throw new Error("Remote inventory unavailable")
+      operationSignal.throwIfAborted()
+      await backendRegistry.retryWorkspaces(backendId, { invalidate: releaseCheck })
+    }
+  }, { signal, timeoutMs: INITIAL_LOAD_TIMEOUT_MS, message: "Timed out refreshing workspace inventory" })
 }
 
-async function checkReleaseResults(context: RestoreContext, backendId: string): Promise<boolean> {
+async function checkReleaseResults(context: RestoreContext, backendId: string, signal: AbortSignal): Promise<boolean> {
   if (!context.releases?.size) return false
   const results = await runAbortable(() => Promise.all(context.snapshot.tabs.flatMap(tab => {
     if (tab.kind !== "workspace" || backendIdOf(tab) !== backendId || !tab.workspaceId) return []
     const result = context.releases?.get(tab.workspaceId)
     return result ? [result.then(outcome => outcome === "unconfirmed" ? tab.workspaceId : undefined)] : []
-  })), { signal: context.signal, timeoutMs: OPERATION_TIMEOUT_MS })
-  for (const id of results) if (id) context.reusableReleasedIds.add(id)
+  })), { signal, timeoutMs: OPERATION_TIMEOUT_MS })
   // A failed DELETE might have taken effect; only a subsequent inventory can confirm presence.
-  return results.some(Boolean)
+  const unconfirmed = results.filter((id): id is string => !!id)
+  if (!unconfirmed.length) return false
+  for (const id of unconfirmed) context.reusableReleasedIds.delete(id)
+  try {
+    await refreshRestoreInventory(backendId, signal, true)
+    for (const id of unconfirmed) context.reusableReleasedIds.add(id)
+  } catch (error) {
+    if (!signal.aborted) log.warn("Could not confirm released workspace records; restoring without reuse", error)
+  }
+  return true
 }
 function hasLocalRestoredTab(capture: AppSessionCaptureController, index: number): boolean {
   const tabId = capture.restoredTabIds()[index]
@@ -315,17 +335,20 @@ export function useAppSessionRestore(): void {
     if (pending) return pending
     const flight = (async () => {
       await initialRestore
-      if (!context || disposed) return
+      const current = context
+      if (!current || disposed) return
+      await current.recoveryPasses.get(backendId)
+      if (context !== current || disposed) return
       if (backendId !== LOCAL_BACKEND_ID && preferences().multiBackend !== true) return
-      await checkReleaseResults(context, backendId)
-      await refreshRestoreInventory(backendId, controller.signal)
-      const indexes = new Map(context.snapshot.tabs.flatMap((tab, index) => {
+      const indexes = new Map(current.snapshot.tabs.flatMap((tab, index) => {
         const placeholder = remoteRestoreTabs().find(value => value.snapshot === tab)
         if (!placeholder || tab.kind !== "workspace" || backendIdOf(tab) !== backendId) return []
         const current = capture.createRestoredTabCommitGuard(index)
         return [[index, () => current() && remoteRestoreTabs().includes(placeholder)] as const]
       }))
-      await restoreTabs({ ...context, signal: controller.signal }, indexes, backendId === LOCAL_BACKEND_ID)
+      if (!indexes.size) return
+      if (!await checkReleaseResults(current, backendId, controller.signal)) await refreshRestoreInventory(backendId, controller.signal)
+      if (context === current) await restoreTabs({ ...current, signal: controller.signal }, indexes, backendId === LOCAL_BACKEND_ID)
     })().finally(() => workspaceRecoveries.delete(backendId))
     workspaceRecoveries.set(backendId, flight)
     return flight
@@ -375,17 +398,18 @@ export function useAppSessionRestore(): void {
       recovery.selectActive(capture.restoredTabIds()[snapshot.activeTabIndex] ?? null, true)
     })
     // Use the same attempt/Retry path as startup, without reopening live SideCars.
-    initialRestore = initialRestore.then(async () => {
-      await Promise.all([...indexes].map(async ([backendId, group]) => {
+    for (const [backendId, group] of indexes) {
+      const pass = initialRestore.then(async () => {
+        if (context !== recovery || disposed) return
         try {
-          const refresh = await checkReleaseResults(recovery, backendId)
-          if (refresh) await refreshRestoreInventory(backendId, controller.signal)
-          await restoreTabs(recovery, group, refresh && backendId === LOCAL_BACKEND_ID)
+          const checked = await checkReleaseResults(recovery, backendId, controller.signal)
+          if (context === recovery) await restoreTabs(recovery, group, checked && backendId === LOCAL_BACKEND_ID)
         } catch (error) {
           if (!disposed) log.error("Failed to restore projects after cancelled shutdown", error)
         }
-      }))
-    })
+      })
+      recovery.recoveryPasses.set(backendId, pass)
+    }
   }
   const stopLifecycle = onInstanceLifecycleAuthority(event => {
     if (event.type !== "unavailable" || backendIdOf(event) === LOCAL_BACKEND_ID
@@ -438,6 +462,7 @@ export function useAppSessionRestore(): void {
     return recovering = (async () => {
       // Collect all concurrent refusals, even if setup finishes during startup.
       await initialRestore
+      await context?.recoveryPasses.get(LOCAL_BACKEND_ID)
       // Late refusals from that pass may have re-registered this continuation
       // after setup consumed it. Drain them before a retry can offer new work.
       unregisterRecovery()

@@ -204,6 +204,7 @@ const viewCases = [
   { web: false, close: false }, { web: false, close: false, tauri: true }, { web: false, close: true },
   ...[false, true].flatMap(tauri => [
     { web: false, close: false, tauri, refusedDeletes: 2 },
+    { web: false, close: false, tauri, refusedDeletes: 2, stalledInventory: true },
     { web: false, close: false, tauri, refusedDeletes: 1, heldRelease: true },
     { web: false, close: false, tauri, duplicateSidecars: true },
   ]),
@@ -216,7 +217,7 @@ const viewCases = [
   { web: true, close: false, delayedCopy: true },
 ]
 for (const { web, close, late, unsupportedDiscard, discard, tauri, delayedCopy, reloadDuringQuit, earlyRelease,
-  refusedDeletes = 0, heldRelease, duplicateSidecars } of viewCases) test(`${web ? "browser-session" : "native"} production capture/restore binds duplicate UUIDs after ${close ? "closure" : "reorder"} (${late ? "late DELETE" : discard ? "discard" : delayedCopy ? "delayed copy" : unsupportedDiscard ? "no discard signal" : tauri ? "Tauri navigation" : "navigation"}${reloadDuringQuit ? ", reload during quit" : ""}${earlyRelease ? ", release before tabs attach" : ""}${refusedDeletes ? `, ${refusedDeletes} refused DELETEs${heldRelease ? " with one still pending at cancel" : ""}` : ""}${duplicateSidecars ? ", duplicate SideCars" : ""})`, async () => {
+  refusedDeletes = 0, heldRelease, stalledInventory, duplicateSidecars } of viewCases) test(`${web ? "browser-session" : "native"} production capture/restore binds duplicate UUIDs after ${close ? "closure" : "reorder"} (${late ? "late DELETE" : discard ? "discard" : delayedCopy ? "delayed copy" : unsupportedDiscard ? "no discard signal" : tauri ? "Tauri navigation" : "navigation"}${reloadDuringQuit ? ", reload during quit" : ""}${earlyRelease ? ", release before tabs attach" : ""}${refusedDeletes ? `, ${refusedDeletes} refused DELETEs${heldRelease ? " with one still pending at cancel" : ""}` : ""}${stalledInventory ? ", stalled recovery inventory" : ""}${duplicateSidecars ? ", duplicate SideCars" : ""})`, async () => {
   const context = await browser.newContext()
   const page = await context.newPage()
   const restoredDocument = (candidate: Page) => candidate.locator('[data-restoring="false"]').waitFor({ timeout: 60_000 })
@@ -289,6 +290,10 @@ for (const { web, close, late, unsupportedDiscard, discard, tauri, delayedCopy, 
   const explicitDeleteCompleted = Promise.withResolvers<boolean>()
   let sourceIds: string[] = []
   let quitIds: string[] = []
+  let recoveryReadStarted = false
+  const recoveryRead = Promise.withResolvers<void>()
+  const recoveryReadAborted = Promise.withResolvers<boolean>()
+  const finishRecoveryRead = Promise.withResolvers<void>()
   const deletes: string[] = []
   const mock = (method: string, path: string, input: any) => {
     let body: any = {}
@@ -346,6 +351,13 @@ for (const { web, close, late, unsupportedDiscard, discard, tauri, delayedCopy, 
         await finishDelete.promise
         if (res.destroyed) return
       }
+    }
+    if (stalledInventory && quitIds.length && req.method === "GET" && target.pathname === "/api/workspaces" && !recoveryReadStarted) {
+      recoveryReadStarted = true
+      res.on("close", () => recoveryReadAborted.resolve(!res.writableFinished))
+      recoveryRead.resolve()
+      await finishRecoveryRead.promise
+      if (res.destroyed) return
     }
     const body = mock(req.method!, target.pathname, chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : undefined)
     if (holdRestorePosts && req.method === "POST" && target.pathname === "/api/workspaces") await restorePosts.promise
@@ -535,6 +547,11 @@ for (const { web, close, late, unsupportedDiscard, discard, tauri, delayedCopy, 
         assert.deepEqual(await page.evaluate(() => JSON.parse(sessionStorage.getItem("snapshot")!).session.tabs
           .map((tab: any) => tab.workspaceId)), released, "a navigation flush during release cannot commit the empty renderer")
       }
+      if (stalledInventory) {
+        const now = Date.now()
+        await page.clock.install({ time: now })
+        await page.clock.pauseAt(now + 1_000)
+      }
       await flush(1, "cancel")
       restorePosts.resolve()
       assert.equal(await page.evaluate(() => document.documentElement.inert), false, "refused quit unlocks input")
@@ -543,15 +560,26 @@ for (const { web, close, late, unsupportedDiscard, discard, tauri, delayedCopy, 
           "do not reuse a record with DELETE still in flight")
         finishNativeRelease.resolve()
       }
+      if (stalledInventory) {
+        await recoveryRead.promise
+        assert.equal(await page.locator('[data-tab-kind="remote-restore"]').count(), 2)
+        await page.evaluate(() => { void (window as any).tabViews.retry() })
+        assert.equal(await page.evaluate(() => (window as any).tabViews.refresh()), true)
+        await page.clock.fastForward(15_001)
+        await page.clock.resume()
+      }
       await restoredDocument(page)
       await page.waitForFunction(() => (window as any).tabViews.ids().length === 2, undefined, { timeout: 5_000 })
+      if (stalledInventory) assert.equal(await recoveryReadAborted.promise, true)
       const recovered = await page.evaluate(() => (window as any).tabViews.ids().map((id: string) => ({ id, view: (window as any).tabViews.view(id) })))
       const recoveredIds = recovered.map((row: any) => row.id)
-      assert.deepEqual(recoveredIds.slice(0, refusedDeletes), released.slice(0, refusedDeletes), "reuse the exact surviving occurrences")
-      assert.ok(recoveredIds.slice(refusedDeletes).every((id: string) => !restored.some((previous: any) => previous.id === id) && !released.includes(id)))
+      const reused = stalledInventory ? 0 : refusedDeletes
+      assert.deepEqual(recoveredIds.slice(0, reused), released.slice(0, reused), "reuse only confirmed surviving occurrences")
+      assert.ok(recoveredIds.slice(reused).every((id: string) => !restored.some((previous: any) => previous.id === id) && !released.includes(id)))
       if (refusedDeletes) {
         assert.equal(new Set(recoveredIds).size, 2)
-        assert.deepEqual(inventory.filter(id => id.startsWith("uuid-")).sort(), [...recoveredIds].sort(), "no orphaned records")
+        assert.deepEqual(inventory.filter(id => id.startsWith("uuid-")).sort(),
+          [...recoveredIds, ...stalledInventory ? released : []].sort(), "leave unconfirmed records alone")
       }
       assert.deepEqual(recovered.map((row: any) => row.view), restored.map((row: any) => row.view))
       await page.waitForFunction(id => (window as any).tabViews.draft(id) === "restored draft", recovered[0].id)
@@ -595,6 +623,7 @@ for (const { web, close, late, unsupportedDiscard, discard, tauri, delayedCopy, 
     restorePosts.resolve()
     finishDelete.resolve()
     finishNativeRelease.resolve()
+    finishRecoveryRead.resolve()
     await context.close()
     server.closeAllConnections()
     await new Promise<void>(resolve => server.close(() => resolve()))

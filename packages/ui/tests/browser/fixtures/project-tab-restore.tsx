@@ -26,6 +26,7 @@ import { moveAppTab } from "../../../src/stores/app-tabs"
 import { savedSessionBrowser } from "../../../src/stores/session-browser-persistence"
 import { getToastHistory } from "../../../src/lib/notifications"
 import { openSidecarTab } from "../../../src/stores/sidecars"
+import { remoteRestoreTabs } from "../../../src/stores/remote-restore-tabs"
 
 ;(window as any).tabViews = {
   ids: () => appTabs().filter(tab => tab.kind === "instance").map(tab => tab.instance.id),
@@ -48,6 +49,7 @@ import { openSidecarTab } from "../../../src/stores/sidecars"
   writeDraft: (id: string, text: string) => setSessionDraftPrompt(id, "same", text),
   temporary: (id: string) => instances().get(id)?.temporary,
   refresh: () => refreshWorkspaceList(),
+  retry: () => remoteRestoreTabs()[0].retry(),
   remove: (id: string) => (serverEvents as any).dispatch({
     type: "workspace.stopped", workspaceId: id, reason: "deleted", temporaryRetained: true,
   }),
