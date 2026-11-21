@@ -50,6 +50,7 @@ pub fn decode_message(v: &Value) -> Result<Message> {
         id: id.into(),
         role: role.into(),
         body,
+        parts: crate::content::decode(v)?,
     })
 }
 fn cursor(v: &Value, kind: &str) -> Result<Option<Value>> {
@@ -96,7 +97,13 @@ pub fn decode(v: Value) -> Result<Page> {
 }
 pub fn check(rows: &[Message]) -> Result<()> {
     let mut ids = HashSet::new();
-    if rows.len() > MAX_ROWS || rows.iter().map(|r| r.body.len()).sum::<usize>() > MAX_BYTES {
+    if rows.len() > MAX_ROWS
+        || rows
+            .iter()
+            .map(|r| r.body.len() + crate::content::bytes(&r.parts))
+            .sum::<usize>()
+            > MAX_BYTES
+    {
         return Err("resident history limit reached".into());
     }
     if rows.iter().any(|row| !ids.insert(&row.id)) {

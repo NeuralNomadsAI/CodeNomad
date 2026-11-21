@@ -123,7 +123,7 @@ impl Backend {
         let data = read_json(
             self.client
                 .get(format!(
-                    "{}workspaces/{}/instance/api/session/{}/message?limit=200",
+                    "{}workspaces/{}/instance/api/session/{}/message?limit=200&order=asc",
                     self.base, self.workspace, self.session
                 ))
                 .send()?
@@ -133,6 +133,23 @@ impl Backend {
             .as_array()
             .filter(|rows| rows.len() <= 200)
             .ok_or("fresh session response exceeds its bound")?;
+        // Native cursors also anchor future reads; their presence alone is not evidence of another page.
+        let latest = read_json(
+            self.client
+                .get(format!(
+                    "{}workspaces/{}/instance/api/session/{}/message?limit=1",
+                    self.base, self.workspace, self.session
+                ))
+                .send()?
+                .error_for_status()?,
+        )?;
+        let tail = latest["data"]
+            .as_array()
+            .filter(|rows| rows.len() <= 1)
+            .ok_or("invalid latest message")?;
+        if native.last().map(|r| &r["id"]) != tail.first().map(|r| &r["id"]) {
+            return Err("fresh session retained history exceeds its bound or changed".into());
+        }
         if first.is_some_and(|first| !native.iter().any(|row| row["id"] == first)) {
             return Err("fresh session retained anchor is outside the native page".into());
         }

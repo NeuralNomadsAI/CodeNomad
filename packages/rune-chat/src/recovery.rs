@@ -204,6 +204,14 @@ pub fn run(
                             publish(&out, &wake, Event::Delta(id.into(), delta.into()));
                         }
                     }
+                    kind if kind.starts_with("session.tool.") => {
+                        dirty = true;
+                        quiet = Instant::now() + Duration::from_millis(100);
+                    }
+                    kind if kind.starts_with("session.tool.") => {
+                        dirty = true;
+                        quiet = Instant::now() + Duration::from_millis(100);
+                    }
                     "session.execution.succeeded"
                     | "session.execution.failed"
                     | "session.execution.interrupted" => {

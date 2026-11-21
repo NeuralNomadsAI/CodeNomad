@@ -28,6 +28,37 @@ Le binaire `codenomad-rune-recovery.exe` sert aux vérifications en arrière-pla
 
 ## Résultats vérifiés
 
+### Blocs d’outils et qualification interactive du projet réel
+
+Campagne dans `D:\CodeNomad\.codenomad\worktrees\rune-native-chat`. Le projet ouvert depuis Rune est le vrai dossier `D:\CodeNomad`. La conversation longue est une copie créée par le fork natif d’une conversation de travail réelle ; la source conserve ses messages. La première page native de la copie contient 200 messages avec continuation. Les messages de test sont envoyés uniquement dans cette copie et dans une session neuve créée depuis l’interface. Les deux sessions de test interdisent explicitement tous les outils avant les envois.
+
+| Cas | Résultat et preuve |
+|---|---|
+| Sélecteur Windows | Ouvert depuis Parcourir ; sélection du dossier effectuée par l’utilisateur après difficulté de ciblage de l’automatisation. Catalogue réel ensuite affiché. |
+| Grand inventaire Git | Le service expose 143 worktrees. Le premier envoi rencontre le refus du serveur à 64 entrées, puis la vérification globale dépasse le délai du client. Les lectures natives confirment que ces deux tentatives ont laissé le prompt absent. |
+| Envoi dans la copie longue | Après la vérification ciblée du dossier racine : réponse `RUNE-HISTORIQUE-OK` affichée dans Rune ; service terminé avec succès, un fragment de texte, zéro outil appelé. Preuve : `evidence/interactive-final.log`, entrée `INTERACTIVE_TURN` de la session longue. |
+| Session neuve créée depuis Rune | Réponse de 20 lignes et marqueur `RUNE-NEUF-OK` affichés ; service terminé avec succès, neuf fragments, trois messages natifs, zéro outil appelé. Le client rencontre ensuite le traitement erroné d’un curseur natif présent. Preuve : même journal, seconde entrée `INTERACTIVE_TURN`. |
+| Correction de relecture | Lecture explicite ascendante et contrôle de la dernière identité via une lecture native récente. Le banc fournit désormais un curseur d’ancrage futur même sous la limite ; les deux envois et la réconciliation passent. L’essai interactif complet d’une nouvelle session après ce dernier correctif reste à reproduire. |
+| Historique d’outils réels | L’arbre d’accessibilité Windows du client reconstruit les cartes de plusieurs appels historiques avec leur état « Terminé » et leur bouton « Détails ». La conversation longue est à l’état « Prêt ». Les appels historiques sont lus passivement. |
+| Rendu des détails et bornes | Tests du vrai runtime : ordre texte/outil/texte conservé, détails masqués puis entrées/sorties affichées au clic, erreur native, identités dupliquées refusées, longue sortie Unicode bornée. `evidence/tools-tests.log` : onze tests réussis, test du presse-papiers filtré. |
+| État vivant des outils | Serveur Rust réel + OpenCode simulé : états en cours puis terminés observés et deux réponses distinctes en streaming, une création et deux prompts. `evidence/tools-stream.log` ; aucune exécution d’outil réelle dans ce banc. |
+| Régression de reprise | `evidence/recovery.log` : 606 lignes canoniques, sept injections, ancre de lecture conservée à 0 point. |
+
+Commandes complémentaires :
+
+```powershell
+node packages/rune-chat/launcher-fixture.mjs --with-tools
+$env:RUNE_TEST_GIT_COUNT = '143'
+node packages/rune-chat/launcher-fixture.mjs
+Remove-Item Env:RUNE_TEST_GIT_COUNT
+# Commande avec fenêtre, à réserver à une campagne interactive autorisée :
+node packages/rune-chat/interactive-live.mjs D:/CodeNomad '<titre-exact-de-la-session-longue>'
+```
+
+Le rendu initial des champs d’outil est borné à 10 000 caractères avec révélation à la demande. Les champs conservés ont une borne de 256 Kio et portent un indicateur de limitation. Les images et fichiers de sortie d’outil, les contrôles de modèle, les permissions/questions et l’interruption restent à qualifier et implémenter selon leur périmètre. La reprise après rupture du SSE avec cette conversation de travail est une qualification distincte de son ouverture ; l’essai réel de coupure sur les 600 archives natives est documenté plus bas.
+
+La copie de préparation en tête détachée `...\work\rune-native-chat` a été retirée après vérification de la couverture des sources par la branche poussée. Le worktree du prototype de départ `...\work\rune-prototype-b970ca97` conserve les preuves du socle.
+
 ### Ouverture d’un projet et choix d’une session depuis Rune
 
 Les preuves de cette campagne sont dans le worktree de reprise :

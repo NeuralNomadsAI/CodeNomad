@@ -148,6 +148,9 @@ pub fn t(key: &str) -> &'static str {
     if let Some(value) = crate::launcher_strings::get(locale, key) {
         return value;
     }
+    if let Some(value) = crate::tool_strings::get(locale, key) {
+        return value;
+    }
     if let Some(index) = ["older", "reconnecting", "retry"]
         .iter()
         .position(|k| *k == key)

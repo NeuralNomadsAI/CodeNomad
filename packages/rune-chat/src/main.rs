@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 mod backend;
 mod catalog;
+mod content;
 mod history;
 mod launcher;
 mod launcher_probe;
@@ -13,6 +14,8 @@ mod recovery_probe;
 mod stream;
 mod strings;
 mod surfaces;
+mod tool_strings;
+mod transcript;
 mod transport;
 mod wire;
 use rune::edit::TextEdit;
@@ -27,8 +30,10 @@ pub struct Message {
     pub id: String,
     pub role: String,
     pub body: String,
+    pub parts: Vec<content::Part>,
 }
 struct State {
+    expanded_tools: std::collections::HashSet<String>,
     launcher: Option<launcher::Launcher>,
     launcher_visible: bool,
     chat_title: String,
@@ -52,6 +57,7 @@ enum Phase {
 }
 fn init() -> State {
     State {
+        expanded_tools: Default::default(),
         launcher: None,
         launcher_visible: false,
         chat_title: String::new(),
@@ -100,6 +106,7 @@ fn send(s: &mut State, _: &mut Tx) {
             id: format!("rune-user-{}", s.revision),
             role: "user".into(),
             body,
+            parts: vec![],
         });
         s.revision += 1;
         s.draft = TextEdit::new("");
@@ -190,35 +197,7 @@ fn view(s: &State, _: &mut Cx<State>) -> El {
             s.messages.len(),
             110.0,
             |s: &State, i| s.messages[i].id.clone().into(),
-            |s: &State, i| {
-                let m = &s.messages[i];
-                col()
-                    .key(m.id.clone())
-                    .w_full()
-                    .padding(18.0)
-                    .gap(8.0)
-                    .child(
-                        text(strings::t(if m.role == "user" {
-                            "user"
-                        } else {
-                            "assistant"
-                        }))
-                        .font(type_::LABEL)
-                        .color(surfaces::get().text),
-                    )
-                    .child(
-                        text(&m.body)
-                            .key(format!("body-{}", m.id))
-                            .w_full()
-                            .font(if m.body.starts_with("fn ") || m.body.starts_with("```") {
-                                type_::BODY.mono()
-                            } else {
-                                type_::BODY
-                            })
-                            .color(surfaces::get().text)
-                            .selectable(true),
-                    )
-            },
+            |s: &State, i| transcript::message(s, i),
         )
         .virtual_rows_version(s.revision);
     let status = match s.phase {
@@ -383,6 +362,8 @@ fn main() {
     });
 }
 
+#[cfg(test)]
+mod content_tests;
 #[cfg(test)]
 mod history_tests;
 #[cfg(test)]

@@ -22,6 +22,7 @@ pub fn decode_native(e: &Value) -> Option<Event> {
                 .into(),
             role: "assistant".into(),
             body: String::new(),
+            parts: vec![],
         })),
         "session.text.delta" => Some(Event::Delta(
             data["assistantMessageID"]

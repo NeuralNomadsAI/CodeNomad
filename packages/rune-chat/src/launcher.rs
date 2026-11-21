@@ -174,6 +174,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.next = rows.next;
         }
         Ok(Reply::Bound(b, title)) => {
+            s.expanded_tools.clear();
             s.chat_title = title;
             s.messages.clear();
             s.draft = TextEdit::new("");

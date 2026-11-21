@@ -56,6 +56,31 @@ fn opens_ten_thousand_rows_with_bounded_mounts_and_scrolls() {
     assert_eq!(rt.scroll_at_bottom("history"), Some(true));
 }
 #[test]
+fn long_realistic_paragraph_occupies_multiple_lines_in_the_transcript() {
+    let mut state = init();
+    state.messages = vec![Message {
+        parts: vec![],
+        id: "long-paragraph".into(),
+        role: "assistant".into(),
+        body: "Un historique réel contient des paragraphes longs à lire intégralement. ".repeat(80),
+    }];
+    state.phase = Phase::Ready;
+    let mut rt = Runtime::new(state, view, (960.0, 760.0), Env::new(true, 1.0));
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    let body = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.path.ends_with("/body-long-paragraph"))
+        .unwrap();
+    assert!(
+        body.rect[3] > 300.0,
+        "paragraph must wrap rather than clip on a single line: {:?}",
+        body.rect
+    );
+}
+#[test]
 fn multiline_input_submits_once_and_stream_preserves_unicode() {
     let mut rt = runtime();
     let (tx, commands) = mpsc::sync_channel(1);
@@ -74,6 +99,7 @@ fn multiline_input_submits_once_and_stream_preserves_unicode() {
     rt.state.incoming = Some(incoming);
     rt.poll = Some(poll);
     out.send(Event::Message(Message {
+        parts: vec![],
         id: "live".into(),
         role: "assistant".into(),
         body: "".into(),

@@ -28,6 +28,7 @@ pub enum Event {
 pub fn synthetic() -> Vec<Message> {
     (0..10_000)
         .map(|i| Message {
+            parts: vec![],
             id: format!("synthetic-{i}"),
             role: if i % 2 == 0 { "user" } else { "assistant" }.into(),
             body: if i == 9999 {
@@ -71,6 +72,7 @@ pub fn run(out: SyncSender<Event>, input: Receiver<Command>, wake: rune::Waker) 
             &out,
             &wake,
             Event::Message(Message {
+                parts: vec![],
                 id: id.clone(),
                 role: "assistant".into(),
                 body: String::new(),

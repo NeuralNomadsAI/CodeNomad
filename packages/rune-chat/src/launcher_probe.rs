@@ -108,6 +108,7 @@ pub fn run() {
     });
     assert!(rt.state.messages.is_empty());
     let mut fragments = 0;
+    let mut tool_running = false;
     for turn in 1..=2 {
         rt.state.draft = TextEdit::new(format!("Functional turn {turn} · été 日本語 🦀"));
         rt.frame(1.0 / 60.0);
@@ -116,6 +117,12 @@ pub fn run() {
         while rt.state.phase != Phase::Ready {
             assert!(Instant::now() < until, "send {turn}");
             rt.frame(1.0 / 60.0);
+            tool_running |= rt
+                .state
+                .messages
+                .iter()
+                .flat_map(|m| &m.parts)
+                .any(|p| matches!(p,crate::content::Part::Tool(t) if t.status=="running"));
             if rt
                 .state
                 .messages
@@ -137,6 +144,18 @@ pub fn run() {
         );
     }
     assert!(fragments > 2, "actual intermediate text observed");
+    if std::env::var_os("RUNE_TEST_TOOLS").is_some() {
+        assert!(tool_running, "live tool running state must reach the view");
+        assert_eq!(
+            rt.state
+                .messages
+                .iter()
+                .flat_map(|m| &m.parts)
+                .filter(|p| matches!(p,crate::content::Part::Tool(t) if t.status=="completed"))
+                .count(),
+            2
+        );
+    }
     launcher::back(&mut rt.state);
     wait(&mut rt, "relist created session", |s| {
         !s.launcher.as_ref().unwrap().pending

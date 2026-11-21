@@ -6,6 +6,7 @@ use serde_json::json;
 fn rows(ids: &[&str]) -> Vec<Message> {
     ids.iter()
         .map(|id| Message {
+            parts: vec![],
             id: (*id).into(),
             role: "assistant".into(),
             body: format!("body {id}"),
@@ -30,6 +31,7 @@ fn broken_overlap_duplicate_ids_and_resident_overflow_fail_closed() {
     assert!(history::join(&rows(&["a", "b"]), &rows(&["b", "a"])).is_err());
     let many = (0..=history::MAX_ROWS)
         .map(|i| Message {
+            parts: vec![],
             id: format!("m{i}"),
             role: "user".into(),
             body: "x".into(),

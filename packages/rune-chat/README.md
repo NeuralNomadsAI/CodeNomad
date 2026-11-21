@@ -28,9 +28,16 @@ Keep native UI state, opening actions, API transport and rendering in their dedi
 ```powershell
 node packages/rune-chat/launcher-fixture.mjs
 node packages/rune-chat/launcher-fixture.mjs --uncertain-create
+node packages/rune-chat/launcher-fixture.mjs --with-tools
 ```
 
-Both commands run the actual Rust server against synthetic OpenCode, then exercise the real Rune widgets without a window. They cover login and folder errors, folder-dialog selection/cancellation, catalog continuation, existing history, unsent-draft retention, creation, two distinct streaming sends and return to the original session. The second injects an error after native creation and checks reconciliation with exactly one created session. Desktop presentation of the Windows folder picker and the complete opening flow against an installed OpenCode service require interactive qualification. Model choice, tool blocks, permission/question controls and persisted tabs/drafts remain outside this milestone.
+These commands run the actual Rust server against synthetic OpenCode, then exercise the real Rune widgets without a window. They cover login and folder errors, folder-dialog selection/cancellation, catalog continuation, existing history, unsent-draft retention, creation, two distinct streaming sends and return to the original session. The second injects an error after native creation and checks reconciliation with exactly one created session. The third qualifies historical and live tool blocks, running/completed states and text streaming. Set `RUNE_TEST_GIT_COUNT=143` to exercise a Git project with a large native checkout inventory and verify that root sends avoid sibling enumeration.
+
+## Native tool blocks
+
+Assistant content keeps its native text/tool order. Each tool shows its name and preparation, running, completed or error state. Details reveals its input and textual output/error. Tool input/output first renders 10,000 characters with Show all; retained fields are bounded to 256 KiB with an explicit limited-output label. History and reconnection rebuild blocks from native records, while scoped tool events trigger authoritative refreshes. Loaded tool data stays passive.
+
+`interactive-live.mjs <absolute-project-folder> <existing-session-title>` explicitly opens a Windows window against the installed service and an owned Rust backend. It forks the selected long real session, denies tools on the copy, and observes test responses without modifying the original conversation. Its exact-title new-session guard applies tool denial before sending from the test's newly created session. The French test journal separates the interactive observations, fixes, and remaining qualification. Model choice, permission/question controls, interruption and persisted tabs/drafts are the next client milestone.
 
 ## Existing backend contract
 
@@ -42,6 +49,8 @@ Both commands run the actual Rust server against synthetic OpenCode, then exerci
 - `POST /api/workspaces/{workspace}/session-history/window`, with `{sessionID,target:{kind:"latest"}}`; at most 200 native message records, a 2 MiB response limit.
 - `GET /api/events?clientId=…&connectionId=…`, decoding `instance.event` envelopes and native V2 `session.step.started`, `session.text.delta` and terminal execution events. Ping events receive `POST /api/client-connections/pong`.
 - `POST /workspaces/{workspace}/instance/api/session/{session}/prompt`, with `{text}`.
+
+Fresh-session reads request `order=asc` and compare their final native ID with a separate latest-message read. Native cursors also anchor future reads, so a present continuation alone does not establish overflow.
 
 The subscription opens before enabling Send. Workspace and session IDs fence event admission. HTTP redirects are refused, requests use explicit loopback addresses and the adapter bounds each SSE frame to 256 KiB. Missing history capability and disconnected streams put the composer into its connection-failure state.
 
