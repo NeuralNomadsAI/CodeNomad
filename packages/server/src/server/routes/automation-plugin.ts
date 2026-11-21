@@ -78,6 +78,16 @@ function developerSelection(status: DeveloperNativeStatus["status"]): DeveloperC
     ...(status.windowInstance ? { windowInstance: status.windowInstance } : {}) }
 }
 
+function nativeWindowParams(window: { runId: string; windowId: string; windowInstance?: string }) {
+  return { windowId: window.windowId, runId: window.runId,
+    ...(window.windowInstance ? { windowInstance: window.windowInstance } : {}) }
+}
+
+function sameNativeWindow(window: DeveloperCdpSelection, status: DeveloperCdpSelection | undefined): boolean {
+  return window.runId === status?.runId && window.windowId === status.windowId
+    && window.windowInstance === status.windowInstance && window.endpoint === status.endpoint
+}
+
 export function isAutomationPluginRequest(
   request: FastifyRequest,
   deps: Pick<AutomationPluginRouteDeps, "authManager" | "bridgeToken">,
@@ -288,8 +298,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     let native: DeveloperNativeStatus
     try {
       native = await deps.nativeParent.request<DeveloperNativeStatus>(inventory ? "developer.targets" : "developer.status",
-        exact ? { windowId: exact.windowId, runId: exact.runId,
-          ...(exact.windowInstance ? { windowInstance: exact.windowInstance } : {}) } : {})
+        exact ? nativeWindowParams(exact) : {})
     } catch (error) {
       return unavailable(error instanceof Error ? error.message : String(error))
     }
@@ -334,6 +343,11 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       }
       if (command.action === "inspect") {
         const result = await deps.developerCdp.inspect(identity, { ref: command.ref, query: command.query })
+        if (identity.windowInstance) {
+          const after = await deps.nativeParent.request<DeveloperNativeStatus>("developer.status", nativeWindowParams(identity))
+            .catch(() => undefined)
+          if (!sameNativeWindow(identity, after && developerSelection(after.status))) return unavailable()
+        }
         result.diagnostics.push(...(native.logs ?? []).slice(-32))
         const nextPin = publishInspection?.({ ...identity, ...(result.document ? { document: result.document } : {}) })
         if (publishInspection && !nextPin) return reply.code(409).send({ code: "stale-inspection", error: "A newer inspection selected the window" })

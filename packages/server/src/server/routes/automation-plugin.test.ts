@@ -35,6 +35,8 @@ test("targets the inspected window independently of the visible conversation", a
   let firstWindowOpen = true
   let holdStatus: (() => Promise<void>) | undefined
   let screenshotWindow: string | undefined
+  let windowInstance: string | undefined
+  let onInspection: (() => void) | undefined
   let visibleSession = "session-1"
   let inspectedIdentity: unknown
   const previewError = { level: "error", text: "browser preview: install navigation starting handler: Paramètre incorrect. (0x80070057)" }
@@ -43,7 +45,7 @@ test("targets the inspected window independently of the visible conversation", a
     authManager: { isLoopbackRequest: () => true },
     bridgeToken: "secret",
     nativeParent: {
-      request: async (method: string, params: { windowId?: string; runId?: string }) => {
+      request: async (method: string, params: { windowId?: string; runId?: string; windowInstance?: string }) => {
         nativeCalls.push({ method, params })
         if (holdStatus && params.windowId === "window-1") {
           const wait = holdStatus
@@ -55,7 +57,8 @@ test("targets the inspected window independently of the visible conversation", a
           return { state: "starting", runId }
         }
         const windowId = params.windowId ?? focusedWindow
-        const available = (!params.runId || params.runId === runId) && (windowId !== "window-1" || firstWindowOpen)
+        const available = (!params.runId || params.runId === runId && params.windowInstance === windowInstance)
+          && (windowId !== "window-1" || firstWindowOpen)
         return {
           status: {
             state: available ? state : "starting",
@@ -63,6 +66,7 @@ test("targets the inspected window independently of the visible conversation", a
             nativeIdentity: "electron:test",
             cdpUrl: "http://127.0.0.1:9222",
             windowId: available ? windowId : undefined,
+            windowInstance,
           },
           logs: [previewError],
         }
@@ -74,6 +78,7 @@ test("targets the inspected window independently of the visible conversation", a
         return { windowId: "window-1", instanceId: "workspace-1", sessionId: visibleSession }
       },
       inspect: async (identity: unknown, options: unknown) => {
+        onInspection?.()
         inspectedIdentity = identity
         inspectOptions.push(options)
         return {
@@ -185,6 +190,12 @@ test("targets the inspected window independently of the visible conversation", a
   assert.equal((await capture("unissued")).json().code, "target-gone")
   assert.equal((await capture(b)).statusCode, 200)
   assert.equal(screenshotWindow, "window-2")
+
+  windowInstance = "old-window"
+  onInspection = () => { windowInstance = "new-window" }
+  const replaced = await request({ mode: "developer-execute", sessionID: "session-1",
+    target: `electron:test/${runId}/window-1/old-window`, command: { action: "inspect" } })
+  assert.equal(replaced.json().code, "target-gone", "closing and reopening a window cannot publish the new outline under the old selector")
 
   state = "stopped"
   assert.equal((await request({ mode: "developer-probe", sessionID: "session-2" })).statusCode, 404)
