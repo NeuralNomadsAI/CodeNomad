@@ -78,8 +78,6 @@ checks that a session Form reply settles once and only a confirmed UI mark quali
 
 Results: `bench/out/<mode>.json` (TS and Rust observations, or `error`), redacted logs `out/<mode>-ts.log` / `out/<mode>-rs.log`, screenshots `out/screenshots/<mode>/`. `out/` is ignored by Git; `out/tmp/` keeps each fixture for diagnosis (about 700 MiB after a full run) and can be deleted.
 
-Missions modes (lifecycle, families, admission, calendar, recurrences) are not part of the bench while their contract is revised. Rust still starts with its fixture Missions routes and the Missions plugin, as in the qualified configuration.
-
 ## Parity cases for unit tests
 
 Computed by the built TypeScript server and written to `tests/fixtures/` (or the folder given as argument):
