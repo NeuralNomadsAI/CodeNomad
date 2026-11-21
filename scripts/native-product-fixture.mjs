@@ -76,7 +76,7 @@ export async function writeFixtureServiceRegistration(env, { url, pid, version, 
 // `service` enables native persisted calendar wakes in this owned child only.
 // `flags` sets OPENCODE_FLAGS in the owned daemon for native flag qualification.
 // `run` also receives the daemon's `env`, the environment of every other fixture-owned child.
-export async function withProductRuntime(cli, prepare, run, { projectConfig = false, registry, service = false, flags } = {}) {
+export async function withProductRuntime(cli, prepare, run, { projectConfig = false, registry, service = false, flags, respond } = {}) {
   assert(cli && path.isAbsolute(cli), "Pass an absolute isolated CLI executable path")
   assert(!registry || /^http:\/\/127\.0\.0\.1:\d+\/?$/.test(registry), "A fixture registry must be loopback")
   const root = await mkdtemp(path.join(await fixtureParent({ projectConfig }), "product-native-"))
@@ -94,9 +94,12 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
     try {
       let raw = ""
       for await (const chunk of req) raw += chunk
-      requests.push(JSON.parse(raw))
+      const request = JSON.parse(raw)
+      requests.push(request)
       res.setHeader("Content-Type", "text/event-stream")
-      for (const [delta, finish_reason] of [[{ role: "assistant", content: "FIXTURE_ANSWER" }, null], [{}, "stop"]]) {
+      const scripted = await respond?.(request)
+      const firstDelta = scripted ?? { role: "assistant", content: "FIXTURE_ANSWER" }
+      for (const [delta, finish_reason] of [[firstDelta, null], [{}, firstDelta.tool_calls ? "tool_calls" : "stop"]]) {
         res.write(`data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", model: "fixture",
           choices: [{ index: 0, delta, finish_reason }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } })}\n\n`)
       }

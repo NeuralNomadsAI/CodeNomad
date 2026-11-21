@@ -67,6 +67,11 @@ node roundtrip.mjs $OpenCode
 `CNRS_BENCH_STARTUP_TIMEOUT_MS` changes the readiness budget for `compare.mjs` when the machine is busy.
 Set `CNRS_BENCH_MISSIONS_SERVE=1` on Windows to compare `missions` or `missions-calendar` with Rust's production `serve` contract, packaged plugins and a CLI shim bound to the owned fixture daemon. No Tauri window is opened.
 
+On Windows, set `TEMP` and `TMP` to a private directory outside the account's home and run
+`node packages/server-rs/bench/missions-human.mjs <OpenCode exe> <Rust exe> <packages/server/dist/plugins>`
+with absolute paths. This headless fixture copies OpenCode, uses a local scripted provider and
+checks that a session Form reply settles once and only a confirmed UI mark qualifies for ordinary Wayfinder.
+
 Results: `bench/out/<mode>.json` (TS and Rust observations, or `error`), redacted logs `out/<mode>-ts.log` / `out/<mode>-rs.log`, screenshots `out/screenshots/<mode>/`. `out/` is ignored by Git; `out/tmp/` keeps each fixture for diagnosis (about 700 MiB after a full run) and can be deleted.
 
 Missions modes (lifecycle, families, admission, calendar, recurrences) are not part of the bench while their contract is revised. Rust still starts with its fixture Missions routes and the Missions plugin, as in the qualified configuration.
