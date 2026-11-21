@@ -5,6 +5,7 @@ pub mod calendar;
 pub mod configuration;
 pub mod creation_admission;
 pub mod family;
+pub mod human_answer;
 pub mod reads;
 pub mod recurrence;
 pub mod recurrence_contract;

@@ -17,6 +17,7 @@ use super::{
     NativeBody, SESSION_LOCATED_ELSEWHERE, SESSION_PLACEMENT_HEADER, native_rpc_absent, read_json, session_directory,
     session_record, upstream_error,
 };
+use crate::missions::human_answer;
 use crate::{App, Error, Shared, error, not_found, unavailable};
 
 // The reference gate is separate from forwarding: allowlisted features whose
@@ -144,16 +145,17 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let workspace = app.workspace(id)?;
     let route = safe_route(suffix).ok_or_else(invalid)?;
     let route = route.trim_end_matches('/');
+    let form = human_answer::form_reply(route, &head.method);
     if !ALLOWED.iter().any(|(m, pat)| *m == head.method.as_str() && pat.is_match(route)) {
         return Err(error(Status::FORBIDDEN, "OpenCode route is not available through a workspace"));
     }
-    if !guarded(route, &head.method) {
+    if form.is_none() && !guarded(route, &head.method) {
         return Ok(unavailable());
     }
     // Native writes that can create or move execution state share the
     // backend's worktree mutation fence with Git, files and removal.
-    let _mutation = if head.method != Method::GET {
-        let held = app.project_mutation.lock().await;
+    let mut mutation = if head.method != Method::GET {
+        let held = app.project_mutation.clone().lock_owned().await;
         principal.live()?;
         Some(held)
     } else {
@@ -164,7 +166,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     if dunce::canonicalize(opened).ok().as_ref() != Some(&workspace.path) {
         return Err(foreign());
     }
-    let mut target = app.native.url();
+    let form_endpoint = form.map(|_| app.native.endpoint().ok_or_else(upstream_error)).transpose()?;
+    let mut target = form_endpoint.as_ref().map_or_else(|| app.native.url(), |e| e.url.clone());
     target.set_query(head.uri.query());
     let requested = target
         .query_pairs()
@@ -309,6 +312,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
         let fields: &[&str] = if create {
             &["title", "location", "agent", "model"]
+        } else if form.is_some() {
+            &["answer"]
         } else if route.ends_with("/agent") {
             &["agent"]
         } else if route.ends_with("/model") {
@@ -372,7 +377,26 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     if !app.inner.lock().unwrap().workspaces.iter().any(|w| w.id == workspace.id) {
         return Err(not_found());
     }
-    let mut upstream = app.native.request(head.method, target);
+    let mut upstream = if let (Some(form), Some(endpoint)) = (form, form_endpoint) {
+        if human_answer::reply(
+            &app,
+            &workspace,
+            &endpoint,
+            &head,
+            principal,
+            actual.as_ref().ok_or_else(upstream_error)?,
+            form,
+            input.as_ref().ok_or_else(upstream_error)?,
+            &mut mutation,
+        )
+        .await?
+        {
+            return Ok(Status::NO_CONTENT.into_response());
+        }
+        app.native.client.request(head.method, target).basic_auth("opencode", Some(&endpoint.password))
+    } else {
+        app.native.request(head.method, target)
+    };
     if let Some(accept) = head.headers.get(header::ACCEPT) {
         upstream = upstream.header(header::ACCEPT, accept);
     }
