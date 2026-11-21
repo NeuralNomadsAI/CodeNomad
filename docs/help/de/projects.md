@@ -4,7 +4,7 @@ Ein Projekt-Tab verbindet CodeNomad mit einem Ordner auf dem Backend-Rechner. Da
 
 ## Projekt öffnen {#open-project}
 
-Klicken Sie auf **Neue Instanz** (`+`) oder drücken Sie `Ctrl/Cmd+N` für einen leeren Tab. Wählen Sie ein Projekt unter **Zuletzt verwendete Tabs** oder **Durchsuchen**. Ohne gespeicherte Projekttabs oder nach dem Schließen des letzten Tabs zeigt CodeNomad einen leeren Tab. Klonen und temporäre Tabs verwenden das lokale Backend.
+Klicken Sie auf **Neue Instanz** (`+`) oder drücken Sie `Ctrl/Cmd+N`, um einen neuen leeren Tab zu öffnen. Wählen Sie ein Projekt unter **Zuletzt verwendete Tabs** oder **Durchsuchen**. Wenn keine Tabs wiederhergestellt werden oder der letzte Tab geschlossen wird, zeigt CodeNomad einen leeren Tab. Klonen und temporäre Tabs verwenden das lokale Backend.
 
 [Ein Remote-Projekt in einem Tab öffnen](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
 

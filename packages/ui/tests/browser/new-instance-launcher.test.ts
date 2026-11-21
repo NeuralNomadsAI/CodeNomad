@@ -107,7 +107,7 @@ test('opening the context menu focuses its container, not search, and arrows and
   } finally { await page.close() }
 })
 
-test("a click keeps the empty tab while a long press opens the launcher", async () => {
+test("a click requests a new empty tab while a long press opens the launcher", async () => {
   const { page, errors, remoteRequests, calls } = await prepare()
   try {
     await plus(page).click()

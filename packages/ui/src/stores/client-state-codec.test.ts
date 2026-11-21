@@ -37,6 +37,14 @@ it("ignores the legacy Home flag without changing tab selection", () => {
 const normalizeWorkspace = (overrides: UnknownRecord) => firstWorkspace(session(workspace(overrides)))
 
 describe("client state codec", () => {
+  it("keeps project state and the selected empty slot when empty tabs exceed the tab budget", () => {
+    const tabs = [...Array.from({ length: 40 }, () => ({ kind: "blank" })), workspace(), { kind: "blank" }]
+    const restored = normalizeRestorableSession({ tabs, activeTabIndex: tabs.length - 1 })!
+    assert.equal(restored.tabs.length, 32)
+    assert.equal(restored.tabs[30].kind, "workspace")
+    assert.equal(restored.activeTabIndex, 31)
+  })
+
   it("normalizes v1 workspace state, scroll state, and a sidecar", () => {
     const decoded = decodeClientSnapshot(snapshot({
       revision: 7,

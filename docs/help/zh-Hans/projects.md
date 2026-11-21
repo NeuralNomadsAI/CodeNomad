@@ -4,7 +4,7 @@
 
 ## 打开项目 {#open-project}
 
-点击 **新建实例**（`+`）或按 `Ctrl/Cmd+N` 打开空白标签页，从 **最近的标签页** 或 **浏览** 中选择项目。没有可恢复的项目标签页时，或关闭最后一个标签页后，CodeNomad 会显示空白标签页。 克隆和临时标签页使用本地后端。
+点击 **新建实例**（`+`）或按 `Ctrl/Cmd+N` 打开新的空白标签页，从 **最近的标签页** 或 **浏览** 中选择项目。没有可恢复的标签页时，或关闭最后一个标签页后，CodeNomad 会显示空白标签页。 克隆和临时标签页使用本地后端。
 
 
 [在标签页中打开远程项目](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)

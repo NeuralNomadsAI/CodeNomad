@@ -117,7 +117,7 @@ Wählen Sie in einem leeren Tab **Durchsuchen** und dann einen Server. Fügen Si
 
 Lokale und entfernte Projekte teilen sich das Fenster. **Zuletzt verwendete Tabs** zeigt beim Durchsuchen die Einträge des ausgewählten Servers. In der gemischten Liste stehen Serversymbol und Servername bei den hier geöffneten Projekten. [Remote-Tabs wiederherstellen](projects.md#restore-remote-tabs).
 
-Unter **Einstellungen → Server** wählt **Öffnen** den Server in **Durchsuchen** und verwendet den leeren Tab, falls vorhanden.
+Unter **Einstellungen → Server** wählt **Öffnen** den Server in **Durchsuchen** und verwendet einen bereits geöffneten leeren Tab, falls vorhanden.
 
 ### `--connect-server` {#connect-server}
 

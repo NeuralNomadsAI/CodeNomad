@@ -4,7 +4,7 @@ A project tab connects CodeNomad to a folder on the backend computer. Opening a 
 
 ## Open a project {#open-project}
 
-When no project tabs are restored or the last tab closes, CodeNomad shows an empty tab. Click **New instance** (`+`) or press `Ctrl/Cmd+N` to open or reuse it. Pick a project from **Browse** or **Recent tabs**. **Temporary tab** and **Clone repository** use the local backend.
+When no tabs are restored or the last tab closes, CodeNomad shows an empty tab. Click **New instance** (`+`) or press `Ctrl/Cmd+N` to open a new empty tab. Pick a project from **Browse** or **Recent tabs**. **Temporary tab** and **Clone repository** use the local backend.
 
 [Open a remote project in a tab](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
 

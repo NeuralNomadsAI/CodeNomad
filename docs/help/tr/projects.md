@@ -4,7 +4,7 @@ Bir proje sekmesi CodeNomad'i arka uç bilgisayarındaki bir klasöre bağlar. S
 
 ## Bir proje açın {#open-project}
 
-Boş sekme açmak için **Yeni instance** (`+`) veya `Ctrl/Cmd+N` kullanın. **Son sekmeler** ya da **Gözat** üzerinden proje seçin. Geri yüklenecek proje sekmesi kalmadığında veya son sekme kapatıldığında CodeNomad boş bir sekme gösterir. Klonlama ve geçici sekmeler yerel sunucuyu kullanır.
+Yeni bir boş sekme açmak için **Yeni instance** (`+`) veya `Ctrl/Cmd+N` kullanın. **Son sekmeler** ya da **Gözat** üzerinden proje seçin. Geri yüklenecek sekme olmadığında veya son sekme kapatıldığında CodeNomad boş bir sekme gösterir. Klonlama ve geçici sekmeler yerel sunucuyu kullanır.
 
 
 [Uzak projeyi sekmede açma](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)

@@ -4,7 +4,7 @@ Un onglet de projet relie CodeNomad à un dossier sur l’ordinateur du backend.
 
 ## Ouvrir un projet {#open-project}
 
-Sans onglet de projet à restaurer ou après la fermeture du dernier onglet, CodeNomad affiche un onglet vide. Cliquez sur **Nouvelle instance** (`+`) ou utilisez `Ctrl/Cmd+N` pour l’ouvrir ou le réutiliser. Choisissez un projet dans **Parcourir** ou **Onglets récents**. **Onglet temporaire** et **Cloner un dépôt** utilisent le serveur local.
+Sans onglet à restaurer ou après la fermeture du dernier onglet, CodeNomad affiche un onglet vide. Cliquez sur **Nouvelle instance** (`+`) ou utilisez `Ctrl/Cmd+N` pour ouvrir un nouvel onglet vide. Choisissez un projet dans **Parcourir** ou **Onglets récents**. **Onglet temporaire** et **Cloner un dépôt** utilisent le serveur local.
 
 [Ouvrir un projet distant dans un onglet](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
 

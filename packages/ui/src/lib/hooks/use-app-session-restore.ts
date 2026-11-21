@@ -13,7 +13,7 @@ import {
 } from "../../stores/app-session-reconciliation"
 import { getAbortReason, runAbortable } from "../../stores/app-session-restore-timeout"
 import {
-  activeAppTabId, appTabs, appTabOrderRevision, appTabSelectionRevision, attachInstanceTab, getInstanceAppTabId,
+  activeAppTabId, appendBlankTab, appTabs, appTabOrderRevision, appTabSelectionRevision, attachInstanceTab, getInstanceAppTabId,
   getSidecarAppTabId, selectAppTab, setAppTabOrder,
 } from "../../stores/app-tabs"
 import {
@@ -413,11 +413,14 @@ export function useAppSessionRestore(): void {
         capture.start(snapshot!)
         await runAbortable(async (signal) => {
           context = createRestoreContext(snapshot!, signal, capture, offerRecovery)
-          if (preferences().multiBackend === true || isWebHost()) batch(() => {
+          batch(() => {
             snapshot!.tabs.forEach((tab, index) => {
-              if (tab.kind !== "workspace" || (backendIdOf(tab) === LOCAL_BACKEND_ID
-                ? !isWebHost() : preferences().multiBackend !== true)) return
-              addPlaceholder(tab, index)
+              if (tab.kind === "blank") {
+                capture.recordRestoredTab(index, appendBlankTab())
+              } else if (tab.kind === "workspace"
+                && (backendIdOf(tab) === LOCAL_BACKEND_ID ? isWebHost() : preferences().multiBackend === true)) {
+                addPlaceholder(tab, index)
+              }
             })
             context!.applyOrder()
             const requested = capture.restoredTabIds()[snapshot!.activeTabIndex]

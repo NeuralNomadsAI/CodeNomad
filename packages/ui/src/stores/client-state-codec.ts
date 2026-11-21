@@ -26,7 +26,8 @@ export interface RestorableWorkspaceTabState {
 }
 
 export interface RestorableSidecarTabState { kind: "sidecar"; sidecarId: string }
-export type RestorableTabState = RestorableWorkspaceTabState | RestorableSidecarTabState
+interface RestorableBlankTabState { kind: "blank" }
+export type RestorableTabState = RestorableWorkspaceTabState | RestorableSidecarTabState | RestorableBlankTabState
 export interface RestorableSessionState { tabs: RestorableTabState[]; activeTabIndex: number }
 export interface ClientSnapshotV1 {
   version: 1; revision: number; savedAt: number
@@ -233,11 +234,12 @@ interface WorkspaceIdentity {
   prioritySessionIds: string[]; priorityDrafts: Record<string, string>
   priorityAttachments: Record<string, RestorableAttachment[]>
 }
-type TabIdentity = WorkspaceIdentity | RestorableSidecarTabState
+type TabIdentity = WorkspaceIdentity | RestorableSidecarTabState | RestorableBlankTabState
 
 function normalizeIdentity(value: unknown, budget: StringBudget): TabIdentity | null {
   if (!isRecord(value)) return null
   const kind = value.kind ?? value.type
+  if (kind === "blank") return { kind }
   if (kind === "sidecar") {
     const sidecarId = takeString(value.sidecarId, MAX_ID, budget)
     return sidecarId === undefined ? null : { kind, sidecarId }
@@ -301,7 +303,16 @@ export function normalizeRestorableSession(value: unknown): RestorableSessionSta
 function normalizeSession(value: unknown, budget: StringBudget): RestorableSessionState | null {
   if (!isRecord(value) || !Array.isArray(value.tabs) || !Number.isInteger(value.activeTabIndex)) return null
   const requested = Number(value.activeTabIndex)
-  const rawTabs = value.tabs.slice(0, MAX_TABS)
+  const rawTabs = value.tabs
+  // Empty slots use spare capacity; they must not crowd project state out of a snapshot.
+  const chosen = new Set<number>()
+  for (let index = 0; index < rawTabs.length && chosen.size < MAX_TABS; index++) {
+    const tab: unknown = rawTabs[index]
+    if (!isRecord(tab) || (tab.kind ?? tab.type) !== "blank") chosen.add(index)
+  }
+  if (chosen.size < MAX_TABS && requested >= 0 && requested < rawTabs.length) chosen.add(requested)
+  for (let index = 0; index < rawTabs.length && chosen.size < MAX_TABS; index++) chosen.add(index)
+  const indexes = [...chosen].sort((a, b) => a - b)
   const identityByIndex = new Map<number, TabIdentity>()
   const normalizedByIndex = new Map<number, RestorableTabState>()
   const normalizeIdentityAt = (originalIndex: number) => {
@@ -312,26 +323,22 @@ function normalizeSession(value: unknown, budget: StringBudget): RestorableSessi
   const normalizeTabAt = (originalIndex: number, prioritizeDrafts: boolean) => {
     const identity = identityByIndex.get(originalIndex)
     if (!identity) return
-    const tab = identity.kind === "sidecar"
-      ? identity
-      : normalizeWorkspaceTab(identity.value, identity, budget, prioritizeDrafts)
+    const tab = identity.kind === "workspace"
+      ? normalizeWorkspaceTab(identity.value, identity, budget, prioritizeDrafts)
+      : identity
     if (tab) normalizedByIndex.set(originalIndex, tab)
   }
-  rawTabs.forEach((_tab, index) => normalizeIdentityAt(index))
-  const priorityOrder = [requested, ...rawTabs.map((_tab, index) => index).filter((index) => index !== requested)]
+  indexes.forEach(normalizeIdentityAt)
+  const priorityOrder = [requested, ...indexes.filter((index) => index !== requested)]
   for (const index of priorityOrder) {
     const identity = identityByIndex.get(index)
     if (identity?.kind === "workspace") reservePriorityDrafts(identity, budget)
   }
   if (rawTabs[requested] !== undefined) normalizeTabAt(requested, true)
-  rawTabs.forEach((_tab, index) => {
+  indexes.forEach((index) => {
     if (index !== requested) normalizeTabAt(index, true)
   })
-  const identities = rawTabs.flatMap((_tab, originalIndex) => {
-    const identity = identityByIndex.get(originalIndex)
-    return identity ? [{ originalIndex, identity }] : []
-  })
-  const normalized = identities.flatMap(({ originalIndex }) => {
+  const normalized = indexes.flatMap((originalIndex) => {
     const tab = normalizedByIndex.get(originalIndex)
     return tab ? [{ originalIndex, tab }] : []
   })

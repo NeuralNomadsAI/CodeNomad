@@ -73,7 +73,7 @@ function captureRuntimeState(
   return { unseenIdleSince, generationRecovery, ...(Object.keys(seenInterruptions).length ? { seenInterruptions } : {}) }
 }
 export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>) {
-  const tabs = appTabs().filter(tab => tab.kind !== "blank")
+  const tabs = appTabs()
   const occurrenceKey = (project: Pick<RestorableWorkspaceTabState, "folder" | "backendId" | "serverId">) =>
     workspaceInstallationKey(project.folder, project.backendId, project.serverId)
   const nextOccurrence = new Map<string, number>()
@@ -96,6 +96,7 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
     occurrenceByInstance.set(instance.id, occurrence)
   }
   const restorableTabs: RestorableTabState[] = tabs.map((tab) => {
+    if (tab.kind === "blank") return { kind: "blank" }
     if (tab.kind === "sidecar") return { kind: "sidecar", sidecarId: tab.sidecarTab.sidecarId }
     if (tab.kind === "remote-restore") return tab.snapshot
     const id = tab.instance.id

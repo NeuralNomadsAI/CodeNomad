@@ -117,7 +117,7 @@ Dans un onglet vide, choisissez **Parcourir**, puis un serveur. Collez une adres
 
 Les projets locaux et distants partagent la même fenêtre. **Onglets récents** affiche les raccourcis du serveur parcouru ; les récents mixtes indiquent l’icône et le nom du serveur pour les projets ouverts ici. [Restaurer les onglets distants](projects.md#restore-remote-tabs).
 
-Dans **Paramètres → Serveurs**, **Ouvrir** sélectionne le serveur dans **Parcourir** et réutilise l’onglet vide s’il existe.
+Dans **Paramètres → Serveurs**, **Ouvrir** sélectionne le serveur dans **Parcourir** et réutilise un onglet vide s’il y en a un.
 
 ### `--connect-server` {#connect-server}
 

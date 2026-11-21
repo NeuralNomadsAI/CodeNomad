@@ -864,7 +864,7 @@ const App: Component = () => {
                   {tab.kind === "sidecar" ? <SideCarView tab={tab.sidecarTab} /> : tab.kind === "remote-restore" ? <RemoteRestoreView tab={tab} /> :
                      <FolderSelectionView initialServer={tab.server} active={isVisible()} isLoading={isSelectingFolder()}
                       onSelectFolder={path => void handleSelectFolder(path, tab.id)}
-                      onSelectExistingInstance={handleSelectExistingInstance}
+                       onSelectExistingInstance={(id, path) => handleSelectExistingInstance(id, path, tab.id)}
                       onNewTemporaryInstance={() => void handleNewTemporaryInstance(tab.id)}
                       onOpenSidecar={id => void handleOpenSidecar(id, tab.id)}
                       onJoined={() => closeBlankTab(tab.id)}

@@ -48,6 +48,8 @@ A plain browser tab, including an installed PWA, keeps the same V1 client snapsh
 
 OpenCode sessions and messages are shared through the global daemon. Window membership, tabs, drafts, view state, and native bounds are local to each UUID window. Client-state V3 is a per-window envelope over the V2 SHA-256 content-addressed partition graph: immutable partitions are prepared before atomic root publication, writes and migrations are fenced by current ownership and renderer authority, and garbage collection runs after publication while retaining every partition referenced by any window.
 
+Empty tab descriptors occupy ordered slots in the session manifest, using spare capacity within the saved tab limit. Each restores a fresh Browse and Recent view.
+
 Each workspace descriptor has its own optional `viewState` payload, normalized by `stores/tab-view-state-codec.ts` and stored inline in that descriptor's workspace partition (`client-state-partitions.ts`). Duplicate folders keep distinct descriptors through their `occurrence` and runtime tab bindings; restore seeds the envelope onto each recreated instance UUID before session hydration. The payload is:
 
 | Field | Saved presentation |

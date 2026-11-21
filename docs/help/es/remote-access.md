@@ -117,7 +117,7 @@ En una pestaña vacía, elige **Explorar** y selecciona un servidor. Pega la dir
 
 Los proyectos locales y remotos comparten ventana. **Pestañas recientes** muestra los accesos directos del servidor seleccionado mientras exploras. Los proyectos abiertos aquí conservan el icono y el nombre del servidor en la lista mixta. [Restaurar pestañas remotas](projects.md#restore-remote-tabs).
 
-En **Configuración → Servidores**, **Abrir** selecciona el servidor en **Explorar** y reutiliza la pestaña vacía si existe.
+En **Configuración → Servidores**, **Abrir** selecciona el servidor en **Explorar** y reutiliza una pestaña vacía si hay alguna abierta.
 
 ### `--connect-server` {#connect-server}
 

@@ -59,6 +59,14 @@ const sidecarSnapshot: ClientSnapshotV1 = {
 const loader = (encoded: Awaited<ReturnType<typeof encodeClientSnapshotV2>>) =>
   async (key: string) => encoded.partitions[key] ?? null
 
+it("round-trips multiple empty tabs around a project with the last empty tab selected", async () => {
+  const snapshot = graphSnapshot()
+  snapshot.session = { tabs: [{ kind: "blank" }, workspace(0, "draft"), { kind: "blank" }], activeTabIndex: 2 }
+  const encoded = await encodeClientSnapshotV2(snapshot)
+  const restored = await decodeClientSnapshotV2(encoded.root, 1, loader(encoded))
+  assert.equal(canonicalJson(restored?.session), canonicalJson(snapshot.session))
+})
+
 it("restores the selected tab from a manifest with a legacy Home flag", async () => {
   const snapshot = graphSnapshot()
   snapshot.session!.activeTabIndex = 1

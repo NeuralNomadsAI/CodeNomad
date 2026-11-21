@@ -48,7 +48,10 @@ for (const mode of ["desktop", "web", "phone"]) {
       if (mode === "desktop") await page.addInitScript(`{
         // Exercise the local desktop renderer in Chromium without starting a desktop host.
         Object.assign(window, { __CODENOMAD_WINDOW_CONTEXT__: "local", __CODENOMAD_RUNTIME_HOST__: "electron",
-          electronAPI: { loadClientState: async () => ({ isPrimary: true, restoreEnabled: true }), claimClientStateAccess: async () => true } })
+          electronAPI: {
+            loadClientState: async () => ({ isPrimary: true, restoreEnabled: true }), claimClientStateAccess: async () => true,
+            onMenuAction(callback) { window.runFixtureMenuAction = callback; return () => {} },
+          } })
       }`)
       await openApp(page)
       const blank = page.locator('[data-tab-kind="blank"]')
@@ -91,15 +94,32 @@ for (const mode of ["desktop", "web", "phone"]) {
         await page.keyboard.press("Escape")
       }
       await page.getByRole("button", { name: "New instance", exact: true }).click()
-      assert.equal(await blank.getAttribute("data-tab-id"), blankId)
-      assert.equal(await blank.getAttribute("data-tab-visible"), "true")
+      const activeBlank = page.locator('[data-tab-kind="blank"][data-tab-visible="true"]')
+      const secondId = await activeBlank.getAttribute("data-tab-id")
+      assert.notEqual(secondId, blankId)
+      assert.equal(await blank.count(), 2)
       await page.keyboard.press("Control+n")
-      assert.equal(await blank.getAttribute("data-tab-id"), blankId)
+      const thirdId = await activeBlank.getAttribute("data-tab-id")
+      assert.notEqual(thirdId, secondId)
+      assert.notEqual(thirdId, blankId)
+      assert.equal(await blank.count(), 3)
+      if (mode === "desktop") {
+        await page.evaluate(() => (window as unknown as { runFixtureMenuAction(action: string): void }).runFixtureMenuAction("new-instance"))
+        assert.equal(await blank.count(), 4)
+        assert.notEqual(await activeBlank.getAttribute("data-tab-id"), thirdId)
+        await page.keyboard.press("Control+w")
+        assert.equal(await activeBlank.getAttribute("data-tab-id"), thirdId)
+      }
+      await page.keyboard.press("Control+w")
+      assert.equal(await activeBlank.getAttribute("data-tab-id"), secondId)
       await page.keyboard.press("Control+w")
       await page.locator('[data-remote-restore="demo"]').waitFor()
       await page.keyboard.press("Control+w")
+      assert.equal(await activeBlank.getAttribute("data-tab-id"), blankId)
+      await page.keyboard.press("Control+w")
       await blank.getByRole("heading", { name: "CodeNomad", exact: true }).waitFor()
       assert.equal(await blank.count(), 1)
+      assert.notEqual(await activeBlank.getAttribute("data-tab-id"), blankId)
     } finally {
       await page.close()
     }
@@ -124,12 +144,18 @@ for (const width of [1280, 390]) {
   })
 }
 
-test("server settings keep the saved order for equal dates and reuse the empty tab", async () => {
+test("server settings keep the saved order for equal dates and reuse the active empty tab", async () => {
   const page = await browser.newPage()
   try {
     await openApp(page)
     const blank = page.locator('[data-tab-kind="blank"]')
     const blankId = await blank.getAttribute("data-tab-id")
+    await blank.locator('[data-remote-server="alpha"]').click()
+    await blank.locator(".remote-server-navigation bdi").getByText("Alpha", { exact: true }).waitFor()
+    await page.getByRole("button", { name: "New instance", exact: true }).click()
+    const active = page.locator('[data-tab-kind="blank"][data-tab-visible="true"]')
+    const activeId = await active.getAttribute("data-tab-id")
+    await active.locator('[data-remote-server="alpha"]').waitFor()
     await page.getByRole("button", { name: "Open settings", exact: true }).click()
     await page.locator('button[aria-label="Language"]').waitFor()
     await page.getByRole("button", { name: "Servers", exact: true }).click()
@@ -137,8 +163,13 @@ test("server settings keep the saved order for equal dates and reuse the empty t
     await rows.nth(1).waitFor()
     assert.deepEqual(await rows.evaluateAll(buttons => buttons.map(button => button.getAttribute("aria-label"))), ["Open: Beta", "Open: Alpha"])
     await rows.first().click()
-    await page.locator(".remote-server-navigation bdi").getByText("Beta", { exact: true }).waitFor()
-    assert.equal(await blank.getAttribute("data-tab-id"), blankId)
+    await active.locator(".remote-server-navigation bdi").getByText("Beta", { exact: true }).waitFor()
+    assert.equal(await active.getAttribute("data-tab-id"), activeId)
+    assert.equal(await blank.count(), 2)
+    await page.locator(`[data-app-tab-id="${blankId}"]`).getByRole("tab").click()
+    await active.locator(".remote-server-navigation bdi").getByText("Alpha", { exact: true }).waitFor()
+    await page.locator(`[data-app-tab-id="${activeId}"]`).getByRole("tab").click()
+    await active.locator(".remote-server-navigation bdi").getByText("Beta", { exact: true }).waitFor()
   } finally {
     await page.close()
   }
@@ -182,5 +213,25 @@ test("startup keeps the loading state and restores the last selected tab", async
     await selected.waitFor()
     assert.match(await selected.innerText(), /Last/)
     assert.equal(await page.locator('[data-tab-kind="blank"]').count(), 0)
+  } finally { await page.close() }
+})
+
+test("web reload restores several empty tabs in order with the last one selected", async () => {
+  const page = await browser.newPage()
+  try {
+    await openApp(page)
+    await page.evaluate(() => (window as unknown as { openFixtureProject(): void }).openFixtureProject())
+    await page.getByRole("button", { name: "New instance", exact: true }).click()
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.getByRole("heading", { name: "CodeNomad", exact: true }).waitFor()
+    const contents = page.locator("[data-tab-kind]")
+    assert.deepEqual(await contents.evaluateAll(tabs => tabs.map(tab => [
+      tab.getAttribute("data-tab-kind"), tab.getAttribute("data-tab-visible"),
+    ])), [["blank", "false"], ["remote-restore", "false"], ["blank", "true"]])
+    await page.keyboard.press("Control+w")
+    await page.locator('[data-remote-restore="demo"]').waitFor()
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.locator('[data-remote-restore="demo"]').waitFor()
+    assert.equal(await page.locator('[data-tab-kind="blank"]').count(), 1)
   } finally { await page.close() }
 })

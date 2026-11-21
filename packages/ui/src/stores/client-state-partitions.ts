@@ -126,6 +126,7 @@ async function encodeSessionGraph(session: RestorableSessionState | null, legacy
 
   const encodedSession = session === null ? null : {
     tabs: await Promise.all(session.tabs.map(async (tab) => {
+      if (tab.kind === "blank") return { kind: tab.kind }
       if (tab.kind === "sidecar") return { kind: tab.kind, sidecarId: tab.sidecarId }
 
       const sessionIds = new Set([
@@ -368,6 +369,11 @@ async function decodeGraph(
   let legacyGraph = false
   for (const shell of manifest.session.tabs) {
     if (!isRecord(shell)) return
+    if (shell.kind === "blank") {
+      if (!hasExactKeys(shell, ["kind"])) return
+      tabs.push({ kind: shell.kind })
+      continue
+    }
     if (shell.kind === "sidecar") {
       if (!hasExactKeys(shell, ["kind", "sidecarId"])) return
       tabs.push({ kind: shell.kind, sidecarId: shell.sidecarId })

@@ -117,7 +117,7 @@ Boş sekmede **Gözat** bölümünden sunucuyu seçin. Sunucuyu kaydetmek için 
 
 Yerel ve uzak projeler aynı pencerede açılır. Gezinirken **Son sekmeler** seçili sunucunun kısayollarını gösterir. Karma listede burada açtığınız projelerin sunucu simgesi ve adı görünür. [Uzak sekmeleri geri yükleme](projects.md#restore-remote-tabs).
 
-**Ayarlar → Sunucular** bölümünde **Aç**, sunucuyu **Gözat** içinde seçer ve varsa boş sekmeyi kullanır.
+**Ayarlar → Sunucular** bölümünde **Aç**, sunucuyu **Gözat** içinde seçer ve varsa açık bir boş sekmeyi kullanır.
 
 ### `--connect-server` {#connect-server}
 

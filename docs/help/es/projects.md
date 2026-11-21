@@ -4,7 +4,7 @@ Una pestaña de proyecto conecta CodeNomad a una carpeta del equipo del backend.
 
 ## Abrir un proyecto {#open-project}
 
-Pulsa **Nueva instancia** (`+`) o `Ctrl/Cmd+N` para abrir una pestaña vacía. Elige un proyecto en **Pestañas recientes** o **Explorar**. Si no hay pestañas de proyecto que restaurar o cierras la última, CodeNomad muestra una pestaña vacía. La clonación y las pestañas temporales usan el servidor local.
+Pulsa **Nueva instancia** (`+`) o `Ctrl/Cmd+N` para abrir una nueva pestaña vacía. Elige un proyecto en **Pestañas recientes** o **Explorar**. Si no hay pestañas que restaurar o cierras la última, CodeNomad muestra una pestaña vacía. La clonación y las pestañas temporales usan el servidor local.
 
 [Abrir un proyecto remoto en una pestaña](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
 
