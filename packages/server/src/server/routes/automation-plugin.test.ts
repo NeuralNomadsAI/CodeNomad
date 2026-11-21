@@ -182,7 +182,7 @@ test("targets the inspected window independently of the visible conversation", a
   finally { releaseInspection() }
   assert.equal((await lateInspection).json().code, "stale-inspection")
   const capture = (pin: string) => request({ mode: "developer-execute", sessionID: "session-1", pin, command: { action: "screenshot" } })
-  assert.equal((await capture(a)).json().code, "target-gone")
+  assert.equal((await capture("unissued")).json().code, "target-gone")
   assert.equal((await capture(b)).statusCode, 200)
   assert.equal(screenshotWindow, "window-2")
 

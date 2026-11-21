@@ -65,15 +65,17 @@ interface DeveloperNativeStatus {
     nativeIdentity?: string
     cdpUrl?: string
     windowId?: string
+    windowInstance?: string
   }
   logs?: DeveloperCdpDiagnostic[]
-  windows?: Array<{ windowId: string; focused: boolean }>
+  windows?: Array<{ windowId: string; windowInstance?: string; focused: boolean }>
 }
 
 function developerSelection(status: DeveloperNativeStatus["status"]): DeveloperCdpSelection | undefined {
   if (status?.state !== "ready" || typeof status.runId !== "string" || typeof status.nativeIdentity !== "string"
     || typeof status.cdpUrl !== "string" || typeof status.windowId !== "string") return undefined
-  return { endpoint: status.cdpUrl, runId: status.runId, windowId: status.windowId }
+  return { endpoint: status.cdpUrl, runId: status.runId, windowId: status.windowId,
+    ...(status.windowInstance ? { windowInstance: status.windowInstance } : {}) }
 }
 
 export function isAutomationPluginRequest(
@@ -286,31 +288,38 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     let native: DeveloperNativeStatus
     try {
       native = await deps.nativeParent.request<DeveloperNativeStatus>(inventory ? "developer.targets" : "developer.status",
-        exact ? { windowId: exact.windowId, runId: exact.runId } : {})
+        exact ? { windowId: exact.windowId, runId: exact.runId,
+          ...(exact.windowInstance ? { windowInstance: exact.windowInstance } : {}) } : {})
     } catch (error) {
       return unavailable(error instanceof Error ? error.message : String(error))
     }
     const selection = developerSelection(native.status)
-    if (!selection || exact && (selection.windowId !== exact.windowId || selection.runId !== exact.runId)
+    if (!selection || exact && (selection.windowId !== exact.windowId || selection.runId !== exact.runId
+        || selection.windowInstance !== exact.windowInstance)
       || explicit && explicit.nativeIdentity !== native.status.nativeIdentity
       || !explicit && pin && pin.endpoint !== selection.endpoint) return unavailable()
 
     if (probe) {
       const selected = { available: true, nativeIdentity: native.status.nativeIdentity, runId: selection.runId }
       if (inventory) {
-        const windows = await Promise.all((native.windows ?? []).slice(0, 16).map(async window => {
-          try {
-            const context = await deps.developerCdp.probeContext({ ...selection, windowId: window.windowId })
+        const local = (native.windows ?? []).slice(0, 16)
+        try {
+          const contexts = await deps.developerCdp.probeContexts(selection.endpoint, new Set(local.map(window => window.windowId)))
+          const windows = local.flatMap(window => {
+            const context = contexts.get(window.windowId)
+            if (!context) return []
             const visible = context.sessionId === body.sessionID && !context.instanceId?.includes("~")
-            return { windowId: context.windowId, focused: window.focused === true,
+            return [{ windowId: context.windowId, focused: window.focused === true,
+              ...(window.windowInstance ? { windowInstance: window.windowInstance } : {}),
               session: visible ? "visible" : context.localSessions?.includes(body.sessionID as string) ? "open" : "elsewhere",
-              ...(visible && context.tabId ? { tabId: context.tabId } : {}) }
-          } catch { return undefined }
-        }))
-        return reply.send({ result: { ...selected, windows: windows.filter(Boolean) } })
+              ...(visible && context.tabId ? { tabId: context.tabId } : {}) }]
+          })
+          return reply.send({ result: { ...selected, windows } })
+        } catch { return unavailable() }
       }
       try { await deps.developerCdp.context(selection) } catch { return unavailable() }
-      return reply.send({ result: { ...selected, windowId: selection.windowId } })
+      return reply.send({ result: { ...selected, windowId: selection.windowId,
+        ...(selection.windowInstance ? { windowInstance: selection.windowInstance } : {}) } })
     }
 
     if (!command) return reply.code(400).send({ error: "Missing developer command" })

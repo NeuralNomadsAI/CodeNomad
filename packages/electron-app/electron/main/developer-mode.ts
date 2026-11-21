@@ -8,12 +8,13 @@ export interface DeveloperTargetStatus {
   nativeIdentity?: string
   cdpUrl?: string
   windowId?: string
+  windowInstance?: string
 }
 
 interface DeveloperModeOptions {
   devtoolsDataPath: string
   nativeIdentity: string
-  windows(): Array<{ windowId: string; focused: boolean }>
+  windows(): Array<{ windowId: string; windowInstance?: string; focused: boolean }>
   requestRelaunch(): void
   runId?: string
   schedule?: (callback: () => void) => void
@@ -52,14 +53,15 @@ export class DeveloperMode {
     } catch {
       return { status: base, windows: [] }
     }
-    const input = params as { windowId?: unknown; runId?: unknown } | undefined
+    const input = params as { windowId?: unknown; runId?: unknown; windowInstance?: unknown } | undefined
     const windows = this.options.windows()
     const window = input?.runId !== undefined || input?.windowId !== undefined
-      ? input.runId === this.runId && windows.find(value => value.windowId === input.windowId)
+      ? input.runId === this.runId && windows.find(value => value.windowId === input.windowId && value.windowInstance === input.windowInstance)
       : windows[0]
     const cdpUrl = `http://127.0.0.1:${port}`
     const status: DeveloperTargetStatus = window
-      ? { ...base, cdpUrl, state: "ready", windowId: window.windowId }
+      ? { ...base, cdpUrl, state: "ready", windowId: window.windowId,
+          ...(window.windowInstance ? { windowInstance: window.windowInstance } : {}) }
       : { ...base, cdpUrl }
     return { status, windows }
   }

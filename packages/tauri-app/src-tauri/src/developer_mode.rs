@@ -134,26 +134,29 @@ impl DeveloperMode {
         }
         let port = self.discovered_port();
         let state = app.state::<crate::AppState>();
-        let mut windows: Vec<(String, bool)> = if port.is_some() {
+        let mut windows: Vec<(String, String, bool)> = if port.is_some() {
             app.state::<crate::local_windows::LocalWindows>()
                 .automation_labels()
                 .into_iter()
-                .filter_map(|label| {
+                .filter_map(|(label, instance)| {
                     let view = app.get_webview(&label)?;
                     crate::require_local_app_webview(&view, &state).ok()?;
                     let focused = view.window().is_focused().unwrap_or(false);
-                    Some((crate::identity::local_window_id(&label).ok()?, focused))
+                    Some((crate::identity::local_window_id(&label).ok()?, instance, focused))
                 })
                 .collect()
         } else {
             Vec::new()
         };
-        windows.sort_by_key(|(_, focused)| !focused);
-        let window_id = select_window(&self.run_id, &windows, params.as_ref());
-        let mut result = self.snapshot(port, window_id);
+        windows.sort_by_key(|(_, _, focused)| !focused);
+        let chosen = select_window(&self.run_id, &windows, params.as_ref());
+        let mut result = self.snapshot(port, chosen.map(|(id, _, _)| id.clone()));
+        if let Some((_, instance, _)) = chosen {
+            result["status"]["windowInstance"] = json!(instance);
+        }
         if inventory {
-            result["windows"] = json!(windows.iter().map(|(id, focused)| {
-                json!({ "windowId": id, "focused": focused })
+            result["windows"] = json!(windows.iter().map(|(id, instance, focused)| {
+                json!({ "windowId": id, "windowInstance": instance, "focused": focused })
             }).collect::<Vec<_>>());
         }
         Ok(result)
@@ -180,14 +183,18 @@ impl DeveloperMode {
     }
 }
 
-fn select_window(run: &str, windows: &[(String, bool)], params: Option<&Value>) -> Option<String> {
+fn select_window<'a>(
+    run: &str,
+    windows: &'a [(String, String, bool)],
+    params: Option<&Value>,
+) -> Option<&'a (String, String, bool)> {
     let exact = params.filter(|value| value.get("runId").is_some() || value.get("windowId").is_some());
     match exact {
-        None => windows.first().map(|(id, _)| id.clone()),
+        None => windows.first(),
         Some(input) if input["runId"].as_str() == Some(run) => windows
             .iter()
-            .find(|(id, _)| Some(id.as_str()) == input["windowId"].as_str())
-            .map(|(id, _)| id.clone()),
+            .find(|(id, instance, _)| Some(id.as_str()) == input["windowId"].as_str()
+                && Some(instance.as_str()) == input["windowInstance"].as_str()),
         Some(_) => None,
     }
 }
@@ -198,12 +205,14 @@ mod tests {
 
     #[test]
     fn selects_exact_window_without_using_focus_or_substituting() {
-        let mut windows = vec![("B".into(), true), ("A".into(), false)];
-        let target = json!({ "runId": "current", "windowId": "A" });
-        assert_eq!(select_window("current", &windows, None).as_deref(), Some("B"));
-        assert_eq!(select_window("current", &windows, Some(&target)).as_deref(), Some("A"));
+        let mut windows = vec![("B".into(), "b".into(), true), ("A".into(), "a".into(), false)];
+        let target = json!({ "runId": "current", "windowId": "A", "windowInstance": "a" });
+        assert_eq!(select_window("current", &windows, None).map(|w| w.0.as_str()), Some("B"));
+        assert_eq!(select_window("current", &windows, Some(&target)).map(|w| w.0.as_str()), Some("A"));
         assert_eq!(select_window("old", &windows, Some(&target)), None);
         windows.pop();
+        assert_eq!(select_window("current", &windows, Some(&target)), None);
+        windows.push(("A".into(), "new".into(), false));
         assert_eq!(select_window("current", &windows, Some(&target)), None);
     }
 

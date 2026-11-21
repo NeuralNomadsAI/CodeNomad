@@ -31,6 +31,7 @@ export interface DeveloperCdpSelection {
   endpoint: string
   runId: string
   windowId: string
+  windowInstance?: string
   sessionId?: string
 }
 
@@ -222,10 +223,22 @@ export class DeveloperCdp {
     return this.exclusive(selection.runId, async () => (await this.ensure(selection)).context!)
   }
 
-  async probeContext(selection: DeveloperCdpSelection): Promise<DeveloperCdpContext> {
-    const state = this.newState(discoveryUrl(selection.endpoint), selection.windowId)
-    try { return (await this.ensureTarget(state)).context! }
-    finally { this.disconnect(state, new Error("CDP target probe completed")) }
+  async probeContexts(endpoint: string, windowIds: ReadonlySet<string>): Promise<Map<string, DeveloperCdpContext>> {
+    const source = discoveryUrl(endpoint)
+    const pages = await this.listTargets(source)
+    const found = new Map<string, DeveloperCdpContext>(), ambiguous = new Set<string>()
+    for (let index = 0; index < pages.length; index += DISCOVERY_PROBE_CONCURRENCY) {
+      const contexts = await Promise.all(pages.slice(index, index + DISCOVERY_PROBE_CONCURRENCY).map(target =>
+        this.probePage(source, target)))
+      for (const context of contexts) {
+        if (!context || !windowIds.has(context.windowId) || ambiguous.has(context.windowId)) continue
+        if (found.has(context.windowId)) {
+          found.delete(context.windowId)
+          ambiguous.add(context.windowId)
+        } else found.set(context.windowId, context)
+      }
+    }
+    return found
   }
 
   private publicContext({ localSessions: _localSessions, ...context }: DeveloperCdpContext): DeveloperCdpContext {
@@ -235,7 +248,7 @@ export class DeveloperCdp {
   private async ensure(identity: DeveloperCdpSelection | DeveloperCdpIdentity): Promise<RunState> {
     if (!identity.runId.trim()) throw new Error("runId is required")
     const endpoint = discoveryUrl(identity.endpoint)
-    const key = `${identity.runId}\0${identity.windowId}`
+    const key = `${identity.runId}\0${identity.windowId}\0${identity.windowInstance ?? ""}`
     let state = this.windows.get(key)
     if (!state || state.endpoint !== endpoint || state.windowId !== identity.windowId || state.sessionId !== identity.sessionId
       || ("instanceId" in identity && state.instanceId !== identity.instanceId)) {
@@ -272,8 +285,8 @@ export class DeveloperCdp {
     }
   }
 
-  private async ensureTarget(state: RunState): Promise<RunState> {
-    const response = await this.dependencies.fetch(state.endpoint, {
+  private async listTargets(endpoint: string): Promise<CdpTarget[]> {
+    const response = await this.dependencies.fetch(endpoint, {
       signal: AbortSignal.timeout(this.dependencies.timeoutMs),
     })
     if (!response.ok) throw new Error(`Chrome target discovery failed (HTTP ${response.status})`)
@@ -286,7 +299,11 @@ export class DeveloperCdp {
     let candidates: unknown
     try { candidates = JSON.parse(text) } catch { throw new Error("Chrome target discovery returned invalid JSON") }
     if (!Array.isArray(candidates)) throw new Error("Chrome target discovery returned invalid JSON")
-    const targets = candidates.slice(0, DISCOVERY_TARGET_LIMIT).filter(isTarget).filter((target) => target.type === "page")
+    return candidates.slice(0, DISCOVERY_TARGET_LIMIT).filter(isTarget).filter((target) => target.type === "page")
+  }
+
+  private async ensureTarget(state: RunState): Promise<RunState> {
+    const targets = await this.listTargets(state.endpoint)
     let target = state.target && targets.find((candidate) => candidate.id === state.target!.id)
     if (!target) {
       this.disconnect(state, new Error("Chrome target was replaced"))
@@ -313,23 +330,26 @@ export class DeveloperCdp {
     const matches: CdpTarget[] = []
     for (let index = 0; index < targets.length && matches.length < 2; index += DISCOVERY_PROBE_CONCURRENCY) {
       const batch = await Promise.all(targets.slice(index, index + DISCOVERY_PROBE_CONCURRENCY).map(async (target) => {
-        const probe = this.newState(state.endpoint, state.windowId, state.sessionId, state.instanceId)
-        probe.target = target
-        try {
-          await this.connect(probe, target)
-          return this.matchesContext(state, await this.readContext(probe)) ? target : undefined
-        } catch {
-          // Targets can disappear while Chromium's target list is being inspected.
-          return undefined
-        } finally {
-          this.disconnect(probe, new Error("CDP target probe completed"))
-        }
+        const context = await this.probePage(state.endpoint, target)
+        return context && this.matchesContext(state, context) ? target : undefined
       }))
       matches.push(...batch.filter((target): target is CdpTarget => Boolean(target)))
     }
     if (matches.length === 0) throw new Error("No CodeNomad page matches the selected window and OpenCode session")
     if (matches.length > 1) throw new Error("Multiple CodeNomad pages match the selected window and OpenCode session")
     return matches[0]
+  }
+
+  private async probePage(endpoint: string, target: CdpTarget): Promise<DeveloperCdpContext | undefined> {
+    const probe = this.newState(endpoint, "")
+    try {
+      await this.connect(probe, target, false)
+      return await this.readContext(probe)
+    } catch {
+      return undefined
+    } finally {
+      this.disconnect(probe, new Error("CDP target probe completed"))
+    }
   }
 
   private async readContext(state: RunState): Promise<DeveloperCdpContext> {
@@ -354,7 +374,7 @@ export class DeveloperCdp {
       && (state.instanceId === undefined || context.instanceId === state.instanceId)
   }
 
-  private async connect(state: RunState, target: CdpTarget): Promise<void> {
+  private async connect(state: RunState, target: CdpTarget, enable = true): Promise<void> {
     const socket = this.dependencies.connect(target.webSocketDebuggerUrl)
     state.socket = socket
     state.open = new Promise<void>((resolve, reject) => {
@@ -378,6 +398,7 @@ export class DeveloperCdp {
       this.rejectPending(state, new Error("CDP WebSocket closed"))
     }
     await state.open
+    if (!enable) return
     await this.command(state, "Page.enable")
     await this.command(state, "Runtime.enable")
     await this.command(state, "Accessibility.enable")

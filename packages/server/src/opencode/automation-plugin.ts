@@ -75,11 +75,13 @@ interface ProbedBridge {
   runId: string
   windows?: DeveloperWindowCandidate[]
   windowId?: string
+  windowInstance?: string
   pin?: string
 }
 
 interface DeveloperWindowCandidate {
   windowId: string
+  windowInstance?: string
   focused: boolean
   session: "visible" | "open" | "elsewhere"
   tabId?: string
@@ -589,12 +591,13 @@ async function probeBridge(registration: DiscoveredBridgeRegistration, sessionID
   try {
     const response = await callBridge(registration, { mode: "developer-probe", sessionID,
       ...(selector ? { purpose: "target", target: selector } : inventory ? { purpose: "targets" } : {}) })
-    const result = response.body.result as { available?: unknown; nativeIdentity?: unknown; runId?: unknown; windows?: unknown; windowId?: unknown } | undefined
+    const result = response.body.result as { available?: unknown; nativeIdentity?: unknown; runId?: unknown; windows?: unknown; windowId?: unknown; windowInstance?: unknown } | undefined
     const windows = Array.isArray(result?.windows) ? result.windows.slice(0, 16).filter((item): item is DeveloperWindowCandidate =>
       item && typeof item.windowId === "string" && ["visible", "open", "elsewhere"].includes(item.session)) : undefined
     return response.status === 200 && result?.available === true && typeof result.nativeIdentity === "string" && typeof result.runId === "string"
       ? { registration, nativeIdentity: result.nativeIdentity, runId: result.runId, windows,
-          windowId: typeof result.windowId === "string" ? result.windowId : undefined }
+          windowId: typeof result.windowId === "string" ? result.windowId : undefined,
+          windowInstance: typeof result.windowInstance === "string" ? result.windowInstance : undefined }
       : undefined
   } catch {
     return undefined
@@ -776,37 +779,41 @@ function targetError(code: string, message: string): Error {
   return Object.assign(new Error(`${code}: ${message}`), { code })
 }
 
-function windowSelector(bridge: ProbedBridge, windowId: string) {
-  return formatDeveloperTarget({ nativeIdentity: bridge.nativeIdentity, runId: bridge.runId, windowId })
+function windowSelector(bridge: ProbedBridge, windowId: string, windowInstance?: string) {
+  return formatDeveloperTarget({ nativeIdentity: bridge.nativeIdentity, runId: bridge.runId, windowId, windowInstance })
 }
 
 const windowRank = (window: DeveloperWindowCandidate) => ["visible", "open", "elsewhere"].indexOf(window.session)
 
 async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
   sessionID: string, command: DeveloperAction,
-  options: { inventory?: boolean; selector?: string; publish?: (target: ProbedBridge) => void } = {}) {
+  options: { inventory?: boolean; selector?: string; isCurrent?: () => boolean; publish?: (target: ProbedBridge) => boolean } = {}) {
   let target = inspectedTargets.get(sessionID)
   let select = options.selector
   if (command.action === "inspect" && select) {
     const exact = select
     const matches = await probeBridges(await registrations(), sessionID, { selector: exact,
-      accept: bridge => !!bridge.windowId && windowSelector(bridge, bridge.windowId) === exact })
+      accept: bridge => !!bridge.windowId && windowSelector(bridge, bridge.windowId, bridge.windowInstance) === exact })
     if (!matches.length) throw targetError("target-gone", "The selected window is unavailable; list the targets again")
     if (matches.length > 1) throw targetError("ambiguous-target", "Several backends returned the selected window")
     target = matches[0]
   } else if (command.action === "inspect" && (options.inventory || !target && !command.ref)) {
     const bridges = await probeBridges(await registrations(), sessionID, { inventory: true, limit: MAX_REGISTRATIONS })
     const windows = bridges.flatMap(bridge => (bridge.windows ?? []).map(window => ({
-      bridge, window, target: windowSelector(bridge, window.windowId),
+      bridge, window, target: windowSelector(bridge, window.windowId, window.windowInstance),
     })))
     if (options.inventory) return formatBridgeResult({ targets: windows.map(({ target, window }) => ({ target, ...window })) })
     const candidates = bridges.flatMap<{ bridge: ProbedBridge; rank: number; selector?: string }>(bridge => {
       const best = (bridge.windows ?? []).reduce<DeveloperWindowCandidate | undefined>((chosen, window) =>
         !chosen || windowRank(window) < windowRank(chosen) ? window : chosen, undefined)
-      return best ? [{ bridge, rank: windowRank(best), selector: windowSelector(bridge, best.windowId) }]
-        : bridge.windows === undefined ? [{ bridge, rank: 2 }] : []
+      return best ? [{ bridge, rank: windowRank(best), selector: windowSelector(bridge, best.windowId, best.windowInstance) }] : []
     }).sort((left, right) => left.rank - right.rank)
-    if (!candidates[0]) throw targetError("no-window", "No ready local CodeNomad window for this session")
+    if (!candidates[0]) {
+      if (bridges.some(bridge => bridge.windows === undefined)) {
+        throw targetError("unsupported-target", "Update CodeNomad to select a window")
+      }
+      throw targetError("no-window", "No ready local CodeNomad window for this session")
+    }
     if (candidates[1]?.rank === candidates[0].rank) {
       throw targetError("ambiguous-target", "Several CodeNomad profiles match; choose a window in inspect({targets:true})")
     }
@@ -819,6 +826,7 @@ async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
   const existingTokens = command.action === "restart"
     ? new Set((await registrations()).map((registration) => registration.token))
     : undefined
+  if (options.isCurrent && !options.isCurrent()) throw targetError("stale-inspection", "A newer inspection selected the window")
   const response = await callBridge(target.registration, { mode: "developer-execute", sessionID, command,
     ...(select ? { target: select } : target.pin ? { pin: target.pin } : {}) }, REQUEST_TIMEOUT_MS).catch(error => {
     if (isConnectionRefused(error)) throw targetError("target-gone", "The selected backend has closed; list the targets again")
@@ -829,9 +837,11 @@ async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
     throw typeof response.body.code === "string" ? targetError(response.body.code, message) : new Error(message)
   }
   if (command.action === "restart") {
-    return waitForRestart(inspectedTargets, sessionID, target.nativeIdentity, target.runId, existingTokens!)
+    return waitForRestart(sessionID, target.nativeIdentity, target.runId, existingTokens!, options.publish!)
   }
-  options.publish?.(inspectedBridge(target, response.body.result))
+  if (options.publish && !options.publish(inspectedBridge(target, response.body.result))) {
+    throw targetError("stale-inspection", "A newer inspection selected the window")
+  }
   return formatBridgeResult(response.body.result)
 }
 
@@ -841,11 +851,11 @@ function inspectedBridge(target: ProbedBridge, result: unknown): ProbedBridge {
 }
 
 async function waitForRestart(
-  inspectedTargets: Map<string, ProbedBridge>,
   sessionID: string,
   nativeIdentity: string,
   previousRunId: string,
   existingTokens: ReadonlySet<string>,
+  publish: (target: ProbedBridge) => boolean,
 ) {
   const deadline = Date.now() + REQUEST_TIMEOUT_MS
   while (Date.now() < deadline) {
@@ -866,7 +876,9 @@ async function waitForRestart(
           command: { action: "inspect" },
         }, INSPECTION_TIMEOUT_MS)
         if (inspection.status === 200) {
-          inspectedTargets.set(sessionID, inspectedBridge(candidate, inspection.body.result))
+          if (!publish(inspectedBridge(candidate, inspection.body.result))) {
+            return { content: "CodeNomad restarted; the newer window selection was kept." }
+          }
           return formatBridgeResult(inspection.body.result)
         }
       } catch {
@@ -881,6 +893,19 @@ async function waitForRestart(
 export function createDeveloperToolTransform() {
   const inspectedTargets = new Map<string, ProbedBridge>()
   const selections = new Map<string, symbol>()
+  const selectWindow = async (session: string, command: DeveloperAction, selector?: string) => {
+    const issued = Symbol()
+    selections.set(session, issued)
+    try {
+      return await executeDeveloperTool(inspectedTargets, session, command, { selector, isCurrent: () => selections.get(session) === issued, publish: chosen => {
+        if (selections.get(session) !== issued) return false
+        inspectedTargets.set(session, chosen)
+        return true
+      } })
+    } finally {
+      if (selections.get(session) === issued) selections.delete(session)
+    }
+  }
   return (draft: Pick<ToolDraft, "add">) => {
     draft.add({
       name: "inspect",
@@ -907,16 +932,7 @@ export function createDeveloperToolTransform() {
         if (value.targets === true || value.ref !== undefined) {
           return executeDeveloperTool(inspectedTargets, session, command, { inventory: value.targets === true })
         }
-        const issued = Symbol()
-        selections.set(session, issued)
-        try {
-          return await executeDeveloperTool(inspectedTargets, session, command, { selector, publish: chosen => {
-            if (selections.get(session) !== issued) throw targetError("stale-inspection", "A newer inspection selected the window")
-            inspectedTargets.set(session, chosen)
-          } })
-        } finally {
-          if (selections.get(session) === issued) selections.delete(session)
-        }
+        return selectWindow(session, command, selector)
       },
     })
     draft.add({
@@ -932,7 +948,11 @@ export function createDeveloperToolTransform() {
         additionalProperties: false,
       },
       options: { namespace: "codenomad", codemode: false },
-      execute: (input, tool) => executeDeveloperTool(inspectedTargets, tool.sessionID, parseDeveloperAction(input)),
+      execute: (input, tool) => {
+        const command = parseDeveloperAction(input)
+        return command.action === "restart" ? selectWindow(tool.sessionID, command)
+          : executeDeveloperTool(inspectedTargets, tool.sessionID, command)
+      },
     })
     draft.add({
       name: "screenshot",

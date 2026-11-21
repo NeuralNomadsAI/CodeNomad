@@ -1,4 +1,5 @@
 import type { BrowserWindow, WebContents } from "electron"
+import { randomUUID } from "node:crypto"
 import type { ClientStateNavigationController } from "./client-state-navigation"
 import type { WindowStateTracker } from "./window-state"
 
@@ -38,6 +39,7 @@ const MAX_FOLDER_ATTEMPTS = 3
 export class LocalWindowRegistry {
   private readonly records = new Map<string, LocalWindowRecord>()
   private readonly webContentsIds = new Map<number, string>()
+  private readonly incarnations = new WeakMap<BrowserWindow, string>()
   private mru: string[] = []
 
   constructor(private readonly setActiveWindow: (id: string) => void | Promise<void>) {}
@@ -48,6 +50,7 @@ export class LocalWindowRegistry {
     if (!record.connectOnly && this.userWindowCount() >= MAX_LOCAL_WINDOWS) throw new RangeError("Too many local windows")
     record.id = id
     this.records.set(id, record)
+    this.incarnations.set(record.window, randomUUID())
     this.webContentsIds.set(record.window.webContents.id, id)
     if (!record.connectOnly) this.mru = [id, ...this.mru.filter((candidate) => candidate !== id)]
   }
@@ -101,12 +104,12 @@ export class LocalWindowRegistry {
     return undefined
   }
 
-  automationWindows(focused: BrowserWindow | null): Array<{ windowId: string; focused: boolean }> {
+  automationWindows(focused: BrowserWindow | null): Array<{ windowId: string; windowInstance: string; focused: boolean }> {
     const windows = this.mru.flatMap(id => {
       const record = this.records.get(id)
       if (!record || record.connectOnly || record.loading || !record.backendUrl
         || record.window.isDestroyed() || record.window.webContents.isDestroyed()) return []
-      return [{ windowId: id, focused: record.window === focused }]
+      return [{ windowId: id, windowInstance: this.incarnations.get(record.window)!, focused: record.window === focused }]
     })
     return windows.sort((left, right) => Number(right.focused) - Number(left.focused))
   }

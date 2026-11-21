@@ -63,6 +63,7 @@ fn local_window_initial_destination(backend_target: Option<&str>) -> String {
 pub(crate) struct LocalWindowRecord {
     pub(crate) id: String,
     pub(crate) label: String,
+    automation_instance: String,
     pub(crate) persisted: bool,
     pending_folders: VecDeque<PendingFolder>,
     pending_connections: VecDeque<PendingConnection>,
@@ -232,6 +233,7 @@ impl Registry {
             pending_connections: VecDeque::new(),
             connect_only,
             renderer_ready: false,
+            automation_instance: uuid::Uuid::new_v4().to_string(),
             workspace_menu_enabled: false,
             view_menu_state: None,
         };
@@ -323,20 +325,20 @@ impl LocalWindows {
         self.registry.lock().ok()?.mru_label()
     }
 
-    pub(crate) fn automation_labels(&self) -> Vec<String> {
+    pub(crate) fn automation_labels(&self) -> Vec<(String, String)> {
         let Ok(registry) = self.registry.lock() else {
             return Vec::new();
         };
         registry
             .mru
             .iter()
-            .filter(|label| {
+            .filter_map(|label| {
                 registry
                     .records
-                    .get(*label)
-                    .is_some_and(|record| !record.connect_only && record.renderer_ready)
+                    .get(label)
+                    .filter(|record| !record.connect_only && record.renderer_ready)
+                    .map(|record| (label.clone(), record.automation_instance.clone()))
             })
-            .cloned()
             .collect()
     }
 

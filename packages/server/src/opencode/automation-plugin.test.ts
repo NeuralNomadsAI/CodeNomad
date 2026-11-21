@@ -27,6 +27,7 @@ type ToolDefinition = {
   name: string
   execute(input: unknown, context: { sessionID: string }): Promise<{ content: unknown }>
 }
+const oneWindow = [{ windowId: "window-1", focused: true, session: "elsewhere" }]
 
 function listen(handler: (body: Record<string, unknown>, response: http.ServerResponse) => Promise<Record<string, unknown>>) {
   return new Promise<{ server: http.Server; url: string }>((resolve) => {
@@ -334,7 +335,7 @@ test("restart waits for a new native generation and returns a fresh inspection",
       : { result: { target: { id: `page-${index}`, title: "Distractor", url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } })))
     distractorServers.push(...distractors.map((value) => value.server))
     const old = await listen(async (body) => {
-      if (body.mode === "developer-probe") return { result: { available: true, nativeIdentity: "electron:test", runId: "run-old" } }
+      if (body.mode === "developer-probe") return { result: { available: true, nativeIdentity: "electron:test", runId: "run-old", windows: oneWindow } }
       if (body.command && (body.command as { action?: unknown }).action === "inspect") {
         return { result: { target: { id: "page-old", title: "Original", url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } }
       }
@@ -375,7 +376,7 @@ test("keeps inspected targets isolated per plugin setup", async () => {
   let server: http.Server | undefined
   try {
     const bridge = await listen(async (body) => body.mode === "developer-probe"
-      ? { result: { available: true, nativeIdentity: "electron:isolation", runId: "run-isolation" } }
+      ? { result: { available: true, nativeIdentity: "electron:isolation", runId: "run-isolation", windows: oneWindow } }
       : { result: { target: { id: "isolated", title: "Isolated", url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } })
     server = bridge.server
     removeBridge = await publishAutomationBridge(createAutomationBridgeRegistration(bridge.url))
@@ -402,7 +403,7 @@ test("pins parallel sessions to their independently inspected bridges", async ()
   try {
     for (const sessionID of ["session-a", "session-b"]) {
       const bridge = await listen(async (body) => body.mode === "developer-probe"
-        ? { result: { available: body.sessionID === sessionID, nativeIdentity: `electron:${sessionID}`, runId: `run-${sessionID}` } }
+        ? { result: { available: body.sessionID === sessionID, nativeIdentity: `electron:${sessionID}`, runId: `run-${sessionID}`, windows: oneWindow } }
         : { result: { target: { id: sessionID, title: sessionID, url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } })
       servers.push(bridge.server)
       removals.push(await publishAutomationBridge(createAutomationBridgeRegistration(bridge.url)))
@@ -493,7 +494,7 @@ test("prunes stale registry pressure before limiting discovery", async () => {
   let server: http.Server | undefined
   try {
     const bridge = await listen(async (body) => body.mode === "developer-probe"
-      ? { result: { available: true, nativeIdentity: "electron:live", runId: "run-live" } }
+      ? { result: { available: true, nativeIdentity: "electron:live", runId: "run-live", windows: oneWindow } }
       : { result: { target: { id: "live", title: "Live", url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } })
     server = bridge.server
     removeBridge = await publishAutomationBridge(createAutomationBridgeRegistration(bridge.url))
