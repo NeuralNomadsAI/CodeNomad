@@ -38,7 +38,7 @@ Tab searches, arrows and Enter select, and Escape returns focus to `+`.
 
 Unsent drafts and attachments of the closed tab return when you reopen the same folder in that window; the window keeps them for its 16 most recently closed projects until it reloads or closes. They are not part of startup restoration.
 
-Closing or reloading a window or browser tab, or quitting the app, releases its project connections. Other windows keep their tabs. Startup restoration reconnects saved tabs and keeps open temporary folders. Stop runs explicitly to end their execution; see [OpenCode setup](opencode.md) for shared-service maintenance.
+When you close or reload a window or browser tab, or quit the app, CodeNomad asks the servers to release its project connections. An unreachable server may keep the records. Other windows keep their tabs. Startup restoration reconnects saved tabs and keeps open temporary folders. Stop runs explicitly to end their execution; see [OpenCode setup](opencode.md) for shared-service maintenance.
 
 With startup restoration enabled, each remaining tab restores its own panel choices, Mission selection/reader and chat/web preview choice. Browser URLs and history are shared per session; saved pages load only when the web preview is explicitly reopened. Closing one occurrence removes only its saved view; reopening the folder creates a new occurrence.
 

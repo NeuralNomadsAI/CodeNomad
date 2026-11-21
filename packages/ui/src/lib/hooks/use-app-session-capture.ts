@@ -219,12 +219,32 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   let nativeShutdownGeneration: number | null = null
   let releasing: Promise<unknown> | undefined
   let preparedTabs: RestorableSessionState | undefined
+  let unlockInput: (() => void) | undefined
+  const lockInput = () => {
+    if (unlockInput) return
+    // Close can keep this document visible while the host saves its snapshot.
+    const root = document.documentElement
+    const wasInert = root.inert
+    root.inert = true
+    // Keys retargeted to the document can still reach global shortcuts.
+    const blockShortcut = (event: KeyboardEvent) => {
+      event.preventDefault()
+      event.stopImmediatePropagation()
+    }
+    window.addEventListener("keydown", blockShortcut, true)
+    unlockInput = () => {
+      root.inert = wasInert
+      window.removeEventListener("keydown", blockShortcut, true)
+      unlockInput = undefined
+    }
+  }
   const resumeCapture = () => {
     resumeWorkspaceCreations()
     if (releasing && preparedTabs) recoverReleasedTabs?.(preparedTabs)
     preparedTabs = undefined
     nativeShutdownGeneration = null
     releasing = undefined
+    unlockInput?.()
     schedule()
   }
   const capture = () => {
@@ -243,6 +263,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   const flush = async (nativeShutdownGenerationRequest?: number) => {
     const nativeShutdown = nativeShutdownGenerationRequest !== undefined
     if (nativeShutdown) nativeShutdownGeneration = nativeShutdownGenerationRequest
+    if (nativeShutdown) lockInput()
     // Record a scroll that has not settled yet; it may reschedule the capture cleared below.
     messageStoreBus.flushScrollSnapshots()
     if (timer) clearTimeout(timer)
@@ -278,6 +299,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     ])
   }
   const awaitRelease = async () => {
+    lockInput()
     // The local backend also carries the remote relay. Quit has to send
     // releases before stopping it, and must be able to recover on refusal.
     if (recoverReleasedTabs) preparedTabs ??= captureState(scrollAuthority).state
@@ -456,6 +478,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   })
   onCleanup(() => {
     disposed = true
+    unlockInput?.()
     if (timer) clearTimeout(timer)
     timer = null
     hydrationController.abort(new Error("App session capture disposed"))

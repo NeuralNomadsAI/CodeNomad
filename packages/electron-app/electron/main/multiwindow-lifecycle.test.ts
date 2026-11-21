@@ -576,6 +576,11 @@ test("normal quit restores windows when renderer persistence fails", async () =>
   const calls: string[] = []
   const events = new Map<string, Function>()
   const first = windowRecord("one", calls)
+  const hidden = windowRecord("hidden", calls)
+  hidden.window.isVisible = () => false
+  hidden.window.webContents.executeJavaScript = async source => {
+    calls.push(source.includes('flush("cancel")') ? "resume:hidden" : "renderer:hidden")
+  }
   first.window.webContents.executeJavaScript = async source => {
     if (source.includes('flush("cancel")')) { calls.push("resume"); return }
     calls.push("renderer")
@@ -585,14 +590,14 @@ test("normal quit restores windows when renderer persistence fails", async () =>
     app: { on: (name: string, handler: Function) => events.set(name, handler), quit: () => {}, exit: () => calls.push("exit") } as never,
     clientStateManager: { isPrimary: true, flush: async () => calls.push("aggregate"), drainAndReleasePrimary: async () => calls.push("release") } as never,
     cliManager: { shutdown: async () => calls.push("stop") } as never,
-    getLocalWindows: () => [first], getAllWindows: () => [first.window], removeWindowState: async () => true,
+    getLocalWindows: () => [first, hidden], getAllWindows: () => [first.window, hidden.window], removeWindowState: async () => true,
     getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
   })
   lifecycle.registerAppEvents()
 
   events.get("before-quit")?.({ preventDefault: () => calls.push("prevent") })
   await tick(); await tick()
-  assert.deepEqual(calls, ["prevent", "hide:one", "renderer", "resume", "show:one"])
+  assert.deepEqual(calls, ["prevent", "hide:one", "renderer", "renderer:hidden", "native:hidden", "resume", "show:one", "resume:hidden"])
 })
 
 test("final close restores its window after failed shutdown and allows one deduped retry", async () => {
