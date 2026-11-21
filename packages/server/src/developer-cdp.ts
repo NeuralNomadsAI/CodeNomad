@@ -2,7 +2,7 @@ import { WebSocket } from "undici"
 import { randomBytes } from "node:crypto"
 import { bindRefs, performAction, snapshotPage, type PageActionResult, type PageSession } from "./automation/page/actions"
 import { cdpSession } from "./automation/page/cdp-driver"
-import { declaration, FOCUS_MISMATCH, GLOBAL_FUNCTIONS, INPUT_MARK_LEASE_MS, POINTER_COVER } from "./automation/page/functions"
+import { declaration, FOCUS_MISMATCH, GLOBAL_FUNCTIONS, INPUT_MARK_LEASE_MS, POINTER_COVER, WHEEL_COVER } from "./automation/page/functions"
 import type { RefAction } from "./automation/page/parse"
 import { RefTable } from "./automation/page/refs"
 import { SnapshotScopeError } from "./automation/page/snapshot"
@@ -47,7 +47,7 @@ const GUARDED_CALLS = new Map((["option-click", "programmatic-click", "select", 
     return (${program}).call(handle, ...args, check);
   }`]
 }))
-const INPUT_DESTINATION = `function (point, expected, release, handle, insertText, dragSource, track, confirmReceiver, confirmed, observeDrag) {
+const INPUT_DESTINATION = (wheel: boolean) => `function (point, expected, release, handle, insertText, dragSource, track, confirmReceiver, confirmed, observeDrag) {
   if (this.root !== document.documentElement || window !== window.top) return "root";
   let target = point ? document.elementFromPoint(point.x, point.y) : document.activeElement;
   while (target?.shadowRoot) {
@@ -73,7 +73,7 @@ const INPUT_DESTINATION = `function (point, expected, release, handle, insertTex
     const element = handle.nodeType === Node.ELEMENT_NODE ? handle : handle.parentElement;
     if (!element?.isConnected || element.ownerDocument !== document) return "element";
     if (point) {
-      const cover = (element, ...args) => { ${POINTER_COVER} };
+      const cover = (element, ...args) => { ${wheel ? WHEEL_COVER : POINTER_COVER} };
       const blocked = cover(element, target);
       // The source can follow the pointer without capture. In that case retain the exact hit.
       const moved = capture ?? (this.dragPress && dragSource?.isConnected ? dragSource : null);
@@ -342,7 +342,7 @@ export class DeveloperCdp {
           let status
           try {
             status = await this.inputDestination(state, inputRoot, point, foreground, release, target,
-              method === "Input.insertText", track, confirmReceiver, dragPress, guard)
+              method === "Input.insertText", track, confirmReceiver, dragPress, action.action === "scroll", guard)
           } catch (error) {
             guard()
             if (error instanceof CdpCommandTimeout)
@@ -440,11 +440,11 @@ export class DeveloperCdp {
 
   private async inputDestination(state: RunState, objectId: string, point: { x: number; y: number } | null,
     context: DeveloperCdpContext, release: boolean, target: InputTarget | undefined, insertText: boolean,
-    track: number | undefined, confirmReceiver: number | undefined, observeDrag: boolean, guard: () => void): Promise<unknown> {
+    track: number | undefined, confirmReceiver: number | undefined, observeDrag: boolean, wheel: boolean, guard: () => void): Promise<unknown> {
     const read = async (confirmed?: string) => {
       guard()
       const result = await this.command(state, "Runtime.callFunctionOn", {
-        objectId, functionDeclaration: INPUT_DESTINATION, objectGroup: OBJECT_GROUP,
+        objectId, functionDeclaration: INPUT_DESTINATION(wheel), objectGroup: OBJECT_GROUP,
         arguments: [{ value: point }, { value: context }, { value: release },
           target ? { objectId: target.handle } : { value: null }, { value: insertText },
           target?.dragSource ? { objectId: target.dragSource } : { value: null },

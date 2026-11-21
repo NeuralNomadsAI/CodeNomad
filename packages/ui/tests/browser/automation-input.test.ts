@@ -98,7 +98,12 @@ test("keys, hover, wheel, drag and pointer clicks behave like a user and are alw
     await act({ action: "click", ref: await refFor(/menuitem "Menu item"/, "Menu item") })
     assert.ok((await log(page)).includes("menu-item"), "a pointerdown-only menu opens and its item is clickable")
 
-    await act({ action: "scroll", ref: await refFor(/region "Scroller"/), direction: "down", amount: 500 })
+    await page.locator("#scroller").evaluate(node => {
+      node.insertAdjacentHTML("afterbegin", '<button style="width:100%;height:100px">Folder 12</button>')
+    })
+    const scroller = await refFor(/region "Scroller"/)
+    await assert.rejects(act({ action: "click", ref: scroller }), /covered by button "Folder 12"/)
+    await act({ action: "scroll", ref: scroller, direction: "down", amount: 500 })
     await page.waitForFunction(() => document.getElementById("scroller")!.scrollTop > 0)
 
     await act({ action: "drag", ref: await refFor(/button "Handle"/), to: await refFor(/region "Drop zone"/) })

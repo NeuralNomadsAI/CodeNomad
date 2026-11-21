@@ -7,7 +7,7 @@ import { callOn, Handle, markedInput, resolveElement, PageDriverUnsupportedError
 export interface Point { x: number; y: number }
 
 /** Null means geometry confirmed no box; undefined means there is no usable point. */
-export async function aim(session: PageSession, ref: string, backendNodeId: number, options: { hitTest?: boolean; scroll?: boolean } = {}): Promise<Point | null | undefined> {
+export async function aim(session: PageSession, ref: string, backendNodeId: number, options: { hitTest?: boolean; scroll?: boolean; wheel?: boolean } = {}): Promise<Point | null | undefined> {
   if (options.scroll !== false) await session.driver.scrollIntoView(backendNodeId).catch(error => { if (error instanceof PageDriverUnsupportedError) throw error })
   await session.checkpoint()
   const quads = await session.driver.geometry(backendNodeId)
@@ -22,12 +22,12 @@ export async function aim(session: PageSession, ref: string, backendNodeId: numb
   const top = Math.max(0, Math.min(...ys)), bottom = Math.min(viewport.height, Math.max(...ys))
   if (right - left < 1 || bottom - top < 1) return undefined
   const point = { x: (left + right) / 2, y: (top + bottom) / 2 }
-  if (options.hitTest !== false) await assertReceives(session, ref, backendNodeId, point)
+  if (options.hitTest !== false) await assertReceives(session, ref, backendNodeId, point, options.wheel)
   return point
 }
 
 /** Refuses a point that another element covers, instead of acting on whatever is on top. */
-async function assertReceives(session: PageSession, ref: string, backendNodeId: number, point: Point): Promise<void> {
+async function assertReceives(session: PageSession, ref: string, backendNodeId: number, point: Point, wheel?: boolean): Promise<void> {
   // Like real events, hit testing passes through `pointer-events: none` layers (toasts, overlays' gaps).
   const hitNode = await session.driver.hitTest(Math.floor(point.x), Math.floor(point.y)).catch(error => { if (error instanceof PageDriverUnsupportedError) throw error; return undefined })
   await session.checkpoint()
@@ -35,7 +35,7 @@ async function assertReceives(session: PageSession, ref: string, backendNodeId: 
   const target = await resolveElement(session, ref, backendNodeId)
   const other = await resolveElement(session, ref, hitNode).catch(() => undefined)
   if (!other) return
-  const covered = await callOn(session, ref, target, "receives", [new Handle(other)])
+  const covered = await callOn(session, ref, target, wheel ? "receives-wheel" : "receives", [new Handle(other)])
   if (typeof covered === "string") throw new Error(`${ref} is covered by ${covered}; close or move it first, then inspect again`)
 }
 

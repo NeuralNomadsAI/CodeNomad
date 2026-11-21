@@ -40,12 +40,15 @@ const PROBED_TYPES = ["date", "time", "datetime-local", "month", "week", "number
 const TEXT_FIELD = `const textField = item => item instanceof HTMLInputElement || item instanceof HTMLTextAreaElement
   || (item instanceof HTMLElement && item.isContentEditable);`
 
-export const POINTER_COVER = `const hit = args[0] && (args[0].nodeType === Node.ELEMENT_NODE ? args[0] : args[0].parentElement);
+const HIT_ANCESTRY = `const hit = args[0] && (args[0].nodeType === Node.ELEMENT_NODE ? args[0] : args[0].parentElement);
    if (!hit) return null;
    const parent = node => {
      if (node.nodeType === 9) { try { return node.defaultView && node.defaultView.frameElement; } catch { return null; } }
      return node.assignedSlot || node.parentNode || (node.nodeType === 11 ? node.host : null);
-   };
+   };`
+const DESCRIBE_BLOCKER = `const name = (blocker.getAttribute("aria-label") || blocker.getAttribute("title") || blocker.innerText || "").replace(/\\s+/g, " ").trim().slice(0, 60);
+   return blocker.tagName.toLowerCase() + (name ? " " + JSON.stringify(name) : "");`
+export const POINTER_COVER = `${HIT_ANCESTRY}
     const nativeInteractive = 'a[href], audio[controls], button, details, embed, iframe, img[usemap], input:not([type="hidden"]), select, textarea, video[controls]';
     const interactive = nativeInteractive + ', [tabindex], [contenteditable]:not([contenteditable="false"]), [role~="button"], [role~="link"], [role~="checkbox"], [role~="radio"], [role~="switch"], [role~="tab"], [role~="menuitem"]';
     const label = hit.closest("label");
@@ -60,8 +63,14 @@ export const POINTER_COVER = `const hit = args[0] && (args[0].nodeType === Node.
       if (node.matches(interactive)) break;
    }
    const blocker = foreignLabel ? label : hit;
-   const name = (blocker.getAttribute("aria-label") || blocker.getAttribute("title") || blocker.innerText || "").replace(/\\s+/g, " ").trim().slice(0, 60);
-   return blocker.tagName.toLowerCase() + (name ? " " + JSON.stringify(name) : "");`
+   ${DESCRIBE_BLOCKER}`
+export const WHEEL_COVER = `${HIT_ANCESTRY}
+   for (let node = hit; node; node = parent(node)) {
+     if (node === element) return null;
+     if (node.nodeType === 1 && /^(iframe|frame|fencedframe|object|embed|portal|webview)$/.test(node.localName)) break;
+   }
+   const blocker = hit;
+   ${DESCRIBE_BLOCKER}`
 export const FOCUS_MISMATCH = `active !== field && !(editable && active instanceof HTMLElement && active.isContentEditable && active.contains(field))`
 
 export const ELEMENT_FUNCTIONS = {
@@ -137,7 +146,8 @@ export const ELEMENT_FUNCTIONS = {
   "read-value": `const value = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.value : element.innerText || element.textContent || "";
   if (element instanceof HTMLInputElement && element.type === "password") return "•".repeat(Math.min(value.length, 16));
   return value.length > ${VALUE_LIMIT} ? value.slice(0, ${VALUE_LIMIT - 1}) + "…" : value;`,
-   receives: POINTER_COVER,
+    receives: POINTER_COVER,
+  "receives-wheel": WHEEL_COVER,
   contains: `const needle = String(args[0]).replace(/\\s+/g, " ").trim().toLowerCase();
   const root = element;
   const text = value => String(value || "").replace(/\\s+/g, " ").toLowerCase();
@@ -163,7 +173,7 @@ export const GLOBAL_FUNCTIONS = {
 export type PageFunctionId = keyof typeof ELEMENT_FUNCTIONS | keyof typeof GLOBAL_FUNCTIONS
 export const FUNCTION_ARGS: Record<PageFunctionId, readonly string[]> = {
   "option-click": [], "programmatic-click": [], select: ["strings"], focus: [], describe: [], field: [], prepare: ["boolean"],
-  "set-value": ["string", "boolean"], "delete-selection": [], "read-value": [], receives: ["handle"], contains: ["string"],
+  "set-value": ["string", "boolean"], "delete-selection": [], "read-value": [], receives: ["handle"], "receives-wheel": ["handle"], contains: ["string"],
   "active-element": [], "document-root": [], "input-acceptance": [], "mark-input": [], "unmark-input": [],
 }
 export const handleResult = (id: PageFunctionId) => ["field", "active-element", "document-root"].includes(id)

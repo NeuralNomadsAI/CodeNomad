@@ -158,6 +158,19 @@ export const readCalls = {
    const blocker = foreignLabel ? label : hit;
    const name = (blocker.getAttribute("aria-label") || blocker.getAttribute("title") || blocker.innerText || "").replace(/\s+/g, " ").trim().slice(0, 60);
    return blocker.tagName.toLowerCase() + (name ? " " + JSON.stringify(name) : ""); },
+"receives-wheel": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); const hit = args[0] && (args[0].nodeType === Node.ELEMENT_NODE ? args[0] : args[0].parentElement);
+   if (!hit) return null;
+   const parent = node => {
+     if (node.nodeType === 9) { try { return node.defaultView && node.defaultView.frameElement; } catch { return null; } }
+     return node.assignedSlot || node.parentNode || (node.nodeType === 11 ? node.host : null);
+   };
+   for (let node = hit; node; node = parent(node)) {
+     if (node === element) return null;
+     if (node.nodeType === 1 && /^(iframe|frame|fencedframe|object|embed|portal|webview)$/.test(node.localName)) break;
+   }
+   const blocker = hit;
+   const name = (blocker.getAttribute("aria-label") || blocker.getAttribute("title") || blocker.innerText || "").replace(/\s+/g, " ").trim().slice(0, 60);
+   return blocker.tagName.toLowerCase() + (name ? " " + JSON.stringify(name) : ""); },
 "contains": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); const needle = String(args[0]).replace(/\s+/g, " ").trim().toLowerCase();
   const root = element;
   const text = value => String(value || "").replace(/\s+/g, " ").toLowerCase();

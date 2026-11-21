@@ -62,7 +62,7 @@ export async function performAction(session: PageSession, action: PageAction): P
         return {}
       }
       case "scroll": {
-        const point = action.target ? await aim(session, action.target.ref, action.target.backendNodeId) : undefined
+        const point = action.target ? await aim(session, action.target.ref, action.target.backendNodeId, { wheel: true }) : undefined
         if (action.target && !point) throw new Error(`${action.target.ref} has no visible box to scroll`)
         const sign = action.direction === "up" || action.direction === "left" ? -1 : 1
         const vertical = action.direction === "up" || action.direction === "down"
