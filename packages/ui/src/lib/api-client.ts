@@ -374,10 +374,11 @@ export function createServerApi(ctx: BackendHttp) {
         signal: options?.signal,
       })
     },
-    cancelWorkspaceCreation(requestId: string): Promise<void> {
+    cancelWorkspaceCreation(requestId: string, keepalive = false): Promise<void> {
       return request("/api/workspaces/creation/cancel", {
         method: "POST",
         body: JSON.stringify({ requestId }),
+        keepalive,
       })
     },
     releaseWorkspaceCreation(id: string, requestId: string): Promise<void> {

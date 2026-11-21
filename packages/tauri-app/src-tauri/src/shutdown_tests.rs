@@ -299,6 +299,21 @@ fn shutdown_release_has_its_own_bounded_wait_after_persistence() {
 }
 
 #[test]
+fn shutdown_joins_an_in_flight_local_release_without_requesting_it_again() {
+    let coordinator = ShutdownCoordinator::default();
+    let label = "local-closing";
+    let release = coordinator.approve_local_close(label.into(), Ok(())).unwrap().unwrap();
+    assert!(coordinator.begin_shutdown([label.into()]).unwrap().is_empty());
+    assert!(coordinator.begin_cleanup(false));
+    assert!(coordinator.begin_workspace_releases().is_empty());
+    assert!(!coordinator.wait_for_workspace_releases(Duration::ZERO));
+    assert!(!coordinator.finish_local_release(label, release - 1));
+    assert!(!coordinator.wait_for_workspace_releases(Duration::ZERO));
+    assert!(coordinator.finish_local_release(label, release));
+    assert!(coordinator.wait_for_workspace_releases(Duration::ZERO));
+}
+
+#[test]
 fn timed_out_global_shutdown_reopens_navigation_authority() {
     let coordinator = ShutdownCoordinator::default();
     let mut requests = coordinator

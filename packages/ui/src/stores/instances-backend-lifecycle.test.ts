@@ -238,10 +238,12 @@ it("keeps flag-off admission remote-free and the default owner strictly local", 
   const bodies: unknown[] = []
   t.mock.method(serverApi, "createWorkspace", async (body: Parameters<typeof serverApi.createWorkspace>[0]) => {
     bodies.push(body)
-    return { id: "local-default", path: body.path, status: "starting", proxyPath: "", createdAt: "", updatedAt: "" }
+    return { id: "local-default", requestId: body.requestId, path: body.path, status: "starting", proxyPath: "", createdAt: "", updatedAt: "" }
   })
-  assert.equal((await createInstance("C:\\physical\\repo", "Named")).instanceId, "local-default")
-  assert.deepEqual(bodies, [{ path: "C:\\physical\\repo", name: "Named", requestId: undefined }])
+  const result = await createInstance("C:\\physical\\repo", "Named")
+  assert.equal(result.instanceId, "local-default")
+  assert.ok(result.requestId)
+  assert.deepEqual(bodies, [{ path: "C:\\physical\\repo", name: "Named", requestId: result.requestId }])
   assert.equal(instances().get("local-default")?.backendId, undefined)
 })
 

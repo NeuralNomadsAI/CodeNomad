@@ -52,11 +52,11 @@ const instance = { id: "local-project", folder: "/local", status: "starting", cl
 const create = (id: string, signal?: AbortSignal) => {
   preferences().multiBackend = true
   const original = crypto.randomUUID
-  Object.defineProperty(crypto, "randomUUID", { configurable: true, value: () => "11111111-1111-4111-8111-111111111111" })
+  if (signal) Object.defineProperty(crypto, "randomUUID", { configurable: true, value: () => "11111111-1111-4111-8111-111111111111" })
   try { return createInstance("/same", undefined, { backend: backends.get(id)!, signal,
     onCreateCommit: instanceId => attachInstanceTab(instanceId, { source: "restore" }),
   }) }
-  finally { Object.defineProperty(crypto, "randomUUID", { configurable: true, value: original }) }
+  finally { if (signal) Object.defineProperty(crypto, "randomUUID", { configurable: true, value: original }) }
 }
 await preferencesForBackend("local").ensureLoaded()
 await preloadLocaleMessages(preferences().locale)

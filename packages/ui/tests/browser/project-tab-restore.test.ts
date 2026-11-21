@@ -1,4 +1,6 @@
 import assert from "node:assert/strict"
+import { EventEmitter, once } from "node:events"
+import { createServer, request as forwardRequest } from "node:http"
 import { before, after, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { borrowFixture } from "./fixture-borrow"
@@ -18,6 +20,77 @@ before(async () => {
   armFixtureNavigationBudget(browser)
 })
 after(async () => { await browser?.close() })
+
+test("reloading cancels an accepted project opening whose POST reply is still held", async () => {
+  const admitted = Promise.withResolvers<void>(), respond = Promise.withResolvers<void>()
+  const cancelled = new EventEmitter()
+  let requestId: string | undefined, cancelledId: string | undefined
+  const record = { id: "held", path: "D:/first", status: "ready", proxyPath: "/workspaces/held/instance",
+    binaryId: "fixture", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() }
+  const inventory = [{ ...record, id: "other-window" }]
+  const server = createServer(async (req, res) => {
+    const target = new URL(req.url!, url)
+    // Observe keepalive at the real HTTP listener: navigation detaches Playwright routing.
+    if (!/^\/(?:api|workspaces)\//.test(target.pathname)) {
+      const upstream = forwardRequest(target, incoming => {
+        res.writeHead(incoming.statusCode!, incoming.headers)
+        incoming.pipe(res)
+      })
+      upstream.on("error", () => res.writeHead(502).end())
+      upstream.end()
+      return
+    }
+    let body: unknown = {}
+    if (req.method === "POST") {
+      const chunks = []
+      for await (const chunk of req) chunks.push(chunk)
+      const input = JSON.parse(Buffer.concat(chunks).toString())
+      if (target.pathname === "/api/workspaces") {
+        requestId = input.requestId
+        inventory.push(record)
+        admitted.resolve()
+        await respond.promise
+        body = { ...record, requestId }
+      } else if (target.pathname === "/api/workspaces/creation/cancel") {
+        cancelledId = input.requestId
+        if (requestId && requestId === cancelledId) inventory.splice(inventory.indexOf(record), 1)
+        res.writeHead(204).end()
+        cancelled.emit("received")
+        return
+      }
+    } else if (target.pathname === "/api/workspaces") body = inventory
+    res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(body))
+  })
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
+  const page = await browser.newPage()
+  try {
+    await page.addInitScript(() => {
+      ;(window as any).__name = (value: unknown) => value
+      Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: "web", EventSource: class extends EventTarget { close() {} } })
+    })
+    await page.goto(`http://127.0.0.1:${(server.address() as { port: number }).port}${new URL(url).pathname}`)
+    await page.locator('[data-restoring="false"]').waitFor()
+    await page.evaluate(() => { void (window as any).runtimeRecovery.openFirst().catch(() => {}) })
+    await admitted.promise
+    assert.deepEqual(await page.evaluate(() => (window as any).tabViews.ids()), [])
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true })))
+    assert.equal(cancelledId, undefined)
+    const receipt = once(cancelled, "received", { signal: AbortSignal.timeout(10_000) })
+    void receipt.catch(() => {})
+    await page.reload()
+    await page.locator('[data-restoring="false"]').waitFor()
+    await receipt
+    assert.ok(requestId)
+    assert.equal(cancelledId, requestId)
+    assert.deepEqual(inventory.map(row => row.id), ["other-window"])
+    assert.deepEqual(await page.evaluate(() => (window as any).tabViews.ids()), [])
+  } finally {
+    respond.resolve()
+    await page.close()
+    server.closeAllConnections()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  }
+})
 
 for (const host of ["electron", "tauri"] as const) for (const mode of ["normal", "user", "timeout", "catalog", "foreground", "foreground-user", "foreground-existing", "foreground-git", "foreground-inventory", "foreground-catalog", "foreground-history", "foreground-slow", "foreground-runtime-update", "foreground-runtime-continue", "foreground-runtime-user", "foreground-runtime-closed", "foreground-runtime-failure", "foreground-runtime-settings", "foreground-runtime-disposed", "foreground-runtime-discovered", "foreground-runtime-late", "foreground-runtime-refused-again", "foreground-runtime-manual-pending", "foreground-runtime-manual-same", "foreground-runtime-concurrent-continue"] as const) {
 const userSelection = mode === "user" || mode === "foreground-user"

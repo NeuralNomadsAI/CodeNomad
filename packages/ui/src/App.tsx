@@ -59,6 +59,7 @@ import {
 import { preferencesForBackend, recentFolders, useConfig } from "./stores/preferences"
 import {
   createInstance,
+  WorkspaceCreationDeparture,
   instances,
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
@@ -541,6 +542,7 @@ const App: Component = () => {
       })
       return true
     } catch (error) {
+      if (error instanceof WorkspaceCreationDeparture) return false
       const message = formatLaunchErrorMessage(
         error,
         t("app.launchError.fallbackMessage"),
@@ -572,6 +574,7 @@ const App: Component = () => {
       replaceBlankTab(blankId ?? undefined, getInstanceAppTabId(id))
       setShowFolderSelection(false)
     } catch (error) {
+      if (error instanceof WorkspaceCreationDeparture) return
       const message = formatLaunchErrorMessage(
         error,
         t("app.launchError.fallbackMessage"),

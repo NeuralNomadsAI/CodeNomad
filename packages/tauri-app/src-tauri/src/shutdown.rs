@@ -199,11 +199,15 @@ impl ShutdownCoordinator {
             .collect()
     }
 
-    fn wait_for_workspace_releases(&self, timeout: Duration) {
+    fn wait_for_workspace_releases(&self, timeout: Duration) -> bool {
         let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        let _result = self
+        let (state, _) = self
             .release_acknowledged
-            .wait_timeout_while(state, timeout, |state| !state.global_pending.is_empty());
+            .wait_timeout_while(state, timeout, |state| {
+                !state.global_pending.is_empty() || !state.releasing_local_closes.is_empty()
+            })
+            .unwrap_or_else(|error| error.into_inner());
+        state.global_pending.is_empty() && state.releasing_local_closes.is_empty()
     }
 
     fn begin_cleanup(&self, deadline_reached: bool) -> bool {
@@ -316,13 +320,16 @@ impl ShutdownCoordinator {
         }
         state.releasing_local_closes.remove(label);
         state.approved_local_closes.insert(label.to_string());
+        self.release_acknowledged.notify_all();
         true
     }
 
     fn local_window_destroyed(&self, label: &str) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         state.approved_local_closes.remove(label);
-        state.releasing_local_closes.remove(label);
+        if state.releasing_local_closes.remove(label).is_some() {
+            self.release_acknowledged.notify_all();
+        }
     }
 
     fn exit_allowed(&self) -> bool {

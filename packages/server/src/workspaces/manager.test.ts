@@ -658,6 +658,17 @@ describe("workspace manager shared service lifecycle", () => {
     assert.equal(harness.service.evictionCalls.length, 0)
   })
 
+  it("rejects the exact creation if cancellation reached the server first", async () => {
+    const harness = createHarness()
+    await harness.manager.cancelCreationRequest("departing-request")
+    await assert.rejects(
+      harness.manager.create(process.cwd(), undefined, { requestId: "departing-request" }),
+      /was cancelled/,
+    )
+    const retained = await harness.manager.create(process.cwd(), undefined, { requestId: "other-request" })
+    assert.deepEqual(harness.manager.list().map(({ id }) => id), [retained.workspace.id])
+  })
+
   it("keeps a released duplicate when another creation request is cancelled", async () => {
     const harness = createHarness()
     const retained = await harness.manager.create(process.cwd(), undefined, { requestId: "retained-request" })

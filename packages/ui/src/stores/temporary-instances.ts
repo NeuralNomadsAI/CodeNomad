@@ -7,7 +7,7 @@ import { backendEvents as serverEvents } from "../lib/server-events"
 import { showAlertDialog, showChoiceDialog } from "./alerts"
 import { activeAppTabId, closeInstanceTab, detachInstanceTab, getAdjacentAppTabId, getInstanceAppTabId, selectAppTab, selectInstanceTab } from "./app-tabs"
 import { getSessionAttachmentsForInstance } from "./attachments"
-import { closeWorkspace, createInstance, instances, trackWorkspaceClose, updateInstance } from "./instances"
+import { closeWorkspace, createInstance, instances, trackWorkspaceClose, updateInstance, WorkspaceCreationDeparture } from "./instances"
 import { preferencesOf } from "./preferences"
 import { getSessionDraftPromptsForInstance, getSessions } from "./sessions"
 import { backendIdOf, LOCAL_BACKEND_ID } from "../lib/backend-identity"
@@ -63,7 +63,9 @@ export async function openTemporaryInstance(): Promise<string> {
     return instanceId
   } catch (error) {
     // Never leave an empty registered folder behind a failed launch.
-    await serverApi.abandonTemporaryFolder(path).catch((cleanupError) => log.warn("Failed to remove unused temporary folder", cleanupError))
+    if (!(error instanceof WorkspaceCreationDeparture)) {
+      await serverApi.abandonTemporaryFolder(path).catch((cleanupError) => log.warn("Failed to remove unused temporary folder", cleanupError))
+    }
     throw error
   }
 }

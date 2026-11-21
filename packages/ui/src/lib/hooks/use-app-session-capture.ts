@@ -25,7 +25,7 @@ import { backendRegistry } from "../../stores/remote-backends"
 import { appSessionRestoreGateActive } from "../../stores/app-session-restore-gate"
 import { saveReloadTabSelection } from "../native/reload-tab-selection"
 import { showFolderSelection } from "../../stores/ui"
-import { closeWorkspace, instances } from "../../stores/instances"
+import { cancelUnattachedWorkspaceCreations, closeWorkspace, instances, resumeWorkspaceCreations } from "../../stores/instances"
 import {
   activeParentSessionId, activeSessionId, expandedSessions, getAuthoritativeDraftSessionIdsForInstance, getPersistentExpandedSessionIds,
   getAuthoritativeSessionExpansionIdsForInstance, getAuthoritativelyDeletedSessionIdsForInstance,
@@ -220,6 +220,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   let releasing: Promise<unknown> | undefined
   let preparedTabs: RestorableSessionState | undefined
   const resumeCapture = () => {
+    resumeWorkspaceCreations()
     if (releasing && preparedTabs) recoverReleasedTabs?.(preparedTabs)
     preparedTabs = undefined
     nativeShutdownGeneration = null
@@ -263,13 +264,19 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
       ...(nativeShutdown ? [storage.flushWrites()] : []),
     ])
   }
-  const release = () => releasing ??= Promise.allSettled(appTabs().map(tab => {
-    if (tab.kind === "instance") return closeWorkspace(tab.instance.id, true)
-    if (tab.kind === "remote-restore" && tab.instanceId && tab.snapshot.backendId
-      && matchesRestoredServer(tab.snapshot, backendRegistry.serverId(tab.snapshot.backendId))) {
-      return closeWorkspace(tab.instanceId, true)
-    }
-  }))
+  const release = (deleteTabs = true) => {
+    if (releasing) return releasing
+    const ids = new Set(appTabs().flatMap(tab => {
+      if (tab.kind === "instance") return [tab.instance.id]
+      if (tab.kind === "remote-restore" && tab.instanceId && tab.snapshot.backendId
+        && matchesRestoredServer(tab.snapshot, backendRegistry.serverId(tab.snapshot.backendId))) return [tab.instanceId]
+      return []
+    }))
+    return releasing = Promise.allSettled([
+      cancelUnattachedWorkspaceCreations(ids),
+      ...(deleteTabs ? [...ids].map(id => closeWorkspace(id, true)) : []),
+    ])
+  }
   const awaitRelease = async () => {
     // The local backend also carries the remote relay. Quit has to send
     // releases before stopping it, and must be able to recover on refusal.
@@ -418,7 +425,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     const pageHide = (event: PageTransitionEvent) => {
       if (event.persisted || releasing) return
       if (web) void flush().catch(error => log.warn("Could not flush client state", error))
-      if (!web || markWebSessionRecordsReleased()) void release()
+      void release(!web || markWebSessionRecordsReleased())
     }
     const nativeFlush: NonNullable<Window["__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__"]> = async closing => {
       if (closing === "cancel") resumeCapture()

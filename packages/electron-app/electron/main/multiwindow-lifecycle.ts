@@ -46,6 +46,7 @@ export class MultiwindowLifecycle {
   private readonly sessionEndWindows = new WeakSet<BrowserWindow>()
   private readonly pendingWindowCloses = new Set<BrowserWindow>()
   private readonly approvedWindowCloses = new WeakSet<BrowserWindow>()
+  private readonly windowReleases = new Map<BrowserWindow, Promise<void>>()
 
   constructor(private readonly dependencies: Dependencies) {}
 
@@ -131,7 +132,7 @@ export class MultiwindowLifecycle {
       void this.startShutdown().then(() => this.exit(), (error) => {
         this.relaunchRequested = false
         this.pendingWindowCloses.clear()
-        for (const window of visibleWindows) if (!window.isDestroyed()) {
+        for (const window of visibleWindows) if (!window.isDestroyed() && !this.approvedWindowCloses.has(window)) {
           if (!this.dependencies.isSupportWindow?.(window)) this.resumeCapture(window)
           window.show()
         }
@@ -168,10 +169,12 @@ export class MultiwindowLifecycle {
       await this.flushApplicationWindows("prepare")
       await this.run("aggregate state flush", () => this.dependencies.clientStateManager.flush())
       await Promise.all([
-        ...this.dependencies.getLocalWindows().map(record => record.window),
-        ...this.dependencies.getAllWindows().filter(window => this.dependencies.isRemoteWindow?.(window)),
-      ].filter(window => this.needsShutdownFlush(window))
-        .map(window => this.releaseWorkspaces(window)))
+        ...this.windowReleases.values(),
+        ...[
+          ...this.dependencies.getLocalWindows().map(record => record.window),
+          ...this.dependencies.getAllWindows().filter(window => this.dependencies.isRemoteWindow?.(window)),
+        ].filter(window => this.needsShutdownFlush(window)).map(window => this.releaseWorkspaces(window)),
+      ])
       await this.dependencies.cliManager.shutdown()
       try {
         await this.releasePrimary()
@@ -253,7 +256,12 @@ export class MultiwindowLifecycle {
   }
 
   private releaseWorkspaces(window: BrowserWindow): Promise<void> {
-    return this.run("workspace release", () => this.flushRenderer(window, "release"))
+    const pending = this.windowReleases.get(window)
+    if (pending) return pending
+    const release = this.run("workspace release", () => this.flushRenderer(window, "release"))
+      .finally(() => this.windowReleases.delete(window))
+    this.windowReleases.set(window, release)
+    return release
   }
 
   private releasePrimary(): Promise<void> {

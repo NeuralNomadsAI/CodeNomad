@@ -51,6 +51,53 @@ test("closing the last local window beside a remote window keeps its V3 record f
   assert.deepEqual(calls, ["prevent", "renderer:local", "native:local", "workspace-release:local", "close:local"])
 })
 
+for (const failed of [false, true]) test(`quit joins an approved window's release before stopping its relay (failed=${failed})`, async () => {
+  const calls: string[] = []
+  const first = windowRecord("one", calls), second = windowRecord("two", calls)
+  const local = [first, second]
+  const appEvents = new Map<string, Function>()
+  let started!: () => void, finish!: () => void
+  let forgotten = false
+  const releasing = new Promise<void>(resolve => { started = resolve })
+  const held = new Promise<void>(resolve => { finish = resolve })
+  const execute = first.window.webContents.executeJavaScript
+  first.window.webContents.executeJavaScript = async source => {
+    if (source.includes('flush("release")')) {
+      started()
+      await held
+    } else if (forgotten) throw new Error("Unknown client state window")
+    return execute(source)
+  }
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: (name: string, handler: Function) => appEvents.set(name, handler), exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true, flush: async () => {}, drainAndReleasePrimary: async () => {} } as never,
+    cliManager: { shutdown: async () => { calls.push("stop"); if (failed) throw new Error("CLI failed") } } as never,
+    getLocalWindows: () => local, getAllWindows: () => local.map(record => record.window),
+    removeWindowState: async () => { forgotten = true; return true },
+    getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.attach(first)
+  lifecycle.registerAppEvents()
+  first.events.get("close")?.({ preventDefault() {} })
+  await releasing
+  appEvents.get("before-quit")?.({ preventDefault() {} })
+  try {
+    await tick()
+    assert.ok(calls.includes("workspace-release:two"), "quit releases the remaining window concurrently")
+    assert.ok(!calls.includes("stop"), "the relay is still up while the approved close is releasing")
+    assert.equal(calls.filter(call => call === "renderer:one").length, 1, "quit does not capture the approved window again")
+  } finally {
+    finish()
+  }
+  await tick()
+  assert.deepEqual(calls.filter(call => ["workspace-release:one", "stop", "exit"].includes(call)),
+    failed ? ["workspace-release:one", "stop"] : ["workspace-release:one", "stop", "exit"])
+  if (failed) {
+    assert.ok(calls.includes("show:two"), "only the remaining window recovers after refused quit")
+    assert.ok(!calls.includes("show:one"))
+  }
+})
+
 test("closing a remote window awaits only that window's workspace release", async () => {
   const calls: string[] = []
   const local = windowRecord("local", calls), remote = windowRecord("remote", calls)
@@ -396,36 +443,6 @@ test("quit commits a slow snapshot before attempting release, then ignores an ex
     await Promise.race([exit, new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error("quit did not finish")), 4_000) })])
   } finally { clearTimeout(deadline) }
   assert.deepEqual(calls, ["hide:one", "snapshot", "native:one", "aggregate", "release attempted", "stop"])
-})
-
-test("quit does not preflush a forgotten window still releasing its records", async () => {
-  const calls: string[] = []
-  const events = new Map<string, Function>()
-  const first = windowRecord("one", calls), second = windowRecord("two", calls)
-  let finish!: () => void
-  let forgotten = false
-  first.window.webContents.executeJavaScript = async source => {
-    if (source.includes('flush("release")')) return new Promise<void>(resolve => { finish = resolve })
-    if (forgotten) throw new Error("Unknown client state window")
-  }
-  const lifecycle = new MultiwindowLifecycle({
-    app: { on: (name: string, handler: Function) => events.set(name, handler), exit: () => calls.push("exit") } as never,
-    clientStateManager: { isPrimary: true, flush: async () => {}, drainAndReleasePrimary: async () => {} } as never,
-    cliManager: { shutdown: async () => {} } as never,
-    getLocalWindows: () => [first, second], getAllWindows: () => [first.window, second.window],
-    removeWindowState: async () => { forgotten = true; return true },
-    getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
-  })
-  lifecycle.attach(first)
-  lifecycle.registerAppEvents()
-  first.events.get("close")?.({ preventDefault: () => {} })
-  await tick()
-  assert.equal(forgotten, true)
-  try {
-    events.get("before-quit")?.({ preventDefault: () => {} })
-    await tick()
-    assert.ok(calls.includes("exit"))
-  } finally { finish?.() }
 })
 
 test("final close retains its record and shutdown stops/releases once", async () => {

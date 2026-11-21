@@ -43,6 +43,7 @@ import type { TemporaryFolderRegistry } from "./temporary-workspaces"
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
 const MAX_ACTIVE_WORKSPACE_CREATIONS = 32
+const MAX_EARLY_CREATION_CANCELLATIONS = 1024
 const WORKSPACE_STATE = Symbol("workspaceState")
 type ManagerTimeout = number | NodeJS.Timeout
 type WorkspaceStopDetails = { temporaryRetained?: true }
@@ -197,6 +198,7 @@ export class WorkspaceManager {
   private readonly deletingWorktreeRoots = new Set<string>()
   private readonly cancelledCreationRequests = new Set<string>()
   private readonly pendingCreationRequests = new Set<string>()
+  private readonly earlyCreationCancellations = new Map<string, number>()
   private activeWorkspaceCreations = 0
   private shuttingDown = false
   private readonly sharedService: SharedService
@@ -921,10 +923,12 @@ export class WorkspaceManager {
   async cancelCreationRequest(requestId: string): Promise<void> {
     const deletions: Promise<WorkspaceDescriptor | undefined>[] = []
     let releasedClaimFound = false
+    let claimFound = false
     for (const [workspaceId, record] of this.workspaces) {
       const state = record[WORKSPACE_STATE]
       const claim = state.creationClaims.get(requestId)
       if (claim === undefined) continue
+      claimFound = true
       if (claim === "released") {
         releasedClaimFound = true
         continue
@@ -932,11 +936,19 @@ export class WorkspaceManager {
       state.creationClaims.set(requestId, "cancelled")
       this.refreshCreationRequestId(record)
       if (!state.creationRetained && !this.hasActiveCreationClaims(state)) {
-        deletions.push(this.delete(workspaceId))
+        deletions.push(this.delete(workspaceId, { temporaryRetained: true }))
       }
     }
-    if (!releasedClaimFound && this.pendingCreationRequests.has(requestId)) {
-      this.cancelledCreationRequests.add(requestId)
+    if (!releasedClaimFound) {
+      if (this.pendingCreationRequests.has(requestId)) this.cancelledCreationRequests.add(requestId)
+      else if (!claimFound && !this.shuttingDown) {
+        // Keepalive cancellation can reach the relay before the original POST.
+        this.earlyCreationCancellations.delete(requestId)
+        this.earlyCreationCancellations.set(requestId, this.now() + DEFAULT_LAUNCH_TIMEOUT_MS)
+        if (this.earlyCreationCancellations.size > MAX_EARLY_CREATION_CANCELLATIONS) {
+          this.earlyCreationCancellations.delete(this.earlyCreationCancellations.keys().next().value!)
+        }
+      }
     }
     await Promise.all(deletions)
   }
@@ -967,6 +979,10 @@ export class WorkspaceManager {
   }
 
   private beginCreationRequest(requestId: string): void {
+    if ((this.earlyCreationCancellations.get(requestId) ?? 0) > this.now()) {
+      throw new Error(`Workspace creation request ${requestId} was cancelled`)
+    }
+    this.earlyCreationCancellations.delete(requestId)
     const claimed = Array.from(this.workspaces.values())
       .some((record) => record[WORKSPACE_STATE].creationClaims.has(requestId))
     if (this.pendingCreationRequests.has(requestId) || claimed) {
@@ -1006,6 +1022,7 @@ export class WorkspaceManager {
     for (const [id, record] of records) this.removeRecord(id, record, true, "stopped")
     this.cancelledCreationRequests.clear()
     this.pendingCreationRequests.clear()
+    this.earlyCreationCancellations.clear()
     const remaining = Math.max(1, deadlineAt - this.now())
     await this.withTimeout(
       this.sharedService.shutdown({ timeoutMs: remaining }),
