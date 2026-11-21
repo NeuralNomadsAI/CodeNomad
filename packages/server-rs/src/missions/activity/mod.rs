@@ -17,7 +17,7 @@ use axum::{
 use native::{Observer, same};
 use ojson::{J, PAGE_BYTES, obj, utf16_len};
 use serde_json::Value;
-use std::{collections::HashSet, path::Path, time::Duration};
+use std::{collections::HashSet, path::Path, sync::{Arc, atomic::Ordering}, time::Duration};
 use tokio::time::Instant;
 
 const OBSERVATION: Duration = Duration::from_secs(15);
@@ -34,11 +34,13 @@ fn foreign() -> Response {
     reads::unavailable(Status::BAD_GATEWAY, "plugin-unavailable")
 }
 
-async fn rpc(app: &crate::App, dir: &str, input: &Value) -> Result<J, ()> {
-    let url = app.native.url().join("/api/rpc/codenomad.missions/panelPage").map_err(|_| ())?;
+async fn rpc(app: &crate::App, endpoint: &crate::opencode::Endpoint, dir: &str, input: &Value) -> Result<J, ()> {
+    let url = endpoint.url.join("/api/rpc/codenomad.missions/panelPage").map_err(|_| ())?;
     let mut response = app
         .native
-        .request(axum::http::Method::POST, url)
+        .client
+        .post(url)
+        .basic_auth("opencode", Some(&endpoint.password))
         .query(&[("location[directory]", dir)])
         .json(&serde_json::json!({ "input": input }))
         .timeout(Duration::from_secs(12))
@@ -84,12 +86,16 @@ pub async fn panel(app: Shared, id: String, input: Value) -> Response {
     let (mut text, mut length) = (String::new(), 0u64);
     let (mut header, mut digest, mut characters): (Option<Vec<(String, J)>>, Option<String>, Option<u64>) = (None, None, None);
     loop {
+        if !opened.display.load(Ordering::Relaxed)
+            || !app.native.endpoint().is_some_and(|p| Arc::ptr_eq(&p, &opened.endpoint)) {
+            return refusal("observation-unavailable");
+        }
         let mut call = input.clone();
         call.as_object_mut().unwrap().remove("cursor");
         if let Some(c) = &cursor {
             call["cursor"] = serde_json::from_str(&c.stringify()).unwrap();
         }
-        let Ok(output) = rpc(&app, &opened.dir, &call).await else {
+        let Ok(output) = rpc(&app, &opened.endpoint, &opened.dir, &call).await else {
             return reads::unavailable(Status::OK, "plugin-unavailable");
         };
         let Some(result) = output.get("output") else { return foreign() };
@@ -214,11 +220,15 @@ pub async fn panel(app: Shared, id: String, input: Value) -> Response {
             (d, identity)
         })
         .collect();
+    let displays: Vec<_> = directories.iter().map(|(d, _)| crate::worktrees::fence::capture_display(d)).collect();
     let current = || {
         app.workspace(&id).is_ok_and(|w| {
             w.path == workspace.path && w.location == workspace.location && w.created_at == workspace.created_at
         }) && files::host_identity(&workspace.path).ok() == initial
             && directories.iter().all(|(d, i)| files::host_identity(Path::new(d)).ok() == *i)
+            && opened.display.load(Ordering::Relaxed)
+            && displays.iter().all(|d| d.load(Ordering::Relaxed))
+            && app.native.endpoint().is_some_and(|p| Arc::ptr_eq(&p, &opened.endpoint))
             && app.inner.lock().unwrap().generation == generation
     };
     let observer = Observer::new(&app, &workspace, Instant::now() + OBSERVATION, &current);

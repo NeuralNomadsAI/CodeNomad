@@ -1,4 +1,4 @@
-use crate::{Error, Shared, error, worktrees::linked, files};
+use crate::{Error, Shared, error, files, opencode, worktrees::fence};
 use axum::{
     Json,
     extract::{Path, Query, State},
@@ -7,7 +7,11 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, atomic::Ordering},
+    time::Duration,
+};
 
 const PANEL: usize = 64 * 1024;
 pub(crate) fn unavailable(status: Status, reason: &str) -> Response {
@@ -28,9 +32,7 @@ fn valid(s: &str, max: usize) -> bool {
     !s.is_empty() && s.len() <= max && !s.chars().any(char::is_control)
 }
 fn digest(s: &str) -> bool {
-    s.len() == 43
-        && s.bytes()
-            .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+    s.len() == 43 && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
 }
 /// The owned Location's active plugin (reference `readMissionPlugin` preamble).
 pub(crate) struct Opened<'a> {
@@ -38,7 +40,10 @@ pub(crate) struct Opened<'a> {
     pub workspace: crate::Workspace,
     pub dir: String,
     pub project: String,
+    pub canonical: String,
+    pub endpoint: Arc<opencode::Endpoint>,
     pub initial: Option<String>,
+    pub display: Arc<std::sync::atomic::AtomicBool>,
 }
 pub(crate) async fn open<'a>(app: &'a crate::App, id: &str) -> Result<Opened<'a>, Response> {
     if !app.mission_reads {
@@ -54,77 +59,100 @@ pub(crate) async fn open<'a>(app: &'a crate::App, id: &str) -> Result<Opened<'a>
     if initial.is_none() || files::root(&workspace).is_err() {
         return Err(unavailable(Status::OK, "workspace-unavailable"));
     }
+    let display = fence::capture_display(&fence::identity(&workspace.path));
     let slot = app.mission_read_slot.acquire().await.unwrap();
-    let location = [("location[directory]", dir.as_str())];
-    let Ok(resolved) = linked::native(
-        &app,
-        Method::GET,
-        "/api/location",
-        &location,
-        None,
-        128 * 1024,
-    )
-    .await
-    else {
+    let Some(endpoint) = app.native.endpoint() else {
         return Err(unavailable(Status::OK, "workspace-unavailable"));
     };
-    if resolved["directory"]
-        .as_str()
-        .and_then(|v| dunce::canonicalize(v).ok())
-        .as_ref()
+    let resolved =
+        native_read(app, &endpoint, Method::GET, "/api/location", &dir, None, 128 * 1024)
+            .await
+            .map_err(|_| unavailable(Status::OK, "workspace-unavailable"))?;
+    if resolved["directory"].as_str().and_then(|v| dunce::canonicalize(v).ok()).as_ref()
         != Some(&workspace.path)
-        || resolved["project"]["canonical"]
-            .as_str()
-            .and_then(|v| dunce::canonicalize(v).ok())
-            .as_ref()
-            != Some(&workspace.path)
     {
         return Err(unavailable(Status::FORBIDDEN, "workspace-unavailable"));
     }
-    let Some(project) = resolved["project"]["id"]
-        .as_str()
-        .filter(|p| valid(p, 240) && *p != "global")
-        .map(str::to_owned)
+    let Some(project) =
+        resolved["project"]["id"].as_str().filter(|p| valid(p, 240)).map(str::to_owned)
     else {
         return Err(unavailable(Status::FORBIDDEN, "workspace-unavailable"));
     };
-    let Ok(plugins) = linked::native(
-        app,
-        Method::GET,
-        "/api/plugin",
-        &location,
-        None,
-        512 * 1024,
-    )
-    .await
-    else {
-        return Err(unavailable(Status::OK, "plugin-unavailable"));
+    let Some(canonical) = resolved["project"]["canonical"].as_str() else {
+        return Err(unavailable(Status::OK, "workspace-unavailable"));
     };
-    let Some(plugin) = plugins["data"]
-        .as_array()
-        .and_then(|a| a.iter().find(|r| r["id"] == "codenomad.missions"))
+    active_plugin(app, &endpoint, &dir).await.map_err(|reason| unavailable(Status::OK, reason))?;
+    Ok(Opened {
+        slot,
+        workspace,
+        dir,
+        project,
+        initial,
+        canonical: canonical.to_owned(),
+        endpoint,
+        display,
+    })
+}
+
+pub(super) async fn active_plugin(
+    app: &crate::App,
+    endpoint: &crate::opencode::Endpoint,
+    dir: &str,
+) -> Result<(), &'static str> {
+    let off = "plugin-unavailable";
+    let plugins = native_read(app, endpoint, Method::GET, "/api/plugin", dir, None, 512 * 1024)
+        .await
+        .map_err(|_| off)?;
+    let Some(plugin) =
+        plugins["data"].as_array().and_then(|a| a.iter().find(|r| r["id"] == "codenomad.missions"))
     else {
-        return Err(unavailable(Status::OK, "plugin-unavailable"));
+        return Err(off);
     };
     match plugin["state"]["status"].as_str() {
-        Some("active") => {}
-        Some("failed") => return Err(unavailable(Status::OK, "plugin-failed")),
-        _ => return Err(unavailable(Status::OK, "plugin-unavailable")),
+        Some("active") => Ok(()),
+        Some("failed") => Err("plugin-failed"),
+        _ => Err(off),
     }
-    Ok(Opened { slot, workspace, dir, project, initial })
 }
+
+async fn native_read(
+    app: &crate::App,
+    endpoint: &opencode::Endpoint,
+    method: Method,
+    path: &str,
+    dir: &str,
+    body: Option<Value>,
+    max: usize,
+) -> Result<Value, ()> {
+    let url = endpoint.url.join(path).map_err(|_| ())?;
+    let mut request = app
+        .native
+        .client
+        .request(method, url)
+        .basic_auth("opencode", Some(&endpoint.password))
+        .query(&[("location[directory]", dir)])
+        .timeout(Duration::from_secs(10));
+    if let Some(body) = body {
+        request = request.json(&body);
+    }
+    let response = request.send().await.map_err(|_| ())?.error_for_status().map_err(|_| ())?;
+    opencode::read_json(response, max).await
+}
+
 async fn read(app: Shared, id: String, method: &'static str, input: Value, max: usize) -> Response {
-    let Opened { slot: _slot, workspace, dir, project, initial } = match open(&app, &id).await {
-        Ok(opened) => opened,
-        Err(refused) => return refused,
-    };
-    let location = [("location[directory]", dir.as_str())];
-    let Ok(output) = linked::native(
+    let Opened { slot: _slot, workspace, dir, project, canonical, initial, endpoint, display } =
+        match open(&app, &id).await {
+            Ok(opened) => opened,
+            Err(refused) => return refused,
+        };
+    let args = if method == "snapshot" { json!({}) } else { input.clone() };
+    let Ok(output) = native_read(
         &app,
+        &endpoint,
         Method::POST,
         &format!("/api/rpc/codenomad.missions/{method}"),
-        &location,
-        Some(json!({"input":input})),
+        &dir,
+        Some(json!({"input":args})),
         max + 256,
     )
     .await
@@ -135,8 +163,11 @@ async fn read(app: Shared, id: String, method: &'static str, input: Value, max: 
         return unavailable(Status::NOT_FOUND, "workspace-unavailable");
     };
     if after.path != workspace.path
+        || after.created_at != workspace.created_at
         || after.location != workspace.location
         || files::host_identity(&after.path).ok() != initial
+        || !app.native.endpoint().is_some_and(|p| Arc::ptr_eq(&p, &endpoint))
+        || !display.load(Ordering::Relaxed)
     {
         return unavailable(Status::CONFLICT, "workspace-unavailable");
     }
@@ -167,9 +198,7 @@ async fn read(app: Shared, id: String, method: &'static str, input: Value, max: 
         map["projectID"] == project
             && map["projectCanonical"]
                 .as_str()
-                .and_then(|p| dunce::canonicalize(p).ok())
-                .as_ref()
-                == Some(&workspace.path)
+                .is_some_and(|p| fence::normalize(p) == fence::normalize(&canonical))
     };
     let owned = match method {
         "panelPage" => panel_scope(&input, result),
@@ -177,17 +206,42 @@ async fn read(app: Shared, id: String, method: &'static str, input: Value, max: 
             .get("mission")
             .is_none_or(|map| map["id"] == input["missionID"] && owned_map(map)),
         "tasks" | "content" => result["missionID"] == input["missionID"],
-        "list" => result["missions"]
-            .as_array()
-            .is_some_and(|maps| maps.iter().all(owned_map)),
+        "list" | "snapshot" => {
+            result["missions"].as_array().is_some_and(|maps| maps.iter().all(owned_map))
+        }
         _ => false,
     };
     if !scope || !owned || serde_json::to_vec(result).map_or(true, |b| b.len() > max) {
         return unavailable(Status::BAD_GATEWAY, "plugin-unavailable");
     }
+    if method == "snapshot" {
+        return Json(admission_projection(result, &input["missionID"])).into_response();
+    }
     let mut response = result.clone();
     response["available"] = json!(true);
     Json(response).into_response()
+}
+
+fn admission_projection(snapshot: &Value, mission: &Value) -> Value {
+    let cleanups: Vec<&Value> = snapshot["cleanups"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|c| &c["missionID"] == mission)
+        .collect();
+    let mut result = json!({"available":true,"version":snapshot["version"],"projectID":snapshot["projectID"],
+        "generatedAt":snapshot["generatedAt"],"cleanups":cleanups});
+    if let Some(map) =
+        snapshot["missions"].as_array().into_iter().flatten().find(|m| &m["id"] == mission)
+    {
+        result["mission"] = map.clone();
+    }
+    for flag in ["cleanupUnavailable", "controlUnavailable", "notificationUnavailable"] {
+        if snapshot[flag] == true {
+            result[flag] = json!(true);
+        }
+    }
+    result
 }
 fn panel_scope(input: &Value, result: &Value) -> bool {
     let mission = if input["source"] == "tasks" {
@@ -199,15 +253,11 @@ fn panel_scope(input: &Value, result: &Value) -> bool {
         && input["source"] == result["source"]
         && result.get("taskMarksThrough").is_some() == (input["source"] == "task-marks")
         && result.get("missionID") == mission
-        && ["field", "part", "text", "header"]
-            .iter()
-            .all(|key| input.get(*key) == result.get(*key))
+        && ["field", "part", "text", "header"].iter().all(|key| input.get(*key) == result.get(*key))
         && input.get("window").is_some() == result.get("window").is_some()
         && result["page"]["digest"].as_str().is_some_and(digest)
         && result["page"]["total"].is_u64()
-        && result["page"]["pieces"]
-            .as_array()
-            .is_some_and(|p| p.len() <= 50)
+        && result["page"]["pieces"].as_array().is_some_and(|p| p.len() <= 50)
         && input.get("window").is_none_or(|w| {
             let (Some(offset), Some(total)) =
                 (w["offset"].as_u64(), result["window"]["total"].as_u64())
@@ -217,8 +267,7 @@ fn panel_scope(input: &Value, result: &Value) -> bool {
             let count = if input["text"] == true { 1 } else { 50 };
             result["window"]["offset"] == offset.min(total)
                 && result["window"]["end"] == offset.saturating_add(count).min(total)
-                && w.get("order")
-                    .is_none_or(|order| &result["window"]["order"] == order)
+                && w.get("order").is_none_or(|order| &result["window"]["order"] == order)
         })
 }
 #[derive(Deserialize)]
@@ -234,10 +283,7 @@ pub async fn list(
 ) -> Result<Response, Error> {
     let mut input = json!({});
     if let Some(include) = q.include {
-        let mut names = include
-            .split(',')
-            .filter(|v| !v.is_empty())
-            .collect::<Vec<_>>();
+        let mut names = include.split(',').filter(|v| !v.is_empty()).collect::<Vec<_>>();
         names.sort_unstable();
         names.dedup();
         if names.len() > 4 || names.iter().any(|v| !valid(v, 100)) {
@@ -260,14 +306,18 @@ pub async fn mission(
     if !valid(&mission, 100) {
         return Err(bad("Invalid mission ID"));
     }
-    Ok(read(
-        app,
-        id,
-        "mission",
-        json!({"missionID":mission}),
-        4 * 1024 * 1024,
-    )
-    .await)
+    Ok(read(app, id, "mission", json!({"missionID":mission}), 4 * 1024 * 1024).await)
+}
+
+pub async fn admission(
+    State(app): State<Shared>,
+    Path((id, mission)): Path<(String, String)>,
+) -> Result<Response, Error> {
+    let mission = crate::shared::js_trim(&mission);
+    if !valid(mission, 100) {
+        return Err(bad("Invalid mission read request"));
+    }
+    Ok(read(app, id, "snapshot", json!({"missionID":mission}), 4 * 1024 * 1024).await)
 }
 pub async fn content(
     State(app): State<Shared>,
@@ -288,9 +338,7 @@ pub async fn content(
             "digest" if digest(&value) => input[key] = json!(value),
             "offset" | "change" if value.len() <= 15 => {
                 input[key] = json!(
-                    value
-                        .parse::<u64>()
-                        .map_err(|_| bad("Invalid mission content selector"))?
+                    value.parse::<u64>().map_err(|_| bad("Invalid mission content selector"))?
                 )
             }
             _ => return Err(bad("Invalid mission content selector")),
@@ -319,30 +367,18 @@ pub async fn tasks(
         match key.as_str() {
             "order" if digest(&value) => input[key] = json!(value),
             "offset" | "attention" if value.len() <= 15 => {
-                input[key] = json!(
-                    value
-                        .parse::<u64>()
-                        .map_err(|_| bad("Invalid mission task selector"))?
-                )
+                input[key] =
+                    json!(value.parse::<u64>().map_err(|_| bad("Invalid mission task selector"))?)
             }
             "keys" | "ids" | "reports" => {
-                let items = value
-                    .split(',')
-                    .filter(|v| !v.is_empty())
-                    .collect::<Vec<_>>();
+                let items = value.split(',').filter(|v| !v.is_empty()).collect::<Vec<_>>();
                 names += items.len();
                 if names > 50
-                    || items
-                        .iter()
-                        .any(|v| !valid(v, if key == "keys" { 64 } else { 240 }))
+                    || items.iter().any(|v| !valid(v, if key == "keys" { 64 } else { 240 }))
                 {
                     return Err(bad("Invalid mission task selector"));
                 }
-                input[if key == "reports" {
-                    "reportIds".into()
-                } else {
-                    key
-                }] = json!(items);
+                input[if key == "reports" { "reportIds".into() } else { key }] = json!(items);
             }
             _ => return Err(bad("Invalid mission task selector")),
         }
@@ -367,4 +403,25 @@ pub async fn panel(
     // The native registered schema validates the complete selector. This
     // transport admits no live actor observation or activity sources.
     read(app, id, "panelPage", input, PANEL).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn admission_preserves_full_target_map_and_project_damage_without_other_missions() {
+        let target = json!({"id":"msn_target","tasks":[{"brief":"full"}],"actors":[]});
+        let snapshot = json!({"projectID":"project","version":1,"generatedAt":10,"controlUnavailable":true,
+            "cleanupUnavailable":true,"notificationUnavailable":false,"missions":[{"id":"msn_other"},target],
+            "cleanups":[{"missionID":"msn_target"},{"missionID":"msn_other"}]});
+        assert_eq!(
+            admission_projection(&snapshot, &json!("msn_target")),
+            json!({
+                "available":true,"version":1,"projectID":"project","generatedAt":10,"controlUnavailable":true,
+                "cleanupUnavailable":true,"mission":target,"cleanups":[{"missionID":"msn_target"}]
+            })
+        );
+        assert!(admission_projection(&snapshot, &json!("msn_missing")).get("mission").is_none());
+    }
 }
