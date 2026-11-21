@@ -221,15 +221,17 @@ const bodyRows = [
   { name: "profile document patch", method: "PATCH", target: "/api/storage/state", body: { ui: null } },
 ] as const
 
-for (const row of bodyRows) {
-  test(`${row.name} captures principal before parsing a delayed body`, { timeout: 8000 }, async t => {
-    const parsing = rendezvous()
-    const f = await fixture(t, app => {
-      app.addHook("preParsing", async (request, _reply, payload) => {
-        if (request.url === row.target) parsing.resolve()
-        return payload
-      })
+test("each saved-profile and relay action captures its principal before parsing a delayed body", { timeout: 15000 }, async t => {
+  let expected: { target: string; parsing: ReturnType<typeof rendezvous<void>> } | undefined
+  const f = await fixture(t, app => {
+    app.addHook("preParsing", async (request, _reply, payload) => {
+      if (expected && request.url === expected.target) expected.parsing.resolve()
+      return payload
     })
+  })
+  for (const row of bodyRows) {
+    const parsing = rendezvous()
+    expected = { target: row.target, parsing }
     const caller = f.principal()
     const before = f.settings.getOwner("state", "ui")
     const body = JSON.stringify(row.name === "probe" ? { baseUrl: f.remote.origin } : row.body)
@@ -247,15 +249,16 @@ for (const row of bodyRows) {
       request.on("error", error => resolve({ error }))
       request.flushHeaders()
     })
-    t.after(() => request.destroy())
-    await reached(parsing.promise, `${row.name} preParsing reached with unread body`)
-    ok(await f.logout(caller))
-    request.end(body)
-    assert.ok("error" in await pending, "principal ended before any body could be parsed or dispatched")
-    assert.equal(f.io(), 0, "no upstream access after principal end")
-    assert.deepEqual(f.settings.getOwner("state", "ui"), before, "administration and private connection state remain unchanged")
-  })
-}
+    try {
+      await reached(parsing.promise, `${row.name} preParsing reached with unread body`)
+      ok(await f.logout(caller))
+      request.end(body)
+      assert.ok("error" in await pending, `${row.name}: principal ended before any body could be parsed or dispatched`)
+      assert.equal(f.io(), 0, `${row.name}: no upstream access after principal end`)
+      assert.deepEqual(f.settings.getOwner("state", "ui"), before, `${row.name}: administrative and private connection state remain unchanged`)
+    } finally { request.destroy() }
+  }
+})
 
 test("saved-profile action guards reject before parsing malformed JSON", { timeout: 8000 }, async t => {
   let parsed = 0

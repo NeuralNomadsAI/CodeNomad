@@ -13,13 +13,9 @@ import { sessions, setSessions } from "./session-state"
 import { getPendingWorktreeSlug, reloadWorktrees, setWorktreeSlugForParentSession } from "./worktrees"
 import { createClientSession } from "../types/session"
 import { registerLocalBackendFixture } from "../../tests/contracts/local-backend-fixture"
+import { deferred } from "../../tests/test-support/deferred"
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve))
-function deferred<T>() {
-  let resolve!: (value: T) => void, reject!: (error: Error) => void
-  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail })
-  return { promise, resolve, reject }
-}
 function fixture(t: TestContext, name: string) {
   const backendId = `runtime_${name}`, id = `${backendId}~workspace`, directory = "/repo"
   registerLocalBackendFixture(t, backendId)

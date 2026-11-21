@@ -6,15 +6,11 @@ import { CODENOMAD_API_CONTRACT } from "../../../server/src/meta-contract"
 import { createBackendClient, type BackendClient } from "../lib/backend-client"
 import { BackendEvents } from "../lib/backend-events"
 import { createBackendRegistry } from "./backend-registry"
+import { deferred } from "../../tests/test-support/deferred"
 
 const profile: RemoteServerProfile = { id: "saved", name: "A", baseUrl: "http://a.test", skipTlsVerify: false,
   createdAt: "", updatedAt: "" }
 const metadata = { apiContract: CODENOMAD_API_CONTRACT, serverId: "server-a" }
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>(done => { resolve = done })
-  return { promise, resolve }
-}
 function harness(initial: unknown = true, bound = false) {
   const [enabled, setEnabled] = createSignal(initial)
   const [profiles, setProfiles] = createSignal([profile])
@@ -286,10 +282,12 @@ test("concurrent ensure coalesces, rename retains client, replacement revokes th
   } finally { h.registry.dispose() }
 })
 
-test("missing, mismatched or empty metadata refuses without SSE, attachment or workspace reads", async () => {
-  for (const meta of [null, {}, { ...metadata, apiContract: 0 }, { ...metadata, serverId: " " }]) {
+test("unavailable or invalid metadata refuses without SSE, attachment or workspace reads", async () => {
+  const invalid = [null, {}, { ...metadata, apiContract: 0 }, { ...metadata, serverId: " " }].map(meta => Response.json(meta))
+  for (const response of [...invalid, new Response("missing", { status: 404 }),
+    new Response("upgrade required", { status: 426 }), new Response("<html>old server</html>")]) {
     const h = harness()
-    h.read(async () => Response.json(meta))
+    h.read(async () => response)
     try {
       assert.equal(await h.registry.ensure("saved"), undefined)
       assert.equal(h.registry.state("saved"), "refused")
@@ -297,20 +295,6 @@ test("missing, mismatched or empty metadata refuses without SSE, attachment or w
       assert.equal(h.events.signal("saved"), undefined)
       assert.equal(h.loads(), 0)
       assert.equal(h.streams(), 0)
-    } finally { h.registry.dispose() }
-  }
-})
-
-test("absent, upgrade-required and non-JSON metadata refuse without attachment", async () => {
-  for (const response of [new Response("missing", { status: 404 }), new Response("upgrade required", { status: 426 }), new Response("<html>old server</html>")]) {
-    const h = harness()
-    h.read(async () => response)
-    try {
-      assert.equal(await h.registry.ensure("saved"), undefined)
-      assert.equal(h.registry.state("saved"), "refused")
-      assert.equal(h.clients.size, 0)
-      assert.equal(h.streams(), 0)
-      assert.equal(h.loads(), 0)
     } finally { h.registry.dispose() }
   }
 })

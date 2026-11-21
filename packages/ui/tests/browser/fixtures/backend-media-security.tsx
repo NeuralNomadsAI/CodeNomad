@@ -16,7 +16,7 @@ const canvas = document.createElement("canvas")
 canvas.width = 8; canvas.height = 8
 const data = canvas.toDataURL("image/png")
 const png = Uint8Array.from(atob(data.split(",")[1]), char => char.charCodeAt(0))
-let body: BlobPart = png, declared = "image/png", transferred = 0, holdSignature = false, backendCalls = 0
+let body: BodyInit = png, declared = "image/png", transferred = 0, holdSignature = false, backendCalls = 0
 const dataCalls: { credentials?: RequestCredentials }[] = []
 const plainFetch = globalThis.fetch.bind(globalThis)
 globalThis.fetch = (input, init) => {
@@ -29,13 +29,13 @@ const create = URL.createObjectURL.bind(URL)
 URL.createObjectURL = blob => { const url = create(blob); created.push({ url, type: (blob as Blob).type }); return url }
 const client = createBackendClient({ id: "security", baseUrl: "https://media.example.invalid", fetcher: async () => {
   backendCalls++
-  const blob = new Blob([body], { type: declared })
-  const response = new Response(blob, { headers: { "Content-Type": declared, "Content-Security-Policy": "sandbox; default-src 'none'" } })
+  const response = new Response(body, { headers: { "Content-Type": declared, "Content-Security-Policy": "sandbox; default-src 'none'" } })
   const arrayBuffer = response.arrayBuffer.bind(response)
   response.arrayBuffer = async () => {
-    transferred++
     if (holdSignature) await new Promise<void>(resolve => pending.push(resolve))
-    return arrayBuffer()
+    const bytes = await arrayBuffer()
+    transferred++
+    return bytes
   }
   return response
 } })

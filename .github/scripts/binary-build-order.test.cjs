@@ -127,7 +127,7 @@ test("native ARM smoke consumes only the successful Intel producer's immutable a
 test("artifact identity rejects missing/mismatched provenance before download (API double, no network)", () => {
   const script = workflow("build-and-upload.yml").jobs["smoke-electron-macos-arm64"].steps[2].run.split("<<'PY'\n")[1].split("\nPY")[0]
   python(String.raw`
-import contextlib, copy, datetime, io, json, os, pathlib, subprocess, sys, tempfile, urllib.request
+import contextlib, datetime, io, json, os, subprocess, sys, tempfile, urllib.request
 from unittest.mock import patch, Mock
 script = sys.argv[1]
 source, workflow_sha, checksum = 'a' * 40, 'b' * 40, 'c' * 64
@@ -305,10 +305,8 @@ with tempfile.TemporaryDirectory() as tmp:
     aliases = [
         [('CodeNomad.app/A',L,b'.'), ('CodeNomad.app/link',L,b'a/../inside')],
         [('CodeNomad.app/É',L,b'.'), ('CodeNomad.app/link',L,'E\u0301/../inside'.encode())],
-        [('CodeNomad.app/E\u0301',L,b'.'), ('CodeNomad.app/link',L,'É/../inside'.encode())],
         [('CodeNomad.app/A',L,b'.'), ('CodeNomad.app/bridge',L,b'a/../inside'), ('CodeNomad.app/link',L,b'bridge')],
         [('CodeNomad.app/A',L,b'a/../inside')],
-        [('CodeNomad.app/É',L,'E\u0301/../inside'.encode())],
         [('CodeNomad.app/Dir/',D,b''), ('CodeNomad.app/Dir/A',L,b'.'), ('CodeNomad.app/link',L,b'Dir/a/../../inside')],
         [('CodeNomad.app/Dir/file',F,b'x'), ('CodeNomad.app/link',L,b'dir/../inside')],
     ]

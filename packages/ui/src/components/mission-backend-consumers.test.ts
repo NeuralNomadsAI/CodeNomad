@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
 import { test } from "node:test"
 import { generateUUID } from "../lib/client-identity"
 import { repositoryIdentitySchema } from "../../../server/src/missions/mission-repository-condition"
-import ts from "typescript"
+import { productionHandler } from "../../tests/test-support/production-ast"
+import { deferred } from "../../tests/test-support/deferred"
 import { isMissionPickerSource } from "./mission-scheduling-data"
 import { isReservedMissionScheduleSessionID } from "../../../server/src/missions/mission-schedule-carrier-identity"
 import { buildProjectSessionListOptions, normalizeSessionDirectory } from "../stores/session-list-options"
@@ -16,24 +16,7 @@ import { createEffect, createMemo, createRoot, createSignal, mapArray, on, onCle
 // Local and remote transports are deliberately distinct: reverting a consumer to
 // the singleton fails at dispatch, even when the API layer itself still routes.
 function production(path: string, name: string, scope: Record<string, any>, marker?: string) {
-  const file = ts.createSourceFile(path, readFileSync(new URL(path, import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
-  let found: ts.Node | undefined
-  const visit = (node: ts.Node) => {
-    if (!marker && ts.isFunctionDeclaration(node) && node.name?.text === name) found = node
-    if (!marker && ts.isVariableDeclaration(node) && node.name.getText(file) === name && node.initializer) found = node.initializer
-    if (marker && ts.isCallExpression(node) && node.expression.getText(file) === name
-      && node.arguments[0]?.getText(file).includes(marker)) found = node.arguments[0]
-    ts.forEachChild(node, visit)
-  }
-  visit(file); assert.ok(found, `${path}: ${name}`)
-  const text = found.getText(file).replace(/^export\s+/, "")
-  const code = ts.transpileModule(`(${text})`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText
-  return new Function("scope", `with (scope) { return ${code} }`)(scope)
-}
-function deferred() {
-  let resolve!: (value?: any) => void
-  const promise = new Promise<any>(accept => { resolve = accept })
-  return { promise, resolve }
+  return productionHandler(new URL(path, import.meta.url), name, scope, marker)
 }
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve() }
 const solid = { createEffect, createMemo, createSignal, mapArray, on, onCleanup, untrack }
@@ -297,7 +280,7 @@ test("depth writes stay on their owner and a detached acknowledgement never star
     instances: () => new Map([[id, { client }]]), getOpenCodeInstanceGeneration: () => 1, read: () => { reads++ },
   })
   const pending = run(); assert.equal(env.owners.length, 1)
-  env.revoke(); write.resolve(); await pending
+  env.revoke(); write.resolve(undefined); await pending
   assert.equal(reads, 0); assert.equal(state.phase, "uncertain")
 })
 
@@ -507,7 +490,7 @@ test("lifecycle reconcile authorizes only its exact request after its own read",
   const scope = { ...env, props: { instanceId: id }, identity: () => "scope", epoch: 1, alive: true,
     durableRequest: () => input, retry: () => undefined, retryable: () => true, missionStore: { state: () => ({ status: "ready" }) } }
   const reconcile = production("./mission-lifecycle-controls.tsx", "reconcile", scope)
-  const pending = reconcile(read.promise); env.revoke(); read.resolve(); assert.equal(await pending, false)
+  const pending = reconcile(read.promise); env.revoke(); read.resolve(undefined); assert.equal(await pending, false)
   env.replace(); assert.equal(await reconcile(Promise.resolve()), true)
 })
 

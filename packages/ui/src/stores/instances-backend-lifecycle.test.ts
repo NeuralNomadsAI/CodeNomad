@@ -6,12 +6,7 @@ import { preferences } from "./preferences"
 import { addInstance, createInstance, closeWorkspace, instances, removeInstance, releaseRestoreCreatedInstance, type WorkspaceCreationOwnership } from "./instances"
 import { selectInstanceTab, activeAppTabId } from "./app-tabs"
 import { serverApi } from "../lib/api-client"
-
-const deferred = <T,>() => {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>(done => { resolve = done })
-  return { promise, resolve }
-}
+import { deferred } from "../../tests/test-support/deferred"
 
 for (const recovery of ["discard", "event"] as const) for (const mode of recovery === "discard"
   ? ["lost-response", "resolved", "retired", "removed"] as const

@@ -76,18 +76,7 @@ test("browser/ambient auth headers and every non-POST fail before CORS without c
   assert.equal((await send(f.target(), f.code)).status, 200)
 })
 
-test("ten wrong codes cannot lock out a fresh valid code or permit its replay", async t => {
-  const f = await startRemoteSurface(t)
-  for (let i = 0; i < 10; i++) assert.equal((await send(f.target(), "x".repeat(32))).status, 401)
-  const valid = new URL(f.manager.createPairing().url).hash.slice(1)
-  assert.equal((await send(f.target(), valid)).status, 200)
-  assert.equal(f.manager.devices().length, 1)
-  assert.notEqual((await send(f.target(), valid)).status, 200)
-  assert.equal((await send(f.target(), valid, { path: "/api/remote-control/pair", headers: { origin: `https://${FAKE_TUNNEL_HOST}` } })).status, 401)
-  assert.equal(f.manager.devices().length, 1)
-})
-
-test("strict bodies, expiry and wrong codes are refused; only the server route has a bounded limiter", async t => {
+test("strict bodies and expired codes are refused; the server failure quota never locks out a valid code or permits replay", async t => {
   let now = Date.now()
   const f = await startRemoteSurface(t, { now: () => now })
   for (const body of [JSON.stringify({ code: f.code, hostName: "" }), JSON.stringify({ code: f.code, hostName: "x", extra: true }), JSON.stringify({ code: "short", hostName: "x" })]) {
@@ -99,7 +88,9 @@ test("strict bodies, expiry and wrong codes are refused; only the server route h
   assert.equal((await send(f.target(), "x".repeat(32))).status, 401)
   now += PAIRING_TTL_MS + 1
   assert.equal((await send(f.target(), f.code)).status, 401)
+  // Three strict-body failures, a wrong code, and an expired code have used five slots.
   for (let i = 0; i < 5; i++) assert.equal((await send(f.target(), "x".repeat(32))).status, 401)
+  assert.equal((await send(f.target(), "x".repeat(32))).status, 429)
   const next = new URL(f.manager.createPairing().url).hash.slice(1)
   assert.equal((await send(f.target(), next)).status, 200, "a valid code bypasses the failure quota")
   assert.equal(f.manager.devices().length, 1)
@@ -108,6 +99,7 @@ test("strict bodies, expiry and wrong codes are refused; only the server route h
   assert.match(String(limited.headers["retry-after"]), /^[1-6]?[0-9]$/)
   privateResponse(limited)
   assert.equal((await send(f.target(), next, { path: "/api/remote-control/pair", headers: { origin: `https://${FAKE_TUNNEL_HOST}` } })).status, 401, "redemption consumes the shared browser code")
+  assert.equal(f.manager.devices().length, 1)
   const browserCode = new URL(f.manager.createPairing().url).hash.slice(1)
   assert.equal((await send(f.target(), browserCode, { path: "/api/remote-control/pair", headers: { origin: `https://${FAKE_TUNNEL_HOST}` } })).status, 200, "browser flow stays independent")
 })

@@ -1,21 +1,27 @@
 import assert from "node:assert/strict"
-import { test } from "node:test"
-import { chromium } from "playwright"
+import { after, before, test } from "node:test"
+import { chromium, type Browser } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { fixtureEventStream } from "./fixture-event-stream"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
+let browser: Browser, fixtureUrl: string
+before(async () => {
+  const fixture = await borrowFixture({ name: "remote-preview-metadata", routes: [{ path: "/fixture", html:
+    '<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/header-windows.tsx"></script></body></html>' }] })
+  fixtureUrl = fixture.url
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
+})
+after(async () => { await browser?.close() })
+
 for (const recovery of ["none", "open-after-failure", "reconnect-pending", "reconnect-pending-success", "navigation"] as const) test(`remote preview controls wait for host metadata (${recovery})`, { timeout: 60_000 }, async () => {
   const reconnectWhilePending = recovery === "reconnect-pending" || recovery === "reconnect-pending-success"
   const fails = recovery === "open-after-failure" || recovery === "reconnect-pending" || recovery === "navigation"
-  const fixture = await borrowFixture({ name: "remote-preview-metadata", routes: [{ path: "/fixture", html:
-    '<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/header-windows.tsx"></script></body></html>' }] })
-  const events = await fixtureEventStream(fixture.url)
-  const { origin, port, hostname } = new URL(fixture.url)
+  const events = await fixtureEventStream(fixtureUrl)
+  const { origin, port, hostname } = new URL(fixtureUrl)
   const meta = { localUrl: origin, eventsUrl: "/api/events", host: hostname, hostLabel: "Fixture",
     listeningMode: "local", localPort: Number(port), workspaceRoot: "/repo", addresses: [], previewsUnavailable: false }
-  const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
-  armFixtureNavigationBudget(browser)
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } })
   let releaseHost!: () => void
   const hostGate = new Promise<void>(resolve => { releaseHost = resolve })
@@ -62,7 +68,7 @@ for (const recovery of ["none", "open-after-failure", "reconnect-pending", "reco
     await page.getByRole("menu").waitFor({ state: "hidden" })
   }
   try {
-    const url = `${fixture.url}?remotePreview&assistant&links`
+    const url = `${fixtureUrl}?remotePreview&assistant&links`
     if (reconnectWhilePending) {
       // The first stream open precedes preview demand; only its reconnect can queue recovery.
       await page.goto(`${url}&hostEventsBeforeMount`, { waitUntil: "commit" })
@@ -115,8 +121,7 @@ for (const recovery of ["none", "open-after-failure", "reconnect-pending", "reco
     releaseHost()
     releaseFollowup()
     releaseEvents(false)
-    await browser.close()
+    await page.close()
     await events.close()
-    await fixture.close()
   }
 })

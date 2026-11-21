@@ -246,49 +246,38 @@ mod tests {
             r#"{"id":"a","baseUrl":"https://a.test","skipTlsVerify":false,"password":"secret"}"#
         )
         .is_err());
-        let capabilities = include_str!("../../capabilities/preferences-window.json");
-        assert!(capabilities.contains("allow-preferences-select-server"));
-        assert!(!include_str!("../../capabilities/main-window.json")
-            .contains("allow-preferences-select-server"));
+        let main = include_str!("../../capabilities/main-window.json");
+        let preferences = include_str!("../../capabilities/preferences-window.json");
+        assert!(preferences.contains("allow-preferences-select-server"));
+        assert!(!main.contains("allow-preferences-select-server"));
+        assert!(main.contains("allow-server-selection-result"));
+        assert!(!preferences.contains("allow-server-selection-result"));
     }
+
     #[test]
-    fn results_are_correlated_to_the_exact_opener_and_acceptance() {
+    fn selection_results_bind_to_the_exact_opener_and_expire() {
         let commands = SelectionCommands::default();
-        let (a, reply_a) = commands.begin("window-a").unwrap();
+        let (expired, reply) = commands.begin("window-a").unwrap();
         let (b, reply_b) = commands.begin("window-b").unwrap();
-        assert_ne!(a, b);
-        assert!(commands.complete(&a, "window-b", true).is_err());
-        assert_eq!(reply_a.try_recv(), Err(mpsc::TryRecvError::Empty));
+        assert_ne!(expired, b);
+        assert!(commands.complete(&expired, "window-b", true).is_err());
+        assert_eq!(reply.try_recv(), Err(mpsc::TryRecvError::Empty));
         commands.complete(&b, "window-b", false).unwrap();
         assert_eq!(
             accepted(reply_b, Duration::ZERO),
             Err("Server selection refused".into())
         );
-        commands.complete(&a, "window-a", true).unwrap();
-        assert!(accepted(reply_a, Duration::ZERO).is_ok());
-        commands.complete(&a, "window-a", false).unwrap();
-        assert!(commands.0.lock().unwrap().is_empty());
-    }
-    #[test]
-    fn missing_replies_expire_and_late_results_cannot_settle_another_selection() {
-        let commands = SelectionCommands::default();
-        let (expired, reply) = commands.begin("window-a").unwrap();
         assert_eq!(
-            accepted(reply, Duration::from_millis(5)),
+            accepted(reply, Duration::ZERO),
             Err("Server selection result unavailable".into())
         );
         commands.forget(&expired);
-        let (next, reply) = commands.begin("window-a").unwrap();
+        let (next, reply_next) = commands.begin("window-a").unwrap();
         commands.complete(&expired, "window-a", true).unwrap();
-        assert_eq!(reply.try_recv(), Err(mpsc::TryRecvError::Empty));
+        assert_eq!(reply_next.try_recv(), Err(mpsc::TryRecvError::Empty));
+        commands.complete(&next, "window-a", true).unwrap();
+        assert!(accepted(reply_next, Duration::ZERO).is_ok());
         commands.complete(&next, "window-a", false).unwrap();
-        assert_eq!(
-            accepted(reply, Duration::ZERO),
-            Err("Server selection refused".into())
-        );
-        let main = include_str!("../../capabilities/main-window.json");
-        let preferences = include_str!("../../capabilities/preferences-window.json");
-        assert!(main.contains("allow-server-selection-result"));
-        assert!(!preferences.contains("allow-server-selection-result"));
+        assert!(commands.0.lock().unwrap().is_empty());
     }
 }

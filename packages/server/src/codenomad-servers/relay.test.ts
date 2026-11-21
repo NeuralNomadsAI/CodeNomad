@@ -1,25 +1,18 @@
 import assert from "node:assert/strict"
 import fs from "node:fs"
-import os from "node:os"
-import path from "node:path"
-import http, { type IncomingMessage, type ServerResponse } from "node:http"
+import http, { type ServerResponse } from "node:http"
 import { gzipSync } from "node:zlib"
 import { test, type TestContext } from "node:test"
-import Fastify from "fastify"
 import { RemoteServerBrowseManager } from "./browse-manager"
 import { CodeNomadServerCredentials } from "./credentials"
 import { startFakeCodeNomad } from "./test-support/fake-codenomad"
-import { registerBackendRelayRoutes } from "../server/routes/backend-relay"
 import { RemoteIngress } from "../remote-control/ingress"
 import { DEVICE_COOKIE_NAME } from "../remote-control/gate"
 import { SERVER_PAIR_PATH } from "../remote-control/server-pairing"
 import { FAKE_TUNNEL_HOST, startRemoteSurface } from "../remote-control/test-support/surface"
-import { registerRequestLogging } from "../server/request-logging"
-import type { Logger } from "../logger"
 import { RELAY_AUTHORITY_HEADER as AUTHORITY, RELAY_AUTHORITY_QUERY, RELAY_BOOTSTRAP } from "./relay-authority"
 import { backendAdmissionFixture } from "../remote-control/test-support/backend-admission"
-
-const PREFIX = "/api/backends/saved"
+import { PREFIX, bounded, deferred, open, read, relayFixture, send } from "./test-support/relay"
 
 async function remoteCallerFixture(t: TestContext) {
   const f = await backendAdmissionFixture(t)
@@ -142,57 +135,49 @@ test("memory relay requires the current proof and local browser authority before
   }
 })
 
-for (const operation of ["login", "logout"] as const) {
-  for (const carrier of ["stale-query", "malformed-query", "duplicate-query", "conflicting"] as const) {
-    test(`auth ${operation} rejects ${carrier} without touching the current connection`, async t => {
-      const f = await fixture(t)
-      const admit = async () => {
-        assert.equal((await f.connect()).status, 200)
-        f.remote.state.overrides.set("/api/meta", { status: 200, body: { serverId: "A", apiContract: 1 } })
-        return String((await f.call("/api/meta", { headers: { [AUTHORITY]: RELAY_BOOTSTRAP } })).headers[AUTHORITY])
-      }
-      const old = await admit()
-      await f.manager.forget("saved")
-      const current = await admit()
-      assert.notEqual(current, old)
-      const saved = fs.readFileSync(f.file, "utf8")
-      const before = f.remote.state.requests.length
-      const value = carrier === "malformed-query" ? "malformed" : old
-      const query = `${RELAY_AUTHORITY_QUERY}=${value}` + (carrier === "duplicate-query" ? `&${RELAY_AUTHORITY_QUERY}=${current}` : "")
-      const result = await f.call(`/api/auth/${operation}?${query}`, { method: "POST",
-        headers: { "content-type": "application/json", ...(carrier === "conflicting" ? { [AUTHORITY]: current } : {}) },
-        body: JSON.stringify(operation === "login" ? { username: "codenomad", password: "remote-password" } : {}),
-      })
-      assert.equal(result.status, operation === "login" ? 401 : 502)
-      assert.deepEqual(JSON.parse(result.body), { error: operation === "login" ? "auth" : "unreachable" })
-      assert.equal(f.remote.state.requests.length, before, "no upstream auth or fetch on refusal")
-      f.manager.assertProof("saved", current)
-      assert.equal(fs.readFileSync(f.file, "utf8"), saved)
-      assert.equal((await f.call("/api/filesystem", { headers: { [AUTHORITY]: current } })).status, 200)
-    })
-  }
-}
-
-test("auth carriers require unique nonempty exact values; bootstrap is login-only", async t => {
+test("auth refuses stale, malformed, conflicting and ambiguous carriers without touching the current connection", async t => {
   const f = await fixture(t)
-  await f.connect()
   f.remote.state.overrides.set("/api/meta", { status: 200, body: { serverId: "A", apiContract: 1 } })
-  const proof = String((await f.call("/api/meta", { headers: { [AUTHORITY]: RELAY_BOOTSTRAP } })).headers[AUTHORITY])
+  const admit = async () => {
+    assert.equal((await f.connect()).status, 200)
+    const response = await f.call("/api/meta", { headers: { [AUTHORITY]: RELAY_BOOTSTRAP } })
+    const proof = String(response.headers[AUTHORITY])
+    assert.match(proof, /^[A-Za-z0-9_-]{43}$/)
+    return proof
+  }
+  const old = await admit()
+  await f.manager.forget("saved")
+  const proof = await admit()
+  assert.notEqual(proof, old)
+  const saved = fs.readFileSync(f.file, "utf8")
+  const oldQuery = `${RELAY_AUTHORITY_QUERY}=${old}`
   for (const operation of ["login", "logout"] as const) {
     const before = f.remote.state.requests.length
-    for (const options of [
-      { query: `${RELAY_AUTHORITY_QUERY}=`, headers: {} },
-      { query: `${RELAY_AUTHORITY_QUERY}=${"x".repeat(43)}`, headers: {} },
-      { query: `${RELAY_AUTHORITY_QUERY}=bootstrap-extra`, headers: {} },
-      { query: "", headers: { [AUTHORITY]: "" } },
-      { query: "", headers: { [AUTHORITY]: [proof, proof] } },
-      { query: `${RELAY_AUTHORITY_QUERY}=${proof}&${RELAY_AUTHORITY_QUERY}=${proof}`, headers: {} },
-      ...(operation === "logout" ? [{ query: `${RELAY_AUTHORITY_QUERY}=${RELAY_BOOTSTRAP}`, headers: {} }] : []),
-    ]) {
-      assert.equal((await f.call(`/api/auth/${operation}?${options.query}`, { method: "POST", headers: options.headers })).status, operation === "login" ? 401 : 502)
+    const body = JSON.stringify(operation === "login" ? { username: "codenomad", password: "remote-password" } : {})
+    const cases: Array<[string, string, http.OutgoingHttpHeaders?]> = [
+      ["stale query", oldQuery],
+      ["malformed query", `${RELAY_AUTHORITY_QUERY}=malformed`],
+      ["mixed duplicate query", `${oldQuery}&${RELAY_AUTHORITY_QUERY}=${proof}`],
+      ["conflicting carriers", oldQuery, { [AUTHORITY]: proof }],
+      ["empty query", `${RELAY_AUTHORITY_QUERY}=`],
+      ["unknown proof", `${RELAY_AUTHORITY_QUERY}=${"x".repeat(43)}`],
+      ["inexact bootstrap", `${RELAY_AUTHORITY_QUERY}=bootstrap-extra`],
+      ["empty header", "", { [AUTHORITY]: "" }],
+      ["duplicate header", "", { [AUTHORITY]: [proof, proof] }],
+      ["duplicate query", `${RELAY_AUTHORITY_QUERY}=${proof}&${RELAY_AUTHORITY_QUERY}=${proof}`],
+    ]
+    if (operation === "logout") cases.push(["login-only bootstrap", `${RELAY_AUTHORITY_QUERY}=${RELAY_BOOTSTRAP}`])
+    for (const [name, query, headers] of cases) {
+      const result = await f.call(`/api/auth/${operation}?${query}`, { method: "POST",
+        headers: { "content-type": "application/json", ...headers }, body })
+      const label = `${operation}: ${name}`
+      assert.equal(result.status, operation === "login" ? 401 : 502, label)
+      assert.deepEqual(JSON.parse(result.body), { error: operation === "login" ? "auth" : "unreachable" }, label)
+      assert.equal(f.remote.state.requests.length, before, "no upstream auth or fetch on refusal")
       f.manager.assertProof("saved", proof)
+      assert.equal(fs.readFileSync(f.file, "utf8"), saved)
     }
-    assert.equal(f.remote.state.requests.length, before)
+    assert.equal((await f.call("/api/filesystem", { headers: { [AUTHORITY]: proof } })).status, 200)
   }
 })
 
@@ -380,67 +365,12 @@ test("forget revokes a connection queued before its first dispatch", async t => 
   assert.equal(fs.existsSync(f.file), false)
 })
 
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  let reject!: (error: Error) => void
-  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail })
-  return { promise, resolve, reject }
-}
-
-async function bounded<T>(promise: Promise<T>): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([promise, new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error("Relay did not progress within 3 seconds")), 3000)
-    })])
-  } finally { clearTimeout(timer) }
-}
-
-function open(origin: string, target: string, options: { method?: string; headers?: http.OutgoingHttpHeaders } = {}) {
-  const received = deferred<IncomingMessage>()
-  const headers = Object.fromEntries(Object.entries({ origin, ...options.headers }).filter(([, value]) => value !== undefined))
-  const request = http.request(new URL(origin), { path: target, method: options.method ?? "GET", agent: false,
-    headers }, response => received.resolve(response))
-  request.once("error", received.reject)
-  return { request, response: received.promise }
-}
-
-async function read(response: IncomingMessage) {
-  let body = ""
-  for await (const chunk of response) body += chunk
-  return { status: response.statusCode!, headers: response.headers, body }
-}
-
-async function send(origin: string, target: string, options: { method?: string; headers?: http.OutgoingHttpHeaders; body?: string } = {}) {
-  const socket = open(origin, target, options)
-  socket.request.end(options.body)
-  return bounded(socket.response.then(read))
-}
-
 async function fixture(t: TestContext, remoteOrigin?: string) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-relay-"))
-  const remote = await startFakeCodeNomad()
-  const profiles = [{ id: "saved", baseUrl: remoteOrigin ?? remote.origin, skipTlsVerify: false }]
-  const file = path.join(directory, "remote-server-credentials.json")
-  const settings = { getOwner: () => ({ remoteServers: profiles }), configYamlPathForAuthority: () => path.join(directory, "config.yaml") }
-  const manager = new RemoteServerBrowseManager(settings)
-  const app = Fastify()
-  const logs: unknown[] = []
-  registerRequestLogging(app, { debug: (record: unknown) => logs.push(record), trace: (record: unknown) => logs.push(record), isLevelEnabled: () => true } as unknown as Logger)
-  let origin = ""
-  registerBackendRelayRoutes(app, { manager, getSelfOrigins: () => new Set([origin, "http://192.168.1.50", "https://remote.test"]) })
-  origin = await app.listen({ host: "127.0.0.1", port: 0 })
-  t.after(async () => {
-    manager.close()
-    app.server.closeAllConnections()
-    await app.close()
-    await remote.close()
-    fs.rmSync(directory, { recursive: true, force: true })
-  })
-  const call = (target: string, options: Parameters<typeof send>[2] = {}) => send(origin, `${PREFIX}${target}`, options)
+  const fixture = await relayFixture(t, { remoteOrigin, advertised: ["http://192.168.1.50", "https://remote.test"] })
+  const call = (target: string, options: Parameters<typeof send>[2] = {}) => send(fixture.origin, `${PREFIX}${target}`, options)
   const connect = (password = "remote-password") => call("/api/auth/login", { method: "POST",
     headers: { "content-type": "application/json" }, body: JSON.stringify({ username: "codenomad", password }) })
-  return { remote, manager, settings, app, origin, profiles, file, call, connect, logs }
+  return { ...fixture, call, connect }
 }
 
 test("relay diagnostics omit private request bodies and target queries", async t => {

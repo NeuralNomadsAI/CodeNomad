@@ -51,17 +51,18 @@ test("Stats, quota and account consumers route raw workspace IDs to their owner 
   assert.equal(await page.evaluate(() => (window as any).routing.calls.filter((call: any) => call.owner === "local").length), localCount)
 }))
 
-test("detach fences pending Stats, quotas and account writes; reattachment recovers without stale publication", async () => fixturePage(async page => {
+test("Stats, quotas and accounts fence detachment, recover on reattachment, and never fall back for a missing backend", async () => fixturePage(async page => {
   const remote = page.locator('[data-owner="remote"]')
+  const cleared = () => page.waitForFunction(() => !document.querySelector('[data-owner="remote"] [role="progressbar"]')
+    && !document.querySelector('[data-owner="remote"] .usage-metrics')
+    && document.querySelectorAll('[data-owner="remote"] [data-accounts] option').length === 0)
   await page.evaluate(() => (window as any).routing.hold())
   await remote.getByRole("switch").click()
   await remote.locator('[data-stats] button').click()
   await page.evaluate(() => (window as any).routing.event("remote"))
   await page.waitForFunction(() => (window as any).routing.pending >= 3)
   await page.evaluate(() => (window as any).routing.detach())
-  await page.waitForFunction(() => !document.querySelector('[data-owner="remote"] [role="progressbar"]')
-    && !document.querySelector('[data-owner="remote"] .usage-metrics')
-    && document.querySelectorAll('[data-owner="remote"] [data-accounts] option').length === 0)
+  await cleared()
   await page.evaluate(() => { (window as any).routing.release(); (window as any).routing.reattach() })
   await page.waitForFunction(() => document.querySelector('[data-owner="remote"] [role="progressbar"]')?.getAttribute("aria-valuenow") === "22"
     && document.querySelector('[data-owner="remote"] [data-accounts] select')?.textContent?.includes("remote-2"))
@@ -69,13 +70,8 @@ test("detach fences pending Stats, quotas and account writes; reattachment recov
   assert.equal(await remote.getByRole("switch").isChecked(), true)
   assert.equal(await remote.locator('[data-accounts] select').isDisabled(), false)
   assert.equal(await remote.locator('[data-stats] button').isDisabled(), false)
-}))
-
-test("a missing backend clears consumers and never sends their reads to local", async () => fixturePage(async page => {
   const count = await page.evaluate(() => (window as any).routing.calls.length)
   await page.evaluate(() => (window as any).routing.missing())
-  await page.waitForFunction(() => !document.querySelector('[data-owner="remote"] [role="progressbar"]')
-    && !document.querySelector('[data-owner="remote"] .usage-metrics')
-    && document.querySelectorAll('[data-owner="remote"] [data-accounts] option').length === 0)
+  await cleared()
   assert.equal(await page.evaluate(() => (window as any).routing.calls.length), count)
 }))
