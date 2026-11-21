@@ -26,7 +26,7 @@ Für die Fernsteuerung sind **Web-Vorschauen** unter **Einstellungen → Remote-
 
 ## Geteilte Anmeldungen und Automatisierungsgrenzen {#signins-automation}
 
-Unter Electron und Tauri für Windows startet der automatisierte Neustart (`codenomad.act`, `restart`) das geprüfte Profil mit derselben Konfiguration und demselben Build neu. Wird das ursprüngliche Fenster wiederhergestellt, wird es erneut geprüft; andernfalls meldet die Automatisierung das fehlende Fenster und prüft kein anderes. Eine erfolgreiche Prüfung während der Wiederverbindung hat Vorrang.
+Der automatisierte Neustart (`codenomad.act`, `restart`) startet das geprüfte Profil mit derselben Konfiguration und demselben Build neu. Er ist unter Tauri für Windows und beim direkten Start eines Electron-Skripts verfügbar. Starten Sie eine paketierte Electron-Version oder eine aus dem App-Ordner gestartete App manuell neu. Das Werkzeug prüft das ursprüngliche Fenster erneut, wenn es wiederhergestellt wird, und meldet andernfalls sein Fehlen. Eine erfolgreiche Prüfung während der Wiederverbindung hat Vorrang.
 
 Native Vorschauen teilen Cookies, Anmeldungen und Websitespeicher über Projekte/Sitzungen innerhalb derselben Desktop-Engine und desselben Profil-/Konfigurationsbereichs, getrennt vom vertrauenswürdigen CodeNomad-Renderer. Abmelden von einer Website in einer Vorschau betrifft andere Vorschauen desselben Speichers. Dokumente, Formulare, Sitzungsspeicher, Navigationsverläufe und Automatisierungszuordnungen gehören jeweils zur Sitzung.
 

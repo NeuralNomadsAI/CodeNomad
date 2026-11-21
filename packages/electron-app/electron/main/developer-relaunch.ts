@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto"
 import { realpathSync, statSync } from "node:fs"
-import { isAbsolute, resolve } from "node:path"
-import { Worker } from "node:worker_threads"
+import { dirname, isAbsolute, resolve } from "node:path"
 import { readDeveloperRestart, type DeveloperRestart } from "../../../server/src/automation/developer-restart"
 
 const PREFIX = "--codenomad-automation-relaunch="
@@ -18,11 +17,13 @@ export function pinElectronRelaunch(execPath: string, appPath: string, appArgs: 
   const artifact = realpathSync.native(appPath)
   const mainPath = realpathSync.native(loadedMain)
   const operand = appArgs.at(-1)
-  // Keep Electron's package launch when the CLI operand is its app root.
-  const cliPackage = operand === appPath ? artifact : undefined
+  // Electron's default_app sets getAppPath() to the CLI operand when it
+  // applies a manifest, or to dirname(resolved entry) otherwise. Require
+  // that the direct entry preserves both the app path and metadata.
   return {
-    execPath: realpathSync.native(execPath), appPath: artifact, mainPath, cliPackage,
-    appArgs: operand ? [...appArgs.slice(0, -1), cliPackage ?? mainPath] : [],
+    execPath: realpathSync.native(execPath), appPath: artifact, mainPath,
+    appArgs: operand && operand !== appPath && dirname(mainPath) === appPath
+      ? [...appArgs.slice(0, -1), mainPath] : undefined,
   }
 }
 
@@ -32,31 +33,23 @@ export function developerNativeIdentity(profile: string, configIdentity: string,
   return `electron:${createHash("sha256").update(`${profile}\0${configIdentity}\0${config ?? ""}\0${execPath}\0${appPath}\0${mainPath}`).digest("hex")}`
 }
 
-export async function verifyElectronRelaunch({ execPath, appPath, mainPath, cliPackage }: ElectronRelaunchArtifact): Promise<void> {
+export async function verifyElectronRelaunch(artifact: ElectronRelaunchArtifact): Promise<void> {
+  directEntryArgs(artifact)
+  const { execPath, appPath, mainPath } = artifact
   try {
     if (realpathSync.native(execPath) === execPath && realpathSync.native(appPath) === appPath
-      && realpathSync.native(mainPath) === mainPath && statSync(mainPath).isFile()
-      && (!cliPackage || await resolveFreshPackageMain(cliPackage) === mainPath)) return
+      && realpathSync.native(mainPath) === mainPath && statSync(mainPath).isFile()) return
   } catch (cause) {
     throw new Error("The CodeNomad relaunch artifact changed or is unavailable", { cause })
   }
   throw new Error("The CodeNomad relaunch artifact changed or is unavailable")
 }
 
-function resolveFreshPackageMain(appPath: string): Promise<string> {
-  // Electron's default_app/main.ts uses Module._resolveFilename(operand, null, true).
-  // A fresh isolate avoids Node's cached package paths and realpaths from the original load.
-  const worker = new Worker(`
-    const { parentPort, workerData } = require("node:worker_threads")
-    const { Module } = require("node:module")
-    const { realpathSync } = require("node:fs")
-    parentPort.postMessage(realpathSync.native(Module._resolveFilename(workerData, null, true)))
-  `, { eval: true, execArgv: [], workerData: appPath })
-  return new Promise<string>((resolve, reject) => {
-    worker.once("message", resolve)
-    worker.once("error", reject)
-    worker.once("exit", () => reject(new Error("Electron entry resolution ended without a result")))
-  })
+function directEntryArgs({ appArgs }: ElectronRelaunchArtifact): string[] {
+  // Packaged startup selects main in LoadAppPackage() before handling any
+  // application arguments. A CLI package similarly resolves main on startup.
+  if (!appArgs) throw new Error("Electron cannot relaunch this entry directly. Restart CodeNomad manually.")
+  return appArgs
 }
 
 /** Entry selection follows Electron's default_app/main.ts. Only --no-sandbox carries over. */
@@ -79,8 +72,8 @@ export function readElectronEntry(argv: readonly string[]) {
   }
 }
 
-export function developerRelaunchOptions(launch: DeveloperRelaunch, { execPath, appArgs }: ElectronRelaunchArtifact): Electron.RelaunchOptions {
-  return { execPath, args: [...appArgs, PREFIX + Buffer.from(JSON.stringify(launch)).toString("base64url")] }
+export function developerRelaunchOptions(launch: DeveloperRelaunch, artifact: ElectronRelaunchArtifact): Electron.RelaunchOptions {
+  return { execPath: artifact.execPath, args: [...directEntryArgs(artifact), PREFIX + Buffer.from(JSON.stringify(launch)).toString("base64url")] }
 }
 
 /** The relaunch is one-shot: consume it before interpreting ordinary launch intents. */
