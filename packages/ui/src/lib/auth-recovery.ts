@@ -32,8 +32,9 @@ export function createAuthRecovery(base: string | undefined | Pick<BackendHttp, 
     const probe = ++nextProbe
     const pending = (async () => {
       try {
+        const timeout = AbortSignal.timeout(8000)
         const response = await fetcher(url("/api/auth/status"), {
-          credentials: "include", cache: "no-store", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000),
+          credentials: "include", cache: "no-store", signal: signal ? AbortSignal.any?.([signal, timeout]) ?? timeout : timeout,
         })
         if (!response.ok) return
         const status = await response.json()
