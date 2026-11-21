@@ -101,11 +101,14 @@ async function sendInput(session: PageSession, kind: InputKind, params: Record<s
     case "insert-text": return session.driver.insertText(params.text as string)
   }
 }
+export class PageTargetChangedError extends Error {}
+
 /** Provenance marking belongs only to the trusted application window. */
 export async function markedInput<T>(session: PageSession, run: (dispatch: (kind: InputKind, params: Record<string, unknown>) => Promise<void>) => Promise<T>): Promise<T> {
   const held = new Map<string, { kind: InputKind; params: Record<string, unknown> }>()
   let point = { x: 0, y: 0 }
   let attempted = false
+  let targetLost = false
   const dispatch = async (kind: InputKind, params: Record<string, unknown>) => {
     let timestamp: number | undefined
     if (session.markAutomation) {
@@ -129,17 +132,18 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (kind
   await awaitInputAcceptance(session)
   try { return await run(dispatch) }
   catch (error) {
+    targetLost = error instanceof PageTargetChangedError
     if (attempted && error instanceof Error && /timed out|timeout/i.test(error.message)) throw new Error("Input timed out: its outcome is unknown. The page was busy and the input may still be delivered; inspect before retrying.")
     throw error
   } finally {
-    for (const release of [...held.values()].reverse()) {
+    for (const release of targetLost ? [] : [...held.values()].reverse()) {
       try {
         if (session.markAutomation) await session.driver.call("mark-input", undefined, []).catch(() => undefined)
         const { text: _text, unmodifiedText: _unmodified, ...params } = release.params
         await sendInput(session, release.kind, { ...params, ...(release.kind === "pointer" ? point : {}) })
       } catch { /* Exact original driver, best effort; never replay a press. */ }
     }
-    if (session.markAutomation) await session.driver.call("unmark-input", undefined, []).catch(() => undefined)
+    if (session.markAutomation && !targetLost) await session.driver.call("unmark-input", undefined, []).catch(() => undefined)
   }
 }
 async function awaitInputAcceptance(session: PageSession): Promise<void> {

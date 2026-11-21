@@ -5,6 +5,7 @@ import { cdpSession } from "./automation/page/cdp-driver"
 import type { RefAction } from "./automation/page/parse"
 import { RefTable } from "./automation/page/refs"
 import { SnapshotScopeError } from "./automation/page/snapshot"
+import { PageTargetChangedError } from "./automation/page/protocol"
 
 const DEFAULT_TIMEOUT_MS = 5_000
 const DEFAULT_MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024
@@ -473,19 +474,19 @@ export class DeveloperCdp {
 
   private async assertContextCurrent(state: RunState, epoch: number, message: string, foreground?: DeveloperCdpContext): Promise<void> {
     if (state.navigationEpoch !== epoch || !state.socket) {
-      throw new Error(message)
+      throw new PageTargetChangedError(message)
     }
     const context = await this.readContext(state)
     if (!this.matchesContext(state, context)) {
       this.invalidateRefs(state)
       state.context = context
-      throw new Error(message)
+      throw new PageTargetChangedError(message)
     }
     if (state.navigationEpoch !== epoch || !state.socket) {
-      throw new Error(message)
+      throw new PageTargetChangedError(message)
     }
     if (foreground && (context.tabId !== foreground.tabId || context.instanceId !== foreground.instanceId
-      || context.sessionId !== foreground.sessionId)) throw new Error("The active tab changed during the action; inspect again")
+      || context.sessionId !== foreground.sessionId)) throw new PageTargetChangedError("The active tab changed during the action; inspect again")
     state.context = context
   }
 

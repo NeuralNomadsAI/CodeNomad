@@ -840,7 +840,8 @@ async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
     throw typeof response.body.code === "string" ? targetError(response.body.code, message) : new Error(message)
   }
   if (command.action === "restart") {
-    return waitForRestart(sessionID, target.nativeIdentity, target.runId, target.windowId, existingTokens!, options.publish!)
+    return waitForRestart(sessionID, target.nativeIdentity, target.runId, target.windowId, existingTokens!,
+      options.order!, options.isCurrent!, options.publish!)
   }
   if (options.publish && !options.publish(inspectedBridge(target, response.body.result))) {
     throw targetError("stale-inspection", "A newer inspection selected the window")
@@ -860,6 +861,8 @@ async function waitForRestart(
   previousRunId: string,
   windowId: string | undefined,
   existingTokens: ReadonlySet<string>,
+  order: string,
+  isCurrent: () => boolean,
   publish: (target: ProbedBridge) => boolean,
 ) {
   const deadline = Date.now() + REQUEST_TIMEOUT_MS
@@ -880,12 +883,14 @@ async function waitForRestart(
       reconnected = true
       const restored = candidate.windows?.find(window => window.windowId === windowId)
       if (!restored) continue
+      if (!isCurrent()) return { content: "CodeNomad restarted; the newer window selection was kept." }
       try {
         const inspection = await callBridge(candidate.registration, {
           mode: "developer-execute",
           sessionID,
           command: { action: "inspect" },
           target: windowSelector(candidate, restored.windowId, restored.windowInstance),
+          order,
         }, INSPECTION_TIMEOUT_MS)
         const inspected = inspectedBridge(candidate, inspection.body.result)
         if (inspection.status === 200 && inspected.windowId === windowId) {
@@ -911,7 +916,7 @@ export function createDeveloperToolTransform() {
   let sequence = 0
   const selectWindow = async (session: string, command: DeveloperAction, selector?: string) => {
     const issued = Symbol()
-    const order = command.action === "inspect" ? `${source}/${++sequence}` : undefined
+    const order = `${source}/${++sequence}`
     selections.set(session, issued)
     try {
       return await executeDeveloperTool(inspectedTargets, session, command, { selector, order, isCurrent: () => selections.get(session) === issued, publish: chosen => {
