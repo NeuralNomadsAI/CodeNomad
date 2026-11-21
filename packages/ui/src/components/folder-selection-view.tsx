@@ -9,8 +9,9 @@ import BrowseMenu, { createBrowseEntryCount } from "./browse-menu"
 import EntryCount from "./entry-count"
 import RemoteRecentSession from "./remote-recent-session"
 import ActionOverflowMenu from "./action-overflow-menu"
-import { joinRecentOpenTarget, recentAccessibleName, recentOpenTarget, launchableRecents, type LaunchableRecent } from "../lib/recent-open-target"
-import RecentOpenElsewhere from "./recent-open-elsewhere"
+import { Tooltip } from "@kobalte/core/tooltip"
+import { joinRecentOpenTarget, recentAccessibleName, recentOpenElsewhere, recentOpenTarget, launchableRecents, type LaunchableRecent } from "../lib/recent-open-target"
+import RecentOpenElsewhere, { RecentOpenElsewhereTooltip } from "./recent-open-elsewhere"
 import { helpUrl } from "../lib/help-url"
 import { Heart } from "lucide-solid"
 import NewTabActions from "./new-tab-actions"
@@ -542,6 +543,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                           {(folder, index) => {
                             const key = folder.key
                             const existingInstance = () => recentOpenTarget(folder)
+                            const elsewhere = () => recentOpenElsewhere(folder) ? t("folderSelection.recent.openElsewhere") : undefined
                             const projectName = () => getProjectDisplayName(folder.path, folder.projectName)
                             const actions = createMemo(() => [
                               ...(folder.kind === "sidecar" ? [] : [
@@ -570,18 +572,21 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                               <Show when={folder.kind === "remote" && connectingRecent() === folder ? folder : undefined} keyed fallback={
                               <div class="flex items-center gap-2 w-full px-1">
                                 <div class="panel-list-item-content relative flex-1">
-                                  <button
-                                    data-list-index={index()}
-                                    type="button"
-                                    class="folder-home-recent-primary-action"
-                                    disabled={isLoading()}
-                                    aria-label={recentAccessibleName(folder)}
-                                    title={recentAccessibleName(folder)}
-                                    onClick={() => openRecent(folder)}
-                                    onFocus={() => {
-                                      setSelectedIndex(index())
-                                    }}
-                                  />
+                                  <RecentOpenElsewhereTooltip label={elsewhere()}>
+                                    <Tooltip.Trigger as="button"
+                                      data-list-index={index()}
+                                      type="button"
+                                      class="folder-home-recent-primary-action"
+                                      disabled={isLoading()}
+                                      aria-label={recentAccessibleName(folder)}
+                                      aria-description={elsewhere()}
+                                      title={elsewhere() ? undefined : recentAccessibleName(folder)}
+                                      onClick={() => openRecent(folder)}
+                                      onFocus={() => {
+                                        setSelectedIndex(index())
+                                      }}
+                                    />
+                                  </RecentOpenElsewhereTooltip>
                                   <div class="relative z-[1] pointer-events-none flex items-center justify-between gap-3 w-full">
                                     <div class="flex-1 min-w-0">
                                       <div class="flex items-center gap-2 mb-1">
@@ -641,7 +646,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                                         <span class="flex-shrink-0">{formatRelativeTime(t, folder.lastAccessed)}</span>
                                       </div>
                                     </div>
-                                    <RecentOpenElsewhere recent={folder} />
+                                    <RecentOpenElsewhere label={elsewhere()} />
                                   </div>
                                 </div>
                                 <Show when={!remoteSource() && folder.kind !== "sidecar"}><Show when={props.blank} fallback={

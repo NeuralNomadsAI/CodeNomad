@@ -24,41 +24,14 @@ let copiedPageId: string | undefined
 let departing = false
 let restored = false
 
-/** Web Locks require a secure context; on LAN HTTP, ask the live same-origin page. */
-function claimBroadcastPage(id: string): Promise<boolean> {
-  return new Promise(resolve => {
-    const channel = new BroadcastChannel(`${PAGE_KEY}:${id}`)
-    const contender = generateUUID()
-    let owns = false
-    const finish = (claimed: boolean) => {
-      clearTimeout(timer)
-      owns = claimed
-      if (!claimed) channel.close()
-      resolve(claimed)
-    }
-    const timer = setTimeout(() => finish(true), 100)
-    channel.onmessage = ({ data }: MessageEvent<{ claim?: string; occupied?: string }>) => {
-      if (data.claim) {
-        if (owns || contender < data.claim) channel.postMessage({ occupied: data.claim })
-        else finish(false)
-      } else if (!owns && data.occupied === contender) finish(false)
-    }
-    window.addEventListener("pagehide", function close(event) {
-      if (event.persisted) return
-      window.removeEventListener("pagehide", close)
-      channel.close()
-    })
-    channel.postMessage({ claim: contender })
-  })
-}
-
 /** A duplicated tab inherits both the snapshot and its owner's lock name. */
 export function claimWebSessionRecords(): Promise<boolean> {
   return recordClaim ??= (async () => {
     const storage = sessionStore()
-    if (!storage) return false
-    const acquire = (id: string) => !navigator.locks ? claimBroadcastPage(id) : new Promise<boolean>((resolve, reject) => {
-      void navigator.locks.request(`${PAGE_KEY}:${id}`, { ifAvailable: true }, lock => {
+    const locks = navigator.locks
+    if (!storage || !locks) return false
+    const acquire = (id: string) => new Promise<boolean>((resolve, reject) => {
+      void locks.request(`${PAGE_KEY}:${id}`, { ifAvailable: true }, lock => {
         resolve(Boolean(lock))
         if (lock) return new Promise<void>(release => {
           const onHide = (event: PageTransitionEvent) => {

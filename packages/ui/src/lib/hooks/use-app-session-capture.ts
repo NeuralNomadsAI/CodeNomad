@@ -156,7 +156,7 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
     tabIds: tabs.map(({ id }) => id), authorities,
   }
 }
-export function useAppSessionCapture() {
+export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: RestorableSessionState) => void) {
   const [started, setStarted] = createSignal(false)
   const enabled = () => started() && clientStateIsPrimary() && restorePreviousStateEnabled()
   // Snapshot the scalar inputs of catalog/runtime capture and prompt hydration.
@@ -218,7 +218,10 @@ export function useAppSessionCapture() {
   }
   let nativeShutdownGeneration: number | null = null
   let releasing: Promise<unknown> | undefined
+  let preparedTabs: RestorableSessionState | undefined
   const resumeCapture = () => {
+    if (releasing && preparedTabs) recoverReleasedTabs?.(preparedTabs)
+    preparedTabs = undefined
     nativeShutdownGeneration = null
     releasing = undefined
     schedule()
@@ -243,7 +246,7 @@ export function useAppSessionCapture() {
     messageStoreBus.flushScrollSnapshots()
     if (timer) clearTimeout(timer)
     timer = null
-    if (enabled()) {
+    if (enabled() && !releasing) {
       const current = mergedState()
       const state = nativeShutdown
         && current.tabs.length === 0
@@ -251,6 +254,9 @@ export function useAppSessionCapture() {
         ? nativeFallbackState!
         : current
       updateRestorableSession(state)
+      if (nativeShutdown) preparedTabs = state
+    } else if (nativeShutdown && !releasing && recoverReleasedTabs) {
+      preparedTabs = captureState(scrollAuthority).state
     }
     await Promise.all([
       flushClientState(),
@@ -265,6 +271,9 @@ export function useAppSessionCapture() {
     }
   }))
   const awaitRelease = async () => {
+    // The local backend also carries the remote relay. Quit has to send
+    // releases before stopping it, and must be able to recover on refusal.
+    if (recoverReleasedTabs) preparedTabs ??= captureState(scrollAuthority).state
     const pending = release()
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
@@ -405,10 +414,11 @@ export function useAppSessionCapture() {
     }
   })
   onMount(() => {
+    const web = isWebHost()
     const pageHide = (event: PageTransitionEvent) => {
       if (event.persisted || releasing) return
-      void flush().catch(error => log.warn("Could not flush client state", error))
-      if (markWebSessionRecordsReleased()) void release()
+      if (web) void flush().catch(error => log.warn("Could not flush client state", error))
+      if (!web || markWebSessionRecordsReleased()) void release()
     }
     const nativeFlush: NonNullable<Window["__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__"]> = async closing => {
       if (closing === "cancel") resumeCapture()
@@ -416,7 +426,6 @@ export function useAppSessionCapture() {
       else if (closing === "release") await awaitRelease()
       else await flush()
     }
-    const web = isWebHost()
     const electronLocal = isElectronHost() && isLocalWindow()
     const saveSelection = () => {
       const tab = enabled() && !appSessionRestoreGateActive()
@@ -427,12 +436,12 @@ export function useAppSessionCapture() {
         : tab?.kind === "remote-restore" ? tab.snapshot
         : tab?.kind === "sidecar" ? { kind: "sidecar", sidecarId: tab.sidecarTab.sidecarId } : undefined)
     }
-    if (web) window.addEventListener("pagehide", pageHide)
+    window.addEventListener("pagehide", pageHide)
     if (electronLocal) window.addEventListener("pagehide", saveSelection)
     if (isElectronHost() || isTauriHost()) window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ = nativeFlush
     onCleanup(() => {
       if (electronLocal) window.removeEventListener("pagehide", saveSelection)
-      if (web) window.removeEventListener("pagehide", pageHide)
+      window.removeEventListener("pagehide", pageHide)
       if (window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ === nativeFlush) {
         delete window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__
       }
@@ -465,7 +474,10 @@ export function useAppSessionCapture() {
       schedule()
     },
     createRestoredTabCommitGuard(index: number) {
-      return preservation ? createRestoredTabCommitGuard(preservation, index) : () => false
+      const owner = preservation
+      if (!owner) return () => false
+      const current = createRestoredTabCommitGuard(owner, index)
+      return () => preservation === owner && current()
     },
     removeRestoredTab(index: number) {
       const tab = preservation?.sourceTabs[index]

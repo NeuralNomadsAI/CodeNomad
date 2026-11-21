@@ -39,7 +39,7 @@ Tab aramayı açar, oklar ve Enter seçim yapar, Escape odağı `+` düğmesine 
 
 Kapatılan sekmenin gönderilmemiş taslakları ve ekleri, aynı klasörü o pencerede yeniden açtığınızda geri gelir; pencere bunları yeniden yüklenene veya kapanana kadar en son kapatılan 16 proje için tutar. Başlangıç geri yüklemesine dahil değildir.
 
-Bir pencereyi veya tarayıcı sekmesini kapattığınızda, uygulamadan çıktığınızda ya da tarayıcı sayfasını yenilediğinizde ilgili proje bağlantıları bırakılır. Diğer pencerelerin sekmeleri açık kalır. Başlangıçta geri yükleme, kayıtlı sekmeleri yeniden bağlar ve açık geçici klasörleri korur. Yürütmeyi sonlandırmak için ilgili çalıştırmaları açıkça durdurun; paylaşılan hizmetin bakımı için [OpenCode kurulumu](opencode.md) bölümüne bakın.
+Bir pencereyi veya tarayıcı sekmesini kapattığınızda ya da yenilediğinizde veya uygulamadan çıktığınızda ilgili proje bağlantıları bırakılır. Diğer pencerelerin sekmeleri açık kalır. Başlangıçta geri yükleme, kayıtlı sekmeleri yeniden bağlar ve açık geçici klasörleri korur. Yürütmeyi sonlandırmak için ilgili çalıştırmaları açıkça durdurun; paylaşılan hizmetin bakımı için [OpenCode kurulumu](opencode.md) bölümüne bakın.
 
 Başlangıç geri yüklemesi etkinken kalan her sekme kendi panel tercihlerini, Görev seçimini ve okuyucusunu, sohbet veya web önizlemesi seçimini geri yükler. Tarayıcı URL'leri ve geçmişi oturum başına paylaşılır; kayıtlı sayfalar yalnızca web önizlemesi açıkça yeniden açıldığında yüklenir. Bir örneği kapatmak yalnızca o örneğin kayıtlı görünümünü kaldırır; klasörü yeniden açmak yeni bir örnek oluşturur.
 

@@ -17,7 +17,7 @@ before(async () => {
 })
 after(async () => { await browser?.close() })
 
-for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse", "offline", "auth", "pairing", "refused", "absent", "disabled", "closed", "uncertain", "partial-refusal", "auto-off"]) {
+for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse", "offline", "auth", "pairing", "refused", "absent", "disabled", "closed", "uncertain", "partial-refusal", "auto-off", "cancel-quit"]) {
   test(`${host}: real restore hook preserves remote occurrences (${mode})`, async () => {
     const context = await browser.newContext()
     const page = await context.newPage()
@@ -193,6 +193,26 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
         assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), tabs[2].id)
         const expectedCreates = mode === "partial-refusal" ? 3 : 2
         assert.equal(creates.filter(value => value === "a:/same").length, expectedCreates)
+        if (mode === "cancel-quit") {
+          await page.evaluate(async () => {
+            const flush = window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__!
+            await flush("prepare")
+            await flush("release")
+            const fixture = (window as any).restoreFixture
+            for (const tab of fixture.tabs()) fixture.stopped(tab.id)
+          })
+          await page.waitForFunction(() => (window as any).restoreFixture.tabs().length === 0)
+          assert.deepEqual(projects.map(project => project.id), ["existing-0", "existing-1"], "only the renderer's records went through the relay")
+          generation++
+          await page.evaluate(() => window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__!("cancel"))
+          await page.waitForFunction(() => (window as any).restoreFixture.tabs().filter((tab: any) => tab.kind === "instance").length === 3)
+          const recovered = await page.evaluate(() => (window as any).restoreFixture.tabs())
+          assert.deepEqual(recovered.map((tab: any) => tab.drafts.__no_session_draft__), ["draft-0", "draft-1", "draft-2"])
+          assert.ok(recovered.slice(1).every((tab: any) => tab.id.startsWith("instance:a~remote-1")))
+          assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), recovered[2].id)
+          assert.deepEqual(errors, [])
+          return
+        }
         const before = creates.length
         await page.waitForFunction(() => Boolean((window as any).committedState))
         const immediateReload = host === "electron" && mode === "reuse"

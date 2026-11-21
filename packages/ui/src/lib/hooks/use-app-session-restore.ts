@@ -275,7 +275,7 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
   await Promise.all([...existing.map((match) => restoreWorkspace(match)), restoreMissing(), ...sidecars])
 }
 export function useAppSessionRestore(): void {
-  const capture = useAppSessionCapture()
+  const capture = useAppSessionCapture(recoverReleasedTabs)
   const controller = new AbortController()
   let disposed = false
   let context: RestoreContext | undefined
@@ -324,6 +324,35 @@ export function useAppSessionRestore(): void {
       },
     })
     return id
+  }
+  function recoverReleasedTabs(snapshot: RestorableSessionState) {
+    if (disposed || !snapshot.tabs.some(tab => tab.kind === "workspace")) return
+    const live = appTabs()
+    const recovery = createRestoreContext(snapshot, controller.signal, capture, offerRecovery)
+    const indexes = new Map<number, () => boolean>()
+    batch(() => {
+      capture.start(snapshot)
+      context = recovery
+      for (const tab of live) {
+        if (tab.kind === "instance") detachInstanceTabMembership(tab.instance.id)
+        else if (tab.kind === "remote-restore") removeRemoteRestoreTab(tab.id)
+      }
+      snapshot.tabs.forEach((tab, index) => {
+        if (tab.kind === "sidecar") {
+          capture.recordRestoredTab(index, live.find(candidate =>
+            candidate.kind === "sidecar" && candidate.sidecarTab.sidecarId === tab.sidecarId)?.id ?? null)
+          return
+        }
+        addPlaceholder(tab, index)
+        indexes.set(index, capture.createRestoredTabCommitGuard(index))
+      })
+      recovery.applyOrder()
+      recovery.selectActive(capture.restoredTabIds()[snapshot.activeTabIndex] ?? null, true)
+    })
+    // Use the same attempt/Retry path as startup, without reopening live SideCars.
+    initialRestore = initialRestore.then(() => restoreTabs(recovery, indexes)).catch(error => {
+      if (!disposed) log.error("Failed to restore projects after cancelled shutdown", error)
+    })
   }
   const stopLifecycle = onInstanceLifecycleAuthority(event => {
     if (event.type !== "unavailable" || backendIdOf(event) === LOCAL_BACKEND_ID

@@ -503,6 +503,11 @@ test("normal quit reports a failed CLI shutdown without allowing exit", async ()
   const calls: string[] = []
   const events = new Map<string, Function>()
   const first = windowRecord("one", calls)
+  const execute = first.window.webContents.executeJavaScript
+  first.window.webContents.executeJavaScript = (source, userGesture) => {
+    if (source.includes('flush("cancel")')) calls.push("cancel")
+    return execute(source, userGesture)
+  }
   const lifecycle = new MultiwindowLifecycle({
     app: { on: (name: string, handler: Function) => events.set(name, handler), quit: () => {}, exit: () => calls.push("exit") } as never,
     clientStateManager: { isPrimary: true, flush: async () => {}, drainAndReleasePrimary: async () => calls.push("release") } as never,
@@ -516,6 +521,8 @@ test("normal quit reports a failed CLI shutdown without allowing exit", async ()
   assert.equal(calls.includes("prevent"), true)
   assert.equal(calls.includes("exit"), false)
   assert.equal(calls.includes("release"), false)
+  assert.ok(calls.indexOf("renderer:one") < calls.indexOf("workspace-release:one"))
+  assert.ok(calls.indexOf("workspace-release:one") < calls.indexOf("cancel"), "a refused quit cancels the renderer's release")
   assert.ok(calls.indexOf("show:one") > calls.indexOf("hide:one"))
 })
 

@@ -3010,7 +3010,8 @@ mod menu_tests {
                 "notification:allow-is-permission-granted",
                 "notification:allow-request-permission",
                 "notification:allow-notify",
-                "allow-notification-badge-set"
+                "allow-notification-badge-set",
+                "allow-client-state-renderer-flushed"
             ])
         );
 
@@ -3035,7 +3036,7 @@ mod menu_tests {
             .iter()
             .any(|permission| permission
                 .as_str()
-                .is_some_and(|value| value.starts_with("allow-cli"))));
+                .is_some_and(|value| value.starts_with("allow-cli-"))));
     }
 
     #[test]

@@ -167,13 +167,22 @@ for (const home of [false, true]) test(`Open elsewhere is informational and back
       await openedWithFocus(page)
     }
     const surface = home ? page : launcher(page)
-    const dot = surface.getByRole("img", { name: "Open elsewhere", exact: true })
+    const dot = surface.getByRole("listitem").locator(".status-dot.ready")
     await dot.waitFor()
     assert.equal(await dot.count(), 1, "the local tab, another backend and an unready record add no dots")
-    assert.equal(await dot.getAttribute("title"), "Open elsewhere")
     assert.equal(await dot.getAttribute("tabindex"), null)
-    const row = surface.getByRole("listitem").filter({ has: page.getByRole("img", { name: "Open elsewhere", exact: true }) })
-    await row.getByRole("button", { name: /Blender tools/ }).click()
+    const row = surface.getByRole("listitem").filter({ has: page.locator(".status-dot.ready") })
+    const button = row.getByRole("button", { name: /Blender tools/ })
+    assert.equal(await button.getAttribute("aria-description"), "Open elsewhere")
+    await button.hover()
+    await page.getByRole("tooltip", { name: "Open elsewhere" }).waitFor()
+    await page.keyboard.press("Escape")
+    await button.focus()
+    await page.getByRole("tooltip", { name: "Open elsewhere" }).waitFor()
+    if (home) {
+      const point = (await dot.boundingBox())!
+      await page.mouse.click(point.x + point.width / 2, point.y + point.height / 2)
+    } else await button.click()
     assert.deepEqual(await calls(), ["folder:D:/blender"])
   } finally { await page.close() }
 })

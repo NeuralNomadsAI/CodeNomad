@@ -38,7 +38,7 @@ Tab permite buscar, las flechas y Enter seleccionan y Escape devuelve el foco a 
 
 Los borradores y adjuntos sin enviar de la pestaña cerrada vuelven al reabrir la misma carpeta en esa ventana; la ventana los conserva para sus 16 últimos proyectos cerrados hasta que se recarga o se cierra. No forman parte de la restauración al iniciar.
 
-Al cerrar una ventana o pestaña del navegador, salir de la aplicación o recargar una página del navegador, se liberan las conexiones correspondientes. Las demás ventanas conservan sus pestañas. La restauración al iniciar vuelve a conectar las pestañas guardadas y conserva las carpetas temporales abiertas. Detén las ejecuciones explícitamente si quieres terminarlas; consulta la [configuración de OpenCode](opencode.md) para el mantenimiento del servicio compartido.
+Al cerrar o recargar una ventana o pestaña del navegador, o al salir de la aplicación, se liberan las conexiones correspondientes. Las demás ventanas conservan sus pestañas. La restauración al iniciar vuelve a conectar las pestañas guardadas y conserva las carpetas temporales abiertas. Detén las ejecuciones explícitamente si quieres terminarlas; consulta la [configuración de OpenCode](opencode.md) para el mantenimiento del servicio compartido.
 
 Con la restauración al iniciar activada, cada pestaña restante recupera sus propias opciones de paneles, selección y lector de Misión, y elección entre chat y vista previa web. Las URL y el historial del navegador se comparten por sesión; las páginas guardadas se cargan solo al reabrir explícitamente la vista previa web. Cerrar una instancia elimina solo su vista guardada; reabrir la carpeta crea una instancia nueva.
 

@@ -201,21 +201,31 @@ for (const remote of [false, true]) test(`${remote ? "desktop remote" : "storage
 })
 
 const viewCases = [
-  { web: false, close: false }, { web: false, close: true },
-  { web: true, close: false }, { web: true, close: false, broadcast: true },
+  { web: false, close: false }, { web: false, close: false, tauri: true }, { web: false, close: true },
+  { web: true, close: false }, { web: true, close: false, noLock: true },
   { web: true, close: true, late: true }, { web: true, close: false, discard: true },
 ]
-for (const { web, close, late, broadcast, discard } of viewCases) test(`${web ? "browser-session" : "native"} production capture/restore binds duplicate UUIDs after ${close ? "closure" : "reorder"} (${late ? "late DELETE" : discard ? "discard" : broadcast ? "broadcast" : "navigation"})`, async () => {
+for (const { web, close, late, noLock, discard, tauri } of viewCases) test(`${web ? "browser-session" : "native"} production capture/restore binds duplicate UUIDs after ${close ? "closure" : "reorder"} (${late ? "late DELETE" : discard ? "discard" : noLock ? "no Web Locks" : tauri ? "Tauri navigation" : "navigation"})`, async () => {
   const context = await browser.newContext()
   const page = await context.newPage()
   const errors: string[] = [], loads: string[] = []
   page.on("pageerror", error => errors.push(error.message))
-  await context.addInitScript(({ web, broadcast, discard }) => {
+  await context.addInitScript(({ web, noLock, discard, tauri }) => {
     if (location.search === "?other") return
-    if (broadcast) Object.defineProperty(navigator, "locks", { value: undefined })
+    if (noLock) {
+      Object.defineProperty(navigator, "locks", { value: undefined })
+      // Reproduce a live HTTP opener whose reply arrives after the old claim timeout.
+      if (!window.opener) {
+        const send = BroadcastChannel.prototype.postMessage
+        BroadcastChannel.prototype.postMessage = function (message) {
+          if (message.occupied) setTimeout(() => send.call(this, message), 2_000)
+          else send.call(this, message)
+        }
+      }
+    }
     const w = window as any
     w.__name = (value: unknown) => value
-    w.__CODENOMAD_RUNTIME_HOST__ = web ? "web" : "electron"; w.__CODENOMAD_WINDOW_CONTEXT__ = "local"
+    w.__CODENOMAD_RUNTIME_HOST__ = web ? "web" : tauri ? "tauri" : "electron"; w.__CODENOMAD_WINDOW_CONTEXT__ = "local"
     w.EventSource = class extends EventTarget { close() {} }
     const boot = Number(sessionStorage.getItem("boot") ?? 0) + 1
     sessionStorage.setItem("boot", String(boot)); w.boot = boot
@@ -235,12 +245,34 @@ for (const { web, close, late, broadcast, discard } of viewCases) test(`${web ? 
       if (discard && boot === 1) window.addEventListener("pagehide", event => {
         if (!event.persisted) event.stopImmediatePropagation()
       }, { capture: true })
-    } else w.electronAPI = {
+    } else if (tauri) {
+      const callbacks = new Map(), events = new Map(), acknowledgements: number[] = []
+      w.__TAURI_INTERNALS__ = {
+        metadata: { currentWindow: { label: "local-test" }, currentWebview: { label: "local-test" } },
+        transformCallback: (callback: Function) => { const id = callbacks.size + 1; callbacks.set(id, callback); return id },
+        invoke: async (command: string, args: any) => {
+          if (command === "plugin:event|listen") {
+            if (args.event.startsWith("client-state:flush-") && args.target.label !== "local-test") throw new Error("wrong webview target")
+            events.set(args.event, args.handler)
+            return args.handler
+          }
+          if (command === "client_state_renderer_flushed") acknowledgements.push(args.generation)
+          if (command === "client_state_load") return w.electronAPI.loadClientState()
+          if (command === "client_state_save") return w.electronAPI.saveClientState("", args.snapshot)
+          return true
+        },
+      }
+      w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} }
+      w.emitFlush = (cancelled: boolean, generation: number, releaseOnly?: boolean) =>
+        callbacks.get(events.get(`client-state:flush-${cancelled ? "cancelled" : "requested"}`))?.({ payload: { generation, releaseOnly } })
+      w.acknowledgements = acknowledgements
+    }
+    if (!web) w.electronAPI = {
       claimClientStateAccess: async () => true,
       loadClientState: async () => ({ isPrimary: true, restoreEnabled: true, snapshot: JSON.parse(sessionStorage.getItem("snapshot") ?? "null") ?? initial }),
       saveClientState: async (_token: string, snapshot: unknown) => { sessionStorage.setItem("snapshot", JSON.stringify(snapshot)); return true },
     }
-  }, { web, broadcast, discard })
+  }, { web, noLock, discard, tauri })
   let sequence = 0
   let inventory = ["web-0", "web-1", "other-window"]
   let holdNativeRelease = false
@@ -313,7 +345,7 @@ for (const { web, close, late, broadcast, discard } of viewCases) test(`${web ? 
     await page.locator('[data-restoring="false"]').waitFor()
     await page.waitForFunction(() => (window as any).tabViews.ids().length === 2)
     const ids = await page.evaluate(() => (window as any).tabViews.ids()) as string[]
-    assert.equal(ids.includes("web-0"), web, "only an unmarked browser page reclaims its exact record")
+    if (!noLock) assert.equal(ids.includes("web-0"), web, "only an unmarked browser page reclaims its exact record")
     assert.deepEqual(await page.evaluate(ids => ids.map((id: string) => (window as any).tabViews.view(id).missions?.selected), ids),
       ["legacy-mission", undefined], "folder Mission selection adopts into the first descriptor only")
     const legacyUrls = await page.evaluate(async id => {
@@ -341,7 +373,7 @@ for (const { web, close, late, broadcast, discard } of viewCases) test(`${web ? 
       }, close)
       assert.deepEqual(deletes, close ? ["web-0"] : [], "entering and leaving bfcache does not delete any records")
       assert.equal(await page.evaluate(() => sessionStorage.getItem("codenomad.client-state.records-released")), null)
-    } else {
+    } else if (close) {
       await page.evaluate(() => window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__!("prepare"))
       assert.ok(ids.slice(close ? 1 : 0).every(id => !deletes.includes(id)), "snapshot preparation sends no release")
       holdNativeRelease = true
@@ -349,7 +381,7 @@ for (const { web, close, late, broadcast, discard } of viewCases) test(`${web ? 
       assert.ok(ids.slice(close ? 1 : 0).every(id => deletes.includes(id)), "approved native release dispatches without waiting indefinitely for DELETE")
       assert.ok(inventory.includes("other-window"))
       finishNativeRelease.resolve()
-    }
+    } else await page.evaluate(() => window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__!())
     const captured = await page.evaluate(web => JSON.parse(sessionStorage.getItem(web ? "codenomad.client-state.v1" : "snapshot")!).session.tabs, web)
     assert.equal(captured.length, close ? 1 : 2)
     assert.equal(captured[0].viewState.missions.reader.kind, "playbook")
@@ -377,10 +409,11 @@ for (const { web, close, late, broadcast, discard } of viewCases) test(`${web ? 
         return ids.every(id => !rows.some((row: any) => row.id === id))
       }, copied.map((v: any) => v.id))
       assert.ok(ids.every(id => inventory.includes(id)), "closing a popup with copied sessionStorage keeps the opener's records")
+      if (noLock) assert.ok(ids.every(id => !id.startsWith("web-")), "a page cannot reclaim saved IDs without a Web Lock")
     }
     const count = loads.length
     await page.reload(); await page.locator('[data-restoring="false"]').waitFor()
-    if (web) assert.equal(deletes.includes("web-1"), !discard, "reload sends the keepalive DELETE unless pagehide was skipped")
+    assert.equal(deletes.includes(ids[1]), !discard, "reload sends the keepalive DELETE unless pagehide was skipped")
     const restored = await page.evaluate(() => (window as any).tabViews.ids().map((id: string) => ({ id, view: (window as any).tabViews.view(id) })))
     assert.equal(restored.length, captured.length)
     if (discard) {
@@ -397,6 +430,32 @@ for (const { web, close, late, broadcast, discard } of viewCases) test(`${web ? 
     assert.equal(await page.locator('[role="tab"][aria-selected="true"]').getAttribute("data-session-selection"), "same")
     assert.deepEqual(restored.map((v: any) => v.view), captured.map((v: any) => v.viewState))
     assert.equal(loads.length, count, "restoration allocates zero preview records and loads zero saved pages")
+    if (!web && !close) {
+      const released = restored.map((row: any) => row.id)
+      const flush = (generation: number, phase: "prepare" | "release" | "cancel") => page.evaluate(async ({ phase, generation, tauri }) => {
+        if (tauri) (window as any).emitFlush(phase === "cancel", generation, phase === "release")
+        else await window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__!(phase)
+      }, { generation, phase, tauri })
+      await flush(1, "prepare")
+      if (tauri) await page.waitForFunction(() => (window as any).acknowledgements.includes(1))
+      await flush(2, "release")
+      if (tauri) await page.waitForFunction(() => (window as any).acknowledgements.includes(2))
+      assert.ok(released.every(id => deletes.includes(id)))
+      await page.evaluate(ids => { for (const id of ids) (window as any).tabViews.remove(id) }, released)
+      await page.waitForFunction(() => (window as any).tabViews.ids().length === 0)
+      await page.evaluate(() => window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__!())
+      assert.deepEqual(await page.evaluate(() => JSON.parse(sessionStorage.getItem("snapshot")!).session.tabs
+        .map((tab: any) => tab.workspaceId)), released, "a navigation flush during release cannot commit the empty renderer")
+      await flush(1, "cancel")
+      await page.waitForFunction(() => (window as any).tabViews.ids().length === 2, undefined, { timeout: 5_000 })
+      const recovered = await page.evaluate(() => (window as any).tabViews.ids().map((id: string) => ({ id, view: (window as any).tabViews.view(id) })))
+      assert.ok(recovered.every((row: any) => !released.includes(row.id)))
+      assert.deepEqual(recovered.map((row: any) => row.view), restored.map((row: any) => row.view))
+      assert.equal(await page.evaluate(id => (window as any).tabViews.draft(id), recovered[0].id), "restored draft")
+      assert.equal(await page.locator('[role="tab"][aria-selected="true"]').getAttribute("data-session-selection"), "same")
+      await page.waitForFunction(ids => JSON.parse(sessionStorage.getItem("snapshot")!).session.tabs
+        .map((tab: any) => tab.workspaceId).join() === ids.join(), recovered.map((row: any) => row.id))
+    }
     assert.deepEqual(errors, [])
     if (late) {
       assert.ok(inventory.includes("web-1"), "the old record was listed when the replacement restored")

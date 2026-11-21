@@ -18,7 +18,7 @@ before(async () => {
 })
 after(async () => { await browser?.close() })
 
-for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"]) test(`web mobile HTTP: ${mode}, A/B identities and explicit recovery`, { timeout: 120_000 }, async () => {
+for (const mode of ["present", "offline", "missing", "rate-limited", "uncertain"]) test(`web mobile HTTP: ${mode}, A/B identities and explicit recovery`, { timeout: 120_000 }, async () => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
     userAgent: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/130.0.0.0 Mobile Safari/537.36" })
   const page = await context.newPage()
@@ -44,7 +44,7 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
     }
   })
   let healthy = mode !== "offline"
-  const inventories = new Map(["a", "b"].map(id => [id, !["reuse", "offline"].includes(mode) && id === "b" ? [] : [
+  const inventories = new Map(["a", "b"].map(id => [id, !["present", "offline"].includes(mode) && id === "b" ? [] : [
     descriptor("sibling", "/same"), descriptor("same", "/same"),
   ]]))
   await context.route(url => /^\/(?:api|workspaces)\//.test(url.pathname), async route => {
@@ -66,7 +66,7 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
         assert(owner, "web restore must never create a local workspace")
         creates.push(owner)
         requestIds.push(request.postDataJSON().requestId)
-        if (creates.length === 1 && ["rate-limited", "uncertain"].includes(mode)) {
+        if (owner === "b" && creates.filter(id => id === "b").length === 1 && ["rate-limited", "uncertain"].includes(mode)) {
           return route.fulfill({ status: mode === "rate-limited" ? 429 : 499, json: { error: "refused" } })
         }
         body = { ...descriptor(`opened-${creates.length}`, "/same"), requestId: request.postDataJSON().requestId }
@@ -83,10 +83,10 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
     const tabs = () => page.evaluate(() => (window as any).restoreFixture.tabs())
     let state = await tabs()
     assert.equal(state.length, 2)
-    assert.equal(state[0].id, "instance:a~same", "saved record wins over folder occurrence zero")
+    assert.match(state[0].id, /^instance:a~opened-/, "HTTP creates a new record even when the saved one still exists")
     assert.equal(state[0].drafts.__no_session_draft__, "draft-a")
     assert.equal(state[1].drafts.__no_session_draft__, "draft-b")
-    assert.deepEqual(creates, ["reuse", "offline"].includes(mode) ? [] : ["b"], "only a missing record on an admitted server is created")
+    assert.deepEqual([...creates].sort(), mode === "offline" ? ["a"] : ["a", "b"], "only admitted servers receive a new record")
     if (mode === "offline") {
       assert.equal(state[1].kind, "remote-restore")
       await page.getByRole("button", { name: "Connect", exact: true }).click()
@@ -99,14 +99,14 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
       await page.getByRole("button", { name: "Retry", exact: true }).click()
       await page.waitForFunction(() => !document.querySelector("[data-remote-restore] button:disabled"))
       if (mode === "uncertain") {
-        assert.deepEqual(creates, ["b"], "an uncertain 499 never replays its creation")
+        assert.deepEqual([...creates].sort(), ["a", "b"], "an uncertain 499 never replays its creation")
         assert.equal((await tabs())[1].drafts.__no_session_draft__, "draft-b")
         return
       }
     }
     await page.waitForFunction(() => (window as any).restoreFixture.tabs().every((tab: any) => tab.kind === "instance"))
-    const expectedCreates = mode === "rate-limited" ? ["b", "b"] : mode === "missing" ? ["b"] : []
-    assert.deepEqual(creates, expectedCreates)
+    const expectedCreates = mode === "rate-limited" ? ["a", "b", "b"] : ["a", "b"]
+    assert.deepEqual([...creates].sort(), expectedCreates)
     for (const id of requestIds) assert.match(id, /^restore-[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i, "HTTP creation IDs use the shared cryptographic UUID helper")
     state = await tabs()
     assert.deepEqual(state.map((tab: any) => tab.drafts.__no_session_draft__), ["draft-a", "draft-b"])

@@ -1,11 +1,12 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, on } from "solid-js"
+import { Tooltip } from "@kobalte/core/tooltip"
 import { Search } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { filterRecents, formatRelativeTime, getDisplayPath, getProjectDisplayName } from "../lib/recent-folder-display"
-import { joinRecentOpenTarget, recentAccessibleName, recentOpenTarget, launchableRecents, type LaunchableRecent } from "../lib/recent-open-target"
+import { joinRecentOpenTarget, recentAccessibleName, recentOpenElsewhere, recentOpenTarget, launchableRecents, type LaunchableRecent } from "../lib/recent-open-target"
 import RemoteRecentSession from "./remote-recent-session"
 import RecentTabIcon from "./recent-tab-icon"
-import RecentOpenElsewhere from "./recent-open-elsewhere"
+import RecentOpenElsewhere, { RecentOpenElsewhereTooltip } from "./recent-open-elsewhere"
 import { remoteRecentProjectsUsable, type RemoteRecentProject } from "../stores/recent-projects"
 import { ensureSidecarsLoaded } from "../stores/sidecars"
 import { sidecarsAllowed } from "../lib/server-meta"
@@ -79,25 +80,30 @@ export default function RecentTabsMenu(props: {
       <div class="window-body new-instance-launcher-recents" id={listId} role="list"
         aria-label={t("newInstanceLauncher.recentTitle")} ref={list} onKeyDown={(event) => navigate(event)}>
         <For each={matches()} fallback={<p class="new-instance-launcher-empty" role="status">{t(launchableRecents().length ? "newInstanceLauncher.noMatch" : "newInstanceLauncher.empty")}</p>}>
-          {(recent, position) => (
+          {(recent, position) => {
+            const elsewhere = () => recentOpenElsewhere(recent) ? t("folderSelection.recent.openElsewhere") : undefined
+            return (
             <div class="new-instance-launcher-recent" role="listitem" data-open={recentOpenTarget(recent) ? "true" : undefined}
               data-remote-server={recent.kind === "remote" ? recent.backendId : undefined} data-sidecar={recent.kind === "sidecar" ? recent.path : undefined}>
               <Show when={recent.kind === "remote" && connectingRecent() === recent ? recent : undefined} keyed fallback={<>
-              <button type="button" class="new-instance-launcher-recent-primary" disabled={props.isLoading}
-                aria-label={recentAccessibleName(recent)} title={recentAccessibleName(recent)} data-launcher-index={position()}
-                onFocus={() => setIndex(position())} onClick={() => open(recent)}>
-                <RecentTabIcon recent={recent} class="w-4 h-4 icon-muted shrink-0" />
-                <span class="new-instance-launcher-recent-details">
-                  <span class="new-instance-launcher-recent-name">{getProjectDisplayName(recent.path, recent.projectName)}</span>
-                  <span class="new-instance-launcher-recent-path">
-                    <Show when={recent.kind === "remote" ? recent.serverLabel : undefined}>{name => <><bdi>{name()}</bdi><span aria-hidden="true"> · </span></>}</Show>
-                    <Show when={recent.kind === "local"}><span>{t("folderSelection.browseMenu.thisComputer")} · </span></Show>
-                    <Show when={recent.kind !== "sidecar"} fallback={t("folderSelection.recent.sidecar")}><bdi dir="ltr">{getDisplayPath(recent.path)}</bdi></Show>
+              <RecentOpenElsewhereTooltip label={elsewhere()}>
+                <Tooltip.Trigger as="button" type="button" class="new-instance-launcher-recent-primary" disabled={props.isLoading}
+                  aria-label={recentAccessibleName(recent)} aria-description={elsewhere()}
+                  title={elsewhere() ? undefined : recentAccessibleName(recent)} data-launcher-index={position()}
+                  onFocus={() => setIndex(position())} onClick={() => open(recent)}>
+                  <RecentTabIcon recent={recent} class="w-4 h-4 icon-muted shrink-0" />
+                  <span class="new-instance-launcher-recent-details">
+                    <span class="new-instance-launcher-recent-name">{getProjectDisplayName(recent.path, recent.projectName)}</span>
+                    <span class="new-instance-launcher-recent-path">
+                      <Show when={recent.kind === "remote" ? recent.serverLabel : undefined}>{name => <><bdi>{name()}</bdi><span aria-hidden="true"> · </span></>}</Show>
+                      <Show when={recent.kind === "local"}><span>{t("folderSelection.browseMenu.thisComputer")} · </span></Show>
+                      <Show when={recent.kind !== "sidecar"} fallback={t("folderSelection.recent.sidecar")}><bdi dir="ltr">{getDisplayPath(recent.path)}</bdi></Show>
+                    </span>
                   </span>
-                </span>
-              </button>
+                </Tooltip.Trigger>
+              </RecentOpenElsewhereTooltip>
               <Show when={recentOpenTarget(recent)} fallback={<span class="new-instance-launcher-recent-meta inline-flex items-center gap-2">
-                {formatRelativeTime(t, recent.lastAccessed)}<RecentOpenElsewhere recent={recent} />
+                {formatRelativeTime(t, recent.lastAccessed)}<RecentOpenElsewhere label={elsewhere()} />
               </span>}>
                 <button type="button" class="folder-home-open-instance-button" disabled={props.isLoading}
                   title={t("folderSelection.recent.switchToOpenProject")}
@@ -113,7 +119,7 @@ export default function RecentTabsMenu(props: {
                   onOpened={() => props.onRun?.()} />}
               </Show>
             </div>
-          )}
+          )}}
         </For>
       </div>
     </div>

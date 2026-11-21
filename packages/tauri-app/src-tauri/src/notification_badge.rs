@@ -515,7 +515,8 @@ mod tests {
                 "notification:allow-is-permission-granted",
                 "notification:allow-request-permission",
                 "notification:allow-notify",
-                "allow-notification-badge-set"
+                "allow-notification-badge-set",
+                "allow-client-state-renderer-flushed"
             ])
         );
     }
