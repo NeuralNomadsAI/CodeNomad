@@ -1,0 +1,38 @@
+[package]
+name = "codenomad-rune-chat"
+version = "0.1.0"
+edition = "2024"
+publish = false
+default-run = "codenomad-rune-chat"
+
+[[bin]]
+name = "codenomad-rune-chat"
+path = "src/main.rs"
+
+[[bin]]
+name = "codenomad-rune-live"
+path = "src/main.rs"
+
+[[bin]]
+name = "codenomad-rune-recovery"
+path = "src/main.rs"
+
+[dependencies]
+rune = { path = "../../.prototype-deps/rune/crates/rune", default-features = false, features = ["embedded-fonts", "accessibility", "tooling", "segmenter-dictionaries"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "cookies"] }
+
+[package.metadata.rune]
+repository = "https://github.com/anomalyco/rune"
+rev = "21e5342b9a4cc33eeee88071b4b1f0eafb1247d4"
+
+[patch.crates-io]
+wgpu-hal = { path = "../../.prototype-deps/rune/vendor/wgpu-hal" }
+winit = { path = "../../.prototype-deps/rune/vendor/winit" }
+parley_engine = { path = "../../.prototype-deps/rune/vendor/parley_engine" }
+accesskit_windows = { path = "../../.prototype-deps/rune/vendor/accesskit_windows" }
+accesskit_macos = { path = "../../.prototype-deps/rune/vendor/accesskit_macos" }
+sctk-adwaita = { path = "../../.prototype-deps/rune/vendor/sctk-adwaita" }
+
+[profile.dev]
+debug = 0

@@ -1,0 +1,10 @@
+import {mkdir} from 'node:fs/promises'
+import path from 'node:path'
+export async function privateEnvironment(profile) {
+  const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>/^(PATH|PATHEXT|SYSTEMROOT|WINDIR|COMSPEC|SYSTEMDRIVE|OS|NUMBER_OF_PROCESSORS|PROCESSOR_ARCHITECTURE|PROGRAMFILES|PROGRAMFILES\(X86\)|PROGRAMW6432|COMMONPROGRAMFILES|COMMONPROGRAMFILES\(X86\)|COMMONPROGRAMW6432)$/i.test(key)))
+  for(const [name,relative] of Object.entries({HOME:'home',USERPROFILE:'home',APPDATA:'home/AppData/Roaming',LOCALAPPDATA:'home/AppData/Local',
+    XDG_CONFIG_HOME:'xdg/config',XDG_DATA_HOME:'xdg/data',XDG_STATE_HOME:'xdg/state',XDG_CACHE_HOME:'xdg/cache',TEMP:'tmp',TMP:'tmp',CLI_CONFIG:'config'})) {
+    env[name]=path.join(profile,relative);await mkdir(env[name],{recursive:true})
+  }
+  return {...env,GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled',RUST_BACKTRACE:'1'}
+}
