@@ -39,6 +39,7 @@ export const folderSelectionMessages = {
   "newInstanceLauncher.searchLabel": "हालका परियोजनाहरू खोज्नुहोस्",
   "newInstanceLauncher.searchPlaceholder": "हालका ट्याबहरू खोज्नुहोस्…",
   "newInstanceLauncher.recentTitle": "हालका ट्याबहरू",
+  "newInstanceLauncher.description": "हालको परियोजना छान्नुहोस्।",
   "newInstanceLauncher.empty": "अहिलेसम्म कुनै हालको परियोजना छैन।",
   "newInstanceLauncher.noMatch": "कुनै परियोजना मेल खाँदैन।",
   "folderSelection.recent.switchToOpenProject": "खुला परियोजनामा जानुहोस्",
@@ -61,7 +62,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.errorRequired": "रिपोजिटरी URL र गन्तव्य फोल्डर आवश्यक छ।",
   "folderSelection.actions.connectButton": "CodeNomad सर्भर जडान गर्नुहोस्",
 
-  "folderSelection.opencode": "OpenCode",
 
 
   "folderSelection.loading.title": "उदाहरण सुरु गर्दै...",
@@ -111,7 +111,7 @@ export const folderSelectionMessages = {
   "projectRenameDialog.actions.cancel": "रद्द गर्नुहोस्",
   "projectRenameDialog.actions.rename": "पुन: नामकरण गर्नुहोस्",
   "projectRenameDialog.actions.renaming": "पुन: नामकरण गर्दै...",
-  "newTab.temporary": "अस्थायी",
+  "newTab.temporary": "अस्थायी ट्याब",
   "newTab.title": "नयाँ ट्याब",
   "newTab.items.one": "{count} वस्तु",
   "newTab.items.other": "{count} वस्तुहरू",

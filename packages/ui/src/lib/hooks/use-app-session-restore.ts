@@ -8,7 +8,6 @@ import {
   type RestorableSessionState,
 } from "../../stores/client-state"
 import { releaseAppSessionRestoreGate } from "../../stores/app-session-restore-gate"
-import { setShowFolderSelection } from "../../stores/ui"
 import {
   matchesRestoredServer, mayCreateRestoredWorkspace, reconcileWorkspaceTabs, resolveRestoredActiveTabId, shouldRestoreSessionState,
 } from "../../stores/app-session-reconciliation"
@@ -404,7 +403,6 @@ export function useAppSessionRestore(): void {
   onMount(() => {
     const snapshot = applyReloadTabSelection(loadedRestorableSession())
     const shouldRestore = shouldRestoreSessionState(clientStateIsPrimary(), restorePreviousStateEnabled(), snapshot)
-    setShowFolderSelection(snapshot?.homeActive === true)
     initialRestore = (async () => {
       try {
         await capture.ready

@@ -113,7 +113,7 @@ Pour le Contrôle à distance, collez plutôt un lien d’appairage récent dans
 
 ## Ouvrir un projet distant dans un onglet {#remote-project-tabs}
 
-À l’accueil ou dans un nouvel onglet, choisissez **Parcourir**, puis un serveur. Collez une adresse ou un lien d’appairage dans **Adresse ou lien du serveur** pour l’enregistrer. Connectez-vous si nécessaire. Cliquez sur un dossier pour y entrer ; utilisez Entrée dans le champ de chemin ou **Ouvrir** (la flèche) pour l’ouvrir. **Retour à Parcourir** revient à la liste des serveurs.
+Dans un onglet vide, choisissez **Parcourir**, puis un serveur. Collez une adresse ou un lien d’appairage dans **Adresse ou lien du serveur** pour l’enregistrer. Connectez-vous si nécessaire. Cliquez sur un dossier pour y entrer ; utilisez Entrée dans le champ de chemin ou **Ouvrir** (la flèche) pour l’ouvrir. **Retour à Parcourir** revient à la liste des serveurs.
 
 Les projets locaux et distants partagent la même fenêtre. **Onglets récents** affiche les raccourcis du serveur parcouru ; les récents mixtes indiquent l’icône et le nom du serveur pour les projets ouverts ici. [Restaurer les onglets distants](projects.md#restore-remote-tabs).
 

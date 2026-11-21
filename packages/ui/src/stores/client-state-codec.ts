@@ -27,7 +27,7 @@ export interface RestorableWorkspaceTabState {
 
 export interface RestorableSidecarTabState { kind: "sidecar"; sidecarId: string }
 export type RestorableTabState = RestorableWorkspaceTabState | RestorableSidecarTabState
-export interface RestorableSessionState { tabs: RestorableTabState[]; activeTabIndex: number; homeActive?: boolean }
+export interface RestorableSessionState { tabs: RestorableTabState[]; activeTabIndex: number }
 export interface ClientSnapshotV1 {
   version: 1; revision: number; savedAt: number
   layout: Record<string, string>; session: RestorableSessionState | null
@@ -341,7 +341,7 @@ function normalizeSession(value: unknown, budget: StringBudget): RestorableSessi
   const surviving = normalized.findIndex(({ originalIndex }) => originalIndex === requested)
   const next = normalized.findIndex(({ originalIndex }) => originalIndex > requested)
   const activeTabIndex = !tabs.length ? -1 : surviving >= 0 ? surviving : next >= 0 ? next : tabs.length - 1
-  return { tabs, activeTabIndex, ...(value.homeActive === true ? { homeActive: true } : {}) }
+  return { tabs, activeTabIndex }
 }
 
 export function decodeClientSnapshot(value: unknown): ClientSnapshotV1 | null {

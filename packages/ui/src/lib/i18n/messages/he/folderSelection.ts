@@ -41,6 +41,7 @@ export const folderSelectionMessages = {
   "newInstanceLauncher.searchLabel": "חיפוש בפרויקטים אחרונים",
   "newInstanceLauncher.searchPlaceholder": "חיפוש בכרטיסיות אחרונות…",
   "newInstanceLauncher.recentTitle": "כרטיסיות אחרונות",
+  "newInstanceLauncher.description": "בחר פרויקט אחרון.",
   "newInstanceLauncher.empty": "עדיין אין פרויקטים אחרונים.",
   "newInstanceLauncher.noMatch": "אין פרויקט תואם.",
   "folderSelection.recent.switchToOpenProject": "עבור לפרויקט הפתוח",
@@ -63,7 +64,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.errorRequired": "כתובת המאגר ותיקיית היעד הן שדות חובה.",
   "folderSelection.actions.connectButton": "התחבר לשרת CodeNomad",
 
-  "folderSelection.opencode": "OpenCode",
 
 
   "folderSelection.loading.title": "מפעיל מופע...",
@@ -113,7 +113,7 @@ export const folderSelectionMessages = {
   "projectRenameDialog.actions.cancel": "ביטול",
   "projectRenameDialog.actions.rename": "שנה שם",
   "projectRenameDialog.actions.renaming": "משנה שם...",
-  "newTab.temporary": "זמני",
+  "newTab.temporary": "לשונית זמנית",
   "newTab.title": "לשונית חדשה",
   "newTab.items.one": "פריט {count}",
   "newTab.items.other": "{count} פריטים",

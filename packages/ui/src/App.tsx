@@ -29,7 +29,7 @@ import { useCommands } from "./lib/hooks/use-commands"
 import { useAppLifecycle } from "./lib/hooks/use-app-lifecycle"
 import { useAppSessionRestore } from "./lib/hooks/use-app-session-restore"
 import { loadedRestorableSession } from "./stores/client-state"
-import { shouldShowAppHomeOverlay, shouldShowAppRestoreLoading } from "./stores/app-session-restore-gate"
+import { appSessionRestoreGateActive } from "./stores/app-session-restore-gate"
 import { getLogger } from "./lib/logger"
 import { launchError, showLaunchError, clearLaunchError } from "./stores/launch-errors"
 import OpenCodeSetup from "./components/opencode-setup"
@@ -53,8 +53,6 @@ import { useViewMenu } from "./lib/native/view-menu"
 import {
   isSelectingFolder,
   setIsSelectingFolder,
-  showFolderSelection,
-  setShowFolderSelection,
 } from "./stores/ui"
 import { preferencesForBackend, recentFolders, useConfig } from "./stores/preferences"
 import {
@@ -320,7 +318,6 @@ const App: Component = () => {
           await releaseNativeBrowserOpen(requestID)
           return
         }
-        setShowFolderSelection(false)
         selectInstanceTab(instance.id)
         setActiveSessionFromList(instance.id, sessionID, intent)
       } catch (error) {
@@ -345,8 +342,9 @@ const App: Component = () => {
   })
 
   createEffect(() => {
-    appTabs()
-    ensureActiveAppTab()
+    if (appSessionRestoreGateActive()) return
+    if (appTabs().length === 0) openBlankTab()
+    else ensureActiveAppTab()
   })
 
   const activeInstance = createMemo(() => {
@@ -526,14 +524,12 @@ const App: Component = () => {
       if (result.reused) {
         selectInstanceTab(result.instanceId)
         replaceBlankTab(blankId ?? undefined, getInstanceAppTabId(result.instanceId))
-        setShowFolderSelection(false)
         log.info("Selected reused instance", { instanceId: result.instanceId, folderPath })
         return true
       }
 
       selectInstanceTab(result.instanceId)
       replaceBlankTab(blankId ?? undefined, getInstanceAppTabId(result.instanceId))
-      setShowFolderSelection(false)
 
       log.info("Created instance", {
         instanceId: result.instanceId,
@@ -570,7 +566,6 @@ const App: Component = () => {
       const id = await openTemporaryInstance()
       selectInstanceTab(id)
       replaceBlankTab(blankId ?? undefined, getInstanceAppTabId(id))
-      setShowFolderSelection(false)
     } catch (error) {
       const message = formatLaunchErrorMessage(
         error,
@@ -596,7 +591,6 @@ const App: Component = () => {
     recordWorkspaceLaunch(instance.folder, recentPath)
     selectInstanceTab(instanceId)
     if (blankId) closeBlankTab(blankId)
-    setShowFolderSelection(false)
     log.info("Selected existing instance", { instanceId, folderPath: instance.folder })
   }
 
@@ -611,14 +605,12 @@ const App: Component = () => {
 
   function handleNewInstanceRequest() {
     openBlankTab()
-    setShowFolderSelection(false)
   }
 
   const [launcherOpen, setLauncherOpen] = createSignal(false)
   const [launcherAnchor, setLauncherAnchor] = createSignal<HTMLElement>()
-  // The launcher is anchored to the tab bar: the home page or a closed tab bar retires it.
   createEffect(() => {
-    if (showFolderSelection() || appTabs().length === 0) setLauncherOpen(false)
+    if (mobileFullscreenMode()) setLauncherOpen(false)
   })
 
   async function handleOpenSidecar(sidecarId: string, blankId: string | null | undefined = activeBlankTabId()) {
@@ -626,7 +618,6 @@ const App: Component = () => {
       const tab = await openSidecarTab(sidecarId)
       selectSidecarTab(tab.token)
       replaceBlankTab(blankId ?? undefined, getSidecarAppTabId(tab.token))
-      setShowFolderSelection(false)
       preferencesForBackend("local").recordSidecarRecent(sidecarId)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -715,8 +706,6 @@ const App: Component = () => {
     handleCloseActiveTab: () => closeAppTab(activeAppTabId() ?? ""),
     handleNewSession,
     handleCloseSession,
-    showFolderSelection,
-    setShowFolderSelection,
     getActiveInstance: activeInstance,
     getActiveSessionIdForInstance: activeSessionIdForInstance,
   })
@@ -794,7 +783,7 @@ const App: Component = () => {
       </Dialog>
       <AppViewport>
         <Show when={hasNativeTitlebar}>
-          <NativeTitlebar title={t("window.title.main")} logo menus actions />
+          <NativeTitlebar title={t("window.title.main")} logo menus />
         </Show>
         <Show when={mobileFullscreenMode()}>
           <div class="mobile-fullscreen-exit-wrapper">
@@ -810,110 +799,80 @@ const App: Component = () => {
           </div>
         </Show>
         <Show
-          when={appTabs().length === 0}
+          when={appTabs().length > 0}
           fallback={
-            <>
-              <Show when={!mobileFullscreenMode()}>
-                <InstanceTabs
-                  tabs={appTabs()}
-                  activeTabId={activeAppTabId()}
-                  onSelect={selectAppTab}
-                  onClose={(tabId) => void closeAppTab(tabId)}
-                  onNew={handleNewInstanceRequest}
-                  onOpenLauncher={(anchor) => {
-                    // The home page already offers everything; a hidden tab bar must not reopen it.
-                    if (showFolderSelection()) return
-                    setLauncherAnchor(anchor)
-                    setLauncherOpen(true)
-                  }}
-                  launcherOpen={launcherOpen()}
-                  onMoveTab={moveAppTab}
-                />
-              </Show>
-
-              <For each={appTabs()}>
-                {(tab) => {
-                  const isVisible = () => activeAppTabId() === tab.id && !showFolderSelection()
-                  return tab.kind === "instance" ? (
-                    <div
-                      class="flex-1 min-h-0 overflow-hidden"
-                      style={{ display: isVisible() ? "flex" : "none" }}
-                      data-instance-id={tab.instance.id}
-                      data-tab-id={tab.id}
-                      data-tab-kind={tab.kind}
-                      data-tab-visible={isVisible() ? "true" : "false"}
-                    >
-                      <InstanceMetadataProvider instance={tab.instance}>
-                        <InstanceShell
-                          instance={tab.instance}
-                          isActiveInstance={isVisible()}
-                          escapeInDebounce={escapeInDebounce()}
-                          paletteCommands={paletteCommands}
-                          onCloseSession={(sessionId) => handleCloseSession(tab.instance.id, sessionId)}
-                          onNewSession={() => handleNewSession(tab.instance.id)}
-                          handleSidebarAgentChange={(sessionId, agent) => handleSidebarAgentChange(tab.instance.id, sessionId, agent)}
-                          handleSidebarModelChange={(sessionId, model) => handleSidebarModelChange(tab.instance.id, sessionId, model)}
-                          onExecuteCommand={executeCommand}
-                          tabBarOffset={mobileFullscreenMode() ? 0 : instanceTabBarHeight()}
-                          mobileFullscreenMode={mobileFullscreenMode()}
-                          onEnterMobileFullscreen={() => void enterMobileFullscreen()}
-                          onExitMobileFullscreen={() => void exitMobileFullscreen()}
-                        />
-                      </InstanceMetadataProvider>
-                    </div>
-                  ) : (
-                    <div
-                      class="flex-1 min-h-0 overflow-hidden"
-                      style={{ display: isVisible() ? "flex" : "none" }}
-                      data-tab-id={tab.id}
-                      data-tab-kind={tab.kind}
-                      data-tab-visible={isVisible() ? "true" : "false"}
-                    >
-                      {tab.kind === "sidecar" ? <SideCarView tab={tab.sidecarTab} /> : tab.kind === "remote-restore" ? <RemoteRestoreView tab={tab} /> :
-                        <FolderSelectionView blank initialServer={tab.server} active={isVisible()} isLoading={isSelectingFolder()}
-                          onSelectFolder={path => void handleSelectFolder(path, tab.id)}
-                          onSelectExistingInstance={handleSelectExistingInstance}
-                          onNewTemporaryInstance={() => void handleNewTemporaryInstance(tab.id)}
-                          onOpenSidecar={id => void handleOpenSidecar(id, tab.id)}
-                          onJoined={() => closeBlankTab(tab.id)}
-                          onRemoteOpened={id => replaceBlankTab(tab.id, getInstanceAppTabId(id))} />}
-                    </div>
-                  )
-                }}
-              </For>
-
-            </>
+            <div class="loading-state" role="status">
+              <div class="spinner" aria-hidden="true" />
+              <span>{t("loadingScreen.status.loading")}</span>
+            </div>
           }
         >
-          <FolderSelectionView
-            onSelectFolder={handleSelectFolder}
-            onSelectExistingInstance={handleSelectExistingInstance}
-            onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
-            isLoading={isSelectingFolder() || shouldShowAppRestoreLoading(loadedRestorableSession())}
-            onOpenSidecar={handleOpenSidecar}
-            onJoined={() => setShowFolderSelection(false)}
-            onRemoteOpened={() => setShowFolderSelection(false)}
-          />
-        </Show>
+          <Show when={!mobileFullscreenMode()}>
+            <InstanceTabs
+              tabs={appTabs()}
+              activeTabId={activeAppTabId()}
+              onSelect={selectAppTab}
+              onClose={(tabId) => void closeAppTab(tabId)}
+              onNew={handleNewInstanceRequest}
+              onOpenLauncher={(anchor) => {
+                setLauncherAnchor(anchor)
+                setLauncherOpen(true)
+              }}
+              launcherOpen={launcherOpen()}
+              onMoveTab={moveAppTab}
+            />
+          </Show>
 
-        <Show when={shouldShowAppHomeOverlay(showFolderSelection(), appTabs().length)}>
-          <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
-            <div class="w-full h-full relative">
-              <FolderSelectionView
-                onSelectFolder={path => void handleSelectFolder(path, null)}
-                onSelectExistingInstance={(id, path) => handleSelectExistingInstance(id, path, null)}
-                onNewTemporaryInstance={() => void handleNewTemporaryInstance(null)}
-                isLoading={isSelectingFolder()}
-                onOpenSidecar={id => void handleOpenSidecar(id, null)}
-                onJoined={() => setShowFolderSelection(false)}
-                onRemoteOpened={() => setShowFolderSelection(false)}
-                onClose={() => {
-                  setShowFolderSelection(false)
-                  clearLaunchError()
-                }}
-              />
-            </div>
-          </div>
+          <For each={appTabs()}>
+            {(tab) => {
+              const isVisible = () => activeAppTabId() === tab.id
+              return tab.kind === "instance" ? (
+                <div
+                  class="flex-1 min-h-0 overflow-hidden"
+                  style={{ display: isVisible() ? "flex" : "none" }}
+                  data-instance-id={tab.instance.id}
+                  data-tab-id={tab.id}
+                  data-tab-kind={tab.kind}
+                  data-tab-visible={isVisible() ? "true" : "false"}
+                >
+                  <InstanceMetadataProvider instance={tab.instance}>
+                    <InstanceShell
+                      instance={tab.instance}
+                      isActiveInstance={isVisible()}
+                      escapeInDebounce={escapeInDebounce()}
+                      paletteCommands={paletteCommands}
+                      onCloseSession={(sessionId) => handleCloseSession(tab.instance.id, sessionId)}
+                      onNewSession={() => handleNewSession(tab.instance.id)}
+                      handleSidebarAgentChange={(sessionId, agent) => handleSidebarAgentChange(tab.instance.id, sessionId, agent)}
+                      handleSidebarModelChange={(sessionId, model) => handleSidebarModelChange(tab.instance.id, sessionId, model)}
+                      onExecuteCommand={executeCommand}
+                      tabBarOffset={mobileFullscreenMode() ? 0 : instanceTabBarHeight()}
+                      mobileFullscreenMode={mobileFullscreenMode()}
+                      onEnterMobileFullscreen={() => void enterMobileFullscreen()}
+                      onExitMobileFullscreen={() => void exitMobileFullscreen()}
+                    />
+                  </InstanceMetadataProvider>
+                </div>
+              ) : (
+                <div
+                  class="flex-1 min-h-0 overflow-hidden"
+                  style={{ display: isVisible() ? "flex" : "none" }}
+                  data-tab-id={tab.id}
+                  data-tab-kind={tab.kind}
+                  data-tab-visible={isVisible() ? "true" : "false"}
+                >
+                  {tab.kind === "sidecar" ? <SideCarView tab={tab.sidecarTab} /> : tab.kind === "remote-restore" ? <RemoteRestoreView tab={tab} /> :
+                     <FolderSelectionView initialServer={tab.server} active={isVisible()} isLoading={isSelectingFolder()}
+                      onSelectFolder={path => void handleSelectFolder(path, tab.id)}
+                      onSelectExistingInstance={handleSelectExistingInstance}
+                      onNewTemporaryInstance={() => void handleNewTemporaryInstance(tab.id)}
+                      onOpenSidecar={id => void handleOpenSidecar(id, tab.id)}
+                      onJoined={() => closeBlankTab(tab.id)}
+                      onRemoteOpened={id => replaceBlankTab(tab.id, getInstanceAppTabId(id))} />}
+                </div>
+              )
+            }}
+          </For>
         </Show>
 
         <NewInstanceLauncher

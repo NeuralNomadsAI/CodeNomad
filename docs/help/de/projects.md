@@ -4,7 +4,7 @@ Ein Projekt-Tab verbindet CodeNomad mit einem Ordner auf dem Backend-Rechner. Da
 
 ## Projekt öffnen {#open-project}
 
-Klicken Sie auf **Neue Instanz** (`+`) oder drücken Sie `Ctrl/Cmd+N` für einen leeren Tab. Wählen Sie ein Projekt unter **Zuletzt verwendete Tabs** oder **Durchsuchen**. Das CodeNomad-Logo öffnet die Startseite. Klonen und temporäre Tabs verwenden das lokale Backend.
+Klicken Sie auf **Neue Instanz** (`+`) oder drücken Sie `Ctrl/Cmd+N` für einen leeren Tab. Wählen Sie ein Projekt unter **Zuletzt verwendete Tabs** oder **Durchsuchen**. Ohne gespeicherte Projekttabs oder nach dem Schließen des letzten Tabs zeigt CodeNomad einen leeren Tab. Klonen und temporäre Tabs verwenden das lokale Backend.
 
 [Ein Remote-Projekt in einem Tab öffnen](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
 
@@ -14,7 +14,7 @@ Einen Remote-Server zu durchsuchen bedeutet, dessen Dateisystem zu durchsuchen, 
 
 Klonen schreibt ein Repository ins Zielverzeichnis. **Zielordner zuerst entfernen, falls er bereits existiert.** ist destruktiv: Aktivieren Sie dies nur, wenn alles dort Vorhandene gelöscht werden darf. Verwenden Sie im Zweifel ein neues Ziel. Ein fehlgeschlagener Klon ist kein Grund, ein vorhandenes Projekt zu löschen; prüfen Sie vor dem Wiederholen das gemeldete Ziel und den Fehler.
 
-Zuletzt verwendete Einträge sind Verknüpfungen. Die direkten Schaltflächen auf der Startseite und das Aktionsmenü leerer Tabs bieten je nach Eintrag **Arbeitsbereich umbenennen** und **Aus Liste entfernen**; Dateien und Unterhaltungen bleiben erhalten. Auf Startseite, leeren Tabs und im Schnellstarter erzeugt ein Klick auf lokale/entfernte Projekte oder SideCars ein neues Vorkommen, auch wenn sie geöffnet sind. Die separate Aktion **Offen** (**Zum offenen Projekt wechseln**) wählt das vorhandene Vorkommen.
+Zuletzt verwendete Einträge sind Verknüpfungen. Das Aktionsmenü im leeren Tab bietet je nach Eintrag **Arbeitsbereich umbenennen** und **Aus Liste entfernen**; Dateien und Unterhaltungen bleiben erhalten. Im leeren Tab und im Schnellstarter erzeugt ein Klick auf lokale/entfernte Projekte oder SideCars ein neues Vorkommen, auch wenn sie geöffnet sind. Die separate Aktion **Offen** (**Zum offenen Projekt wechseln**) wählt das vorhandene Vorkommen.
 
 Die Aktion zum Wechseln wählt auch einen Tab aus, der auf seinen Server wartet, und schließt den leeren Ausgangstab.
 
@@ -50,7 +50,7 @@ Beim Neuladen bleiben bei aktivierter Wiederherstellung Reihenfolge, Auswahl und
 
 ## Temporäre Arbeitsbereiche {#temporary-workspaces}
 
-1. Wählen Sie **Neuer temporärer Tab** auf der Startseite oder **Temporär** über den Spalten eines leeren Tabs.
+1. Wählen Sie oben im leeren Tab **Temporärer Tab**.
 2. Arbeiten Sie im leeren, von CodeNomad verwalteten Ordner; Git wird nicht automatisch initialisiert.
 3. Wählen Sie beim Schließen des Tabs **Behalten**, **Verwerfen** oder **Abbrechen**. Das Tab-Menü bietet auch **Als Projekt behalten**.
 
@@ -60,7 +60,7 @@ Beim Neuladen bleiben bei aktivierter Wiederherstellung Reihenfolge, Auswahl und
 | Verwerfen | Löscht Unterhaltungen, Dateien und ungesendete Entwürfe des temporären Arbeitsbereichs | Nicht rückgängig zu machen; benötigte Inhalte vorher anderswo sichern |
 | Abbrechen | Lässt den temporären Arbeitsbereich geöffnet | Weiterarbeiten oder später entscheiden |
 
-Ein unberührter temporärer Tab ohne Unterhaltung, Datei oder ungesendeten Entwurf wird beim Schließen stillschweigend verworfen. Geöffnete temporäre Tabs nehmen an der normalen Startwiederherstellung teil, aber die Startseite hat keine separate Liste zum Fortsetzen geschlossener temporärer Ordner.
+Ein unberührter temporärer Tab ohne Unterhaltung, Datei oder ungesendeten Entwurf wird beim Schließen stillschweigend verworfen. Geöffnete temporäre Tabs nehmen an der normalen Startwiederherstellung teil.
 
 Verwerfen wird verweigert, während eine Unterhaltung läuft oder der Ordner in einem anderen Tab/Fenster geöffnet ist. Stoppen Sie zuerst die Ausführung und schließen Sie die anderen Ansichten. Nach fehlgeschlagenem Verwerfen bleibt der Ordner temporär: Beheben Sie das gemeldete Problem und versuchen Sie es erneut, statt manuell ein übergeordnetes Verzeichnis zu löschen.
 

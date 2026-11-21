@@ -31,9 +31,8 @@ const firstWorkspace = (value: ReturnType<typeof normalizeRestorableSession>) =>
   return tab
 }
 
-it("preserves only an explicit active home view", () => {
-  assert.equal(normalizeRestorableSession({ tabs: [], activeTabIndex: -1, homeActive: true })?.homeActive, true)
-  assert.equal(normalizeRestorableSession({ tabs: [], activeTabIndex: -1, homeActive: "true" })?.homeActive, undefined)
+it("ignores the legacy Home flag without changing tab selection", () => {
+  assert.deepEqual(normalizeRestorableSession({ tabs: [], activeTabIndex: -1, homeActive: true }), { tabs: [], activeTabIndex: -1 })
 })
 const normalizeWorkspace = (overrides: UnknownRecord) => firstWorkspace(session(workspace(overrides)))
 

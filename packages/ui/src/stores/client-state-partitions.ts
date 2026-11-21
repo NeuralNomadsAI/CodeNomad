@@ -113,7 +113,7 @@ async function encodeAttachments(attachments: RestorableAttachment[], addPartiti
   }))
 }
 
-async function encodeSessionGraph(session: RestorableSessionState | null) {
+async function encodeSessionGraph(session: RestorableSessionState | null, legacyHomeActive = false) {
   const generated: Record<string, string> = Object.create(null)
   const addPartition = async (value: unknown) => {
     const partition = await encodePartition(value, MAX_PARTITION_BYTES)
@@ -183,7 +183,7 @@ async function encodeSessionGraph(session: RestorableSessionState | null) {
       return shell
     })),
     activeTabIndex: session.activeTabIndex,
-    ...(session.homeActive !== undefined ? { homeActive: session.homeActive } : {}),
+    ...(legacyHomeActive ? { homeActive: true } : {}),
   }
   const sessionPartition = await addPartition({ format: 2, session: encodedSession })
   const partitionKeys = Object.keys(generated).sort()
@@ -282,6 +282,7 @@ async function decodeGraph(
   }
   if (!isRecord(manifest.session)
     || !hasExactKeys(manifest.session, ["tabs", "activeTabIndex"], ["homeActive"])
+    || (hasOwn(manifest.session, "homeActive") && manifest.session.homeActive !== true)
     || !Array.isArray(manifest.session.tabs)) return
 
   const loadCanonical = async (key: unknown): Promise<Record<string, unknown> | null> => {
@@ -510,12 +511,12 @@ async function decodeGraph(
   const reconstructed: unknown = {
     tabs,
     activeTabIndex: manifest.session.activeTabIndex,
-    ...(hasOwn(manifest.session, "homeActive") ? { homeActive: manifest.session.homeActive } : {}),
   }
   const normalized = normalizeRestorableSession(reconstructed)
   if (!normalized || !canonicalEquals(reconstructed, normalized)) return
   if (degraded || legacyGraph) return normalized
-  const reencoded = await encodeSessionGraph(normalized)
+  // Reproduce the stored manifest hash before exposing just the restorable tabs.
+  const reencoded = await encodeSessionGraph(normalized, manifest.session.homeActive === true)
   return graphMatches(reencoded, rootKey, persistedKeys, loaded) ? normalized : undefined
 }
 

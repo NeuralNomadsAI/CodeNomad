@@ -4,7 +4,7 @@ Ana bilgisayarda çalışmayı sürdürmek için telefon veya tabletin tarayıc�
 
 ## Bir telefon veya tabletten bağlanın {#connect}
 
-Kayıtlı sunucular Ana sayfa ve Ayarlar → Sunucular üzerinden kullanılabilir. [Uzak sekmeleri geri yükleme](projects.md#restore-remote-tabs).
+Kayıtlı sunucular boş sekmedeki **Gözat** ve Ayarlar → Sunucular üzerinden kullanılabilir. [Uzak sekmeleri geri yükleme](projects.md#restore-remote-tabs).
 
 1. Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** öğesini açın, ardından **Uzaktan Kontrolü başlat** öğesini seçin.
 2. Eşleştirme QR kodunu mobil cihazınızla tarayın ve bağlantıyı kullanmaya devam etmek istediğiniz tarayıcıda açın.
@@ -45,4 +45,4 @@ Gezinmeyi ve araçları açmak için **Sol panel** ve **Sağ panel** kontrolleri
 
 Arka ucu erişilebilir tutun. Yeniden denemeden önce işlemin tamamlanıp tamamlanmadığını kontrol edin. PWA kapatmak bağımsız arka ucu durdurmaz; ana bilgisayardaki masaüstü uygulamasından ve arka uçtan çıkmak Uzaktan Kontrolü sonraki başlatmaya kadar kullanılamaz yapar.
 
-Yüklü PWA dahil her tarayıcı sekmesi, açık projelerini, seçili konuşmalarını, gönderilmemiş taslaklarını ve kaydırma konumlarını o sekme için saklar: sayfa yeniden yüklendiğinde veya mobil işletim sistemi onu uygulama değişikliği ya da ekran kilidinden sonra yeniden yüklediğinde geri gelirler. Yeni bir sekme veya işletim sisteminin tamamen kapattığı bir PWA ana sayfada açılır. Bunu sekme için **Ayarlar → Genel → Önceki durumu geri yükle** ile kapatın.
+Yüklü PWA dahil her tarayıcı sekmesi, açık projelerini, seçili konuşmalarını, gönderilmemiş taslaklarını ve kaydırma konumlarını o sekme için saklar: sayfa yeniden yüklendiğinde veya mobil işletim sistemi onu uygulama değişikliği ya da ekran kilidinden sonra yeniden yüklediğinde geri gelirler. Yeni bir sekme veya işletim sisteminin tamamen kapattığı bir PWA boş sekmeyle açılır. Bunu sekme için **Ayarlar → Genel → Önceki durumu geri yükle** ile kapatın.

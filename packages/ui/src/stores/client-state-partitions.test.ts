@@ -59,6 +59,20 @@ const sidecarSnapshot: ClientSnapshotV1 = {
 const loader = (encoded: Awaited<ReturnType<typeof encodeClientSnapshotV2>>) =>
   async (key: string) => encoded.partitions[key] ?? null
 
+it("restores the selected tab from a manifest with a legacy Home flag", async () => {
+  const snapshot = graphSnapshot()
+  snapshot.session!.activeTabIndex = 1
+  const encoded = await encodeClientSnapshotV2(snapshot)
+  const previous = encoded.root.sessionPartition
+  const manifest = JSON.parse(encoded.partitions[previous])
+  manifest.session.homeActive = true
+  const document = canonicalJson(manifest)
+  const key = await sha256(document)
+  const root = { ...encoded.root, sessionPartition: key, partitionKeys: encoded.root.partitionKeys.map(item => item === previous ? key : item).sort() }
+  const restored = await decodeClientSnapshotV2(root, 1, async item => item === key ? document : encoded.partitions[item] ?? null)
+  assert.equal(canonicalJson(restored?.session), canonicalJson(snapshot.session))
+})
+
 async function blobReferenceSnapshot(dataPartitions: string[], blobs: Record<string, string>) {
   const document = canonicalJson({
     format: 2,

@@ -4,17 +4,17 @@ Un onglet de projet relie CodeNomad à un dossier sur l’ordinateur du backend.
 
 ## Ouvrir un projet {#open-project}
 
-Cliquez sur **Nouvelle instance** (`+`) ou utilisez `Ctrl/Cmd+N` pour ouvrir un onglet vide. Choisissez un projet dans **Onglets récents** ou **Parcourir**. Le logo CodeNomad ouvre l’accueil. Le clonage et les onglets temporaires utilisent le serveur local.
+Sans onglet de projet à restaurer ou après la fermeture du dernier onglet, CodeNomad affiche un onglet vide. Cliquez sur **Nouvelle instance** (`+`) ou utilisez `Ctrl/Cmd+N` pour l’ouvrir ou le réutiliser. Choisissez un projet dans **Parcourir** ou **Onglets récents**. **Onglet temporaire** et **Cloner un dépôt** utilisent le serveur local.
 
 [Ouvrir un projet distant dans un onglet](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
 
-Pour une copie de dépôt, choisissez **Cloner un depot Git**, saisissez **URL du depot** et **Dossier de destination**, puis **Cloner**. **Dossier de destination** est prérempli avec le nom du dépôt, dans le dossier qui contient votre dernier clone, sinon à côté de votre projet le plus récent. **Parcourir** choisit le dossier qui contiendra le clone ; vous pouvez aussi modifier le chemin, y compris le nom du dossier du clone.
+Pour une copie de dépôt, choisissez **Cloner un dépôt**, saisissez **URL du dépôt** et **Dossier de destination**, puis **Cloner**. **Dossier de destination** est prérempli avec le nom du dépôt, dans le dossier qui contient votre dernier clone, sinon à côté de votre projet le plus récent. **Parcourir** choisit le dossier qui contiendra le clone ; vous pouvez aussi modifier le chemin, y compris le nom du dossier du clone.
 
 Parcourir un serveur distant signifie parcourir son système de fichiers, pas votre téléphone ou ordinateur portable. Ouvrir un projet ne crée pas un démon OpenCode distinct par onglet. Les conversations sont des sessions natives OpenCode ; leur durée de vie n’est pas celle de l’onglet.
 
 Le clonage écrit un dépôt dans la destination. **Supprimer d'abord le dossier de destination s'il existe deja.** est destructeur : n’activez cette option que si tout ce qui s’y trouve peut être supprimé. Dans le doute, utilisez une nouvelle destination. Un échec de clonage n’est pas une raison de supprimer un projet existant ; vérifiez la destination et l’erreur signalées avant de réessayer.
 
-Les récents sont des raccourcis. Les boutons en ligne sur l'accueil et le menu d'actions des onglets vides proposent **Renommer l'espace de travail** et **Retirer des récents** selon l'entrée ; retirer conserve fichiers et conversations. Partout, accueil, onglet vide et lanceur rapide, cliquer sur un projet local, distant ou un SideCar crée une nouvelle occurrence, même déjà ouvert. L'action séparée **Ouvert** (**Basculer vers le projet ouvert**) rejoint l'occurrence existante.
+Les récents sont des raccourcis. Le menu d’actions de l’onglet vide propose **Renommer l'espace de travail** et **Retirer des récents** selon l'entrée ; retirer conserve fichiers et conversations. Dans l’onglet vide et le lanceur rapide, cliquer sur un projet local, distant ou un SideCar crée une nouvelle occurrence, même déjà ouvert. L'action séparée **Ouvert** (**Basculer vers le projet ouvert**) rejoint l'occurrence existante.
 
 L’action **Ouvert** sélectionne aussi un onglet qui attend son serveur et ferme l’onglet vide de départ.
 
@@ -50,7 +50,7 @@ Au rechargement, si la restauration est activée, les onglets distants retrouven
 
 ## Espaces de travail temporaires {#temporary-workspaces}
 
-1. Choisissez **Nouvel onglet temporaire** sur l'accueil ou **Temporaire** au-dessus des colonnes d'un onglet vide.
+1. Choisissez **Onglet temporaire** en haut de l’onglet vide.
 2. Travaillez dans le dossier vide géré par CodeNomad ; Git n’est pas initialisé automatiquement.
 3. À la fermeture de l’onglet, choisissez **Garder**, **Jeter** ou **Annuler**. Le menu de l’onglet propose aussi **Garder comme projet**.
 
@@ -60,7 +60,7 @@ Au rechargement, si la restauration est activée, les onglets distants retrouven
 | Jeter | Supprime les conversations, fichiers et brouillons non envoyés de l’espace de travail temporaire | Aucune annulation ; enregistrez d’abord ailleurs ce dont vous avez besoin |
 | Annuler | Laisse l’espace de travail temporaire ouvert | Continuer à travailler ou décider plus tard |
 
-Un onglet temporaire intact, sans conversation, fichier ni brouillon non envoyé, est supprimé discrètement à la fermeture. Les onglets temporaires ouverts participent à la restauration normale au démarrage, mais l’accueil n’a pas de liste séparée pour reprendre les dossiers temporaires fermés.
+Un onglet temporaire intact, sans conversation, fichier ni brouillon non envoyé, est supprimé discrètement à la fermeture. Les onglets temporaires ouverts participent à la restauration normale au démarrage.
 
 La suppression est refusée si une conversation est active ou si le dossier est ouvert dans un autre onglet/une autre fenêtre. Arrêtez l’exécution et fermez d’abord les autres vues. En cas d’échec, l’espace reste temporaire : résolvez le problème signalé et réessayez plutôt que de supprimer manuellement un répertoire parent.
 

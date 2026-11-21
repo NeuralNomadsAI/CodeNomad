@@ -1,0 +1,186 @@
+import assert from "node:assert/strict"
+import { after, before, test } from "node:test"
+import { chromium, type Browser, type Page } from "playwright"
+import { borrowFixture } from "./fixture-borrow"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+
+let browser: Browser, url: string
+before(async () => {
+  const fixture = await borrowFixture({
+    name: "empty-tab",
+    routes: [{ path: "/fixture", html: '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/empty-tab.tsx"></script></body></html>' }],
+  })
+  url = fixture.url
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
+})
+after(async () => { await browser?.close() })
+
+const profiles = ["Beta", "Alpha"].map(name => ({
+  id: name.toLowerCase(), name, baseUrl: `https://${name.toLowerCase()}.example`,
+  createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z",
+}))
+
+async function openApp(page: Page, remoteServers = profiles) {
+  await page.route("**/api/**", route => {
+    const path = new URL(route.request().url()).pathname
+    if (path === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" })
+    if (path.endsWith("/browse")) return route.fulfill({ status: 409, json: { error: "needs_credentials", code: "needs_credentials" } })
+    const data: Record<string, unknown> = {
+      "/api/workspaces": [],
+      "/api/storage/config/ui": { settings: { locale: "en" } },
+      "/api/storage/state/ui": { remoteServers },
+      "/api/meta": { serversUsable: true, serversManageable: true, secretEntryAllowed: true },
+      "/api/opencode/update": { state: "ready", serviceState: "ready" },
+      "/api/opencode/login/start": { state: "off" },
+      "/api/sidecars": { sidecars: [] },
+    }
+    return route.fulfill({ json: data[path] ?? {} })
+  })
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
+  await page.getByRole("heading", { name: "CodeNomad", exact: true }).waitFor()
+}
+
+for (const mode of ["desktop", "web", "phone"]) {
+  test(`${mode}: the empty tab is the start page and app controls stay in the tab bar`, async () => {
+    const page = await browser.newPage({ viewport: { width: mode === "phone" ? 390 : 1280, height: 850 } })
+    try {
+      if (mode === "desktop") await page.addInitScript(`{
+        // Exercise the local desktop renderer in Chromium without starting a desktop host.
+        Object.assign(window, { __CODENOMAD_WINDOW_CONTEXT__: "local", __CODENOMAD_RUNTIME_HOST__: "electron",
+          electronAPI: { loadClientState: async () => ({ isPrimary: true, restoreEnabled: true }), claimClientStateAccess: async () => true } })
+      }`)
+      await openApp(page)
+      const blank = page.locator('[data-tab-kind="blank"]')
+      const blankId = await blank.getAttribute("data-tab-id")
+      assert.ok(blankId)
+      const logo = page.locator(mode === "desktop" ? ".native-titlebar-brand img" : ".tab-bar-logo img").first()
+      assert.equal(await logo.evaluate(el => !!el.closest("a, button")), false)
+      const actions = page.locator(".tab-bar-actions")
+      for (const name of ["Open settings", "Remote connect"]) {
+        assert.ok(await actions.getByRole("button", { name, exact: true }).isVisible())
+        assert.equal(await blank.getByRole("button", { name, exact: true }).count(), 0)
+      }
+      if (mode === "web") {
+        await actions.getByRole("button", { name: "Remote connect", exact: true }).click()
+        await page.getByRole("button", { name: "Remote Access", exact: true }).waitFor()
+        await page.getByRole("button", { name: "Close settings", exact: true }).click()
+      }
+      assert.equal(await blank.locator('[aria-label="Language"]').count(), 0)
+      for (const name of ["Sponsor", "CodeNomad GitHub", "CodeNomad GitHub Stars", "CodeNomad Discord"]) {
+        assert.ok(await blank.getByRole("link", { name, exact: true }).isVisible(), name)
+      }
+      const browse = (await blank.getByRole("region", { name: "Browse", exact: true }).boundingBox())!
+      const recent = (await blank.getByRole("region", { name: "Recent tabs", exact: true }).boundingBox())!
+      assert.ok(browse.height >= 512)
+      assert.equal(browse.height, recent.height)
+      if (mode === "phone") assert.ok(browse.y + browse.height < recent.y)
+      else {
+        assert.equal(browse.y, recent.y)
+        assert.ok(browse.x + browse.width < recent.x)
+      }
+
+      await page.evaluate(() => (window as unknown as { openFixtureProject(): void }).openFixtureProject())
+      await page.locator('[data-remote-restore="demo"]').waitFor()
+      if (mode === "web") {
+        await page.getByRole("button", { name: "New instance", exact: true }).click({ button: "right" })
+        const launcher = page.getByRole("dialog", { name: "Recent tabs", exact: true })
+        const describedBy = await launcher.getAttribute("aria-describedby")
+        assert.ok(describedBy)
+        assert.equal(await page.locator(`[id="${describedBy}"]`).textContent(), "Choose a recent project.")
+        await page.keyboard.press("Escape")
+      }
+      await page.getByRole("button", { name: "New instance", exact: true }).click()
+      assert.equal(await blank.getAttribute("data-tab-id"), blankId)
+      assert.equal(await blank.getAttribute("data-tab-visible"), "true")
+      await page.keyboard.press("Control+n")
+      assert.equal(await blank.getAttribute("data-tab-id"), blankId)
+      await page.keyboard.press("Control+w")
+      await page.locator('[data-remote-restore="demo"]').waitFor()
+      await page.keyboard.press("Control+w")
+      await blank.getByRole("heading", { name: "CodeNomad", exact: true }).waitFor()
+      assert.equal(await blank.count(), 1)
+    } finally {
+      await page.close()
+    }
+  })
+}
+
+for (const width of [1280, 390]) {
+  test(`direct HTTPS sign-in fits the Browse panel at ${width} pixels`, async () => {
+    const page = await browser.newPage({ viewport: { width, height: 850 } })
+    try {
+      await openApp(page)
+      await page.locator('[data-remote-server="alpha"]').click()
+      await page.getByRole("textbox", { name: "New pairing link", exact: true }).waitFor()
+      const submit = page.getByRole("button", { name: "Sign in", exact: true })
+      const bounds = await page.locator(".browse-menu:visible").boundingBox()
+      const button = await submit.boundingBox()
+      assert.ok(bounds && button && button.y + button.height <= bounds.y + bounds.height + 1, JSON.stringify({ bounds, button }))
+      await submit.click({ trial: true })
+    } finally {
+      await page.close()
+    }
+  })
+}
+
+test("server settings keep the saved order for equal dates and reuse the empty tab", async () => {
+  const page = await browser.newPage()
+  try {
+    await openApp(page)
+    const blank = page.locator('[data-tab-kind="blank"]')
+    const blankId = await blank.getAttribute("data-tab-id")
+    await page.getByRole("button", { name: "Open settings", exact: true }).click()
+    await page.locator('button[aria-label="Language"]').waitFor()
+    await page.getByRole("button", { name: "Servers", exact: true }).click()
+    const rows = page.getByRole("button", { name: /^Open: (Beta|Alpha)$/ })
+    await rows.nth(1).waitFor()
+    assert.deepEqual(await rows.evaluateAll(buttons => buttons.map(button => button.getAttribute("aria-label"))), ["Open: Beta", "Open: Alpha"])
+    await rows.first().click()
+    await page.locator(".remote-server-navigation bdi").getByText("Beta", { exact: true }).waitFor()
+    assert.equal(await blank.getAttribute("data-tab-id"), blankId)
+  } finally {
+    await page.close()
+  }
+})
+
+test("startup keeps the loading state and restores the last selected tab", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.addInitScript(`{
+      Object.assign(window, { __CODENOMAD_WINDOW_CONTEXT__: "local", __CODENOMAD_RUNTIME_HOST__: "electron",
+        electronAPI: {
+          claimClientStateAccess: async () => true,
+          loadClientState: async () => ({ isPrimary: true, restoreEnabled: true, snapshot: {
+            version: 1, revision: 1, savedAt: 1, layout: {}, session: {
+              activeTabIndex: 1, homeActive: true,
+              tabs: ["First", "Last"].map(name => ({
+                kind: "workspace", backendId: "offline", folder: "/" + name, occurrence: 0, projectName: name,
+                drafts: {}, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},
+              })),
+            },
+          } }),
+        },
+      })
+    }`)
+    let release!: () => void
+    const hold = new Promise<void>(resolve => { release = resolve })
+    await page.route("**/api/**", async route => {
+      const path = new URL(route.request().url()).pathname
+      if (path === "/api/storage/config/ui") await hold
+      if (path === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" })
+      return route.fulfill({ json: path === "/api/workspaces" ? [] : path === "/api/storage/config/ui"
+        ? { settings: { locale: "en", multiBackend: true } } : path === "/api/opencode/update"
+          ? { state: "ready", serviceState: "ready" } : {} })
+    })
+    await page.goto(url, { waitUntil: "commit" })
+    try {
+      await page.locator(".loading-state").waitFor({ timeout: 30000 })
+      assert.equal(await page.locator('[data-tab-kind="blank"]').count(), 0)
+    } finally { release() }
+    const selected = page.locator('[data-tab-kind="remote-restore"][data-tab-visible="true"]')
+    await selected.waitFor()
+    assert.match(await selected.innerText(), /Last/)
+    assert.equal(await page.locator('[data-tab-kind="blank"]').count(), 0)
+  } finally { await page.close() }
+})

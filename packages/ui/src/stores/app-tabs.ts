@@ -189,8 +189,8 @@ function selectAppTab(tabId: string | null, options?: { source?: "restore"; crea
 
 function selectInstanceTab(instanceId: string, creation?: WorkspaceCreationOwnership): boolean {
   if (!instances().has(instanceId) || creation && !creation.current(instanceId)) return false
-  // The first tab dismisses Home and triggers automatic selection. Publish its
-  // membership and explicit selection together so the opening transfers first.
+  // Publish membership and explicit selection together so the opening transfers
+  // before automatic tab selection can run.
   return batch(() => {
     attachInstanceTab(instanceId)
     return selectAppTab(getInstanceAppTabId(instanceId), creation ? { creation } : undefined) === true

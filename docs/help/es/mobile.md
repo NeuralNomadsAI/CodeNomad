@@ -4,7 +4,7 @@ Usa la interfaz de navegador en un teléfono o tableta para continuar trabajando
 
 ## Conectarse desde un teléfono o tableta {#connect}
 
-Los servidores guardados están disponibles en Inicio y Configuración → Servidores. [Restaurar pestañas remotas](projects.md#restore-remote-tabs).
+Los servidores guardados están disponibles en **Explorar** en una pestaña vacía y en Configuración → Servidores. [Restaurar pestañas remotas](projects.md#restore-remote-tabs).
 
 1. En el anfitrión, abre **Configuración → Acceso remoto → Control remoto** y elige **Iniciar control remoto**.
 2. Escanea el QR de emparejamiento con tu dispositivo móvil y abre el enlace en el navegador que quieras seguir usando.
@@ -45,4 +45,4 @@ El editor de mensajes mantiene Agente, Modelo y Razonamiento en su pie. El tama�
 
 Mantén el backend accesible. Comprueba si una acción terminó antes de reintentar. Cerrar la PWA no detiene un backend independiente; salir de la aplicación de escritorio anfitriona y su backend deja Control remoto no disponible hasta el siguiente inicio.
 
-Cada pestaña del navegador, incluida la PWA instalada, conserva para esa pestaña sus proyectos abiertos, conversaciones seleccionadas, borradores sin enviar y posiciones de desplazamiento: vuelven cuando la página se recarga, o cuando el sistema móvil la recarga tras cambiar de aplicación o bloquear la pantalla. Una pestaña nueva, o una PWA que el sistema cerró por completo, se abre en la página de inicio. Desactívalo para la pestaña en **Configuración → General → Restaurar el estado anterior**.
+Cada pestaña del navegador, incluida la PWA instalada, conserva para esa pestaña sus proyectos abiertos, conversaciones seleccionadas, borradores sin enviar y posiciones de desplazamiento: vuelven cuando la página se recarga, o cuando el sistema móvil la recarga tras cambiar de aplicación o bloquear la pantalla. Una pestaña nueva, o una PWA que el sistema cerró por completo, muestra una pestaña vacía. Desactívalo para la pestaña en **Configuración → General → Restaurar el estado anterior**.

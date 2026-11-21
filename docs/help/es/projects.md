@@ -4,7 +4,7 @@ Una pestaña de proyecto conecta CodeNomad a una carpeta del equipo del backend.
 
 ## Abrir un proyecto {#open-project}
 
-Pulsa **Nueva instancia** (`+`) o `Ctrl/Cmd+N` para abrir una pestaña vacía. Elige un proyecto en **Pestañas recientes** o **Explorar**. El logotipo de CodeNomad abre Inicio. La clonación y las pestañas temporales usan el servidor local.
+Pulsa **Nueva instancia** (`+`) o `Ctrl/Cmd+N` para abrir una pestaña vacía. Elige un proyecto en **Pestañas recientes** o **Explorar**. Si no hay pestañas de proyecto que restaurar o cierras la última, CodeNomad muestra una pestaña vacía. La clonación y las pestañas temporales usan el servidor local.
 
 [Abrir un proyecto remoto en una pestaña](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
 
@@ -14,7 +14,7 @@ Explorar un servidor remoto significa explorar el sistema de archivos de ese ser
 
 La clonación escribe un repositorio en el destino. **Eliminar primero la carpeta de destino si ya existe.** es destructivo: actívalo solo si se puede borrar todo lo que ya haya allí. Usa un destino nuevo si tienes dudas. Una clonación fallida no es motivo para eliminar un proyecto existente; inspecciona el destino y el error indicados antes de reintentar.
 
-Los recientes son accesos directos. Los botones en línea de Inicio y el menú de acciones de las pestañas vacías ofrecen **Renombrar workspace** y **Eliminar de recientes** cuando corresponde; conserva archivos y conversaciones. En Inicio, pestañas vacías y lanzador rápido, pulsar un proyecto local, remoto o SideCar crea una nueva instancia aunque ya esté abierto. La acción separada **Abierta** (**Cambiar al proyecto abierto**) selecciona la existente.
+Los recientes son accesos directos. El menú de acciones de la pestaña vacía ofrece **Renombrar workspace** y **Eliminar de recientes** cuando corresponde; conserva archivos y conversaciones. En la pestaña vacía y el lanzador rápido, pulsar un proyecto local, remoto o SideCar crea una nueva instancia aunque ya esté abierto. La acción separada **Abierta** (**Cambiar al proyecto abierto**) selecciona la existente.
 
 La acción para cambiar de pestaña también selecciona una pestaña que espera a su servidor y cierra la pestaña vacía de origen.
 
@@ -50,7 +50,7 @@ Al recargar con la restauración activada, las pestañas remotas conservan su or
 
 ## Espacios de trabajo temporales {#temporary-workspaces}
 
-1. Elige **Nueva pestaña temporal** en Inicio o **Temporal** sobre las columnas de una pestaña vacía.
+1. Elige **Pestaña temporal** en la parte superior de la pestaña vacía.
 2. Trabaja en la carpeta vacía gestionada por CodeNomad; Git no se inicializa automáticamente.
 3. Al cerrar la pestaña, elige **Conservar**, **Descartar** o **Cancelar**. El menú de la pestaña también ofrece **Conservar como proyecto**.
 
@@ -60,7 +60,7 @@ Al recargar con la restauración activada, las pestañas remotas conservan su or
 | Descartar | Elimina las conversaciones, los archivos y los borradores sin enviar del espacio de trabajo temporal | No se puede deshacer; guarda primero en otro lugar lo que necesites |
 | Cancelar | Deja abierto el espacio de trabajo temporal | Continúa trabajando o decide más tarde |
 
-Una pestaña temporal sin usar, sin conversación, archivo ni borrador sin enviar, se descarta silenciosamente al cerrarla. Las pestañas temporales abiertas participan en la restauración normal al iniciar, pero la página de inicio no tiene una lista aparte para reabrir carpetas temporales cerradas.
+Una pestaña temporal sin usar, sin conversación, archivo ni borrador sin enviar, se descarta silenciosamente al cerrarla. Las pestañas temporales abiertas participan en la restauración normal al iniciar.
 
 Descartar se rechaza mientras haya una conversación en ejecución o la carpeta esté abierta en otra pestaña/ventana. Detén la ejecución y cierra antes las otras vistas. Si el descarte falla, permanece temporal: resuelve el problema indicado y reintenta en lugar de eliminar manualmente un directorio padre.
 

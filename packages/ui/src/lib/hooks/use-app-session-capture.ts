@@ -21,7 +21,6 @@ import {
 import { activeAppTab, activeAppTabId, appTabs, getInstanceAppTabId } from "../../stores/app-tabs"
 import { appSessionRestoreGateActive } from "../../stores/app-session-restore-gate"
 import { saveReloadTabSelection } from "../native/reload-tab-selection"
-import { showFolderSelection } from "../../stores/ui"
 import { instances } from "../../stores/instances"
 import {
   activeParentSessionId, activeSessionId, expandedSessions, getAuthoritativeDraftSessionIdsForInstance, getPersistentExpandedSessionIds,
@@ -148,7 +147,6 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
     state: {
       tabs: restorableTabs,
       activeTabIndex: tabs.findIndex(({ id }) => id === activeAppTabId()),
-      ...(showFolderSelection() ? { homeActive: true } : {}),
     },
     tabIds: tabs.map(({ id }) => id), authorities,
   }
@@ -357,7 +355,7 @@ export function useAppSessionCapture() {
   createEffect(() => {
     if (!enabled()) return
     const tabs = appTabs()
-    activeAppTabId(); activeParentSessionId(); activeSessionId(); expandedSessions(); showFolderSelection()
+    activeAppTabId(); activeParentSessionId(); activeSessionId(); expandedSessions()
     outlineCacheRevision(); seenInterruptionsRevision()
     checkpointSessions()
     for (const tab of tabs) if (tab.kind === "instance") {

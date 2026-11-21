@@ -336,7 +336,6 @@ export function mergeRestorableSessionState(
   return {
     tabs,
     activeTabIndex,
-    ...(current.homeActive === true ? { homeActive: true } : {}),
   }
 }
 export function markPreservedWorkspaceUnavailable(
