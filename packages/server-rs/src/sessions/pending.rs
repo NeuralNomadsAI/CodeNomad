@@ -248,7 +248,8 @@ pub async fn snapshot(
         biased;
         _ = shutdown.cancelled() => Err(error(Status::SERVICE_UNAVAILABLE, "Server is shutting down")),
         result = snapshot_response(app, id, query) => result,
-    }.into_response();
+    }
+    .into_response();
     response.headers_mut().insert(header::CACHE_CONTROL, header::HeaderValue::from_static("no-store"));
     response
 }
