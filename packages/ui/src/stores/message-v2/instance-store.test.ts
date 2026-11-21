@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { describe, it } from "node:test"
+import { unwrap } from "solid-js/store"
 
 import { createInstanceMessageStore } from "./instance-store.ts"
 import {
@@ -17,6 +18,27 @@ import {
 import { getSessionMessageRenderCache, purgeMessageRenderCache, REASONING_RENDER_CHARACTER_LIMIT } from "../../lib/message-render-cache.ts"
 import type { MessageInfo, ClientPart } from "../../types/message"
 import { emptyLatestWindow, toWindowSnapshot, windowFromSnapshot } from "./message-window"
+
+it("hydrates one session without visiting another session's resident messages", () => {
+  const store = createInstanceMessageStore("scoped-hydration")
+  const sibling = { id: "unrelated", sessionId: "other", role: "assistant" as const, status: "complete" as const }
+  const live = { id: "live", sessionId: "current", role: "assistant" as const, status: "complete" as const }
+  store.hydrateMessages("other", [sibling])
+  store.hydrateMessages("current", [live])
+  const record = store.getMessage(sibling.id)
+  let stored = unwrap(record)
+  let siblingReads = 0
+  Object.defineProperty(unwrap(store.state.messages), sibling.id, {
+    configurable: true,
+    enumerable: true,
+    get() { siblingReads++; return stored },
+    set(next) { stored = next },
+  })
+  store.hydrateMessages("current", [{ ...live, parts: [{ id: "part", type: "text", text: "updated" }] }])
+  assert.equal(siblingReads, 0)
+  assert.equal(store.getMessage(sibling.id), record)
+  assert.deepEqual(store.getSessionMessageIds("current"), [live.id])
+})
 
 it("keeps the beginning and final response when bounding message parts", () => {
   const partIds = Array.from({ length: MESSAGE_PART_DISPLAY_LIMIT + 2 }, (_, index) => `part-${index}`)

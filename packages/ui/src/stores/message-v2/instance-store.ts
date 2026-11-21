@@ -614,7 +614,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     // Preserve only requests that have not received a promptAsync response
     // yet. Accepted prompts are confirmed under the same messageID, while
     // rejected requests are marked failed and can be removed by this snapshot.
-    const previousMessageIds = state.sessions[sessionId]?.messageIds ?? []
+    const previousMessageIds = unwrap(state.sessions[sessionId]?.messageIds ?? [])
+    const previousMessages = unwrap(state.messages)
     // For each previous ephemeral "sending" record absent from this snapshot,
     // preserve it ONLY while it is a still-in-flight pending send; otherwise
     // it is stale — a send that already failed, or an ephemeral record the
@@ -632,7 +633,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         precedingId = id
         continue
       }
-      const record = state.messages[id]
+      const record = previousMessages[id]
       if (record && preservePendingSendOnOmission(id)) {
         pendingOptimisticIds.push(id)
       } else {
@@ -653,11 +654,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     const normalizedRecords: Record<string, MessageRecord> = {}
     const now = Date.now()
-    let contentChanged = false
 
     dedupedInputs.forEach((input) => {
       const normalizedParts = normalizeParts(input.id, input.parts)
-      const previous = state.messages[input.id]
+      const previous = previousMessages[input.id]
       const partsChanged = normalizedParts
         ? havePartsChanged(previous?.partIds, previous?.parts, normalizedParts.ids, normalizedParts.map)
         : false
@@ -667,9 +667,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       // so `previous` IS the optimistic record and its client-only
       // prompt-display metadata carries over unchanged.
       const clientPromptDisplayMetadata = resolveClientPromptDisplayText(instanceId, input, previous)
-      // The window is re-projected on every native event, so unchanged
-      // messages must keep their resident record object: replacing it would
-      // notify every Solid subscriber of that message and re-render it.
+      // Reuse unchanged records to avoid notifying their Solid subscribers.
       const recordUnchanged = Boolean(previous) && !shouldBump
         && previous.role === input.role
         && previous.sessionId === input.sessionId
@@ -677,11 +675,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         && (input.updatedAt === undefined || previous.updatedAt === input.updatedAt)
         && (input.isEphemeral === undefined || previous.isEphemeral === input.isEphemeral)
         && samePromptDisplayMetadata(clientPromptDisplayMetadata, previous.clientPromptDisplayMetadata)
-      if (recordUnchanged) {
-        normalizedRecords[input.id] = previous
-        return
-      }
-      contentChanged = true
+      if (recordUnchanged) return
       normalizedRecords[input.id] = {
         id: input.id,
         sessionId: input.sessionId,
@@ -701,15 +695,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const isVisibleInfo = (info: MessageInfo) => !revertMessageId || info.id < revertMessageId
     const infoList = infos ? Array.from(infos).filter(isVisibleInfo) : undefined
 
-    const nextMessages: Record<string, MessageRecord> = { ...state.messages }
-    const nextMessageInfoVersion: Record<string, number> = { ...state.messageInfoVersion }
-    const nextPermissionsByMessage: Record<string, Record<string, PermissionEntry>> = {
-      ...state.permissions.byMessage,
-    }
-
-    Object.entries(normalizedRecords).forEach(([id, record]) => {
-      nextMessages[id] = record
-    })
+    const nextMessageInfoVersion: Record<string, number> = {}
+    const previousInfoVersions = unwrap(state.messageInfoVersion)
 
     // The snapshot is authoritative: remove every omitted record except a
     // request that is still awaiting same-ID persistence confirmation.
@@ -718,9 +705,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         messageInfoCache.delete(id)
         forgetPendingSend(id)
         clearPromptDisplayOverride(instanceId, sessionId, id)
-        delete nextMessages[id]
-        delete nextMessageInfoVersion[id]
-        delete nextPermissionsByMessage[id]
       })
       clearRecordDisplayCacheForMessages(instanceId, omittedIds)
       hooks?.onMessagesRemoved?.(instanceId, sessionId, omittedIds)
@@ -748,7 +732,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         if (!infoChanged) continue
         infoChangedAny = true
         messageInfoCache.set(messageId, info)
-        const currentVersion = nextMessageInfoVersion[messageId] ?? 0
+        const currentVersion = nextMessageInfoVersion[messageId] ?? previousInfoVersions[messageId] ?? 0
         nextMessageInfoVersion[messageId] = currentVersion + 1
       }
     }
@@ -756,7 +740,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     // An identical snapshot leaves the whole resident session untouched: no
     // record replacement, no session-entry write, no revision bump. This is
     // what keeps a re-projected window from invalidating every mounted row.
-    if (!contentChanged && omittedIds.length === 0 && !infoChangedAny
+    const recordsChanged = Object.keys(normalizedRecords).length > 0
+    if (!recordsChanged && omittedIds.length === 0 && !infoChangedAny
       && areMessageIdListsEqual(previousMessageIds, incomingIds)) {
       return
     }
@@ -772,9 +757,9 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const usageState = usageInfos ? rebuildUsageStateFromInfos(usageInfos) : state.usage[sessionId]
 
     batch(() => {
-      setState("messages", () => nextMessages)
-      setState("messageInfoVersion", () => nextMessageInfoVersion)
-      setState("permissions", "byMessage", () => nextPermissionsByMessage)
+      // Store object updates merge. Pass only changed records and versions.
+      if (recordsChanged) setState("messages", normalizedRecords)
+      if (infoChangedAny) setState("messageInfoVersion", nextMessageInfoVersion)
 
       // Solid store object updates merge, so omitted keys are deleted explicitly.
       if (!options?.preserveOmitted && omittedIds.length > 0) {
@@ -820,7 +805,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
       clearLatestTodoSnapshot(sessionId)
       incomingIds.forEach((messageId) => {
-        maybeUpdateLatestTodoFromRecord(nextMessages[messageId])
+        maybeUpdateLatestTodoFromRecord(previousMessages[messageId])
       })
 
       bumpSessionRevision(sessionId)
