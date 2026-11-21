@@ -33,7 +33,6 @@ for (const mode of ["present", "offline", "missing", "rate-limited", "uncertain"
     Object.defineProperty(navigator, "clipboard", { value: undefined })
     window.EventSource = class extends EventTarget { close() {} } as any
     if (!sessionStorage.getItem("codenomad.client-state.v1")) {
-      sessionStorage.setItem("codenomad.client-state.page", "fixture-page")
       sessionStorage.setItem("codenomad.client-state.v1", JSON.stringify({
         version: 1, revision: 1, savedAt: 1, layout: {}, session: { activeTabIndex: 1, tabs: ["a", "b"].map((backendId, index) => ({
           kind: "workspace", folder: "/same", backendId, serverId: backendId, workspaceId: `${backendId}~same`, occurrence: 0,
@@ -149,7 +148,7 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
     ;(window as any).__name = (value: unknown) => value
     Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: "web", __CODENOMAD_WINDOW_CONTEXT__: "remote" })
     window.addEventListener("pagehide", event => event.stopImmediatePropagation(), { capture: true })
-    sessionStorage.setItem("codenomad.client-state.page", "fixture-page")
+    Object.defineProperty(document, "wasDiscarded", { value: true })
     let openRemote: () => void
     let connections = 0
     Object.assign(window, { openRemoteEvents: () => openRemote(), remoteConnections: () => connections })

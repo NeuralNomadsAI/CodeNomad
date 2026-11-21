@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { createServer, request as forwardRequest } from "node:http"
 import { after, before, test } from "node:test"
-import { chromium, type Browser } from "playwright"
+import { chromium, type Browser, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
@@ -202,27 +202,18 @@ for (const remote of [false, true]) test(`${remote ? "desktop remote" : "storage
 
 const viewCases = [
   { web: false, close: false }, { web: false, close: false, tauri: true }, { web: false, close: true },
-  { web: true, close: false }, { web: true, close: false, noLock: true },
+  { web: true, close: false }, { web: true, close: false, unsupportedDiscard: true },
   { web: true, close: true, late: true }, { web: true, close: false, discard: true },
+  { web: true, close: false, delayedCopy: true },
 ]
-for (const { web, close, late, noLock, discard, tauri } of viewCases) test(`${web ? "browser-session" : "native"} production capture/restore binds duplicate UUIDs after ${close ? "closure" : "reorder"} (${late ? "late DELETE" : discard ? "discard" : noLock ? "no Web Locks" : tauri ? "Tauri navigation" : "navigation"})`, async () => {
+for (const { web, close, late, unsupportedDiscard, discard, tauri, delayedCopy } of viewCases) test(`${web ? "browser-session" : "native"} production capture/restore binds duplicate UUIDs after ${close ? "closure" : "reorder"} (${late ? "late DELETE" : discard ? "discard" : delayedCopy ? "delayed copy" : unsupportedDiscard ? "no discard signal" : tauri ? "Tauri navigation" : "navigation"})`, async () => {
   const context = await browser.newContext()
   const page = await context.newPage()
+  const restoredDocument = (candidate: Page) => candidate.locator('[data-restoring="false"]').waitFor({ timeout: 60_000 })
   const errors: string[] = [], loads: string[] = []
   page.on("pageerror", error => errors.push(error.message))
-  await context.addInitScript(({ web, noLock, discard, tauri }) => {
-    if (location.search === "?other") return
-    if (noLock) {
-      Object.defineProperty(navigator, "locks", { value: undefined })
-      // Reproduce a live HTTP opener whose reply arrives after the old claim timeout.
-      if (!window.opener) {
-        const send = BroadcastChannel.prototype.postMessage
-        BroadcastChannel.prototype.postMessage = function (message) {
-          if (message.occupied) setTimeout(() => send.call(this, message), 2_000)
-          else send.call(this, message)
-        }
-      }
-    }
+  await context.addInitScript(({ web, unsupportedDiscard, discard, tauri, late }) => {
+    if (location.search === "?other" || location.search === "?parked") return
     const w = window as any
     w.__name = (value: unknown) => value
     w.__CODENOMAD_RUNTIME_HOST__ = web ? "web" : tauri ? "tauri" : "electron"; w.__CODENOMAD_WINDOW_CONTEXT__ = "local"
@@ -237,8 +228,10 @@ for (const { web, close, late, noLock, discard, tauri } of viewCases) test(`${we
       tabs: [0, 1].map(occurrence => ({ kind: "workspace", folder: "/same", occurrence, workspaceId: `web-${occurrence}`,
         activeSessionId: "same", activeParentSessionId: "same", drafts: {}, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {} })) } }
     if (web) {
+      if (unsupportedDiscard || discard || late && boot > 1) {
+        Object.defineProperty(document, "wasDiscarded", { value: unsupportedDiscard ? undefined : true })
+      }
       if (boot === 1) {
-        sessionStorage.setItem("codenomad.client-state.page", "first-page")
         for (const [key, value] of Object.entries(initial.layout)) localStorage.setItem(key, value)
         sessionStorage.setItem("codenomad.client-state.v1", JSON.stringify(initial))
       }
@@ -272,11 +265,15 @@ for (const { web, close, late, noLock, discard, tauri } of viewCases) test(`${we
       loadClientState: async () => ({ isPrimary: true, restoreEnabled: true, snapshot: JSON.parse(sessionStorage.getItem("snapshot") ?? "null") ?? initial }),
       saveClientState: async (_token: string, snapshot: unknown) => { sessionStorage.setItem("snapshot", JSON.stringify(snapshot)); return true },
     }
-  }, { web, noLock, discard, tauri })
+  }, { web, unsupportedDiscard, discard, tauri, late })
   let sequence = 0
   let inventory = ["web-0", "web-1", "other-window"]
   let holdNativeRelease = false
   const finishNativeRelease = Promise.withResolvers<void>()
+  const heldDelete = Promise.withResolvers<void>()
+  const finishDelete = Promise.withResolvers<void>()
+  const explicitDeleteCompleted = Promise.withResolvers<boolean>()
+  let sourceIds: string[] = []
   const deletes: string[] = []
   const mock = (method: string, path: string, input: any) => {
     let body: any = {}
@@ -289,8 +286,7 @@ for (const { web, close, late, noLock, discard, tauri } of viewCases) test(`${we
         binaryId: "fixture", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), temporary: id !== "other-window" }))
     } else if (path.startsWith("/api/workspaces/") && method === "DELETE") {
       const id = path.split("/").at(-1)!
-      deletes.push(id)
-      if (id.startsWith("uuid-") || !close && !late || close && id === "web-0") inventory = inventory.filter(candidate => candidate !== id)
+      if (!late || id !== sourceIds[1]) inventory = inventory.filter(candidate => candidate !== id)
       return undefined
     } else if (path === "/api/previews") {
       loads.push(input.url)
@@ -307,6 +303,7 @@ for (const { web, close, late, noLock, discard, tauri } of viewCases) test(`${we
   // transport completes. Observe delivery at the HTTP listener instead.
   const server = createServer(async (req, res) => {
     const target = new URL(req.url!, url)
+    if (target.search === "?parked") return res.writeHead(200, { "Content-Type": "text/html" }).end("<!doctype html>")
     if (!/^\/(?:api|workspaces)\//.test(target.pathname)) {
       const upstream = forwardRequest(target, incoming => {
         res.writeHead(incoming.statusCode!, incoming.headers)
@@ -318,6 +315,17 @@ for (const { web, close, late, noLock, discard, tauri } of viewCases) test(`${we
     }
     const chunks = []
     for await (const chunk of req) chunks.push(chunk)
+    if (req.method === "DELETE" && target.pathname.startsWith("/api/workspaces/")) {
+      const id = target.pathname.split("/").at(-1)!
+      deletes.push(id)
+      const explicit = late && id === sourceIds[0]
+      if (explicit || delayedCopy && sourceIds.includes(id)) {
+        if (explicit) res.on("close", () => explicitDeleteCompleted.resolve(res.writableFinished))
+        heldDelete.resolve()
+        await finishDelete.promise
+        if (res.destroyed) return
+      }
+    }
     const body = mock(req.method!, target.pathname, chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : undefined)
     if (holdNativeRelease && req.method === "DELETE") await finishNativeRelease.promise
     if (body === undefined) res.writeHead(204).end()
@@ -327,25 +335,26 @@ for (const { web, close, late, noLock, discard, tauri } of viewCases) test(`${we
   const address = server.address() as { port: number }
   const fixtureUrl = `http://127.0.0.1:${address.port}${new URL(url).pathname}`
   try {
-    const other = web && !close && !discard ? await context.newPage() : undefined
+    const other = web && !close && !discard && !delayedCopy ? await context.newPage() : undefined
     if (other) {
       await other.addInitScript(() => {
         const w = window as any
         w.__name = (value: unknown) => value
         w.__CODENOMAD_RUNTIME_HOST__ = "web"; w.__CODENOMAD_WINDOW_CONTEXT__ = "local"
         w.EventSource = class extends EventTarget { close() {} }
-        sessionStorage.setItem("codenomad.client-state.page", "other-page")
+        Object.defineProperty(document, "wasDiscarded", { value: true })
         sessionStorage.setItem("codenomad.client-state.v1", JSON.stringify({ version: 1, revision: 1, savedAt: 1,
           layout: {}, session: { activeTabIndex: 0, tabs: [{ kind: "workspace", workspaceId: "other-window", folder: "/same" }] } }))
       })
       await other.goto(`${fixtureUrl}?other`)
-      await other.locator('[data-restoring="false"]').waitFor()
+      await restoredDocument(other)
     }
     await page.goto(fixtureUrl)
-    await page.locator('[data-restoring="false"]').waitFor()
+    await restoredDocument(page)
     await page.waitForFunction(() => (window as any).tabViews.ids().length === 2)
     const ids = await page.evaluate(() => (window as any).tabViews.ids()) as string[]
-    if (!noLock) assert.equal(ids.includes("web-0"), web, "only an unmarked browser page reclaims its exact record")
+    sourceIds = ids
+    assert.equal(ids.includes("web-0"), Boolean(discard), "only a same-tab discard reclaims exact records")
     assert.deepEqual(await page.evaluate(ids => ids.map((id: string) => (window as any).tabViews.view(id).missions?.selected), ids),
       ["legacy-mission", undefined], "folder Mission selection adopts into the first descriptor only")
     const legacyUrls = await page.evaluate(async id => {
@@ -371,7 +380,7 @@ for (const { web, close, late, noLock, discard, tauri } of viewCases) test(`${we
         const tabs = JSON.parse(sessionStorage.getItem("codenomad.client-state.v1")!).session.tabs
         return tabs.length === (close ? 1 : 2) && tabs[0].viewState?.missions?.reader?.missionId === "debug"
       }, close)
-      assert.deepEqual(deletes, close ? ["web-0"] : [], "entering and leaving bfcache does not delete any records")
+      assert.deepEqual(deletes, close ? [ids[0]] : [], "entering and leaving bfcache does not delete any records")
       assert.equal(await page.evaluate(() => sessionStorage.getItem("codenomad.client-state.records-released")), null)
     } else if (close) {
       await page.evaluate(() => window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__!("prepare"))
@@ -388,11 +397,18 @@ for (const { web, close, late, noLock, discard, tauri } of viewCases) test(`${we
     assert.equal(captured[0].viewState.missions.reader.missionId, "debug")
     if (!close) assert.deepEqual(captured[1].viewState.previews.same, { mode: "preview" })
     assert.equal(await page.evaluate(() => (window as any).tabViews.saved("same").targetUrl), "https://example.com/a")
-    if (other) {
+    if (other || delayedCopy) {
       const opened = page.waitForEvent("popup")
-      await page.evaluate(() => { window.open(location.href) })
+      await page.evaluate(delayed => { window.open(delayed ? "?parked" : location.href) }, delayedCopy)
       const copy = await opened
-      await copy.locator('[data-restoring="false"]').waitFor()
+      if (delayedCopy) {
+        assert.equal(await copy.evaluate(() => sessionStorage.getItem("codenomad.client-state.records-released")), null)
+        await page.goto(`${fixtureUrl}?parked`)
+        await heldDelete.promise
+        assert.ok(ids.every(id => inventory.includes(id)), "source DELETEs are pending while the copy starts")
+        await copy.goto(fixtureUrl)
+      }
+      await restoredDocument(copy)
       const copied = await copy.evaluate(() => {
         const f = (window as any).tabViews
         return f.ids().map((id: string) => ({ id, draft: f.draft(id), view: f.view(id) }))
@@ -401,6 +417,15 @@ for (const { web, close, late, noLock, discard, tauri } of viewCases) test(`${we
       assert.ok(copied.every((v: any) => inventory.includes(v.id) && !ids.includes(v.id)), "a duplicated page owns different records")
       assert.equal(copied[0].draft, "restored draft")
       assert.deepEqual(copied.map((v: any) => v.view), captured.map((v: any) => v.viewState))
+      if (delayedCopy) {
+        finishDelete.resolve()
+        await copy.waitForFunction(async (ids: string[]) => {
+          const rows = await (await fetch("/api/workspaces")).json()
+          return ids.every(id => !rows.some((row: any) => row.id === id))
+        }, ids)
+        assert.ok(copied.every((row: any) => inventory.includes(row.id)), "source DELETEs cannot remove the copy's records")
+        return
+      }
       const closed = copy.waitForEvent("close")
       await copy.close({ runBeforeUnload: true })
       await closed
@@ -409,10 +434,15 @@ for (const { web, close, late, noLock, discard, tauri } of viewCases) test(`${we
         return ids.every(id => !rows.some((row: any) => row.id === id))
       }, copied.map((v: any) => v.id))
       assert.ok(ids.every(id => inventory.includes(id)), "closing a popup with copied sessionStorage keeps the opener's records")
-      if (noLock) assert.ok(ids.every(id => !id.startsWith("web-")), "a page cannot reclaim saved IDs without a Web Lock")
     }
     const count = loads.length
-    await page.reload(); await page.locator('[data-restoring="false"]').waitFor()
+    if (late) await heldDelete.promise
+    await page.reload(); await restoredDocument(page)
+    if (late) {
+      finishDelete.resolve()
+      assert.equal(await explicitDeleteCompleted.promise, true, "immediate reload does not cancel the detached tab's DELETE")
+      assert.ok(!inventory.includes(ids[0]))
+    }
     assert.equal(deletes.includes(ids[1]), !discard, "reload sends the keepalive DELETE unless pagehide was skipped")
     const restored = await page.evaluate(() => (window as any).tabViews.ids().map((id: string) => ({ id, view: (window as any).tabViews.view(id) })))
     assert.equal(restored.length, captured.length)
@@ -458,15 +488,15 @@ for (const { web, close, late, noLock, discard, tauri } of viewCases) test(`${we
     }
     assert.deepEqual(errors, [])
     if (late) {
-      assert.ok(inventory.includes("web-1"), "the old record was listed when the replacement restored")
-      inventory = inventory.filter(id => id !== "web-1")
-      await page.evaluate(async () => {
+      assert.ok(inventory.includes(ids[1]), "the old record was listed when the replacement restored")
+      inventory = inventory.filter(id => id !== ids[1])
+      await page.evaluate(async id => {
         const f = (window as any).tabViews
-        f.remove("web-1")
+        f.remove(id)
         await f.refresh()
-      })
+      }, ids[1])
       assert.deepEqual(await page.evaluate(() => (window as any).tabViews.ids()), restored.map((row: any) => row.id))
-      assert.equal(sequence, 1, "the late DELETE does not trigger a second restore")
+      assert.equal(sequence, 3, "a released snapshot creates fresh records even with a discard signal")
     }
     if (other) {
       await page.evaluate(() => (window as any).tabViews.disableRestore())
@@ -486,6 +516,7 @@ for (const { web, close, late, noLock, discard, tauri } of viewCases) test(`${we
       assert.deepEqual(await other.evaluate(() => (window as any).tabViews.ids()), ["other-window"])
     }
   } finally {
+    finishDelete.resolve()
     finishNativeRelease.resolve()
     await context.close()
     server.closeAllConnections()

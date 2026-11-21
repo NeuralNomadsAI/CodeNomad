@@ -42,6 +42,8 @@ Beim Schließen oder Neuladen eines Fensters oder Browser-Tabs sowie beim Beende
 
 Bei aktivierter Startwiederherstellung stellt jeder verbleibende Tab seine eigenen Panel-Auswahlen, Missionsauswahl und -leseansicht sowie die Wahl zwischen Chat und Web-Vorschau wieder her. Browser-URLs und Verlauf werden pro Sitzung geteilt; gespeicherte Seiten laden erst beim ausdrücklichen erneuten Öffnen der Web-Vorschau. Das Schließen einer Instanz entfernt nur ihre gespeicherte Ansicht; erneutes Öffnen des Ordners erzeugt eine neue Instanz.
 
+Ein duplizierter Browser-Tab öffnet eigene Projektverbindungen. Eine noch offene Verbindung kann nur beim Wiederherstellen desselben Tabs nach dem Verwerfen durch den Browser weiterverwendet werden.
+
 ## Remote-Tabs wiederherstellen {#restore-remote-tabs}
 
 Beim Neuladen bleiben bei aktivierter Wiederherstellung Reihenfolge, Auswahl und Entwürfe der Remote-Tabs erhalten. Ein unerreichbarer Server hinterlässt einen wartenden Tab: Wählen Sie **Wiederholen**, sobald er erreichbar ist, oder **Verbinden** mit Benutzername/Passwort oder einem Link im Feld **Neuer Kopplungslink**. Andere Server bleiben nutzbar. **Server nicht gefunden** bedeutet, dass der gespeicherte Server fehlt.

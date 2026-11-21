@@ -2224,7 +2224,7 @@ function trackWorkspaceClose(id: string, operation: () => Promise<void>, keepali
   return request
 }
 
-function closeWorkspace(id: string, keepalive = false): Promise<void> {
+function closeWorkspace(id: string, { keepalive = false, silent = false } = {}): Promise<void> {
   const instance = instances().get(id)
   if (!instance) return Promise.resolve()
   const pending = workspaceCloseRequests.get(id)
@@ -2242,7 +2242,7 @@ function closeWorkspace(id: string, keepalive = false): Promise<void> {
     .catch((error) => {
       log.error("Failed to close workspace", error)
       try {
-        if (!keepalive) showToastNotification({ category: "projects",
+        if (!silent) showToastNotification({ category: "projects",
           message: tGlobal("app.closeInstance.toast.error"),
           variant: "error",
         })

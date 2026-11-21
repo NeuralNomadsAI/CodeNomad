@@ -29,7 +29,7 @@ for (const offline of [false, true]) test(`web reload recreates backend-owned re
     Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: "web", __CODENOMAD_WINDOW_CONTEXT__: "remote" })
     window.EventSource = class extends EventTarget { close() {} } as any
     if (sessionStorage.getItem("codenomad.client-state.v1")) return
-    sessionStorage.setItem("codenomad.client-state.page", "fixture-page")
+    Object.defineProperty(document, "wasDiscarded", { value: true })
     sessionStorage.setItem("codenomad.client-state.v1", JSON.stringify({
       version: 1, revision: 1, savedAt: 1, layout: {}, session: { activeTabIndex: 1, tabs: [
         { workspaceId: "survivor", occurrence: 0 },

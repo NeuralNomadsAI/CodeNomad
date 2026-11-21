@@ -42,6 +42,8 @@ Fermer ou recharger une fenêtre ou un onglet du navigateur, ou quitter l’appl
 
 Lorsque la restauration au démarrage est activée, chaque onglet restant retrouve ses propres choix de panneaux, sa sélection et son lecteur de Mission ainsi que son choix entre le chat et l’aperçu web. Les URL et l’historique du navigateur sont partagés par session ; les pages enregistrées se chargent uniquement lorsque l’aperçu web est explicitement rouvert. Fermer une occurrence retire uniquement sa vue enregistrée ; rouvrir le dossier crée une nouvelle occurrence.
 
+Un onglet dupliqué ouvre ses propres connexions de projet. Une connexion encore ouverte ne peut être réutilisée que si le navigateur a déchargé puis repris le même onglet.
+
 ## Restaurer les onglets distants {#restore-remote-tabs}
 
 Au rechargement, si la restauration est activée, les onglets distants retrouvent leur ordre, leur sélection et leurs brouillons. Un serveur indisponible laisse un onglet en attente : choisissez **Réessayer** à son retour, ou **Se connecter** avec son nom d’utilisateur/mot de passe ou un lien dans **Nouveau lien d’appairage**. Les autres serveurs restent utilisables. **Serveur introuvable** signifie que le serveur enregistré est introuvable.

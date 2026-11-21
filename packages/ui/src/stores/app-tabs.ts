@@ -225,7 +225,7 @@ function attachInstanceTab(instanceId: string, options?: { source?: "restore" })
 function closeInstanceTab(instanceId: string): void {
   if (!openInstanceTabIds().has(instanceId)) return
   detachInstanceTab(instanceId)
-  void closeWorkspace(instanceId).catch(() => {})
+  void closeWorkspace(instanceId, { keepalive: true }).catch(() => {})
 }
 
 /** Local-only removal for server stops, temporary discard and disconnected-dialog dismissal. */

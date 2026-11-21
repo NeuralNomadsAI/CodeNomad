@@ -43,6 +43,8 @@ Bir pencereyi veya tarayıcı sekmesini kapattığınızda ya da yenilediğinizd
 
 Başlangıç geri yüklemesi etkinken kalan her sekme kendi panel tercihlerini, Görev seçimini ve okuyucusunu, sohbet veya web önizlemesi seçimini geri yükler. Tarayıcı URL'leri ve geçmişi oturum başına paylaşılır; kayıtlı sayfalar yalnızca web önizlemesi açıkça yeniden açıldığında yüklenir. Bir örneği kapatmak yalnızca o örneğin kayıtlı görünümünü kaldırır; klasörü yeniden açmak yeni bir örnek oluşturur.
 
+Bir tarayıcı sekmesini çoğaltmak, o sekmeye ait ayrı proje bağlantıları açar. Açık kalan bir bağlantı yalnızca tarayıcının bellekten çıkardığı aynı sekme yeniden açıldığında kullanılabilir.
+
 ## Uzak sekmeleri geri yükleme {#restore-remote-tabs}
 
 Geri yükleme açıkken yeniden yüklediğinizde uzak sekmelerin sırası, seçimi ve taslakları korunur. Kullanılamayan sunucu bekleyen bir sekme bırakır: sunucu döndüğünde **Yeniden dene**, ya da kullanıcı adı/parola veya **Yeni eşleştirme bağlantısı** alanındaki bağlantıyla **Bağlan** seçin. Diğer sunucular kullanılabilir kalır. **Sunucu bulunamadı**, kayıtlı sunucunun eksik olduğunu gösterir.

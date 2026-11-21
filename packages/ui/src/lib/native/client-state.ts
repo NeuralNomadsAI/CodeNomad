@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event"
 import { isElectronHost, isLocalWindow, isTauriHost } from "../runtime-env"
 import { getLogger } from "../logger"
 import { isStartupStateCommand, type StartupStateCommand, type StartupStateSnapshot } from "./startup-state-command"
-import { claimWebSessionRecords, clearWebSessionClientState, loadWebSessionClientState, saveWebSessionClientState,
+import { clearWebSessionClientState, loadWebSessionClientState, saveWebSessionClientState,
   setWebSessionRestoreEnabled } from "../web-session-client-state"
 const LEGACY_WEB_KEYS = ["codenomad-client-snapshot-v1", "codenomad-client-restore-enabled-v1"]
 export type NativeClientStateLoadResult = {
@@ -66,9 +66,7 @@ export async function loadNativeClientState(): Promise<NativeClientStateLoadResu
   const web = loadWebSessionClientState()
   if (!web) return SECONDARY_CLIENT_STATE
   webSessionOwned = true
-  const { recordsReleased, ...state } = web
-  const claimed = await claimWebSessionRecords()
-  return { isPrimary: true, ...state, webSession: true, ...(claimed && !recordsReleased ? {} : { recreateWebRecords: true }) }
+  return { isPrimary: true, ...web, webSession: true }
 }
 // A plain browser tab persists in its own sessionStorage (`web-session-client-state.ts`).
 const persistClientState = (web: () => boolean, native: () => Promise<boolean>): Promise<boolean> =>

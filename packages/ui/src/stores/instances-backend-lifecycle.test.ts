@@ -4,7 +4,7 @@ import { createBackendClient, registerBackendClient } from "../lib/backend-clien
 import { backendEvents } from "../lib/backend-events"
 import { preferences } from "./preferences"
 import { addInstance, createInstance, closeWorkspace, instances, removeInstance, releaseRestoreCreatedInstance, type WorkspaceCreationOwnership } from "./instances"
-import { selectInstanceTab, activeAppTabId } from "./app-tabs"
+import { selectInstanceTab, activeAppTabId, attachInstanceTab, closeInstanceTab } from "./app-tabs"
 import { serverApi } from "../lib/api-client"
 import { deferred } from "../../tests/test-support/deferred"
 import { RELAY_AUTHORITY_HEADER } from "../../../server/src/codenomad-servers/relay-authority"
@@ -319,8 +319,9 @@ it("captures create/close/release owner, converges qualified identities and fenc
   await releaseRestoreCreatedInstance(br.instanceId, br.requestId!)
   await releaseRestoreCreatedInstance(br.instanceId, br.requestId!)
   assert.equal(requests.filter(([id, , route]) => id === "B" && route.endsWith("/w/creation/release")).length, 1)
-  const close = closeWorkspace(br.instanceId, true)
-  await Promise.all([close, closeWorkspace(br.instanceId)])
+  attachInstanceTab(br.instanceId, { source: "restore" })
+  closeInstanceTab(br.instanceId)
+  await closeWorkspace(br.instanceId)
   assert.deepEqual(requests.filter(([, method]) => method === "DELETE"), [["B", "DELETE", "/api/backends/B/api/workspaces/w"]])
   assert.deepEqual(closeTransport, [{ keepalive: true, credentials: "include", proof: "b".repeat(43) }])
   const queued = closeWorkspace(ar.instanceId)

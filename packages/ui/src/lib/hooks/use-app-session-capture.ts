@@ -274,7 +274,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
     }))
     return releasing = Promise.allSettled([
       cancelUnattachedWorkspaceCreations(ids),
-      ...(deleteTabs ? [...ids].map(id => closeWorkspace(id, true)) : []),
+      ...(deleteTabs ? [...ids].map(id => closeWorkspace(id, { keepalive: true, silent: true })) : []),
     ])
   }
   const awaitRelease = async () => {

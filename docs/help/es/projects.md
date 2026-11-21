@@ -42,6 +42,8 @@ Al cerrar o recargar una ventana o pestaña del navegador, o al salir de la apli
 
 Con la restauración al iniciar activada, cada pestaña restante recupera sus propias opciones de paneles, selección y lector de Misión, y elección entre chat y vista previa web. Las URL y el historial del navegador se comparten por sesión; las páginas guardadas se cargan solo al reabrir explícitamente la vista previa web. Cerrar una instancia elimina solo su vista guardada; reabrir la carpeta crea una instancia nueva.
 
+Al duplicar una pestaña del navegador, se abren conexiones de proyecto propias. Solo se puede reutilizar una conexión que siga abierta al reanudar la misma pestaña después de que el navegador la haya descartado.
+
 ## Restaurar pestañas remotas {#restore-remote-tabs}
 
 Al recargar con la restauración activada, las pestañas remotas conservan su orden, selección y borradores. Un servidor no disponible deja una pestaña en espera: elige **Reintentar** cuando vuelva, o **Conectar** con su usuario/contraseña o un enlace en **Nuevo enlace de emparejamiento**. Los demás servidores siguen disponibles. **Servidor no encontrado** indica que falta el servidor guardado.

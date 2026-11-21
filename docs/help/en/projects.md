@@ -42,6 +42,8 @@ Closing or reloading a window or browser tab, or quitting the app, releases its 
 
 With startup restoration enabled, each remaining tab restores its own panel choices, Mission selection/reader and chat/web preview choice. Browser URLs and history are shared per session; saved pages load only when the web preview is explicitly reopened. Closing one occurrence removes only its saved view; reopening the folder creates a new occurrence.
 
+Duplicating a browser tab opens its own project connections. Only resuming the same tab after the browser discarded it can reuse a connection that's still open.
+
 ## Restore remote tabs {#restore-remote-tabs}
 
 When you reload with restoration enabled, remote tabs keep their order, selection and drafts. An unavailable server leaves a waiting tab: choose **Retry** when it returns, or **Connect** with its username/password or a fresh link in **New pairing link**. Other servers remain usable. **Server not found** means the saved server is missing.
