@@ -49,7 +49,7 @@ export class PageDriverUnsupportedError extends Error {
   readonly code = "unsupported"
   constructor(readonly driver: DriverKind, readonly operation: string) { super(`${driver} page driver does not support ${operation}`) }
 }
-export interface PageSession { driver: PageDriver; checkpoint(): Promise<void>; beforeInput?(): Promise<void>; markAutomation: boolean }
+export interface PageSession { driver: PageDriver; checkpoint(): Promise<void>; beforeInput?(): Promise<void>; checkRelease?(): void; markAutomation: boolean }
 export class Handle { constructor(readonly objectId: string) {} }
 export function gone(ref: string): Error { return new Error(`${ref} is no longer in the page; inspect again`) }
 
@@ -114,6 +114,7 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (kind
   let targetLost: PageTargetChangedError | undefined
   const checkInput = (release: boolean) =>
     !release && session.beforeInput ? session.beforeInput() : session.checkpoint()
+  const checkRelease = () => session.checkRelease ? session.checkRelease() : session.checkpoint()
   const dispatch = async (kind: InputKind, params: Record<string, unknown>) => {
     let timestamp: number | undefined
     const keyRelease = kind === "keyboard" && params.type === "keyUp" && held.has(`key:${params.code}`)
@@ -140,15 +141,20 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (kind
   await awaitInputAcceptance(session)
   try { return await run(dispatch) }
   catch (error) {
-    if (error instanceof PageTargetChangedError) targetLost = error
+    if (error instanceof PageTargetChangedError) {
+      targetLost = error
+      if (attempted && !error.sameDocument) {
+        throw new PageTargetChangedError(`${error.message}. Input already sent may still be delivered.`)
+      }
+    }
     if (attempted && error instanceof Error && /timed out|timeout/i.test(error.message)) throw new Error("Input timed out: its outcome is unknown. The page was busy and the input may still be delivered; inspect before retrying.")
     throw error
   } finally {
     for (const release of targetLost && !targetLost.sameDocument ? [] : [...held.values()].reverse()) {
       try {
-        await session.checkpoint()
+        await checkRelease()
         if (session.markAutomation) await session.driver.call("mark-input", undefined, []).catch(() => undefined)
-        await session.checkpoint()
+        await checkRelease()
         const { text: _text, unmodifiedText: _unmodified, ...params } = release.params
         await sendInput(session, release.kind, { ...params, ...(release.kind === "pointer" ? point : {}) })
       } catch (error) {

@@ -222,6 +222,8 @@ export class DeveloperCdp {
         return this.command(state, method, params)
       } }, () => check(monitorForeground ? foreground : undefined), true)
       if (!monitorForeground) session.beforeInput = () => check(foreground)
+      // A stalled renderer may not answer context reads until after the release is queued.
+      session.checkRelease = guard
       return performAction(session, page)
     })
   }
