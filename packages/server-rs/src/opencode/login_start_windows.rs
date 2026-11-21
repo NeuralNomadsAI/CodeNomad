@@ -207,3 +207,14 @@ fn task_is_user_scoped_and_does_not_interpret_the_command() {
     assert!(task("not-a-sid", Path::new("x"), Path::new("y"), &launch).is_err());
     assert_eq!(literal("a'’b"), "'a''’’b'");
 }
+
+#[test]
+fn wsl_uses_an_explicit_distro_and_executable_without_a_shell() {
+    let launch = wsl_launch(r"\\wsl.localhost\Fixture distro\home\user\opencode").unwrap();
+    assert!(launch.command.ends_with(r"System32\wsl.exe"));
+    assert_eq!(
+        launch.args,
+        ["--distribution", "Fixture distro", "--exec", "/home/user/opencode", "serve", "--service"]
+    );
+    assert_eq!(wsl_launch(r"\\wsl.localhost\Fixture distro").err(), Some(Failure::Unsupported));
+}

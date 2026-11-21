@@ -200,6 +200,10 @@ impl RefreshQueue {
         if matches!(kind, "session.created" | "session.forked") && !data["parentID"].as_str().is_some_and(ordinary) {
             return;
         }
+        if kind == "session.created" && !rules::parse(&data["permissions"]).is_ok_and(|rules| maybe_supervised(&rules))
+        {
+            return;
+        }
         let lane = match id.as_deref() {
             Some(id) if matches!(kind, "session.created" | "session.forked" | "session.deleted") => {
                 format!("{kind}:{id}")
