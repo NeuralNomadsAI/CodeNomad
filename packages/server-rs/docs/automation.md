@@ -31,7 +31,7 @@ Established from the branch's code and tests (`developer_mode.rs`, `browser_cont
 | Tool | Windows (WebView2) | macOS 14+ (WKWebView) | Linux (WebKitGTK) |
 | --- | --- | --- | --- |
 | inspect, act, screenshot (app window) | Yes: server CDP WebSocket to `--remote-debugging-port=0` → **B**: in-process `CallDevToolsProtocolMethod`, no port | No: `developer.status` refuses ("requires the Tauri Windows runtime"); WebKit has no CDP → **B**: new, WebKit driver on the app's own view | No, as macOS → **B**: new, as macOS |
-| restart | Yes, after an inspection → **B**: yes | No: needs an inspection, and `developer.restart` is refused although the host's relaunch is cross-platform → **B**: yes once inspect works | No, as macOS → **B**: as macOS |
+| restart | Yes, after an inspection, using `developer.restartScope` and `developer.reconnect` | No: needs a native inspection and a scoped relaunch → **B**: yes once both work | No, as macOS → **B**: as macOS |
 | browser open, navigate, screenshot | Yes: host navigation, CDP `Page.captureScreenshot` → **B**: unchanged | Yes: `takeSnapshotWithConfiguration` → **B**: unchanged | Yes: `webkit_web_view_get_snapshot` → **B**: unchanged |
 | browser snapshot and page actions | Yes: server engine, host `cdp` driver → **B**: engine in the host, same driver | Yes: server engine, host `webkit` driver → **B**: engine in the host, same driver | Yes, as macOS → **B**: as macOS |
 | inspect diagnostics | Renderer console through CDP events, host preview errors → **B**: WebView2 DevTools event receiver, plus Rust server diagnostics | None (no inspect) → **B**: a fixed page-world console/error hook, plus Rust server diagnostics | As macOS |

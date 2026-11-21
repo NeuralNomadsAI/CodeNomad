@@ -1,5 +1,6 @@
 //! The exact-window bridge. The host drives the page; only the bridge issues inspection receipts.
 mod pins;
+pub(super) mod restart;
 
 use std::time::Duration;
 
@@ -20,7 +21,7 @@ const PROBE: Duration = Duration::from_secs(2);
 const TARGET_GONE: &str = "The selected window is unavailable; choose a window in inspect({targets:true})";
 const STALE_DOCUMENT: &str = "The selected window document changed; inspect again";
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Target {
     native_identity: String,
@@ -233,41 +234,6 @@ pub(super) async fn handle(pins: &Pins, session: &str, mode: &str, body: &Value,
     };
     let document = (!fresh).then(|| pin.as_ref().and_then(|pin| pin.document.as_deref())).flatten();
     let action = command["action"].as_str().unwrap_or_default();
-    if action == "restart" {
-        if let Err(error) = target.context(session).await {
-            return error.response(is_exact);
-        }
-        let Some(restart) = pins.restart(session, run, access) else {
-            return refuse(Status::CONFLICT, "Developer CDP run is closed; inspect again");
-        };
-        return match native_parent::request("developer.restart", target.native_params(), NATIVE).await {
-            Ok(done) => {
-                restart.finish(true);
-                result(done)
-            }
-            // The parent returns plain strings: these two transport failures cannot confirm admission.
-            Err(error)
-                if matches!(
-                    error.as_str(),
-                    "Native request timed out: developer.restart" | "Native parent is shutting down"
-                ) =>
-            {
-                coded(
-                    Status::BAD_GATEWAY,
-                    "restart-outcome-unknown",
-                    "The restart outcome is unknown. Choose the window in inspect({targets:true}) before retrying.",
-                )
-            }
-            Err(error) => {
-                restart.finish(false);
-                if error.starts_with("The selected window is no longer available") {
-                    unavailable(is_exact, None)
-                } else {
-                    refuse(Status::CONFLICT, &error)
-                }
-            }
-        };
-    }
     let capture = action == "inspect" || action == "screenshot";
     let inspecting = action == "inspect";
     let mut done = match target.execute(session, document, command, NATIVE).await {
@@ -278,25 +244,10 @@ pub(super) async fn handle(pins: &Pins, session: &str, mode: &str, body: &Value,
         return unavailable(is_exact, None);
     }
     if inspecting {
-        if !target.window.matches(&done["context"]) {
-            return unavailable(is_exact, None);
-        }
-        if !done["snapshot"].is_string() || !done["diagnostics"].is_array() {
-            return refuse(Status::CONFLICT, "CodeNomad returned an invalid inspection");
-        }
-        let inspection_result = done.as_object_mut().unwrap(); // Window context and snapshot were validated above.
-        let captured = inspection_result
-            .remove("document")
-            .and_then(|value| value.as_str().filter(|s| !s.is_empty()).map(str::to_owned));
-        if document.is_some() && document != captured.as_deref() {
-            return Failure::Document(STALE_DOCUMENT.into()).response(is_exact);
-        }
-        if target.window.window_instance.is_some() && captured.is_none() {
-            return refuse(Status::CONFLICT, "CodeNomad page has no valid document context");
-        }
-        if let Some(context) = inspection_result.get_mut("context").and_then(Value::as_object_mut) {
-            context.remove("sessionOpen");
-        }
+        let captured = match inspection_document(&target, &mut done, document) {
+            Ok(captured) => captured,
+            Err(error) => return error.response(is_exact),
+        };
         if let Some(ticket) = inspection {
             let Some(pin) = pins.publish(session, ticket, access, Pin { target, document: captured }) else {
                 return stale_inspection();
@@ -306,6 +257,28 @@ pub(super) async fn handle(pins: &Pins, session: &str, mode: &str, body: &Value,
         diagnostics::extend(&mut done, &native["logs"]);
     }
     result(done)
+}
+
+fn inspection_document(target: &Target, done: &mut Value, document: Option<&str>) -> Result<Option<String>, Failure> {
+    if !target.window.matches(&done["context"]) {
+        return Err(Failure::Target(TARGET_GONE.into()));
+    }
+    if !done["snapshot"].is_string() || !done["diagnostics"].is_array() {
+        return Err(Failure::Action("CodeNomad returned an invalid inspection".into()));
+    }
+    let snapshot = done.as_object_mut().unwrap(); // Validated above.
+    let captured =
+        snapshot.remove("document").and_then(|value| value.as_str().filter(|s| !s.is_empty()).map(str::to_owned));
+    if document.is_some() && document != captured.as_deref() {
+        return Err(Failure::Document(STALE_DOCUMENT.into()));
+    }
+    if target.window.window_instance.is_some() && captured.is_none() {
+        return Err(Failure::Action("CodeNomad page has no valid document context".into()));
+    }
+    if let Some(context) = snapshot.get_mut("context").and_then(Value::as_object_mut) {
+        context.remove("sessionOpen");
+    }
+    Ok(captured)
 }
 
 async fn inventory_windows(native: &Value, target: &Target, session: &str) -> Vec<Value> {

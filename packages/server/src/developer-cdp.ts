@@ -67,6 +67,10 @@ export interface DeveloperCdpInspectOptions {
   recoverUncertainRun?: boolean
 }
 
+interface DeveloperCdpInspectionHooks {
+  beforeRead?(): void
+}
+
 export interface DeveloperCdpScreenshot {
   mediaType: "image/png"
   data: string
@@ -137,7 +141,7 @@ interface RunState {
 export class DeveloperCdp {
   private readonly dependencies: DeveloperCdpDependencies
   private readonly windows = new Map<string, RunState>()
-  private readonly probes = new Map<RunState, RunState | undefined>()
+  private readonly probes = new Map<RunState, RunState | string>()
   private readonly operations = new Map<string, Promise<void>>()
   private readonly retiredRuns = new Map<string, { closed: boolean; recoverable: boolean }>()
   private closed = false
@@ -154,11 +158,13 @@ export class DeveloperCdp {
     }
   }
 
-  async inspect(identity: DeveloperCdpIdentity, options: DeveloperCdpInspectOptions = {}): Promise<DeveloperCdpInspection> {
+  async inspect(identity: DeveloperCdpIdentity, options: DeveloperCdpInspectOptions = {}, hooks?: DeveloperCdpInspectionHooks): Promise<DeveloperCdpInspection> {
     return this.exclusive(identity, async () => {
+      hooks?.beforeRead?.()
       const retirement = this.retiredRuns.get(identity.runId)
-      const recovering = Boolean(options.recoverUncertainRun && !options.ref && retirement?.recoverable)
+      const recovering = Boolean(options.recoverUncertainRun && !options.ref && !identity.document && retirement?.recoverable)
       const state = await this.ensure(identity, recovering)
+      hooks?.beforeRead?.()
       const generation = this.generation(state)
       const root = options.ref === undefined ? undefined : state.refs.resolve(options.ref, generation)
       let snapshot
@@ -181,9 +187,11 @@ export class DeveloperCdp {
     })
   }
 
-  async act(identity: DeveloperCdpIdentity, action: RefAction): Promise<PageActionResult> {
+  async act(identity: DeveloperCdpIdentity, action: RefAction, checkAdmission?: () => void): Promise<PageActionResult> {
     return this.exclusive(identity, async () => {
+      checkAdmission?.()
       const state = await this.ensure(identity)
+      checkAdmission?.()
       const epoch = state.navigationEpoch, generation = this.generation(state)
       const page = bindRefs(action, ref => state.refs.resolve(ref, generation))
       const monitorForeground = action.action === "scroll" && !action.ref || action.action === "wait"
@@ -270,6 +278,10 @@ export class DeveloperCdp {
           }
           guard()
           if (status === "ready") {
+            if (!release && checkAdmission) {
+              try { checkAdmission() }
+              catch (error) { throw new PageTargetChangedError(error instanceof Error ? error.message : String(error), true) }
+            }
             if (point) pointerReceipt = track ? { ...point, id: track } : undefined
             return this.command(state, method, point ? { ...params, ...point } : params)
           }
@@ -319,9 +331,11 @@ export class DeveloperCdp {
       () => this.assertContextCurrent(state, epoch, message, foreground), true)
   }
 
-  async screenshot(identity: DeveloperCdpIdentity): Promise<DeveloperCdpScreenshot> {
+  async screenshot(identity: DeveloperCdpIdentity, checkAdmission?: () => void): Promise<DeveloperCdpScreenshot> {
     return this.exclusive(identity, async () => {
+      checkAdmission?.()
       const state = await this.ensure(identity)
+      checkAdmission?.()
       const epoch = state.navigationEpoch
       const result = await this.command(state, "Page.captureScreenshot", {
         format: "png",
@@ -350,11 +364,16 @@ export class DeveloperCdp {
       this.disconnect(state, error)
       this.windows.delete(id)
     }
-    if (!runId) for (const probe of this.probes.keys()) this.disconnect(probe, error)
+    for (const [probe, owner] of this.probes) {
+      if (!runId || owner === runId) this.disconnect(probe, error)
+    }
   }
 
-  async context(selection: DeveloperCdpSelection): Promise<DeveloperCdpContext> {
-    return this.exclusive(selection, async () => (await this.ensure(selection)).context!)
+  async context(selection: DeveloperCdpSelection, beforeRead?: () => void): Promise<DeveloperCdpContext> {
+    return this.exclusive(selection, async () => {
+      beforeRead?.()
+      return (await this.ensure(selection)).context!
+    })
   }
 
   private async inputDestination(state: RunState, objectId: string, point: { x: number; y: number } | null,
@@ -383,14 +402,18 @@ export class DeveloperCdp {
     return (await read(hit.objectId))?.value ?? "frame"
   }
 
-  async probeContexts(endpoint: string, windowIds: ReadonlyMap<string, string | undefined>,
+  async probeContexts(selection: Pick<DeveloperCdpSelection, "endpoint" | "runId">, windowIds: ReadonlyMap<string, string | undefined>,
     sessionID?: string): Promise<Map<string, DeveloperCdpContext>> {
+    const { endpoint, runId } = selection
+    const retirement = this.retiredRuns.get(runId)
+    const current = () => !this.closed && !retirement?.closed && retirement === this.retiredRuns.get(runId)
+    if (!current()) return new Map()
     const source = discoveryUrl(endpoint)
     const pages = await this.listTargets(source)
     const found = new Map<string, DeveloperCdpContext>(), ambiguous = new Set<string>()
-    for (let index = 0; !this.closed && index < pages.length; index += DISCOVERY_PROBE_CONCURRENCY) {
+    for (let index = 0; current() && index < pages.length; index += DISCOVERY_PROBE_CONCURRENCY) {
       const contexts = await Promise.all(pages.slice(index, index + DISCOVERY_PROBE_CONCURRENCY).map(target =>
-        this.probePage(source, target, Math.min(this.dependencies.timeoutMs, INVENTORY_PAGE_MS), sessionID)))
+        this.probePage(source, target, Math.min(this.dependencies.timeoutMs, INVENTORY_PAGE_MS), runId, sessionID)))
       for (const context of contexts) {
         if (!context || !windowIds.has(context.windowId) || ambiguous.has(context.windowId)) continue
         const expected = windowIds.get(context.windowId)
@@ -401,7 +424,7 @@ export class DeveloperCdp {
         } else found.set(context.windowId, context)
       }
     }
-    return this.closed ? new Map() : found
+    return current() ? found : new Map()
   }
 
   private publicContext({ sessionOpen: _sessionOpen, ...context }: DeveloperCdpContext): DeveloperCdpContext {
@@ -410,7 +433,9 @@ export class DeveloperCdp {
 
   private async ensure(identity: DeveloperCdpSelection | DeveloperCdpIdentity, recovering = false): Promise<RunState> {
     if (!identity.runId.trim()) throw new Error("runId is required")
-    if (this.closed || !recovering && this.retiredRuns.get(identity.runId)?.closed) throw new Error("Developer CDP run is closed; inspect again")
+    if (this.closed || !recovering && this.retiredRuns.get(identity.runId)?.closed) {
+      throw new Error("Developer CDP run is closed; choose a window in inspect({targets:true})")
+    }
     const endpoint = discoveryUrl(identity.endpoint)
     const key = windowKey(identity)
     let state = this.windows.get(key)
@@ -503,7 +528,7 @@ export class DeveloperCdp {
     for (let index = 0; index < targets.length && matches.length < 2; index += DISCOVERY_PROBE_CONCURRENCY) {
       guard()
       const batch = await Promise.all(targets.slice(index, index + DISCOVERY_PROBE_CONCURRENCY).map(async (target) => {
-        const context = await this.probePage(state.endpoint, target, Math.min(this.dependencies.timeoutMs, timeoutMs), undefined, state)
+        const context = await this.probePage(state.endpoint, target, Math.min(this.dependencies.timeoutMs, timeoutMs), state)
         return context && this.matchesContext(state, context) ? target : undefined
       }))
       guard()
@@ -519,8 +544,8 @@ export class DeveloperCdp {
     return matches[0]
   }
 
-  private async probePage(endpoint: string, target: CdpTarget, timeoutMs = this.dependencies.timeoutMs,
-    sessionID?: string, owner?: RunState): Promise<DeveloperCdpContext | undefined> {
+  private async probePage(endpoint: string, target: CdpTarget, timeoutMs: number,
+    owner: RunState | string, sessionID?: string): Promise<DeveloperCdpContext | undefined> {
     const probe = this.newState(endpoint, "")
     this.probes.set(probe, owner)
     const deadline = Date.now() + timeoutMs

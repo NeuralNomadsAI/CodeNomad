@@ -148,9 +148,9 @@ pub mod tests {
             assert_eq!(call.await.unwrap(), Err(expected.into()));
         }
 
-        let late = exchange("developer.restart", json!({}), Duration::from_millis(50)).await;
-        assert_eq!(late, Err("Native request timed out: developer.restart".into()));
-        assert_eq!(next().await["method"], "developer.restart");
+        let late = exchange("developer.restartScope", json!({}), Duration::from_millis(50)).await;
+        assert_eq!(late, Err("Native request timed out: developer.restartScope".into()));
+        assert_eq!(next().await["method"], "developer.restartScope");
         assert!(PENDING.lock().unwrap().as_ref().unwrap().is_empty());
         let deadline = chrono::Utc::now().timestamp_millis() + 5000;
         let pinned = tokio::spawn(exchange_until("browser.execute", json!({"target":"preview:1"}), deadline));

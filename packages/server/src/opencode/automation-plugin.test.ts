@@ -919,7 +919,7 @@ test("removes only the generated legacy global plugin shim", async () => {
   }
 })
 
-test("restart waits for a new native generation and returns a fresh inspection", async () => {
+for (const restored of [true, false]) test(`restart correlates the next run and ${restored ? "inspects only the original window" : "reports a missing original window"}`, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-automation-restart-"))
   const restoreBridgeRegistry = isolateAutomationBridgeRegistry(root)
   const definitions: ToolDefinition[] = []
@@ -932,42 +932,63 @@ test("restart waits for a new native generation and returns a fresh inspection",
   let preexistingServer: http.Server | undefined
   const distractorServers: http.Server[] = []
   let restarting = false
+  let probedPreexisting = false
 
   try {
     await setupAutomationPlugin({
       tool: { transform: async (callback) => callback({ add: (value) => definitions.push(value as typeof definitions[number]) }) },
     })
-    const replacement = await listen(async (body) => body.mode === "developer-probe"
-      ? { result: { available: true, nativeIdentity: "electron:test", runId: "run-new",
-          windows: [{ windowId: "window-2", focused: true, session: "visible" }, oneWindow[0]] } }
-      : { result: { target: { id: "page-new", title: body.target === "electron:test/run-new/window-1" ? "Restarted" : "Wrong window", url: "http://app.test" },
-          context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [], pin: "replacement-receipt" } })
+    const target = { nativeIdentity: "electron:test", runId: "run-old", windowId: "window-1", windowInstance: "old-incarnation" }
+    let restartCommand: Record<string, unknown>
+    const replacement = await listen(async (body) => {
+      // Its focused window is different. Only the exact reconnect operation can inspect window-1.
+      if (body.mode !== "developer-reconnect") return { result: { target: { title: "Wrong window" } } }
+      assert.deepEqual(body.command, restartCommand)
+      return { developerTarget: { ...target, runId: "run-new", windowInstance: "new-incarnation" }, restartId: restartCommand.restartId,
+        windowState: restored ? "inspected" : "missing",
+        ...(restored && { result: { target: { id: "page-new", title: "Restarted", url: "http://app.test" }, pin: "pin-new",
+          context: { windowId: "window-1", windowInstance: "new-incarnation", instanceId: null, sessionId: null },
+          snapshot: "", collapsed: 0, diagnostics: [] } }) }
+    })
     newServer = replacement.server
-    const preexisting = await listen(async (body) => body.mode === "developer-probe" && restarting
-      ? { result: { available: true, nativeIdentity: "electron:test", runId: "run-preexisting" } }
-      : body.mode === "developer-probe"
-        ? { result: { available: false } }
-        : { result: { target: { id: "page-wrong", title: "Pre-existing", url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } })
+    const preexisting = await listen(async (body) => {
+      if (body.mode === "developer-reconnect") {
+        probedPreexisting = true
+        return { developerTarget: { ...target, runId: "run-preexisting" }, restartId: restartCommand.restartId, windowState: "missing" }
+      }
+      return { result: { available: restarting, nativeIdentity: target.nativeIdentity, runId: "run-preexisting" } }
+    })
     preexistingServer = preexisting.server
     removePreexisting = await publishAutomationBridge(createAutomationBridgeRegistration(preexisting.url))
-    const distractors = await Promise.all(Array.from({ length: 5 }, (_, index) => listen(async (body) => body.mode === "developer-probe"
-      ? { result: { available: true, nativeIdentity: `electron:distractor-${index}`, runId: `run-distractor-${index}` } }
-      : { result: { target: { id: `page-${index}`, title: "Distractor", url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } })))
+    const distractors = await Promise.all(Array.from({ length: 5 }, (_, index) => listen(async (body) => {
+      if (body.mode !== "developer-reconnect") return { result: { available: false } }
+      const developerTarget = { ...target, runId: `run-distractor-${index}`,
+        ...(index === 0 && { nativeIdentity: "electron:different-scope" }),
+        ...(index === 1 && { runId: target.runId }),
+        ...(index === 2 && { windowId: "wrong-window" }) }
+      return { developerTarget, windowState: "missing", restartId: index < 3 ? restartCommand.restartId : "unrelated-relaunch" }
+    })))
     distractorServers.push(...distractors.map((value) => value.server))
-    let restartPin: unknown
     const old = await listen(async (body) => {
-      if (body.mode === "developer-probe") return { result: { available: true, nativeIdentity: "electron:test", runId: "run-old", windows: oneWindow } }
+      if (body.mode === "developer-probe") return { result: { available: true, ...target,
+        windows: [{ ...oneWindow[0], windowInstance: target.windowInstance }] } }
       if (body.command && (body.command as { action?: unknown }).action === "inspect") {
-        return { result: { target: { id: "page-old", title: "Original", url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [], pin: "original-receipt" } }
+        return { result: { target: { id: "page-old", title: "Original", url: "http://app.test" }, pin: "pin-old",
+          context: { windowId: target.windowId, windowInstance: target.windowInstance, instanceId: null, sessionId: null },
+          snapshot: "", collapsed: 0, diagnostics: [] } }
       }
-      restartPin = body.pin
+      assert.equal(body.mode, "developer-restart")
+      assert.equal(body.pin, "pin-old")
+      restartCommand = body.command as Record<string, unknown>
+      assert.deepEqual(restartCommand, { ...target, restartId: restartCommand.restartId })
+      assert.match(String(restartCommand.restartId), /^[a-f0-9-]{36}$/)
       restarting = true
       removeNew = await publishAutomationBridge(createAutomationBridgeRegistration(replacement.url))
       for (const distractor of distractors) {
         await new Promise((resolve) => setTimeout(resolve, 2))
         removeDistractors.push(await publishAutomationBridge(createAutomationBridgeRegistration(distractor.url)))
       }
-      return { result: { state: "starting" } }
+      return { result: restartCommand }
     })
     oldServer = old.server
     removeOld = await publishAutomationBridge(createAutomationBridgeRegistration(old.url))
@@ -976,8 +997,10 @@ test("restart waits for a new native generation and returns a fresh inspection",
     await inspect.execute({}, { sessionID: "session-1" })
     const act = definitions.find((definition) => definition.name === "act")!
     const result = await act.execute({ action: "restart" }, { sessionID: "session-1" })
-    assert.match(String(result.content), /Restarted/)
-    assert.equal(restartPin, "original-receipt")
+    assert.match(String(result.content), restored ? /Restarted/ : /restarted.*window was not restored/i)
+    assert.doesNotMatch(String(result.content), /Wrong window|Pre-existing|Distractor/)
+    assert.equal(probedPreexisting, false)
+    if (!restored) await assert.rejects(act.execute({ action: "restart" }, { sessionID: "session-1" }), /Run codenomad\.inspect/)
   } finally {
     await removeOld?.()
     await removeNew?.()
@@ -991,6 +1014,79 @@ test("restart waits for a new native generation and returns a fresh inspection",
     await rm(root, { recursive: true, force: true })
   }
 })
+
+for (const windowState of ["inspected", "superseded"]) {
+  test(`restart does not present A as selected after inspection B wins (${windowState})`, { timeout: 5_000 }, async t => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-reconnect-race-"))
+    const restoreBridgeRegistry = isolateAutomationBridgeRegistry(root)
+    const removals: Array<() => Promise<void>> = []
+    const servers: http.Server[] = []
+    let reached!: () => void, resume!: () => void
+    const paused = new Promise<void>(resolve => { reached = resolve })
+    const resumed = new Promise<void>(resolve => { resume = resolve })
+    t.after(async () => {
+      resume()
+      await Promise.all(removals.map(remove => remove()))
+      await Promise.all(servers.map(closeServer))
+      restoreBridgeRegistry()
+      await rm(root, { recursive: true, force: true })
+    })
+    const targetA = { nativeIdentity: "electron:test", runId: "run-old", windowId: "window-A" }
+    const targetB = { ...targetA, runId: "run-new", windowId: "window-B" }
+    const inspection = (windowId: string, title: string) => ({
+      target: { id: windowId, title, url: "http://app.test" }, context: { windowId, instanceId: null, sessionId: null },
+      pin: `pin-${windowId}`, snapshot: "", collapsed: 0, diagnostics: [],
+    })
+    let restarting = false
+    const replacement = await listen(async body => {
+      if (body.mode === "developer-probe") return { result: { ...targetB, available: true,
+        windows: [{ ...oneWindow[0], windowId: targetB.windowId }] } }
+      if (body.mode === "developer-reconnect") {
+        reached()
+        await resumed
+        return { developerTarget: { ...targetA, runId: targetB.runId }, restartId: (body.command as { restartId: string }).restartId,
+          windowState, ...(windowState === "inspected" && { result: inspection(targetA.windowId, "Restored A") }) }
+      }
+      if ((body.command as { action: string }).action === "inspect") {
+        return { developerTarget: targetB, result: inspection(targetB.windowId, "New inspection B") }
+      }
+      assert.equal(body.mode, "developer-execute")
+      assert.equal(body.pin, `pin-${targetB.windowId}`)
+      return { result: { windowId: targetB.windowId } }
+    })
+    servers.push(replacement.server)
+    const original = await listen(async body => {
+      if (body.mode === "developer-probe") return { result: { ...targetA, available: !restarting,
+        windows: [{ ...oneWindow[0], windowId: targetA.windowId }] } }
+      if (body.mode === "developer-restart") {
+        restarting = true
+        removals.push(await publishAutomationBridge(createAutomationBridgeRegistration(replacement.url)))
+        return { result: body.command }
+      }
+      return { developerTarget: targetA, result: inspection(targetA.windowId, "Original A") }
+    })
+    servers.push(original.server)
+    removals.push(await publishAutomationBridge(createAutomationBridgeRegistration(original.url)))
+    const tools = await collectTools()
+    const inspect = tools.find(definition => definition.name === "inspect")!
+    const act = tools.find(definition => definition.name === "act")!
+    const context = { sessionID: "ses_fixture" }
+    await inspect.execute({}, context)
+    const restart = act.execute({ action: "restart" }, context)
+    await paused
+    // A different plugin setup can publish B on the backend without a matching local pin.
+    const inspector = windowState === "superseded"
+      ? (await collectTools()).find(definition => definition.name === "inspect")! : inspect
+    assert.match(String((await inspector.execute({}, context)).content), /New inspection B/)
+    resume()
+    assert.match(String((await restart).content), /^CodeNomad restarted; the original inspection was not restored\. Inspect again\.$/)
+    if (windowState === "inspected") {
+      assert.match(JSON.stringify((await act.execute({ action: "press", key: "Enter" }, context)).content), /window-B/)
+    } else {
+      await assert.rejects(act.execute({ action: "press", key: "Enter" }, context), /Run codenomad\.inspect/)
+    }
+  })
+}
 
 test("keeps inspected targets isolated and refuses follow-ups when a bridge returns no receipt", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-automation-isolation-"))

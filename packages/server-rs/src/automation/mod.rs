@@ -136,12 +136,29 @@ async fn missions(app: Shared, parts: Parts, bytes: Bytes) -> Response {
 
 /// Modes of one OpenCode session owned by an open workspace.
 async fn session(app: Shared, parts: Parts, bytes: Bytes, body: Value) -> Response {
-    const MODES: [&str; 6] =
-        ["developer-probe", "developer-execute", "browser-claim", "browser-probe", "browser-execute", "mission-input"];
+    const MODES: [&str; 8] = [
+        "developer-probe",
+        "developer-execute",
+        "developer-restart",
+        "developer-reconnect",
+        "browser-claim",
+        "browser-probe",
+        "browser-execute",
+        "mission-input",
+    ];
     let mode = body["mode"].as_str().unwrap_or_default();
     let Some(id) = body["sessionID"].as_str().filter(|s| s.encode_utf16().count() <= 256 && MODES.contains(&mode))
     else {
         return invalid();
+    };
+    // The host can confirm the relaunch even before the session's project has been restored.
+    let reconnect = if mode == "developer-reconnect" {
+        match developer::restart::Reconnect::read(&body).await {
+            Ok(reconnect) => Some(reconnect),
+            Err(response) => return response,
+        }
+    } else {
+        None
     };
     let inspection = if mode == "developer-execute" && developer::selects_window(&body["command"]) {
         let Some(ticket) = app.automation_pins.begin(id, body["order"].as_str()) else {
@@ -161,6 +178,9 @@ async fn session(app: Shared, parts: Parts, bytes: Bytes, body: Value) -> Respon
     let preference = mode == "browser-claim" && matches!(purpose, Some("mission-preferences" | "mission-prepare"))
         || mode == "mission-input" && matches!(kind, Some("profile-defaults" | "configurations" | "settings"));
     let not_owner = |message: &str| {
+        if let Some(reconnect) = &reconnect {
+            return reconnect.pending();
+        }
         let mut refusal = json!({ "error": message });
         if preference {
             refusal["code"] = json!("mission-not-owner");
@@ -183,6 +203,12 @@ async fn session(app: Shared, parts: Parts, bytes: Bytes, body: Value) -> Respon
     }
     if mode == "mission-input" || mission_claim {
         return missions(app, parts, bytes).await;
+    }
+    if let Some(reconnect) = reconnect {
+        return reconnect.inspect(&app.automation_pins, id, &body).await;
+    }
+    if mode == "developer-restart" {
+        return developer::restart::dispatch(&app.automation_pins, id, &body).await;
     }
     developer::handle(&app.automation_pins, id, mode, &body, inspection).await
 }

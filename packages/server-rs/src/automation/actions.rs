@@ -39,7 +39,7 @@ pub fn developer(input: &Value) -> Result<Value> {
     let value = object(input, "Native automation input must be an object")?;
     match value.get("action").and_then(Value::as_str) {
         Some("inspect") => scope(value, "inspect"),
-        Some(action @ ("restart" | "screenshot")) => Ok(json!({ "action": action })),
+        Some("screenshot") => Ok(json!({ "action": "screenshot" })),
         _ => page(value, "inspection")?.ok_or_else(|| "Unsupported native automation action".into()),
     }
 }
@@ -245,7 +245,7 @@ mod tests {
             ok(json!({"action":"wait","text":"Done"})),
             json!({"action":"wait","text":"Done","gone":false,"timeout":5000})
         );
-        assert_eq!(ok(json!({"action":"restart","extra":1})), json!({"action":"restart"}));
+        assert!(developer(&json!({"action":"restart"})).is_err());
         for key in [
             "Enter",
             "enter",

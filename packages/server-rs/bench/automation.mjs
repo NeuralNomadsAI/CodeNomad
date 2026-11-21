@@ -41,7 +41,7 @@ async function window(native, post, sessions, ready, answer) {
       return ok({ context: { ...context, windowId: id, windowInstance: other.windowInstance,
         instanceId: "remote~project", sessionOpen: id === "window-2" }, document })
     },
-    "developer.restart": () => ok({ state: "starting", runId, nativeIdentity }),
+    "developer.restartScope": params => ok(params),
   })
   const call = (command, extra) => post({ mode: "developer-execute", sessionID: sessions.root, command, ...extra })
   const probe = extra => post({ mode: "developer-probe", sessionID: sessions.root, ...extra })
@@ -116,16 +116,48 @@ async function window(native, post, sessions, ready, answer) {
   host(() => ({ error: "CodeNomad window or active session changed; inspect again", stage: "target" }))
   assert.equal((await call({ action: "press", key: "Enter" }, { pin })).body.code, "target-gone")
   host(() => inspection)
+  const current = (await call({ action: "inspect" }, { target })).body.result.pin
   reset()
-  const restarted = await call({ action: "restart" }, { pin })
+  const restartId = "7c3e5066-017d-4ce1-a371-187ac459c4b2"
+  const expected = { ...exact, nativeIdentity, restartId }
+  const restart = pin => post({ mode: "developer-restart", sessionID: sessions.root, command: expected, pin })
+  assert.equal((await call({ action: "restart" }, { pin })).status, 400, "old restart requests are inert")
+  assert.equal((await restart(pin)).status, 409, "an older receipt cannot restart")
+  assert.deepEqual(native.requests, [])
+  answer({
+    "developer.status": () => ok({ status: ready }),
+    "developer.execute": () => ok({ context, document: "changed" }),
+  })
+  assert.equal((await restart(current)).body.code, "stale-document")
+  assert(!native.requests.some(r => r.method === "developer.restartScope"))
+  host(() => inspection)
+  reset()
+  const restarted = await restart(current)
   assert.deepEqual([restarted.status, restarted.body.result, native.requests],
-    [200, { state: "starting", runId, nativeIdentity }, [
+    [200, expected, [
       { method: "developer.status", params: exact },
       { method: "developer.execute", params: { ...exact, sessionID: sessions.root, command: { action: "context" } } },
-      { method: "developer.restart", params: exact },
+      { method: "developer.restartScope", params: expected },
     ]])
   assert.equal((await call({ action: "click", ref: "e1" }, { pin })).body.code, "target-gone", "restart forgets all existing receipts for the run")
   assert.equal((await call({ action: "inspect" }, { target })).status, 409, "an acknowledged restart retires the previous run")
+  const reconnect = (sessionID = sessions.subfolder, extra) => post({ mode: "developer-reconnect", sessionID, command: expected, ...extra })
+  const successor = { ...ready, runId: "run-2", windowInstance: "new-incarnation", restartId }
+  const successorContext = { ...context, windowInstance: successor.windowInstance, sessionId: sessions.subfolder }
+  answer({ "developer.reconnect": () => ok({ status: { ...successor, windowInstance, state: "ready" } }) })
+  assert.equal((await reconnect()).status, 404, "a reused incarnation cannot confirm")
+  answer({
+    "developer.reconnect": () => ok({ status: successor }),
+    "developer.execute": () => ok({ ...inspection, context: successorContext }),
+    "developer.status": () => ok({ status: successor }),
+  })
+  assert.equal((await reconnect(sessions.foreign)).body.windowState, "pending", "handoff proof does not authorize renderer access")
+  assert.equal((await reconnect(sessions.subfolder, { purpose: "confirm" })).body.windowState, "pending")
+  assert.equal((await reconnect(sessions.root)).body.windowState, "superseded")
+  const restored = await reconnect()
+  assert.equal(restored.body.windowState, "inspected")
+  assert.equal(restored.body.developerTarget.windowInstance, successor.windowInstance)
+  assert.match(restored.body.result.pin, /^[\da-f-]{36}$/)
 }
 
 export async function run({ call, fixture, root, pid, native, folder, data }) {

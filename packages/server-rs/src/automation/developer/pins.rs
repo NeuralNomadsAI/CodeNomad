@@ -17,6 +17,7 @@ pub struct Pins(Mutex<State>);
 #[derive(Default)]
 struct State {
     serial: u64,
+    evicted: bool,
     sessions: VecDeque<Entry>,
     runs: HashMap<String, (u64, Run)>,
 }
@@ -25,6 +26,8 @@ struct Entry {
     session: String,
     ticket: u64,
     order: Option<(String, u64)>,
+    restart_id: Option<String>,
+    current: Option<String>,
     issued: VecDeque<(String, Pin)>,
 }
 
@@ -66,9 +69,22 @@ impl Pins {
 
     /// Selection starts at arrival, before session/native reads can finish out of order.
     pub(in crate::automation) fn begin(&self, session: &str, raw_order: Option<&str>) -> Option<u64> {
+        self.begin_selection(session, raw_order, None)
+    }
+
+    pub(super) fn begin_reconnect(&self, session: &str, raw_order: Option<&str>, restart_id: &str) -> Option<u64> {
+        self.begin_selection(session, raw_order, Some(restart_id))
+    }
+
+    fn begin_selection(&self, session: &str, raw_order: Option<&str>, restart_id: Option<&str>) -> Option<u64> {
         let mut state = self.lock();
         let mut next_order = raw_order.and_then(order);
         let previous = state.sessions.iter().position(|entry| entry.session == session);
+        if restart_id.is_some()
+            && previous.map_or(state.evicted, |index| state.sessions[index].restart_id.as_deref() != restart_id)
+        {
+            return None;
+        }
         let issued = if let Some(index) = previous {
             if let (Some((source, sequence)), Some((old_source, old_sequence))) =
                 (&next_order, &state.sessions[index].order)
@@ -84,11 +100,27 @@ impl Pins {
             VecDeque::new()
         };
         let ticket = state.next();
-        state.sessions.push_back(Entry { session: session.into(), ticket, order: next_order, issued });
+        state.sessions.push_back(Entry {
+            session: session.into(),
+            ticket,
+            order: next_order,
+            restart_id: restart_id.map(str::to_owned),
+            current: None,
+            issued,
+        });
         if state.sessions.len() > SESSIONS {
             state.sessions.pop_front();
+            state.evicted = true;
         }
         Some(ticket)
+    }
+
+    pub(super) fn is_selected(&self, session: &str, ticket: u64) -> bool {
+        self.lock().sessions.iter().any(|entry| entry.session == session && entry.ticket == ticket)
+    }
+
+    pub(super) fn is_current(&self, session: &str, token: &str) -> bool {
+        self.lock().sessions.iter().any(|entry| entry.session == session && entry.current.as_deref() == Some(token))
     }
 
     pub(super) fn get(&self, session: &str, pin: &Value) -> Option<Pin> {
@@ -112,6 +144,7 @@ impl Pins {
         let run = (status == Run::Uncertain).then(|| pin.target.run_id.clone());
         let entry = state.sessions.iter_mut().find(|entry| entry.session == session && entry.ticket == ticket)?;
         let id = Uuid::new_v4().to_string();
+        entry.current = Some(id.clone());
         entry.issued.push_back((id.clone(), pin));
         if entry.issued.len() > PINS {
             entry.issued.pop_front();
@@ -122,16 +155,19 @@ impl Pins {
         Some(id)
     }
 
-    pub(super) fn restart<'a>(&'a self, session: &str, run: &'a str, version: u64) -> Option<Restart<'a>> {
+    pub(super) fn restart<'a>(&'a self, session: &str, token: &str, run: &'a str, version: u64) -> Option<Restart<'a>> {
         let mut state = self.lock();
         if state.run(run) != (version, Run::Open) {
             return None;
         }
+        let entry = state
+            .sessions
+            .iter_mut()
+            .find(|entry| entry.session == session && entry.current.as_deref() == Some(token))?;
+        entry.current = None;
+        entry.issued.retain(|(_, pin)| pin.target.run_id != run);
         let version = state.next();
         state.runs.insert(run.into(), (version, Run::Restarting));
-        if let Some(entry) = state.sessions.iter_mut().find(|entry| entry.session == session) {
-            entry.issued.retain(|(_, pin)| pin.target.run_id != run);
-        }
         Some(Restart { pins: self, run, version })
     }
 }
@@ -156,6 +192,9 @@ impl Restart<'_> {
         if outcome != Run::Open {
             for entry in &mut state.sessions {
                 entry.issued.retain(|(_, pin)| pin.target.run_id != self.run);
+                if !entry.issued.iter().any(|(token, _)| Some(token) == entry.current.as_ref()) {
+                    entry.current = None;
+                }
             }
         }
         state.runs.insert(self.run.into(), (self.version, outcome));
@@ -221,26 +260,37 @@ mod tests {
         let mine = publish(&pins, "mine", RUN);
         let other = publish(&pins, "other", RUN);
         let other_run = publish(&pins, "mine", "different-run");
-        let old_ticket = pins.begin("mine", None).unwrap();
-
-        let restart = pins.restart("mine", RUN, 0).unwrap();
+        let newer = publish(&pins, "mine", RUN);
+        assert!(pins.restart("mine", mine.as_str().unwrap(), RUN, 0).is_none());
+        let restart = pins.restart("mine", newer.as_str().unwrap(), RUN, 0).unwrap();
         assert!(pins.access(RUN, true).is_none(), "an in-flight restart cannot be recovered or replayed");
-        assert!(pins.restart("other", RUN, 0).is_none());
+        assert!(pins.restart("other", other.as_str().unwrap(), RUN, 0).is_none());
         restart.finish(false);
         assert!(pins.get("mine", &mine).is_none());
         assert!(pins.get("other", &other).is_some());
-        assert!(pins.publish("mine", old_ticket, 0, pin(RUN)).is_none());
 
-        drop(pins.restart("other", RUN, pins.access(RUN, false).unwrap()).unwrap());
+        drop(pins.restart("other", other.as_str().unwrap(), RUN, pins.access(RUN, false).unwrap()).unwrap());
         assert!(pins.get("other", &other).is_none());
         assert!(pins.get("mine", &other_run).is_some());
         assert!(pins.access(RUN, false).is_none());
         let ticket = pins.begin("mine", None).unwrap();
         let access = pins.access(RUN, true).unwrap();
-        assert!(pins.publish("mine", ticket, access, pin(RUN)).is_some());
+        let recovered = pins.publish("mine", ticket, access, pin(RUN)).unwrap();
         assert!(pins.access(RUN, false).is_some());
 
-        pins.restart("mine", RUN, access).unwrap().finish(true);
+        pins.restart("mine", &recovered, RUN, access).unwrap().finish(true);
         assert!(pins.access(RUN, true).is_none(), "a confirmed restart cannot recover the old run");
+    }
+
+    #[test]
+    fn ordinary_selection_supersedes_reconnect_regardless_of_order_source() {
+        let pins = Pins::default();
+        let reconnect = pins.begin_reconnect("mine", None, "handoff").unwrap();
+        assert!(pins.begin_reconnect("mine", None, "other-handoff").is_none());
+        assert!(pins.is_selected("mine", reconnect));
+        pins.begin("mine", None).unwrap();
+        assert!(!pins.is_selected("mine", reconnect));
+        assert!(pins.publish("mine", reconnect, 0, pin(RUN)).is_none());
+        assert!(pins.begin_reconnect("mine", None, "handoff").is_none());
     }
 }
