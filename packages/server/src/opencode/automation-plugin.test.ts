@@ -323,7 +323,7 @@ test("restart waits for a new native generation and returns a fresh inspection",
       ? { result: { available: true, nativeIdentity: "electron:test", runId: "run-new",
           windows: [{ windowId: "window-2", focused: true, session: "visible" }, oneWindow[0]] } }
       : { result: { target: { id: "page-new", title: body.target === "electron:test/run-new/window-1" ? "Restarted" : "Wrong window", url: "http://app.test" },
-          context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } })
+          context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [], pin: "replacement-receipt" } })
     newServer = replacement.server
     const preexisting = await listen(async (body) => body.mode === "developer-probe" && restarting
       ? { result: { available: true, nativeIdentity: "electron:test", runId: "run-preexisting" } }
@@ -336,11 +336,13 @@ test("restart waits for a new native generation and returns a fresh inspection",
       ? { result: { available: true, nativeIdentity: `electron:distractor-${index}`, runId: `run-distractor-${index}` } }
       : { result: { target: { id: `page-${index}`, title: "Distractor", url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } })))
     distractorServers.push(...distractors.map((value) => value.server))
+    let restartPin: unknown
     const old = await listen(async (body) => {
       if (body.mode === "developer-probe") return { result: { available: true, nativeIdentity: "electron:test", runId: "run-old", windows: oneWindow } }
       if (body.command && (body.command as { action?: unknown }).action === "inspect") {
-        return { result: { target: { id: "page-old", title: "Original", url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } }
+        return { result: { target: { id: "page-old", title: "Original", url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [], pin: "original-receipt" } }
       }
+      restartPin = body.pin
       restarting = true
       removeNew = await publishAutomationBridge(createAutomationBridgeRegistration(replacement.url))
       for (const distractor of distractors) {
@@ -357,6 +359,7 @@ test("restart waits for a new native generation and returns a fresh inspection",
     const act = definitions.find((definition) => definition.name === "act")!
     const result = await act.execute({ action: "restart" }, { sessionID: "session-1" })
     assert.match(String(result.content), /Restarted/)
+    assert.equal(restartPin, "original-receipt")
   } finally {
     await removeOld?.()
     await removeNew?.()
@@ -371,24 +374,51 @@ test("restart waits for a new native generation and returns a fresh inspection",
   }
 })
 
-test("keeps inspected targets isolated per plugin setup", async () => {
+test("keeps inspected targets isolated and refuses follow-ups when a bridge returns no receipt", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-automation-isolation-"))
   const restoreBridgeRegistry = isolateAutomationBridgeRegistry(root)
   let removeBridge: (() => Promise<void>) | undefined
   let server: http.Server | undefined
   try {
-    const bridge = await listen(async (body) => body.mode === "developer-probe"
-      ? { result: { available: true, nativeIdentity: "electron:isolation", runId: "run-isolation", windows: oneWindow } }
-      : { result: { target: { id: "isolated", title: "Isolated", url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } })
+    const requests: Record<string, unknown>[] = []
+    let issueReceipt = true
+    const bridge = await listen(async (body, response) => {
+      requests.push(body)
+      if (body.mode === "developer-probe") {
+        return { result: { available: true, nativeIdentity: "electron:isolation", runId: "run-isolation", windows: oneWindow } }
+      }
+      if ((body.command as { action: string }).action !== "inspect" || (body.command as { ref?: string }).ref) {
+        response.statusCode = 409
+        return { error: "An unpinned command reached the bridge" }
+      }
+      return { result: { target: { id: "isolated", title: "Isolated", url: "http://app.test" },
+        context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [],
+        ...(issueReceipt ? { pin: "receipt" } : {}) } }
+    })
     server = bridge.server
     removeBridge = await publishAutomationBridge(createAutomationBridgeRegistration(bridge.url))
     const first = await collectTools()
     const second = await collectTools()
-    await first.find((definition) => definition.name === "inspect")!.execute({}, { sessionID: "session-isolation" })
+    const session = { sessionID: "session-isolation" }
+    const inspect = first.find(tool => tool.name === "inspect")!
+    const act = first.find(tool => tool.name === "act")!
+    const capture = first.find(tool => tool.name === "screenshot")!
+    await inspect.execute({}, session)
     await assert.rejects(
-      second.find((definition) => definition.name === "screenshot")!.execute({}, { sessionID: "session-isolation" }),
+      second.find(tool => tool.name === "screenshot")!.execute({}, session),
       /Run codenomad\.inspect/,
     )
+
+    issueReceipt = false
+    assert.match(String((await inspect.execute({}, session)).content), /CodeNomad window window-1/)
+    const before = requests.length
+    for (const [tool, input] of [[capture, {}], [inspect, { ref: "e1" }],
+      [act, { action: "press", key: "Enter" }], [act, { action: "restart" }]] as const) {
+      await assert.rejects(tool.execute(input, session), /inspect-required/)
+    }
+    assert.equal(requests.length, before, "legacy responses cannot forward unpinned commands")
+    assert.match(String((await inspect.execute({}, session)).content), /CodeNomad window window-1/)
+    assert.equal(requests.at(-1)?.target, "electron:isolation/run-isolation/window-1")
   } finally {
     await removeBridge?.()
     await closeServer(server)
@@ -404,9 +434,15 @@ test("pins parallel sessions to their independently inspected bridges", async ()
   const servers: http.Server[] = []
   try {
     for (const sessionID of ["session-a", "session-b"]) {
-      const bridge = await listen(async (body) => body.mode === "developer-probe"
-        ? { result: { available: body.sessionID === sessionID, nativeIdentity: `electron:${sessionID}`, runId: `run-${sessionID}`, windows: oneWindow } }
-        : { result: { target: { id: sessionID, title: sessionID, url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } })
+      const bridge = await listen(async body => {
+        if (body.mode === "developer-probe") {
+          return { result: { available: body.sessionID === sessionID, nativeIdentity: `electron:${sessionID}`, runId: `run-${sessionID}`, windows: oneWindow } }
+        }
+        if ((body.command as { action: string }).action === "screenshot") return { result: { receipt: body.pin } }
+        return { result: { target: { id: sessionID, title: sessionID, url: "http://app.test" },
+          context: { windowId: "window-1", instanceId: null, sessionId: null },
+          snapshot: "", collapsed: 0, diagnostics: [], pin: `receipt-${sessionID}` } }
+      })
       servers.push(bridge.server)
       removals.push(await publishAutomationBridge(createAutomationBridgeRegistration(bridge.url)))
     }
@@ -431,7 +467,7 @@ test("lists exact window selectors, prefers the visible session and stays pinned
   const calls: Array<Record<string, unknown>> = []
   const removals: Array<() => Promise<void>> = []
   const servers: http.Server[] = []
-  let twoVisible = false
+  let twoVisible = false, closed = false, ignoreSelector = false
   let entered!: () => void, release!: () => void
   const inspecting = new Promise<void>(resolve => { entered = resolve })
   const paused = new Promise<void>(resolve => { release = resolve })
@@ -446,19 +482,28 @@ test("lists exact window selectors, prefers the visible session and stays pinned
         if (body.mode === "developer-probe") return { result: { available: true, nativeIdentity: `electron:${profile}`, runId: "run",
           windows: [{ windowId: "window-1", focused: true, session: profile === "b" && !twoVisible ? "elsewhere" : "visible" },
             { windowId: "window-2", focused: false, session: "open" }] } }
-        if ((body.command as { action: string }).action === "screenshot") {
-          response.statusCode = 404
-          return { code: "target-gone", error: "Closed" }
+        const action = (body.command as { action: string }).action
+        const windowId = ignoreSelector ? "window-1"
+          : typeof body.target === "string" ? body.target.split("/")[2]
+          : typeof body.pin === "string" ? body.pin.split(":")[1] : "window-1"
+        if (action === "screenshot") {
+          if (closed) {
+            response.statusCode = 404
+            return { code: "target-gone", error: "Closed" }
+          }
+          return { result: { image: { data: Buffer.from(windowId).toString("base64"), mime: "image/png" } } }
         }
-        if (profile === "a" && body.pin === "pin-a") { entered(); await paused }
+        if (action === "press") return { result: { windowId } }
+        if (profile === "a" && body.pin === "a:window-1") { entered(); await paused }
         return { result: { target: { id: "page", title: "CodeNomad", url: "http://app.test" },
-          context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [], pin: `pin-${profile}` } }
+          context: { windowId, instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [], pin: `${profile}:${windowId}` } }
       })
       servers.push(bridge.server)
       removals.push(await publishAutomationBridge(createAutomationBridgeRegistration(bridge.url)))
     }
     const tools = await collectTools()
     const inspect = tools.find(tool => tool.name === "inspect")!
+    const act = tools.find(tool => tool.name === "act")!
     const capture = tools.find(tool => tool.name === "screenshot")!
     const session = { sessionID: "one" }
     const list = JSON.parse(String((await inspect.execute({ targets: true }, session)).content))
@@ -469,17 +514,24 @@ test("lists exact window selectors, prefers the visible session and stays pinned
     twoVisible = true
     await assert.rejects(inspect.execute({}, { sessionID: "two" }), /ambiguous-target/)
     const target = list.targets.find((item: { target: string }) => item.target === "electron:b/run/window-2").target
+    ignoreSelector = true
+    await assert.rejects(inspect.execute({ target }, { sessionID: "redirected" }), /target-gone/)
+    ignoreSelector = false
     const late = assert.rejects(inspect.execute({}, session), /stale-inspection/)
     await inspecting
-    try { await inspect.execute({ target }, session) }
+    try { assert.match(String((await inspect.execute({ target }, session)).content), /CodeNomad window window-2/) }
     finally { release() }
     await late
     assert.ok(calls.some(call => call.mode === "developer-execute" && call.target === target))
+    assert.equal(JSON.parse(String((await act.execute({ action: "press", key: "Enter" }, session)).content)).windowId, "window-2")
+    const image = (await capture.execute({}, session)).content as Array<{ uri: string }>
+    assert.equal(image[1].uri, `data:image/png;base64,${Buffer.from("window-2").toString("base64")}`)
+    closed = true
     const before = calls.length
     await assert.rejects(capture.execute({}, session), /target-gone/)
     assert.equal(calls.length, before + 1, "a closed window cannot trigger a new discovery or capture")
     assert.equal(calls.at(-1)?.profile, "b")
-    assert.equal(calls.at(-1)?.pin, "pin-b")
+    assert.equal(calls.at(-1)?.pin, "b:window-2")
   } finally {
     release()
     await Promise.all(removals.map(remove => remove()))

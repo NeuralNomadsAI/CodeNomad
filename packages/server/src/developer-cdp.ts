@@ -2,10 +2,11 @@ import { WebSocket } from "undici"
 import { randomBytes } from "node:crypto"
 import { bindRefs, performAction, snapshotPage, type PageActionResult, type PageSession } from "./automation/page/actions"
 import { cdpSession } from "./automation/page/cdp-driver"
+import { GLOBAL_FUNCTIONS } from "./automation/page/functions"
 import type { RefAction } from "./automation/page/parse"
 import { RefTable } from "./automation/page/refs"
 import { SnapshotScopeError } from "./automation/page/snapshot"
-import { PageTargetChangedError } from "./automation/page/protocol"
+import { OBJECT_GROUP, PageTargetChangedError } from "./automation/page/protocol"
 
 const DEFAULT_TIMEOUT_MS = 5_000
 const DEFAULT_MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024
@@ -136,6 +137,7 @@ interface RunState {
   refs: RefTable
   nextCommandId: number
   navigationEpoch: number
+  childDocumentEpoch: number
   pending: Map<number, PendingCommand>
   diagnostics: DeveloperCdpDiagnostic[]
 }
@@ -189,8 +191,37 @@ export class DeveloperCdp {
       const monitorForeground = action.action === "scroll" && !action.ref || action.action === "wait"
       const foreground = state.context
       const message = "Page changed during action; inspect again"
-      const session = this.session(state, epoch, message, monitorForeground ? foreground : undefined)
-      if (!monitorForeground) session.beforeInput = () => this.assertContextCurrent(state, epoch, message, foreground)
+      const childEpoch = state.childDocumentEpoch
+      const guard = () => {
+        if (state.navigationEpoch !== epoch || !state.socket || state.childDocumentEpoch !== childEpoch) {
+          throw new PageTargetChangedError(message)
+        }
+      }
+      const check = async (context?: DeveloperCdpContext) => {
+        guard()
+        await this.assertContextCurrent(state, epoch, message, context)
+        guard()
+      }
+      let inputRoot: string | undefined
+      const session: PageSession = cdpSession({ send: async (method, params) => {
+        guard()
+        const expression = params?.expression
+        if (method === "Runtime.evaluate" && (expression === GLOBAL_FUNCTIONS["mark-input"] || expression === GLOBAL_FUNCTIONS["unmark-input"])) {
+          if (!inputRoot) {
+            const result = await this.command(state, "Runtime.evaluate", { expression: "document.documentElement", objectGroup: OBJECT_GROUP })
+            inputRoot = (result.result as { objectId?: string } | undefined)?.objectId
+            guard()
+            if (!inputRoot) throw new PageTargetChangedError(message)
+          }
+          return this.command(state, "Runtime.callFunctionOn", {
+            objectId: inputRoot,
+            functionDeclaration: `function () { if (this !== document.documentElement) return; return ${expression} }`,
+            returnByValue: true,
+          })
+        }
+        return this.command(state, method, params)
+      } }, () => check(monitorForeground ? foreground : undefined), true)
+      if (!monitorForeground) session.beforeInput = () => check(foreground)
       return performAction(session, page)
     })
   }
@@ -297,6 +328,7 @@ export class DeveloperCdp {
       refs: new RefTable("inspect again", `e${this.refNamespace}${String(stamp).padStart(10, "0")}`),
       nextCommandId: 0,
       navigationEpoch: 0,
+      childDocumentEpoch: 0,
       pending: new Map(),
       diagnostics: [],
     }
@@ -464,9 +496,10 @@ export class DeveloperCdp {
       else pending.resolve(message.result ?? {})
       return
     }
-    if ((message.method === "Page.frameNavigated" || message.method === "Page.documentOpened")
-      && !(message.params?.frame as { parentId?: string } | undefined)?.parentId) {
-      this.invalidateRefs(state)
+    if (message.method === "Page.frameNavigated" || message.method === "Page.documentOpened" || message.method === "Page.frameDetached") {
+      if (message.method === "Page.frameDetached" || (message.params?.frame as { parentId?: string } | undefined)?.parentId) {
+        state.childDocumentEpoch++
+      } else this.invalidateRefs(state)
       return
     }
     const diagnostic = readDiagnostic(message)

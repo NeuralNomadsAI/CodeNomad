@@ -57,8 +57,8 @@ only a qualified path is retained across calls.
 
 - The HTTP bridge and CDP endpoint use IPv4 loopback only. The bridge requires its random token. Raw CDP has no authentication and can execute code in authenticated renderer pages, so it trusts local processes; the bridge keeps its token and session/window selection checks.
 - Initial discovery prefers a window visibly showing the invoking session, then a window with that session selected in an inactive tab, then a ready window. Focus and local recency break ties within a profile; equally ranked profiles require an explicit selection. Preferences and remote windows are never targets. `developer.targets` supplies the ready local inventory; `developer.status {runId,windowId,windowInstance}` validates the pinned incarnation, including when another window reuses the saved window ID.
-- Operations for one native window incarnation are serialized. Click and type revalidate context immediately before input; inspection and screenshot revalidate after capture.
-- Actions and screenshots require a successful inspection and stay pinned to that registration until another inspection or a verified restart replaces it.
+- Operations for one native window incarnation are serialized. New presses revalidate the tab and the document; held inputs can be released after a tab change in the same document. A frame replacement fences further input. Inspection and screenshot revalidate after capture.
+- Actions, ref expansions, screenshots and restart require the exact receipt from a successful inspection in the invoking session. The OpenCode adapter retains it privately for the inspected window. Without a receipt, another inspection of the selected window sends its exact identifier and verifies the returned window before presenting the outline.
 - Registration files, bridge responses, target probes, diagnostics, accessibility snapshots, screenshots, request bodies and reconnect time are bounded.
 
 ## Page engine

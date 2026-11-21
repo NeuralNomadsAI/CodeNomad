@@ -542,7 +542,7 @@ function callWindowsBridge(
 
 interface InspectionResult {
   target: { title: string; url: string }
-  context: { windowId: string; instanceId: string | null; sessionId: string | null; tabId?: string | null }
+  context: { windowId: string; windowInstance?: string; instanceId: string | null; sessionId: string | null; tabId?: string | null }
   snapshot: string
   collapsed: number
   diagnostics: Array<{ level: string; text: string }>
@@ -792,6 +792,7 @@ async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
   options: { inventory?: boolean; selector?: string; order?: string; isCurrent?: () => boolean; publish?: (target: ProbedBridge) => boolean } = {}) {
   let target = inspectedTargets.get(sessionID)
   let select = options.selector
+  const freshInspection = command.action === "inspect" && !command.ref
   if (command.action === "inspect" && select) {
     const exact = select
     const matches = await probeBridges(await registrations(), sessionID, { selector: exact,
@@ -822,8 +823,14 @@ async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
     target = candidates[0].bridge
     select = candidates[0].selector
   }
-  if (!target) {
-    throw targetError("inspect-required", "Run codenomad.inspect before acting on or restarting CodeNomad")
+  if (!target || !freshInspection && !target.pin) {
+    throw targetError("inspect-required", target
+      ? "The backend did not return an inspection receipt; update CodeNomad and inspect again"
+      : "Run codenomad.inspect before acting on or restarting CodeNomad")
+  }
+  if (freshInspection && !select && !target.pin) {
+    if (!target.windowId) throw targetError("target-gone", "The selected window is unavailable; list the targets again")
+    select = windowSelector(target, target.windowId, target.windowInstance)
   }
   const existingTokens = command.action === "restart"
     ? new Set((await registrations()).map((registration) => registration.token))
@@ -843,16 +850,19 @@ async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
     return waitForRestart(sessionID, target.nativeIdentity, target.runId, target.windowId, existingTokens!,
       options.order!, options.isCurrent!, options.publish!)
   }
-  if (options.publish && !options.publish(inspectedBridge(target, response.body.result))) {
-    throw targetError("stale-inspection", "A newer inspection selected the window")
+  if (options.publish) {
+    const inspected = inspectedBridge(select ? { ...target, ...parseDeveloperTarget(select) } : target, response.body.result)
+    if (!inspected) throw targetError("target-gone", "The inspection returned a different window; list the targets again")
+    if (!options.publish(inspected)) throw targetError("stale-inspection", "A newer inspection selected the window")
   }
   return formatBridgeResult(response.body.result)
 }
 
-function inspectedBridge(target: ProbedBridge, result: unknown): ProbedBridge {
+function inspectedBridge(target: ProbedBridge, result: unknown): ProbedBridge | undefined {
   const pin = (result as { pin?: unknown } | undefined)?.pin
   const context = (result as Partial<InspectionResult> | undefined)?.context
-  return { ...target, pin: typeof pin === "string" ? pin : undefined, windowId: context?.windowId }
+  if (!context || context.windowId !== target.windowId || context.windowInstance !== target.windowInstance) return undefined
+  return { ...target, pin: typeof pin === "string" && pin ? pin : undefined }
 }
 
 async function waitForRestart(
@@ -892,8 +902,9 @@ async function waitForRestart(
           target: windowSelector(candidate, restored.windowId, restored.windowInstance),
           order,
         }, INSPECTION_TIMEOUT_MS)
-        const inspected = inspectedBridge(candidate, inspection.body.result)
-        if (inspection.status === 200 && inspected.windowId === windowId) {
+        const inspected = inspection.status === 200
+          && inspectedBridge({ ...candidate, windowId: restored.windowId, windowInstance: restored.windowInstance }, inspection.body.result)
+        if (inspected) {
           if (!publish(inspected)) {
             return { content: "CodeNomad restarted; the newer window selection was kept." }
           }

@@ -110,16 +110,20 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (kind
   const held = new Map<string, { kind: InputKind; params: Record<string, unknown> }>()
   let point = { x: 0, y: 0 }
   let attempted = false
+  let marked = false
   let targetLost: PageTargetChangedError | undefined
+  const checkInput = (release: boolean) =>
+    !release && session.beforeInput ? session.beforeInput() : session.checkpoint()
   const dispatch = async (kind: InputKind, params: Record<string, unknown>) => {
     let timestamp: number | undefined
-    const keyRelease = kind === "keyboard" && params.type === "keyUp"
+    const keyRelease = kind === "keyboard" && params.type === "keyUp" && held.has(`key:${params.code}`)
     if (session.markAutomation) {
+      await checkInput(keyRelease)
+      marked = true
       const stamp = (await session.driver.call("mark-input", undefined, [])).value
       if (typeof stamp !== "number" || !Number.isFinite(stamp) || stamp <= 0) throw new Error("Cannot establish automation input provenance")
       timestamp = stamp
-      if (session.beforeInput && !keyRelease) await session.beforeInput()
-      else await session.checkpoint()
+      await checkInput(keyRelease)
     }
     const mouse = kind === "pointer" || kind === "wheel"
     if (mouse && typeof params.x === "number" && typeof params.y === "number") point = { x: params.x, y: params.y }
@@ -140,13 +144,11 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (kind
     if (attempted && error instanceof Error && /timed out|timeout/i.test(error.message)) throw new Error("Input timed out: its outcome is unknown. The page was busy and the input may still be delivered; inspect before retrying.")
     throw error
   } finally {
-    for (const release of targetLost ? [] : [...held.values()].reverse()) {
+    for (const release of targetLost && !targetLost.sameDocument ? [] : [...held.values()].reverse()) {
       try {
-        if (session.beforeInput) await session.beforeInput()
-        else await session.checkpoint()
+        await session.checkpoint()
         if (session.markAutomation) await session.driver.call("mark-input", undefined, []).catch(() => undefined)
-        if (session.beforeInput) await session.beforeInput()
-        else await session.checkpoint()
+        await session.checkpoint()
         const { text: _text, unmodifiedText: _unmodified, ...params } = release.params
         await sendInput(session, release.kind, { ...params, ...(release.kind === "pointer" ? point : {}) })
       } catch (error) {
@@ -154,7 +156,7 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (kind
         // Cleanup cannot replay a press or dispatch without a current context.
       }
     }
-    if (session.markAutomation && (!targetLost || targetLost.sameDocument)) {
+    if (marked && (!targetLost || targetLost.sameDocument)) {
       await session.driver.call("unmark-input", undefined, []).catch(() => undefined)
     }
   }

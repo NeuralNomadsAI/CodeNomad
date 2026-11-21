@@ -128,8 +128,8 @@ export const GLOBAL_FUNCTIONS = {
   if (!navigation || !(navigation.domInteractive > 0)) return 50;
   return Math.max(0, Math.ceil(navigation.domInteractive + 500 - performance.now()));
 })() })`,
-  "mark-input": `globalThis.__codenomadAutomationInputUntil = performance.now() + ${INPUT_MARK_LEASE_MS}; Date.now() / 1000`,
-  "unmark-input": "globalThis.__codenomadAutomationInputUntil = Math.min(globalThis.__codenomadAutomationInputUntil || 0, performance.now()); true",
+  "mark-input": `(() => { globalThis.__codenomadAutomationInputUntil = performance.now() + ${INPUT_MARK_LEASE_MS}; return Date.now() / 1000 })()`,
+  "unmark-input": "(() => { globalThis.__codenomadAutomationInputUntil = Math.min(globalThis.__codenomadAutomationInputUntil || 0, performance.now()); return true })()",
 } as const
 export type PageFunctionId = keyof typeof ELEMENT_FUNCTIONS | keyof typeof GLOBAL_FUNCTIONS
 export const FUNCTION_ARGS: Record<PageFunctionId, readonly string[]> = {

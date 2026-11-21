@@ -76,8 +76,9 @@ class FakeChrome {
       this.deferred.set(command.method, { socket, command })
       return
     }
-    queueMicrotask(() => socket.respond(command, command.method === "Runtime.evaluate" && String(command.params?.expression).includes("__codenomadAutomationInputUntil")
-      ? { result: { value: 1_700_000_000 } } : this.result(command.method)))
+    queueMicrotask(() => socket.respond(command, command.method === "Runtime.evaluate" && command.params?.expression === "document.documentElement"
+      ? { result: { objectId: "input-document" } } : command.method === "Runtime.callFunctionOn"
+        && command.params?.objectId === "input-document" ? { result: { value: 1_700_000_000 } } : this.result(command.method)))
   }
 
   /** Visible box of every element, or none; and the element hit at its centre. */
@@ -120,6 +121,43 @@ const identity = {
 }
 
 describe("DeveloperCdp", () => {
+  it("releases only admitted keys after an unrelated tab change", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    const { endpoint, runId, windowId } = identity
+    const window = { endpoint, runId, windowId }
+    try {
+      const { document } = await client.inspect(window)
+      chrome.onCommand = command => {
+        if (command.method === "Input.dispatchKeyEvent" && command.params?.code === "ControlLeft"
+          && command.params.type !== "keyUp") chrome.context = { ...chrome.context, instanceId: "next-tab" }
+      }
+      await assert.rejects(client.act({ ...window, document }, { action: "press", key: "Control+]" }), /active tab changed/)
+      const keys = chrome.commands.filter(command => command.method === "Input.dispatchKeyEvent")
+      assert.deepEqual(keys.map(command => [command.params?.code, command.params?.type]),
+        [["ControlLeft", "rawKeyDown"], ["ControlLeft", "keyUp"]])
+    } finally { client.close() }
+  })
+
+  it("does not release an admitted key after a nested document changes", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    const { endpoint, runId, windowId } = identity
+    const window = { endpoint, runId, windowId }
+    try {
+      const { document } = await client.inspect(window)
+      chrome.onCommand = command => {
+        if (command.method === "Input.dispatchKeyEvent" && command.params?.code === "ControlLeft"
+          && command.params.type !== "keyUp") {
+          chrome.sockets.at(-1)!.emit("Page.documentOpened", { frame: { id: "child", parentId: "main" } })
+        }
+      }
+      await assert.rejects(client.act({ ...window, document }, { action: "press", key: "Control+]" }), /changed during action/)
+      const keys = chrome.commands.filter(command => command.method === "Input.dispatchKeyEvent")
+      assert.deepEqual(keys.map(command => command.params?.code), ["ControlLeft"])
+    } finally { client.close() }
+  })
+
   it("completes key releases in the same document after a tab-switch chord", async () => {
     const chrome = new FakeChrome()
     const client = chrome.client()
@@ -146,12 +184,30 @@ describe("DeveloperCdp", () => {
       const window = { endpoint, runId, windowId }
       const { document } = await client.inspect(window)
       chrome.onCommand = command => {
-        if (command.method === "Runtime.evaluate" && String(command.params?.expression).includes("__codenomadAutomationInputUntil")) {
+        if (command.method === "Runtime.callFunctionOn" && command.params?.objectId === "input-document") {
           chrome.context = { ...chrome.context, instanceId: "duplicate" }
         }
       }
       await assert.rejects(client.act({ ...window, document }, { action: "press", key: "Enter" }), /active tab changed/)
       assert.ok(chrome.commands.every(command => command.method !== "Input.dispatchKeyEvent"))
+    } finally { client.close() }
+  })
+
+  it("binds provenance to the document observed before its marking command", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    const { endpoint, runId, windowId } = identity
+    const window = { endpoint, runId, windowId }
+    try {
+      const { document } = await client.inspect(window)
+      chrome.onCommand = command => {
+        if (command.method === "Runtime.evaluate" && command.params?.expression === "document.documentElement") {
+          chrome.sockets.at(-1)!.emit("Page.documentOpened", { frame: { id: "main" } })
+        }
+      }
+      await assert.rejects(client.act({ ...window, document }, { action: "press", key: "Enter" }), /changed during action/)
+      assert.ok(chrome.commands.every(command => command.method !== "Input.dispatchKeyEvent"
+        && !JSON.stringify(command.params)?.includes("__codenomadAutomationInputUntil")))
     } finally { client.close() }
   })
 
@@ -331,8 +387,8 @@ describe("DeveloperCdp", () => {
     await client.act(identity, { action: "click", ref: refOf(inspection) })
 
     const sequence = chrome.commands.filter(command => command.method === "Input.dispatchMouseEvent"
-      || (command.method === "Runtime.evaluate" && /__codenomadAutomationInputUntil/.test(String(command.params?.expression))))
-      .map(command => command.method === "Runtime.evaluate" ? (/Math.min/.test(String(command.params!.expression)) ? "unmark" : "mark")
+      || (command.method === "Runtime.callFunctionOn" && command.params?.objectId === "input-document"))
+      .map(command => command.method === "Runtime.callFunctionOn" ? (/Math.min/.test(String(command.params!.functionDeclaration)) ? "unmark" : "mark")
         : `${command.params!.type}@${command.params!.x},${command.params!.y}`)
     assert.deepEqual(sequence, ["mark", "mouseMoved@200,60", "mark", "mousePressed@200,60", "mark", "mouseReleased@200,60", "unmark"],
       "every trusted event in the CodeNomad window is marked, and the mark is cleared")
