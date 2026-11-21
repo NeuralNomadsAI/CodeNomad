@@ -18,6 +18,7 @@
     "notification:allow-notify",
     "allow-notification-badge-set",
     "allow-notification-show",
+    "allow-notification-permission",
     "notification:allow-show",
     "allow-cli-get-status",
     "allow-device-speech-request",

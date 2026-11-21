@@ -7,12 +7,12 @@ use objc2::{
 };
 use objc2_foundation::{NSBundle, NSError, NSObject, NSObjectProtocol, NSString};
 use objc2_user_notifications::{
-    UNAuthorizationOptions, UNMutableNotificationContent, UNNotification,
+    UNAuthorizationOptions, UNAuthorizationStatus, UNMutableNotificationContent, UNNotification,
     UNNotificationDefaultActionIdentifier, UNNotificationPresentationOptions,
-    UNNotificationRequest, UNNotificationResponse, UNUserNotificationCenter,
-    UNUserNotificationCenterDelegate,
+    UNNotificationRequest, UNNotificationResponse, UNNotificationSettings,
+    UNUserNotificationCenter, UNUserNotificationCenterDelegate,
 };
-use std::{cell::OnceCell, sync::Weak};
+use std::{cell::OnceCell, ptr::NonNull, sync::Weak};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
@@ -74,41 +74,62 @@ pub(super) fn install(host: Weak<AppHandle>) -> bool {
     true
 }
 
-pub(super) fn show(host: Weak<AppHandle>, route: Option<Uuid>, title: String, body: String) {
-    let retire_route = move || {
-        if let (Some(app), Some(id)) = (host.upgrade(), route) {
-            app.state::<super::NotificationClicks>().take(id);
+pub(super) async fn permission(request: bool) -> Result<&'static str, String> {
+    if request {
+        let (tx, mut rx) = tauri::async_runtime::channel(1);
+        {
+            let complete = RcBlock::new(move |_: Bool, error: *mut NSError| {
+                let _ = tx.try_send(error.is_null());
+            });
+            UNUserNotificationCenter::currentNotificationCenter()
+                .requestAuthorizationWithOptions_completionHandler(
+                    UNAuthorizationOptions::Alert,
+                    &complete,
+                );
         }
-    };
-    let authorized = RcBlock::new(move |allowed: Bool, _: *mut NSError| {
-        if !allowed.as_bool() {
-            retire_route();
-            return;
+        if rx.recv().await != Some(true) {
+            return Err("macOS could not request notification authorization".into());
         }
-        let content = UNMutableNotificationContent::new();
-        content.setTitle(&NSString::from_str(&title));
-        content.setBody(&NSString::from_str(&body));
-        let id = route.unwrap_or_else(Uuid::new_v4);
-        let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
-            &NSString::from_str(&id.to_string()),
-            &content,
-            None,
-        );
-        let delivered = RcBlock::new({
-            let retire_route = retire_route.clone();
-            move |error: *mut NSError| {
-                if !error.is_null() {
-                    retire_route();
-                    eprintln!("[notification] macOS refused the notification request");
-                }
-            }
+    }
+    let (tx, mut rx) = tauri::async_runtime::channel(1);
+    {
+        let complete = RcBlock::new(move |settings: NonNull<UNNotificationSettings>| {
+            // Notification Center supplies a live settings object for this callback.
+            let status = unsafe { settings.as_ref() }.authorizationStatus();
+            let value = match status {
+                UNAuthorizationStatus::Authorized
+                | UNAuthorizationStatus::Provisional
+                | UNAuthorizationStatus::Ephemeral => "granted",
+                UNAuthorizationStatus::Denied => "denied",
+                _ => "default",
+            };
+            let _ = tx.try_send(value);
         });
         UNUserNotificationCenter::currentNotificationCenter()
-            .addNotificationRequest_withCompletionHandler(&request, Some(&delivered));
+            .getNotificationSettingsWithCompletionHandler(&complete);
+    }
+    rx.recv()
+        .await
+        .ok_or_else(|| "macOS did not return notification settings".into())
+}
+
+pub(super) fn show(host: Weak<AppHandle>, route: Option<Uuid>, title: String, body: String) {
+    let content = UNMutableNotificationContent::new();
+    content.setTitle(&NSString::from_str(&title));
+    content.setBody(&NSString::from_str(&body));
+    let id = route.unwrap_or_else(Uuid::new_v4);
+    let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
+        &NSString::from_str(&id.to_string()),
+        &content,
+        None,
+    );
+    let delivered = RcBlock::new(move |error: *mut NSError| {
+        if !error.is_null() {
+            if let (Some(app), Some(id)) = (host.upgrade(), route) {
+                app.state::<super::NotificationClicks>().take(id);
+            }
+        }
     });
     UNUserNotificationCenter::currentNotificationCenter()
-        .requestAuthorizationWithOptions_completionHandler(
-            UNAuthorizationOptions::Alert,
-            &authorized,
-        );
+        .addNotificationRequest_withCompletionHandler(&request, Some(&delivered));
 }

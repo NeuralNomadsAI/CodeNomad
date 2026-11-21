@@ -61,7 +61,7 @@ plist = "1.8"
 block2 = "0.6.2"
 objc2 = "0.6.4"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSBundle"] }
-objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["std", "block2", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationTrigger", "UNUserNotificationCenter"] }
+objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["std", "block2", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSettings", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-app-kit", "WKWebView", "WKBackForwardList", "WKBackForwardListItem", "WKNavigation"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -71,3 +71,6 @@ gtk = "0.18"
 gstreamer = "0.23"
 gstreamer-app = "0.23"
 zbus = "5"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+zbus = { version = "5", features = ["p2p"] }

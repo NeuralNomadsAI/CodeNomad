@@ -516,6 +516,7 @@ mod tests {
                 "notification:allow-request-permission",
                 "notification:allow-notify",
                 "allow-notification-badge-set",
+                "allow-notification-permission",
                 "allow-notification-show"
             ])
         );

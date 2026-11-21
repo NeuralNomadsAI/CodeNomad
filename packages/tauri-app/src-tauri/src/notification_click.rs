@@ -141,12 +141,32 @@ pub(crate) fn install(host: &Arc<AppHandle>) {
     }
     #[cfg(target_os = "linux")]
     {
-        *routes.linux.host.lock() = Arc::downgrade(host);
+        let _ = routes.linux.host.set(Arc::downgrade(host));
     }
     #[cfg(target_os = "macos")]
     if macos::install(Arc::downgrade(host)) {
         let _ = routes.native_host.set(Arc::downgrade(host));
     }
+}
+
+#[tauri::command]
+pub(crate) async fn notification_permission(
+    webview: Webview,
+    request: bool,
+) -> Result<Option<&'static str>, String> {
+    sender_url(&webview)?;
+    #[cfg(target_os = "macos")]
+    if webview
+        .app_handle()
+        .state::<NotificationClicks>()
+        .native_host
+        .get()
+        .is_some()
+    {
+        return macos::permission(request).await.map(Some);
+    }
+    let _ = request;
+    Ok(None)
 }
 
 #[tauri::command]

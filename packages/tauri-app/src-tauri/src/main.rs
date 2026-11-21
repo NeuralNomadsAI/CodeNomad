@@ -1911,7 +1911,12 @@ fn main() {
     let browser_controller = browser_controller::BrowserController::new(
         setup_scope.webview_data_directory.join("browser"),
     );
-    desktop_updater::register(tauri::Builder::default(), context.config())
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.append_invoke_initialization_script(
+        "window.__CODENOMAD_NOTIFICATION_PERMISSION__ = true;",
+    );
+    desktop_updater::register(builder, context.config())
         .append_invoke_initialization_script("window.__CODENOMAD_NOTIFICATION_ACTIONS__ = true;")
         .plugin(single_instance)
         .plugin(tauri_plugin_dialog::init())
@@ -2119,6 +2124,7 @@ fn main() {
             wake_lock_start,
             wake_lock_stop,
             notification_badge::notification_badge_set,
+            notification_click::notification_permission,
             notification_click::notification_show,
             needs_local_certificate_install,
             preferences_window::open_preferences_window,
@@ -3016,6 +3022,7 @@ mod menu_tests {
                 "notification:allow-request-permission",
                 "notification:allow-notify",
                 "allow-notification-badge-set",
+                "allow-notification-permission",
                 "allow-notification-show"
             ])
         );

@@ -91,30 +91,25 @@ async function getTauriNotificationModule(): Promise<any | null> {
   }
 }
 
-async function getTauriPermission(): Promise<OsNotificationPermission> {
-  const mod = await getTauriNotificationModule()
-  if (!mod) return "unsupported"
+async function tauriPermission(request: boolean): Promise<OsNotificationPermission> {
   try {
-    // Ask the native plugin directly rather than the page script's cached state.
+    if (window.__CODENOMAD_NOTIFICATION_PERMISSION__) {
+      const native = await invoke<OsNotificationPermission | null>("notification_permission", { request })
+      if (native !== null) return native
+    }
+    const mod = await getTauriNotificationModule()
+    if (!mod) return "unsupported"
+    if (request) {
+      const result = await mod.requestPermission()
+      if (result === "granted" || result === "denied") return result
+      return "default"
+    }
+    // Ask the plugin directly rather than the page script's cached state.
     const granted = await invoke<boolean | null>("plugin:notification|is_permission_granted")
     return granted ? "granted" : "default"
   } catch (error) {
-    log.warn("[os-notifications] failed to check tauri notification permission", error)
-    return "default"
-  }
-}
-
-async function requestTauriPermission(): Promise<OsNotificationPermission> {
-  const mod = await getTauriNotificationModule()
-  if (!mod) return "unsupported"
-  try {
-    const result = await mod.requestPermission()
-    if (result === "granted") return "granted"
-    if (result === "denied") return "denied"
-    return "default"
-  } catch (error) {
-    log.warn("[os-notifications] failed to request tauri notification permission", error)
-    return await getTauriPermission()
+    log.warn("[os-notifications] tauri notification permission failed", error)
+    return request ? await tauriPermission(false) : "default"
   }
 }
 
@@ -171,7 +166,7 @@ export async function getOsNotificationCapability(): Promise<OsNotificationCapab
   }
 
   if (isTauriHost()) {
-    const permission = await getTauriPermission()
+    const permission = await tauriPermission(false)
     const supported = permission !== "unsupported"
     return {
       supported,
@@ -201,7 +196,7 @@ export async function requestOsNotificationPermission(): Promise<OsNotificationP
   }
 
   if (isTauriHost()) {
-    return await requestTauriPermission()
+    return await tauriPermission(true)
   }
 
   return await requestWebPermission()

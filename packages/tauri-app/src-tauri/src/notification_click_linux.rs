@@ -1,28 +1,38 @@
 use gtk::prelude::*;
-use parking_lot::Mutex;
 use std::{
     collections::VecDeque,
-    sync::{Arc, Weak},
+    sync::{
+        mpsc::{self, Receiver, SyncSender},
+        Arc, OnceLock, Weak,
+    },
+    time::Duration,
 };
 use tauri::{AppHandle, Manager, Webview};
 use uuid::Uuid;
 use zbus::{
-    blocking::{Connection, Proxy},
+    blocking::{connection::Builder, Connection, Proxy},
     zvariant::Value,
 };
 
 const SERVICE: &str = "org.freedesktop.Notifications";
 const PATH: &str = "/org/freedesktop/Notifications";
+const REPLY_TIMEOUT: Duration = Duration::from_millis(300);
 
 #[derive(Default)]
 pub(super) struct LinuxNotifications {
-    pub(super) host: Mutex<Weak<AppHandle>>,
-    bus: Mutex<Option<Bus>>,
+    pub(super) host: OnceLock<Weak<AppHandle>>,
+    worker: OnceLock<Result<Arc<SyncSender<Event>>, String>>,
 }
 
 struct Bus {
     proxy: Proxy<'static>,
-    notices: Arc<Mutex<VecDeque<Notice>>>,
+    capabilities: Vec<String>,
+    notices: VecDeque<Notice>,
+}
+
+enum Event {
+    Show(Uuid, String, String),
+    Signal(zbus::Message),
 }
 
 struct Notice {
@@ -33,43 +43,48 @@ struct Notice {
 }
 
 impl Bus {
-    fn connect(host: Weak<AppHandle>) -> Result<Self, String> {
-        let session = Connection::session().map_err(|error| error.to_string())?;
-        let proxy =
-            Proxy::new_owned(session, SERVICE, PATH, SERVICE).map_err(|error| error.to_string())?;
-        let signals = proxy
+    fn connect(events: Weak<SyncSender<Event>>) -> Result<Self, String> {
+        let session = Builder::session()
+            .and_then(connect_with_timeout)
+            .map_err(|error| error.to_string())?;
+        let bus = Self::new(session).map_err(|error| error.to_string())?;
+        let signals = bus
+            .proxy
             .receive_all_signals()
             .map_err(|error| error.to_string())?;
-        let notices = Arc::new(Mutex::new(VecDeque::<Notice>::new()));
-        let tracked = notices.clone();
         std::thread::Builder::new()
             .name("notification-actions".into())
             .spawn(move || {
                 for signal in signals {
-                    let Some(app) = host.upgrade() else { break };
-                    let action = consume_signal(&mut tracked.lock(), &signal);
-                    if let Some((notice, click)) = action {
-                        if click {
-                            super::clicked(&app, notice.route, notice.token);
-                        } else {
-                            app.state::<super::NotificationClicks>().take(notice.route);
-                        }
+                    let Some(events) = events.upgrade() else {
+                        break;
+                    };
+                    if events.send(Event::Signal(signal)).is_err() {
+                        break;
                     }
                 }
             })
             .map_err(|error| error.to_string())?;
-        Ok(Self { proxy, notices })
+        Ok(bus)
     }
 
-    fn show(&self, id: Uuid, title: &str, body: &str) -> zbus::Result<()> {
-        let capabilities: Vec<String> = self.proxy.call("GetCapabilities", &()).unwrap_or_default();
-        let body = super::linux_body(body, &capabilities);
+    fn new(session: Connection) -> zbus::Result<Self> {
+        let proxy = Proxy::new_owned(session, SERVICE, PATH, SERVICE)?;
+        // A timed-out or unsupported probe stays plain text until there is a new connection.
+        let capabilities = proxy.call("GetCapabilities", &()).unwrap_or_default();
+        Ok(Self {
+            proxy,
+            capabilities,
+            notices: VecDeque::new(),
+        })
+    }
+
+    fn show(&mut self, id: Uuid, title: &str, body: &str) -> zbus::Result<()> {
+        let body = super::linux_body(body, &self.capabilities);
         let hints = std::collections::HashMap::from([(
             "desktop-entry",
             Value::from(crate::identity::STABLE_IDENTIFIER),
         )]);
-        // Hold the table until the server's ID is recorded; a fast click can arrive meanwhile.
-        let mut notices = self.notices.lock();
         let reply = self.proxy.call_method(
             "Notify",
             &(
@@ -85,10 +100,10 @@ impl Bus {
         )?;
         let number = reply.body().deserialize::<u32>()?;
         if let Some(owner) = reply.header().sender() {
-            if notices.len() >= super::MAX_NOTICES {
-                notices.pop_front();
+            if self.notices.len() >= super::MAX_NOTICES {
+                self.notices.pop_front();
             }
-            notices.push_back(Notice {
+            self.notices.push_back(Notice {
                 owner: owner.to_string(),
                 number,
                 route: id,
@@ -97,6 +112,10 @@ impl Bus {
         }
         Ok(())
     }
+}
+
+fn connect_with_timeout(builder: Builder<'_>) -> zbus::Result<Connection> {
+    builder.method_timeout(REPLY_TIMEOUT).build()
 }
 
 fn consume_signal(
@@ -139,27 +158,66 @@ pub(super) fn show(
     title: String,
     body: String,
 ) -> Result<(), String> {
-    let Some(host) = state.host.lock().upgrade() else {
+    let Some(host) = state.host.get() else {
         return Err("Notification host is unavailable".into());
     };
-    tauri::async_runtime::spawn_blocking(move || {
-        let routes = host.state::<super::NotificationClicks>();
-        let result = (|| {
-            let mut bus = routes.linux.bus.lock();
-            if bus.is_none() {
-                *bus = Some(Bus::connect(Arc::downgrade(&host))?);
-            }
-            bus.as_ref()
-                .unwrap()
-                .show(id, &title, &body)
-                .map_err(|error| error.to_string())
-        })();
-        if let Err(error) = result {
-            host.state::<super::NotificationClicks>().take(id);
-            eprintln!("[notification] failed to show: {error}");
-        }
+    let worker = state.worker.get_or_init(|| {
+        let (tx, rx) = mpsc::sync_channel(super::MAX_NOTICES);
+        let tx = Arc::new(tx);
+        let events = Arc::downgrade(&tx);
+        let host = host.clone();
+        std::thread::Builder::new()
+            .name("notification-send".into())
+            .spawn(move || run(host, events, rx))
+            .map_err(|error| error.to_string())?;
+        Ok(tx)
     });
-    Ok(())
+    worker
+        .as_ref()
+        .map_err(Clone::clone)?
+        .try_send(Event::Show(id, title, body))
+        .map_err(|error| error.to_string())
+}
+
+fn run(host: Weak<AppHandle>, events: Weak<SyncSender<Event>>, rx: Receiver<Event>) {
+    // One worker owns the connection and table. Even a fast click is handled after Notify
+    // records its ID; no shared lock spans a D-Bus call.
+    let mut bus = None;
+    for event in rx {
+        let Some(app) = host.upgrade() else { break };
+        match event {
+            Event::Show(id, title, body) => {
+                let result = (|| {
+                    if bus.is_none() {
+                        bus = Some(Bus::connect(events.clone())?);
+                    }
+                    bus.as_mut()
+                        .unwrap()
+                        .show(id, &title, &body)
+                        .map_err(|error| error.to_string())
+                })();
+                if let Err(error) = result {
+                    app.state::<super::NotificationClicks>().take(id);
+                    eprintln!("[notification] failed to show: {error}");
+                }
+            }
+            Event::Signal(signal) => {
+                if let Some((notice, click)) = bus
+                    .as_mut()
+                    .and_then(|bus| consume_signal(&mut bus.notices, &signal))
+                {
+                    if click {
+                        super::clicked(&app, notice.route, notice.token);
+                    } else {
+                        app.state::<super::NotificationClicks>().take(notice.route);
+                    }
+                }
+            }
+        }
+    }
+    if let Some(bus) = bus {
+        let _ = bus.proxy.connection().clone().close();
+    }
 }
 
 pub(super) fn focus_with_token(webview: &Webview, token: Option<&str>) -> bool {
@@ -177,6 +235,58 @@ pub(super) fn focus_with_token(webview: &Webview, token: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{TcpListener, TcpStream};
+    use zbus::blocking::MessageIterator;
+
+    #[test]
+    #[allow(deprecated)] // Use blocking TCP sockets for the private peer-to-peer bus.
+    fn notification_capability_timeout_caches_plain_text_and_allows_later_sends() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (ready, subscribed) = mpsc::channel();
+        let (resume, resume_rx) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let connection = Builder::tcp_stream(listener.accept().unwrap().0)
+                .auth_mechanism(zbus::AuthMechanism::Anonymous)
+                .server(zbus::Guid::generate())
+                .unwrap()
+                .p2p()
+                .build()
+                .unwrap();
+            let mut messages = MessageIterator::from(&connection);
+            ready.send(()).unwrap();
+            let request = messages.next().unwrap().unwrap();
+            assert_eq!(
+                request.header().member().unwrap().as_str(),
+                "GetCapabilities"
+            );
+            // Give the client time to use its deadline, even if the implementation under test
+            // forgot to set one. A reply before the deadline would advertise markup.
+            let _ = resume_rx.recv_timeout(REPLY_TIMEOUT * 5);
+            connection
+                .reply(&request.header(), &vec!["body-markup"])
+                .unwrap();
+            for number in 1..=2u32 {
+                let request = messages.next().unwrap().unwrap();
+                assert_eq!(request.header().member().unwrap().as_str(), "Notify");
+                connection.reply(&request.header(), &number).unwrap();
+            }
+        });
+        let session = connect_with_timeout(
+            Builder::tcp_stream(stream)
+                .auth_mechanism(zbus::AuthMechanism::Anonymous)
+                .p2p(),
+        )
+        .unwrap();
+        subscribed.recv().unwrap();
+        let mut bus = Bus::new(session).unwrap();
+        assert!(bus.capabilities.is_empty());
+        resume.send(()).unwrap();
+        for _ in 0..2 {
+            bus.show(Uuid::new_v4(), "Title", "R&D").unwrap();
+        }
+        server.join().unwrap();
+    }
 
     #[test]
     fn only_the_notifying_daemon_can_activate_a_notice_with_its_token() {

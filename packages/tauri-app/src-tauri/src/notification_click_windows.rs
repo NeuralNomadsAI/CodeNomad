@@ -5,7 +5,9 @@ use windows::{
     core::{Result, HSTRING},
     Data::Xml::Dom::XmlDocument,
     Foundation::TypedEventHandler,
-    UI::Notifications::{ToastNotification, ToastNotificationManager},
+    UI::Notifications::{
+        ToastDismissalReason, ToastDismissedEventArgs, ToastNotification, ToastNotificationManager,
+    },
 };
 
 pub(super) struct Toast {
@@ -56,7 +58,12 @@ pub(super) fn show(
     };
     let dismissed = notification.Dismissed(&TypedEventHandler::new({
         let forget = forget.clone();
-        move |_, _| forget()
+        move |_, args: windows::core::Ref<'_, ToastDismissedEventArgs>| {
+            if retires_on_dismissal(args.as_ref().and_then(|args| args.Reason().ok())) {
+                forget()?;
+            }
+            Ok(())
+        }
     }))?;
     let failed = notification.Failed(&TypedEventHandler::new(move |_, _| forget()))?;
     let toast = Toast {
@@ -73,9 +80,17 @@ fn toast_identity(profile: &str) -> HSTRING {
     HSTRING::from(profile)
 }
 
+fn retires_on_dismissal(reason: Option<ToastDismissalReason>) -> bool {
+    // A timed-out banner can still be in Action Center.
+    matches!(
+        reason,
+        Some(ToastDismissalReason::UserCanceled | ToastDismissalReason::ApplicationHidden)
+    )
+}
+
 fn toast_xml(title: &str, body: &str) -> String {
     format!(
-        r#"<toast><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual></toast>"#,
+        r#"<toast><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual><audio silent="true"/></toast>"#,
         super::escape_text(title),
         super::escape_text(body),
     )
@@ -98,5 +113,22 @@ mod tests {
     fn notification_keeps_content_as_text() {
         let xml = toast_xml("<text>x & y</text>", "message");
         assert!(xml.contains("<text>&lt;text&gt;x &amp; y&lt;/text&gt;</text>"));
+    }
+
+    #[test]
+    fn notification_without_requested_audio_is_silent() {
+        assert!(toast_xml("Title", "Body").ends_with(r#"<audio silent="true"/></toast>"#));
+    }
+
+    #[test]
+    fn notification_keeps_its_click_handler_after_the_banner_times_out() {
+        assert!(!retires_on_dismissal(Some(ToastDismissalReason::TimedOut)));
+        assert!(!retires_on_dismissal(None));
+        assert!(retires_on_dismissal(Some(
+            ToastDismissalReason::UserCanceled
+        )));
+        assert!(retires_on_dismissal(Some(
+            ToastDismissalReason::ApplicationHidden
+        )));
     }
 }
