@@ -5,8 +5,8 @@ import { activeSessionId, getVisibleSessionIds, selectSessionFromList } from "..
 import { openSettings } from "../../stores/settings-screen"
 import { hostSupports } from "../backend-capabilities"
 
-export function registerNavigationShortcuts(isMainView: () => boolean = () => true) {
-  const hasInstance = () => isMainView() && Boolean(activeInstanceId())
+export function registerNavigationShortcuts() {
+  const hasInstance = () => Boolean(activeInstanceId())
   keyboardRegistry.register({
     id: "instance-prev",
     handler: () => selectPreviousAppTab(),
@@ -75,7 +75,7 @@ export function registerNavigationShortcuts(isMainView: () => boolean = () => tr
 
   keyboardRegistry.register({
     id: "switch-to-info",
-    condition: () => isMainView() && hostSupports("opencode-admin"),
+    condition: () => hostSupports("opencode-admin"),
     handler: () => {
       void openSettings("opencode")
     },

@@ -2,17 +2,11 @@ import { Component, Show, createEffect, createSignal, onCleanup } from "solid-js
 import { Bell, MonitorUp, Settings } from "lucide-solid"
 import ToastHistoryPanel from "./toast-history-panel"
 import { useI18n } from "../lib/i18n"
-import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { hostSupports } from "../lib/backend-capabilities"
 import { getUnreadToastCountSignal } from "../lib/notifications"
 import { openSettings, toggleSettings } from "../stores/settings-screen"
 
-interface AppActionsProps {
-  class: string
-}
-
-/** Settings, the notification history bell and Remote Access: the project tab bar's end, or the macOS title bar. */
-const AppActions: Component<AppActionsProps> = (props) => {
+const AppActions: Component = () => {
   const { t } = useI18n()
   const [showToastHistory, setShowToastHistory] = createSignal(false)
   let notificationTriggerRef: HTMLButtonElement | undefined
@@ -41,7 +35,7 @@ const AppActions: Component<AppActionsProps> = (props) => {
   const unreadCount = getUnreadToastCountSignal()
 
   return (
-    <div class={props.class} data-titlebar-interactive>
+    <div class="tab-bar-actions">
       <button
         class="new-tab-button"
         onClick={() => toggleSettings()}
@@ -86,7 +80,7 @@ const AppActions: Component<AppActionsProps> = (props) => {
         </Show>
       </div>
 
-      <Show when={canOpenRemoteWindows() && hostSupports("remote-control")}>
+      <Show when={hostSupports("remote-control")}>
         <button
           class="new-tab-button tab-remote-button"
           onClick={() => openSettings("remote")}

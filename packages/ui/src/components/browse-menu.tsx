@@ -1,16 +1,18 @@
 import { For, Show, createEffect, createMemo, createSignal, on, onMount } from "solid-js"
-import { Globe, Laptop, Server } from "lucide-solid"
+import { Globe, Laptop, Plus, Server } from "lucide-solid"
 import type { RemoteServerBrowseResponse, RemoteServerProfile, SideCar } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { qualifiedServerDisplayName } from "../lib/codenomad-link"
 import { allowsPlainNavigation, withHotkey } from "../lib/hotkeys"
 import { sameServerSelection, type ServerSelectionIntent } from "../lib/native/server-selection-intent"
 import { getServerMeta, serversManageable, sidecarsAllowed } from "../lib/server-meta"
+import { hostSupports } from "../lib/backend-capabilities"
 import ServerAddField from "./server-add-field"
 import { RemoteServerBrowser } from "./remote-server-browser"
 import { useConfig } from "../stores/preferences"
 import { remoteRecentProjectsUsable, savedProjectProfile } from "../stores/recent-projects"
 import { ensureSidecarsLoaded, sidecars } from "../stores/sidecars"
+import { openSettingsRow } from "../stores/settings-screen"
 import { joinRecentOpenTarget, recentAccessibleName, recentOpenTarget, type LaunchableRecent } from "../lib/recent-open-target"
 
 interface BrowseMenuProps {
@@ -23,7 +25,6 @@ interface BrowseMenuProps {
   onOpenSidecar: (id: string) => void
   onJoined?: () => void
   onRemoteOpened?: (instanceId: string) => void
-  pinAddField?: boolean
 }
 
 /** Choices only: this computer, available saved servers and configured SideCars (the add field is an action). */
@@ -108,7 +109,7 @@ export default function BrowseMenu(props: BrowseMenuProps) {
   </Show>
 
   return (
-    <div class="browse-menu" classList={{ "browse-menu--footer": props.pinAddField }} ref={bodyRef} onKeyDown={handleKeyDown}>
+    <div class="browse-menu" ref={bodyRef} onKeyDown={handleKeyDown}>
         <div class="browse-menu-body" role="group" aria-label={t("folderSelection.browseMenu.title")}>
           <Show when={selectedServer()} keyed>{(profile) => <RemoteServerBrowser profile={profile} active={props.active} onBack={backToRoot}
             onListing={listing => {
@@ -156,12 +157,16 @@ export default function BrowseMenu(props: BrowseMenuProps) {
               </div>
             }}
           </For>
-          <Show when={!props.pinAddField}><AddField /></Show>
+          <Show when={hostSupports("sidecars")}>
+            <button type="button" class="browse-menu-row" data-browse-nav disabled={props.isLoading}
+              onClick={() => void openSettingsRow("sidecars", "sidecar-add")}>
+              <Plus class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
+              <span class="browse-menu-name">{t("folderSelection.newSidecar")}</span>
+            </button>
+          </Show>
           </Show>
         </div>
-        <Show when={props.pinAddField}>
-          <div class="browse-menu-footer"><AddField /></div>
-        </Show>
+        <div class="browse-menu-footer"><AddField /></div>
     </div>
   )
 }

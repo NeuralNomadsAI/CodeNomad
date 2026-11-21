@@ -7,7 +7,6 @@ import { activeAppTabId, appTabs, getInstanceAppTabId, openBlankTab, selectAppTa
 import { workspaceIdentity } from "./app-session-reconciliation"
 import type { RemoteRestoreTab } from "./remote-restore-tabs"
 import { closeSettings } from "./settings-screen"
-import { setShowFolderSelection } from "./ui"
 import { recordRemoteProjectLaunch, remoteRecentProjectsUsable, savedProjectProfile } from "./recent-projects"
 
 export function selectRemoteServer(value: unknown): void {
@@ -15,7 +14,6 @@ export function selectRemoteServer(value: unknown): void {
   if (!intent || !savedProjectProfile(intent)) throw new Error("Server selection changed")
   closeSettings()
   openBlankTab(intent)
-  setShowFolderSelection(false)
 }
 
 /** Matches visible tab membership, never unselected backend inventory records. */

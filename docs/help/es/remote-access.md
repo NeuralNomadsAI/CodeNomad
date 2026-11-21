@@ -113,11 +113,11 @@ Para Control remoto, pega en su lugar un enlace de emparejamiento nuevo en **URL
 
 ## Abrir un proyecto remoto en una pestaña {#remote-project-tabs}
 
-En Inicio o en una pestaña nueva, elige **Explorar** y selecciona un servidor. Pega la dirección o el enlace de emparejamiento en **Dirección o enlace del servidor** para guardarlo. Inicia sesión si se te pide. Selecciona una carpeta para explorarla; pulsa Intro en el campo de ruta o elige **Abrir** para abrirla. **Volver a Explorar** vuelve a la lista de servidores.
+En una pestaña vacía, elige **Explorar** y selecciona un servidor. Pega la dirección o el enlace de emparejamiento en **Dirección o enlace del servidor** para guardarlo. Inicia sesión si se te pide. Selecciona una carpeta para explorarla; pulsa Intro en el campo de ruta o elige **Abrir** para abrirla. **Volver a Explorar** vuelve a la lista de servidores.
 
 Los proyectos locales y remotos comparten ventana. **Pestañas recientes** muestra los accesos directos del servidor seleccionado mientras exploras. Los proyectos abiertos aquí conservan el icono y el nombre del servidor en la lista mixta. [Restaurar pestañas remotas](projects.md#restore-remote-tabs).
 
-En **Configuración → Servidores**, **Abrir** selecciona el servidor en **Explorar** y reutiliza la pestaña vacía si existe.
+En **Configuración → Servidores**, **Abrir** selecciona el servidor en **Explorar** y reutiliza una pestaña vacía si hay alguna abierta.
 
 ### `--connect-server` {#connect-server}
 

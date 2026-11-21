@@ -4,7 +4,7 @@ Verwenden Sie die Browseroberfläche auf Telefon oder Tablet, um Arbeit auf dem 
 
 ## Mit Telefon oder Tablet verbinden {#connect}
 
-Gespeicherte Server sind über die Startseite und Einstellungen → Server verfügbar. [Remote-Tabs wiederherstellen](projects.md#restore-remote-tabs).
+Gespeicherte Server sind über **Durchsuchen** im leeren Tab und Einstellungen → Server verfügbar. [Remote-Tabs wiederherstellen](projects.md#restore-remote-tabs).
 
 1. Öffnen Sie auf dem Host **Einstellungen → Remote-Zugriff → Fernsteuerung** und wählen Sie **Fernsteuerung starten**.
 2. Scannen Sie den Kopplungs-QR-Code mit Ihrem Mobilgerät und öffnen Sie den Link im Browser, den Sie weiterverwenden möchten.
@@ -45,4 +45,4 @@ Das Eingabefeld behält Agent, Modell und Denken in der Fußzeile. Seine Größe
 
 Halten Sie das Backend erreichbar. Prüfen Sie vor Wiederholung, ob eine Aktion abgeschlossen wurde. PWA-Schließen stoppt kein eigenständiges Backend; das Beenden der Host-Desktop-App samt Backend macht Fernsteuerung bis zum nächsten Start unverfügbar.
 
-Jeder Browser-Tab, auch die installierte PWA, behält für diesen Tab geöffnete Projekte, ausgewählte Unterhaltungen, nicht gesendete Entwürfe und Scrollpositionen: Sie kehren zurück, wenn die Seite neu lädt oder das mobile Betriebssystem sie nach einem App-Wechsel oder einer Bildschirmsperre neu lädt. Ein neuer Tab oder eine vom Betriebssystem vollständig geschlossene PWA öffnet die Startseite. Schalten Sie dies für den Tab unter **Einstellungen → Allgemein → Vorherigen Zustand wiederherstellen** aus.
+Jeder Browser-Tab, auch die installierte PWA, behält für diesen Tab geöffnete Projekte, ausgewählte Unterhaltungen, nicht gesendete Entwürfe und Scrollpositionen: Sie kehren zurück, wenn die Seite neu lädt oder das mobile Betriebssystem sie nach einem App-Wechsel oder einer Bildschirmsperre neu lädt. Ein neuer Tab oder eine vom Betriebssystem vollständig geschlossene PWA öffnet einen leeren Tab. Schalten Sie dies für den Tab unter **Einstellungen → Allgemein → Vorherigen Zustand wiederherstellen** aus.

@@ -12,7 +12,8 @@ import {
 import InstanceTab from "./instance-tab"
 import TabScroll from "./tab-scroll"
 import AppActions from "./app-actions"
-import { appActionsInTitlebar } from "./native-titlebar"
+import { hasNativeTitlebar } from "./native-titlebar"
+import { BrandLogo } from "./brand-logo"
 import ProjectRenameDialog from "./project-rename-dialog"
 import { renameProject } from "../stores/project-names"
 import { Plus, Server } from "lucide-solid"
@@ -204,8 +205,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
     })
   })
 
-  // Renaming a tab renames its project folder, like the home page: every tab of
-  // that folder and its recent-folder entry share one name.
+  // Every tab of the project folder and its recent-folder entry share one name.
   const [renameTarget, setRenameTarget] = createSignal<{ folder: string; label: string; backendId?: BackendId } | null>(null)
   const [isRenaming, setIsRenaming] = createSignal(false)
   const openRename = (folder: string, label: string, backendId?: BackendId) => setRenameTarget({ folder, label, backendId })
@@ -238,6 +238,9 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
   return (
     <>
       <div class="tab-bar tab-bar-instance">
+        <Show when={!hasNativeTitlebar}>
+          <BrandLogo alt={t("folderSelection.logoAlt")} class="native-titlebar-logo tab-bar-logo" />
+        </Show>
         <div class="tab-container">
           <TabScroll>
               <div class="tab-strip-tabs" role="tablist" ref={tabList}>
@@ -291,9 +294,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
               <Plus class="w-4 h-4" />
             </button>
           </div>
-          <Show when={!appActionsInTitlebar}>
-            <AppActions class="tab-bar-actions" />
-          </Show>
+          <AppActions />
         </div>
       </div>
 

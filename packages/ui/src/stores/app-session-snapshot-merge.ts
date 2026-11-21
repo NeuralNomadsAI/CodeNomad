@@ -41,7 +41,7 @@ function mapTabIdentities(tabs: readonly RestorableTabState[]): TabIdentity[] {
   return tabs.map((tab) => {
     const key = tab.kind === "workspace"
       ? workspaceKey(tab)
-      : `sidecar:${tab.sidecarId}`
+      : tab.kind === "sidecar" ? `sidecar:${tab.sidecarId}` : "blank"
     const inferred = nextOccurrences.get(key) ?? 0
     const occurrence = tab.kind === "workspace" ? tab.occurrence ?? inferred : inferred
     nextOccurrences.set(key, Math.max(inferred, occurrence) + 1)
@@ -71,7 +71,12 @@ export function recordRestoredTab(
   runtimeTabId: string | null,
   unavailableSessionIds?: ReadonlySet<string>,
 ): void {
-  if (!preservation.sourceTabs[sourceIndex]) return
+  const tab = preservation.sourceTabs[sourceIndex]
+  if (!tab) return
+  if (tab.kind === "blank") {
+    preservation.results[sourceIndex] = { status: "restored", runtimeTabId }
+    return
+  }
   preservation.results[sourceIndex] = unavailableSessionIds
     ? { status: "restored", runtimeTabId, unavailableSessionIds }
     : { status: "pending", ...(runtimeTabId ? { runtimeTabId } : {}) }
@@ -336,7 +341,6 @@ export function mergeRestorableSessionState(
   return {
     tabs,
     activeTabIndex,
-    ...(current.homeActive === true ? { homeActive: true } : {}),
   }
 }
 export function markPreservedWorkspaceUnavailable(

@@ -4,7 +4,7 @@ Utilisez l’interface navigateur sur téléphone ou tablette pour poursuivre le
 
 ## Se connecter depuis un téléphone ou une tablette {#connect}
 
-Les serveurs enregistrés sont accessibles depuis l’accueil et Paramètres → Serveurs. [Restaurer les onglets distants](projects.md#restore-remote-tabs).
+Les serveurs enregistrés sont accessibles dans **Parcourir** depuis un onglet vide et dans Paramètres → Serveurs. [Restaurer les onglets distants](projects.md#restore-remote-tabs).
 
 1. Sur l’hôte, ouvrez **Paramètres → Accès distant → Contrôle à distance**, puis choisissez **Démarrer le contrôle à distance**.
 2. Scannez le QR code d’appairage avec votre appareil mobile et ouvrez le lien dans le navigateur que vous comptez garder.
@@ -45,4 +45,4 @@ La zone de saisie garde Agent, Modèle et Réflexion dans son pied. La taille du
 
 Gardez le backend accessible. Vérifiez si une action s’est terminée avant de réessayer. Fermer la PWA n’arrête pas un backend autonome ; quitter l’application de bureau hôte et son backend rend le Contrôle à distance indisponible jusqu’au prochain lancement.
 
-Chaque onglet du navigateur, y compris la PWA installée, garde pour cet onglet ses projets ouverts, ses conversations sélectionnées, ses brouillons non envoyés et ses positions de défilement : ils reviennent quand la page se recharge, ou quand le système mobile la recharge après un changement d'application ou un verrouillage de l'écran. Un nouvel onglet, ou une PWA entièrement fermée par le système, s'ouvre sur l'accueil. Désactivez ce comportement pour l'onglet avec **Paramètres → Général → Restaurer l’état précédent**.
+Chaque onglet du navigateur, y compris la PWA installée, garde pour cet onglet ses projets ouverts, ses conversations sélectionnées, ses brouillons non envoyés et ses positions de défilement : ils reviennent quand la page se recharge, ou quand le système mobile la recharge après un changement d'application ou un verrouillage de l'écran. Un nouvel onglet, ou une PWA entièrement fermée par le système, s’ouvre sur un onglet vide. Désactivez ce comportement pour l'onglet avec **Paramètres → Général → Restaurer l’état précédent**.

@@ -19,7 +19,7 @@ const CORE = ["workspaces", "workspace-files", "workspace-git", "events"]
 /** Routes of the optional families these surfaces would read at startup or on display. */
 const OPTIONAL_ROUTES = /\/api\/(speech|opencode|sidecars|config-files|remote-control\/status|usage)\b|\/(background-shells|plugin-controls|integrations|service-usage|permission-mode)\b/
 const HIDDEN = {
-  home: ["Clone Git Repo", "New temporary tab", "New SideCar", "OpenCode"],
+  blank: ["Clone repository", "Temporary tab", "New SideCar"],
   status: ["Permissions", "Background Shells", "Plugins"],
   settings: ["Voice", "Remote Access", "OpenCode", "Missions", "Stats", "SideCars", "Config Files"],
 }
@@ -45,13 +45,14 @@ for (const [label, capabilities] of [["core families only", CORE], ["every famil
         await (window as any).fixture.refreshOpenCodeSetup()
         return (await (window as any).fixture.loadSpeechCapabilities())?.available ?? null
       })
-      const home = page.locator("main"), status = page.locator("aside"), nav = page.locator(".settings-screen-nav-list")
+      const blank = page.locator("main"), status = page.locator("aside"), nav = page.locator(".settings-screen-nav-list")
       await nav.getByRole("button", { name: "General", exact: true }).waitFor()
       await status.getByText("Tokens", { exact: true }).waitFor()
-      const visible = async (scope: typeof home, name: string) => await scope.getByText(name, { exact: true }).count() > 0
-      for (const [scope, names] of [[home, HIDDEN.home], [status, HIDDEN.status], [nav, HIDDEN.settings]] as const) {
+      const visible = async (scope: typeof blank, name: string) => await scope.getByText(name, { exact: true }).count() > 0
+      for (const [scope, names] of [[blank, HIDDEN.blank], [status, HIDDEN.status], [nav, HIDDEN.settings]] as const) {
         for (const name of names) assert.equal(await visible(scope, name), capabilities !== CORE, `${label}: ${name}`)
       }
+      assert.equal(await blank.getByRole("button", { name: "Remote connect", exact: true }).count(), Number(capabilities !== CORE))
       if (capabilities === CORE) {
         assert.equal(speech, false, "an undeclared speech family reads as unavailable voice")
         assert.deepEqual(optional, [], "no request reaches an undeclared family")

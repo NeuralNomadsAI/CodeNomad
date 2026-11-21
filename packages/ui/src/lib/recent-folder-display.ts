@@ -1,4 +1,4 @@
-// Shared presentation of recent project folders (home page and new-instance launcher).
+// Shared presentation of recent project folders in the empty tab and quick launcher.
 
 type Translate = (key: string, params?: Record<string, unknown>) => string
 

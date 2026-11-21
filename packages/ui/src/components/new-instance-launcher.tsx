@@ -49,6 +49,7 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
                 </button>
               </Show>
             </header>
+            <Popover.Description class="sr-only">{t("newInstanceLauncher.description")}</Popover.Description>
             <RecentTabsMenu active={props.open} isLoading={props.isLoading} onRun={close}
               onSelectFolder={props.onSelectFolder} onSelectExistingInstance={props.onSelectExistingInstance} onOpenSidecar={props.onOpenSidecar} />
           </Popover.Content>

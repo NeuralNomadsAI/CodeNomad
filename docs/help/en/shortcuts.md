@@ -19,7 +19,7 @@ Bindings are saved in CodeNomad UI configuration and affect clients sharing that
 
 ## Renderer defaults {#renderer-defaults}
 
-`Mod` means `Ctrl` on Windows/Linux and `Cmd` on macOS. These are defaults, not guarantees that the OS/native host will deliver the key. Scope matters: the same key can serve a different action on the home page, in a composer or in search.
+`Mod` means `Ctrl` on Windows/Linux and `Cmd` on macOS. These are defaults, not guarantees that the OS/native host will deliver the key. Scope matters: the same key can serve a different action in an empty tab, in a composer or in search.
 
 | Action | Default |
 | --- | --- |

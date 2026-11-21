@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js"
 import { OpenCode } from "@opencode/client"
 import { render } from "solid-js/web"
+import AppActions from "../../../src/components/app-actions"
 import StatusTab from "../../../src/components/instance/shell/right-panel/tabs/StatusTab"
 import FolderSelectionView from "../../../src/components/folder-selection-view"
 import { SettingsScreen } from "../../../src/components/settings-screen"
@@ -31,7 +32,7 @@ const Fixture = () => {
   const [customization, setCustomization] = createSignal({ ...DEFAULT_RIGHT_PANEL_CUSTOMIZATION })
   const session = () => ({ id: "ses_a", location: { directory: "/repo" } } as Session)
   return <div style={{ display: "flex" }}>
-    <main style={{ width: "640px" }}><FolderSelectionView onSelectFolder={() => {}} onSelectExistingInstance={() => {}}
+    <main style={{ width: "640px" }}><AppActions /><FolderSelectionView onSelectFolder={() => {}} onSelectExistingInstance={() => {}}
       onOpenSidecar={() => {}} onNewTemporaryInstance={() => {}} /></main>
     <aside style={{ width: "280px" }}><StatusTab t={t} instanceId={id} instance={instances().get(id)!} activeSession={session}
       isActive={() => true} expandedItems={expanded} onExpandedItemsChange={setExpanded}
