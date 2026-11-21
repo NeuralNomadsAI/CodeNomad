@@ -225,6 +225,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     app, clientStateManager: clientState, cliManager: cli,
     getLocalWindows: () => registry.all(), getAllWindows: () => BrowserWindow.getAllWindows(),
     isSupportWindow: (window) => preferencesWindows.current() === window || remoteDictation.window() === window || isBrowserAuxiliaryWindow(window),
+    isRemoteWindow: (window) => !window.isDestroyed() && remoteWindows.resolve(window.webContents) === window,
     isLaunchWindow: (window) => launchWindows.has(window),
     flushSupportWindows: async () => {
       const window = preferencesWindows.current()
@@ -652,7 +653,7 @@ function runPrimary(firstIntent: LaunchIntent) {
       window.setTitle(title)
       window.webContents.on("page-title-updated", (event) => { event.preventDefault(); window.setTitle(title) })
       setupNavigationGuards(window, undefined, getAllowedOrigins, getLoadingUrl)
-      lifecycle.attachSupportWindow(window)
+      lifecycle.attach({ id: "", window, tracker: null, persisted: false })
       window.once("session-end", remoteDictation.revoke)
       window.on("closed", () => { remoteOrigins.delete(nativeWindowId); insecureOrigins.delete(webContentsId) })
       const navigate = () => navigateRemoteWindow(window, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify)

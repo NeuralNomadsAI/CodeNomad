@@ -18,6 +18,7 @@ interface Dependencies {
   cliManager: CliProcessManager
   getLocalWindows(): LifecycleWindow[]
   getAllWindows(): BrowserWindow[]
+  isRemoteWindow?(window: BrowserWindow): boolean
   isSupportWindow?(window: BrowserWindow): boolean
   /** Hidden windows a `--connect-server` launch owns: they never keep CodeNomad alive. */
   isLaunchWindow?(window: BrowserWindow): boolean
@@ -64,11 +65,12 @@ export class MultiwindowLifecycle {
           return
         }
         // A hidden launch window holds no user state: dispose it even when its renderer never started.
-        if (!this.dependencies.isLaunchWindow?.(record.window)) await this.flushWindow(record)
+        if (!this.dependencies.isLaunchWindow?.(record.window)) await this.flushWindow(record, true)
         // The last local window keeps its saved state beside remote windows, as when it quits CodeNomad:
         // the next local window (New Window, a later launch or the next start) reopens it.
         if (record.persisted !== false && this.hasOtherLocalWindow(record.id)
           && !await this.dependencies.removeWindowState(record.id)) {
+          this.resumeCapture(record.window)
           closing = false
           this.pendingWindowCloses.delete(record.window)
           return
@@ -76,6 +78,7 @@ export class MultiwindowLifecycle {
         approved = true
         record.window.close()
       })().catch((error) => {
+        this.resumeCapture(record.window)
         closing = false
         this.pendingWindowCloses.delete(record.window)
         console.warn("[client-state] local window close failed", error)
@@ -115,7 +118,10 @@ export class MultiwindowLifecycle {
       void this.startShutdown().then(() => this.exit(), (error) => {
         this.relaunchRequested = false
         this.pendingWindowCloses.clear()
-        for (const window of visibleWindows) if (!window.isDestroyed()) window.show()
+        for (const window of visibleWindows) if (!window.isDestroyed()) {
+          if (!this.dependencies.isSupportWindow?.(window)) this.resumeCapture(window)
+          window.show()
+        }
         console.warn("[client-state] shutdown remains pending", error)
       })
     })
@@ -145,7 +151,8 @@ export class MultiwindowLifecycle {
   private startShutdown(preparedFlush?: Promise<void>): Promise<void> {
     if (this.shutdown) return this.shutdown
     const cleanup = async () => {
-      await (preparedFlush ?? this.flushLocalWindows())
+      if (preparedFlush) await preparedFlush
+      await this.flushApplicationWindows(true)
       await this.run("aggregate state flush", () => this.dependencies.clientStateManager.flush())
       await this.dependencies.cliManager.shutdown()
       try {
@@ -165,12 +172,15 @@ export class MultiwindowLifecycle {
     return shutdown
   }
 
-  private flushLocalWindows(): Promise<void> {
+  private flushApplicationWindows(closing = false): Promise<void> {
     // A hidden launch window holds no state to preserve, and its pending connection ends with the app.
     return Promise.all([
       ...this.dependencies.getLocalWindows()
         .filter((record) => !this.dependencies.isLaunchWindow?.(record.window))
-        .map((record) => this.flushWindow(record)),
+        .map((record) => this.flushWindow(record, closing)),
+      ...(closing ? this.dependencies.getAllWindows()
+        .filter(window => this.dependencies.isRemoteWindow?.(window) && !this.dependencies.isLaunchWindow?.(window))
+        .map(window => this.flushWindow({ id: "", window, tracker: null }, true)) : []),
       this.dependencies.flushSupportWindows?.(),
     ]).then(() => undefined)
   }
@@ -178,7 +188,7 @@ export class MultiwindowLifecycle {
   private prepareSessionEnd(): void {
     if (this.exitAllowed || this.sessionEnd || this.shutdown || this.sessionEndPreparationPending) return
     this.sessionEndPreparationPending = true
-    const preparation = this.flushLocalWindows()
+    const preparation = this.flushApplicationWindows()
     this.sessionEndPreparation = preparation
     void preparation.finally(() => {
       if (this.sessionEndPreparation === preparation) this.sessionEndPreparationPending = false
@@ -188,7 +198,7 @@ export class MultiwindowLifecycle {
   private startSessionEnd(): void {
     if (this.exitAllowed || this.sessionEnd) return
     const timeoutMs = this.dependencies.sessionEndCleanupTimeoutMs ?? 5_000
-    const cleanup = this.shutdown ?? this.startShutdown(this.sessionEndPreparation ?? this.flushLocalWindows())
+    const cleanup = this.shutdown ?? this.startShutdown(this.sessionEndPreparation ?? undefined)
     this.sessionEnd = Promise.race([
       cleanup,
       new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
@@ -197,14 +207,27 @@ export class MultiwindowLifecycle {
     }).then(() => this.exit())
   }
 
-  private async flushWindow(record: LifecycleWindow): Promise<void> {
-    await flushRendererClientStateBeforeShutdown(
+  private async flushWindow(record: LifecycleWindow, closing: boolean): Promise<void> {
+    const remote = this.dependencies.isRemoteWindow?.(record.window) === true
+    const flush = () => flushRendererClientStateBeforeShutdown(
       record.window,
-      this.dependencies.clientStateManager.isPrimary,
+      closing || remote || this.dependencies.clientStateManager.isPrimary,
       (url) => this.dependencies.isTrustedRendererOrigin(url, this.dependencies.getAllowedRendererOrigins(record.window)),
       this.dependencies.rendererFlushTimeoutMs,
+      closing,
+      remote || !this.dependencies.clientStateManager.isPrimary,
     )
+    if (remote) await this.run("remote window flush", flush)
+    else await flush()
     if (record.tracker) await this.run("native window flush", () => record.tracker!.flush())
+  }
+
+  private resumeCapture(window: BrowserWindow): void {
+    void this.run("renderer resume", () => flushRendererClientStateBeforeShutdown(
+      window, true,
+      url => this.dependencies.isTrustedRendererOrigin(url, this.dependencies.getAllowedRendererOrigins(window)),
+      this.dependencies.rendererFlushTimeoutMs, "cancel", true,
+    ))
   }
 
   private releasePrimary(): Promise<void> {

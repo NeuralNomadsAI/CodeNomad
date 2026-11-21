@@ -36,7 +36,7 @@ Tab öffnet die Suche, Pfeiltasten und Enter wählen aus, Escape setzt den Fokus
 
 Zeigt ein anderes Fenster dieselbe Projektverbindung, schließt sich dessen Tab ebenfalls und dieses Fenster zeigt eine Benachrichtigung. Ungesendete Entwürfe und Anhänge des geschlossenen Tabs kehren zurück, wenn Sie denselben Ordner in diesem Fenster erneut öffnen; das Fenster behält sie für seine 16 zuletzt geschlossenen Projekte, bis es neu geladen oder geschlossen wird. Sie gehören nicht zur Startwiederherstellung.
 
-Das Schließen eines ganzen Fensters, Beenden oder Neuladen schließt dessen Projektverbindungen nicht; die normale Startwiederherstellung gilt weiterhin. Stoppen Sie relevante Ausführungen ausdrücklich, wenn Sie sicherstellen müssen, dass sie beendet sind. CodeNomad entlädt niemals native Locations; die Wartung des gemeinsamen Dienstes beschreibt die [OpenCode-Einrichtung](opencode.md).
+Beim Schließen eines Fensters oder Browser-Tabs, beim Beenden oder beim Neuladen werden die Projektverbindungen dieses Fensters freigegeben. Andere Fenster behalten ihre Tabs. Die Startwiederherstellung verbindet gespeicherte Tabs erneut und behält offene temporäre Ordner. Stoppen Sie Ausführungen ausdrücklich, wenn Sie sie beenden möchten. Hinweise zur Wartung des gemeinsamen Dienstes finden Sie unter [OpenCode-Einrichtung](opencode.md).
 
 Bei aktivierter Startwiederherstellung stellt jeder verbleibende Tab seine eigenen Panel-Auswahlen, Missionsauswahl und -leseansicht sowie die Wahl zwischen Chat und Web-Vorschau wieder her. Browser-URLs und Verlauf werden pro Sitzung geteilt; gespeicherte Seiten laden erst beim ausdrücklichen erneuten Öffnen der Web-Vorschau. Das Schließen einer Instanz entfernt nur ihre gespeicherte Ansicht; erneutes Öffnen des Ordners erzeugt eine neue Instanz.
 
@@ -44,7 +44,7 @@ Bei aktivierter Startwiederherstellung stellt jeder verbleibende Tab seine eigen
 
 Beim Neuladen bleiben bei aktivierter Wiederherstellung Reihenfolge, Auswahl und Entwürfe der Remote-Tabs erhalten. Ein unerreichbarer Server hinterlässt einen wartenden Tab: Wählen Sie **Wiederholen**, sobald er erreichbar ist, oder **Verbinden** mit Benutzername/Passwort oder einem Link im Feld **Neuer Kopplungslink**. Andere Server bleiben nutzbar. **Server nicht gefunden** bedeutet, dass der gespeicherte Server fehlt.
 
-**Wiederholen** verbindet erneut mit einem vorhandenen Projekt. Ist der Server erreichbar, aber das Projekt fehlt, wählen Sie **Öffnen**.
+**Wiederholen** verbindet das Projekt auf dem gespeicherten Server erneut und erstellt seine Verbindung bei Bedarf neu.
 
 **Wiederholen** stellt wartende Tabs auch bei deaktivierter automatischer Startwiederherstellung wieder her. Benachrichtigungen wählen den vorhandenen wartenden Tab aus. Prüfen Sie das Ergebnis einer unbestätigten Konversationsaktion, bevor Sie sie erneut senden.
 

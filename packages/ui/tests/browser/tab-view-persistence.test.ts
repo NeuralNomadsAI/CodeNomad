@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createServer, request as forwardRequest } from "node:http"
 import { after, before, test } from "node:test"
 import { chromium, type Browser } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
@@ -200,7 +201,8 @@ for (const remote of [false, true]) test(`${remote ? "desktop remote" : "storage
 })
 
 for (const web of [false, true]) for (const close of [false, true]) test(`${web ? "browser-session" : "native"} production capture/restore binds duplicate UUIDs after ${close ? "closure" : "reorder"}, without loading saved pages`, async () => {
-  const page = await browser.newPage()
+  const context = await browser.newContext()
+  const page = await context.newPage()
   const errors: string[] = [], loads: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.addInitScript(web => {
@@ -229,21 +231,23 @@ for (const web of [false, true]) for (const close of [false, true]) test(`${web 
     }
   }, web)
   let sequence = 0
-  let inventory = ["web-0", "web-1"]
-  await page.route(url => /^\/(?:api|workspaces)\//.test(url.pathname), async route => {
-    const path = new URL(route.request().url()).pathname
+  let inventory = ["web-0", "web-1", "other-window"]
+  const deletes: string[] = []
+  const mock = (method: string, path: string, input: any) => {
     let body: any = {}
     if (path === "/api/workspaces") {
-      if (route.request().method() === "POST") {
-        const input = route.request().postDataJSON()
+      if (method === "POST") {
         body = { id: `uuid-${++sequence}`, path: input.path, status: "ready", port: 1234, proxyPath: `/workspaces/uuid-${sequence}/instance`,
-          binaryId: "fixture", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), requestId: input.requestId }
+          binaryId: "fixture", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), requestId: input.requestId, temporary: true }
+        inventory.push(body.id)
       } else body = web ? inventory.map(id => ({ id, path: "/same", status: "ready", port: 1234, proxyPath: `/workspaces/${id}/instance`,
-        binaryId: "fixture", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() })) : []
-    } else if (web && path.startsWith("/api/workspaces/") && route.request().method() === "DELETE") {
-      inventory = inventory.filter(id => id !== path.split("/").at(-1))
+        binaryId: "fixture", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), temporary: id !== "other-window" })) : []
+    } else if (web && path.startsWith("/api/workspaces/") && method === "DELETE") {
+      const id = path.split("/").at(-1)!
+      deletes.push(id)
+      if (!close || id === "web-0") inventory = inventory.filter(candidate => candidate !== id)
+      return undefined
     } else if (path === "/api/previews") {
-      const input = route.request().postDataJSON()
       loads.push(input.url)
       body = { sessionId: input.sessionId, targetUrl: input.url, token: "preview", proxyUrl: input.url, createdAt: new Date().toISOString() }
     } else if (path.endsWith("/worktrees")) body = { isGitRepo: true, worktrees: [{ slug: "root", directory: "/same", kind: "root" }] }
@@ -252,10 +256,45 @@ for (const web of [false, true]) for (const close of [false, true]) test(`${web 
         cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } }
       body = path.endsWith("/session") ? { data: [row], cursor: {} } : row
     } else if (/\/(?:agent|provider|command|model|permission|form|shell)$/.test(path)) body = { data: [] }
-    await route.fulfill({ json: body })
+    return body
+  }
+  // Page teardown detaches Playwright's route interception before keepalive's
+  // transport completes. Observe delivery at the HTTP listener instead.
+  const server = createServer(async (req, res) => {
+    const target = new URL(req.url!, url)
+    if (!/^\/(?:api|workspaces)\//.test(target.pathname)) {
+      const upstream = forwardRequest(target, incoming => {
+        res.writeHead(incoming.statusCode!, incoming.headers)
+        incoming.pipe(res)
+      })
+      upstream.on("error", () => res.writeHead(502).end())
+      upstream.end()
+      return
+    }
+    const chunks = []
+    for await (const chunk of req) chunks.push(chunk)
+    const body = mock(req.method!, target.pathname, chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : undefined)
+    if (body === undefined) res.writeHead(204).end()
+    else res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(body))
   })
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
+  const address = server.address() as { port: number }
+  const fixtureUrl = `http://127.0.0.1:${address.port}${new URL(url).pathname}`
   try {
-    await page.goto(url)
+    const other = web && !close ? await context.newPage() : undefined
+    if (other) {
+      await other.addInitScript(() => {
+        const w = window as any
+        w.__name = (value: unknown) => value
+        w.__CODENOMAD_RUNTIME_HOST__ = "web"; w.__CODENOMAD_WINDOW_CONTEXT__ = "local"
+        w.EventSource = class extends EventTarget { close() {} }
+        sessionStorage.setItem("codenomad.client-state.v1", JSON.stringify({ version: 1, revision: 1, savedAt: 1,
+          layout: {}, session: { activeTabIndex: 0, tabs: [{ kind: "workspace", workspaceId: "other-window", folder: "/same" }] } }))
+      })
+      await other.goto(fixtureUrl)
+      await other.locator('[data-restoring="false"]').waitFor()
+    }
+    await page.goto(fixtureUrl)
     await page.locator('[data-restoring="false"]').waitFor()
     await page.waitForFunction(() => (window as any).tabViews.ids().length === 2)
     const ids = await page.evaluate(() => (window as any).tabViews.ids()) as string[]
@@ -272,14 +311,19 @@ for (const web of [false, true]) for (const close of [false, true]) test(`${web 
       await f.open("same", "https://example.com/a", a); f.files(a)
       f.mission(b)
       f.reorder(b, a)
+      f.writeDraft(b, "restored draft")
     }, ids)
     if (close) await page.evaluate(id => (window as any).tabViews.close(id), ids[0])
     if (web) {
-      await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide")))
+      await page.evaluate(() => {
+        window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }))
+        window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }))
+      })
       await page.waitForFunction(close => {
         const tabs = JSON.parse(sessionStorage.getItem("codenomad.client-state.v1")!).session.tabs
         return tabs.length === (close ? 1 : 2) && tabs[0].viewState?.missions?.reader?.missionId === "debug"
       }, close)
+      assert.deepEqual(deletes, close ? ["web-0"] : [], "entering and leaving bfcache does not delete any records")
     } else await page.evaluate(() => (window as any).__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__())
     const captured = await page.evaluate(web => JSON.parse(sessionStorage.getItem(web ? "codenomad.client-state.v1" : "snapshot")!).session.tabs, web)
     assert.equal(captured.length, close ? 1 : 2)
@@ -289,14 +333,53 @@ for (const web of [false, true]) for (const close of [false, true]) test(`${web 
     assert.equal(await page.evaluate(() => (window as any).tabViews.saved("same").targetUrl), "https://example.com/a")
     const count = loads.length
     await page.reload(); await page.locator('[data-restoring="false"]').waitFor()
+    if (web) assert.ok(deletes.includes("web-1"), "reload sends the keepalive DELETE")
     const restored = await page.evaluate(() => (window as any).tabViews.ids().map((id: string) => ({ id, view: (window as any).tabViews.view(id) })))
     assert.equal(restored.length, captured.length)
-    if (web) {
-      assert.deepEqual(restored.map((v: any) => v.id), captured.map((v: any) => v.workspaceId), "web restoration reuses each saved backend record")
-      assert.equal(sequence, 0, "web restoration never creates workspaces")
+    if (web && close) {
+      assert.equal(restored[0].id, "web-1", "a dropped DELETE leaves the exact record reusable")
+      assert.equal(sequence, 0)
     } else assert.ok(restored.every((v: any) => !ids.includes(v.id)), "backend recreation changes every instance UUID")
+    if (web) {
+      assert.ok(inventory.includes("other-window"), "the other window's same-folder record survives")
+      assert.ok(restored.every((v: any) => v.id !== "other-window"))
+      assert.equal(await page.evaluate(id => (window as any).tabViews.temporary(id), restored[0].id), true)
+    }
+    assert.equal(await page.evaluate(id => (window as any).tabViews.draft(id), restored[0].id), "restored draft")
+    assert.equal(await page.locator('[role="tab"][aria-selected="true"]').getAttribute("data-session-selection"), "same")
     assert.deepEqual(restored.map((v: any) => v.view), captured.map((v: any) => v.viewState))
     assert.equal(loads.length, count, "restoration allocates zero preview records and loads zero saved pages")
     assert.deepEqual(errors, [])
-  } finally { await page.close() }
+    if (web && close) {
+      // Deliver a DELETE that raced the exact-ID rebind after navigation.
+      inventory = inventory.filter(id => id !== "web-1")
+      await page.evaluate(() => (window as any).tabViews.remove("web-1"))
+      await page.waitForFunction(() => (window as any).tabViews.ids()[0]?.startsWith("uuid-"))
+      assert.equal(await page.evaluate(() => {
+        const f = (window as any).tabViews
+        return f.draft(f.ids()[0])
+      }), "restored draft")
+    }
+    if (other) {
+      await page.evaluate(() => (window as any).tabViews.disableRestore())
+      const closed = page.waitForEvent("close")
+      await page.close({ runBeforeUnload: true })
+      await closed
+      await other.waitForFunction(async (ids: string[]) => {
+        const rows = await (await fetch("/api/workspaces")).json()
+        return ids.every(id => !rows.some((row: any) => row.id === id))
+      }, restored.map((v: any) => v.id))
+      const noticeCounts = await other.evaluate((ids: string[]) => {
+        const before = (window as any).tabViews.noticeCount()
+        for (const id of ids) (window as any).tabViews.remove(id)
+        return [before, (window as any).tabViews.noticeCount()]
+      }, restored.map((v: any) => v.id))
+      assert.equal(noticeCounts[0], noticeCounts[1], "no closed-elsewhere notice for records this page never opened")
+      assert.deepEqual(await other.evaluate(() => (window as any).tabViews.ids()), ["other-window"])
+    }
+  } finally {
+    await context.close()
+    server.closeAllConnections()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  }
 })

@@ -89,9 +89,10 @@ export async function acceptNativePreferencesRequest(request: NativePreferencesR
 
 export async function onNativePreferencesFlushRequested(flush: (generation?: number) => Promise<void>): Promise<() => void> {
   if (isElectronHost()) {
-    window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ = flush
+    const flushBeforeShutdown = () => flush()
+    window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ = flushBeforeShutdown
     return () => {
-      if (window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ === flush) {
+      if (window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ === flushBeforeShutdown) {
         delete window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__
       }
     }

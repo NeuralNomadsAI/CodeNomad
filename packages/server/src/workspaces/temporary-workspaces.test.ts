@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
+import Fastify from "fastify"
+import { registerWorkspaceRoutes } from "../server/routes/workspaces"
 import { TemporaryFolderRegistry, TemporaryWorkspaceError, TemporaryWorkspaces } from "./temporary-workspaces"
 import { WorktreeDeletionFence } from "./worktree-session-evacuation"
 import type { WorkspaceManager } from "./manager"
@@ -14,6 +16,7 @@ async function harness() {
   const workspaces = new Map<string, { id: string; path: string }>()
   const removed: string[] = []
   const cleared: string[] = []
+  const deletes: unknown[][] = []
   let sessions: Array<{ id: string; parentID?: string; location: { directory: string } }> = []
   let active: Record<string, unknown> = {}
   let carrier = ""
@@ -33,7 +36,7 @@ async function harness() {
     list: () => [...workspaces.values()],
     getServiceDirectory: (id: string) => workspaces.get(id)?.path,
     getSharedServiceClient: async () => client,
-    delete: async (id: string) => { workspaces.delete(id) },
+    delete: async (id: string, detail?: unknown) => { deletes.push([id, detail]); workspaces.delete(id) },
     reserveWorktreeDeletion: async (folder: string) => {
       if ([...workspaces.values()].some((workspace) => workspace.path.toLowerCase() === folder.toLowerCase())) {
         throw new Error("Worktree is open as another workspace")
@@ -47,7 +50,7 @@ async function harness() {
     registry, workspaceManager: manager, deletionFence: new WorktreeDeletionFence(), onChange: (folders) => changes.push(folders),
   })
   return {
-    base, file, registry, workspaces, removed, cleared, temporary, changes,
+    base, file, registry, workspaces, removed, cleared, temporary, changes, manager, deletes,
     setSessions: (next: typeof sessions) => { sessions = next },
     setActive: (next: typeof active) => { active = next },
     setCarrier: (id: string) => { carrier = id },
@@ -74,6 +77,23 @@ test("temporary folders are created under the root and survive a restart only wh
     assert.equal(reopened.has(deleted), false)
     assert.deepEqual(JSON.parse(await readFile(h.file, "utf8")).folders, [kept])
   } finally { await h.cleanup() }
+})
+
+test("window release deletes just the record of a registered temporary folder", async () => {
+  const h = await harness(), app = Fastify()
+  registerWorkspaceRoutes(app, { workspaceManager: h.manager, worktreeDeletionFence: new WorktreeDeletionFence() })
+  try {
+    const folder = await h.temporary.createFolder()
+    await writeFile(path.join(folder, "draft.txt"), "keep me")
+    h.workspaces.set("closing", { id: "closing", path: folder })
+    h.workspaces.set("peer", { id: "peer", path: folder })
+    assert.equal((await app.inject({ method: "DELETE", url: "/api/workspaces/closing?windowRelease=1" })).statusCode, 204)
+    assert.deepEqual([...h.workspaces.keys()], ["peer"])
+    assert.deepEqual(h.deletes, [["closing", { temporaryRetained: true, windowRelease: true }]])
+    assert.equal(h.registry.has(folder), true)
+    assert.equal(await readFile(path.join(folder, "draft.txt"), "utf8"), "keep me")
+    assert.deepEqual(h.removed, [])
+  } finally { await app.close(); await h.cleanup() }
 })
 
 test("keeping a temporary workspace unregisters it without touching the folder", async () => {

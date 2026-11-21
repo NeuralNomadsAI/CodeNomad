@@ -180,6 +180,11 @@ pub fn client_state_renderer_flushed(
     access_token: String,
     generation: u64,
 ) -> Result<(), String> {
+    if webview.label().starts_with("remote-") {
+        let label = webview.label().to_string();
+        crate::shutdown::renderer_flushed(app, label.clone(), label, generation);
+        return Ok(());
+    }
     let (window_id, _) = validate_access(&webview, &state, &access_token)?;
     crate::shutdown::renderer_flushed(app, webview.label().to_string(), window_id, generation);
     Ok(())

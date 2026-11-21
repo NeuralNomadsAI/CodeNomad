@@ -1640,14 +1640,15 @@ function handleWorkspaceEvent(event: BackendEventPayload) {
     case "workspace.stopped": {
       const instance = instances().get(event.workspaceId)
       const locallyClosed = locallyRequestedWorkspaceCloses.delete(event.workspaceId)
-      if (event.reason === "deleted" && instance && openInstanceTabIds().has(event.workspaceId)
+      const windowRelease = event.reason === "deleted" && event.windowRelease === true && openInstanceTabIds().has(event.workspaceId)
+      if (event.reason === "deleted" && !event.windowRelease && instance && openInstanceTabIds().has(event.workspaceId)
         && !locallyClosed) {
         showToastNotification({ category: "projects",
           message: tGlobal("app.closeInstance.toast.otherWindow", { project: getInstanceLabel(instance) }),
           variant: "info",
         })
       }
-      requestInstanceTabClose(event.workspaceId)
+      if (!windowRelease) requestInstanceTabClose(event.workspaceId)
       const tracked = restoreCreatedWorkspaceCleanup.get(event.workspaceId, true)
       if (tracked?.receipt?.attached()) restoreCreatedWorkspaceCleanup.release(event.workspaceId, tracked.receipt.requestKey)
       // Clear the instance after this event batch has unmounted its tab: clearing
@@ -1656,13 +1657,15 @@ function handleWorkspaceEvent(event: BackendEventPayload) {
       const stop = Symbol(event.workspaceId)
       const operation = captureInstanceOperation(event.workspaceId)
       pendingWorkspaceStops.set(event.workspaceId, stop)
-      const discarded = event.reason === "deleted" && instance !== undefined && isRegisteredTemporary(instance)
+      const discarded = event.reason === "deleted" && !event.temporaryRetained && instance !== undefined && isRegisteredTemporary(instance)
       queueMicrotask(() => {
         if (pendingWorkspaceStops.get(event.workspaceId) !== stop) return
         pendingWorkspaceStops.delete(event.workspaceId)
         if (!operation.current()) return
         releaseInstanceResources(event.workspaceId)
-        removeInstance(event.workspaceId, { authoritative: event.reason === "deleted", drafts: discarded ? "discard" : "keep" })
+        removeInstance(event.workspaceId, { authoritative: event.reason === "deleted" && !windowRelease,
+          drafts: discarded ? "discard" : "keep", ...(windowRelease ? { windowRelease: true } : {}) })
+        if (windowRelease) requestInstanceTabClose(event.workspaceId)
       })
       break
     }
@@ -1794,7 +1797,7 @@ function updateInstance(id: string, updates: Partial<Instance>) {
   syncHasInstancesFlag()
 }
 
-function removeInstance(id: string, options: { authoritative?: boolean; drafts?: "keep" | "skip" | "discard" } = {}) {
+function removeInstance(id: string, options: { authoritative?: boolean; drafts?: "keep" | "skip" | "discard"; windowRelease?: true } = {}) {
   clearSessionListView(id)
   locallyRequestedWorkspaceCloses.delete(id)
   deferredPendingDiscovery.delete(id)
@@ -1812,6 +1815,7 @@ function removeInstance(id: string, options: { authoritative?: boolean; drafts?:
       instanceId: id,
       folder: removedInstance.folder,
       occurrence: removedOccurrence,
+      ...(options.windowRelease ? { windowRelease: true } : {}),
       ...(removedInstance.backendId ? { backendId: removedInstance.backendId } : {}),
       ...(removedInstance.serverId ? { serverId: removedInstance.serverId } : {}),
     })
@@ -2190,12 +2194,12 @@ const workspaceCloseRequests = new Map<string, Promise<void>>()
 const locallyRequestedWorkspaceCloses = new Set<string>()
 
 /** Origin outlives the HTTP request: cleanup and its stop event may arrive later. */
-function trackWorkspaceClose(id: string, operation: () => Promise<void>): Promise<void> {
+function trackWorkspaceClose(id: string, operation: () => Promise<void>, keepalive = false): Promise<void> {
   const pending = workspaceCloseRequests.get(id)
   if (pending) return pending
   const hadOrigin = locallyRequestedWorkspaceCloses.has(id)
   locallyRequestedWorkspaceCloses.add(id)
-  const request = Promise.resolve().then(operation).catch((error) => {
+  const request = (keepalive ? operation() : Promise.resolve().then(operation)).catch((error) => {
     if (!hadOrigin && error instanceof HttpResponseError && error.status >= 400 && error.status < 500) {
       locallyRequestedWorkspaceCloses.delete(id)
     }
@@ -2205,7 +2209,7 @@ function trackWorkspaceClose(id: string, operation: () => Promise<void>): Promis
   return request
 }
 
-function closeWorkspace(id: string): Promise<void> {
+function closeWorkspace(id: string, keepalive = false): Promise<void> {
   const instance = instances().get(id)
   if (!instance) return Promise.resolve()
   const pending = workspaceCloseRequests.get(id)
@@ -2218,12 +2222,12 @@ function closeWorkspace(id: string): Promise<void> {
   return trackWorkspaceClose(id, () => {
     if (!receipt) return Promise.reject(captureError)
     if (!receipt.current()) return Promise.reject(new Error("Workspace close owner unavailable"))
-    return receipt.api.deleteWorkspace(id)
-  })
+    return receipt.api.deleteWorkspace(id, keepalive)
+  }, keepalive)
     .catch((error) => {
       log.error("Failed to close workspace", error)
       try {
-        showToastNotification({ category: "projects",
+        if (!keepalive) showToastNotification({ category: "projects",
           message: tGlobal("app.closeInstance.toast.error"),
           variant: "error",
         })

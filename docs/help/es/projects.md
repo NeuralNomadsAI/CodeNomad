@@ -36,7 +36,7 @@ Tab permite buscar, las flechas y Enter seleccionan y Escape devuelve el foco a 
 
 Si otra ventana muestra la misma conexión de proyecto, su pestaña también se cierra y esa ventana muestra una notificación. Los borradores y adjuntos sin enviar de la pestaña cerrada vuelven al reabrir la misma carpeta en esa ventana; la ventana los conserva para sus 16 últimos proyectos cerrados hasta que se recarga o se cierra. No forman parte de la restauración al iniciar.
 
-Cerrar una ventana entera, salir o recargar no cierra sus conexiones de proyecto; se sigue aplicando la restauración normal al iniciar. Detén explícitamente las ejecuciones relevantes si necesitas verificar que la ejecución terminó. CodeNomad nunca descarga las Locations nativas; el mantenimiento del servicio compartido se describe en [configuración de OpenCode](opencode.md).
+Al cerrar una ventana o una pestaña del navegador, salir o recargar, se liberan las conexiones de proyecto de esa ventana. Las demás ventanas conservan sus pestañas. La restauración al iniciar vuelve a conectar las pestañas guardadas y conserva las carpetas temporales abiertas. Detén las ejecuciones explícitamente si quieres terminarlas; consulta la [configuración de OpenCode](opencode.md) para el mantenimiento del servicio compartido.
 
 Con la restauración al iniciar activada, cada pestaña restante recupera sus propias opciones de paneles, selección y lector de Misión, y elección entre chat y vista previa web. Las URL y el historial del navegador se comparten por sesión; las páginas guardadas se cargan solo al reabrir explícitamente la vista previa web. Cerrar una instancia elimina solo su vista guardada; reabrir la carpeta crea una instancia nueva.
 
@@ -44,7 +44,7 @@ Con la restauración al iniciar activada, cada pestaña restante recupera sus pr
 
 Al recargar con la restauración activada, las pestañas remotas conservan su orden, selección y borradores. Un servidor no disponible deja una pestaña en espera: elige **Reintentar** cuando vuelva, o **Conectar** con su usuario/contraseña o un enlace en **Nuevo enlace de emparejamiento**. Los demás servidores siguen disponibles. **Servidor no encontrado** indica que falta el servidor guardado.
 
-**Reintentar** vuelve a conectar con un proyecto existente. Si se puede acceder al servidor pero falta el proyecto, elige **Abrir**.
+**Reintentar** vuelve a conectar el proyecto en el servidor guardado y recrea su conexión si hace falta.
 
 **Reintentar** también recupera pestañas en espera con la restauración automática al iniciar desactivada. Las notificaciones seleccionan la pestaña en espera existente. Comprueba el resultado de una acción de conversación no confirmada antes de enviarla otra vez.
 

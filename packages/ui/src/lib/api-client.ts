@@ -548,9 +548,9 @@ export function createServerApi(ctx: BackendHttp) {
         body: JSON.stringify({ password }),
       })
     },
-    deleteWorkspace(id: string): Promise<void> {
+    deleteWorkspace(id: string, keepalive = false): Promise<void> {
       id = parseInstanceKey(id).workspaceId
-      return request(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" })
+      return request(`/api/workspaces/${encodeURIComponent(id)}${keepalive ? "?windowRelease=1" : ""}`, { method: "DELETE", keepalive })
     },
     createTemporaryFolder(): Promise<{ path: string }> {
       return request("/api/workspaces/temporary", { method: "POST" })

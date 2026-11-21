@@ -250,7 +250,7 @@ test(`${host} restores the active project and saved session identity before hydr
       else if (mode !== "foreground-runtime-closed") assert.equal(await second.getAttribute("aria-selected"), "true")
       assert.equal(await page.getByRole("tab").count(), ["foreground-runtime-closed", "foreground-runtime-failure"].includes(mode) ? 1 : 2)
       assert.equal(creations.filter(folder => folder === "D:/second").length, ["foreground-runtime-refused-again", "foreground-runtime-concurrent-continue"].includes(mode) ? 3 : 2)
-      assert.equal(creations.filter(folder => folder === "D:/first").length, manualPending ? 3 : ["foreground-runtime-failure", "foreground-runtime-discovered"].includes(mode) ? 1 : 2,
+      assert.equal(creations.filter(folder => folder === "D:/first").length, manualPending ? 3 : mode === "foreground-runtime-failure" ? 1 : 2,
         "never duplicate a manually reopened tab or replay a non-426 failure")
       if (mode !== "foreground-runtime-closed") await page.getByText("Saved transcript visible before secondary hydration", { exact: true }).first().waitFor()
       const count = creations.length

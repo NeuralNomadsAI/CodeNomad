@@ -51,7 +51,7 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
     const owner = /^\/api\/backends\/([ab])/.exec(pathname)?.[1]
     const path = owner ? pathname.slice(`/api/backends/${owner}`.length) : pathname
     let body: any = {}
-    if (path.startsWith("/api/storage/")) body = owner ? {} : path.endsWith("/config/ui") ? { settings: { multiBackend: true } }
+    if (path.startsWith("/api/storage/")) body = owner ? {} : path.endsWith("/config/ui") ? { settings: { multiBackend: true, locale: "en" } }
       : path.endsWith("/state/ui") ? { remoteServers: ["a", "b"].map(id => ({
         id, name: `Server ${id.toUpperCase()}`, baseUrl: `https://${id}.test`, skipTlsVerify: false, createdAt: "", updatedAt: "",
       })) } : {}
@@ -85,7 +85,7 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
     assert.equal(state[0].id, "instance:a~same", "saved record wins over folder occurrence zero")
     assert.equal(state[0].drafts.__no_session_draft__, "draft-a")
     assert.equal(state[1].drafts.__no_session_draft__, "draft-b")
-    assert.deepEqual(creates, [], "automatic restoration creates nothing")
+    assert.deepEqual(creates, ["reuse", "offline"].includes(mode) ? [] : ["b"], "only a missing record on an admitted server is created")
     if (mode === "offline") {
       assert.equal(state[1].kind, "remote-restore")
       await page.getByRole("button", { name: "Connect", exact: true }).click()
@@ -93,29 +93,19 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
       assert.equal(await page.getByLabel("New pairing link", { exact: true }).isDisabled(), true)
       healthy = true
       await page.getByRole("button", { name: "Retry", exact: true }).click()
-    } else if (!["reuse", "offline"].includes(mode)) {
+    } else if (["rate-limited", "uncertain"].includes(mode)) {
       assert.equal(state[1].kind, "remote-restore")
       await page.getByRole("button", { name: "Retry", exact: true }).click()
-      assert.deepEqual(creates, [], "Retry only rebinds web records")
-      await page.getByRole("button", { name: "Open", exact: true }).click()
-      if (["rate-limited", "uncertain"].includes(mode)) {
-        const settled = () => page.waitForFunction(() => {
-          const button = document.querySelector<HTMLButtonElement>("[data-remote-restore] button")
-          return !button || !button.disabled
-        })
-        await settled()
-        await page.getByRole("button", { name: "Open", exact: true }).click()
-        await settled()
-        if (mode === "uncertain") {
-          assert.deepEqual(creates, ["b"], "an uncertain 499 never replays its creation")
-          assert.equal((await tabs())[1].drafts.__no_session_draft__, "draft-b")
-          return
-        }
+      await page.waitForFunction(() => !document.querySelector("[data-remote-restore] button:disabled"))
+      if (mode === "uncertain") {
+        assert.deepEqual(creates, ["b"], "an uncertain 499 never replays its creation")
+        assert.equal((await tabs())[1].drafts.__no_session_draft__, "draft-b")
+        return
       }
     }
     await page.waitForFunction(() => (window as any).restoreFixture.tabs().every((tab: any) => tab.kind === "instance"))
     const expectedCreates = mode === "rate-limited" ? ["b", "b"] : mode === "missing" ? ["b"] : []
-    assert.deepEqual(creates, expectedCreates, "only explicit Open creates a missing occurrence")
+    assert.deepEqual(creates, expectedCreates)
     for (const id of requestIds) assert.match(id, /^restore-[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i, "HTTP creation IDs use the shared cryptographic UUID helper")
     state = await tabs()
     assert.deepEqual(state.map((tab: any) => tab.drafts.__no_session_draft__), ["draft-a", "draft-b"])
@@ -206,7 +196,7 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
     else if (path === "/api/workspaces") {
       if (request.method() === "POST") {
         creates.push(pathname)
-        return route.fulfill({ status: 500, json: {} })
+        return route.fulfill({ status: 404, json: {} })
       }
       if (remote && reload && ++reads === 1) {
         // Dispatch open while the admission request is held. Wait for the
@@ -265,10 +255,10 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
       remoteAvailable = true
       await page.evaluate(() => (window as any).restoreFixture.disconnect())
       await page.waitForFunction(() => (window as any).remoteConnections() === 2)
-      await page.evaluate(async () => {
-        ;(window as any).openRemoteEvents()
-        await (window as any).restoreFixture.waitForInventory()
-      })
+      const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === "/api/backends/a/api/workspaces")
+      await page.evaluate(() => (window as any).openRemoteEvents())
+      await refreshed
+      await page.waitForFunction(() => (window as any).restoreFixture.state() === "compatible")
       assert.equal(reads, 2, "the next valid opening refreshes inventory once")
       assert.equal(await state(), "compatible")
       await page.getByRole("button", { name: "Retry", exact: true }).click()
@@ -311,7 +301,7 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
       assert.deepEqual((await tabs())[1].drafts, state[1].drafts)
       assert.equal(await page.evaluate(() => (window as any).restoreFixture.view("a~same")?.rightPanelTab), "files")
       assert.equal(reads, 4)
-      assert.deepEqual(creates, [], "reload and both retries only rebind existing workspaces")
+      assert.deepEqual(creates, ["/api/backends/a/api/workspaces"], "Retry attempts a fresh record while the original is absent")
       return
     }
     assert.deepEqual(await restored(), expected, "both existing occurrences must rebind without Retry")
@@ -331,11 +321,11 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
 })
 
 const primaryCases = [
-  ...[false, true].flatMap(multiBackend => ["open", "retry"].map(recovery => ({ multiBackend, recovery, initiallyUnavailable: false }))),
-  { multiBackend: false, recovery: "retry", initiallyUnavailable: true },
+  ...[false, true].map(multiBackend => ({ multiBackend, initiallyUnavailable: false })),
+  { multiBackend: false, initiallyUnavailable: true },
 ]
-for (const { multiBackend, recovery, initiallyUnavailable } of primaryCases) {
-  test(`web missing primary record preserves its occurrence (${multiBackend}, ${recovery}, unavailable=${initiallyUnavailable})`, async () => {
+for (const { multiBackend, initiallyUnavailable } of primaryCases) {
+  test(`web missing primary record preserves its occurrence (multiBackend=${multiBackend}, unavailable=${initiallyUnavailable})`, async () => {
     const context = await browser.newContext(), page = await context.newPage()
     page.setDefaultTimeout(15_000)
     page.setDefaultNavigationTimeout(60_000)
@@ -358,7 +348,7 @@ for (const { multiBackend, recovery, initiallyUnavailable } of primaryCases) {
       const request = route.request(), path = new URL(request.url()).pathname
       assert.equal(path.startsWith("/api/backends/"), false, "primary recovery keeps its host API")
       let body: any = {}
-      if (path.startsWith("/api/storage/")) body = path.endsWith("/config/ui") ? { settings: { multiBackend } } : {}
+      if (path.startsWith("/api/storage/")) body = path.endsWith("/config/ui") ? { settings: { multiBackend, locale: "en" } } : {}
       else if (path === "/api/meta") body = { apiContract: CODENOMAD_API_CONTRACT, serverId: "local", localRequest: false }
       else if (path === "/api/workspaces") {
         if (request.method() === "POST") {
@@ -376,36 +366,28 @@ for (const { multiBackend, recovery, initiallyUnavailable } of primaryCases) {
     })
     const tabs = () => page.evaluate(() => (window as any).restoreFixture.tabs())
     const waitReady = () => page.locator('[data-restoring="false"]').waitFor()
-    const waitIdle = () => page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("[data-remote-restore] button:disabled"))
     try {
       await page.goto(url)
       await waitReady()
       assert.equal((await tabs()).length, 1, "the missing primary record keeps its tab")
       assert.equal((await tabs())[0].drafts.__no_session_draft__, "primary-backend-draft")
-      assert.deepEqual(creates, [])
-      await page.evaluate(() => window.dispatchEvent(new Event("pagehide")))
-      await page.reload()
-      await waitReady()
-      assert.equal((await tabs())[0].kind, "remote-restore")
-      assert.equal((await tabs())[0].drafts.__no_session_draft__, "primary-backend-draft")
-      assert.equal(await page.getByRole("button", { name: "Connect", exact: true }).count(), 0)
-      unavailable = false
-      const before = reads
-      await page.getByRole("button", { name: "Retry", exact: true }).click()
-      await waitIdle()
-      assert.ok(reads > before, "Retry reads the primary inventory")
-      assert.deepEqual(creates, [], "reload and Retry never create")
-      if (recovery === "retry") projects.push(descriptor("resumed", "/same"))
-      await page.getByRole("button", { name: recovery === "retry" ? "Retry" : "Open", exact: true }).click()
+      if (initiallyUnavailable) {
+        assert.equal((await tabs())[0].kind, "remote-restore")
+        assert.deepEqual(creates, [])
+        unavailable = false
+        const before = reads
+        await page.getByRole("button", { name: "Retry", exact: true }).click()
+        await page.waitForFunction(() => (window as any).restoreFixture.tabs()[0]?.kind === "instance")
+        assert.ok(reads > before, "Retry reads the primary inventory")
+      }
       await page.waitForFunction(() => (window as any).restoreFixture.tabs()[0]?.kind === "instance")
       assert.equal((await tabs())[0].drafts.__no_session_draft__, "primary-backend-draft")
-      assert.deepEqual(creates, recovery === "open" ? ["/same"] : [])
-      await page.evaluate(() => window.dispatchEvent(new Event("pagehide")))
+      assert.deepEqual(creates, ["/same"])
       await page.reload()
       await waitReady()
-      assert.equal((await tabs())[0].id, `instance:${recovery === "open" ? "opened" : "resumed"}`)
+      assert.equal((await tabs())[0].id, "instance:opened")
       assert.equal((await tabs())[0].drafts.__no_session_draft__, "primary-backend-draft")
-      assert.deepEqual(creates, recovery === "open" ? ["/same"] : [])
+      assert.deepEqual(creates, ["/same"])
       assert.deepEqual(errors, [])
     } finally { await context.close() }
   })

@@ -751,9 +751,13 @@ describe("workspace manager shared service lifecycle", () => {
     const second = await harness.manager.create(process.cwd())
 
     assert.notEqual(first.workspace.id, second.workspace.id)
-    await harness.manager.delete(first.workspace.id)
+    const releases: unknown[] = []
+    harness.eventBus.on("workspace.stopped", event => releases.push(event))
+    await harness.manager.delete(first.workspace.id, { temporaryRetained: true, windowRelease: true })
+    assert.deepEqual(releases, [{ type: "workspace.stopped", workspaceId: first.workspace.id, reason: "deleted",
+      temporaryRetained: true, windowRelease: true }])
     assert.equal(harness.service.evictionCalls.length, 0)
-    assert.equal(harness.manager.list().length, 1)
+    assert.deepEqual(harness.manager.list().map(record => record.id), [second.workspace.id])
     await harness.manager.delete(second.workspace.id)
     assert.equal(harness.service.evictionCalls.length, 0)
     assert.equal(harness.manager.list().length, 0)

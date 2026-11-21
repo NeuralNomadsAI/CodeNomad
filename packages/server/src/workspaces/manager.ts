@@ -45,6 +45,7 @@ const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
 const MAX_ACTIVE_WORKSPACE_CREATIONS = 32
 const WORKSPACE_STATE = Symbol("workspaceState")
 type ManagerTimeout = number | NodeJS.Timeout
+type WorkspaceStopDetails = { temporaryRetained?: true; windowRelease?: true }
 
 async function ownershipRealpath(directory: string, strict = false): Promise<string | undefined> {
   try { return await realpath(directory) }
@@ -886,7 +887,7 @@ export class WorkspaceManager {
     }
   }
 
-  delete(id: string): Promise<WorkspaceDescriptor | undefined> {
+  delete(id: string, event?: WorkspaceStopDetails): Promise<WorkspaceDescriptor | undefined> {
     const record = this.workspaces.get(id)
     if (!record) return Promise.resolve(undefined)
     const state = record[WORKSPACE_STATE]
@@ -895,7 +896,7 @@ export class WorkspaceManager {
     }
     if (!state.deletePromise) {
       let deletePromise!: Promise<WorkspaceDescriptor | undefined>
-      deletePromise = this.cleanupDeletedWorkspace(id, record).catch((error) => {
+      deletePromise = this.cleanupDeletedWorkspace(id, record, event).catch((error) => {
         if (state.deletePromise === deletePromise) state.deletePromise = undefined
         throw error
       })
@@ -1040,12 +1041,12 @@ export class WorkspaceManager {
     record[WORKSPACE_STATE].abortController.signal.throwIfAborted()
   }
 
-  private async cleanupDeletedWorkspace(id: string, record: WorkspaceRecord): Promise<WorkspaceDescriptor> {
+  private async cleanupDeletedWorkspace(id: string, record: WorkspaceRecord, event?: WorkspaceStopDetails): Promise<WorkspaceDescriptor> {
     const timeoutMs = Math.max(1, this.options.launchSettlementTimeoutMs ?? 5000)
     const state = record[WORKSPACE_STATE]
     const cleanup = state.cleanupSettlement ?? (async () => {
       await state.settlement!
-      this.removeRecord(id, record, true)
+      this.removeRecord(id, record, true, "deleted", event)
       return record
     })()
     state.cleanupSettlement = cleanup
@@ -1228,6 +1229,7 @@ export class WorkspaceManager {
     record: WorkspaceRecord,
     publishStopped: boolean,
     reason: "deleted" | "stopped" = "deleted",
+    event?: WorkspaceStopDetails,
   ): void {
     if (this.workspaces.get(id) !== record) return
     this.workspaces.delete(id)
@@ -1237,16 +1239,16 @@ export class WorkspaceManager {
     invalidateWorktreeCache(id)
     invalidateWorktreeCache(`event:${id}`)
     clearWorkspaceSearchCache(record.path)
-    if (publishStopped) this.publishStopped(record, reason)
+    if (publishStopped) this.publishStopped(record, reason, event)
   }
 
-  private publishStopped(record: WorkspaceRecord, reason: "deleted" | "stopped" = "stopped"): void {
+  private publishStopped(record: WorkspaceRecord, reason: "deleted" | "stopped" = "stopped", event?: WorkspaceStopDetails): void {
     const state = record[WORKSPACE_STATE]
     if (!state.published || state.stoppedPublished) return
     state.stoppedPublished = true
     record.status = "stopped"
     record.error = undefined
-    this.options.eventBus.publish({ type: "workspace.stopped", workspaceId: record.id, reason })
+    this.options.eventBus.publish({ type: "workspace.stopped", workspaceId: record.id, reason, ...event })
   }
 
   resolveBinaryPath(identifier: string, timeoutMs = DEFAULT_LAUNCH_TIMEOUT_MS): string {

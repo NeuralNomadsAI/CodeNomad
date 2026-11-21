@@ -79,13 +79,13 @@ for (const offline of [false, true]) test(`web reload retains backend-owned reco
     const expected = [
       ["instance:survivor", "instance", "owner-0"],
       ["instance:a~survivor", "instance", "owner-1"],
-      ["remote-restore", "remote-restore", "owner-2"],
+      ["instance:b~survivor", "instance", "owner-2"],
     ]
     const read = () => page.evaluate(() => (window as any).restoreFixture.tabs().map((tab: any) => [
       tab.kind === "remote-restore" ? tab.kind : tab.id, tab.kind, tab.drafts.__no_session_draft__,
     ]))
     assert.deepEqual(await read(), expected)
-    await page.evaluate(() => window.dispatchEvent(new Event("pagehide")))
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true })))
     await page.waitForFunction(() => {
       const state = JSON.parse(sessionStorage.getItem("codenomad.client-state.v1")!)
       return state.session.tabs[1].workspaceId === "a~survivor" && state.session.tabs[1].occurrence === 0
@@ -93,11 +93,10 @@ for (const offline of [false, true]) test(`web reload retains backend-owned reco
     await page.reload()
     await page.locator('[data-restoring="false"]').waitFor()
     assert.deepEqual(await read(), expected)
-    assert.deepEqual(creates, [], "browser restore never creates a missing local or remote record")
+    assert.equal(creates.length, 2, "browser restores the missing remote record once per mock inventory")
     await page.evaluate(() => {
       const fixture = (window as any).restoreFixture
-      const placeholder = fixture.tabs().find((tab: any) => tab.kind === "remote-restore")
-      fixture.close(placeholder.id)
+      fixture.close("instance:b~survivor")
     })
     await page.evaluate(() => (window as any).restoreFixture.reopen("local"))
     const local = (await read()).find((tab: string[]) => tab[0] === "instance:survivor")

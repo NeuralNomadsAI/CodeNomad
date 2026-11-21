@@ -591,8 +591,9 @@ const App: Component = () => {
   }
 
   function handleSelectExistingInstance(instanceId: string, recentPath: string, blankId: string | null | undefined = activeBlankTabId()) {
-    const instance = instances().get(instanceId)
-    if (!instance) return
+    const tab = appTabs().find(tab => tab.kind === "instance" && tab.instance.id === instanceId)
+    if (tab?.kind !== "instance") return
+    const { instance } = tab
     recordWorkspaceLaunch(instance.folder, recentPath)
     selectInstanceTab(instanceId)
     if (blankId) closeBlankTab(blankId)

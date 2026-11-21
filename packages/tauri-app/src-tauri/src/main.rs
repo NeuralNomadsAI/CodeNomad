@@ -1763,7 +1763,7 @@ fn request_final_application_window_close(app: AppHandle, label: String, local_w
         // resumes at the next launch.
         if still_final {
             shutdown::request(app);
-        } else if local_window {
+        } else if local_window || label.starts_with("remote-") {
             shutdown::request_local_window_close(app, label);
         } else {
             dispatch_approved_auxiliary_close(&app, &label);
@@ -2404,10 +2404,10 @@ fn main() {
                     return;
                 }
                 let local_window = identity::local_window_id(&label).is_ok();
-                if local_window {
+                if local_window || label.starts_with("remote-") {
                     let consumed = shutdown::consume_local_window_close(&app_handle, &label);
                     let in_flight = shutdown::local_window_close_in_flight(&app_handle, &label);
-                    let launch_window = app_handle
+                    let launch_window = local_window && app_handle
                         .state::<local_windows::LocalWindows>()
                         .is_connect_only(&label);
                     match local_close_event_action(consumed, in_flight, launch_window) {
@@ -2435,7 +2435,7 @@ fn main() {
                     request_final_application_window_close(app_handle.clone(), label, local_window);
                     return;
                 }
-                if local_window {
+                if local_window || label.starts_with("remote-") {
                     api.prevent_close();
                     shutdown::request_local_window_close(app_handle.clone(), label);
                 }

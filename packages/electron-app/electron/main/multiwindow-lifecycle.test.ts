@@ -9,7 +9,9 @@ function windowRecord(id: string, calls: string[]): LifecycleWindow & { events: 
     on: (name: string, handler: Function) => events.set(name, handler), isDestroyed: () => false,
     isVisible: () => !calls.includes(`hide:${id}`) || calls.lastIndexOf(`show:${id}`) > calls.lastIndexOf(`hide:${id}`),
     hide: () => calls.push(`hide:${id}`), show: () => calls.push(`show:${id}`), close: () => { calls.push(`close:${id}`); events.get("close")?.({ preventDefault: () => assert.fail() }) },
-    webContents: { isDestroyed: () => false, getURL: () => "http://localhost/app", executeJavaScript: async () => calls.push(`renderer:${id}`) },
+    webContents: { isDestroyed: () => false, getURL: () => "http://localhost/app", executeJavaScript: async (source: string) => {
+      if (!source.includes('flush("cancel")')) calls.push(`renderer:${id}`)
+    } },
   }
   return { id, window: window as never, tracker: { flush: async () => calls.push(`native:${id}`) } as never, events }
 }
@@ -46,6 +48,31 @@ test("closing the last local window beside a remote window keeps its V3 record f
   await tick()
   // The remote window stays open; New Window, a later launch or the next start reopens this one.
   assert.deepEqual(calls, ["prevent", "renderer:local", "native:local", "close:local"])
+})
+
+test("closing a remote window awaits only that window's workspace release", async () => {
+  const calls: string[] = []
+  const local = windowRecord("local", calls), remote = windowRecord("remote", calls)
+  let finish!: () => void
+  remote.window.webContents.executeJavaScript = async source => {
+    assert.match(source, /flush\(true\)/)
+    calls.push("remote release")
+    await new Promise<void>(resolve => { finish = resolve })
+  }
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: () => {}, quit: () => assert.fail() } as never,
+    clientStateManager: { isPrimary: false } as never, cliManager: {} as never,
+    getLocalWindows: () => [local], getAllWindows: () => [local.window, remote.window],
+    isRemoteWindow: window => window === remote.window,
+    removeWindowState: async () => assert.fail(), getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.attach({ ...remote, tracker: null, persisted: false })
+  remote.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
+  await tick()
+  assert.deepEqual(calls, ["prevent", "remote release"])
+  finish()
+  await tick()
+  assert.deepEqual(calls, ["prevent", "remote release", "close:remote"])
 })
 
 test("a local window on the sign-in page closes without waiting for a renderer that is not there", async () => {
@@ -260,7 +287,8 @@ test("renderer persistence failure blocks destructive local close and remains re
   const first = windowRecord("one", calls)
   const second = windowRecord("two", calls)
   let attempts = 0
-  first.window.webContents.executeJavaScript = async () => {
+  first.window.webContents.executeJavaScript = async source => {
+    if (source.includes('flush("cancel")')) { calls.push("resume"); return }
     attempts += 1
     calls.push(`renderer:${attempts}`)
     if (attempts === 1) throw new Error("snapshot too large")
@@ -276,10 +304,10 @@ test("renderer persistence failure blocks destructive local close and remains re
 
   first.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
   await tick()
-  assert.deepEqual(calls, ["prevent", "renderer:1"])
+  assert.deepEqual(calls, ["prevent", "renderer:1", "resume"])
   first.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
   await tick()
-  assert.deepEqual(calls, ["prevent", "renderer:1", "prevent", "renderer:2", "native:one", "remove", "close:one"])
+  assert.deepEqual(calls, ["prevent", "renderer:1", "resume", "prevent", "renderer:2", "native:one", "remove", "close:one"])
 })
 
 test("quitting with a hidden launch window pending flushes and exits without asking its renderer", async () => {
@@ -356,6 +384,9 @@ test("final close retains its record and shutdown stops/releases once", async ()
 test("Windows query preflush leaves the app alive until session end is confirmed", async () => {
   const calls: string[] = []
   const first = windowRecord("one", calls)
+  first.window.webContents.executeJavaScript = async source => {
+    calls.push(source.includes("flush(true)") ? "renderer:release" : "renderer:one")
+  }
   const lifecycle = new MultiwindowLifecycle({
     app: { on: () => {}, quit: () => {}, exit: () => calls.push("exit") } as never,
     clientStateManager: { isPrimary: true, flush: async () => calls.push("aggregate"), drainAndReleasePrimary: async () => calls.push("release") } as never,
@@ -372,7 +403,7 @@ test("Windows query preflush leaves the app alive until session end is confirmed
 
   first.events.get("session-end")?.()
   await (lifecycle as any).sessionEnd
-  assert.deepEqual(calls, ["renderer:one", "native:one", "aggregate", "stop", "release", "exit"])
+  assert.deepEqual(calls, ["renderer:one", "native:one", "renderer:release", "native:one", "aggregate", "stop", "release", "exit"])
 })
 
 test("support windows receive session-end cleanup without local close semantics", async () => {
@@ -451,7 +482,11 @@ test("normal quit restores windows when renderer persistence fails", async () =>
   const calls: string[] = []
   const events = new Map<string, Function>()
   const first = windowRecord("one", calls)
-  first.window.webContents.executeJavaScript = async () => { calls.push("renderer"); throw new Error("snapshot too large") }
+  first.window.webContents.executeJavaScript = async source => {
+    if (source.includes('flush("cancel")')) { calls.push("resume"); return }
+    calls.push("renderer")
+    throw new Error("snapshot too large")
+  }
   const lifecycle = new MultiwindowLifecycle({
     app: { on: (name: string, handler: Function) => events.set(name, handler), quit: () => {}, exit: () => calls.push("exit") } as never,
     clientStateManager: { isPrimary: true, flush: async () => calls.push("aggregate"), drainAndReleasePrimary: async () => calls.push("release") } as never,
@@ -463,7 +498,7 @@ test("normal quit restores windows when renderer persistence fails", async () =>
 
   events.get("before-quit")?.({ preventDefault: () => calls.push("prevent") })
   await tick(); await tick()
-  assert.deepEqual(calls, ["prevent", "hide:one", "renderer", "show:one"])
+  assert.deepEqual(calls, ["prevent", "hide:one", "renderer", "resume", "show:one"])
 })
 
 test("final close restores its window after failed shutdown and allows one deduped retry", async () => {

@@ -10,7 +10,7 @@ import {
 import { releaseAppSessionRestoreGate } from "../../stores/app-session-restore-gate"
 import { setShowFolderSelection } from "../../stores/ui"
 import {
-  matchesRestoredServer, mayCreateRestoredWorkspace, reconcileWorkspaceTabs, resolveRestoredActiveTabId, shouldRestoreSessionState,
+  matchesRestoredServer, reconcileWorkspaceTabs, resolveRestoredActiveTabId, shouldRestoreSessionState,
 } from "../../stores/app-session-reconciliation"
 import { getAbortReason, runAbortable } from "../../stores/app-session-restore-timeout"
 import {
@@ -102,7 +102,7 @@ function reconcileRestoredWorkspaces({ snapshot, capture }: RestoreContext) {
         ?? (match.existingWorkspaceId && !reserved.has(match.existingWorkspaceId) ? match.existingWorkspaceId : null) }
     })
 }
-async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<number, () => boolean>, explicitlyOpenedIndex?: number,
+async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<number, () => boolean>,
   primaryInventoryReady = false): Promise<void> {
   const { snapshot, signal, capture } = context
   const sidecars = retryIndexes ? [] : snapshot.tabs.map((tab, index) => tab.kind === "sidecar" ? restoreSidecar(tab, index) : undefined)
@@ -157,7 +157,7 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
         const existingId = match.existingWorkspaceId
         const backendId = backendIdOf(tab)
         const remote = backendId !== LOCAL_BACKEND_ID
-        const retainOccurrence = remote || isWebHost()
+        const retainOccurrence = remote || isWebHost() || remoteRestoreTabs().some(placeholder => placeholder.snapshot === tab)
         const backend = remote ? await backendRegistry.ensure(backendId) : undefined
         if (remote && (!backend || backendRegistry.state(backendId) !== "compatible"
           || !matchesRestoredServer(tab, backendRegistry.serverId(backendId)))) return null
@@ -178,9 +178,8 @@ async function restoreTabs(context: RestoreContext, retryIndexes?: ReadonlyMap<n
             else void closeWorkspace(id).catch(() => {})
           },
         })
-        const mayCreate = mayCreateRestoredWorkspace(remote, isWebHost(), explicitlyOpenedIndex === match.tabIndex)
-        if (retainOccurrence && !reusableId && mayCreate) context.attemptedCreates.add(match.tabIndex)
-        const creation = reusableId || !mayCreate ? null : await create()
+        if (retainOccurrence && !reusableId) context.attemptedCreates.add(match.tabIndex)
+        const creation = reusableId ? null : await create()
         if (creation && finishCreateCommit) await waitForWorkspaceMountAdoption()
         finishCreateCommit?.()
         if (retainOccurrence && !canCommitCreation()) return null
@@ -283,16 +282,15 @@ export function useAppSessionRestore(): void {
   let initialRestore = Promise.resolve()
   let recovering: Promise<void> | undefined
   let unregisterRecovery = () => {}
-  const remoteRecoveries = new Map<string, Promise<void>>()
+  const workspaceRecoveries = new Map<string, Promise<void>>()
   let startupComplete = false
-  const retryRemote = (backendId: string, explicitlyOpenedIndex?: number): Promise<void> => {
-    const pending = remoteRecoveries.get(backendId)
-    if (pending) return explicitlyOpenedIndex === undefined ? pending : pending.then(() => retryRemote(backendId, explicitlyOpenedIndex))
+  const retryWorkspaces = (backendId: string): Promise<void> => {
+    const pending = workspaceRecoveries.get(backendId)
+    if (pending) return pending
     const flight = (async () => {
       await initialRestore
-      if (!context || disposed || !clientStateIsPrimary()) return
+      if (!context || disposed) return
       if (backendId === LOCAL_BACKEND_ID) {
-        if (!isWebHost()) return
         if (!await refreshWorkspaceList(LOCAL_BACKEND_ID, undefined, controller.signal)) throw new Error("Primary inventory superseded")
       } else {
         if (preferences().multiBackend !== true) return
@@ -306,16 +304,15 @@ export function useAppSessionRestore(): void {
         const current = capture.createRestoredTabCommitGuard(index)
         return [[index, () => current() && remoteRestoreTabs().includes(placeholder)] as const]
       }))
-      await restoreTabs({ ...context, signal: controller.signal }, indexes, explicitlyOpenedIndex, backendId === LOCAL_BACKEND_ID)
-    })().finally(() => { if (remoteRecoveries.get(backendId) === flight) remoteRecoveries.delete(backendId) })
-    remoteRecoveries.set(backendId, flight)
+      await restoreTabs({ ...context, signal: controller.signal }, indexes, backendId === LOCAL_BACKEND_ID)
+    })().finally(() => { if (workspaceRecoveries.get(backendId) === flight) workspaceRecoveries.delete(backendId) })
+    workspaceRecoveries.set(backendId, flight)
     return flight
   }
   const addPlaceholder = (tab: Extract<RestorableSessionState["tabs"][number], { kind: "workspace" }>, index: number, id = `remote-restore:${generateUUID()}`, instanceId?: string) => {
     capture.recordRestoredTab(index, id)
     addRemoteRestoreTab({ id, kind: "remote-restore", snapshot: tab, instanceId,
-      retry: () => retryRemote(backendIdOf(tab)),
-      open: () => retryRemote(backendIdOf(tab), index),
+      retry: () => retryWorkspaces(backendIdOf(tab)),
       remove({ retainWorkspace = false } = {}) {
         const binding = capture.restoredTabIds()[index]
         const workspaceId = binding?.startsWith("instance:") ? binding.slice("instance:".length) : instanceId
@@ -329,8 +326,8 @@ export function useAppSessionRestore(): void {
     return id
   }
   const stopLifecycle = onInstanceLifecycleAuthority(event => {
-    if (event.type !== "unavailable" || backendIdOf(event) === LOCAL_BACKEND_ID
-      || preferences().multiBackend !== true) return
+    if (event.type !== "unavailable" || !event.windowRelease && (backendIdOf(event) === LOCAL_BACKEND_ID
+      || preferences().multiBackend !== true)) return
     const runtimeTabId = getInstanceAppTabId(event.instanceId)
     if (!appTabs().some(tab => tab.id === runtimeTabId)) return
     batch(() => {
@@ -346,6 +343,7 @@ export function useAppSessionRestore(): void {
         context = createRestoreContext(captured.state, controller.signal, capture, offerRecovery)
         retained = { index, snapshot }
       }
+      if (!retained && event.windowRelease) retained = capture.preserveReleasedTab(runtimeTabId)
       if (!retained) return
       context.snapshot.tabs[retained.index] = retained.snapshot
       const id = `remote-restore:${generateUUID()}`
@@ -354,7 +352,10 @@ export function useAppSessionRestore(): void {
         detachInstanceTabMembership(event.instanceId)
       })
     })
-    // Inventory publication owns reconciliation; recovery is explicit.
+    // An unload request can reach the server after the next page reuses the record.
+    if (event.windowRelease && !capture.isReleasing()) {
+      void retryWorkspaces(backendIdOf(event)).catch(error => log.warn("Could not restore a released workspace", error))
+    }
   })
   createEffect(() => {
     if (preferences().multiBackend !== true) return

@@ -468,23 +468,31 @@ fn awaits_renderer_flush(url: Option<&tauri::Url>) -> bool {
     url.map_or(true, |url| !crate::is_listenerless_document(url))
 }
 
-fn emit_flush(app: &AppHandle, label: &str, generation: u64) -> bool {
+fn emit_flush(app: &AppHandle, label: &str, generation: u64, release_workspaces: bool) -> bool {
     app.get_webview(label).is_some_and(|webview| {
-        awaits_renderer_flush(webview.url().ok().as_ref())
-            && webview
-                .emit(
-                    "client-state:flush-requested",
-                    client_state::RendererFlushRequest { generation },
-                )
-                .is_ok()
+        if !awaits_renderer_flush(webview.url().ok().as_ref()) {
+            return false;
+        }
+        if label.starts_with("remote-") {
+            return webview.eval(format!(
+                r#"Promise.resolve().then(() => window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?.({release_workspaces}))
+                    .finally(() => window.__TAURI_INTERNALS__.invoke("client_state_renderer_flushed", {{ generation: {generation}, accessToken: "" }}));"#
+            )).is_ok();
+        }
+        webview.emit("client-state:flush-requested",
+            client_state::RendererFlushRequest { generation, release_workspaces }).is_ok()
     })
 }
 
 fn emit_flush_cancelled(app: &AppHandle, label: &str, generation: u64) {
     if let Some(webview) = app.get_webview(label) {
+        if label.starts_with("remote-") {
+            let _ = webview.eval(r#"window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?.("cancel")"#);
+            return;
+        }
         let _ = webview.emit(
             FLUSH_CANCELLED_EVENT,
-            client_state::RendererFlushRequest { generation },
+            client_state::RendererFlushRequest { generation, release_workspaces: false },
         );
     }
 }
@@ -496,26 +504,32 @@ fn emit_flush_cancellations(app: &AppHandle, cancellations: Vec<(String, u64)>) 
 }
 
 pub(crate) fn request_local_window_close(app: AppHandle, label: String) {
-    let Some(record) = app.state::<LocalWindows>().record(&label) else {
-        return;
+    let record = app.state::<LocalWindows>().record(&label);
+    let remote = label.starts_with("remote-");
+    let window_id = match record.as_ref() {
+        Some(record) => record.id.clone(),
+        None if remote => label.clone(),
+        None => return,
     };
     let removes_state = app
         .state::<LocalWindows>()
         .has_other_user_window(&label, |other| local_window_close_in_flight(&app, other));
     let Some(generation) = app.state::<ShutdownCoordinator>().begin_local_close(
         label.clone(),
-        record.id.clone(),
-        record.persisted && removes_state,
+        window_id.clone(),
+        record.is_some_and(|record| record.persisted && removes_state),
     ) else {
         return;
     };
-    if !emit_flush(&app, &label, generation) {
-        finish_local_close(app, label, record.id, generation);
+    if !emit_flush(&app, &label, generation, true) {
+        finish_local_close(app, label, window_id, generation);
         return;
     }
     std::thread::spawn(move || {
         std::thread::sleep(RENDERER_FLUSH_TIMEOUT);
-        if app
+        if remote {
+            finish_local_close(app, label, window_id, generation);
+        } else if app
             .state::<ShutdownCoordinator>()
             .cancel_local_close(&label, generation)
         {
@@ -564,6 +578,11 @@ fn finish_local_close(app: AppHandle, label: String, window_id: String, generati
 
 fn renderer_labels(app: &AppHandle) -> Vec<String> {
     let mut labels = app.state::<LocalWindows>().user_window_labels();
+    labels.extend(
+        app.webview_windows()
+            .into_keys()
+            .filter(|label| label.starts_with("remote-")),
+    );
     if app.get_webview_window(crate::preferences_window::LABEL).is_some()
         && app.state::<crate::preferences_window::PreferencesWindow>().renderer_ready()
     {
@@ -595,9 +614,17 @@ pub(crate) fn request_update(
 fn flush_shutdown(app: AppHandle, requests: Vec<(String, u64)>, timeout: Duration) {
     crate::remote_dictation::revoke(&app, None);
     for (label, generation) in &requests {
-        if !emit_flush(&app, label, *generation) {
+        if !emit_flush(&app, label, *generation, true) {
             app.state::<ShutdownCoordinator>()
                 .acknowledge_global(label, *generation);
+        } else if label.starts_with("remote-") {
+            // A remote page can be offline or from a server without this hook.
+            let app = app.clone();
+            let (label, generation) = (label.clone(), *generation);
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(900));
+                renderer_flushed(app, label.clone(), label, generation);
+            });
         }
     }
     if requests.is_empty()
@@ -803,7 +830,7 @@ fn prepare_windows_session_end(app: &AppHandle) -> (u64, Instant) {
         return (generation, deadline);
     };
     for (label, flush_generation) in requests {
-        if !emit_flush(app, &label, flush_generation) {
+        if label.starts_with("remote-") || !emit_flush(app, &label, flush_generation, false) {
             app.state::<ShutdownCoordinator>()
                 .acknowledge_global(&label, flush_generation);
         }

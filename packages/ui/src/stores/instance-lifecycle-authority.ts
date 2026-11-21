@@ -9,6 +9,7 @@ export interface InstanceLifecycleAuthorityEvent {
   /** Absent for the local backend. */
   backendId?: BackendId
   serverId?: string
+  windowRelease?: true
 }
 
 const listeners = new Set<(event: InstanceLifecycleAuthorityEvent) => void>()

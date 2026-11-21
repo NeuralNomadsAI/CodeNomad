@@ -36,7 +36,7 @@ Tab searches, arrows and Enter select, and Escape returns focus to `+`.
 
 If another window displays the same project connection, its tab closes too and that window shows a notification. Unsent drafts and attachments of the closed tab return when you reopen the same folder in that window; the window keeps them for its 16 most recently closed projects until it reloads or closes. They are not part of startup restoration.
 
-Closing a whole window, quitting or reloading does not close its project connections; normal startup restoration still applies. Stop relevant runs explicitly if you need to verify execution ended. CodeNomad never unloads native Locations; shared-service maintenance is described in [OpenCode setup](opencode.md).
+Closing a window or browser tab, quitting or reloading releases that window’s project connections. Other windows keep their tabs. Startup restoration reconnects saved tabs and keeps open temporary folders. Stop runs explicitly if you need to end their execution; see [OpenCode setup](opencode.md) for shared-service maintenance.
 
 With startup restoration enabled, each remaining tab restores its own panel choices, Mission selection/reader and chat/web preview choice. Browser URLs and history are shared per session; saved pages load only when the web preview is explicitly reopened. Closing one occurrence removes only its saved view; reopening the folder creates a new occurrence.
 
@@ -44,7 +44,7 @@ With startup restoration enabled, each remaining tab restores its own panel choi
 
 When you reload with restoration enabled, remote tabs keep their order, selection and drafts. An unavailable server leaves a waiting tab: choose **Retry** when it returns, or **Connect** with its username/password or a fresh link in **New pairing link**. Other servers remain usable. **Server not found** means the saved server is missing.
 
-**Retry** reconnects to an existing project. If the server is reachable but the project is missing, choose **Open**.
+**Retry** reconnects the project on the saved server and recreates its connection if needed.
 
 **Retry** also recovers waiting tabs when automatic startup restoration is off. Notifications select the existing waiting tab. Check an unconfirmed conversation action's outcome before sending it again.
 

@@ -36,7 +36,7 @@ Tab ouvre la recherche, les flèches et Entrée sélectionnent, et Échap rend l
 
 Si une autre fenêtre affiche la même connexion de projet, son onglet se ferme aussi et cette fenêtre affiche une notification. Les brouillons et pièces jointes non envoyés de l’onglet fermé reviennent quand vous rouvrez le même dossier dans cette fenêtre ; elle les garde pour ses 16 derniers projets fermés, jusqu’à son rechargement ou sa fermeture. Ils ne font pas partie de la restauration au démarrage.
 
-Fermer une fenêtre entière, quitter ou recharger ne ferme pas ses connexions de projet ; la restauration normale au démarrage s’applique toujours. Arrêtez explicitement les exécutions concernées si vous devez vérifier qu’elles sont terminées. CodeNomad ne décharge jamais les Locations natives ; la maintenance du service partagé est décrite dans [Configuration d’OpenCode](opencode.md).
+Fermer une fenêtre ou un onglet du navigateur, quitter ou recharger libère les connexions de projet de cette fenêtre. Les autres fenêtres gardent leurs onglets. La restauration au démarrage reconnecte les onglets enregistrés et conserve les dossiers temporaires ouverts. Pour arrêter une exécution, arrêtez-la explicitement ; voir [Configuration d’OpenCode](opencode.md) pour la maintenance du service partagé.
 
 Lorsque la restauration au démarrage est activée, chaque onglet restant retrouve ses propres choix de panneaux, sa sélection et son lecteur de Mission ainsi que son choix entre le chat et l’aperçu web. Les URL et l’historique du navigateur sont partagés par session ; les pages enregistrées se chargent uniquement lorsque l’aperçu web est explicitement rouvert. Fermer une occurrence retire uniquement sa vue enregistrée ; rouvrir le dossier crée une nouvelle occurrence.
 
@@ -44,7 +44,7 @@ Lorsque la restauration au démarrage est activée, chaque onglet restant retrou
 
 Au rechargement, si la restauration est activée, les onglets distants retrouvent leur ordre, leur sélection et leurs brouillons. Un serveur indisponible laisse un onglet en attente : choisissez **Réessayer** à son retour, ou **Se connecter** avec son nom d’utilisateur/mot de passe ou un lien dans **Nouveau lien d’appairage**. Les autres serveurs restent utilisables. **Serveur introuvable** signifie que le serveur enregistré est introuvable.
 
-**Réessayer** reconnecte un projet existant. Si le serveur est joignable mais que le projet manque, choisissez **Ouvrir**.
+**Réessayer** reconnecte le projet sur le serveur enregistré et recrée sa connexion si nécessaire.
 
 **Réessayer** reprend aussi les onglets en attente lorsque la restauration automatique au démarrage est désactivée. Les notifications sélectionnent l’onglet en attente existant. Vérifiez le résultat d’une action de conversation incertaine avant de la renvoyer.
 

@@ -111,7 +111,7 @@ function enqueuePendingSave(republish = false): Promise<void> {
   if (!normalizedSnapshot) return Promise.reject(new Error("Client snapshot normalization failed"))
   layout = { ...normalizedSnapshot.layout }
   dirty = false
-  const saveAttempt = writeQueue.then(async () => {
+  const save = async () => {
     try {
       const partitioned = partitionProtocolVersion === 1 ? await encodeClientSnapshotV2(normalizedSnapshot) : null
       const content = partitioned && JSON.stringify({ ...partitioned.root, revision: 0, savedAt: 0 })
@@ -159,7 +159,9 @@ function enqueuePendingSave(republish = false): Promise<void> {
       lastSaveError = error
       throw error
     }
-  })
+  }
+  // Web saves write sessionStorage before the first await, including during pagehide.
+  const saveAttempt = snapshotOwnsLayout ? writeQueue.then(save) : save()
   writeQueue = saveAttempt.catch(() => undefined)
   return saveAttempt
 }
@@ -294,6 +296,7 @@ export function removeClientLayoutValue(key: string): void {
 
 export async function flushClientState(): Promise<void> {
   cancelSaveTimer()
+  if (!snapshotOwnsLayout) return enqueuePendingSave(true)
   let lastError = lastSaveError
   for (let attempts = 0; attempts < FLUSH_MAX_ATTEMPTS; attempts += 1) {
     while (true) {

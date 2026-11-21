@@ -2,7 +2,7 @@ import { createEffect, createMemo, createSignal, onCleanup, onMount, untrack } f
 import { listen } from "@tauri-apps/api/event"
 import { getLogger } from "../logger"
 import { acknowledgeNativeClientStateNavigationFlush, acknowledgeNativeClientStateRendererFlush } from "../native/client-state"
-import { isElectronHost, isLocalWindow, isTauriHost } from "../runtime-env"
+import { isElectronHost, isLocalWindow, isTauriHost, isWebHost } from "../runtime-env"
 import {
   clientStateIsPrimary, flushClientState, restorePreviousStateEnabled, updateRestorableSession,
   type RestorableSessionState, type RestorableTabState, type RestorableWorkspaceTabState,
@@ -19,10 +19,11 @@ import {
   type RestorableWorkspaceRuntimeAuthority,
 } from "../../stores/app-session-snapshot-merge"
 import { activeAppTab, activeAppTabId, appTabs, getInstanceAppTabId } from "../../stores/app-tabs"
+import { openInstanceTabIds } from "../../stores/app-tab-membership"
 import { appSessionRestoreGateActive } from "../../stores/app-session-restore-gate"
 import { saveReloadTabSelection } from "../native/reload-tab-selection"
 import { showFolderSelection } from "../../stores/ui"
-import { instances } from "../../stores/instances"
+import { closeWorkspace, instances } from "../../stores/instances"
 import {
   activeParentSessionId, activeSessionId, expandedSessions, getAuthoritativeDraftSessionIdsForInstance, getPersistentExpandedSessionIds,
   getAuthoritativeSessionExpansionIdsForInstance, getAuthoritativelyDeletedSessionIdsForInstance,
@@ -214,16 +215,24 @@ export function useAppSessionCapture() {
     })
   }
   let nativeShutdownGeneration: number | null = null
+  let releasing: Promise<unknown> | undefined
+  let releaseGeneration = 0
+  const resumeCapture = () => {
+    releaseGeneration++
+    nativeShutdownGeneration = null
+    releasing = undefined
+    schedule()
+  }
   const capture = () => {
     timer = null
-    if (enabled() && !disposed && nativeShutdownGeneration === null) {
+    if (enabled() && !disposed && !releasing && nativeShutdownGeneration === null) {
       const state = mergedState()
       if (state.tabs.length > 0) nativeFallbackState = state
       updateRestorableSession(state)
     }
   }
   const schedule = () => {
-    if (!enabled() || disposed || nativeShutdownGeneration !== null) return
+    if (!enabled() || disposed || releasing || nativeShutdownGeneration !== null) return
     if (timer) clearTimeout(timer)
     timer = setTimeout(capture, CAPTURE_DEBOUNCE_MS)
   }
@@ -248,24 +257,43 @@ export function useAppSessionCapture() {
       ...(nativeShutdown ? [storage.flushWrites()] : []),
     ])
   }
+  const release = (ids: string[]) => releasing ??= Promise.allSettled(ids.map(id => closeWorkspace(id, true)))
+  const flushAndRelease = async (generation?: number) => {
+    const currentRelease = releaseGeneration
+    const deadline = performance.now() + 750
+    const ids = [...openInstanceTabIds()]
+    await flush(generation)
+    if (currentRelease !== releaseGeneration) return
+    // Keep native acknowledgements within the host's flush deadline.
+    const pending = release(ids)
+    const remaining = deadline - performance.now()
+    if (remaining <= 0) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([pending, new Promise<void>(resolve => { timer = setTimeout(resolve, remaining) })])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
   const nativeUnlisteners: Array<() => void> = []
   let nativeDisposed = false
-  const register = <T extends { generation: number }>(event: string, acknowledge: (payload: T) => void | Promise<void>, nativeShutdown: boolean) => listen<T>(event, ({ payload }) => {
-    void flush(nativeShutdown ? payload.generation : undefined).then(() => acknowledge(payload)).catch((error) => log.error(`Failed to handle ${event}`, error))
+  const register = <T extends { generation: number; releaseWorkspaces?: boolean }>(event: string, acknowledge: (payload: T) => void | Promise<void>, nativeShutdown: boolean) => listen<T>(event, ({ payload }) => {
+    const generation = nativeShutdown ? payload.generation : undefined
+    void (payload.releaseWorkspaces ? flushAndRelease(generation) : flush(generation))
+      .then(() => acknowledge(payload)).catch((error) => log.error(`Failed to handle ${event}`, error))
   }).then((unlisten) => {
     if (nativeDisposed) unlisten()
     else nativeUnlisteners.push(unlisten)
   }).catch((error) => log.error(`Failed to listen for ${event}`, error))
   const ready = isTauriHost() && isLocalWindow()
     ? Promise.all([
-        register<{ generation: number }>("client-state:flush-requested",
+        register<{ generation: number; releaseWorkspaces?: boolean }>("client-state:flush-requested",
           ({ generation }) => acknowledgeNativeClientStateRendererFlush(generation), true),
         register<{ generation: number }>("client-state:navigation-flush-requested",
           ({ generation }) => acknowledgeNativeClientStateNavigationFlush(generation), false),
         listen<{ generation: number }>("client-state:flush-cancelled", ({ payload }) => {
           if (nativeShutdownGeneration !== payload.generation) return
-          nativeShutdownGeneration = null
-          schedule()
+          resumeCapture()
         }).then((unlisten) => {
           if (nativeDisposed) unlisten()
           else nativeUnlisteners.push(unlisten)
@@ -377,8 +405,17 @@ export function useAppSessionCapture() {
     }
   })
   onMount(() => {
-    const flushNow = () => void flush()
-    const useBrowserLifecycleFlush = !isLocalWindow()
+    const flushNow = () => void flush().catch(error => log.warn("Could not flush client state", error))
+    const pageHide = (event: PageTransitionEvent) => {
+      if (useBrowserLifecycleFlush && !releasing) flushNow()
+      if (!event.persisted) void release([...openInstanceTabIds()])
+    }
+    const nativeFlush = async (closing?: boolean | "cancel") => {
+      if (closing === "cancel") resumeCapture()
+      else if (closing) await flushAndRelease()
+      else await flush()
+    }
+    const useBrowserLifecycleFlush = isWebHost() || !isLocalWindow()
     const electronLocal = isElectronHost() && isLocalWindow()
     const saveSelection = () => {
       const tab = enabled() && !appSessionRestoreGateActive()
@@ -389,21 +426,13 @@ export function useAppSessionCapture() {
         : tab?.kind === "remote-restore" ? tab.snapshot
         : tab?.kind === "sidecar" ? { kind: "sidecar", sidecarId: tab.sidecarTab.sidecarId } : undefined)
     }
-    if (useBrowserLifecycleFlush) {
-      window.addEventListener("pagehide", flushNow)
-      window.addEventListener("beforeunload", flushNow)
-    }
-    if (electronLocal) {
-      window.addEventListener("pagehide", saveSelection)
-      window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ = flush
-    }
+    window.addEventListener("pagehide", pageHide)
+    if (electronLocal) window.addEventListener("pagehide", saveSelection)
+    if (isElectronHost() || isTauriHost()) window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ = nativeFlush
     onCleanup(() => {
       if (electronLocal) window.removeEventListener("pagehide", saveSelection)
-      if (useBrowserLifecycleFlush) {
-        window.removeEventListener("pagehide", flushNow)
-        window.removeEventListener("beforeunload", flushNow)
-      }
-      if (window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ === flush) {
+      window.removeEventListener("pagehide", pageHide)
+      if (window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ === nativeFlush) {
         delete window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__
       }
     })
@@ -419,6 +448,7 @@ export function useAppSessionCapture() {
   })
   return {
     ready,
+    isReleasing: () => releasing !== undefined,
     start(snapshot?: RestorableSessionState) {
       if (snapshot) preservation = createRestorableSessionPreservation(snapshot)
       nativeFallbackState = snapshot?.tabs.length ? snapshot : null
@@ -447,6 +477,17 @@ export function useAppSessionCapture() {
       // The unavailable lifecycle event already merged live and not-yet-hydrated state.
       const snapshot = preservation.sourceTabs[index]
       if (snapshot?.kind === "workspace") return { index, snapshot }
+    },
+    preserveReleasedTab(tabId: string) {
+      if (!preservation) return
+      const captured = captureState(scrollAuthority)
+      const snapshot = captured.state.tabs[captured.tabIds.indexOf(tabId)]
+      if (snapshot?.kind !== "workspace") return
+      const index = preservation.sourceTabs.length
+      preservation.sourceTabs.push(snapshot)
+      preservation.results.push({ status: "pending", runtimeTabId: tabId, runtimeUnavailable: true })
+      preservation.removalRevisions.push(0)
+      return { index, snapshot }
     },
     hasRestoredTabBinding(index: number, expectedRuntimeTabId: string) {
       return preservation ? hasRestoredTabBinding(preservation, index, expectedRuntimeTabId) : false

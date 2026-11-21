@@ -7,6 +7,7 @@ import { addInstance, createInstance, closeWorkspace, instances, removeInstance,
 import { selectInstanceTab, activeAppTabId } from "./app-tabs"
 import { serverApi } from "../lib/api-client"
 import { deferred } from "../../tests/test-support/deferred"
+import { RELAY_AUTHORITY_HEADER } from "../../../server/src/codenomad-servers/relay-authority"
 
 for (const recovery of ["discard", "event"] as const) for (const mode of recovery === "discard"
   ? ["lost-response", "resolved", "retired", "removed"] as const
@@ -289,11 +290,14 @@ it("captures create/close/release owner, converges qualified identities and fenc
   preferences().multiBackend = true
   t.after(() => { preferences().multiBackend = previous })
   const requests: Array<[string, string, string]> = []
+  const closeTransport: Array<{ keepalive?: boolean; credentials?: RequestCredentials; release: string | null; proof: string | null }> = []
   const make = (id: string) => createBackendClient({ id, baseUrl: `https://${id}.invalid`,
     relayProfileId: id, bindRelayAuthority: true,
     fetcher: async (input, init) => {
       const url = new URL(String(input)), method = init?.method ?? "GET"
       requests.push([id, method, url.pathname])
+      if (method === "DELETE") closeTransport.push({ keepalive: init?.keepalive, credentials: init?.credentials,
+        release: url.searchParams.get("windowRelease"), proof: new Headers(init?.headers).get(RELAY_AUTHORITY_HEADER) })
       if (method === "POST" && url.pathname.endsWith("/api/workspaces")) {
         const body = JSON.parse(String(init?.body))
         return Response.json({ id: "w", path: body.path, requestId: body.requestId, status: "starting", proxyPath: "/workspaces/w/instance", createdAt: "", updatedAt: "" })
@@ -313,9 +317,10 @@ it("captures create/close/release owner, converges qualified identities and fenc
   await releaseRestoreCreatedInstance(br.instanceId, br.requestId!)
   await releaseRestoreCreatedInstance(br.instanceId, br.requestId!)
   assert.equal(requests.filter(([id, , route]) => id === "B" && route.endsWith("/w/creation/release")).length, 1)
-  const close = closeWorkspace(br.instanceId)
+  const close = closeWorkspace(br.instanceId, true)
   await Promise.all([close, closeWorkspace(br.instanceId)])
   assert.deepEqual(requests.filter(([, method]) => method === "DELETE"), [["B", "DELETE", "/api/backends/B/api/workspaces/w"]])
+  assert.deepEqual(closeTransport, [{ keepalive: true, credentials: "include", release: "1", proof: "b".repeat(43) }])
   const queued = closeWorkspace(ar.instanceId)
   detachA()
   await assert.rejects(queued)

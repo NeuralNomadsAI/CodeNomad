@@ -1,6 +1,6 @@
 import { createEffect, For, Show } from "solid-js"
 import { render } from "solid-js/web"
-import { initializeClientState } from "../../../src/stores/client-state"
+import { initializeClientState, setRestorePreviousStateEnabled } from "../../../src/stores/client-state"
 import { decodeClientSnapshotV2 } from "../../../src/stores/client-state-partitions"
 import { useAppSessionRestore } from "../../../src/lib/hooks/use-app-session-restore"
 import { activeAppTabId, appTabs, ensureActiveAppTab, selectAppTab } from "../../../src/stores/app-tabs"
@@ -9,7 +9,7 @@ import { activeInstanceId, createInstance, instances, updateInstance } from "../
 import { closeInstanceTab, selectInstanceTab } from "../../../src/stores/app-tabs"
 import { canContinueOpenCodeSetup, continueOpenCodeSetup, openOpenCodeSetup, refreshOpenCodeSetup, runOpenCodeSetup } from "../../../src/stores/opencode-setup"
 import { serverEvents } from "../../../src/lib/server-events"
-import { activeSessionId } from "../../../src/stores/session-state"
+import { activeSessionId, getSessionDraftPromptsForInstance, setSessionDraftPrompt } from "../../../src/stores/session-state"
 import { sessions, getSessionListIds, getSessionThreads, loading } from "../../../src/stores/session-state"
 import SessionList from "../../../src/components/session-list"
 import { reloadWorktrees } from "../../../src/stores/worktrees"
@@ -24,6 +24,7 @@ import { openSessionPreview, getSessionPreview, restoreSessionPreview } from "..
 import { updateMissionProjectView } from "../../../src/stores/mission-view-state"
 import { moveAppTab } from "../../../src/stores/app-tabs"
 import { savedSessionBrowser } from "../../../src/stores/session-browser-persistence"
+import { getToastHistory } from "../../../src/lib/notifications"
 
 ;(window as any).tabViews = {
   ids: () => appTabs().filter(tab => tab.kind === "instance").map(tab => tab.instance.id),
@@ -32,6 +33,14 @@ import { savedSessionBrowser } from "../../../src/stores/session-browser-persist
   mission: (id: string) => updateMissionProjectView(id, { selected: "mission-b", reader: { kind: "playbook", missionId: "debug" } }),
   reorder: (a: string, b: string) => moveAppTab(`instance:${a}`, `instance:${b}`, "before"),
   close: closeInstanceTab,
+  disableRestore: () => setRestorePreviousStateEnabled(false),
+  draft: (id: string) => getSessionDraftPromptsForInstance(id).same,
+  writeDraft: (id: string, text: string) => setSessionDraftPrompt(id, "same", text),
+  temporary: (id: string) => instances().get(id)?.temporary,
+  remove: (id: string, windowRelease = true) => (serverEvents as any).dispatch({
+    type: "workspace.stopped", workspaceId: id, reason: "deleted", temporaryRetained: true, windowRelease,
+  }),
+  noticeCount: () => getToastHistory().length,
   saved: savedSessionBrowser,
 }
 
