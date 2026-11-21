@@ -73,12 +73,25 @@ export async function resolveElement(session: PageSession, ref: string, node: nu
 }
 export async function callOn(session: PageSession, ref: string, handle: string, functionId: PageFunctionId, args: Array<PageArgument | Handle>, byValue = true): Promise<unknown> {
   const result = await session.driver.call(functionId, handle, args.map(value => value instanceof Handle ? { handle: value.objectId } : value))
+    .catch(error => {
+      if (functionId === "programmatic-click" && lostClickReply(error)) {
+        throw new Error("The click outcome is unknown; inspect before retrying.", { cause: error })
+      }
+      throw error
+    })
   await session.checkpoint()
   if (result.exception !== undefined) throw pageError(ref, result.exception)
   if (!byValue) { if (typeof result.handle !== "string") throw gone(ref); return result.handle }
   return result.value
 }
 export async function releaseObjects(session: PageSession): Promise<void> { await session.driver.releaseHandles().catch(() => undefined) }
+
+function lostClickReply(error: unknown): boolean {
+  // The transports currently report lost replies and explicit rejections as plain errors.
+  return error instanceof Error && !(error instanceof PageTargetChangedError) &&
+    (/^(?:CDP (?:command Runtime\.callFunctionOn timed out|WebSocket (?:closed|connection failed))|Developer CDP controller closed)$/.test(error.message) ||
+      /^(?:Native request timed out: browser\.page\.send|(?:Native|WebView2) browser command timed out)$/.test(error.message))
+}
 
 function pageError(ref: string, description: string): Error {
   const [code, detail = ""] = /codenomad:([a-z-]+)(?::(.*))?/.exec(description.split("\n", 1)[0])?.slice(1) ?? []

@@ -4,6 +4,97 @@ import { clickAt, dragBetween, pressKeys } from "./input"
 import type { PageSession } from "./protocol"
 import { cdpSession } from "./cdp-driver"
 import { performAction } from "./actions"
+import { declaration } from "./functions"
+import { PageDriverUnsupportedError, PageTargetChangedError } from "./protocol"
+
+const click = { kind: "click", ref: "e1", backendNodeId: 1 } as const
+
+function clickFixture(
+  quads: number[][] | Error,
+  activate: () => Record<string, unknown> = () => ({}),
+  overlay = false,
+) {
+  const inputs: string[] = []
+  const session = cdpSession({ send: async (method, params = {}) => {
+    if (method === "DOM.resolveNode") return { object: { objectId: String(params.backendNodeId) } }
+    if (method === "DOM.getContentQuads") {
+      if (quads instanceof Error) throw quads
+      return { quads }
+    }
+    if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { clientWidth: 100, clientHeight: 100 } }
+    if (method === "DOM.getNodeForLocation") return { backendNodeId: overlay ? 2 : 1 }
+    if (method === "Runtime.callFunctionOn") {
+      if (params.functionDeclaration === declaration("programmatic-click", true)) {
+        inputs.push("programmatic-click")
+        return activate()
+      }
+      if (params.functionDeclaration === declaration("receives", true)) return { result: { value: 'div "Overlay"' } }
+    }
+    if (method.startsWith("Input.")) inputs.push(String(params.type))
+    return { result: { value: 1_700_000_000 } }
+  } }, async () => {}, true)
+  return { session, inputs }
+}
+
+test("a failed geometry read never falls back to programmatic or native input", async () => {
+  for (const failure of [
+    new Error("CDP command DOM.getContentQuads timed out"),
+    new Error("Could not compute content quads."),
+    new PageDriverUnsupportedError("cdp", "geometry"),
+  ]) {
+    const { session, inputs } = clickFixture(failure)
+    await assert.rejects(performAction(session, click), error => error === failure)
+    assert.deepEqual(inputs, [])
+  }
+})
+
+test("only the confirmed boxless target uses a programmatic click, not a covered target", async () => {
+  const boxless = clickFixture([])
+  await assert.rejects(performAction(boxless.session, { ...click, button: "right" }), /no visible box to right-click/)
+  assert.deepEqual(boxless.inputs, [])
+  await performAction(boxless.session, click)
+  assert.deepEqual(boxless.inputs, ["programmatic-click"])
+
+  const quads = [[10, 10, 30, 10, 30, 30, 10, 30]]
+  const visible = clickFixture(quads)
+  await performAction(visible.session, click)
+  assert.deepEqual(visible.inputs, ["mouseMoved", "mousePressed", "mouseReleased"])
+
+  const covered = clickFixture(quads, undefined, true)
+  await assert.rejects(performAction(covered.session, click), /covered by div "Overlay"/)
+  assert.deepEqual(covered.inputs, [])
+})
+
+test("a programmatic click with a lost reply reports an unknown outcome without replay", async () => {
+  for (const message of [
+    "CDP command Runtime.callFunctionOn timed out", "CDP WebSocket closed", "Developer CDP controller closed",
+    "Native request timed out: browser.page.send",
+  ]) {
+    let clicks = 0, lateClick: (() => void) | undefined
+    const { session, inputs } = clickFixture([], () => {
+      lateClick = () => { clicks++ }
+      throw new Error(message)
+    })
+    await assert.rejects(performAction(session, click), /outcome is unknown.*inspect before retrying/i)
+    assert.equal(clicks, 0)
+    lateClick?.()
+    assert.equal(clicks, 1)
+    assert.deepEqual(inputs, ["programmatic-click"])
+  }
+})
+
+test("explicit programmatic click refusals are not reported as unknown outcomes", async () => {
+  for (const failure of [
+    new Error("Could not find object with given id"),
+    new PageTargetChangedError("The input destination check timed out; inspect again", true),
+    new PageDriverUnsupportedError("cdp", "programmatic-click"),
+  ]) {
+    const { session } = clickFixture([], () => { throw failure })
+    await assert.rejects(performAction(session, click), error => error === failure)
+  }
+  const { session } = clickFixture([], () => ({ exceptionDetails: { exception: { description: "Error: codenomad:gone" } } }))
+  await assert.rejects(performAction(session, click), { message: "e1 is no longer in the page; inspect again" })
+})
 
 test("failed pointer and key sequences release potentially held inputs without replaying the action", async () => {
   for (const kind of ["click", "drag", "keys"] as const) {

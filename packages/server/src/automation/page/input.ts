@@ -6,11 +6,11 @@ import { callOn, Handle, markedInput, resolveElement, PageDriverUnsupportedError
 
 export interface Point { x: number; y: number }
 
-/** The point a user would click, or undefined for an element without a visible box. */
+/** The point a user would click, or undefined when geometry shows no visible box. */
 export async function aim(session: PageSession, ref: string, backendNodeId: number, options: { hitTest?: boolean; scroll?: boolean } = {}): Promise<Point | undefined> {
   if (options.scroll !== false) await session.driver.scrollIntoView(backendNodeId).catch(error => { if (error instanceof PageDriverUnsupportedError) throw error })
   await session.checkpoint()
-  const quads = await session.driver.geometry(backendNodeId).catch(error => { if (error instanceof PageDriverUnsupportedError) throw error; return [] })
+  const quads = await session.driver.geometry(backendNodeId)
   await session.checkpoint()
   const viewport = await layoutViewport(session)
   const quad = quads.find(item => item.length === 8 && area(item) >= 1)
