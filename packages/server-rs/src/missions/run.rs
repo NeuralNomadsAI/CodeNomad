@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
+use tokio_util::sync::CancellationToken;
 
 const PREFIX: &str = "/api/rpc/codenomad.missions/";
 pub async fn playbooks() -> Response {
@@ -215,9 +216,11 @@ pub async fn create(
         .ok_or_else(creation_admission::invalid)?;
     app.mission_creations.register(&wid, request, &raw)?;
     let key = (wid, request.to_owned());
+    let lifetime = p.0.child_token();
+    let _disconnect = lifetime.clone().drop_guard();
     // Losing the HTTP client must not drop the permit or cancel an already dispatched create.
     let result = tokio::spawn(async move {
-        let result = create_once(&app, &key, p, raw).await;
+        let result = create_once(&app, &key, lifetime, raw).await;
         app.mission_creations.finish(&key, &result);
         result
     })
@@ -229,7 +232,7 @@ pub async fn create(
 async fn create_once(
     app: &App,
     key: &(String, String),
-    p: crate::auth::Principal,
+    lifetime: CancellationToken,
     raw: Value,
 ) -> Result<Value, Error> {
     let invalid = creation_admission::invalid;
@@ -276,8 +279,8 @@ async fn create_once(
     if let Some(profiles) = profiles {
         input["profiles"] = profiles;
     }
-    if p.0.is_cancelled() {
-        return Err(foreign());
+    if lifetime.is_cancelled() {
+        return Err(unavailable());
     }
     let (status, caps) = scope.call(app, "documentCapabilities", &json!({}), 10, 65536).await?;
     if !status.is_success() || !document_capabilities(&caps["output"]) {
@@ -307,7 +310,7 @@ async fn create_once(
         )
     })?;
     scope.refresh(app).await?;
-    if p.0.is_cancelled() {
+    if lifetime.is_cancelled() {
         return Err(unavailable());
     }
     let mission = format!("msn_{}", token(&format!("{}\0{}", scope.project, key.1), 24));
@@ -513,6 +516,8 @@ async fn mutate(
     if app.mission_bridge.is_none() {
         return Err(plugin_unavailable());
     }
+    let lifetime = p.0.child_token();
+    let _disconnect = lifetime.clone().drop_guard();
     tokio::spawn(async move {
         let _slot = app.mission_control_slot.acquire().await.map_err(|_| plugin_unavailable())?;
         p.live()?;
@@ -529,6 +534,9 @@ async fn mutate(
             return Err(error(Status::CONFLICT, "Mission workspace changed"));
         }
         p.live()?;
+        if lifetime.is_cancelled() {
+            return Err(plugin_unavailable());
+        }
         let (status, body) = scope
             .call(&app, method, &input, 85, 4 * 1024 * 1024)
             .await
