@@ -29,7 +29,7 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
           holdRead: false, releaseRead: () => {}, holdCancelReceipt: false, releaseCancelReceipt: () => {},
         }
         const tauriApi = kind === "tauri-api" || kind === "tauri-preferences" || kind === "tauri-remote-api"
-        const bridge = { requests, choice: kind === "remote" && unsupportedChoice ? null
+        const bridge = { requests, choice: kind === "remote" && unsupportedChoice ? "unsupported"
           : kind === "remote-api" || kind === "remote-api-legacy" || tauriApi ? "api" : "hex", operation: "recording",
           resolve: (_: string) => {}, holdMicrophone: false, admitMicrophone: () => {},
           denyMicrophone: false, microphoneState: "recording", readFails: false, denyLease: false }
@@ -616,7 +616,7 @@ test("an unsupported saved engine requires explicit reselection before recording
   assert.equal(await engine.inputValue(), "api")
 }, false, "hex-setup", false, "en", false, false, { unsupportedChoice: true }))
 
-test("an unsupported choice in a remote window opens Dictation settings without capture", () => withComposer(async page => {
+test("an older host's unsupported choice opens Dictation settings without capture", () => withComposer(async page => {
   await page.getByRole("button", { name: "More actions", exact: true }).click()
   const dictate = page.getByRole("menuitem").filter({ hasText: chooseLocalEngine })
   await dictate.click()
