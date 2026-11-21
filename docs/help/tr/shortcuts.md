@@ -19,7 +19,7 @@ Atamalar CodeNomad arayüz yapılandırmasına kaydedilir ve bunu paylaşan iste
 
 ## Arayüz varsayılanları {#renderer-defaults}
 
-`Mod`, Windows/Linux'ta `Ctrl` ve macOS'ta `Cmd` anlamına gelir. Bunlar varsayılan değerlerdir; işletim sisteminin/yerel ana bilgisayarın anahtarı teslim edeceğini garanti etmez. Kapsam önemlidir: Aynı anahtar ana sayfada, ileti düzenleyicisinde veya aramada farklı bir eyleme hizmet edebilir.
+`Mod`, Windows/Linux'ta `Ctrl` ve macOS'ta `Cmd` anlamına gelir. Bunlar varsayılan değerlerdir; işletim sisteminin/yerel ana bilgisayarın anahtarı teslim edeceğini garanti etmez. Kapsam önemlidir: Aynı anahtar boş sekmede, ileti düzenleyicisinde veya aramada farklı bir eyleme hizmet edebilir.
 
 | Eylem | Varsayılan |
 | --- | --- |

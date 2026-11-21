@@ -4,7 +4,7 @@ import type { RestorableSessionState, RestorableWorkspaceTabState } from "../../
 import { normalizeWorkspacePath } from "../../stores/app-session-reconciliation"
 
 type SelectedTab = Pick<RestorableWorkspaceTabState, "kind" | "workspaceId" | "backendId" | "serverId" | "folder" | "occurrence">
-  | { kind: "sidecar"; sidecarId: string }
+  | { kind: "sidecar"; sidecarId: string } | { kind: "blank" }
 
 // An unmanaged renderer reload cannot wait for the asynchronous native snapshot.
 // Carry only the selected identity; the native snapshot still owns all tab data.
@@ -14,8 +14,8 @@ function key() {
 
 function identity(tab: SelectedTab | undefined): string | undefined {
   if (tab?.kind === "sidecar") return JSON.stringify(["sidecar", tab.sidecarId])
-  if (tab?.workspaceId) return JSON.stringify(["workspace", backendIdOf(tab), tab.serverId, tab.workspaceId])
   if (tab?.kind === "workspace") {
+    if (tab.workspaceId) return JSON.stringify(["workspace", backendIdOf(tab), tab.serverId, tab.workspaceId])
     return JSON.stringify(["waiting", backendIdOf(tab), tab.serverId, normalizeWorkspacePath(tab.folder), tab.occurrence ?? 0])
   }
 }

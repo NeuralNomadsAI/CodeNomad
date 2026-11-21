@@ -29,7 +29,12 @@ export interface SideCarAppTab {
   sidecarTab: SideCarTabRecord
 }
 
-interface BlankAppTab { id: string; kind: "blank"; server?: ServerSelectionIntent }
+interface BlankAppTab {
+  id: string
+  kind: "blank"
+  server?: ServerSelectionIntent
+  setServer: (server: ServerSelectionIntent) => void
+}
 export type AppTabRecord = InstanceAppTab | SideCarAppTab | RemoteRestoreTab | BlankAppTab
 
 export function allowsAutomaticLocalSetup(tab: AppTabRecord): boolean {
@@ -37,30 +42,41 @@ export function allowsAutomaticLocalSetup(tab: AppTabRecord): boolean {
   return tab.kind !== "remote-restore" && (tab.kind !== "blank" || !tab.server)
 }
 
-const [blankTab, setBlankTab] = createSignal<BlankAppTab>()
-const [blankServer, setBlankServer] = createSignal<ServerSelectionIntent>()
+const [blankTabs, setBlankTabs] = createSignal<BlankAppTab[]>([])
+
+export function appendBlankTab(server?: ServerSelectionIntent): string {
+  const id = `blank:${generateUUID()}`
+  const [selection, setSelection] = createSignal(server && { ...server })
+  const tab: BlankAppTab = {
+    id, kind: "blank",
+    get server() { return selection() },
+    setServer: intent => setSelection({ ...intent }),
+  }
+  setBlankTabs(tabs => [...tabs, tab])
+  return id
+}
 
 export function openBlankTab(server?: ServerSelectionIntent): void {
   batch(() => {
-    let tab = blankTab()
-    const currentServer = blankServer()
-    const alreadySelected = tab && activeAppTabId() === tab.id
-      && (!server || currentServer && sameServerSelection(server, currentServer))
-    if (server) setBlankServer({ ...server })
-    if (!tab) {
-      tab = { id: `blank:${generateUUID()}`, kind: "blank", get server() { return blankServer() } }
-      setBlankTab(tab)
+    if (server) {
+      const active = activeAppTab()
+      const existing = active?.kind === "blank" ? active : appTabs().find(tab => tab.kind === "blank")
+      if (existing) {
+        const alreadySelected = existing === active && existing.server && sameServerSelection(server, existing.server)
+        existing.setServer(server)
+        if (!alreadySelected) selectAppTab(existing.id)
+        return
+      }
     }
-    if (!alreadySelected) selectAppTab(tab.id)
+    selectAppTab(appendBlankTab(server))
   })
 }
 
 export function closeBlankTab(id: string): void {
-  if (blankTab()?.id !== id) return
+  if (!blankTabs().some(tab => tab.id === id)) return
   const fallback = getAdjacentAppTabId(id)
   batch(() => {
-    setBlankServer(undefined)
-    setBlankTab(undefined)
+    setBlankTabs(tabs => tabs.filter(tab => tab.id !== id))
     setTabOrder(ids => ids.filter(entry => entry !== id))
     setAppTabOrderRevision(revision => revision + 1)
     if (activeAppTabId() === id) selectAppTab(fallback)
@@ -69,11 +85,10 @@ export function closeBlankTab(id: string): void {
 
 /** A successful choice occupies its originating blank tab's position. */
 export function replaceBlankTab(blankId: string | undefined, chosenId: string): void {
-  if (!blankId || blankTab()?.id !== blankId || !getAppTabById(chosenId)) return
+  if (!blankId || !blankTabs().some(tab => tab.id === blankId) || !getAppTabById(chosenId)) return
   const ids = appTabs().map(tab => tab.id).filter(id => id !== chosenId)
   batch(() => {
-    setBlankServer(undefined)
-    setBlankTab(undefined)
+    setBlankTabs(tabs => tabs.filter(tab => tab.id !== blankId))
     setAppTabOrder(ids.map(id => id === blankId ? chosenId : id))
     setAppTabOrderRevision(revision => revision + 1)
   })
@@ -123,9 +138,8 @@ const appTabs = createMemo<AppTabRecord[]>((previous = []) => {
   // Solid's <For> keys by object identity. Metadata refreshes and opening another
   // project must not remount every shell (and restart their Git/status reads).
   const previousById = new Map(previous.map((tab) => [tab.id, tab]))
-  const blank = blankTab()
   const currentTabs = [
-    ...(blank ? [blank] : []),
+    ...blankTabs(),
     ...remoteRestoreTabs(),
     ...Array.from(instances().values())
       .filter((instance) => openInstanceTabIds().has(instance.id))
@@ -189,8 +203,8 @@ function selectAppTab(tabId: string | null, options?: { source?: "restore"; crea
 
 function selectInstanceTab(instanceId: string, creation?: WorkspaceCreationOwnership): boolean {
   if (!instances().has(instanceId) || creation && !creation.current(instanceId)) return false
-  // The first tab dismisses Home and triggers automatic selection. Publish its
-  // membership and explicit selection together so the opening transfers first.
+  // Publish membership and explicit selection together so the opening transfers
+  // before automatic tab selection can run.
   return batch(() => {
     attachInstanceTab(instanceId)
     return selectAppTab(getInstanceAppTabId(instanceId), creation ? { creation } : undefined) === true

@@ -48,6 +48,8 @@ A plain browser tab, including an installed PWA, keeps the same V1 client snapsh
 
 OpenCode sessions and messages are shared through the global daemon. Window membership, tabs, drafts, view state, and native bounds are local to each UUID window. Client-state V3 is a per-window envelope over the V2 SHA-256 content-addressed partition graph: immutable partitions are prepared before atomic root publication, writes and migrations are fenced by current ownership and renderer authority, and garbage collection runs after publication while retaining every partition referenced by any window.
 
+Empty tab descriptors occupy ordered slots in the session manifest, using spare capacity within the saved tab limit. Each restores a fresh Browse and Recent view.
+
 Each workspace descriptor has its own optional `viewState` payload, normalized by `stores/tab-view-state-codec.ts` and stored inline in that descriptor's workspace partition (`client-state-partitions.ts`). Duplicate folders keep distinct descriptors through their `occurrence` and runtime tab bindings; restore seeds the envelope onto each recreated instance UUID before session hydration. The payload is:
 
 | Field | Saved presentation |
@@ -419,7 +421,7 @@ Run `node --import tsx packages/ui/tests/contracts/backend-async-inventory.ts > 
 | `components/preferences-window.tsx` | C+IPC | flush; applyRequest; project SDK context; request/persistence queues; close/scroll flush | Native preferences request generation, sequential queues and current window request; durable storage flush; instance SDK cache cleanup. |
 | `components/auth-recovery-dialog.tsx` | C | signIn | Retained auth client/login generation; component cleanup for view. |
 | `components/interruption-permission.tsx` | C+P | submit/cancel/respond | Request/permission/form identity and delegated response authority; durable admitted response; focus animation is DOM. |
-| `components/folder-selection-view.tsx`, `components/instance-tabs.tsx` | C+P | browse/drop/open; rename or remove a recent | Local workspace client and delegated preference/native project mutation; view callback ownership. Home and empty tabs render remote recents and folders in separate panels and keep Settings as the profile editor. |
+| `components/folder-selection-view.tsx`, `components/instance-tabs.tsx` | C+P | browse/drop/open; rename or remove a recent | Local workspace client and delegated preference/native project mutation; view callback ownership. Empty tabs render remote recents and folders in separate panels and keep Settings as the profile editor. |
 | `stores/project-names.ts` | C | renameProject | Captured project/instance identity; SDK project update and persisted recent-folder name. |
 | `components/settings/config-files-settings-section.tsx` | C | loadContent/loadFiles/file-change/reload/save; discard confirmation | Local server configuration client; selected file/open editor demand and dirty state; durable config-file write. |
 | `components/settings/opencode-login-start-card.tsx` | C | load/change login-start configuration | Local admin client; disposed guard; durable setting mutation. |

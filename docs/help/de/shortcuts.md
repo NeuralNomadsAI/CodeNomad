@@ -19,7 +19,7 @@ Belegungen werden in CodeNomads UI-Konfiguration gespeichert und betreffen Clien
 
 ## Renderer-Standards {#renderer-defaults}
 
-`Mod` bedeutet `Ctrl` unter Windows/Linux und `Cmd` unter macOS. Dies sind Vorgaben, keine Garantie, dass OS/nativer Host die Taste durchreichen. Der Kontext zählt: Dieselbe Taste kann auf Startseite, im Eingabefeld oder in der Suche andere Aktionen bedienen.
+`Mod` bedeutet `Ctrl` unter Windows/Linux und `Cmd` unter macOS. Dies sind Vorgaben, keine Garantie, dass OS/nativer Host die Taste durchreichen. Der Kontext zählt: Dieselbe Taste kann in einem leeren Tab, im Eingabefeld oder in der Suche andere Aktionen bedienen.
 
 | Aktion | Standard |
 | --- | --- |

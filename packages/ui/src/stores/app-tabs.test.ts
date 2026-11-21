@@ -12,6 +12,7 @@ import {
   closeInstanceTab,
   detachInstanceTab,
   setAppTabOrder,
+  selectAppTab,
   selectInstanceTab,
   openBlankTab, closeBlankTab, replaceBlankTab,
 } from "./app-tabs.ts"
@@ -62,10 +63,11 @@ function workspace(folder: string): RestorableWorkspaceTabState {
 }
 
 function captureTabs(): RestorableSessionState {
-  const restorable = appTabs().filter(tab => tab.kind !== "blank")
+  const restorable = appTabs()
   const tabs = restorable.map((tab) => tab.kind === "instance"
     ? workspace(tab.instance.folder)
-    : tab.kind === "remote-restore" ? tab.snapshot : { kind: "sidecar" as const, sidecarId: tab.sidecarTab.sidecarId })
+    : tab.kind === "remote-restore" ? tab.snapshot
+    : tab.kind === "blank" ? { kind: "blank" as const } : { kind: "sidecar" as const, sidecarId: tab.sidecarTab.sidecarId })
   return { tabs, activeTabIndex: restorable.findIndex((tab) => tab.id === activeAppTabId()) }
 }
 
@@ -89,7 +91,28 @@ describe("renderer-local workspace tabs", () => {
       assert.equal(allowsAutomaticLocalSetup(activeAppTab()!), false)
     } finally { closeBlankTab(tab.id) }
   })
-  it("reselects a single blank until it is filled, excludes it from capture, and closes it locally", () => {
+  it("opens a saved server in the first empty tab when a project is active", () => {
+    const existing = instance("server-open-fallback")
+    addInstance(existing)
+    openBlankTab()
+    const first = activeAppTabId()!
+    openBlankTab()
+    const second = activeAppTabId()!
+    try {
+      selectInstanceTab(existing.id)
+      const server = { id: "remote", baseUrl: "https://server.example", skipTlsVerify: false }
+      openBlankTab(server)
+      assert.equal(activeAppTabId(), first)
+      assert.deepEqual(appTabs().filter(tab => tab.kind === "blank").map(tab => [tab.id, tab.server]), [
+        [first, server], [second, undefined],
+      ])
+    } finally {
+      closeBlankTab(first)
+      closeBlankTab(second)
+      removeInstance(existing.id, { authoritative: false })
+    }
+  })
+  it("creates, captures, fills and closes empty tabs independently", () => {
     const existing = instance("before-blank")
     const chosen = instance("blank-choice")
     addInstance(existing)
@@ -101,23 +124,21 @@ describe("renderer-local workspace tabs", () => {
     const first = activeAppTabId()!
     let second: string | undefined
     try {
-      selectInstanceTab(existing.id)
-      openBlankTab()
-      assert.equal(activeAppTabId(), first)
-      assert.equal(appTabs().filter(tab => tab.kind === "blank").length, 1)
-      assert.deepEqual(captureState(new Map()).tabIds, [`instance:${existing.id}`])
-      selectInstanceTab(chosen.id)
-      replaceBlankTab(first, `instance:${chosen.id}`)
-      assert.deepEqual(appTabs().map(tab => tab.id), [`instance:${existing.id}`, `instance:${chosen.id}`])
-      const captured = captureState(new Map())
-      assert.equal(captured.state.activeTabIndex, 1)
-      assert.equal(captured.authorities.length, 2)
       openBlankTab()
       second = activeAppTabId()!
       assert.notEqual(second, first)
-      replaceBlankTab(first, `instance:${existing.id}`)
+      const captured = captureState(new Map())
+      assert.deepEqual(captured.tabIds, [`instance:${existing.id}`, first, second])
+      assert.deepEqual(captured.state.tabs.map(tab => tab.kind), ["workspace", "blank", "blank"])
+      assert.equal(captured.state.activeTabIndex, 2)
+      selectInstanceTab(chosen.id)
+      replaceBlankTab(first, `instance:${chosen.id}`)
       assert.deepEqual(appTabs().map(tab => tab.id), [`instance:${existing.id}`, `instance:${chosen.id}`, second])
+      replaceBlankTab(first, `instance:${existing.id}`)
+      selectAppTab(second)
       closeBlankTab(second)
+      assert.equal(activeAppTabId(), `instance:${chosen.id}`)
+      assert.deepEqual(appTabs().map(tab => tab.id), [`instance:${existing.id}`, `instance:${chosen.id}`])
       assert.equal(deletes, 0)
     } finally {
       closeBlankTab(first)

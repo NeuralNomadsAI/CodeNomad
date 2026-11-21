@@ -1,37 +1,28 @@
 .folder-home-root {
-  height: 100dvh;
+  height: 100%;
   overflow-x: hidden;
   overflow-y: auto;
-  background-color: var(--surface-secondary);
+  background-color: var(--surface-shade-light);
 }
 
-.folder-home-root--blank { height: 100%; background-color: var(--surface-shade-light); }
-.folder-home-shell { max-width: 60rem; padding-top: 0; }
-.folder-home-root--blank .folder-home-shell { padding-top: 1rem; }
-.folder-home-hero { margin-bottom: 1.5rem; }
-.folder-home-root--blank .folder-home-hero { margin-bottom: var(--space-xs); }
+.folder-home-shell { height: 100%; max-width: 60rem; padding-block: 1.5rem; }
+.folder-home-hero { margin-block-end: 1.5rem; }
 .folder-home-logo { height: 4rem; }
-.folder-home-main, .folder-home-list-column { min-width: 0; }
-.folder-home-main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
-.folder-home-create-column { min-width: 0; }
-.folder-dashboard-servers { height: 16rem; min-height: 0; }
-.folder-dashboard-servers > .browse-menu { flex: 1; }
-.folder-home-root--blank .panel-header { background-color: var(--surface-secondary); }
-.folder-home-blank-actions { display: flex; justify-content: center; gap: var(--space-sm); flex-shrink: 0; margin-bottom: var(--space-xl); }
-.folder-home-blank-actions .window-action:not(:hover) { background-color: var(--surface-control); }
-
-.folder-home-list-panel {
-  min-width: 0;
-  height: 16rem;
+.folder-home-main {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(32rem, 1fr);
+  min-height: 32rem;
 }
-
-.folder-home-list-panel .panel-header { flex-shrink: 0; }
-.folder-home-header-tab { min-width: 0; }
+.folder-home-main > section { min-height: 0; }
+.folder-home-main .panel-header { flex-shrink: 0; background-color: var(--surface-secondary); }
+.folder-home-actions { flex-shrink: 0; margin-block-end: var(--space-sm); }
+.folder-home-actions .window-action:not(:hover) { background-color: var(--surface-control); }
+.folder-home-actions .window-action:last-child { margin-inline-start: auto; }
+.folder-home-actions .window-action { white-space: normal; }
 .folder-home-recent-source { overflow: hidden; }
-.folder-home-header-tab:hover { background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay)); }
-.folder-home-list-panel .panel-list--fill { max-height: min(28rem, 52dvh); min-height: 0; }
+.folder-home-recent-item .action-overflow-trigger { display: inline-flex; }
 
-.folder-home-creation-actions .button-primary { min-height: 3rem; padding: 0.75rem 1.5rem; }
 .folder-home-open-instance-button {
   display: inline-flex;
   flex-shrink: 0;
@@ -74,13 +65,11 @@
 .folder-home-recent-primary-action:disabled { cursor: not-allowed; }
 .folder-home-recent-item.folder-home-recent-item-action-active { background-color: transparent !important; box-shadow: none !important; }
 
-@media (max-width: 639px) {
-  .folder-home-shell { padding-top: 3.5rem; }
-  .folder-home-root--blank .folder-home-shell { padding-top: 0.5rem; }
-  .folder-home-main { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 768px) {
+  .folder-home-actions { position: absolute; inset-block-start: 1rem; inset-inline: 1.5rem; }
 }
 
-@media (min-width: 640px) {
-  .folder-home-root:not(.folder-home-root--blank) .folder-home-list-column { contain: size; }
-  .folder-home-root:not(.folder-home-root--blank) .folder-home-list-panel { height: 100%; min-height: 0; }
+@media (max-width: 639px) {
+  .folder-home-shell { height: auto; padding-block-start: 1rem; }
+  .folder-home-main { grid-template-columns: minmax(0, 1fr); }
 }

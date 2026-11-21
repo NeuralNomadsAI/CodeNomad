@@ -6,6 +6,7 @@ import { backends, createBackendClient, localBackend, type BackendClient } from 
 import { backendEvents } from "../lib/backend-events"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { backendIdOf, parseInstanceKey } from "../lib/backend-identity"
+import { allowsAutomaticLocalSetup } from "./app-tabs"
 import { selectBrowserOpenOwner } from "../lib/native/browser"
 import { getPreviewFrameSource } from "../components/browser-frame-security"
 import { closeSessionPreview, dismissSessionPreview, getSessionPreview, openSessionPreview, restoreSessionPreview, sessionPreviews, showSessionChatFor, showSessionPreview, updateSessionPreviewHistory } from "./session-previews"
@@ -274,7 +275,7 @@ test("App host-native browser-open consumer excludes colliding remote owners and
         opened.push(args.slice(0, 3))
         assert.equal(await (args[3] as () => Promise<boolean>)(), true)
       },
-      setShowFolderSelection: () => {}, selectInstanceTab: (id: string) => selected.push(id),
+      selectInstanceTab: (id: string) => selected.push(id),
       setActiveSessionFromList: () => {}, log: { warn: () => {} },
     }
     const consumer = appCallback("openRequestedPreview", boundaries)
@@ -317,7 +318,7 @@ test("App native browser claim and preview continuations retain the admitted att
           if (phase === "open") { admitted(); await gate }
         },
         releaseNativeBrowserOpen: async (request: string) => { released.push(request) },
-        setShowFolderSelection: () => navigated.push("home"), selectInstanceTab: () => navigated.push("tab"),
+        selectInstanceTab: () => navigated.push("tab"),
         setActiveSessionFromList: () => navigated.push("session"), log: { warn: () => {} },
       })
       const request = `host-${phase}-${revoke}`
@@ -341,7 +342,7 @@ test("App native browser claim and preview continuations retain the admitted att
 test("App automatic host setup follows the selected live or restoring backend without gating remote tabs", () => {
   let active: any, saved: any
   const automatic = appCallback("automaticLocalSetup", {
-    activeAppTab: () => active, loadedRestorableSession: () => saved, parseInstanceKey, backendIdOf,
+    activeAppTab: () => active, loadedRestorableSession: () => saved, allowsAutomaticLocalSetup, backendIdOf,
   })
   assert.equal(automatic(), true)
   saved = { tabs: [{ kind: "workspace", folder: "/same", backendId: "remote" }], activeTabIndex: 0 }

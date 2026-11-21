@@ -113,11 +113,11 @@ For Remote Control, paste a fresh pairing link into **Server URL** instead. The 
 
 ## Open a remote project in a tab {#remote-project-tabs}
 
-On Home or in a new tab, choose **Browse**, then a server. Paste an address or pairing link into **Server address or link** to save a server. Sign in if asked. Click a folder to enter it; press Enter in the path field or choose **Open** (the arrow) to open it. **Back to Browse** returns to the server list.
+In an empty tab, choose **Browse**, then a server. Paste an address or pairing link into **Server address or link** to save a server. Sign in if asked. Click a folder to enter it; press Enter in the path field or choose **Open** (the arrow) to open it. **Back to Browse** returns to the server list.
 
 Local and remote projects share the same window. **Recent tabs** shows the selected server’s shortcuts while you browse; mixed recents show the server icon and name for projects opened here. [Restore remote tabs](projects.md#restore-remote-tabs).
 
-In **Settings → Servers**, **Open** selects the server in **Browse**, reusing the empty tab if present.
+In **Settings → Servers**, **Open** selects the server in **Browse**, reusing an empty tab if one is open.
 
 ### `--connect-server` {#connect-server}
 

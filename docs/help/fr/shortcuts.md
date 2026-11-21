@@ -19,7 +19,7 @@ Les affectations sont enregistrées dans la configuration d’interface CodeNoma
 
 ## Valeurs par défaut du moteur de rendu {#renderer-defaults}
 
-`Mod` désigne `Ctrl` sous Windows/Linux et `Cmd` sous macOS. Ce sont des valeurs par défaut, pas des garanties que le système/l’hôte natif transmettra la touche. La portée compte : une même touche peut servir une autre action sur l’accueil, dans la zone de saisie ou la recherche.
+`Mod` désigne `Ctrl` sous Windows/Linux et `Cmd` sous macOS. Ce sont des valeurs par défaut, pas des garanties que le système/l’hôte natif transmettra la touche. La portée compte : une même touche peut servir une autre action dans un onglet vide, dans la zone de saisie ou la recherche.
 
 | Action | Valeur par défaut |
 | --- | --- |
