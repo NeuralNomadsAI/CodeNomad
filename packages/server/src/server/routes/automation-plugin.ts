@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto"
+import { resolve } from "node:path"
 import { isSessionNotFoundError } from "@opencode/client"
 import type { FastifyInstance, FastifyRequest } from "fastify"
 import type { AuthManager } from "../../auth/manager"
@@ -259,7 +260,12 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       if (executionExpired()) return expiredExecution()
       const reads = workspaces.map(async workspace => {
         try { if (await deps.workspaceManager.ownsLocation(workspace.id, location, undefined, { signal, strict: preferenceProbe || browserDiscovery || openingBrowser })) return workspace.id }
-        catch { ownershipReadFailed = true }
+        catch (error) {
+          const failure = error as NodeJS.ErrnoException | undefined
+          const missingRoot = openingBrowser && failure?.code === "ENOENT" && failure.syscall === "realpath"
+            && typeof failure.path === "string" && resolve(failure.path) === resolve(workspace.path)
+          if (!missingRoot) ownershipReadFailed = true
+        }
         throw new Error("Not an owner")
       })
       if (openingBrowser) {
