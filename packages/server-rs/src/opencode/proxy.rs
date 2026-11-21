@@ -156,10 +156,11 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     };
 
     let opened = workspace.location["directory"].as_str().ok_or_else(upstream_error)?;
+    let endpoint = app.native.endpoint().ok_or_else(upstream_error)?;
     if dunce::canonicalize(opened).ok().as_ref() != Some(&workspace.path) {
         return Err(foreign());
     }
-    let mut target = app.native.url();
+    let mut target = endpoint.url.clone();
     target.set_query(head.uri.query());
     let requested = target
         .query_pairs()
@@ -167,7 +168,11 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         .map(|(_, v)| v.into_owned());
     let session_path = route.strip_prefix("/api/session/").or_else(|| route.strip_prefix("/api/experimental/session/"));
     let session = session_path.and_then(|path| path.split('/').next()).filter(|v| !matches!(*v, "active" | "global"));
-    let actual = if let Some(session) = session { Some(session_record(&app, session).await?) } else { None };
+    let actual = if let Some(session) = session {
+        Some(super::session_record_at(&app, &endpoint, session).await?)
+    } else {
+        None
+    };
     // TS checks the session's own location first and names a proven
     // departure, so the UI can drop a conversation moved out of the project.
     let list_slug = match &actual {
@@ -278,6 +283,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         }
     }
     let create = route == "/api/session" && head.method == Method::POST;
+    let mut root_permissions = None;
     let mut input = None;
     if matches!(head.method, Method::POST | Method::PUT) {
         let contents =
@@ -325,13 +331,16 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
                 return Ok(unavailable());
             }
             data.insert("location".into(), json!({"directory": directory}));
+            root_permissions = crate::sessions::permission_mode::new_root(&app, &endpoint, directory, true).await?;
+            if let Some(block) = &root_permissions {
+                data.insert("permissions".into(), block.clone());
+            }
         }
         input = Some(Value::Object(data));
     }
     if head.method == Method::POST && route.ends_with("/prompt") {
         let session = session.ok_or_else(upstream_error)?;
-        let url =
-            app.native.url().join(&format!("/api/session/{session}/environment")).map_err(|_| upstream_error())?;
+        let url = endpoint.url.join(&format!("/api/session/{session}/environment")).map_err(|_| upstream_error())?;
         // Backend secrets and private daemon state never reach a session's environment.
         const PRIVATE: &str = "OPENCODE_PASSWORD OPENCODE_SERVER_PASSWORD CODENOMAD_SERVER_PASSWORD \
             CODENOMAD_AUTOMATION_BRIDGE_TOKEN CODENOMAD_BOOTSTRAP_TOKEN OPENCODE_DB XDG_STATE_HOME OPENCODE_CONFIG_CONTENT";
@@ -344,7 +353,9 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         principal.live()?;
         let response = app
             .native
+            .client
             .request(Method::PUT, url)
+            .basic_auth("opencode", Some(&endpoint.password))
             .json(&json!({"variables":variables}))
             .timeout(Duration::from_secs(15))
             .send()
@@ -353,7 +364,7 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         if !response.status().is_success() {
             return Err(error(Status::BAD_GATEWAY, "Failed to apply session environment"));
         }
-        let fresh = session_record(&app, session).await?;
+        let fresh = super::session_record_at(&app, &endpoint, session).await?;
         if fresh["location"]["directory"] != directory
             || fresh["location"].get("workspaceID").is_some()
             || marker(&fresh)
@@ -363,6 +374,13 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         // `syncSessionMemoryContext`: advisory, bounded to its own 2 s budget.
         crate::memory::sync(&app, session).await;
         principal.live()?;
+        let identity = crate::files::host_identity(std::path::Path::new(directory)).map_err(|_| foreign())?;
+        crate::sessions::permission_mode::refresh_before_send(&app, &endpoint, &fresh, || {
+            principal.live().is_ok()
+                && crate::sessions::permission_mode::workspace_current(&app, &workspace)
+                && crate::files::host_identity(std::path::Path::new(directory)).as_ref().ok() == Some(&identity)
+        })
+        .await?;
     }
     if !explicit && !create && session.is_none() && !matches!(route, "/api/project" | "/api/session/active") {
         target.query_pairs_mut().append_pair(if session_list { "directory" } else { "location[directory]" }, directory);
@@ -371,7 +389,10 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     if !app.inner.lock().unwrap().workspaces.iter().any(|w| w.id == workspace.id) {
         return Err(not_found());
     }
-    let mut upstream = app.native.request(head.method, target);
+    if !app.native.endpoint().is_some_and(|current| std::sync::Arc::ptr_eq(&current, &endpoint)) {
+        return Err(upstream_error());
+    }
+    let mut upstream = app.native.client.request(head.method, target).basic_auth("opencode", Some(&endpoint.password));
     if let Some(accept) = head.headers.get(header::ACCEPT) {
         upstream = upstream.header(header::ACCEPT, accept);
     }
@@ -380,6 +401,25 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     }
     principal.live()?;
     let response = upstream.send().await.map_err(|_| upstream_error())?;
+    if let Some(block) = root_permissions.filter(|_| response.status().is_success()) {
+        let builder = relayed(&response);
+        let native = read_json(response, 2 * 1024 * 1024).await.map_err(|_| upstream_error())?;
+        let row = native.get("data").unwrap_or(&native);
+        let session = row["id"].as_str().ok_or_else(upstream_error)?;
+        let project = row["projectID"].as_str().filter(|s| !s.is_empty()).ok_or_else(upstream_error)?;
+        crate::sessions::permission_mode::confirm_root(
+            &app,
+            &endpoint,
+            directory,
+            project,
+            session,
+            &block,
+            false,
+            || crate::sessions::permission_mode::workspace_current(&app, &workspace),
+        )
+        .await?;
+        return builder.extension(NativeBody).body(Body::from(native.to_string())).map_err(|_| upstream_error());
+    }
     if response.status().is_success() && project.is_some() {
         let builder = relayed(&response);
         let mut native = read_json(response, 8 * 1024 * 1024).await.map_err(|_| upstream_error())?;

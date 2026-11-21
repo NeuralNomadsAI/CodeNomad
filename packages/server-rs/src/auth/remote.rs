@@ -20,6 +20,7 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     [
     ("GET",r"^/api/(?:meta|events|auth/status|filesystem|storage/(?:state/ui|config/(?:ui|server))|panel-extensions|workspaces)$"),
     ("GET",r"^/api/workspaces/[^/]+(?:/(?:worktrees|pending-requests|sessions/[^/]+/permission-receipts))?$"),
+    ("GET PUT",r"^/api/workspaces/[^/]+/sessions/[^/]+/permission-mode$"),
     ("GET",r"^/api/workspaces/[^/]+/(?:files(?:/preview|/search)?|worktrees/[^/]+/(?:git-status|git-diff|git-history(?:/[a-f0-9]+)?))$"),
     ("PUT",r"^/api/workspaces/[^/]+/files/content$"),
     ("POST",r"^/api/workspaces/[^/]+/(?:git-init|worktrees/[^/]+/git-(?:stage|unstage|commit))$"),

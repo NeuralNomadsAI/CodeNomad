@@ -199,11 +199,23 @@ pub fn native_rpc_absent(body: &Value, status: Status) -> bool {
 }
 
 pub async fn session_record(app: &App, id: &str) -> Result<Value, Error> {
+    let endpoint = app.native.endpoint().ok_or_else(upstream_error)?;
+    session_record_at(app, &endpoint, id).await
+}
+
+pub async fn session_record_at(app: &App, endpoint: &Endpoint, id: &str) -> Result<Value, Error> {
     if !valid_id(id) {
         return Err(error(Status::BAD_REQUEST, "Invalid session ID"));
     }
-    let response =
-        app.native.get(&format!("/api/session/{id}")).timeout(Duration::from_secs(4)).send().await.map_err(|e| {
+    let response = app
+        .native
+        .client
+        .get(endpoint.url.join(&format!("/api/session/{id}")).map_err(|_| upstream_error())?)
+        .basic_auth("opencode", Some(&endpoint.password))
+        .timeout(Duration::from_secs(4))
+        .send()
+        .await
+        .map_err(|e| {
             bench::route_trace(format_args!(
                 "session-record send-failed timeout={} connect={} chain={:?}",
                 e.is_timeout(),

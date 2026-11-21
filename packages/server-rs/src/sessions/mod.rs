@@ -4,6 +4,7 @@ pub mod contracts;
 pub mod favorites;
 pub mod history;
 pub mod pending;
+pub mod permission_mode;
 pub mod receipts;
 
 use axum::{
@@ -20,5 +21,9 @@ pub fn routes(shutdown: CancellationToken) -> Router<Shared> {
         .route("/api/workspaces/{id}/session-favorites", get(favorites::list))
         .route("/api/workspaces/{id}/session-favorites/{session}", put(favorites::update))
         .route("/api/workspaces/{id}/sessions/{session}/permission-receipts", get(receipts::list))
+        .route(
+            "/api/workspaces/{id}/sessions/{session}/permission-mode",
+            get(permission_mode::routes::handle).put(permission_mode::routes::handle),
+        )
         .route("/api/workspaces/{id}/session-history/{action}", post(history::handle))
 }

@@ -35,7 +35,7 @@ UI (Solid) ──HTTP + SSE──▶ codenomad-rs ──HTTP, basic auth, loopba
 | `src/events/` | Per-session daemon event routing and per-subscriber SSE queues (4 MiB each, 32 MiB shared). Backlogs fold superseding events; overflow triggers workspace resynchronization. |
 | `src/files/`, `search/`, `git/` | Project files and links, folder browser (any local folder with `--unrestricted-root`), file search, Git status/diff/history/mutations |
 | `src/worktrees/` | Owned checkouts, linked worktrees, location ownership, deletion fence |
-| `src/sessions/` | Pending requests, permission receipts, favorites, history navigation |
+| `src/sessions/` | Pending requests, permission receipts, permission modes, favorites, history navigation |
 | `src/memory/` | Agent memory: private Git store, Preferences routes, native tool bridge |
 | `src/extensions/` | Panel extensions; bundled plugin provisioning, readiness, lifecycle |
 | `src/subagent_depth/` | `subagent-depth` settings and JSONC edits |
@@ -60,5 +60,7 @@ cargo build --release --locked
 ```
 
 Behaviour must match `packages/server`: every change runs the matching comparison in `bench/` (`node compare.mjs <mode> <opencode>`). Parity cases are regenerated from the TypeScript sources with `bench/generate-*.mjs`.
+
+Conversation permission modes cover owned unforked roots and family lookup. The backend projects the profile preference on ordinary and paused Mission root creation and refreshes positively owned root blocks before supported sends; ownership shares the private `sessionPermissionBlocks` state with TypeScript. Child/fork provenance, background refresh on native events or reconnect, private-state pruning after deletion, and managed actor-root creation belong to the TypeScript implementation.
 
 Known divergence: when a platform package does not match its registry integrity, the TypeScript server installs it anyway through `@opencode/cli`'s postinstall fallback; Rust refuses it (`bench/opencode-install.mjs`). OpenCode 1.x npm replacement is not ported: such an installation is refused.

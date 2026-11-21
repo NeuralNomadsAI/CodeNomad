@@ -15,7 +15,7 @@ import { assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
 import { browserFiles, populate } from "./files.mjs"
 import { browserWorktrees } from "./worktrees.mjs"
 
-const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
+const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "mission-permissions", "solid"]
 const [mode, exe] = process.argv.slice(2)
 assert(MODES.includes(mode) && path.isAbsolute(exe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)
 const bin = rustBinary()
@@ -105,6 +105,8 @@ async function start(label, fixture, folder, password, trustedCA) {
   await assertPrivateProfile(root, env, resolveConfigLocation(env.CLI_CONFIG))
   const uiDir = await bench?.ui?.(root) ?? path.join(out, "ui")
   if (bench?.ui) env.CNRS_FIXTURE_UI_DIR = uiDir
+  const relay = await bench?.nativeRelay?.(fixture)
+  if (relay) env.CNRS_FIXTURE_URL = relay.url
   const child = label === "ts"
     ? spawn(process.execPath, [path.join(import.meta.dirname, "ts-server.mjs"), "--http", "true", "--http-port", String(port), "--https", "false",
       "--ui-no-update", "--ui-dir", uiDir, "--config", env.CLI_CONFIG, "--workspace-root", folder],
@@ -118,6 +120,7 @@ async function start(label, fixture, folder, password, trustedCA) {
   const request = (route, init) => fetch(`${listen}${route}`, { signal: AbortSignal.timeout(HTTP_TIMEOUT), redirect: "manual", ...init })
   const close = async () => {
     if (!spawnError && child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, stopped)
+    await relay?.close()
     await dropRegistration(fixture.env, child.pid)
     const leaked = (bench?.secrets?.() ?? []).filter(secret => output.includes(secret))
     const safe = leaked.reduce((text, secret) => text.replaceAll(secret, "<redacted>"), output)
