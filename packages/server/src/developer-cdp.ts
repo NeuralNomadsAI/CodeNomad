@@ -635,11 +635,17 @@ export class DeveloperCdp {
     }
     await open
     if (!enable) return
-    await this.command(state, "Page.enable")
-    const result = await this.command(state, "Page.getFrameTree")
-    state.mainFrameId ??= (result.frameTree as { frame?: { id?: string } } | undefined)?.frame?.id
-    await this.command(state, "Runtime.enable")
-    await this.command(state, "Accessibility.enable")
+    try {
+      await this.command(state, "Page.enable")
+      const result = await this.command(state, "Page.getFrameTree")
+      state.mainFrameId ??= (result.frameTree as { frame?: { id?: string } } | undefined)?.frame?.id
+      if (!state.mainFrameId) throw new Error("CDP did not report the main frame")
+      await this.command(state, "Runtime.enable")
+      await this.command(state, "Accessibility.enable")
+    } catch (error) {
+      if (state.socket === socket) this.disconnect(state, new Error("CDP initialization failed"))
+      throw error
+    }
   }
 
   private command(

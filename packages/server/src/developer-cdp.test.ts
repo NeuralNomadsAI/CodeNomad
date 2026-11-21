@@ -169,6 +169,27 @@ const identity = {
 }
 
 describe("DeveloperCdp", () => {
+  it("does not publish an inspection through a partially initialized CDP socket", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client({ timeoutMs: 40 })
+    try {
+      chrome.skipReply = command => command.method === "Page.getFrameTree"
+      await assert.rejects(client.inspect(identity), /Page.getFrameTree timed out/)
+      const incomplete = chrome.sockets.at(-1)
+      assert.ok(incomplete?.closed)
+      chrome.skipReply = undefined
+      const { document } = await client.inspect(identity)
+      assert.notEqual(chrome.sockets.at(-1), incomplete)
+      assert.ok(chrome.commands.some(command => command.method === "Runtime.enable"))
+      const socket = chrome.sockets.at(-1)!
+      const context = (id: number) => ({ context: { id, auxData: { isDefault: true, frameId: "main" } } })
+      socket.emit("Runtime.executionContextCreated", context(1))
+      socket.emit("Runtime.executionContextCreated", context(2))
+      await assert.rejects(client.screenshot({ ...identity, document }), /Page changed/)
+      assert.ok(chrome.commands.every(command => command.method !== "Page.captureScreenshot"))
+    } finally { client.close() }
+  })
+
   it("does not reopen a retired run for an inspection already in its queue", async () => {
     const chrome = new FakeChrome()
     const client = chrome.client()
