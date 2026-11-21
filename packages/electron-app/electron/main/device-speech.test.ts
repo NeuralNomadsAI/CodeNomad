@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { EventEmitter } from "node:events"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { registerHooks } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -9,12 +9,11 @@ import type { BrowserWindow, IpcMainInvokeEvent, Session, WebContents } from "el
 import { isDeviceSpeechRequest } from "../../../desktop-speech/contract"
 import vectors from "../../../desktop-speech/request-vectors.json"
 import { DeviceSpeech, DeviceSpeechPreference, type DeviceSpeechDriver, type SpeechOperationControl } from "./device-speech"
-import { createSystemSpeechDriver } from "./device-speech-system"
 import { setupDeviceSpeechIPC } from "./device-speech-ipc"
 
 test("an unused remote microphone reservation expires; an authorized one stays held until revocation", t => {
   let now = 0
-  const { device } = fixture(t, undefined, undefined, () => now)
+  const { device } = fixture(t, undefined, () => now)
   const claim = (owner: number, remote = false) => device.request(owner, {
     action: "claimMicrophone", id: "c2d420ea-2677-4dbd-a521-92435a6ba004", purpose: "dictation",
   }, remote)
@@ -43,7 +42,7 @@ test("a remote microphone permission request cannot grant a reservation expired 
   t.after(() => hooks.deregister())
   const { configureMediaPermissionHandlers } = await import("./permissions")
   let now = 0
-  const { device } = fixture(t, undefined, undefined, () => now)
+  const { device } = fixture(t, undefined, () => now)
   const claim = (owner: number) => device.request(owner, {
     action: "claimMicrophone", id: "c2d420ea-2677-4dbd-a521-92435a6ba004", purpose: "conversation",
   }, true)
@@ -72,11 +71,11 @@ test("a remote microphone permission request cannot grant a reservation expired 
   assert.deepEqual(claim(1), { ok: true, value: { busy: "conversation" } })
 })
 
-function fixture(t: TestContext, driver?: DeviceSpeechDriver, hexDriver?: DeviceSpeechDriver, now?: () => number) {
+function fixture(t: TestContext, hexDriver?: DeviceSpeechDriver, now?: () => number) {
   const directory = mkdtempSync(join(tmpdir(), "codenomad-speech-"))
   const path = join(directory, "choice.json")
   const preference = new DeviceSpeechPreference(path)
-  const device = new DeviceSpeech(preference, driver, hexDriver, now)
+  const device = new DeviceSpeech(preference, hexDriver, now)
   t.after(() => { device.revokeAll(); rmSync(directory, { recursive: true, force: true }) })
   return { device, preference, path }
 }
@@ -89,18 +88,15 @@ test("device speech parses the shared native wire vectors", () => {
   for (const { request, valid } of vectors) assert.equal(isDeviceSpeechRequest(request), valid, JSON.stringify(request))
 })
 
-test("an unsupported system choice stays saved until the user selects another engine", {
-  skip: process.platform === "darwin",
-}, t => {
-  const { device, preference } = fixture(t, createSystemSpeechDriver("unused"))
-  assert.equal(preference.select("system"), undefined)
-  const saved = preference.read()
+test("a saved system choice blocks native capture and is preserved until explicit reselection", t => {
+  const { device, preference, path } = fixture(t)
+  const saved = JSON.stringify({ version: 1, engine: "system", revision: "c2d420ea-2677-4dbd-a521-92435a6ba004" })
+  writeFileSync(path, saved)
   assert.deepEqual(device.request(1, { action: "read" }), { ok: true, value: {
-    engine: "system", system: "unavailable", systemReason: "platformUnsupported", hex: { state: "unavailable" },
+    engine: null, hex: { state: "unavailable" },
   } })
   assert.deepEqual(device.request(1, { action: "start", locale: "en" }), { ok: false, error: "unavailable" })
-  assert.deepEqual(device.request(1, { action: "select", engine: "system" }), { ok: false, error: "unavailable" })
-  assert.deepEqual(preference.read(), saved)
+  assert.equal(readFileSync(path, "utf8"), saved)
   assert.equal(device.request(1, { action: "select", engine: "api" }).ok, true)
   assert.equal(preference.read().engine, "api")
 })
@@ -108,11 +104,11 @@ test("an unsupported system choice stays saved until the user selects another en
 test("microphone reservations compete across owners and native dictation stays busy through driver shutdown", async (t) => {
   let finish!: (text: string) => void
   const { device, preference } = fixture(t, {
-    capabilities: () => ({ system: "ready", systemLocales: ["en-US"], hex: { state: "unavailable" } }),
+    capabilities: () => ({ hex: { state: "ready", plan: { id: "ready", missing: [] } } }),
     prepare: async () => {},
     dictate: () => new Promise(resolve => { finish = resolve }),
   })
-  assert.equal(preference.select("system"), undefined)
+  assert.equal(preference.select("hex"), undefined)
   const id = "c0de0001-1234-4567-8abc-0123456789ab"
   const claim = (owner: number, purpose: "test" | "dictation" | "conversation") =>
     device.request(owner, { action: "claimMicrophone", id, purpose })
@@ -126,7 +122,7 @@ test("microphone reservations compete across owners and native dictation stays b
   assert.deepEqual(claim(2, "dictation"), occupied("test"), "the old document can still be closing")
   device.revokeRendererMicrophone(1)
   assert.deepEqual(claim(2, "dictation"), occupied(null))
-  const start = device.request(2, { action: "start", engine: "system", locale: "en-US", microphoneLeaseId: id })
+  const start = device.request(2, { action: "start", engine: "hex", locale: "en-US", microphoneLeaseId: id })
   assert.ok(start.ok && start.value && "id" in start.value)
   await tick()
   device.revoke(2)
@@ -139,14 +135,12 @@ test("microphone reservations compete across owners and native dictation stays b
 test("unconfigured desktop preserves API; only supported choices can be written", (t) => {
   const { device, preference, path } = fixture(t)
   assert.deepEqual(device.request(1, { action: "read" }), {
-    ok: true, value: { engine: "api", system: "unavailable", hex: { state: "unavailable" } },
+    ok: true, value: { engine: "api", hex: { state: "unavailable" } },
   })
-  for (const engine of ["hex", "system"] as const) {
-    assert.deepEqual(device.request(1, { action: "select", engine }), { ok: false, error: "unavailable" })
-  }
-  assert.equal(preference.select("system"), undefined)
+  assert.deepEqual(device.request(1, { action: "select", engine: "hex" }), { ok: false, error: "unavailable" })
+  assert.equal(preference.select("api"), undefined)
   const { revision } = preference.read()
-  assert.equal(new DeviceSpeechPreference(path).read().engine, "system")
+  assert.equal(new DeviceSpeechPreference(path).read().revision, revision)
   assert.equal(preference.select("api"), undefined)
   assert.equal(preference.select("hex", revision), "planChanged")
   assert.equal(preference.read().engine, "api")
@@ -160,13 +154,12 @@ test("one owner prepares the exact current plan; cancellation waits for the driv
   const ready = { id: "ready", missing: [] }
   let prepared = false
   const { device, preference } = fixture(t, {
-    capabilities: () => ({ system: "ready", hex: prepared ? { state: "ready", plan: ready } : {
+    capabilities: () => ({ hex: prepared ? { state: "ready", plan: ready } : {
       state: "needsPreparation", plan: { id: download.id, missing: [...download.missing] },
     } }),
     prepare: (_plan, control) => new Promise<void>((finish) => pending.push({ control, finish })),
     dictate: async () => "",
   })
-  assert.equal(preference.select("system"), undefined)
   assert.deepEqual(device.request(2, { action: "prepare", planId: "old" }), { ok: false, error: "planChanged" })
   const start = device.request(2, { action: "prepare", planId: download.id })
   assert.ok(start.ok && start.value && "id" in start.value)
@@ -183,7 +176,7 @@ test("one owner prepares the exact current plan; cancellation waits for the driv
   pending[0].finish()
   await tick()
   assert.deepEqual(device.request(2, { action: "status", id }), { ok: true, value: { state: "cancelled" } })
-  assert.equal(preference.read().engine, "system")
+  assert.equal(preference.read().engine, "api")
 
   const retry = device.request(2, { action: "prepare", planId: download.id })
   assert.ok(retry.ok && retry.value && "id" in retry.value)
@@ -199,55 +192,19 @@ test("one owner prepares the exact current plan; cancellation waits for the driv
   assert.equal(pending.length, 2, "zero missing components never invoke preparation")
 })
 
-test("only owner stops normally; permission revocation discards a late transcript", async (t) => {
-  let control!: SpeechOperationControl
-  let ingest!: (text: string) => void
-  const { device, preference } = fixture(t, {
-    capabilities: () => ({ system: "ready", systemLocales: ["en-US"], hex: { state: "unavailable" } }),
-    prepare: async () => {},
-    dictate: (_engine, _locale, commands) => {
-      control = commands
-      return new Promise((finish) => { ingest = finish })
-    },
-  })
-  assert.equal(preference.select("system"), undefined)
-  assert.deepEqual(device.request(1, { action: "start", locale: "en-GB" }), { ok: false, error: "localeUnavailable" })
-  assert.equal(typeof control, "undefined", "an unavailable locale never starts capture")
-  const start = device.request(1, { action: "start", locale: "en-US" })
-  assert.ok(start.ok && start.value && "id" in start.value)
-  const id = start.value.id
-  await tick()
-  control.progress({ state: "recording", text: "Early text" })
-  assert.deepEqual(device.request(1, { action: "status", id }), { ok: true, value: { state: "recording", text: "Early text" } })
-  assert.deepEqual(device.request(2, { action: "status", id }), notOwned)
-  assert.deepEqual(device.request(2, { action: "start", locale: "fr-FR" }), busy)
-  assert.deepEqual(device.request(2, { action: "finish", id }), notOwned)
-  assert.equal(control.finish.aborted, false)
-  assert.deepEqual(device.request(1, { action: "finish", id }), { ok: true, value: null })
-  assert.equal(control.finish.aborted, true)
-  control.progress({ state: "recording", text: "Late preview" })
-  assert.deepEqual(device.request(1, { action: "status", id }), { ok: true, value: { state: "recording" } })
-  control.revokePermission()
-  assert.equal(control.signal.aborted, true)
-  ingest("This must never leave the driver")
-  await tick()
-  assert.deepEqual(device.request(1, { action: "status", id }), { ok: true, value: { state: "error", error: "permissionDenied" } })
-})
-
 test("only the initiating Hex capture can submit one canonical WAV", async (t) => {
   const wav = Buffer.from("524946462600000057415645666d74201000000001000100803e0000007d00000200100064617461020000000000", "hex")
   const observed: Buffer[] = []
-  const { device } = fixture(t, undefined, {
-    capabilities: () => ({ system: "unavailable", hex: { state: "ready", plan: { id: "ready", missing: [] } } }),
+  const { device } = fixture(t, {
+    capabilities: () => ({ hex: { state: "ready", plan: { id: "ready", missing: [] } } }),
     prepare: async () => { assert.fail("already ready") },
-    dictate: async (_engine, _locale, control) => {
+    dictate: async control => {
       const audio = await control.waitForAudio()
       if (audio) observed.push(audio)
       return "bonjour"
     },
   })
   assert.equal(device.request(2, { action: "select", engine: "hex" }).ok, true)
-  assert.deepEqual(device.request(1, { action: "start", engine: "system", locale: "en" }), { ok: false, error: "unavailable" })
   const start = device.request(1, { action: "start", engine: "hex", locale: "fr" })
   assert.ok(start.ok && start.value && "id" in start.value)
   const id = start.value.id

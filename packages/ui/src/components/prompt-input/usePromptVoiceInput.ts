@@ -36,7 +36,6 @@ const sameSelection = (field: HTMLTextAreaElement, captured: TextSelection) =>
 export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
   const { t, locale } = useI18n()
   const [state, setState] = createSignal<RecordingState>("idle")
-  const [recordingPreview, setRecordingPreview] = createSignal("")
   const transcript = () => {
     if (!options.active()) return
     const saved = promptTranscript(options.instanceId(), options.sessionId())
@@ -65,7 +64,6 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     if (!capture) return
     setActiveCapture(undefined)
     capture.controller?.cancelRecording()
-    setRecordingPreview("")
     setState("idle")
   }
 
@@ -98,7 +96,7 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     const purpose = microphoneUse()
     if (purpose) return `voice.microphone.${purpose}`
     if (engine()?.canStart()) return
-    if (deviceDictation?.languageMissing()) return "settings.speech.device.localeUnavailable"
+    if (deviceDictation?.choice() === null || remoteDictation?.choice() === null) return "settings.speech.device.chooseLocal"
     if (engine() === apiEngine && !apiCaptureAvailable()) {
       if (typeof window !== "undefined" && !window.isSecureContext) return "voice.command.secureContext"
       return "voice.microphone.unavailable"
@@ -134,10 +132,8 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
       onStateChange: value => {
         if (activeCapture() !== capture) return
         if (value === "idle") setActiveCapture(undefined)
-        if (value !== "recording") setRecordingPreview("")
         setState(value)
       },
-      onRecordingPreview: text => { if (held()) setRecordingPreview(text) },
       onTranscript: text => {
         if (!held() || delivered || !text) return
         delivered = true
@@ -180,7 +176,6 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
 
   return {
     state,
-    recordingPreview,
     unavailableKey,
     canStartRecording,
     startRecording,

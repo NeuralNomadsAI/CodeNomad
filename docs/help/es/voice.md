@@ -30,7 +30,7 @@ Son solicitudes al servicio configurado, no una garantía de que todos los endpo
 2. Elige **Probar entrada por API**, concede permiso de micrófono, habla y después **Detener grabación**. Comprueba la transcripción devuelta.
 3. Elige **Probar reproducción** para escuchar la muestra; **Detener muestra** la finaliza.
 
-La prueba de reproducción usa inmediatamente el modo y el formato seleccionados, pero el endpoint, la clave, el modelo y la voz proceden de los ajustes guardados. **Probar entrada por API** envía el audio al proveedor de API configurado aunque hayas seleccionado Hex o el reconocimiento del sistema. No envía un mensaje de conversación. El proveedor puede cobrar por estas pruebas.
+La prueba de reproducción usa inmediatamente el modo y el formato seleccionados, pero el endpoint, la clave, el modelo y la voz proceden de los ajustes guardados. **Probar entrada por API** envía audio al proveedor de API configurado, sea cual sea el motor de dictado. No envía un mensaje de conversación. El proveedor puede cobrar por estas pruebas.
 
 ## Dictar un mensaje {#dictate}
 
@@ -43,13 +43,11 @@ Si la API recurre a WAV en Tauri para Linux, el dictado y la prueba de entrada d
 
 Las grabaciones comprimidas para la API también se detienen al alcanzar el límite de tamaño y ofrecen **Transcribir** o **Cancelar**.
 
-Con el reconocimiento del sistema, aparece una vista previa mientras hablas. Puedes seguir editando el borrador: solo se puede insertar la transcripción final.
-
 ### Elegir un motor en el escritorio {#desktop-dictation}
 
 En **Preferencias → Voz → Dictado** de la aplicación de escritorio local, elige el **Motor de dictado en este dispositivo**. La elección se aplica a todos los proyectos del dispositivo. **Proveedor de API** usa los ajustes del servidor conectado y necesita un contexto seguro para el micrófono.
 
-- El **Reconocimiento local del sistema** está disponible en macOS si hay un motor local instalado para el idioma de la aplicación. En Windows o Linux, elige **Hex (local)** si se ofrece o **Proveedor de API**. Si una ventana remota indica que el motor del sistema guardado no es compatible, cámbialo en **Preferencias → Voz → Dictado** de la aplicación local.
+- Si el motor guardado no está disponible, elige aquí **Hex (local)**, si se ofrece, o **Proveedor de API**. En los Mac Intel o con una versión anterior a macOS 15, usa **Proveedor de API**.
 - Voz muestra qué componentes faltan y el tamaño de descarga de cada uno y del total. Un clic en **Activar Hex** verifica y reutiliza los archivos compatibles, descarga lo que falta y selecciona Hex cuando está listo. Sigue el progreso en Voz. Puedes usar **Cancelar la activación de Hex** y, cuando aparezca, **Reanudar la activación de Hex**. Si falla o se cancela, se mantiene el motor anterior. Abrir Preferencias, seleccionar **Hex (local)** cuando ya está listo o dictar con él no inicia otra descarga.
 - Hex se ofrece en equipos compatibles: Windows x64/arm64, Apple Silicon con macOS 15 o posterior y Linux x64/arm64 con glibc 2.36 o posterior y las bibliotecas que requiere Hex. Los Mac Intel y los sistemas Linux con una glibc anterior o con musl no son compatibles. El motor y los modelos se obtienen aparte del instalador de CodeNomad; no hace falta usar la terminal ni una clave de API.
 

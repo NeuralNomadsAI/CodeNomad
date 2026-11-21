@@ -296,7 +296,7 @@ pub(crate) fn with_api_microphone_document<T>(
         || !entry.dictation_document.ready
         || !is_microphone_document(entry, current)
         || !purpose
-            .allows_engine(|| app.state::<DeviceSpeech>().preferred_engine() == Ok(Engine::Api))
+            .allows_engine(|| app.state::<DeviceSpeech>().preferred_engine() == Ok(Some(Engine::Api)))
     {
         return None;
     }
@@ -528,7 +528,7 @@ fn remote_request(
     let speech = app.state::<DeviceSpeech>();
     let read_choice = || {
         speech
-            .remote_choice()
+            .preferred_engine()
             .map_err(|_| "Device speech preference unavailable")
     };
     match request {
@@ -565,7 +565,7 @@ fn remote_request(
             if !is_microphone_document(registered, &current)
                 || !registered.dictation_document.allows(id)
                 || !focused
-                || !purpose.allows_engine(|| speech.preferred_engine() == Ok(Engine::Api))
+                || !purpose.allows_engine(|| speech.preferred_engine() == Ok(Some(Engine::Api)))
             {
                 return Err("API microphone requires the focused remote application document");
             }
@@ -589,7 +589,7 @@ fn remote_request(
                 .ok_or("unavailable")?;
             if !capture
                 .purpose()
-                .allows_engine(|| speech.preferred_engine() == Ok(Engine::Api))
+                    .allows_engine(|| speech.preferred_engine() == Ok(Some(Engine::Api)))
             {
                 return Err("unavailable");
             }
@@ -643,7 +643,7 @@ fn remote_request(
             let (target, generation) =
                 backend_target(&state, &locale, &registered.dictation_destination)
                     .ok_or("Local dictation backend unavailable")?;
-            if !matches!(read_choice()?, Some(Engine::System | Engine::Hex)) {
+            if read_choice()? != Some(Engine::Hex) {
                 return Err("Select native dictation in local Preferences");
             }
             let relay = app.state::<RemoteDictation>();

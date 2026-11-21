@@ -1,14 +1,8 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup } from "solid-js"
 import { useI18n } from "../../lib/i18n"
 import { hexCaptureAvailable } from "../../lib/hex-capture"
-import { resolveSystemSpeechLocale, type DeviceSpeechSnapshot, type SpeechEngine } from "../../lib/native/device-speech"
+import type { DeviceSpeechSnapshot, SpeechEngine } from "../../lib/native/device-speech"
 import type { useDeviceSpeechSettings } from "./use-device-speech-settings"
-
-export function deviceSystemLabel(snapshot: DeviceSpeechSnapshot | undefined, locale: string) {
-  if (snapshot?.system !== "ready") return `settings.speech.device.${snapshot?.systemReason ?? "unavailable"}`
-  return resolveSystemSpeechLocale(snapshot.systemLocales ?? [], locale)
-    ? "settings.speech.device.system" : "settings.speech.device.localeUnavailable"
-}
 
 export function deviceHexLabel(snapshot: DeviceSpeechSnapshot | undefined) {
   if (!hexCaptureAvailable()) return "settings.speech.device.hexUnavailable"
@@ -38,8 +32,7 @@ export function DeviceSpeechSettings(props: { speech: ReturnType<typeof useDevic
       .format(Math.ceil(bytes / divisor * 100) / 100)
   }
   const isolatedSize = (bytes: number) => `\u2068${formatSize(bytes)}\u2069`
-  const systemKey = () => deviceSystemLabel(speech.snapshot(), locale())
-  const showSystem = () => speech.snapshot()?.systemReason !== "platformUnsupported" || speech.snapshot()?.engine === "system"
+  const selected = () => speech.snapshot()?.engine ?? ""
   const hexKey = () => deviceHexLabel(speech.snapshot())
   const errorKey = () => {
     switch (speech.error()) {
@@ -76,19 +69,19 @@ export function DeviceSpeechSettings(props: { speech: ReturnType<typeof useDevic
             class="selector-input w-full min-w-0 sm:max-w-[24rem]"
             ref={element => {
               engineSelect = element
-              createEffect(() => { element.value = speech.snapshot()?.engine ?? "api" })
+              createEffect(() => { element.value = selected() })
             }}
             disabled={!speech.canChange()}
             onChange={event => {
               const engine = event.currentTarget.value as SpeechEngine
-              event.currentTarget.value = speech.snapshot()?.engine ?? "api"
+              event.currentTarget.value = selected()
               void speech.select(engine)
             }}
           >
-            <option value="api">{t("settings.speech.device.api")}</option>
-            <Show when={showSystem()}>
-              <option value="system" disabled={systemKey() !== "settings.speech.device.system"}>{t(systemKey())}</option>
+            <Show when={speech.snapshot()?.engine === null}>
+              <option value="" disabled>{t("settings.voice.unavailable")}</option>
             </Show>
+            <option value="api">{t("settings.speech.device.api")}</option>
             <option value="hex" disabled={hexKey() !== "settings.speech.device.hex"}>{t(hexKey())}</option>
           </select>
         </label>

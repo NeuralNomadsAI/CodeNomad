@@ -1,14 +1,13 @@
 import type { Accessor } from "solid-js"
-import { requestDeviceSpeech, resolveSystemSpeechLocale, type DeviceSpeechSnapshot, type LocalSpeechEngine } from "../../lib/native/device-speech"
+import { requestDeviceSpeech, type DeviceSpeechSnapshot } from "../../lib/native/device-speech"
 import { isElectronHost, isLocalWindow, isTauriHost } from "../../lib/runtime-env"
-import { createNativeRecordingController, hexCaptureAvailable } from "./hex-recording-controller"
+import { createHexRecordingController } from "./hex-recording-controller"
+import { hexCaptureAvailable } from "../../lib/hex-capture"
 import type { VoiceInputEngine } from "./recording-controller"
 import { createDictationSnapshot } from "./dictation-snapshot"
 
-export function availableLocalDictation(snapshot: DeviceSpeechSnapshot | undefined, locale: string): LocalSpeechEngine | undefined {
-  if (snapshot?.engine === "hex" && snapshot.hex.state === "ready" && hexCaptureAvailable()) return "hex"
-  if (snapshot?.engine === "system" && snapshot.system === "ready"
-    && resolveSystemSpeechLocale(snapshot.systemLocales ?? [], locale)) return "system"
+export function canUseHexDictation(snapshot: DeviceSpeechSnapshot | undefined): boolean {
+  return snapshot?.engine === "hex" && snapshot.hex.state === "ready" && hexCaptureAvailable()
 }
 
 const device = createDictationSnapshot(async () => {
@@ -20,25 +19,20 @@ export function useDeviceDictation(locale: () => string, active: Accessor<boolea
   if (!isLocalWindow() || (!isTauriHost() && !(isElectronHost() && window.electronAPI?.deviceSpeech))) return
   const { snapshot } = device
   device.use(active)
-  const engine = (kind: LocalSpeechEngine): VoiceInputEngine => ({
-    canStart: () => availableLocalDictation(snapshot(), locale()) === kind,
-    createController: callbacks => createNativeRecordingController(kind, locale(), callbacks),
-  })
-  const system = engine("system"), hex = engine("hex")
+  const hex: VoiceInputEngine = {
+    canStart: () => canUseHexDictation(snapshot()),
+    createController: callbacks => createHexRecordingController(locale(), callbacks),
+  }
   return {
     readFailed: device.readFailed,
-    languageMissing: () => {
-      const current = snapshot()
-      return current?.engine === "system" && current.system === "ready" &&
-        !resolveSystemSpeechLocale(current.systemLocales ?? [], locale())
-    },
+    choice: () => snapshot()?.engine,
     async authorizeApi() {
       return (await device.readFresh())?.engine === "api"
     },
     route: (api: VoiceInputEngine) => {
       if (device.readFailed()) return
       const choice = snapshot()?.engine
-      return choice === "api" ? api : choice === "system" ? system : choice === "hex" ? hex : undefined
+      return choice === "api" ? api : choice === "hex" ? hex : undefined
     },
   }
 }

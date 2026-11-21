@@ -3,15 +3,14 @@ import { closeSync, mkdirSync, openSync, readSync, renameSync, rmSync, writeFile
 import { dirname } from "node:path"
 import { SelectionLock } from "./profile-transition"
 import { decodeHexAudio } from "./device-speech-hex"
-import { SystemSpeechFailure } from "./device-speech-system"
 import { HexFailure } from "../../../desktop-speech/hex-files.mjs"
 import {
-  isSpeechEngine, maxDeviceSpeechTextBytes, resolveSystemSpeechLocale, type DeviceSpeechCapabilities, type DeviceSpeechError,
+  isSpeechEngine, maxDeviceSpeechTextBytes, type DeviceSpeechCapabilities, type DeviceSpeechError,
   type DeviceSpeechOperation, type DeviceSpeechRequest, type DeviceSpeechResponses,
-  type DeviceSpeechResult, type HexPlan, type LocalSpeechEngine, type MicrophonePurpose, type SpeechEngine,
+  type DeviceSpeechResult, type HexPlan, type MicrophonePurpose, type SpeechEngine,
 } from "../../../desktop-speech/contract"
 
-const unavailable: DeviceSpeechCapabilities = { system: "unavailable", hex: { state: "unavailable" } }
+const unavailable: DeviceSpeechCapabilities = { hex: { state: "unavailable" } }
 const ok = <T>(value: T) => ({ ok: true, value } as const)
 const error = (error: DeviceSpeechError) => ({ ok: false, error } as const)
 const terminal = (state: DeviceSpeechOperation["state"]) =>
@@ -19,9 +18,7 @@ const terminal = (state: DeviceSpeechOperation["state"]) =>
 
 export interface SpeechOperationControl {
   signal: AbortSignal
-  finish: AbortSignal
   waitForAudio(): Promise<Buffer | undefined>
-  revokePermission(): void
   progress(value: Extract<DeviceSpeechOperation, { state: "downloading" | "recording" }> |
     { state: "transcribing" | "verifying" }): void
 }
@@ -29,14 +26,14 @@ export interface DeviceSpeechDriver {
   // Read-only discovery. A plan id covers the exact components, retained partial bytes and approved sources.
   capabilities(): DeviceSpeechCapabilities
   prepare(plan: HexPlan, control: SpeechOperationControl): Promise<void>
-  // Resolve after capture and inference have stopped. Observe live OS permission; never fall back to API.
-  dictate(engine: LocalSpeechEngine, locale: string, control: SpeechOperationControl): Promise<string>
+  // Resolve after inference has stopped.
+  dictate(control: SpeechOperationControl): Promise<string>
 }
 
 export class DeviceSpeechPreference {
   constructor(private path: string) {}
 
-  read(): { engine: SpeechEngine; revision: string } {
+  read(): { engine: SpeechEngine | null; revision: string } {
     let fd: number
     try { fd = openSync(this.path, "r") } catch (cause) {
       if ((cause as NodeJS.ErrnoException).code === "ENOENT") return { engine: "api", revision: "" }
@@ -47,11 +44,11 @@ export class DeviceSpeechPreference {
       const size = readSync(fd, buffer, 0, buffer.length, null)
       if (size === buffer.length) throw new Error("Speech preference is oversized")
       const value = JSON.parse(buffer.toString("utf8", 0, size))
-      if (value?.version !== 1 || !isSpeechEngine(value.engine) ||
+      if (value?.version !== 1 || (value.engine !== "system" && !isSpeechEngine(value.engine)) ||
           typeof value.revision !== "string" || !/^[a-f0-9-]{36}$/.test(value.revision)) {
         throw new Error("Invalid speech preference")
       }
-      return { engine: value.engine, revision: value.revision }
+      return { engine: value.engine === "system" ? null : value.engine, revision: value.revision }
     } finally { closeSync(fd) }
   }
 
@@ -80,18 +77,17 @@ type Slot = {
   operation: "prepare" | "start"
   abort: AbortController
   finish: AbortController
-  expectsAudio?: boolean
   audio?: Buffer
   lease?: NodeJS.Timeout
   state: DeviceSpeechOperation
-  reason?: "permissionDenied" | "failed"
+  reason?: "failed"
 }
 
 export class DeviceSpeech {
   private slots = new Map<"prepare" | "start", Slot>()
   private microphone?: { owner: number; id: string; purpose: MicrophonePurpose; expiresAt?: number }
 
-  constructor(private preference: DeviceSpeechPreference, private driver?: DeviceSpeechDriver, private hexDriver?: DeviceSpeechDriver,
+  constructor(private preference: DeviceSpeechPreference, private hexDriver?: DeviceSpeechDriver,
     private now = Date.now) {}
 
   private currentMicrophone() {
@@ -107,8 +103,7 @@ export class DeviceSpeech {
   }
 
   private capabilities(): DeviceSpeechCapabilities {
-    const fallback = this.driver?.capabilities() ?? unavailable
-    return this.hexDriver ? { ...fallback, hex: this.hexDriver.capabilities().hex } : fallback
+    return this.hexDriver?.capabilities() ?? unavailable
   }
 
   request(owner: number, input: DeviceSpeechRequest, remote = false): DeviceSpeechResult<DeviceSpeechResponses[keyof DeviceSpeechResponses]> {
@@ -128,15 +123,14 @@ export class DeviceSpeech {
         case "select": {
           if (this.active("prepare")) return error("busy")
           const current = snapshot()
-          if ((input.engine === "system" && current.system !== "ready") ||
-              (input.engine === "hex" && current.hex.state !== "ready")) return error("unavailable")
+          if (input.engine === "hex" && current.hex.state !== "ready") return error("unavailable")
           const refused = this.preference.select(input.engine)
           return refused ? error(refused) : ok({ ...current, engine: input.engine })
         }
         case "prepare": {
           if (this.active("prepare")) return error("busy")
           const hex = snapshot().hex
-          const driver = this.hexDriver ?? this.driver
+          const driver = this.hexDriver
           if (!driver || hex.state === "unavailable") return error("unavailable")
           if (input.planId !== hex.plan.id) return error("planChanged")
           const { revision } = this.preference.read()
@@ -158,16 +152,12 @@ export class DeviceSpeech {
           }
           if (!lease && input.microphoneLeaseId) return error("notOwned")
           const current = snapshot()
-          const driver = current.engine === "hex" ? this.hexDriver ?? this.driver : this.driver
-          if (!driver || current.engine === "api" || (input.engine && current.engine !== input.engine) ||
-              (current.engine === "system" ? current.system !== "ready" : current.hex.state !== "ready")) return error("unavailable")
-          const engine = current.engine
-          if (engine === "system" && current.systemLocales && !resolveSystemSpeechLocale(current.systemLocales, input.locale))
-            return error("localeUnavailable")
+          const driver = this.hexDriver
+          if (!driver || current.engine !== "hex" || current.hex.state !== "ready") return error("unavailable")
           return ok(this.begin(owner, "start", async (control) => {
-            const text = await driver.dictate(engine, input.locale, control)
+            const text = await driver.dictate(control)
             return Buffer.byteLength(text) <= maxDeviceSpeechTextBytes ? { state: "transcribed", text } : { state: "error", error: "failed" }
-          }, engine === "hex" && !!this.hexDriver))
+          }))
         }
         default: {
           const slot = [...this.slots.values()].find(slot => slot.id === input.id && slot.owner === owner)
@@ -184,10 +174,7 @@ export class DeviceSpeech {
           } else {
             if (slot.operation !== "start" || slot.abort.signal.aborted || terminal(slot.state.state)) return error("unavailable")
             if (slot.finish.signal.aborted) return error("busy")
-            if (slot.expectsAudio) {
-              if (!(slot.audio = decodeHexAudio(input.wav))) return error("failed")
-            } else if (input.wav !== undefined) return error("unavailable")
-            if (slot.state.state === "recording") slot.state = { state: "recording" }
+            if (!(slot.audio = decodeHexAudio(input.wav))) return error("failed")
             slot.finish.abort()
           }
           return ok(null)
@@ -224,11 +211,11 @@ export class DeviceSpeech {
 
   private begin(owner: number, operation: Slot["operation"], run: (
     control: SpeechOperationControl, complete: (value: DeviceSpeechOperation) => void,
-  ) => Promise<DeviceSpeechOperation>, expectsAudio = false) {
+  ) => Promise<DeviceSpeechOperation>) {
     const previous = this.slots.get(operation)
     if (previous) this.clear(previous)
     const slot: Slot = { owner, operation, id: randomUUID(), abort: new AbortController(), finish: new AbortController(),
-      state: { state: "starting" }, expectsAudio }
+      state: { state: "starting" } }
     this.slots.set(operation, slot)
     this.renew(slot)
     const limit = setTimeout(() => this.abort(slot, "failed"), operation === "start" ? 150_000 : 7_200_000).unref()
@@ -241,7 +228,7 @@ export class DeviceSpeech {
       slot.lease = setTimeout(() => this.clear(slot), 30_000).unref()
     }
     void Promise.resolve().then(() => slot.abort.signal.aborted ? { state: "cancelled" } as const : run({
-      signal: slot.abort.signal, finish: slot.finish.signal,
+      signal: slot.abort.signal,
       waitForAudio: async () => {
         const signal = AbortSignal.any([slot.abort.signal, slot.finish.signal])
         if (!signal.aborted) await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }))
@@ -249,13 +236,12 @@ export class DeviceSpeech {
         slot.audio = undefined
         return slot.abort.signal.aborted ? undefined : audio
       },
-      revokePermission: () => this.abort(slot, "permissionDenied"),
       progress: (value) => {
         if (!slot.abort.signal.aborted && !terminal(slot.state.state) &&
             (operation === "prepare" ? value.state === "downloading" || value.state === "verifying" :
               (value.state === "recording" && !slot.finish.signal.aborted) || value.state === "transcribing")) slot.state = value
       },
-    }, settle)).then(settle, cause => settle({ state: "error", error: cause instanceof HexFailure || cause instanceof SystemSpeechFailure ? cause.code : "failed" }))
+    }, settle)).then(settle, cause => settle({ state: "error", error: cause instanceof HexFailure ? cause.code : "failed" }))
     return { id: slot.id }
   }
 

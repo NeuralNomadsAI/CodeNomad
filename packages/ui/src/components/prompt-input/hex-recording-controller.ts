@@ -1,14 +1,11 @@
 import { blobToBase64 } from "../../lib/audio-utils"
-import { hexCaptureAvailable, startPcmCapture } from "../../lib/hex-capture"
+import { startPcmCapture } from "../../lib/hex-capture"
 import { claimMicrophone, microphoneErrorKey, MicrophoneUnavailable } from "../../lib/microphone-lease"
-import { requestDeviceSpeech, usesWebKitMicrophone, type LocalSpeechEngine } from "../../lib/native/device-speech"
+import { requestDeviceSpeech, usesWebKitMicrophone } from "../../lib/native/device-speech"
 import { isElectronHost } from "../../lib/runtime-env"
 import type { RecordingControllerCallbacks, VoiceInputController } from "./recording-controller"
 
-export { hexCaptureAvailable }
-
-export function createNativeRecordingController(
-  engine: LocalSpeechEngine,
+export function createHexRecordingController(
   locale: string,
   callbacks: RecordingControllerCallbacks,
   send = requestDeviceSpeech,
@@ -19,9 +16,6 @@ export function createNativeRecordingController(
   let id: string | undefined
   let timer: number | undefined
   let stopping = false
-  let nativeRecording = false
-  let lastPreview: string | undefined
-  let lastPreviewAt = -Infinity
   let starting = false
   let lease: Awaited<ReturnType<typeof claimMicrophone>> | undefined
   let nativeCancellation: Promise<unknown> | undefined
@@ -61,41 +55,18 @@ export function createNativeRecordingController(
         return
       case "cancelled":
       case "stopping": settle(); return
-      case "recording":
-        if (engine === "system" && !stopping) {
-          if (!nativeRecording) {
-            nativeRecording = true
-            callbacks.onStateChange("recording")
-          }
-          const text = result.value.text
-          // Coalesce changing hypotheses for the polite live region.
-          const now = performance.now()
-          if (callbacks.onRecordingPreview && text !== undefined && text !== lastPreview && now - lastPreviewAt >= 1000) {
-            lastPreview = text
-            lastPreviewAt = now
-            const characters = Array.from(text.trim())
-            callbacks.onRecordingPreview(characters.length > 120 ? `…${characters.slice(-120).join("")}` : characters.join(""))
-          }
-        }
-        break
-      case "transcribing":
-        if (engine === "system" && !stopping) {
-          stopping = true
-          callbacks.onStateChange("transcribing")
-        }
-        break
     }
     timer = window.setTimeout(() => { void poll(owner) }, 200)
   }
 
   function stopRecording() {
-    if (!current() || !id || (!recording && !nativeRecording) || stopping) return
+    if (!current() || !id || !recording || stopping) return
     stopping = true
     const owner = id
     callbacks.onStateChange("transcribing")
-    void (recording?.finish().then(blobToBase64) ?? Promise.resolve(undefined)).then(async wav => {
+    void recording.finish().then(blobToBase64).then(async wav => {
       if (!current()) return
-      const result = await send("finish", wav ? { id: owner, wav } : { id: owner })
+      const result = await send("finish", { id: owner, wav })
       if (!result.ok) failure(result.error === "permissionDenied")
     }).catch(() => failure())
   }
@@ -103,7 +74,7 @@ export function createNativeRecordingController(
   return {
     async startRecording() {
       if (!current() || id || starting) return
-      if (engine === "hex" && usesWebKitMicrophone() && navigator.userActivation?.isActive !== true) {
+      if (usesWebKitMicrophone() && navigator.userActivation?.isActive !== true) {
         failure(true)
         return
       }
@@ -112,12 +83,11 @@ export function createNativeRecordingController(
       try {
         lease = await claim("dictation", lifetime.signal)
         if (!current()) return
-        const result = await send("start", { engine, locale, microphoneLeaseId: lease.id })
+        const result = await send("start", { engine: "hex", locale, microphoneLeaseId: lease.id })
         if (!result.ok) { failure(result.error === "permissionDenied"); return }
         id = result.value.id
         if (!current()) { nativeCancellation = send("cancel", { id }); return }
         void poll(id)
-        if (engine === "system") return
         if (isElectronHost()) {
           const access = await window.electronAPI?.requestMicrophoneAccess?.()
           if (!current()) return

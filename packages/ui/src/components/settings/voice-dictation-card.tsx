@@ -7,7 +7,7 @@ import { useConfig } from "../../stores/preferences"
 import { speechCapabilities, speechCapabilitiesError } from "../../stores/speech"
 import { useRemoteDictation } from "../prompt-input/useRemoteDictation"
 import { BehaviorSettingRows } from "./behavior-setting-rows"
-import { DeviceSpeechSettings, deviceHexLabel, deviceSystemLabel } from "./device-speech-settings"
+import { DeviceSpeechSettings, deviceHexLabel } from "./device-speech-settings"
 import type { useDeviceSpeechSettings } from "./use-device-speech-settings"
 import { VoiceSettingsCard } from "./voice-settings-fields"
 
@@ -27,7 +27,6 @@ export function VoiceDictationCard(props: {
   const visibleEngine = () => {
     if (!remote) return t("settings.speech.device.api")
     const choice = remoteChoice()
-    if (choice === null) return t("settings.speech.device.platformUnsupported")
     return choice ? t(`settings.speech.device.${choice}`) : t("settings.voice.unavailable")
   }
   let testButton: HTMLButtonElement | undefined
@@ -57,16 +56,12 @@ export function VoiceDictationCard(props: {
     if (remote?.readFailed()) return t("settings.speech.device.readFailed")
     if (!props.settled) return t("settings.speech.status.loading")
     const snapshot = device?.snapshot()
-    if (snapshot?.engine === "system") {
-      const key = deviceSystemLabel(snapshot, locale())
-      return t(key === "settings.speech.device.system" ? "settings.voice.ready" : key)
-    }
     if (snapshot?.engine === "hex") {
       const key = deviceHexLabel(snapshot)
       return t(key === "settings.speech.device.hex" ? "settings.voice.ready" : key)
     }
     const choice = remoteChoice()
-    if (choice === null) return t("settings.speech.device.chooseLocal")
+    if (snapshot?.engine === null || choice === null) return t("settings.speech.device.chooseLocal")
     if (remote && choice !== "api") return t(choice ? "settings.voice.ready" : "settings.voice.unavailable")
     if (speechCapabilitiesError()) return t("settings.speech.status.error")
     const capabilities = speechCapabilities()

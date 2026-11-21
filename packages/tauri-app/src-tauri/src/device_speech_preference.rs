@@ -1,6 +1,7 @@
 use super::{valid_id, Engine, SpeechError};
 use crate::profile_transition::SelectionLock;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer};
+use serde_json::json;
 use std::{
     fs::{self, File},
     io::{Read, Write},
@@ -9,11 +10,21 @@ use std::{
 };
 use uuid::Uuid;
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize)]
 pub(super) struct Preference {
     version: u8,
-    pub(super) engine: Engine,
+    #[serde(deserialize_with = "read_engine")]
+    pub(super) engine: Option<Engine>,
     pub(super) revision: String,
+}
+
+fn read_engine<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Engine>, D::Error> {
+    match String::deserialize(d)?.as_str() {
+        "api" => Ok(Some(Engine::Api)),
+        "hex" => Ok(Some(Engine::Hex)),
+        "system" => Ok(None),
+        _ => Err(serde::de::Error::custom("invalid speech engine")),
+    }
 }
 
 #[derive(Clone)]
@@ -26,7 +37,7 @@ impl Store {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(Preference {
                     version: 1,
-                    engine: Engine::Api,
+                    engine: Some(Engine::Api),
                     revision: String::new(),
                 });
             }
@@ -56,11 +67,8 @@ impl Store {
         if expected.is_some_and(|revision| revision != current.revision) {
             return Err(SpeechError::PlanChanged);
         }
-        let value = Preference {
-            version: 1,
-            engine,
-            revision: Uuid::new_v4().to_string(),
-        };
+        let value =
+            json!({ "version": 1, "engine": engine, "revision": Uuid::new_v4().to_string() });
         let mut temporary =
             tempfile::NamedTempFile::new_in(directory).map_err(|_| SpeechError::Failed)?;
         serde_json::to_writer(&mut temporary, &value).map_err(|_| SpeechError::Failed)?;

@@ -30,7 +30,7 @@ These are requests to the configured service, not a guarantee that every compati
 2. Choose **Test API input**, grant microphone permission, speak, then **Stop recording**. Check the returned transcription.
 3. Choose **Test playback** to hear the sample; **Stop sample** ends it.
 
-The playback test uses the selected playback mode/format immediately, but endpoint, key, model and voice come from saved settings. **Test API input** sends audio to the configured API provider, even when Hex or system recognition is selected. It does not send a conversation prompt. The provider may charge for these tests.
+The playback test uses the selected playback mode/format immediately, but endpoint, key, model and voice come from saved settings. **Test API input** sends audio to the configured API provider regardless of the dictation engine. It does not send a conversation prompt. The provider may charge for these tests.
 
 ## Dictate a prompt {#dictate}
 
@@ -43,13 +43,11 @@ If the API uses WAV fallback on Linux Tauri, **Dictate** and **Test API input** 
 
 Encoded API recordings also stop at a size limit and offer the same **Transcribe** and **Cancel** choices.
 
-With system recognition, a preview appears as you speak. You can keep editing the draft; only the final transcript can be inserted.
-
 ### Choose a desktop engine {#desktop-dictation}
 
 In local desktop **Preferences → Voice → Dictation**, set **Dictation engine on this device**. This choice applies across projects on the device. **API provider** uses the connected server's API settings and requires a secure context for microphone access.
 
-- **On-device system recognition** is available on macOS with an installed local recognizer for the app language. On Windows or Linux, choose **Hex (local)** if offered or **API provider**. If a remote window reports that the saved system engine is unsupported, change it in the local app’s **Preferences → Voice → Dictation**.
+- If your saved engine is unavailable, choose **Hex (local)** if offered, or **API provider**. On Intel Macs and Macs running versions before macOS 15, use **API provider**.
 - **Dictation** shows the remaining download size, per component and in total, before you choose **Activate Hex**. Activation verifies and reuses compatible files, downloads what is missing, and selects Hex when ready. Use **Cancel Hex activation** to stop or **Resume Hex activation** when offered. Failure or cancellation keeps your previous engine. Selecting ready **Hex (local)** starts no download.
 - Hex is offered on eligible Windows x64/arm64, Apple silicon with macOS 15+, and Linux x64/arm64 with glibc 2.36+ and the libraries required by Hex. Intel Macs and Linux systems with older glibc or musl are ineligible. The engine and models are separate from the CodeNomad installer; no terminal or API key is needed.
 
