@@ -40,7 +40,7 @@ UI (Solid) ──HTTP + SSE──▶ codenomad-rs ──HTTP, basic auth, loopba
 | `src/sidecars/` | SideCars: `config.yaml` records, port probe and events; HTTP and WebSocket proxy (loopback listener only) |
 | `src/usage.rs` | Settings › Stats: the service's native aggregate and its display cache in `state.yaml` |
 | `src/provider_usage/` | Conversation Status usage: native session ownership and credential selection, a bounded provider transport and per-provider cache |
-| `src/previews/` | Local preview tokens, cookie-free HTTP/WS proxy and bounded document rewriting |
+| `src/previews/` | Preview tokens, cookie-free HTTP/WS proxy and bounded document rewriting; direct HTTP(S) relay generations, isolated loopback origins and paired-device path capabilities |
 | `src/missions/` | Missions and calendar brokering (contract under revision: unchanged here) |
 | `src/shared/` | Cross-domain helpers |
 | `contracts/`, `tests/fixtures/` | Frozen schemas and parity cases generated from the TypeScript server |

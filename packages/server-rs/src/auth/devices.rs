@@ -126,6 +126,9 @@ pub async fn sweep(app: Shared, stop: CancellationToken) {
     }
 }
 impl Devices {
+    pub fn previews_allowed(&self) -> bool {
+        !self.disabled && self.doc.previews != Some(false)
+    }
     fn open(file: PathBuf, origin: String, ingress: bool) -> Result<Self, Fail> {
         let doc = match fs::File::open(&file) {
             Ok(f) => {
@@ -256,6 +259,28 @@ impl Devices {
         self.failures = self.failures.saturating_add(1);
         (self.failures > 10).then(|| self.reset.saturating_duration_since(now).as_millis().div_ceil(1000).max(1) as u64)
     }
+}
+
+pub async fn set_previews(State(app): State<Shared>, Json(body): Json<Value>) -> Response {
+    let Some(enabled) = body.get("enabled").and_then(Value::as_bool) else {
+        return crate::error(Status::BAD_REQUEST, "Invalid previews setting").into_response();
+    };
+    let Some(devices) = &app.devices else { return crate::unavailable() };
+    let state = {
+        let mut d = devices.lock().unwrap();
+        let mut doc = d.doc.clone();
+        doc.previews = (!enabled).then_some(false);
+        if d.persist(&doc).is_err() {
+            return crate::error(Status::SERVICE_UNAVAILABLE, "Preview policy could not be saved").into_response();
+        }
+        d.doc = doc;
+        json!({"manageable":true,"enabled":false,"startsOnLaunch":false,"state":"stopped",
+            "previews":enabled,"pairedDevices":d.doc.devices.iter().filter(|d|d.live()).count()})
+    };
+    if !enabled {
+        app.previews.revoke_devices();
+    }
+    Json(state).into_response()
 }
 fn reply(status: Status, message: &str) -> Response {
     (status, Json(json!({"error":message}))).into_response()

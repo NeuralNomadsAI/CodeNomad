@@ -40,7 +40,7 @@ Rust state: **ported** before this change, **here** ported for this usage, **hos
 | GET | `/api/workspaces/:id/service-usage`, `/cache`, `/owner` | Stats | 200 | here, compared by `usage` |
 | GET | `/api/usage/:provider` | Conversation Status › Provider Usage | 200 | compared by `providers` against synthetic credentials and provider responses |
 | POST, DELETE, * | `/api/previews`, `/api/previews/:token`, `/previews/:token/*` | Local preview | 200, 204, upstream | source HTTP/WS compared by `previews` |
-| POST, DELETE | `/api/backends/:id/preview-capabilities` | Preview of a remote project | 200, 204 | requires the backend relay and generation owner |
+| POST, DELETE | `/api/backends/:id/preview-capabilities` | Preview of a remote project | 200, 204 | HTTP(S) profiles, generation-bound; compared by `remote-previews` |
 
 The TS worktree creation with a session move stayed pending on this fixture (over 120 s), so the journey stops at the dialog; the TS instance storage answered GET 403 and PUT 404 once the conversation started.
 
@@ -67,7 +67,8 @@ Observed but not ported, then not observed and therefore not kept. Opinion: usef
 ## Differences kept on purpose
 
 - Settings are always read from disk: an edit outside the server is seen at once (the reference keeps its cache, and its `/api/meta` feed, until an event). An unreadable `state.yaml` refuses writes (503) instead of being replaced. Keys are written in sorted order.
-- `PATCH /api/storage/state/ui` touching multi-backend profiles (`remoteServers`, remote project history) answers 501: this host does not serve them and does not compact their history.
+- The local UI can save remote profiles with multi-backend enabled. This host serves the preview relay's admission and content routes; general project relay and SSH forwards are unavailable.
+- The preview relay admits saved direct HTTP(S) profiles. Its HTTP redirects stay within the source capability. A paired client's relay capability belongs to its issuing device, listener and Host. The full `previews` capability requires the rest of the remote backend transport.
 - The unrestricted folder browser and workspace creation still refuse UNC shares and device paths (audit M2).
 - Session favorites stay in the data folder rather than in `state.yaml`.
 - SideCar content and WebSockets are served on the loopback listener only: the host's `sidecarsOverDirectHttps` opt-in is not served, so `/api/meta` reports `sidecarsAllowed: false` on the HTTPS listener (the reference's default). A refused SideCar upgrade carries the admission's JSON error body (the reference answers empty).

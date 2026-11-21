@@ -1,5 +1,7 @@
 //! Session preview registry and cookie-free capability proxy (`previews/manager.ts`).
+pub mod backend;
 mod proxy;
+mod remote;
 mod rewrite;
 
 use std::{
@@ -9,9 +11,8 @@ use std::{
 
 use axum::{
     Json, Router,
-    body::Bytes,
     extract::{Path, Request, State},
-    http::{HeaderMap, StatusCode as Status, header},
+    http::{StatusCode as Status, header},
     middleware::Next,
     response::{IntoResponse, Response},
     routing::{any, delete, post},
@@ -57,11 +58,14 @@ fn referred_preview(app: &Shared, req: &Request) -> Option<(Uuid, Preview, Strin
 pub struct Previews {
     live: Mutex<HashMap<Uuid, Preview>>,
     rewrites: rewrite::Budget,
+    pub owners: backend::Owners,
+    remote: remote::Remote,
 }
 #[derive(Clone)]
 struct Preview {
     target: Url,
     until: CancellationToken,
+    source_device: Option<crate::auth::Principal>,
 }
 pub fn routes() -> Router<Shared> {
     Router::new()
@@ -69,6 +73,43 @@ pub fn routes() -> Router<Shared> {
         .route("/api/previews/{token}", delete(remove))
         .route("/previews/{token}", any(content))
         .route("/previews/{token}/{*tail}", any(content))
+        .merge(backend::routes())
+        .merge(remote::routes())
+}
+impl Previews {
+    pub fn close(&self) {
+        self.remote.close();
+        self.owners.close();
+        for preview in self.live.lock().unwrap().values() {
+            preview.until.cancel();
+        }
+    }
+    pub fn revoke_devices(&self) {
+        self.remote.revoke_devices();
+        self.live.lock().unwrap().retain(|_, p| {
+            if p.source_device.is_some() {
+                p.until.cancel();
+                false
+            } else {
+                true
+            }
+        });
+    }
+}
+pub async fn sweep(app: Shared, stop: CancellationToken) {
+    loop {
+        tokio::select! {
+            _ = stop.cancelled() => { app.previews.close(); return; }
+            _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+                app.previews.owners.reconcile(&app);
+                if !device_allowed(&app) { app.previews.revoke_devices(); }
+                app.previews.live.lock().unwrap().retain(|_,p| !p.until.is_cancelled());
+            }
+        }
+    }
+}
+fn device_allowed(app: &crate::App) -> bool {
+    app.devices.as_ref().is_some_and(|d| d.lock().unwrap().previews_allowed())
 }
 fn invalid_target(message: &str) -> Error {
     error(Status::BAD_REQUEST, message)
@@ -163,20 +204,39 @@ fn parse(body: &Value) -> Result<(&str, &str), Error> {
         Err(invalid_target(&serde_json::to_string_pretty(&issues).unwrap()))
     }
 }
-async fn create(State(app): State<Shared>, headers: HeaderMap, bytes: Bytes) -> Result<Json<Value>, Error> {
-    let body = match fastify::body(&headers, &bytes)? {
+async fn create(State(app): State<Shared>, request: Request) -> Result<Json<Value>, Error> {
+    let source_device = if crate::auth::tls::https_only(&request).is_some() {
+        if !device_allowed(&app) {
+            return Err(error(Status::NOT_FOUND, "Not found"));
+        }
+        Some(request.extensions().get::<crate::auth::Principal>().cloned().ok_or_else(crate::auth::unauthorized)?)
+    } else {
+        None
+    };
+    let (head, body) = request.into_parts();
+    let bytes = axum::body::to_bytes(body, 1024 * 1024)
+        .await
+        .map_err(|_| error(Status::PAYLOAD_TOO_LARGE, "Request body is too large"))?;
+    let body = match fastify::body(&head.headers, &bytes)? {
         None | Some(fastify::Body::Json(Value::Null)) => json!({}),
         Some(fastify::Body::Json(v)) => v,
         Some(fastify::Body::Text(s)) => json!(s),
     };
     let (session, url) = parse(&body)?;
     let target = target(url)?;
+    if let Some(principal) = &source_device {
+        principal.live()?;
+        if !device_allowed(&app) {
+            return Err(error(Status::NOT_FOUND, "Not found"));
+        }
+    }
     let token = Uuid::new_v4();
     let proxy_url =
         format!("{}{}{}{}", base(token), target.path(), suffix('?', target.query()), suffix('#', target.fragment()));
     let answer =
         json!({"token":token,"sessionId":session,"targetUrl":target.as_str(),"proxyUrl":proxy_url,"createdAt":now()});
-    app.previews.live.lock().unwrap().insert(token, Preview { target, until: CancellationToken::new() });
+    let until = source_device.as_ref().map_or_else(CancellationToken::new, |p| p.0.child_token());
+    app.previews.live.lock().unwrap().insert(token, Preview { target, until, source_device });
     Ok(Json(answer))
 }
 async fn remove(State(app): State<Shared>, Path(token): Path<String>) -> Result<Status, Error> {
@@ -261,6 +321,27 @@ pub async fn admit_local(State(app): State<Shared>, req: Request, next: Next) ->
         return content(State(app), req).await;
     }
     next.run(req).await
+}
+/// TLS host is already verified by the remote gate. No cookie reaches content or opens UI routes.
+pub async fn admit_remote(app: &Shared, req: Request) -> Response {
+    let Some(token) = path_token(req.uri().path()) else {
+        return not_found();
+    };
+    let req = match remote::path(app, req, token).await {
+        Ok(response) => return response,
+        Err(req) => req,
+    };
+    let Some(channel) = crate::auth::tls::https_only(&req) else {
+        return not_found();
+    };
+    if !channel.ingress
+        || !device_allowed(app)
+        || !safe_request(&req, Some(&channel.origin))
+        || !lookup(app, token).is_some_and(|p| !p.until.is_cancelled())
+    {
+        return not_found();
+    }
+    content(State(app.clone()), req).await
 }
 fn safe_request(req: &Request, own: Option<&str>) -> bool {
     let headers = req.headers();

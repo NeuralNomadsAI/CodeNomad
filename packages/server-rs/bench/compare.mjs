@@ -15,7 +15,7 @@ import { assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
 import { browserFiles, populate } from "./files.mjs"
 import { browserWorktrees } from "./worktrees.mjs"
 
-const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "host", "sidecars", "usage", "providers", "previews", "solid"]
+const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
 const [mode, exe] = process.argv.slice(2)
 assert(MODES.includes(mode) && path.isAbsolute(exe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)
 const bin = rustBinary()
@@ -72,6 +72,10 @@ async function start(label, fixture, folder, password, trustedCA) {
   // `host`: both servers as the desktop hosts start them, over the whole filesystem, on equal settings.
   if (mode === "host") Object.assign(env, { CLI_UNRESTRICTED_ROOT: "true" })
   Object.assign(env, bench?.environment?.(root) ?? {})
+  if (label === "ts" && bench?.remoteIngress) {
+    env.CNRS_PREVIEW_TEST_TUNNEL = "1"
+    delete env.CODENOMAD_REMOTE_CONTROL
+  }
   // Modes that seed `config.yaml` start both servers on equal settings.
   // Keep the Rust settings at their private positional default in modes without a seeded YAML.
   env.CLI_CONFIG = label === "ts" ? path.join(root, "ts.yaml")
@@ -101,7 +105,8 @@ async function start(label, fixture, folder, password, trustedCA) {
       if (spawnError || child.exitCode !== null) throw Error(`${label} startup: ${spawnError ?? output.slice(-2500)}`)
       return (await request("/api/auth/status").catch(() => undefined))?.status === 200 && (label !== "ts" || output.includes("Local Connection URL"))
     }, `${label} startup`, STARTUP_TIMEOUT).catch(error => { throw Error(`${error.message}\n${output.slice(-2500)}`, { cause: error }) })
-    return { request, close, origin: listen, secureOrigin: /^HTTPS (https:\/\/\S+)$/m.exec(output)?.[1]?.trim(), pid: child.pid, status: info.version, daemonPID: info.pid }
+    const ingress = () => /^CNRS_TEST_INGRESS (http:\/\/127\.0\.0\.1:\d+)$/m.exec(output)?.[1]
+    return { request, close, origin: listen, secureOrigin: /^HTTPS (https:\/\/\S+)$/m.exec(output)?.[1]?.trim(), ingress, pid: child.pid, status: info.version, daemonPID: info.pid }
   } catch (e) { await close(); throw e }
 }
 
@@ -393,7 +398,7 @@ try {
     await populate(path.join(rsRoot, "Rust Project"))
     await populate(path.join(tsRoot, "Local Project"))
     await rustPruning.ready(remote.client, path.join(rsRoot, "Rust Project"))
-    const seeded = (await bench?.configure?.()) ?? ""
+    const seeded = (await bench?.configure?.(local, remote)) ?? ""
     const settings = `server:\n  opencodeBinary: ${JSON.stringify(exe)}\n${seeded}ui:\n  settings:\n    multiBackend: true\n    locale: en\n`
     await writeFile(path.join(local.root, "ts.yaml"), settings)
     if (mode === "host" || bench?.configure) await writeFile(path.join(remote.root, "rust.yaml"), settings)
@@ -408,7 +413,8 @@ try {
       const hosts = []
       for (const host of [ts, rs]) {
         const cookie = await signIn(host, password)
-        hosts.push({ call: (route, init) => host.request(route, withCookie(cookie, init)), origin: host.origin, cookie })
+        hosts.push({ call: (route, init) => host.request(route, withCookie(cookie, init)), origin: host.origin, cookie,
+          ...(bench?.remoteIngress ? { secureOrigin: host.secureOrigin, ingress: host.ingress } : {}) })
       }
       if (bench.pair) { result[mode] = await bench.pair(...hosts); return }
       await compareSides([

@@ -48,6 +48,7 @@ node roundtrip.mjs $OpenCode
 | `usage` | Settings › Stats: the native service aggregate, its display cache in `state.yaml`, the restored period, query refusals, an unknown workspace. |
 | `providers` | Conversation Status usage against an isolated daemon with synthetic credentials. A local recorder substitutes for every provider; compares the route results and outgoing requests for each adapter. |
 | `previews` | Local source previews against a loopback fixture: token creation/deletion, HTTP/WS, HTML/CSS/module rewriting, redirects, cookie and credential isolation, partial and compressed documents. |
+| `remote-previews` | Remote preview generations and isolated content origins; paired browser path capabilities; HTTP and WebSocket relay, credential and origin isolation, and revocation of live streams. The TS tunnel terminates on a local fixture; no browser or desktop host starts. |
 | `solid` | Real UI served by TS: HTTPS pairing of Rust, two prompts, two isolated tabs, worktree, Files, Rust memory under 48 MiB, no error toast. |
 | `security.mjs` | TLS and pairing: same checks on the Rust HTTPS listener and the TS remote surface, revocation during SSE, certificate reuse and rotation. |
 | `launch.mjs` | Both servers launched as Tauri launches them (same `serve` arguments and variables, private homes): stdout contract lines, bootstrap token exchange, sign-in pages and redirects, UI bundle and single-page fallback, `tls/` and identity files, stop over stdin. No OpenCode needed. |

@@ -43,5 +43,21 @@ if (process.env.CNRS_FIXTURE_PROVIDERS) {
 if (process.env.CNRS_FIXTURE_TRUSTED_CA)
   tls.setDefaultCACertificates([...tls.getCACertificates("bundled"), await readFile(process.env.CNRS_FIXTURE_TRUSTED_CA, "utf8")])
 const entry = new URL("index.js", dist)
+if (process.env.CNRS_PREVIEW_TEST_TUNNEL === "1") {
+  const { RemoteControlManager } = await fromDist("remote-control/manager.js")
+  const start = RemoteControlManager.prototype.start
+  RemoteControlManager.prototype.start = function () {
+    this.options.openTunnel = async ({ target }) => {
+      assert.match(target, /^127\.0\.0\.1:\d+$/)
+      const hostname = "preview-ingress.fixture.test"
+      let close
+      const closed = new Promise(resolve => { close = resolve })
+      console.log(`CNRS_TEST_INGRESS http://${target}`)
+      return { hostname, url: `https://${hostname}`, closed, close: async () => close(),
+        status: () => ({ state: "connected", connections: 0 }) }
+    }
+    return start.call(this)
+  }
+}
 process.argv[1] = fileURLToPath(entry)
 await import(entry)

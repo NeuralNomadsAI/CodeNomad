@@ -145,6 +145,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         .merge(sidecars::routes())
         .merge(usage::routes())
         .merge(provider_usage::routes())
+        .merge(previews::routes())
         .merge(opencode::routes())
         .merge(opencode::install::routes());
 
@@ -156,6 +157,7 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
         bench::stop_on_stdin(shutdown.clone());
     }
     let plugins = extensions::lifecycle::start(&state, shutdown.clone())?;
+    tokio::spawn(previews::sweep(state.clone(), shutdown.clone()));
     missions::serve_bridge(&state, shutdown.clone());
     tokio::spawn(files::watch::run(state.clone(), watch_rx, shutdown.clone()));
     let remote_url = tls.as_ref().map(|tls| tls.origin.clone());
@@ -178,7 +180,6 @@ async fn run(launch: host::Launch) -> Result<bool, Box<dyn std::error::Error>> {
     tokio::spawn(sidecars::probe(state.clone()));
     let local = routes
         .merge(auth::local_routes())
-        .merge(previews::routes())
         .merge(sidecars::proxy::routes(ui.clone()))
         .fallback({
             let ui = ui.clone();

@@ -18,7 +18,7 @@ use tokio::time::Instant;
 use super::{Preview, rewrite, suffix};
 use crate::{Shared, error};
 
-const SANDBOX: &str = "sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads";
+pub(super) const SANDBOX: &str = "sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads";
 const DERIVED: &[&str] = &[
     "content-length",
     "content-encoding",
@@ -181,6 +181,7 @@ fn backend_port(app: &Shared, port: u16) -> bool {
 }
 async fn address(app: &Shared, host: &str, port: u16) -> Result<Vec<SocketAddr>, Status> {
     if host.trim_end_matches('.').to_ascii_lowercase().ends_with(".preview.localhost")
+        || app.previews.remote.listener_port() == Some(port)
         || backend_port(app, port) && loopback_host(host)
     {
         return Err(Status::NOT_FOUND);
@@ -200,7 +201,7 @@ async fn address(app: &Shared, host: &str, port: u16) -> Result<Vec<SocketAddr>,
     }
     Ok(answers)
 }
-async fn client(app: &Shared, target: &Url) -> Result<Client, Status> {
+pub(super) async fn pinned_client(app: &Shared, target: &Url, skip_tls: bool, decode: bool) -> Result<Client, Status> {
     let host = target.host_str().ok_or(Status::BAD_GATEWAY)?;
     let port = target.port_or_known_default().ok_or(Status::BAD_GATEWAY)?;
     let addresses = address(app, host, port).await?;
@@ -210,9 +211,10 @@ async fn client(app: &Shared, target: &Url) -> Result<Client, Status> {
         .http1_only()
         .resolve_to_addrs(host, &addresses)
         .connect_timeout(Duration::from_secs(10))
-        .no_gzip()
-        .no_deflate()
-        .no_brotli();
+        .danger_accept_invalid_certs(skip_tls);
+    if !decode {
+        client = client.no_gzip().no_deflate().no_brotli();
+    }
     if let Some(file) = std::env::var_os("NODE_EXTRA_CA_CERTS")
         && let Ok(bytes) = tokio::fs::read(file).await
         && let Ok(certs) = reqwest::Certificate::from_pem_bundle(&bytes)
@@ -261,7 +263,7 @@ pub async fn relay(app: &Shared, mut request: Request, preview: Preview, path: &
     }
     let method = parts.method;
     let perform = async {
-        let client = client(app, &target).await?;
+        let client = pinned_client(app, &target, false, false).await?;
         let mut req = client.request(method.clone(), target.clone()).headers(headers);
         if !matches!(method, Method::GET | Method::HEAD) && !upgrade {
             req = req.body(reqwest::Body::wrap_stream(body.into_data_stream()));
@@ -280,16 +282,7 @@ pub async fn relay(app: &Shared, mut request: Request, preview: Preview, path: &
     let mut headers = response_headers(response.headers().clone(), &target, base, upgrade, opaque);
     if let Some(on_upgrade) = on_upgrade {
         if status == Status::SWITCHING_PROTOCOLS {
-            let Ok(upstream) = response.upgrade().await else { return stop(Status::BAD_GATEWAY) };
-            let until = preview.until;
-            tokio::spawn(async move {
-                let Ok(peer) = on_upgrade.await else { return };
-                let (mut peer, mut upstream) = (TokioIo::new(peer), upstream);
-                tokio::select! { _ = until.cancelled() => {}, _ = tokio::io::copy_bidirectional(&mut peer, &mut upstream) => {} }
-            });
-            let mut reply = status.into_response();
-            *reply.headers_mut() = headers;
-            return reply;
+            return tunnel(response, headers, on_upgrade, preview.until).await;
         }
         hop(&mut headers);
         headers.insert(header::CONNECTION, HeaderValue::from_static("close"));
@@ -345,13 +338,32 @@ pub async fn relay(app: &Shared, mut request: Request, preview: Preview, path: &
     make(status, headers, Body::from_stream(response.bytes_stream().take_until(preview.until.cancelled_owned())))
 }
 
-fn make(status: Status, headers: HeaderMap, body: Body) -> Response {
+pub(super) async fn tunnel(
+    response: reqwest::Response,
+    headers: HeaderMap,
+    upgrade: hyper::upgrade::OnUpgrade,
+    until: tokio_util::sync::CancellationToken,
+) -> Response {
+    let Ok(mut upstream) = response.upgrade().await else { return stop(Status::BAD_GATEWAY) };
+    tokio::spawn(async move {
+        let Ok(peer) = upgrade.await else { return };
+        let mut peer = TokioIo::new(peer);
+        tokio::select! {
+            biased;
+            _ = until.cancelled() => {},
+            _ = tokio::io::copy_bidirectional(&mut peer, &mut upstream) => {},
+        }
+    });
+    make(Status::SWITCHING_PROTOCOLS, headers, Body::empty())
+}
+
+pub(super) fn make(status: Status, headers: HeaderMap, body: Body) -> Response {
     let mut response = Response::new(body);
     *response.status_mut() = status;
     *response.headers_mut() = headers;
     response
 }
-async fn document(response: reqwest::Response, encoding: &str) -> Option<Vec<u8>> {
+pub(super) async fn document(response: reqwest::Response, encoding: &str) -> Option<Vec<u8>> {
     use async_compression::tokio::bufread::{BrotliDecoder, GzipDecoder, ZlibDecoder};
     use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
     let input = BufReader::new(tokio_util::io::StreamReader::new(

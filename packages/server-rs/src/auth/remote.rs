@@ -46,6 +46,8 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ("PUT DELETE",r"^/workspaces/[^/]+/instance/api/experimental/session/[^/]+/instructions/entries/[^/]+$"),
     ("GET PUT",r"^/api/workspaces/[^/]+/subagent-depth$"),
     ("GET POST",r"^/api/sidecars$"),
+    ("POST",r"^/api/previews$"),
+    ("DELETE",r"^/api/previews/[^/]+$"),
     ("GET",r"^/api/usage/[^/]+$"),
     ("PUT DELETE",r"^/api/sidecars/[^/]+$"),
     ("GET",r"^/api/workspaces/[^/]+/service-usage(?:/(?:owner|cache))?$"),
@@ -129,6 +131,9 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
     if h.get(header::HOST).and_then(|v| v.to_str().ok()) != Some(authority) || !only(header::HOST) {
         return reply(Status::MISDIRECTED_REQUEST, "Misdirected request");
     }
+    if path.starts_with("/previews/") {
+        return crate::previews::admit_remote(&app, req).await;
+    }
     if !only(header::ORIGIN)
         || !only(header::REFERER)
         || !only(header::CONTENT_TYPE)
@@ -178,6 +183,7 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
         );
     }
     let method = req.method().clone();
+    let backend_ui = !server && crate::previews::backend::enabled(&app) && preview_control(&path, &method);
     let direct = channel.ingress || devices::direct_origin(&channel.origin);
     if path == "/remote-pair" && matches!(method, Method::GET | Method::HEAD) && direct && !server {
         return cors(next.run(req).await, supplied);
@@ -189,7 +195,7 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
         return cors(next.run(req).await, supplied);
     }
     if path.starts_with("/api/auth/") && path != "/api/auth/status"
-        || path.starts_with("/api/backends/")
+        || (path.starts_with("/api/backends/") && !backend_ui)
         || path.starts_with("/api/remote-control/")
         || path == "/api/remote-control"
         || path.starts_with("/api/push/")
@@ -199,10 +205,12 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
     if !server && !matches!(method, Method::GET | Method::HEAD | Method::OPTIONS) && !origin_ok {
         return cors(reply(Status::FORBIDDEN, "Cross-origin request rejected"), None);
     }
-    if !CATALOG.iter().any(|(methods, pat)| {
-        methods.split(' ').any(|m| m == if method == Method::HEAD { "GET" } else { method.as_str() })
-            && pat.is_match(&path)
-    }) {
+    if !backend_ui
+        && !CATALOG.iter().any(|(methods, pat)| {
+            methods.split(' ').any(|m| m == if method == Method::HEAD { "GET" } else { method.as_str() })
+                && pat.is_match(&path)
+        })
+    {
         return cors(reply(Status::NOT_FOUND, "Not found"), supplied);
     }
     let Ok((_, token)) = crate::auth::cookies(h, app.auth.cookie_name()) else {
@@ -238,7 +246,9 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
         return cors(status(!principal.is_cancelled()), supplied);
     }
     for name in super::AUTHORITY_HEADERS {
-        req.headers_mut().remove(name);
+        if !backend_ui || name != crate::previews::backend::PROOF {
+            req.headers_mut().remove(name);
+        }
     }
     req.extensions_mut().insert(Principal(principal.clone()));
     let response = tokio::select! {
@@ -249,4 +259,19 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
     let (parts, body) = response.into_parts();
     let body = axum::body::Body::from_stream(body.into_data_stream().take_until(principal.cancelled_owned()));
     cors(Response::from_parts(parts, body), supplied)
+}
+
+fn preview_control(path: &str, method: &Method) -> bool {
+    let Some((id, route)) = path.strip_prefix("/api/backends/").and_then(|p| p.split_once('/')) else {
+        return false;
+    };
+    crate::previews::backend::id_ok(id)
+        && match *method {
+            Method::GET => route == "api/meta",
+            Method::POST => route == "preview-capabilities",
+            Method::DELETE => route
+                .strip_prefix("preview-capabilities/")
+                .is_some_and(|id| id.len() == 36 && uuid::Uuid::parse_str(id).is_ok()),
+            _ => false,
+        }
 }

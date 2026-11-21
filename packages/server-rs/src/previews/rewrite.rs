@@ -114,6 +114,29 @@ impl Default for Budget {
 }
 
 pub const BYTES: usize = LIMIT;
+
+/// A remote source has already rewritten the document. Both UUID prefixes have equal width.
+pub(super) fn replace_prefix(mut bytes: Vec<u8>, mime: &str, from: &str, to: &str) -> Option<Vec<u8>> {
+    let charset = Encoding::select(&bytes, mime)?;
+    let wide = matches!(charset, Encoding::Be | Encoding::Le);
+    let from = charset.encode(from.into())?;
+    let to = charset.encode(to.into())?;
+    if from.is_empty() || from.len() != to.len() {
+        return None;
+    }
+    let find = memchr::memmem::Finder::new(&from);
+    let mut offset = 0;
+    while let Some(at) = find.find(&bytes[offset..]) {
+        let at = offset + at;
+        if wide && at % 2 == 1 {
+            offset = at + 1;
+            continue;
+        }
+        bytes[at..at + to.len()].copy_from_slice(&to);
+        offset = at + to.len();
+    }
+    Some(bytes)
+}
 #[derive(Clone, Copy, Debug)]
 pub struct TooLarge;
 
