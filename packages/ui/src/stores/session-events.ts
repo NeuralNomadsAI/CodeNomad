@@ -28,7 +28,9 @@ import type { PermissionRequest } from "../types/permission"
 import { showToastNotification, type ToastHandle, ToastVariant, type ToastPayload } from "../lib/notifications"
 import { uiState } from "./preferences"
 import { getInstanceLabel } from "../lib/instance-label"
+import { batch } from "solid-js"
 import { setActiveSessionFromList } from "./session-state"
+import { applySurface, beginGesture } from "./session-surface"
 import {
   instances,
   markPermissionReplied,
@@ -701,13 +703,18 @@ function showInstanceToast(instanceId: string, sessionId: string | undefined | n
   const authority = captureEventAuthority(instanceId)
   const onClick = async () => {
     if (!authority.current()) return
+    // An explicit open: show the conversation over any Mission reader, file or preview.
+    const gesture = sessionId ? beginGesture({ instanceId, sessionId }) : undefined
     const { appTabs, selectAppTab, selectInstanceTab } = await import("./app-tabs")
     if (!authority.current()) return
     const waiting = appTabs().find(tab => tab.kind === "remote-restore" && tab.instanceId === instanceId)
     if (waiting) { selectAppTab(waiting.id); return }
     if (!instances().has(instanceId)) return
     if (sessionId && !sessions().get(instanceId)?.has(sessionId)) return
-    if (selectInstanceTab(instanceId) && sessionId) setActiveSessionFromList(instanceId, sessionId)
+    if (selectInstanceTab(instanceId) && sessionId && gesture) batch(() => {
+      setActiveSessionFromList(instanceId, sessionId, gesture)
+      applySurface({ instanceId, sessionId }, { kind: "conversation" }, gesture)
+    })
   }
   if (local) return showToastNotification({ ...payload, systemAction: onClick })
   return showToastNotification({ ...payload, signal: authority.signal, action: {

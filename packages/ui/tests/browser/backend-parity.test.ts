@@ -140,12 +140,14 @@ test("web system notification clicks navigate to the qualified session and revok
   assert.deepEqual(await page.evaluate(() => (window as any).parity.history()), [], "System-only routing creates no history action")
   for (const owner of ["A", "B"]) {
     await page.evaluate(owner => {
+      ;(window as any).parity.openMissionReader(`${owner}~same`)
       const notice = (window as any).systemNotifications.find((item: any) => item.title === `Server ${owner} · ${owner}`)
       notice.dispatchEvent(new Event("click"))
     }, owner)
     await page.waitForFunction(owner => (window as any).parity.selected().instance === `${owner}~same`, owner)
     const selected = await page.evaluate(() => (window as any).parity.selected())
     assert.equal(selected[`session${owner}`], "ses_homonym")
+    assert.equal(await page.evaluate(owner => (window as any).parity.surface(`${owner}~same`), owner), "conversation", "The click shows the conversation over a Mission reader")
   }
   await page.evaluate(() => {
     ;(window as any).parity.detach()
