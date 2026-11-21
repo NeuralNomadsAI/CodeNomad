@@ -710,6 +710,22 @@ describe("DeveloperCdp", () => {
     } finally { client.close() }
   })
 
+  it("refuses a new key when its inspection is superseded during the final focus read", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    let selected = true
+    try {
+      const { document } = await client.inspect(identity)
+      chrome.onCommand = command => {
+        if (isDestination(command)) selected = false
+      }
+      await assert.rejects(client.act({ ...identity, document }, { action: "press", key: "Enter" }, () => {
+        if (!selected) throw new Error("Newer inspection won")
+      }), { message: "Newer inspection won" })
+      assert.ok(chrome.commands.every(command => command.method !== "Input.dispatchKeyEvent"))
+    } finally { client.close() }
+  })
+
   it("binds provenance to the document observed before its marking command", async () => {
     const chrome = new FakeChrome()
     const client = chrome.client()
