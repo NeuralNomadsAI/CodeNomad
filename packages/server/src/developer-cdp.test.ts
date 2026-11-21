@@ -139,6 +139,56 @@ describe("DeveloperCdp", () => {
     } finally { client.close() }
   })
 
+  it("completes an admitted click when the press changes the tab in the same document", async () => {
+    const chrome = new FakeChrome()
+    chrome.quads = [[100, 40, 300, 40, 300, 80, 100, 80]]
+    const client = chrome.client()
+    try {
+      const { endpoint, runId, windowId } = identity
+      const window = { endpoint, runId, windowId }
+      const inspection = await client.inspect(window)
+      chrome.onCommand = command => {
+        if (command.method === "Input.dispatchMouseEvent" && command.params?.type === "mousePressed") {
+          chrome.context = { ...chrome.context, instanceId: "next-tab" }
+        }
+      }
+      await client.act({ ...window, document: inspection.document }, { action: "click", ref: refOf(inspection) })
+      assert.deepEqual(chrome.commands.filter(command => command.method === "Input.dispatchMouseEvent")
+        .map(command => command.params?.type), ["mouseMoved", "mousePressed", "mouseReleased"])
+    } finally { client.close() }
+  })
+
+  it("reports uncertain input when the socket closes after sending a key", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    try {
+      const { endpoint, runId, windowId } = identity
+      const window = { endpoint, runId, windowId }
+      const { document } = await client.inspect(window)
+      chrome.onCommand = command => {
+        if (command.method === "Input.dispatchKeyEvent") chrome.sockets.at(-1)!.close()
+      }
+      await assert.rejects(client.act({ ...window, document }, { action: "press", key: "Enter" }), /Input already sent/)
+      assert.equal(chrome.commands.filter(command => command.method === "Input.dispatchKeyEvent").length, 1)
+    } finally { client.close() }
+  })
+
+  it("reports that the key was sent if its follow-up focus read loses the document", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    try {
+      const { endpoint, runId, windowId } = identity
+      const window = { endpoint, runId, windowId }
+      const { document } = await client.inspect(window)
+      chrome.onCommand = command => {
+        if (command.method === "Runtime.evaluate" && command.params?.objectGroup
+          && command.params.expression !== "document.documentElement") chrome.sockets.at(-1)!.close()
+      }
+      await assert.rejects(client.act({ ...window, document }, { action: "press", key: "Enter" }), /Key input was sent/)
+      assert.equal(chrome.commands.filter(command => command.method === "Input.dispatchKeyEvent").length, 2)
+    } finally { client.close() }
+  })
+
   for (const [event, params] of [
     ["Page.documentOpened", { frame: { id: "child", parentId: "main" } }],
     ["Runtime.executionContextsCleared", {}],

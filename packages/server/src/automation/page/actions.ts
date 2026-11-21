@@ -75,7 +75,8 @@ export async function performAction(session: PageSession, action: PageAction): P
           await callOn(session, action.target.ref, element, "focus", [])
         }
         await pressKeys(session, action.key)
-        return { focused: await focusedElement(session) }
+        try { return { focused: await focusedElement(session) } }
+        catch (error) { throw new Error("Key input was sent, but the current focus could not be read; inspect before retrying.", { cause: error }) }
       }
       case "wait": return await waitForText(session, action.text, action.gone, action.timeoutMs)
     }

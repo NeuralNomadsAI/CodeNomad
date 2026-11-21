@@ -117,20 +117,20 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (kind
   const checkRelease = () => session.checkRelease ? session.checkRelease() : session.checkpoint()
   const dispatch = async (kind: InputKind, params: Record<string, unknown>) => {
     let timestamp: number | undefined
-    const keyRelease = kind === "keyboard" && params.type === "keyUp" && held.has(`key:${params.code}`)
+    const mouse = kind === "pointer" || kind === "wheel"
+    const id = mouse ? `mouse:${params.button}` : `key:${params.code}`
+    const up = mouse ? params.type === "mouseReleased" : params.type === "keyUp"
+    const release = up && held.has(id)
     if (session.markAutomation) {
-      await checkInput(keyRelease)
+      await checkInput(release)
       marked = true
       const stamp = (await session.driver.call("mark-input", undefined, [])).value
       if (typeof stamp !== "number" || !Number.isFinite(stamp) || stamp <= 0) throw new Error("Cannot establish automation input provenance")
       timestamp = stamp
-      await checkInput(keyRelease)
+      await checkInput(release)
     }
-    const mouse = kind === "pointer" || kind === "wheel"
     if (mouse && typeof params.x === "number" && typeof params.y === "number") point = { x: params.x, y: params.y }
-    const id = mouse ? `mouse:${params.button}` : `key:${params.code}`
     const down = mouse ? params.type === "mousePressed" : params.type === "keyDown" || params.type === "rawKeyDown"
-    const up = mouse ? params.type === "mouseReleased" : params.type === "keyUp"
     if (down) held.set(id, { kind, params: { ...params, type: mouse ? "mouseReleased" : "keyUp", buttons: 0, modifiers: 0,
       ...(timestamp === undefined ? {} : { timestamp }) } })
     attempted = true
@@ -141,13 +141,11 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (kind
   await awaitInputAcceptance(session)
   try { return await run(dispatch) }
   catch (error) {
-    if (error instanceof PageTargetChangedError) {
-      targetLost = error
-      if (attempted && !error.sameDocument) {
-        throw new PageTargetChangedError(`${error.message}. Input already sent may still be delivered.`)
-      }
-    }
+    if (error instanceof PageTargetChangedError) targetLost = error
     if (attempted && error instanceof Error && /timed out|timeout/i.test(error.message)) throw new Error("Input timed out: its outcome is unknown. The page was busy and the input may still be delivered; inspect before retrying.")
+    if (attempted && session.markAutomation && error instanceof Error) {
+      throw new Error(`${error.message}. Input already sent may still be delivered; inspect before retrying.`, { cause: error })
+    }
     throw error
   } finally {
     for (const release of targetLost && !targetLost.sameDocument ? [] : [...held.values()].reverse()) {
