@@ -410,7 +410,10 @@ describe("BrowserController preview lifecycle", () => {
     assert.equal(h.controller.claimOpen(h.owner, requests[0]), true)
     const other = { id: 2, isDestroyed: () => false } as WebContents
     assert.equal(h.controller.permitAttachment(other, { src: url, webpreferences: "codenomadSession=session" }), true)
+    const { guest, events } = createGuest({ id: 82, owner: other })
+    h.controller.guestCreated(guest)
     assert.equal(h.controller.claimOpen(h.owner, requests[0]), false)
+    events.emit("destroyed")
     assert.equal(h.controller.releaseOpen(h.owner, requests[0]), true)
     await rejected
     assert.equal(requests.length, 1)

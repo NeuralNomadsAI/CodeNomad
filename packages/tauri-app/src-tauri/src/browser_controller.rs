@@ -714,6 +714,14 @@ impl BrowserController {
         };
         let attachment = inner.attachments.get(&claim.session_id);
         if attachment.is_some_and(|(owner, _)| owner != window_label) {
+            if claim.owner.as_deref() == Some(window_label) {
+                inner
+                    .open_claims
+                    .get_mut(request_id)
+                    .unwrap()
+                    .failed_owners
+                    .insert(window_label.to_string());
+            }
             return false;
         }
         let generation = attachment.map(|(_, generation)| *generation);
@@ -773,8 +781,8 @@ impl BrowserController {
         if claim.owner.as_deref() != Some(window_label) {
             return None;
         }
-        claim.failed_owners.insert(window_label.to_string());
-        if claim.attachment.is_none() && !occupied {
+        let first_failure = claim.failed_owners.insert(window_label.to_string());
+        if first_failure && claim.attachment.is_none() && !occupied {
             claim.owner = None;
         }
         Some(claim.clone())
@@ -845,8 +853,8 @@ impl BrowserController {
                     if claim.owner.as_deref() != Some(window_label) {
                         return None;
                     }
-                    claim.failed_owners.insert(window_label.to_string());
-                    if claim.attachment.is_some() || occupied.contains(&claim.session_id) {
+                    let first_failure = claim.failed_owners.insert(window_label.to_string());
+                    if !first_failure || claim.attachment.is_some() || occupied.contains(&claim.session_id) {
                         return None;
                     }
                     claim.owner = None;

@@ -217,7 +217,10 @@ export class BrowserController {
     const claim = this.openClaims.get(requestID)
     if (!claim || claim.abandoned || claim.failedOwners.has(owner) || (claim.owner && claim.owner !== owner)) return false
     const attachment = this.attachments.get(claim.sessionID)
-    if (attachment && attachment.owner !== owner) return false
+    if (attachment && attachment.owner !== owner) {
+      if (claim.owner === owner) claim.abandoned = true
+      return false
+    }
     if (claim.attachment && claim.attachment !== attachment) return false
     claim.owner = owner
     if (attachment) claim.attachment ??= attachment
@@ -228,7 +231,7 @@ export class BrowserController {
     if (typeof requestID !== "string") return false
     const claim = this.openClaims.get(requestID)
     if (!claim || claim.owner !== owner) return false
-    if (claim.attachment || this.attachments.has(claim.sessionID)) {
+    if (claim.abandoned || claim.attachment || this.attachments.has(claim.sessionID)) {
       claim.abandoned = true
       return true
     }
