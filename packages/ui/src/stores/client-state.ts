@@ -388,6 +388,9 @@ export function initializeClientState(): Promise<void> {
         snapshot = decodeClientSnapshot(loaded.snapshot)
         writeBlock = loaded.snapshot !== null && snapshot === null ? "snapshot" : false
       }
+      if (loaded.recreateWebRecords) {
+        for (const tab of snapshot?.session?.tabs ?? []) if (tab.kind === "workspace") delete tab.workspaceId
+      }
       resetLoadedState(snapshot && !snapshotOwnsLayout ? { ...snapshot, layout: {} } : snapshot, true)
       if (!writeBlock) {
         const migratedLayout = snapshotOwnsLayout && migrateLegacyLayoutValues()

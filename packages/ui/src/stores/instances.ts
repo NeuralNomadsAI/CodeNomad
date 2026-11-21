@@ -108,7 +108,7 @@ import { clearInstanceAttachments } from "./attachments"
 import { retainClosedWorkspaceDrafts } from "./closed-workspace-drafts"
 import { remoteRestoreTabs } from "./remote-restore-tabs"
 import { clearInstanceSeenInterruptions } from "./session-interruption-seen"
-import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
+import { isInstanceOccurrenceReused, publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { getUnavailableWorkspaceIds } from "./app-session-reconciliation"
 import { getAbortReason } from "./app-session-restore-timeout"
 import { AbortCreatedWorkspaceCleanup } from "./abort-created-workspace-cleanup"
@@ -1501,7 +1501,8 @@ async function refreshWorkspaceList(
     )) {
       if (!active()) return false
       releaseInstanceResources(instanceId)
-      removeInstance(instanceId, { authoritative: false })
+      removeInstance(instanceId, { authoritative: false,
+        windowRelease: openInstanceTabIds().has(instanceId) && isInstanceOccurrenceReused(instanceId) ? true : undefined })
     }
     const published = active() && workspaceListReconciliationFence.isCurrent(requestFence)
     if (published) inventoryPublished?.()

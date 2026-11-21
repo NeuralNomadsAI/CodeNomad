@@ -258,15 +258,8 @@ export function useAppSessionCapture() {
     ])
   }
   const release = (ids: string[]) => releasing ??= Promise.allSettled(ids.map(id => closeWorkspace(id, true)))
-  const flushAndRelease = async (generation?: number) => {
-    const currentRelease = releaseGeneration
-    const deadline = performance.now() + 750
-    const ids = [...openInstanceTabIds()]
-    await flush(generation)
-    if (currentRelease !== releaseGeneration) return
-    // Keep native acknowledgements within the host's flush deadline.
+  const awaitRelease = async (ids: string[], remaining = 750) => {
     const pending = release(ids)
-    const remaining = deadline - performance.now()
     if (remaining <= 0) return
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
@@ -275,11 +268,19 @@ export function useAppSessionCapture() {
       clearTimeout(timer)
     }
   }
+  const flushAndRelease = async (generation?: number) => {
+    const currentRelease = releaseGeneration
+    const deadline = performance.now() + 750
+    const ids = [...openInstanceTabIds()]
+    await flush(generation)
+    if (currentRelease === releaseGeneration) await awaitRelease(ids, deadline - performance.now())
+  }
   const nativeUnlisteners: Array<() => void> = []
   let nativeDisposed = false
-  const register = <T extends { generation: number; releaseWorkspaces?: boolean }>(event: string, acknowledge: (payload: T) => void | Promise<void>, nativeShutdown: boolean) => listen<T>(event, ({ payload }) => {
+  const register = <T extends { generation: number; releaseWorkspaces?: boolean; releaseOnly?: boolean }>(event: string, acknowledge: (payload: T) => void | Promise<void>, nativeShutdown: boolean) => listen<T>(event, ({ payload }) => {
     const generation = nativeShutdown ? payload.generation : undefined
-    void (payload.releaseWorkspaces ? flushAndRelease(generation) : flush(generation))
+    void (payload.releaseOnly ? awaitRelease([...openInstanceTabIds()])
+      : payload.releaseWorkspaces ? flushAndRelease(generation) : flush(generation))
       .then(() => acknowledge(payload)).catch((error) => log.error(`Failed to handle ${event}`, error))
   }).then((unlisten) => {
     if (nativeDisposed) unlisten()
@@ -287,7 +288,7 @@ export function useAppSessionCapture() {
   }).catch((error) => log.error(`Failed to listen for ${event}`, error))
   const ready = isTauriHost() && isLocalWindow()
     ? Promise.all([
-        register<{ generation: number; releaseWorkspaces?: boolean }>("client-state:flush-requested",
+        register<{ generation: number; releaseWorkspaces?: boolean; releaseOnly?: boolean }>("client-state:flush-requested",
           ({ generation }) => acknowledgeNativeClientStateRendererFlush(generation), true),
         register<{ generation: number }>("client-state:navigation-flush-requested",
           ({ generation }) => acknowledgeNativeClientStateNavigationFlush(generation), false),
@@ -410,8 +411,10 @@ export function useAppSessionCapture() {
       if (useBrowserLifecycleFlush && !releasing) flushNow()
       if (!event.persisted) void release([...openInstanceTabIds()])
     }
-    const nativeFlush = async (closing?: boolean | "cancel") => {
+    const nativeFlush = async (closing?: boolean | "cancel" | "prepare" | "release") => {
       if (closing === "cancel") resumeCapture()
+      else if (closing === "prepare") await flush(0)
+      else if (closing === "release") await awaitRelease([...openInstanceTabIds()])
       else if (closing) await flushAndRelease()
       else await flush()
     }

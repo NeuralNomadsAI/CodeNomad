@@ -5,7 +5,7 @@ import { decodeClientSnapshotV2 } from "../../../src/stores/client-state-partiti
 import { useAppSessionRestore } from "../../../src/lib/hooks/use-app-session-restore"
 import { activeAppTabId, appTabs, ensureActiveAppTab, selectAppTab } from "../../../src/stores/app-tabs"
 import { appSessionRestoreGateActive } from "../../../src/stores/app-session-restore-gate"
-import { activeInstanceId, createInstance, instances, updateInstance } from "../../../src/stores/instances"
+import { activeInstanceId, createInstance, instances, refreshWorkspaceList, updateInstance } from "../../../src/stores/instances"
 import { closeInstanceTab, selectInstanceTab } from "../../../src/stores/app-tabs"
 import { canContinueOpenCodeSetup, continueOpenCodeSetup, openOpenCodeSetup, refreshOpenCodeSetup, runOpenCodeSetup } from "../../../src/stores/opencode-setup"
 import { serverEvents } from "../../../src/lib/server-events"
@@ -37,6 +37,7 @@ import { getToastHistory } from "../../../src/lib/notifications"
   draft: (id: string) => getSessionDraftPromptsForInstance(id).same,
   writeDraft: (id: string, text: string) => setSessionDraftPrompt(id, "same", text),
   temporary: (id: string) => instances().get(id)?.temporary,
+  refresh: () => refreshWorkspaceList(),
   remove: (id: string, windowRelease = true) => (serverEvents as any).dispatch({
     type: "workspace.stopped", workspaceId: id, reason: "deleted", temporaryRetained: true, windowRelease,
   }),

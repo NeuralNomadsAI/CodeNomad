@@ -39,6 +39,7 @@ struct ShutdownState {
     next_generation: u64,
     local_closes: HashMap<String, PendingClose>,
     committed_local_closes: HashMap<String, PendingClose>,
+    releasing_local_closes: HashMap<String, u64>,
     approved_local_closes: HashSet<String>,
     global_pending: HashMap<String, u64>,
     global_requests: HashMap<String, u64>,
@@ -75,6 +76,7 @@ impl ShutdownCoordinator {
         if state.shutdown_started
             || state.local_closes.contains_key(&label)
             || state.committed_local_closes.contains_key(&label)
+            || state.releasing_local_closes.contains_key(&label)
             || state.approved_local_closes.contains(&label)
         {
             return None;
@@ -138,6 +140,7 @@ impl ShutdownCoordinator {
         state.shutdown_started = true;
         state.local_closes.clear();
         state.committed_local_closes.clear();
+        state.releasing_local_closes.clear();
         state.global_requests.clear();
         let mut requests = Vec::new();
         for label in labels {
@@ -253,24 +256,42 @@ impl ShutdownCoordinator {
         self.state.lock().map_or(true, |state| {
             state.local_closes.contains_key(label)
                 || state.committed_local_closes.contains_key(label)
+                || state.releasing_local_closes.contains_key(label)
                 || state.approved_local_closes.contains(label)
         })
     }
 
-    fn approve_local_close(&self, label: String) {
-        self.state
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .approved_local_closes
-            .insert(label);
+    fn approve_local_close(
+        &self,
+        label: String,
+        removal: Result<(), String>,
+    ) -> Result<Option<u64>, String> {
+        removal?;
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.shutdown_started {
+            return Ok(None);
+        }
+        // A late preflush acknowledgement cannot finish the release phase.
+        state.next_generation += 1;
+        let generation = state.next_generation;
+        state.releasing_local_closes.insert(label, generation);
+        Ok(Some(generation))
+    }
+
+    fn finish_local_release(&self, label: &str, generation: u64) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.releasing_local_closes.get(label) != Some(&generation) {
+            return false;
+        }
+        state.releasing_local_closes.remove(label);
+        state.approved_local_closes.insert(label.to_string());
+        true
     }
 
     fn local_window_destroyed(&self, label: &str) {
-        self.state
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .approved_local_closes
-            .remove(label);
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.approved_local_closes.remove(label);
+        state.releasing_local_closes.remove(label);
     }
 
     fn exit_allowed(&self) -> bool {
@@ -468,19 +489,34 @@ fn awaits_renderer_flush(url: Option<&tauri::Url>) -> bool {
     url.map_or(true, |url| !crate::is_listenerless_document(url))
 }
 
-fn emit_flush(app: &AppHandle, label: &str, generation: u64, release_workspaces: bool) -> bool {
+#[derive(Clone, Copy)]
+enum RendererFlush {
+    Prepare,
+    Shutdown,
+    Release,
+}
+
+fn emit_flush(app: &AppHandle, label: &str, generation: u64, phase: RendererFlush) -> bool {
     app.get_webview(label).is_some_and(|webview| {
         if !awaits_renderer_flush(webview.url().ok().as_ref()) {
             return false;
         }
         if label.starts_with("remote-") {
+            let argument = match phase {
+                RendererFlush::Prepare => "\"prepare\"",
+                RendererFlush::Shutdown => "true",
+                RendererFlush::Release => "\"release\"",
+            };
             return webview.eval(format!(
-                r#"Promise.resolve().then(() => window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?.({release_workspaces}))
+                r#"Promise.resolve().then(() => window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?.({argument}))
                     .finally(() => window.__TAURI_INTERNALS__.invoke("client_state_renderer_flushed", {{ generation: {generation}, accessToken: "" }}));"#
             )).is_ok();
         }
-        webview.emit("client-state:flush-requested",
-            client_state::RendererFlushRequest { generation, release_workspaces }).is_ok()
+        webview.emit("client-state:flush-requested", client_state::RendererFlushRequest {
+            generation,
+            release_workspaces: matches!(phase, RendererFlush::Shutdown),
+            release_only: matches!(phase, RendererFlush::Release),
+        }).is_ok()
     })
 }
 
@@ -492,7 +528,7 @@ fn emit_flush_cancelled(app: &AppHandle, label: &str, generation: u64) {
         }
         let _ = webview.emit(
             FLUSH_CANCELLED_EVENT,
-            client_state::RendererFlushRequest { generation, release_workspaces: false },
+            client_state::RendererFlushRequest { generation, release_workspaces: false, release_only: false },
         );
     }
 }
@@ -521,7 +557,7 @@ pub(crate) fn request_local_window_close(app: AppHandle, label: String) {
     ) else {
         return;
     };
-    if !emit_flush(&app, &label, generation, true) {
+    if !emit_flush(&app, &label, generation, RendererFlush::Prepare) {
         finish_local_close(app, label, window_id, generation);
         return;
     }
@@ -614,7 +650,7 @@ pub(crate) fn request_update(
 fn flush_shutdown(app: AppHandle, requests: Vec<(String, u64)>, timeout: Duration) {
     crate::remote_dictation::revoke(&app, None);
     for (label, generation) in &requests {
-        if !emit_flush(&app, label, *generation, true) {
+        if !emit_flush(&app, label, *generation, RendererFlush::Shutdown) {
             app.state::<ShutdownCoordinator>()
                 .acknowledge_global(label, *generation);
         } else if label.starts_with("remote-") {
@@ -652,6 +688,9 @@ fn flush_shutdown(app: AppHandle, requests: Vec<(String, u64)>, timeout: Duratio
 }
 
 pub(crate) fn renderer_flushed(app: AppHandle, label: String, window_id: String, generation: u64) {
+    if finish_local_release(&app, &label, generation) {
+        return;
+    }
     if app
         .state::<ShutdownCoordinator>()
         .acknowledge_global(&label, generation)
@@ -780,27 +819,49 @@ pub(crate) fn consume_local_window_close(app: &AppHandle, label: &str) -> Option
     let pending = app
         .state::<ShutdownCoordinator>()
         .take_committed_local_close(label)?;
-    if !pending.removes_state {
-        app.state::<ShutdownCoordinator>()
-            .approve_local_close(label.to_string());
-        return Some(true);
+    let result = if pending.removes_state {
+        app.try_state::<client_state::ClientState>()
+            .ok_or_else(|| "client state is unavailable".to_string())
+            .and_then(|state| match state.remove_window(&pending.window_id) {
+                Ok(true) => Ok(()),
+                Ok(false) => Err("persistent window state was not removed".to_string()),
+                Err(error) => Err(error),
+            })
+    } else {
+        Ok(())
+    };
+    match coordinator.approve_local_close(label.to_string(), result) {
+        Ok(Some(generation)) => {
+            let emitted = emit_flush(app, label, generation, RendererFlush::Release);
+            let app = app.clone();
+            let label = label.to_string();
+            std::thread::spawn(move || {
+                if emitted {
+                    std::thread::sleep(RENDERER_FLUSH_TIMEOUT);
+                }
+                finish_local_release(&app, &label, generation);
+            });
+        }
+        Ok(None) => {} // Global shutdown owns the window.
+        Err(error) => {
+            eprintln!("[client-state] failed to remove closed window: {error}");
+            emit_flush_cancelled(app, label, pending.generation);
+        }
     }
-    let result = app
-        .try_state::<client_state::ClientState>()
-        .ok_or_else(|| "client state is unavailable".to_string())
-        .and_then(|state| match state.remove_window(&pending.window_id) {
-            Ok(true) => Ok(()),
-            Ok(false) => Err("persistent window state was not removed".to_string()),
-            Err(error) => Err(error),
-        });
-    if let Err(error) = result {
-        eprintln!("[client-state] failed to remove closed window: {error}");
-        emit_flush_cancelled(app, label, pending.generation);
-        return Some(false);
+    Some(false)
+}
+
+pub(crate) fn finish_local_release(app: &AppHandle, label: &str, generation: u64) -> bool {
+    if !app
+        .state::<ShutdownCoordinator>()
+        .finish_local_release(label, generation)
+    {
+        return false;
     }
-    app.state::<ShutdownCoordinator>()
-        .approve_local_close(label.to_string());
-    Some(true)
+    if let Some(webview) = app.get_webview(label) {
+        let _ = webview.window().close();
+    }
+    true
 }
 
 pub(crate) fn local_window_close_in_flight(app: &AppHandle, label: &str) -> bool {
@@ -830,7 +891,7 @@ fn prepare_windows_session_end(app: &AppHandle) -> (u64, Instant) {
         return (generation, deadline);
     };
     for (label, flush_generation) in requests {
-        if label.starts_with("remote-") || !emit_flush(app, &label, flush_generation, false) {
+        if label.starts_with("remote-") || !emit_flush(app, &label, flush_generation, RendererFlush::Prepare) {
             app.state::<ShutdownCoordinator>()
                 .acknowledge_global(&label, flush_generation);
         }

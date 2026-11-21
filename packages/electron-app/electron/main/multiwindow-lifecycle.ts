@@ -65,7 +65,9 @@ export class MultiwindowLifecycle {
           return
         }
         // A hidden launch window holds no user state: dispose it even when its renderer never started.
-        if (!this.dependencies.isLaunchWindow?.(record.window)) await this.flushWindow(record, true)
+        const launch = this.dependencies.isLaunchWindow?.(record.window)
+        const remote = this.dependencies.isRemoteWindow?.(record.window) === true
+        if (!launch && !remote) await this.flushWindow(record, "prepare")
         // The last local window keeps its saved state beside remote windows, as when it quits CodeNomad:
         // the next local window (New Window, a later launch or the next start) reopens it.
         if (record.persisted !== false && this.hasOtherLocalWindow(record.id)
@@ -75,6 +77,7 @@ export class MultiwindowLifecycle {
           this.pendingWindowCloses.delete(record.window)
           return
         }
+        if (!launch) await this.run("workspace release", () => this.flushRenderer(record.window, remote ? true : "release"))
         approved = true
         record.window.close()
       })().catch((error) => {
@@ -207,27 +210,27 @@ export class MultiwindowLifecycle {
     }).then(() => this.exit())
   }
 
-  private async flushWindow(record: LifecycleWindow, closing: boolean): Promise<void> {
-    const remote = this.dependencies.isRemoteWindow?.(record.window) === true
-    const flush = () => flushRendererClientStateBeforeShutdown(
-      record.window,
-      closing || remote || this.dependencies.clientStateManager.isPrimary,
-      (url) => this.dependencies.isTrustedRendererOrigin(url, this.dependencies.getAllowedRendererOrigins(record.window)),
+  private flushRenderer(window: BrowserWindow, closing: boolean | "cancel" | "prepare" | "release") {
+    const remote = this.dependencies.isRemoteWindow?.(window) === true
+    return flushRendererClientStateBeforeShutdown(
+      window,
+      Boolean(closing) || remote || this.dependencies.clientStateManager.isPrimary,
+      (url) => this.dependencies.isTrustedRendererOrigin(url, this.dependencies.getAllowedRendererOrigins(window)),
       this.dependencies.rendererFlushTimeoutMs,
       closing,
       remote || !this.dependencies.clientStateManager.isPrimary,
     )
-    if (remote) await this.run("remote window flush", flush)
+  }
+
+  private async flushWindow(record: LifecycleWindow, closing: boolean | "prepare"): Promise<void> {
+    const flush = () => this.flushRenderer(record.window, closing)
+    if (this.dependencies.isRemoteWindow?.(record.window)) await this.run("remote window flush", flush)
     else await flush()
     if (record.tracker) await this.run("native window flush", () => record.tracker!.flush())
   }
 
   private resumeCapture(window: BrowserWindow): void {
-    void this.run("renderer resume", () => flushRendererClientStateBeforeShutdown(
-      window, true,
-      url => this.dependencies.isTrustedRendererOrigin(url, this.dependencies.getAllowedRendererOrigins(window)),
-      this.dependencies.rendererFlushTimeoutMs, "cancel", true,
-    ))
+    void this.run("renderer resume", () => this.flushRenderer(window, "cancel"))
   }
 
   private releasePrimary(): Promise<void> {

@@ -146,7 +146,7 @@ declare global {
        __CODENOMAD_BROWSER_CAPABILITIES__?: import("../lib/native/browser").BrowserHostCapabilities
        __CODENOMAD_WINDOW_CONTEXT__?: "local" | "remote" | "preferences"
        readonly __CODENOMAD_WINDOW_ID__?: string | null
-       __CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?: (closing?: boolean | "cancel") => Promise<void>
+       __CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?: (closing?: boolean | "cancel" | "prepare" | "release") => Promise<void>
        __CODENOMAD_STARTUP_STATE_COMMAND__?: (command: unknown) => Promise<unknown>
        __CODENOMAD_MEMORY_CLEANUP__?: (request: unknown) => Promise<void>
        __CODENOMAD_SELECT_SERVER__?: (intent: unknown, action?: "remove") => void

@@ -151,7 +151,7 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
   const context = await browser.newContext(), page = await context.newPage()
   const creates: string[] = []
   const disappears = mode === "disappears", failedReconnect = mode === "failed-reconnect"
-  let reload = false, reads = 0, remotePresent = true, remoteAvailable = true
+  let reload = false, reads = 0, remotePresent = true, remoteAvailable = true, remoteId = "same"
   const releaseHydration = Promise.withResolvers<void>(), omitProject = Promise.withResolvers<void>()
   await context.addInitScript(disappears => {
     ;(window as any).__name = (value: unknown) => value
@@ -196,9 +196,12 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
     else if (path === "/api/workspaces") {
       if (request.method() === "POST") {
         creates.push(pathname)
-        return route.fulfill({ status: 404, json: {} })
+        assert.ok(disappears && remote && !remotePresent)
+        remoteId = "recreated"
+        remotePresent = true
+        body = { ...descriptor(remoteId, "/remote"), requestId: request.postDataJSON().requestId }
       }
-      if (remote && reload && ++reads === 1) {
+      else if (remote && reload && ++reads === 1) {
         // Dispatch open while the admission request is held. Wait for the
         // handler's module import before letting the response reach Chromium.
         await page.evaluate(async () => {
@@ -212,12 +215,12 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
           await page.waitForFunction(() => (window as any).restoreFixture.state() === "unreachable")
         }
       }
-      if (remote && reload && disappears && reads === 2) {
+      if (request.method() !== "POST" && remote && reload && disappears && reads === 2) {
         // Wait until the admitted record owns the tab and its saved session read is in flight.
         await omitProject.promise
         remotePresent = false
       }
-      body = remote && !remotePresent ? [] : [descriptor("same", remote ? "/remote" : "/local")]
+      if (request.method() !== "POST") body = remote && !remotePresent ? [] : [descriptor(remote ? remoteId : "same", remote ? "/remote" : "/local")]
     } else if (path.endsWith("/worktrees")) body = { isGitRepo: false, worktrees: [] }
     else if (remote && path.endsWith("/instance/api/session/held-session")) {
       if (reload) await releaseHydration.promise
@@ -276,8 +279,6 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
         return !f.tabs().some((tab: any) => tab.id === "instance:a~same")
       })
       assert.equal(await page.locator('[data-restoring="true"]').count(), 1, "hydration remains pending at removal")
-      releaseHydration.resolve()
-      await restored()
       const tabs = () => page.evaluate(() => (window as any).restoreFixture.tabs())
       const state = await tabs()
       assert.equal(state.length, 2, "the missing remote project keeps its tab")
@@ -287,21 +288,14 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
       assert.equal(state[1].folder, "/remote")
       assert.deepEqual(state[1].drafts, { __no_session_draft__: "/remote", "held-session": "unsent conversation draft" })
       assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), state[1].id)
-      const placeholder = page.locator('[data-remote-restore="a"]')
-      const retry = placeholder.getByRole("button", { name: "Retry", exact: true })
-      await retry.click()
-      await page.waitForFunction(() => !document.querySelector("[data-remote-restore] button:disabled"))
-      assert.equal(reads, 3, "Retry reads inventory while the project remains absent")
-      assert.deepEqual(await tabs(), state)
-      remotePresent = true
-      await retry.click()
-      await page.locator('[data-ready]').filter({ hasText: "instance:a~same" }).waitFor()
+      releaseHydration.resolve()
+      await page.locator('[data-ready]').filter({ hasText: "instance:a~recreated" }).waitFor()
       await page.waitForFunction(() => (window as any).restoreFixture.tabs()[1]?.drafts["held-session"] === "unsent conversation draft")
-      assert.deepEqual((await tabs()).map((tab: any) => tab.id), expected)
+      assert.deepEqual((await tabs()).map((tab: any) => tab.id), ["instance:same", "instance:a~recreated"])
       assert.deepEqual((await tabs())[1].drafts, state[1].drafts)
-      assert.equal(await page.evaluate(() => (window as any).restoreFixture.view("a~same")?.rightPanelTab), "files")
-      assert.equal(reads, 4)
-      assert.deepEqual(creates, ["/api/backends/a/api/workspaces"], "Retry attempts a fresh record while the original is absent")
+      assert.equal(await page.evaluate(() => (window as any).restoreFixture.view("a~recreated")?.rightPanelTab), "files")
+      assert.equal(reads, 3)
+      assert.deepEqual(creates, ["/api/backends/a/api/workspaces"], "inventory loss replaces a reused record without Retry")
       return
     }
     assert.deepEqual(await restored(), expected, "both existing occurrences must rebind without Retry")

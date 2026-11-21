@@ -200,12 +200,19 @@ for (const remote of [false, true]) test(`${remote ? "desktop remote" : "storage
   } finally { await page.close() }
 })
 
-for (const web of [false, true]) for (const close of [false, true]) test(`${web ? "browser-session" : "native"} production capture/restore binds duplicate UUIDs after ${close ? "closure" : "reorder"}, without loading saved pages`, async () => {
+const viewCases = [
+  { web: false, close: false }, { web: false, close: true },
+  { web: true, close: false }, { web: true, close: false, broadcast: true },
+  { web: true, close: true, late: "inventory" }, { web: true, close: false, late: "overlap" },
+]
+for (const { web, close, late, broadcast } of viewCases) test(`${web ? "browser-session" : "native"} production capture/restore binds duplicate UUIDs after ${close ? "closure" : "reorder"} (${late ?? (broadcast ? "broadcast" : "navigation")})`, async () => {
   const context = await browser.newContext()
   const page = await context.newPage()
   const errors: string[] = [], loads: string[] = []
   page.on("pageerror", error => errors.push(error.message))
-  await page.addInitScript(web => {
+  await context.addInitScript(({ web, broadcast }) => {
+    if (location.search === "?other") return
+    if (broadcast) Object.defineProperty(navigator, "locks", { value: undefined })
     const w = window as any
     w.__name = (value: unknown) => value
     w.__CODENOMAD_RUNTIME_HOST__ = web ? "web" : "electron"; w.__CODENOMAD_WINDOW_CONTEXT__ = "local"
@@ -229,9 +236,10 @@ for (const web of [false, true]) for (const close of [false, true]) test(`${web 
       loadClientState: async () => ({ isPrimary: true, restoreEnabled: true, snapshot: JSON.parse(sessionStorage.getItem("snapshot") ?? "null") ?? initial }),
       saveClientState: async (_token: string, snapshot: unknown) => { sessionStorage.setItem("snapshot", JSON.stringify(snapshot)); return true },
     }
-  }, web)
+  }, { web, broadcast })
   let sequence = 0
   let inventory = ["web-0", "web-1", "other-window"]
+  let beforeCreate: (() => Promise<void>) | undefined
   const deletes: string[] = []
   const mock = (method: string, path: string, input: any) => {
     let body: any = {}
@@ -245,7 +253,7 @@ for (const web of [false, true]) for (const close of [false, true]) test(`${web 
     } else if (web && path.startsWith("/api/workspaces/") && method === "DELETE") {
       const id = path.split("/").at(-1)!
       deletes.push(id)
-      if (!close || id === "web-0") inventory = inventory.filter(candidate => candidate !== id)
+      if (id.startsWith("uuid-") || !close && !late || close && id === "web-0") inventory = inventory.filter(candidate => candidate !== id)
       return undefined
     } else if (path === "/api/previews") {
       loads.push(input.url)
@@ -273,6 +281,7 @@ for (const web of [false, true]) for (const close of [false, true]) test(`${web 
     }
     const chunks = []
     for await (const chunk of req) chunks.push(chunk)
+    if (req.method === "POST" && target.pathname === "/api/workspaces") await beforeCreate?.()
     const body = mock(req.method!, target.pathname, chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : undefined)
     if (body === undefined) res.writeHead(204).end()
     else res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(body))
@@ -281,7 +290,7 @@ for (const web of [false, true]) for (const close of [false, true]) test(`${web 
   const address = server.address() as { port: number }
   const fixtureUrl = `http://127.0.0.1:${address.port}${new URL(url).pathname}`
   try {
-    const other = web && !close ? await context.newPage() : undefined
+    const other = web && !close && !late ? await context.newPage() : undefined
     if (other) {
       await other.addInitScript(() => {
         const w = window as any
@@ -291,7 +300,7 @@ for (const web of [false, true]) for (const close of [false, true]) test(`${web 
         sessionStorage.setItem("codenomad.client-state.v1", JSON.stringify({ version: 1, revision: 1, savedAt: 1,
           layout: {}, session: { activeTabIndex: 0, tabs: [{ kind: "workspace", workspaceId: "other-window", folder: "/same" }] } }))
       })
-      await other.goto(fixtureUrl)
+      await other.goto(`${fixtureUrl}?other`)
       await other.locator('[data-restoring="false"]').waitFor()
     }
     await page.goto(fixtureUrl)
@@ -331,12 +340,33 @@ for (const web of [false, true]) for (const close of [false, true]) test(`${web 
     assert.equal(captured[0].viewState.missions.reader.missionId, "debug")
     if (!close) assert.deepEqual(captured[1].viewState.previews.same, { mode: "preview" })
     assert.equal(await page.evaluate(() => (window as any).tabViews.saved("same").targetUrl), "https://example.com/a")
+    if (other) {
+      const opened = page.waitForEvent("popup")
+      await page.evaluate(() => { window.open(location.href) })
+      const copy = await opened
+      await copy.locator('[data-restoring="false"]').waitFor()
+      const copied = await copy.evaluate(() => {
+        const f = (window as any).tabViews
+        return f.ids().map((id: string) => ({ id, draft: f.draft(id), view: f.view(id) }))
+      })
+      assert.equal(copied.length, 2)
+      assert.equal(copied[0].draft, "restored draft")
+      assert.deepEqual(copied.map((v: any) => v.view), captured.map((v: any) => v.viewState))
+      const closed = copy.waitForEvent("close")
+      await copy.close({ runBeforeUnload: true })
+      await closed
+      await page.waitForFunction(async (ids: string[]) => {
+        const rows = await (await fetch("/api/workspaces")).json()
+        return ids.every(id => !rows.some((row: any) => row.id === id))
+      }, copied.map((v: any) => v.id))
+      assert.ok(ids.every(id => inventory.includes(id)), "closing a popup with copied sessionStorage keeps the opener's records")
+    }
     const count = loads.length
     await page.reload(); await page.locator('[data-restoring="false"]').waitFor()
     if (web) assert.ok(deletes.includes("web-1"), "reload sends the keepalive DELETE")
     const restored = await page.evaluate(() => (window as any).tabViews.ids().map((id: string) => ({ id, view: (window as any).tabViews.view(id) })))
     assert.equal(restored.length, captured.length)
-    if (web && close) {
+    if (late) {
       assert.equal(restored[0].id, "web-1", "a dropped DELETE leaves the exact record reusable")
       assert.equal(sequence, 0)
     } else assert.ok(restored.every((v: any) => !ids.includes(v.id)), "backend recreation changes every instance UUID")
@@ -350,11 +380,22 @@ for (const web of [false, true]) for (const close of [false, true]) test(`${web 
     assert.deepEqual(restored.map((v: any) => v.view), captured.map((v: any) => v.viewState))
     assert.equal(loads.length, count, "restoration allocates zero preview records and loads zero saved pages")
     assert.deepEqual(errors, [])
-    if (web && close) {
-      // Deliver a DELETE that raced the exact-ID rebind after navigation.
+    if (late) {
       inventory = inventory.filter(id => id !== "web-1")
-      await page.evaluate(() => (window as any).tabViews.remove("web-1"))
+      if (late === "inventory") await page.evaluate(() => (window as any).tabViews.refresh())
+      else {
+        const first = page.waitForRequest(request => request.method() === "POST" && new URL(request.url()).pathname === "/api/workspaces")
+        const gate = Promise.withResolvers<void>()
+        beforeCreate = () => gate.promise
+        try {
+          await page.evaluate(() => (window as any).tabViews.remove("web-1"))
+          await first
+          inventory = inventory.filter(id => id !== "web-0")
+          await page.evaluate(() => (window as any).tabViews.remove("web-0"))
+        } finally { gate.resolve() }
+      }
       await page.waitForFunction(() => (window as any).tabViews.ids()[0]?.startsWith("uuid-"))
+      if (late === "overlap") await page.waitForFunction(() => (window as any).tabViews.ids().length === 2)
       assert.equal(await page.evaluate(() => {
         const f = (window as any).tabViews
         return f.draft(f.ids()[0])

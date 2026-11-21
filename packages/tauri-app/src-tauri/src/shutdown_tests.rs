@@ -75,7 +75,7 @@ fn restart_waits_for_cleanup_and_is_cancelled_when_cleanup_fails() {
 fn failed_shutdown_paths_emit_the_renderer_resume_event() {
     let source = include_str!("shutdown.rs");
     assert_eq!(FLUSH_CANCELLED_EVENT, "client-state:flush-cancelled");
-    assert!(source.contains("RendererFlushRequest { generation, release_workspaces: false }"));
+    assert!(source.contains("emit_flush(&app, &label, generation, RendererFlush::Prepare)"));
     assert!(source.contains("emit_flush_cancellations(&app, cancellations)"));
 }
 
@@ -123,10 +123,21 @@ fn pending_and_approved_local_closes_remain_visible_to_final_window_decisions() 
     assert!(coordinator.commit_local_close("local-a".into(), pending));
     assert!(coordinator.local_close_in_flight("local-a"));
     coordinator.take_committed_local_close("local-a").unwrap();
-    coordinator.approve_local_close("local-a".into());
+    let release = coordinator.approve_local_close("local-a".into(), Ok(())).unwrap().unwrap();
+    assert!(coordinator.local_close_in_flight("local-a"));
+    assert!(!coordinator.finish_local_release("local-a", generation));
+    assert!(coordinator.finish_local_release("local-a", release));
     assert!(coordinator.local_close_in_flight("local-a"));
     coordinator.local_window_destroyed("local-a");
     assert!(!coordinator.local_close_in_flight("local-a"));
+}
+
+#[test]
+fn refused_close_never_gains_workspace_release_authority() {
+    let coordinator = ShutdownCoordinator::default();
+    assert!(coordinator.approve_local_close("local-a".into(), Err("refused".into())).is_err());
+    assert!(!coordinator.finish_local_release("local-a", 1));
+    assert!(coordinator.begin_local_close("local-a".into(), "a".into(), true).is_some());
 }
 
 #[test]
