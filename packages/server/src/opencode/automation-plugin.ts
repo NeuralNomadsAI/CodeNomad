@@ -1,6 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto"
 import { execFile, spawn } from "node:child_process"
-import { mkdir, open, opendir, readFile, rename, rm, writeFile } from "node:fs/promises"
+import { mkdir, open, opendir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import type { Plugin } from "@opencode/plugin"
@@ -149,18 +149,15 @@ function resolveWslWindowsLocalAppData(env: NodeJS.ProcessEnv, { strict = false,
     || rememberFailures && (!strict || cachedWslWindowsLocalAppData.expiresAt > Date.now()))) return Promise.resolve(cachedWslWindowsLocalAppData.value)
   if (rememberFailures && !signal && pendingWslWindowsLocalAppData?.key === key) return pendingWslWindowsLocalAppData.promise
   const promise = (async (): Promise<WindowsDiscovery> => {
-    let interopAvailable = false
     try {
       const windowsPath = await windowsDiscoveryOutput("cmd.exe", ["/d", "/s", "/c", "echo %LOCALAPPDATA%"], env, signal)
-      interopAvailable = true
       signal?.throwIfAborted()
       const translated = await windowsDiscoveryOutput("wslpath", ["-u", windowsPath], env, signal)
       signal?.throwIfAborted()
       return path.posix.isAbsolute(translated) ? translated : null
     } catch (error) {
       signal?.throwIfAborted()
-      // A browser inventory is incomplete if Windows responded but its registry path could not be translated.
-      if (strict === "browser" && interopAvailable) return null
+      if (strict === "browser") return null
       return ["ENOENT", "ENOEXEC"].includes((error as NodeJS.ErrnoException).code ?? "") ? false : null
     }
   })().then(value => {
@@ -390,6 +387,10 @@ async function registrations({ pruneStale = true, strict }: { pruneStale?: boole
     } catch (error) {
       signal?.throwIfAborted()
       if (strict && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+      if (strict === "browser" && directoryIndex > 0) {
+        // An absent registry is meaningful only on a readable Windows profile mount.
+        if (entries.length || !(await stat(path.dirname(path.dirname(directory)))).isDirectory()) throw error
+      }
       continue
     }
     entries.sort((left, right) => right.startedAt - left.startedAt)
@@ -492,7 +493,7 @@ function callWindowsBridge(
   return new Promise((resolve, reject) => {
     const child = spawn("curl.exe", [
       // First argument disables curlrc, which can turn on redirect following.
-      ...(rejectRedirects ? ["--disable"] : []),
+      ...(rejectRedirects ? ["--disable", "--globoff"] : []),
       "--verbose", "--silent", "--show-error", "--max-time", String(timeoutMs / 1_000),
       "--noproxy", "*",
       "--request", "POST",
@@ -782,6 +783,10 @@ interface BrowserPin {
   target: string
 }
 
+function sameBrowserBridge(a: DiscoveredBridgeRegistration, b: DiscoveredBridgeRegistration): boolean {
+  return a.token === b.token && a.url === b.url && a[WINDOWS_INTEROP] === b[WINDOWS_INTEROP]
+}
+
 export function createBrowserToolExecutor() {
   const pins = new Map<string, BrowserPin>()
   const queues = new Map<string, Promise<void>>()
@@ -809,7 +814,7 @@ export async function executeBrowserTool(sessionID: string, input: unknown, pins
   const bound = command.action !== "open" && !snapshot
   const pin = bound ? submitted ? submitted.pin : pins?.get(sessionID) : undefined
   const currentPin = pins?.get(sessionID)
-  if (bound && submitted && (pin?.target !== currentPin?.target || pin?.registration.token !== currentPin?.registration.token)) {
+  if (bound && submitted && pin !== currentPin) {
     throw new Error("stale-preview: The preview selection changed; take a new snapshot")
   }
   if (pins && !pin && command.action !== "open" && !snapshot) {
@@ -825,14 +830,17 @@ export async function executeBrowserTool(sessionID: string, input: unknown, pins
   let incomplete = false, unsupported = false, stale = false
   for (let index = 0; index < active.length && owners.length < 2; index += PROBE_CONCURRENCY) {
     const results = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async bridge => {
+      const now = Date.now()
+      const timeout = Math.min(remaining(now), BROWSER_DISCOVERY_TIMEOUT_MS)
+      const probeDeadline = now + timeout
       try {
-        const now = Date.now()
-        const timeout = Math.min(remaining(now), BROWSER_DISCOVERY_TIMEOUT_MS)
-        return { bridge, ...await callBridge(bridge, { mode: opening ? "browser-claim" : "browser-probe", sessionID, deadline: now + timeout }, timeout) }
+        const result = await callBridge(bridge, { mode: opening ? "browser-claim" : "browser-probe", sessionID, deadline: probeDeadline }, timeout)
+        if (Date.now() < probeDeadline) return { bridge, ...result }
+        incomplete = true
       } catch (error) {
-        if (!isConnectionRefused(error)) incomplete = true
-        return undefined
+        if (Date.now() >= probeDeadline || !isConnectionRefused(error)) incomplete = true
       }
+      return undefined
     }))
     for (const item of results) {
       if (!item) continue
@@ -857,7 +865,7 @@ export async function executeBrowserTool(sessionID: string, input: unknown, pins
   if (unsupported) throw new Error("unsupported: A CodeNomad backend cannot verify the preview target; update the desktop host")
   if (stale) throw new Error("stale-preview: The preview changed; take a new snapshot")
   const owner = owners[0]
-  if (pin && (!owner || owner.bridge.token !== pin.registration.token || owner.witness !== pin.target)) {
+  if (pin && (!owner || !sameBrowserBridge(owner.bridge, pin.registration) || owner.witness !== pin.target)) {
     throw new Error("stale-preview: The preview changed; take a new snapshot")
   }
   if (!owner) throw new Error(opening ? "No local CodeNomad window owns this session"
@@ -865,9 +873,15 @@ export async function executeBrowserTool(sessionID: string, input: unknown, pins
   const registration = pin?.registration ?? owner.bridge
   const target = pin?.target ?? owner.witness
   const response = await callBridge(registration, { mode: "browser-execute", sessionID, command, deadline, ...(target ? { target } : {}) }, remaining())
+    .catch(error => { remaining(); throw error })
+  remaining()
   if (response.status !== 200) {
-    const reason = response.body.error || `Browser command failed (${response.status})`
-    throw new Error(typeof response.body.code === "string" ? `${response.body.code}: ${reason}` : reason)
+    const reason = response.body?.error || `Browser command failed (${response.status})`
+    throw new Error(typeof response.body?.code === "string" ? `${response.body.code}: ${reason}` : reason)
+  }
+  const result = response.body?.result as { url?: unknown; snapshot?: unknown } | undefined
+  if (command.action === "snapshot" && (typeof result?.url !== "string" || typeof result.snapshot !== "string")) {
+    throw new Error("The browser bridge returned no valid snapshot result; take a new snapshot")
   }
   if (command.action === "open") pins?.delete(sessionID)
   if (pins && snapshot && target) {
@@ -875,7 +889,7 @@ export async function executeBrowserTool(sessionID: string, input: unknown, pins
     pins.set(sessionID, { registration, target })
     if (pins.size > 128) pins.delete(pins.keys().next().value!)
   }
-  return formatBridgeResult(response.body.result, { text: "Captured the visible CodeNomad browser.", name: "browser.png" })
+  return formatBridgeResult(result, { text: "Captured the visible CodeNomad browser.", name: "browser.png" })
 }
 
 function targetError(code: string, message: string): Error {

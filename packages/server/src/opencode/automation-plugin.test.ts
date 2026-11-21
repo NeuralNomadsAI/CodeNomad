@@ -206,6 +206,8 @@ test("mission discovery waits for cold ownership validation and still rejects co
   }
 })
 
+const fixtureSnapshot = { url: "https://example.test/", snapshot: "WebKit native result", collapsed: 0 }
+
 test("browser discovery executes native WebKit open, snapshot and screenshot actions", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-webkit-browser-"))
   const restore = isolateAutomationBridgeRegistry(root)
@@ -213,7 +215,8 @@ test("browser discovery executes native WebKit open, snapshot and screenshot act
   let remove: (() => Promise<void>) | undefined
   const { server, url } = await listen(async (body, response) => {
     calls.push([body.mode, body.target])
-    return { result: body.mode === "browser-execute" ? { text: "WebKit native result" } : { available: true, target: "webkit-document" } }
+    return { result: body.mode !== "browser-execute" ? { available: true, target: "webkit-document" }
+      : (body.command as { action: string }).action === "snapshot" ? fixtureSnapshot : { text: "WebKit native result" } }
   })
   try {
     remove = await publishAutomationBridge(createAutomationBridgeRegistration(url))
@@ -261,7 +264,7 @@ test("preview discovery cannot dispatch past unverified profiles", async t => {
     const token = new Headers(init.headers).get("x-codenomad-automation-token")
     if (body.mode === "browser-execute") {
       executions++
-      return Response.json({ result: { ok: true } })
+      return Response.json({ result: body.command.action === "snapshot" ? fixtureSnapshot : { ok: true } })
     }
     if (token === owner.token) return Response.json({ result: { available: true, target: "document" } })
     if (refusal instanceof Error) throw refusal
@@ -341,7 +344,7 @@ test("browser execution keeps its exact fetch destination and never replays a re
   const command = { action: "press", key: "Enter" }
   const owner = await listen(async (body, reply, request) => {
     if (body.mode === "browser-probe") return { result: { available: true, target: "exact-document" } }
-    if ((body.command as { action: string }).action === "snapshot") return { result: { text: "snapshot" } }
+    if ((body.command as { action: string }).action === "snapshot") return { result: fixtureSnapshot }
     received.push(["owner", request.headers["x-codenomad-automation-token"], body.mode, body.sessionID, body.target, body.command])
     reply.statusCode = 307
     reply.setHeader("location", new URL(AUTOMATION_BRIDGE_PATH, other.url).href)
@@ -379,16 +382,25 @@ test("WSL preview discovery keeps malformed and redirecting Windows advertisemen
   const foreign = { ...createAutomationBridgeRegistration("http://127.0.0.1:2"), pid: 0x80000000 }
   const registrationName = ({ startedAt, pid }: typeof local, suffix: string) => `${startedAt}-${pid}-${suffix}.json`
   const localName = registrationName(local, "local"), foreignName = registrationName(foreign, "windows")
-  let foreignContents = "{unparseable", vanished = false, redirects = true, windowsOwner = false
+  let foreignContents = "{unparseable", vanished = false, redirects = true, windowsOwner = false, mounted = true
   let executions = 0, curlCalls = 0
   let missing: { file: string; code: string } | undefined
   t.mock.method(childProcess, "execFile", (file: string, _args: string[], _options: unknown, callback: (error: Error | null, stdout?: string) => void) => {
     if (missing?.file === file) callback(Object.assign(new Error("Fixture command unavailable"), { code: missing.code }))
     else callback(null, file === "cmd.exe" ? "C:/fixture-windows" : "/fixture-windows")
   })
-  t.mock.method(fs, "opendir", async (directory: string) => (async function* () {
-    yield { name: directory.startsWith("/fixture-linux/") ? localName : foreignName, isFile: () => true }
-  })())
+  t.mock.method(fs, "opendir", async (directory: string) => {
+    const localDirectory = directory.startsWith("/fixture-linux/")
+    if (!localDirectory && !mounted) throw Object.assign(new Error("Mount missing"), { code: "ENOENT" })
+    return (async function* () {
+      yield { name: localDirectory ? localName : foreignName, isFile: () => true }
+    })()
+  })
+  t.mock.method(fs, "stat", async (directory: string) => {
+    assert.equal(directory, "/fixture-windows")
+    if (!mounted) throw Object.assign(new Error("Mount missing"), { code: "ENOENT" })
+    return { isDirectory: () => true }
+  })
   t.mock.method(fs, "open", async (file: string) => {
     const windows = file.endsWith(foreignName)
     if (windows && vanished) throw Object.assign(new Error("File vanished"), { code: "ENOENT" })
@@ -398,14 +410,17 @@ test("WSL preview discovery keeps malformed and redirecting Windows advertisemen
   t.mock.method(fs, "rm", async () => assert.fail("Windows advertisements are left to their publishers"))
   t.mock.method(globalThis, "fetch", async (url: string, init: RequestInit) => {
     assert.equal(url, local.url)
-    if (JSON.parse(String(init.body)).mode === "browser-execute") executions++
+    const body = JSON.parse(String(init.body))
+    if (body.mode === "browser-execute") executions++
     if (windowsOwner) return Response.json({ code: "browser-not-owner" }, { status: 404 })
+    if (body.command?.action === "snapshot") return Response.json({ result: fixtureSnapshot })
     return Response.json({ result: { available: true, target: "document" } })
   })
   const windowsActions: unknown[] = [], forwarded: unknown[] = []
   t.mock.method(childProcess, "spawn", (command: string, args: string[]) => {
     curlCalls++
     assert.equal(command, "curl.exe")
+    assert.ok(args.includes("--globoff"), "curl cannot expand one bridge address into several requests")
     const child = Object.assign(new EventEmitter(), {
       stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true,
     })
@@ -415,7 +430,7 @@ test("WSL preview discovery keeps malformed and redirecting Windows advertisemen
       if (windowsOwner) {
         const body = JSON.parse(input)
         if (body.mode === "browser-probe") child.stdout.write('{"result":{"available":true,"target":"windows-document"}}\n200')
-        else if (body.command.action === "snapshot") child.stdout.write('{"result":{"text":"snapshot"}}\n200')
+        else if (body.command.action === "snapshot") child.stdout.write(`${JSON.stringify({ result: fixtureSnapshot })}\n200`)
         else {
           const request = [args.at(-1), args.find(arg => arg.startsWith("x-codenomad-automation-token: ")),
             body.mode, body.sessionID, body.target, body.command]
@@ -443,11 +458,11 @@ test("WSL preview discovery keeps malformed and redirecting Windows advertisemen
     return child
   })
   syncBuiltinESMExports()
-  await t.test("missing cmd.exe still proves absence for browser discovery", async () => {
+  await t.test("missing cmd.exe leaves Windows browser discovery unverified", async () => {
     missing = { file: "cmd.exe", code: "ENOENT" }
     const before = executions
-    await browser({ action: "snapshot" })
-    assert.equal(executions, before + 1)
+    await assert.rejects(browser({ action: "snapshot" }), /inventory could not be verified/)
+    assert.equal(executions, before)
   })
   for (const code of ["ENOENT", "ENOEXEC"]) {
     await t.test(`${code} from wslpath after cmd.exe succeeds prevents any browser dispatch`, async () => {
@@ -462,6 +477,14 @@ test("WSL preview discovery keeps malformed and redirecting Windows advertisemen
     })
   }
   missing = undefined
+  await t.test("missing Windows mount cannot be treated as an empty registry", async () => {
+    mounted = false
+    try {
+      const before = executions
+      await assert.rejects(browser({ action: "open", url: "https://example.test" }), /inventory could not be verified/)
+      assert.equal(executions, before)
+    } finally { mounted = true }
+  })
   await t.test("unreadable JSON", async () => {
     const before = executions
     await assert.rejects(browser({ action: "snapshot" }), /inventory could not be verified/)
@@ -509,7 +532,7 @@ test("preview discovery refuses a 65-profile inventory rather than dropping the 
     const token = new Headers(init.headers).get("x-codenomad-automation-token")
     if (body.mode === "browser-execute") {
       executions++
-      return Response.json({ result: { ok: true } })
+      return Response.json({ result: body.command.action === "snapshot" ? fixtureSnapshot : { ok: true } })
     }
     return token === owner.token || token === "oldest"
       ? Response.json({ result: { available: true, target: token } })
@@ -538,13 +561,68 @@ test("preview probes carry the smaller of their HTTP budget and the command dead
   const probes: number[] = []
   t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
     const body = JSON.parse(String(init.body))
-    if (body.mode === "browser-execute") return Response.json({ result: { ok: true } })
+    if (body.mode === "browser-execute") return Response.json({ result: fixtureSnapshot })
     probes.push(body.deadline)
     return Response.json({ result: { available: true, target: "document" } })
   })
   await executeBrowserTool("session", { action: "snapshot" })
   await executeBrowserTool("session", { action: "snapshot" }, undefined, now + 1_000)
   assert.deepEqual(probes, [now + 5_000, now + 1_000])
+})
+
+test("late HTTP responses cannot establish or execute a preview selection", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-preview-http-deadline-"))
+  const restore = isolateAutomationBridgeRegistry(root)
+  t.after(async () => { restore(); await rm(root, { recursive: true, force: true }) })
+  await publishAutomationBridge(createAutomationBridgeRegistration("http://127.0.0.1:56780"))
+  let now = Date.now(), delayProbe = true, executions = 0
+  t.mock.method(Date, "now", () => now)
+  t.mock.method(globalThis, "fetch", async (_url: unknown, init: RequestInit) => {
+    const body = JSON.parse(String(init.body))
+    if (body.mode === "browser-probe") {
+      if (delayProbe) now = body.deadline + 1
+      return Response.json({ result: { available: true, target: "document" } })
+    }
+    executions++
+    now = body.deadline + 1
+    return Response.json({ result: fixtureSnapshot })
+  })
+  const snapshot = { action: "snapshot" }
+  await assert.rejects(executeBrowserTool("session", snapshot, undefined, now + 30_000), /inventory could not be verified/)
+  assert.equal(executions, 0)
+  delayProbe = false
+  const browser = createBrowserToolExecutor()
+  await assert.rejects(browser("session", snapshot), /preview-expired/)
+  await assert.rejects(browser("session", { action: "screenshot" }), /snapshot-required/)
+  assert.equal(executions, 1)
+})
+
+test("a preview pin requires a snapshot result and retains its bridge address", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-preview-pinned-bridge-"))
+  const restore = isolateAutomationBridgeRegistry(root)
+  t.after(async () => { restore(); await rm(root, { recursive: true, force: true }) })
+  const original = createAutomationBridgeRegistration("http://127.0.0.1:56780")
+  const remove = await publishAutomationBridge(original)
+  let valid = false
+  const executed: string[] = []
+  t.mock.method(globalThis, "fetch", async (url: string, init: RequestInit) => {
+    const body = JSON.parse(String(init.body))
+    if (body.mode === "browser-probe") {
+      return Response.json({ result: { available: true, target: "document" } })
+    }
+    executed.push(url)
+    return Response.json(valid ? { result: fixtureSnapshot } : {})
+  })
+  const browser = createBrowserToolExecutor()
+  const snapshot = { action: "snapshot" }, capture = { action: "screenshot" }
+  await assert.rejects(browser("session", snapshot), /snapshot result/)
+  await assert.rejects(browser("session", capture), /snapshot-required/)
+  valid = true
+  await browser("session", snapshot)
+  await remove()
+  await publishAutomationBridge({ ...original, url: original.url.replace("56780", "56781") })
+  await assert.rejects(browser("session", capture), /stale-preview/)
+  assert.deepEqual(executed, [original.url, original.url])
 })
 
 test("unscoped snapshots change the preview pin; ref-free actions stay on that pin", async t => {
