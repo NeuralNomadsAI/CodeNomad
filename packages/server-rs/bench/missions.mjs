@@ -4,7 +4,7 @@ import path from "node:path"
 import { execFileSync } from "node:child_process"
 import { setTimeout as delay } from "node:timers/promises"
 
-export async function run({ call, fixture: { client }, root, folder }) {
+export async function run({ call, fixture: { client, env }, root, folder }) {
   const result = {}
   async function observe(key, method, url, payload, status, project = v => v) {
     const response = await call(url, { method, signal: AbortSignal.timeout(90_000), ...(payload === undefined ? {} : {
@@ -40,8 +40,10 @@ export async function run({ call, fixture: { client }, root, folder }) {
     const forge = `/api/workspaces/${workspace.id}/repository-source`
     const selected = `${forge}?directory=${encodeURIComponent(location.directory)}`
     const checkout = path.join(root, folder)
-    const git = (...args) => execFileSync("git", ["-C", checkout, ...args], { windowsHide: true })
-    await read("repository-source-no-remote", selected, 200)
+    const git = (...args) => execFileSync("git", ["-C", checkout, ...args], { windowsHide: true, env })
+    git("remote", "remove", "origin")
+    const missing = await read("repository-source-no-remote", selected, 200)
+    assert.deepEqual(missing, { status: "unavailable", reason: "no_remote" })
     git("remote", "add", "origin", "https://gitlab.com/fixture/fork.git")
     git("remote", "add", "upstream", "git@github.com:fixture/project.git")
     const detected = await read("repository-source-upstream", selected, 200)
