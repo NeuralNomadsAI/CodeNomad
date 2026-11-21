@@ -143,6 +143,7 @@ const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
           return source || frameSource(await openSessionPreview(props.preview.sessionId, address, props.instanceId))
         }}
         onNavigationError={showNavigationError}
+        previewIdentity={props.preview.token}
         onOwnershipConflict={() => {
           showNavigationError(new Error(t("sessionPreview.open.alreadyOwned")))
           rejectSessionPreviewAdmission(props.preview.storageKey, props.active ? props.instanceId : undefined)

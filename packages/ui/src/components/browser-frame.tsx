@@ -97,6 +97,7 @@ interface BrowserFrameProps {
   onNavigate?: (address: string) => Promise<string>
   onNavigationError?: (error: unknown) => void
   onOwnershipConflict?: () => void
+  previewIdentity?: string
   onFrameLocation?: (path: string) => string | void
   initialHistory?: BrowserHistory
   initialViewport?: BrowserViewportPreset
@@ -714,6 +715,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       registering = true
       const target = nativeTarget()
       const registrationId = browserRegistrationId
+      const previewIdentity = props.previewIdentity
       // This registration loads the pending address itself (e.g. a retry).
       if (pendingTauriNavigation?.url === target) pendingTauriNavigation = undefined
       let loaded = target
@@ -742,6 +744,12 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
           ...(webkitEmulation ? { presentation: presentation() } : {}),
         })
         if (!admitted) {
+          if (active && registrationId === browserRegistrationId
+            && (previewIdentity !== props.previewIdentity || target !== nativeTarget())) {
+            registering = false
+            syncBounds()
+            return
+          }
           refused = true
           unlistenNavigation()
           unlistenNavigation = () => {}
