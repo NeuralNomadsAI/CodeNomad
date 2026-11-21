@@ -24,7 +24,7 @@ serverApi.discardTemporaryWorkspace = async (id, options) => {
 }
 serverApi.createTemporaryFolder = async () => { calls.push("create"); return { path: "D:\\temp\\20261009-120000-dead" } }
 serverApi.createWorkspace = async payload => { createdName = payload.name; throw new HttpResponseError("opencode_update_required", 426, null) }
-serverApi.abandonTemporaryFolder = async (path) => { calls.push(`abandon:${path}`) }
+serverApi.abandonTemporaryFolder = async (path, requestId?: string) => { calls.push(`abandon:${path}${requestId ? `:${requestId}` : ""}`) }
 
 const { tGlobal } = await import("../lib/i18n")
 const { clearToastHistory, getToastHistory } = await import("../lib/notifications")
@@ -328,7 +328,8 @@ test("a failed launch removes the folder it just created", async () => {
   } finally { reset() }
 })
 
-test("release cancels a partial temporary opening but retains its registered folder", async t => {
+test("release abandons only the newly allocated folder of the unattached temporary opening", async t => {
+  openEmpty("captured")
   let markPosted!: (id: string) => void
   const posted = new Promise<string>(resolve => { markPosted = resolve })
   t.mock.method(serverApi, "createWorkspace", (...[payload, options]: Parameters<typeof serverApi.createWorkspace>) => {
@@ -342,11 +343,12 @@ test("release cancels a partial temporary opening but retains its registered fol
   try {
     const opening = assert.rejects(openTemporaryInstance(), /Window is releasing workspace records/)
     const requestId = await posted
-    await cancelUnattachedWorkspaceCreations(new Set())
+    await cancelUnattachedWorkspaceCreations(new Set(["captured"]))
     await opening
-    assert.deepEqual(calls, ["create", `cancel:${requestId}:true`])
+    assert.deepEqual(calls, ["create", `abandon:D:\\temp\\20261009-120000-dead:${requestId}`])
+    assert.ok(tabOpen("captured"))
   } finally {
     resumeWorkspaceCreations()
-    reset()
+    reset("captured")
   }
 })

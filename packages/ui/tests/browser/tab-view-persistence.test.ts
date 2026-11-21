@@ -202,11 +202,13 @@ for (const remote of [false, true]) test(`${remote ? "desktop remote" : "storage
 
 const viewCases = [
   { web: false, close: false }, { web: false, close: false, tauri: true }, { web: false, close: true },
+  { web: false, close: false, reloadDuringQuit: true },
+  { web: false, close: false, tauri: true, reloadDuringQuit: true },
   { web: true, close: false }, { web: true, close: false, unsupportedDiscard: true },
   { web: true, close: true, late: true }, { web: true, close: false, discard: true },
   { web: true, close: false, delayedCopy: true },
 ]
-for (const { web, close, late, unsupportedDiscard, discard, tauri, delayedCopy } of viewCases) test(`${web ? "browser-session" : "native"} production capture/restore binds duplicate UUIDs after ${close ? "closure" : "reorder"} (${late ? "late DELETE" : discard ? "discard" : delayedCopy ? "delayed copy" : unsupportedDiscard ? "no discard signal" : tauri ? "Tauri navigation" : "navigation"})`, async () => {
+for (const { web, close, late, unsupportedDiscard, discard, tauri, delayedCopy, reloadDuringQuit } of viewCases) test(`${web ? "browser-session" : "native"} production capture/restore binds duplicate UUIDs after ${close ? "closure" : "reorder"} (${late ? "late DELETE" : discard ? "discard" : delayedCopy ? "delayed copy" : unsupportedDiscard ? "no discard signal" : tauri ? "Tauri navigation" : "navigation"}${reloadDuringQuit ? ", reload during quit" : ""})`, async () => {
   const context = await browser.newContext()
   const page = await context.newPage()
   const restoredDocument = (candidate: Page) => candidate.locator('[data-restoring="false"]').waitFor({ timeout: 60_000 })
@@ -256,8 +258,10 @@ for (const { web, close, late, unsupportedDiscard, discard, tauri, delayedCopy }
         },
       }
       w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} }
-      w.emitFlush = (cancelled: boolean, generation: number, releaseOnly?: boolean) =>
-        callbacks.get(events.get(`client-state:flush-${cancelled ? "cancelled" : "requested"}`))?.({ payload: { generation, releaseOnly } })
+      w.emitFlush = (cancelled: boolean, generation: number, prepareGeneration?: number) =>
+        callbacks.get(events.get(`client-state:flush-${cancelled ? "cancelled" : "requested"}`))?.({
+          payload: { generation, prepareGeneration },
+        })
       w.acknowledgements = acknowledgements
     }
     if (!web) w.electronAPI = {
@@ -461,25 +465,36 @@ for (const { web, close, late, unsupportedDiscard, discard, tauri, delayedCopy }
     assert.deepEqual(restored.map((v: any) => v.view), captured.map((v: any) => v.viewState))
     assert.equal(loads.length, count, "restoration allocates zero preview records and loads zero saved pages")
     if (!web && !close) {
-      const released = restored.map((row: any) => row.id)
       const flush = (generation: number, phase: "prepare" | "release" | "cancel") => page.evaluate(async ({ phase, generation, tauri }) => {
-        if (tauri) (window as any).emitFlush(phase === "cancel", generation, phase === "release")
+        if (tauri) (window as any).emitFlush(phase === "cancel", generation, phase === "release" ? 1 : undefined)
         else await window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__!(phase)
       }, { generation, phase, tauri })
       await flush(1, "prepare")
       if (tauri) await page.waitForFunction(() => (window as any).acknowledgements.includes(1))
+      if (reloadDuringQuit) {
+        await page.reload()
+        await restoredDocument(page)
+        assert.equal(await page.evaluate(() => document.documentElement.inert), false, "the replacement did not receive prepare")
+        await page.evaluate(() => window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__!())
+      }
+      const released = await page.evaluate(() => (window as any).tabViews.ids()) as string[]
+      assert.equal(released.length, 2)
       await flush(2, "release")
       if (tauri) await page.waitForFunction(() => (window as any).acknowledgements.includes(2))
       assert.ok(released.every(id => deletes.includes(id)))
       assert.equal(await page.evaluate(() => document.documentElement.inert), true, "input stays locked through release")
+      if (tauri) {
+        await flush(2, "cancel")
+        assert.equal(await page.evaluate(() => document.documentElement.inert), true, "the release ACK generation cannot cancel prepare")
+      }
       await page.evaluate(ids => { for (const id of ids) (window as any).tabViews.remove(id) }, released)
       await page.waitForFunction(() => (window as any).tabViews.ids().length === 0)
       await page.evaluate(() => window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__!())
       assert.deepEqual(await page.evaluate(() => JSON.parse(sessionStorage.getItem("snapshot")!).session.tabs
         .map((tab: any) => tab.workspaceId)), released, "a navigation flush during release cannot commit the empty renderer")
       await flush(1, "cancel")
-      await page.waitForFunction(() => (window as any).tabViews.ids().length === 2, undefined, { timeout: 5_000 })
       assert.equal(await page.evaluate(() => document.documentElement.inert), false, "refused quit unlocks input")
+      await page.waitForFunction(() => (window as any).tabViews.ids().length === 2, undefined, { timeout: 5_000 })
       const recovered = await page.evaluate(() => (window as any).tabViews.ids().map((id: string) => ({ id, view: (window as any).tabViews.view(id) })))
       assert.ok(recovered.every((row: any) => !released.includes(row.id)))
       assert.deepEqual(recovered.map((row: any) => row.view), restored.map((row: any) => row.view))

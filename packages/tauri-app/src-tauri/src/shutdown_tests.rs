@@ -82,7 +82,7 @@ fn restart_waits_for_cleanup_and_is_cancelled_when_cleanup_fails() {
 fn failed_shutdown_paths_emit_the_renderer_resume_event() {
     let source = include_str!("shutdown.rs");
     assert_eq!(FLUSH_CANCELLED_EVENT, "client-state:flush-cancelled");
-    assert!(source.contains("emit_flush(&app, &label, generation, RendererFlush::Prepare)"));
+    assert!(source.contains("emit_prepare(&app, &label, generation)"));
     assert!(source.contains("emit_flush_cancellations(&app, cancellations)"));
 }
 
@@ -130,9 +130,10 @@ fn pending_and_approved_local_closes_remain_visible_to_final_window_decisions() 
     assert!(coordinator.commit_local_close("local-a".into(), pending));
     assert!(coordinator.local_close_in_flight("local-a"));
     let release = coordinator.approve_local_close("local-a", |_| Ok(())).unwrap().unwrap();
+    assert_eq!(release.prepare_generation, Some(generation));
     assert!(coordinator.local_close_in_flight("local-a"));
     assert!(!coordinator.finish_local_release("local-a", generation));
-    assert!(coordinator.finish_local_release("local-a", release));
+    assert!(coordinator.finish_local_release("local-a", release.generation));
     assert!(coordinator.local_close_in_flight("local-a"));
     coordinator.local_window_destroyed("local-a");
     assert!(!coordinator.local_close_in_flight("local-a"));
@@ -291,7 +292,7 @@ fn shutdown_release_has_its_own_bounded_wait_after_persistence() {
     let closing = coordinator.approve_local_close("local-closing", |_| Ok(())).unwrap().unwrap();
     let requests = coordinator.begin_shutdown(["local-a".into(), "remote-b".into(), "local-closing".into()]).unwrap();
     assert_eq!(requests.len(), 2, "the already approved close must not preflush a forgotten record");
-    assert!(coordinator.finish_local_release("local-closing", closing));
+    assert!(coordinator.finish_local_release("local-closing", closing.generation));
     for (label, generation) in &requests {
         coordinator.acknowledge_global(label, *generation);
     }
@@ -299,12 +300,15 @@ fn shutdown_release_has_its_own_bounded_wait_after_persistence() {
     let releases = coordinator.begin_workspace_releases();
     assert_eq!(releases.len(), 2);
     for (label, generation) in &requests {
+        let release = releases.iter().find(|(target, _)| target == label).unwrap().1;
+        assert_eq!(release.prepare_generation, Some(*generation));
+        assert_ne!(release.generation, *generation);
         assert!(!coordinator.acknowledge_global(label, *generation));
     }
-    assert!(!coordinator.acknowledge_global(&releases[0].0, releases[0].1));
+    assert!(!coordinator.acknowledge_global(&releases[0].0, releases[0].1.generation));
     coordinator.wait_for_workspace_releases(Duration::ZERO);
     assert!(coordinator.shutdown_started());
-    assert!(coordinator.acknowledge_global(&releases[1].0, releases[1].1));
+    assert!(coordinator.acknowledge_global(&releases[1].0, releases[1].1.generation));
 }
 
 #[test]
@@ -317,9 +321,9 @@ fn shutdown_joins_an_in_flight_local_release_without_requesting_it_again() {
     assert!(coordinator.begin_cleanup(false));
     assert!(coordinator.begin_workspace_releases().is_empty());
     assert!(!coordinator.wait_for_workspace_releases(Duration::ZERO));
-    assert!(!coordinator.finish_local_release(label, release - 1));
+    assert!(!coordinator.finish_local_release(label, release.prepare_generation.unwrap()));
     assert!(!coordinator.wait_for_workspace_releases(Duration::ZERO));
-    assert!(coordinator.finish_local_release(label, release));
+    assert!(coordinator.finish_local_release(label, release.generation));
     assert!(coordinator.wait_for_workspace_releases(Duration::ZERO));
 }
 

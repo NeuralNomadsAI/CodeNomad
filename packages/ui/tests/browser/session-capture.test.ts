@@ -57,10 +57,10 @@ test("capture defers only busy usage through both real-store effects and keeps f
           },
         }
         w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} }
-        w.emit = (event: string, generation: number, label = "local-fixture", releaseOnly = false) => {
+        w.emit = (event: string, generation: number, label = "local-fixture", prepareGeneration?: number) => {
           const listener = listeners.get(event)
           if (listener && (listener.target.kind === "Any" || listener.target.label === label)) {
-            callbacks.get(listener.handler)?.({ payload: { generation, releaseOnly } })
+            callbacks.get(listener.handler)?.({ payload: { generation, prepareGeneration } })
           }
         }
       }, { host })
@@ -231,7 +231,7 @@ test("capture defers only busy usage through both real-store effects and keeps f
       assert.deepEqual(decoded.state.session, await state())
       assert.equal(new Set(decoded.tokens).size, 1, "one native owner token")
       if (host === "tauri") {
-        await page.evaluate(() => (window as any).emit("client-state:flush-requested", 6, "local-other", true))
+        await page.evaluate(() => (window as any).emit("client-state:flush-requested", 6, "local-other", 5))
         await settle()
         assert.deepEqual(deletes, [], "approving another Tauri window's close cannot release this window's records")
         assert.equal(await page.evaluate(() => (window as any).acks.some((ack: any) => ack.generation === 6)), false)

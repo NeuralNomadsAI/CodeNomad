@@ -464,7 +464,9 @@ function invalidatePendingRequestSync(instanceId: string): void {
 }
 type RestoreWorkspaceDescriptor = WorkspaceDescriptor & { reused?: boolean; receipt?: WorkspaceOperationReceipt }
 const workspaceListReconciliationFence = new BackendWorkspaceListReconciliationFence()
-const restoreCreationReceipts = new Map<string, WorkspaceOperationReceipt>()
+const restoreCreationReceipts = new Map<string, WorkspaceOperationReceipt & {
+  cancelOnDeparture?: (requestId: string) => Promise<void>
+}>()
 let workspaceCreationLifetime = new AbortController()
 let workspaceCommitHold: { promise: Promise<void>; resolve: () => void } | undefined
 export class WorkspaceCreationDeparture extends Error {
@@ -1983,7 +1985,8 @@ function cancelUnattachedWorkspaceCreations(attachedIds: ReadonlySet<string>): P
     if (receipt.instanceId && (attachedIds.has(receipt.instanceId)
       || restoreCreatedWorkspaceCleanup.isReleased(receipt.instanceId, receipt.requestKey))) return
     // An earlier ordinary cancel may still be in flight and cannot survive navigation.
-    await receipt.api.cancelWorkspaceCreation(receipt.requestId!, true)
+    if (receipt.cancelOnDeparture) await receipt.cancelOnDeparture(receipt.requestId!)
+    else await receipt.api.cancelWorkspaceCreation(receipt.requestId!, true)
     restoreCreatedWorkspaceCleanup.settleRequest(receipt.requestKey)
     restoreCreationReceipts.delete(receipt.requestKey)
   })
@@ -2035,14 +2038,18 @@ async function createInstance(
     onCreateCommit?: (instanceId: string) => void
     onCreation?: (creation: WorkspaceCreationOwnership) => void
     waitForCreateCommit?: () => Promise<void>
+    cancelOnDeparture?: (requestId: string) => Promise<void>
   },
 ): Promise<{ instanceId: string; reused: boolean; requestId?: string }> {
   if (options?.onCreation && !options.signal) throw new Error("Creation ownership requires a cancellation signal")
   const lifetime = workspaceCreationLifetime.signal
   lifetime.throwIfAborted()
   const restoreRequestId = createRestoreCreationRequestId()
-  const receipt = captureWorkspaceOperation(folder, options?.backend, restoreRequestId,
-    options?.signal ? workspaceOpeningSignal(options.signal) : lifetime)
+  const receipt = Object.freeze({
+    ...captureWorkspaceOperation(folder, options?.backend, restoreRequestId,
+      options?.signal ? workspaceOpeningSignal(options.signal) : lifetime),
+    cancelOnDeparture: options?.cancelOnDeparture,
+  })
   const userOpeningOrder = !options?.signal ? restoreCreatedWorkspaceCleanup.captureOperationOrder() : undefined
   const signal = receipt.signal
   const commitGate: RestoreWorkspaceCommitGate<RestoreWorkspaceDescriptor> | undefined = options?.waitForCreateCommit

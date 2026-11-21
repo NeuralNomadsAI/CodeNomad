@@ -330,20 +330,22 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   const nativeUnlisteners: Array<() => void> = []
   let nativeDisposed = false
   const nativeView = isTauriHost() && isLocalWindow() ? getCurrentWebview() : undefined
-  const register = <T extends { generation: number; releaseOnly?: boolean }>(event: string, acknowledge: (payload: T) => void | Promise<void>, nativeShutdown: boolean) => nativeView!.listen<T>(event, ({ payload }) => {
-    const generation = nativeShutdown ? payload.generation : undefined
-    void (payload.releaseOnly ? awaitRelease() : flush(generation))
-      .then(() => acknowledge(payload)).catch((error) => log.error(`Failed to handle ${event}`, error))
+  const register = (event: string, acknowledge: (generation: number) => void | Promise<void>, nativeShutdown: boolean) => nativeView!.listen<{
+    generation: number
+    prepareGeneration?: number
+  }>(event, ({ payload: { generation, prepareGeneration } }) => {
+    // A replacement document can receive release without having seen prepare.
+    if (prepareGeneration !== undefined) nativeShutdownGeneration = prepareGeneration
+    void (prepareGeneration !== undefined ? awaitRelease() : flush(nativeShutdown ? generation : undefined))
+      .then(() => acknowledge(generation)).catch((error) => log.error(`Failed to handle ${event}`, error))
   }).then((unlisten) => {
     if (nativeDisposed) unlisten()
     else nativeUnlisteners.push(unlisten)
   }).catch((error) => log.error(`Failed to listen for ${event}`, error))
   const ready = nativeView
     ? Promise.all([
-        register<{ generation: number; releaseOnly?: boolean }>("client-state:flush-requested",
-          ({ generation }) => acknowledgeNativeClientStateRendererFlush(generation), true),
-        register<{ generation: number }>("client-state:navigation-flush-requested",
-          ({ generation }) => acknowledgeNativeClientStateNavigationFlush(generation), false),
+        register("client-state:flush-requested", acknowledgeNativeClientStateRendererFlush, true),
+        register("client-state:navigation-flush-requested", acknowledgeNativeClientStateNavigationFlush, false),
         nativeView.listen<{ generation: number }>("client-state:flush-cancelled", ({ payload }) => {
           if (nativeShutdownGeneration !== payload.generation) return
           resumeCapture()

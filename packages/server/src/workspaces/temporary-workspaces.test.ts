@@ -5,6 +5,8 @@ import path from "node:path"
 import { test } from "node:test"
 import Fastify from "fastify"
 import { registerWorkspaceRoutes } from "../server/routes/workspaces"
+import { registerTemporaryWorkspaceRoutes } from "../server/routes/temporary-workspaces"
+import { EventBus } from "../events/bus"
 import { TemporaryFolderRegistry, TemporaryWorkspaceError, TemporaryWorkspaces } from "./temporary-workspaces"
 import { WorktreeDeletionFence } from "./worktree-session-evacuation"
 import type { WorkspaceManager } from "./manager"
@@ -32,6 +34,7 @@ async function harness() {
     },
   }
   const manager = {
+    temporaryFolders: registry,
     get: (id: string) => workspaces.get(id),
     list: () => [...workspaces.values()],
     getServiceDirectory: (id: string) => workspaces.get(id)?.path,
@@ -171,6 +174,29 @@ test("registry changes are announced and a never-opened empty folder can be aban
     await h.temporary.keep("open")
     assert.deepEqual(h.changes.at(-1), [used])
   } finally { await h.cleanup() }
+})
+
+test("abandon cancels the pending creation before removing only its empty folder", async () => {
+  const h = await harness(), app = Fastify()
+  registerTemporaryWorkspaceRoutes(app, { workspaceManager: h.manager, worktreeDeletionFence: new WorktreeDeletionFence(), eventBus: new EventBus() })
+  try {
+    const pending = await h.temporary.createFolder()
+    const captured = await h.temporary.createFolder()
+    h.workspaces.set("pending", { id: "pending", path: pending })
+    h.workspaces.set("captured", { id: "captured", path: captured })
+    const requests: string[] = []
+    h.manager.cancelCreationRequest = async id => {
+      requests.push(id)
+      if (id === "pending-request") h.workspaces.delete("pending")
+    }
+    const result = await app.inject({ method: "POST", url: "/api/workspaces/temporary/abandon",
+      payload: { path: pending, requestId: "pending-request" } })
+    assert.equal(result.statusCode, 204, result.body)
+    assert.deepEqual(requests, ["pending-request"])
+    assert.deepEqual(h.temporary.list(), [captured])
+    assert.deepEqual(await readdir(h.registry.root), [path.basename(captured)])
+    assert.ok(h.workspaces.has("captured"))
+  } finally { await app.close(); await h.cleanup() }
 })
 
 test("a discard limited to empty instances refuses conversations or files and deletes an empty one", async () => {
