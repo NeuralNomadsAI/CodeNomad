@@ -68,6 +68,11 @@ const localElectronAPI = {
   deviceSpeech: (request) => ipcRenderer.invoke("device-speech:request", request),
   setWakeLock: (enabled) => ipcRenderer.invoke("power:setWakeLock", Boolean(enabled)),
   showNotification: (payload) => ipcRenderer.invoke("notifications:show", payload),
+  onNotificationClick: (callback) => {
+    const handler = (_event, actionId) => callback(actionId)
+    ipcRenderer.on("notifications:click", handler)
+    return () => ipcRenderer.removeListener("notifications:click", handler)
+  },
   setNotificationBadge: (count) => ipcRenderer.invoke("notifications:setBadge", count),
   openRemoteWindow: (payload) => ipcRenderer.invoke("remote:openWindow", payload),
   openPreferences: (section, context, toggle, resume) => ipcRenderer.invoke("preferences:open", section, context, Boolean(toggle), Boolean(resume)),
@@ -105,6 +110,7 @@ const remoteElectronAPI = {
   requestMicrophoneAccess: localElectronAPI.requestMicrophoneAccess,
   setWakeLock: localElectronAPI.setWakeLock,
   showNotification: localElectronAPI.showNotification,
+  onNotificationClick: localElectronAPI.onNotificationClick,
   setNotificationBadge: localElectronAPI.setNotificationBadge,
   // Honoured only from the unavailable-server document the host loaded, with the token it issued for it.
   retryRemoteWindow: (token) => ipcRenderer.invoke("remote:retry", token),
@@ -119,6 +125,7 @@ const preferencesElectronAPI = {
   deviceSpeech: localElectronAPI.deviceSpeech,
   openDialog: localElectronAPI.openDialog,
   showNotification: localElectronAPI.showNotification,
+  onNotificationClick: localElectronAPI.onNotificationClick,
   openRemoteWindow: localElectronAPI.openRemoteWindow,
   getZoomFactor: localElectronAPI.getZoomFactor,
   getPreferencesSection: () => ipcRenderer.invoke("preferences:getSection"),

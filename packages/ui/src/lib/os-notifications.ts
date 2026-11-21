@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core"
 import { isElectronHost, isTauriHost } from "./runtime-env"
 import { getLogger } from "./logger"
+import { createNotificationClicks } from "./notification-click"
 
 export type OsNotificationPermission = "granted" | "denied" | "default" | "unsupported"
 
@@ -18,6 +19,18 @@ export type OsNotificationPayload = {
 }
 
 const log = getLogger("actions")
+const clicks = createNotificationClicks()
+let listening = false
+
+function listenForNativeClicks(): void {
+  if (listening) return
+  listening = true
+  const run = (id: unknown) => {
+    void clicks.run(id).catch(error => log.warn("[os-notifications] action failed", error))
+  }
+  if (isElectronHost()) window.electronAPI?.onNotificationClick?.(run)
+  else window.addEventListener("codenomad:notification-click", event => run((event as CustomEvent).detail))
+}
 
 function hasWebNotificationApi(): boolean {
   return typeof window !== "undefined" && typeof (window as any).Notification !== "undefined"
@@ -65,17 +78,7 @@ async function sendWebNotification(payload: OsNotificationPayload): Promise<void
 }
 
 function hasElectronNotifier(): boolean {
-  if (typeof window === "undefined") return false
-  const api = (window as Window & { electronAPI?: any }).electronAPI
-  return Boolean(api && typeof api.showNotification === "function")
-}
-
-async function sendElectronNotification(payload: OsNotificationPayload): Promise<void> {
-  const api = (window as Window & { electronAPI?: any }).electronAPI
-  if (!api || typeof api.showNotification !== "function") {
-    throw new Error("Electron notification bridge unavailable")
-  }
-  await api.showNotification({ title: payload.title, body: payload.body })
+  return typeof window !== "undefined" && typeof window.electronAPI?.showNotification === "function"
 }
 
 async function getTauriNotificationModule(): Promise<any | null> {
@@ -115,13 +118,21 @@ async function requestTauriPermission(): Promise<OsNotificationPermission> {
   }
 }
 
-async function sendTauriNotification(payload: OsNotificationPayload): Promise<void> {
-  const mod = await getTauriNotificationModule()
-  if (payload.signal?.aborted) return
-  if (!mod) {
-    throw new Error("Tauri notification plugin unavailable")
+async function sendNativeNotification(payload: OsNotificationPayload, electron: boolean): Promise<void> {
+  listenForNativeClicks()
+  const { title, body, onClick, signal } = payload
+  const actionId = onClick ? clicks.remember({ onClick, signal }) : undefined
+  try {
+    if (electron) {
+      const result = await window.electronAPI?.showNotification?.({ title, body, actionId })
+      if (!result?.ok && actionId) clicks.forget(actionId)
+    } else {
+      await invoke("notification_show", { title, body, actionId })
+    }
+  } catch (error) {
+    if (actionId) clicks.forget(actionId)
+    throw error
   }
-  await mod.sendNotification({ title: payload.title, body: payload.body })
 }
 
 export async function getOsNotificationCapability(): Promise<OsNotificationCapability> {
@@ -189,13 +200,9 @@ export async function sendOsNotification(payload: OsNotificationPayload): Promis
     return
   }
 
-  if (isElectronHost()) {
-    await sendElectronNotification(payload)
-    return
-  }
-
-  if (isTauriHost()) {
-    await sendTauriNotification(payload)
+  const electron = isElectronHost()
+  if (electron || isTauriHost()) {
+    await sendNativeNotification(payload, electron)
     return
   }
 

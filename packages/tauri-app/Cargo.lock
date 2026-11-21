@@ -575,6 +575,7 @@ dependencies = [
  "gtk",
  "keepawake",
  "libc",
+ "notify-rust",
  "objc2",
  "objc2-web-kit",
  "open",
@@ -604,8 +605,10 @@ dependencies = [
  "webkit2gtk",
  "webview2-com",
  "which",
+ "windows",
  "windows-core",
  "windows-sys 0.59.0",
+ "zbus",
 ]
 
 [[package]]

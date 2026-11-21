@@ -34,6 +34,7 @@ mod native_request;
 mod native_service_start;
 mod notification_badge;
 mod notification_badge_lifetime;
+mod notification_click;
 mod preferences_window;
 mod profile_selection_dialog;
 mod profile_transition;
@@ -1825,6 +1826,11 @@ fn app_context<R: tauri::Runtime>() -> tauri::Context<R> {
 
 fn main() {
     #[cfg(windows)]
+    if std::env::args_os().any(|arg| arg == notification_click::windows::ACTIVATION_ARG) {
+        // An old toast cannot target a renderer after the notifying process has exited.
+        return;
+    }
+    #[cfg(windows)]
     if let Some(code) = cli_manager::run_windows_cli_launcher_if_requested() {
         std::process::exit(code);
     }
@@ -1949,6 +1955,7 @@ fn main() {
         ))
         .manage(local_windows::LocalWindows::default())
         .manage(notification_badge::NotificationBadge::default())
+        .manage(notification_click::NotificationClicks::default())
         .manage(window_constraints::WindowConstraints::default())
         .manage(preferences_window::PreferencesWindow::default())
         .manage(data_profile_cleanup::CleanupContext::new(
@@ -2017,6 +2024,8 @@ fn main() {
         })
         .on_page_load(|webview, payload| {
             if payload.event() == PageLoadEvent::Started {
+                webview.app_handle().state::<notification_click::NotificationClicks>()
+                    .forget_window(webview.label());
                 if !webview.label().starts_with("remote-") {
                     webview.app_handle().state::<device_speech::DeviceSpeech>().revoke(Some(webview.label()));
                 }
@@ -2067,10 +2076,13 @@ fn main() {
                 .set_host(&badge_host);
             app.state::<remote_dictation::RemoteDictation>()
                 .set_host(&badge_host);
+            set_windows_app_user_model_id(&setup_scope.identifier);
+            if let Err(error) = notification_click::install(&badge_host) {
+                eprintln!("[notification] activation unavailable: {error}");
+            }
             *setup_notification_badge_host
                 .lock()
                 .unwrap_or_else(|e| e.into_inner()) = Some(badge_host);
-            set_windows_app_user_model_id(&setup_scope.identifier);
             app.state::<AppState>().developer_mode.prepare_profile()?;
             eprintln!(
                 "[tauri-startup] in-place updates supported on this installation: {}",
@@ -2116,6 +2128,7 @@ fn main() {
             wake_lock_start,
             wake_lock_stop,
             notification_badge::notification_badge_set,
+            notification_click::notification_show,
             needs_local_certificate_install,
             preferences_window::open_preferences_window,
             preferences_window::preferences_window_ready,
@@ -2445,6 +2458,7 @@ fn main() {
                 event: tauri::WindowEvent::Destroyed,
                 ..
             } => {
+                app_handle.state::<notification_click::NotificationClicks>().forget_window(&label);
                 if remote_dictation::is_sheet(&label) {
                     remote_dictation::revoke(&app_handle, Some(&label));
                     remote_dictation::retired(&app_handle, &label);
@@ -3010,7 +3024,8 @@ mod menu_tests {
                 "notification:allow-is-permission-granted",
                 "notification:allow-request-permission",
                 "notification:allow-notify",
-                "allow-notification-badge-set"
+                "allow-notification-badge-set",
+                "allow-notification-show"
             ])
         );
 

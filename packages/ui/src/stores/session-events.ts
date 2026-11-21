@@ -696,21 +696,23 @@ function getInstanceDisplayName(instanceId: string, detail?: string): string {
 
 /** Keep navigation and displayed notices on the exact event attachment. */
 function showInstanceToast(instanceId: string, sessionId: string | undefined | null, payload: ToastPayload): ToastHandle {
-  if (parseInstanceKey(instanceId).backendId === "local") return showToastNotification(payload)
+  const local = parseInstanceKey(instanceId).backendId === "local"
+  if (local && (!sessionId || payload.transient)) return showToastNotification(payload)
   const authority = captureEventAuthority(instanceId)
+  const onClick = async () => {
+    if (!authority.current()) return
+    const { appTabs, selectAppTab, selectInstanceTab } = await import("./app-tabs")
+    if (!authority.current()) return
+    const waiting = appTabs().find(tab => tab.kind === "remote-restore" && tab.instanceId === instanceId)
+    if (waiting) { selectAppTab(waiting.id); return }
+    if (!instances().has(instanceId)) return
+    if (sessionId && !sessions().get(instanceId)?.has(sessionId)) return
+    if (selectInstanceTab(instanceId) && sessionId) setActiveSessionFromList(instanceId, sessionId)
+  }
+  if (local) return showToastNotification({ ...payload, systemAction: onClick })
   return showToastNotification({ ...payload, signal: authority.signal, action: {
     label: tGlobal(sessionId ? "interruption.viewConversation" : "folderSelection.recent.switchToOpenProject"),
-    onClick: async () => {
-      if (!authority.current()) return
-      const { appTabs, selectAppTab, selectInstanceTab } = await import("./app-tabs")
-      if (!authority.current()) return
-      const waiting = appTabs().find(tab => tab.kind === "remote-restore" && tab.instanceId === instanceId)
-      if (waiting) { selectAppTab(waiting.id); return }
-      if (!instances().has(instanceId)) return
-      if (sessionId && !sessions().get(instanceId)?.has(sessionId)) return
-      selectInstanceTab(instanceId)
-      if (sessionId) setActiveSessionFromList(instanceId, sessionId)
-    },
+    onClick,
   } })
 }
 

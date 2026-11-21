@@ -158,6 +158,48 @@ test("web system notification clicks navigate to the qualified session and revok
   assert.equal((await page.evaluate(() => (window as any).parity.selected())).instance, "B~same")
 }))
 
+for (const host of ["electron", "tauri"] as const) {
+  test(`${host} system clicks select the exact local and qualified remote sessions`, async () => fixturePage(async page => {
+    await page.evaluate(async host => {
+      const w = window as any
+      await w.parity.systemRouting()
+      w.__CODENOMAD_RUNTIME_HOST__ = host
+      const notices: Array<{ title: string; actionId: string }> = w.systemNotifications
+      const show = async (notice: typeof notices[number]) => { notices.push(notice); return { ok: true } }
+      if (host === "electron") {
+        w.electronAPI = { showNotification: show, onNotificationClick: (callback: typeof w.clickNative) => { w.clickNative = callback } }
+      } else {
+        w.__TAURI_INTERNALS__ = { invoke: (command: string, args: typeof notices[number]) =>
+          command === "notification_show" ? show(args) : undefined }
+        w.clickNative = (id: string) => dispatchEvent(new CustomEvent("codenomad:notification-click", { detail: id }))
+      }
+      w.parity.notify("local")
+      w.parity.notify("A")
+      w.parity.notify("B")
+    }, host)
+    await page.waitForFunction(() => (window as any).systemNotifications.length === 3)
+    for (const [title, key, session] of [["local", "same", "sessionLocal"], ["Server B · B", "B~same", "sessionB"]]) {
+      await page.evaluate(title => {
+        const w = window as any
+        w.clickNative(w.systemNotifications.find((notice: any) => notice.title === title).actionId)
+      }, title)
+      await page.waitForFunction(({ key, session }) => {
+        const selected = (window as any).parity.selected()
+        return selected.instance === key && selected[session] === "ses_homonym"
+      }, { key, session })
+    }
+    const selected = await page.evaluate(async () => {
+      const w = window as any
+      w.parity.detach()
+      w.parity.reattach()
+      w.clickNative(w.systemNotifications.find((notice: any) => notice.title === "Server A · A").actionId)
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      return w.parity.selected().instance
+    })
+    assert.equal(selected, "B~same")
+  }))
+}
+
 test("embedded Settings Missions reads the selected qualified project's worktree Location", async () => fixturePage(async page => {
   for (const owner of ["A", "B"]) {
     const before = await page.evaluate(() => (window as any).parity.calls.length)

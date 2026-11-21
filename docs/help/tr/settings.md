@@ -109,6 +109,8 @@ Tarayıcı/İşletim Sistemi izni cihaza ve uygulama kaynağına aittir; kaydedi
 
 Yalnızca Geçmiş'e yönlendirilen bildirimleri sayan zil/okunmamış geçmiş sayısı, tarayıcı favicon noktasını ve yerel uygulama rozetini yönlendirir.
 
+Masaüstü uygulamasında bir sistem bildirimine tıklamak ilgili pencereyi öne getirir ve konuşma hâlâ kullanılabiliyorsa açar.
+
 ## Gelişmiş seçenekler {#advanced}
 
 1. **Gelişmiş** öğesini açın.

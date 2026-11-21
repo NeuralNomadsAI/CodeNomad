@@ -59,6 +59,7 @@ fn main() {
             "wake_lock_start",
             "wake_lock_stop",
             "notification_badge_set",
+            "notification_show",
             "needs_local_certificate_install",
             "open_preferences_window",
             "preferences_window_ready",

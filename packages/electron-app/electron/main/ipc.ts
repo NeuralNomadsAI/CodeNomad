@@ -7,6 +7,7 @@ import { openWorkspaceTarget, type WorkspaceEditor, type WorkspaceOpenTarget } f
 import { popupTitlebarMenu, setWorkspaceMenuEnabled, type TitlebarMenu } from "./menu"
 import { requireHttpUrl } from "./navigation-security"
 import { validateMainFrame } from "./ipc-security"
+import { setupNotificationIPC } from "./notification-ipc"
 import type { BrowserController } from "./browser-controller"
 
 interface LocalSender {
@@ -225,14 +226,5 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     await dependencies.openLocalWindow()
     return { ok: true }
   })
-  ipcMain.handle("notifications:show", async (event, payload: { title?: unknown; body?: unknown }): Promise<{ ok: boolean; reason?: string }> => {
-    anyTrusted(event)
-    if (!Notification.isSupported()) return { ok: false, reason: "unsupported" }
-    try {
-      new Notification({ title: typeof payload?.title === "string" ? payload.title : "CodeNomad", body: typeof payload?.body === "string" ? payload.body : "" }).show()
-      return { ok: true }
-    } catch (error) {
-      return { ok: false, reason: error instanceof Error ? error.message : String(error) }
-    }
-  })
+  setupNotificationIPC(ipcMain, anyTrusted, options => Notification.isSupported() ? new Notification(options) : undefined)
 }

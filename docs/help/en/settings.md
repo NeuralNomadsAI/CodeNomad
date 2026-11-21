@@ -109,6 +109,8 @@ Browser/OS permission belongs to the device and application origin; a saved pref
 
 The bell/history unread count, which only counts notifications routed to History, drives the browser favicon dot and native application badge.
 
+In the desktop app, clicking a system notification brings its window forward and opens the conversation if it’s still available.
+
 ## Advanced options {#advanced}
 
 1. Open **Advanced**.

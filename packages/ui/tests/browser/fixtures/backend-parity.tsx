@@ -165,5 +165,5 @@ let retainedAction: any
     next.delete(`${owner}~same`)
     return next
   }),
-  selected: () => ({ instance: activeInstanceId(), sessionA: activeSessionId().get("A~same"), sessionB: activeSessionId().get("B~same") }),
+  selected: () => ({ instance: activeInstanceId(), sessionA: activeSessionId().get("A~same"), sessionB: activeSessionId().get("B~same"), sessionLocal: activeSessionId().get("same") }),
 }

@@ -28,6 +28,7 @@ test("CLI event disposers remove only their own wrapper listeners", () => {
     ["onCliStatus", "cli:status"],
     ["onCliError", "cli:error"],
     ["onBrowserOpenRequest", "browser-target:open"],
+    ["onNotificationClick", "notifications:click"],
   ] as const) {
     const calls: string[] = []
     const disposeFirst = api![subscribe]((value: string) => calls.push(`first:${value}`))
@@ -58,7 +59,7 @@ test("Preferences preload exposes only section and frame controls", () => {
 
   const api = exposed.get("electronAPI") as Record<string, Function>
   assert.deepEqual(Object.keys(api), [
-    "onCliStatus", "onCliError", "getCliStatus", "restartCli", "deviceSpeech", "openDialog", "showNotification", "openRemoteWindow", "getZoomFactor",
+    "onCliStatus", "onCliError", "getCliStatus", "restartCli", "deviceSpeech", "openDialog", "showNotification", "onNotificationClick", "openRemoteWindow", "getZoomFactor",
     "getPreferencesSection", "getPreferencesRequest", "preferencesReady", "acceptPreferencesRequest", "resolvePreferencesTransition",
     "openerStartupState", "memoryCleanup", "selectServer", "listOtherDataProfiles", "deleteOtherDataProfiles", "setNextLaunchDataProfile", "relaunchIntoNextDataProfile",
     "onPreferencesSection", "onPreferencesCloseRequested", "onPreferencesTransitionRequested",
