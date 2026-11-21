@@ -60,7 +60,7 @@ impl BrowserController {
         let target = url.to_string();
         let dispatched = Arc::new(Mutex::new(None));
         let receipt = dispatched.clone();
-        let admit = move || {
+        let admit = move || -> Result<u64, String> {
             dispatch_check()?;
             let mut receipt = receipt.lock().map_err(|error| error.to_string())?;
             let sequence = controller.prepare_navigation(
