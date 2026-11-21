@@ -730,10 +730,11 @@ describe("BrowserController preview lifecycle", () => {
     })
   }
 
-  for (const scenario of ["post-commit fragment", "fragment-only", "replacement after commit"] as const) {
+  for (const scenario of ["post-commit fragment", "fragment-only", "replacement after commit", "fragment aborts initial load"] as const) {
     it(`keeps the exact navigation receipt: ${scenario}`, async t => {
       const fragmentOnly = scenario === "fragment-only"
       const replacement = scenario === "replacement after commit"
+      const fragmentAborted = scenario === "fragment aborts initial load"
       const url = fragmentOnly ? "https://example.com/#requested" : "https://example.com/next"
       const committedUrl = fragmentOnly ? url : "https://example.com/redirected"
       const h = createHarness((owner, channel, { requestID, instanceId }) => {
@@ -761,12 +762,14 @@ describe("BrowserController preview lifecycle", () => {
         setUrl(next)
         if (replacement) events.emit("did-navigate", {}, next)
         else events.emit("did-navigate-in-page", {}, next, true)
+        if (fragmentAborted) throw Object.assign(new Error("ERR_ABORTED (-3)"), { code: "ERR_ABORTED" })
         events.emit("did-finish-load")
       })
       const opening = h.controller.open("session", url, Infinity, ["tab"])
-      if (replacement) await assert.rejects(opening, /Browser navigation changed/)
+      if (replacement || fragmentAborted) await assert.rejects(opening, /Browser navigation changed/)
       else assert.deepEqual(await opening, { url: committedUrl })
-      assert.deepEqual(h.receipts.map(receipt => (receipt as { committedUrl?: string }).committedUrl), [replacement ? undefined : committedUrl])
+      assert.deepEqual(h.receipts.map(receipt => (receipt as { committedUrl?: string }).committedUrl), [replacement || fragmentAborted ? undefined : committedUrl])
+      if (fragmentAborted) assert.equal((h.receipts[0] as { keepGuest?: boolean }).keepGuest, true)
     })
   }
 

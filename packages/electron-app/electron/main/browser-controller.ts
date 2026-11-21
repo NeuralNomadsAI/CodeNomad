@@ -759,6 +759,7 @@ async function loadNavigation(guest: WebContents, url: string, deadline: number,
   let started = false
   let sameDocument = false
   let committed: string | undefined
+  let laterFragment: string | undefined
   let superseded = false
   let rejectLoad!: (error: Error) => void
   const revoked = new Promise<never>((_, reject) => { rejectLoad = reject })
@@ -776,9 +777,12 @@ async function loadNavigation(guest: WebContents, url: string, deadline: number,
     if (started && !committed && !superseded) committed = destination
   }
   const inPage = (event: Electron.Event, destination: string, mainFrame: boolean) => {
-    if (sameDocument && mainFrame && destination === expected) {
+    if (!mainFrame) return
+    if (sameDocument && destination === expected) {
       document(event, destination)
       complete()
+    } else if (committed && destination !== committed && isBrowserUrlAllowed(destination)) {
+      laterFragment = destination
     }
   }
   const finished = () => { if (!sameDocument && committed) complete() }
@@ -793,7 +797,7 @@ async function loadNavigation(guest: WebContents, url: string, deadline: number,
   }
   const cancel = (error: Error) => {
     rejectLoad(error)
-    if (started && !superseded && !guest.isDestroyed() && guest.isLoading()) guest.stop()
+    if (started && !superseded && !laterFragment && !guest.isDestroyed() && guest.isLoading()) guest.stop()
   }
   const timer = setInterval(() => {
     try { validate() } catch (error) { cancel(error as Error) }
@@ -809,6 +813,11 @@ async function loadNavigation(guest: WebContents, url: string, deadline: number,
     if (!started || superseded) throw new Error("Browser navigation changed")
     if (!committed || !isBrowserUrlAllowed(committed)) throw new Error("Browser document is unavailable")
     return { url: committed }
+  } catch (error) {
+    if (laterFragment && !guest.isDestroyed() && guest.getURL() === laterFragment) {
+      throw new MainNavigationSuperseded("Browser navigation changed", { cause: error })
+    }
+    throw error
   } finally {
     clearInterval(timer)
     guest.removeListener("did-start-navigation", startedNavigation)
