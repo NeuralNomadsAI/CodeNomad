@@ -427,6 +427,37 @@ test("keeps inspected targets isolated and refuses follow-ups when a bridge retu
   }
 })
 
+test("a lost response after a window action asks for inspection without replay", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-automation-input-response-"))
+  const restore = isolateAutomationBridgeRegistry(root)
+  let attempts = 0
+  const bridge = await listen(async (body, response) => {
+    if (body.mode === "developer-probe") {
+      return { result: { available: true, nativeIdentity: "electron:fixture", runId: "run", windows: oneWindow } }
+    }
+    if ((body.command as { action: string }).action === "inspect") {
+      return { result: { target: { id: "page", title: "Fixture", url: "http://app.test" },
+        context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [], pin: "receipt" } }
+    }
+    attempts++
+    response.destroy()
+    return {}
+  })
+  const remove = await publishAutomationBridge(createAutomationBridgeRegistration(bridge.url))
+  try {
+    const tools = await collectTools(), session = { sessionID: "session" }
+    await tools.find(tool => tool.name === "inspect")!.execute({}, session)
+    await assert.rejects(tools.find(tool => tool.name === "act")!.execute({ action: "press", key: "Enter" }, session),
+      /outcome is unknown.*inspect.*retry/i)
+    assert.equal(attempts, 1)
+  } finally {
+    await remove()
+    await closeServer(bridge.server)
+    restore()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("pins parallel sessions to their independently inspected bridges", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-automation-sessions-"))
   const restoreBridgeRegistry = isolateAutomationBridgeRegistry(root)

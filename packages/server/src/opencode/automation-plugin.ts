@@ -840,6 +840,9 @@ async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
     ...(select ? { target: select } : target.pin ? { pin: target.pin } : {}), ...(options.order ? { order: options.order } : {}) },
     REQUEST_TIMEOUT_MS).catch(error => {
     if (isConnectionRefused(error)) throw targetError("target-gone", "The selected backend has closed; list the targets again")
+    if (command.action !== "inspect" && command.action !== "screenshot" && command.action !== "wait") {
+      throw new Error("The window action outcome is unknown. Inspect the window before retrying.", { cause: error })
+    }
     throw error
   })
   if (response.status !== 200) {
