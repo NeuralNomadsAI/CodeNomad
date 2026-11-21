@@ -12,10 +12,10 @@ Browser previews are an ordinary desktop feature and must work in user projects 
 - Browser and developer calls share the backend's loopback registration and private native transport. Native instrumentation is prepared at normal startup and every tool is available. Execution still verifies the selected backend, supported native capabilities and invoking session.
 - Developer inspection targets a local native window (including empty views). The invoking session identifies an owning backend and helps choose the first window; it need not be visible. `inspect({targets:true})` lists eligible windows and invocation-scoped session presence; `inspect({target})` selects an exact returned identifier. A plain inspection keeps its selected window. Actions retain the inspected window/run and document, independently of focus and project/conversation selection. Document changes require a fresh inspection; a lost window requires a new selection. Browser-preview tools retain their separate per-session attachment rules.
 - `packages/server/src/server/routes/automation-plugin.ts` serves the `/api/opencode-plugin/automation` endpoint with the per-process token.
-- `browser-claim` verifies exactly one browser-capable backend owning the session before an `open` action asks the UI to select a project-tab occurrence under the targeting rule below.
+- `browser-claim` verifies exactly one browser-capable backend owning the session before `open` reads its verified owning workspace IDs and discovers an occurrence under the targeting rule below.
 - `browser-probe` requires exactly one visible native preview registered to that session. The native probe returns a bounded opaque `target` for its registration and document generation.
-- Browser claims and probes require a complete bounded profile inventory. Only a confirmed connection refusal or an explicit bridge response proving absence excludes a candidate. Unreadable registrations, including Windows registrations found through WSL, redirects, authentication failures and untyped 404s block dispatch. At the command deadline the queue stops waiting for blocked registry reads; any late handle is closed without resuming discovery. Each discovery request carries its absolute HTTP deadline (at most 5 seconds) through session and ownership checks to the native probe; native responses must arrive before that deadline.
-- Browser bridge requests go directly over loopback, bypassing environment proxies and refusing redirects. The `browser-execute` deadline bounds service, session and ownership waits as well as native execution. The HTTP observer stops waiting at expiry; shared reads keep running. A hidden, replaced or ambiguous preview fails rather than redirecting the command. Opening the first preview uses `browser-claim`.
+- Browser claims and probes require a complete bounded profile inventory. Only a confirmed connection refusal or an explicit bridge response proving absence excludes a candidate. Unreadable registrations, including Windows registrations found through WSL, redirects, authentication failures, untyped 404s and failed native visibility reads block dispatch. At the command deadline the queue stops waiting for blocked registry reads; any late handle is closed without resuming discovery. Each discovery request carries its absolute HTTP deadline (at most 5 seconds) through session and ownership checks to the native probe; native responses must arrive before that deadline.
+- Browser bridge requests go directly over loopback, bypassing environment proxies and refusing redirects. The `browser-execute` deadline bounds service, session and ownership waits as well as native execution. The HTTP observer stops waiting at expiry; shared reads keep running. Open passes verified workspace IDs; other commands require the exact probe witness at native execution or page lease admission. A hidden, replaced or ambiguous preview fails rather than redirecting the command.
 - An unscoped `browser(snapshot)` selects the preview and document for following calls, including operations without an element reference. Take a fresh snapshot after opening, navigation or a stale-target refusal.
 
 An active backend publishes an ephemeral registration with a per-process 256-bit
@@ -93,7 +93,7 @@ Electron maps the channel's `Input.insertText` to `WebContents.insertText` and `
 
 `begin` binds one expiring operation lease to the exact visible registered guest and document generation. Every `send` is bounded and allowlisted to semantic operations; every `check` revalidates visibility, registration and document identity. Responses are fenced again after native I/O. A changed, hidden, ambiguous or missing target fails rather than switching guests. The backend owns refs per session and generation; it issues no refs from an unconfirmed read and never retries a failed mutation. Once `begin` may have reached the host, `end` cleans up the exact lease even after a lost reply, cancellation or navigation, without detaching someone else's emulation overrides. A host without channel support fails explicitly.
 
-Preview navigation, screenshots and page lease admission carry the probe's `target` beside `sessionID` and revalidate it before native dispatch. Screenshots keep the exact document through capture; navigation keeps the exact registration through the load. Open uses its own claim path.
+Preview navigation, screenshots and page lease admission carry the probe's `target` beside `sessionID` and revalidate it before native dispatch. Screenshots keep the exact document through capture. Open uses an exact occurrence claim instead of a document witness; both paths use the same native navigation and load receipt for the admitted registration.
 
 Electron and Windows Tauri observe private CDP `Page.documentOpened` events before issuing a witness. A main-frame document stream reopened at the same URL revokes that guest's witness and page lease, independently of native navigation and load completion. Electron arms its listener on probe and releases the automation attachment on hide or unregister while preserving emulation overrides. Tauri installs the receiver and enables the Page domain during WebView2 creation; the receiver follows that native view's lifetime.
 
@@ -319,12 +319,23 @@ WebKitGTK clipboard writes and native Ctrl+C/V use the engine's user-initiated p
 - WebKit history reads the native back/forward list on the UI thread. Each retained native item gets a monotonic numeric handle, with at most 32 exposed entries; redirects and `replaceState` update that item's URL, while distinct same-URL entries keep distinct handles. Reads and traversal revalidate the registration's owner/generation, reject expired or removed handles and release retained items on replacement, close and primary-renderer reload. GTK observes native URI/list changes. WKWebView samples native lists every 250 ms while visible and every second while hidden because its public list API has no same-URL `pushState` notification. Saved restoration keeps only URLs/cursor and loads the selected URL on explicit reopening.
 - Keep application capabilities confined to primary local webviews. Never apply `linux_tls.rs` remote-window exceptions to browser previews.
 
-Autonomous native opens consider local-backend occurrences containing the session:
-choose the active occurrence, otherwise its unique open owner; refuse ambiguity.
-Claim for one local window, select that occurrence/session and open its preview.
-Keep that occurrence pinned through claim and creation; revalidate attachment,
-instance and session ownership. Closing it releases its new proxy token; stale
-admitted claims release their exact request. Never reroute to a duplicate.
+Autonomous native opens ask visible, non-minimized local application windows for
+an eligible tab in native focus/MRU order. Discovery reads the open occurrence
+set and backend-verified workspace IDs; it sends no URL, refreshes no session
+list, and changes no selection. A definite absence advances to the next window.
+In the first eligible window, the active owning tab wins; otherwise a single
+owning tab wins or ambiguity stops the request. An inconclusive discovery stops.
+
+The host sends the URL to that renderer and occurrence alone, without raising the
+window. Foreground selection respects tab selections made after the renderer
+receives the open; the existing claim still requires its exact visible registration.
+The renderer refuses adoption while the owning tab shows a file or Mission reader.
+Claim and adoption are scoped to the native window incarnation, renderer
+generation and tab; the host waits for that renderer's acknowledgement of its visible native registration
+and checks the same registration after load. Hide, minimize, renderer reload,
+window/occurrence closure or failed adoption retires the request; never reroute it.
+A retained preview in another window blocks guest construction. An existing preview
+can still navigate when it is the only visible guest and belongs to the selected occurrence.
 Page actions require exactly one visible native target for the invoking session.
 Ambiguity, hiding and closure invalidate it. Registrations retain the real native
 session ID on Electron and Tauri Windows/macOS/Linux.
@@ -343,7 +354,35 @@ own proxy tokens. SessionView reads the shared typed foreground projection; brow
 resources retain their independent lifetimes. Location/history notifications apply
 immediately while pending gestures retain their generation.
 
-Native open claims retain their request deadline and backend-generation fence. The UI revalidates the claim after asynchronous preview-record creation and before publishing the preview; a rejected record's token is released. Native-parent stdin preserves UTF-8 across buffer boundaries, and timed-out response IDs stay retired independently of subsequent requests.
+Native open claims use up to ten seconds for discovery and adoption, then the remaining
+native request deadline for the command slot and load. The UI rejects competing opens
+before changing the gesture and revalidates after asynchronous record
+creation. A new guest starts on a neutral document: Electron consumes the exact
+claim before attachment; Tauri checks it before construction and at publication.
+Retirement before acknowledgement releases the abandoned guest and record; a prior
+preview remains available.
+An explicit surface gesture retires the superseded request immediately. A user navigation
+on its acknowledged guest retires the open and retains that guest. Before dispatching
+the user's navigation, the journal excludes the retired native entry by identity.
+A main-frame link navigation that supersedes an in-flight open also retains its exact guest.
+When its location arrives before the open settles, a matching native successor receipt
+saves the new visit without saving the interrupted load.
+An explicit open from another occurrence can replace the first agent open's provisional
+guest. Address submission waits for that guest's attachment acknowledgement while the
+address field stays editable. Refresh waits for the first open to settle. The native
+dispatch rechecks the exact reservation immediately before navigating.
+
+The native host issues the URL only after the exact visible registration is admitted.
+It returns that navigation's committed URL, including redirects, after the main document's
+load completes or a requested same-document navigation is confirmed in the main frame.
+The owning renderer saves the URL and journal only from that request's successful native
+result while its gesture is current. A valid commit outside the journal's URL bound stays
+live and preserves the previous saved journal, as does retirement. Live address updates
+follow the native location independently of the receipt. Expiry or
+revocation stops the admitted navigation on its own guest while it is still current;
+a successor navigation or replacement guest keeps its own lifetime.
+Native-parent stdin preserves UTF-8 across buffer boundaries, and timed-out response
+IDs stay retired independently of subsequent requests.
 
 ## Focused Validation
 

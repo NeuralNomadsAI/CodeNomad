@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto"
+import { resolve } from "node:path"
 import { isSessionNotFoundError } from "@opencode/client"
 import type { FastifyInstance, FastifyRequest } from "fastify"
 import type { AuthManager } from "../../auth/manager"
@@ -249,17 +250,33 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     }
     if (executionExpired()) return expiredExecution()
     if (discoveryExpired()) return inventoryUnavailable()
-    // One validated owner is sufficient. Waiting for every unrelated inventory
-    // can exceed the plugin's discovery deadline despite a ready local owner.
+    // Open needs the complete set for occurrence selection. Other modes can
+    // proceed with one validated owner without waiting for unrelated inventories.
+    const openingBrowser = body.mode === "browser-execute" && (body.command as { action?: unknown } | undefined)?.action === "open"
+    let workspaceIDs: string[] | undefined
     let owned: boolean, ownershipReadFailed = false
     try {
       const workspaces = deps.workspaceManager.list()
       if (executionExpired()) return expiredExecution()
-      owned = await lifetime.wait(Promise.any(workspaces.map(async workspace => {
-        try { if (await deps.workspaceManager.ownsLocation(workspace.id, location, undefined, { signal, strict: preferenceProbe || browserDiscovery })) return true }
-        catch { ownershipReadFailed = true }
+      const reads = workspaces.map(async workspace => {
+        try { if (await deps.workspaceManager.ownsLocation(workspace.id, location, undefined, { signal, strict: preferenceProbe || browserDiscovery || openingBrowser })) return workspace.id }
+        catch (error) {
+          const failure = error as NodeJS.ErrnoException | undefined
+          const missingRoot = openingBrowser && failure?.code === "ENOENT" && failure.syscall === "realpath"
+            && typeof failure.path === "string" && resolve(failure.path) === resolve(workspace.path)
+          if (!missingRoot) ownershipReadFailed = true
+        }
         throw new Error("Not an owner")
-      })), readSignal).catch(() => false)
+      })
+      if (openingBrowser) {
+        const results = await lifetime.wait(Promise.allSettled(reads), readSignal)
+        if (executionExpired()) return expiredExecution()
+        if (ownershipReadFailed) return reply.code(409).send({ error: "Could not verify the owning project tabs" })
+        workspaceIDs = results.flatMap(result => result.status === "fulfilled" ? [result.value] : [])
+        owned = workspaceIDs.length > 0
+      } else {
+        owned = await lifetime.wait(Promise.any(reads), readSignal).then(() => true, () => false)
+      }
     } catch (error) {
       if (executionExpired()) return expiredExecution()
       if (preferenceProbe) return preferenceUnavailable()
@@ -428,15 +445,23 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       if (executionExpired()) return expiredExecution()
       try {
         const work = command.action === "open" || command.action === "navigate" || command.action === "screenshot"
-          ? deps.nativeParent.request("browser.execute", { sessionID: body.sessionID, command, ...(target ? { target } : {}) },
-            { deadline: executionDeadline })
+          ? deps.nativeParent.request("browser.execute", {
+            sessionID: body.sessionID, command, ...(target ? { target } : {}), ...(workspaceIDs ? { workspaceIDs } : {}),
+          }, { deadline: executionDeadline })
           : browserPage.execute(body.sessionID, command, readSignal, target as string, executionDeadline)
         const result = await lifetime.wait(work, readSignal)
         if (executionExpired()) return expiredExecution()
         return reply.send({ result })
       } catch (error) {
         if (executionExpired()) return reply.code(409).send({ code: "preview-expired", error: "Browser command timed out; inspect before another action" })
-        return reply.code(409).send(browserTargetRefusal(error instanceof Error ? error.message : String(error)))
+        const message = error instanceof Error ? error.message : String(error)
+        const code = !openingBrowser ? undefined
+          : /Multiple owning tabs/.test(message) ? "ambiguous-target"
+          : /No visible local window has the owning project tab|Owning project tabs are unavailable/.test(message) ? "no-occurrence"
+          : /Browser (?:open (?:target|renderer|registration) changed|(?:open )?navigation changed)/.test(message) ? "target-gone"
+          : /Browser preview (?:already exists|open is already in progress)/.test(message) ? "preview-in-use"
+          : undefined
+        return reply.code(409).send(code ? { error: message, code } : browserTargetRefusal(message))
       }
     }
 

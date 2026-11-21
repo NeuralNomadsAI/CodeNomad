@@ -1,6 +1,6 @@
 import { nativeFixture } from "./browser-frame-native-bridge"
 import { serverApi } from "../../../src/lib/api-client"
-import { getSessionPreview, openSessionPreview, sessionPreviews } from "../../../src/stores/session-previews"
+import { getSessionPreview, openSessionPreview, sessionPreviews, settleSessionPreviewOpen } from "../../../src/stores/session-previews"
 import { initializeClientState, writeClientLayoutValue } from "../../../src/stores/client-state"
 import { getTabViewState, seedTabViewState } from "../../../src/stores/tab-view-state"
 import { migrateLegacyTabPreviews } from "../../../src/stores/tab-view-state-migration"
@@ -90,6 +90,13 @@ Object.assign(shell, {
   surfaceIntentCurrent: () => surfaceIntent.current(),
   native: nativeFixture,
   openPreview: (sessionId: string, url: string, instanceId = ids[0]) => openSessionPreview(sessionId, url, instanceId),
+  openNativePreview: (requestID: string, url: string) => {
+    const sessionId = "session", instanceId = ids[0]
+    const intent = beginGesture({ instanceId, sessionId })
+    return openSessionPreview(sessionId, url, instanceId, async () => true, intent, { requestID, instanceId, current: intent.current })
+  },
+  settleNativePreview: (requestID: string, committedUrl?: string, keepGuest?: boolean, successorUrl?: string) =>
+    settleSessionPreviewOpen("session", ids[0], requestID, committedUrl, keepGuest, successorUrl),
   preview: (sessionId: string, instanceId = ids[0]) => {
     if (!isInstanceOccurrenceOpen(instanceId)) return null
     const preview = getSessionPreview(sessionId)
