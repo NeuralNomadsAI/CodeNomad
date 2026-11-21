@@ -41,6 +41,10 @@ export interface DeveloperCdpIdentity extends DeveloperCdpSelection {
   document?: string
 }
 
+function windowKey(identity: DeveloperCdpSelection): string {
+  return `${identity.runId}\0${identity.windowId}\0${identity.windowInstance ?? ""}`
+}
+
 export interface DeveloperCdpContext {
   windowId: string
   windowInstance?: string
@@ -153,7 +157,7 @@ export class DeveloperCdp {
   }
 
   async inspect(identity: DeveloperCdpIdentity, options: DeveloperCdpInspectOptions = {}): Promise<DeveloperCdpInspection> {
-    return this.exclusive(identity.runId, async () => {
+    return this.exclusive(windowKey(identity), async () => {
       const state = await this.ensure(identity)
       const generation = this.generation(state)
       const root = options.ref === undefined ? undefined : state.refs.resolve(options.ref, generation)
@@ -177,7 +181,7 @@ export class DeveloperCdp {
   }
 
   async act(identity: DeveloperCdpIdentity, action: RefAction): Promise<PageActionResult> {
-    return this.exclusive(identity.runId, async () => {
+    return this.exclusive(windowKey(identity), async () => {
       const state = await this.ensure(identity)
       const epoch = state.navigationEpoch, generation = this.generation(state)
       const page = bindRefs(action, ref => state.refs.resolve(ref, generation))
@@ -196,7 +200,7 @@ export class DeveloperCdp {
   }
 
   async screenshot(identity: DeveloperCdpIdentity): Promise<DeveloperCdpScreenshot> {
-    return this.exclusive(identity.runId, async () => {
+    return this.exclusive(windowKey(identity), async () => {
       const state = await this.ensure(identity)
       const epoch = state.navigationEpoch
       const result = await this.command(state, "Page.captureScreenshot", {
@@ -223,7 +227,7 @@ export class DeveloperCdp {
   }
 
   async context(selection: DeveloperCdpSelection): Promise<DeveloperCdpContext> {
-    return this.exclusive(selection.runId, async () => (await this.ensure(selection)).context!)
+    return this.exclusive(windowKey(selection), async () => (await this.ensure(selection)).context!)
   }
 
   async probeContexts(endpoint: string, windowIds: ReadonlyMap<string, string | undefined>,
@@ -254,7 +258,7 @@ export class DeveloperCdp {
   private async ensure(identity: DeveloperCdpSelection | DeveloperCdpIdentity): Promise<RunState> {
     if (!identity.runId.trim()) throw new Error("runId is required")
     const endpoint = discoveryUrl(identity.endpoint)
-    const key = `${identity.runId}\0${identity.windowId}\0${identity.windowInstance ?? ""}`
+    const key = windowKey(identity)
     let state = this.windows.get(key)
     if (!state || state.endpoint !== endpoint || state.windowId !== identity.windowId || state.sessionId !== identity.sessionId
       || ("instanceId" in identity && state.instanceId !== identity.instanceId)) {
@@ -476,13 +480,13 @@ export class DeveloperCdp {
     state.context = context
   }
 
-  private exclusive<T>(runId: string, operation: () => Promise<T>): Promise<T> {
-    const previous = this.operations.get(runId) ?? Promise.resolve()
+  private exclusive<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.operations.get(key) ?? Promise.resolve()
     const queued = previous.catch(() => undefined).then(operation)
     const tail = queued.then(() => undefined, () => undefined)
-    this.operations.set(runId, tail)
+    this.operations.set(key, tail)
     return queued.finally(() => {
-      if (this.operations.get(runId) === tail) this.operations.delete(runId)
+      if (this.operations.get(key) === tail) this.operations.delete(key)
     })
   }
 

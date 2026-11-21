@@ -70,7 +70,10 @@ export class DeveloperMode {
     if (method === "developer.status") return { status: await this.status(params), logs: [] }
     if (method === "developer.targets") return { ...await this.inventory(), logs: [] }
     if (method === "developer.restart") {
-      const status = await this.status()
+      const status = await this.status(params)
+      if (params && (params as { runId?: unknown }).runId !== undefined && status.state !== "ready") {
+        throw new Error("The selected window is no longer available")
+      }
       this.schedule(() => this.options.requestRelaunch())
       return { ...status, state: "starting", windowId: undefined }
     }

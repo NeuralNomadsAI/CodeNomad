@@ -318,7 +318,7 @@ pub(crate) fn handle_native_request(
         "developer.status" | "developer.targets" => state
             .developer_mode
             .native_snapshot(app, params, method == "developer.targets"),
-        "developer.restart" => state.developer_mode.request_restart(app),
+        "developer.restart" => state.developer_mode.request_restart(app, params),
         _ => Err(format!("Unsupported native request: {method}")),
     }
 }

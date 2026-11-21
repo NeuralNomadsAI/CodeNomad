@@ -169,9 +169,14 @@ impl DeveloperMode {
         })
     }
 
-    pub(crate) fn request_restart(&self, app: &AppHandle) -> Result<Value, String> {
+    pub(crate) fn request_restart(&self, app: &AppHandle, params: Option<Value>) -> Result<Value, String> {
         if !cfg!(windows) {
             return Err("Native automation requires the Tauri Windows runtime".to_string());
+        }
+        if params.as_ref().is_some_and(|value| value.get("runId").is_some())
+            && self.native_snapshot(app, params, false)?["status"]["state"] != "ready"
+        {
+            return Err("The selected window is no longer available".to_string());
         }
         let status = self.status(self.discovered_port(), None);
         let app = app.clone();

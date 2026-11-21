@@ -128,6 +128,9 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       || typeof body.sessionID !== "string" || body.sessionID.length > 256) {
       return reply.code(400).send({ error: "Invalid automation bridge request" })
     }
+    const rawDeveloper = body.mode === "developer-execute" ? body.command as { action?: unknown; ref?: unknown } : undefined
+    const publishInspection = rawDeveloper?.action === "inspect" && (rawDeveloper.ref === undefined || rawDeveloper.ref === "")
+      ? inspectedTargets.begin(body.sessionID) : undefined
     if (body.mode === "memory-probe" || body.mode === "memory-input" || body.mode === "memory-context") {
       if (!deps.memory) return reply.code(503).send({ code: "unreadable", error: "Memory is unavailable" })
       try {
@@ -294,7 +297,6 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     const unavailable = (error?: string) => reply.code(404).send(exact
       ? { code: "target-gone", error: "The selected window is unavailable; choose a window in inspect({targets:true})" }
       : { code: "no-window", error: error ?? "No ready local CodeNomad window for this backend" })
-    const publishInspection = command?.action === "inspect" && !command.ref ? inspectedTargets.begin(body.sessionID) : undefined
     let native: DeveloperNativeStatus
     try {
       native = await deps.nativeParent.request<DeveloperNativeStatus>(inventory ? "developer.targets" : "developer.status",
@@ -340,7 +342,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       if (command.action === "restart") {
         await deps.developerCdp.context(identity)
         inspectedTargets.forget(body.sessionID)
-        const result = await deps.nativeParent.request<DeveloperNativeStatus["status"]>("developer.restart", {})
+        const result = await deps.nativeParent.request<DeveloperNativeStatus["status"]>("developer.restart", nativeWindowParams(identity))
         deps.developerCdp.close(selection.runId)
         return reply.send({ result })
       }
@@ -365,7 +367,9 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       return reply.send({ result: { ok: true, ...result } })
     } catch (error) {
       if (error instanceof StaleDeveloperDocument) return reply.code(409).send({ code: "stale-document", error: error.message })
-      if (exact && error instanceof Error && /^No CodeNomad page matches|^CodeNomad window or active session changed/.test(error.message)) return unavailable()
+      if (exact && error instanceof Error && /^(No CodeNomad page matches|CodeNomad window or active session changed|The selected window is no longer available)/.test(error.message)) {
+        return unavailable()
+      }
       return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) })
     }
     } finally { lifetime.dispose() }

@@ -145,7 +145,7 @@ test("targets the inspected window independently of the visible conversation", a
   assert.equal(restart.statusCode, 200)
   assert.deepEqual(nativeCalls.slice(-2), [
     { method: "developer.status", params: { windowId: "window-1", runId: "run-1" } },
-    { method: "developer.restart", params: {} },
+    { method: "developer.restart", params: { windowId: "window-1", runId: "run-1" } },
   ])
   assert.equal((await request({ mode: "developer-probe", sessionID: "session-2" })).statusCode, 200)
   assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "restart" } })).statusCode, 404)

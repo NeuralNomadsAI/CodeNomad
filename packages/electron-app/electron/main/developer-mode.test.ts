@@ -58,6 +58,8 @@ test("reports the current local window and schedules a graceful relaunch", async
   assert.equal((await mode.status({ windowId: "window-1", runId: "old" })).state, "starting")
   windows.pop()
   assert.equal((await mode.status({ windowId: "window-1", runId: "run-1" })).state, "starting")
+  await assert.rejects(mode.handleNativeRequest("developer.restart", { windowId: "window-1", runId: "run-1" }), /no longer available/)
+  assert.equal(restart, undefined, "a disappeared window cannot arm the relaunch")
   assert.deepEqual(await mode.handleNativeRequest("developer.restart"), {
     state: "starting",
     runId: "run-1",

@@ -121,7 +121,8 @@ describe("DeveloperCdp", () => {
   it("skips unresponsive inventory pages and checks the window incarnation before reading", async () => {
     const chrome = new FakeChrome(), stalled = new FakeChrome()
     stalled.target = page("stalled")
-    chrome.targets = [stalled.target, chrome.target]
+    const workers = Array.from({ length: 64 }, (_, index) => ({ ...page(`worker-${index}`), type: "service_worker" }))
+    chrome.targets = [...workers, stalled.target, chrome.target]
     stalled.deferred.set("Runtime.evaluate", undefined as never)
     chrome.context.windowInstance = "current"
     const client = chrome.client({ connect: (url: string) => url.endsWith("/stalled") ? stalled.connect(url) : chrome.connect(url) })
