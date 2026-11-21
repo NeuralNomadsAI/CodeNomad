@@ -599,7 +599,9 @@ fn browser_target_claim_open(
     response: browser_controller::OpenResponse,
 ) -> Result<bool, String> {
     require_local_app_webview(&webview, &state)?;
-    state.browser_controller.claim_open(webview.label(), &request_id, response)
+    state
+        .browser_controller
+        .claim_open(webview.app_handle(), webview.label(), &request_id, response)
 }
 
 #[tauri::command]

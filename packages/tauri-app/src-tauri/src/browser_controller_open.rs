@@ -94,11 +94,24 @@ impl OpenClaim {
 }
 
 impl BrowserController {
-    pub(crate) fn claim_open(
+    pub(crate) fn claim_open<R: tauri::Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        owner: &str,
+        request_id: &str,
+        response: OpenResponse,
+    ) -> Result<bool, String> {
+        self.claim_open_with_visibility(owner, request_id, response, |label| {
+            window_visible(app, label)
+        })
+    }
+
+    fn claim_open_with_visibility(
         &self,
         owner: &str,
         request_id: &str,
         response: OpenResponse,
+        read_visibility: impl FnMut(&str) -> tauri::Result<bool>,
     ) -> Result<bool, String> {
         let (inner, ready) = &*self.inner;
         let mut inner = inner.lock().map_err(|error| error.to_string())?;
@@ -113,13 +126,24 @@ impl BrowserController {
             return Ok(false);
         }
         let target = match &response {
-            OpenResponse::Adopt { .. } => {
+            OpenResponse::Adopt { instance_id } => {
+                if claim.instance_id.as_ref() != Some(instance_id) || !claim.claimed || claim.adopted
+                {
+                    return Ok(false);
+                }
+                let snapshot = OpenPreviewSnapshot::new(&inner, &claim.session_id, owner);
+                drop(inner);
+                let visibility = snapshot.read(read_visibility)?;
+                inner = self.inner.0.lock().map_err(|error| error.to_string())?;
+                let Ok(claim) = current_claim(&inner, request_id) else {
+                    return Ok(false);
+                };
                 if inner.open_claims.iter().any(|(id, other)| {
                     id != request_id && other.session_id == claim.session_id && other.adopted
                 }) {
                     return Err("Browser preview open is already in progress".into());
                 }
-                check_no_foreign_preview(&inner, &claim.session_id, owner, claim.instance_id.as_deref())?;
+                visibility.check(&inner, &claim.session_id, owner, Some(instance_id), None)?;
                 None
             }
             OpenResponse::Target {
@@ -228,7 +252,7 @@ impl BrowserController {
         {
             return Err("Browser open construction is no longer current".into());
         }
-        check_no_foreign_preview(&inner, &claim.session_id, owner, None)?;
+        check_no_foreign_preview(&inner, &claim.session_id, owner)?;
         inner.open_claims.get_mut(request_id).unwrap().construction =
             Some((input.registration_id.clone(), generation));
         Ok(())
@@ -248,7 +272,7 @@ impl BrowserController {
         {
             return Err("Browser open construction is no longer current".into());
         }
-        check_no_foreign_preview(inner, &claim.session_id, &claim.owner, None)
+        check_no_foreign_preview(inner, &claim.session_id, &claim.owner)
     }
 
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -318,7 +342,7 @@ impl BrowserController {
             guard.open_claims.insert(request_id.clone(), claim);
             drop(guard);
             let event_target = tauri::EventTarget::webview(&owner);
-            let mut result = (|| -> Result<Option<String>, String> {
+            let result = (|| -> Result<Option<String>, String> {
                 app.emit_to(
                     event_target.clone(),
                     "browser-target:discover",
@@ -328,7 +352,7 @@ impl BrowserController {
                 let instance_id =
                     loop {
                         owner_current()?;
-                        let mut guard = inner.lock().map_err(|error| error.to_string())?;
+                        let guard = inner.lock().map_err(|error| error.to_string())?;
                         let claim = current_claim(&guard, &request_id)?;
                         if let Some(discovery) = &claim.discovery {
                             match discovery {
@@ -337,13 +361,7 @@ impl BrowserController {
                                     "Multiple owning tabs; select one before opening the preview"
                                         .into(),
                                 ),
-                                Discovery::Occurrence(id) => {
-                                    let id = id.clone();
-                                    guard.open_claims.get_mut(&request_id).unwrap().instance_id =
-                                        Some(id.clone());
-                                    check_no_foreign_preview(&guard, session_id, &owner, Some(&id))?;
-                                    break id;
-                                }
+                                Discovery::Occurrence(id) => break id.clone(),
                             }
                         }
                         drop(
@@ -352,10 +370,14 @@ impl BrowserController {
                                 .map_err(|error| error.to_string())?,
                         );
                     };
+                let visibility = self.read_open_preview(app, session_id, &owner)?;
                 owner_current()?;
                 {
-                    let guard = inner.lock().map_err(|error| error.to_string())?;
+                    let mut guard = inner.lock().map_err(|error| error.to_string())?;
                     current_claim(&guard, &request_id)?;
+                    visibility.check(&guard, session_id, &owner, Some(&instance_id), None)?;
+                    guard.open_claims.get_mut(&request_id).unwrap().instance_id =
+                        Some(instance_id.clone());
                 }
                 app.emit_to(event_target, "browser-target:open", json!({
                     "sessionID": session_id, "url": raw_url, "requestID": request_id, "instanceId": instance_id,
@@ -397,28 +419,31 @@ impl BrowserController {
                 )
                 .map(Some)
             })();
-            if result.is_ok() {
-                result = owner_current().and(result);
-            }
-            let retired = {
+            let result = result.and_then(|url| {
+                let visibility = url
+                    .as_ref()
+                    .map(|_| self.read_open_preview(app, session_id, &owner))
+                    .transpose()?;
+                owner_current()?;
+                Ok((url, visibility))
+            });
+            let (result, retired) = {
                 let mut guard = inner.lock().map_err(|error| error.to_string())?;
-                if let Ok(url) = &result {
-                    let check = current_claim(&guard, &request_id).and_then(|claim| {
-                        if url.is_some() {
-                            let target =
-                                claim.target.as_ref().ok_or("Browser open target changed")?;
-                            check_open_target(&guard, &request_id, target)?;
-                        }
-                        Ok(())
-                    });
-                    result = check.and(result);
-                }
-                guard.open_claims.remove(&request_id).map(|mut claim| {
+                let result = result.and_then(|(url, visibility)| {
+                    let claim = current_claim(&guard, &request_id)?;
+                    if let Some(visibility) = visibility {
+                        let target = claim.target.as_ref().ok_or("Browser open target changed")?;
+                        check_open_target(&guard, &request_id, target, &visibility)?;
+                    }
+                    Ok(url)
+                });
+                let retired = guard.open_claims.remove(&request_id).map(|mut claim| {
                     claim.keep_guest &= claim.target.as_ref().is_some_and(|target| {
                         guard.registrations.get(&target.registration_id) == Some(target)
                     });
                     claim
-                })
+                });
+                (result, retired)
             };
             if let Some(claim) = retired.filter(|claim| claim.adopted) {
                 if claim.target.is_none() {
@@ -438,30 +463,97 @@ impl BrowserController {
         }
         Err("No visible local window has the owning project tab".into())
     }
+
+    pub(super) fn read_open_preview<R: tauri::Runtime>(
+        &self,
+        app: &AppHandle<R>,
+        session_id: &str,
+        owner: &str,
+    ) -> Result<OpenPreviewCheck, String> {
+        let snapshot = {
+            let inner = self.inner.0.lock().map_err(|error| error.to_string())?;
+            OpenPreviewSnapshot::new(&inner, session_id, owner)
+        };
+        snapshot.read(|label| window_visible(app, label))
+    }
 }
 
-fn check_no_foreign_preview(
-    inner: &Inner,
-    session_id: &str,
-    owner: &str,
-    instance_id: Option<&str>,
-) -> Result<(), String> {
-    if inner.registrations.values().any(|registration| {
-        registration.session_id == session_id && registration.window_label != owner
-    }) {
-        if let Some(instance_id) = instance_id {
-            let mut visible = inner.registrations.values().filter(|registration| {
-                registration.session_id == session_id && registration.visible
-            });
-            if visible.next().is_some_and(|registration| {
-                registration.window_label == owner
-                    && registration.instance_id.as_deref() == Some(instance_id)
-            }) && visible.next().is_none()
+struct OpenPreviewSnapshot(Option<Vec<Registration>>);
+
+pub(super) struct OpenPreviewCheck(Option<(Vec<Registration>, Registration)>);
+
+impl OpenPreviewSnapshot {
+    fn new(inner: &Inner, session_id: &str, owner: &str) -> Self {
+        Self(has_foreign_preview(inner, session_id, owner).then(|| {
+            advertised_visible_registrations(inner, session_id).cloned().collect()
+        }))
+    }
+
+    fn read(
+        self,
+        read_visibility: impl FnMut(&str) -> tauri::Result<bool>,
+    ) -> Result<OpenPreviewCheck, String> {
+        let Some(registrations) = self.0 else {
+            return Ok(OpenPreviewCheck(None));
+        };
+        let visible = resolve_visible_registration(&registrations, read_visibility)?.clone();
+        Ok(OpenPreviewCheck(Some((registrations, visible))))
+    }
+}
+
+impl OpenPreviewCheck {
+    fn check(
+        &self,
+        inner: &Inner,
+        session_id: &str,
+        owner: &str,
+        instance_id: Option<&str>,
+        expected: Option<&Registration>,
+    ) -> Result<(), String> {
+        if !has_foreign_preview(inner, session_id, owner) {
+            return Ok(());
+        }
+        // Only reuse the exact visible inventory sampled outside the registry lock.
+        if let Some((registrations, visible)) = &self.0 {
+            if visible.window_label == owner
+                && instance_id.is_some()
+                && visible.instance_id.as_deref() == instance_id
+                && expected.is_none_or(|expected| visible == expected)
+                && advertised_visible_registrations(inner, session_id).count() == registrations.len()
+                && registrations.iter().all(|registration| {
+                    inner.registrations.get(&registration.registration_id) == Some(registration)
+                })
             {
                 return Ok(());
             }
         }
-        return Err("Browser preview already exists in another window".into());
+        Err(foreign_preview_error())
+    }
+}
+
+fn advertised_visible_registrations<'a>(
+    inner: &'a Inner,
+    session_id: &'a str,
+) -> impl Iterator<Item = &'a Registration> {
+    inner
+        .registrations
+        .values()
+        .filter(move |registration| registration.session_id == session_id && registration.visible)
+}
+
+fn has_foreign_preview(inner: &Inner, session_id: &str, owner: &str) -> bool {
+    inner.registrations.values().any(|registration| {
+        registration.session_id == session_id && registration.window_label != owner
+    })
+}
+
+fn foreign_preview_error() -> String {
+    "Browser preview already exists in another window".into()
+}
+
+fn check_no_foreign_preview(inner: &Inner, session_id: &str, owner: &str) -> Result<(), String> {
+    if has_foreign_preview(inner, session_id, owner) {
+        return Err(foreign_preview_error());
     }
     Ok(())
 }
@@ -470,6 +562,7 @@ pub(super) fn check_open_target(
     inner: &Inner,
     request_id: &str,
     expected: &Registration,
+    visibility: &OpenPreviewCheck,
 ) -> Result<(), String> {
     let claim = current_claim(inner, request_id)?;
     if claim.target.as_ref() != Some(expected)
@@ -477,11 +570,12 @@ pub(super) fn check_open_target(
     {
         return Err("Browser open registration changed".into());
     }
-    check_no_foreign_preview(
+    visibility.check(
         inner,
         &expected.session_id,
         &expected.window_label,
         expected.instance_id.as_deref(),
+        Some(expected),
     )
 }
 
@@ -585,7 +679,15 @@ mod tests {
         }
         let report = |owner, response| {
             controller
-                .claim_open(owner, "request", serde_json::from_value(response).unwrap())
+                .claim_open_with_visibility(
+                    owner,
+                    "request",
+                    serde_json::from_value(response).unwrap(),
+                    |label| {
+                        assert!(controller.inner.0.try_lock().is_ok());
+                        Ok(label != "other")
+                    },
+                )
                 .unwrap()
         };
         assert!(!report(
@@ -614,6 +716,15 @@ mod tests {
             json!({"kind":"claim","instanceId":"wrong"})
         ));
         assert!(report("owner", json!({"kind":"claim","instanceId":"tab"})));
+        let foreign = {
+            let mut inner = controller.inner.0.lock().unwrap();
+            inner.registrations.get_mut("wrong").unwrap().visible = false;
+            let mut foreign = inner.registrations["right"].clone();
+            foreign.registration_id = "foreign".into();
+            foreign.window_label = "other".into();
+            inner.registrations.insert("foreign".into(), foreign.clone());
+            foreign
+        };
         assert!(report("owner", json!({"kind":"adopt","instanceId":"tab"})));
         let mut construction = controller.owned_registration("owner", "right").unwrap();
         construction.generation += 1;
@@ -622,11 +733,26 @@ mod tests {
             "url": "https://example.com/", "bounds": { "x": 0, "y": 0, "width": 1, "height": 1 }
         }))
         .unwrap();
+        assert!(controller
+            .reserve_open_construction("request", "owner", &input, construction.generation)
+            .is_err());
+        controller
+            .inner
+            .0
+            .lock()
+            .unwrap()
+            .registrations
+            .remove("foreign");
         controller
             .reserve_open_construction("request", "owner", &input, construction.generation)
             .unwrap();
         {
             let mut inner = controller.inner.0.lock().unwrap();
+            inner.registrations.insert("foreign".into(), foreign.clone());
+            assert!(
+                BrowserController::check_open_publication(&inner, "request", &construction).is_err()
+            );
+            inner.registrations.remove("foreign");
             inner
                 .open_claims
                 .get_mut("request")
@@ -657,7 +783,7 @@ mod tests {
             .unwrap();
         assert!(report("owner", target("right")));
         assert!(!report("owner", target("right")));
-        let expected = {
+        let (expected, minimized) = {
             let mut inner = controller.inner.0.lock().unwrap();
             inner
                 .open_claims
@@ -670,42 +796,54 @@ mod tests {
                 .clone()
                 .unwrap();
             assert_eq!(expected.registration_id, "right");
-            let mut foreign = expected.clone();
-            foreign.registration_id = "foreign".into();
-            foreign.window_label = "other".into();
-            foreign.instance_id = None;
-            assert!(check_open_target(&inner, "request", &expected).is_ok());
+            let no_foreign = OpenPreviewCheck(None);
+            assert!(check_open_target(&inner, "request", &expected, &no_foreign).is_ok());
             inner
                 .registrations
                 .insert("foreign".into(), foreign.clone());
-            assert!(check_open_target(&inner, "request", &expected).is_err());
-            assert!(check_open_target(&inner, "request", &foreign).is_err());
-            inner.registrations.get_mut("foreign").unwrap().visible = false;
-            assert!(check_open_target(&inner, "request", &expected).is_ok());
-            assert!(check_no_foreign_preview(&inner, "session", "owner", Some("wrong")).is_err());
-            assert!(check_no_foreign_preview(&inner, "session", "owner", None).is_err());
+            assert!(check_open_target(&inner, "request", &expected, &no_foreign).is_err());
+            assert!(check_no_foreign_preview(&inner, "session", "owner").is_err());
+            let snapshot = || OpenPreviewSnapshot::new(&inner, "session", "owner");
+            assert!(snapshot().read(|_| Ok(true)).is_err());
+            assert!(snapshot()
+                .read(|label| Ok(label == "other"))
+                .unwrap()
+                .check(&inner, "session", "owner", Some("tab"), None)
+                .is_err());
+            let minimized = snapshot().read(|label| Ok(label == "owner")).unwrap();
+            assert!(minimized
+                .check(&inner, "session", "owner", Some("wrong"), None)
+                .is_err());
+            assert!(check_open_target(&inner, "request", &expected, &minimized).is_ok());
+            assert!(check_open_target(&inner, "request", &foreign, &minimized).is_err());
+            inner.registrations.get_mut("foreign").unwrap().visibility_version += 1;
+            assert!(check_open_target(&inner, "request", &expected, &minimized).is_err());
             inner.registrations.remove("foreign");
             let mut replacement = expected.clone();
             replacement.generation += 1;
             inner
                 .registrations
                 .insert("right".into(), replacement.clone());
-            assert!(check_open_target(&inner, "request", &replacement).is_err());
-            assert!(check_open_target(&inner, "request", &expected).is_err());
+            assert!(check_open_target(&inner, "request", &replacement, &no_foreign).is_err());
+            assert!(check_open_target(&inner, "request", &expected, &no_foreign).is_err());
             inner.registrations.insert("right".into(), expected.clone());
             current.store(false, Ordering::SeqCst);
             assert!(current_claim(&inner, "request").is_err());
             current.store(true, Ordering::SeqCst);
             let claim = inner.open_claims.get_mut("request").unwrap();
             claim.deadline = Instant::now();
-            expected
+            inner.registrations.insert("foreign".into(), foreign);
+            let minimized = OpenPreviewSnapshot::new(&inner, "session", "owner")
+                .read(|label| Ok(label == "owner"))
+                .unwrap();
+            (expected, minimized)
         };
         let admit = || {
             controller.prepare_navigation(
                 &expected,
                 "https://example.com/",
                 None,
-                Some("request"),
+                Some(("request", &minimized)),
                 || Ok(()),
             )
         };
@@ -727,7 +865,7 @@ mod tests {
         );
         {
             let inner = controller.inner.0.lock().unwrap();
-            assert!(check_open_target(&inner, "request", &expected).is_ok());
+            assert!(check_open_target(&inner, "request", &expected, &minimized).is_ok());
         }
         controller.mark_page_started(
             "right",
@@ -754,7 +892,7 @@ mod tests {
         );
         {
             let inner = controller.inner.0.lock().unwrap();
-            assert!(check_open_target(&inner, "request", &expected).is_ok());
+            assert!(check_open_target(&inner, "request", &expected, &minimized).is_ok());
         }
         controller.mark_page_committed(
             "right",

@@ -195,10 +195,11 @@ fn main() {
             controller.observe_owner(&app.get_window(OWNER).unwrap())?;
             let view = app.get_webview(OWNER).unwrap();
             let discovery = controller.clone();
+            let discovery_app = app.handle().clone();
             view.listen("browser-target:discover", move |event| {
                 let payload: Value = serde_json::from_str(event.payload()).unwrap();
                 let request = payload["requestID"].as_str().unwrap();
-                assert!(discovery.claim_open(OWNER, request, browser_controller::OpenResponse::Discover {
+                assert!(discovery.claim_open(&discovery_app, OWNER, request, browser_controller::OpenResponse::Discover {
                     instance_id: Some(Some("fixture-tab".into())), ambiguous: None,
                 }).unwrap());
             });
@@ -210,14 +211,14 @@ fn main() {
                 let request = payload["requestID"].as_str().unwrap().to_string();
                 use browser_controller::OpenResponse;
                 let instance_id = payload["instanceId"].as_str().unwrap().to_string();
-                if !open_controller.claim_open(OWNER, &request, OpenResponse::Claim { instance_id: instance_id.clone() }).unwrap() {
+                if !open_controller.claim_open(&open_app, OWNER, &request, OpenResponse::Claim { instance_id: instance_id.clone() }).unwrap() {
                     return;
                 }
                 let app = open_app.clone();
                 let controller = open_controller.clone();
                 let live = open_live.clone();
                 std::thread::spawn(move || {
-                    assert!(controller.claim_open(OWNER, &request, OpenResponse::Adopt { instance_id: instance_id.clone() }).unwrap());
+                    assert!(controller.claim_open(&app, OWNER, &request, OpenResponse::Adopt { instance_id: instance_id.clone() }).unwrap());
                     let id = format!("fixture-{}", uuid::Uuid::new_v4());
                     let result = register(
                         &app,
@@ -229,7 +230,7 @@ fn main() {
                     );
                     if result.is_ok() {
                         *live.lock().unwrap() = id.clone();
-                        assert!(controller.claim_open(OWNER, &request, OpenResponse::Target {
+                        assert!(controller.claim_open(&app, OWNER, &request, OpenResponse::Target {
                             instance_id, registration_id: id,
                         }).unwrap());
                     } else {

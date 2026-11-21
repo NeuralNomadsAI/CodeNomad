@@ -21,28 +21,34 @@ impl BrowserController {
         let document = witness.map(|(document, _)| document);
         let open_request_id = open_request_id.map(str::to_owned);
         let dispatch_request_id = open_request_id.clone();
-        let check_open = move |inner: &Inner, expected: &Registration| match &open_request_id {
-            Some(id) => super::open::check_open_target(inner, id, expected),
-            None => Ok(()),
-        };
         let dispatch_fence = fence.clone();
-        let check = move || {
+        let check = move || -> Result<Option<super::open::OpenPreviewCheck>, String> {
             fence.check()?;
             if Instant::now() >= deadline {
                 return Err("Native browser command timed out".into());
             }
             check()?;
             if document.is_some() {
-                controller.check_target_identity(&app, &expected, deadline, &fence)
+                controller.check_target_identity(&app, &expected, deadline, &fence)?;
             } else {
+                let visibility = open_request_id
+                    .as_ref()
+                    .map(|_| {
+                        controller.read_open_preview(
+                            &app,
+                            &expected.session_id,
+                            &expected.window_label,
+                        )
+                    })
+                    .transpose()?;
                 controller.check_registration(&app, &expected)?;
-                let inner = controller
-                    .inner
-                    .0
-                    .lock()
-                    .map_err(|error| error.to_string())?;
-                check_open(&inner, &expected)
+                if let Some((id, visibility)) = open_request_id.as_deref().zip(visibility) {
+                    let inner = controller.inner.0.lock().map_err(|error| error.to_string())?;
+                    super::open::check_open_target(&inner, id, &expected, &visibility)?;
+                    return Ok(Some(visibility));
+                }
             }
+            Ok(None)
         };
         check()?;
         #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -61,13 +67,22 @@ impl BrowserController {
         let dispatched = Arc::new(Mutex::new(None));
         let receipt = dispatched.clone();
         let admit = move || -> Result<u64, String> {
-            dispatch_check()?;
+            let visibility = dispatch_check()?;
+            let open_request = dispatch_request_id
+                .as_deref()
+                .map(|id| {
+                    visibility
+                        .as_ref()
+                        .map(|check| (id, check))
+                        .ok_or("Browser open target changed")
+                })
+                .transpose()?;
             let mut receipt = receipt.lock().map_err(|error| error.to_string())?;
             let sequence = controller.prepare_navigation(
                 &expected,
                 &target,
                 document,
-                dispatch_request_id.as_deref(),
+                open_request,
                 || {
                     dispatch_fence.check()?;
                     if Instant::now() >= deadline {
@@ -132,7 +147,10 @@ impl BrowserController {
                     })),
                 },
                 deadline,
-                check.clone(),
+                {
+                    let check = check.clone();
+                    move || check().map(|_| ())
+                },
             )
             .map(|_| fragment_only)
         };

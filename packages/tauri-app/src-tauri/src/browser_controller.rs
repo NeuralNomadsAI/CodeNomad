@@ -979,7 +979,7 @@ impl BrowserController {
     fn resolve_with_visibility(
         &self,
         session_id: &str,
-        mut read_visibility: impl FnMut(&str) -> tauri::Result<bool>,
+        read_visibility: impl FnMut(&str) -> tauri::Result<bool>,
     ) -> Result<Registration, String> {
         validate_id(session_id, 256)?;
         let registrations = self
@@ -992,19 +992,7 @@ impl BrowserController {
             .filter(|registration| registration.session_id == session_id && registration.visible)
             .cloned()
             .collect::<Vec<_>>();
-        let mut matches = Vec::new();
-        for registration in registrations {
-            if read_visibility(&registration.window_label)
-                .map_err(|error| preview_error("inventory is incomplete", error))?
-            {
-                matches.push(registration);
-            }
-        }
-        match matches.as_slice() {
-            [] => Err(no_browser_target_error()),
-            [registration] => Ok(registration.clone()),
-            _ => Err("Multiple visible browser targets exist for this session".to_string()),
-        }
+        resolve_visible_registration(registrations.iter(), read_visibility).cloned()
     }
 
     #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
@@ -1164,7 +1152,7 @@ impl BrowserController {
         registration: &Registration,
         url: &str,
         document: Option<u64>,
-        open_request_id: Option<&str>,
+        open_request: Option<(&str, &open::OpenPreviewCheck)>,
         check_admission: impl FnOnce() -> Result<(), String>,
     ) -> Result<u64, String> {
         let mut inner = self.inner.0.lock().map_err(|error| error.to_string())?;
@@ -1175,12 +1163,12 @@ impl BrowserController {
             return Err(STALE_TARGET.into());
         }
         check_admission()?;
-        if let Some(request_id) = open_request_id {
-            open::check_open_target(&inner, request_id, registration)?;
+        if let Some((request_id, visibility)) = open_request {
+            open::check_open_target(&inner, request_id, registration, visibility)?;
         }
         invalidate_page(&mut inner, id);
         let sequence = record_page_load(&mut inner, id, url, true);
-        if let Some(request_id) = open_request_id {
+        if let Some((request_id, _)) = open_request {
             inner.open_claims.get_mut(request_id).unwrap().load_sequence = Some(sequence);
         }
         Ok(sequence)
@@ -1502,7 +1490,25 @@ fn navigation_error() -> String {
     "Browser navigation requires a credential-free HTTP(S) URL".to_string()
 }
 
-#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+fn resolve_visible_registration<'a>(
+    registrations: impl IntoIterator<Item = &'a Registration>,
+    mut read_visibility: impl FnMut(&str) -> tauri::Result<bool>,
+) -> Result<&'a Registration, String> {
+    let mut matches = Vec::new();
+    for registration in registrations {
+        if read_visibility(&registration.window_label)
+            .map_err(|error| preview_error("inventory is incomplete", error))?
+        {
+            matches.push(registration);
+        }
+    }
+    match matches.as_slice() {
+        [] => Err(no_browser_target_error()),
+        [registration] => Ok(*registration),
+        _ => Err("Multiple visible browser targets exist for this session".to_string()),
+    }
+}
+
 fn window_visible<R: tauri::Runtime>(app: &AppHandle<R>, owner: &str) -> tauri::Result<bool> {
     let Some(window) = app.get_window(owner) else {
         return Ok(false);
