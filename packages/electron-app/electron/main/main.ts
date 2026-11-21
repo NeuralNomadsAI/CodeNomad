@@ -160,12 +160,7 @@ function runPrimary(firstIntent: LaunchIntent) {
   const developerMode = new DeveloperMode({
     devtoolsDataPath: sessionDataPath,
     nativeIdentity: developerNativeIdentity,
-    // A focused Preferences or remote window is not an automation target: fall back to the
-    // most recently used application window instead of reporting no target at all.
-    targetWindowId: () => {
-      const focused = BrowserWindow.getFocusedWindow()
-      return (focused ? registry.resolve(focused.webContents)?.id : undefined) ?? registry.mruRecord()?.id
-    },
+    windows: () => registry.automationWindows(BrowserWindow.getFocusedWindow()),
     requestRelaunch: () => lifecycle.requestRelaunch(),
   })
   const browserController = new BrowserController((sessionID, url, requestID) => {
@@ -175,7 +170,7 @@ function runPrimary(firstIntent: LaunchIntent) {
   })
   const cli = new CliProcessManager((method, params, deadline) => method.startsWith("browser.")
     ? handleNativeBrowserRequest(browserController, method, params, deadline)
-    : developerMode.handleNativeRequest(method))
+    : developerMode.handleNativeRequest(method, params))
   const remoteOrigins = new Map<number, Set<string>>()
   const insecureOrigins = new Map<number, Set<string>>()
   const navigationLifecycle = new SerializedLifecycle()
@@ -301,6 +296,7 @@ function runPrimary(firstIntent: LaunchIntent) {
 
   configureBrowserGuests()
   const createWindow = (windowId: string, persisted = true, connectOnly = false): LocalWindowRecord => {
+    const automationInstance = randomUUID()
     const saved = persisted ? clientState.getWindowState(windowId) : undefined
     const minimum = zoomedWindowMinimum(saved?.zoomFactor ?? 1)
     const bounds = saved ? clampWindowBounds(saved.bounds, screen.getAllDisplays().map((display) => ({ ...display.workArea, scaleFactor: display.scaleFactor })), minimum) : undefined
@@ -314,7 +310,8 @@ function runPrimary(firstIntent: LaunchIntent) {
         preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac, webviewTag: true,
         ...(connectOnly ? { backgroundThrottling: false } : {}),
         ...(saved ? { zoomFactor: saved.zoomFactor } : {}),
-        additionalArguments: ["--codenomad-window-context=local", `--codenomad-window-id=${windowId}`],
+        additionalArguments: ["--codenomad-window-context=local", `--codenomad-window-id=${windowId}`,
+          `--codenomad-window-instance=${automationInstance}`],
       },
     })
     if (!isMac) window.setMenuBarVisibility(false)
@@ -330,7 +327,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     const tracker = persisted && clientState.isPrimary ? new WindowStateTracker(window, clientState, saved, windowId) : null
     installWindowSizeConstraints(window, () => screen.getDisplayMatching(window.getBounds()).workArea, saved?.zoomFactor ?? 1)
     if (persisted && clientState.isPrimary) restoreWindowState(window, saved, bounds)
-    const record: LocalWindowRecord = { id: windowId, persisted, window, navigation, tracker, loading: false, backendUrl: null, pendingFolders: [], ...(connectOnly ? { connectOnly } : {}) }
+    const record: LocalWindowRecord = { id: windowId, automationInstance, persisted, window, navigation, tracker, loading: false, backendUrl: null, pendingFolders: [], ...(connectOnly ? { connectOnly } : {}) }
     registry.add(record)
     bindNotificationBadge(window)
     bindClientState(window)

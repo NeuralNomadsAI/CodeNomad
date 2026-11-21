@@ -28,6 +28,8 @@ class Native {
       if (method === this.failMethod) throw new Error("Native reply uncertain")
       if (method === "Accessibility.getFullAXTree") { await this.gate?.(); return { nodes: this.nodes } }
       if (method === "DOM.resolveNode") return { object: { objectId: "object-1" } }
+      if (method === "DOM.getContentQuads") return { quads: [] }
+      if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } }
       if (method === "Runtime.callFunctionOn") return { result: { value: null } }
       return {}
     } }, input.operation as PageOperation) as T

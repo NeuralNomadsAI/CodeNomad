@@ -315,8 +315,10 @@ pub(crate) fn handle_native_request(
             .browser_controller
             .handle_native(app, method, params, deadline, fence),
         "opencode.service.start" => native_service_start::start(params, deadline),
-        "developer.status" => state.developer_mode.native_snapshot(app),
-        "developer.restart" => state.developer_mode.request_restart(app),
+        "developer.status" | "developer.targets" => state
+            .developer_mode
+            .native_snapshot(app, params, method == "developer.targets"),
+        "developer.restart" => state.developer_mode.request_restart(app, params),
         _ => Err(format!("Unsupported native request: {method}")),
     }
 }

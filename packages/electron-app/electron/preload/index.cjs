@@ -8,14 +8,13 @@ function resolveWindowContext() {
   return context === "local" || context === "preferences" || context === "dictation" ? context : "remote"
 }
 
-function resolveWindowId() {
-  const prefix = "--codenomad-window-id="
+function resolveWindowArgument(prefix) {
   const arg = process.argv.find((value) => typeof value === "string" && value.startsWith(prefix))
   return arg ? arg.slice(prefix.length) : null
 }
 
 const windowContext = resolveWindowContext()
-const windowId = resolveWindowId()
+const windowId = resolveWindowArgument("--codenomad-window-id=")
 
 const localElectronAPI = {
   onCliStatus: (callback) => {
@@ -165,4 +164,7 @@ contextBridge.exposeInMainWorld(
 )
 contextBridge.exposeInMainWorld("__CODENOMAD_WINDOW_CONTEXT__", windowContext)
 contextBridge.exposeInMainWorld("__CODENOMAD_WINDOW_ID__", windowContext === "local" ? windowId : null)
+if (windowContext === "local") {
+  contextBridge.exposeInMainWorld("__CODENOMAD_WINDOW_INSTANCE__", resolveWindowArgument("--codenomad-window-instance="))
+}
 contextBridge.exposeInMainWorld("__CODENOMAD_RUNTIME_HOST__", "electron")
