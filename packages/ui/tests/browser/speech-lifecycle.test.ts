@@ -152,22 +152,39 @@ test("stop and disposal fence buffered responses and capabilities still loading"
   assert.equal(stopped.audios.length, 0)
 }))
 
-test("buffered playback starts and cancels without AbortSignal.any", () => withPage(async page => {
+test("buffered playback uses the binary route without newer AbortSignal methods", () => withPage(async page => {
+  await page.route("**/api/speech/synthesize/stream", route => route.fulfill({
+    status: 200, contentType: "audio/mpeg", body: Buffer.from([97]),
+  }))
   await page.evaluate(() => {
     const f = (window as any).fixture
+    f.useRealTransport()
     f.mount("a", "buffered")
-    const original = AbortSignal.any
-    try {
-      Object.defineProperty(AbortSignal, "any", { value: undefined, configurable: true })
-      f.toggle("a")
-    } finally {
-      Object.defineProperty(AbortSignal, "any", { value: original, configurable: true })
-    }
+    Object.defineProperty(AbortSignal, "any", { value: undefined, configurable: true })
+    Object.defineProperty(AbortSignal.prototype, "throwIfAborted", { value: undefined, configurable: true })
+    f.toggle("a")
   })
-  await page.waitForFunction(() => (window as any).fixture.snapshot().pending === 1)
-  await page.evaluate(() => { const f = (window as any).fixture; f.toggle("a"); f.resolve(0) })
+  await state(page, "a", "playing")
+  await page.evaluate(() => (window as any).fixture.toggle("a"))
   await state(page, "a", "idle")
-  const stopped = await snapshot(page)
-  assert.deepEqual(stopped.aborted, [true])
-  assert.equal(stopped.audios.length, 0)
+  assert.deepEqual((await snapshot(page)).revoked, ["blob:speech-1"])
+}))
+
+test("a synthesis 401 leaves the delayed pairing status check alive", () => withPage(async page => {
+  await page.route("**/api/speech/synthesize/stream", route => route.fulfill({ status: 401, json: { error: "Expired" } }))
+  let release!: () => void
+  const afterPlayback = new Promise<void>(resolve => { release = resolve })
+  await page.route("**/api/auth/status", async route => {
+    await afterPlayback
+    await route.fulfill({ json: { authenticated: false, pairingRequired: true } })
+  })
+  await page.evaluate(() => {
+    const f = (window as any).fixture
+    f.useRealTransport()
+    f.mount("a", "auth")
+    f.toggle("a")
+  })
+  await state(page, "a", "idle")
+  release()
+  await page.waitForFunction(() => (window as any).fixture.authRequired())
 }))

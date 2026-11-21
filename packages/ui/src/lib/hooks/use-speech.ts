@@ -36,11 +36,11 @@ export function useSpeech(options: UseSpeechOptions) {
     if (captureBackendOperation("").current()) void loadSpeechCapabilities()
   })
 
-  const stop = () => {
+  const stop = (cancel = true) => {
     if (activePlayback === stop) activePlayback = null
     const controller = playback
     playback = undefined
-    controller?.abort()
+    if (cancel) controller?.abort()
     setState("idle")
   }
 
@@ -123,7 +123,9 @@ export function useSpeech(options: UseSpeechOptions) {
         variant: "error",
       })
     } finally {
-      if (playback === controller) stop()
+      operation.signal.removeEventListener("abort", detached)
+      // Playback has settled; a status check triggered by an HTTP 401 still owns its result.
+      if (playback === controller) stop(false)
     }
   }
 

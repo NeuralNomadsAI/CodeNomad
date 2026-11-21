@@ -12,7 +12,7 @@ export async function playSpeech(
   let audio: HTMLAudioElement | undefined
   let url: string | undefined
   try {
-    signal.throwIfAborted()
+    if (signal.aborted) throw signal.reason
     const error = () => new Error(tGlobal("messageItem.actions.speak.error.generate"))
     const mime = response.headers.get("content-type") || formatToMimeType(ttsFormat)
     const stream = response.body
@@ -26,7 +26,7 @@ export async function playSpeech(
       url = URL.createObjectURL(media)
     } else {
       const blob = await response.blob()
-      signal.throwIfAborted()
+      if (signal.aborted) throw signal.reason
       url = URL.createObjectURL(blob.type ? blob : blob.slice(0, blob.size, mime))
     }
     const player = audio = new Audio(url)
@@ -39,7 +39,7 @@ export async function playSpeech(
       player.addEventListener("ended", finish, once)
       player.addEventListener("error", () => fail(error()), once)
       const play = async () => {
-        signal.throwIfAborted()
+        if (signal.aborted) throw signal.reason
         onPlaying?.()
         await player.play()
       }

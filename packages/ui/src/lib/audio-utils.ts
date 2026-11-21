@@ -24,7 +24,7 @@ export async function streamToMediaSource(
   media: MediaSource, stream: ReadableStream<Uint8Array>, mime: string,
   signal: AbortSignal, play: () => void, error: () => Error,
 ) {
-  signal.throwIfAborted()
+  if (signal.aborted) throw signal.reason
   const source = media.addSourceBuffer(mime)
   const reader = stream.getReader()
   const cancel = () => { void reader.cancel().catch(() => {}) }
@@ -33,7 +33,7 @@ export async function streamToMediaSource(
     let started = false
     while (true) {
       const { done, value } = await reader.read()
-      signal.throwIfAborted()
+      if (signal.aborted) throw signal.reason
       if (done) break
       if (!value.byteLength) continue
       await appendChunk(source, value, signal, error)
@@ -52,7 +52,7 @@ export async function streamToMediaSource(
 
 function appendChunk(source: SourceBuffer, chunk: Uint8Array, signal: AbortSignal, error: () => Error): Promise<void> {
   return new Promise((resolve, reject) => {
-    signal.throwIfAborted()
+    if (signal.aborted) throw signal.reason
     const listeners = new AbortController()
     const once = { once: true, signal: listeners.signal }
     const fail = (cause: unknown) => { listeners.abort(); reject(cause) }

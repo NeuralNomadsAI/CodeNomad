@@ -264,7 +264,7 @@ async function runConversationQueue(): Promise<void> {
 
 async function playSummary(text: string, signal: AbortSignal): Promise<void> {
   const capabilities = (await loadSpeechCapabilities()) ?? speechCapabilities()
-  signal.throwIfAborted()
+  if (signal.aborted) throw signal.reason
   const settings = serverSettings().speech
 
   if (!capabilities?.available || !capabilities.ttsConfigured || !capabilities.supportsTts) {

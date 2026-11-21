@@ -3,6 +3,7 @@ import { render } from "solid-js/web"
 import ToolCall from "../../../src/components/tool-call"
 import { useSpeech } from "../../../src/lib/hooks/use-speech"
 import { serverApi } from "../../../src/lib/api-client"
+import { authRecovery } from "../../../src/lib/auth-recovery"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { ConfigProvider } from "../../../src/stores/preferences"
@@ -12,6 +13,7 @@ const capabilities = { available: true, ttsConfigured: true, supportsTts: true, 
 serverApi.fetchSpeechCapabilities = async () => capabilities as any
 const pending: Array<{ resolve: (value: Response) => void; signal: AbortSignal }> = []
 let resolveCapabilities: (() => void) | undefined
+const synthesizeSpeechStream = serverApi.synthesizeSpeechStream
 serverApi.synthesizeSpeechStream = (_request, signal) => new Promise(resolve => pending.push({ resolve, signal }))
 
 const audios: FakeAudio[] = [], revoked: string[] = []
@@ -92,6 +94,8 @@ async function cards(count: number, drift: boolean) {
 
 ;(window as any).fixture = {
   mount, cards,
+  useRealTransport: () => { serverApi.synthesizeSpeechStream = synthesizeSpeechStream },
+  authRequired: () => authRecovery.required() && authRecovery.pairingRequired(),
   holdCapabilities: () => {
     resetSpeechCapabilities()
     serverApi.fetchSpeechCapabilities = () => new Promise(resolve => { resolveCapabilities = () => resolve(capabilities as any) })
