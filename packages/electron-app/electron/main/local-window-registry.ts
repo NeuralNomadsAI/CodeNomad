@@ -106,13 +106,22 @@ export class LocalWindowRegistry {
   }
 
   automationWindows(focused: BrowserWindow | null): Array<{ windowId: string; windowInstance: string; focused: boolean }> {
-    const windows = this.mru.flatMap(id => {
-      const record = this.records.get(id)
-      if (!record || record.connectOnly || record.loading || !record.backendUrl
+    return this.readyWindows(focused).map(({ id, window }) => ({
+      windowId: id, windowInstance: this.incarnations.get(window)!, focused: window === focused,
+    }))
+  }
+
+  browserOpenCandidates(focused: BrowserWindow | null): WebContents[] {
+    return this.readyWindows(focused).map(({ window }) => window.webContents)
+  }
+
+  private readyWindows(focused: BrowserWindow | null): LocalWindowRecord[] {
+    return this.mru.flatMap(id => {
+      const record = this.get(id)
+      if (!record || record.loading || !record.backendUrl
         || record.window.isDestroyed() || record.window.webContents.isDestroyed()) return []
-      return [{ windowId: id, windowInstance: this.incarnations.get(record.window)!, focused: record.window === focused }]
-    })
-    return windows.sort((left, right) => Number(right.focused) - Number(left.focused))
+      return [record]
+    }).sort((left, right) => Number(right.window === focused) - Number(left.window === focused))
   }
 
   focusMru(): LocalWindowRecord | undefined {

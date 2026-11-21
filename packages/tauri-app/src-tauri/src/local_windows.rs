@@ -274,6 +274,25 @@ impl Registry {
             .find(|label| self.records.contains_key(*label))
             .cloned()
     }
+
+    fn automation_labels(&self, focused: Option<&str>) -> Vec<(String, String)> {
+        let mut windows = self
+            .mru
+            .iter()
+            .filter_map(|label| {
+                self.records
+                    .get(label)
+                    .filter(|record| record.renderer_ready && !record.connect_only)
+                    .map(|record| (label.clone(), record.automation_instance.clone()))
+            })
+            .collect::<Vec<_>>();
+        if let Some(index) =
+            focused.and_then(|focused| windows.iter().position(|(label, _)| label == focused))
+        {
+            windows[..=index].rotate_right(1);
+        }
+        windows
+    }
 }
 
 #[derive(Default)]
@@ -330,17 +349,17 @@ impl LocalWindows {
         let Ok(registry) = self.registry.lock() else {
             return Vec::new();
         };
-        registry
-            .mru
-            .iter()
-            .filter_map(|label| {
-                registry
-                    .records
-                    .get(label)
-                    .filter(|record| !record.connect_only && record.renderer_ready)
-                    .map(|record| (label.clone(), record.automation_instance.clone()))
+        registry.automation_labels(None)
+    }
+
+    pub(crate) fn automation_window_current(&self, label: &str, incarnation: &str) -> bool {
+        self.registry.lock().is_ok_and(|registry| {
+            registry.records.get(label).is_some_and(|record| {
+                record.renderer_ready
+                    && !record.connect_only
+                    && record.automation_instance == incarnation
             })
-            .collect()
+        })
     }
 
     #[cfg(windows)]
@@ -635,6 +654,17 @@ pub(crate) fn focused_local_window(app: &AppHandle) -> Option<Webview> {
     let mru = app.state::<LocalWindows>().mru_label();
     let label = select_local_label(focused.as_ref().map(Webview::label), mru.as_deref())?;
     app.get_webview(&label)
+}
+
+pub(crate) fn browser_open_candidates(app: &AppHandle) -> Result<Vec<(String, String)>, String> {
+    let focused = focused_window(app);
+    let windows = app.state::<LocalWindows>();
+    let registry = windows.registry.lock().map_err(|error| error.to_string())?;
+    Ok(registry.automation_labels(focused.as_ref().map(Webview::label)))
+}
+
+pub(crate) fn browser_open_window_current(app: &AppHandle, label: &str, incarnation: &str) -> bool {
+    app.state::<LocalWindows>().automation_window_current(label, incarnation)
 }
 
 /// The update flow lives in application windows. Preferences and remote windows

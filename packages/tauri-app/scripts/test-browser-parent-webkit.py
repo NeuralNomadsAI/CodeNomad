@@ -46,7 +46,9 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             body = (body + '<script>' + programs['auditor'] + '</script>').encode('utf-8')
         else:
             body = b'<!doctype html><meta charset="utf-8"><title>Parent channel fixture</title><h1>Native parent fixture</h1><dialog>Overlay</dialog>'
-        if self.path == '/redirect':
+        if self.path == '/open-slow':
+            time.sleep(11)
+        if self.path in ('/redirect', '/open-slow'):
             self.send_response(302)
             self.send_header('Location', '/ok')
             self.end_headers()

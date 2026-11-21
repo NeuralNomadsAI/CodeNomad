@@ -33,6 +33,68 @@ fn registry_tracks_uuid_labels_mru_and_folder_ack_order() {
 }
 
 #[test]
+fn browser_open_ranks_ready_local_windows_by_focus_then_mru() {
+    let mut registry = Registry::default();
+    let first = registry.add(id(1), true).unwrap().label;
+    let second = registry.add(id(2), true).unwrap().label;
+    let loading = registry.add(id(3), true).unwrap().label;
+    let hidden = registry.add_window(id(4), false, true).unwrap().label;
+    for label in [&first, &second, &hidden] {
+        registry.records.get_mut(label).unwrap().renderer_ready = true;
+    }
+    let candidates = |focused| {
+        registry
+            .automation_labels(focused)
+            .into_iter()
+            .map(|(label, _)| label)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        candidates(Some(&loading)),
+        vec![second.clone(), first.clone()]
+    );
+    assert_eq!(
+        candidates(Some(&hidden)),
+        vec![second.clone(), first.clone()]
+    );
+    assert_eq!(
+        candidates(Some(&first)),
+        vec![first.clone(), second.clone()]
+    );
+    assert_eq!(candidates(None), vec![second, first]);
+}
+
+#[test]
+fn a_reopened_saved_window_does_not_reuse_automation_authority() {
+    let windows = LocalWindows::default();
+    let label = {
+        let mut registry = windows.registry.lock().unwrap();
+        let first = registry.add(id(1), true).unwrap();
+        registry
+            .records
+            .get_mut(&first.label)
+            .unwrap()
+            .renderer_ready = true;
+        first.label
+    };
+    let (_, old) = windows.automation_labels().pop().unwrap();
+    assert!(windows.automation_window_current(&label, &old));
+    {
+        let mut registry = windows.registry.lock().unwrap();
+        registry.remove(&label);
+        let reopened = registry.add(id(1), true).unwrap();
+        registry
+            .records
+            .get_mut(&reopened.label)
+            .unwrap()
+            .renderer_ready = true;
+    }
+    assert!(!windows.automation_window_current(&label, &old));
+    let (_, new) = windows.automation_labels().pop().unwrap();
+    assert!(windows.automation_window_current(&label, &new));
+}
+
+#[test]
 fn registry_enforces_maximum_and_lowercase_labels() {
     let mut registry = Registry::default();
     for value in 0..MAX_LOCAL_WINDOWS {
@@ -346,7 +408,7 @@ fn window_created_after_error_publication_opens_the_loading_page() {
     );
 
     // With a ready backend the destination stays the backend target.
-    let mut ready = LocalWindows::default();
+    let ready = LocalWindows::default();
     ready.set_backend_target(Some("http://127.0.0.1:9899/".to_string()));
     assert_eq!(
         local_window_initial_destination(ready.backend_target().as_deref()),
