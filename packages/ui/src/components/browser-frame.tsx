@@ -173,9 +173,9 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   // Latest navigation requested before the Tauri target exists, replayed once its
   // emulation is restored. Kept apart from nativeTarget, which the initial load's
   // navigation events can overwrite. Any later direct action supersedes it.
-  let pendingTauriNavigation: { url: string; logicalAddress?: string } | undefined
+  let pendingTauriNavigation: { url: string; logicalAddress?: string; sessionId?: string } | undefined
   const navigateTauri = (url: string, logicalAddress?: string) => {
-    if (!tauriRegistered) { pendingTauriNavigation = { url, logicalAddress }; return Promise.resolve() }
+    if (!tauriRegistered) { pendingTauriNavigation = { url, logicalAddress, sessionId: props.sessionId }; return Promise.resolve() }
     pendingTauriNavigation = undefined
     return controlTauriBrowserTarget(browserRegistrationId, "navigate", url, logicalAddress)
   }
@@ -747,7 +747,8 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         syncErrorReported = false
         // Load the address requested before the target existed, under the restored
         // profile, unless a direct action superseded it or this target was replaced.
-        const pending = active && registrationId === browserRegistrationId ? pendingTauriNavigation : undefined
+        const pending = active && registrationId === browserRegistrationId && pendingTauriNavigation?.sessionId === sessionId
+          && props.sessionId === sessionId ? pendingTauriNavigation : undefined
         if (pending) {
           pendingTauriNavigation = undefined
           await controlTauriBrowserTarget(registrationId, "navigate", pending.url, pending.logicalAddress)
@@ -859,6 +860,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     const index = journal.value.index + offset
     if (index < 0 || index >= journal.value.urls.length) return
     props.onNavigationStart?.()
+    pendingTauriNavigation = undefined
     setHistoryBusy(true)
     const version = ++historyTravelVersion
     ++historyRead // Fence reads started before this explicit traversal.
@@ -867,10 +869,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       if (disposed || version !== historyTravelVersion) return
       if (props.active === false) { setHistoryBusy(false); return }
       const target = journal.request(index, logicalHistory(native))
-      if (target.id !== undefined) {
-        pendingTauriNavigation = undefined
-        await goToBrowserHistoryEntry(browserRegistrationId, target.id, historyGuestId())
-      }
+      if (target.id !== undefined) await goToBrowserHistoryEntry(browserRegistrationId, target.id, historyGuestId())
       else if (nativeMode()) {
         const source = props.isolatedSource ? await props.onNavigate!(target.url) : target.url
         if (disposed || version !== historyTravelVersion) return

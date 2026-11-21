@@ -216,6 +216,25 @@ test("Tauri: an address typed while the profile restores supersedes the pending 
   } finally { await page.close() }
 })
 
+test("Tauri: an address typed for one session is never loaded into a replaced session's target", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(url)
+    await page.evaluate(() => { (window as any).nativeFixture.deferRegistration = true })
+    await page.evaluate(() => (window as any).nativeFixture.mount(false))
+    await page.evaluate(() => { const f = (window as any).nativeFixture; f.calls.length = 0; f.mount(true) })
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_register"))
+    const typed = new URL("/browser-native-guest?typed", url).href
+    await page.getByRole("textbox", { name: "Address" }).fill(typed)
+    await page.getByRole("textbox", { name: "Address" }).press("Enter")
+    await page.evaluate(() => { const f = (window as any).nativeFixture; f.session("other-session"); f.settleRegistration() })
+    await page.waitForTimeout(300)
+    const first = (await snapshot(page)).calls.find((c: any) => c.command === "browser_target_register").payload.registrationId
+    assert.equal((await snapshot(page)).calls.some((c: any) => c.payload?.action === "navigate" && c.payload.registrationId === first), false,
+      "the replaced session's target receives no pending navigation")
+  } finally { await page.close() }
+})
+
 test("Tauri: a registration retry that already carries the typed address does not load it twice", async () => {
   const page = await browser.newPage()
   try {
