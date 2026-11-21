@@ -49,7 +49,7 @@ export class PageDriverUnsupportedError extends Error {
   readonly code = "unsupported"
   constructor(readonly driver: DriverKind, readonly operation: string) { super(`${driver} page driver does not support ${operation}`) }
 }
-export interface PageSession { driver: PageDriver; checkpoint(): Promise<void>; beforeInput?(): Promise<void>; checkRelease?(): void; markAutomation: boolean }
+export interface PageSession { driver: PageDriver; checkpoint(): Promise<void>; guardInput?(): void; markAutomation: boolean }
 export class Handle { constructor(readonly objectId: string) {} }
 export function gone(ref: string): Error { return new Error(`${ref} is no longer in the page; inspect again`) }
 
@@ -112,30 +112,35 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (kind
   let attempted = false
   let marked = false
   let targetLost: PageTargetChangedError | undefined
-  const checkInput = (release: boolean) =>
-    !release && session.beforeInput ? session.beforeInput() : session.checkpoint()
-  const checkRelease = () => session.checkRelease ? session.checkRelease() : session.checkpoint()
+  const checkInput = () => session.guardInput ? session.guardInput() : session.checkpoint()
   const dispatch = async (kind: InputKind, params: Record<string, unknown>) => {
     let timestamp: number | undefined
     const mouse = kind === "pointer" || kind === "wheel"
     const id = mouse ? `mouse:${params.button}` : `key:${params.code}`
     const up = mouse ? params.type === "mouseReleased" : params.type === "keyUp"
-    const release = up && held.has(id)
     if (session.markAutomation) {
-      await checkInput(release)
+      await checkInput()
       marked = true
       const stamp = (await session.driver.call("mark-input", undefined, [])).value
       if (typeof stamp !== "number" || !Number.isFinite(stamp) || stamp <= 0) throw new Error("Cannot establish automation input provenance")
       timestamp = stamp
-      await checkInput(release)
+      await checkInput()
     }
-    if (mouse && typeof params.x === "number" && typeof params.y === "number") point = { x: params.x, y: params.y }
     const down = mouse ? params.type === "mousePressed" : params.type === "keyDown" || params.type === "rawKeyDown"
+    if (up) held.delete(id)
+    let failure: { error: unknown } | undefined
+    try {
+      await sendInput(session, kind, { ...params, ...(timestamp === undefined || kind === "insert-text" ? {} : { timestamp }) })
+    } catch (error) {
+      // The application channel throws this only before handing input to CDP.
+      if (error instanceof PageTargetChangedError) throw error
+      failure = { error }
+    }
+    attempted = true
+    if (mouse && typeof params.x === "number" && typeof params.y === "number") point = { x: params.x, y: params.y }
     if (down) held.set(id, { kind, params: { ...params, type: mouse ? "mouseReleased" : "keyUp", buttons: 0, modifiers: 0,
       ...(timestamp === undefined ? {} : { timestamp }) } })
-    if (up) held.delete(id)
-    attempted = true
-    await sendInput(session, kind, { ...params, ...(timestamp === undefined || kind === "insert-text" ? {} : { timestamp }) })
+    if (failure) throw failure.error
     await session.checkpoint()
   }
   await awaitInputAcceptance(session)
@@ -150,9 +155,11 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (kind
   } finally {
     for (const release of targetLost && !targetLost.sameDocument ? [] : [...held.values()].reverse()) {
       try {
-        await checkRelease()
-        if (session.markAutomation) await session.driver.call("mark-input", undefined, []).catch(() => undefined)
-        await checkRelease()
+        await checkInput()
+        if (session.markAutomation) await session.driver.call("mark-input", undefined, []).catch(error => {
+          if (error instanceof PageTargetChangedError) throw error
+        })
+        await checkInput()
         const { text: _text, unmodifiedText: _unmodified, ...params } = release.params
         await sendInput(session, release.kind, { ...params, ...(release.kind === "pointer" ? point : {}) })
       } catch (error) {

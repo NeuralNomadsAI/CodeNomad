@@ -140,6 +140,47 @@ test("a hidden press target never submits the focused draft, and dragging cannot
   } finally { await run.close() }
 })
 
+test("pointer admission checks the viewport after scrolling, including closed shadow frame owners", async () => {
+  const run = await openAutomationPage(automation, `${base}/automation-inputs`)
+  try {
+    const { page, act } = run
+    for (const closed of [false, true]) {
+      await page.evaluate(async closed => {
+        document.body.style.minHeight = "200vh"
+        scrollTo(0, 230)
+        const frame = document.createElement("iframe")
+        frame.srcdoc = '<script>document.addEventListener("wheel", () => parent.postMessage("child-wheel", "*"))</script>'
+        const loaded = new Promise(resolve => frame.addEventListener("load", resolve, { once: true }))
+        const owner = document.createElement("div")
+        owner.id = "input-frame-owner"
+        Object.assign(owner.style, { position: "fixed", top: "10%", left: "10%", width: "120px",
+          height: "80px", transform: "translate(-50%, -50%)", zIndex: "100" })
+        Object.assign(frame.style, { width: "100%", height: "100%", border: "0" })
+        const root = closed ? owner.attachShadow({ mode: "closed" }) : owner
+        root.append(frame)
+        document.body.append(owner)
+        await loaded
+        window.addEventListener("message", event => {
+          if (event.source === frame.contentWindow && event.data === "child-wheel") (window as any).log.push("child-wheel")
+        })
+        Object.defineProperty(window, "__codenomadAutomationInputUntil", {
+          configurable: true,
+          get() { return 0 },
+          set() { owner.style.top = owner.style.left = "50%" },
+        })
+      }, closed)
+      await assert.rejects(act({ action: "scroll", direction: "down", amount: 50 }),
+        error => error instanceof Error && /pointer.*main document/.test(error.message) && !/Input already sent/.test(error.message))
+      assert.equal(await page.evaluate(() => scrollY), 230)
+      assert.deepEqual(await log(page), [])
+      await page.evaluate(() => {
+        document.querySelector("#input-frame-owner")?.remove()
+        Reflect.deleteProperty(window, "__codenomadAutomationInputUntil")
+      })
+    }
+  } finally { await run.close() }
+})
+
 /** Answers the real InterruptionDock question and returns the human-answer header it sent. */
 async function answerDock(via: "click" | "press" | "press-stalled" | "click-stalled" | "human"): Promise<unknown> {
   const run = await openAutomationPage(automation, `${base}/automation-dock`, async page => {

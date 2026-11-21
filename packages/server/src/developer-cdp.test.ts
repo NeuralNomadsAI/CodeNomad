@@ -8,6 +8,9 @@ interface Command {
   params?: Record<string, unknown>
 }
 
+const isDestination = (command: Command) => command.method === "Runtime.callFunctionOn"
+  && String(command.params?.functionDeclaration).includes("document.elementFromPoint")
+
 const page = (id: string) => ({
   id,
   title: `Page ${id}`,
@@ -48,7 +51,7 @@ class FakeSocket {
 class FakeChrome {
   target = page("one")
   targets: Array<ReturnType<typeof page>> | undefined
-  context = { windowId: "window-1", instanceId: "workspace-1", sessionId: "session-1", windowInstance: undefined as string | undefined }
+  context = { windowId: "window-1", instanceId: "workspace-1", sessionId: "session-1", tabId: "tab-1", windowInstance: undefined as string | undefined }
   onCommand?: (command: Command) => void
   sockets: FakeSocket[] = []
   commands: Command[] = []
@@ -79,7 +82,8 @@ class FakeChrome {
     queueMicrotask(() => socket.respond(command, command.method === "Runtime.evaluate" && command.params?.expression === "document.documentElement"
       ? { result: { objectId: "input-document" } } : command.method === "Runtime.callFunctionOn"
         && command.params?.objectId === "input-document" ? {
-          result: { value: String(command.params.functionDeclaration).includes("activeElement") ? this.mainFocus : 1_700_000_000 },
+          result: { value: !this.inputRootCurrent ? "root" : isDestination(command) ? this.destination(command)
+            : String(command.params.functionDeclaration).includes("Math.min") ? true : 1_700_000_000 },
         } : command.method === "Runtime.callFunctionOn" && String(command.params?.functionDeclaration).includes("window.top") ? {
           result: { value: this.mainRef },
         } : this.result(command.method)))
@@ -91,8 +95,17 @@ class FakeChrome {
   hitFrame = "main"
   hitTag = "button"
   mainFocus = true
+  inputRootCurrent = true
   mainRef = true
   functionResult: unknown
+
+  private destination(command: Command): string {
+    const [point, expected, release] = command.params!.arguments as [
+      { value: { x: number; y: number } | null }, { value: FakeChrome["context"] }, { value: boolean },
+    ]
+    if (!release.value && (["tabId", "instanceId", "sessionId"] as const).some(key => this.context[key] !== expected.value[key])) return "tab"
+    return (point.value ? this.hitFrame === "main" && this.hitTag !== "iframe" : this.mainFocus) ? "ready" : "frame"
+  }
 
   result(method: string): Record<string, unknown> {
     if (method === "Accessibility.getFullAXTree") return {
@@ -225,7 +238,11 @@ describe("DeveloperCdp", () => {
       chrome.mainFocus = false
       const { document } = await client.inspect(identity)
       chrome.sockets.at(-1)!.emit("Page.frameNavigated", { frame: { id: "child", parentId: "main" } })
-      await assert.rejects(client.act({ ...identity, document }, { action: "press", key: "Enter" }), /focus.*outside the main document/i)
+      await assert.rejects(client.act({ ...identity, document }, { action: "press", key: "Enter" }), (error: Error) => {
+        assert.match(error.message, /focus.*outside the main document/i)
+        assert.doesNotMatch(error.message, /input already sent|outcome is unknown/i)
+        return true
+      })
       assert.ok(!chrome.commands.some(command => command.method === "Input.dispatchKeyEvent"))
     } finally { client.close() }
   })
@@ -300,7 +317,7 @@ describe("DeveloperCdp", () => {
     } finally { client.close() }
   })
 
-  it("rechecks a pending hit if a child's default execution context dies before Page reports navigation", async () => {
+  it("checks the live frame at the release point even before Page reports navigation", async () => {
     const chrome = new FakeChrome()
     chrome.quads = [[100, 40, 300, 40, 300, 80, 100, 80]]
     const client = chrome.client()
@@ -309,7 +326,7 @@ describe("DeveloperCdp", () => {
       const socket = chrome.sockets.at(-1)!
       socket.emit("Runtime.executionContextCreated", { context: { id: 6, auxData: { isDefault: true, frameId: "child" } } })
       chrome.onCommand = command => {
-        if (command.method === "DOM.describeNode" && chrome.commands.some(previous => previous.params?.type === "mousePressed")) {
+        if (isDestination(command) && chrome.commands.some(previous => previous.params?.type === "mousePressed")) {
           socket.emit("Runtime.executionContextDestroyed", { executionContextId: 6 })
           chrome.hitFrame = "child"
         }
@@ -321,6 +338,49 @@ describe("DeveloperCdp", () => {
         .map(command => command.params?.type), ["mouseMoved", "mousePressed"])
       assert.ok(chrome.commands.some(command => command.params?.objectId === "input-document"
         && String(command.params.functionDeclaration).includes("Math.min")))
+    } finally { client.close() }
+  })
+
+  for (const during of ["mark", "destination"]) it(`does not release the mouse after explicit root loss during ${during}`, async () => {
+    const chrome = new FakeChrome()
+    chrome.quads = [[100, 40, 300, 40, 300, 80, 100, 80]]
+    const client = chrome.client()
+    try {
+      const inspection = await client.inspect(identity)
+      chrome.onCommand = command => {
+        if (during === "mark" && command.method === "Input.dispatchMouseEvent" && command.params?.type === "mousePressed"
+          || during === "destination" && isDestination(command) && chrome.commands.some(previous => previous.params?.type === "mousePressed")) {
+          chrome.inputRootCurrent = false
+        }
+      }
+      await assert.rejects(client.act({ ...identity, document: inspection.document }, {
+        action: "click", ref: refOf(inspection),
+      }), /Input already sent/)
+      assert.deepEqual(chrome.commands.filter(command => command.method === "Input.dispatchMouseEvent")
+        .map(command => command.params?.type), ["mouseMoved", "mousePressed"])
+    } finally { client.close() }
+  })
+
+  it("keeps an admitted mouse release through two unrelated iframe changes during its hit checks", async () => {
+    const chrome = new FakeChrome()
+    chrome.quads = [[100, 40, 300, 40, 300, 80, 100, 80]]
+    const client = chrome.client()
+    try {
+      const inspection = await client.inspect(identity)
+      let unrelated = 0
+      chrome.onCommand = command => {
+        if (isDestination(command)
+          && chrome.commands.some(previous => previous.params?.type === "mousePressed")) {
+          for (const id of ["child-1", "child-2"]) {
+            chrome.sockets.at(-1)!.emit("Page.frameNavigated", { frame: { id, parentId: "main" } })
+            unrelated++
+          }
+        }
+      }
+      await client.act({ ...identity, document: inspection.document }, { action: "click", ref: refOf(inspection) })
+      assert.equal(unrelated, 2)
+      assert.deepEqual(chrome.commands.filter(command => command.method === "Input.dispatchMouseEvent")
+        .map(command => command.params?.type), ["mouseMoved", "mousePressed", "mouseReleased"])
     } finally { client.close() }
   })
 
@@ -355,6 +415,25 @@ describe("DeveloperCdp", () => {
         }
       }
       await assert.rejects(client.act({ ...window, document }, { action: "press", key: "Enter" }), /active tab changed/)
+      assert.ok(chrome.commands.every(command => command.method !== "Input.dispatchKeyEvent"))
+    } finally { client.close() }
+  })
+
+  it("refuses a new key when the tab changes during the final focus read", async () => {
+    const chrome = new FakeChrome()
+    const client = chrome.client()
+    try {
+      const { document } = await client.inspect(identity)
+      chrome.onCommand = command => {
+        if (isDestination(command)) {
+          chrome.context = { ...chrome.context, tabId: "duplicate" }
+        }
+      }
+      await assert.rejects(client.act({ ...identity, document }, { action: "press", key: "Enter" }), (error: Error) => {
+        assert.match(error.message, /active tab changed/)
+        assert.doesNotMatch(error.message, /input already sent|outcome is unknown/i)
+        return true
+      })
       assert.ok(chrome.commands.every(command => command.method !== "Input.dispatchKeyEvent"))
     } finally { client.close() }
   })
@@ -553,7 +632,7 @@ describe("DeveloperCdp", () => {
     await client.act(identity, { action: "click", ref: refOf(inspection) })
 
     const sequence = chrome.commands.filter(command => command.method === "Input.dispatchMouseEvent"
-      || (command.method === "Runtime.callFunctionOn" && command.params?.objectId === "input-document"))
+      || (command.method === "Runtime.callFunctionOn" && command.params?.objectId === "input-document" && !isDestination(command)))
       .map(command => command.method === "Runtime.callFunctionOn" ? (/Math.min/.test(String(command.params!.functionDeclaration)) ? "unmark" : "mark")
         : `${command.params!.type}@${command.params!.x},${command.params!.y}`)
     assert.deepEqual(sequence, ["mark", "mouseMoved@200,60", "mark", "mousePressed@200,60", "mark", "mouseReleased@200,60", "unmark"],

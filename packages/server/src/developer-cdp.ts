@@ -17,13 +17,6 @@ const DISCOVERY_TARGET_LIMIT = 64
 const DISCOVERY_PROBE_CONCURRENCY = 4
 const INVENTORY_PAGE_MS = 250
 const FRAME_OWNER = /^(iframe|frame|fencedframe|object|embed|portal|webview)$/
-const INPUT_FOCUS = `function () {
-  if (this !== document.documentElement) return false;
-  let active = document.activeElement;
-  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
-  if (!active || ${FRAME_OWNER}.test(active.localName)) return false;
-  return active.matches(':focus') ? true : active;
-}`
 const CONTEXT_FUNCTION = `(session) => {
   const root = document.querySelector('[data-tab-visible="true"][data-tab-id]');
   const pane = root?.querySelector('.session-cache-pane[data-session-active="true"][data-session-id]');
@@ -36,6 +29,25 @@ const CONTEXT_FUNCTION = `(session) => {
     sessionOpen: session !== null && Array.prototype.some.call(document.querySelectorAll('[data-tab-id][data-instance-id]'),
       tab => tab.getAttribute('data-tab-session-id') === session && !tab.getAttribute('data-instance-id').includes('~')),
   };
+}`
+const INPUT_DESTINATION = `function (point, expected, release, confirmed) {
+  if (this !== document.documentElement || window !== window.top) return "root";
+  let target = point ? document.elementFromPoint(point.x, point.y) : document.activeElement;
+  while (target?.shadowRoot) {
+    const root = target.shadowRoot;
+    const inner = point ? root.elementFromPoint(point.x, point.y) : root.activeElement;
+    if (!inner || inner === target || (!root.contains(inner) && !target.contains(inner))) break;
+    target = inner;
+  }
+  const current = (${CONTEXT_FUNCTION})(null);
+  if (current.windowId !== expected.windowId || current.windowInstance !== (expected.windowInstance ?? null)) return "root";
+  if (!release && (current.tabId !== (expected.tabId ?? null) || current.instanceId !== expected.instanceId
+    || current.sessionId !== expected.sessionId)) return "tab";
+  if (!target || ${FRAME_OWNER}.test(target.localName)) return "frame";
+  // A hit retargeted out of a closed shadow root looks like any other host.
+  const canHostShadow = /-|^(article|aside|blockquote|body|div|footer|h[1-6]|header|main|nav|p|section|span)$/;
+  if (!target.shadowRoot && canHostShadow.test(target.localName) && target !== confirmed) return target;
+  return "ready";
 }`
 
 export interface DeveloperCdpSelection {
@@ -130,6 +142,8 @@ interface PendingCommand {
   timer: NodeJS.Timeout
 }
 
+class CdpCommandTimeout extends Error {}
+
 interface RunState {
   endpoint: string
   windowId: string
@@ -200,7 +214,7 @@ export class DeveloperCdp {
       const epoch = state.navigationEpoch, generation = this.generation(state)
       const page = bindRefs(action, ref => state.refs.resolve(ref, generation))
       const monitorForeground = action.action === "scroll" && !action.ref || action.action === "wait"
-      const foreground = state.context
+      const foreground = state.context!
       const message = "Page changed during action; inspect again"
       const guard = () => {
         if (state.navigationEpoch !== epoch || !state.socket) {
@@ -213,7 +227,7 @@ export class DeveloperCdp {
         guard()
       }
       let inputRoot: string | undefined
-      let inputRefusal: PageTargetChangedError | undefined
+      let verifiedInput: { destination: string; childEpoch: number } | undefined
       const session: PageSession = cdpSession({ send: async (method, params) => {
         guard()
         const expression = params?.expression
@@ -224,30 +238,51 @@ export class DeveloperCdp {
             guard()
             if (!inputRoot) throw new PageTargetChangedError(message)
           }
-          return this.command(state, "Runtime.callFunctionOn", {
-            objectId: inputRoot,
-            functionDeclaration: `function () { if (this !== document.documentElement) return; return ${expression} }`,
-            returnByValue: true,
-          })
+          try {
+            const result = await this.command(state, "Runtime.callFunctionOn", {
+              objectId: inputRoot,
+              functionDeclaration: `function () { if (this !== document.documentElement) return "root"; return ${expression} }`,
+              returnByValue: true,
+            })
+            guard()
+            const value = (result.result as { value?: unknown } | undefined)?.value
+            if (result.exceptionDetails || (expression === GLOBAL_FUNCTIONS["mark-input"]
+              ? typeof value !== "number" || !Number.isFinite(value) || value <= 0 : value !== true)) {
+              throw new PageTargetChangedError(message)
+            }
+            return result
+          } catch (error) {
+            if (error instanceof CdpCommandTimeout) throw error
+            throw new PageTargetChangedError(message)
+          }
         }
         if (method === "Input.dispatchKeyEvent" || method === "Input.insertText" || method === "Input.dispatchMouseEvent") {
-          if (inputRefusal) throw inputRefusal
-          // CDP Input has no frame selector. Recheck the destination before each send, including releases.
+          if (!inputRoot) throw new PageTargetChangedError(message)
           const mouse = method === "Input.dispatchMouseEvent"
           const point = mouse && typeof params?.x === "number" && typeof params.y === "number"
-            ? { x: Math.floor(params.x), y: Math.floor(params.y) } : undefined
-          for (let attempt = 0; attempt < 2; attempt++) {
-            const childEpoch = state.childFrameEpoch
-            const inMainFrame = await (mouse ? this.isMainFramePoint(state, point, guard)
-              : this.isMainFrameFocus(state, inputRoot, guard)).catch(() => false)
-            guard()
-            if (!inMainFrame) break
-            if (childEpoch === state.childFrameEpoch) return this.command(state, method, point ? { ...params, ...point } : params)
+            ? { x: Math.floor(params.x), y: Math.floor(params.y) } : null
+          if (mouse && !point) throw new PageTargetChangedError(message)
+          const release = params?.type === "mouseReleased" || params?.type === "keyUp"
+          const destination = point ? `${point.x},${point.y}` : "keyboard"
+          const childEpoch = state.childFrameEpoch
+          let status
+          try {
+            status = await this.inputDestination(state, inputRoot, point, foreground, release, guard)
+            if (status === "ready") verifiedInput = { destination, childEpoch }
+          } catch (error) {
+            // A renderer blocked by admitted input can still receive its release on recovery.
+            // Only that previously verified destination qualifies, and only on timeout.
+            if (!(error instanceof CdpCommandTimeout)) throw new PageTargetChangedError(message)
+            status = release && verifiedInput?.destination === destination
+              && verifiedInput.childEpoch === state.childFrameEpoch ? "ready" : "frame"
           }
-          inputRefusal = new PageTargetChangedError(mouse
+          guard()
+          if (status === "ready") return this.command(state, method, point ? { ...params, ...point } : params)
+          if (status === "root") throw new PageTargetChangedError(message)
+          if (status === "tab") throw new PageTargetChangedError("The active tab changed during the action; inspect again", true)
+          throw new PageTargetChangedError(mouse
             ? "Cannot confirm the pointer is in the main document; inspect again"
             : "Keyboard focus is outside the main document or unavailable; focus the main document and inspect again", true)
-          throw inputRefusal
         }
         if (method === "DOM.resolveNode" && (action.action === "press" || action.action === "type")) {
           const result = await this.command(state, method, params)
@@ -264,9 +299,8 @@ export class DeveloperCdp {
         }
         return this.command(state, method, params)
       } }, () => check(monitorForeground ? foreground : undefined), true)
-      if (!monitorForeground) session.beforeInput = () => check(foreground)
-      // A stalled renderer may not answer context reads until after the release is queued.
-      session.checkRelease = guard
+      // The input channel checks the destination; this guard also works when the renderer stalls.
+      session.guardInput = guard
       return performAction(session, page)
     })
   }
@@ -312,32 +346,29 @@ export class DeveloperCdp {
     return this.exclusive(windowKey(selection), async () => (await this.ensure(selection)).context!)
   }
 
-  private async isMainFrameFocus(state: RunState, objectId: string | undefined, guard: () => void): Promise<boolean> {
-    if (!objectId) return false
-    const response = await this.command(state, "Runtime.callFunctionOn", {
-      objectId, functionDeclaration: INPUT_FOCUS, objectGroup: OBJECT_GROUP,
-    })
-    const result = response.result as { value?: unknown; objectId?: string } | undefined
-    if (result?.value === true) return true
-    if (!result?.objectId) return false
-    // An apparent focus fallback may hide the actual focused element in a closed shadow root.
+  private async inputDestination(state: RunState, objectId: string, point: { x: number; y: number } | null,
+    context: DeveloperCdpContext, release: boolean, guard: () => void): Promise<unknown> {
+    const read = async (confirmed?: string) => {
+      guard()
+      const result = await this.command(state, "Runtime.callFunctionOn", {
+        objectId, functionDeclaration: INPUT_DESTINATION, objectGroup: OBJECT_GROUP,
+        arguments: [{ value: point }, { value: context }, { value: release }, ...(confirmed ? [{ objectId: confirmed }] : [])],
+      })
+      return result.result as { value?: unknown; objectId?: string } | undefined
+    }
+    const hit = await read()
+    if (!hit?.objectId) return hit?.value ?? "root"
     guard()
-    const described = await this.command(state, "DOM.describeNode", { objectId: result.objectId, depth: 0, pierce: true })
-    const node = described.node as { shadowRoots?: unknown[] } | undefined
-    return !!node && !node.shadowRoots?.length
-  }
-
-  private async isMainFramePoint(state: RunState, point: { x: number; y: number } | undefined, guard: () => void): Promise<boolean> {
-    if (!state.mainFrameId || !point) return false
-    const hit = await this.command(state, "DOM.getNodeForLocation", {
-      ...point, includeUserAgentShadowDOM: false, ignorePointerEventsNone: false,
-    })
-    if (hit.frameId !== state.mainFrameId || typeof hit.backendNodeId !== "number") return false
-    // Chromium reports an out-of-process frame as its owner element in this target's hit test.
-    guard()
-    const described = await this.command(state, "DOM.describeNode", { backendNodeId: hit.backendNodeId, depth: 0 })
-    const node = described.node as { localName?: string } | undefined
-    return typeof node?.localName === "string" && !FRAME_OWNER.test(node.localName)
+    try {
+      const described = await this.command(state, "DOM.describeNode", { objectId: hit.objectId, depth: 0, pierce: true })
+      const node = described.node as { shadowRoots?: unknown[] } | undefined
+      if (!node || node.shadowRoots?.length) return "frame"
+      // A shadow-host candidate may have moved since the describe; sample the same point again.
+      return (await read(hit.objectId))?.value ?? "frame"
+    } catch (error) {
+      if (error instanceof CdpCommandTimeout) return "frame"
+      throw error
+    }
   }
 
   async probeContexts(endpoint: string, windowIds: ReadonlyMap<string, string | undefined>,
@@ -545,7 +576,7 @@ export class DeveloperCdp {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         state.pending.delete(id)
-        reject(new Error(`CDP command ${method} timed out`))
+        reject(new CdpCommandTimeout(`CDP command ${method} timed out`))
       }, timeoutMs)
       state.pending.set(id, { resolve, reject, timer })
       state.socket!.send(JSON.stringify({ id, method, ...(params ? { params } : {}) }))
