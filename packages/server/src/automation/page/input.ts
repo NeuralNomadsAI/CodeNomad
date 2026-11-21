@@ -76,13 +76,13 @@ export async function dragBetween(session: PageSession, from: Point, to: Point, 
   await markedInput(session, async dispatch => {
     await dispatch("pointer", { type: "mouseMoved", ...from }, source)
     await dispatch("pointer", { type: "mousePressed", ...from, button: "left", buttons: 1, clickCount: 1 }, source)
+    const destination = target && { ...target, dragSource: source?.handle }
     const steps = 10
     for (let step = 1; step <= steps; step++) {
       await dispatch("pointer", { type: "mouseMoved", x: from.x + (to.x - from.x) * step / steps,
-        y: from.y + (to.y - from.y) * step / steps, button: "left", buttons: 1 }, step === steps ? target : undefined)
+        y: from.y + (to.y - from.y) * step / steps, button: "left", buttons: 1 }, step === steps ? destination : undefined)
     }
-    await dispatch("pointer", { type: "mouseReleased", ...to, button: "left", buttons: 0, clickCount: 1 },
-      target && { ...target, alternate: source?.handle })
+    await dispatch("pointer", { type: "mouseReleased", ...to, button: "left", buttons: 0, clickCount: 1 }, destination)
   })
 }
 

@@ -2,7 +2,7 @@ import { WebSocket } from "undici"
 import { randomBytes } from "node:crypto"
 import { bindRefs, performAction, snapshotPage, type PageActionResult, type PageSession } from "./automation/page/actions"
 import { cdpSession } from "./automation/page/cdp-driver"
-import { declaration, FOCUS_MISMATCH, GLOBAL_FUNCTIONS, POINTER_COVER } from "./automation/page/functions"
+import { declaration, FOCUS_MISMATCH, GLOBAL_FUNCTIONS, INPUT_MARK_LEASE_MS, POINTER_COVER } from "./automation/page/functions"
 import type { RefAction } from "./automation/page/parse"
 import { RefTable } from "./automation/page/refs"
 import { SnapshotScopeError } from "./automation/page/snapshot"
@@ -34,15 +34,20 @@ const FOREGROUND = `const current = (${CONTEXT_FUNCTION})(null);
   const sameWindow = current.windowId === expected.windowId && current.windowInstance === (expected.windowInstance ?? null);
   const sameTab = current.tabId === (expected.tabId ?? null) && current.instanceId === expected.instanceId && current.sessionId === expected.sessionId;`
 const INPUT_STATE = "({ root: document.documentElement })"
-const SCRIPT_CLICK = (id: "option-click" | "programmatic-click") => `function (handle, expected) {
-  ${FOREGROUND}
-  if (this.root !== document.documentElement || window !== window.top || handle?.ownerDocument !== document || !sameWindow)
-    throw new Error("codenomad:action-root");
-  if (!sameTab) throw new Error("codenomad:action-tab");
-  return (${declaration(id, true)}).call(handle);
-}`
-const CLICK_CALLS = new Map((["option-click", "programmatic-click"] as const).map(id => [declaration(id, true), SCRIPT_CLICK(id)]))
-const INPUT_DESTINATION = `function (point, expected, release, handle, insertText, alternate, track, confirmReceiver, confirmed) {
+const GUARDED_CALLS = new Map((["option-click", "programmatic-click", "select", "set-value"] as const).map(id => {
+  const program = declaration(id, true)
+  return [program, `function (handle, expected, ...args) {
+    const check = () => {
+      ${FOREGROUND}
+      if (this.root !== document.documentElement || window !== window.top || handle?.ownerDocument !== document || !sameWindow)
+        throw new Error("codenomad:action-root");
+      if (!sameTab) throw new Error("codenomad:action-tab");
+    };
+    check();
+    return (${program}).call(handle, ...args, check);
+  }`]
+}))
+const INPUT_DESTINATION = `function (point, expected, release, handle, insertText, dragSource, track, confirmReceiver, confirmed, observeDrag) {
   if (this.root !== document.documentElement || window !== window.top) return "root";
   let target = point ? document.elementFromPoint(point.x, point.y) : document.activeElement;
   while (target?.shadowRoot) {
@@ -55,24 +60,34 @@ const INPUT_DESTINATION = `function (point, expected, release, handle, insertTex
   if (!sameWindow) return "root";
   if (!release && !sameTab) return "tab";
   if (!target || ${FRAME_OWNER}.test(target.localName)) return "frame";
-  if (confirmReceiver && (this.hit?.id !== confirmReceiver || this.hit.target !== target)) return "receiver";
+  let capturing = false;
   if (handle && (point || !release)) {
     const element = handle.nodeType === Node.ELEMENT_NODE ? handle : handle.parentElement;
     if (!element?.isConnected || element.ownerDocument !== document) return "element";
     if (point) {
       const cover = (element, ...args) => { ${POINTER_COVER} };
       const blocked = cover(element, target);
-      if (blocked !== null && !(alternate?.isConnected && cover(alternate, target) === null)) return "cover:" + blocked;
+      capturing = Boolean(dragSource?.isConnected) && this.dragPointerId !== undefined &&
+        Element.prototype.hasPointerCapture.call(dragSource, this.dragPointerId);
+      if (blocked !== null && !(capturing && cover(dragSource, target) === null)) return "cover:" + blocked;
     } else {
       const field = element, active = target;
       const editable = insertText && !(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement);
       if (${FOCUS_MISMATCH}) return "focus";
     }
   }
+  const receiver = capturing ? dragSource : target;
+  if (confirmReceiver && (this.hit?.id !== confirmReceiver || this.hit.receiver !== receiver)) return "receiver";
   // A hit retargeted out of a closed shadow root looks like any other host.
   const canHostShadow = /-|^(article|aside|blockquote|body|div|footer|h[1-6]|header|main|nav|p|section|span)$/;
   if (!target.shadowRoot && canHostShadow.test(target.localName) && target !== confirmed) return target;
-  if (track) this.hit = { id: track, target };
+  if (track) this.hit = { id: track, receiver };
+  // Learn the pointer ID from this press; geometry alone cannot prove capture.
+  if (observeDrag) window.addEventListener("pointerdown", event => {
+    if (event.isTrusted && event.pointerType === "mouse" && event.button === 0 &&
+        event.clientX === point.x && event.clientY === point.y && event.composedPath()[0] === target)
+      this.dragPointerId = event.pointerId;
+  }, { capture: true, once: true, signal: AbortSignal.timeout(${INPUT_MARK_LEASE_MS}) });
   return "ready";
 }`
 
@@ -268,10 +283,10 @@ export class DeveloperCdp {
         guard()
         const expression = params?.expression
         if (method === "Runtime.callFunctionOn" && typeof params?.functionDeclaration === "string") {
-          const functionDeclaration = CLICK_CALLS.get(params.functionDeclaration)
+          const functionDeclaration = GUARDED_CALLS.get(params.functionDeclaration)
           if (functionDeclaration) return this.command(state, method, {
             ...params, functionDeclaration, objectId: inputRoot,
-            arguments: [{ objectId: params.objectId }, { value: foreground }],
+            arguments: [{ objectId: params.objectId }, { value: foreground }, ...(params.arguments as unknown[])],
           })
         }
         if (method === "Runtime.evaluate" && (expression === GLOBAL_FUNCTIONS["mark-input"] || expression === GLOBAL_FUNCTIONS["unmark-input"])) {
@@ -306,15 +321,16 @@ export class DeveloperCdp {
           if (mouse && !point) throw new PageTargetChangedError(message)
           const release = params?.type === "mouseReleased" || params?.type === "keyUp"
           const target = session.inputTarget
-          const confirmReceiver = point && session.inputCleanup && pointerReceipt?.x === point.x && pointerReceipt.y === point.y
+          const confirmReceiver = point && release && pointerReceipt?.x === point.x && pointerReceipt.y === point.y
             ? pointerReceipt.id : undefined
-          if (point && session.inputCleanup && !confirmReceiver)
+          if (point && release && !confirmReceiver)
             throw new PageTargetChangedError("Cannot confirm the original pointer recipient; inspect again", true)
-          const track = point && !release && target ? ++pointerSequence : undefined
+          const dragPress = action.action === "drag" && params?.type === "mousePressed"
+          const track = point && target && !release && (params?.type === "mousePressed" || target.dragSource) ? ++pointerSequence : undefined
           let status
           try {
             status = await this.inputDestination(state, inputRoot, point, foreground, release, target,
-              method === "Input.insertText", track, confirmReceiver, guard)
+              method === "Input.insertText", track, confirmReceiver, dragPress, guard)
           } catch (error) {
             guard()
             if (error instanceof CdpCommandTimeout)
@@ -354,7 +370,7 @@ export class DeveloperCdp {
       } }, () => check(monitorForeground ? foreground : undefined), true)
       // The input channel checks the destination; this guard also works when the renderer stalls.
       session.guardInput = guard
-      if (action.action === "click") {
+      if (action.action === "click" || action.action === "type" || action.action === "select") {
         try { await getInputRoot() }
         catch (error) { await session.driver.releaseHandles().catch(() => undefined); throw error }
       }
@@ -412,16 +428,16 @@ export class DeveloperCdp {
 
   private async inputDestination(state: RunState, objectId: string, point: { x: number; y: number } | null,
     context: DeveloperCdpContext, release: boolean, target: InputTarget | undefined, insertText: boolean,
-    track: number | undefined, confirmReceiver: number | undefined, guard: () => void): Promise<unknown> {
+    track: number | undefined, confirmReceiver: number | undefined, observeDrag: boolean, guard: () => void): Promise<unknown> {
     const read = async (confirmed?: string) => {
       guard()
       const result = await this.command(state, "Runtime.callFunctionOn", {
         objectId, functionDeclaration: INPUT_DESTINATION, objectGroup: OBJECT_GROUP,
         arguments: [{ value: point }, { value: context }, { value: release },
           target ? { objectId: target.handle } : { value: null }, { value: insertText },
-          target?.alternate ? { objectId: target.alternate } : { value: null },
+          target?.dragSource ? { objectId: target.dragSource } : { value: null },
           { value: track ?? null }, { value: confirmReceiver ?? null },
-          ...(confirmed ? [{ objectId: confirmed }] : [])],
+          confirmed ? { objectId: confirmed } : { value: null }, { value: observeDrag }],
       })
       if (result.exceptionDetails) return undefined
       return result.result as { value?: unknown; objectId?: string } | undefined

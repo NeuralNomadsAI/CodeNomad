@@ -120,10 +120,11 @@ async function type(session: PageSession, action: Target & { text: string; clear
     throw new Error("Text input was sent, but the field value could not be read; inspect before retrying.", { cause: error })
   }
 }
-async function focusedElement(session: PageSession): Promise<string | undefined> {
+async function focusedElement(session: PageSession): Promise<string> {
   const active = await session.driver.call("active-element", undefined, [])
   await session.checkpoint()
-  if (typeof active.handle !== "string") return undefined
+  if (active.exception !== undefined || typeof active.handle !== "string")
+    throw new Error(active.exception ?? "Missing focused element")
   const described = await callOn(session, "the focused element", active.handle, "describe", [])
   if (typeof described !== "string") throw new Error("Invalid focus description")
   return described

@@ -37,7 +37,11 @@ const INPUTS = `<!doctype html><html lang="en"><body style="margin:0"><main>
   let dragging = false
   const handle = document.getElementById("handle"), zone = document.getElementById("zone")
   handle.addEventListener("pointerdown", event => { dragging = true; handle.setPointerCapture(event.pointerId) })
-  handle.addEventListener("pointermove", event => { if (dragging) { handle.style.left = (event.clientX - 20) + "px"; handle.style.top = (event.clientY - handle.offsetParent.getBoundingClientRect().top - 20) + "px" } })
+  handle.addEventListener("pointermove", event => {
+    if (!dragging || (window.moveOnlyAtDrop && event.clientX !== window.moveOnlyAtDrop)) return
+    handle.style.left = (event.clientX - 20) + "px"
+    handle.style.top = (event.clientY - handle.offsetParent.getBoundingClientRect().top - 20) + "px"
+  })
   handle.addEventListener("pointerup", event => {
     dragging = false
     const box = zone.getBoundingClientRect()
@@ -163,6 +167,54 @@ test("a pointer move can reveal a cover, but the cover receives no click", async
   } finally { await run.close() }
 })
 
+test("a scheduled mouse release refuses a substitute inside the inspected button", async () => {
+  const run = await openAutomationPage(automation, `${base}/automation-inputs`)
+  try {
+    const { page, act, refFor } = run
+    assert.equal(await page.evaluate(() => document.hasFocus()), true)
+    const ref = await refFor(/button "Hover me"/)
+    await page.evaluate(() => {
+      const button = document.getElementById("hover-target")!
+      button.style.position = "relative"
+      button.addEventListener("pointerdown", () => {
+        const child = document.createElement("span")
+        child.style.cssText = "position:absolute;inset:0"
+        child.addEventListener("pointerup", () => (window as any).log.push("substitute-release"))
+        button.append(child)
+      }, { once: true })
+    })
+    const failure = await act({ action: "click", ref }).catch((error: Error) => error.message)
+    assert.deepEqual(await log(page), ["pointerdown:hover-target::true:true"])
+    assert.match(String(failure), /original pointer recipient changed.*Input already sent/i)
+  } finally { await run.close() }
+})
+
+test("a short drag releases on the source covering the destination only while it holds capture", async () => {
+  const run = await openAutomationPage(automation, `${base}/automation-inputs`)
+  try {
+    const { page, act, refFor } = run
+    const ref = await refFor(/button "Handle"/), to = await refFor(/region "Drop zone"/)
+    for (const [moveLate, loseCapture] of [[false, false], [true, false], [false, true]]) {
+      await page.evaluate(({ moveLate, loseCapture }) => {
+        const source = document.getElementById("handle")!, destination = document.getElementById("zone")!
+        Object.assign(source.style, { left: "20px", top: "20px", zIndex: "1" })
+        destination.style.left = "76px"
+        const box = destination.getBoundingClientRect()
+        const end = Math.floor(box.x + box.width / 2)
+        ;(window as any).moveOnlyAtDrop = moveLate && end
+        ;(window as any).dropped = false
+        if (loseCapture) source.addEventListener("pointermove", event => {
+          if (event.buttons === 1 && event.clientX === end) source.releasePointerCapture(event.pointerId)
+        })
+      }, { moveLate, loseCapture })
+      const drag = act({ action: "drag", ref, to })
+      if (loseCapture) await assert.rejects(drag, /covered by div "Handle".*Input already sent/)
+      else await drag
+      assert.equal(await page.evaluate(() => (window as any).dropped), !loseCapture)
+    }
+  } finally { await run.close() }
+})
+
 test("a label forwards its own pointer hit, but not one on a different interactive descendant", async () => {
   const run = await openAutomationPage(automation, `${base}/automation-inputs`)
   try {
@@ -190,6 +242,81 @@ test("a label forwards its own pointer hit, but not one on a different interacti
     await assert.rejects(act({ action: "click", ref }), /covered by a "Different action"/)
     assert.equal(await checkbox.isChecked(), true)
     assert.deepEqual(await log(page), [])
+
+    await page.evaluate(() => {
+      const button = document.getElementById("item")!
+      document.getElementById("menu")!.hidden = false
+      button.style.position = "relative"
+      const other = document.createElement("input")
+      other.id = "other-control"
+      other.type = "checkbox"
+      const label = document.createElement("label")
+      label.htmlFor = other.id
+      label.style.cssText = "position:absolute;inset:0"
+      label.innerHTML = '<span role="menuitem">Foreign label</span>'
+      button.append(label)
+      document.body.append(other)
+    })
+    const item = await refFor(/menuitem "Menu item Foreign label"/)
+    const failure = await act({ action: "click", ref: item }).catch((error: Error) => error.message)
+    assert.deepEqual(await log(page), [])
+    assert.match(String(failure), /covered by label "Foreign label"/)
+    await assert.rejects(act({ action: "click", ref: await refFor(/menuitem "Foreign label"/) }), /covered by label "Foreign label"/)
+    assert.equal(await page.locator("#other-control").isChecked(), false)
+  } finally { await run.close() }
+})
+
+test("a value setter refuses the field from the occurrence left during focus", async () => {
+  const run = await openAutomationPage(automation, `${base}/automation-inputs`)
+  try {
+    const { page, act, refFor } = run
+    await page.evaluate(() => {
+      document.body.insertAdjacentHTML("beforeend", `
+        <section data-tab-id="a" data-instance-id="project" data-tab-visible="true">
+          <input id="date-a" type="date" aria-label="First date" value="2026-11-21">
+        </section><section data-tab-id="b" data-instance-id="project" data-tab-visible="false">
+          <input id="date-b" type="date" aria-label="Second date" value="2026-11-22">
+        </section>`)
+      const field = document.querySelector<HTMLInputElement>("#date-a")!
+      field.addEventListener("focus", () => {
+        field.parentElement!.dataset.tabVisible = "false"
+        field.parentElement!.style.opacity = "0" // The cached occurrence keeps its node and focus.
+        field.parentElement!.nextElementSibling!.setAttribute("data-tab-visible", "true")
+      }, { once: true })
+      for (const event of ["input", "change"]) field.addEventListener(event, () => (window as any).log.push(event))
+    })
+    const ref = await refFor(/"First date"/)
+    const failure = await act({ action: "type", ref, text: "2027-01-01" }).catch((error: Error) => error.message)
+    assert.deepEqual(await log(page), [])
+    assert.equal(await page.inputValue("#date-a"), "2026-11-21")
+    assert.equal(await page.inputValue("#date-b"), "2026-11-22")
+    assert.match(String(failure), /active tab changed/i)
+  } finally { await run.close() }
+})
+
+for (const via of ["select", "click"]) test(`a native ${via} refuses options changed during focus`, async () => {
+  const run = await openAutomationPage(automation, `${base}/automation-inputs`)
+  try {
+    const { page, act, refFor } = run
+    await page.evaluate(via => {
+      const select = document.createElement("select")
+      select.setAttribute("aria-label", "Choices")
+      select.multiple = true
+      select.innerHTML = '<option selected>Keep</option><option>Pick</option>'
+      const picked = select.options[1]
+      select.addEventListener("focus", () => {
+        if (via === "click") picked.replaceWith(picked.cloneNode(true))
+        else picked.remove()
+      }, { once: true })
+      for (const event of ["input", "change"]) select.addEventListener(event, () => (window as any).log.push(event))
+      document.body.append(select)
+    }, via)
+    const input = via === "click" ? { action: via, ref: await refFor(/option "Pick"/) }
+      : { action: via, ref: await refFor(/listbox "Choices"/), values: ["Pick"] }
+    const failure = await act(input).catch((error: Error) => error.message)
+    assert.deepEqual(await log(page), [])
+    assert.deepEqual(await page.locator("select option:checked").allTextContents(), ["Keep"])
+    assert.match(String(failure), /options of .* changed.*inspect again/i)
   } finally { await run.close() }
 })
 

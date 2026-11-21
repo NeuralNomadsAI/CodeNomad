@@ -11,7 +11,7 @@ interface Command {
 const isDestination = (command: Command) => command.method === "Runtime.callFunctionOn"
   && String(command.params?.functionDeclaration).includes("document.elementFromPoint")
 const isScriptClick = (command: Command) => command.method === "Runtime.callFunctionOn"
-  && String(command.params?.functionDeclaration).startsWith("function (handle, expected)")
+  && String(command.params?.functionDeclaration).startsWith("function (handle, expected, ...args)")
 const isInputState = (command: Command) => command.method === "Runtime.evaluate"
   && command.params?.expression === "({ root: document.documentElement })"
 
@@ -93,7 +93,8 @@ class FakeChrome {
             : String(command.params.functionDeclaration).includes("Math.min") ? true : 1_700_000_000 },
         } : command.method === "Runtime.callFunctionOn" && String(command.params?.functionDeclaration).includes("window.top") ? {
           result: { value: this.mainRef },
-        } : this.result(command.method)))
+         } : command.params?.expression === "document.activeElement" ? this.activeElementReply
+           : command.params?.objectId === "active-element" ? { result: { value: "button" } } : this.result(command.method)))
   }
 
   /** Visible box of every element, or none; and the element hit at its centre. */
@@ -102,6 +103,7 @@ class FakeChrome {
   hitFrame = "main"
   hitTag = "button"
   mainFocus = true
+  activeElementReply: Record<string, unknown> = { result: { objectId: "active-element" } }
   inputRootCurrent = true
   mainRef = true
   functionResult: unknown
@@ -380,6 +382,19 @@ describe("DeveloperCdp", () => {
       assert.equal(chrome.commands.filter(command => command.method === "Input.dispatchKeyEvent").length, 2)
     } finally { client.close() }
   })
+
+  for (const reply of [{ exceptionDetails: { text: "Focus read failed" } }, {}]) {
+    it(`reports an explicit post-press failure for ${Object.keys(reply)[0] ?? "missing focus"}`, async () => {
+      const chrome = new FakeChrome()
+      const client = chrome.client()
+      try {
+        chrome.activeElementReply = reply
+        const { document } = await client.inspect(identity)
+        await assert.rejects(client.act({ ...identity, document }, { action: "press", key: "Enter" }), /Key input was sent.*focus could not be read/i)
+        assert.equal(chrome.commands.filter(command => command.method === "Input.dispatchKeyEvent").length, 2)
+      } finally { client.close() }
+    })
+  }
 
   for (const receiverChanges of [false, true]) it(`rechecks an unsent release after a timeout (receiver changed: ${receiverChanges})`, async () => {
     const chrome = new FakeChrome()

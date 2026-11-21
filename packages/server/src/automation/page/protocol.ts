@@ -49,7 +49,7 @@ export class PageDriverUnsupportedError extends Error {
   readonly code = "unsupported"
   constructor(readonly driver: DriverKind, readonly operation: string) { super(`${driver} page driver does not support ${operation}`) }
 }
-export interface InputTarget { ref: string; handle: string; alternate?: string }
+export interface InputTarget { ref: string; handle: string; dragSource?: string }
 export interface PageSession {
   driver: PageDriver
   checkpoint(): Promise<void>
@@ -57,7 +57,6 @@ export interface PageSession {
   markAutomation: boolean
   /** Expected ref for the current native dispatch, scoped to the serialized page operation. */
   inputTarget?: InputTarget
-  inputCleanup?: boolean
 }
 export class Handle { constructor(readonly objectId: string) {} }
 export function gone(ref: string): Error { return new Error(`${ref} is no longer in the page; inspect again`) }
@@ -122,6 +121,7 @@ function pageError(ref: string, description: string): Error {
     case "not-select": return new Error(`${ref} is not a native select; click it to open its menu, then click the option`)
     case "is-select": return new Error(`${ref} is a native select; use select with its option labels`)
     case "no-option": return new Error(`No option ${quoted} in ${ref}; inspect it to see its options`)
+    case "options-changed": return new Error(`The options of ${ref} changed during focus; inspect again`)
     case "option-disabled": return new Error(`Option ${quoted} of ${ref} is disabled`)
     case "single": return new Error(`${ref} takes exactly one value`)
     case "disabled": return new Error(`${ref} is disabled`)
@@ -138,9 +138,8 @@ function pageError(ref: string, description: string): Error {
 }
 
 type InputKind = "pointer" | "wheel" | "keyboard" | "insert-text"
-async function sendInput(session: PageSession, kind: InputKind, params: Record<string, unknown>, target?: InputTarget, cleanup = false): Promise<void> {
+async function sendInput(session: PageSession, kind: InputKind, params: Record<string, unknown>, target?: InputTarget): Promise<void> {
   session.inputTarget = target
-  session.inputCleanup = cleanup
   try {
     switch (kind) {
       case "pointer": return await session.driver.pointer(params as unknown as PointerInput)
@@ -150,7 +149,6 @@ async function sendInput(session: PageSession, kind: InputKind, params: Record<s
     }
   } finally {
     session.inputTarget = undefined
-    session.inputCleanup = undefined
   }
 }
 export class PageTargetChangedError extends Error {
@@ -223,8 +221,8 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (kind
         })
         await checkInput()
         const { text: _text, unmodifiedText: _unmodified, ...params } = release.params
-        if (release.kind === "pointer" && point) await sendInput(session, release.kind, { ...params, x: point.x, y: point.y }, point.target, true)
-        else await sendInput(session, release.kind, params, release.target, true)
+        if (release.kind === "pointer" && point) await sendInput(session, release.kind, { ...params, x: point.x, y: point.y }, point.target)
+        else await sendInput(session, release.kind, params, release.target)
       } catch (error) {
         if (error instanceof PageTargetChangedError) { targetLost = error; break }
         // Cleanup cannot replay a press or dispatch without a current context.
