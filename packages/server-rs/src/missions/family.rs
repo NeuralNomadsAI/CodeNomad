@@ -1,3 +1,4 @@
+//! Native family control: deepest-first interruption, queue ownership and exact receipts.
 use crate::{App, Error, error, worktrees::linked::native};
 use axum::http::{Method, StatusCode as Status};
 use serde_json::{Value, json};
@@ -136,8 +137,8 @@ async fn interrupt(app: &App, id: &str) -> Result<Value, Error> {
         app,
         Method::POST,
         &format!("/api/session/{id}/interrupt"),
-        &[],
-        Some(json!({"resume":false})),
+        &[("resume", "false")],
+        None,
         4096,
     )
     .await?;
