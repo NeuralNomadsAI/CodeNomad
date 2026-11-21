@@ -195,6 +195,27 @@ test("Tauri: an address entered before registration completes loads once the tar
   } finally { await page.close() }
 })
 
+test("Tauri: an address typed while the profile restores supersedes the pending one", async () => {
+  const page = await browser.newPage({ userAgent: "Windows fixture" })
+  try {
+    await page.goto(`${url}?viewport=mobile`)
+    await page.evaluate(() => { const f = (window as any).nativeFixture; f.deferRegistration = true; f.deferEmulation = true })
+    await page.evaluate(() => (window as any).nativeFixture.mount(false))
+    await page.evaluate(() => { const f = (window as any).nativeFixture; f.calls.length = 0; f.mount(true) })
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_register"))
+    const address = page.getByRole("textbox", { name: "Address" })
+    const pending = new URL("/browser-native-guest?pending", url).href, latest = new URL("/browser-native-guest?latest", url).href
+    await address.fill(pending); await address.press("Enter")
+    await page.evaluate(() => (window as any).nativeFixture.settleRegistration())
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.payload?.action === "emulate"))
+    await address.fill(latest); await address.press("Enter")
+    await page.evaluate(() => (window as any).nativeFixture.settleEmulation())
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_update" && c.payload.visible))
+    const navigated = (await snapshot(page)).calls.filter((c: any) => c.payload?.action === "navigate").map((c: any) => c.payload.url)
+    assert.deepEqual(navigated, [latest], "the latest address wins and the superseded one is never loaded")
+  } finally { await page.close() }
+})
+
 test("Tauri: a registration retry that already carries the typed address does not load it twice", async () => {
   const page = await browser.newPage()
   try {

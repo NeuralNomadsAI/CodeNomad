@@ -8,6 +8,7 @@ const callbacks = new Map<number, (event: unknown) => void>()
 const histories = new Map<string, { entries: Array<{ id: number; url: string }>; index: number }>()
 let historyId = 0
 let callbackId = 0
+let pendingEmulation: (() => void) | undefined
 let pendingRegistration: { resolve: () => void; reject: (error: Error) => void } | undefined
 
 export const nativeFixture = {
@@ -17,6 +18,8 @@ export const nativeFixture = {
   failUpdates: false,
   failEmulation: false,
   deferRegistration: false,
+  deferEmulation: false,
+  settleEmulation() { pendingEmulation?.(); pendingEmulation = undefined },
   settleRegistration(reject = false) {
     if (!pendingRegistration) throw new Error("No pending registration")
     if (reject) pendingRegistration.reject(new Error("Registration failed"))
@@ -47,6 +50,7 @@ async function invoke(command: string, args: any = {}) {
     for (const callback of callbacks.values()) callback({ payload: { registrationId: args.payload.registrationId, url: history.entries[history.index].url } })
   }
   if (command === "browser_target_action" && args.payload.action === "emulate" && nativeFixture.failEmulation) throw new Error("Emulation failed")
+  if (command === "browser_target_action" && args.payload.action === "emulate" && nativeFixture.deferEmulation) await new Promise<void>(resolve => { pendingEmulation = resolve })
   if (command === "browser_target_register" && nativeFixture.deferRegistration) {
     const id = args.payload.registrationId
     registering.add(id)

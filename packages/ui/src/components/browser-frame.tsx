@@ -170,13 +170,19 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   let cleanupWebviewListeners: (() => void) | null = null
   let cleanupTauriTarget: (() => void) | null = null
   let tauriRegistered = false
-  // Latest navigation requested while the Tauri target registers. Kept apart from
-  // nativeTarget, which navigation events of the initial load can overwrite.
+  // Latest navigation requested before the Tauri target exists, replayed once its
+  // emulation is restored. Kept apart from nativeTarget, which the initial load's
+  // navigation events can overwrite. Any later direct action supersedes it.
   let pendingTauriNavigation: { url: string; logicalAddress?: string } | undefined
   const navigateTauri = (url: string, logicalAddress?: string) => {
-    if (tauriRegistered) return controlTauriBrowserTarget(browserRegistrationId, "navigate", url, logicalAddress)
-    pendingTauriNavigation = { url, logicalAddress }
-    return Promise.resolve()
+    if (!tauriRegistered) { pendingTauriNavigation = { url, logicalAddress }; return Promise.resolve() }
+    pendingTauriNavigation = undefined
+    return controlTauriBrowserTarget(browserRegistrationId, "navigate", url, logicalAddress)
+  }
+  const actOnTauri = (action: "back" | "reload") => {
+    if (!tauriRegistered) return
+    pendingTauriNavigation = undefined
+    void controlTauriBrowserTarget(browserRegistrationId, action).catch(reportNativeError)
   }
   let browserRegistrationId = nativeBrowserAvailable ? generateUUID() : ""
   let disposed = false
@@ -700,6 +706,8 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       registering = true
       const target = nativeTarget()
       const registrationId = browserRegistrationId
+      // This registration loads the pending address itself (e.g. a retry).
+      if (pendingTauriNavigation?.url === target) pendingTauriNavigation = undefined
       void onTauriBrowserNavigation(registrationId, (url) => {
         if (!active) return
         const address = props.isolatedSource ? props.sourceAddress?.(url) : url
@@ -732,18 +740,18 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         }
         registered = true
         nativeVisible = false
-        // From here every action reaches the target directly, in request order: replay
-        // the latest pending navigation first, unless the registered URL already is it.
         tauriRegistered = true
-        const pending = pendingTauriNavigation
-        pendingTauriNavigation = undefined
-        const replay = pending ? (pending.url === target ? undefined : pending)
-          : nativeTarget() === target ? undefined : { url: nativeTarget(), logicalAddress: undefined }
-        if (replay) void controlTauriBrowserTarget(registrationId, "navigate", replay.url, replay.logicalAddress).catch(reportNativeError)
         // Registration starts hidden; re-read overlays and geometry before reveal.
         await restoreEmulation(registrationId)
         void captureHistory()
         syncErrorReported = false
+        // Load the address requested before the target existed, under the restored
+        // profile, unless a direct action superseded it or this target was replaced.
+        const pending = active && registrationId === browserRegistrationId ? pendingTauriNavigation : undefined
+        if (pending) {
+          pendingTauriNavigation = undefined
+          await controlTauriBrowserTarget(registrationId, "navigate", pending.url, pending.logicalAddress)
+        }
         syncBounds()
       }).catch(reportSyncError)
     }
@@ -835,7 +843,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     if (journal) { void traverseHistory(-1); return }
     props.onNavigationStart?.()
     if (nativeMode()) {
-      if (browserHost === "tauri") { if (tauriRegistered) void controlTauriBrowserTarget(browserRegistrationId, "back").catch(reportNativeError) }
+      if (browserHost === "tauri") actOnTauri("back")
       else if (webviewReady && webviewRef?.canGoBack()) webviewRef.goBack()
       return
     }
@@ -859,7 +867,10 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       if (disposed || version !== historyTravelVersion) return
       if (props.active === false) { setHistoryBusy(false); return }
       const target = journal.request(index, logicalHistory(native))
-      if (target.id !== undefined) await goToBrowserHistoryEntry(browserRegistrationId, target.id, historyGuestId())
+      if (target.id !== undefined) {
+        pendingTauriNavigation = undefined
+        await goToBrowserHistoryEntry(browserRegistrationId, target.id, historyGuestId())
+      }
       else if (nativeMode()) {
         const source = props.isolatedSource ? await props.onNavigate!(target.url) : target.url
         if (disposed || version !== historyTravelVersion) return
@@ -885,7 +896,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     props.onNavigationStart?.()
     supersedeHistoryTraversal()
     if (nativeMode()) {
-      if (browserHost === "tauri") { if (tauriRegistered) void controlTauriBrowserTarget(browserRegistrationId, "reload").catch(reportNativeError) }
+      if (browserHost === "tauri") actOnTauri("reload")
       else if (webviewReady) webviewRef?.reload()
       return
     }
