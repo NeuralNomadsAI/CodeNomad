@@ -108,17 +108,25 @@ impl Creations {
     }
 
     pub async fn receipt(&self, app: &App, key: &Key) -> Value {
+        let _read = fence::serialize(format!("mission-creation-receipt\n{}\n{}", key.0, key.1)).await;
         let unknown = || json!({"requestId":key.1,"state":"unknown"});
-        let attempt = {
+        let entry = {
             let entries = self.0.lock().unwrap();
             match entries.get(key) {
                 Some(r) if r.state == State::Rejected => return json!({"requestId":key.1,"state":"rejected"}),
-                Some(r) if matches!(r.state, State::Unknown | State::Created) => r.attempt.clone(),
+                Some(r) if matches!(r.state, State::Unknown | State::Created) => {
+                    r.attempt.clone().map(|attempt| (attempt, r.state == State::Unknown))
+                }
                 _ => None,
             }
         };
-        let Some(attempt) = attempt else { return unknown() };
+        let Some((attempt, recovering)) = entry else { return unknown() };
         let Ok(result) = attempt.receipt(app).await else { return unknown() };
+        if recovering {
+            // The native creation receipt establishes settlement; present rules
+            // only recover local ownership, without writing any native rules.
+            let _ = attempt.confirm_permissions(app, &result, true).await;
+        }
         if self.settle(key, &attempt) {
             return json!({"requestId":key.1,"state":"created","mission":result});
         }
@@ -302,6 +310,25 @@ pub(super) struct Attempt {
 }
 
 impl Attempt {
+    pub async fn confirm_permissions(&self, app: &App, mission: &Value, recovering: bool) -> Result<(), Error> {
+        if let Some(block) = self.input.get("permissions") {
+            let coordinator = mission["coordinatorSessionId"].as_str().ok_or_else(uncertain)?;
+            crate::sessions::permission_mode::confirm_root(
+                app,
+                &self.scope.endpoint,
+                &self.scope.dir,
+                &self.scope.project,
+                coordinator,
+                block,
+                recovering,
+                || self.scope.current(app),
+            )
+            .await
+            .map_err(|_| uncertain())?;
+        }
+        Ok(())
+    }
+
     fn matches(&self, m: &Value) -> bool {
         let Some(coordinator) = m["coordinatorSessionId"].as_str() else { return false };
         m["id"] == self.mission

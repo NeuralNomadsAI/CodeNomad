@@ -15,7 +15,7 @@ import { assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
 import { browserFiles, populate } from "./files.mjs"
 import { browserWorktrees } from "./worktrees.mjs"
 
-const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "missions", "missions-family", "missions-calendar", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
+const MODES = ["http", "files", "contract", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "missions", "missions-family", "missions-calendar", "mission-permissions", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
 const [mode, exe] = process.argv.slice(2)
 assert(MODES.includes(mode) && path.isAbsolute(exe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)
 const bin = rustBinary()
@@ -128,6 +128,8 @@ async function start(label, fixture, folder, password, trustedCA) {
     rustArgs = ["serve", "--http", "true", "--http-port", String(port), "--https", "false",
       "--ui-dir", uiDir, "--workspace-root", folder]
   }
+  const relay = await bench?.nativeRelay?.(fixture)
+  if (relay) env.CNRS_FIXTURE_URL = relay.url
   const child = label === "ts"
     ? spawn(process.execPath, [path.join(import.meta.dirname, "ts-server.mjs"), "--http", "true", "--http-port", String(port), "--https", "false",
       "--ui-no-update", "--ui-dir", uiDir, "--config", env.CLI_CONFIG, "--workspace-root", folder],
@@ -145,6 +147,7 @@ async function start(label, fixture, folder, password, trustedCA) {
       await Promise.race([stopped, delay(15_000, undefined, { ref: false })])
     }
     if (!spawnError && child.exitCode === null && child.signalCode === null) await stopFixtureChild(child, stopped)
+    await relay?.close()
     await dropRegistration(fixture.env, child.pid)
     const leaked = (bench?.secrets?.() ?? []).filter(secret => output.includes(secret))
     const safe = leaked.reduce((text, secret) => text.replaceAll(secret, "<redacted>"), output)

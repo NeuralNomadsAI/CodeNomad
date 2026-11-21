@@ -178,6 +178,32 @@ impl Settings {
         Ok(value)
     }
 
+    pub(crate) fn private_state_owner(&self, name: &str) -> Result<Doc, Unreadable> {
+        owner_strict(&document::read(&self.location.state)?, name)
+    }
+
+    pub(crate) fn replace_private_state(
+        &self,
+        name: &str,
+        key: &str,
+        expected: Option<&Value>,
+        value: Option<Value>,
+    ) -> Result<bool, Unreadable> {
+        let _write = self.write.lock().unwrap();
+        let mut doc = document::read(&self.location.state)?;
+        let mut owner = owner_strict(&doc, name)?;
+        if owner.get(key) != expected {
+            return Ok(false);
+        }
+        match value {
+            Some(value) => owner.insert(key.to_owned(), value),
+            None => owner.remove(key),
+        };
+        doc.insert(name.to_owned(), Value::Object(owner));
+        document::write(&self.location.state, &doc).map_err(|_| Unreadable)?;
+        Ok(true)
+    }
+
     /// `mergePatchOwner`: the merge starts from the document on disk now (an unreadable state
     /// document is refused rather than overwritten). Returns the saved owner.
     pub fn patch(&self, kind: Kind, name: &str, patch: &Value) -> Result<Value, Failure> {

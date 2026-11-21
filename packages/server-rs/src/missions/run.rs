@@ -290,18 +290,16 @@ async fn create_once(
     if let Some(session) = &options.coordinator {
         input["coordinatorSessionID"] = json!(session);
         input["expectedCoordinatorLocation"] = scope.attach(app, session).await?;
-    } else {
-        let ui = app.settings.raw_config_owner("ui").map_err(|_| unavailable())?;
-        if ui
-            .get("settings")
-            .and_then(|s| s.get("newConversationPermissions"))
-            .and_then(Value::as_str)
-            == Some("supervised")
-        {
-            // Until the shared permission service supplies the projected rules
-            // and owns their confirmed block, do not create an Autonomous root.
-            return Err(creation_unavailable("Mission root permissions unavailable"));
-        }
+    } else if let Some(block) = crate::sessions::permission_mode::new_root(
+        app,
+        &scope.endpoint,
+        &scope.dir,
+        caps["output"]["rootPermissions"] == true,
+    )
+    .await
+    .map_err(|_| creation_unavailable("Mission root permissions unavailable"))?
+    {
+        input["permissions"] = block;
     }
     let permit = scope.permit().ok_or_else(|| {
         (
@@ -319,6 +317,9 @@ async fn create_once(
     let result = attempt.create(app).await?;
     if !attempt.acknowledgement(&result) || attempt.scope.refresh(app).await.is_err() {
         return Err(creation_admission::uncertain());
+    }
+    if result["acknowledgement"] == "fresh" {
+        attempt.confirm_permissions(app, &result["mission"], false).await?;
     }
     Ok(result)
 }
@@ -629,7 +630,8 @@ pub async fn dispatch(
     if !id(&req.session_id, 240) {
         return Err(bad());
     }
-    let co = crate::opencode::session_record(&app, &req.session_id).await?;
+    let endpoint = app.native.endpoint().ok_or_else(held)?;
+    let co = crate::opencode::session_record_at(&app, &endpoint, &req.session_id).await?;
     let dir = co["location"]["directory"].as_str().ok_or_else(foreign)?;
     let project = co["projectID"].as_str().ok_or_else(foreign)?;
     let w = app
@@ -751,6 +753,7 @@ pub async fn dispatch(
         )
         .await?;
         checkpoint().await?;
+        crate::sessions::permission_mode::refresh_coordinator(&app, &w, &endpoint, &co).await?;
         let message =
             format!("msg_{}", token(&format!("{}\0resume\0{}", life.operation, life.sid), 28));
         let input = json!({"id":message,"text":route,"description":"CodeNomad mission start/resume","delivery":"queue","resume":true,

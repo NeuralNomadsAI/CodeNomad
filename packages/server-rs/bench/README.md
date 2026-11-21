@@ -38,6 +38,7 @@ node roundtrip.mjs $OpenCode
 | `files` | Files and Git on a rich repository (rename, gitlink, conflict, CRLF, large and binary files), mutations, refusals, watches. |
 | `contract` | Session placement header, foreign sessions, outline in a worktree, `pending-requests`. |
 | `depth` | `subagent-depth` on subfolders, linked worktree, junctions, written documents, worktree deletion fence. |
+| `mission-permissions` | Paused Supervised creation, native rule projection, private state read by TypeScript, an altered acknowledgement and a lost acknowledgement recovered by exact receipt, ambiguous block refusal, ordinary mode switching and refresh before a prompt. No desktop window. |
 | `worktree-gone` | Registered worktree whose `.git` or administrative folder is gone. |
 | `links` | Symbolic links and junctions (internal, outgoing, broken, loop) for read, write, diff, status and search. |
 | `search` | `files/search`: queries, limits, zod refusals, folders, cache and 30 s TTL, busy scans. |
