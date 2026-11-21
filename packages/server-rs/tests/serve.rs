@@ -290,7 +290,9 @@ async fn desktop_launch_contract() {
     // `exchange_bootstrap_token`: Tauri's own HTTP/1.1 request, read to the end of the connection.
     let set = tauri_exchange(&url, &token).await;
     let set = set.lines().find_map(|l| l.strip_prefix("set-cookie: ")).expect("200 with a cookie").to_owned();
-    assert!(set.starts_with(&format!("{COOKIE}=")) && set.ends_with("; HttpOnly; Path=/; SameSite=Lax"), "{set}");
+    assert!(
+        set.starts_with(&format!("{COOKIE}=")) && set.ends_with("; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800")
+    );
     let cookie = set.split(';').next().unwrap().to_owned();
     assert!(tauri_exchange(&url, &token).await.starts_with("HTTP/1.1 401 "));
 

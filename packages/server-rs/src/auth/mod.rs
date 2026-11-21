@@ -228,9 +228,14 @@ impl Auth {
         Ok(id)
     }
     /// Values are base64url session ids, which `encodeURIComponent` leaves unchanged.
-    fn session_cookie(&self, value: &str, max_age: Option<u8>) -> String {
+    fn session_cookie(&self, value: &str, max_age: Option<u64>) -> String {
         let tail = max_age.map(|age| format!("; Max-Age={age}")).unwrap_or_default();
         format!("{}={value}; HttpOnly; Path=/; SameSite=Lax{tail}", self.settings.cookie)
+    }
+
+    fn issued_session_cookie(&self, value: &str) -> String {
+        // AuthManager.setSessionCookieWithOptions uses a fixed cookie lifetime.
+        self.session_cookie(value, (!self.settings.skip).then_some(7 * 24 * 60 * 60))
     }
 }
 
@@ -436,7 +441,7 @@ pub async fn login(
         }
     }
     let id = app.auth.open_session(username)?;
-    Ok(([(header::SET_COOKIE, app.auth.session_cookie(&id, None))], Json(json!({"ok":true}))))
+    Ok(([(header::SET_COOKIE, app.auth.issued_session_cookie(&id))], Json(json!({"ok":true}))))
 }
 
 #[derive(Deserialize)]
@@ -471,7 +476,7 @@ pub async fn token(
     }
     match app.auth.open_session(app.auth.identity().0) {
         Ok(id) => {
-            ([(header::SET_COOKIE, app.auth.session_cookie(&id, None))], Json(json!({"ok":true}))).into_response()
+            ([(header::SET_COOKIE, app.auth.issued_session_cookie(&id))], Json(json!({"ok":true}))).into_response()
         }
         Err(e) => e.into_response(),
     }

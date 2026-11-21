@@ -138,7 +138,7 @@ async function signIn(host, password) {
   const login = await host.request("/api/auth/login", jsonBody({ username: "codenomad", password }))
   assert.equal(login.status, 200)
   const cookie = login.headers.get("set-cookie")
-  assert.match(cookie, /^codenomad_session=[A-Za-z0-9_-]{43}; HttpOnly; Path=\/; SameSite=Lax$/)
+  assert.ok(/^codenomad_session=[A-Za-z0-9_-]{43}; HttpOnly; Path=\/; SameSite=Lax; Max-Age=604800$/.test(cookie), "Unexpected login cookie attributes")
   return cookie.split(";", 1)[0]
 }
 

@@ -20,9 +20,10 @@ await useBenchTemp()
 // The TS test surface with a real connection manager, so that revocation closes live streams.
 const surface=new URL("remote-control/test-support/surface.js",dist)
 const wired=new URL("surface-bench.mjs",surface)
-const before=await readFile(surface,"utf8"), marker="clientConnectionManager: stub,"
+const before=await readFile(surface,"utf8"), marker="clientConnectionManager: stub,", create="const server = createHttpServer"
 assert.equal(before.split(marker).length,2)
-await writeFile(wired,`import { ClientConnectionManager } from "../../clients/connection-manager.js";\n${before.replace(marker,"clientConnectionManager: connections,").replace("const server = createHttpServer",`const connections = new ClientConnectionManager(logger); t.after(()=>connections.shutdown());\n    const server = createHttpServer`)}`)
+assert.equal(before.split(create).length,2)
+await writeFile(wired,`import { ClientConnectionManager } from "../../clients/connection-manager.js";\n${before.replace(marker,"clientConnectionManager: connections,").replace(create,`const connections = new ClientConnectionManager(serverLogger); t.after(()=>connections.shutdown());\n    ${create}`)}`)
 const {startRemoteSurface, FAKE_TUNNEL_HOST}=await import(wired)
 await rm(wired)
 const reports=[]
