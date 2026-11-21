@@ -347,6 +347,47 @@ pub async fn request_read(
     }
     read_receipt(&app, &endpoint, &w, &p, &canonical, &mid, Some(&request)).await
 }
+
+/// Observations through the authenticated agent bridge reuse the HTTP receipt and ownership checks.
+pub(super) async fn agent_read(app: Shared, scope: &super::creation_admission::Scope, raw: Value) -> Result<Value, Error> {
+    let invalid = || input_invalid();
+    let input = raw.as_object().ok_or_else(invalid)?;
+    let action = raw["action"].as_str().ok_or_else(invalid)?;
+    let id = scope.workspace.id.to_string();
+    let directory = Some(scope.dir.clone());
+    let fields = |names: &[&str]| input.keys().all(|k| names.contains(&k.as_str()));
+    scope.refresh(&app).await?;
+    let result = match action {
+        "list" if fields(&["action", "after", "limit"]) => {
+            let after = input.get("after").map(|a| a.as_str().filter(|v| good(v)).map(str::to_owned).ok_or_else(invalid)).transpose()?;
+            let limit = input.get("limit").map(|v| v.as_u64().filter(|n| (1..=8).contains(n)).ok_or_else(invalid)).transpose()?;
+            let Json(mut page) = list(State(app.clone()), Path(id), Query(Filter { directory, after, limit, request: None })).await?;
+            let schedules = page["schedules"].as_array().ok_or_else(unavailable)?;
+            page["schedules"] = Value::Array(schedules.iter().map(|doc| {
+                let mut summary = json!({"missionID":doc["id"],"title":doc["configuration"]["title"]});
+                for name in ["kind","revision","state","observation","availableActions","blockReason"] {
+                    if let Some(value) = doc.get(name) { summary[name] = value.clone(); }
+                }
+                summary
+            }).collect());
+            page
+        }
+        "capabilities" if fields(&["action"]) => {
+            capabilities(State(app.clone()), Path(id), Query(Filter { directory, ..Filter::default() })).await?.0
+        }
+        "read" if fields(&["action", "missionID", "requestID"]) => {
+            let mid = raw["missionID"].as_str().filter(|v| good(v)).ok_or_else(invalid)?.to_owned();
+            let request = input.get("requestID").map(|r| r.as_str().filter(|v| good(v)).map(str::to_owned).ok_or_else(invalid)).transpose()?;
+            match read(State(app.clone()), Path((id, mid)), Ok(Query(ReadQuery { directory, request }))).await {
+                Ok(Json(mut body)) => { body["status"] = json!(200); body }
+                Err((status, Json(mut body))) => { body["status"] = json!(status.as_u16()); body }
+            }
+        }
+        _ => return Err(crate::error(Status::NOT_IMPLEMENTED, "Mission schedule operation unavailable")),
+    };
+    scope.refresh(&app).await?;
+    Ok(result)
+}
 pub struct Input {
     request: String,
     revision: u64,

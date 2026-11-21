@@ -17,7 +17,6 @@ use std::sync::Arc;
 use subtle::ConstantTimeEq;
 use tokio_util::sync::CancellationToken;
 
-const PREFIX: &str = "/api/rpc/codenomad.missions/";
 pub async fn playbooks() -> Response {
     (
         [(axum::http::header::CONTENT_TYPE, "application/json")],
@@ -47,50 +46,6 @@ pub fn directory(w: &Workspace) -> Result<&str, Error> {
     w.location["directory"].as_str().ok_or_else(foreign)
 }
 
-pub async fn rpc(app: &App, dir: &str, method: &str, input: Value, max: usize) -> Result<Value, Error> {
-    let url = app.native.url().join(&format!("{PREFIX}{method}")).map_err(|_| held())?;
-    let res = app
-        .native
-        .request(Method::POST, url)
-        .query(&[("location[directory]", dir)])
-        .json(&json!({"input":input}))
-        .timeout(std::time::Duration::from_secs(85))
-        .send()
-        .await
-        .map_err(|_| held())?;
-    let status = res.status();
-    let body = crate::opencode::read_json(res, max).await.map_err(|_| held())?;
-    if !status.is_success() {
-        // Preserve reviewed reserved conflict/validation codes, not daemon prose.
-        let code = body["type"].as_str().or_else(|| body["code"].as_str()).unwrap_or_default();
-        let public = code.strip_prefix("mission.").unwrap_or(code);
-        if crate::bench::missions_run() {
-            eprintln!(
-                "Mission RPC {method} refused ({status}, {})",
-                if public.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') && public.len() <= 64 {
-                    public
-                } else {
-                    "opaque"
-                }
-            );
-        }
-        if matches!(
-            public,
-            "stale-revision"
-                | "revision-conflict"
-                | "request-conflict"
-                | "already-member"
-                | "mission-not-found"
-                | "invalid-execution"
-                | "invalid-state"
-                | "control-pending"
-        ) {
-            return Err((Status::CONFLICT, Json(json!({"error":"Mission request refused","code":public}))));
-        }
-        return Err(held());
-    }
-    body.get("output").cloned().ok_or_else(held)
-}
 pub async fn project_owner(app: &App, w: &Workspace) -> Result<(String, String), Error> {
     files::root(w)?;
     let dir = directory(w)?;
@@ -596,6 +551,14 @@ pub async fn dispatch(State(app): State<Shared>, request: axum::extract::Request
         "create-root" => super::inputs::create_root(&app, scope, co, command.input).await,
         "cleanup" => super::cleanup::remove(&app, scope, co, command.input).await,
         "task-sessions" => super::task_sessions::observe(&app, scope, co, command.input).await,
+        "schedule" => {
+            let result = super::calendar::agent_read(app.clone(), &scope, command.input).await?;
+            let fresh = super::bridge::session(&app, &scope, &req.session_id).await?;
+            if ["location", "parentID"].iter().any(|k| fresh[*k] != co[*k]) {
+                return Err(foreign());
+            }
+            Ok(result)
+        }
         "prompt" | "synthetic" => super::inputs::admit(&app, scope, co, &command.kind, command.input).await,
         "lifecycle" => lifecycle(&app, scope, co, command.input).await,
         _ => Err(error(Status::NOT_IMPLEMENTED, "Mission bridge operation unavailable")),
