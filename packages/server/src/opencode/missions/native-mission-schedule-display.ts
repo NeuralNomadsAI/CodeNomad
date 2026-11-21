@@ -25,7 +25,8 @@ export async function observeNativeMissionSchedule(doc: MissionDocument, native:
       if (slot.creation !== "adopted" || !slot.scheduleID || !mapping || mapping.scheduleID !== slot.scheduleID
         || mapping.sessionID !== slot.sessionID || slot.timeGeneration !== doc.timeGeneration || mapping.timeGeneration !== doc.timeGeneration) return unknown
       const info = await native.get({ missionID: doc.id, descriptor: slot }, slot.scheduleID, () => native.assertCurrent())
-      if (!info || info.id !== slot.scheduleID || !nativeScheduleCalendarMatches(info, slot) || info.runCount < mapping.highWater) return unknown
+      if (!info || info.id !== slot.scheduleID || !nativeScheduleCalendarMatches(info, slot)
+        || info.runCount < (info.code ? mapping.highWater - 1 : mapping.highWater)) return unknown
       if (info.status === "active" && info.nextDueAt === null) return unknown
       statuses.add(info.status)
       wakeCount += info.runCount

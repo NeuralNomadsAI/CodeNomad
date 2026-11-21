@@ -228,6 +228,7 @@ async function preparingControl(fixture, deleting) {
     fixture.result.stage = "genuine-current-wake-preparing"
     const held = await fixture.until(() => { const state = fixture.snapshot(id); return frame && preparationIn(state, frame.sessionID, frame.messageID) ? state : false }, fixture.delayMs + 10000)
     assert.equal(held.document.launchedCount, 0); assert.equal(held.sessions.length, 0)
+    const codeRow = fixture.readSQL(db => db.prepare("SELECT json_extract(action,'$.type') AS type FROM automation WHERE id=?").get(frame.schedule.id)?.type) === "code"
     await fixture.save("genuine-wake-preparing-held", { state: held, frame })
     const action = deleting ? "delete" : "stop"
     await fixture.control(id, action, { allowPending: true })
@@ -240,6 +241,14 @@ async function preparingControl(fixture, deleting) {
     await fixture.save("control-retains-current-preparation", { state: during, frame, originalControl })
     unlock("control-proof-recorded")
     const nativeACK = await fixture.until(() => fixture.readSQL(db => {
+      // A code row acknowledges the run by counting it once its program returns, even after the Stop paused it.
+      // Cleanup may remove the row once the counted run is processed; the consumed preparation then proves it.
+      if (codeRow) {
+        const automation = db.prepare("SELECT run_count FROM automation WHERE id=?").get(frame.schedule.id)
+        const consumed = !preparationIn(fixture.snapshot(fixture.result.documentID), frame.sessionID, frame.messageID)
+        return automation ? automation.run_count >= frame.schedule.run && { scheduleID: frame.schedule.id, run: frame.schedule.run, counted: automation.run_count }
+          : consumed && { scheduleID: frame.schedule.id, run: frame.schedule.run, rowRemovedAfterProcessing: true }
+      }
       const row = db.prepare("SELECT id,data FROM session_message WHERE id=? AND session_id=? AND type='user'").get(frame.messageID, frame.sessionID)
       if (!row) return false
       const data = JSON.parse(row.data), schedule = data.metadata?.schedule
@@ -247,7 +256,9 @@ async function preparingControl(fixture, deleting) {
         ? { id: row.id, scheduleID: schedule.id, run: schedule.run, dueAt: schedule.dueAt } : false
     }))
     await fixture.save("genuine-original-native-ack", nativeACK)
-    await fixture.until(() => fixture.technicalRows().filter(row => row.sessionID === frame.sessionID).every(row => row.nativeClaim === null && row.inboxCount === 0))
+    // A released code wake can complete cleanup itself, removing the carrier before the Check.
+    await fixture.until(() => fixture.technicalRows().filter(row => row.sessionID === frame.sessionID)
+      .every(row => !row.sessionPresent || row.nativeClaim === null && row.inboxCount === 0))
     await fixture.control(id, "check", { allowPending: true }) // Explicit fresh human Check; never a blind original resend.
     const clean = await waitCleanup(fixture, id, deleting ? "deleted" : "stopped", "current-preparation-final-cleanup")
     if (deleting) { assert.equal(clean.state.document.requestID, originalControl.requestID); assert.equal(clean.state.document.expectedRevision, originalControl.expectedRevision) }

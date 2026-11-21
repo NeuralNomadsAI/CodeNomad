@@ -19,6 +19,8 @@ import { parseNativeMissionScheduleClaim } from "./native-mission-schedule-wake-
 import { nativeScheduleClaimAbandoned, receivingNativeScheduleWake } from "./native-mission-schedule-wake-flight"
 import type { NativeScheduleArtifacts } from "./native-schedule-installation"
 import type { NativeScheduleCalendarOwner } from "./native-schedule-owner"
+import { missionCodeWakeProof } from "./native-mission-automation"
+import { admitNativeMissionScheduleCodeWake } from "./native-mission-schedule-code-admission"
 
 const text = z.string().min(1).max(4096)
 const inputSchema = z.object({ registrationFile: text, incarnation: z.object({ id: text, pid: z.number().int().positive(), url: text, version: text.optional() }).strict(),
@@ -101,7 +103,7 @@ async function receive(mode: "wake" | "status", input: Input, entry: Entry,
  * initiated transport. No setup/context graph supplies private Session/Schedule. */
 export function nativeMissionScheduleWakeHandlers(ctx: Plugin.Context, _artifacts?: NativeScheduleArtifacts) {
   const invocation = nativeInvocation()
-  const handler = (mode: "wake" | "status", raw: unknown) => Effect.scoped(invocation.capture(Effect.gen(function* () {
+  const handler = (mode: "wake" | "status" | "admit", raw: unknown) => Effect.scoped(invocation.capture(Effect.gen(function* () {
     const input = inputSchema.parse(raw); assertNativeScheduleWake(input.wake)
     if (input.incarnation.pid !== process.pid) throw new Error("schedule-wake-process")
     const processCurrent = nativeScheduleIncarnationGuard(input.registrationFile, input.incarnation)
@@ -122,6 +124,12 @@ export function nativeMissionScheduleWakeHandlers(ctx: Plugin.Context, _artifact
       && item.scheduleID === input.wake.scheduleID && item.timeGeneration === input.wake.generation)
     if (mapped && mapped.highWater >= input.wake.run) return { key: nativeScheduleWakeKey(input.wake), state: "applied" as const }
     const { owner, native, store } = yield* acquireNativeMissionScheduleOwner(ctx, doc, run, current)
+    if (mode === "admit") {
+      const descriptor = doc.calendarOwner.slots.find(item => item.sessionID === input.wake.sessionID)
+      if (!descriptor) throw new Error("schedule-wake-current-slot")
+      return yield* Effect.tryPromise(() => admitNativeMissionScheduleCodeWake(input.wake, { store, current,
+        row: () => native.get({ missionID: doc.id, descriptor }, input.wake.scheduleID, current) }))
+    }
     const reader = yield* acquireNativeMissionScheduleWakeReader(ctx, run)
     const runtime = yield* acquireNativeScheduledPassageRuntime(ctx, run, { incarnation: input.incarnation.id })
     const controller = new AbortController()
@@ -136,13 +144,13 @@ export function nativeMissionScheduleWakeHandlers(ctx: Plugin.Context, _artifact
       const descriptor = binding.document.calendarOwner!.slots.find(item => item.sessionID === input.wake.sessionID)
       if (!descriptor) throw new Error("schedule-wake-current-slot")
       const info = await native.get({ missionID: doc.id, descriptor }, input.wake.scheduleID, current)
-      const wake = await reader.message(input.wake)
-      if (!info || info.runCount < input.wake.run || !wake) throw new Error("schedule-wake-proof")
+      const wake = info?.code ? missionCodeWakeProof(binding.calendar, info, input.wake.run) : await reader.message(input.wake)
+      if (!info || !info.code && info.runCount < input.wake.run || !wake) throw new Error("schedule-wake-proof")
       current(); return { binding, wake }
     }
     return yield* Effect.tryPromise(() => receiveNativeMissionScheduleWake(mode, input, { current, signal: controller.signal, consumed: () => { consumed = true } }, { store, owner, runtime, read,
       claim: async () => parseNativeMissionScheduleClaim(await run(ctx.storage.get(nativeScheduleClaimKey(ctx, doc.id))), doc.id),
       close: locked => closeNativeScheduleCarrierClaimLocked(ctx, doc.id, run, current, locked) }))
   })).pipe(Effect.orDie))
-  return { wake: (raw: unknown) => handler("wake", raw), status: (raw: unknown) => handler("status", raw) }
+  return { wake: (raw: unknown) => handler("wake", raw), status: (raw: unknown) => handler("status", raw), admit: (raw: unknown) => handler("admit", raw) }
 }

@@ -23,7 +23,7 @@ export async function ownerFixture(t: test.TestContext, timing: import("../../mi
   t.after(() => rmSync(directory, { recursive: true, force: true }))
   const values = new Map<string, MissionJsonValue>(), sessions = new Map<string, any>(), calendars = new Map<string, NativeScheduleCalendarInfo>()
   const calls: string[] = [], blocked = new Set<string>()
-  let serial = 0, lost: boolean | "principal" | "reconciliation" = false, absentCreate = false, allowResume = false
+  let serial = 0, lost: boolean | "principal" | "reconciliation" = false, absentCreate = false, allowResume = false, codeRows = false
   const current = () => true as const, now = Date.now()
   let clock = now, auxiliaryDelay = 0
   const store = new NativeMissionDocumentStore({ get: async key => structuredClone(values.get(key)), compareAndSet: async (key, value, expected, guard) => {
@@ -62,7 +62,7 @@ export async function ownerFixture(t: test.TestContext, timing: import("../../mi
       if (absentCreate) { absentCreate = false; throw new Error("Dispatched create outcome unknown") }
       const info: NativeScheduleCalendarInfo = { id: `sch_${++serial}`, sessionID: target.descriptor.sessionID, name: target.descriptor.name,
         when: structuredClone(target.descriptor.when), endsAt: target.descriptor.endsAt, status: "active", runCount: 0, remainingRuns: null,
-        createdAt: target.descriptor.anchorAt!, nextDueAt: previewMissionCalendar({ ...target.descriptor, anchorAt: target.descriptor.anchorAt! }, target.descriptor.anchorAt!, 1)[0] ?? null }
+        createdAt: target.descriptor.anchorAt!, code: codeRows, nextDueAt: previewMissionCalendar({ ...target.descriptor, anchorAt: target.descriptor.anchorAt! }, target.descriptor.anchorAt!, 1)[0] ?? null }
       if (info.nextDueAt === null) throw new Error("The schedule ends before it first fires")
       calendars.set(info.id, info)
       if (lost === true || lost === target.descriptor.role) { lost = false; throw new Error("Create ACK lost") }
@@ -91,5 +91,6 @@ export async function ownerFixture(t: test.TestContext, timing: import("../../mi
   }
   return { owner, makeOwner, store, native, ctx, directory, values, sessions, calendars, calls, blocked, configuration, installation, read, control, current, now,
     advance: (ms: number) => { clock += ms }, delayAuxiliary: (ms: number) => { auxiliaryDelay = ms },
-    loseCreateACK: (role?: "principal" | "reconciliation") => { lost = role ?? true }, loseCreateWithoutCandidate: () => { absentCreate = true }, allowPendingResume: () => { allowResume = true } }
+    loseCreateACK: (role?: "principal" | "reconciliation") => { lost = role ?? true }, loseCreateWithoutCandidate: () => { absentCreate = true }, allowPendingResume: () => { allowResume = true },
+    createCodeRows: () => { codeRows = true } }
 }

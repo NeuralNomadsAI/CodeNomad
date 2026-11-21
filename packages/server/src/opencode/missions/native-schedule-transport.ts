@@ -63,7 +63,7 @@ export async function boundedNativeScheduleResponse(response: Response, signal: 
  * mapping/Location authorization and status reconciliation across plugin reloads. */
 export function createNativeScheduleTransport(overrides: Partial<Dependencies> = {}) {
   const deps: Dependencies = { discover: Service.discover, headers: Service.headers, fetch: globalThis.fetch, ...overrides }
-  const invoke = async (mode: "wake" | "status", request: Request, claim?: Mutation["claim"]): Promise<NativeScheduleTransportResult> => {
+  const invoke = async (mode: "wake" | "status" | "admit", request: Request, claim?: Mutation["claim"]): Promise<NativeScheduleTransportResult> => {
     // Snapshot mutable caller inputs before the first await.
     const { registrationFile, directory } = request, wake = nativeScheduleWakeIdentity({ ...request.wake })
     const preflight = request.preflight && { ...request.preflight }
@@ -146,5 +146,6 @@ export function createNativeScheduleTransport(overrides: Partial<Dependencies> =
     try { return await Promise.race([operation, aborted]) }
     finally { clearTimeout(timer); signal.removeEventListener("abort", onAbort) }
   }
-  return { wake: (request: Mutation) => invoke("wake", request, request.claim), status: (request: Request) => invoke("status", request) }
+  return { wake: (request: Mutation) => invoke("wake", request, request.claim), status: (request: Request) => invoke("status", request),
+    admit: (request: Request) => invoke("admit", request) }
 }

@@ -8,14 +8,11 @@ import { nativeInvocation } from "./native-invocation"
 import { acquireNativeMissionDocumentStore } from "./native-mission-document-storage"
 import { acquireNativeMissionScheduleWakeReader } from "./native-mission-schedule-wake-reader"
 import { nativeScheduleCarrierWakes } from "./native-schedule-carrier"
-import { assertNativeScheduleCarrierArtifacts, readNativeScheduleCarrierOwnership, claimNativeScheduleCarrierWake,
-  nativeScheduleClaimKey, type NativeScheduleCarrierBinding } from "./native-schedule-carrier-binding"
-import { createNativeScheduleTransport } from "./native-schedule-transport"
+import { assertNativeScheduleCarrierArtifacts, readNativeScheduleCarrierOwnership, nativeScheduleClaimKey } from "./native-schedule-carrier-binding"
 import { nativeScheduleWakeIdentity, type NativeScheduleWake } from "./native-schedule-transport-contract"
-import { assertNativeSchedulePreflight } from "./native-mission-schedule-preflight"
 import { missionWakeMetadata } from "./native-mission-automation"
-import { dispatchNativeMissionScheduleWake, nativeMissionSchedulePriorHeld, parseNativeMissionScheduleClaim,
-  recoverNativeMissionScheduleClaim } from "./native-mission-schedule-wake-dispatch"
+import { parseNativeMissionScheduleClaim, recoverNativeMissionScheduleClaim } from "./native-mission-schedule-wake-dispatch"
+import { nativeMissionScheduleDispatcher } from "./native-mission-schedule-wake-dispatcher"
 
 /** One local technical turn only retains public facade closures between HTTP
  * calls. Every native preflight/wake is reacquired by the receiving RPC. */
@@ -26,7 +23,7 @@ export function nativeMissionScheduleWakeContext(ctx: Plugin.Context, event: Ses
     const ownership = yield* readNativeScheduleCarrierOwnership(ctx, event.sessionID), original = ownership?.document
     if (!ownership?.verified || !original?.calendarOwner) throw new Error("schedule-context-owner")
     const store = yield* acquireNativeMissionDocumentStore(ctx, run), reader = yield* acquireNativeMissionScheduleWakeReader(ctx, run)
-    const transport = createNativeScheduleTransport(), abort = new AbortController()
+    const abort = new AbortController()
     const timer = setTimeout(() => abort.abort(), 8000)
     yield* Effect.addFinalizer(() => Effect.sync(() => { clearTimeout(timer); abort.abort() }))
     const current = (): true => {
@@ -47,32 +44,7 @@ export function nativeMissionScheduleWakeContext(ctx: Plugin.Context, event: Ses
       if (doc.pending || doc.synchronization || doc.calendarOwner?.operation.pending || doc.blocked || doc.deletion || doc.state !== "running") return
       await locked.change(doc.id, doc.revision, current, value => missionDocumentChanges.prepareWake(value, proof))
     })
-    const dispatch = async (wake: NativeScheduleWake) => {
-      current()
-      return dispatchNativeMissionScheduleWake({ wake, registrationFile: original.calendarOwner!.installation.registrationFile,
-        directory: ctx.location.directory, signal: abort.signal }, { transport, current,
-        held: async () => {
-          const doc = await fresh()
-          if (!doc) return true
-          return nativeMissionSchedulePriorHeld(parseNativeMissionScheduleClaim(await run(ctx.storage.get(nativeScheduleClaimKey(ctx, doc.id))), doc.id), doc, wake)
-        },
-        claim: async (incarnation, preflight, retry) => {
-          assertNativeSchedulePreflight(preflight, wake, incarnation.id)
-          const readAuxiliaryIntent = async (): Promise<NativeScheduleCarrierBinding | undefined> => {
-            assertNativeSchedulePreflight(preflight, wake, incarnation.id); current()
-            const owned = await run(readNativeScheduleCarrierOwnership(ctx, wake.sessionID)), doc = owned?.document
-            const slot = doc?.calendarOwner?.slots.find(item => item.role === "reconciliation" && item.sessionID === wake.sessionID
-              && item.timeGeneration === wake.generation && item.creation !== "prepared" && !item.ambiguous.length
-              && (item.scheduleID === null || item.scheduleID === wake.scheduleID))
-            if (!owned?.verified || !doc || doc.timeGeneration !== wake.generation || !slot) return undefined
-            // The positive, signed own-process preflight validated the exact row
-            // and message. Only plain current intent data crosses this boundary.
-            return { document: doc, calendar: doc.calendars.find(item => item.sessionID === wake.sessionID) ?? { role: "reconciliation", slot: 0,
-              timeGeneration: wake.generation, sessionID: wake.sessionID, scheduleID: wake.scheduleID, highWater: 0, pendingWake: null, wakePreparing: null } }
-          }
-          return claimNativeScheduleCarrierWake(ctx, wake, incarnation, run, current, readAuxiliaryIntent, retry)
-        } })
-    }
+    const { dispatch } = nativeMissionScheduleDispatcher(ctx, original, { run, current, signal: abort.signal, fresh })
     const descriptor = original.calendarOwner.slots.find(item => item.sessionID === event.sessionID && item.timeGeneration === original.timeGeneration)
     if (!descriptor) return // Retiring carriers stay local, without autonomous admission.
     const calendar = original.calendars.find(item => item.sessionID === event.sessionID)
@@ -114,7 +86,8 @@ export function nativeMissionScheduleWakeContext(ctx: Plugin.Context, event: Ses
           const run = principal.wakePreparing?.run ?? principal.highWater + 1
           const wake = { missionID: doc!.id, generation: principal.timeGeneration, sessionID: principal.sessionID,
             scheduleID: principal.scheduleID, run, messageID: `msg_${principal.scheduleID}_${run}` }
-          const proof = await reader.message(wake)
+          // A code principal's preparation is its only proof; the receiver checks either kind.
+          const proof = principal.wakePreparing ?? await reader.message(wake)
           if (!proof) continue
           await prepare(wake, proof)
           await dispatch(wake)

@@ -7,6 +7,7 @@ import { registerNativeScheduleProvider } from "./native-schedule-provider-regis
 import { NativeScheduleTransportRpc } from "./native-schedule-transport-contract"
 import { nativeMissionScheduleWakeHandlers } from "./native-mission-schedule-wake-rpc"
 import { registerNativeMissionScheduleCarrierHooks } from "./native-mission-schedule-wake-hooks"
+import { registerNativeMissionScheduleCodeWake } from "./native-mission-schedule-code-wake"
 import type { NativeScheduleArtifacts } from "./native-schedule-installation"
 import type { NativeDocumentBusiness } from "./desktop-plugin"
 import { registerNativeMissionScheduleIdleHints } from "./native-mission-schedule-wake-idle"
@@ -23,6 +24,7 @@ export const registerNativeMissionScheduleRuntime = Effect.fn("missions.register
   yield* registerNativeMissionScheduleCarrierHooks(ctx, idle.remember)
   yield* registerScheduledChildInput(ctx)
   yield* ctx.rpc.register(Rpc.define(NativeScheduleTransportRpc), nativeMissionScheduleWakeHandlers(ctx, artifacts)).pipe(Effect.orDie)
+  yield* registerNativeMissionScheduleCodeWake(ctx)
   yield* registerNativeMissionScheduleMaintenance(ctx)
   // One registration, shared by persistent native tool routing and preparation.
   const business: NativeDocumentBusiness = yield* registerNativeScheduledBusinessRpc(ctx, artifacts, invocation)
