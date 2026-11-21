@@ -2,6 +2,7 @@
 //! its CLI (`daemon`, `launch`) and admitted (`admission`), bounded native reads and the workspace
 //! relay (`proxy`) with its session-list scope (`scope`), the executable's update status (`update`).
 pub mod admission;
+mod controls;
 pub mod daemon;
 pub mod install;
 pub mod launch;

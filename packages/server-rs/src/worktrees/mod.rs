@@ -52,8 +52,7 @@ pub async fn root_only(workspace: &Workspace) -> Result<Option<bool>, Error> {
 }
 
 pub async fn exact_root_supported(app: &App, workspace: &Workspace) -> Result<bool, Error> {
-    Ok(root_only(workspace).await?.is_some()
-        || crate::worktrees::linked::catalogue(app, workspace, false).await.is_ok())
+    Ok(root_only(workspace).await?.is_some() || inventory::root_supported(app, workspace).await)
 }
 
 pub async fn native_project(app: &App, workspace: &Workspace, project: &str) -> Result<bool, Error> {

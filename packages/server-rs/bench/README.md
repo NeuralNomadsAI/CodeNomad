@@ -37,6 +37,7 @@ node roundtrip.mjs $OpenCode
 | `http` | Linked worktrees: creation, session move, evacuation on deletion, refusal of a modified checkout; owned locations and VCS reads. |
 | `files` | Files and Git on a rich repository (rename, gitlink, conflict, CRLF, large and binary files), mutations, refusals, watches. |
 | `contract` | Session placement header, foreign sessions, outline in a worktree, `pending-requests`. |
+| `agent-controls` | Native permission decisions and durable reasons, invalid and stale requests, typed Form replies/cancellation, foreign-session refusal, and interruption of a held synthetic response followed by an idle interruption. |
 | `depth` | `subagent-depth` on subfolders, linked worktree, junctions, written documents, worktree deletion fence. |
 | `mission-permissions` | Supervised creation and exact receipt recovery; direct child and fork provenance, additive background refresh, owned fork removal and unowned fork refusal. |
 | `worktree-gone` | Registered worktree whose `.git` or administrative folder is gone. |

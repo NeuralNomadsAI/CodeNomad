@@ -88,6 +88,7 @@ async function harness(
   let invalidations = 0
   const client = {
     rpc: () => ({ scheduleCarrierRead: async () => { throw { type: "rpc.method_not_found" } } }),
+    permission: { get: async ({ sessionID, requestID }: { sessionID: string; requestID: string }) => ({ id: requestID, sessionID, action: "read", resources: [] }) },
     project: {
       list: async () => [
         { id: "owned-project", canonical: serviceDirectory, time: { created: 1, updated: 1 }, sandboxes: [sessionDirectory, "/other"] },
@@ -132,8 +133,9 @@ async function harness(
       },
     },
   } as unknown as OpenCodeClient
+  const workspace = { id: "workspace", path: workspacePath } as never
   const manager: InstanceProxyWorkspaceManager = {
-    get: () => ({ id: "workspace", path: workspacePath }) as never,
+    get: () => workspace,
     getSharedServiceEndpoint: async () => ({ url: `http://127.0.0.1:${address.port}` }),
     getSharedServiceConnection: async () => ({
       endpoint: { url: `http://127.0.0.1:${address.port}` }, client,

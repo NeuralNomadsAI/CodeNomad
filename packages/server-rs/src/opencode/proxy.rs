@@ -59,7 +59,9 @@ fn guarded(route: &str, method: &Method) -> bool {
     (*method == Method::POST && route == "/api/session")
         || (*method == Method::POST
             && route.starts_with("/api/session/")
-            && ["/prompt", "/agent", "/model", "/fork"].iter().any(|suffix| route.ends_with(suffix)))
+            && ["/prompt", "/agent", "/model", "/fork", "/interrupt"].iter().any(|suffix| route.ends_with(suffix)))
+        || super::controls::permission(route, method).is_some()
+        || super::controls::form_cancel(route, method).is_some()
         || (*method == Method::PATCH && route.strip_prefix("/api/session/").is_some_and(|r| !r.contains('/')))
         || (matches!(*method, Method::PUT | Method::DELETE)
             && route.starts_with("/api/experimental/session/")
@@ -147,6 +149,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let route = safe_route(suffix).ok_or_else(invalid)?;
     let route = route.trim_end_matches('/');
     let form = human_answer::form_reply(route, &head.method);
+    let permission = super::controls::permission(route, &head.method);
+    let cancel_form = super::controls::form_cancel(route, &head.method);
     if !ALLOWED.iter().any(|(m, pat)| *m == head.method.as_str() && pat.is_match(route)) {
         return Err(error(Status::FORBIDDEN, "OpenCode route is not available through a workspace"));
     }
@@ -324,6 +328,10 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             &["before"]
         } else if permissions_patch {
             &["permissions"]
+        } else if permission.is_some() {
+            &["decision", "message"]
+        } else if route.ends_with("/interrupt") {
+            &["resume"]
         } else if form.is_some() {
             &["answer"]
         } else if route.ends_with("/agent") {
@@ -336,7 +344,22 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             &["text", "delivery", "id"]
         };
         if data.keys().any(|key| !fields.contains(&key.as_str())) {
+            if permission.is_some() {
+                return Err(error(Status::BAD_REQUEST, "Invalid permission decision"));
+            }
+            if route.ends_with("/interrupt") {
+                return Err(error(Status::BAD_REQUEST, "Invalid interruption request"));
+            }
+            if form.is_some() {
+                return Err(error(Status::BAD_REQUEST, "Invalid question reply"));
+            }
             return Ok(unavailable());
+        }
+        if permission.is_some() && !super::controls::valid_reply(&Value::Object(data.clone())) {
+            return Err(error(Status::BAD_REQUEST, "Invalid permission decision"));
+        }
+        if route.ends_with("/interrupt") && data.get("resume").is_some_and(|v| !v.is_boolean()) {
+            return Err(error(Status::BAD_REQUEST, "Invalid interruption request"));
         }
         if create {
             if !crate::worktrees::exact_root_supported(&app, &workspace).await? {
@@ -349,6 +372,15 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             }
         }
         input = Some(Value::Object(data));
+    }
+    if head.method == Method::POST
+        && route.ends_with("/interrupt")
+        && !super::controls::valid_interrupt(input.as_ref().ok_or_else(upstream_error)?)
+    {
+        return Err(error(Status::BAD_REQUEST, "Invalid interruption request"));
+    }
+    if let Some(request) = form.map(str::to_owned).or(cancel_form) {
+        super::controls::pending_form(&app, &endpoint, session.ok_or_else(upstream_error)?, &request).await?;
     }
     let _rules_lock = if permissions_patch {
         let id = session.ok_or_else(upstream_error)?;
@@ -438,6 +470,41 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             return Err(upstream_error());
         }
     }
+    let permission_snapshot = if let Some(request) = &permission {
+        let session = session.ok_or_else(upstream_error)?;
+        let snapshot = super::controls::pending(&app, &endpoint, session, request).await?;
+        let fresh = super::session_record_at(&app, &endpoint, session).await?;
+        if actual
+            .as_ref()
+            .is_none_or(|prior| prior["location"] != fresh["location"] || prior["projectID"] != fresh["projectID"])
+        {
+            return Err(foreign());
+        }
+        Some(snapshot)
+    } else {
+        None
+    };
+    if let Some(request) = permission_snapshot.as_ref() {
+        crate::sessions::receipts::capture(&app, request).await?;
+    }
+    if permission.is_some()
+        || form.is_some()
+        || super::controls::form_cancel(route, &head.method).is_some()
+        || route.ends_with("/interrupt")
+    {
+        let fresh = super::session_record_at(&app, &endpoint, session.ok_or_else(upstream_error)?).await?;
+        if actual.as_ref().is_none_or(|prior| {
+            ["id", "location", "projectID", "parentID", "fork"].iter().any(|key| prior[*key] != fresh[*key])
+                || prior["time"]["created"] != fresh["time"]["created"]
+        }) {
+            return Err(foreign());
+        }
+        app.workspace(id)?;
+        if !app.native.endpoint().is_some_and(|current| std::sync::Arc::ptr_eq(&current, &endpoint)) {
+            return Err(upstream_error());
+        }
+    }
+    let permission_input = permission_snapshot.as_ref().and(input.clone());
     let mut upstream = app.native.client.request(head.method, target).basic_auth("opencode", Some(&endpoint.password));
     if let Some(accept) = head.headers.get(header::ACCEPT) {
         upstream = upstream.header(header::ACCEPT, accept);
@@ -447,6 +514,13 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     }
     principal.live()?;
     let response = upstream.send().await.map_err(|_| upstream_error())?;
+    if response.status().is_success() {
+        if let (Some(snapshot), Some(input)) = (permission_snapshot, permission_input) {
+            if let Err(error) = crate::sessions::receipts::confirmed(&app, &workspace, &snapshot, &input).await {
+                eprintln!("Permission confirmed; receipt persistence failed: {}", error.0);
+            }
+        }
+    }
     if fork && response.status().is_success() {
         let builder = relayed(&response);
         let native = read_json(response, 2 * 1024 * 1024).await.map_err(|_| upstream_error())?;

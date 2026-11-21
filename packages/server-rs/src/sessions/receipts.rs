@@ -45,6 +45,8 @@ struct Receipt {
     decision: String,
     origin: String,
     resolved_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
 }
 #[derive(Serialize, Deserialize)]
 struct Record {
@@ -52,6 +54,7 @@ struct Record {
     #[serde(skip_serializing_if = "Option::is_none")]
     receipt: Option<Receipt>,
 }
+static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn hash(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))
@@ -140,6 +143,7 @@ pub async fn observe(app: &App, event: &Value, recipients: &[Workspace]) -> Resu
     let data = &event["data"];
     let Some(session) = id(&data["sessionID"]) else { return Ok(()) };
     let scope = scope(app).await?;
+    let _serial = SERIAL.lock().await;
     let folder = dir(app, &scope, session);
     if kind == "session.deleted" {
         return match fs::remove_dir_all(folder) {
@@ -175,6 +179,7 @@ pub async fn observe(app: &App, event: &Value, recipients: &[Workspace]) -> Resu
                 request: saved.request.clone(),
                 decision: decision.into(),
                 origin: "native".into(),
+                reason: None,
                 resolved_at: event["created"].as_u64().unwrap_or_else(|| chrono::Utc::now().timestamp_millis() as u64),
             });
             persist(&file, &saved)?;
@@ -190,6 +195,47 @@ pub async fn observe(app: &App, event: &Value, recipients: &[Workspace]) -> Resu
             }
         }
     }
+    Ok(())
+}
+
+/// Capture the authoritative pending request before an explicit reply.
+pub async fn capture(app: &App, value: &Value) -> Result<(), Error> {
+    let request = snapshot(value).ok_or_else(|| error(Status::BAD_GATEWAY, "Invalid permission snapshot"))?;
+    let scope = scope(app).await?;
+    let _serial = SERIAL.lock().await;
+    let file = dir(app, &scope, &request.session_id).join(format!("{}.json", hash(&request.request_id)));
+    if read(&file)?.is_none() {
+        persist(&file, &Record { request, receipt: None })?;
+    }
+    Ok(())
+}
+/// A confirmed explicit reply upgrades only the same native decision, preserving cascades.
+pub async fn confirmed(app: &App, workspace: &Workspace, request: &Value, input: &Value) -> Result<(), Error> {
+    let request = snapshot(request).ok_or_else(|| error(Status::BAD_GATEWAY, "Invalid permission snapshot"))?;
+    let decision = input["decision"]
+        .as_str()
+        .filter(|v| matches!(*v, "once" | "always" | "reject"))
+        .ok_or_else(|| error(Status::BAD_REQUEST, "Invalid permission decision"))?;
+    let scope = scope(app).await?;
+    let _serial = SERIAL.lock().await;
+    let file = dir(app, &scope, &request.session_id).join(format!("{}.json", hash(&request.request_id)));
+    let mut saved = read(&file)?.unwrap_or(Record { request, receipt: None });
+    if saved.receipt.as_ref().is_some_and(|r| r.origin != "native" || r.decision != decision) {
+        return Ok(());
+    }
+    let at =
+        saved.receipt.as_ref().map(|r| r.resolved_at).unwrap_or_else(|| chrono::Utc::now().timestamp_millis() as u64);
+    saved.receipt = Some(Receipt {
+        request: saved.request.clone(),
+        decision: decision.into(),
+        origin: "codenomad".into(),
+        resolved_at: at,
+        reason: text(&input["message"]),
+    });
+    persist(&file, &saved)?;
+    app.emit(
+        json!({"type":"permission.receiptsChanged","instanceId":workspace.id,"sessionId":saved.request.session_id}),
+    );
     Ok(())
 }
 
