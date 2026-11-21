@@ -33,8 +33,8 @@ const items = [
   make("idle-a", 8, { idleSince: 5 }),
   make("interrupted-b", 7, interrupted),
   make("working-c", 6, { status: "working" }),
-  make("permission-d", 5, { pendingPermission: true }),
-  make("question-d", 4.5, { pendingForm: true }),
+  make("permission-d", 5),
+  make("question-d", 4.5),
   make("idle-e", 4, { idleSince: 5 }),
   make("parent-f", 3),
   make("f-1", 3, { idleSince: 5 }, "parent-f"),
@@ -66,6 +66,14 @@ setSessions(previous => new Map(previous).set(id, new Map(items.map(item => [ite
 setProviders(prev => new Map(prev).set(id, [{ id: "fixture", name: "Fixture", models: [{ id: "fixture", name: "Fixture", providerId: "fixture", limit: { context: 10000, output: 1000 }, cost: { input: 0, output: 0 } }] }]))
 setSessionPage(id, roots, false, true)
 setActiveSession(id, "viewed")
+;(sseManager as any).handleEvent(id, {
+  id: "evt_clear_permission", type: "permission.asked", created: ++time, location: { directory: "/repo" },
+  data: { id: "fixture-permission", sessionID: "permission-d", action: "read", resources: ["fixture.txt"] },
+})
+;(sseManager as any).handleEvent(id, {
+  id: "evt_clear_form", type: "form.created", created: ++time, location: { directory: "/repo" },
+  data: { form: { id: "fixture-form", sessionID: "question-d", title: "Question", fields: [{ type: "string", key: "answer" }] } },
+})
 const [active, setActive] = createSignal("viewed")
 const selected: string[] = []
 function Fixture() {
