@@ -72,11 +72,11 @@ test("WebKit reader finds composed text and accepts shadow descendants without a
     await page.waitForFunction(() => (document.querySelector("iframe")!.contentDocument!.body.dataset.clicked === "true"))
     await performAction(session, { kind: "scroll", target: { ref: "frame", backendNodeId: frame.node }, direction: "down", amount: 200 })
     await page.waitForFunction(() => document.querySelector("iframe")!.contentWindow!.scrollY > 0)
-    // The shared CDP program accepts same-origin document ancestry and rejects unrelated hits.
+    // A hit inside the frame reaches the frame itself, but not an element outside it.
     assert.deepEqual(await page.evaluate(source => {
       const frame = document.querySelector("iframe")!, receives = new Function(`return (${source})`)()
       return [receives.call(frame, frame.contentDocument!.body), receives.call(document.body, frame.contentDocument!.body), typeof receives.call(frame, document.body)]
-    }, declaration("receives", false)), [null, null, "string"])
+    }, declaration("receives", false)), [null, 'body "Frame phrase"', "string"])
     await page.locator("iframe").evaluate(frame => {
       frame.setAttribute("aria-disabled", "true")
       frame.contentDocument!.body.insertAdjacentHTML("beforeend", '<input aria-label="Frame disabled field">')
