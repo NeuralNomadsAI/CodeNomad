@@ -732,17 +732,18 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
         }
         registered = true
         nativeVisible = false
+        // From here every action reaches the target directly, in request order: replay
+        // the latest pending navigation first, unless the registered URL already is it.
+        tauriRegistered = true
+        const pending = pendingTauriNavigation
+        pendingTauriNavigation = undefined
+        const replay = pending ? (pending.url === target ? undefined : pending)
+          : nativeTarget() === target ? undefined : { url: nativeTarget(), logicalAddress: undefined }
+        if (replay) void controlTauriBrowserTarget(registrationId, "navigate", replay.url, replay.logicalAddress).catch(reportNativeError)
         // Registration starts hidden; re-read overlays and geometry before reveal.
         await restoreEmulation(registrationId)
         void captureHistory()
         syncErrorReported = false
-        // Navigations requested until now stay pending, so the latest one is replayed
-        // last; the registered URL already started loading.
-        const pending = pendingTauriNavigation
-        pendingTauriNavigation = undefined
-        tauriRegistered = true
-        if (pending) { if (pending.url !== target) await controlTauriBrowserTarget(registrationId, "navigate", pending.url, pending.logicalAddress) }
-        else if (nativeTarget() !== target) await controlTauriBrowserTarget(registrationId, "navigate", nativeTarget())
         syncBounds()
       }).catch(reportSyncError)
     }
