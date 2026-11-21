@@ -9,7 +9,7 @@ import type { Session } from "../types/session.ts"
 import { addInstance, instances, refreshVolatileInstanceState, removeInstance, updateInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { fetchCommands, getCommands } from "./commands.ts"
-import { beginMessageHistoryTraversal, deleteSession, fetchAgents, fetchProviders, fetchSessions, forkSession, hasMoreMessages, hydrateRestoredSessionChain, invalidateMessageHistoryTraversal, isLatestMessageWindow, loadAllSessions, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadMoreSessions, loadNewerMessageWindow, loadOldestMessageWindow, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
+import { beginMessageHistoryTraversal, deleteSession, fetchAgents, fetchProviders, fetchSessions, forkSession, hasMoreMessages, hydrateRestoredSessionChain, invalidateMessageHistoryTraversal, isLatestMessageWindow, loadAllSessions, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadMoreSessions, loadNewerMessageWindow, loadOldestMessageWindow, refreshSessionRuntimeStatus, removeSessionRuntimeState, searchSessions } from "./session-api.ts"
 import { handleNativeSessionEvent, handleSessionUpdate } from "./session-events.ts"
 import { openListedSession } from "./history-search-sessions.ts"
 import { liveVoiceAgent } from "./live-voice-agent.ts"
@@ -47,6 +47,13 @@ function holdEventFrame(t: TestContext) {
     serverEvents.flushPendingBatch()
     Reflect.deleteProperty(globalThis, "requestAnimationFrame")
   })
+}
+
+function queueTextDelta(instanceId: string, sessionId: string) {
+  serverEvents["queueBatch"]([{ type: "instance.event", instanceId, event: {
+    id: "delta", type: "session.text.delta", created: 2, location: { directory: "/work" },
+    data: { sessionID: sessionId, assistantMessageID: "msg_live", ordinal: 0, delta: "live" },
+  } }])
 }
 
 function session(instanceId: string, id: string): Session {
@@ -1274,6 +1281,58 @@ describe("session request authority", () => {
       assert.equal(sessions().get(instanceId)?.has(sessionId) ?? false, false, "the deletion is visible before paint")
       assert.deepEqual({ opened: await opening, prepared }, { opened: false, prepared: 0 })
     } finally {
+      cleanup()
+    }
+  })
+
+  for (const status of ["idle", "working"] as const) {
+    it(`preserves buffered work over a stale activity reply when the session was ${status}`, async t => {
+      const instanceId = `runtime-delta-${status}`, sessionId = "session"
+      const { client, cleanup } = setup(instanceId)
+      const active = deferred<Record<string, never>>()
+      const dispatched = deferred<void>()
+      const target = { ...session(instanceId, sessionId), status }
+      setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, target]])))
+      client.session.get = async () => apiSession(sessionId)
+      let reads = 0
+      client.session.active = async () => {
+        // An initially working row needs an outcome read and final activity check.
+        if (++reads === 1 && status === "working") return {}
+        dispatched.resolve()
+        return active.promise
+      }
+      holdEventFrame(t)
+      try {
+        const request = refreshSessionRuntimeStatus(instanceId)
+        await dispatched.promise
+        queueTextDelta(instanceId, sessionId)
+        assert.equal(sessions().get(instanceId)?.get(sessionId), target, "the delta is still queued")
+        active.resolve({})
+        await request
+        assert.equal(sessions().get(instanceId)?.get(sessionId)?.status, "working")
+      } finally {
+        destroyOpenCodeData(instanceId)
+        cleanup()
+      }
+    })
+  }
+
+  it("voice reports running when a text delta is queued before the frame", async t => {
+    const instanceId = "voice-buffered-status", sessionId = "session"
+    const { cleanup } = setup(instanceId)
+    const target = session(instanceId, sessionId)
+    setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, target]])))
+    holdEventFrame(t)
+    try {
+      const voice = liveVoiceAgent({ instance: instances().get(instanceId)!, session: target, key: "fixture" },
+        { canSend: () => true, followUp: () => "queue" })
+      const read = () => voice({ name: "get_session_status", arguments: {} }, () => true)
+      assert.deepEqual(await read(), { title: sessionId, status: "idle" })
+      queueTextDelta(instanceId, sessionId)
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.status, "idle", "the delta is still queued")
+      assert.deepEqual(await read(), { title: sessionId, status: "running" })
+    } finally {
+      destroyOpenCodeData(instanceId)
       cleanup()
     }
   })

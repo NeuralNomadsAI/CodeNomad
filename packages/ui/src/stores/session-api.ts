@@ -96,7 +96,7 @@ const MAX_SESSION_LIST_PAGES = 1_000
 import { getInstanceMetadata } from "./instance-metadata"
 import {
   captureSessionPlacementEvidence, clearPendingSessionMove, confirmSessionPlacement, confirmedSessionListDirectory, getPendingSessionMove, isSessionMovePending,
-  hasPendingSessionReturn, matchesSessionPlacement, retainConfirmedSessionPlacement, settleListedReturn,
+  hasPendingSessionReturn, matchesSessionPlacement, nativeSessionLifecycleGeneration, retainConfirmedSessionPlacement, settleListedReturn,
 } from "./session-events"
 import { idleReadAdmissionEpoch, mergeFetchedSessionRuntimeState, reconcileFetchedSessionRuntime } from "./session-generation-recovery"
 import { setPromptTranscript } from "./prompt-transcripts"
@@ -460,15 +460,18 @@ function withRuntimeStatus(session: Session, existingSession: Session | undefine
 }
 
 async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSignal) {
+  serverEvents.flushPendingBatch()
   const client = instances().get(instanceId)?.client
   if (!client) return
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
-  const captured = new Map(sessions().get(instanceId) ?? [])
+  const captured = Array.from(sessions().get(instanceId) ?? [], ([id, baseline]) => ({
+    id, baseline, lifecycle: nativeSessionLifecycleGeneration(instanceId, id),
+  }))
   let active = await getRootClient(instanceId).session.active(signal ? { signal } : undefined)
   if (signal?.aborted || !generationCurrent() || instances().get(instanceId)?.client !== client) return
   // An active-only map cannot explain a run that settled during an SSE gap.
   // Read outcomes only for inactive rows whose completion needs reconciling.
-  const outcomes = new Map(await Promise.all(Array.from(captured).flatMap(([id, baseline]) => {
+  const outcomes = new Map(await Promise.all(captured.flatMap(({ id, baseline }) => {
     if (Object.prototype.hasOwnProperty.call(active, id)
       || (baseline.status === "idle" && !baseline.generationRecovery)) return []
     return [(async () => {
@@ -485,24 +488,26 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
   // Outcome is historical. Work may have restarted while its read was pending,
   // including without a delivered SSE event; the later activity read wins.
   if (outcomes.size) active = await getRootClient(instanceId).session.active(signal ? { signal } : undefined)
+  // A buffered delta can advance activity without changing an already-working row.
+  serverEvents.flushPendingBatch()
   if (signal?.aborted || !generationCurrent() || instances().get(instanceId)?.client !== client) return
-  // A run the UI still believed working that the final activity read does not
-  // list settled during an SSE gap; its terminal event may never be delivered.
-  // The observation owes the transcript's settlement read.
   const settledWithoutEvent: string[] = []
-  for (const [id, baseline] of captured) {
-    if (baseline.status === "working" && !Object.prototype.hasOwnProperty.call(active, id)) settledWithoutEvent.push(id)
-  }
   setSessions(previous => {
     const next = new Map(previous)
     const current = new Map(next.get(instanceId) ?? [])
-    for (const [id, baseline] of captured) {
+    for (const { id, baseline, lifecycle } of captured) {
       const latest = current.get(id)
       if (!latest) continue
+      const nativeLifecycleChanged = nativeSessionLifecycleGeneration(instanceId, id) !== lifecycle
+      // A run that settled during an SSE gap owes the transcript's settlement read.
+      if (!nativeLifecycleChanged && baseline.status === "working" && !Object.prototype.hasOwnProperty.call(active, id)) {
+        settledWithoutEvent.push(id)
+      }
       const info = outcomes.get(id)
       // Activity can release an acknowledged send's brief delivery hold even
       // if the historical outcome could not be read. Keep the rest of the row.
       if (outcomes.has(id) && !info && !Object.prototype.hasOwnProperty.call(active, id)) {
+        if (nativeLifecycleChanged) continue
         const epoch = idleReadAdmissionEpoch(baseline, latest)
         if (epoch !== latest.idleReadAdmissionEpoch) {
           current.set(id, { ...latest, idleReadAdmissionEpoch: epoch })
@@ -510,7 +515,7 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
         continue
       }
       const fetched = withRuntimeStatus(info ? toClientSessionV2(instanceId, info, baseline) : baseline, baseline, active)
-      const merged = mergeFetchedSessionRuntimeState(fetched, baseline, latest)
+      const merged = mergeFetchedSessionRuntimeState(fetched, baseline, latest, false, nativeLifecycleChanged)
       if (merged) current.set(id, merged)
     }
     next.set(instanceId, current)

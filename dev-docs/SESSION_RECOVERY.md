@@ -41,7 +41,10 @@ Later authoritative list or liveness reads can therefore recognize the newer
 completion; rollback restores the prior epoch/boundary as well as outcome.
 
 The merge preserves activity/recovery/admission/outcome as an authority group
-when newer SSE/local authority supersedes the captured baseline. Deletion,
+when newer SSE/local authority supersedes the captured baseline. Liveness drains
+accepted events at both ends of the HTTP read and compares the native lifecycle
+generation, so streaming work retains authority even if the status value stays
+the same. Metadata keeps its own merge rules. Deletion,
 instance/client-generation and abort fences apply. Recovery never prompts,
 interrupts, updates a session or replays anything automatically.
 

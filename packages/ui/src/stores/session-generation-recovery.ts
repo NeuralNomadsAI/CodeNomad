@@ -83,8 +83,9 @@ export function mergeFetchedSessionRuntimeState(
   captured: Session | undefined,
   latest: Session | undefined,
   deleted = false,
+  nativeLifecycleChanged = false,
 ): Session | null {
-  const merged = mergeRuntimeState(fetched, captured, latest, deleted)
+  const merged = mergeRuntimeState(fetched, captured, latest, deleted, nativeLifecycleChanged)
   if (merged) reconcileSessionInterruptionBoundary(merged.instanceId, merged)
   return merged
 }
@@ -93,12 +94,13 @@ function mergeRuntimeState(
   fetched: Session,
   captured: Session | undefined,
   latest: Session | undefined,
-  deleted = false,
+  deleted: boolean,
+  nativeLifecycleChanged: boolean,
 ): Session | null {
   if (deleted) return null
   if (captured && !latest) return null
   if (!latest) return fetched
-  if (latest === captured) {
+  if (latest === captured && !nativeLifecycleChanged) {
     return latest.generationAdmissionToken === undefined ? preservePendingModel(fetched, latest) : { ...fetched, ...latest }
   }
   const merged = { ...fetched }
@@ -117,7 +119,7 @@ function mergeRuntimeState(
   // a stale fetch must not graft an old interruption onto that newer state.
   const authorityKeys = ["status", "runtimeStatusKnown", "generationRecovery", "generationAdmissionToken", "generationAdmissionEpoch", "generationAdmissionIdleBoundary"] as const
   const runtimeKeys = [...authorityKeys, "outcome", "retry", "idleSince", "idleReadAdmissionEpoch"] as const
-  if (authorityKeys.some(key => !captured || !Object.is(captured[key], latest[key]))) {
+  if (nativeLifecycleChanged || authorityKeys.some(key => !captured || !Object.is(captured[key], latest[key]))) {
     for (const key of runtimeKeys) {
       if (Object.prototype.hasOwnProperty.call(latest, key)) (merged as any)[key] = latest[key]
       else delete (merged as any)[key]
@@ -125,7 +127,7 @@ function mergeRuntimeState(
   }
 
   const fetchedActive = fetched.status === "working" || fetched.status === "compacting"
-  if (captured && fetchedActive && latest.generationAdmissionToken === undefined
+  if (!nativeLifecycleChanged && captured && fetchedActive && latest.generationAdmissionToken === undefined
     && captured.generationAdmissionEpoch === latest.generationAdmissionEpoch
     && latest.runtimeStatusKnown === false && latest.generationRecovery === "pending") {
     for (const key of runtimeKeys) {
