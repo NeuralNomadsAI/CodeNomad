@@ -438,6 +438,80 @@ fn reserves_the_session_until_native_close_and_fences_stale_renderers() {
 }
 
 #[test]
+fn registration_ipc_keeps_the_issuing_renderer_version_through_the_queue() {
+    use crate::browser_registration_ipc::{route, RegistrationRequest};
+    use tauri::ipc::CallbackFn;
+    use tauri::webview::InvokeRequest;
+
+    let controller = BrowserController::new(std::path::PathBuf::new());
+    let queued = Arc::new(Mutex::new(None::<RegistrationRequest<MockRuntime>>));
+    let app = mock_builder()
+        .invoke_handler(route(
+            |_| false,
+            {
+                let controller = controller.clone();
+                move |_| controller.clone()
+            },
+            |_| Ok(()),
+            {
+                let queued = queued.clone();
+                move |resolver, request| {
+                    assert!(queued.lock().unwrap().replace(request).is_none());
+                    resolver.resolve(());
+                }
+            },
+        ))
+        .build(crate::app_context())
+        .unwrap();
+    let url = tauri::Url::parse("http://127.0.0.1:32123/").unwrap();
+    let ipc = |owner, registration_id| {
+        let window = WebviewWindowBuilder::new(&app, owner, WebviewUrl::External(url.clone()))
+            .build()
+            .unwrap();
+        tauri::test::get_ipc_response(
+            &window,
+            InvokeRequest {
+                cmd: "browser_target_register".into(),
+                callback: CallbackFn(0),
+                error: CallbackFn(1),
+                url: url.clone(),
+                body: json!({ "payload": {
+                    "sessionId": "session",
+                    "registrationId": registration_id,
+                    "url": "https://example.com/",
+                    "visible": false,
+                    "bounds": { "x": 0, "y": 0, "width": 300, "height": 200 }
+                }})
+                .into(),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.into(),
+            },
+        )
+        .unwrap();
+        queued.lock().unwrap().take().unwrap()
+    };
+    let reserve = |request: RegistrationRequest<MockRuntime>| {
+        let registration = Registration {
+            window_label: request.window.label().into(),
+            session_id: request.payload.session_id,
+            registration_id: request.payload.registration_id,
+            ..registration()
+        };
+        request
+            .controller
+            .reserve_attachment(&registration, request.renderer_version)
+    };
+
+    let old = ipc(OWNER, "old-preview");
+    controller.renderer_page_started(&app.get_webview(OWNER).unwrap());
+    assert_eq!(
+        reserve(old).unwrap_err(),
+        "Browser preview renderer is no longer current"
+    );
+    reserve(ipc(OTHER, "new-preview")).unwrap();
+}
+
+#[test]
 fn only_primary_renderer_reload_disposes_its_native_browser_children() {
     let (app, owner, child) = app_with_preview();
     let (controller, registration) = controller_with_registration();
