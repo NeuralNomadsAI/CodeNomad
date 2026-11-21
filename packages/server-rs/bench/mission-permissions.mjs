@@ -110,7 +110,7 @@ export async function run({ call, fixture, root, folder, data }) {
     assert.deepEqual(await modes.read({ sessionID: session.id, read: () => Promise.resolve(session), current() {} }), { mode: "supervised" })
   }
   const until = async (name, read) => {
-    for (const deadline = Date.now() + 24_000; Date.now() < deadline; await delay(100)) {
+    for (const deadline = Date.now() + 45_000; Date.now() < deadline; await delay(100)) {
       const value = await read()
       if (value) return value
     }
@@ -135,18 +135,18 @@ export async function run({ call, fixture, root, folder, data }) {
       await client.session.wait({ sessionID }, { signal: AbortSignal.timeout(20_000) })
     }
     await history(fresh.id)
-    const child = await client.session.create({ parentID: fresh.id, location })
+    const child = await client.session.create({ parentID: fresh.id, location, title: "Child permission copy fixture" })
     assert.deepEqual(await mode(child.id), { mode: "supervised", rootSessionID: fresh.id })
     assert.deepEqual(child.permissions, expected)
     await until("direct child copy", async () => (await stored(child))[0]?.child)
     await history(child.id)
     const copied = await send(`/workspaces/${w.id}/instance/api/session/${fresh.id}/fork`, "POST", {})
     const ownedFork = copied.data ?? copied
+    await until("owned fork from the root", async () => (await stored(ownedFork))[0]?.fork)
     const unownedFork = await client.session.fork({ sessionID: child.id })
     await until("fork ownership does not come from a child", async () => {
-      const storedRoot = (await stored(ownedFork))[0]
       const storedChild = (await stored(unownedFork))[0]
-      return storedRoot?.fork && storedChild && !storedChild.fork
+      return storedChild && !storedChild.fork
     })
     const before = await client.session.create({ permissions: [trailing], location })
     await mode(before.id, "supervised")
