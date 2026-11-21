@@ -2,6 +2,7 @@
 //! registration, token, session ownership and the desktop host's browser and window requests.
 //! Memory and Missions modes are answered by their domains.
 pub mod actions;
+mod browser;
 mod developer;
 pub mod diagnostics;
 mod registry;
@@ -153,6 +154,9 @@ async fn session(app: Shared, parts: Parts, bytes: Bytes, body: Value) -> Respon
     let (purpose, kind) = (body["purpose"].as_str(), body["command"]["kind"].as_str());
     let mission_claim =
         mode == "browser-claim" && matches!(purpose, Some("mission" | "mission-preferences" | "mission-prepare"));
+    if mode.starts_with("browser-") && !mission_claim {
+        return browser::handle(&app, mode, id, &body).await;
+    }
     // A Missions preference read distinguishes "not this backend" from "cannot tell".
     let preference = mode == "browser-claim" && matches!(purpose, Some("mission-preferences" | "mission-prepare"))
         || mode == "mission-input" && matches!(kind, Some("profile-defaults" | "configurations" | "settings"));
@@ -180,35 +184,7 @@ async fn session(app: Shared, parts: Parts, bytes: Bytes, body: Value) -> Respon
     if mode == "mission-input" || mission_claim {
         return missions(app, parts, bytes).await;
     }
-    let native = native_parent::available();
-    if mode.starts_with("browser-") && crate::config::native_browser_automation_unavailable() {
-        let refusal = json!({ "code": "unsupported", "error": "Browser automation is unavailable in this host" });
-        return (Status::CONFLICT, Json(refusal)).into_response();
-    }
-    match mode {
-        "browser-claim" if !native => refuse(Status::NOT_FOUND, "Browser automation is unavailable in this host"),
-        "browser-claim" => result(json!({ "available": true })),
-        "browser-probe" => match native_parent::request("browser.probe", json!({ "sessionID": id }), NATIVE).await {
-            Ok(found) if found["available"] == true => result(found),
-            Ok(_) => refuse(Status::NOT_FOUND, "No visible browser target"),
-            Err(e) => refuse(Status::NOT_FOUND, &e),
-        },
-        "browser-execute" => {
-            let command = match actions::browser(&body["command"]) {
-                Ok(command) => command,
-                Err(e) => return refuse(Status::BAD_REQUEST, &e),
-            };
-            // The host runs open, navigate and screenshot itself, and snapshots and page actions
-            // through its in-host engine.
-            match native_parent::request("browser.execute", json!({ "sessionID": id, "command": command }), NATIVE)
-                .await
-            {
-                Ok(done) => result(done),
-                Err(e) => refuse(Status::CONFLICT, &e),
-            }
-        }
-        _ => developer::handle(&app.automation_pins, id, mode, &body, inspection).await,
-    }
+    developer::handle(&app.automation_pins, id, mode, &body, inspection).await
 }
 
 fn preferences_unavailable() -> Response {

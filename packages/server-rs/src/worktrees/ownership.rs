@@ -60,17 +60,23 @@ pub fn within(root: &Path, candidate: &Path) -> bool {
 }
 /// `readGitCommonDirectory`: the canonical Git common directory, `None` when unreadable.
 pub async fn common_directory(dir: &Path) -> Option<PathBuf> {
+    read_common_directory(dir).await.ok().flatten()
+}
+
+async fn read_common_directory(dir: &Path) -> Result<Option<PathBuf>, ()> {
     let out = crate::git::run(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"], 16 * 1024)
         .await
-        .ok()?
-        .ok()
-        .ok()?;
-    dunce::canonicalize(out.text().trim()).ok()
+        .map_err(|_| ())?;
+    if out.not_a_repository() {
+        return Ok(None);
+    }
+    let out = out.ok().map_err(|_| ())?;
+    dunce::canonicalize(out.text().trim()).map(Some).map_err(|_| ())
 }
-/// `sharesGitCommonDirectory(left, right)` without `strict`: any read failure is `false`.
-pub async fn shares_common_directory(left: &Path, right: &Path) -> bool {
-    let (a, b) = tokio::join!(common_directory(left), common_directory(right));
-    a.is_some() && a == b
+async fn shares_common_directory(left: &Path, right: &Path) -> Result<bool, ()> {
+    let (a, b) = tokio::join!(read_common_directory(left), read_common_directory(right));
+    let (a, b) = (a?, b?);
+    Ok(a.is_some() && a == b)
 }
 async fn repository_root(root: &Path) -> PathBuf {
     match crate::git::run(root, &["rev-parse", "--show-toplevel"], 16 * 1024).await.ok().and_then(|o| o.ok().ok()) {
@@ -80,33 +86,56 @@ async fn repository_root(root: &Path) -> PathBuf {
 }
 
 pub async fn resolve(app: &App, w: &Workspace, directory: &str) -> Option<Owned> {
+    resolve_checked(app, w, directory, false).await.ok().flatten()
+}
+
+/// In strict discovery, distinguish a confirmed non-owner from an unreadable checkout.
+pub async fn resolve_checked(app: &App, w: &Workspace, directory: &str, strict: bool) -> Result<Option<Owned>, ()> {
     let root = &w.path;
     if !crate::files::paths::under(&app.scope, Path::new(directory)) {
-        return None;
+        return Ok(None);
     }
-    let target = dunce::canonicalize(directory).ok();
+    let target = match dunce::canonicalize(directory) {
+        Ok(path) => Some(path),
+        Err(error) if strict && error.kind() != std::io::ErrorKind::NotFound => return Err(()),
+        Err(_) => None,
+    };
+    if target.as_ref().is_some_and(|path| !path.starts_with(&app.scope)) {
+        return Ok(None);
+    }
     if target.as_deref() == Some(root.as_path()) {
-        return Some(Owned { directory: root.to_string_lossy().into_owned(), checkout: repository_root(root).await });
+        return Ok(Some(Owned {
+            directory: root.to_string_lossy().into_owned(),
+            checkout: repository_root(root).await,
+        }));
     }
-    if let Some(t) = &target {
-        if !within(root, t) && !shares_common_directory(root, t).await {
-            return None;
-        }
+    if let Some(t) = &target
+        && !within(root, t)
+        && !shares_common_directory(root, t).await?
+    {
+        return Ok(None);
     }
-    let resolved = resolve_directory(directory).filter(|r| r.starts_with(&app.scope))?;
+    let resolved = resolve_directory(directory).ok_or(())?;
+    if !resolved.starts_with(&app.scope) {
+        return Ok(None);
+    }
     for fresh in [false, true] {
         // A non-Git folder has no inventory: only the opened folder itself is owned.
-        let catalogue = crate::worktrees::linked::catalogue(app, w, fresh).await.ok()?;
+        let catalogue = match crate::worktrees::linked::catalogue(app, w, fresh).await {
+            Ok(catalogue) => catalogue,
+            Err(_) if strict && matches!(read_common_directory(root).await, Ok(None)) => return Ok(None),
+            Err(_) => return Err(()),
+        };
         let owner =
             catalogue.trees.iter().filter(|t| t.contains_live(&resolved)).max_by_key(|t| t.path.as_os_str().len());
         if let Some(tree) = owner {
-            return Some(Owned {
+            return Ok(Some(Owned {
                 directory: resolved.to_string_lossy().into_owned(),
                 checkout: tree.registered().to_path_buf(),
-            });
+            }));
         }
     }
-    None
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -140,8 +169,10 @@ mod tests {
         let real = dunce::canonicalize(&link).unwrap();
         assert_eq!(real, foreign);
         assert!(!within(&repo, &real));
-        assert!(!shares_common_directory(&repo, &real).await);
-        assert!(shares_common_directory(&repo, &repo).await);
+        assert_eq!(shares_common_directory(&repo, &real).await, Ok(false));
+        assert_eq!(shares_common_directory(&repo, &repo).await, Ok(true));
+        std::fs::write(foreign.join(".git"), "gitdir: missing").unwrap();
+        assert_eq!(shares_common_directory(&repo, &real).await, Err(()));
         std::fs::remove_dir(&link).unwrap();
         let _ = std::fs::remove_dir_all(&base);
     }

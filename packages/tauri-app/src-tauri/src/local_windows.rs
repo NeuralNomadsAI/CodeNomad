@@ -770,6 +770,13 @@ fn build_local_window(
         return Err(error);
     }
     crate::notification_badge::bind_webview(window.as_ref(), badge_binding);
+    if let Err(error) = app
+        .state::<crate::AppState>()
+        .browser_controller
+        .observe_owner(&window.as_ref().window())
+    {
+        eprintln!("[browser] could not schedule preview owner visibility observer: {error}");
+    }
     crate::remote_dictation::bind_termination(window.as_ref(), None);
     #[cfg(target_os = "linux")]
     crate::device_speech_ipc::bind_microphone(&window, false);

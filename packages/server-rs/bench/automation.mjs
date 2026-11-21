@@ -8,7 +8,7 @@ import assert from "node:assert/strict"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
 import { fromDist } from "./fixtures.mjs"
-import { bridgeClient, loopbackFetch } from "./memory.mjs"
+import { bridgeClient } from "./memory.mjs"
 
 export const comparable = value => value.compared
 
@@ -148,7 +148,7 @@ export async function run({ call, fixture, root, pid, native, folder, data }) {
   const scrub = value => JSON.parse(JSON.stringify(value ?? null).replace(/ses_[A-Za-z0-9]+/g, id => `<session:${names.get(id) ?? "?"}>`))
 
   const steps = []
-  // `statusOnly`: only the status compares; `reply`: the reply without the native requests, which`n  // differ where the reference runs the preview engine itself and the host runs it under Rust.
+  // Page engine requests differ where the reference runs it server-side and Rust runs it in the host.
   const step = async (name, request, { statusOnly = false, reply: only = false } = {}) => {
     native.requests.length = 0
     const reply = await request()
@@ -205,39 +205,63 @@ export async function run({ call, fixture, root, pid, native, folder, data }) {
       await step(`developer-execute ${name}`, () => bridge("developer-execute", sessions.root, command))
     if (data) await window(native, post, sessions, ready, answer)
 
+    const preview = "fixture:preview:1"
+    const runBrowser = command => post({ mode: "browser-execute", sessionID: sessions.root, command, target: preview })
     answer({
-      "browser.probe": ({ sessionID }) => sessionID === sessions.root ? { ok: true, result: { available: true, driver: "cdp" } } : { ok: true, result: { available: false } },
-      "browser.execute": ({ command }) => ["open", "navigate"].includes(command.action) ? { ok: true, result: { url: command.url } } : { ok: false, error: { message: "Fixture preview hidden" } },
-      "browser.page.begin": fail("Fixture preview hidden"),
+      "browser.probe": ({ sessionID }) => ({
+        ok: true, result: sessionID === sessions.root ? { available: true, target: preview } : { available: false },
+      }),
+      "browser.execute": ({ command, target }) => {
+        assert.equal(target, command.action === "open" ? undefined : preview)
+        return ["open", "navigate"].includes(command.action)
+          ? { ok: true, result: { url: command.url } }
+          : { ok: false, error: { message: "No visible browser target" } }
+      },
+      "browser.page.begin": ({ target }) => {
+        assert.equal(target, preview)
+        return { ok: false, error: { message: "No visible browser target" } }
+      },
+      "browser.page.end": ok({}),
     })
     for (const session of ["root", "subfolder", "foreign"]) await step(`browser-claim ${session}`, () => post({ mode: "browser-claim", sessionID: sessions[session] }))
-    await step("browser-probe root", () => bridge("browser-probe", sessions.root))
+    assert.deepEqual((await step("browser-probe root", () => bridge("browser-probe", sessions.root))).body.result,
+      { available: true, target: preview })
     await step("browser-probe subfolder", () => bridge("browser-probe", sessions.subfolder))
     for (const [name, command] of [["no command", undefined], ["open without url", { action: "open" }], ["bad key", { action: "press", key: "Shift++" }],
       ["open", { action: "open", url: "https://fixture.invalid/a", extra: 1 }], ["navigate", { action: "navigate", url: "http://127.0.0.1:1/" }],
       ["screenshot", { action: "screenshot" }]])
-      await step(`browser-execute ${name}`, () => bridge("browser-execute", sessions.root, command))
-    await step("browser-execute click", () => bridge("browser-execute", sessions.root, { action: "click", ref: "b1e1" }), { reply: true })
-    await step("browser-execute snapshot", () => bridge("browser-execute", sessions.root, { action: "snapshot" }), { reply: true })
+      await step(`browser-execute ${name}`, () => runBrowser(command))
+    await step("browser-execute click", () => runBrowser({ action: "click", ref: "b1e1" }), { reply: true })
+    await step("browser-execute snapshot", () => runBrowser({ action: "snapshot" }), { reply: true })
+    const missing = await step("browser-execute missing target", () => bridge("browser-execute", sessions.root, { action: "snapshot" }))
+    assert.deepEqual([missing.status, missing.body.code, native.requests.length], [400, "target-required", 0])
+    const expired = await step("browser-execute expired", () => post({
+      mode: "browser-execute", sessionID: sessions.root, command: { action: "snapshot" }, target: preview, deadline: 1,
+    }))
+    assert.deepEqual([expired.status, expired.body.code, native.requests.length], [409, "preview-expired", 0])
     answer({ "browser.probe": fail("Fixture host busy") })
     await step("browser-probe host error", () => bridge("browser-probe", sessions.root))
 
     // The TS plugin's browser client discovers this server's registration and forwards through it.
-    answer({ "browser.probe": ok({ available: true }), "browser.execute": ({ command }) => ({ ok: true, result: { url: command.url, opened: command.action } }) })
+    answer({ "browser.probe": ok({ available: true, target: preview }),
+      "browser.execute": ({ command, target }) => {
+        assert.equal(target, command.action === "open" ? undefined : preview)
+        return { ok: true, result: { url: command.url, opened: command.action } }
+      } })
     const { executeBrowserTool } = await fromDist("opencode/automation-plugin.js")
     const previous = { LOCALAPPDATA: process.env.LOCALAPPDATA, XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR, HOME: process.env.HOME }
     if (process.platform === "win32") process.env.LOCALAPPDATA = fixture.env.LOCALAPPDATA
     else { delete process.env.XDG_RUNTIME_DIR; process.env.HOME = fixture.root }
-    const nodeFetch = globalThis.fetch
-    globalThis.fetch = (input, init) => /^http:\/\/127\.0\.0\.1:\d+\/api\/opencode-plugin\/automation$/.test(String(input)) ? loopbackFetch(String(input), init) : nodeFetch(input, init)
     try {
       // Rust re-serializes the host's result with sorted keys: the text is compared parsed.
       const parsed = text => { try { return JSON.parse(text) } catch { return text } }
       const settle = p => p.then(value => ({ value: { ...value, content: parsed(value.content) } }), error => ({ error: String(error.message) }))
       await step("plugin open", async () => settle(executeBrowserTool(sessions.root, { action: "open", url: "https://fixture.invalid/p" })))
+      const url = "https://fixture.invalid/q"
+      const navigated = await step("plugin navigate with probed target", () => settle(executeBrowserTool(sessions.root, { action: "navigate", url })))
+      assert.deepEqual(navigated.value?.content, { url, opened: "navigate" })
       await step("plugin foreign", async () => settle(executeBrowserTool(sessions.foreign, { action: "navigate", url: "https://fixture.invalid/q" })))
     } finally {
-      globalThis.fetch = nodeFetch
       for (const [k, v] of Object.entries(previous)) if (v === undefined) delete process.env[k]; else process.env[k] = v
     }
   } catch (error) {

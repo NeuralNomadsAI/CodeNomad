@@ -29,27 +29,44 @@ pub async fn request(method: &str, params: Value, deadline: Duration) -> Result<
 }
 
 async fn exchange(method: &str, params: Value, deadline: Duration) -> Result<Value, String> {
+    exchange_until(method, params, chrono::Utc::now().timestamp_millis() + deadline.as_millis() as i64).await
+}
+
+pub async fn request_until(method: &str, params: Value, deadline: i64) -> Result<Value, String> {
+    if !available() {
+        return Err("Native control is unavailable in this host".into());
+    }
+    exchange_until(method, params, deadline).await
+}
+
+async fn exchange_until(method: &str, params: Value, deadline: i64) -> Result<Value, String> {
     let id = uuid::Uuid::new_v4().to_string();
     let (tx, rx) = oneshot::channel();
+    let timeout = || format!("Native request timed out: {method}");
+    let expires;
     {
         let mut pending = PENDING.lock().unwrap();
         let pending = pending.as_mut().ok_or("Native parent is shutting down")?;
         if pending.len() >= MAX_PENDING {
             return Err("Too many pending native requests".into());
         }
+        let remaining = deadline - chrono::Utc::now().timestamp_millis();
+        if remaining <= 0 {
+            return Err(timeout());
+        }
+        expires = tokio::time::Instant::now() + Duration::from_millis(remaining as u64);
         pending.insert(id.clone(), tx);
     }
-    let at = chrono::Utc::now().timestamp_millis() + deadline.as_millis() as i64;
     emit(format!(
         "{REQUEST_PREFIX}{}\n",
-        json!({"v": 1, "id": id, "method": method, "params": params, "deadline": at})
+        json!({"v": 1, "id": id, "method": method, "params": params, "deadline": deadline})
     ));
-    match tokio::time::timeout(deadline, rx).await {
-        Ok(Ok(result)) => result,
+    match tokio::time::timeout_at(expires, rx).await {
+        Ok(Ok(result)) if tokio::time::Instant::now() < expires => result,
         Ok(Err(_)) => Err("Native parent is shutting down".into()),
-        Err(_) => {
+        _ => {
             PENDING.lock().unwrap().as_mut().map(|p| p.remove(&id));
-            Err(format!("Native request timed out: {method}"))
+            Err(timeout())
         }
     }
 }
@@ -133,7 +150,17 @@ pub mod tests {
 
         let late = exchange("developer.restart", json!({}), Duration::from_millis(50)).await;
         assert_eq!(late, Err("Native request timed out: developer.restart".into()));
+        assert_eq!(next().await["method"], "developer.restart");
         assert!(PENDING.lock().unwrap().as_ref().unwrap().is_empty());
+        let deadline = chrono::Utc::now().timestamp_millis() + 5000;
+        let pinned = tokio::spawn(exchange_until("browser.execute", json!({"target":"preview:1"}), deadline));
+        let sent = next().await;
+        assert_eq!(sent["deadline"], deadline);
+        assert_eq!(sent["params"]["target"], "preview:1");
+        handle_line(&format!("{RESPONSE_PREFIX}{}", json!({"v": 1, "id": sent["id"], "ok": true})));
+        assert_eq!(pinned.await.unwrap(), Ok(Value::Null));
+        let expired = exchange_until("browser.execute", json!({}), 0).await;
+        assert_eq!(expired, Err("Native request timed out: browser.execute".into()));
 
         let calls: Vec<_> = (0..MAX_PENDING)
             .map(|_| tokio::spawn(exchange("browser.execute", json!({}), Duration::from_secs(5))))

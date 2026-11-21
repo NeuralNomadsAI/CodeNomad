@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto"
-import type { NativeParent } from "../native-parent"
+import { randomBytes, randomUUID } from "node:crypto"
+import { NativeRequestNotSent, type NativeParent } from "../native-parent"
 import { bindRefs, performAction, snapshotPage, type PageSession } from "./page/actions"
 import type { RefAction } from "./page/parse"
 import { RefTable } from "./page/refs"
@@ -16,18 +16,20 @@ const MAX_SESSIONS = 128
 export class BrowserPage {
   private readonly queues = new Map<string, Promise<void>>()
   private readonly tables = new Map<string, RefTable>()
+  private readonly refNamespace = BigInt(`0x${randomBytes(8).toString("hex")}`).toString().padStart(20, "0")
   private sequence = 0
   private pending = 0
   private closed = false
 
   constructor(private readonly native: Pick<NativeParent, "request">) {}
 
-  async execute(sessionID: string, action: BrowserPageAction, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  async execute(sessionID: string, action: BrowserPageAction, signal?: AbortSignal, expectedTarget?: string,
+    deadline = Number.POSITIVE_INFINITY): Promise<Record<string, unknown>> {
     if (this.closed) throw new Error("Browser automation is shutting down")
     if (this.pending >= MAX_PENDING) throw new Error("Too many pending browser operations")
     this.pending++
     const previous = this.queues.get(sessionID) ?? Promise.resolve()
-    const operation = previous.then(() => this.run(sessionID, action, signal))
+    const operation = previous.then(() => this.run(sessionID, action, signal, expectedTarget, deadline))
     const tail = operation.then(() => undefined, () => undefined)
     this.queues.set(sessionID, tail)
     try { return await operation }
@@ -39,26 +41,36 @@ export class BrowserPage {
 
   close(): void { this.closed = true; this.tables.clear() }
 
-  private async run(sessionID: string, action: BrowserPageAction, signal?: AbortSignal): Promise<Record<string, unknown>> {
-    const operationID = randomUUID(), deadline = Date.now() + OPERATION_MS
+  private async run(sessionID: string, action: BrowserPageAction, signal: AbortSignal | undefined, expectedTarget: string | undefined,
+    stopAt: number): Promise<Record<string, unknown>> {
+    const operationID = randomUUID(), deadline = Math.min(stopAt, Date.now() + OPERATION_MS)
     let failure: Error | undefined
+    let beginMayHaveReachedHost = false
+    const checkDeadline = () => {
+      if (Date.now() >= deadline) throw new Error("Browser operation timed out; inspect before another action")
+    }
     const current = () => {
       if (failure) throw failure
       signal?.throwIfAborted()
       if (this.closed) throw new Error("Browser automation is shutting down")
-      if (Date.now() >= deadline) throw new Error("Browser operation timed out; inspect before another action")
+      checkDeadline()
     }
     const request = async <T>(method: string, params: Record<string, unknown>): Promise<T> => {
       current()
-      const result = await this.native.request<T>(method, { sessionID, operationID, ...params }, Math.max(1, deadline - Date.now())).catch(error => {
+      const beginning = method === "browser.page.begin"
+      if (beginning) beginMayHaveReachedHost = true
+      const result = await this.native.request<T>(method, { sessionID, operationID, ...params }, { deadline }).catch(error => {
+        if (beginning && error instanceof NativeRequestNotSent) beginMayHaveReachedHost = false
         failure = error instanceof Error ? error : new Error(String(error))
         throw failure
       })
       current()
       return result
     }
+    let result: Record<string, unknown>
     try {
-      const target = await request<{ generation: string; url: string; driver: unknown; contractVersion: unknown }>("browser.page.begin", {})
+      const target = await request<{ generation: string; url: string; driver: unknown; contractVersion: unknown }>(
+        "browser.page.begin", expectedTarget === undefined ? {} : { target: expectedTarget })
       if (!target || typeof target.generation !== "string" || !target.generation || target.generation.length > 512
         || typeof target.url !== "string") throw new Error("Invalid native browser target")
       const generation = target.generation
@@ -73,21 +85,24 @@ export class BrowserPage {
       const refs = this.table(sessionID)
       if (action.action === "snapshot") {
         const rootBackendNodeId = action.ref ? refs.resolve(action.ref, generation) : undefined
-        const snapshot = await snapshotPage(page, () => refs.issuer(generation), { rootBackendNodeId, query: action.query })
-        return { url, snapshot: snapshot.text, collapsed: snapshot.collapsed }
+        const snapshot = await snapshotPage(page, () => refs.issuer(generation), { rootBackendNodeId, query: action.query, refLength: refs.refLength })
+        result = { url, snapshot: snapshot.text, collapsed: snapshot.collapsed }
+      } else {
+        const actionResult = await performAction(page, bindRefs(action, ref => refs.resolve(ref, generation)))
+        result = { url, ...actionResult }
       }
-      const result = await performAction(page, bindRefs(action, ref => refs.resolve(ref, generation)))
-      return { url, ...result }
     } finally {
       // Cleanup is exact, best effort and independent of cancellation/navigation. A lost
       // reply never replays the operation; the native lease also expires on its own.
-      await this.native.request("browser.page.end", { sessionID, operationID }, 5_000).catch(() => undefined)
+      if (beginMayHaveReachedHost) await this.native.request("browser.page.end", { sessionID, operationID }, 5_000).catch(() => undefined)
     }
+    checkDeadline()
+    return result
   }
 
   private table(sessionID: string): RefTable {
     let table = this.tables.get(sessionID)
-    if (!table) table = new RefTable("take a new snapshot", `b${++this.sequence}e`)
+    if (!table) table = new RefTable("take a new snapshot", `b${this.refNamespace}${++this.sequence}e`)
     this.tables.delete(sessionID)
     this.tables.set(sessionID, table)
     if (this.tables.size > MAX_SESSIONS) this.tables.delete(this.tables.keys().next().value!)

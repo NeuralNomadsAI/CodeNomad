@@ -62,6 +62,9 @@ impl Output {
     pub fn ok(self) -> Result<Self, Error> {
         if self.code == 0 { Ok(self) } else { Err(bad("Git read failed")) }
     }
+    pub fn not_a_repository(&self) -> bool {
+        self.code == 128 && self.err.starts_with(b"fatal: not a git repository (or any ")
+    }
     fn mutation(self) -> Result<(), Error> {
         if self.code == 0 {
             Ok(())
