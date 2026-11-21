@@ -317,7 +317,7 @@ Run `node --import tsx packages/ui/tests/contracts/backend-async-inventory.ts > 
 | `stores/speech.ts` | C | loadSpeechCapabilities; shared promise/cache | Local API/client capability cache and pending owner retained through reconnect. |
 | `stores/conversation-speech.ts` | V+C | runConversationQueue; Classic summary playback | Conversation playback queue and AbortController; playback request/controller owns stop. |
 | `lib/hooks/use-speech.ts` | A | start/toggle; manual playback | captureBackendOperation plus playback controller and content identity; owner disposal stops playback. |
-| `lib/speech-playback.ts` | V+C | playSpeech; binary synthesis and audio playback | Local speech client and caller's signal cover request, buffered body or stream, and audio cleanup. |
+| `lib/speech-playback.ts` | V+C | playSpeech; binary synthesis and audio playback | The renderer's own backend serves speech even for an attached project. The caller's signal covers the request, buffered body or stream, and audio cleanup. |
 | `lib/hooks/use-live-voice-conversation.ts` | A+V | local speech WebSocket and session controller | Renderer server origin and matching local session/client, provider engine and explicit consent; target change or disposal stops audio and socket. |
 | `lib/live-voice-consent.ts` | C | persist accepted provider notice | Renderer server origin, provider and notice version own the write; native profile HTTP or browser storage. |
 | `lib/live-voice-session.ts` | V | provider socket, audio and agent turn callbacks | Captured audience, run and socket lifetime; signal fences pending work and stop releases capture and connection. |

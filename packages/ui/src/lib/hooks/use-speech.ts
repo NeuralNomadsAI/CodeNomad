@@ -31,6 +31,7 @@ export function useSpeech(options: UseSpeechOptions) {
   const [state, setState] = createSignal<SpeechPlaybackState>("idle")
 
   let playback: AbortController | undefined
+  let disposed = false
 
   createEffect(() => {
     if (captureBackendOperation("").current()) void loadSpeechCapabilities()
@@ -45,7 +46,7 @@ export function useSpeech(options: UseSpeechOptions) {
   }
 
   const ownerId = createMemo(options.id)
-  onCleanup(stop)
+  onCleanup(() => { disposed = true; stop() })
   createEffect(() => {
     ownerId()
     onCleanup(stop)
@@ -71,9 +72,10 @@ export function useSpeech(options: UseSpeechOptions) {
   }
 
   const start = async () => {
+    if (disposed || playback) return
     const ownerId = options.id()
     const text = options.text().trim()
-    if (!text || playback) return
+    if (!text) return
     // Speech is served by the renderer's local backend, independently of the conversation.
     const controller = new AbortController()
     const operation = captureBackendOperation("", undefined, () => options.id() === ownerId)

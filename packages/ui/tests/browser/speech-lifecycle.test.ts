@@ -152,6 +152,18 @@ test("stop and disposal fence buffered responses and capabilities still loading"
   assert.equal(stopped.audios.length, 0)
 }))
 
+test("a retained action cannot start synthesis after its view unmounts", () => withPage(async page => {
+  await page.evaluate(() => {
+    const f = (window as any).fixture
+    f.mount("a", "removed")
+    void f.toggleAfterRemove("a")
+  })
+  await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 0)))
+  const stopped = await snapshot(page)
+  assert.equal(stopped.pending, 0)
+  assert.equal(stopped.audios.length, 0)
+}))
+
 test("buffered playback uses the binary route without newer AbortSignal methods", () => withPage(async page => {
   await page.route("**/api/speech/synthesize/stream", route => route.fulfill({
     status: 200, contentType: "audio/mpeg", body: Buffer.from([97]),

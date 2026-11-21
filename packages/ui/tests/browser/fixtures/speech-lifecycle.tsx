@@ -105,6 +105,12 @@ async function cards(count: number, drift: boolean) {
   change: (key: string, id: string) => owners.get(key)!.setId(id),
   replace: (key: string) => owners.get(key)!.replace(),
   remove: (key: string) => { owners.get(key)!.dispose(); owners.delete(key) },
+  toggleAfterRemove: (key: string) => {
+    const owner = owners.get(key)!
+    owner.dispose()
+    owners.delete(key)
+    return owner.speech.toggle()
+  },
   toggle: (key: string) => { void owners.get(key)!.speech.toggle() },
   state: (key: string) => owners.get(key)!.speech.state(),
   resolve: (index: number) => pending[index].resolve(new Response(new Uint8Array([97]), { headers: { "content-type": "audio/mpeg" } })),
