@@ -17,6 +17,7 @@ import { registerWorkspaceRoutes } from "./routes/workspaces"
 import { registerTemporaryWorkspaceRoutes } from "./routes/temporary-workspaces"
 import { syncSessionGitContext } from "../workspaces/session-git-context"
 import { syncSessionMemoryContext } from "../workspaces/session-memory-context"
+import { admitSessionControl, currentSessionControl, controlKind } from "./session-control-admission"
 import { assertOrdinaryMissionScheduleBody, assertOrdinaryMissionScheduleSession, MissionScheduleInputError } from "./mission-schedule-input-guard"
 import { readGitStatus } from "../workspaces/git-requirement"
 import { registerSettingsRoutes } from "./routes/settings"
@@ -1521,6 +1522,11 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       }
     }
     const formReply = request.method === "POST" && pathname.match(/^\/api\/session\/[^/]+\/form\/([^/]+)\/reply\/?$/)
+    // Validate incoming fields before the proxy injects its translated Location.
+    const control = authorizedSession && controlKind(request.method, pathname) ? { method: request.method, pathname, body: request.body, session: authorizedSession,
+      client: await clientForRequest(), signal } : undefined
+    const controlRefusal = control && await wait(admitSessionControl(control))
+    if (controlRefusal) { releaseMutation?.(); return reply.code(controlRefusal.status).send({ error: controlRefusal.error }) }
     if (formReply && sessionId && sessionId !== "global" && connection && args.humanAnswers
       && request.headers[HUMAN_ANSWER_HEADER] === "1") {
       grantPendingReconciliation(connection, workspaceId, authorizedSessionDirectory ?? runtimeLocation.directory)
@@ -1551,6 +1557,11 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       ? await args.permissionReceipts.prepareDeletion(workspaceId, connection, sessionId) : undefined
     connection?.assertCurrent()
     // Recheck after authorization and receipt preparation, before forwarding.
+    if (control && (!await wait(currentSessionControl(control)) || workspaceManager.get(workspaceId) !== workspace)) {
+      releaseMutation?.()
+      return reply.code(403).send({ error: "Location does not belong to workspace" })
+    }
+    connection?.assertCurrent()
     if (deferList()) return reply.header("Retry-After", "30").header("Cache-Control", "no-store").code(503).send({ error: PENDING_DISCOVERY_DEFERRED })
     if (connection && ((request.method === "POST" && /^\/api\/session\/[^/]+\/(?:permission|form)\/[^/]+\/reply\/?$/.test(pathname))
       || (request.method === "DELETE" && /^\/api\/session\/[^/]+\/form\/[^/]+\/?$/.test(pathname)))) {
