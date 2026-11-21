@@ -1,5 +1,5 @@
 import { aim, clickAt, dragBetween, hoverAt, pressKeys, waitForText, wheelAt, type MouseButton } from "./input"
-import { callOn, markedInput, releaseObjects, resolveElement, PageDriverUnsupportedError, type PageSession } from "./protocol"
+import { callOn, markedInput, releaseObjects, resolveElement, PageDriverUnsupportedError, type InputTarget, type PageSession } from "./protocol"
 import { snapshotTree } from "./semantic-tree"
 import type { RefAction } from "./parse"
 import { renderSnapshot, type AxNode, type Snapshot, type SnapshotOptions } from "./snapshot"
@@ -51,14 +51,14 @@ export async function performAction(session: PageSession, action: PageAction): P
       case "hover": {
         const point = await aim(session, action.ref, action.backendNodeId)
         if (!point) throw new Error(`${action.ref} has no visible box to hover`)
-        await hoverAt(session, point)
+        await hoverAt(session, point, await pointerTarget(session, action))
         return {}
       }
       case "drag": {
         const from = await aim(session, action.ref, action.backendNodeId, { scroll: false })
         const to = await aim(session, action.to.ref, action.to.backendNodeId, { scroll: false })
         if (!from || !to) throw new Error(`${!from ? action.ref : action.to.ref} has no visible box to drag ${!from ? "from" : "to"}`)
-        await dragBetween(session, from, to)
+        await dragBetween(session, from, to, await pointerTarget(session, action), await pointerTarget(session, action.to))
         return {}
       }
       case "scroll": {
@@ -66,21 +66,27 @@ export async function performAction(session: PageSession, action: PageAction): P
         if (action.target && !point) throw new Error(`${action.target.ref} has no visible box to scroll`)
         const sign = action.direction === "up" || action.direction === "left" ? -1 : 1
         const vertical = action.direction === "up" || action.direction === "down"
-        await wheelAt(session, point, { x: vertical ? 0 : sign * action.amount, y: vertical ? sign * action.amount : 0 })
+        await wheelAt(session, point, { x: vertical ? 0 : sign * action.amount, y: vertical ? sign * action.amount : 0 },
+          action.target && await pointerTarget(session, action.target))
         return {}
       }
       case "press": {
+        let target: InputTarget | undefined
         if (action.target) {
           const element = await resolveElement(session, action.target.ref, action.target.backendNodeId)
           await callOn(session, action.target.ref, element, "focus", [])
+          target = { ref: action.target.ref, handle: element }
         }
-        await pressKeys(session, action.key)
+        await pressKeys(session, action.key, target)
         try { return { focused: await focusedElement(session) } }
         catch (error) { throw new Error("Key input was sent, but the current focus could not be read; inspect before retrying.", { cause: error }) }
       }
       case "wait": return await waitForText(session, action.text, action.gone, action.timeoutMs)
     }
   } finally { await releaseObjects(session) }
+}
+async function pointerTarget(session: PageSession, { ref, backendNodeId }: Target): Promise<InputTarget | undefined> {
+  if (session.guardInput) return { ref, handle: await resolveElement(session, ref, backendNodeId) }
 }
 async function click(session: PageSession, action: Target & { button?: MouseButton }): Promise<PageActionResult> {
   const element = await resolveElement(session, action.ref, action.backendNodeId)
@@ -90,7 +96,7 @@ async function click(session: PageSession, action: Target & { button?: MouseButt
   if (!point) {
     if (action.button && action.button !== "left") throw new Error(`${action.ref} has no visible box to ${action.button}-click`)
     await callOn(session, action.ref, element, "programmatic-click", [])
-  } else await clickAt(session, point, action.button)
+  } else await clickAt(session, point, action.button, { ref: action.ref, handle: element })
   return {}
 }
 async function type(session: PageSession, action: Target & { text: string; clear: boolean }): Promise<PageActionResult> {
@@ -100,7 +106,8 @@ async function type(session: PageSession, action: Target & { text: string; clear
   const field = await callOn(session, action.ref, element, "field", [], false) as string
   const mode = await callOn(session, action.ref, field, "prepare", [action.clear])
   if (mode === "value" || mode === "append") await callOn(session, action.ref, field, "set-value", [action.text, mode === "append"])
-  else if (action.text) await markedInput(session, dispatch => dispatch("insert-text", { text: action.text }))
+  else if (action.text) await markedInput(session, dispatch => dispatch("insert-text", { text: action.text },
+    { ref: action.ref, handle: field }))
   else if (action.clear) await callOn(session, action.ref, field, "delete-selection", [])
   try { return { value: String(await callOn(session, action.ref, field, "read-value", [])) } }
   catch (error) {

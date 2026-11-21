@@ -1,5 +1,5 @@
 import { keyChord } from "./keys"
-import { callOn, Handle, markedInput, resolveElement, PageDriverUnsupportedError, type PageSession } from "./protocol"
+import { callOn, Handle, markedInput, resolveElement, PageDriverUnsupportedError, type InputTarget, type PageSession } from "./protocol"
 
 /** Trusted pointer, wheel and keyboard input through DevTools, aimed like a user would:
  * at the element's visible centre, only when that point actually reaches the element. */
@@ -54,44 +54,44 @@ function area(quad: number[]): number {
 const BUTTONS = { left: 1, right: 2, middle: 4 } as const
 export type MouseButton = keyof typeof BUTTONS
 
-export async function clickAt(session: PageSession, point: Point, button: MouseButton = "left"): Promise<void> {
+export async function clickAt(session: PageSession, point: Point, button: MouseButton = "left", target?: InputTarget): Promise<void> {
   await markedInput(session, async dispatch => {
-    await dispatch("pointer", { type: "mouseMoved", ...point })
-    await dispatch("pointer", { type: "mousePressed", ...point, button, buttons: BUTTONS[button], clickCount: 1 })
-    await dispatch("pointer", { type: "mouseReleased", ...point, button, buttons: 0, clickCount: 1 })
+    await dispatch("pointer", { type: "mouseMoved", ...point }, target)
+    await dispatch("pointer", { type: "mousePressed", ...point, button, buttons: BUTTONS[button], clickCount: 1 }, target)
+    await dispatch("pointer", { type: "mouseReleased", ...point, button, buttons: 0, clickCount: 1 }, target)
   })
 }
 
-export async function hoverAt(session: PageSession, point: Point): Promise<void> {
-  await markedInput(session, dispatch => dispatch("pointer", { type: "mouseMoved", ...point }))
+export async function hoverAt(session: PageSession, point: Point, target?: InputTarget): Promise<void> {
+  await markedInput(session, dispatch => dispatch("pointer", { type: "mouseMoved", ...point }, target))
 }
 
-export async function wheelAt(session: PageSession, point: Point | undefined, delta: { x: number; y: number }): Promise<void> {
+export async function wheelAt(session: PageSession, point: Point | undefined, delta: { x: number; y: number }, target?: InputTarget): Promise<void> {
   const at = point ?? await viewportCentre(session)
   await markedInput(session, async dispatch => {
-    await dispatch("pointer", { type: "mouseMoved", ...at })
-    await dispatch("wheel", { type: "mouseWheel", ...at, deltaX: delta.x, deltaY: delta.y })
+    await dispatch("pointer", { type: "mouseMoved", ...at }, target)
+    await dispatch("wheel", { type: "mouseWheel", ...at, deltaX: delta.x, deltaY: delta.y }, target)
   })
 }
 
 /** A pointer drag in small steps, so pointer-based drag libraries pass their activation distance. */
-export async function dragBetween(session: PageSession, from: Point, to: Point): Promise<void> {
+export async function dragBetween(session: PageSession, from: Point, to: Point, source?: InputTarget, target?: InputTarget): Promise<void> {
   await markedInput(session, async dispatch => {
-    await dispatch("pointer", { type: "mouseMoved", ...from })
-    await dispatch("pointer", { type: "mousePressed", ...from, button: "left", buttons: 1, clickCount: 1 })
+    await dispatch("pointer", { type: "mouseMoved", ...from }, source)
+    await dispatch("pointer", { type: "mousePressed", ...from, button: "left", buttons: 1, clickCount: 1 }, source)
     const steps = 10
     for (let step = 1; step <= steps; step++) {
       await dispatch("pointer", { type: "mouseMoved", x: from.x + (to.x - from.x) * step / steps,
-        y: from.y + (to.y - from.y) * step / steps, button: "left", buttons: 1 })
+        y: from.y + (to.y - from.y) * step / steps, button: "left", buttons: 1 }, step === steps ? target : undefined)
     }
-    await dispatch("pointer", { type: "mouseReleased", ...to, button: "left", buttons: 0, clickCount: 1 })
+    await dispatch("pointer", { type: "mouseReleased", ...to, button: "left", buttons: 0, clickCount: 1 }, target)
   })
 }
 
-export async function pressKeys(session: PageSession, chord: string): Promise<void> {
+export async function pressKeys(session: PageSession, chord: string, target?: InputTarget): Promise<void> {
   const events = keyChord(chord)
   await markedInput(session, async dispatch => {
-    for (const event of events) await dispatch("keyboard", event)
+    for (const event of events) await dispatch("keyboard", event, target)
   })
 }
 

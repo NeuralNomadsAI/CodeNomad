@@ -49,7 +49,15 @@ export class PageDriverUnsupportedError extends Error {
   readonly code = "unsupported"
   constructor(readonly driver: DriverKind, readonly operation: string) { super(`${driver} page driver does not support ${operation}`) }
 }
-export interface PageSession { driver: PageDriver; checkpoint(): Promise<void>; guardInput?(): void; markAutomation: boolean }
+export interface InputTarget { ref: string; handle: string }
+export interface PageSession {
+  driver: PageDriver
+  checkpoint(): Promise<void>
+  guardInput?(): void
+  markAutomation: boolean
+  /** Expected ref for the current native dispatch, scoped to the serialized page operation. */
+  inputTarget?: InputTarget
+}
 export class Handle { constructor(readonly objectId: string) {} }
 export function gone(ref: string): Error { return new Error(`${ref} is no longer in the page; inspect again`) }
 
@@ -93,12 +101,17 @@ function pageError(ref: string, description: string): Error {
 }
 
 type InputKind = "pointer" | "wheel" | "keyboard" | "insert-text"
-async function sendInput(session: PageSession, kind: InputKind, params: Record<string, unknown>): Promise<void> {
-  switch (kind) {
-    case "pointer": return session.driver.pointer(params as unknown as PointerInput)
-    case "wheel": return session.driver.wheel(params as unknown as WheelInput)
-    case "keyboard": return session.driver.keyboard(params as unknown as KeyboardInput)
-    case "insert-text": return session.driver.insertText(params.text as string)
+async function sendInput(session: PageSession, kind: InputKind, params: Record<string, unknown>, target?: InputTarget): Promise<void> {
+  session.inputTarget = target
+  try {
+    switch (kind) {
+      case "pointer": return await session.driver.pointer(params as unknown as PointerInput)
+      case "wheel": return await session.driver.wheel(params as unknown as WheelInput)
+      case "keyboard": return await session.driver.keyboard(params as unknown as KeyboardInput)
+      case "insert-text": return await session.driver.insertText(params.text as string)
+    }
+  } finally {
+    session.inputTarget = undefined
   }
 }
 export class PageTargetChangedError extends Error {
@@ -106,14 +119,14 @@ export class PageTargetChangedError extends Error {
 }
 
 /** Provenance marking belongs only to the trusted application window. */
-export async function markedInput<T>(session: PageSession, run: (dispatch: (kind: InputKind, params: Record<string, unknown>) => Promise<void>) => Promise<T>): Promise<T> {
-  const held = new Map<string, { kind: InputKind; params: Record<string, unknown> }>()
-  let point = { x: 0, y: 0 }
+export async function markedInput<T>(session: PageSession, run: (dispatch: (kind: InputKind, params: Record<string, unknown>, target?: InputTarget) => Promise<void>) => Promise<T>): Promise<T> {
+  const held = new Map<string, { kind: InputKind; params: Record<string, unknown>; target?: InputTarget }>()
+  let point: { x: number; y: number; target?: InputTarget } = { x: 0, y: 0 }
   let attempted = false
   let marked = false
   let targetLost: PageTargetChangedError | undefined
   const checkInput = () => session.guardInput ? session.guardInput() : session.checkpoint()
-  const dispatch = async (kind: InputKind, params: Record<string, unknown>) => {
+  const dispatch = async (kind: InputKind, params: Record<string, unknown>, target?: InputTarget) => {
     let timestamp: number | undefined
     const mouse = kind === "pointer" || kind === "wheel"
     const id = mouse ? `mouse:${params.button}` : `key:${params.code}`
@@ -130,15 +143,15 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (kind
     if (up) held.delete(id)
     let failure: { error: unknown } | undefined
     try {
-      await sendInput(session, kind, { ...params, ...(timestamp === undefined || kind === "insert-text" ? {} : { timestamp }) })
+      await sendInput(session, kind, { ...params, ...(timestamp === undefined || kind === "insert-text" ? {} : { timestamp }) }, target)
     } catch (error) {
       // The application channel throws this only before handing input to CDP.
       if (error instanceof PageTargetChangedError) throw error
       failure = { error }
     }
     attempted = true
-    if (mouse && typeof params.x === "number" && typeof params.y === "number") point = { x: params.x, y: params.y }
-    if (down) held.set(id, { kind, params: { ...params, type: mouse ? "mouseReleased" : "keyUp", buttons: 0, modifiers: 0,
+    if (mouse && typeof params.x === "number" && typeof params.y === "number") point = { x: params.x, y: params.y, target }
+    if (down) held.set(id, { kind, target, params: { ...params, type: mouse ? "mouseReleased" : "keyUp", buttons: 0, modifiers: 0,
       ...(timestamp === undefined ? {} : { timestamp }) } })
     if (failure) throw failure.error
     await session.checkpoint()
@@ -161,7 +174,8 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (kind
         })
         await checkInput()
         const { text: _text, unmodifiedText: _unmodified, ...params } = release.params
-        await sendInput(session, release.kind, { ...params, ...(release.kind === "pointer" ? point : {}) })
+        if (release.kind === "pointer") await sendInput(session, release.kind, { ...params, x: point.x, y: point.y }, point.target)
+        else await sendInput(session, release.kind, params, release.target)
       } catch (error) {
         if (error instanceof PageTargetChangedError) { targetLost = error; break }
         // Cleanup cannot replay a press or dispatch without a current context.

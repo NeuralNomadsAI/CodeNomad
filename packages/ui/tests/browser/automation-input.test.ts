@@ -140,6 +140,70 @@ test("a hidden press target never submits the focused draft, and dragging cannot
   } finally { await run.close() }
 })
 
+test("a pointer move can reveal a cover, but the cover receives no click", async () => {
+  const run = await openAutomationPage(automation, `${base}/automation-inputs`)
+  try {
+    const { page, act, refFor } = run
+    const ref = await refFor(/button "Hover me"/)
+    await page.evaluate(() => {
+      const button = document.getElementById("hover-target")!
+      button.addEventListener("pointerenter", () => {
+        const { x, y, width, height } = button.getBoundingClientRect()
+        const cover = document.createElement("button")
+        cover.id = "late-cover"
+        cover.textContent = "Late cover"
+        Object.assign(cover.style, { position: "fixed", left: `${x}px`, top: `${y}px`, width: `${width}px`, height: `${height}px`, zIndex: "100" })
+        document.body.append(cover)
+      }, { once: true })
+    })
+    const error = await act({ action: "click", ref }).catch((error: Error) => error.message)
+    assert.deepEqual(await log(page), [], "neither the cover nor the inspected target receives the click")
+    assert.match(String(error), /is covered by button "Late cover"/)
+  } finally { await run.close() }
+})
+
+test("press and type refuse a substitute that takes focus just before native input", async () => {
+  const run = await openAutomationPage(automation, `${base}/automation-inputs`)
+  try {
+    const { page, act, refFor } = run
+    const ref = await refFor(/textbox "Query"/)
+    const substitute = page.locator("#substitute")
+    await page.evaluate(() => {
+      const substitute = document.createElement("input")
+      substitute.id = "substitute"
+      document.getElementById("search")!.append(substitute)
+    })
+    for (const input of [{ action: "press", key: "Enter" }, { action: "type", text: "Not for this field" }]) {
+      await page.evaluate(() => {
+        let until = 0, steal = true
+        Object.defineProperty(window, "__codenomadAutomationInputUntil", {
+          configurable: true,
+          get() { return until },
+          set(value) {
+            until = value
+            if (steal) {
+              steal = false
+              document.getElementById("substitute")!.focus()
+            }
+          },
+        })
+      })
+      const error = await act({ ...input, ref }).catch((error: Error) => error.message)
+      assert.deepEqual(await log(page), [], "no Enter or implicit submit was sent to the substitute")
+      assert.equal(await substitute.inputValue(), "", "the substitute did not receive the text")
+      assert.match(String(error), /focus.*changed/i)
+    }
+    await page.evaluate(() => {
+      const query = document.querySelector<HTMLInputElement>("#query")!
+      const substitute = document.querySelector<HTMLInputElement>("#substitute")!
+      substitute.value = "Keep this"
+      query.select = () => { substitute.focus(); substitute.select() }
+    })
+    await assert.rejects(act({ action: "type", ref, text: "" }), /cannot take focus/)
+    assert.equal(await substitute.inputValue(), "Keep this", "clearing the inspected field cannot delete a substitute's selection")
+  } finally { await run.close() }
+})
+
 test("pointer admission checks the viewport after scrolling, including closed shadow frame owners", async () => {
   const run = await openAutomationPage(automation, `${base}/automation-inputs`)
   try {
@@ -181,11 +245,11 @@ test("pointer admission checks the viewport after scrolling, including closed sh
   } finally { await run.close() }
 })
 
-/** Answers the real InterruptionDock question and returns the human-answer header it sent. */
-async function answerDock(via: "click" | "press" | "press-stalled" | "click-stalled" | "human"): Promise<unknown> {
+/** Exercises input on a real InterruptionDock question and reads the recorded provenance. */
+async function answerDock(via: "click" | "press" | "press-stalled" | "click-recovered" | "click-stalled" | "human"): Promise<unknown> {
   const run = await openAutomationPage(automation, `${base}/automation-dock`, async page => {
     await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
-  })
+  }, via === "click-stalled" ? 2_000 : 10_000)
   try {
     const { page, act, refFor } = run
     await page.waitForFunction(() => Boolean((window as any).fixture?.snapshot().ids.length))
@@ -198,17 +262,39 @@ async function answerDock(via: "click" | "press" | "press-stalled" | "click-stal
     } else {
       const ref = await refFor(/textbox/, "textbox")
       await act({ action: "type", ref, text: `Automation ${via}` })
-      if (via === "press-stalled" || via === "click-stalled") {
-        await page.evaluate(({ event, duration }) => window.addEventListener(event, () => {
-          const end = performance.now() + duration
-          while (performance.now() < end) { /* Renderer stalled beyond the 15-second input lease. */ }
-        }, { capture: true, once: true }), { event: via === "press-stalled" ? "keydown" : "pointerdown", duration: via === "press-stalled" ? 16_000 : 25_000 })
-        const input = via === "press-stalled" ? { action: "press", key: "Enter", ref }
+      if (via === "press-stalled" || via === "click-recovered" || via === "click-stalled") {
+        const keyboard = via === "press-stalled"
+        await page.evaluate(({ keyboard, duration }) => {
+          const fixture = (window as any).fixture
+          fixture.inputEvents = []
+          const down = keyboard ? "keydown" : "pointerdown"
+          for (const type of [down, keyboard ? "keyup" : "pointerup"]) window.addEventListener(type, event => {
+            if (type === down) {
+              const end = performance.now() + duration
+              while (performance.now() < end) { /* Let the input lease expire before the event continues. */ }
+            }
+            fixture.inputEvents.push([type, event.isTrusted, fixture.automationInputActive(event.timeStamp)])
+          }, { capture: true, once: true })
+        }, { keyboard, duration: via === "click-recovered" ? 25_000 : 16_000 })
+        const input = keyboard ? { action: "press", key: "Enter" }
           : { action: "click", ref: await refFor(/button "Submit"/, "Submit") }
-        await act(input).catch(error => {
-          if (!/timed out/.test(error.message)) throw error
+        await assert.rejects(act(input), /outcome is unknown/)
+        const { events, replies } = await page.evaluate(() => {
+          const fixture = (window as any).fixture
+          return { events: fixture.inputEvents, replies: fixture.replies.length }
         })
-      } else if (via === "press") await act({ action: "press", key: "Enter", ref })
+        assert.deepEqual(events, via === "click-stalled" ? [["pointerdown", true, true]]
+          : keyboard ? [["keydown", true, true], ["keyup", true, true]] : [["pointerdown", true, true], ["pointerup", true, true]])
+        if (via === "click-stalled") {
+          assert.equal(replies, 0, "an unverified release cannot complete the admitted down event")
+          return
+        }
+      } else if (via === "press") {
+        await act({ action: "press", key: "Enter", ref }).catch((error: Error) => {
+          // Enter can complete the answer and dismiss the field before the guarded keyUp.
+          if (!/(?:no longer in the page|focus changed).*Input already sent/i.test(error.message)) throw error
+        })
+      }
       else await act({ action: "click", ref: await refFor(/button "Submit"/, "Submit") })
     }
     await page.waitForFunction(() => (window as any).fixture.replies.length === 1)
@@ -221,7 +307,11 @@ async function answerDock(via: "click" | "press" | "press-stalled" | "click-stal
 test("a dock answer given through trusted automation clicks or keys never carries the human-answer mark", async () => {
   assert.equal(await answerDock("click"), undefined, "a trusted automation click is not a human answer")
   assert.equal(await answerDock("press"), undefined, "a trusted automation Enter is not a human answer")
-  assert.equal(await answerDock("press-stalled"), undefined, "a key queued past lease expiry and its default click still are not human")
-  assert.equal(await answerDock("click-stalled"), undefined, "a cleanup release after two 10-second command timeouts retains its original provenance")
   assert.equal(await answerDock("human"), "1", "control: a real user click on the same dock is")
+})
+
+test("stalled dock input keeps its provenance and completes a click only after a verified release", async () => {
+  assert.equal(await answerDock("press-stalled"), undefined, "a delayed Enter and its default click still are not human")
+  assert.equal(await answerDock("click-recovered"), undefined, "a verified cleanup release retains its original provenance")
+  await answerDock("click-stalled")
 })

@@ -26,14 +26,15 @@ export async function launchAutomationBrowser() {
 let windows = 0
 
 /** A page that identifies as one CodeNomad window, and the controller pinned to it. */
-export async function openAutomationPage(browser: { context: BrowserContext; endpoint: string }, url: string, setup?: (page: Page) => Promise<void>) {
+export async function openAutomationPage(browser: { context: BrowserContext; endpoint: string }, url: string,
+  setup?: (page: Page) => Promise<void>, timeoutMs = 10_000) {
   const windowId = `automation-window-${++windows}`
   const page = await browser.context.newPage()
   page.setDefaultTimeout(15_000)
   await page.addInitScript(`window.__CODENOMAD_WINDOW_ID__ = ${JSON.stringify(windowId)}`)
   await setup?.(page)
   await page.goto(url)
-  const cdp = new DeveloperCdp({ timeoutMs: 10_000 })
+  const cdp = new DeveloperCdp({ timeoutMs })
   const identity: DeveloperCdpIdentity = { endpoint: browser.endpoint, runId: `run-${windowId}`, windowId }
   const refFor = async (pattern: RegExp, query?: string) => {
     const { snapshot } = await cdp.inspect(identity, query ? { query } : {})

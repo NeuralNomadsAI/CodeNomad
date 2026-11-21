@@ -33,6 +33,20 @@ const PROBED_TYPES = ["date", "time", "datetime-local", "month", "week", "number
 const TEXT_FIELD = `const textField = item => item instanceof HTMLInputElement || item instanceof HTMLTextAreaElement
   || (item instanceof HTMLElement && item.isContentEditable);`
 
+export const POINTER_COVER = `const hit = args[0] && (args[0].nodeType === Node.ELEMENT_NODE ? args[0] : args[0].parentElement);
+   if (!hit) return null;
+   const parent = node => {
+     if (node.nodeType === 9) { try { return node.defaultView && node.defaultView.frameElement; } catch { return null; } }
+     return node.assignedSlot || node.parentNode || (node.nodeType === 11 ? node.host : null);
+   };
+   for (let node = hit; node; node = parent(node)) {
+     if (node === element) return null;
+     if (node.nodeType === 1 && node.localName === "label" && (node.control === element || node.contains(element))) return null;
+   }
+  const name = (hit.getAttribute("aria-label") || hit.getAttribute("title") || hit.innerText || "").replace(/\\s+/g, " ").trim().slice(0, 60);
+  return hit.tagName.toLowerCase() + (name ? " " + JSON.stringify(name) : "");`
+export const FOCUS_MISMATCH = `active !== field && !(editable && active instanceof HTMLElement && active.isContentEditable && active.contains(field))`
+
 export const ELEMENT_FUNCTIONS = {
   "option-click": `${CHOOSE}
   const option = element.closest("option"), select = option && option.closest("select");
@@ -68,7 +82,7 @@ export const ELEMENT_FUNCTIONS = {
   field.focus();
   const active = field.getRootNode().activeElement;
   const editable = !(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement);
-  if (active !== field && !(editable && active instanceof HTMLElement && active.isContentEditable && active.contains(field))) {
+  if (${FOCUS_MISMATCH}) {
     throw new Error("codenomad:unfocusable");
   }
   if (field instanceof HTMLInputElement && ${JSON.stringify(VALUE_TYPES)}.includes(field.type)) return "value";
@@ -97,18 +111,7 @@ export const ELEMENT_FUNCTIONS = {
   "read-value": `const value = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.value : element.innerText || element.textContent || "";
   if (element instanceof HTMLInputElement && element.type === "password") return "•".repeat(Math.min(value.length, 16));
   return value.length > ${VALUE_LIMIT} ? value.slice(0, ${VALUE_LIMIT - 1}) + "…" : value;`,
-  receives: `const hit = args[0] && (args[0].nodeType === Node.ELEMENT_NODE ? args[0] : args[0].parentElement);
-   if (!hit) return null;
-   const parent = node => {
-     if (node.nodeType === 9) { try { return node.defaultView && node.defaultView.frameElement; } catch { return null; } }
-     return node.assignedSlot || node.parentNode || (node.nodeType === 11 ? node.host : null);
-   };
-   for (let node = hit; node; node = parent(node)) {
-     if (node === element) return null;
-     if (node.nodeType === 1 && node.localName === "label" && (node.control === element || node.contains(element))) return null;
-   }
-  const name = (hit.getAttribute("aria-label") || hit.getAttribute("title") || hit.innerText || "").replace(/\\s+/g, " ").trim().slice(0, 60);
-  return hit.tagName.toLowerCase() + (name ? " " + JSON.stringify(name) : "");`,
+   receives: POINTER_COVER,
   contains: `const needle = String(args[0]).replace(/\\s+/g, " ").trim().toLowerCase();
   const root = element;
   const text = value => String(value || "").replace(/\\s+/g, " ").toLowerCase();
@@ -140,7 +143,10 @@ export const FUNCTION_ARGS: Record<PageFunctionId, readonly string[]> = {
 export const handleResult = (id: PageFunctionId) => ["field", "active-element", "document-root"].includes(id)
 export const applicationOnly = (id: PageFunctionId) => id === "mark-input" || id === "unmark-input"
 export function declaration(id: keyof typeof ELEMENT_FUNCTIONS, mark: boolean): string {
-  const body = ELEMENT_FUNCTIONS[id]
+  const body = mark && id === "delete-selection" ? `const field = element, active = field.getRootNode().activeElement;
+    const editable = !(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement);
+    if (${FOCUS_MISMATCH}) throw new Error("codenomad:unfocusable");
+    ${ELEMENT_FUNCTIONS[id]}` : ELEMENT_FUNCTIONS[id]
   const element = `const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement;
     if (!(element instanceof Element) || !element.isConnected) throw new Error("codenomad:gone");`
   return mark

@@ -53,6 +53,7 @@ class FakeChrome {
   targets: Array<ReturnType<typeof page>> | undefined
   context = { windowId: "window-1", instanceId: "workspace-1", sessionId: "session-1", tabId: "tab-1", windowInstance: undefined as string | undefined }
   onCommand?: (command: Command) => void
+  skipReply?: (command: Command) => boolean
   sockets: FakeSocket[] = []
   commands: Command[] = []
   deferred = new Map<string, { socket: FakeSocket; command: Command }>()
@@ -75,6 +76,7 @@ class FakeChrome {
   receive(socket: FakeSocket, command: Command): void {
     this.onCommand?.(command)
     this.commands.push(command)
+    if (this.skipReply?.(command)) return
     if (this.deferred.has(command.method)) {
       this.deferred.set(command.method, { socket, command })
       return
@@ -144,6 +146,31 @@ const identity = {
 }
 
 describe("DeveloperCdp", () => {
+  it("does not reopen a window retired while discovering targets for the same run", async () => {
+    const chrome = new FakeChrome()
+    let hold: (() => void) | undefined, started: (() => void) | undefined
+    const blocked = new Promise<void>(resolve => { hold = resolve })
+    const listing = new Promise<void>(resolve => { started = resolve })
+    let deferList = false
+    const client = chrome.client({ fetch: async (url: string) => {
+      if (deferList) { started!(); await blocked }
+      return chrome.fetch(url)
+    } })
+    try {
+      await client.inspect(identity)
+      const count = chrome.sockets.length
+      chrome.context.windowId = "window-2"
+      deferList = true
+      const other = client.inspect({ ...identity, windowId: "window-2" })
+      await listing
+      client.close(identity.runId)
+      hold!()
+      await assert.rejects(other, /retired|closed/i)
+      assert.equal(chrome.sockets.length, count, "discovery must not open even a probe for the retired state")
+      assert.ok(chrome.sockets.every(socket => socket.closed))
+    } finally { client.close() }
+  })
+
   it("releases only admitted keys after an unrelated tab change", async () => {
     const chrome = new FakeChrome()
     const client = chrome.client()
@@ -262,6 +289,32 @@ describe("DeveloperCdp", () => {
         && String(command.params.functionDeclaration).includes("Math.min")))
     } finally { client.close() }
   })
+
+  for (const mouse of [false, true]) for (const cleanup of [false, true]) {
+    it(`requires a fresh ${mouse ? "pointer" : "keyboard"} destination for ${cleanup ? "cleanup" : "the scheduled release"}`, async () => {
+      const chrome = new FakeChrome()
+      chrome.quads = [[100, 40, 300, 40, 300, 80, 100, 80]]
+      const client = chrome.client({ timeoutMs: 40 })
+      try {
+        const inspection = await client.inspect(identity)
+        const down = mouse ? "mousePressed" : "keyDown"
+        chrome.skipReply = command => {
+          if (cleanup && command.params?.type === down) return true
+          if (!isDestination(command) || !chrome.commands.some(previous => previous.params?.type === down)) return false
+          // An existing iframe can take focus or cover the point without a CDP frame event.
+          chrome.mainFocus = false
+          chrome.hitTag = "iframe"
+          return true
+        }
+        const result = client.act({ ...identity, document: inspection.document }, mouse
+          ? { action: "click", ref: refOf(inspection) } : { action: "press", key: "Enter" })
+        const failure = await result.catch((error: Error) => error.message)
+        assert.deepEqual(chrome.commands.filter(command => command.method.startsWith("Input."))
+          .map(command => command.params?.type), mouse ? ["mouseMoved", down] : [down])
+        assert.match(String(failure), /outcome is unknown|Input already sent/)
+      } finally { client.close() }
+    })
+  }
 
   for (const isDefault of [true, false]) it(`fences loss of the main world only (default: ${isDefault})`, async () => {
     const chrome = new FakeChrome()
