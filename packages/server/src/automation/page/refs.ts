@@ -13,9 +13,9 @@ export class RefTable {
   }
 
   /** Issues refs for one inspection; refs of other generations can no longer resolve and are dropped. */
-  issuer(generation: string, keep?: (generation: string) => boolean): (backendNodeId: number) => string {
+  issuer(generation: string): (backendNodeId: number) => string {
     for (const [ref, entry] of this.entries) {
-      if (entry.generation === generation || keep?.(entry.generation)) continue
+      if (entry.generation === generation) continue
       this.entries.delete(ref)
       this.byNode.delete(`${entry.generation}\0${entry.backendNodeId}`)
     }

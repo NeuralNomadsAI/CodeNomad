@@ -75,6 +75,7 @@ interface ProbedBridge {
   runId: string
   windows?: DeveloperWindowCandidate[]
   windowId?: string
+  pin?: string
 }
 
 interface DeveloperWindowCandidate {
@@ -781,8 +782,9 @@ function windowSelector(bridge: ProbedBridge, windowId: string) {
 
 const windowRank = (window: DeveloperWindowCandidate) => ["visible", "open", "elsewhere"].indexOf(window.session)
 
-async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>, sessionID: string, command: DeveloperAction,
-  options: { inventory?: boolean; selector?: string } = {}) {
+async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
+  sessionID: string, command: DeveloperAction,
+  options: { inventory?: boolean; selector?: string; publish?: (target: ProbedBridge) => void } = {}) {
   let target = inspectedTargets.get(sessionID)
   let select = options.selector
   if (command.action === "inspect" && select) {
@@ -818,7 +820,10 @@ async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
     ? new Set((await registrations()).map((registration) => registration.token))
     : undefined
   const response = await callBridge(target.registration, { mode: "developer-execute", sessionID, command,
-    ...(select ? { target: select } : {}) }, REQUEST_TIMEOUT_MS)
+    ...(select ? { target: select } : target.pin ? { pin: target.pin } : {}) }, REQUEST_TIMEOUT_MS).catch(error => {
+    if (isConnectionRefused(error)) throw targetError("target-gone", "The selected backend has closed; list the targets again")
+    throw error
+  })
   if (response.status !== 200) {
     const message = response.body.error || `Native automation failed (${response.status})`
     throw typeof response.body.code === "string" ? targetError(response.body.code, message) : new Error(message)
@@ -826,8 +831,13 @@ async function executeDeveloperTool(inspectedTargets: Map<string, ProbedBridge>,
   if (command.action === "restart") {
     return waitForRestart(inspectedTargets, sessionID, target.nativeIdentity, target.runId, existingTokens!)
   }
-  if (command.action === "inspect" && !command.ref) inspectedTargets.set(sessionID, target)
+  options.publish?.(inspectedBridge(target, response.body.result))
   return formatBridgeResult(response.body.result)
+}
+
+function inspectedBridge(target: ProbedBridge, result: unknown): ProbedBridge {
+  const pin = (result as { pin?: unknown } | undefined)?.pin
+  return { ...target, pin: typeof pin === "string" ? pin : undefined }
 }
 
 async function waitForRestart(
@@ -856,7 +866,7 @@ async function waitForRestart(
           command: { action: "inspect" },
         }, INSPECTION_TIMEOUT_MS)
         if (inspection.status === 200) {
-          inspectedTargets.set(sessionID, candidate)
+          inspectedTargets.set(sessionID, inspectedBridge(candidate, inspection.body.result))
           return formatBridgeResult(inspection.body.result)
         }
       } catch {
@@ -870,6 +880,7 @@ async function waitForRestart(
 
 export function createDeveloperToolTransform() {
   const inspectedTargets = new Map<string, ProbedBridge>()
+  const selections = new Map<string, symbol>()
   return (draft: Pick<ToolDraft, "add">) => {
     draft.add({
       name: "inspect",
@@ -885,14 +896,27 @@ export function createDeveloperToolTransform() {
         additionalProperties: false,
       },
       options: { namespace: "codenomad", codemode: false },
-      execute: (input, tool) => {
+      execute: async (input, tool) => {
         const value = input && typeof input === "object" ? input as Record<string, unknown> : {}
         const selector = value.target === undefined ? undefined : formatDeveloperTarget(parseDeveloperTarget(value.target))
         if (value.targets === true && (selector || value.ref !== undefined || value.query !== undefined) || selector && value.ref !== undefined) {
           throw new Error("List targets or inspect a window; use a ref only in the inspected window")
         }
-        return executeDeveloperTool(inspectedTargets, tool.sessionID,
-          parseDeveloperAction({ ...value, action: "inspect" }), { inventory: value.targets === true, selector })
+        const command = parseDeveloperAction({ ...value, action: "inspect" })
+        const session = tool.sessionID
+        if (value.targets === true || value.ref !== undefined) {
+          return executeDeveloperTool(inspectedTargets, session, command, { inventory: value.targets === true })
+        }
+        const issued = Symbol()
+        selections.set(session, issued)
+        try {
+          return await executeDeveloperTool(inspectedTargets, session, command, { selector, publish: chosen => {
+            if (selections.get(session) !== issued) throw targetError("stale-inspection", "A newer inspection selected the window")
+            inspectedTargets.set(session, chosen)
+          } })
+        } finally {
+          if (selections.get(session) === issued) selections.delete(session)
+        }
       },
     })
     draft.add({

@@ -97,7 +97,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     const lifetime = requestAdmission(request, reply)
     try {
     if (!isAutomationPluginRequest(request, deps)) return reply.code(401).send({ error: "Unauthorized automation bridge" })
-    const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown; purpose?: unknown; target?: unknown } | undefined
+    const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown; purpose?: unknown; target?: unknown; pin?: unknown } | undefined
     if (body?.mode === "human-answer-verify") {
       if (!deps.settings) return reply.code(503).send({ error: "Human answer admission unavailable" })
       try { return reply.send({ result: await verifyMissionHumanAnswer(body.command,
@@ -271,7 +271,10 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     } catch (error) {
       return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) })
     }
-    const pin = probe ? undefined : inspectedTargets.get(body.sessionID)
+    const pin = probe ? undefined : inspectedTargets.get(body.sessionID, body.pin)
+    if (!probe && body.pin !== undefined && !pin) {
+      return reply.code(404).send({ code: "target-gone", error: "The inspection is unavailable; choose a window in inspect({targets:true})" })
+    }
     const exact = explicit ?? pin
     if (command && (command.action !== "inspect" || command.ref) && !pin) {
       return reply.code(404).send({ code: "inspect-required", error: "Run codenomad.inspect before acting on this window" })
@@ -279,6 +282,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     const unavailable = (error?: string) => reply.code(404).send(exact
       ? { code: "target-gone", error: "The selected window is unavailable; choose a window in inspect({targets:true})" }
       : { code: "no-window", error: error ?? "No ready local CodeNomad window for this backend" })
+    const publishInspection = command?.action === "inspect" && !command.ref ? inspectedTargets.begin(body.sessionID) : undefined
     let native: DeveloperNativeStatus
     try {
       native = await deps.nativeParent.request<DeveloperNativeStatus>(inventory ? "developer.targets" : "developer.status",
@@ -322,9 +326,10 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       if (command.action === "inspect") {
         const result = await deps.developerCdp.inspect(identity, { ref: command.ref, query: command.query })
         result.diagnostics.push(...(native.logs ?? []).slice(-32))
-        if (!command.ref) inspectedTargets.remember(body.sessionID, { ...identity, ...(result.document ? { document: result.document } : {}) })
+        const nextPin = publishInspection?.({ ...identity, ...(result.document ? { document: result.document } : {}) })
+        if (publishInspection && !nextPin) return reply.code(409).send({ code: "stale-inspection", error: "A newer inspection selected the window" })
         const { document: _document, ...inspection } = result
-        return reply.send({ result: inspection })
+        return reply.send({ result: { ...inspection, ...(nextPin ? { pin: nextPin } : {}) } })
       }
       if (command.action === "screenshot") {
         const image = await deps.developerCdp.screenshot(identity)

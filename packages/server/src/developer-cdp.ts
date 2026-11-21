@@ -124,6 +124,7 @@ interface RunState {
   open?: Promise<void>
   /** Distinguishes this run's refs from an earlier state's on the same target. */
   stamp: number
+  refs: RefTable
   nextCommandId: number
   navigationEpoch: number
   pending: Map<number, PendingCommand>
@@ -134,8 +135,7 @@ export class DeveloperCdp {
   private readonly dependencies: DeveloperCdpDependencies
   private readonly windows = new Map<string, RunState>()
   private readonly operations = new Map<string, Promise<void>>()
-  /** Shared by runs so a ref name is never reused for another element. */
-  private readonly refs = new RefTable("inspect again", `e${BigInt(`0x${randomBytes(8).toString("hex")}`).toString().padStart(20, "0")}`)
+  private readonly refNamespace = BigInt(`0x${randomBytes(8).toString("hex")}`).toString().padStart(20, "0")
   private stamps = 0
 
   constructor(dependencies: Partial<DeveloperCdpDependencies> = {}) {
@@ -152,15 +152,11 @@ export class DeveloperCdp {
     return this.exclusive(identity.runId, async () => {
       const state = await this.ensure(identity)
       const generation = this.generation(state)
-      const root = options.ref === undefined ? undefined : this.refs.resolve(options.ref, generation)
+      const root = options.ref === undefined ? undefined : state.refs.resolve(options.ref, generation)
       let snapshot
       try {
         snapshot = await snapshotPage(this.session(state, state.navigationEpoch, "Page changed during inspection; inspect again"),
-          () => {
-            const live = new Set([...this.windows.values()].filter(window => window.target && window.socket)
-              .map(window => this.generation(window)))
-            return this.refs.issuer(generation, candidate => live.has(candidate))
-          }, { rootBackendNodeId: root, query: options.query, refLength: this.refs.refLength })
+          () => state.refs.issuer(generation), { rootBackendNodeId: root, query: options.query, refLength: state.refs.refLength })
       } catch (error) {
         if (error instanceof SnapshotScopeError) throw new Error(`${options.ref} is no longer in the page; inspect again`)
         throw error
@@ -180,7 +176,7 @@ export class DeveloperCdp {
     return this.exclusive(identity.runId, async () => {
       const state = await this.ensure(identity)
       const epoch = state.navigationEpoch, generation = this.generation(state)
-      const page = bindRefs(action, ref => this.refs.resolve(ref, generation))
+      const page = bindRefs(action, ref => state.refs.resolve(ref, generation))
       return performAction(this.session(state, epoch, "Page changed during action; inspect again"), page)
     })
   }
@@ -261,12 +257,14 @@ export class DeveloperCdp {
   }
 
   private newState(endpoint: string, windowId: string, sessionId?: string, instanceId?: string): RunState {
+    const stamp = ++this.stamps
     return {
       endpoint,
       windowId,
       sessionId,
       instanceId,
-      stamp: ++this.stamps,
+      stamp,
+      refs: new RefTable("inspect again", `e${this.refNamespace}${String(stamp).padStart(10, "0")}`),
       nextCommandId: 0,
       navigationEpoch: 0,
       pending: new Map(),

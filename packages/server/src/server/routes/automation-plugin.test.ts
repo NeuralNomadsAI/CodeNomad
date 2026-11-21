@@ -170,6 +170,22 @@ test("targets the inspected window independently of the visible conversation", a
   assert.equal((await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "screenshot" } })).statusCode, 200)
   assert.equal(screenshotWindow, "window-2", "a late expansion must not switch windows")
 
+  const a = (await select("window-1")).json().result.pin
+  let enteredInspection!: () => void, releaseInspection!: () => void
+  const reading = new Promise<void>(resolve => { enteredInspection = resolve })
+  const paused = new Promise<void>(resolve => { releaseInspection = resolve })
+  holdStatus = () => { enteredInspection(); return paused }
+  const lateInspection = request({ mode: "developer-execute", sessionID: "session-1", pin: a, command: { action: "inspect" } })
+  await reading
+  let b: string
+  try { b = (await select("window-2")).json().result.pin }
+  finally { releaseInspection() }
+  assert.equal((await lateInspection).json().code, "stale-inspection")
+  const capture = (pin: string) => request({ mode: "developer-execute", sessionID: "session-1", pin, command: { action: "screenshot" } })
+  assert.equal((await capture(a)).json().code, "target-gone")
+  assert.equal((await capture(b)).statusCode, 200)
+  assert.equal(screenshotWindow, "window-2")
+
   state = "stopped"
   assert.equal((await request({ mode: "developer-probe", sessionID: "session-2" })).statusCode, 404)
   state = "ready"

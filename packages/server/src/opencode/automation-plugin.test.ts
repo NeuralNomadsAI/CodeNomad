@@ -429,6 +429,9 @@ test("lists exact window selectors, prefers the visible session and stays pinned
   const removals: Array<() => Promise<void>> = []
   const servers: http.Server[] = []
   let twoVisible = false
+  let entered!: () => void, release!: () => void
+  const inspecting = new Promise<void>(resolve => { entered = resolve })
+  const paused = new Promise<void>(resolve => { release = resolve })
   try {
     for (const profile of ["a", "b"]) {
       const bridge = await listen(async (body, response) => {
@@ -444,8 +447,9 @@ test("lists exact window selectors, prefers the visible session and stays pinned
           response.statusCode = 404
           return { code: "target-gone", error: "Closed" }
         }
+        if (profile === "a" && body.pin === "pin-a") { entered(); await paused }
         return { result: { target: { id: "page", title: "CodeNomad", url: "http://app.test" },
-          context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } }
+          context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [], pin: `pin-${profile}` } }
       })
       servers.push(bridge.server)
       removals.push(await publishAutomationBridge(createAutomationBridgeRegistration(bridge.url)))
@@ -462,13 +466,19 @@ test("lists exact window selectors, prefers the visible session and stays pinned
     twoVisible = true
     await assert.rejects(inspect.execute({}, { sessionID: "two" }), /ambiguous-target/)
     const target = list.targets.find((item: { target: string }) => item.target === "electron:b/run/window-2").target
-    await inspect.execute({ target }, session)
-    assert.equal(calls.at(-1)?.target, target)
+    const late = assert.rejects(inspect.execute({}, session), /stale-inspection/)
+    await inspecting
+    try { await inspect.execute({ target }, session) }
+    finally { release() }
+    await late
+    assert.ok(calls.some(call => call.mode === "developer-execute" && call.target === target))
     const before = calls.length
     await assert.rejects(capture.execute({}, session), /target-gone/)
     assert.equal(calls.length, before + 1, "a closed window cannot trigger a new discovery or capture")
     assert.equal(calls.at(-1)?.profile, "b")
+    assert.equal(calls.at(-1)?.pin, "pin-b")
   } finally {
+    release()
     await Promise.all(removals.map(remove => remove()))
     await Promise.all(servers.map(closeServer))
     restore()
