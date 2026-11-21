@@ -625,6 +625,38 @@ test("a preview pin requires a snapshot result and retains its bridge address", 
   assert.deepEqual(executed, [original.url, original.url])
 })
 
+test("an invalid replacement snapshot does not change the preview pin", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-preview-invalid-snapshot-"))
+  const restore = isolateAutomationBridgeRegistry(root)
+  t.after(async () => { restore(); await rm(root, { recursive: true, force: true }) })
+  const original = createAutomationBridgeRegistration("http://127.0.0.1:56780")
+  const replacement = createAutomationBridgeRegistration("http://127.0.0.1:56781")
+  await publishAutomationBridge(original)
+  await publishAutomationBridge(replacement)
+  let active = original, reply: unknown = fixtureSnapshot
+  const captures: string[] = []
+  t.mock.method(globalThis, "fetch", async (url: string, init: RequestInit) => {
+    const body = JSON.parse(String(init.body))
+    if (body.mode === "browser-probe") {
+      return url === active.url ? Response.json({ result: { available: true, target: active.token } })
+        : Response.json({ code: "hidden-preview" }, { status: 404 })
+    }
+    if (body.command.action === "screenshot") captures.push(url)
+    return Response.json({ result: reply })
+  })
+  const browser = createBrowserToolExecutor()
+  const takeSnapshot = () => browser("session", { action: "snapshot" })
+  await takeSnapshot()
+  active = replacement
+  for (reply of [{ url: "", snapshot: "" }, { ...fixtureSnapshot, collapsed: "unknown" }]) {
+    await assert.rejects(takeSnapshot(), /snapshot result/)
+  }
+  await assert.rejects(browser("session", { action: "screenshot" }), /stale-preview/)
+  active = original
+  await browser("session", { action: "screenshot" })
+  assert.deepEqual(captures, [original.url])
+})
+
 test("unscoped snapshots change the preview pin; ref-free actions stay on that pin", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-browser-pin-"))
   const restore = isolateAutomationBridgeRegistry(root)

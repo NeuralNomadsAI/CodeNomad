@@ -879,17 +879,28 @@ export async function executeBrowserTool(sessionID: string, input: unknown, pins
     const reason = response.body?.error || `Browser command failed (${response.status})`
     throw new Error(typeof response.body?.code === "string" ? `${response.body.code}: ${reason}` : reason)
   }
-  const result = response.body?.result as { url?: unknown; snapshot?: unknown } | undefined
-  if (command.action === "snapshot" && (typeof result?.url !== "string" || typeof result.snapshot !== "string")) {
-    throw new Error("The browser bridge returned no valid snapshot result; take a new snapshot")
+  const result = response.body?.result
+  if (command.action === "snapshot") {
+    const { url, snapshot: text, collapsed } = (result ?? {}) as { url?: unknown; snapshot?: unknown; collapsed?: unknown }
+    const address = typeof url === "string" ? URL.parse(url) : null
+    if (!address || !["http:", "https:"].includes(address.protocol) || address.username || address.password
+      || typeof text !== "string" || !text.trim()
+      || collapsed !== undefined && (typeof collapsed !== "number" || !Number.isSafeInteger(collapsed) || collapsed < 0)) {
+      throw new Error("The browser bridge returned no valid snapshot result; take a new snapshot")
+    }
+    const content = formatBrowserSnapshot({ url: address.href, snapshot: text, collapsed })
+    remaining()
+    if (pins && snapshot && target) {
+      pins.delete(sessionID)
+      pins.set(sessionID, { registration, target })
+      if (pins.size > 128) pins.delete(pins.keys().next().value!)
+    }
+    return { content }
   }
+  const formatted = formatBridgeResult(result, { text: "Captured the visible CodeNomad browser.", name: "browser.png" })
+  remaining()
   if (command.action === "open") pins?.delete(sessionID)
-  if (pins && snapshot && target) {
-    pins.delete(sessionID)
-    pins.set(sessionID, { registration, target })
-    if (pins.size > 128) pins.delete(pins.keys().next().value!)
-  }
-  return formatBridgeResult(result, { text: "Captured the visible CodeNomad browser.", name: "browser.png" })
+  return formatted
 }
 
 function targetError(code: string, message: string): Error {
