@@ -34,8 +34,12 @@ fn foreign() -> Response {
     reads::unavailable(Status::BAD_GATEWAY, "plugin-unavailable")
 }
 
-async fn rpc(app: &crate::App, endpoint: &crate::opencode::Endpoint, dir: &str, input: &Value) -> Result<J, ()> {
-    let url = endpoint.url.join("/api/rpc/codenomad.missions/panelPage").map_err(|_| ())?;
+async fn rpc(app: &crate::App, endpoint: &crate::opencode::Endpoint, dir: &str, input: &Value, passage: Option<&Value>) -> Result<J, ()> {
+    let (route, input) = match passage {
+        Some(source) => ("recurrenceCurrentPage", serde_json::json!({"source": source, "selector": input})),
+        None => ("panelPage", input.clone()),
+    };
+    let url = endpoint.url.join(&format!("/api/rpc/codenomad.missions/{route}")).map_err(|_| ())?;
     let mut response = app
         .native
         .client
@@ -71,6 +75,14 @@ fn same_header(a: &[(String, J)], b: &[(String, J)]) -> bool {
 }
 
 pub async fn panel(app: Shared, id: String, input: Value) -> Response {
+    observe_panel(app, id, input, None).await
+}
+
+pub async fn current_panel(app: Shared, id: String, input: Value, passage: Value) -> Response {
+    observe_panel(app, id, input, Some(passage)).await
+}
+
+async fn observe_panel(app: Shared, id: String, input: Value, passage: Option<Value>) -> Response {
     let Some(request) = context::request(&input) else {
         return json(Status::BAD_REQUEST, &obj(vec![("available", J::Bool(false)), ("reason", J::s("invalid-request"))]));
     };
@@ -80,6 +92,7 @@ pub async fn panel(app: Shared, id: String, input: Value) -> Response {
         Err(refused) => return refused,
     };
     let source = if request.activity { "activity" } else { "marks" };
+    let expected_passage = passage.as_ref().and_then(|value| ojson::parse(value.to_string().as_bytes()));
 
     // Persisted context, in digest-pinned slices of one exact text.
     let mut cursor: Option<J> = None;
@@ -95,7 +108,7 @@ pub async fn panel(app: Shared, id: String, input: Value) -> Response {
         if let Some(c) = &cursor {
             call["cursor"] = serde_json::from_str(&c.stringify()).unwrap();
         }
-        let Ok(output) = rpc(&app, &opened.endpoint, &opened.dir, &call).await else {
+        let Ok(output) = rpc(&app, &opened.endpoint, &opened.dir, &call, passage.as_ref()).await else {
             return reads::unavailable(Status::OK, "plugin-unavailable");
         };
         let Some(result) = output.get("output") else { return foreign() };
@@ -113,6 +126,7 @@ pub async fn panel(app: Shared, id: String, input: Value) -> Response {
             || result.get("source").and_then(J::str) != Some(source)
             || result.get("phase").and_then(J::str) != Some("context")
             || result.get("missionID").and_then(J::str) != request.mission.as_deref()
+            || result.get("passage") != expected_passage.as_ref()
             || result.get("field").is_some()
             || result.get("observedAt").is_some()
             || result.get("revision").is_some() != request.activity

@@ -324,9 +324,16 @@ async fn current(app: Shared, id: String, schedule: String, passage: Option<Stri
             o.remove("location");
             public
         }
-        // Live actor observation (`readMissionPanelObservation`) is not ported:
-        // refuse with the reference's own observation refusal.
-        Mode::Page(input) if input["selector"]["source"] == "activity" => json!({"available":false,"reason":"observation-unavailable"}),
+        Mode::Page(input) if input["selector"]["source"] == "activity" => {
+            let response = super::activity::current_panel(app.clone(), id.clone(), input["selector"].clone(), input["source"].clone()).await;
+            if !still(&app, &s) {
+                return fail(Status::FORBIDDEN, "Mission ownership changed");
+            }
+            if identity().await.ok() != Some(before) {
+                return unavailable();
+            }
+            return response;
+        }
         Mode::Page(input) => {
             let Ok(v) = rpc(&app, &s, "recurrenceCurrentPage", input.clone(), PANEL_PAGE_BYTES + 256).await else {
                 return unavailable();

@@ -8,6 +8,7 @@ export const prepare = () => ({ experimental: { automations: true },
   agents: { fixture_specialist: { mode: "subagent", description: "Isolated calendar role" } } })
 export const environment = () => ({ CNRS_FIXTURE_MISSIONS_CALENDAR: "1" })
 export const configure = () => "  environmentVariables: {}\n"
+export const holdProvider = "FIXTURE_DAILY_PASSAGE_HELD"
 
 export async function run({ call, fixture: { client }, root, folder }) {
   const observations = {}
@@ -71,7 +72,7 @@ export async function run({ call, fixture: { client }, root, folder }) {
       }
     }
     const daily = `${base}/recurrence`
-    const input = { requestID: "daily_create_fixture", instructions: "Prove exact daily controls.",
+    const input = { requestID: "daily_create_fixture", instructions: `${holdProvider}: keep the provider open for readback.`,
       template: "custom", profiles, taskMode: "native", watchedConversationIDs: [],
       clock: { time: new Date(Date.now() + 3 * 3600_000).toISOString().slice(11, 16), zone: "UTC" } }
     const { schedule } = await request("daily-create", daily, input, v => ({ state: v.schedule?.state }))
@@ -84,6 +85,21 @@ export async function run({ call, fixture: { client }, root, folder }) {
       const route = `${daily}/${sid}/control`
       await request(`daily-${action}`, route, body, v => ({ state: v.state, complete: v.controlsComplete }))
       await request(`daily-${action}-receipt`, `${route}/status`, body, v => ({ state: v.state, outcome: v.outcome }))
+      if (action === "pause") {
+        const paused = await request("daily-paused-snapshot", daily, undefined, v => ({ present: v.schedules?.some(x => x.id === sid) }))
+        const manual = { requestID: "daily_run_fixture", expectedRevision: paused.schedules.find(x => x.id === sid).revision }
+        const run = `${daily}/${sid}/run-now`
+        await request("daily-run-now", run, manual, v => ({ outcome: v.outcome }))
+        await request("daily-run-now-receipt", `${run}/status?${new URLSearchParams(manual)}`, undefined, v => ({ outcome: v.outcome }))
+        const current = `${daily}/${sid}/current`
+        const view = await request("daily-current", current, undefined, v => ({ hasPassage: Boolean(v.source?.passageID) }))
+        assert(view.source?.passageID, "The held passage has no current source")
+        const page = `${current}/${view.source.passageID}/page`
+        await request("daily-current-activity", page, { source: view.source, selector: { source: "activity", missionID: view.source.missionID } },
+          v => ({ available: v.available, phase: v.phase, total: v.page?.total }))
+        await request("daily-current-content", `${current}/${view.source.passageID}/content?kind=overview&section=objective`, undefined,
+          v => ({ section: v.section, page: v.page }))
+      }
     }
     return observations
   } catch (error) {
