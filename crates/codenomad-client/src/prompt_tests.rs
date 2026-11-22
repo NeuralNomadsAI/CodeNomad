@@ -294,6 +294,28 @@ fn user_parts_keep_only_display_data_and_native_order() {
 }
 
 #[test]
+fn projected_file_blobs_keep_bytes_and_hide_the_old_device_path() {
+    run(async {
+        let server = Server::new(vec![window(vec![json!({
+            "mime":"image/png", "name":"shot.png", "data":"AAEC/w==",
+            "source":{"type":"file","path":"D:/device/shot.png"}
+        })])]);
+        let page = server.backend.page(json!({"kind":"latest"})).await.unwrap();
+        let Part::File(file) = &page.rows[0].parts[1] else {
+            panic!("missing historical file")
+        };
+        assert_eq!(file.name.as_deref(), Some("shot.png"));
+        assert_eq!(file.uri, "data:image/png;base64,AAEC/w==");
+        assert_eq!(
+            STANDARD
+                .decode(file.uri.split_once(',').unwrap().1)
+                .unwrap(),
+            [0, 1, 2, 255]
+        );
+    });
+}
+
+#[test]
 fn prompt_and_history_limits_do_not_expand_catalogues() {
     run(async {
         let server = Server::new(vec![]);

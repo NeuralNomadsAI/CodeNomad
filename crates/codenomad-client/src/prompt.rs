@@ -4,6 +4,36 @@ use serde_json::{Map, Value};
 
 pub const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
 
+pub(crate) fn encode(input: &Prompt) -> crate::history::Result<Vec<u8>> {
+    encode_limited(input, MAX_BODY_BYTES)
+}
+
+fn encode_limited(input: &Prompt, limit: usize) -> crate::history::Result<Vec<u8>> {
+    struct Body(Vec<u8>, usize);
+    impl std::io::Write for Body {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            let new_len = self.0.len().saturating_add(bytes.len());
+            if new_len > self.1 {
+                return Err(std::io::Error::other(
+                    "prompt request body exceeds its bound",
+                ));
+            }
+            if new_len > self.0.capacity() {
+                let capacity = new_len.max(self.0.capacity().saturating_mul(2)).min(self.1);
+                self.0.reserve_exact(capacity - self.0.len());
+            }
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut body = Body(Vec::new(), limit);
+    serde_json::to_writer(&mut body, input)?;
+    Ok(body.0)
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Prompt {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -67,4 +97,26 @@ pub struct Skill {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Acknowledgement {
     pub id: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn escaped_text_counts_against_the_serialization_budget() {
+        let input = Prompt {
+            text: "\0".repeat(12),
+            ..Prompt::default()
+        };
+        let plain = serde_json::to_vec(&input).unwrap();
+        assert!(plain.len() > input.text.len() * 6);
+        assert_eq!(encode_limited(&input, plain.len()).unwrap(), plain);
+        assert!(
+            encode_limited(&input, plain.len() - 1)
+                .unwrap_err()
+                .to_string()
+                .contains("exceeds its bound")
+        );
+    }
 }

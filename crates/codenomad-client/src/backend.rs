@@ -112,10 +112,7 @@ impl Backend {
         &self,
         input: &crate::prompt::Prompt,
     ) -> Result<crate::prompt::Acknowledgement> {
-        let body = serde_json::to_vec(input)?;
-        if body.len() > crate::prompt::MAX_BODY_BYTES {
-            return Err("prompt request body exceeds its bound".into());
-        }
+        let body = crate::prompt::encode(input)?;
         let response = self
             .client
             .post(format!(

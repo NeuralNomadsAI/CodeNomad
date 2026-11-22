@@ -69,7 +69,8 @@ pub(super) fn decode(value: &Value) -> Result<Vec<Part>> {
         let mime = string(file, "mime")?;
         let uri = match file["source"]["type"].as_str() {
             Some("uri") => string(&file["source"], "uri")?.into(),
-            Some("inline") => format!("data:{mime};base64,{}", string(file, "data")?),
+            // Stored media projection keeps the historical `file` source and hydrates its bytes.
+            Some("inline" | "file") => format!("data:{mime};base64,{}", string(file, "data")?),
             _ => return Err("invalid native file source".into()),
         };
         parts.push(Part::File(File {
