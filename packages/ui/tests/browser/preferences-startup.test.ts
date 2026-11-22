@@ -275,6 +275,7 @@ for (const host of ["electron", "tauri"] as const) {
     try {
       await Promise.all([page.waitForRequest("**/api/workspaces/a/plugin-controls**", { timeout: 60_000 }), page.goto(url)])
       await page.waitForFunction(() => (window as any).fixtureReady)
+      const writesBefore = await page.evaluate(() => (window as any).fixtureSaved.length)
       await page.evaluate(() => { (window as any).fixtureHoldPersistence = true })
       await nativeRequest(page, { section: "chat", instanceId: second.id, workspacePath: second.path, scrollTop: 120 })
       await page.waitForFunction(() => (window as any).fixtureSaving?.section === "chat")
@@ -285,7 +286,8 @@ for (const host of ["electron", "tauri"] as const) {
       await page.evaluate(() => { (window as any).fixtureHoldPersistence = false; (window as any).fixtureReleasePersistence() })
       await page.locator(".settings-screen-content-title").getByText("Chat", { exact: true }).waitFor()
       await page.evaluate(() => (window as any).__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?.())
-      const saved = await page.evaluate(id => (window as any).fixtureSaved.filter((value: NativePreferencesRequest) => value.instanceId === id), second.id)
+      const saved = await page.evaluate(({ id, writesBefore }) => (window as any).fixtureSaved.slice(writesBefore)
+        .filter((value: NativePreferencesRequest) => value.instanceId === id), { id: second.id, writesBefore })
       assert.ok(saved.length)
       assert.ok(saved.every((value: NativePreferencesRequest) => value.section === "chat" && value.scrollTop === 120), JSON.stringify(saved))
       assert.deepEqual(fixture.errors, [])
