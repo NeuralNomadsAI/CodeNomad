@@ -208,7 +208,13 @@ try{
     client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
     client.on('close',()=>{for(const gate of gates.values())gate.reject()})
   }
-  if(!restoreState&&!pendingOpen){const timer=setTimeout(()=>client.kill(),web?300000:120000);try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}}
+  if(!restoreState&&!pendingOpen){
+    const budget=web||filesState?300000:120000
+    let expired=false
+    const timer=setTimeout(()=>{expired=true;client.kill()},budget)
+    try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
+    assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
+  }
   assert.equal(result,0);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,0);if(!webRestore)assert(stats.lists>=12)}else if(workspaceClaims||pendingOpen||filesState){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
   if(filesState){
     await filesChain;assert(filesProof);assert.deepEqual(filesStages.map(s=>s.stage),filesExpected)
