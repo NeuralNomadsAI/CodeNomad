@@ -14,7 +14,7 @@ pub struct Owner {
     sending: Option<Send>,
     pub send_error: bool,
     pub unconfirmed: Option<String>,
-    pub command_unconfirmed: bool,
+    pub command_unconfirmed: Option<String>,
     pub restored: bool,
 }
 struct Send {
@@ -32,6 +32,7 @@ pub fn can_send(s: &State) -> bool {
         && !s.composer.picker.open()
         && !s.composer.picker.command_pending(&s.draft.text)
         && s.composer.unconfirmed.is_none()
+        && s.composer.command_unconfirmed.as_deref() != Some(s.draft.text.trim())
         && s.composer.draft.can_send(&s.draft)
         && s.commands.as_ref().is_some_and(|tx| !tx.is_closed())
         && s.agent.as_ref().is_none_or(|a| !a.blocked())
@@ -63,10 +64,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
                 slash: true,
             });
             s.composer.send_error = false;
-            s.composer.command_unconfirmed = false;
-            s.draft.clear();
-            s.composer.picker.reset();
-            workspace::draft_changed(s, tx);
+            s.composer.command_unconfirmed = None;
         } else {
             s.composer.send_error = true;
         }
@@ -128,12 +126,23 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
     let Some(send) = s.composer.sending.take() else {
         return;
     };
-    if matches!(outcome, PromptOutcome::Unconfirmed) {
-        if send.slash {
-            s.composer.command_unconfirmed = true;
-        } else {
-            s.composer.unconfirmed = Some(send.id);
+    if send.slash {
+        match outcome {
+            PromptOutcome::Confirmed(_) if s.draft.text == send.edit.text => {
+                s.draft.clear();
+                s.composer.picker.reset();
+                s.composer.restored = true;
+            }
+            PromptOutcome::Unconfirmed => {
+                s.composer.command_unconfirmed = Some(send.edit.text.trim().into());
+            }
+            PromptOutcome::Rejected => s.composer.send_error = true,
+            _ => {}
         }
+        return;
+    }
+    if matches!(outcome, PromptOutcome::Unconfirmed) {
+        s.composer.unconfirmed = Some(send.id);
         return;
     }
     let row = s.messages.iter().position(|row| row.id == attempted);
@@ -162,11 +171,9 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         s.messages.remove(index);
     }
     s.composer.send_error = true;
-    if s.draft.text.is_empty() && (send.slash || s.composer.draft.attachments.is_empty()) {
+    if s.draft.text.is_empty() && s.composer.draft.attachments.is_empty() {
         s.draft = send.edit;
-        if !send.slash {
-            s.composer.draft = send.draft;
-        }
+        s.composer.draft = send.draft;
         s.composer.restored = true;
     }
     if s.phase == Phase::Streaming && !send.was_running {

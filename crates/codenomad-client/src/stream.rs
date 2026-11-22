@@ -87,7 +87,10 @@ pub(super) async fn dispatch(
     }
     let own = value["instanceId"] == b.workspace;
     let native = &value["event"];
-    if own && value["type"] == "instance.eventStatus" {
+    if own && value["type"] == "instance.event" && native["type"] == "command.updated" {
+        out.send(Input::Workspace(epoch, WorkspaceEvent::CommandsChanged))
+            .await?;
+    } else if own && value["type"] == "instance.eventStatus" {
         let ready = value["status"] == "connected";
         state.upstream.store(ready, SeqCst);
         let version = state.version.fetch_add(1, SeqCst) + 1;

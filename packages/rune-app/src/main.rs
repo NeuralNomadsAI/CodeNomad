@@ -168,7 +168,7 @@ fn latest(s: &mut State, tx: &mut Tx) {
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = launcher::poll(s, tx);
     changed |= poll_chat(s, 64);
-    changed |= s.composer.picker.poll();
+    changed |= s.composer.picker.poll(&s.reads, &s.wake);
     changed |= chat::attachments::poll(s, tx);
     changed |= workspace::poll(s, now, tx);
     changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
@@ -203,6 +203,9 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     }
                     a.refresh(catalog)
                 }
+            }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::CommandsChanged) => {
+                s.composer.picker.commands_changed(&s.reads, &s.wake);
             }
             Event::Workspace(event) => {
                 if let Some(files) = &mut s.files {

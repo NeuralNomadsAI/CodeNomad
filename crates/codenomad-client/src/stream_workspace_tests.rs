@@ -32,6 +32,31 @@ async fn deliver(b: &Backend, out: &Sender<Input>, state: &State, value: Value) 
 }
 
 #[test]
+fn global_command_update_reaches_only_the_owning_catalogue() {
+    run(async {
+        let b = backend().await;
+        let (out, input) = bounded(4);
+        let state = State::default();
+        for workspace in ["foreign", "owner"] {
+            deliver(
+                &b,
+                &out,
+                &state,
+                json!({"type":"instance.event","instanceId":workspace,
+                "event":{"type":"command.updated","data":{}}}),
+            )
+            .await;
+        }
+        assert!(matches!(
+            input.try_recv().unwrap(),
+            Input::Workspace(7, WorkspaceEvent::CommandsChanged)
+        ));
+        assert!(input.is_empty());
+        assert_eq!(state.version.load(SeqCst), 0);
+    });
+}
+
+#[test]
 fn workspace_batches_keep_scope_and_do_not_fence_transcript_reads() {
     run(async {
         let b = backend().await;

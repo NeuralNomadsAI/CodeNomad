@@ -130,8 +130,16 @@ impl Draft {
         }) {
             let path = path.strip_prefix("./").unwrap_or(path);
             if !path.is_empty() && path != "." {
-                text = text.replacen(&format!("@{path}"), &format!("./{path}"), 1);
-                text = text.replacen(&format!("@{path}/"), &format!("./{path}/"), 1);
+                let token = format!("@{path}");
+                let end = |start| start + token.len();
+                if let Some((start, _)) = text.match_indices(&token).find(|(start, _)| {
+                    text[end(*start)..]
+                        .chars()
+                        .next()
+                        .is_none_or(|next| next == '/' || whitespace(next))
+                }) {
+                    text.replace_range(start..start + 1, "./");
+                }
             }
         }
         text

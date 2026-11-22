@@ -8,6 +8,7 @@ pub struct DirectoryChange {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkspaceEvent {
+    CommandsChanged,
     FilesChanged {
         workspace_id: String,
         changes: Vec<DirectoryChange>,
