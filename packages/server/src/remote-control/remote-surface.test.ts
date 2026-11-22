@@ -178,14 +178,17 @@ async function pair(target: string, code: string): Promise<string> {
 }
 
 test("an unpaired remote browser reaches only the pairing surface", async (t) => {
-  const { target } = await startRemoteSurface(t)
+  const { target, code } = await startRemoteSurface(t)
   assert.equal((await send(target(), "/api/test/echo")).status, 401)
-  const page = await send(target(), "/", { headers: { accept: "text/html" } })
-  assert.equal(page.status, 302)
-  assert.equal(page.headers.location, "/remote-pair")
-  const pairPage = await send(target(), "/remote-pair")
-  assert.equal(pairPage.status, 200)
-  assert.equal(pairPage.headers["cache-control"], "no-store")
+  const headers = { accept: "text/html", referer: "https://outside.invalid/link" }
+  for (const method of ["GET", "HEAD"]) {
+    const page = await send(target(), "/", { method, headers })
+    assert.equal(page.status, 302)
+    assert.equal(page.headers.location, "/remote-pair")
+    const pairPage = await send(target(), "/remote-pair", { method, headers })
+    assert.equal(pairPage.status, 200)
+    assert.equal(pairPage.headers["cache-control"], "no-store")
+  }
   // Password login is a host-only surface, so it cannot be guessed remotely.
   const login = await send(target(), "/api/auth/login", {
     method: "POST",
@@ -195,6 +198,12 @@ test("an unpaired remote browser reaches only the pairing surface", async (t) =>
   assert.equal(login.status, 404)
   // Recovery is told to pair again rather than to offer password login.
   assert.deepEqual(JSON.parse((await send(target(), "/api/auth/status")).body), { authenticated: false, pairingRequired: true })
+  const cookie = await pair(target(), code)
+  for (const method of ["GET", "HEAD"]) {
+    const headers = { cookie, accept: "text/html", referer: "https://outside.invalid/previews/external" }
+    assert.equal((await send(target(), "/remote-pair", { method, headers })).status, 200)
+    assert.equal((await send(target(), "/?source=external", { method, headers })).status, 200)
+  }
 })
 
 test("the static UI bundle stays public while HTML entry points require pairing", async (t) => {

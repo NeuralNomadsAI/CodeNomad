@@ -2395,6 +2395,7 @@ function proxyPreviewFallbackFromReferer(
     return false
   }
   const rawUrl = request.raw.url ?? request.url ?? ""
+  if ((request.method === "GET" || request.method === "HEAD") && routedPath(rawUrl) === PAIR_PAGE_PATH) return false
   const pathname = rawUrl.split("?")[0] ?? ""
   if (!isPreviewFallbackPath(pathname)) {
     return false

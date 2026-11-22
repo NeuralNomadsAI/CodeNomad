@@ -95,7 +95,7 @@ test("the host issues a direct HTTPS link while the tunnel is stopped; pairing i
 
   // The pairing page answers on the verified origin only.
   assert.equal((await f.app.inject({ url: "/remote-pair", headers: { host: PUBLIC_HOST } })).statusCode, 200)
-  for (const headers of [{}, { host: "lan.example.test:9899" }, { host: PUBLIC_HOST, referer: `${LAN_HTTP}/` }]) {
+  for (const headers of [{}, { host: "lan.example.test:9899", referer: `${LAN_HTTP}/` }]) {
     assert.equal((await f.app.inject({ url: "/remote-pair", headers })).statusCode, 404, JSON.stringify(headers))
   }
   assert.equal((await f.app.inject({ url: "/remote-pair", headers: { host: PUBLIC_HOST, origin: "null" } })).statusCode, 403)
@@ -114,6 +114,26 @@ test("the host issues a direct HTTPS link while the tunnel is stopped; pairing i
   assert.equal(paired.headers["cache-control"], "no-store")
   assert.deepEqual(f.manager.devices().map(device => [device.name, device.origin]), [["iPhone · Safari", PUBLIC]])
   assert.equal((await f.app.inject({ method: "POST", url: "/api/remote-control/pair", headers: { host: PUBLIC_HOST, origin: PUBLIC }, payload: { code: pairingCode } })).statusCode, 401, "single use")
+})
+
+test("external links open the verified direct pairing page and a paired browser's home", async t => {
+  const f = await surface(t)
+  const { cookie } = await pairDirect(f, LAN_PEER)
+  const headers = { host: PUBLIC_HOST, referer: "https://outside.invalid/previews/external", accept: "text/html" }
+  for (const method of ["GET", "HEAD"] as const) {
+    const read = (url: string, extra: Record<string, string> = {}) =>
+      f.app.inject({ method, url, remoteAddress: LAN_PEER, headers: { ...headers, ...extra } })
+    const page = await read("/remote-pair")
+    assert.equal(page.statusCode, 200)
+    assert.equal(page.headers["referrer-policy"], "no-referrer")
+    assert.equal((await read("/remote-pair", { cookie })).statusCode, 200)
+    assert.equal((await read("/?source=external", { cookie })).statusCode, 200)
+    const stale = await read("/", { cookie: `${DEVICE_COOKIE_NAME}=invalid` })
+    assert.equal(stale.statusCode, 302)
+    assert.equal(stale.headers.location, "/remote-pair")
+    assert.equal((await read("/api/test/echo", { cookie })).statusCode, 401)
+    assert.equal((await read("/remote-pair", { origin: "null" })).statusCode, 403)
+  }
 })
 
 test("codes and devices stay on their channel: tunnel and direct HTTPS never cross", async t => {

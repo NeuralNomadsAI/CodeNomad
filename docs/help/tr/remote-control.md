@@ -21,7 +21,7 @@ Tünel engellendiğinde ama arka uca güvenilir HTTPS ile ulaşılabildiğinde, 
 
 1. Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** öğesini açın.
 2. **Doğrudan HTTPS eşleştirme** altında, birden fazlaysa **HTTPS adresi** seçin, ardından **HTTPS eşleştirme bağlantısı oluştur** öğesini seçin.
-3. Bağlantıyı, tünel bağlantısında olduğu gibi cihazda açın.
+3. Bağlantıyı, tünel bağlantısında olduğu gibi cihazda açın. Bağlantıya başka bir sayfadan tıklayabilirsiniz.
 
 Bağlantı aynı beş dakika ve tek kullanım kurallarına uyar ve kullanılmayan bağlantının yerini alır; tekrarlanan yanlış kodlar sınırlandırılır. Ters proxy güvenilir TLS'yi sonlandırmalı, özgün `Host` ve `Origin` başlıklarını iletmeli ve arka uca geri döngü veya korumalı bir ağ üzerinden ulaşmalıdır.
 
