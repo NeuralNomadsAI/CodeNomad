@@ -270,7 +270,7 @@ pub fn code(source: &str, wrap: bool) -> El {
 type Strike = (usize, usize, Option<Color>);
 
 fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
-    let mut spans = Vec::with_capacity(log.runs.len().min(COPY_RUN_LIMIT));
+    let mut spans: Vec<Span> = Vec::with_capacity(log.runs.len().min(COPY_RUN_LIMIT));
     let mut strikes = vec![];
     let metrics = tokens(dark());
     let default = metrics.color("text-primary");
@@ -303,7 +303,7 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
             window_budget -= cost;
             true
         };
-        if spans.len() + strikes.len() == COPY_RUN_LIMIT || !charge(line.len()) {
+        if !charge(line.len()) {
             // The native source stays available to Copy; keep conceal even without ink.
             if style.hidden {
                 text[range].fill(b' ');
@@ -346,7 +346,22 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
         if style.italic {
             span = span.italic();
         }
-        spans.push(span);
+        if let Some(last) = spans.last_mut()
+            && (last.end == span.start
+                || text.get(last.end as usize..span.start as usize) == Some(b"\n"))
+            && span
+                == (Span {
+                    start: span.start,
+                    end: span.end,
+                    ..last.clone()
+                })
+        {
+            last.end = span.end;
+        } else if spans.len() + strikes.len() < COPY_RUN_LIMIT {
+            spans.push(span);
+        } else if style.hidden {
+            text[range].fill(b' ');
+        }
     }
     (String::from_utf8(text).unwrap_or_default(), spans, strikes)
 }
@@ -510,7 +525,7 @@ mod tests {
     }
 
     #[test]
-    fn selection_html_receives_bounded_styles_without_exposing_conceal() {
+    fn bounded_styles_do_not_expose_conceal_after_the_limit() {
         let source = format!(
             "{}\u{1b}[8mhidden\u{1b}[0mEND",
             "\u{1b}[31mA\u{1b}[32mB\n".repeat(16_384)
@@ -527,5 +542,22 @@ mod tests {
         assert!(text.ends_with("\n\nB"));
         assert_eq!(spans[0].end, 1500);
         assert!(spans[0].underline.is_some());
+    }
+
+    #[test]
+    fn a_uniform_multiline_color_preserves_the_following_warning() {
+        let source = format!(
+            "\u{1b}[32m{}\u{1b}[0m\u{1b}[31;4mFAILED\u{1b}[0m",
+            "OK\n".repeat(1024)
+        );
+        let (text, spans, _) = styled(parse(&source));
+        assert_eq!(spans.len(), 2);
+        let warning = &spans[1];
+        assert_eq!(
+            &text[warning.start as usize..warning.end as usize],
+            "FAILED"
+        );
+        assert_eq!(warning.color, Some(rgb(187, 0, 0)));
+        assert!(warning.underline.is_some());
     }
 }
