@@ -21,8 +21,9 @@ the execution journal retains its task, report and lifecycle contracts.
 The **Missions** checkbox in **Customize right panel** uses the regular tab
 visibility preference. The gesture also writes `codenomad.missions` when shown
 or `-codenomad.missions` after confirming hide, in the connected OpenCode
-server's Global configuration. A failed write reports an error and retains the
-layout choice. Reset only changes the layout. Project rules still take precedence.
+server's Global configuration. The checkbox takes direct input outside the
+visibility sweep. A failed write sends an app notification and retains the layout
+choice. Reset only changes the layout. Project rules still take precedence.
 Other Missions surfaces use their ordinary availability handling.
 
 ## Backend routing

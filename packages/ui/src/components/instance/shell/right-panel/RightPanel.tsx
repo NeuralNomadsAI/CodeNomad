@@ -18,7 +18,8 @@ import type { RightPanelTab } from "./types"
 import { MISSIONS_PLUGIN_ID } from "../../../../../../server/src/missions/plugin-id"
 
 import { captureBackendOperation } from "../../../../lib/backend-operation"
-import { showAlertDialog, showConfirmDialog } from "../../../../stores/alerts"
+import { showConfirmDialog } from "../../../../stores/alerts"
+import { showToastNotification } from "../../../../lib/notifications"
 import { pluginControlsCache } from "../../../../stores/plugin-controls"
 import { readClientLayoutValue, writeClientLayoutValue } from "../../../../stores/client-state"
 import { getTabViewState, updateTabViewState } from "../../../../stores/tab-view-state"
@@ -154,9 +155,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     try {
       await pluginControlsCache.mutate(instanceId, location, MISSIONS_PLUGIN_ID, "global", enabled, "codenomad")
     } catch {
-      if (operation.current()) showAlertDialog(props.t("instanceServiceStatus.plugins.errors.save", {
+      showToastNotification({ category: "opencode", variant: "error", message: props.t("instanceServiceStatus.plugins.errors.save", {
         name: props.t("instanceShell.rightPanel.tabs.missions"), scope: props.t("instanceServiceStatus.plugins.scope.global"),
-      }), { variant: "error" })
+      }) })
     }
   }
 

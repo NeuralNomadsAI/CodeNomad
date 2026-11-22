@@ -95,8 +95,8 @@ export function RightPanelCustomizationPopover(props: RightPanelCustomizationPop
                       type="checkbox"
                       checked={visible()}
                       disabled={tab.alwaysVisible || (Boolean(extension()) && (!props.extensions.verified() || props.extensions.activating() || !props.isActive()))}
-                      // Activating an extension is a trust decision, never swept along.
-                      data-toggle-sweep={extension() ? undefined : toggleSweepGroup("right-panel-customization")}
+                      // Plugin activation requires an explicit gesture.
+                      data-toggle-sweep={extension() || tab.id === "missions" ? undefined : toggleSweepGroup("right-panel-customization")}
                       onChange={(event) => {
                         const enabled = event.currentTarget.checked
                         const entry = extension()

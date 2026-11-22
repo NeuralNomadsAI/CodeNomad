@@ -80,7 +80,7 @@ Ordnen Sie jeden Statusabschnitt per Ziehen oder mit den Tasten Auf/Ab um. Sicht
 
 Status enthält Tokeninformationen, Berechtigungen, Anbieternutzung, Hintergrund-Shells, MCP und Plugins. Solange die Unterhaltung ein [Ziel](conversations.md#goal) hat, zeigt eine Zielzeile über diesen Abschnitten es an; diese Zeile ist kein Abschnitt und lässt sich weder ausblenden noch verschieben. Ausblenden deaktiviert keinen Dienst und widerruft keine Rechte. Schmale Layouts schließen Panels, die nicht mehr passen, statt die Unterhaltung einzuengen; ein dort geöffnetes Panel schwebt über ihr, und ein schwebendes Panel zu öffnen schließt das andere.
 
-Das integrierte Layout gilt für das Fenster. Das [Kästchen Missionen](missions.md#activation) ändert auch die globale Plugin-Aktivierung. Erweiterungskästchen aktivieren Code in allen Projekten dieser Konfiguration. **Zurücksetzen** ändert keine Erweiterungszustimmung. Siehe [Panel-Erweiterungen](extensions.md).
+Das integrierte Layout gilt für das Fenster. Das [Kästchen Missionen](missions.md#activation) ändert auch die globale Plugin-Aktivierung und wird beim Ziehen über Kästchen übersprungen. Erweiterungskästchen aktivieren Code in allen Projekten dieser Konfiguration. **Zurücksetzen** ändert keine Erweiterungszustimmung. Siehe [Panel-Erweiterungen](extensions.md).
 
 ## Verlaufsdetails und Eingabegröße {#transcript-composer}
 

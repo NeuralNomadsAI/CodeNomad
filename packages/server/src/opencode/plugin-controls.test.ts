@@ -1095,6 +1095,17 @@ describe("CodeNomad-managed plugin re-enable with an exact disabling rule", () =
     }), { kind: "forbidden" })
   })
 
+  it("keeps the wildcard's leading comment when replacing an exact Missions rule", async () => {
+    const pluginId = "codenomad.missions", wildcard = "-codenomad.*"
+    const fixture = createFixture({ globalPlugins: [pluginId, wildcard] })
+    await installManaged(fixture, "missions", pluginId)
+    fs.writeFileSync(fixture.globalFile, `{\n  "plugins": [\n    "${pluginId}",\n    // Disable other bundled plugins\n    "${wildcard}"\n  ]\n}\n`)
+    await fixture.controls.mutate("workspace", { location: fixture.location, pluginId, scope: "global", enabled: false, managedBy: "codenomad" })
+    const text = fs.readFileSync(fixture.globalFile, "utf8")
+    assert.deepEqual(parse(text).plugins, [wildcard, `-${pluginId}`])
+    assert.match(text, /\/\/ Disable other bundled plugins\r?\n\s*"-codenomad\.\*"/)
+  })
+
   it("removes the exact disabling rule instead of appending a positive ID", async () => {
     for (const scope of ["global", "project"] as const) {
       const fixture = createFixture({
