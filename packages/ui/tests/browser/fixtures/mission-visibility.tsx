@@ -2,6 +2,7 @@ import { Show, createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import AlertDialog from "../../../src/components/alert-dialog"
 import RightPanel from "../../../src/components/instance/shell/right-panel/RightPanel"
+import { SettingsScreen } from "../../../src/components/settings-screen"
 import { RIGHT_PANEL_TAB_STORAGE_KEY } from "../../../src/components/instance/shell/storage"
 import { initializeClientState, writeClientLayoutValue } from "../../../src/stores/client-state"
 import { ConfigProvider } from "../../../src/stores/preferences"
@@ -21,16 +22,18 @@ function Fixture() {
   const { t } = useI18n()
   const [active, setActive] = createSignal(false)
   const [mounted, setMounted] = createSignal(true)
+  const [settings, showSettings] = createSignal(false)
   ;(window as any).missionVisibility = {
     activate: setActive,
     // Selection persists in the per-window view; unmounting disposes the selected toolbar.
     mount: setMounted,
+    settings: showSettings,
     demanded: () => missionStore.demandedInstanceIds(),
     state: () => missionStore.state(instance.id),
     // Startup order: restoration has not begun, is running, then settles.
     restoration: (fetching: boolean) => setSessionListFetching(fetching, instance.id),
     event: (type: string) => (serverEvents as any).dispatchBatch([
-      { type: "instance.event", instanceId: instance.id, event: { type, data: { sessionID: "visibility-actor" } } },
+      { type: "instance.event", instanceId: instance.id, event: { type, location: { directory: instance.folder }, data: { sessionID: "visibility-actor" } } },
     ]),
   }
   return <div style={{ width: "390px", height: "850px", display: active() ? "block" : "none" }}>
@@ -38,6 +41,7 @@ function Fixture() {
       activeSessionId={() => null} activeSession={() => null} isPhoneLayout={() => false}
       rightDrawerWidth={() => 390} rightDrawerWidthInitialized={() => true}
       onCloseRightDrawer={() => {}} promptInputApi={() => null} setContentEl={() => {}} /></Show>
+    <Show when={settings()}><SettingsScreen standalone providerContext={{ instanceId: instance.id, location: { directory: instance.folder } }} /></Show>
     {/* App-level host for Stop… confirmations, as in App.tsx. */}
     <AlertDialog />
   </div>

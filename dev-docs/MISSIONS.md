@@ -16,6 +16,23 @@ schedule RPC and business bridge stay registered independently of desktop presen
 The calendar owner shares project document exclusion with admission and controls;
 the execution journal retains its task, report and lifecycle contracts.
 
+## Activation
+
+**Customize right panel → Missions** writes the connected OpenCode server's
+Global `plugins` through native plugin controls. The current Location's
+effective OpenCode rule drives the checkbox, tab, readers and project-bound
+Settings. Config and plugin events and reconnects reconcile manual edits
+through the shared plugin controls cache. A window layout reset leaves
+activation alone; layout restoration retains tab order.
+
+Disabling unloads the plugin through OpenCode's config watcher, removing
+`mission_*` from subsequent model turns in existing sessions after reload.
+The sole write is the activation rule: journals, calendars, native queues and
+conversations are retained. Native work already admitted can continue; plugin
+hooks, outbox recovery and business wake admission require the loaded plugin.
+Scheduled runs can be missed. The disable confirmation recommends pausing
+active and scheduled Missions before unloading.
+
 ## Backend routing
 
 The Mission panel, reader, editor and controls resolve the project's `backendOf(instanceId)` for all Mission, schedule, recurrence and passage requests. Playbooks belong to that backend; native profile catalogues and Wayfinder Forms use its root SDK client. Workspace HTTP paths carry the raw workspace ID; presentation uses the qualified occurrence's `instanceId`, completion acknowledgements retain backend-qualified project scope, and request directories remain physical paths. Missing owners fail closed. Attachment and request generations fence reads, follow-up effects and publication; in-flight deduplication and busy cleanup retain their exact operation owner. Dispatched mutations retain their selected backend and durable request identity for explicit reconciliation.

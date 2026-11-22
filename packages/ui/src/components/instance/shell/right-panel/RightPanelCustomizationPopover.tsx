@@ -3,6 +3,7 @@ import { ChevronRight } from "lucide-solid"
 import { toggleSweepGroup } from "../../../../lib/toggle-sweep"
 import { ExtensionManager } from "../../../panel-extensions/extension-manager"
 import type { usePanelExtensions } from "../../../panel-extensions/use-panel-extensions"
+import type { useMissionActivation } from "../../../../stores/mission-activation"
 import {
   moveRightPanelItem,
   parseRightPanelCustomization,
@@ -20,6 +21,7 @@ interface RightPanelCustomizationPopoverProps {
   trigger: () => HTMLButtonElement | undefined
   onClose: () => void
   extensions: PanelExtensions
+  missionActivation: ReturnType<typeof useMissionActivation>
   tabs: Accessor<readonly RightPanelTabModule[]>
   statusSections: Accessor<readonly RightPanelItem[]>
   visibleStatusSectionCount: Accessor<number>
@@ -78,7 +80,9 @@ export function RightPanelCustomizationPopover(props: RightPanelCustomizationPop
           {(tab) => {
             const label = () => tab.label ?? props.t(tab.labelKey)
             const extension = () => extensionForTab(tab.id)
-            const visible = () => extension()?.enabled ?? (tab.alwaysVisible || !props.customization().hiddenTabIds.includes(tab.id))
+            const missions = tab.id === "missions"
+            const visible = () => missions ? props.missionActivation.enabled() :
+              extension()?.enabled ?? (tab.alwaysVisible || !props.customization().hiddenTabIds.includes(tab.id))
             return (
               <>
                 <div class="right-panel-customization-row">
@@ -93,10 +97,18 @@ export function RightPanelCustomizationPopover(props: RightPanelCustomizationPop
                     <input
                       type="checkbox"
                       checked={visible()}
-                      disabled={tab.alwaysVisible || (Boolean(extension()) && (!props.extensions.verified() || props.extensions.activating() || !props.isActive()))}
-                      // Activating an extension is a trust decision, never swept along.
-                      data-toggle-sweep={extension() ? undefined : toggleSweepGroup("right-panel-customization")}
+                      indeterminate={missions && props.missionActivation.checking()}
+                      disabled={tab.alwaysVisible || (missions && !props.missionActivation.canToggle())
+                        || (Boolean(extension()) && (!props.extensions.verified() || props.extensions.activating() || !props.isActive()))}
+                      // Activation changes have side effects beyond panel visibility.
+                      data-toggle-sweep={missions || extension() ? undefined : toggleSweepGroup("right-panel-customization")}
                       onChange={(event) => {
+                        if (missions) {
+                          const enabled = event.currentTarget.checked
+                          event.currentTarget.checked = visible()
+                          void props.missionActivation.toggle(enabled)
+                          return
+                        }
                         const entry = extension()
                         if (entry) {
                           const enabled = event.currentTarget.checked

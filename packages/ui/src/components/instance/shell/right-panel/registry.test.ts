@@ -116,4 +116,10 @@ describe("right panel registry", () => {
     assert.deepEqual(setRightPanelItemHidden(["files"], "status", true), ["files", "status"])
     assert.deepEqual(setRightPanelItemHidden(["files"], "files", false), [])
   })
+
+  it("retains Missions tab order but leaves activation to OpenCode", () => {
+    const saved = parseRightPanelCustomization(JSON.stringify({ tabOrder: ["files", "missions"], hiddenTabIds: ["files", "missions"] }))
+    assert.deepEqual(saved.tabOrder, ["files", "missions"])
+    assert.deepEqual(saved.hiddenTabIds, ["files"])
+  })
 })

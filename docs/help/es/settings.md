@@ -82,6 +82,8 @@ Estado incluye información de tokens, Permisos, Uso del proveedor, shells en se
 
 La disposición integrada es disposición de ventana, no una modificación del proyecto. Las casillas de extensiones son distintas: activan código en todos los proyectos que usan la configuración. **Restablecer** no cambia el consentimiento de extensiones. Consulta [Extensiones de panel](extensions.md).
 
+La casilla **Misiones** [activa o desactiva las Misiones](missions.md#activation) en el servidor OpenCode conectado. **Restablecer** no cambia su estado.
+
 ## Detalle de la transcripción y tamaño del editor {#transcript-composer}
 
 1. Abre **Chat** para elegir los valores de detalle de la transcripción. Los preajustes son **Nada**, **Mínimo**, **Equilibrado** y **Todo**; los cambios individuales producen **Personalizado**.

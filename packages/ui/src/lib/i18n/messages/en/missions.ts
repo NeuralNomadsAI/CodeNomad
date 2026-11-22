@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.activation.disableConfirm": "Disable Missions for this OpenCode server? Pause active and scheduled Missions first to avoid interrupted work or missed runs. Saved data is kept.",
   "missions.cleanup.retrying": "Retrying cleanup…",
   "missions.control.reader.loading": "Reading content…",
   "missions.control.form.loading": "Loading form…",

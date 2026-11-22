@@ -1080,6 +1080,33 @@ describe("CodeNomad-managed plugin re-enable with an exact disabling rule", () =
       assert.deepEqual((parse(fs.readFileSync(scope === "global" ? fixture.globalFile : fixture.projectFile, "utf8")) as any).plugins, [])
     }
   })
+
+  it("toggles Missions globally with an exact rule and preserves unrelated configuration", async () => {
+    const pluginId = "codenomad.missions"
+    const fixture = createFixture({ globalPlugins: ["-opencode.fork-notice"] })
+    await installManaged(fixture, "missions", pluginId)
+    const change = (enabled: boolean) => fixture.controls.mutate("workspace", { location: fixture.location, pluginId, scope: "global", enabled })
+    const off = await change(false)
+    assert.equal(off.snapshot.controls.find(control => control.id === pluginId)?.effective, "disabled")
+    assert.equal(off.reloadPending, true)
+    assert.deepEqual(parse(fs.readFileSync(fixture.globalFile, "utf8")).plugins, ["-opencode.fork-notice", `-${pluginId}`])
+    fixture.setGlobalPlugins(["-opencode.fork-notice", `-${pluginId}`])
+    const on = await change(true)
+    assert.equal(on.snapshot.controls.find(control => control.id === pluginId)?.effective, "default")
+    assert.deepEqual(parse(fs.readFileSync(fixture.globalFile, "utf8")).plugins, ["-opencode.fork-notice"])
+  })
+
+  it("refuses a Global Missions toggle masked by Project config without changing either file", async () => {
+    const pluginId = "codenomad.missions"
+    for (const enabled of [true, false]) {
+      const fixture = createFixture({ globalPlugins: [], projectPlugins: [enabled ? `-${pluginId}` : pluginId] })
+      await installManaged(fixture, "missions", pluginId)
+      const before = [fixture.globalFile, fixture.projectFile].map(file => fs.readFileSync(file, "utf8"))
+      await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId, scope: "global", enabled }),
+        (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden")
+      assert.deepEqual([fixture.globalFile, fixture.projectFile].map(file => fs.readFileSync(file, "utf8")), before)
+    }
+  })
 })
 
 async function installManaged(fixture: ReturnType<typeof createFixture>, feature: DesktopPluginFeature, id: string) {

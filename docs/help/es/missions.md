@@ -4,6 +4,12 @@ Una Misión reúne un objetivo, una conversación del coordinador, tareas y resu
 
 Si Misiones no está disponible, **Ajustes de OpenCode** abre la recuperación del servicio para un plugin ausente o con errores. **Diagnóstico del servidor** abre el informe de diagnóstico en Configuración → Info cuando el puente local de Misiones del servidor no está disponible.
 
+## Activar o desactivar Misiones {#activation}
+
+En **Personalizar panel derecho**, desmarca **Misiones** para desactivar el plugin en la configuración global del servidor OpenCode conectado. Vuelve a marcar la casilla para activarlo. OpenCode se recarga automáticamente; después, las conversaciones existentes usan la nueva lista de herramientas en su siguiente turno. Si el proyecto tiene una regla de plugin con mayor prioridad, edítala en OpenCode para cambiar el estado efectivo del proyecto.
+
+Pausa primero las Misiones activas y programadas. La desactivación conserva las Misiones, sus calendarios y las conversaciones. El trabajo que ya se envió a OpenCode puede continuar, pero las herramientas de Misiones no están disponibles y pueden omitirse ejecuciones programadas. Al volver a activarlas, revisa tus Misiones y reanuda las que pausaste cuando quieras.
+
 ## Crear una Misión {#create}
 
 Las conexiones remotas usan el mismo formulario y los mismos controles. Usa preferentemente HTTPS para proteger el tráfico de red.

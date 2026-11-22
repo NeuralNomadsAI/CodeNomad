@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.activation.disableConfirm": "要停用此 OpenCode 服务器上的任务吗？请先暂停正在运行的任务和计划任务，以免工作中断或错过运行。已保存的数据将保留。",
   "missions.followed.title": "关注的对话",
   "missions.followed.add": "添加对话",
   "missions.followed.source": "关注的对话 {number}",

@@ -37,6 +37,7 @@ import {
 import { createWslPluginControlDocumentFileSystem } from "./plugin-control-document-wsl"
 import { nativeSettingExpectation } from "./native-experimental-settings"
 import { readManagedDesktopPlugins, managedDesktopPluginForSource, type ManagedDesktopPlugin } from "./desktop-plugin-managed"
+import { MISSIONS_PLUGIN_ID } from "../missions/plugin-id"
 import { gitPluginRevision, PLUGIN_VERSIONS_RPC_ID, pluginVersionsSchema } from "./plugin-package-versions-contract"
 import { definedBefore, enabledThrough, matchesSelector, type AppliedEntry, type AppliedSequence } from "./plugin-activation-order"
 import { declaredEntrypointOf, discoveryEntrypointOf, discoveryEntrypointShape, discoveryLoaders, escapes, reportingEntries } from "./plugin-discovery-loaders"
@@ -441,8 +442,13 @@ export class PluginControls {
         if (!control) throw new PluginControlsError("Plugin ID is not present in the authorized inventory", "forbidden")
 
         const desired: PluginScopeRuleState = request.enabled ? "enabled" : "disabled"
+        // The Missions feature switch describes this Location's effective state.
+        // Never change Global underneath a higher-priority rule that masks it here.
+        const missions = request.scope === "global" && request.pluginId === MISSIONS_PLUGIN_ID && control.managedBy === "codenomad"
+        const isEffective = (value: PluginControlsSnapshot) => request.enabled
+          === (value.controls.find(candidate => candidate.id === request.pluginId)?.effective !== "disabled")
         assertCurrentConnection(context.connection)
-        if (projection.noOpSafe && control[request.scope] === desired) {
+        if (projection.noOpSafe && control[request.scope] === desired && (!missions || isEffective(before))) {
           return {
             snapshot: before,
             rule: request.enabled ? request.pluginId : `-${request.pluginId}`,
@@ -462,6 +468,7 @@ export class PluginControls {
         // package of that name. Nothing qualifying is refused before any write.
         let edit: { remove: number[]; rule?: string; snapshot: PluginControlsSnapshot } | undefined
         for (const candidate of [...removable.length > 0 ? [{ remove: removable }, { remove: removable, rule }] : [], { remove: [] as number[], rule }]) {
+          if (missions && !request.enabled && candidate.rule === undefined) continue
           const plugins = candidate.rule === undefined ? kept : [...(candidate.remove.length > 0 ? kept : projection.plugins), candidate.rule]
           const evaluated = evaluateDocuments(base, context, { servicePath: target.path, plugins, scope: request.scope })
           const position = evaluated.documents.find(entry => entry.path && samePath(context.paths, entry.path, target.path))!.order
@@ -469,10 +476,13 @@ export class PluginControls {
           if (candidate.rule !== undefined && request.enabled
             && !definedBefore(evaluated.sequence, request.pluginId, position, plugins.length - 1)) continue
           if (enabledThrough(evaluated.sequence, request.pluginId, through) !== request.enabled) continue
+          if (missions && !isEffective(evaluated.snapshot)) continue
           edit = { ...candidate, snapshot: evaluated.snapshot }
           break
         }
-        if (!edit) throw new PluginControlsError("OpenCode's plugin order cannot reach this state without a package spec", "forbidden")
+        if (!edit) throw new PluginControlsError(missions
+          ? "OpenCode's plugin order cannot reach this Missions activation state in this location"
+          : "OpenCode's plugin order cannot reach this state without a package spec", "forbidden")
         const updated = replacePluginControlRules(document, edit.remove, new Set([request.pluginId, `-${request.pluginId}`]), edit.rule)
         try {
           await replacePluginControlDocument(document, updated, {

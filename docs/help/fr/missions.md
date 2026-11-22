@@ -4,6 +4,12 @@ Une Mission rassemble un objectif, une conversation de coordination, des tâches
 
 Si Missions est indisponible, **Paramètres OpenCode** ouvre la récupération du service pour un plugin absent ou en échec. **Diagnostic serveur** ouvre le rapport de diagnostic dans Paramètres → Info lorsque le pont local Missions du serveur est indisponible.
 
+## Activer ou désactiver les Missions {#activation}
+
+Dans **Personnaliser le panneau droit**, décochez **Missions** pour désactiver le plugin dans la configuration globale du serveur OpenCode connecté. Recochez la case pour le réactiver. OpenCode recharge automatiquement la configuration ; les conversations existantes utilisent alors la nouvelle liste d’outils dès leur prochain tour. Si une règle du projet est prioritaire, modifiez-la dans OpenCode pour changer l’état effectif du projet.
+
+Mettez d’abord en pause les Missions en cours et planifiées. La désactivation conserve les Missions, leurs calendriers et les conversations. Le travail déjà envoyé à OpenCode peut continuer, mais les outils Missions deviennent indisponibles et des exécutions planifiées peuvent être manquées. Après réactivation, vérifiez vos Missions et reprenez les éléments en pause quand vous le souhaitez.
+
 ## Créer une Mission {#create}
 
 Les connexions distantes utilisent le même formulaire et les mêmes commandes. Préférez HTTPS pour protéger les échanges réseau.

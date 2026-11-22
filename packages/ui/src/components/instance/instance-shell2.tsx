@@ -27,6 +27,7 @@ import { focusInterruption } from "../../stores/interruption-navigation"
 import SessionView from "../session/session-view"
 import { MissionReader } from "../mission-reader"
 import { missionProjectView } from "../../stores/mission-view-state"
+import { useMissionActivation } from "../../stores/mission-activation"
 import MessageSection from "../message-section"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import RecoveredDrafts from "../prompt-input/recovered-drafts"
@@ -172,6 +173,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     instanceId: () => props.instance.id,
   })
   useFilePreviewLifetime(props.instance.id, activeSessionIdForInstance)
+  const missionActivation = useMissionActivation(
+    () => props.instance.status === "ready" ? props.instance.id : undefined,
+    () => activeSessionForInstance()?.location.directory ?? props.instance.folder,
+    () => props.isActiveInstance !== false,
+  )
 
   // Shell ownership keeps partially answered requests alive as session panes change.
   const [interruptionExpanded, setInterruptionExpanded] = createSignal(false)
@@ -831,6 +837,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             instance={props.instance}
             activeSessionId={activeSessionIdForInstance}
             activeSession={activeSessionForInstance}
+            missionActivation={missionActivation}
             onRestoreConversation={() => { if (showingInfoView()) handleBackToConversation() }}
             isPhoneLayout={isPhoneLayout}
             rightDrawerWidth={rightPanelWidth}
@@ -858,6 +865,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           instance={props.instance}
           activeSessionId={activeSessionIdForInstance}
           activeSession={activeSessionForInstance}
+          missionActivation={missionActivation}
           onRestoreConversation={() => { if (showingInfoView()) handleBackToConversation() }}
           isPhoneLayout={isPhoneLayout}
           rightDrawerWidth={drawerHostWidth}
@@ -878,7 +886,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const headerActionMenuItems = createMemo(() => buildHeaderActionMenuItems())
 
   // Readers that need no conversation: schedules and playbook details.
-  const readingWithoutConversation = () => Boolean(props.isActiveInstance)
+  const readingWithoutConversation = () => Boolean(props.isActiveInstance) && missionActivation.shown()
     && ["recurrence", "playbook"].includes(missionProjectView(props.instance.id).reader?.kind ?? "")
   const activeSessionTitle = createMemo(() => {
     if (showingInfoView()) return null
@@ -1261,6 +1269,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     activeSessions={activeSessions()}
                     instanceId={props.instance.id}
                     instanceFolder={props.instance.folder}
+                    missionsEnabled={missionActivation.shown()}
                     escapeInDebounce={props.escapeInDebounce}
                     isPhoneLayout={isPhoneLayout()}
                     focusConversationOnActivate={focusConversationSessionId() === sessionId}

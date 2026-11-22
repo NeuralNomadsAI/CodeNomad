@@ -27,7 +27,7 @@ Si la connexion échoue, vérifiez la configuration du serveur, l’environnemen
 
 Les plugins gérés par CodeNomad restent hors de la liste ordinaire et de ses contrôles d’activation, de mise à jour et de retrait.
 
-Pour **Les plugins CodeNomad nécessitent votre attention**, ouvrez **i**. Un plugin désactivé propose **Réactiver** ; vérifiez la portée de configuration affichée avant de l’utiliser.
+Pour **Les plugins CodeNomad nécessitent votre attention**, ouvrez **i**. Un plugin désactivé propose **Réactiver** ; vérifiez la portée de configuration affichée avant de l’utiliser. [Missions](missions.md#activation) possède sa propre case dans **Personnaliser le panneau droit**.
 
 1. [Ajoutez le plugin](#plugin-sources) ou déclarez-le dans la configuration d’OpenCode ; puis ouvrez **Statut → Plugins**.
 2. Survolez ou focalisez son nom pour inspecter source, échec d’exécution et détails de cible de configuration.

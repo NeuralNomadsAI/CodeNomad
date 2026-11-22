@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.activation.disableConfirm": "Missionen auf diesem OpenCode-Server deaktivieren? Pausiere zuerst laufende und geplante Missionen, um Unterbrechungen und verpasste Läufe zu vermeiden. Gespeicherte Daten bleiben erhalten.",
   "missions.followed.title": "Verfolgte Gespräche",
   "missions.followed.add": "Gespräch hinzufügen",
   "missions.followed.source": "Verfolgtes Gespräch {number}",

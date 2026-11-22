@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.activation.disableConfirm": "Bu OpenCode sunucusunda Görevler devre dışı bırakılsın mı? İşlerin yarıda kalmaması veya çalıştırmaların atlanmaması için etkin ve zamanlanmış görevleri önce duraklatın. Kayıtlı veriler korunur.",
   "missions.followed.title": "Takip edilen konuşmalar",
   "missions.followed.add": "Konuşma ekle",
   "missions.followed.source": "Takip edilen konuşma {number}",

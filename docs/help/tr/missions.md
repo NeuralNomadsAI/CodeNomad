@@ -4,6 +4,12 @@ Bir Görev; hedefi, koordinatör konuşmasını, işleri ve sonuçlarını birli
 
 Görevler kullanılamıyorsa **OpenCode ayarları**, eksik veya başarısız bir eklenti için hizmet kurtarmayı açar. Sunucunun yerel Görevler köprüsü kullanılamıyorsa **Sunucu tanılaması**, Ayarlar → Bilgi bölümündeki tanılama raporunu açar.
 
+## Görevleri etkinleştirme ve devre dışı bırakma {#activation}
+
+**Sağ paneli özelleştir** bölümünde **Görevler** işaretini kaldırarak eklentiyi bağlı OpenCode sunucusunun genel yapılandırmasında devre dışı bırakın. Etkinleştirmek için kutuyu yeniden işaretleyin. OpenCode otomatik olarak yeniden yükler; ardından mevcut konuşmalar da bir sonraki turda yeni araç listesini kullanır. Projede daha öncelikli bir eklenti kuralı varsa projenin geçerli durumunu değiştirmek için bu kuralı OpenCode’da düzenleyin.
+
+Önce etkin ve zamanlanmış görevleri duraklatın. Devre dışı bırakmak görev kayıtlarını, zamanlamaları ve konuşmaları korur. OpenCode’a gönderilmiş işler sürebilir, ancak görev araçları kullanılamaz ve zamanlanan çalıştırmalar atlanabilir. Yeniden etkinleştirdikten sonra görevlerinizi kontrol edin ve hazır olduğunuzda duraklatılanları sürdürün.
+
 ## Görev oluşturma {#create}
 
 Uzak bağlantılar aynı formu ve kontrolleri kullanır. Ağ trafiğini korumak için HTTPS tercih edin.

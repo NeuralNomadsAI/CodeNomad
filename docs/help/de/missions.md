@@ -4,6 +4,12 @@ Eine Mission verbindet ein Ziel, eine Koordinator-Unterhaltung, Aufgaben und Erg
 
 Ist Missions nicht verfügbar, öffnet **OpenCode-Einstellungen** die Dienstwiederherstellung für ein fehlendes oder fehlerhaftes Plugin. **Serverdiagnose** öffnet den Diagnosebericht unter Einstellungen → Info, wenn die lokale Missions-Verbindung des Servers nicht verfügbar ist.
 
+## Missionen ein- oder ausschalten {#activation}
+
+Deaktivieren Sie unter **Rechtes Panel anpassen** das Kontrollkästchen **Missionen**, um das Plugin in der globalen Konfiguration des verbundenen OpenCode-Servers auszuschalten. Setzen Sie das Häkchen erneut, um es einzuschalten. OpenCode lädt automatisch neu; danach verwenden auch bestehende Unterhaltungen beim nächsten Zug die neue Werkzeugliste. Hat ein Projekt eine vorrangige Plugin-Regel, ändern Sie diese in OpenCode, um den wirksamen Zustand des Projekts zu ändern.
+
+Pausieren Sie zuerst laufende und geplante Missionen. Beim Ausschalten bleiben Missionen, Zeitpläne und Unterhaltungen erhalten. Bereits an OpenCode gesendete Arbeit kann weiterlaufen, aber Missionswerkzeuge sind nicht verfügbar und geplante Läufe können ausfallen. Prüfen Sie nach dem Einschalten Ihre Missionen und setzen Sie pausierte Einträge fort, wenn Sie bereit sind.
+
 ## Eine Mission erstellen {#create}
 
 Remote-Verbindungen verwenden dasselbe Formular und dieselben Steuerelemente. Verwenden Sie vorzugsweise HTTPS, um den Netzwerkverkehr zu schützen.

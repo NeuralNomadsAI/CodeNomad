@@ -13,6 +13,10 @@ available. Mixed lists use native calendars and their frozen explicit profiles. 
 Automation rows own future dates and civil-time behavior; Missions owns admission,
 non-overlap, frozen inputs, launch counts and settlement.
 
+[Disabling Missions](MISSIONS.md#activation) preserves the native calendar
+rows and documents. Business wake admissions require the loaded plugin; pause
+armed schedules before unloading to avoid missed runs.
+
 ### Launch criteria
 
 `missionCriteriaStructure` (`missions/mission-launch-kind.ts`) is the one parser the

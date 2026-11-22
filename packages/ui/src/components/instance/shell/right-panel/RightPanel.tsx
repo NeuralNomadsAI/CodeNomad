@@ -18,6 +18,7 @@ import type { RightPanelTab } from "./types"
 
 import { readClientLayoutValue, writeClientLayoutValue } from "../../../../stores/client-state"
 import { getTabViewState, updateTabViewState } from "../../../../stores/tab-view-state"
+import { useMissionActivation } from "../../../../stores/mission-activation"
 import { RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY, RIGHT_PANEL_TAB_STORAGE_KEY, readStoredRightPanelTab } from "../storage"
 import {
   applyRightPanelItemCustomization,
@@ -94,6 +95,7 @@ interface RightPanelProps {
   rightDrawerWidthInitialized: Accessor<boolean>
   onCloseRightDrawer: () => void
   promptInputApi: Accessor<PromptInputApi | null>
+  missionActivation?: ReturnType<typeof useMissionActivation>
 
   /** Target of the shell's fixed panel toggle. */
   panelId?: string
@@ -104,6 +106,12 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const { locale } = useI18n()
   const theme = useTheme()
   const extensions = usePanelExtensions(() => props.instanceId, props.isActive)
+  const ownMissionActivation = useMissionActivation(
+    () => props.missionActivation ? undefined : props.instanceId,
+    () => props.activeSession()?.location.directory ?? props.instance.folder,
+    props.isActive,
+  )
+  const missionActivation = props.missionActivation ?? ownMissionActivation
   const savedTab = getTabViewState(props.instanceId).rightPanelTab ?? readStoredRightPanelTab("files")
   const [rightPanelTab, selectRightPanelTab] = createSignal<RightPanelTab>(savedTab === "git-changes" ? "files" : savedTab)
   const setRightPanelTab = (tab: RightPanelTab) => {
@@ -228,9 +236,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const allRightPanelTabs = createMemo(() => collectRightPanelItems<RightPanelTabModule>(rightPanelModules(), "tabs"))
   const visibleRightPanelTabs = createMemo(() =>
     applyRightPanelItemCustomization(
-      allRightPanelTabs().filter(tab => extensionForTab(tab.id)?.enabled ?? true),
+      allRightPanelTabs().filter(tab => tab.id === "missions" ? missionActivation.shown() : extensionForTab(tab.id)?.enabled ?? true),
       rightPanelCustomization().tabOrder,
-      // Addons have one profile-wide activation, not a second per-window visibility gate.
+      // Addons have one profile-wide activation; Missions follows OpenCode's effective activation.
       rightPanelCustomization().hiddenTabIds.filter(id => !id.startsWith("extension:")),
     ),
   )
@@ -251,6 +259,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   createEffect(() => {
     const active = activeRightPanelTab()
+    if (rightPanelTab() === "missions" && missionActivation.checking()) return
     if (active && active.id !== rightPanelTab()) {
       selectRightPanelTab(active.id)
     }
@@ -288,7 +297,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                             panelId={tabPanelId(tab.id)}
                             label={tab.label ?? props.t(tab.labelKey)}
                             dragTitle={props.t("instanceShell.rightPanel.customize.dragToReorder")}
-                            tabIndex={rightPanelTab() === tab.id ? 0 : -1}
+                            tabIndex={activeRightPanelTab()?.id === tab.id ? 0 : -1}
                             onSelect={() => setRightPanelTab(tab.id)}
                             onKeyDown={(event) => handleTabKeyDown(event, tab.id)}
                           />
@@ -305,6 +314,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       <Show when={rightPanelCustomizationOpen()}>
         <RightPanelCustomizationPopover t={props.t} isActive={props.isActive} trigger={() => customizationTriggerRef}
           onClose={() => setRightPanelCustomizationOpen(false)} extensions={extensions} tabs={orderedRightPanelTabs}
+          missionActivation={missionActivation}
           statusSections={orderedStatusSections} visibleStatusSectionCount={() => visibleStatusSections().length}
           customization={rightPanelCustomization} onCustomizationChange={updateRightPanelCustomization} />
       </Show>

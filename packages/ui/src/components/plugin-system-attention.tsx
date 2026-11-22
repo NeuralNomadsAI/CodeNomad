@@ -2,6 +2,7 @@ import { For, Show, createMemo, createSignal, createUniqueId, onCleanup } from "
 import type { PluginActivationControl, PluginConfigScope, PluginControlLocation, PluginControlScope, PluginControlsSnapshot, PluginRuntimeInventoryEntry } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { pluginControlsCache } from "../stores/plugin-controls"
+import { missionsPluginControl } from "../stores/mission-activation"
 import { InfoPopoverButton } from "./info-popover-button"
 
 const VALUE_PLACEHOLDER = "\ufffc"
@@ -50,6 +51,8 @@ export function PluginSystemAttention(props: {
       const key = `target:${source.target}`
       result.set(key, { key, name: source.pluginId ?? source.target })
     }
+    const missions = missionsPluginControl(props.snapshot)
+    if (missions?.effective === "disabled") result.delete(`id:${missions.id}`)
     return new Map([...result].filter(([, entry]) => entry.control?.effective === "disabled" || entry.runtime?.state.status !== "active" || props.runtimeUnconfirmed?.has(entry.name)))
   })
   const keys = createMemo(() => [...entries().keys()])

@@ -68,7 +68,7 @@ export function parseRightPanelCustomization(value: string | null): RightPanelCu
     const parsed = JSON.parse(value) as Partial<RightPanelCustomization>
     return {
       tabOrder: readStringArray(parsed.tabOrder),
-      hiddenTabIds: readStringArray(parsed.hiddenTabIds),
+      hiddenTabIds: readStringArray(parsed.hiddenTabIds).filter(id => id !== "missions"),
       statusSectionOrder: readStatusSectionIds(parsed.statusSectionOrder),
       hiddenStatusSectionIds: readStatusSectionIds(parsed.hiddenStatusSectionIds),
     }

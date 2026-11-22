@@ -1,4 +1,5 @@
 export const missionMessages = {
+  "missions.activation.disableConfirm": "Désactiver les Missions sur ce serveur OpenCode ? Mettez d’abord en pause les Missions en cours et planifiées pour éviter d’interrompre un travail ou de manquer une exécution. Les données sont conservées.",
   "missions.followed.title": "Conversations suivies",
   "missions.followed.add": "Ajouter une conversation",
   "missions.followed.source": "Conversation suivie {number}",

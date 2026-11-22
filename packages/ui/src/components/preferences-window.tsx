@@ -1,4 +1,4 @@
-import { batch, createEffect, createMemo, createSignal, onCleanup, onMount, Show, type Component } from "solid-js"
+import { batch, createEffect, createSignal, onCleanup, onMount, Show, type Component } from "solid-js"
 import { Toaster } from "solid-toast"
 import AlertDialog from "./alert-dialog"
 import OpenCodeSetup from "./opencode-setup"
@@ -46,8 +46,7 @@ export const PreferencesWindow: Component = () => {
     await flushScroll(generation)
   }
 
-  const projectDemand = createMemo(() => ["general", "providers", "missions", "usage"].includes(activeSettingsSection()))
-  const project = createPreferencesProjectContext(request, projectDemand, (context, current) => {
+  const project = createPreferencesProjectContext(request, initialized, (context, current) => {
     // Share the native request queue: an explicit newer opener always wins over a late restore read.
     requestQueue = requestQueue.catch(() => undefined).then(async () => {
       if (!current()) return

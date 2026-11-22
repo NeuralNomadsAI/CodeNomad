@@ -82,6 +82,8 @@ Statut inclut les informations de tokens, Permissions, l’utilisation fournisse
 
 La disposition intégrée est propre à la fenêtre, pas une modification du projet. Les cases d’extension sont différentes : elles activent du code dans tous les projets utilisant la configuration. **Réinitialiser** ne change pas le consentement aux extensions. Voir [Extensions de panneau](extensions.md).
 
+La case **Missions** [active ou désactive les Missions](missions.md#activation) sur le serveur OpenCode connecté. **Réinitialiser** ne change pas son état.
+
 ## Détail de transcription et taille de saisie {#transcript-composer}
 
 1. Ouvrez **Chat** pour choisir les niveaux de détail par défaut. Les préréglages sont **Rien**, **Minimal**, **Équilibré** et **Tout** ; les changements individuels produisent **Personnalisé**.

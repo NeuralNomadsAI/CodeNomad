@@ -4,6 +4,12 @@ A Mission keeps an objective, a coordinator conversation, tasks and their result
 
 If Missions is unavailable, **OpenCode settings** opens runtime recovery for a missing or failed plugin. **Server diagnostics** opens the diagnostic report in Settings → Info when the server's local Missions bridge is unavailable.
 
+## Turn Missions on or off {#activation}
+
+In **Customize right panel**, clear **Missions** to disable the plugin in the connected OpenCode server’s Global configuration. Select it again to enable it. OpenCode reloads automatically; existing conversations use the new tool list on their next turn after reload. If a project has a higher-priority plugin rule, edit that rule in OpenCode to change the project’s effective state.
+
+Pause active and scheduled Missions before turning this off. Disabling keeps Mission records, schedules and conversations. Work already sent to OpenCode can continue, but Mission tools are unavailable and scheduled runs can be missed. After enabling, check your Missions and resume paused items when ready.
+
 ## Create a Mission {#create}
 
 Remote connections use the same form and controls. Prefer HTTPS to protect network traffic.

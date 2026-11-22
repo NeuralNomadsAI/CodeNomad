@@ -82,6 +82,8 @@ Status enthält Tokeninformationen, Berechtigungen, Anbieternutzung, Hintergrund
 
 Integriertes Layout ist Fensterlayout, keine Projektänderung. Erweiterungskästchen sind anders: Sie aktivieren Code über alle Projekte dieser Konfiguration. **Zurücksetzen** ändert keine Erweiterungszustimmung. Siehe [Panel-Erweiterungen](extensions.md).
 
+Das Kontrollkästchen **Missionen** [schaltet Missionen ein oder aus](missions.md#activation), und zwar auf dem verbundenen OpenCode-Server. **Zurücksetzen** lässt diesen Zustand unverändert.
+
 ## Verlaufsdetails und Eingabegröße {#transcript-composer}
 
 1. Öffnen Sie **Chat**, um Standarddetails des Verlaufs zu wählen. Vorgaben sind **Nichts**, **Minimal**, **Ausgewogen** und **Alles**; Einzeländerungen erzeugen **Benutzerdefiniert**.

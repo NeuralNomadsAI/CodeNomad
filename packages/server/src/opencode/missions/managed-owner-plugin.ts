@@ -56,7 +56,7 @@ export function withNativeRecurrenceRpc(ctx: Plugin.Context, artifacts?: NativeS
 // `authority-v2` namespace and its managed-owner observer are not part of the
 // shipped lifecycle: setup never reads, creates or repairs those bytes.
 export function desktopPlugin(presenceDirectory: string | readonly string[], artifacts?: NativeScheduleArtifacts) {
-  return Plugin.define({ id: "codenomad.missions", effect: ctx => Effect.gen(function* () {
+  return Plugin.define({ id: CODENOMAD_MISSIONS_RPC_ID, effect: ctx => Effect.gen(function* () {
     const graph = yield* Effect.context<Scope.Scope>()
     const scope = yield* Scope.make()
     const run = Effect.runPromiseWith(Context.add(graph, Scope.Scope, scope))

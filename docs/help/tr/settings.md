@@ -82,6 +82,8 @@ Durum; belirteç bilgilerini, **İzinler** bölümünü, sağlayıcı Kullanım�
 
 Yerleşik düzen proje değişikliği değil, pencere yerleşimidir. Uzantı onay kutuları farklıdır: yapılandırmayı kullanan tüm projelerde kodu etkinleştirir. **Sıfırla** uzantı onayını değiştirmez. Bkz. [Panel uzantıları](extensions.md).
 
+**Görevler** onay kutusu, bağlı OpenCode sunucusunda [görevleri etkinleştirir veya devre dışı bırakır](missions.md#activation). **Sıfırla** bu durumu değiştirmez.
+
 ## Konuşma dökümü ayrıntıları ve ileti düzenleyicisi boyutu {#transcript-composer}
 
 1. Konuşma dökümü ayrıntısı varsayılanlarını seçmek için **Sohbet** öğesini açın. Ön ayarlar **Hiçbir şey**, **Minimal**, **Dengeli** ve **Her şey**'dir; bireysel değişiklikler **Özel** öğesini üretir.

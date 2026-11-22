@@ -82,6 +82,8 @@ Status includes token information, Permissions, provider Usage, background shell
 
 Built-in layout is window layout, not a project mutation. Extension checkboxes are different: they activate code across all projects using the configuration. **Reset** does not change extension consent. See [Panel extensions](extensions.md).
 
+The **Missions** checkbox [activates or disables Missions](missions.md#activation) for the connected OpenCode server. **Reset** leaves it unchanged.
+
 ## Transcript detail and composer size {#transcript-composer}
 
 1. Open **Chat** to choose transcript detail defaults. Presets are **Nothing**, **Minimal**, **Balanced** and **Everything**; individual changes produce **Custom**.

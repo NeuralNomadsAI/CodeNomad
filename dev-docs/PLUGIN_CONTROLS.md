@@ -286,6 +286,13 @@ runtime inventory, an exact configured rule or a verified managed descriptor rev
 controls retain OpenCode's reserved `opencode.*` identity, so builtins stay hidden
 when `plugin.list` omits inactive entries.
 
+**Missions** uses the existing Global activation mutation: it writes an exact
+negative rule for the verified bundled ID and uses the ordinary removal or
+verified positive rule on enable. A later rule that masks the requested state
+in the invoking Location refuses the write. The Missions surface follows the
+effective rule; deliberate disable (including a hand-edited rule) is omitted
+from managed-plugin attention, while failures in enabled Locations stay visible.
+
 A scope without an explicit matching rule inherits predictably in the compact
 switch UI: Global uses OpenCode's enabled baseline, while Project inherits the
 resolved Global state. A Project override therefore never changes the displayed
@@ -295,8 +302,9 @@ operations when they re-enable an already resolved plugin, matching OpenCode's
 native supervisor. Relative and `file://` local declarations are correlated with
 their selected entrypoint (see **Correlation**) before that ordered replay.
 
-Changing sessions inside one worktree reuses its snapshot, and the first read
-waits until the Plugins surface is visible and expanded. Location-scoped plugin events mark
+Changing sessions inside one worktree reuses its snapshot. The visible project's
+Missions UI and project-bound Settings share this demand with the expanded Plugins
+surface. Location-scoped plugin events mark
 only their worktree stale; an unknown directory matches nothing, while a canonical
 event arriving before its WSL alias is learned is retained and fences only the
 snapshot that later adopts that identity. Merging separate host and canonical
@@ -442,6 +450,9 @@ guessed paths.
 - `scripts/test-plugin-runtime-native.mjs <absolute-cli>` runs an isolated native daemon and
   verifies the reported local source against the generated shim or referenced bundle and the
   session-pruning payload descriptor against the exported plugin ID.
+- `node --import tsx scripts/test-missions-activation-native.mjs <absolute-cli>`
+  checks the real Missions bundle and model-visible tools in the same existing
+  conversation across a watcher-driven Global disable and re-enable.
 - `node --import tsx scripts/test-plugin-git-version-native.mjs <absolute-cli>` qualifies
   the native read-only resolver, installed Git manifest version, commit correlation and
   native check/update behavior in an isolated cache.
@@ -515,7 +526,7 @@ guessed paths.
 
 ## Agent conventions
 
-- Recognise managed plugins on the server through validated installer entries and content-addressed payload locations. All ordinary UI paths exclude `managedBy: "codenomad"` records; surface managed failures only in the compact warning and its on-demand details, with scoped Re-enable for disabled entries.
+- Recognise managed plugins on the server through validated installer entries and content-addressed payload locations. All ordinary UI paths exclude `managedBy: "codenomad"` records; surface managed failures in the compact warning and its on-demand details. Disabled managed plugins have scoped Re-enable there; disabled Missions have their own checkbox in right-panel customization.
 - Serialization tests await the held mutation's worktree identity lookup before launching competing scopes. Target discovery performs asynchronous filesystem reads, so arrival order is observed explicitly; the independent scope completes while a second same-target mutation stays queued.
 - Source-add deadline tests await admission of both parallel configuration reads and advance mocked timers through timeout and grace. Release and join the abandoned reads before checking durable bytes.
 - Present Global and Project as separate per-plugin columns so every mutation has an explicit scope. Cache display snapshots by instance and worktree directory, and refresh them only while the plugin surface is visible.

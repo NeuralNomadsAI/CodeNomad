@@ -30,6 +30,7 @@ import { RemoteControlSettingsSection } from "./settings/remote-control-settings
 import { SavedRemoteServersCard } from "./settings/saved-remote-servers-card"
 import { SideCarsSettingsSection } from "./settings/sidecars-settings-section"
 import { MissionsSettingsSection } from "./settings/missions-settings-section"
+import { useMissionActivation } from "../stores/mission-activation"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { confirmSettingsDiscard } from "../stores/settings-dirty-guard"
 import { NativeTitlebar } from "./native-titlebar"
@@ -77,6 +78,13 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const memoryContext = () => props.providerContext ?? embeddedProject()
   const projectUnavailable = () => props.projectUnavailable || !props.standalone && !props.providerContext &&
     parseInstanceKey(activeInstanceId() ?? "").backendId !== "local" && !embeddedProject()
+  const missionInstanceId = () => props.providerContext?.instanceId ?? activeInstanceId() ?? undefined
+  const missionActivation = useMissionActivation(missionInstanceId, () => {
+    const id = missionInstanceId()
+    return props.providerContext?.location?.directory ?? (id ? getActiveCatalogLocation(id)?.directory ?? instances().get(id)?.folder : undefined)
+  }, () => Boolean(props.standalone || settingsOpen()) && !props.projectUnavailable)
+  const showMissions = () => Boolean(missionInstanceId() && !props.projectUnavailable && missionActivation.shown())
+  const shownSection = () => activeSettingsSection() === "missions" && !showMissions() ? "general" : activeSettingsSection()
 
   const sections = createMemo(() => {
     const items: SettingsSectionOption[] = [
@@ -96,13 +104,13 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
     ]
     items.splice(5, 0, { id: "remote", icon: MonitorUp, label: t("settings.nav.remote") })
     if (serversEnabled()) items.splice(6, 0, { id: "servers", icon: Server, label: t("settings.nav.servers") })
-    return items
+    return showMissions() ? items : items.filter(item => item.id !== "missions")
   })
 
-  const activeSection = createMemo(() => sections().find((section) => section.id === activeSettingsSection()) ?? sections()[0])
+  const activeSection = createMemo(() => sections().find((section) => section.id === shownSection()) ?? sections()[0])
 
   const renderSection = () => {
-    switch (activeSettingsSection()) {
+    switch (shownSection()) {
       case "chat":
         return <ChatSettingsSection />
       case "hotkeys":
@@ -297,8 +305,8 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
                       <button
                         type="button"
                         class="settings-nav-button"
-                        data-selected={activeSettingsSection() === section.id ? "true" : "false"}
-                        aria-current={activeSettingsSection() === section.id ? "page" : undefined}
+                        data-selected={shownSection() === section.id ? "true" : "false"}
+                        aria-current={shownSection() === section.id ? "page" : undefined}
                         onClick={() => void handleSectionChange(section.id)}
                       >
                         <Icon class="settings-nav-button-icon" />
