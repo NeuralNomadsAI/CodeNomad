@@ -23,7 +23,7 @@ pub(crate) fn poll(s: &mut State) -> bool {
         shared.main_wake = Some(s.wake.clone());
     }
     let bound = shared.bind(backend);
-    if s.incoming.is_none() {
+    if s.incoming.is_none() || s.phase == crate::Phase::Failed {
         shared.watch(&s.wake);
     } else {
         shared.unwatch();

@@ -67,7 +67,9 @@ impl Preferences {
         if self.stream.is_none()
             && let Some(backend) = &self.backend
         {
-            self.stream = Some(PreferencesWatch::start(backend.clone(), wake.clone()));
+            let (watch, task) = PreferencesWatch::task(backend.clone(), wake.clone());
+            self.stream = Some(watch);
+            platform::spawn(task);
         }
     }
 
@@ -326,7 +328,7 @@ impl Document {
                 self.error = reply.error;
                 self.uncertain = reply.uncertain || self.uncertain && reply.snapshot.is_none();
                 self.read_failed = reply.snapshot.is_none();
-                if self.uncertain || self.read_failed {
+                if self.uncertain {
                     self.pending = None;
                 }
                 if let Some(snapshot) = reply.snapshot {
@@ -338,7 +340,11 @@ impl Document {
         if self.flight.is_some() {
             return changed;
         }
-        let patch = self.pending.take();
+        let patch = if self.read_failed {
+            None
+        } else {
+            self.pending.take()
+        };
         if patch.is_none() && !self.read {
             return changed;
         }

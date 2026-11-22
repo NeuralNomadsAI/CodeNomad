@@ -171,21 +171,24 @@ fn settings_mode_write_fences_palette_until_the_new_color_slot_is_known() {
 
 #[test]
 fn settings_sse_refreshes_only_the_invalidated_owner() {
-    platform::block_on(async {
+    let (listener, backend) = platform::block_on(async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let backend = Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
             .await
             .unwrap();
-        let (sender, receiver) = bounded(8);
-        let wake: rune::Waker = std::sync::Arc::new(move || {
-            let _ = sender.try_send(());
-        });
-        let mut prefs = Preferences::default();
-        prefs.bind(Some(backend));
-        prefs.fixture();
-        prefs.config.read = false;
-        prefs.state.read = false;
-        prefs.watch(&wake);
+        (listener, backend)
+    });
+    let (sender, receiver) = bounded(8);
+    let wake: rune::Waker = std::sync::Arc::new(move || {
+        let _ = sender.try_send(());
+    });
+    let mut prefs = Preferences::default();
+    prefs.bind(Some(backend));
+    prefs.fixture();
+    prefs.config.read = false;
+    prefs.state.read = false;
+    prefs.watch(&wake);
+    platform::block_on(async {
         let mut stream = request(&listener).await;
         assert!(stream.first.starts_with("GET /api/events?"));
         stream

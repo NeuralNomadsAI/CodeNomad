@@ -66,14 +66,14 @@ pub struct PreferencesWatch {
     dirty: Arc<AtomicU8>,
 }
 impl PreferencesWatch {
-    pub fn start(mut backend: Backend, wake: Wake) -> Self {
+    pub fn task(mut backend: Backend, wake: Wake) -> (Self, impl std::future::Future<Output = ()>) {
         let (hold, cancel) = crate::bounded(1);
         let dirty = Arc::new(AtomicU8::new(0));
         let notices = dirty.clone();
         backend.workspace.clear();
         backend.session.clear();
         backend.client_id.push_str("-preferences");
-        runtime::spawn(async move {
+        let run = async move {
             futures_lite::future::race(
                 async {
                     for epoch in 1u64.. {
@@ -104,11 +104,14 @@ impl PreferencesWatch {
                 },
             )
             .await;
-        });
-        Self {
-            _cancel: hold,
-            dirty,
-        }
+        };
+        (
+            Self {
+                _cancel: hold,
+                dirty,
+            },
+            run,
+        )
     }
 
     pub fn take(&self) -> (bool, bool) {
