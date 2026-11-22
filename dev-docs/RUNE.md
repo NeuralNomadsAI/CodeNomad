@@ -44,7 +44,7 @@ When a whole module reaches parity, its Solid and Tauri version is deleted on `f
 |---|---|---|
 | HTTP, SSE, pagination and recovery | CodeNomad API and contract fixtures | `crates/codenomad-client`: native contracts, 606-row recovery and authenticated browser session reading qualified |
 | Workspace file listing and preview API | Solid `api-client.ts`, shared server Files routes | `crates/codenomad-client/files`: typed bounded reads, identities and bytes qualified through HTTP fixtures and Windows shared Rust with private files; browser execution and interface qualification pending |
-| Workspace file tree state | `useWorkspaceTree.ts`, `WorkspaceTree.tsx` | `files/`: lazy snapshots, scoped cancellable reads, refresh coalescing and physical-subtree invalidation; native contracts exercised. `platform/collation` owns stable ICU/Intl sorting. UI assembly, shared-server model qualification and Rust WASM execution remain pending |
+| Workspace file tree state | `useWorkspaceTree.ts`, `WorkspaceTree.tsx` | `files/`: lazy snapshots, scoped cancellable reads, refresh coalescing and physical-subtree invalidation; native contracts exercised. `platform/collation` owns stable ICU/Intl sorting, with actual Rust WASM exercised in six browser locales under CSP. UI assembly and shared-server model qualification remain pending |
 | Tokens and typography | `packages/ui/src/styles/tokens.css` | `crates/rune-theme-codenomad`: generated values; component parity qualified individually |
 | Text | Ten UI catalogues | Generated catalogues, fallback and Hebrew direction qualified |
 | Window close | `components/window-close-button.tsx` | `components/window_close_button.rs`: six Windows light/dark pairs, accessibility and interaction qualified at scale 1 |
