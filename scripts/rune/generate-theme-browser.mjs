@@ -41,6 +41,12 @@ export async function collectTheme(names){
     tabGlyph:['.tab-base > svg',['width','height']],
     tabClose:['.tab-close',['paddingLeft','paddingRight','paddingTop','paddingBottom']],
     tabCloseGlyph:['.tab-close > svg',['width','height']],
+    actionMenu:['.action-overflow-content',['minWidth','paddingLeft','paddingTop','borderTopWidth','borderRadius']],
+    actionMenuItem:['.action-overflow-item',['minHeight','paddingLeft','paddingTop','fontSize','fontWeight','lineHeight','columnGap','borderRadius']],
+    actionMenuIcon:['.action-overflow-item-icon',['width','height']],
+    actionMenuDisabled:['.action-overflow-item[data-disabled]',['opacity']],
+    fileRowAction:['.file-row-icon-button',['minWidth','minHeight','paddingLeft','opacity']],
+    fileRowActionGlyph:['.file-row-icon-button svg',['width','height']],
   }
   const metrics={}
   for(const [name,[selector,properties]] of Object.entries(contracts)){
@@ -52,6 +58,15 @@ export async function collectTheme(names){
       metrics[name][key]=numeric?Number.parseFloat(value):value
     }
   }
+  const sourceGutter=document.querySelector('.action-overflow-content').dataset.sourceGutter
+  if(!/^\d+(?:\.\d+)?$/.test(sourceGutter))throw Error('Missing numeric ActionOverflowMenu source gutter')
+  metrics.actionMenu.gutter=Number(sourceGutter)
+  const menuStyle=getComputedStyle(document.querySelector('.action-overflow-content'))
+  const maximum=/^calc\(100% - ([\d.]+)px\)$/.exec(menuStyle.maxInlineSize)
+  // Chromium resolves the viewport unit to px inside calc(). Retain only its inset.
+  const maximumPixels=/^([\d.]+)px$/.exec(menuStyle.maxInlineSize)
+  if(!maximum&&!maximumPixels)throw Error(`Unsupported action menu max-inline-size ${menuStyle.maxInlineSize}`)
+  metrics.actionMenu.viewportInset=maximum?Number(maximum[1]):window.innerWidth-Number(maximumPixels[1])
   // These exact selectors declare the close hover colors independently of the palette.
   const declarations=[]
   function rules(list,parent=''){for(const rule of list){const selector=rule.selectorText?.replaceAll('&',parent)??parent;if(selector.split(',').some(s=>s.trim()==='.tab-close:hover')&&rule.style)declarations.push(rule.style.cssText);if(rule.cssRules)rules(rule.cssRules,selector)}}

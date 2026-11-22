@@ -1,0 +1,13 @@
+{
+  "component": "action-overflow-menu",
+  "platform": "win32",
+  "scale": 1,
+  "reviewState": "reviewed",
+  "scope": "Three short-label popup states in light/dark; initial hover before deferred platform help. Trigger geometry is compared, trigger pixels and mature native title help have separate qualification.",
+  "regions": {
+    "frame": {"different": 0, "errorSum": 0, "maxError": 0},
+    "surface": {"different": 4000, "errorSum": 4000, "maxError": 1},
+    "text": {"different": 3000, "errorSum": 12000, "maxError": 64},
+    "halo": {"different": 30000, "errorSum": 30000, "maxError": 1}
+  }
+}

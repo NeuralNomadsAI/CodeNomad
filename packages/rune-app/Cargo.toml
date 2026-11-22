@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [features]
 default = []
-test-support = []
+test-support = ["rune-theme-codenomad/test-support"]
 
 [dependencies]
 codenomad-client = { path = "../../crates/codenomad-client" }
