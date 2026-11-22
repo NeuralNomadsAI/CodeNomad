@@ -56,6 +56,9 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
   function markUserScrollIntent(direction: "up" | "down" | null, distance = 0) {
     const now = typeof performance !== "undefined" ? performance.now() : Date.now()
     const container = scrollContainerRef
+    // A gesture observes live geometry: content may have grown since the last
+    // cached measurement without a scroll event announcing it.
+    markScrollMetricsStale()
     // Upward intent takes ownership immediately, even if native middle-button
     // autoscroll waits longer than the intent deadline before its first scroll
     // event; a downward gesture reaching the bottom resumes follow (shared rule).
@@ -184,6 +187,9 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
     const container = scrollContainerRef
     if (!container) return
 
+    // Content changed since the last render: the shared cached extents may be
+    // stale (no scroll event announced the growth).
+    markScrollMetricsStale()
     const now = typeof performance !== "undefined" ? performance.now() : Date.now()
     const result = scrollController.observeViewport(getMetrics(container), now, false)
     setAutoScroll(isAutoFollowing(result.state.mode))
