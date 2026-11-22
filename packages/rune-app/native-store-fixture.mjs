@@ -27,7 +27,7 @@ requireTestSupport(rune)
 const permissions=[{action:'*',resource:'*',effect:'deny'}]
 const env={...await privateEnvironment(root),OPENCODE_TEST_HOME:path.join(root,'home'),
   OPENCODE_CONFIG_DIR:config,OPENCODE_DB:path.join(root,'opencode.db'),
-  OPENCODE_CONFIG_PROJECT_DISABLE:'1',OPENCODE_DISABLE_MODELS_FETCH:'1',OPENCODE_DISABLE_FFF:'1',
+  OPENCODE_CONFIG_PROJECT_DISABLE:'1',OPENCODE_DISABLE_MODELS_FETCH:'1',OPENCODE_DISABLE_FFF:'1',OPENCODE_DISABLE_AUTOUPDATE:'true',
   OPENCODE_SERVER_PASSWORD:randomUUID(),OPENCODE_CONFIG_CONTENT:'{}',
   ProgramData:path.join(root,'ProgramData'),npm_config_userconfig:path.join(root,'npmrc'),
   npm_config_globalconfig:path.join(root,'global-npmrc'),npm_config_cache:path.join(root,'npm-cache')}
