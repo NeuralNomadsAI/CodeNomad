@@ -58,6 +58,9 @@ try {
     const tool = id => page.locator(`.tool-call[data-part-id="${id}"]`)
     await tool('search').waitFor()
     assert.match(await tool('search').innerText(), /return/)
+    const ansi = tool('shell').locator('.tool-call-ansi span').filter({hasText: 'result'})
+    await ansi.waitFor()
+    assert.equal(await ansi.evaluate(span => getComputedStyle(span).color), 'rgb(187, 0, 0)')
     await page.evaluate(() => document.fonts.ready)
     await page.screenshot({path: path.join(out, `solid-${theme}.png`), animations: 'disabled'})
     await writeFile(path.join(out, `solid-${theme}.aria.yml`), await page.locator('.message-stream').ariaSnapshot())
@@ -77,15 +80,26 @@ try {
     await installPngReader(page)
     const images = await Promise.all(['solid', 'rune'].map(async type =>
       `data:image/png;base64,${(await readFile(path.join(out, `${type}-${theme}.png`))).toString('base64')}`))
-    const metrics = await page.evaluate(async input => {
-      const [solid, rune] = await globalThis.__codenomadReadPngs(input)
+    const region = data.elements.find(element => element.key === 'tool-transcript:5:shell-tool_output-content')?.rect
+    assert(region?.length === 4, 'Rune shell pane is present')
+    const metrics = await page.evaluate(async ({images, region: [x, y, width, height]}) => {
+      const [solid, rune] = await globalThis.__codenomadReadPngs(images)
       if (solid.width !== rune.width || solid.height !== rune.height) throw Error('Capture geometry differs')
       let rgbError = 0
       for (let i = 0; i < solid.pixels.length; i++) {
         if (i % 4 !== 3) rgbError += Math.abs(solid.pixels[i] - rune.pixels[i])
       }
-      return {width: solid.width, height: solid.height, meanRgbError: rgbError / (solid.width * solid.height * 3)}
-    }, images)
+      let shellRedPixels = 0
+      for (let py = Math.max(0, Math.floor(y)); py < Math.min(rune.height, Math.ceil(y + height)); py++) {
+        for (let px = Math.max(0, Math.floor(x)); px < Math.min(rune.width, Math.ceil(x + width)); px++) {
+          const offset = (py * rune.width + px) * 4
+          const [red, green, blue] = rune.pixels.slice(offset, offset + 3)
+          if (red > green + 60 && red > blue + 60) shellRedPixels++
+        }
+      }
+      return {width: solid.width, height: solid.height, meanRgbError: rgbError / (solid.width * solid.height * 3), shellRedPixels}
+    }, {images, region})
+    assert(metrics.shellRedPixels > 6, 'Rune paints the ANSI red run inside the shell pane')
     await writeFile(path.join(out, `comparison-${theme}.json`),
       JSON.stringify({theme, ...metrics, status: 'unqualified', runeOutput: rune.stdout}, null, 2))
     await page.close()
