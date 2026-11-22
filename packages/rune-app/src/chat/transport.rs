@@ -32,7 +32,7 @@ pub fn start(s: &mut crate::State) {
     crate::platform::spawn(run_async(out, input, s.wake.clone()));
 }
 
-async fn run_async(out: Sender<Event>, input: Receiver<Command>, wake: rune::Waker) {
+pub(crate) async fn run_async(out: Sender<Event>, input: Receiver<Command>, wake: rune::Waker) {
     if crate::platform::setting("RUNE_BACKEND").is_some() && !crate::local_stress() {
         let result = match crate::platform::configured_backend().await {
             Ok(backend) => run_backend(backend, out.clone(), input, wake.clone()).await,

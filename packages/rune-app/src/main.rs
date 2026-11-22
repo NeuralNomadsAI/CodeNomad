@@ -24,6 +24,8 @@ mod shell;
 mod strings;
 use screen::Screen;
 mod workspace;
+#[cfg(test)]
+use codenomad_client::bounded;
 use codenomad_client::{Receiver, Sender};
 use rune::edit::TextEdit;
 use rune::{AppSpec, Cx, El, Tx, col};
