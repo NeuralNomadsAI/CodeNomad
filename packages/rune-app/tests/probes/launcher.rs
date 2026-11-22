@@ -43,7 +43,9 @@ pub fn run() {
     });
     assert!(rt.state.screen.launcher().unwrap().password.text.is_empty());
     let folder = std::env::var("RUNE_TEST_FOLDER").unwrap();
-    rt.state.screen.launcher_mut().unwrap().folder = TextEdit::new("relative-invalid");
+    rt.update(|s, _| {
+        s.screen.launcher_mut().unwrap().folder = TextEdit::new("relative-invalid");
+    });
     rt.frame(1.0 / 60.0);
     tap(&mut rt, "open-folder");
     wait(&mut rt, "bad folder", |s| {
@@ -90,7 +92,9 @@ pub fn run() {
     wait(&mut rt, "return session list", |s| {
         !s.screen.launcher().unwrap().pending
     });
-    rt.state.screen.launcher_mut().unwrap().title = TextEdit::new("Rune functional test");
+    rt.update(|s, _| {
+        s.screen.launcher_mut().unwrap().title = TextEdit::new("Rune functional test");
+    });
     rt.frame(1.0 / 60.0);
     tap(&mut rt, "create-session");
     if std::env::var_os("RUNE_TEST_CREATE_UNCERTAIN").is_some() {
@@ -121,7 +125,9 @@ pub fn run() {
     let with_tools = std::env::var_os("RUNE_TEST_TOOLS").is_some();
     for turn in 1..=2 {
         let mut visible = false;
-        rt.state.draft = TextEdit::new(format!("Functional turn {turn} · été 日本語 🦀"));
+        rt.update(move |s, _| {
+            s.draft = TextEdit::new(format!("Functional turn {turn} · été 日本語 🦀"));
+        });
         rt.frame(1.0 / 60.0);
         tap(&mut rt, "send");
         let until = Instant::now() + Duration::from_secs(20);
@@ -129,12 +135,7 @@ pub fn run() {
             assert!(Instant::now() < until, "send {turn}");
             rt.frame(1.0 / 60.0);
             let id = format!("reply-ses_created_1-{turn}");
-            let key = if with_tools {
-                format!("part-{id}-2")
-            } else {
-                format!("body-{id}")
-            };
-            let prefix = format!("/history/rows/{id}/");
+            let path = super::fragment_path(&id, usize::from(with_tools));
             let row = rt.state.messages.iter().find(|m| m.id == id);
             let after_tool = row.is_some_and(|m| {
                 m.parts
@@ -150,9 +151,10 @@ pub fn run() {
                     .elements()
                     .into_iter()
                     .filter(|e| {
-                        e.path.contains(&prefix)
-                            && e.key.as_deref() == Some(key.as_str())
-                            && e.text.as_deref().is_some_and(|t| t.starts_with("fn main"))
+                        e.path.contains(&path)
+                            && e.text
+                                .as_deref()
+                                .is_some_and(|t| super::rendered_text(t).starts_with("fn main"))
                             && !e.exiting
                             && e.opacity > 0.99
                             && e.visible[2] >= 50.0
