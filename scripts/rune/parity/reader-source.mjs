@@ -1,5 +1,6 @@
 // Capture the real Solid reader at the measured Rune reader rectangle.
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,6 +14,12 @@ const root = fileURLToPath(new URL('../../../', import.meta.url))
 const native = path.resolve(root, 'target/rune-reader-scenes')
 const out = path.resolve(root, 'target/rune-parity/workspace-reader')
 const entry = path.resolve(root, 'scripts/rune/parity/reader-source.fixture.tsx').replaceAll('\\', '/')
+const hash = bytes => createHash('sha256').update(bytes).digest('hex')
+const { provenance, records } = JSON.parse(await readFile(path.join(native, 'captures.json'), 'utf8'))
+const theme = await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/theme.json'))
+assert.equal(hash(theme), provenance.themeSha256, 'Regenerate Rune captures for the current theme')
+assert.equal(hash(await readFile(new URL('./reader-scenes.mjs', import.meta.url))), provenance.fixtureSha256, 'Regenerate Rune captures for the current fixture')
+assert.equal(hash(await readFile(provenance.binary.path)), provenance.binary.sha256, 'Regenerate Rune captures for the current binary')
 await mkdir(out, { recursive: true })
 const owner = await startRunDaemon({ uiRoot: path.join(root, 'packages/ui'), warmup: false, logPrefix: 'rune-reader-source-' })
 let browser, fixture, stream
@@ -25,7 +32,11 @@ try {
   const scenes = { source: ['reader.rs', '.monaco-editor .view-lines'], 'markup-md': ['markup.md', '.workspace-markdown h1'], 'small-png': ['small.png', '.workspace-image img'], 'nul-bin': ['nul.bin', '.workspace-file-view > .text-secondary'], 'unsupported-mmd': ['unsupported.mmd', '.mermaid-error'] }
   for (const theme of ['light', 'dark']) for (const [scene, [name, ready]] of Object.entries(scenes)) {
     const prefix = `en-${theme}-${scene}`
-    const tree = JSON.parse(await readFile(path.join(native, `${prefix}.json`), 'utf8'))
+    const record = records.find(r => r.locale === 'en' && r.theme === theme && r.scene === (scene === 'source' ? 'source' : name))
+    const treeBytes = await readFile(path.join(native, `${prefix}.json`))
+    const rune = await readFile(path.join(native, `${prefix}.png`))
+    assert(record && hash(treeBytes) === record.treeSha256 && hash(rune) === record.imageSha256, `Capture provenance: ${prefix}`)
+    const tree = JSON.parse(treeBytes)
     const reader = tree.elements.find(n => n.key?.startsWith('file-reader-'))
     assert(reader?.rect.every(Number.isInteger), 'Expected a pixel-aligned reader')
     const [x, y, width, height] = reader.rect
@@ -87,7 +98,6 @@ try {
     const decode = await browser.newPage()
     try {
       await installPngReader(decode)
-      const rune = await readFile(path.join(native, `${prefix}.png`))
       const [ref, actual] = await decode.evaluate(pngs => globalThis.__codenomadReadPngs(pngs), [solid, rune].map(b => `data:image/png;base64,${b.toString('base64')}`))
       let totalError = 0
       const samples = []

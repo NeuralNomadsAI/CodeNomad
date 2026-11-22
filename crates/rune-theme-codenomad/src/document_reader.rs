@@ -117,6 +117,14 @@ pub fn viewport(content: El, wrap: bool) -> El {
     }
     .child(content)
 }
+pub fn rendered_viewport(dark: bool, content: El) -> El {
+    let t = tokens(dark);
+    viewport(content, true).focusable(true).focus_ring(
+        t.metric("windowIconFocus", "outlineWidth").px(),
+        t.metric("windowIconFocus", "outlineOffset").px(),
+        t.color("focus-ring-color"),
+    )
+}
 pub fn source(dark: bool, path: &str, text: &str, wrap: bool, view_width: Option<f32>) -> El {
     let t = tokens(dark);
     let spans = syntax::highlight(syntax::lang_for_path(path), text)

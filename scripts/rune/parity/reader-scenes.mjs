@@ -15,9 +15,11 @@ const locales=values.locales.split(',')
 for(const locale of locales)assert(['en','fr','he'].includes(locale),'Explicit scene locale required')
 const out=path.join(root,'target/rune-reader-scenes');await mkdir(out,{recursive:true})
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex')
-const records=[],provenance={binary:{path:values.binary,sha256:hash(await readFile(values.binary))},
+const binary=await readFile(values.binary),themeFile=await readFile(path.join(root,'crates/rune-theme-codenomad/assets/theme.json'))
+assert(binary.includes(themeFile), 'The qualification binary must embed the current generated theme')
+const records=[],provenance={binary:{path:values.binary,sha256:hash(binary)},
   fixtureSha256:hash(await readFile(fileURLToPath(import.meta.url))),
-  themeSha256:hash(await readFile(path.join(root,'crates/rune-theme-codenomad/assets/theme.json')))}
+  themeSha256:hash(themeFile)}
 const cases=['source','markup.md','valid.mmd','unsupported.mmd','unreadable.mmd','small.png','large.png','sample.svg','sample.avif','nul.bin','broken.png','error']
 async function run(args,name,scene,locale){
   const env={...await privateEnvironment(path.join(out,'profiles',name)),RUNE_READER_CASE:scene,RUNE_READER_LOCALE:locale}
@@ -54,7 +56,8 @@ for(const locale of locales){
     if(scene==='error'||scene==='unsupported.mmd'||scene==='unreadable.mmd')assert(accessible.some(node=>node.role==='alert'),`${name}: accessible error`)
     if(scene==='source'||scene.endsWith('.mmd')&&scene!=='valid.mmd')assert(data.elements.some(node=>node.key==='file-source-text'),`${name}: selectable source`)
     if(scene==='source')assert(data.elements.some(node=>node.key==='file-source-text'&&node.text.includes('fn main()')),`${name}: actual document text`)
-    records.push({scene,locale,theme,tree,image,log:`${base}.log`,at,accessibility:true})
+    records.push({scene,locale,theme,tree,image,log:`${base}.log`,at,accessibility:true,
+      treeSha256:hash(await readFile(tree)),imageSha256:hash(await readFile(image))})
   }
 }
 await writeFile(path.join(out,'captures.json'),JSON.stringify({provenance,records,pixelQualification:'pending',

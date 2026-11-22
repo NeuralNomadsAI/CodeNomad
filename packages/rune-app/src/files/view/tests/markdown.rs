@@ -17,6 +17,65 @@ async fn markup(rt: &mut Runtime<State>, http: &http::Http) {
 }
 
 #[test]
+fn rendered_document_without_links_has_a_keyboard_scroll_stop() {
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut rt = runtime(http.ui(Store::default(), "markdown-scroll"));
+        markup(&mut rt, &http).await;
+        rt.update(|state, _| {
+            let ui = state.files.as_mut().unwrap();
+            let scope = ui.document.scope();
+            ui.document.input(scope).text = format!(
+                "# Read me\n\n{}",
+                "More text in the document.\n\n".repeat(120)
+            );
+            ui.document.changed(scope);
+        });
+        rt.frame(0.02);
+        let focused = |rt: &Runtime<State>| {
+            rt.elements()
+                .iter()
+                .any(|node| node.key.as_deref() == Some("file-rendered-scroll") && node.focused)
+        };
+        for _ in 0..20 {
+            if focused(&rt) {
+                break;
+            }
+            rt.key(KeyEvent {
+                key: Key::Tab,
+                mods: Mods::default(),
+            });
+            rt.frame(0.02);
+        }
+        assert!(focused(&rt));
+        let y = |rt: &Runtime<State>| {
+            rt.elements()
+                .into_iter()
+                .find(|node| node.text.as_deref() == Some("Read me"))
+                .unwrap()
+                .rect[1]
+        };
+        let before = y(&rt);
+        rt.key(KeyEvent {
+            key: Key::Text(" ".into()),
+            mods: Mods::default(),
+        });
+        rt.frame(0.02);
+        assert!(y(&rt) < before);
+        rt.key(KeyEvent {
+            key: Key::Text(" ".into()),
+            mods: Mods {
+                shift: true,
+                ..Mods::default()
+            },
+        });
+        rt.frame(0.02);
+        assert_eq!(y(&rt), before);
+        http.quiet().await;
+    });
+}
+
+#[test]
 fn space_follows_the_reader_scroll_instead_of_activating_a_focused_link() {
     crate::platform::block_on(async {
         let http = http::Http::new().await;
