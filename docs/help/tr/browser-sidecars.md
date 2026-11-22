@@ -12,7 +12,7 @@ Uzak önizlemelerde service worker devre dışıdır.
 
 Bir görüşmedeki `localhost` veya `127.0.0.1` bağlantısına tıklamak, önizlemelerin kullanılabildiği her istemcide o oturumun web önizlemesinde açar. Remote Control üzerinden host web önizlemelerini kapalı tuttuğunda veya önizlemelerin başka bir nedenle kullanılamadığı bir istemcide bu bağlantılar normal tarayıcı davranışını korur. Ctrl+tıklama (macOS'ta ⌘+tıklama) veya orta tıklama bağlantıyı bunun yerine tarayıcınızda açar.
 
-Yerel önizlemeyi kapatmak sohbete döndürür. Yinelenen sekmeler sonuncusu kapanana veya pencere yeniden yüklenene kadar canlı sayfayı paylaşır.
+Sohbete döndüğünüzde veya yerel önizlemeyi aynı penceredeki başka bir sekmeye taşıdığınızda açık sayfa korunur.
 
 Her sekme sohbet/önizleme seçimini kaydeder; oturum ortak URL'yi, görünüm şablonunu ve geçmişi kaydeder. Kaydedilen sayfalar yalnızca oturum tarayıcısını açıkça yeniden açtığınızda yüklenir. URL'ler ve imleç saklanır; canlı formlar, DOM, POST gövdeleri ve JavaScript belleği belgeyle birlikte sona erer. Geçmiş, oturum başına 32 URL ve ortak pencere bütçesiyle sınırlıdır; eski girişler kırpılabilir. URL geri yüklendiğinde sayfa yeniden yüklenebilir.
 
@@ -32,9 +32,9 @@ Yeniden başlatma iptal edilirse `codenomad.inspect` ile `targets: true` kullana
 
 Native önizlemeler aynı masaüstü motoru ve profil/yapılandırma kapsamındaki projeler/oturumlar arasında çerezleri, oturum açma bilgilerini ve site depolamasını paylaşır; bunlar güvenilir CodeNomad arayüzünden ayrıdır. Önizlemede siteden çıkış yapmak aynı depoyu kullanan diğer önizlemeleri etkiler. Belgeler, formlar, oturum depolaması, gezinme geçmişi ve otomasyon bağlantıları her oturuma aittir.
 
-Ajan, önizlemeyi oturumun bir sekmesini içeren odaktaki yerel pencerede, yoksa en son kullanılan uygun pencerede, pencereyi öne getirmeden açar. Etkin sekme uygunsa öncelik onundur. Birden fazla uygun sekme varsa ve hiçbiri etkin değilse birini seçip yeniden deneyin. Önizleme açılırken başka bir sekmeye geçerseniz seçiminiz korunur. Seçilen sekmeyi kapatmak açılışı iptal eder. Başka bir penceredeki önizleme açılışı engelliyorsa o pencereyi kullanın. Sayfa eylemleri oturumun görünür yerel önizlemesini hedefler.
+Her oturumun tek bir yerel önizlemesi vardır. Yinelenen sekmede **Önizleme başka bir sekmede açık** görünürse **Sekmeye git** seçeneğini kullanın veya aynı pencere içinde taşımak için **Burada aç** seçeneğini seçin. Önceki sekme aynı mesajı gösterir. Önizlemenin bulunduğu sekmeyi kapattığınızda önizlemeyi başka bir sekmede açabilirsiniz.
 
-Ajanın önizlemeyi açabilmesi için seçilen sekmedeki açık dosyayı veya görev okuyucusunu kapatın. Kendi gezinmeniz, ajanın bekleyen açma isteğinden önceliklidir. Ajan ilk sayfayı açarken **Yenile** kullanılamaz.
+Ajan önizlemeyi bulunduğu sekmede, açık değilse oturum için en son kullanılan sekmede açar. Sayfa eylemleri görünür yerel önizlemeye uygulanır.
 
 Ajan önizlemede işlem yapmadan veya ekran görüntüsü almadan önce bir anlık görüntü alır. Önizleme değişirse komut başka bir önizlemeyi kullanmak yerine durur.
 

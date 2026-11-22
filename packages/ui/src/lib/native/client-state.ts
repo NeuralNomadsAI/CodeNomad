@@ -13,6 +13,7 @@ export type NativeClientStateLoadResult = {
   partitionProtocolVersion?: 1
   /** A browser tab's sessionStorage state: its layout values stay in shared localStorage. */
   webSession?: true
+  recreateWebRecords?: true
 }
 export type NativeClientStatePartitionCommit = {
   protocolVersion: 1

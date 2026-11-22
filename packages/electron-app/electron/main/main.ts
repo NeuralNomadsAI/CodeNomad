@@ -21,7 +21,6 @@ import { abandonLaunchWindow, acknowledgeLaunchConnection, CONNECT_LAUNCH_TIMEOU
 import { setupCliIPC } from "./ipc"
 import { DeviceSpeech, DeviceSpeechPreference } from "./device-speech"
 import { createHexSpeechDriver } from "./device-speech-hex"
-import { createSystemSpeechDriver } from "./device-speech-system"
 import { setupDeviceSpeechIPC } from "./device-speech-ipc"
 import { setupRemoteDictationIPC } from "./remote-dictation-ipc"
 import { notificationBadgeBitmap, setupNotificationBadgeIPC } from "./notification-badge"
@@ -246,6 +245,7 @@ function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, artifact:
     app, clientStateManager: clientState, cliManager: cli,
     getLocalWindows: () => registry.all(), getAllWindows: () => BrowserWindow.getAllWindows(),
     isSupportWindow: (window) => preferencesWindows.current() === window || remoteDictation.window() === window || isBrowserAuxiliaryWindow(window),
+    isRemoteWindow: (window) => !window.isDestroyed() && remoteWindows.resolve(window.webContents) === window,
     isLaunchWindow: (window) => launchWindows.has(window),
     flushSupportWindows: async () => {
       const window = preferencesWindows.current()
@@ -258,6 +258,7 @@ function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, artifact:
     isTrustedRendererOrigin: isAllowedRendererOrigin,
     navigationLifecycle,
     ...(previousRestart && { defaultRelaunchOptions: { execPath: artifact.execPath, args: artifact.appArgs } }),
+    stopSpeech: () => { remoteDictation.revoke(); return deviceSpeech.revokeAll() },
   })
   const bindClientState = setupClientStateIPC(ipcMain, clientState, (sender) => registry.resolve(sender), getAllowedOrigins)
 
@@ -449,11 +450,12 @@ function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, artifact:
   const speechPreference = new DeviceSpeechPreference(join(baseUserDataPath, "device-speech", "choice.json"))
   const deviceSpeech = new DeviceSpeech(
     speechPreference,
-    createSystemSpeechDriver(app.isPackaged ? process.resourcesPath : join(app.getAppPath(), "electron", "resources")),
     createHexSpeechDriver(join(
       process.platform === "win32" && process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "CodeNomad") : baseUserDataPath,
       "device-speech",
-    )),
+    ), () => {
+      try { return speechPreference.read().engine === "hex" } catch { return false }
+    }),
   )
   const remoteDictation = setupRemoteDictationIPC(ipcMain, {
     resolveRemote: sender => remoteWindows.resolve(sender),
@@ -472,7 +474,6 @@ function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, artifact:
     openSpeechPreferences: () => openPreferences({ section: "speech" }),
     isShuttingDown: () => navigationLifecycle.stopped,
   })
-  app.on("before-quit", () => { remoteDictation.revoke(); deviceSpeech.revokeAll() })
   setupDeviceSpeechIPC(ipcMain, deviceSpeech, {
     resolveLocal: (sender) => registry.resolve(sender)?.window,
     resolvePreferences: (sender) => preferencesWindows.resolve(sender),
@@ -680,7 +681,7 @@ function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, artifact:
       window.setTitle(title)
       window.webContents.on("page-title-updated", (event) => { event.preventDefault(); window.setTitle(title) })
       setupNavigationGuards(window, undefined, getAllowedOrigins, getLoadingUrl)
-      lifecycle.attachSupportWindow(window)
+      lifecycle.attach({ id: "", window, tracker: null, persisted: false })
       window.once("session-end", remoteDictation.revoke)
       window.on("closed", () => { remoteOrigins.delete(nativeWindowId); insecureOrigins.delete(webContentsId) })
       const navigate = () => navigateRemoteWindow(window, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify)

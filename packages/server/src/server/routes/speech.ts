@@ -100,21 +100,6 @@ export function registerSpeechRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
   })
 
-  app.post("/api/speech/synthesize", async (request, reply) => {
-    const admission = requestAdmission(request, reply)
-    try {
-      const body = SynthesizeBodySchema.parse(request.body ?? {})
-      const result = await deps.speechService.synthesize(body, admission.signal)
-      admission.signal.throwIfAborted()
-      return result
-    } catch (error) {
-      if (admission.signal.aborted) return
-      return respondSpeechError(error, "Failed to synthesize audio", request, reply)
-    } finally {
-      admission.dispose()
-    }
-  })
-
   app.post("/api/speech/synthesize/stream", async (request, reply) => {
     const admission = requestAdmission(request, reply)
     // The downstream can disconnect after the provider has started streaming.

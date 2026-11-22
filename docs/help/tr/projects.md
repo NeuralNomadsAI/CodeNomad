@@ -7,6 +7,8 @@ Bir proje sekmesi CodeNomad'i arka uç bilgisayarındaki bir klasöre bağlar. S
 Yeni bir boş sekme açmak için **Yeni instance** (`+`) veya `Ctrl/Cmd+N` kullanın. **Son sekmeler** ya da **Gözat** üzerinden proje seçin. Geri yüklenecek sekme olmadığında veya son sekme kapatıldığında CodeNomad boş bir sekme gösterir. Klonlama ve geçici sekmeler yerel sunucuyu kullanır.
 
 
+Son sekmelerde **Aç**, bu penceredeki sekmeye geçer. Yeşil **Başka bir pencerede açık** noktası, projenin sunucusunda bu pencerenin dışında bir bağlantı olduğunu gösterir. Satırı seçmek ayrı bir sekme açar.
+
 [Uzak projeyi sekmede açma](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
 
 Depoyu kopyalamak için **Git Deposunu Klonla** eylemini seçin; **Depo URL'si** ve **Hedef klasör** alanlarını doldurup **Klonla** eylemini seçin. **Hedef klasör**, son klonunuzun bulunduğu klasörde (yoksa en son projenizin yanında) depo adıyla önceden doldurulur. **Göz At** klonu içerecek klasörü seçer; klon klasörünün adı dahil yolu elle de düzenleyebilirsiniz.
@@ -35,17 +37,19 @@ Tab aramayı açar, oklar ve Enter seçim yapar, Escape odağı `+` düğmesine 
 | Sekmeyi Kapat | O sekmenin CodeNomad proje bağlantısını kaldırır; aynı klasörde ayrı açılmış başka bir sekme etkilenmez | Proje dosyalarını veya yerel geçmişi silmez, oturumları durdurmaz veya OpenCode'un Location bağlamını kaldırmaz |
 | Oturumu durdur | Seçilen görüşmenin yürütülmesi | Projeyi kapatmaz veya geçmişini silmez |
 
-Aynı proje bağlantısını başka bir pencere gösteriyorsa oradaki sekme de kapanır ve o pencere bir bildirim gösterir. Kapatılan sekmenin gönderilmemiş taslakları ve ekleri, aynı klasörü o pencerede yeniden açtığınızda geri gelir; pencere bunları yeniden yüklenene veya kapanana kadar en son kapatılan 16 proje için tutar. Başlangıç geri yüklemesine dahil değildir.
+Kapatılan sekmenin gönderilmemiş taslakları ve ekleri, aynı klasörü o pencerede yeniden açtığınızda geri gelir; pencere bunları yeniden yüklenene veya kapanana kadar en son kapatılan 16 proje için tutar. Başlangıç geri yüklemesine dahil değildir.
 
-Bir pencerenin tamamını kapatmak, uygulamadan çıkmak veya yeniden yüklemek proje bağlantılarını kapatmaz; normal başlangıç geri yüklemesi yine uygulanır. Yürütmenin bittiğini doğrulamak istiyorsanız ilgili çalıştırmaları açıkça durdurun. CodeNomad yerel Location bağlamlarını hiçbir zaman kaldırmaz; paylaşılan hizmetin bakımı [OpenCode kurulumu](opencode.md) bölümünde açıklanır.
+Bir pencereyi veya tarayıcı sekmesini kapattığınızda ya da yenilediğinizde veya uygulamadan çıktığınızda CodeNomad sunuculardan ilgili proje bağlantılarını bırakmalarını ister. Sunucuya ulaşılamazsa kayıtlar sunucuda kalabilir. Diğer pencerelerin sekmeleri açık kalır. Başlangıçta geri yükleme, kayıtlı sekmeleri yeniden bağlar ve açık geçici klasörleri korur. Yürütmeyi sonlandırmak için ilgili çalıştırmaları açıkça durdurun; paylaşılan hizmetin bakımı için [OpenCode kurulumu](opencode.md) bölümüne bakın.
 
 Başlangıç geri yüklemesi etkinken kalan her sekme kendi panel tercihlerini, Görev seçimini ve okuyucusunu, sohbet veya web önizlemesi seçimini geri yükler. Tarayıcı URL'leri ve geçmişi oturum başına paylaşılır; kayıtlı sayfalar yalnızca web önizlemesi açıkça yeniden açıldığında yüklenir. Bir örneği kapatmak yalnızca o örneğin kayıtlı görünümünü kaldırır; klasörü yeniden açmak yeni bir örnek oluşturur.
+
+Bir tarayıcı sekmesini çoğaltmak, o sekmeye ait ayrı proje bağlantıları açar. Açık kalan bir bağlantı yalnızca tarayıcının bellekten çıkardığı aynı sekme yeniden açıldığında kullanılabilir.
 
 ## Uzak sekmeleri geri yükleme {#restore-remote-tabs}
 
 Geri yükleme açıkken yeniden yüklediğinizde uzak sekmelerin sırası, seçimi ve taslakları korunur. Kullanılamayan sunucu bekleyen bir sekme bırakır: sunucu döndüğünde **Yeniden dene**, ya da kullanıcı adı/parola veya **Yeni eşleştirme bağlantısı** alanındaki bağlantıyla **Bağlan** seçin. Diğer sunucular kullanılabilir kalır. **Sunucu bulunamadı**, kayıtlı sunucunun eksik olduğunu gösterir.
 
-**Yeniden dene**, var olan bir projeye yeniden bağlanır. Sunucuya erişilebiliyor ancak proje bulunamıyorsa **Aç** seçeneğini kullanın.
+**Yeniden dene**, kayıtlı sunucudaki projeye yeniden bağlanır ve gerekirse bağlantıyı yeniden oluşturur.
 
 **Yeniden dene**, başlangıçta otomatik geri yükleme kapalıyken de bekleyen sekmeleri kurtarır. Bildirimler mevcut bekleyen sekmeyi seçer. Onaylanmamış bir konuşma işlemini yeniden göndermeden önce sonucunu kontrol edin.
 

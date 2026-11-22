@@ -18,7 +18,6 @@ mod developer_relaunch;
 mod device_speech;
 mod device_speech_hex;
 mod device_speech_ipc;
-mod device_speech_system;
 mod device_speech_worker;
 mod embedded_view;
 mod external_open;
@@ -612,7 +611,17 @@ fn browser_target_claim_open(
     require_local_app_webview(&webview, &state)?;
     state
         .browser_controller
-        .claim_open(webview.app_handle(), webview.label(), &request_id, response)
+        .claim_open(webview.label(), &request_id, response)
+}
+
+#[tauri::command]
+fn browser_target_ownership(
+    webview: tauri::Webview,
+    state: tauri::State<'_, AppState>,
+    input: browser_controller::OwnershipAction,
+) -> Result<Option<serde_json::Value>, String> {
+    require_local_app_webview(&webview, &state)?;
+    state.browser_controller.change_ownership(webview.app_handle(), webview.label(), input)
 }
 
 #[tauri::command]
@@ -620,13 +629,11 @@ fn browser_target_release_open(
     webview: tauri::Webview,
     state: tauri::State<'_, AppState>,
     request_id: String,
-    keep_guest: Option<bool>,
 ) -> Result<bool, String> {
     require_local_app_webview(&webview, &state)?;
     Ok(state.browser_controller.release_open(
         webview.label(),
         &request_id,
-        keep_guest.unwrap_or(false),
     ))
 }
 
@@ -1785,7 +1792,7 @@ fn request_final_application_window_close(app: AppHandle, label: String, local_w
         // resumes at the next launch.
         if still_final {
             shutdown::request(app);
-        } else if local_window {
+        } else if local_window || label.starts_with("remote-") {
             shutdown::request_local_window_close(app, label);
         } else {
             dispatch_approved_auxiliary_close(&app, &label);
@@ -2042,9 +2049,7 @@ fn main() {
                 identity::electron_user_data_base(&home)
                     .join("device-speech")
                     .join("choice.json"),
-                Some(std::sync::Arc::new(
-                    device_speech_system::SystemDriver::default(),
-                )),
+                None,
             )
             .with_hex(
                 if cfg!(windows) {
@@ -2232,6 +2237,7 @@ fn main() {
             browser_target_action,
             browser_target_unregister,
             browser_target_claim_open,
+            browser_target_ownership,
             browser_target_release_open
         ]))
         .on_menu_event(|app_handle, event| {
@@ -2481,10 +2487,10 @@ fn main() {
                     return;
                 }
                 let local_window = identity::local_window_id(&label).is_ok();
-                if local_window {
+                if local_window || label.starts_with("remote-") {
                     let consumed = shutdown::consume_local_window_close(&app_handle, &label);
                     let in_flight = shutdown::local_window_close_in_flight(&app_handle, &label);
-                    let launch_window = app_handle
+                    let launch_window = local_window && app_handle
                         .state::<local_windows::LocalWindows>()
                         .is_connect_only(&label);
                     match local_close_event_action(consumed, in_flight, launch_window) {
@@ -2512,7 +2518,7 @@ fn main() {
                     request_final_application_window_close(app_handle.clone(), label, local_window);
                     return;
                 }
-                if local_window {
+                if local_window || label.starts_with("remote-") {
                     api.prevent_close();
                     shutdown::request_local_window_close(app_handle.clone(), label);
                 }
@@ -3087,7 +3093,8 @@ mod menu_tests {
                 "notification:allow-is-permission-granted",
                 "notification:allow-request-permission",
                 "notification:allow-notify",
-                "allow-notification-badge-set"
+                "allow-notification-badge-set",
+                "allow-client-state-renderer-flushed"
             ])
         );
 
@@ -3112,7 +3119,7 @@ mod menu_tests {
             .iter()
             .any(|permission| permission
                 .as_str()
-                .is_some_and(|value| value.starts_with("allow-cli"))));
+                .is_some_and(|value| value.starts_with("allow-cli-"))));
     }
 
     #[test]

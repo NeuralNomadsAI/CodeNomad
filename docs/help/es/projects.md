@@ -6,6 +6,8 @@ Una pestaña de proyecto conecta CodeNomad a una carpeta del equipo del backend.
 
 Pulsa **Nueva instancia** (`+`) o `Ctrl/Cmd+N` para abrir una nueva pestaña vacía. Elige un proyecto en **Pestañas recientes** o **Explorar**. Si no hay pestañas que restaurar o cierras la última, CodeNomad muestra una pestaña vacía. La clonación y las pestañas temporales usan el servidor local.
 
+En las pestañas recientes, **Abierta** cambia a una pestaña de esta ventana. El punto verde **Abierto en otra ventana** indica una conexión en el servidor del proyecto fuera de esta ventana. Seleccionar la fila abre una pestaña independiente.
+
 [Abrir un proyecto remoto en una pestaña](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
 
 Para obtener una copia de un repositorio, elige **Clonar repo Git**, introduce la **URL del repositorio** y la **Carpeta de destino** y pulsa **Clonar**. La **Carpeta de destino** se rellena con el nombre del repositorio en la carpeta que contiene tu último clon, o junto a tu proyecto más reciente. **Buscar** elige la carpeta que contendrá el clon; también puedes editar la ruta, incluido el nombre de la carpeta del clon.
@@ -34,17 +36,19 @@ Tab permite buscar, las flechas y Enter seleccionan y Escape devuelve el foco a 
 | Cerrar pestaña | Retira la conexión de proyecto de CodeNomad de esa pestaña; otra pestaña abierta por separado en la misma carpeta no se ve afectada | No elimina archivos del proyecto ni el historial nativo, no detiene sesiones ni descarga la Location de OpenCode |
 | Detener sesión | Ejecución de la conversación seleccionada | No cierra el proyecto ni elimina su historial |
 
-Si otra ventana muestra la misma conexión de proyecto, su pestaña también se cierra y esa ventana muestra una notificación. Los borradores y adjuntos sin enviar de la pestaña cerrada vuelven al reabrir la misma carpeta en esa ventana; la ventana los conserva para sus 16 últimos proyectos cerrados hasta que se recarga o se cierra. No forman parte de la restauración al iniciar.
+Los borradores y adjuntos sin enviar de la pestaña cerrada vuelven al reabrir la misma carpeta en esa ventana; la ventana los conserva para sus 16 últimos proyectos cerrados hasta que se recarga o se cierra. No forman parte de la restauración al iniciar.
 
-Cerrar una ventana entera, salir o recargar no cierra sus conexiones de proyecto; se sigue aplicando la restauración normal al iniciar. Detén explícitamente las ejecuciones relevantes si necesitas verificar que la ejecución terminó. CodeNomad nunca descarga las Locations nativas; el mantenimiento del servicio compartido se describe en [configuración de OpenCode](opencode.md).
+Al cerrar o recargar una ventana o pestaña del navegador, o al salir de la aplicación, CodeNomad pide a los servidores que liberen las conexiones de proyecto correspondientes. Si no se puede acceder a un servidor, este puede conservar los registros. Las demás ventanas conservan sus pestañas. La restauración al iniciar vuelve a conectar las pestañas guardadas y conserva las carpetas temporales abiertas. Detén las ejecuciones explícitamente si quieres terminarlas; consulta la [configuración de OpenCode](opencode.md) para el mantenimiento del servicio compartido.
 
 Con la restauración al iniciar activada, cada pestaña restante recupera sus propias opciones de paneles, selección y lector de Misión, y elección entre chat y vista previa web. Las URL y el historial del navegador se comparten por sesión; las páginas guardadas se cargan solo al reabrir explícitamente la vista previa web. Cerrar una instancia elimina solo su vista guardada; reabrir la carpeta crea una instancia nueva.
+
+Al duplicar una pestaña del navegador, se abren conexiones de proyecto propias. Solo se puede reutilizar una conexión que siga abierta al reanudar la misma pestaña después de que el navegador la haya descartado.
 
 ## Restaurar pestañas remotas {#restore-remote-tabs}
 
 Al recargar con la restauración activada, las pestañas remotas conservan su orden, selección y borradores. Un servidor no disponible deja una pestaña en espera: elige **Reintentar** cuando vuelva, o **Conectar** con su usuario/contraseña o un enlace en **Nuevo enlace de emparejamiento**. Los demás servidores siguen disponibles. **Servidor no encontrado** indica que falta el servidor guardado.
 
-**Reintentar** vuelve a conectar con un proyecto existente. Si se puede acceder al servidor pero falta el proyecto, elige **Abrir**.
+**Reintentar** vuelve a conectar el proyecto en el servidor guardado y recrea su conexión si hace falta.
 
 **Reintentar** también recupera pestañas en espera con la restauración automática al iniciar desactivada. Las notificaciones seleccionan la pestaña en espera existente. Comprueba el resultado de una acción de conversación no confirmada antes de enviarla otra vez.
 

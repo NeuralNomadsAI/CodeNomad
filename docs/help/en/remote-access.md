@@ -58,6 +58,8 @@ An administrator can fix the listening address: set `CODENOMAD_LOCKED_HOST` mach
 
 For a hostname alias, reverse proxy or separately hosted UI, set `CODENOMAD_ALLOWED_ORIGINS` on the backend to the trusted UI origins (scheme, hostname and port). Native LAN clients must supply an allowed `Origin` header for mutations. Its HTTPS origins also let the host pair devices without the tunnel; see [Pair over direct HTTPS](remote-control.md#direct-https).
 
+When updating a separately hosted UI, deploy the UI and reload open tabs and windows before updating the server. If the server serves the UI, reload open tabs and windows after the update.
+
 Use a loopback connection for host-only operations: SideCar content (`/sidecars/`) and WebSockets, Remote Control management (`/api/remote-control/`), the plugin bridge (`/api/opencode-plugin/`), remote proxies (`/api/remote-proxy/`), password changes and token bootstrap. These require loopback even when signed in through direct LAN access. Only SideCars have an exception: the host's **Open SideCars over HTTPS** setting opens their content and WebSockets to browsers signed in through a trusted HTTPS origin ([SideCars](browser-sidecars.md#register-sidecar)). Live preview content (`/previews/`) is available over direct LAN access with a valid capability token.
 
 The `/api/sidecars` registration APIs remain available to authenticated direct LAN clients and paired devices. Remote Control web previews remain available with their capability token while enabled on the host. For authenticated server management and secure credential entry, see [Save a remote server](remote-access.md#saved-servers).

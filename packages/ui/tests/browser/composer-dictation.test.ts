@@ -8,7 +8,7 @@ let fixture: Awaited<ReturnType<typeof startProductFixture>>
 before(async () => { fixture = await startProductFixture("composer-dictation") })
 after(async () => { await fixture?.close() })
 
-async function withComposer(run: (page: Page) => Promise<void>, mobile = false, native?: "remote" | "remote-api" | "remote-api-legacy" | "remote-tauri" | "wsl" | "hex-setup" | "tauri-api" | "tauri-preferences" | "tauri-remote-api", pcm = false, locale: "en" | "he" | "zh-Hans" = "en", ttsOnly = false, unconfigured: boolean | Promise<number> = false, options: { history?: boolean; engineStatus?: Promise<number>; expectedSends?: string[]; systemLocale?: string } = {}) {
+async function withComposer(run: (page: Page) => Promise<void>, mobile = false, native?: "remote" | "remote-api" | "remote-api-legacy" | "remote-tauri" | "wsl" | "hex-setup" | "tauri-api" | "tauri-preferences" | "tauri-remote-api", pcm = false, locale: "en" | "he" | "zh-Hans" = "en", ttsOnly = false, unconfigured: boolean | Promise<number> = false, options: { history?: boolean; engineStatus?: Promise<number>; expectedSends?: string[]; unsupportedChoice?: boolean } = {}) {
   const context = await fixture.browser.newContext({
     viewport: mobile ? { width: 390, height: 844 } : { width: 900, height: 600 },
     isMobile: mobile, hasTouch: mobile,
@@ -20,19 +20,19 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
   page.on("pageerror", error => errors.push(error))
   try {
     if (native) {
-      const installNativeBridge = (kind: typeof native, systemLocale: string) => {
+      const installNativeBridge = (kind: typeof native, unsupportedChoice: boolean) => {
         const requests: Array<Record<string, unknown>> = []
         const settings = {
-          opened: [] as string[], engine: "system", state: "needsPreparation", token: "plan-initial",
+          opened: [] as string[], engine: unsupportedChoice ? null : "api", state: "needsPreparation", token: "plan-initial",
           remaining: 5_500_000, phase: { state: "downloading", downloadedBytes: 1_250_000, error: "failed" },
           defer: false, readFails: false, acknowledge: () => {},
           holdRead: false, releaseRead: () => {}, holdCancelReceipt: false, releaseCancelReceipt: () => {},
         }
         const tauriApi = kind === "tauri-api" || kind === "tauri-preferences" || kind === "tauri-remote-api"
-        const bridge = { requests, choice: kind === "remote-api" || kind === "remote-api-legacy" || tauriApi ? "api" : "hex", operation: "recording",
+        const bridge = { requests, choice: kind === "remote" && unsupportedChoice ? "unsupported"
+          : kind === "remote-api" || kind === "remote-api-legacy" || tauriApi ? "api" : "hex", operation: "recording",
           resolve: (_: string) => {}, holdMicrophone: false, admitMicrophone: () => {},
-          denyMicrophone: false, microphoneState: "recording", readFails: false, denyLease: false,
-          recordingText: undefined as string | undefined }
+          denyMicrophone: false, microphoneState: "recording", readFails: false, denyLease: false }
         const mic = (action: unknown) => action === "claimMicrophone" ? { ok: true, value: { busy: bridge.denyLease ? "test" : null } }
           : action === "releaseMicrophone" ? { ok: true, value: null } : undefined
         const relay = async (request: Record<string, unknown>) => {
@@ -64,7 +64,7 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
             requests.push(request)
             if (mic(request.action)) return mic(request.action)
             if (kind === "hex-setup") {
-              const snapshot = () => ({ engine: settings.engine, system: "ready", systemLocales: ["fr-FR"],
+              const snapshot = () => ({ engine: settings.engine,
                 hex: { state: settings.state, plan: { id: settings.token, missing: settings.state === "ready" ? [] : [
                   { component: "engine", downloadBytes: 0 }, { component: "model", downloadBytes: settings.remaining },
                 ] } },
@@ -78,7 +78,7 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
                   if (request.planId !== settings.token) return { ok: false, error: "planChanged" }
                   if (settings.defer) await new Promise<void>(resolve => { settings.acknowledge = resolve })
                   return { ok: true, value: { id: "00000000-0000-4000-8000-000000000001" } }
-                case "start": return { ok: false, error: "permissionDenied" }
+                case "start": return { ok: false, error: "failed" }
                 case "status": return settings.phase.state === "forgotten"
                   ? { ok: false, error: "notOwned" } : { ok: true, value: settings.phase }
                 case "cancel":
@@ -96,10 +96,10 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
               }
             }
             switch (request.action) {
-              case "read": return { ok: true, value: { engine: "system", system: "ready", systemLocales: [systemLocale], hex: { state: "unavailable" } } }
+              case "read": return { ok: true, value: { engine: "hex", hex: { state: "ready", plan: { id: "ready", missing: [] } } } }
               case "start": return { ok: true, value: { id: "00000000-0000-4000-8000-000000000001" } }
               case "status": return { ok: true, value: { state: bridge.operation,
-                text: bridge.operation === "recording" ? bridge.recordingText : "WSL text" } }
+                ...(bridge.operation === "transcribed" ? { text: "WSL text" } : {}) } }
               case "finish": bridge.operation = "transcribed"; return { ok: true, value: null }
               case "cancel": bridge.operation = "cancelled"; return { ok: true, value: null }
             }
@@ -107,10 +107,11 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
         } : { remoteDictation: relay, ...(kind !== "remote-api-legacy" ? { remoteMicrophoneLease: true } : {}) }
         Object.assign(window, { native: bridge, speechSettings: settings, __CODENOMAD_WINDOW_CONTEXT__: local ? "local" : "remote" })
         if (kind === "remote-tauri" || tauriApi) {
+          const label = kind === "tauri-preferences" ? "preferences" : kind === "tauri-api" ? "local" : "remote"
           Object.assign(window, {
-            __CODENOMAD_WINDOW_CONTEXT__: kind === "tauri-preferences" ? "preferences" : kind === "tauri-api" ? "local" : "remote",
+            __CODENOMAD_WINDOW_CONTEXT__: label,
             __CODENOMAD_RUNTIME_HOST__: "tauri", __CODENOMAD_REMOTE_DICTATION__: true,
-            __TAURI_INTERNALS__: { invoke: async (command: string, payload: { request: Record<string, unknown> }) => {
+            __TAURI_INTERNALS__: { metadata: { currentWindow: { label }, currentWebview: { label } }, invoke: async (command: string, payload: { request: Record<string, unknown> }) => {
               if (command === "device_speech_request" &&
                   (payload.request?.action === "authorizeApiMicrophone" || payload.request?.action === "revokeApiMicrophone")) {
                 requests.push(payload.request)
@@ -123,7 +124,7 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
               if (command === "device_speech_request") {
                 requests.push(payload.request)
                 if (mic(payload.request.action)) return mic(payload.request.action)
-                return { ok: true, value: { engine: "api", system: "unavailable", hex: { state: "unavailable" } } }
+                return { ok: true, value: { engine: "api", hex: { state: "unavailable" } } }
               }
             } },
           })
@@ -132,7 +133,7 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
           Object.assign(window, { electronAPI: desktop, __CODENOMAD_RUNTIME_HOST__: "electron" })
         }
       }
-      await page.addInitScript(`{ const __name = (value) => value; (${installNativeBridge.toString()})(${JSON.stringify(native)}, ${JSON.stringify(options.systemLocale ?? "en-US")}); }`)
+      await page.addInitScript(`{ const __name = (value) => value; (${installNativeBridge.toString()})(${JSON.stringify(native)}, ${Boolean(options.unsupportedChoice)}); }`)
     }
     await context.route("**/api/**", async route => {
       const url = route.request().url()
@@ -177,6 +178,7 @@ const action = async (page: Page, name: string) => {
   await page.getByRole("menuitem", { name, exact: true }).click()
 }
 const start = (page: Page) => action(page, "Dictate")
+const chooseLocalEngine = "Choose an engine in local Preferences → Voice → Dictation."
 const stop = async (page: Page) => {
   await page.waitForFunction(() => (window as any).capture.starts === 1)
   await action(page, "Stop recording and transcribe")
@@ -581,50 +583,49 @@ test("permission granted after the composer closes releases the new stream witho
   }), [0, 0])
 }))
 
-test("System dictation previews on the local host before inserting only the final text into a WSL draft", () => withComposer(async page => {
+test("Hex captures on the local host and inserts its transcript into a WSL draft", () => withComposer(async page => {
   await field(page).fill("before replace after")
   await select(page, 7, 14)
   await start(page)
-  await page.waitForFunction(() => (window as any).native.requests.some((event: any) => event.action === "start"))
-  await page.evaluate(() => { (window as any).native.recordingText = "Early result" })
-  const preview = page.getByRole("status").getByText("Early result", { exact: true })
-  await preview.waitFor()
+  await page.waitForFunction(() => (window as any).capture.samples > 0)
   assert.equal(await field(page).inputValue(), "before replace after")
-  await page.evaluate(() => { (window as any).native.recordingText = "a".repeat(150) + " latest words" })
-  await page.getByRole("status").getByText(/^…a+ latest words$/).waitFor()
   await action(page, "Stop recording and transcribe")
   await page.waitForFunction(() => document.querySelector("textarea")?.value === "before WSL text after")
-  assert.equal(await page.getByRole("status").getByText(/latest words$/).count(), 0)
   const { native, capture } = await page.evaluate(() => ({ native: (window as any).native.requests, capture: (window as any).capture }))
   const lease = native.find((event: any) => event.action === "claimMicrophone")
   assert.equal(lease.purpose, "dictation")
   assert.deepEqual(native.find((event: any) => event.action === "start"),
-    { action: "start", engine: "system", locale: "en", microphoneLeaseId: lease.id })
-  assert.equal(capture.starts, 0)
+    { action: "start", engine: "hex", locale: "en", microphoneLeaseId: lease.id })
+  assert.equal(capture.starts, 1)
   assert.deepEqual(capture.requests, [])
-}, false, "wsl"))
+}, false, "wsl", true))
 
-test("typing during a System preview preserves the draft and saves only the final text for insertion", () => withComposer(async page => {
-  await start(page)
-  await page.evaluate(() => { (window as any).native.recordingText = "Early result" })
-  await page.getByRole("status").getByText("Early result", { exact: true }).waitFor()
-  await field(page).pressSequentially("My draft")
-  await action(page, "Stop recording and transcribe")
-  await page.getByRole("button", { name: "Insert transcript" }).waitFor()
-  assert.equal(await field(page).inputValue(), "My draft")
-  assert.equal(await page.getByText("Early result", { exact: true }).count(), 0)
-  await page.getByRole("button", { name: "Insert transcript" }).click()
-  assert.equal(await field(page).inputValue(), "My draft WSL text ")
-}, false, "wsl"))
-
-test("Simplified Chinese can start System dictation with the installed zh-CN recognizer", () => withComposer(async page => {
-  await page.locator(".prompt-actions-menu-trigger").click()
+test("an unsupported saved engine requires explicit reselection before recording", () => withComposer(async page => {
+  const more = page.getByRole("button", { name: "More actions", exact: true })
+  await more.click()
   const dictate = page.locator('[data-action-key="voice"]')
-  assert.equal(await dictate.locator(".action-overflow-item-label").textContent(), "听写")
+  await dictate.filter({ hasText: chooseLocalEngine }).waitFor()
   await dictate.click()
-  await page.waitForFunction(() => (window as any).native.requests.some(({ action, locale, engine }: any) =>
-    action === "start" && locale === "zh-Hans" && engine === "system"))
-}, false, "wsl", false, "zh-Hans", false, false, { systemLocale: "zh-CN" }))
+  const engine = page.getByRole("combobox", { name: "Dictation engine on this device" })
+  await engine.waitFor()
+  assert.equal(await engine.inputValue(), "")
+  assert.equal(await engine.locator("option:checked").isDisabled(), true)
+  assert.equal(await page.evaluate(() => (window as any).capture.starts), 0)
+  assert.deepEqual(await page.evaluate(() => (window as any).native.requests.filter(({ action }: any) => action !== "read")), [])
+  await engine.selectOption("api")
+  await engine.locator('option[value=""]').waitFor({ state: "detached" })
+  assert.equal(await engine.inputValue(), "api")
+}, false, "hex-setup", false, "en", false, false, { unsupportedChoice: true }))
+
+test("an older host's unsupported choice opens Dictation settings without capture", () => withComposer(async page => {
+  await page.getByRole("button", { name: "More actions", exact: true }).click()
+  const dictate = page.getByRole("menuitem").filter({ hasText: chooseLocalEngine })
+  await dictate.click()
+  await page.waitForFunction(() => document.activeElement?.id === "voice-dictation")
+  await page.getByText(chooseLocalEngine, { exact: true }).waitFor()
+  assert.equal(await page.evaluate(() => (window as any).native.requests.some(({ action }: any) => action === "begin")), false)
+  assert.equal(await page.evaluate(() => (window as any).capture.starts), 0)
+}, false, "remote", false, "en", false, false, { unsupportedChoice: true }))
 
 test("Classic conversation is available with playback but without API dictation", () => withComposer(async page => {
   const more = page.getByRole("button", { name: "More actions", exact: true })
@@ -759,8 +760,8 @@ test("remote Linux Tauri API prompts again after stop; denial sends no audio", (
   }), [0, 0, 0, 1])
 }, false, "tauri-remote-api"))
 
-for (const choice of ["hex", "system"] as const) {
-  test(`remote Linux Tauri tests the API without changing ${choice} dictation`, () => withComposer(async page => {
+for (const choice of ["hex", null] as const) {
+  test(`remote Linux Tauri tests the API without changing the ${choice ?? "unsupported"} dictation choice`, () => withComposer(async page => {
     await field(page).fill("Original draft")
     await select(page, 0, 8)
     await page.evaluate(engine => {
@@ -800,10 +801,17 @@ for (const choice of ["hex", "system"] as const) {
     assert.deepEqual(revoked, { action: "revokeApiMicrophone", id: approved.id })
 
     await page.evaluate(() => (window as any).fixture.setNativeSettings(false))
-    await start(page)
-    await page.waitForFunction(() => (window as any).native.requests.some(({ action }: any) => action === "begin"))
-    await page.evaluate(() => (window as any).native.resolve("Local"))
-    await page.waitForFunction(() => document.querySelector("textarea")?.value === "Local draft")
+    if (choice === "hex") {
+      await start(page)
+      await page.waitForFunction(() => (window as any).native.requests.some(({ action }: any) => action === "begin"))
+      await page.evaluate(() => (window as any).native.resolve("Local"))
+      await page.waitForFunction(() => document.querySelector("textarea")?.value === "Local draft")
+    } else {
+      await page.getByRole("button", { name: "More actions", exact: true }).click()
+      await page.getByRole("menuitem").filter({ hasText: chooseLocalEngine }).click()
+      await page.waitForFunction(() => document.activeElement?.id === "voice-dictation")
+      assert.equal(await page.evaluate(() => (window as any).native.requests.some(({ action }: any) => action === "begin")), false)
+    }
     assert.deepEqual(await attempts(), [denied, released, approved, finished, revoked])
     assert.deepEqual(await page.evaluate(() => {
       const { native, capture } = window as any
@@ -1032,15 +1040,14 @@ test("keyboard activation shows the approved plan, cancels and resumes, and neve
   const menu = page.getByRole("button", { name: "More actions", exact: true })
   await menu.focus()
   await menu.press("Enter")
-  const setup = page.getByRole("menuitem", { name: "Dictate — System recognition unavailable for this language" })
+  const setup = page.getByRole("menuitem", { name: /^Dictate/ }).filter({ hasText: chooseLocalEngine })
   await setup.focus()
   await setup.press("Enter")
   const activate = page.getByRole("button", { name: "Activate Hex" })
   const engine = page.getByRole("combobox", { name: "Dictation engine on this device" })
   await activate.waitFor()
   await page.waitForFunction(() => document.activeElement?.id === "voice-dictation")
-  assert.equal(await engine.inputValue(), "system")
-  assert.equal(await engine.locator("option[value=system]").innerText(), "System recognition unavailable for this language")
+  assert.equal(await engine.inputValue(), "")
   assert.equal(await engine.locator("option[value=hex]").evaluate((node: HTMLOptionElement) => node.disabled), true)
   const describedBy = await activate.getAttribute("aria-describedby")
   const description = await page.evaluate(ids => ids!.split(" ").map(id => document.getElementById(id)?.textContent).join(" "), describedBy)
@@ -1062,7 +1069,7 @@ test("keyboard activation shows the approved plan, cancels and resumes, and neve
   const resume = page.getByRole("button", { name: "Resume Hex activation" })
   await resume.waitFor()
   await page.getByText("Download: 4.25 MB", { exact: true }).waitFor()
-  assert.equal(await engine.inputValue(), "system")
+  assert.equal(await engine.inputValue(), "")
   assert.equal(await resume.evaluate(node => node === document.activeElement), true)
   await page.evaluate(() => { (window as any).speechSettings.phase.state = "verifying" })
   await resume.press("Enter")
@@ -1095,7 +1102,7 @@ test("keyboard activation shows the approved plan, cancels and resumes, and neve
       microphoneLeaseId: events.find((event: any) => event.action === "claimMicrophone").id })
   assert.equal((await mutations()).filter((event: any) => event.action === "prepare").length, 2)
   assert.deepEqual(await page.evaluate(() => [(window as any).capture.starts, (window as any).capture.requests.length]), [0, 0])
-}, false, "hex-setup"))
+}, false, "hex-setup", false, "en", false, false, { unsupportedChoice: true }))
 
 test("Hex activation leaves focus where the user moves it while waiting", () => withComposer(async page => {
   await page.evaluate(() => { (window as any).fixture.setNativeSettings(true) })
@@ -1211,7 +1218,7 @@ test("a zero-byte plan still requires consent and a failed activation leaves the
   await page.evaluate(() => { (window as any).speechSettings.phase.state = "error" })
   await activate.click()
   await page.getByRole("alert").filter({ hasText: "Could not change the dictation engine" }).waitFor()
-  assert.equal(await page.getByRole("combobox", { name: "Dictation engine on this device" }).inputValue(), "system")
+  assert.equal(await page.getByRole("combobox", { name: "Dictation engine on this device" }).inputValue(), "api")
   assert.equal(await page.getByRole("button", { name: "Resume Hex activation" }).count(), 1)
 }, false, "hex-setup"))
 
@@ -1242,7 +1249,7 @@ test("a changed plan requires another click on the newly displayed download", ()
   await activate.click()
   await page.getByRole("alert").filter({ hasText: "The components changed" }).waitFor()
   await page.getByText("Download: 7 MB", { exact: true }).waitFor()
-  assert.equal(await page.getByRole("combobox", { name: "Dictation engine on this device" }).inputValue(), "system")
+  assert.equal(await page.getByRole("combobox", { name: "Dictation engine on this device" }).inputValue(), "api")
   assert.deepEqual(await page.evaluate(() => (window as any).native.requests.filter((event: any) => event.action === "prepare")),
     [{ action: "prepare", planId: "plan-initial" }])
 }, false, "hex-setup"))

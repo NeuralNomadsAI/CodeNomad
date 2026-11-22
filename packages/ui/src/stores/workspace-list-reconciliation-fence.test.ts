@@ -17,7 +17,7 @@ describe("workspace list reconciliation fence", () => {
       < create.indexOf("upsertWorkspace(committedWorkspace"))
     const close = source.slice(source.indexOf("function closeWorkspace"), source.indexOf("function getActiveInstance"))
     assert.equal(close.includes("removeInstance(id)"), false)
-    assert.equal(close.includes("receipt.api.deleteWorkspace(id)"), true)
+    assert.ok(close.includes("receipt.api.deleteWorkspace(id, keepalive)"), "close forwards keepalive through its captured receipt")
     assert.ok(close.indexOf("captureWorkspaceOperation(instance.folder, backendOf(id))") < close.indexOf("trackWorkspaceClose(id"))
     assert.equal(close.includes("if (!receipt.current())"), true)
   })

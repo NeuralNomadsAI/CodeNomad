@@ -139,7 +139,8 @@ for (const ingress of [false, true]) {
     }
     for (const url of ["/api/test/echo", "/api/unreviewed", "/api/workspaces/w/unreviewed", "/api/workspaces/w/files/delete",
       "/api/workspaces/w/missions/m/unreviewed", "/api/storage/config/ui/unreviewed", "/api/panel-extensions/org.panel/unreviewed",
-      "/api/backends/nested/api/meta", "/api/auth/login", "/api/remote-control/pair", "/api/remote-control/start", "/sidecars/s/", "/unknown"]) {
+       "/api/backends/nested/api/meta", "/api/auth/login", "/api/remote-control/pair", "/api/remote-control/start",
+       "/api/speech/synthesize", "/sidecars/s/", "/unknown"]) {
       for (const method of ["GET", "POST"] as const) assert.equal((await app.inject({ method, url, headers })).statusCode, 404, `${method} ${url}`)
     }
     assert.equal((await app.inject({ method: "DELETE", url: "/api/meta", headers })).statusCode, 404)

@@ -58,6 +58,8 @@ codenomad --host 127.0.0.1 --https=false --http=true
 
 使用主机名别名、反向代理或单独托管的界面时，请在后端设置 `CODENOMAD_ALLOWED_ORIGINS`，列出可信的界面来源（协议、主机名和端口）。 局域网原生客户端必须在修改请求中提供允许的 `Origin` 请求头。 其 HTTPS 来源还允许主机在没有隧道的情况下配对设备；参阅[通过直接 HTTPS 配对](remote-control.md#direct-https)。
 
+如果界面单独托管，请先部署界面并重新加载已打开的标签页和窗口，再更新服务器。如果界面由服务器提供，请在更新后重新加载。
+
 仅限主机的操作需要回环连接：SideCar 内容（`/sidecars/`）及 WebSocket、远程控制管理（`/api/remote-control/`）、插件桥接（`/api/opencode-plugin/`）、远程代理（`/api/remote-proxy/`）、密码更改和令牌初始化。即使通过局域网直接访问并已登录，这些操作也要求回环连接。只有 SideCars 例外：主机的**通过 HTTPS 打开 SideCars**设置会向通过可信 HTTPS 来源登录的浏览器开放其内容和 WebSocket（[SideCars](browser-sidecars.md#register-sidecar)）。持有有效能力令牌时，活动预览内容（`/previews/`）可通过局域网直接访问。
 
 `/api/sidecars` 注册 API 仍可供已认证的局域网直连客户端和已配对设备使用。远程控制网页预览在主机启用时，仍可通过其能力令牌访问。 有关管理服务器和安全输入凭据，请参阅 [保存远程服务器](remote-access.md#saved-servers).

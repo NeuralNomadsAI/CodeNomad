@@ -40,6 +40,10 @@ capture.start({ activeTabIndex: 0, tabs: ids.map(id => ({
 })) })
 ids.forEach((id, index) => capture.recordRestoredTab(index, getInstanceAppTabId(id)))
 await capture.ready
+const draftInput = document.createElement("textarea")
+draftInput.id = "close-draft"
+draftInput.oninput = () => setSessionDraftPrompt("first", "parent", draftInput.value)
+document.body.append(draftInput)
 ;(window as any).fixture = {
   hydrated: () => hydrated,
   captures: () => captures,

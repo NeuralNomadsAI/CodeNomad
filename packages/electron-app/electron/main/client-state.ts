@@ -341,7 +341,6 @@ export class ClientStateManager {
   }
 
   resetRendererAccessToken(windowId = this.activeWindowId): void {
-    this.windowRecord(windowId)
     this.rendererAccessTokens.delete(windowId)
   }
 

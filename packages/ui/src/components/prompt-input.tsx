@@ -950,7 +950,6 @@ export default function PromptInput(props: PromptInputProps) {
     <div class="prompt-input-container"
       data-keyboard-crowded={!props.interruptionExpanded && (viewport().fieldSpace ?? Infinity) < MIN_PROMPT_FIELD_HEIGHT ? "" : undefined}>
       <DictationNotice
-        recordingPreview={voiceInput.recordingPreview()}
         recordingLimitReached={voiceInput.state() === "limitReached"}
         focusDraft={() => textareaRef?.focus({ preventScroll: true })}
         onTranscribe={voiceInput.confirmTranscription} onCancelRecording={voiceInput.cancelRecording}

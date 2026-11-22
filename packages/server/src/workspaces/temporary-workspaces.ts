@@ -1,6 +1,6 @@
 import path from "node:path"
 import { randomBytes } from "node:crypto"
-import { mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises"
+import { mkdir, readdir, readFile, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises"
 import { isSessionNotFoundError, type OpenCodeClient, type SessionInfo } from "@opencode/client"
 import type { WorkspaceManager } from "./manager"
 import type { WorktreeDeletionFence } from "./worktree-session-evacuation"
@@ -173,9 +173,10 @@ export class TemporaryWorkspaces {
   }
 
   /** Removes a registered folder that never opened, e.g. after a failed launch. */
-  async abandonFolder(folder: string): Promise<void> {
+  async abandonFolder(folder: string, requestId?: string): Promise<void> {
     const { registry, workspaceManager } = this.options
     if (!registry.has(folder)) throw new TemporaryWorkspaceError("temporary_not_temporary", "This folder is not temporary", 400)
+    if (requestId) await workspaceManager.cancelCreationRequest(requestId)
     await this.options.deletionFence.run(folder, [folder], async () => {
       // The reservation compares canonical identities, refuses any open
       // workspace inside the folder and blocks new workspaces until released.
@@ -183,12 +184,13 @@ export class TemporaryWorkspaces {
         throw new TemporaryWorkspaceError("temporary_open_elsewhere", "This temporary folder is open in a tab", 409)
       })
       try {
-        const entries = await readdir(folder).catch((error: NodeJS.ErrnoException) => {
-          if (error.code === "ENOENT") return []
+        await rmdir(folder).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return
+          if (error.code === "ENOTEMPTY" || error.code === "EEXIST") {
+            throw new TemporaryWorkspaceError("temporary_not_empty", "This temporary folder is not empty", 409)
+          }
           throw error
         })
-        if (entries.length) throw new TemporaryWorkspaceError("temporary_not_empty", "This temporary folder is not empty", 409)
-        await rm(folder, { recursive: true, force: true })
       } finally {
         release()
       }

@@ -10,9 +10,6 @@ export function matchesRestoredServer(tab: { backendId?: BackendId; serverId?: s
   return backendIdOf(tab) === LOCAL_BACKEND_ID || !!tab.serverId && tab.serverId === serverId
 }
 
-export function mayCreateRestoredWorkspace(remote: boolean, web: boolean, explicitlyOpened: boolean): boolean {
-  return explicitlyOpened || (!remote && !web)
-}
 export type SessionDescriptor = { id: string; parentId?: string | null }
 export interface RestoredSessionReferences {
   activeParentSessionId?: string
@@ -42,36 +39,23 @@ export function reconcileWorkspaceTabs(
   tabs: readonly ReconcileTabDescriptor[],
   liveWorkspaces: readonly LiveWorkspaceDescriptor[],
 ) {
-  const liveByPath = new Map<string, LiveWorkspaceDescriptor[]>()
+  const liveById = new Map<string, LiveWorkspaceDescriptor>()
   for (const workspace of liveWorkspaces) {
     if (workspace.status === "stopped" || workspace.status === "error") continue
-    const path = workspaceInstallationKey(workspace.folderPath, workspace.backendId, workspace.serverId)
-    liveByPath.set(path, [...(liveByPath.get(path) ?? []), workspace])
+    liveById.set(workspace.id, workspace)
   }
   const nextOccurrences = new Map<string, number>()
-  // A saved record that still exists for the same folder wins: occurrences shift
-  // when another client closes a sibling record of that folder.
-  const byId = new Map<number, string>()
-  for (const [tabIndex, tab] of tabs.entries()) {
-    if (tab.kind !== "workspace" || typeof tab.folderPath !== "string" || !tab.workspaceId) continue
-    const path = workspaceInstallationKey(tab.folderPath, tab.backendId, tab.serverId)
-    if (liveByPath.get(path)?.some(workspace => workspace.id === tab.workspaceId && matchesRestoredServer(tab, workspace.serverId))
-      && ![...byId.values()].includes(tab.workspaceId)) {
-      byId.set(tabIndex, tab.workspaceId)
-    }
-  }
-  const claimed = new Set<string>(byId.values())
   return tabs.flatMap((tab, tabIndex) => {
     if (tab.kind !== "workspace" || typeof tab.folderPath !== "string") return []
     const path = workspaceInstallationKey(tab.folderPath, tab.backendId, tab.serverId)
     const inferred = nextOccurrences.get(path) ?? 0
     const occurrence = Number.isInteger(tab.occurrence) && Number(tab.occurrence) >= 0 ? Number(tab.occurrence) : inferred
     nextOccurrences.set(path, Math.max(inferred, occurrence) + 1)
-    const savedId = byId.get(tabIndex)
-    if (savedId) return [{ tabIndex, descriptor: { kind: "workspace" as const, folderPath: tab.folderPath, occurrence, ...(tab.backendId ? { backendId: tab.backendId } : {}) }, existingWorkspaceId: savedId }]
-    const workspace = liveByPath.get(path)?.[occurrence]
-    const existingWorkspaceId = workspace && matchesRestoredServer(tab, workspace.serverId) && !claimed.has(workspace.id) ? workspace.id : null
-    if (existingWorkspaceId) claimed.add(existingWorkspaceId)
+    // Global inventory order cannot establish ownership of another record.
+    const live = tab.workspaceId ? liveById.get(tab.workspaceId) : undefined
+    const existingWorkspaceId = live && matchesRestoredServer(tab, live.serverId)
+      && workspaceInstallationKey(live.folderPath, live.backendId, live.serverId) === path ? live.id : null
+    if (existingWorkspaceId) liveById.delete(existingWorkspaceId)
     return [{
       tabIndex,
       descriptor: { kind: "workspace" as const, folderPath: tab.folderPath, occurrence, ...(tab.backendId ? { backendId: tab.backendId } : {}) },

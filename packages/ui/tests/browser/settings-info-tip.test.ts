@@ -31,7 +31,7 @@ async function setup(page: Page, host = "web", context = "remote") {
     w.failOpen = false
     w.holdOpen = false
     window.open = (...args) => { w.attempts++; if (w.failOpen) throw new Error("opener failure"); w.opened.push(args); return null }
-    w.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
+    w.__TAURI_INTERNALS__ = { metadata: { currentWindow: { label: "local-fixture" }, currentWebview: { label: "local-fixture" } }, invoke: async (command, args) => {
       if (command === "open_external_url") {
         w.attempts++
         if (w.holdOpen) await new Promise(resolve => { w.releaseOpen = resolve })

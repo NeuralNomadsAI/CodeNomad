@@ -2,7 +2,7 @@ import { normalizeServerSelection, type ServerSelectionIntent } from "../lib/nat
 import { backendIdOf } from "../lib/backend-identity"
 import type { BackendId } from "../lib/backend-transport"
 import { backendRegistry } from "./remote-backends"
-import { createInstance, instances, type WorkspaceCreationOwnership } from "./instances"
+import { createInstance, instances, WorkspaceCreationDeparture, type WorkspaceCreationOwnership } from "./instances"
 import { activeAppTabId, appTabs, getInstanceAppTabId, openBlankTab, selectAppTab, selectInstanceTab, type InstanceAppTab } from "./app-tabs"
 import { workspaceIdentity } from "./app-session-reconciliation"
 import type { RemoteRestoreTab } from "./remote-restore-tabs"
@@ -61,6 +61,9 @@ export async function openRemoteProjectForProfile(profile: ServerSelectionIntent
     recordRemoteProjectLaunch(intent, instances().get(result.instanceId)?.folder ?? path, path, options?.projectName)
     if (activeAppTabId() === getInstanceAppTabId(result.instanceId)) options?.onOpened?.(result.instanceId)
     return true
+  } catch (error) {
+    if (error instanceof WorkspaceCreationDeparture) return false
+    throw error
   } finally {
     if (!transferred) await creation?.discard()
   }

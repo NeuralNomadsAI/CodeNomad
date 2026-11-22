@@ -4,9 +4,9 @@ import { tGlobal as t } from "../lib/i18n"
 import { requestDeviceSpeech, type DeviceSpeechSnapshot } from "../lib/native/device-speech"
 import { settleRemoteDictation } from "../lib/native/remote-dictation"
 import type { SettleRemoteDictation } from "../../../desktop-speech/remote-contract"
-import { createNativeRecordingController } from "./prompt-input/hex-recording-controller"
+import { createHexRecordingController } from "./prompt-input/hex-recording-controller"
 import type { RecordingState, VoiceInputController } from "./prompt-input/recording-controller"
-import { availableLocalDictation } from "./prompt-input/useDeviceDictation"
+import { canUseHexDictation } from "./prompt-input/useDeviceDictation"
 
 function readDestination(url: URL): string | undefined {
   try {
@@ -22,7 +22,6 @@ export function RemoteDictationWindow() {
   const [snapshot, setSnapshot] = createSignal<DeviceSpeechSnapshot>()
   const [loaded, setLoaded] = createSignal(false)
   const [state, setState] = createSignal<RecordingState>("idle")
-  const [recordingPreview, setRecordingPreview] = createSignal("")
   const [transcript, setTranscript] = createSignal("")
   const [error, setError] = createSignal<string>()
   const [settling, setSettling] = createSignal(false)
@@ -31,15 +30,13 @@ export function RemoteDictationWindow() {
   let controller: VoiceInputController | undefined
   let disposed = false
 
-  const selectedEngine = () => destination && isSpeechLocale(requestedLocale)
-    ? availableLocalDictation(snapshot(), requestedLocale) : undefined
+  const canCapture = () => Boolean(destination && isSpeechLocale(requestedLocale) && canUseHexDictation(snapshot()))
   const captureBusy = () => state() === "starting" || state() === "transcribing"
 
   function stop() {
     const capture = controller
     controller = undefined
     capture?.cancelRecording()
-    setRecordingPreview("")
   }
 
   onMount(() => {
@@ -73,17 +70,14 @@ export function RemoteDictationWindow() {
   function mainAction(event: MouseEvent) {
     if (!event.isTrusted || !document.hasFocus() || settling()) return
     if (state() === "recording") { controller?.stopRecording(); return }
-    const engine = selectedEngine()
-    if (!engine || !requestedLocale || state() !== "idle" || controller) return
+    if (!canCapture() || !requestedLocale || state() !== "idle" || controller) return
     setError(undefined)
-    const capture = createNativeRecordingController(engine, requestedLocale, {
+    const capture = createHexRecordingController(requestedLocale, {
       onStateChange(value) {
         if (controller !== capture) return
         if (value === "idle") controller = undefined
-        if (value !== "recording") setRecordingPreview("")
         setState(value)
       },
-      onRecordingPreview(text) { if (controller === capture) setRecordingPreview(text) },
       onTranscript(text) {
         if (controller !== capture) return
         const source = captureButton
@@ -107,10 +101,9 @@ export function RemoteDictationWindow() {
         <Show when={destination}><bdi id="dictation-destination" class="min-w-0 break-all">{destination}</bdi></Show>
       </header>
       <div class="window-body bg-surface-canvas">
-        <p class="line-clamp-2 break-words" dir="auto" role="status" aria-live="polite" aria-atomic="false">{recordingPreview()}</p>
         <Show when={error()}><p role="alert">{t(error()!)}</p></Show>
-        <Show when={!error() && loaded() && !selectedEngine()}>
-          <p role="status">{t("promptInput.remoteDictation.unavailable")}</p>
+        <Show when={!error() && loaded() && !canCapture()}>
+          <p role="status">{t(snapshot()?.engine === null ? "settings.speech.device.chooseLocal" : "promptInput.remoteDictation.unavailable")}</p>
         </Show>
         <Show when={state() === "transcribing"}>
           <p role="status">{t("promptInput.voiceInput.transcribing.title")}</p>
@@ -122,13 +115,13 @@ export function RemoteDictationWindow() {
           onClick={event => { if (event.isTrusted) void settle({ action: "cancel" }) }}>
           {t("alertDialog.actions.cancel")}
         </button>
-        <Show when={loaded() && (!selectedEngine() || error())}>
+        <Show when={loaded() && (!canCapture() || error())}>
           <button type="button" class="button-secondary" disabled={settling()}
             onClick={event => { if (event.isTrusted) void settle({ action: "settings" }) }}>
             {t("settings.nav.voice")}
           </button>
         </Show>
-        <Show when={transcript()} fallback={<Show when={selectedEngine()}>
+        <Show when={transcript()} fallback={<Show when={canCapture()}>
           <button ref={captureButton} type="button" class="button-primary" disabled={settling()}
             aria-disabled={captureBusy()} onClick={mainAction}>
             {t(state() === "recording"

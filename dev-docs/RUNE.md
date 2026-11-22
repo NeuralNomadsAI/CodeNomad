@@ -1,69 +1,63 @@
-# Application Rune native et web
+# Rune application
 
-## Périmètre et architecture
+Native Rune client for CodeNomad, replacing the Solid UI and the Tauri host module by module. It runs on the desktop and, built for `wasm32-unknown-unknown`, in a browser for remote and mobile access. It talks to `codenomad-rs` through the same HTTP/SSE API as the Solid UI.
 
-`packages/rune-app` contient l'application native, son état et ses vues. `crates/codenomad-client` contient le contrat typé CodeNomad, les requêtes HTTP, les événements SSE, la pagination et la reprise. Le client reçoit explicitement l'adresse, l'authentification et son propriétaire de réveil ; la sélection du profil et le rendu appartiennent à l'application.
+## Code style
 
-Les modules applicatifs sont groupés par domaine : `agent/`, `launcher/`, `chat/`, `components/` et `platform/`. Les sondes CLI et scènes synthétiques sont activées explicitement par la feature `test-support` ; les artefacts produit natif et WebAssembly conservent les entrées simulées et l'inspection du moteur Rune.
+- The module tree explains the program: one folder per domain (`chat/`, `composer/`, `sessions/`, `git/`, `settings/`…), each holding its state, actions and views. No flat `src/` with name prefixes. Probes and fixtures live in `tests/` or a separate binary, never in the shipped one.
+- Short, dense code over verbose code: one dense page beats ten wordy ones. Comments only for a non-obvious why.
+- Plain functions and data, as in Tauri's Rust. No trait towers, gratuitous generics or lifetimes, home-made macros or abstraction without a second caller.
+- Reuse before writing: `rune-kit`, then Rune, the standard library, an established crate, existing CodeNomad code.
+- No `unwrap`/`expect` on data from the network, disk or user: a bad value shows an error state, never a crash.
+- Before writing, ask in order and stop at the first yes: can the product make it unnecessary; is it already covered; does one line do; only then write the minimum. Fix bugs at their root, once, for every caller.
 
-`crates/rune-theme-codenomad` reçoit les valeurs générées depuis les styles Solid et les dix catalogues existants. `crates/codenomad-host-process` isole les primitives de confinement de processus derrière une API sûre. L'application conserve l'interdiction du code `unsafe`.
+## UI rules
 
-Rune est épinglé à la révision déclarée dans le manifeste de l'application. La préparation vérifie cette identité et l'absence de modifications du checkout de dépendance. Une mise à jour est explicite et qualifiée sur les plateformes prises en charge. Les défauts upstream font l'objet d'une issue dans le dépôt Rune.
+1. **No style value in application code.** Colours, sizes, radii, spacing, type and motion come from the theme, generated from `packages/ui/src/styles/tokens.css` at build time. CI rejects style literals outside the theme crate.
+2. **Never adapt a component for one use.** A screen that needs something different gets a reviewed variant or option of the shared component.
+3. **Screens only assemble components**, `rune-kit` first, otherwise a shared CodeNomad component. Logic lives in state, not in views.
+4. **Text comes from the existing catalogues** (`packages/ui/src/lib/i18n/messages/<locale>`, ten locales), generated at build time; never written in Rust.
+5. **Accessibility is complete**: role, name and state on every interactive element.
 
-## Agent conventions
+## Platform
 
-- Privilégier le style compact du Rust de Tauri : garder une vue d'ensemble du domaine, limiter fichiers, indirections et commentaires, et concentrer les tests sur les contrats et risques réels. Une expression plus dense convient lorsqu'elle évite une abstraction bavarde et reste lisible.
-- L'intégration se fait sur `feat/rust-server`, par branches courtes issues de sa dernière version distante. La synchronisation avec `dev` reste propriétaire de ses fusions ; une tranche Rune ne fusionne jamais `dev` elle-même.
-- Garder le checkout principal, les hôtes installés, leurs profils et le daemon OpenCode partagé hors des écritures de développement. Les essais utilisent des profils `trial-*`, des sessions et répertoires propres et les caches Cargo existants.
-- Les écrans assemblent des composants `rune-kit` ou des composants CodeNomad partagés. Les besoins spécifiques deviennent des variantes ou options de ces composants ; la logique et les transitions restent dans l'état.
-- Couleurs, dimensions, rayons, espacements, typographies et animations proviennent du thème généré. Les adaptateurs de géométrie consomment des jetons sémantiques. Les générateurs et le contrôle de styles doivent couvrir aussi les alias, macros et expressions indirectes avant de qualifier leur garde-fou.
-- Chaque texte visible provient des catalogues Solid générés. Préserver les remplacements de paramètres, les variantes de pluriel, le fallback anglais et le sens de lecture de l'hébreu. Une langue reste une sélection d'état explicite.
-- Les rôles, noms, valeurs et états sont vérifiés dans le véritable arbre d'accessibilité Rune ; les interactions de test passent par ses entrées simulées.
-- Convertir le comportement et le rendu Solid avant de simplifier. Les tests et fixtures Solid sont les exigences de référence ; une correspondance de noms ou une capture isolée reste une référence de source jusqu'à comparaison exécutée.
-- Deux relecteurs indépendants examinent l'état courant sans historique des corrections. Tout constat bloquant ou moyen nécessite une preuve par test. La fusion attend leur résolution ; les constats mineurs restent consignés.
-- Chaque composant qualifié possède une fiche générée, une scène de galerie, des comparaisons claire et sombre avec seuil explicite, une référence d'accessibilité et des interactions simulées.
-- Supprimer un module Solid et ses raccords Tauri seulement après qualification de l'ensemble de son jumeau Rune. La table de correspondance conserve la provenance de chaque module ; les changements synchronisés de la source déclenchent l'adaptation et la requalification de ce jumeau.
-- Les besoins de vue web et de terminal PTY reçoivent une note de décision avant implémentation.
-- Chaque tranche compile le client, l'état et les mêmes écrans en natif et pour `wasm32-unknown-unknown`. La CI vérifie les deux cibles.
-- Le client utilise des opérations asynchrones et des transports interchangeables : HTTP/SSE natif et `fetch`/`EventSource` avec les cookies du navigateur. Les fils bloquants et le client HTTP bloquant restent hors du code partagé.
-- Les services propres au bureau passent par l'interface de plateforme : serveur enfant, fichiers locaux, notifications, presse-papiers et fenêtres. Chaque capacité possède une implémentation navigateur ou un état d'indisponibilité explicite.
-- Les mises en page et les interactions sont qualifiées sur téléphone portrait, tablette et bureau, avec entrées tactiles.
+- Shared code builds for native and `wasm32-unknown-unknown`; CI builds both.
+- The API client is asynchronous with an interchangeable transport (native HTTP/SSE; browser `fetch`/`EventSource`). No blocking I/O or threads in shared code.
+- Desktop-only features (server launch, local files, system notifications, clipboard, windows, updates) sit behind a platform interface with a web implementation.
+- Layouts adapt to phone, tablet and desktop, with touch input.
 
-## Cible web et mobile
+## Conversion
 
-L'application partagée cible WebAssembly et s'appuie sur les contrats d'accès distant HTTPS et d'appairage existants. La coquille web est servie comme fichiers statiques par `codenomad-rs` ; son parcours de qualification couvre connexion, liste des sessions et lecture d'une conversation, puis écriture, permissions, questions et arrêt.
+Each Solid component or module is converted as is, then simplified:
 
-Le rapport de risques distingue les capacités observées dans les sources Rune, les essais de navigateur automatisés et les essais sur téléphone physique. Il couvre clavier virtuel, IME, correction et dictée, lecteurs d'écran, taille compressée et temps de chargement, performances, consommation et défilement tactile. Chaque problème est attribué à l'adaptation CodeNomad ou à une issue Rune étayée par une reproduction. Les notifications push et la parité web complète complètent le jalon conversation mobile.
+1. A sheet generated from the Solid source: props, states, tokens, i18n keys, tests, uses.
+2. Port with kit primitives and the theme only.
+3. Parity: Solid fixture screenshot against Rune's headless PNG (light and dark, with a threshold), accessibility tree, scripted interaction test.
+4. Simplify: merge duplicates, drop unused props and states, move logic to state.
+5. Two fresh blind reviews; a blocking or medium finding needs a failing test.
 
-Les mécanismes inspectés et les critères d'essai sont détaillés dans [Rune web et mobile](RUNE_WEB.md).
+When a whole module reaches parity, its Solid and Tauri version is deleted on `feat/rust-server`. If `dev` later changes a deleted file, the change is ported to the Rune twin; the file is never restored. The [correspondence table](#correspondence) records each pair.
 
-## Inventaire et correspondances
+## Correspondence
 
-L'index tracé `rune-components.generated.json` conserve identités, correspondances, statuts et empreintes des fiches. Les fiches complètes sont reproduites sous `target/rune-inventory/`, dans les sorties ignorées. Leurs références de tests et usages sont des liens statiques vers les sources analysées. Le statut de conversion reste indépendant de cette découverte.
+| Solid / Tauri | Rune | State |
+|---|---|---|
+| HTTP, SSE, pagination and recovery | CodeNomad API and contract fixtures | `crates/codenomad-client`: native contracts and 606-row recovery qualified; connected browser flow pending |
+| Tokens and typography | `packages/ui/src/styles/tokens.css` | `crates/rune-theme-codenomad`: generated values; component parity qualified individually |
+| Text | Ten UI catalogues | Generated catalogues, fallback and Hebrew direction qualified |
+| Window close | `components/window-close-button.tsx` | `components/window_close_button.rs`: six Windows light/dark pairs, accessibility and interaction qualified at scale 1 |
+| Server startup | Tauri `cli_manager.rs` | `platform/host/`: isolated Windows bootstrap, shutdown and generation qualified |
+| Chat, composer and session launcher | Solid transcript, composer and project fixtures | `chat/`, `agent/`, `launcher/`: native flows with shared Rust and simulated OpenCode qualified; Solid parity pending |
+| Browser client | Remote access contracts and Rune web target | Shared WASM state/views: six synthetic viewport/theme contexts qualified; connected session flow and physical mobile pending |
 
-| Domaine | Sources Solid / hôte | Cible Rune | État |
-|---|---|---|---|
-| Contrat HTTP, SSE et reprise | API CodeNomad et fixtures de contrat | `crates/codenomad-client` | Tests natifs, fenêtre de 606 lignes et compilation WASM vérifiés ; parcours connecté web à qualifier |
-| Jetons et typographie | `packages/ui/src/styles/tokens.css`, styles partagés | `crates/rune-theme-codenomad` | Génération et géométrie à qualifier |
-| Textes | `packages/ui/src/lib/i18n/messages/` | Catalogues générés consommés par le thème et l'application | Dix catalogues, fallback et sens hébreu vérifiés |
-| Contrôles partagés | Contrôles Solid et leurs fixtures | `rune-kit` et variantes CodeNomad | Inventaire ; parité à qualifier |
-| Fermeture de fenêtre | `components/window-close-button.tsx` | `packages/rune-app/src/components/window_close_button.rs`, adaptateur `window_control` du thème et galerie | Six paires Windows à échelle 1, accessibilité et activations vérifiées ; autres plateformes et échelles à qualifier |
-| Démarrage du serveur | `packages/tauri-app/src-tauri/src/cli_manager.rs` | Hôte enfant de `packages/rune-app` | Bootstrap, génération et arrêt Windows vérifiés en profil isolé ; lancement quotidien à compléter |
-| Fil, composeur et ouverture de session | Fixtures du fil, du composeur et des projets | Vues et état de `packages/rune-app` | Parcours natif avec serveur partagé et OpenCode simulé vérifié ; parité Solid à qualifier |
-| Client navigateur | Contrats d'accès distant et cible web Rune | Même état et mêmes vues WASM, bundle servi par `codenomad-rs` | Scène locale sur trois viewports vérifiée ; lecture de session connectée et téléphone physique à qualifier |
+## Workspace and qualification
 
-## Qualification et intégration
+`packages/rune-app` holds application state and views. `crates/codenomad-client` owns typed API contracts and transports; `crates/rune-theme-codenomad` owns generated visuals/catalogues; `crates/codenomad-host-process` confines native child processes behind a safe API. Rune is pinned in the app manifest and verified by `scripts/rune/prepare.mjs --check`.
 
-La qualification distingue la structure compilée, les contrats de données, les interactions natives, l'accessibilité et la parité visuelle. Une réussite dans une catégorie porte uniquement sur les cas réellement exécutés. Les captures et preuves volumineuses restent dans les sorties ignorées ; les références nécessaires et les scénarios reproductibles sont tracés.
+The component index is `rune-components.generated.json`; full sheets and captures are generated under ignored `target/`. Install locked npm dependencies before generating checker-derived sheets. Each qualified component requires a gallery, explicit light/dark pixel thresholds, accessibility and simulated interactions, then two independent blind reviews. Solid/Tauri modules are removed only at complete qualified parity. Integration uses short branches and merge commits into `feat/rust-server`; its synchronization owns merges from `dev`.
 
-Les vérifications automatiques restent sans fenêtre visible ni prise de focus. Les essais OpenCode réels utilisent des sessions jetables et interdisent les outils sauf nécessité explicite du cas. Le garde-fou de latence reprend les marqueurs et mesures du banc `scripts/perf/` face à la TUI.
+Tests use isolated `trial-*` profiles, owned processes and existing Cargo caches, without visible windows or writes to installed profiles, shared OpenCode or user sessions. Qualification commands and evidence are in `packages/rune-app/JOURNAL_TESTS.md` and `scripts/rune/QUALIFICATION.md`. Synthetic scenes and probes require explicit `test-support`; default native/WASM artifacts retain Rune inspection and simulated-input tooling.
 
-Les jalons sont les fondations, l'alpha interne permettant une journée de travail, la parité complète et la bascule publiée. La suppression des hôtes Solid/Tauri et du serveur TypeScript appartient à la bascule, après qualification des fonctionnalités et plateformes.
+Browser/mobile risks and physical-device gates are in [RUNE_WEB.md](RUNE_WEB.md). The latency guard reuses `scripts/perf/` markers and TUI budgets. Webview and PTY capabilities require a short decision before implementation.
 
-## Mise à jour et passage à Rune
-
-La bascule publiée exige un module de mise à jour Rust utilisant le flux et la clé publique de signature du contrat [Tauri updater](TAURI_UPDATER.md). La sélection stable/preview, la version portée par le commentaire signé, la vérification complète du téléchargement, la sauvegarde de l'état et l'arrêt confirmé du serveur possédé font partie des critères d'admission. La qualification couvre aussi le retour arrière et la conservation des données.
-
-Les installations Windows, macOS et Linux doivent être testées séparément. La dernière application Tauri doit pouvoir admettre et installer le premier paquet Rune par son mécanisme de mise à jour, avec conservation de l'identité de l'application et des raccourcis. Les mécanismes applicables de `packages/server-rs/install/` sont à réutiliser. Une incompatibilité d'installation reçoit une note de décision avant la bascule.
-
-Les essais d'installation et de migration utilisent des systèmes et profils jetables. Les clés privées de production restent réservées aux étapes de signature de publication ; les essais emploient leurs clés propres. Le module de mise à jour appartient à la plateforme bureau. La distribution du client web suit les actifs statiques servis et les contrats d'accès distant.
+Published switchover requires signed updates using the current [Tauri updater contract](TAURI_UPDATER.md), rollback, and qualification on Windows/macOS/Linux. Reuse `packages/server-rs/install/` where applicable. The final Tauri version must install the first Rune package without user action, preserving identity and data; incompatible installation contracts require a decision before switchover.

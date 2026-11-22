@@ -397,6 +397,5 @@ export const messagingMessages = {
   "voice.microphone.conversation": "La conversation en direct utilise le micro.",
   "voice.microphone.unavailable": "Le micro est indisponible dans cette fenêtre.",
   "promptInput.voiceInput.error.permissionDenied": "macOS a refusé l'accès au microphone.",
-  "promptInput.voiceInput.error.unsupported": "La saisie vocale n'est pas prise en charge dans ce navigateur.",
   "promptInput.voiceInput.error.transcribe": "Impossible de transcrire l'audio enregistré.",
 } as const

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { describe, it } from "node:test"
+import { after, before, describe, it } from "node:test"
 import { encodeClientSnapshotV2 } from "./client-state-partitions.ts"
 import { normalizePersistedOutline } from "./session-outline-persistence.ts"
 import { compactMissionKey } from "./tab-view-state-migration.ts"
@@ -402,6 +402,14 @@ describe("secondary hosts", () => {
 
 describe("plain web tab session", () => {
   const SNAPSHOT_KEY = "codenomad.client-state.v1"
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document")
+  before(() => {
+    Object.defineProperty(globalThis, "document", { configurable: true, value: { wasDiscarded: false } })
+  })
+  after(() => {
+    if (originalDocument) Object.defineProperty(globalThis, "document", originalDocument)
+    else Reflect.deleteProperty(globalThis, "document")
+  })
   const bootWeb = async (tab: MemoryStorage, storage = new MemoryStorage()) => {
     Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: storage, sessionStorage: tab } })
     const state = await import(`./client-state.ts?test=${moduleId++}`) as ClientState

@@ -11,7 +11,7 @@ function scalarEntries(value: Record<string, any>, prefix = ""): Array<[string, 
   })
 }
 
-test("capture defers only busy usage through both real-store effects and keeps fresh checkpoints", async () => {
+test("capture defers only busy usage through both real-store effects and keeps fresh checkpoints", async t => {
   const fixture = await borrowFixture({ name: "session-capture", routes: [{ path: "/fixture",
     html: '<html><body><script type="module" src="/tests/browser/fixtures/session-capture.tsx"></script></body></html>',
   }] })
@@ -31,18 +31,23 @@ test("capture defers only busy usage through both real-store effects and keeps f
         let sequence = 0
         w.receipts = []; w.acks = []; w.mode = "accept"
         const load = () => ({ isPrimary: true, restoreEnabled: true, snapshot: null, partitionProtocolVersion: 1 })
-        const commit = (token: string, payload: unknown) => {
+        const commit = async (token: string, payload: unknown) => {
           w.receipts.push({ token, payload: structuredClone(payload) })
+          if (w.holdNextCommit) {
+            w.holdNextCommit = false
+            await new Promise<void>(resolve => { w.finishHeldCommit = resolve })
+          }
           if (w.mode === "fail") throw Error("synthetic write failure")
           return w.mode !== "refuse"
         }
         w.electronAPI = { claimClientStateAccess: async () => true, loadClientState: async () => load(),
           loadClientStatePartition: async () => null, commitClientStatePartitions: async (token: string, payload: unknown) => commit(token, payload) }
         w.__TAURI_INTERNALS__ = {
+          metadata: { currentWindow: { label: "local-fixture" }, currentWebview: { label: "local-fixture" } },
           transformCallback: (fn: Function) => { callbacks.set(++sequence, fn); return sequence },
           unregisterCallback: (id: number) => callbacks.delete(id),
           invoke: async (command: string, args: any) => {
-            if (command === "plugin:event|listen") { listeners.set(args.event, args.handler); return args.handler }
+            if (command === "plugin:event|listen") { listeners.set(args.event, args); return args.handler }
             if (command === "plugin:event|unlisten") { listeners.delete(args.event); return }
             if (command === "client_state_load") return load()
             if (command === "client_state_load_partition") return null
@@ -52,10 +57,19 @@ test("capture defers only busy usage through both real-store effects and keeps f
           },
         }
         w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} }
-        w.emit = (event: string, generation: number) => callbacks.get(listeners.get(event))?.({ payload: { generation } })
+        w.emit = (event: string, generation: number, label = "local-fixture", prepareGeneration?: number) => {
+          const listener = listeners.get(event)
+          if (listener && (listener.target.kind === "Any" || listener.target.label === label)) {
+            callbacks.get(listener.handler)?.({ payload: { generation, prepareGeneration } })
+          }
+        }
       }, { host })
+      const deletes: string[] = []
       // Production imports may subscribe to SSE; keep that boundary local and inert.
-      await page.route("**/api/**", route => route.fulfill({ json: {} }))
+      await page.route("**/api/**", route => {
+        if (route.request().method() === "DELETE") deletes.push(new URL(route.request().url()).pathname)
+        return route.fulfill({ json: {} })
+      })
       await page.route("**/api/events", route => route.fulfill({ contentType: "text/event-stream", body: ": ready\n\n" }))
       await page.goto(fixture.url)
       await page.waitForFunction(() => Boolean((window as any).fixture))
@@ -86,6 +100,43 @@ test("capture defers only busy usage through both real-store effects and keeps f
       await usage(); await usage("second", "child"); await settle()
       assert.equal(await count(), initial, `${host}: busy usage must not checkpoint`)
       assert.equal(await page.evaluate(() => (window as any).fixture.hydrated()), hydrated, "busy usage must not rehydrate preserved drafts")
+
+      await t.test(`${host}: a held close write rejects late typing; a cancelled close allows edits again`, async () => {
+        const input = page.locator("#close-draft")
+        await page.evaluate(host => {
+          const w = window as any
+          const input = document.querySelector<HTMLTextAreaElement>("#close-draft")!
+          input.value = "typed before prepare"
+          input.focus()
+          input.setSelectionRange(input.value.length, input.value.length)
+          input.dispatchEvent(new Event("input"))
+          w.holdNextCommit = true
+          if (host === "tauri") w.emit("client-state:flush-requested", 1)
+          else w.preparing = w.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__("prepare")
+        }, host)
+        await page.waitForFunction(() => Boolean((window as any).finishHeldCommit))
+        await page.keyboard.type(" typed while saving")
+        await page.evaluate(async host => {
+          const w = window as any
+          w.finishHeldCommit()
+          if (host === "electron") await w.preparing
+        }, host)
+        if (host === "tauri") await page.waitForFunction(() => (window as any).acks.some((ack: any) => ack.generation === 1))
+        assert.deepEqual(deletes, [], "no records are released before approval")
+        const [saved, live] = await page.evaluate(async () => {
+          const w = window as any
+          const snapshot = await w.fixture.decode(w.receipts.at(-1).payload)
+          return [snapshot.session.tabs[0].drafts.parent, w.fixture.draftValue("first", "parent")]
+        })
+        await page.evaluate(async host => {
+          const w = window as any
+          if (host === "tauri") w.emit("client-state:flush-cancelled", 1)
+          else await w.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__("cancel")
+        }, host)
+        await input.fill("typed after cancellation", { timeout: 5_000 })
+        await page.waitForFunction(() => (window as any).fixture.state().tabs[0].drafts.parent === "typed after cancellation")
+        assert.deepEqual([saved, live], ["typed before prepare", "typed before prepare"])
+      })
 
       await page.evaluate(() => (window as any).fixture.draft("edited")); await settle()
       let saved = await state()
@@ -180,6 +231,10 @@ test("capture defers only busy usage through both real-store effects and keeps f
       assert.deepEqual(decoded.state.session, await state())
       assert.equal(new Set(decoded.tokens).size, 1, "one native owner token")
       if (host === "tauri") {
+        await page.evaluate(() => (window as any).emit("client-state:flush-requested", 6, "local-other", 5))
+        await settle()
+        assert.deepEqual(deletes, [], "approving another Tauri window's close cannot release this window's records")
+        assert.equal(await page.evaluate(() => (window as any).acks.some((ack: any) => ack.generation === 6)), false)
         await page.evaluate(() => (window as any).emit("client-state:flush-requested", 8))
         await page.waitForFunction(() => (window as any).acks.some((ack: any) => ack.generation === 8))
         before = await count()

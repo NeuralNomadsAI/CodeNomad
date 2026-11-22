@@ -20,7 +20,7 @@ before(async () => {
 })
 after(async () => { await browser?.close() })
 
-async function withWindow(use: (page: Page) => Promise<void>, ready = true, locale: "en-US" | "fr-FR" = "en-US") {
+async function withWindow(use: (page: Page) => Promise<void>, engine: "hex" | "api" | null = "hex", locale: "en-US" | "fr-FR" = "en-US") {
   const page = await browser.newPage({ locale })
   page.setDefaultTimeout(6000)
   const posts: string[] = []
@@ -29,12 +29,41 @@ async function withWindow(use: (page: Page) => Promise<void>, ready = true, loca
   page.on("request", request => { if (request.method() === "POST") posts.push(request.url()) })
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
-    const installNativeBridge = (ready: boolean) => {
+    const installNativeBridge = (engine: "hex" | "api" | null) => {
       const events: Record<string, unknown>[] = []
       const id = "00000000-0000-4000-8000-000000000001"
       let state = "recording"
+      let capturedPcm = false
+      navigator.mediaDevices.getUserMedia = async () => {
+        const context = new AudioContext()
+        const source = context.createOscillator()
+        const output = context.createMediaStreamDestination()
+        source.connect(output)
+        source.start()
+        await context.resume()
+        const [track] = output.stream.getAudioTracks()
+        const stop = track.stop.bind(track)
+        track.stop = () => { stop(); void context.close() }
+        return output.stream
+      }
+      const addModule = Worklet.prototype.addModule
+      Worklet.prototype.addModule = function (url, options) {
+        return addModule.call(this, new URL(`/src/renderer/public${new URL(String(url)).pathname}`, location.href), options)
+      }
+      // Recording controls can appear before the audio thread has produced samples.
+      window.AudioWorkletNode = class extends AudioWorkletNode {
+        constructor(...args: ConstructorParameters<typeof AudioWorkletNode>) {
+          super(...args)
+          if (args[1] === "codenomad-hex-pcm") {
+            this.port.addEventListener("message", event => {
+              if (event.data instanceof Float32Array && event.data.length) capturedPcm = true
+            })
+          }
+        }
+      }
       Object.assign(window, {
         events, showPreview: () => { state = "transcribed" },
+        capturedPcm: () => capturedPcm,
         __CODENOMAD_WINDOW_CONTEXT__: "dictation", __CODENOMAD_RUNTIME_HOST__: "electron",
         electronAPI: {
           deviceSpeech: async (request: { action: string }) => {
@@ -43,10 +72,10 @@ async function withWindow(use: (page: Page) => Promise<void>, ready = true, loca
               case "claimMicrophone": return { ok: true, value: { busy: null } }
               case "releaseMicrophone": return { ok: true, value: null }
               case "read": return { ok: true, value: {
-                engine: "system", system: ready ? "ready" : "unavailable", systemLocales: ["en-US"], hex: { state: "unavailable" },
+                engine, hex: { state: "ready", plan: { id: "ready", missing: [] } },
               } }
               case "start": return { ok: true, value: { id } }
-              case "status": return { ok: true, value: { state, text: state === "recording" ? "Early result" : "Local preview" } }
+              case "status": return { ok: true, value: { state, ...(state === "transcribed" ? { text: "Local preview" } : {}) } }
               case "finish": state = "transcribing"; return { ok: true, value: null }
               case "cancel": state = "cancelled"; return { ok: true, value: null }
             }
@@ -55,7 +84,7 @@ async function withWindow(use: (page: Page) => Promise<void>, ready = true, loca
         },
       })
     }
-    await page.addInitScript(`{ const __name = (value) => value; (${installNativeBridge.toString()})(${JSON.stringify(ready)}); }`)
+    await page.addInitScript(`{ const __name = (value) => value; (${installNativeBridge.toString()})(${JSON.stringify(engine)}); }`)
     await page.goto(url)
     await page.bringToFront()
     await page.getByRole("heading", { name: locale === "fr-FR" ? "Dicter sur cet appareil" : "Dictate on this device" }).waitFor().catch(error => {
@@ -70,6 +99,8 @@ async function withWindow(use: (page: Page) => Promise<void>, ready = true, loca
 
 const events = (page: Page) => page.evaluate(() => (window as any).events as Record<string, unknown>[])
 const showPreview = (page: Page) => page.evaluate(() => (window as any).showPreview())
+const waitForCapture = (page: Page) => page.waitForFunction(() => (window as any).capturedPcm())
+const waitForFinish = (page: Page) => page.waitForFunction(() => (window as any).events.some(({ action }: any) => action === "finish"))
 
 test("the trusted window requires a real gesture before capture and after preview, and releases only text", () => withWindow(async page => {
   await page.getByText("https://projects.example.test:8443", { exact: true }).waitFor()
@@ -80,13 +111,13 @@ test("the trusted window requires a real gesture before capture and after previe
   await page.keyboard.press("Enter")
   const stop = page.getByRole("button", { name: "Stop recording and transcribe" })
   await stop.waitFor()
-  const interim = page.getByRole("status").filter({ hasText: "Early result" })
-  await interim.waitFor()
   assert.equal(await page.getByRole("button", { name: "Insert transcript" }).count(), 0)
   assert.equal(await stop.evaluate(node => node === document.activeElement), true)
+  await waitForCapture(page)
   await page.keyboard.down("Enter")
-  await page.waitForFunction(() => (window as any).events.some(({ action }: any) => action === "finish"))
-  await interim.waitFor({ state: "hidden" })
+  await waitForFinish(page)
+  const finish = (await events(page)).find(event => event.action === "finish")
+  assert.equal(typeof finish?.wav, "string")
   await showPreview(page)
   await page.getByText("Local preview", { exact: true }).waitFor()
   const insert = page.getByRole("button", { name: "Insert transcript", exact: true })
@@ -101,8 +132,9 @@ test("the trusted window requires a real gesture before capture and after previe
 
 test("the transcript preview leaves focus on Cancel when the user moves it during transcription", () => withWindow(async page => {
   await page.getByRole("button", { name: "Start voice input" }).press("Enter")
+  await waitForCapture(page)
   await page.getByRole("button", { name: "Stop recording and transcribe" }).press("Enter")
-  await page.waitForFunction(() => (window as any).events.some(({ action }: any) => action === "finish"))
+  await waitForFinish(page)
   const cancel = page.getByRole("button", { name: "Cancel", exact: true })
   await cancel.focus()
   await showPreview(page)
@@ -114,7 +146,9 @@ test("the transcript preview leaves focus on Cancel when the user moves it durin
 for (const input of ["pointer", "Space"] as const) {
   test(`${input} pressed before the preview cannot confirm it on release`, () => withWindow(async page => {
     await page.getByRole("button", { name: "Start voice input" }).press("Enter")
+    await waitForCapture(page)
     await page.getByRole("button", { name: "Stop recording and transcribe" }).press("Enter")
+    await waitForFinish(page)
     const capture = page.getByRole("button", { name: "Start voice input" })
     const bounds = (await capture.boundingBox())!
     const point = { x: bounds.x + bounds.width - 16, y: bounds.y + bounds.height / 2 }
@@ -133,12 +167,12 @@ for (const input of ["pointer", "Space"] as const) {
   }))
 }
 
-test("an unavailable local engine offers Voice preferences, without capture or API fallback", () => withWindow(async page => {
-  await page.getByRole("status").getByText("Local dictation is unavailable.", { exact: true }).waitFor()
+test("an unsupported saved engine offers Voice preferences, without capture or API fallback", () => withWindow(async page => {
+  await page.getByRole("status").getByText("Choose an engine in local Preferences → Voice → Dictation.", { exact: true }).waitFor()
   assert.equal(await page.getByRole("button", { name: "Start voice input" }).count(), 0)
   await page.getByRole("button", { name: "Voice", exact: true }).click()
   assert.deepEqual(await events(page), [{ action: "read" }, { settle: true, action: "settings" }])
-}, false))
+}, null))
 
 test("the trusted hand-off uses the device's French interface locale", () => withWindow(async page => {
   assert.equal(await page.locator("html").getAttribute("lang"), "fr")
@@ -146,7 +180,7 @@ test("the trusted hand-off uses the device's French interface locale", () => wit
   await page.getByRole("button", { name: "Voix", exact: true }).focus()
   await page.keyboard.press("Enter")
   assert.deepEqual((await events(page)).at(-1), { settle: true, action: "settings" })
-}, false, "fr-FR"))
+}, "api", "fr-FR"))
 
 test("Escape cancels native capture and closes the trusted hand-off without releasing text", () => withWindow(async page => {
   await page.getByRole("button", { name: "Start voice input" }).click()

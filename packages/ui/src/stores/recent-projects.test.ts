@@ -235,7 +235,7 @@ test("the Open action joins actual tabs including a waiting tab; the row always 
     assert.equal(ensure.mock.callCount(), 1, "Home does not focus the live tab instead of opening")
     addRemoteRestoreTab({
       id: "waiting-a", kind: "remote-restore", retry: async () => { throw new Error("Unexpected recovery") },
-      open: async () => { throw new Error("Unexpected creation") }, remove: () => removeRemoteRestoreTab("waiting-a"),
+      remove: () => removeRemoteRestoreTab("waiting-a"),
       snapshot: { kind: "workspace", backendId: policyA.id, folder: path, occurrence: 1, drafts: { saved: "draft" },
         attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {} },
     })

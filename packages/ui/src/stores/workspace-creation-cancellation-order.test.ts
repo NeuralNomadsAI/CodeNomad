@@ -3,7 +3,7 @@ import { it } from "node:test"
 import { createBackendClient, registerBackendClient } from "../lib/backend-client"
 import { backendEvents } from "../lib/backend-events"
 import { preferences } from "./preferences"
-import { createInstance, instances, removeInstance, refreshWorkspaceList } from "./instances"
+import { createInstance, instances, removeInstance, refreshWorkspaceList, releaseRestoreCreatedInstance } from "./instances"
 
 for (const mode of ["SSE", "list"] as const)
   for (const order of ["user-before-ACK", "user-response-after-ACK"])
@@ -13,6 +13,7 @@ for (const mode of ["SSE", "list"] as const)
         preferences().multiBackend = true
         let requestId = "", finishPost!: () => void, enterPost!: () => void
         let finishCancel!: () => void, enterCancel!: () => void, finishUser!: () => void, enterUser!: () => void
+        let posts = 0
         const post = new Promise<void>(r => { finishPost = r }), posted = new Promise<void>(r => { enterPost = r })
         const cancel = new Promise<void>(r => { finishCancel = r }), canceling = new Promise<void>(r => { enterCancel = r })
         const user = new Promise<void>(r => { finishUser = r }), userEntered = new Promise<void>(r => { enterUser = r })
@@ -22,13 +23,15 @@ for (const mode of ["SSE", "list"] as const)
           fetcher: async (input, init) => {
             const path = new URL(String(input)).pathname
             if (init?.method !== "POST" && init?.method !== "DELETE") return Response.json([])
+            if (path.endsWith("/creation/release")) return new Response(null, { status: 204 })
             calls.push(`${init.method} ${path}`)
             if (path.endsWith("/creation/cancel")) { enterCancel(); await cancel; return new Response(null, { status: 204 }) }
             const body = JSON.parse(String(init?.body))
-            if (body.requestId) { requestId = body.requestId; enterPost(); await post }
+            const restore = ++posts === 1
+            if (restore) { requestId = body.requestId; enterPost(); await post }
             else { enterUser(); await user }
-            return Response.json({ id: "w", requestId: body.requestId, path: body.path,
-              binaryLabel: body.requestId ? "restore-binary" : "user-binary", reused: !body.requestId ? reused : false,
+            return Response.json({ id: "w", requestId: restore || !reused ? body.requestId : undefined, path: body.path,
+              binaryLabel: restore ? "restore-binary" : "user-binary", reused: !restore && reused,
               status: "starting", proxyPath: "", createdAt: "", updatedAt: "" })
           } })
         client.admitRelayAuthority!("o".repeat(43))
@@ -50,6 +53,8 @@ for (const mode of ["SSE", "list"] as const)
         }
         await observe(old)
         if (order === "user-response-after-ACK") { finishUser(); await opened }
+        const openedRequest = (await opened).requestId
+        if (openedRequest) await releaseRestoreCreatedInstance(id, openedRequest)
         finishPost(); await rejected
         await observe(old); await observe(old)
         assert.equal(instances().get(id)?.binaryLabel, "user-binary", "old descriptor must not replace the user occurrence")

@@ -13,7 +13,7 @@ export function formatToMimeType(format: SpeechTtsFormat): string {
   return "audio/mpeg"
 }
 
-export function getCandidateMimeTypes(format: SpeechTtsFormat): string[] {
+function getCandidateMimeTypes(format: SpeechTtsFormat): string[] {
   if (format === "wav") return ["audio/wav"]
   if (format === "opus") {
     return ['audio/ogg; codecs="opus"', 'audio/webm; codecs="opus"', "audio/opus"]
@@ -22,7 +22,7 @@ export function getCandidateMimeTypes(format: SpeechTtsFormat): string[] {
   return ["audio/mpeg"]
 }
 
-export function getSupportedMimeType(format: SpeechTtsFormat): string {
+function getSupportedMimeType(format: SpeechTtsFormat): string {
   const candidates = getCandidateMimeTypes(format)
   if (typeof MediaSource === "undefined") {
     return candidates[0]

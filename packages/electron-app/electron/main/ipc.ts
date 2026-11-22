@@ -137,9 +137,11 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     const window = local(event).window
     return dependencies.browserController.claimOpen(window.webContents, requestID, response)
   })
-  ipcMain.handle("browser-target:releaseOpen", async (event, requestID: unknown, keepGuest: unknown) => {
+  ipcMain.handle("browser-target:ownership", (event, input: unknown) =>
+    dependencies.browserController.changeOwnership(local(event).window.webContents, input))
+  ipcMain.handle("browser-target:releaseOpen", async (event, requestID: unknown) => {
     const { window } = local(event)
-    return dependencies.browserController.releaseOpen(window.webContents, requestID, undefined, keepGuest === true)
+    return dependencies.browserController.releaseOpen(window.webContents, requestID)
   })
   ipcMain.handle("browser-target:unregister", async (event, registrationId: unknown) => {
     const { window } = local(event)

@@ -14,12 +14,12 @@ export type CentralSurface =
 const conversation: CentralSurface = { kind: "conversation" }
 const [files, setFiles] = createSignal<ReadonlyMap<string, FilePreviewTarget>>(new Map())
 const generations = new Map<string, { value: number }>()
-const gestureListeners = new Set<(instanceId: string) => void>()
 export type SurfaceGesture = ReturnType<typeof beginGesture>
 
-export function onSurfaceGesture(listener: (instanceId: string) => void) {
-  gestureListeners.add(listener)
-  return () => { gestureListeners.delete(listener) }
+export function observeSurfaceGesture({ instanceId }: SurfaceContext) {
+  const occurrence = generations.get(instanceId)
+  const generation = occurrence?.value
+  return { current: () => generations.get(instanceId) === occurrence && occurrence?.value === generation && isInstanceOccurrenceOpen(instanceId) }
 }
 
 /** Admit once, before awaiting; only a later gesture or a closed occurrence retires it. */
@@ -27,9 +27,8 @@ export function beginGesture({ instanceId }: SurfaceContext) {
   if (!isInstanceOccurrenceOpen(instanceId)) return { current: () => false }
   const occurrence = generations.get(instanceId) ?? { value: 0 }
   generations.set(instanceId, occurrence)
-  const generation = ++occurrence.value
-  for (const listener of gestureListeners) listener(instanceId)
-  return { current: () => generations.get(instanceId) === occurrence && occurrence.value === generation && isInstanceOccurrenceOpen(instanceId) }
+  occurrence.value++
+  return observeSurfaceGesture({ instanceId, sessionId: null })
 }
 
 /** Passive file reconciliation applies to the current matching target immediately. */

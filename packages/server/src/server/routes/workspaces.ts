@@ -165,7 +165,7 @@ export function registerWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
   })
 
   app.delete<{ Params: { id: string } }>("/api/workspaces/:id", async (request, reply) => {
-    await deps.workspaceManager.delete(request.params.id)
+    await deps.workspaceManager.delete(request.params.id, { temporaryRetained: true })
     reply.code(204)
   })
 
