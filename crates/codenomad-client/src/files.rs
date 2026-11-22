@@ -1,4 +1,4 @@
-//! Read-only workspace files; directory ownership and physical paths stay with the server.
+//! Scoped workspace files; directory ownership and physical paths stay with the server.
 use crate::{
     backend::{Backend, read_json, read_json_limited},
     history::{Result, valid_id},
@@ -36,7 +36,50 @@ pub struct Preview {
     pub version: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WriteResult {
+    Saved,
+    Conflict,
+}
+
 impl Backend {
+    pub async fn write_file(
+        &self,
+        directory: &str,
+        path: &str,
+        contents: &str,
+        expected_version: &str,
+    ) -> Result<WriteResult> {
+        self.file_scope(directory, path, false)?;
+        if contents.len() > MAX_FILE_BYTES || expected_version.is_empty() {
+            return Err("invalid file write".into());
+        }
+        let body = serde_json::to_vec(&serde_json::json!({
+            "contents":contents,"expectedVersion":expected_version
+        }))?;
+        if body.len() > 8 * 1024 * 1024 {
+            return Err("oversized file write".into());
+        }
+        let response = self
+            .client
+            .put(format!(
+                "{}api/workspaces/{}/files/content",
+                self.base, self.workspace
+            ))
+            .query(&[("path", path), ("directory", directory)])
+            .header("Content-Type", "application/json")
+            .body(body)
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::CONFLICT {
+            return Ok(WriteResult::Conflict);
+        }
+        let response = response.error_for_status()?;
+        if !response.status().is_success() {
+            return Err("unexpected file write response".into());
+        }
+        Ok(WriteResult::Saved)
+    }
     /// One listing, with the shared 2 MiB JSON budget; an oversized folder fails intact.
     pub async fn files(&self, directory: &str, path: &str) -> Result<Vec<Entry>> {
         self.file_scope(directory, path, true)?;

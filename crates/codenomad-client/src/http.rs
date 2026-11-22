@@ -30,6 +30,9 @@ impl Http {
     pub fn post(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
         self.request(reqwest::Method::POST, url)
     }
+    pub fn put(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
+        self.request(reqwest::Method::PUT, url)
+    }
     pub fn delete(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
         self.request(reqwest::Method::DELETE, url)
     }
