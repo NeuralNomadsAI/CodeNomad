@@ -5,7 +5,7 @@ import { Copy } from "lucide-solid"
 import type { ToolState } from "../../../types/tool-state"
 import type { ToolRenderer } from "../types"
 import { getDefaultToolAction, getToolName, hasVisibleText, limitToolTitleForRender, readToolStatePayload } from "../utils"
-import { MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT } from "../../../lib/render-text-window"
+import { TASK_PANE_RENDER_CHARACTER_LIMIT } from "../../../lib/render-text-window"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
 import { beginMessageHistoryTraversal, isLatestMessageWindow, loadMessages, loadNewerMessageWindow, loadOldestMessageWindow } from "../../../stores/session-api"
 import { getSessionMessagesLoadError, messagesLoaded, sessions } from "../../../stores/session-state"
@@ -16,7 +16,9 @@ import { getMessageContentIcon } from "../../message-content-icons"
 import { getTaskToolSearchText } from "../search-text"
 import { copyTextChunksToClipboard, copyToClipboard } from "../../../lib/clipboard"
 import LoadErrorState from "../../load-error-state"
-import { collectChildTaskSteps, getLegacyTaskSummary, getTaskOutputCopyText, getTruncatedTaskStepTitleCopyText, isTaskScanTruncated, isTaskStepListTruncated, resolveTaskStepTruncation, stringifyLegacyTaskSummary, TASK_STEP_RENDER_LIMIT } from "./task-summary"
+import { collectChildTaskSteps, getLegacyTaskSummary, getTaskOutputCopyText, getTruncatedTaskStepTitleCopyText, isTaskScanTruncated, isTaskStepListTruncated, resolveTaskStepTruncation, stringifyLegacyTaskSummary, TASK_STEP_MOUNT_LIMIT, TASK_STEP_REVEAL_STEP, TASK_STEP_RENDER_LIMIT } from "./task-summary"
+import { getRevealedRecordText, revealHiddenRecordText } from "../../../stores/message-v2/record-display-cache"
+import { useI18n } from "../../../lib/i18n"
 import { getMessageWindowPageKey } from "../../message-history-pagination"
 import { useTaskStepCopy } from "./task-copy"
 import { getCanonicalToolName } from "../tool-presentation"
@@ -207,6 +209,21 @@ function describeToolTitle(item: TaskSummaryItem): string {
   return getDefaultToolAction(item.tool)
 }
 
+/** Placeholder at the steps gap: the list mounts its newest window, the reveal owns the rest in place. */
+function TaskStepsGap(props: { hidden: number; onReveal: () => void }) {
+  const { t } = useI18n()
+  return (
+    <div class="message-hidden-parts">
+      <span class="message-hidden-parts-label">
+        {t(props.hidden === 1 ? "messageBlock.hiddenParts.one" : "messageBlock.hiddenParts.other", { count: props.hidden })}
+      </span>
+      <button type="button" class="button-secondary message-hidden-parts-button" onClick={props.onReveal}>
+        {t("messageBlock.hiddenParts.show", { count: Math.min(props.hidden, TASK_STEP_REVEAL_STEP) })}
+      </button>
+    </div>
+  )
+}
+
 export const taskRenderer: ToolRenderer = {
   tools: ["task"],
   getSearchText: getTaskToolSearchText,
@@ -223,7 +240,7 @@ export const taskRenderer: ToolRenderer = {
     const { input } = readToolStatePayload(state)
     return describeTaskTitle(input, toolName())
   },
-  renderBody({ toolState, toolCall, sessionId, instanceId, isActive, renderToolCall, messageVersion, partVersion, scrollHelpers, renderMarkdown, t, onContentRendered }) {
+  renderBody({ toolState, toolCall, sessionId, instanceId, isActive, renderToolCall, messageVersion, partVersion, scrollHelpers, renderMarkdown, textRevealTarget, t, onContentRendered }) {
     const store = messageStoreBus.getOrCreate(instanceId)
 
     const childSessionId = createMemo(() => {
@@ -445,6 +462,23 @@ export const taskRenderer: ToolRenderer = {
         return { id, tool, input: fallbackInput, metadata: metadataFromEntry, state: stateValue, status: statusValue, title }
       })
     })
+    // The steps list mounts only its newest window: its nested scroller pays
+    // layout per mounted row, so the omitted rows stay in the store until the
+    // gap's reveal mounts them. Reveal state lives in the record display
+    // cache, so a recycled card keeps what its reader expanded.
+    const stepsRevealTarget = () => textRevealTarget("task:steps")
+    const revealSteps = () => revealHiddenRecordText(stepsRevealTarget())
+    const mountedStepLimit = createMemo(() => TASK_STEP_MOUNT_LIMIT + getRevealedRecordText(stepsRevealTarget()) * TASK_STEP_REVEAL_STEP)
+    const visibleChildToolKeys = createMemo(() => {
+      const keys = childToolKeys()
+      const visible = Math.min(keys.length, mountedStepLimit())
+      return { keys: keys.slice(-visible), hidden: keys.length - visible }
+    })
+    const visibleLegacyItems = createMemo(() => {
+      const items = legacyItems()
+      const visible = Math.min(items.length, mountedStepLimit())
+      return { items: items.slice(-visible), hidden: items.length - visible }
+    })
     // Coverage controls full-copy traversal, not a claim about omitted tool
     // rows. Native cursors can point to an empty boundary page; scan budgets
     // and historical windows likewise cannot prove render-limit overflow.
@@ -491,7 +525,7 @@ export const taskRenderer: ToolRenderer = {
             <div class="tool-call-task-section-body">
               {renderMarkdown({
                 content: promptContent()!,
-                renderLimit: MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT,
+                renderLimit: TASK_PANE_RENDER_CHARACTER_LIMIT,
                 cacheKey: "task:prompt",
                 disableScrollTracking: true,
                 // Always use the normal markdown render path for prompt (even while running)
@@ -549,7 +583,10 @@ export const taskRenderer: ToolRenderer = {
                     }
                   >
                     <div class="tool-call-task-summary">
-                      <For each={legacyItems()}>
+                      <Show when={visibleLegacyItems().hidden > 0}>
+                        <TaskStepsGap hidden={visibleLegacyItems().hidden} onReveal={revealSteps} />
+                      </Show>
+                      <For each={visibleLegacyItems().items}>
                         {(item) => {
                           const icon = getMessageContentIcon(item.tool)
                           const fullDescription = describeToolTitle(item)
@@ -600,7 +637,10 @@ export const taskRenderer: ToolRenderer = {
                   }
                 >
                     <div class="tool-call-task-summary">
-                     <For each={childToolKeys()}>
+                      <Show when={visibleChildToolKeys().hidden > 0}>
+                        <TaskStepsGap hidden={visibleChildToolKeys().hidden} onReveal={revealSteps} />
+                      </Show>
+                      <For each={visibleChildToolKeys().keys}>
                       {(key) => (
                         <Show when={renderToolCall}>
                           {(render) => (
@@ -641,7 +681,7 @@ export const taskRenderer: ToolRenderer = {
               <div class="tool-call-task-section-body">
                 {renderMarkdown({
                   content: outputContent()!,
-                  renderLimit: MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT,
+                  renderLimit: TASK_PANE_RENDER_CHARACTER_LIMIT,
                   cacheKey: "task:output",
                   disableScrollTracking: true,
                 })}
