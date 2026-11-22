@@ -687,6 +687,7 @@ export function createHttpServer(deps: HttpServerDeps) {
 }
 
 export interface InstanceProxyWorkspaceManager {
+  captureWorkspaceOperation?: WorkspaceManager["captureWorkspaceOperation"]
   getServiceWslDistro?: WorkspaceManager["getServiceWslDistro"]
   get(id: string): ReturnType<WorkspaceManager["get"]>
   getSharedServiceEndpoint(id: string): ReturnType<WorkspaceManager["getSharedServiceEndpoint"]>
@@ -1081,6 +1082,9 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     reply.code(403).send({ error: "OpenCode route is not available through a workspace" })
     return
   }
+  const kind = controlKind(request.method, pathname.replace(/\/+$/, ""))
+  const sessionControl = kind && !isGlobalFormAction(pathname, request.method) ? kind : undefined
+  const workspaceOperation = sessionControl ? workspaceManager.captureWorkspaceOperation?.(workspaceId) : undefined
 
   const isMutation = request.method !== "GET" && request.method !== "HEAD"
     && !(request.method === "POST" && SESSION_SETTLEMENT_WAIT.test(pathname.replace(/\/+$/, "")))
@@ -1521,17 +1525,31 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         }
       }
     }
-    const formReply = request.method === "POST" && pathname.match(/^\/api\/session\/[^/]+\/form\/([^/]+)\/reply\/?$/)
-    // Validate incoming fields before the proxy injects its translated Location.
-    const control = authorizedSession && controlKind(request.method, pathname) ? { method: request.method, pathname, body: request.body, session: authorizedSession,
-      client: await clientForRequest(), signal } : undefined
-    const controlRefusal = control && await wait(admitSessionControl(control))
-    if (controlRefusal) { releaseMutation?.(); return reply.code(controlRefusal.status).send({ error: controlRefusal.error }) }
+    const formReply = request.method === "POST" && pathname.match(/^\/api\/session\/[^/]+\/form\/([^/]+)\/reply\/*$/)
+    const control = authorizedSession && sessionControl ? { session: authorizedSession, client: await clientForRequest(), signal } : undefined
+    const controlCurrent = async () => {
+      if (control && !await wait(currentSessionControl(control))) return false
+      connection?.assertCurrent()
+      if (workspaceManager.captureWorkspaceOperation) {
+        try { return workspaceOperation?.current() === true } catch { return false }
+      }
+      return workspaceManager.get(workspaceId)?.path === workspace.path
+    }
+    const result = control && sessionControl && await wait(admitSessionControl(sessionControl, {
+      pathname: pathname.replace(/\/+$/, ""), query: targetUrl.searchParams, body: request.body, ...control,
+    }))
+    if (result && "status" in result) {
+      if (result.reconcile && connection && authorizedSessionDirectory && await controlCurrent()) {
+        grantPendingReconciliation(connection, workspaceId, authorizedSessionDirectory)
+      }
+      releaseMutation?.()
+      return reply.code(result.status).send(result.body)
+    }
     if (formReply && sessionId && sessionId !== "global" && connection && args.humanAnswers
       && request.headers[HUMAN_ANSWER_HEADER] === "1") {
       grantPendingReconciliation(connection, workspaceId, authorizedSessionDirectory ?? runtimeLocation.directory)
       try {
-        const result = await replyMissionHumanAnswer(request, workspaceId, sessionId, decodeURIComponent(formReply[1]),
+        const result = await replyMissionHumanAnswer(request, workspaceId, sessionId, formReply[1],
           args.humanAnswers, connection, signal)
         if (result) {
           releaseMutation?.()
@@ -1544,27 +1562,21 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         return reply.code(409).send({ error: "Human answer outcome unavailable; do not replay the native answer" })
       }
     }
-    const permissionReply = request.method === "POST" && pathname.match(/^\/api\/session\/[^/]+\/permission\/([^/]+)\/reply\/?$/)
-    const permissionBody = body as { decision?: unknown; message?: unknown } | undefined
-    const confirmPermission = permissionReply && connection && args.permissionReceipts && sessionId
-      && permissionBody && ["once", "always", "reject"].includes(String(permissionBody.decision))
-      && (permissionBody.message === undefined || typeof permissionBody.message === "string")
-      ? await args.permissionReceipts.prepare(workspaceId, connection, sessionId, permissionReply[1],
-        permissionBody.decision as "once" | "always" | "reject", "codenomad", permissionBody.message as string | undefined)
+    const confirmPermission = result && connection && args.permissionReceipts
+      ? await wait(args.permissionReceipts.prepare(workspaceId, connection, result.request, result.decision, result.message))
       : undefined
     const confirmDeletion = request.method === "DELETE" && /^\/api\/session\/[^/]+\/?$/.test(pathname)
       && connection && args.permissionReceipts && sessionId
       ? await args.permissionReceipts.prepareDeletion(workspaceId, connection, sessionId) : undefined
     connection?.assertCurrent()
     // Recheck after authorization and receipt preparation, before forwarding.
-    if (control && (!await wait(currentSessionControl(control)) || workspaceManager.get(workspaceId) !== workspace)) {
+    if (control && !await controlCurrent()) {
       releaseMutation?.()
       return reply.code(403).send({ error: "Location does not belong to workspace" })
     }
     connection?.assertCurrent()
     if (deferList()) return reply.header("Retry-After", "30").header("Cache-Control", "no-store").code(503).send({ error: PENDING_DISCOVERY_DEFERRED })
-    if (connection && ((request.method === "POST" && /^\/api\/session\/[^/]+\/(?:permission|form)\/[^/]+\/reply\/?$/.test(pathname))
-      || (request.method === "DELETE" && /^\/api\/session\/[^/]+\/form\/[^/]+\/?$/.test(pathname)))) {
+    if (connection && kind && kind !== "interrupt") {
       grantPendingReconciliation(connection, workspaceId, authorizedSessionDirectory ?? runtimeLocation.directory)
     }
     if (request.method === "POST" && /^\/api\/session\/[^/]+\/(?:prompt|command|shell)\/?$/.test(pathname)) {
@@ -1890,8 +1902,8 @@ function getSessionRouteId(pathname: string): string | null {
 }
 
 function isGlobalFormAction(pathname: string, method: string): boolean {
-  return (method === "POST" && /^\/api\/session\/global\/form\/[^/]+\/reply\/?$/.test(pathname))
-    || (method === "DELETE" && /^\/api\/session\/global\/form\/[^/]+\/?$/.test(pathname))
+  return (method === "POST" && /^\/api\/session\/global\/form\/[^/]+\/reply\/*$/.test(pathname))
+    || (method === "DELETE" && /^\/api\/session\/global\/form\/[^/]+\/*$/.test(pathname))
 }
 
 async function authorizeSessionList(
