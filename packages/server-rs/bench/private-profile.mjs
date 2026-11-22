@@ -17,6 +17,13 @@ export async function outsideUserHome(directory) {
   return resolved
 }
 
+export async function ownedOutput(root, directory) {
+  assert(path.isAbsolute(directory) && below(root, directory), "Bench output must belong to its checkout")
+  const owned = await outsideUserHome(root), resolved = await canonical(directory)
+  assert(below(owned, resolved), "Bench output escapes its checkout")
+  return resolved
+}
+
 export async function assertPrivateProfile(root, env, location) {
   const owned = await outsideUserHome(root)
   async function check(file) {

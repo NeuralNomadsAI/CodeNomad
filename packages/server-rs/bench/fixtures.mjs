@@ -7,10 +7,13 @@ import { register } from "node:module"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { promisify } from "node:util"
+import { ownedOutput } from "./private-profile.mjs"
 
 export const repo = fileURLToPath(new URL("../../../", import.meta.url))
 export const dist = pathToFileURL(path.join(repo, "packages/server/dist/"))
-export const out = fileURLToPath(new URL("./out/", import.meta.url))
+const output = fileURLToPath(new URL("./out/", import.meta.url))
+export const out = await ownedOutput(repo, output)
+await mkdir(out, { recursive: true })
 export const fromDist = file => import(new URL(file, dist))
 assert(existsSync(new URL("index.js", dist)), "Build the TS server first: npm run build --workspace @neuralnomads/codenomad")
 register(new URL("loader.js", dist), import.meta.url)

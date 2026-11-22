@@ -3,7 +3,7 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
+import { assertPrivateProfile, outsideUserHome, ownedOutput } from "./private-profile.mjs"
 
 test("bench profile accepts an owned profile and refuses a missing setting or a junction escape", async () => {
   const scratch = await mkdtemp(path.join(await outsideUserHome(import.meta.dirname), "guard-"))
@@ -22,4 +22,21 @@ test("bench profile accepts an owned profile and refuses a missing setting or a 
   } finally {
     await rm(scratch, { recursive: true, force: true })
   }
+})
+
+test("bench output permits an internal junction and refuses an external or dangling escape before writing", async () => {
+  const scratch = await mkdtemp(path.join(await outsideUserHome(import.meta.dirname), "output-guard-"))
+  try {
+    const root = path.join(scratch, "checkout"), target = path.join(root, "target")
+    await mkdir(target, { recursive: true })
+    const link = path.join(root, "out")
+    await symlink(target, link, "junction")
+    assert.equal(await ownedOutput(root, link), target)
+    const escape = path.join(root, "escape"), dangling = path.join(root, "dangling")
+    await symlink(scratch, escape, "junction")
+    await symlink(path.join(scratch, "absent"), dangling, "junction")
+    await assert.rejects(ownedOutput(root, escape), /escapes/)
+    await assert.rejects(ownedOutput(root, dangling), /escapes/)
+    await assert.rejects(ownedOutput(root, scratch), /belong/)
+  } finally { await rm(scratch, { recursive: true, force: true }) }
 })
