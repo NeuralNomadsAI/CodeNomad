@@ -1,9 +1,6 @@
+use crate::platform::reads::{Reads, cancellable};
 use codenomad_client::{Receiver, backend::Backend, files::Entry, history::Result};
-use std::{
-    future::{Future, poll_fn},
-    sync::Arc,
-    task::Poll,
-};
+use std::sync::Arc;
 
 pub struct Read {
     pub directory: String,
@@ -16,20 +13,14 @@ pub struct Read {
 
 impl Read {
     /// Dropping the HTTP future cancels its body/transport on either platform.
-    pub async fn fetch(&self, backend: &Backend) -> Option<Result<Vec<Entry>>> {
-        let response = backend.files(&self.directory, &self.path);
-        let cancellation = self.cancelled.recv();
-        let mut response = std::pin::pin!(response);
-        let mut cancellation = std::pin::pin!(cancellation);
-        poll_fn(|cx| {
-            if cancellation.as_mut().poll(cx).is_ready() {
-                return Poll::Ready(None);
-            }
-            response.as_mut().poll(cx).map(Some)
-        })
-        .await
+    pub async fn fetch(&self, backend: &Backend, reads: &Reads) -> Option<Result<Vec<Entry>>> {
+        let _slot = reads.background(&self.cancelled).await?;
+        cancellable(&self.cancelled, backend.files(&self.directory, &self.path)).await
     }
     pub fn cancelled(&self) -> bool {
         self.cancelled.is_closed()
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests;

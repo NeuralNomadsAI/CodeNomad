@@ -582,6 +582,7 @@ dependencies = [
 name = "codenomad-rune-app"
 version = "0.1.0"
 dependencies = [
+ "async-lock",
  "codenomad-client",
  "codenomad-host-process",
  "icu_collator",

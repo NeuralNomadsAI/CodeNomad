@@ -334,7 +334,11 @@ fn cancelled_read_yields_before_an_unreachable_backend() {
         let mut tree = tree();
         let read = tree.take_refresh().pop().unwrap();
         tree.close();
-        assert!(read.fetch(&backend).await.is_none());
+        assert!(
+            read.fetch(&backend, &crate::platform::reads::Reads::default())
+                .await
+                .is_none()
+        );
     });
 }
 
@@ -352,7 +356,10 @@ fn hiding_cancels_an_already_dispatched_http_read_without_waiting_for_the_server
         backend.workspace = "fixture".into();
         let mut tree = tree();
         let read = tree.take_refresh().pop().unwrap();
-        let task = tokio::spawn(async move { read.fetch(&backend).await });
+        let task = tokio::spawn(async move {
+            read.fetch(&backend, &crate::platform::reads::Reads::default())
+                .await
+        });
         let socket = tokio::time::timeout(std::time::Duration::from_secs(2), listener.accept())
             .await
             .unwrap()
