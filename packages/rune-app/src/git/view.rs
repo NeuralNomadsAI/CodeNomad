@@ -77,7 +77,7 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
         .child(header);
     let mode_lanes: &[Lane] = match ui.mode {
         Mode::Workspace => &[Lane::Worktrees],
-        Mode::Changes => &[Lane::Worktrees, Lane::Changes],
+        Mode::Changes => &[Lane::Worktrees, Lane::Changes, Lane::Preferences],
         Mode::History => &[Lane::Worktrees, Lane::History, Lane::Details],
     };
     for lane in mode_lanes {

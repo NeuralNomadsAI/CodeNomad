@@ -308,7 +308,7 @@ fn action_focus_reaches_same_file_in_its_new_section() {
         .key()
     );
     assert_eq!(
-        ui.changes.focus_after(focus),
+        ui.changes.focus_after(focus.clone(), true),
         Some(
             Id {
                 section: Section::Staged,
@@ -316,6 +316,10 @@ fn action_focus_reaches_same_file_in_its_new_section() {
             }
             .key()
         )
+    );
+    assert_eq!(
+        ui.changes.focus_after(focus, false).as_deref(),
+        Some("git-section-unstaged")
     );
 }
 
@@ -339,6 +343,49 @@ fn status_before_a_reader_gesture_cannot_close_its_new_target() {
     ui.replace_preview(Preview::local(row));
     ui.accept(Lane::Changes, Value::Changes(vec![], revision));
     assert!(ui.has_preview());
+    statuses(&mut ui, vec![]);
+    assert!(!ui.has_preview());
+}
+
+#[test]
+fn invalidated_status_cannot_remove_the_diff_before_its_trailing_read() {
+    let mut ui = ui();
+    let row = change("a", false, false, 1);
+    statuses(&mut ui, vec![row.clone()]);
+    let selected = ui
+        .changes
+        .find(ui.changes.current.as_ref().unwrap())
+        .unwrap();
+    ui.replace_preview(Preview::local(selected));
+    ui.filesystem_hint();
+    statuses(&mut ui, vec![]);
+    assert!(ui.has_preview());
+    assert_eq!(ui.changes.count(), 1);
+    ui.passive_due = None;
+    statuses(&mut ui, vec![row]);
+    assert!(ui.has_preview());
+}
+
+#[test]
+fn switching_modes_and_refresh_owe_failed_reads_but_stale_preferences_cannot_stage() {
+    let mut ui = ui();
+    ui.mode = Mode::Changes;
+    ui.online = true;
+    ui.shown = true;
+    statuses(&mut ui, vec![change("a", true, false, 1)]);
+    ui.changes.draft = TextEdit::new("a");
+    assert!(ui.can_commit());
+    ui.requests.slot_mut(Lane::Preferences).error = Some("preferences unreadable".into());
+    assert!(!ui.can_commit());
+    ui.online = false;
+    ui.refresh();
+    assert!(ui.requests.slot(Lane::Preferences).dirty);
+    ui.requests.slot_mut(Lane::Changes).dirty = false;
+    ui.requests.slot_mut(Lane::Changes).error = Some("status unreadable".into());
+    ui.set_mode(Mode::History);
+    assert!(!ui.requests.slot(Lane::Changes).dirty);
+    ui.set_mode(Mode::Changes);
+    assert!(ui.requests.slot(Lane::Changes).dirty);
 }
 
 #[test]

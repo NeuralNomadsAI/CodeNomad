@@ -277,13 +277,20 @@ impl Changes {
         Some((rows, index))
     }
 
-    pub fn focus_after(&self, (previous, index): (Vec<Id>, usize)) -> Option<String> {
+    pub fn focus_after(
+        &self,
+        (previous, index): (Vec<Id>, usize),
+        can_open_file: bool,
+    ) -> Option<String> {
         let from = &previous[index];
         let visible = |id: &Id| {
             self.open[self::index(id.section)] && self.visible(id.section).any(|row| &row.id == id)
         };
         if visible(from) {
             return None;
+        }
+        if !can_open_file {
+            return Some(format!("git-section-{}", from.section.key()));
         }
         if let Some(replacement) = self.equivalent(from)
             && visible(&replacement.id)

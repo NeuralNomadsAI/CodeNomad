@@ -209,6 +209,8 @@ impl Ui {
     pub(crate) fn activate(&mut self, active: bool) {
         if !active {
             self.keep_scroll();
+        } else if !self.active {
+            self.retry_panel_reads();
         }
         self.active = active;
         self.demand();
@@ -220,6 +222,9 @@ impl Ui {
                 self.keep_scroll();
             }
             self.shown = shown;
+            if shown {
+                self.retry_panel_reads();
+            }
             if shown
                 && self.mode == Mode::Changes
                 && self
@@ -240,6 +245,7 @@ impl Ui {
         if self.mode != mode {
             self.keep_scroll();
             self.mode = mode;
+            self.retry_panel_reads();
             self.demand();
         }
     }
@@ -247,6 +253,18 @@ impl Ui {
     fn keep_scroll(&self) {
         self.changes_scroll.retain_for_remount();
         self.history_scroll.retain_for_remount();
+    }
+
+    fn retry_panel_reads(&mut self) {
+        let lanes: &[Lane] = match self.mode {
+            Mode::Workspace => &[Lane::Worktrees],
+            Mode::Changes => &[Lane::Worktrees, Lane::Changes, Lane::Preferences],
+            Mode::History => &[Lane::Worktrees, Lane::History, Lane::Details],
+        };
+        for &lane in lanes {
+            let slot = self.requests.slot_mut(lane);
+            slot.dirty |= slot.error.is_some();
+        }
     }
 
     pub(crate) fn tree(&self) -> Option<&Worktree> {
@@ -439,6 +457,7 @@ impl Ui {
     }
 
     fn refresh(&mut self) {
+        self.retry_panel_reads();
         if matches!(
             self.repository(),
             Repository::Uninitialized | Repository::NoGit
@@ -631,6 +650,7 @@ impl Ui {
             && changes.error.is_none()
             && !preference.busy()
             && !preference.dirty
+            && preference.error.is_none()
             && self.passive_due.is_none()
     }
 

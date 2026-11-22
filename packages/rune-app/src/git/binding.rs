@@ -151,7 +151,9 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut rune::Tx) -> bool {
     };
     if changed
         && let Some(focus) = focus.or(parked)
-        && let Some(next) = owner.changes.focus_after(focus)
+        && let Some(next) = owner
+            .changes
+            .focus_after(focus, !owner.backend.session.is_empty())
     {
         tx.focus(next, tx.focus_visible());
     }

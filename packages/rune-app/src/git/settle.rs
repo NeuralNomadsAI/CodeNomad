@@ -58,6 +58,9 @@ impl Ui {
                 }
             }
             Value::Changes(mut statuses, revision) => {
+                if self.requests.slot(lane).dirty || self.passive_due.is_some() {
+                    return;
+                }
                 if let Some(collation) = &self.collation {
                     statuses.sort_by(|a, b| {
                         collation
@@ -65,9 +68,8 @@ impl Ui {
                             .unwrap_or_else(|_| a.path.cmp(&b.path))
                     });
                 }
-                if self.changes.replace(statuses, self.hide_whitespace)
-                    && self.preview_revision == revision
-                {
+                self.changes.replace(statuses, self.hide_whitespace);
+                if self.preview_revision == revision {
                     self.reconcile_preview();
                 }
             }
