@@ -339,6 +339,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permission": "Mikrofonzugriff ist für die Spracheingabe erforderlich.",
   "voice.command.unavailable": "{action} — {reason}",
   "voice.command.conversation": "Gesprächsmodus",
+  "voice.command.dictation": "Diktiermodus",
   "voice.command.off": "Spracheingabe ist deaktiviert",
   "voice.command.composerUnavailable": "In diesem Eingabefeld nicht verfügbar",
   "voice.command.setupDictation": "Diktat einrichten",

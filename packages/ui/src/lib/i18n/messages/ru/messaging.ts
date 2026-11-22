@@ -342,6 +342,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permission": "Для записи голосового ввода требуется доступ к микрофону.",
   "voice.command.unavailable": "{action} — {reason}",
   "voice.command.conversation": "Режим разговора",
+  "voice.command.dictation": "Режим диктовки",
   "voice.command.off": "Голосовой ввод отключён",
   "voice.command.composerUnavailable": "Недоступно в этом поле ввода",
   "voice.command.setupDictation": "Настроить диктовку",

@@ -341,6 +341,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permission": "录制语音输入需要麦克风访问权限。",
   "voice.command.unavailable": "{action} — {reason}",
   "voice.command.conversation": "对话模式",
+  "voice.command.dictation": "听写模式",
   "voice.command.off": "语音输入已关闭",
   "voice.command.composerUnavailable": "在此输入框中不可用",
   "voice.command.setupDictation": "设置听写",

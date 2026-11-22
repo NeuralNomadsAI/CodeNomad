@@ -35,8 +35,8 @@ Der Wiedergabetest verwendet den gewählten Modus und das Format sofort, aber En
 ## Prompt diktieren {#dictate}
 
 1. Lassen Sie **Prompt-Spracheingabe** unter **Sprache** aktiviert (standardmäßig eingeschaltet).
-2. Wählen Sie im Eingabefeld **Weitere Aktionen → Diktieren** und erlauben Sie den Mikrofonzugriff. Ist Diktat oder Gespräch nicht verfügbar, zeigt der Menüpunkt den Grund und öffnet die passende Karte unter **Sprache**. Nur eine Funktion zugleich kann das Mikrofon nutzen: Diktat, Eingabetest oder Live-Gespräch.
-3. Wählen Sie **Aufnahme stoppen und transkribieren** für den Text oder **Diktat abbrechen**, um die Aufnahme zu verwerfen. Ein Gesprächswechsel oder das Schließen des Eingabefelds bricht das Diktat ebenfalls ab.
+2. Aktivieren Sie **Diktiermodus** unter **Weitere Aktionen**. Deaktivieren Sie den aktiven Modus, bevor Sie den anderen wählen.
+3. Halten Sie das Mikrofon neben **Weitere Aktionen** gedrückt, sprechen Sie und lassen Sie zum Transkribieren los. Erlauben Sie bei Bedarf den Mikrofonzugriff. In einem kompatiblen Remote-Fenster öffnet ein Klick die lokale Diktiersteuerung.
 4. Prüfen Sie den Text. Er ersetzt die ursprüngliche Auswahl nur, wenn Entwurf und Auswahl unverändert sind. Andernfalls wählen Sie vor dem nächsten Diktat **Transkription einfügen** im normalen Modus oder **Transkription verwerfen**. Beim Diktieren wird nichts gesendet.
 
 Wenn die API unter Linux mit Tauri auf WAV ausweicht, endet die Aufnahme beim Diktieren und beim Eingabetest nach 24 Sekunden. Der Ausschnitt bleibt auf diesem Gerät, bis Sie ihn mit **Transkribieren** an den Sprachanbieter senden oder mit **Abbrechen** verwerfen.
@@ -55,7 +55,7 @@ Wählen Sie in der lokalen Desktop-App unter **Einstellungen → Sprache → Dik
 
 Ubuntu 24.04 erfüllt die glibc-Anforderung, Ubuntu 22.04 hingegen nicht. Hex erkennt die gesprochene Sprache aus den [von Parakeet unterstützten Sprachen](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), darunter Englisch und Französisch. Diese Liste ist unabhängig von der App-Sprache.
 
-Die lokale Erkennung nutzt das Mikrofon dieses Geräts und funktioniert offline, auch für WSL-Projekte in der lokalen App. In einem kompatiblen Remote-Fenster öffnet **Diktieren** das lokale Fenster **Auf diesem Gerät diktieren**. Prüfen Sie das angezeigte Ziel und wählen Sie **Spracheingabe starten**, **Aufnahme stoppen und transkribieren** und **Transkription einfügen**. Nur der Text kehrt in den Entwurf zurück. Das Remote-Projekt braucht weiterhin seine Serververbindung.
+Die lokale Erkennung funktioniert offline, auch für WSL-Projekte in der lokalen App. Klicken Sie in einem kompatiblen Remote-Fenster auf das Mikrofon, um **Auf diesem Gerät diktieren** zu öffnen. Prüfen Sie das Ziel und verwenden Sie die Aufnahme- und Einfügefunktionen des Fensters. Nur der Text kehrt in den Entwurf zurück. Das Remote-Projekt braucht weiterhin seine Serververbindung.
 
 In einem Tauri-Fenster für einen entfernten Server unter Linux prüft **API-Eingabe testen** die Sprach-API des Servers, ohne die Diktat-Engine zu ändern. Prüfen Sie vor jeder API-Aufnahme die Serveradresse im nativen Mikrofondialog und bestätigen Sie die Aufnahme. Die Aufnahme nutzt PulseAudio oder den PulseAudio-Dienst von PipeWire und hat immer das oben beschriebene WAV-Limit von 24 Sekunden.
 
@@ -75,7 +75,7 @@ Gemini Live und OpenAI Realtime sind nur für Sitzungen auf dem Server verfügba
 
 Wählen Sie in **Gespräch** eine **Gesprächs-Engine**:
 
-- **Klassisch** benötigt nur eine eingerichtete Wiedergabe in einem unterstützten Format. Wählen Sie **Konversationsmodus aktivieren** unter **Weitere Aktionen**. CodeNomad bittet den Agenten, jede Antwort auf einen gesendeten Prompt mit einer kurzen `spoken`-Zusammenfassung zu beginnen, und liest nur diesen fertigen Block in der aktiven Hauptsitzung vor. Der Modus gilt für den Projekt-Tab bis zur Deaktivierung oder zum Neuladen. Der Beginn eines Diktats stoppt das Vorlesen der Zusammenfassung.
+- **Klassisch** benötigt nur eine eingerichtete Wiedergabe in einem unterstützten Format. Aktivieren Sie **Gesprächsmodus** unter **Weitere Aktionen**. CodeNomad liest die fertige `spoken`-Zusammenfassung der Antwort in der aktiven Hauptsitzung vor. Der Modus gilt für den Projekt-Tab bis zur Deaktivierung oder zum Neuladen.
 - **Gemini Live** und **OpenAI Realtime** haben jeweils einen eigenen **API-Schlüssel**, ein **Modell** und eine optionale **Stimme**. Speichern Sie die Einstellungen für den ausgewählten Anbieter. Öffnen Sie die Zielsitzung, wählen Sie **Gesprächsmodus** unter **Weitere Aktionen** und bei der Einwilligung **Zustimmen und starten**. Erlauben Sie den Mikrofonzugriff.
 
 Wird der Anbieter bei geöffnetem Einwilligungsdialog nicht mehr verfügbar, öffnen Sie über **Spracheinstellungen** die Karte für Gespräche.

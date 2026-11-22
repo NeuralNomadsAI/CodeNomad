@@ -342,6 +342,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permission": "音声入力を録音するにはマイクへのアクセスが必要です。",
   "voice.command.unavailable": "{action} — {reason}",
   "voice.command.conversation": "会話モード",
+  "voice.command.dictation": "音声入力モード",
   "voice.command.off": "音声入力はオフです",
   "voice.command.composerUnavailable": "この入力欄では利用できません",
   "voice.command.setupDictation": "音声入力を設定",

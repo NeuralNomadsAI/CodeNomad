@@ -35,11 +35,11 @@ The playback test uses the selected playback mode/format immediately, but endpoi
 ## Dictate a prompt {#dictate}
 
 1. Keep **Prompt voice input** enabled in **Voice** (it is on by default).
-2. In the composer's **More actions** menu, choose **Dictate** and allow microphone access. If dictation or conversation is unavailable, its menu item shows why and opens the relevant **Voice** card. Dictation, the input test and live conversation can use the microphone only one at a time.
-3. Choose **Stop recording and transcribe** to get text or **Cancel dictation** to discard the recording. Switching conversations or closing the composer also cancels dictation.
+2. In **More actions**, check **Dictation mode**. Uncheck the active mode before choosing the other one.
+3. Hold the microphone next to **More actions** (or hold Space with the button focused), speak, then release to transcribe. Allow microphone access when prompted. Switching conversations or closing the composer cancels dictation.
 4. Review the text. It replaces the original selection only if the draft and selection are unchanged; otherwise choose **Insert transcript** in normal mode or **Discard transcript** before dictating again. Dictation never sends the prompt.
 
-If the API uses WAV fallback on Linux Tauri, **Dictate** and **Test API input** stop recording at 24 seconds. The clip stays on this device until you choose **Transcribe** to send it to the speech provider or **Cancel** to discard it.
+If the API uses WAV fallback on Linux Tauri, dictation and **Test API input** stop recording at 24 seconds. The clip stays on this device until you choose **Transcribe** to send it to the speech provider or **Cancel** to discard it.
 
 Encoded API recordings also stop at a size limit and offer the same **Transcribe** and **Cancel** choices.
 
@@ -55,7 +55,7 @@ In local desktop **Preferences → Voice → Dictation**, set **Dictation engine
 
 Ubuntu 24.04 meets the glibc requirement; Ubuntu 22.04 does not. Hex detects the spoken language from [Parakeet’s supported languages](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), which include English and French. This list is independent of the app language.
 
-Local recognition uses this device's microphone and works offline, including with WSL projects opened in the local app. For a compatible remote-server window, **Dictate** opens a separate local **Dictate on this device** window. Check the destination shown there, choose **Start voice input**, then **Stop recording and transcribe** and **Insert transcript** to return only the text to the draft. A remote project still needs its server connection.
+Local recognition works offline, including with WSL projects opened in the local app. In a compatible remote-server window, click the microphone to open the local **Dictate on this device** window. Check the destination, then use its recording and insertion controls. Only text returns to the draft; the remote project still needs its server connection.
 
 In a remote Tauri window on Linux, **Test API input** checks the server’s speech API without changing the dictation engine. For each API recording, check the server address in the native microphone prompt before confirming. Capture uses PulseAudio or PipeWire’s PulseAudio service and always has the 24-second WAV limit described above.
 
@@ -75,7 +75,7 @@ Gemini Live and OpenAI Realtime are available only for sessions on the server th
 
 In **Conversation**, choose a **Conversation engine**:
 
-- **Classic** needs only configured playback in a supported format. In the composer's **More actions**, choose **Enable conversation mode**. CodeNomad asks the agent to start each reply to a prompt you send with a short `spoken` summary and reads only that completed block in the active main session. The mode applies to the project tab until you disable it or reload. Starting dictation stops the spoken summary.
+- **Classic** needs only configured playback in a supported format. In **More actions**, check **Conversation mode**. CodeNomad reads the completed `spoken` summary of each reply in the active main session. The mode applies to the project tab until you uncheck it or reload.
 - **Gemini Live** and **OpenAI Realtime** each have their own **API key**, **Model** and optional **Voice**. Save the selected provider's settings. Open the target session, choose **Conversation mode** under **More actions**, and choose **Agree and start** when the provider consent dialog appears. Allow microphone access.
 
 If the provider becomes unavailable while the consent dialog is open, choose **Voice settings** to open the **Conversation** card.

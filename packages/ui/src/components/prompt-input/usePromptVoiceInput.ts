@@ -186,6 +186,7 @@ export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
     deviceDictation,
     canStartRecording,
     startRecording,
+    usesRemoteCapture: () => remoteDictation?.choice() === "hex" || remoteDictation?.choice() === "system",
     stopRecording: () => activeCapture()?.controller?.stopRecording(),
     confirmTranscription: (restoreFocus: boolean) => {
       const capture = activeCapture()

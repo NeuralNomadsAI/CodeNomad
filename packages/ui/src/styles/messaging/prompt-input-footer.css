@@ -13,6 +13,10 @@
   flex: 0 0 32px;
 }
 
+.prompt-input-footer .voice-button {
+  border-inline-end: 1px solid var(--border-divider);
+}
+
 .prompt-input-footer .send-button,
 .prompt-input-footer .stop-button {
   appearance: none;

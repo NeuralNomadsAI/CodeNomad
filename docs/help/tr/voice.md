@@ -35,8 +35,8 @@ Oynatma testi seçilen modu ve biçimi hemen kullanır, ancak uç nokta, anahtar
 ## Bir istemi dikte edin {#dictate}
 
 1. **Ses** bölümünde **Prompt ses girişi** öğesini etkin tutun (varsayılan olarak açıktır).
-2. İleti düzenleyicisinde **Diğer eylemler → Dikte et** seçeneğini kullanın ve mikrofona izin verin. Dikte veya sohbet kullanılamıyorsa menü öğesi nedenini gösterir ve ilgili **Ses** kartını açar. Dikte, girdi testi ve canlı sohbet aynı anda mikrofonu kullanamaz.
-3. Metni almak için **Kaydı durdur ve metne dönüştür**, kaydı atmak için **Dikteyi iptal et** seçeneğini kullanın. Görüşmeyi değiştirmek veya düzenleyiciyi kapatmak da dikteyi iptal eder.
+2. **Diğer eylemler** menüsünde **Dikte modu** seçeneğini işaretleyin. Diğer modu seçmeden önce etkin modun işaretini kaldırın.
+3. **Diğer eylemler** yanındaki mikrofonu basılı tutup konuşun, ardından metne dönüştürmek için bırakın. İstenirse mikrofon izni verin. Uyumlu uzak pencerede tıklamak yerel kayıt denetimlerini açar.
 4. Metni inceleyin. Yalnızca taslak ve seçim değişmediyse özgün seçimin yerini alır. Aksi hâlde yeniden dikte etmeden önce normal modda **Dikte metnini ekle** seçeneğini veya **Dikte metnini sil** seçeneğini kullanın. Dikte taslağı göndermez.
 
 API, Linux’ta Tauri ile WAV yedek modunu kullanıyorsa dikte ve giriş testi kaydı 24 saniyede durur. Kayıt, ses sağlayıcısına göndermek için **Yazıya dök** veya silmek için **İptal** seçeneğini kullanana kadar bu cihazda kalır.
@@ -55,7 +55,7 @@ Yerel masaüstü uygulamasında **Tercihler → Ses → Dikte** bölümünden **
 
 Ubuntu 24.04 glibc gereksinimini karşılar, Ubuntu 22.04 karşılamaz. Hex, konuşulan dili İngilizce ve Fransızca da dahil olmak üzere [Parakeet’in desteklediği diller](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) arasından otomatik algılar. Bu liste uygulama dilinden bağımsızdır.
 
-Yerel tanıma bu cihazın mikrofonunu kullanır ve yerel uygulamada açılan WSL projelerinde de çevrimdışı çalışır. Uyumlu bir uzak pencerede **Dikte et**, ayrı **Bu cihazda dikte et** penceresini açar. Gösterilen hedefi doğrulayıp **Ses girişini başlat**, **Kaydı durdur ve metne dönüştür** ve **Dikte metnini ekle** seçeneklerini kullanın; taslağa yalnızca metin döner. Uzak proje için sunucu bağlantısı yine gerekir.
+Yerel tanıma, yerel uygulamada açılan WSL projelerinde de çevrimdışı çalışır. Uyumlu bir uzak pencerede **Bu cihazda dikte et** penceresini açmak için mikrofona tıklayın. Hedefi doğrulayın ve bu penceredeki kayıt ve ekleme denetimlerini kullanın. Taslağa yalnızca metin döner. Uzak proje için sunucu bağlantısı yine gerekir.
 
 Linux’ta uzak bir Tauri penceresinde **API girdisini test et**, dikte motorunu değiştirmeden sunucunun ses API’sini sınar. API için her kaydı onaylamadan önce yerel mikrofon iletişim kutusundaki sunucu adresini kontrol edin. Kayıt, PulseAudio veya PipeWire’ın PulseAudio hizmetini kullanır ve yukarıda açıklanan 24 saniyelik WAV sınırı her zaman geçerlidir.
 
@@ -75,7 +75,7 @@ Gemini Live ve OpenAI Realtime yalnızca bu pencereyi açan sunucudaki oturumlar
 
 **Sohbet** kartında bir **Sohbet motoru** seçin:
 
-- **Klasik** yalnızca desteklenen bir formatta oynatma ayarı gerektirir. **Diğer eylemler** menüsünden **Konuşma modunu etkinleştir** seçeneğini kullanın. CodeNomad, gönderdiğiniz her istemin yanıtına kısa bir `spoken` özetiyle başlamasını ajandan ister ve etkin ana oturumda yalnızca tamamlanan özeti seslendirir. Mod, kapatılana veya sayfa yeniden yüklenene kadar proje sekmesinde geçerlidir. Dikte başlatıldığında özetin oynatılması durur.
+- **Klasik** yalnızca desteklenen bir formatta oynatma ayarı gerektirir. **Diğer eylemler** menüsünde **Konuşma modu** seçeneğini işaretleyin. CodeNomad etkin ana oturumda yanıtın tamamlanan `spoken` özetini seslendirir. Mod, kapatılana veya sayfa yeniden yüklenene kadar proje sekmesinde geçerlidir.
 - **Gemini Live** ve **OpenAI Realtime** için ayrı **API anahtarı**, **Model** ve isteğe bağlı **Ses** ayarlanır. Seçtiğiniz sağlayıcının ayarlarını kaydedin. Hedef oturumu açın, **Diğer eylemler** menüsünde **Konuşma modu** seçeneğini, sağlayıcının onay penceresi açıldığında **Kabul et ve başlat** seçeneğini kullanın. Mikrofona izin verin.
 
 Onay penceresi açıkken sağlayıcı kullanılamaz hâle gelirse **Ses ayarları** ile sohbet kartını açın.

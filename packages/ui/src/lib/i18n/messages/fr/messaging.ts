@@ -342,6 +342,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permission": "L'accès au microphone est requis pour enregistrer la saisie vocale.",
   "voice.command.unavailable": "{action} — {reason}",
   "voice.command.conversation": "Mode conversation",
+  "voice.command.dictation": "Mode dictée",
   "voice.command.off": "La saisie vocale est désactivée",
   "voice.command.composerUnavailable": "Indisponible dans cette zone de saisie",
   "voice.command.setupDictation": "Configurer la dictée",
