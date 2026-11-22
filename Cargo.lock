@@ -583,12 +583,14 @@ version = "0.1.0"
 dependencies = [
  "codenomad-client",
  "codenomad-host-process",
+ "js-sys",
  "reqwest",
  "rune",
  "rune-kit",
  "rune-theme-codenomad",
  "serde_json",
  "tokio",
+ "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
 ]

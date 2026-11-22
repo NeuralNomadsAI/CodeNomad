@@ -8,6 +8,8 @@ mod owned_startup;
 mod real_history;
 mod recovery;
 mod session_transport;
+mod window_restore;
+mod workspaces;
 
 /// Dispatch qualification CLI without entering the native window event loop.
 pub fn dispatch() -> bool {
@@ -21,6 +23,8 @@ pub fn dispatch() -> bool {
         ("--probe-real-controls", live_controls::run),
         ("--probe-controls", controls::run),
         ("--probe-launcher", launcher::run),
+        ("--probe-workspace-claims", workspaces::run),
+        ("--probe-window-restore", window_restore::run),
         ("--probe-real-history", real_history::run),
         ("--probe-fresh", session_transport::fresh),
         ("--probe-recovery", recovery::run),

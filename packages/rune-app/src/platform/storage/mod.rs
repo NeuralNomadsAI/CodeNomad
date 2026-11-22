@@ -119,28 +119,52 @@ mod native {
         }
     }
     #[derive(Clone)]
-    pub struct Store(std::sync::Arc<std::sync::Mutex<Files>>);
+    pub struct Store {
+        files: std::sync::Arc<std::sync::Mutex<Files>>,
+        staged: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
+    }
     impl Store {
         pub async fn open(directory: PathBuf) -> Result<Self> {
             let files = tokio::task::spawn_blocking(move || Files::open(directory)).await??;
-            Ok(Self(std::sync::Arc::new(std::sync::Mutex::new(files))))
+            Ok(Self {
+                files: std::sync::Arc::new(std::sync::Mutex::new(files)),
+                staged: Default::default(),
+            })
         }
         pub async fn load(&self) -> Result<Option<Vec<u8>>> {
-            let files = self.0.clone();
+            let files = self.files.clone();
             tokio::task::spawn_blocking(move || {
                 files.lock().map_err(|_| "state store unavailable")?.load()
             })
             .await?
         }
         pub async fn save(&self, bytes: Vec<u8>) -> Result<()> {
-            let files = self.0.clone();
+            let files = self.files.clone();
+            let staged = self.staged.clone();
             tokio::task::spawn_blocking(move || {
-                files
+                let files = files.lock().map_err(|_| "state store unavailable")?;
+                if staged
                     .lock()
                     .map_err(|_| "state store unavailable")?
-                    .save(&bytes)
+                    .as_ref()
+                    .is_some_and(|latest| *latest != bytes)
+                {
+                    return Ok(());
+                }
+                files.save(&bytes)
             })
             .await?
+        }
+        pub fn stage(&self, bytes: &[u8], _: &[(String, String)]) {
+            if let Ok(mut staged) = self.staged.lock() {
+                *staged = Some(bytes.to_vec());
+            }
+        }
+        pub fn save_exit(&self, bytes: Vec<u8>) -> Result<()> {
+            self.stage(&bytes, &[]);
+            crate::platform::block_on(async {
+                tokio::time::timeout(std::time::Duration::from_secs(5), self.save(bytes)).await?
+            })
         }
     }
 }
@@ -149,19 +173,113 @@ pub use native::Store;
 
 #[cfg(target_arch = "wasm32")]
 #[derive(Clone)]
-pub struct Store(web_sys::Storage);
+pub struct Store {
+    storage: web_sys::Storage,
+    staged: std::rc::Rc<BrowserStage>,
+    _listener: std::rc::Rc<BrowserListener>,
+}
+#[cfg(target_arch = "wasm32")]
+struct BrowserStage {
+    window: web_sys::Window,
+    storage: web_sys::Storage,
+    payload: std::cell::RefCell<(Vec<u8>, Vec<(String, String)>)>,
+    departing: std::cell::Cell<bool>,
+}
+#[cfg(target_arch = "wasm32")]
+impl BrowserStage {
+    fn depart(&self) {
+        if self.departing.get() {
+            return;
+        }
+        let Ok(current) = self.payload.try_borrow() else {
+            return;
+        };
+        let Ok(text) = std::str::from_utf8(&current.0) else {
+            return;
+        };
+        if current.0.is_empty() {
+            return;
+        }
+        self.departing.set(true);
+        if self.storage.set_item(Store::KEY, text).is_err()
+            || self.storage.set_item(Store::RELEASED, "1").is_err()
+        {
+            return;
+        }
+        for (base, id) in &current.1 {
+            let request = web_sys::RequestInit::new();
+            request.set_method("DELETE");
+            if js_sys::Reflect::set(request.as_ref(), &"keepalive".into(), &true.into()).ok()
+                != Some(true)
+            {
+                continue;
+            }
+            request.set_credentials(web_sys::RequestCredentials::Include);
+            let _ = self
+                .window
+                .fetch_with_str_and_init(&format!("{base}api/workspaces/{id}"), &request);
+        }
+    }
+}
+#[cfg(target_arch = "wasm32")]
+struct BrowserListener {
+    window: web_sys::Window,
+    callback: wasm_bindgen::closure::Closure<dyn FnMut(web_sys::PageTransitionEvent)>,
+    staged: std::rc::Rc<BrowserStage>,
+}
+#[cfg(target_arch = "wasm32")]
+impl Drop for BrowserListener {
+    fn drop(&mut self) {
+        use wasm_bindgen::JsCast;
+        // Winit unload can drop the last Store before its pagehide callback runs.
+        self.staged.depart();
+        let _ = self.window.remove_event_listener_with_callback(
+            "pagehide",
+            self.callback.as_ref().unchecked_ref(),
+        );
+    }
+}
 #[cfg(target_arch = "wasm32")]
 impl Store {
     const KEY: &'static str = "codenomad.rune.alpha.client-state.v1";
+    const RELEASED: &'static str = "codenomad.rune.alpha.records-released";
     pub async fn open() -> Result<Self> {
-        web_sys::window()
-            .and_then(|w| w.session_storage().ok().flatten())
-            .map(Self)
-            .ok_or_else(|| "state store unavailable".into())
+        use wasm_bindgen::JsCast;
+        let window = web_sys::window().ok_or("state store unavailable")?;
+        let storage = window
+            .session_storage()
+            .map_err(|_| "state store unavailable")?
+            .ok_or("state store unavailable")?;
+        let staged = std::rc::Rc::new(BrowserStage {
+            window: window.clone(),
+            storage: storage.clone(),
+            payload: Default::default(),
+            departing: Default::default(),
+        });
+        let copy = staged.clone();
+        let callback =
+            wasm_bindgen::closure::Closure::new(move |event: web_sys::PageTransitionEvent| {
+                if event.persisted() {
+                    return;
+                }
+                copy.depart();
+            });
+        window
+            .add_event_listener_with_callback("pagehide", callback.as_ref().unchecked_ref())
+            .map_err(|_| "state lifecycle unavailable")?;
+        Ok(Self {
+            storage,
+            staged: staged.clone(),
+            _listener: std::rc::Rc::new(BrowserListener {
+                window,
+                callback,
+                staged,
+            }),
+        })
     }
     pub async fn load(&self) -> Result<Option<Vec<u8>>> {
         let raw = self
-            .0
+            .storage
             .get_item(Self::KEY)
             .map_err(|_| "state read failed")?;
         if raw.as_ref().is_some_and(|v| v.len() > MAX_BYTES) {
@@ -170,13 +288,44 @@ impl Store {
         Ok(raw.map(String::into_bytes))
     }
     pub async fn save(&self, bytes: Vec<u8>) -> Result<()> {
+        if self.staged.payload.borrow().0 != bytes {
+            return Ok(());
+        }
+        self.save_now(&bytes)
+    }
+    fn save_now(&self, bytes: &[u8]) -> Result<()> {
+        if self.staged.departing.get() {
+            return Err("window departing".into());
+        }
         if bytes.len() > MAX_BYTES {
             return Err("state too large".into());
         }
         let value = std::str::from_utf8(&bytes)?;
-        self.0
+        self.storage
             .set_item(Self::KEY, value)
+            .map_err(|_| "state write failed")?;
+        self.storage
+            .remove_item(Self::RELEASED)
             .map_err(|_| "state write failed".into())
+    }
+    pub fn stage(&self, bytes: &[u8], records: &[(String, String)]) {
+        *self.staged.payload.borrow_mut() = (bytes.to_vec(), records.to_vec());
+    }
+    pub fn save_exit(&self, bytes: Vec<u8>) -> Result<()> {
+        self.save_now(&bytes)
+    }
+}
+
+pub fn unix_millis() -> u64 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis().min(9_007_199_254_740_991) as u64)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        js_sys::Date::now().clamp(0.0, 9_007_199_254_740_991.0) as u64
     }
 }
 

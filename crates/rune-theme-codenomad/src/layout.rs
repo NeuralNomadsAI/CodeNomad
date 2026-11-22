@@ -71,6 +71,12 @@ pub fn app_spec<S: 'static>(
         ..rune::AppSpec::new(title, initial_window(), init, view)
     }
 }
+pub fn run<S: 'static>(spec: rune::AppSpec<S>, closing: fn(&mut S, &mut rune::Tx)) {
+    rune::App::new(spec)
+        .on_close(closing)
+        .on_quit(closing)
+        .run();
+}
 pub fn transcript_rows<S: 'static>(
     count: usize,
     key: impl for<'a> Fn(&'a S, usize) -> Cow<'a, str> + 'static,

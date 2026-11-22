@@ -20,6 +20,23 @@ pub fn finish() {
     #[cfg(not(target_arch = "wasm32"))]
     boot::finish();
 }
+pub fn release_records_on_exit(records: Vec<(crate::backend::Backend, String)>) {
+    #[cfg(not(target_arch = "wasm32"))]
+    block_on(async move {
+        let mut jobs = tokio::task::JoinSet::new();
+        for (backend, id) in records {
+            jobs.spawn(async move {
+                let _ = backend.release_project(&id).await;
+            });
+        }
+        let _ = tokio::time::timeout(Duration::from_secs(1), async {
+            while jobs.join_next().await.is_some() {}
+        })
+        .await;
+    });
+    #[cfg(target_arch = "wasm32")]
+    let _ = records;
+}
 pub fn start_local(
     wake: rune::Waker,
 ) -> Option<codenomad_client::Receiver<crate::history::Result<(crate::backend::Backend, LocalHost)>>>

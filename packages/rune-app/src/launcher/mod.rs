@@ -17,6 +17,7 @@ pub struct Launcher {
     pub title: TextEdit,
     pub search: TextEdit,
     pub connection: Option<Backend>,
+    pub server_id: Option<String>,
     pub projects: Vec<Project>,
     pub project: Option<Project>,
     pub sessions: Vec<Session>,
@@ -30,12 +31,36 @@ pub struct Launcher {
     wake: rune::Waker,
 }
 enum Reply {
-    Connected(Backend, Vec<Project>),
-    Opened(Project, Sessions),
+    Connected(Backend, Vec<Project>, String),
+    Opened(
+        crate::workspace::opening::Opening,
+        Sessions,
+        Option<(Backend, String)>,
+    ),
     Listed(Sessions, bool),
     Bound(Backend, String),
 }
 impl Launcher {
+    pub fn local_connection(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.host.is_some()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            false
+        }
+    }
+    pub fn state_directory(&self) -> Option<std::path::PathBuf> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.host.as_ref().and_then(|h| h.state_directory())
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            None
+        }
+    }
     #[cfg(not(target_arch = "wasm32"))]
     pub fn has_owned_server(&self) -> bool {
         self.host.is_some()
@@ -60,6 +85,7 @@ impl Launcher {
             title: TextEdit::new(""),
             search: TextEdit::new(""),
             connection: None,
+            server_id: None,
             projects: vec![],
             project: None,
             sessions: vec![],
@@ -183,15 +209,20 @@ pub fn connect(s: &mut State, _: &mut Tx) {
     let password = l.password.text.clone();
     l.job("connect_error", async move {
         let b = Backend::connect(&address, &password).await?;
+        let server_id = b.server_id().await?;
         let projects = b.projects().await?;
-        Ok(Reply::Connected(b, projects))
+        Ok(Reply::Connected(b, projects, server_id))
     });
 }
 pub fn choose_project(s: &mut State, path: &str, tx: &mut Tx) {
     s.launcher.as_mut().unwrap().folder = TextEdit::new(path);
     open(s, tx);
 }
-pub fn open(s: &mut State, _: &mut Tx) {
+pub fn open(s: &mut State, tx: &mut Tx) {
+    if !crate::workspace::input_ready(s) {
+        return;
+    }
+    crate::workspace::prepare_open(s, tx);
     let Some(l) = &mut s.launcher else {
         return;
     };
@@ -200,9 +231,9 @@ pub fn open(s: &mut State, _: &mut Tx) {
     };
     let folder = l.folder.text.trim().to_string();
     l.job("open_error", async move {
-        let p = b.open_project(&folder).await?;
-        let rows = b.sessions(&p, None).await?;
-        Ok(Reply::Opened(p, rows))
+        let opening = crate::workspace::opening::Opening::create(b.clone(), &folder).await?;
+        let rows = b.sessions(&opening.project, None).await?;
+        Ok(Reply::Opened(opening, rows, None))
     });
 }
 pub fn list(s: &mut State, more: bool) {
@@ -221,6 +252,9 @@ pub fn list(s: &mut State, more: bool) {
     });
 }
 pub fn create(s: &mut State, _: &mut Tx) {
+    if !crate::workspace::input_ready(s) {
+        return;
+    }
     let Some(l) = &mut s.launcher else {
         return;
     };
@@ -241,6 +275,9 @@ pub fn create(s: &mut State, _: &mut Tx) {
     });
 }
 pub fn choose(s: &mut State, id: String, title: String) {
+    if !crate::workspace::input_ready(s) {
+        return;
+    }
     let Some(l) = &mut s.launcher else {
         return;
     };
@@ -271,8 +308,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 // Bootstrap owns the authenticated cookie jar even if project listing fails.
                 l.connection = Some(backend.clone());
                 l.job("list_error", async move {
+                    let server_id = backend.server_id().await?;
                     let projects = backend.projects().await?;
-                    Ok(Reply::Connected(backend, projects))
+                    Ok(Reply::Connected(backend, projects, server_id))
                 });
             }
             Err(_) => l.error = Some("connect_error"),
@@ -287,18 +325,27 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     l.result = None;
     l.pending = false;
     match result {
-        Ok(Reply::Connected(b, projects)) => {
+        Ok(Reply::Connected(b, projects, server_id)) => {
             l.connection = Some(b);
+            l.server_id = Some(server_id);
             l.projects = projects;
             l.password = TextEdit::new("");
+            crate::workspace::connected(s);
+            crate::workspace::resume(s, tx);
         }
-        Ok(Reply::Opened(project, rows)) => {
+        Ok(Reply::Opened(opening, rows, restored)) => {
+            let project = opening.project.clone();
             l.folder = TextEdit::new(&project.path);
-            l.project = Some(project);
+            l.project = Some(project.clone());
             l.sessions = rows.rows;
             l.next = rows.next;
             l.search = TextEdit::new("");
             l.creation_uncertain = false;
+            crate::workspace::opened(s, &project);
+            opening.adopt();
+            if let Some((backend, title)) = restored {
+                bind(s, backend, title, tx);
+            }
         }
         Ok(Reply::Listed(rows, more)) => {
             if !more {
@@ -315,37 +362,14 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.next = rows.next;
         }
         Ok(Reply::Bound(b, title)) => {
-            s.agent = None;
-            s.expanded_tools.clear();
-            s.chat_title = title;
-            s.messages.clear();
-            s.draft = TextEdit::new("");
-            s.phase = Phase::Loading;
-            s.can_older = false;
-            s.paging = false;
-            s.history_error = false;
-            s.revision += 1;
-            let (out, incoming) = bounded(64);
-            let (commands, input) = bounded(1);
-            s.incoming = Some(incoming);
-            s.commands = Some(commands);
-            let wake = l.wake.clone();
-            crate::platform::spawn(async move {
-                if crate::transport::run_backend(b, out.clone(), input, wake.clone())
-                    .await
-                    .is_err()
-                {
-                    crate::transport::publish(&out, &wake, crate::transport::Event::Failed).await;
-                }
-            });
-            s.launcher_visible = false;
-            tx.scroll_to_bottom_instant("history");
+            bind(s, b, title, tx);
         }
         Err(error) => {
             let key = match error.to_string().as_str() {
                 "connect_error" => "connect_error",
                 "list_error" => "list_error",
                 "create_error" => "create_error",
+                "rune.restore_error" => "rune.restore_error",
                 _ => "open_error",
             };
             if key == "create_error" {
@@ -357,14 +381,84 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     tx.instant();
     true
 }
+pub fn restore(s: &mut State, saved: crate::workspace::Workspace) {
+    let Some(l) = &mut s.launcher else {
+        return;
+    };
+    if l.pending {
+        return;
+    }
+    let Some(backend) = l.connection.clone() else {
+        return;
+    };
+    let local = l.local_connection();
+    let identity = if local {
+        saved.backend_id.is_none()
+    } else {
+        saved.backend_id.as_deref()
+            == Some(if cfg!(target_arch = "wasm32") {
+                "web"
+            } else {
+                "external"
+            })
+            && saved.server_id.is_some()
+            && saved.server_id == l.server_id
+    };
+    if !identity {
+        l.error = Some("rune.restore_error");
+        return;
+    }
+    l.job("rune.restore_error", async move {
+        let opening =
+            crate::workspace::opening::Opening::create(backend.clone(), &saved.folder).await?;
+        let rows = backend.sessions(&opening.project, None).await?;
+        let bound = if let Some(id) = &saved.active_session_id {
+            let (bound, session) = backend.bind_session(&opening.project, id, false).await?;
+            Some((bound, session.title))
+        } else {
+            None
+        };
+        Ok(Reply::Opened(opening, rows, bound))
+    });
+}
+fn bind(s: &mut State, b: Backend, title: String, tx: &mut Tx) {
+    let draft = crate::workspace::bound(s, &b);
+    s.agent = None;
+    s.expanded_tools.clear();
+    s.chat_title = title;
+    s.messages.clear();
+    s.draft = TextEdit::new(draft);
+    s.phase = Phase::Loading;
+    s.can_older = false;
+    s.paging = false;
+    s.history_error = false;
+    s.revision += 1;
+    let (out, incoming) = bounded(64);
+    let (commands, input) = bounded(1);
+    s.incoming = Some(incoming);
+    s.commands = Some(commands);
+    let wake = s.wake.clone();
+    crate::platform::spawn(async move {
+        if crate::transport::run_backend(b, out.clone(), input, wake.clone())
+            .await
+            .is_err()
+        {
+            crate::transport::publish(&out, &wake, crate::transport::Event::Failed).await;
+        }
+    });
+    s.launcher_visible = false;
+    crate::workspace::capture(s);
+    tx.scroll_to_bottom_instant("history");
+}
 pub fn back(s: &mut State) {
     if !matches!(s.phase, Phase::Ready | Phase::Failed)
-        || !s.draft.text.is_empty()
+        || (!s.draft.text.is_empty() && s.workspace.is_none())
         || crate::agent::navigation_blocked(s)
         || s.launcher.is_none()
     {
         return;
     }
+    crate::workspace::capture(s);
     s.agent = None;
     s.commands = None;
     s.incoming = None;

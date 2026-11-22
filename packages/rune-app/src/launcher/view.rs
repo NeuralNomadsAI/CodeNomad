@@ -9,6 +9,7 @@ pub fn button(key: &str, label: &str, disabled: bool) -> El {
 }
 pub fn view(s: &State) -> El {
     let l = s.launcher.as_ref().expect("launcher");
+    let waiting = !crate::workspace::input_ready(s);
     let mut body = col().full_width().separate(Space::Md);
     if l.connection.is_none() {
         body = body
@@ -46,6 +47,7 @@ pub fn view(s: &State) -> El {
                 input(&l.folder)
                     .literal_direction()
                     .key("folder-path")
+                    .disabled(waiting)
                     .label(t("folder"))
                     .single_line()
                     .full_width()
@@ -61,7 +63,7 @@ pub fn view(s: &State) -> El {
                         button(
                             "browse",
                             t("browse"),
-                            l.pending || !crate::platform::folder_picker_available(),
+                            l.pending || waiting || !crate::platform::folder_picker_available(),
                         )
                         .on_press_tx(crate::platform::browse),
                     )
@@ -69,7 +71,7 @@ pub fn view(s: &State) -> El {
                         button(
                             "open-folder",
                             t("open"),
-                            l.pending || l.folder.text.trim().is_empty(),
+                            l.pending || waiting || l.folder.text.trim().is_empty(),
                         )
                         .on_press_tx(launcher::open),
                     ),
@@ -78,7 +80,7 @@ pub fn view(s: &State) -> El {
             for p in &l.projects {
                 let path = p.path.clone();
                 body = body.child(
-                    button(&format!("project-{}", p.id), &p.path, l.pending)
+                    button(&format!("project-{}", p.id), &p.path, l.pending || waiting)
                         .literal_direction()
                         .on_press_tx(move |s: &mut State, tx| {
                             launcher::choose_project(s, &path, tx);
@@ -92,7 +94,7 @@ pub fn view(s: &State) -> El {
                         .separate(Space::Sm)
                         .child(text(t("sessions")).text_role(TextRole::Title))
                         .child(
-                            button("refresh-sessions", t("refresh"), l.pending)
+                            button("refresh-sessions", t("refresh"), l.pending || waiting)
                                 .on_press(|s: &mut State| launcher::list(s, false)),
                         ),
                 )
@@ -124,7 +126,7 @@ pub fn view(s: &State) -> El {
                         } else {
                             &title
                         },
-                        l.pending,
+                        l.pending || waiting,
                     )
                     .full_width()
                     .on_press(move |s: &mut State| launcher::choose(s, id.clone(), title.clone())),
@@ -138,7 +140,7 @@ pub fn view(s: &State) -> El {
                     button(
                         "more-sessions",
                         t("more"),
-                        l.pending || l.sessions.len() >= 2000,
+                        l.pending || waiting || l.sessions.len() >= 2000,
                     )
                     .on_press(|s: &mut State| launcher::list(s, true)),
                 );
@@ -162,7 +164,10 @@ pub fn view(s: &State) -> El {
                     button(
                         "create-session",
                         t("create"),
-                        l.pending || l.creation_uncertain || l.title.text.trim().is_empty(),
+                        l.pending
+                            || waiting
+                            || l.creation_uncertain
+                            || l.title.text.trim().is_empty(),
                     )
                     .on_press_tx(launcher::create),
                 );
