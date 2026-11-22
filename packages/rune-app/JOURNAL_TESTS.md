@@ -63,6 +63,8 @@ Le serveur partagé est construit depuis ce worktree et son intégration Rust. L
 
 ## Parité du contrôle de fermeture
 
+Le banc des onglets projet conserve 24 paires Solid/Rune réelles (huit contextes, trois états), trois fiches AST, arbres accessibles et six scripts d'entrées Rune par identité sous `target/rune-parity/project-tabs/evidence.json`. Les écarts pixel diagnostiqués vont de 15,07 % à 56,75 % ; aucun seuil d'admission n'est choisi, la parité reste ouverte. Le composant Solid de fermeture répond au clic mais pas à Espace dans les six contextes de base ; le comportement clavier accessible Rune reste conservé. Commande : `node --import tsx scripts/rune/parity/project-tabs.mjs --binary <galerie-absolue>`. Détails dans `scripts/rune/parity/project-tabs.md`.
+
 La fixture charge le véritable composant Solid, ses fournisseurs et ses styles. Le composant Rune possède une scène de galerie et utilise les métriques générées de ces styles.
 
 Six paires de captures Windows à l'échelle 1 couvrent clair/sombre et repos/survol/focus. La qualification mesurée admet au plus 2/255 d'écart de canal, 39 d'écart cumulé et 34 pixels différents sur 576 ; les pixels hors icône correspondent exactement. Les mutations négatives suppriment l'icône ou la déplacent d'un pixel et sont rejetées.
