@@ -7,6 +7,7 @@ mod links;
 mod rtl_tests;
 #[cfg(test)]
 mod tests;
+mod tool_diff;
 mod tools;
 pub(crate) mod transcript;
 pub(crate) mod transport;

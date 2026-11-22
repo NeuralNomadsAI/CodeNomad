@@ -98,13 +98,15 @@ fn markdown_and_specialized_tools_use_native_content_in_the_runtime() {
             (1000.0, 1200.0),
             Env::new(dark, 1.0),
         );
-        rt.frame(0.0);
+        for _ in 0..12 {
+            rt.frame(1.0 / 60.0);
+        }
         let tree = rt.accessibility_json().to_string();
         for label in [
             "Results",
             "First",
             "let count = 12;",
-            "+return 8;",
+            "return 8;",
             "Print result",
             "printf",
             "Grep return",
@@ -128,6 +130,49 @@ fn markdown_and_specialized_tools_use_native_content_in_the_runtime() {
             Some("$ printf '%s' result\n\u{1b}[31mresult\u{1b}[0m")
         );
     }
+}
+
+#[test]
+fn transcript_edit_switches_the_shared_diff_without_changing_the_copied_patch() {
+    let mut state = init();
+    let native = serde_json::from_str(include_str!("../../fixtures/transcript.json")).unwrap();
+    state.messages = vec![history::decode_message(&native).unwrap()];
+    state.phase = Phase::Ready;
+    let mut rt = Runtime::new(
+        state,
+        |s, cx| crate::strings::with_locale("en", || view(s, cx)),
+        (1000.0, 1200.0),
+        Env::new(false, 1.0),
+    );
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(rt.find("tool-transcript:4:edit-diff").is_some());
+    assert!(
+        rt.accessibility_json()
+            .to_string()
+            .contains("Switch to unified view")
+    );
+    for key in [
+        "tool-transcript:4:edit-mode",
+        "copy-tool-transcript:4:edit-output",
+    ] {
+        let (x, y) = rt.find(key).unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        rt.accessibility_json()
+            .to_string()
+            .contains("Switch to split view")
+    );
+    assert_eq!(
+        clipboard.text().as_deref().map(String::as_str),
+        Some("@@ -1 +1 @@\n-return 7;\n+return 8;")
+    );
 }
 
 #[test]
