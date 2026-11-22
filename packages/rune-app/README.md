@@ -39,7 +39,7 @@ Le mode natif explicite lance un serveur possédé par Rune si ces trois paramè
 
 Le mode par défaut crée un dossier neuf. `RUNE_HOST_PERSISTENT=true` permet de rouvrir le même profil `trial-*` : un marqueur valide son identité et un verrou système protège toute la durée de vie du serveur enfant. La configuration du dossier est conservée.
 
-Les primitives de restauration portent un snapshot borné des onglets et brouillons texte, un fichier atomique sous le profil natif isolé et un stockage de session propre à l'onglet du navigateur. Leur raccord aux onglets et à la restauration de l'interface fait partie de la tranche en cours.
+La restauration conserve un snapshot borné des onglets, sessions sélectionnées et brouillons texte, dans un fichier atomique sous le profil natif isolé ou dans le stockage de session du navigateur. La reconnexion valide le serveur et la session sauvegardés avant de les lier à l'onglet.
 
 ## Vérifications sans fenêtre
 
@@ -60,6 +60,8 @@ node scripts/rune/headless.mjs --binary $env:RUNE_CLIENT_EXE
 
 Les fixtures créent leurs projets, profils `trial-*`, ports éphémères et processus ; OpenCode est simulé dans ces scénarios. Le serveur Rust reste réel. `RUNE_CLIENT_EXE` et `RUNE_SERVER_EXE` sélectionnent des exécutables absolus ; le client utilise sinon le cache `CARGO_TARGET_DIR`, ou `target` à la racine du workspace.
 Les runners contrôlent `--test-support-info` avant de lancer une fixture. Les implémentations des sondes vivent sous `tests/probes/` et sont propres à la cible native.
+
+`node packages/rune-app/native-store-fixture.mjs --opencode <chemin-absolu-opencode>` qualifie le stockage natif dans un daemon privé avec le plugin d'historique de production : 600 messages importés, session hors première page, trois démarrages Rune, deux occurrences et brouillons, pagination et ancre de lecture. Les générations et créations de sessions par Rune sont refusées par les relais du banc ; les sessions de préparation sont supprimées par identité. Le processus OpenCode reste actif entre les trois clients. Les preuves sont sous `scripts/perf/run/trial-rune-store-*`.
 
 `controls-live.mjs` et les scripts `real-history-*` sont des essais explicites avec un OpenCode réel déjà configuré, des sessions jetables et des outils interdits. `interactive-live.mjs` ouvre une fenêtre et demande un dossier et un titre exacts ; ses essais utilisent une copie de la conversation source. Leur lancement interactif appartient à une qualification dédiée.
 

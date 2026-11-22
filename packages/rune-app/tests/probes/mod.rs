@@ -3,6 +3,7 @@ mod controls;
 mod latency;
 mod launcher;
 mod live_controls;
+mod native_store;
 mod native_transport;
 mod owned_startup;
 mod pending_live;
@@ -24,6 +25,7 @@ pub fn dispatch() -> bool {
         ("--probe-owned-startup", owned_startup::run as fn()),
         ("--probe-real-controls", live_controls::run),
         ("--probe-real-pending", pending_live::run),
+        ("--probe-native-store", native_store::run),
         ("--probe-pending-open", pending_open::run),
         ("--probe-controls", controls::run),
         ("--probe-launcher", launcher::run),
