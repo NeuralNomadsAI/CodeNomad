@@ -10,6 +10,7 @@ struct App {
     owner_removed: bool,
     gesture: bool,
     focus_target: bool,
+    inline_target: bool,
     many: bool,
     hidden: bool,
     dialog: bool,
@@ -20,7 +21,7 @@ fn at(s: &mut App) -> Option<&mut State<App>> {
 fn descriptor(s: &App) -> Rc<Menu<App>> {
     let mut item = Item::new("open", "Open", |s: &mut App, tx| {
         s.events.push(format!("select:{:?}", tx.focused()));
-        s.dialog = true;
+        s.dialog = !s.inline_target;
     });
     item.description = Some("Details".into());
     item.checked = Some(true);
@@ -81,7 +82,18 @@ fn view_app(s: &App, cx: &mut Cx<App>) -> El {
                     ),
             );
         }
-        rune_kit::root(rune::col().w_full().h_full().child(trigger), layers)
+        rune_kit::root(
+            rune::col()
+                .w_full()
+                .h_full()
+                .child(trigger)
+                .children(s.inline_target.then(|| {
+                    Button::new("Accept")
+                        .build(kit(layout::dark()))
+                        .key("accept")
+                })),
+            layers,
+        )
     })
 }
 fn runtime() -> Runtime<App> {
@@ -184,20 +196,25 @@ fn immediate_action_keeps_gesture_and_precedes_close() {
     assert!(rt.state.events.iter().any(|e| e.starts_with("restored:")));
 }
 #[test]
-fn gesture_target_overrides_dialog_autofocus() {
-    let mut rt = runtime();
-    rt.state.gesture = true;
-    rt.state.focus_target = true;
-    tap(&mut rt, "actions:trigger");
-    key(&mut rt, Key::Down);
-    key(&mut rt, Key::Enter);
-    assert_eq!(focused(&rt).as_deref(), Some("accept"));
-    deliver(&mut rt);
-    assert!(
-        rt.state
-            .events
-            .contains(&"restored:Some(\"accept\")".into())
-    );
+fn gesture_target_preserves_dialog_focus_but_moves_returned_trigger_focus() {
+    for inline in [false, true] {
+        let mut rt = runtime();
+        rt.state.gesture = true;
+        rt.state.focus_target = true;
+        rt.state.inline_target = inline;
+        tap(&mut rt, "actions:trigger");
+        key(&mut rt, Key::Down);
+        key(&mut rt, Key::Enter);
+        deliver(&mut rt);
+        deliver(&mut rt);
+        let target = if inline { "accept" } else { "cancel" };
+        assert_eq!(focused(&rt).as_deref(), Some(target));
+        assert!(
+            rt.state
+                .events
+                .contains(&format!("restored:Some({target:?})"))
+        );
+    }
 }
 #[test]
 fn trigger_arrows_open_at_enabled_edges_and_keep_menu_navigation() {

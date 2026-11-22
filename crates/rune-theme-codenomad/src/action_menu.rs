@@ -5,6 +5,7 @@ use rune_kit::{Placement, popover};
 use std::{collections::HashMap, rc::Rc, time::Duration};
 
 pub type Action<S> = Rc<dyn Fn(&mut S, &mut Tx)>;
+pub type Focus<S> = Rc<dyn Fn(&S) -> Option<String>>;
 pub type StateAt<S> = fn(&mut S) -> Option<&mut State<S>>;
 
 pub struct Item<S> {
@@ -15,7 +16,7 @@ pub struct Item<S> {
     pub disabled: bool,
     pub checked: Option<bool>,
     pub select_before_close: bool,
-    pub focus_after_select: Option<Rc<dyn Fn(&S) -> Option<String>>>,
+    pub focus_after_select: Option<Focus<S>>,
     pub on_select: Action<S>,
     pub on_mouse_enter: Option<Action<S>>,
     pub on_mouse_leave: Option<Action<S>>,
@@ -40,7 +41,8 @@ impl<S> Item<S> {
 struct Pending<S> {
     action: Option<Action<S>>,
     restored: Option<Action<S>>,
-    menu_prefix: String,
+    focus: Option<Focus<S>>,
+    menu: String,
 }
 struct Open<S> {
     hovered: Option<(String, Option<Action<S>>)>,
@@ -119,7 +121,14 @@ fn unique_items<S>(menu: &Menu<S>) -> Vec<Rc<Item<S>>> {
     }
     items
 }
-fn close<S>(s: &mut S, at: StateAt<S>, menu: &Menu<S>, action: Option<Action<S>>, tx: &mut Tx) {
+fn close<S>(
+    s: &mut S,
+    at: StateAt<S>,
+    menu: &Menu<S>,
+    action: Option<Action<S>>,
+    focus: Option<Focus<S>>,
+    tx: &mut Tx,
+) {
     clear_hover(s, at, &menu.key, tx);
     let Some(state) = at(s) else { return };
     if state.menus.remove(&menu.key).is_none() {
@@ -128,7 +137,8 @@ fn close<S>(s: &mut S, at: StateAt<S>, menu: &Menu<S>, action: Option<Action<S>>
     state.pending.push(Pending {
         action,
         restored: menu.on_focus_restored.clone(),
-        menu_prefix: format!("{}:item:", menu.key),
+        focus,
+        menu: menu.key.clone(),
     });
     if let Some(change) = &menu.on_open_change {
         change(s, false, tx);
@@ -141,15 +151,28 @@ pub fn poll<S>(s: &mut S, at: StateAt<S>, tx: &mut Tx) -> bool {
     let Some(state) = at(s) else { return false };
     let pending = std::mem::take(&mut state.pending);
     let mut delivered = false;
-    for pending in pending {
-        if tx
-            .focused()
-            .is_some_and(|key| key.starts_with(&pending.menu_prefix))
-        {
+    for mut pending in pending {
+        if tx.focused().is_some_and(|key| {
+            key == format!("{}:menu", pending.menu)
+                || key.starts_with(&format!("{}:item:", pending.menu))
+        }) {
             if let Some(state) = at(s) {
                 state.pending.push(pending);
             }
             tx.wake_after(Duration::ZERO);
+            continue;
+        }
+        let target = pending.focus.take().and_then(|target| target(s));
+        if let Some(target) = target.filter(|_| {
+            tx.focused()
+                .is_none_or(|key| key == format!("{}:trigger", pending.menu))
+        }) {
+            tx.return_focus(target, false);
+            if let Some(state) = at(s) {
+                state.pending.push(pending);
+            }
+            tx.wake_after(Duration::ZERO);
+            delivered = true;
             continue;
         }
         if let Some(action) = pending.action.clone() {
@@ -178,7 +201,8 @@ pub fn clear<S>(s: &mut S, at: StateAt<S>, key: &str, tx: &mut Tx) {
             state.pending.push(Pending {
                 action: None,
                 restored: open.restored,
-                menu_prefix: format!("{key}:item:"),
+                focus: None,
+                menu: key.into(),
             });
             tx.wake_after(Duration::ZERO);
         }
@@ -240,7 +264,7 @@ pub fn view<S: 'static>(
             }
             let Some(state) = at(s) else { return };
             if state.is_open(&action.key) {
-                close(s, at, &action, None, tx);
+                close(s, at, &action, None, None, tx);
             } else {
                 open(s, at, &action, tx);
             }
@@ -333,16 +357,10 @@ pub fn view<S: 'static>(
             clear_hover(s, at, &menu.key, tx);
             if item.select_before_close {
                 (item.on_select)(s, tx);
-                if let Some(target) = item
-                    .focus_after_select
-                    .as_ref()
-                    .and_then(|target| target(s))
-                {
-                    tx.return_focus(target, false);
-                }
-                close(s, at, &menu, None, tx);
+                tx.return_focus(format!("{}:trigger", menu.key), false);
+                close(s, at, &menu, None, item.focus_after_select.clone(), tx);
             } else {
-                close(s, at, &menu, Some(item.on_select.clone()), tx);
+                close(s, at, &menu, Some(item.on_select.clone()), None, tx);
             }
         })
     });
@@ -353,7 +371,7 @@ pub fn view<S: 'static>(
         .label(&menu.label)
         .focus_group()
         .focus_return(&trigger_key)
-        .modal_tx(true, move |s, tx| close(s, at, &dismiss, None, tx))
+        .modal_tx(true, move |s, tx| close(s, at, &dismiss, None, None, tx))
         .min_w(t.metric("actionMenu", "minWidth").px())
         .max_w((viewport_width - t.metric("actionMenu", "viewportInset").px()).max(0.0))
         .px(t.metric("actionMenu", "paddingLeft").px())
