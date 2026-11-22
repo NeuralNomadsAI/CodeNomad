@@ -6,17 +6,11 @@ use crate::{
     platform::{self, reads},
 };
 use codenomad_client::{Receiver, Sender, bounded};
-use std::collections::VecDeque;
+use std::collections::HashSet;
 
 #[derive(Clone, Default)]
 pub(crate) struct Pages {
     pub rows: Vec<Session>,
-    next: VecDeque<(String, String)>,
-}
-impl Pages {
-    pub fn more(&self) -> bool {
-        !self.next.is_empty()
-    }
 }
 #[derive(Default)]
 pub(crate) struct Linked {
@@ -30,24 +24,13 @@ impl Linked {
     }
 }
 
-pub(super) fn load(s: &mut State, more: bool) {
+pub(super) fn load(s: &mut State) {
     let reads = s.reads.clone();
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };
     let (Some(backend), Some(project)) = (l.connection.clone(), l.project.clone()) else {
         return;
-    };
-    let old = if more {
-        if l.linked.pending() {
-            return;
-        }
-        let Some(pages) = l.linked.pages.clone().filter(Pages::more) else {
-            return;
-        };
-        Some(pages)
-    } else {
-        None
     };
     let wake = l.wake.clone();
     let (cancel, cancelled) = bounded(1);
@@ -60,41 +43,33 @@ pub(super) fn load(s: &mut State, more: bool) {
                 return;
             };
             let result = async {
-                let (mut pages, targets) = match old {
-                    Some(mut pages) => {
-                        let (directory, cursor) =
-                            pages.next.pop_front().ok_or("missing linked cursor")?;
-                        (pages, vec![(directory, Some(cursor))])
-                    }
-                    None => (
-                        Pages::default(),
-                        backend
-                            .linked_session_directories(&project)
-                            .await?
-                            .into_iter()
-                            .map(|directory| (directory, None))
-                            .collect(),
-                    ),
-                };
-                let mut ids: std::collections::HashSet<_> =
-                    pages.rows.iter().map(|row| row.id.clone()).collect();
-                for (directory, cursor) in targets {
-                    let page = backend
-                        .linked_session_page(&project, &directory, cursor.as_deref())
-                        .await?;
-                    if page.next.is_some() && page.next == cursor {
-                        return Err("linked session cursor did not advance".into());
-                    }
-                    if let Some(next) = page.next {
-                        pages.next.push_back((directory, next));
-                    }
-                    pages.rows.extend(
-                        page.rows
-                            .into_iter()
-                            .filter(|row| ids.insert(row.id.clone())),
-                    );
-                    if pages.rows.len() > 2000 {
-                        return Err("linked session list limit reached".into());
+                let mut pages = Pages::default();
+                let mut ids = HashSet::new();
+                let mut budget = 1000; // Includes empty pages, across all linked locations.
+                for directory in backend.linked_session_directories(&project).await? {
+                    let mut cursor = None;
+                    let mut seen = HashSet::new();
+                    loop {
+                        if budget == 0 {
+                            return Err("linked session page limit reached".into());
+                        }
+                        budget -= 1;
+                        let page = backend
+                            .linked_session_page(&project, &directory, cursor.as_deref())
+                            .await?;
+                        pages.rows.extend(
+                            page.rows
+                                .into_iter()
+                                .filter(|row| ids.insert(row.id.clone())),
+                        );
+                        if pages.rows.len() > 2000 {
+                            return Err("linked session list limit reached".into());
+                        }
+                        let Some(next) = page.next else { break };
+                        if !seen.insert(next.clone()) {
+                            return Err("repeated linked session cursor".into());
+                        }
+                        cursor = Some(next);
                     }
                 }
                 Ok(pages)
@@ -116,10 +91,11 @@ pub(super) fn poll(s: &mut State) -> bool {
         && l.connection.is_some()
         && l.project.is_some()
         && l.linked.pages.is_none()
+        && !l.pending
         && !l.linked.pending()
         && !l.linked.failed
     {
-        load(s, false);
+        load(s);
         return true;
     }
     let Some(result) = l.linked.job.as_ref().and_then(|(_, r)| r.try_recv().ok()) else {

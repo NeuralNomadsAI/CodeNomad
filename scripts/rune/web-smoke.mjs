@@ -55,6 +55,8 @@ try {
       let measured
       const policy=workspacePolicy({origin:url.origin,project:values.project,assets})
       let eventSource=0
+      let releaseLinked
+      const beforeLinked=values.mobile?new Promise(resolve=>{releaseLinked=resolve}):null
       page.on('response',async response=>{
         if(!values.connected)return
         const request=response.request(),pathname=new URL(response.url()).pathname
@@ -79,6 +81,7 @@ try {
             catch{errors.push({name:'WorkspaceAdmission',message:'Private workspace response was refused before delivery'});return route.abort('blockedbyclient')}
           }
         }
+        if(values.mobile&&req.method()==='GET'&&p.endsWith('/worktrees'))await beforeLinked
         await route.continue()
       })
       const started = performance.now()
@@ -132,8 +135,10 @@ try {
           await press(values.project)
           await openSessions()
           if(values.mobile){
+            await row('Existing history').waitFor()
+            releaseLinked()
             await row('Linked checkout session').waitFor()
-            assert.equal(await row('Linked checkout next page').count(),0)
+            await row('Linked checkout next page').waitFor()
             assert.equal(await row('Another session').count(),0)
             await press(messages['sessionList.filter.ariaLabel'])
             await page.locator('textarea:focus').fill('Another session')
@@ -144,7 +149,6 @@ try {
           await press(messages['rune.more'])
           if(values.mobile){
             await row('Another session').waitFor()
-            await press(messages['rune.more'])
             await select('Linked checkout next page','ses_linked_next')
             await page.getByText('Linked checkout answer',{exact:true}).waitFor()
           }
@@ -202,7 +206,7 @@ try {
         if(values.mobile)measured.android=await mobileInteraction(page,{
           prompt:messages['rune.prompt'], send:messages['promptInput.overlay.send'],
           latest:messages['rune.latest'],
-        })
+        },imagePage)
         if(values.mobile){
           measured.network=colorScheme==='dark'?{rttMs:80,downloadBytesPerSecond:2_500_000,uploadBytesPerSecond:625_000}:'loopback'
           assert.deepEqual(measured.viewport,{width,height,touch:true,dpr:control?1:android.deviceScaleFactor,platform:'Android',mobile:true})
@@ -253,7 +257,7 @@ try {
         await page.screenshot({path: path.join(out, `${name}-${colorScheme}-failure.png`)}).catch(() => {})
         await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,measured,mirror:await page.locator('body').ariaSnapshot()}, null, 2))
         throw error
-      } finally {await context.close()}
+      } finally {releaseLinked?.();await context.close()}
     }
   }
 } finally {

@@ -86,7 +86,7 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui, fr
   } finally { await browser.close() }
 }
 
-export async function mobileInteraction(page, labels) {
+export async function mobileInteraction(page, labels, imagePage) {
   const cdp = await page.context().newCDPSession(page)
   const evidence = {}
   async function probe(name, check) {
@@ -145,7 +145,28 @@ export async function mobileInteraction(page, labels) {
         autocapitalize:el.autocapitalize,spellcheck:el.spellcheck})),tap:'center'}
     })
     await probe('compositionAndReplacement', async () => {
+      const bounds=await composer.boundingBox()
+      assert(bounds)
+      const clip={x:Math.ceil(bounds.x+2),y:Math.ceil(bounds.y+2),width:Math.floor(bounds.width-4),height:Math.floor(bounds.height/2)-4}
+      const capture=async()=>`data:image/png;base64,${(await page.screenshot({clip,scale:'css'})).toString('base64')}`
+      const before=await capture()
       await cdp.send('Input.imeSetComposition',{text:'かな',selectionStart:2,selectionEnd:2})
+      await waitValue(`${text}かな`)
+      let preedit
+      for(const until=Date.now()+2500;;){
+        preedit=await imagePage.evaluate(async ([before, after])=>{
+          const [a,b]=await globalThis.__codenomadReadPngs([before,after])
+          let first=a.width,last=0,changed=0
+          for(let i=0;i<a.pixels.length;i+=4){
+            if(![0,1,2].some(c=>Math.abs(a.pixels[i+c]-b.pixels[i+c])>16))continue
+            const x=i/4%a.width
+            first=Math.min(first,x);last=Math.max(last,x);changed++
+          }
+          return {changedInkPixels:changed,inkWidth:last-first+1}
+        },[before,await capture()])
+        if(preedit.changedInkPixels>=25&&preedit.inkWidth>=8)break
+        assert(Date.now()<until,'Rune must paint the preedit before the browser commits it')
+      }
       await cdp.send('Input.insertText',{text:'仮名'})
       await waitValue(`${text}仮名`)
       // An external text service can replace a range without emitting key strokes.
@@ -154,7 +175,12 @@ export async function mobileInteraction(page, labels) {
         el.dispatchEvent(new InputEvent('input',{inputType:'insertReplacementText',data:'Été',bubbles:true}))
       })
       await waitValue('Été 日本語 🦀仮名')
-      return {composed:true,replaced:true}
+      await page.keyboard.press('Tab')
+      await page.waitForFunction(()=>!document.querySelector('textarea:focus')&&[...document.querySelectorAll('textarea')].every(el=>!el.value))
+      const point=await center(composer)
+      await page.touchscreen.tap(point.x,point.y)
+      await waitValue('Été 日本語 🦀仮名')
+      return {composed:true,replaced:true,preedit,restoredAfterBlur:true}
     })
     await probe('visualOcclusion', async () => {
       const value = await editor.inputValue()
@@ -168,11 +194,15 @@ export async function mobileInteraction(page, labels) {
       })
       const field = await composer.boundingBox(), button = await send.boundingBox()
       const shown = await canvas.boundingBox()
-      const {top,bottom} = await page.evaluate(() => ({top:visualViewport.offsetTop,bottom:visualViewport.offsetTop+visualViewport.height}))
+      const viewportBounds = await page.evaluate(() => ({top:visualViewport.offsetTop,bottom:visualViewport.offsetTop+visualViewport.height,
+        left:visualViewport.offsetLeft,right:visualViewport.offsetLeft+visualViewport.width}))
+      const {top,bottom,left,right}=viewportBounds
       await waitValue(value)
+      assert(field&&field.height>0&&field.y>=top-1&&field.y+field.height<=bottom+1&&field.x>=left-1&&field.x+field.width<=right+1,
+        'The composer field must stay visible in the smaller viewport')
       assert(button?.y>=top && button?.y+button?.height<=bottom+1,'Send must stay within the smaller viewport')
       await page.setViewportSize(viewport)
-      return {resized:true,canvas:shown,field,button,top,bottom,retainedDraft:true,sendReachable:true}
+      return {resized:true,canvas:shown,field,button,viewportBounds,retainedDraft:true,fieldVisible:true,sendReachable:true}
     })
     return evidence
   } finally {await cdp.detach()}

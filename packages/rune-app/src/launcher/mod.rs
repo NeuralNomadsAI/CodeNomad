@@ -479,18 +479,13 @@ pub fn list(s: &mut State, more: bool) {
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
-    if l.show_search && !l.search.text.trim().is_empty() {
+    if !more && l.show_search && !l.search.text.trim().is_empty() {
         l.search_results = Default::default();
-        return;
     }
-    if l.pending || more && l.sessions.len() >= MAX_BROWSED_SESSIONS && l.next.is_some() {
+    if l.pending || more && (l.sessions.len() >= MAX_BROWSED_SESSIONS || l.next.is_none()) {
         return;
     }
     let cursor = if more { l.next.clone() } else { None };
-    if more && cursor.is_none() {
-        linked::load(s, true);
-        return;
-    }
     l.listing = true;
     l.job("rune.list_error", async move {
         Ok(Reply::Listed(
@@ -498,9 +493,6 @@ pub fn list(s: &mut State, more: bool) {
             more,
         ))
     });
-    if !more {
-        linked::load(s, false);
-    }
 }
 pub fn create(s: &mut State, _: &mut Tx) {
     if !can_change_session(s) {
@@ -684,7 +676,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 }
                 Restored::Empty => crate::git::project_opened(s),
             }
-            linked::load(s, false);
+            linked::load(s);
         }
         Ok(Reply::Listed(mut rows, more)) => {
             if !more {
@@ -719,6 +711,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 l.sessions = rows.rows;
             }
             l.next = rows.next;
+            if !more {
+                linked::load(s);
+            }
         }
         Ok(Reply::Created(b, title, submitted, dismiss)) => {
             if l.title.text == submitted {

@@ -149,19 +149,11 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
     } else if !searching && count == 0 && !l.pending && !l.linked.pending() {
         items = items.child(text(t("rune.empty_sessions")).pad(Space::Sm));
     }
-    if !searching
-        && (l.next.is_some()
-            || l.linked
-                .pages
-                .as_ref()
-                .is_some_and(launcher::linked::Pages::more))
-    {
+    if !searching && l.next.is_some() {
         items = items.child(button(
             "more-sessions",
             t("rune.more"),
-            disabled
-                || l.next.is_none() && l.linked.pending()
-                || count >= launcher::MAX_BROWSED_SESSIONS,
+            disabled || l.sessions.len() >= launcher::MAX_BROWSED_SESSIONS,
             screen::action(scope, |s| launcher::list(s, true)),
         ));
     }
