@@ -5,6 +5,7 @@ pub(crate) use codenomad_client::{agent_api, backend, catalog, content, history}
 mod chat;
 pub(crate) use chat::{actions as transcript_state, transcript, transport};
 mod components;
+mod files;
 pub(crate) use components::window_close_button as window_control;
 #[cfg(any(test, feature = "test-support"))]
 mod gallery;

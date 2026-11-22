@@ -1,4 +1,5 @@
 //! Platform boundary for task execution, connection defaults and local file picking.
+pub(crate) mod collation;
 mod connection;
 pub(crate) mod storage;
 pub(crate) use connection::configured_backend;

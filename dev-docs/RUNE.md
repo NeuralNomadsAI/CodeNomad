@@ -44,6 +44,7 @@ When a whole module reaches parity, its Solid and Tauri version is deleted on `f
 |---|---|---|
 | HTTP, SSE, pagination and recovery | CodeNomad API and contract fixtures | `crates/codenomad-client`: native contracts, 606-row recovery and authenticated browser session reading qualified |
 | Workspace file listing and preview API | Solid `api-client.ts`, shared server Files routes | `crates/codenomad-client/files`: typed bounded reads, identities and bytes qualified through HTTP fixtures and Windows shared Rust with private files; browser execution and interface qualification pending |
+| Workspace file tree state | `useWorkspaceTree.ts`, `WorkspaceTree.tsx` | `files/`: lazy snapshots, scoped cancellable reads, refresh coalescing and physical-subtree invalidation; native contracts exercised. `platform/collation` owns stable ICU/Intl sorting. UI assembly, shared-server model qualification and Rust WASM execution remain pending |
 | Tokens and typography | `packages/ui/src/styles/tokens.css` | `crates/rune-theme-codenomad`: generated values; component parity qualified individually |
 | Text | Ten UI catalogues | Generated catalogues, fallback and Hebrew direction qualified |
 | Window close | `components/window-close-button.tsx` | `components/window_close_button.rs`: six Windows light/dark pairs, accessibility and interaction qualified at scale 1 |
@@ -56,6 +57,8 @@ When a whole module reaches parity, its Solid and Tauri version is deleted on `f
 ## Workspace and qualification
 
 `packages/rune-app` holds application state and views. `crates/codenomad-client` owns typed API contracts and transports; `crates/rune-theme-codenomad` owns generated visuals/catalogues; `crates/codenomad-host-process` confines native child processes behind a safe API. Rune is pinned in the app manifest and verified by `scripts/rune/prepare.mjs --check`.
+
+Workspace file trees own their requests and eight departed-directory snapshots. A completion retains its tree occurrence, directory, request identity and read version; cancellation or a foreign occurrence fences publication before sorting. The owner drains coalesced refreshes after the shared debounce and the last completion. Sorting belongs to a captured platform collator and completes before any snapshot change: native ICU uses the system locale, or Unicode root collation in unconfigured/POSIX environments; browser Intl uses its default locale. Translation selection remains independent. Equal names retain input order, and errors preserve the last complete listing.
 
 Text fragments retain native ordinals and live/partial/closed provenance. One shared helper updates both ordered parts and the display body. Open page prefixes preserve longer live text; full native endings and committed pages settle ambiguous fragments through bounded recovery reads.
 
