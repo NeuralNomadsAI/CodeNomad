@@ -283,11 +283,6 @@ pub fn code(source: &str, wrap: bool) -> El {
 
 type Strike = (usize, usize, Option<Color>);
 
-fn separated_only_by_newlines(text: &[u8], end: usize, start: usize) -> bool {
-    text.get(end..start)
-        .is_some_and(|gap| gap.iter().all(|&byte| byte == b'\n'))
-}
-
 fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
     let mut spans: Vec<Span> = Vec::with_capacity(log.runs.len().min(COPY_RUN_LIMIT));
     let mut strikes: Vec<Strike> = vec![];
@@ -296,10 +291,15 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
     let mut window_budget = WINDOW_WORK_LIMIT;
     let mut line_budget = LINE_WORK_LIMIT;
     let mut line = 0..0;
-    let mut ascii_runs = None;
+    let mut previous_content_end = 0;
+    let mut ascii = false;
     let mut text = log.text.into_bytes();
-    for (index, (range, style)) in log.runs.iter().cloned().enumerate() {
+    for (range, style) in log.runs {
         while range.start >= line.end {
+            // Remember the last nonempty line's end, excluding its newline.
+            if line.len() > 1 {
+                previous_content_end = line.end - 1;
+            }
             let start = line.end;
             let end = text[start..]
                 .iter()
@@ -307,11 +307,7 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
                 .map_or(text.len(), |newline| start + newline + 1);
             line = start..end;
             line_budget = LINE_WORK_LIMIT;
-            // Printable ASCII in the monospace face does not itemize by script or emoji.
-            ascii_runs = text[line.clone()].is_ascii().then(|| {
-                let styled = log.runs[index..].partition_point(|(range, _)| range.start < line.end);
-                styled.saturating_mul(2).saturating_add(1)
-            });
+            ascii = text[line.clone()].is_ascii();
         }
         // Rune can revisit the shaped line for every span, even for foreground-only ink.
         let mut charge = |cost| {
@@ -340,10 +336,21 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
             if let Some(bg) = style.bg {
                 span = span.bg(dim(bg), 0.0);
             }
-            // Underline bounds are queried for each glyph run in the decorated range.
-            let underline_runs = ascii_runs.unwrap_or_else(|| range.len()).min(range.len());
-            if style.underline && charge(underline_runs.saturating_mul(line.len())) {
-                span = span.underline(dim(style.fg.unwrap_or(default)));
+            if style.underline {
+                // Each decorated glyph run scans its visual line. A printable ASCII
+                // monospace span has one run per visual line; mixed scripts may split
+                // at every scalar (Parley's glyph runs consume whole atoms).
+                let runs = if ascii {
+                    1
+                } else {
+                    text[range.clone()]
+                        .iter()
+                        .filter(|&&byte| byte & 0xc0 != 0x80)
+                        .count()
+                };
+                if charge(runs.saturating_mul(line.len())) {
+                    span = span.underline(dim(style.fg.unwrap_or(default)));
+                }
             }
             if style.strike && charge(line.len()) {
                 let ink = Some(dim(style.fg.unwrap_or(default)));
@@ -366,7 +373,8 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
             continue;
         }
         if let Some(last) = spans.last_mut()
-            && separated_only_by_newlines(&text, last.end as usize, span.start as usize)
+            && (last.end == span.start
+                || (range.start == line.start && last.end as usize == previous_content_end))
             && span
                 == (Span {
                     start: span.start,
@@ -671,15 +679,55 @@ mod tests {
 
     #[test]
     fn equivalent_reverse_colors_do_not_fragment_a_uniform_underline() {
-        let source = format!(
+        let ascii = format!(
             "\u{1b}[4;31;44m{}{}",
             "A".repeat(3000),
             "\u{1b}[34;41;7mA\u{1b}[31;44;27mA".repeat(180)
         );
+        let unicode = format!(
+            "\u{1b}[4;31;44m{}\u{1b}[34;41;7m{}",
+            "é".repeat(700),
+            "é".repeat(10)
+        );
+        for (source, bytes) in [(ascii, 3360), (unicode, 1420)] {
+            let (text, spans, _) = styled(parse(&source));
+            assert_eq!(text.len(), bytes);
+            assert_eq!(spans.len(), 1);
+            assert_eq!(spans[0].end as usize, bytes);
+            assert!(spans[0].underline.is_some());
+        }
+    }
+
+    #[test]
+    fn underline_on_a_long_ascii_line_leaves_work_for_later_styles() {
+        let source = format!(
+            "\u{1b}[4m{}\u{1b}[0m{}\u{1b}[31;4mFAILED\u{1b}[0m{}",
+            "A".repeat(1500),
+            "\u{1b}[31mA\u{1b}[32mB".repeat(100),
+            "x".repeat(3094)
+        );
         let (text, spans, _) = styled(parse(&source));
-        assert_eq!(text.len(), 3360);
-        assert_eq!(spans.len(), 1);
-        assert_eq!(spans[0].end, 3360);
         assert!(spans[0].underline.is_some());
+        let warning = spans.last().unwrap();
+        assert_eq!(
+            &text[warning.start as usize..warning.end as usize],
+            "FAILED"
+        );
+        assert_eq!(warning.color, Some(rgb(187, 0, 0)));
+        assert!(warning.underline.is_some());
+    }
+
+    #[test]
+    fn a_full_quota_can_merge_over_blank_lines_but_not_visible_text() {
+        let dense = "\u{1b}[31mA\u{1b}[32mB\n".repeat(COPY_RUN_LIMIT / 2);
+        let blank = "\n".repeat(220_000);
+        let tail = "\u{1b}[31mA\u{1b}[32mB\n".repeat(1000);
+        let source = format!("{dense}{blank}B{tail}");
+        let (_, spans, _) = styled(parse(&source));
+        assert_eq!(spans.len(), COPY_RUN_LIMIT);
+        assert_eq!(
+            spans.last().unwrap().end as usize,
+            COPY_RUN_LIMIT / 2 * 3 + blank.len() + 1
+        );
     }
 }
