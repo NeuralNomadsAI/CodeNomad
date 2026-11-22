@@ -124,7 +124,7 @@ pub fn contract() {
                     .send(Command::Send(prompts[completed].into()))
                     .unwrap();
             }
-            Event::Failed => panic!("adapter failed"),
+            Event::AuthenticationRequired | Event::Failed => panic!("adapter failed"),
             Event::Sync(_)
             | Event::History(_)
             | Event::Older(_)

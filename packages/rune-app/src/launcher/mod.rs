@@ -23,6 +23,7 @@ pub struct Launcher {
     pub show_search: bool,
     pub visits: Visits,
     pub connection: Option<Backend>,
+    pub(crate) authentication_required: bool,
     pub server_id: Option<String>,
     pub projects: Vec<Project>,
     pub project: Option<Project>,
@@ -106,6 +107,7 @@ impl Launcher {
             show_search: false,
             visits: Visits::default(),
             connection: None,
+            authentication_required: false,
             server_id: None,
             projects: vec![],
             project: None,
@@ -405,8 +407,13 @@ pub fn connect(s: &mut State, _: &mut Tx) {
     if l.pending {
         return;
     }
-    l.host = None;
-    let address = l.address.text.clone();
+    let address = if l.authentication_required {
+        let Some(backend) = &l.connection else { return };
+        backend.base.clone()
+    } else {
+        l.host = None;
+        l.address.text.clone()
+    };
     let password = l.password.text.clone();
     l.job("rune.connect_error", async move {
         let b = Backend::connect(&address, &password).await?;
@@ -625,12 +632,19 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     l.listing = false;
     match result {
         Ok(Reply::Connected(b, projects, server_id)) => {
+            let reauthenticated = std::mem::take(&mut l.authentication_required);
             l.connection = Some(b);
             l.server_id = Some(server_id);
             l.projects = projects;
             l.password = TextEdit::new("");
             crate::workspace::connected(s);
-            crate::workspace::resume(s, tx);
+            if reauthenticated
+                && let Some(id) = crate::workspace::active_session(s).map(str::to_owned)
+            {
+                choose(s, id, tx);
+            } else {
+                crate::workspace::resume(s, tx);
+            }
         }
         Ok(Reply::Opened(opening, rows, restored)) => {
             let project = opening.project.clone();
@@ -863,7 +877,11 @@ fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize>, tx: &mut
     s.incoming = Some(incoming);
     s.commands = Some(commands);
     let wake = s.wake.clone();
+    let previous = crate::settings::stop_before_conversation(s);
     crate::platform::spawn(async move {
+        if let Some(previous) = previous {
+            let _ = previous.recv().await;
+        }
         if crate::transport::run_backend(b, out.clone(), input, wake.clone())
             .await
             .is_err()

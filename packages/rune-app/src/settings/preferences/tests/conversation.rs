@@ -231,3 +231,70 @@ fn settings_direct_retry_replaces_a_closed_transport() {
             .same_channel(&incoming)
     );
 }
+
+#[test]
+fn settings_sse_401_releases_the_transport_for_explicit_authentication() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let (out, events) = bounded(16);
+        let (_commands, input) = bounded(1);
+        platform::spawn(async move {
+            run_backend(prefs.backend.take().unwrap(), out, input, Arc::new(|| {}))
+                .await
+                .unwrap();
+        });
+        let sse = request(&listener).await;
+        assert!(sse.first.starts_with("GET /api/events?"));
+        sse.reply(401, json!({})).await;
+        until(&events, |event| {
+            matches!(event, Event::AuthenticationRequired)
+        })
+        .await;
+        assert!(
+            timeout(Duration::from_secs(2), events.recv())
+                .await
+                .unwrap()
+                .is_err()
+        );
+        assert!(
+            timeout(Duration::from_millis(600), listener.accept())
+                .await
+                .is_err()
+        );
+    });
+}
+
+#[test]
+fn settings_conversation_waits_until_the_fallback_sse_reader_is_closed() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.clone().unwrap();
+        let wake: rune::Waker = Arc::new(|| {});
+        prefs.watch(&wake);
+        let mut fallback = request(&listener).await;
+        assert!(fallback.first.contains("-preferences"));
+        fallback
+            .socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+            .await
+            .unwrap();
+        let closed = prefs.stop_before_conversation().unwrap();
+        let (out, events) = bounded(8);
+        let (_commands, input) = bounded(1);
+        platform::spawn(async move {
+            let _ = closed.recv().await;
+            let _ = run_backend(backend, out, input, Arc::new(|| {})).await;
+        });
+        let closure = timeout(Duration::from_secs(2), fallback.socket.read(&mut [0]))
+            .await
+            .unwrap();
+        assert!(
+            matches!(closure, Ok(0))
+                || closure.is_err_and(|error| error.kind() == std::io::ErrorKind::ConnectionReset)
+        );
+        let conversation = request(&listener).await;
+        assert!(conversation.first.starts_with("GET /api/events?"));
+        assert!(!conversation.first.contains("-preferences"));
+        drop(events);
+    });
+}

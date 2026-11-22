@@ -118,7 +118,7 @@ fn setup(s: &mut State, wake: rune::Waker) {
         workspace::connected(s);
         return;
     }
-    transport::start(s);
+    transport::start(s, true);
 }
 fn local_stress() -> bool {
     #[cfg(feature = "test-support")]
@@ -170,16 +170,21 @@ fn request_older(s: &mut State, _: &mut Tx) {
     }
 }
 fn retry_connection(s: &mut State, tx: &mut Tx) {
+    if s.screen
+        .launcher()
+        .is_some_and(|l| l.authentication_required)
+    {
+        s.show_launcher();
+        return;
+    }
     if s.incoming.as_ref().is_none_or(Receiver::is_closed)
         || s.commands.as_ref().is_none_or(Sender::is_closed)
     {
         if let Some(id) = workspace::active_session(s).map(str::to_owned) {
             launcher::choose(s, id, tx);
-        } else if s.screen.launcher().is_none()
-            && s.incoming.as_ref().is_some_and(Receiver::is_closed)
-        {
+        } else if s.screen.launcher().is_none() && s.incoming.is_some() {
             s.phase = Phase::Reconnecting;
-            transport::start(s);
+            transport::start(s, false);
         }
     } else if s
         .commands
@@ -299,7 +304,14 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::Done => s.phase = Phase::Ready,
-            Event::Failed => {
+            Event::AuthenticationRequired | Event::Failed => {
+                if matches!(event, Event::AuthenticationRequired) {
+                    s.commands = None;
+                    settings::authentication_required(s);
+                    if let Some(launcher) = s.screen.launcher_mut() {
+                        launcher.authentication_required = true;
+                    }
+                }
                 git::online(s, false);
                 if let Some(files) = &mut s.files {
                     files.online(false);

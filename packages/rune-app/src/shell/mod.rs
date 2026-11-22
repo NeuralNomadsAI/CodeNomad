@@ -57,7 +57,9 @@ fn body(
 ) -> El {
     let has_project = s.screen.launcher().is_some_and(|l| l.project.is_some());
     let body = match &s.screen {
-        Screen::Launcher(_) if !has_project => return launcher_view::view(s),
+        Screen::Launcher(l) if !has_project || l.authentication_required => {
+            return launcher_view::view(s);
+        }
         Screen::Launcher(_) => {
             rune_theme_codenomad::shell::empty_conversation(t("instanceShell.empty.title"))
         }

@@ -153,28 +153,49 @@ impl State {
 
 pub fn start(backend: Backend, epoch: u64, out: Sender<Input>, state: Arc<State>) {
     runtime::spawn(async move {
-        #[cfg(not(target_arch = "wasm32"))]
-        let result =
-            futures_lite::future::race(read_native(&backend, epoch, &out, &state), async {
-                while !state.cancelled.load(SeqCst) && !out.is_closed() {
-                    runtime::sleep(Duration::from_millis(25)).await;
-                }
-                Ok(())
-            })
-            .await;
-        #[cfg(target_arch = "wasm32")]
-        let result = browser::read(&backend, epoch, &out, &state).await;
+        let result = read(&backend, epoch, &out, &state).await;
         state.alive.store(false, SeqCst);
         state.version.fetch_add(1, SeqCst);
+        let expired = cfg!(not(target_arch = "wasm32"))
+            && result.as_ref().is_err_and(|error| {
+                error
+                    .downcast_ref::<reqwest::Error>()
+                    .and_then(reqwest::Error::status)
+                    == Some(reqwest::StatusCode::UNAUTHORIZED)
+            });
         if result.is_err() {
             eprintln!("Rune event stream unavailable");
         }
-        let _ = out.send(Input::Closed(epoch)).await;
+        let _ = out
+            .send(if expired {
+                Input::AuthenticationRequired(epoch)
+            } else {
+                Input::Closed(epoch)
+            })
+            .await;
         if let Some(wake) = state.preferences.as_ref().map(|(_, wake)| wake.clone()) {
             drop(state);
             wake();
         }
     });
+}
+
+pub(crate) async fn read(
+    backend: &Backend,
+    epoch: u64,
+    out: &Sender<Input>,
+    state: &State,
+) -> Result<()> {
+    #[cfg(not(target_arch = "wasm32"))]
+    return futures_lite::future::race(read_native(backend, epoch, out, state), async {
+        while !state.cancelled.load(SeqCst) && !out.is_closed() {
+            runtime::sleep(Duration::from_millis(25)).await;
+        }
+        Ok(())
+    })
+    .await;
+    #[cfg(target_arch = "wasm32")]
+    browser::read(backend, epoch, out, state).await
 }
 
 pub(super) async fn opened(epoch: u64, out: &Sender<Input>, state: &State) -> Result<()> {

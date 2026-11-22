@@ -18,13 +18,15 @@ pub(super) struct Preferences {
     pub(super) main_wake: Option<rune::Waker>,
     pub(super) revision: u64,
     stream: Option<PreferencesWatch>,
+    closing_stream: Option<codenomad_client::Receiver<()>>,
+    authentication_required: bool,
 }
 
 impl Preferences {
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn flush(&mut self) -> bool {
         use std::time::Duration;
-        if self.backend.is_some() {
+        if self.backend.is_some() && !self.authentication_required {
             self.take_invalidations();
             self.config.prepare_drain();
             self.state.prepare_drain();
@@ -60,7 +62,8 @@ impl Preferences {
         self.config.rebind(same_address);
         self.state.rebind(same_address);
         self.backend = owner;
-        self.stream = None;
+        self.authentication_required = false;
+        self.unwatch();
         self.refresh();
         self.revision += 1;
         true
@@ -77,7 +80,23 @@ impl Preferences {
         self.state.retry();
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn can_retry(&self) -> bool {
+        self.backend.is_some() && !self.authentication_required
+    }
+
     pub fn watch(&mut self, wake: &rune::Waker) {
+        if self.authentication_required {
+            return;
+        }
+        if self
+            .closing_stream
+            .as_ref()
+            .is_some_and(|reader| !reader.is_closed())
+        {
+            return;
+        }
+        self.closing_stream = None;
         if self.stream.is_none()
             && let Some(backend) = &self.backend
         {
@@ -88,7 +107,25 @@ impl Preferences {
     }
 
     pub fn unwatch(&mut self) {
-        self.stream = None;
+        if let Some(watch) = self.stream.take() {
+            self.closing_stream = Some(watch.stop());
+        }
+    }
+
+    pub fn stop_before_conversation(&mut self) -> Option<codenomad_client::Receiver<()>> {
+        self.unwatch();
+        self.closing_stream
+            .clone()
+            .filter(|reader| !reader.is_closed())
+    }
+
+    pub fn require_authentication(&mut self) {
+        self.authentication_required = true;
+        self.unwatch();
+        self.revision += 1;
+        if let Some(wake) = &self.window_wake {
+            wake();
+        }
     }
 
     pub fn invalidate(&mut self, owner: Owner) {
@@ -114,7 +151,9 @@ impl Preferences {
     }
 
     pub fn error(&self) -> Option<&'static str> {
-        if self.config.write_failed() || self.state.write_failed() {
+        if self.authentication_required {
+            Some("rune.connect_error")
+        } else if self.config.write_failed() || self.state.write_failed() {
             Some("settings.preferenceSaveFailed")
         } else if self.config.read_failed() || self.state.read_failed() {
             Some("rune.connect_error")
@@ -141,6 +180,9 @@ impl Preferences {
     }
 
     fn poll_documents(&mut self) -> bool {
+        if self.authentication_required {
+            return false;
+        }
         let Some(backend) = &self.backend else {
             return false;
         };
@@ -166,7 +208,9 @@ impl Preferences {
     }
 
     pub fn locale_ready(&self) -> bool {
-        self.config.snapshot.is_some() && !self.config.read_failed()
+        !self.authentication_required
+            && self.config.snapshot.is_some()
+            && !self.config.read_failed()
     }
 
     pub fn set_locale(&mut self, locale: &'static str) {
@@ -207,7 +251,7 @@ impl Preferences {
     }
 
     pub fn mode_ready(&self) -> bool {
-        self.state.snapshot.is_some() && !self.state.read_failed()
+        !self.authentication_required && self.state.snapshot.is_some() && !self.state.read_failed()
     }
 
     pub fn mode_display(&self) -> &'static str {

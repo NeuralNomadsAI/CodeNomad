@@ -23,18 +23,35 @@ pub fn synthetic() -> Vec<Message> {
         })
         .collect()
 }
-pub fn start(s: &mut crate::State) {
+pub fn start(s: &mut crate::State, bootstrap: bool) {
     let (out, incoming) = bounded(64);
     let (commands, input) = bounded(1);
     s.agent = None;
     s.incoming = Some(incoming);
     s.commands = Some(commands);
-    crate::platform::spawn(run_async(out, input, s.wake.clone()));
+    let wake = s.wake.clone();
+    let previous = crate::settings::stop_before_conversation(s);
+    crate::platform::spawn(async move {
+        if let Some(previous) = previous {
+            let _ = previous.recv().await;
+        }
+        run_configured(out, input, wake, bootstrap).await;
+    });
 }
 
+#[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) async fn run_async(out: Sender<Event>, input: Receiver<Command>, wake: rune::Waker) {
+    run_configured(out, input, wake, true).await;
+}
+
+async fn run_configured(
+    out: Sender<Event>,
+    input: Receiver<Command>,
+    wake: rune::Waker,
+    bootstrap: bool,
+) {
     if crate::platform::setting("RUNE_BACKEND").is_some() && !crate::local_stress() {
-        let result = match crate::platform::configured_backend().await {
+        let result = match crate::platform::configured_backend(bootstrap).await {
             Ok(backend) => run_backend(backend, out.clone(), input, wake.clone()).await,
             Err(error) => Err(error),
         };

@@ -27,7 +27,11 @@ pub(crate) fn poll(s: &mut State) -> bool {
         .screen
         .launcher()
         .is_some_and(|launcher| shared.bind(launcher.connection.clone()));
-    if crate::workspace::has_conversation_stream(s) {
+    if crate::workspace::has_conversation_stream(s)
+        || s.screen
+            .launcher()
+            .is_some_and(|launcher| launcher.authentication_required)
+    {
         shared.unwatch();
     } else {
         shared.watch(&s.wake);
@@ -50,6 +54,14 @@ pub(crate) fn connected(s: &mut State, backend: &crate::backend::Backend) {
     if s.screen.launcher().is_none() {
         s.settings.shared.borrow_mut().bind(Some(backend.clone()));
     }
+}
+
+pub(crate) fn stop_before_conversation(s: &State) -> Option<codenomad_client::Receiver<()>> {
+    s.settings.shared.borrow_mut().stop_before_conversation()
+}
+
+pub(crate) fn authentication_required(s: &State) {
+    s.settings.shared.borrow_mut().require_authentication();
 }
 
 pub(crate) fn invalidate(s: &State, owner: codenomad_client::settings::Owner) {

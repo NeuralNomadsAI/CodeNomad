@@ -42,6 +42,7 @@ pub enum Event {
     Message(Message),
     Text(String, crate::content::TextEvent),
     Done,
+    AuthenticationRequired,
     Failed,
     Reconnecting,
     PagingFailed,

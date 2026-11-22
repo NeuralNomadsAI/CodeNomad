@@ -63,11 +63,13 @@ fn owner(value: Value) -> Result<Value> {
 /// One scope-less subscription per connected host, independent of conversation lifetimes.
 pub struct PreferencesWatch {
     _cancel: crate::Sender<()>,
+    closed: crate::Receiver<()>,
     dirty: Arc<AtomicU8>,
 }
 impl PreferencesWatch {
     pub fn task(mut backend: Backend, wake: Wake) -> (Self, impl std::future::Future<Output = ()>) {
         let (hold, cancel) = crate::bounded(1);
+        let (close, closed) = crate::bounded(1);
         let dirty = Arc::new(AtomicU8::new(0));
         let notices = dirty.clone();
         backend.workspace.clear();
@@ -78,24 +80,27 @@ impl PreferencesWatch {
                 async {
                     for epoch in 1u64.. {
                         let (output, events) = crate::bounded(16);
-                        stream::start(
-                            backend.clone(),
-                            epoch,
-                            output,
-                            Arc::new(stream::State::default()),
-                        );
-                        while let Ok(event) = events.recv().await {
-                            let flag = match event {
-                                Input::Closed(_) => break,
-                                Input::Opened(_) => 3,
-                                Input::Preferences(Owner::Config) => 1,
-                                Input::Preferences(Owner::State) => 2,
-                                _ => 0,
-                            };
-                            if flag != 0 && notices.fetch_or(flag, SeqCst) & flag != flag {
-                                wake();
-                            }
-                        }
+                        let state = stream::State::default();
+                        futures_lite::future::zip(
+                            async {
+                                let output = output;
+                                let _ = stream::read(&backend, epoch, &output, &state).await;
+                            },
+                            async {
+                                while let Ok(event) = events.recv().await {
+                                    let flag = match event {
+                                        Input::Opened(_) => 3,
+                                        Input::Preferences(Owner::Config) => 1,
+                                        Input::Preferences(Owner::State) => 2,
+                                        _ => 0,
+                                    };
+                                    if flag != 0 && notices.fetch_or(flag, SeqCst) & flag != flag {
+                                        wake();
+                                    }
+                                }
+                            },
+                        )
+                        .await;
                         runtime::sleep(Duration::from_millis(250 * (1 << epoch.min(5)))).await;
                     }
                 },
@@ -104,10 +109,14 @@ impl PreferencesWatch {
                 },
             )
             .await;
+            // The EventSource/HTTP response has been dropped before releasing the next reader.
+            drop(close);
+            wake();
         };
         (
             Self {
                 _cancel: hold,
+                closed,
                 dirty,
             },
             run,
@@ -117,5 +126,9 @@ impl PreferencesWatch {
     pub fn take(&self) -> (bool, bool) {
         let bits = self.dirty.swap(0, SeqCst);
         (bits & 1 != 0, bits & 2 != 0)
+    }
+
+    pub fn stop(self) -> crate::Receiver<()> {
+        self.closed
     }
 }

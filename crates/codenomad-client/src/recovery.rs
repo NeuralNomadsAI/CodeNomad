@@ -23,6 +23,7 @@ pub enum Input {
     Preferences(crate::settings::Owner),
     Hint(u64, u64),
     Unavailable(u64),
+    AuthenticationRequired(u64),
     Closed(u64),
 }
 struct Seen {
@@ -128,6 +129,10 @@ pub async fn run(
                     // Keep the same subscription owner after showing the outage.
                     publish(&out, &wake, Event::Failed).await;
                 }
+            }
+            Some(Input::AuthenticationRequired(e)) if e == epoch => {
+                publish(&out, &wake, Event::AuthenticationRequired).await;
+                return Ok(());
             }
             Some(Input::Unavailable(e)) if e == epoch => {
                 dirty = true;
