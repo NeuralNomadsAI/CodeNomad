@@ -229,7 +229,10 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
                 <div class="settings-section-selector-wrap">
                   <Select<SettingsSectionOption>
                     value={activeSection()}
-                    onChange={(section) => section && void handleSectionChange(section.id)}
+                    onChange={(section) => {
+                      // Option reconciliation can echo the displayed fallback.
+                      if (section && section.id !== activeSection()?.id) void handleSectionChange(section.id)
+                    }}
                     options={sections()}
                     optionValue="id"
                     optionTextValue="label"
