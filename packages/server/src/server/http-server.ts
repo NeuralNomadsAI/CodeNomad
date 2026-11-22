@@ -2395,7 +2395,8 @@ function proxyPreviewFallbackFromReferer(
     return false
   }
   const rawUrl = request.raw.url ?? request.url ?? ""
-  if ((request.method === "GET" || request.method === "HEAD") && routedPath(rawUrl) === PAIR_PAGE_PATH) return false
+  const entry = request.method === "GET" || request.method === "HEAD" ? routedPath(rawUrl) : null
+  if (entry === "/") return false
   const pathname = rawUrl.split("?")[0] ?? ""
   if (!isPreviewFallbackPath(pathname)) {
     return false
@@ -2405,6 +2406,13 @@ function proxyPreviewFallbackFromReferer(
   const referer = Array.isArray(refererHeader) ? refererHeader[0] : refererHeader
   if (!referer) {
     return false
+  }
+  if (entry === PAIR_PAGE_PATH) {
+    // A preview's same-host resource may use this path; an external link is an app navigation.
+    try {
+      const source = new URL(referer)
+      if (source.host !== new URL(`${source.protocol}//${request.headers.host}`).host) return false
+    } catch { return false }
   }
 
   const parsed = parsePreviewUpgradePath(referer)

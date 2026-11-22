@@ -133,6 +133,9 @@ test("external links open the verified direct pairing page and a paired browser'
     assert.equal(stale.headers.location, "/remote-pair")
     assert.equal((await read("/api/test/echo", { cookie })).statusCode, 401)
     assert.equal((await read("/remote-pair", { origin: "null" })).statusCode, 403)
+    const origin = "https://outside.invalid"
+    assert.equal((await read("/remote-pair", { origin })).statusCode, 404)
+    assert.equal((await read("/", { origin, cookie })).headers.location, "/login")
   }
 })
 
