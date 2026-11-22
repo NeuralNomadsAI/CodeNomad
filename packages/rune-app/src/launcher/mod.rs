@@ -24,6 +24,7 @@ pub struct Launcher {
     pub visits: Visits,
     pub connection: Option<Backend>,
     pub(crate) authentication_required: bool,
+    reauthenticated_session: Option<String>,
     pub server_id: Option<String>,
     pub projects: Vec<Project>,
     pub project: Option<Project>,
@@ -108,6 +109,7 @@ impl Launcher {
             visits: Visits::default(),
             connection: None,
             authentication_required: false,
+            reauthenticated_session: None,
             server_id: None,
             projects: vec![],
             project: None,
@@ -649,6 +651,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             if reauthenticated
                 && let Some(id) = crate::workspace::active_session(s).map(str::to_owned)
             {
+                if let Some(launcher) = s.screen.launcher_mut() {
+                    launcher.reauthenticated_session = Some(id.clone());
+                }
                 s.show_chat();
                 choose(s, id, tx);
             } else {
@@ -849,7 +854,9 @@ fn retire_session(s: &mut State, id: &str) {
 fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize>, tx: &mut Tx) {
     let same_session =
         !s.screen.is_launcher() && crate::workspace::active_session(s) == Some(b.session.as_str());
+    let mut reauthenticated = false;
     if let Some(l) = s.screen.launcher_mut() {
+        reauthenticated = l.reauthenticated_session.take().as_deref() == Some(b.session.as_str());
         l.visits.record(&b.session, visit);
         if let Some(row) = l.sessions.iter_mut().find(|row| row.id == b.session) {
             row.title.clone_from(&title);
@@ -872,7 +879,7 @@ fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize>, tx: &mut
         s.messages.clear();
         s.can_older = false;
     } else if let Some(agent) = &mut s.agent {
-        if s.commands.is_none() {
+        if reauthenticated {
             let mut reauthenticated =
                 crate::agent::Ui::new(crate::agent::start(b.clone(), s.wake.clone()));
             reauthenticated.drafts = std::mem::take(&mut agent.drafts);
