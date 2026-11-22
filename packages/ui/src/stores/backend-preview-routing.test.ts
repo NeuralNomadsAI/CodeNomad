@@ -352,10 +352,9 @@ test("autonomous opens respect newer tab selection and save only the exact nativ
   assert.equal(selected, instanceId)
   assert.deepEqual(foreground.splice(0), [instanceId])
   assert.equal(savedSessionBrowser(sessionId), undefined, "an unacknowledged open has no saved destination")
-  const first = getSessionPreview(sessionId, instanceId)!
   settleSessionPreviewOpen(sessionId, instanceId, "first")
-  assert.equal(getSessionPreview(sessionId, instanceId)?.token, first.token, "an unsuccessful load keeps the owned preview")
-  await closeSessionPreview(first.storageKey)
+  assert.equal(getSessionPreview(sessionId, instanceId), null, "a failed first load does not leave an empty preview")
+  assert.equal(getSessionSurface({ sessionId, instanceId }).kind, "conversation")
   assert.equal(await restoreSessionPreview(sessionId, duplicate), null)
 
   const opening = openRequested({ sessionID: sessionId, url, requestID: "second", instanceId })
@@ -383,7 +382,8 @@ test("autonomous opens respect newer tab selection and save only the exact nativ
 
   await open("gesture")
   showSessionChatFor(sessionId, instanceId)
-  settleSessionPreviewOpen(sessionId, instanceId, "gesture")
+  settleSessionPreviewOpen(sessionId, instanceId, "gesture", url)
+  updateSessionPreviewHistory(second.storageKey, { urls: [committed, url], index: 1 })
   assert.equal(getSessionPreview(sessionId, instanceId)?.token, second.token)
   assert.equal(getSessionPreview(sessionId, instanceId)?.nativeOpen, undefined)
   assert.equal(getTabViewState(instanceId).previews?.[sessionId].mode, "chat")
@@ -408,6 +408,25 @@ test("autonomous opens respect newer tab selection and save only the exact nativ
   assert.equal(getSessionPreview(sessionId, instanceId)?.nativeOpen, undefined)
   assert.deepEqual(savedSessionBrowser(sessionId), saved, "a valid but unrecordable URL does not replace saved history")
   await closeSessionPreview(long.storageKey)
+})
+
+test("a first agent failure returns to chat and manual reopen starts the default page", async t => {
+  const instanceId = "first-agent-failure", sessionId = "no-browser-history"
+  publishInstanceLifecycleAuthority({ type: "opened", instanceId, folder: "/same", occurrence: 0 })
+  const requested: string[] = []
+  t.mock.method(localBackend.api, "createPreview", async ({ url }: { url: string }) => {
+    requested.push(url)
+    return { token: String(requested.length), sessionId, targetUrl: url, proxyUrl: "/preview", createdAt: "" }
+  })
+  t.mock.method(localBackend.api, "deletePreview", async () => {})
+  await openSessionPreview(sessionId, "https://example.com/unavailable", instanceId, undefined, { requestID: "first", instanceId })
+  settleSessionPreviewOpen(sessionId, instanceId, "first")
+  assert.equal(getSessionSurface({ sessionId, instanceId }).kind, "conversation")
+  const { requestSessionPreview, DEFAULT_PREVIEW_URL } = await import("./session-previews")
+  await requestSessionPreview(sessionId, instanceId)
+  assert.deepEqual(requested, ["https://example.com/unavailable", DEFAULT_PREVIEW_URL])
+  assert.equal(getSessionPreview(sessionId, instanceId)?.targetUrl, DEFAULT_PREVIEW_URL)
+  await closeSessionPreview(sessionId)
 })
 
 test("an interrupted native open preserves viewport changes and keeps long addresses out of saved history", async t => {

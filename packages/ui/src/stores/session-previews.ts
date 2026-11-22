@@ -23,8 +23,9 @@ interface SessionPreviewRecord extends PreviewSession {
   owner: { client: BackendClient; signal: AbortSignal }
   history: BrowserHistory
   viewport?: RestorableTabPreview["viewport"]
-  nativeOpen?: { requestID: string; instanceId: string; observedAddress?: string }
+  nativeOpen?: { requestID: string; instanceId: string; observedAddress?: string; dismissed?: boolean; firstLoad?: boolean }
   interruptedOpenId?: string
+  dismissedOpenUrl?: string
 }
 type StoredSessionPreview = RestorableTabPreview
 const DEFAULT_PREVIEW_URL = "http://localhost:3000"
@@ -104,11 +105,20 @@ export function settleSessionPreviewOpen(sessionId: string, instanceId: string, 
   const record = getSessionPreview(sessionId, instanceId)
   const request = record?.nativeOpen
   if (!record || request?.requestID !== requestID || request.instanceId !== instanceId) return
-  const confirmed = browserAddress(committedUrl)
-  const next = { ...record, nativeOpen: undefined, interruptedOpenId: confirmed ? undefined : requestID }
+  const reported = browserAddress(committedUrl)
+  const confirmed = request.dismissed ? undefined : reported
   const successor = keepGuest ? browserAddress(successorUrl) : undefined
+  const next = { ...record, nativeOpen: undefined, interruptedOpenId: confirmed ? undefined : requestID,
+    dismissedOpenUrl: request.dismissed ? reported ?? successor : undefined }
   // A native start alone is not a commit; require the retained guest's location event.
-  const committed = confirmed ?? (successor === request.observedAddress ? successor : undefined)
+  const committed = confirmed ?? (!request.dismissed && successor === request.observedAddress ? successor : undefined)
+  if (!reported && !successor && request.firstLoad && !record.history.urls.length) {
+    batch(() => {
+      if (record.mode === "preview") showSessionChatFor(sessionId, instanceId)
+      void removeLivePreview(record.storageKey)
+    })
+    return
+  }
   if (committed) {
     next.targetUrl = request.observedAddress ?? committed
     const savedUrl = historyUrl(committed)
@@ -116,6 +126,9 @@ export function settleSessionPreviewOpen(sessionId: string, instanceId: string, 
       next.history = { ...new BrowserHistoryJournal(record.history).visitUrl(savedUrl) }
       storePreview(sessionId, instanceId, { ...next, targetUrl: savedUrl })
     }
+  } else if (next.dismissedOpenUrl) {
+    // The hidden document may already have moved. Reopen from the saved journal.
+    next.targetUrl = request.observedAddress ?? next.dismissedOpenUrl
   }
   publishPreview(next)
 }
@@ -288,7 +301,7 @@ async function openSessionPreview(sessionId: string, url: string, instanceId: st
     let record: SessionPreviewRecord = preview === existing ? existing : { ...preview, sessionId, mode: "preview", storageKey, instanceId,
       owner: { client: operation.client, signal: operation.signal }, viewport: existing?.viewport ?? saved?.viewport,
       history: nativeOpen ? baseHistory : new BrowserHistoryJournal(baseHistory).visitUrl(preview.targetUrl) }
-    if (nativeOpen && current()) record = { ...record, nativeOpen }
+    if (nativeOpen && current()) record = { ...record, nativeOpen: { ...nativeOpen, firstLoad: preview !== existing } }
     if (record !== existing) publishPreview(record)
     if (nativeOpen) { if (current()) showSessionPreview(sessionId, instanceId, operation) }
     else {
@@ -308,7 +321,8 @@ function restoreSessionPreview(sessionId: string, instanceId: string): Promise<S
   if (current && !current.interruptedOpenId) return Promise.resolve(current)
   adoptLegacyTabPreview(instanceId, sessionId)
   const stored = savedPreview(sessionId, instanceId)
-  if (!stored?.targetUrl || stored.targetUrl === current?.targetUrl) return Promise.resolve(current)
+  if (!stored?.targetUrl) return Promise.resolve(null)
+  if (stored.targetUrl === current?.targetUrl) return Promise.resolve(current)
   const running = operations.get(storageKey)
   const ownOperation = running?.instanceId === instanceId && running.current()
   const pending = ownOperation ? restorePromises.get(storageKey) : undefined
@@ -353,6 +367,8 @@ function activatePreviewSurface(sessionId: string, instanceId: string, intent?: 
 
 function showSessionChatFor(sessionId: string, instanceId: string) {
   const key = previewKey(sessionId, instanceId)
+  const request = getSessionPreview(sessionId, instanceId)?.nativeOpen
+  if (request?.instanceId === instanceId) request.dismissed = true
   if (operations.get(key)?.instanceId === instanceId) cancelOperation(key)
   applySurface({ instanceId, sessionId }, { kind: "conversation" })
 }
@@ -374,9 +390,10 @@ function updateSessionPreviewLocation(storageKey: string, targetUrl: string) {
 export function updateSessionPreviewHistory(storageKey: string, history: BrowserHistory) {
   const current = sessionPreviews().get(storageKey)
   const targetUrl = historyUrl(history.urls[history.index])
-  if (!current || current.owner.signal.aborted || current.nativeOpen || !targetUrl) return
+  if (!current || current.owner.signal.aborted || current.nativeOpen || !targetUrl || targetUrl === current.dismissedOpenUrl) return
   if (current.capability && history.urls.some(url => !historyUrl(url) || new URL(url).hostname.endsWith(".preview.localhost"))) return
-  const next = withLiveMode({ ...current, targetUrl, history: parseBrowserHistory(history, targetUrl), interruptedOpenId: undefined })
+  const next = withLiveMode({ ...current, targetUrl, history: parseBrowserHistory(history, targetUrl),
+    interruptedOpenId: undefined, dismissedOpenUrl: undefined })
   setSessionPreviews(previous => new Map(previous).set(storageKey, next))
   storePreview(current.sessionId, current.instanceId, next)
 }
