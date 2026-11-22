@@ -1,4 +1,4 @@
-use super::{Part, Text, TextProvenance};
+use super::Part;
 use crate::history::Result;
 use serde_json::Value;
 
@@ -51,13 +51,10 @@ pub(super) fn decode(value: &Value) -> Result<Vec<Part>> {
     let id = string(value, "id")?;
     let skills = list(value, "skills")?;
     let files = list(value, "files")?;
-    if skills.len() + files.len() + 1 > 1000 {
+    if skills.len() + files.len() > 1000 {
         return Err("message part bound reached".into());
     }
-    let mut parts = vec![Part::Text(Text {
-        text: string(value, "text")?.into(),
-        provenance: TextProvenance::Closed,
-    })];
+    let mut parts = Vec::with_capacity(skills.len() + files.len());
     for (index, skill) in skills.iter().enumerate() {
         parts.push(Part::Skill(Skill {
             id: format!("{id}-skill-{index}"),
@@ -69,7 +66,8 @@ pub(super) fn decode(value: &Value) -> Result<Vec<Part>> {
         let mime = string(file, "mime")?;
         let uri = match file["source"]["type"].as_str() {
             Some("uri") => string(&file["source"], "uri")?.into(),
-            Some("inline") => format!("data:{mime};base64,{}", string(file, "data")?),
+            // Stored media projection keeps the historical `file` source and hydrates its bytes.
+            Some("inline" | "file") => format!("data:{mime};base64,{}", string(file, "data")?),
             _ => return Err("invalid native file source".into()),
         };
         parts.push(Part::File(File {

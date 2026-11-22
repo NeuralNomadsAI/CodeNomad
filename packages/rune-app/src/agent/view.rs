@@ -1,4 +1,4 @@
-use crate::{Phase, State, launcher_view::button, strings::t};
+use crate::{Phase, State, components::button, strings::t};
 use rune::{Cx, El, col, text};
 use rune_theme_codenomad::interruption;
 use rune_theme_codenomad::{

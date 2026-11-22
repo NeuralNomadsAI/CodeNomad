@@ -94,10 +94,7 @@ impl Draft {
                 text = text.replacen(&format!("@{path}/"), &format!("./{path}/"), 1);
             }
         }
-        let mut parts = vec![Part::Text(content::Text {
-            text: text.clone(),
-            provenance: content::TextProvenance::Closed,
-        })];
+        let mut parts = Vec::new();
         let mut prompt = Prompt {
             id: Some(id.into()),
             text,
@@ -231,7 +228,6 @@ mod tests {
         assert!(matches!(
             &parts[..],
             [
-                Part::Text(_),
                 Part::Skill(_),
                 Part::File(_),
                 Part::File(_),

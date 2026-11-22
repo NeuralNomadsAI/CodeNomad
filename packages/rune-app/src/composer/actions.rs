@@ -149,7 +149,7 @@ mod tests {
         acknowledge(&mut rt.state, &id, Some("confirmed".into()));
         assert_eq!(rt.state.messages[0].id, "confirmed");
         assert!(
-            matches!(&rt.state.messages[0].parts[1], crate::content::Part::Skill(skill) if skill.id == "confirmed-skill-0")
+            matches!(&rt.state.messages[0].parts[0], crate::content::Part::Skill(skill) if skill.id == "confirmed-skill-0")
         );
     }
 

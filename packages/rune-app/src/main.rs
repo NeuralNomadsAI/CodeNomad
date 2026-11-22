@@ -292,7 +292,7 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
                 layout::action_row()
                     .pad(Space::Sm)
                     .child(text(strings::t(error)).role("alert"))
-                    .child(launcher_view::button_tx(
+                    .child(components::button_tx(
                         "workspace-retry",
                         strings::t("sessionList.loadError.retry"),
                         false,
@@ -339,7 +339,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                         .text_role(TextRole::Title),
                 )
                 .child(if s.screen.launcher().is_some() {
-                    launcher_view::button(
+                    components::button(
                         "sessions-back",
                         strings::t("sessionList.header.title"),
                         !matches!(s.phase, Phase::Ready | Phase::Failed)

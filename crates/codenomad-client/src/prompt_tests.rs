@@ -147,9 +147,9 @@ fn inline_file_at_input_limit_reloads_from_native_window() {
             assert_eq!(page.rows.len(), 1);
             let row = &page.rows[0];
             assert_eq!(row.body, "attached");
-            assert_eq!(row.parts.len(), fixtures.len() + 1);
+            assert_eq!(row.parts.len(), fixtures.len());
             for (i, (name, sent)) in fixtures.into_iter().enumerate() {
-                let Part::File(file) = &row.parts[i + 1] else {
+                let Part::File(file) = &row.parts[i] else {
                     panic!("missing native file")
                 };
                 assert_eq!(file.id, format!("user-file-file-{i}"));
@@ -279,18 +279,80 @@ fn user_parts_keep_only_display_data_and_native_order() {
     let row = history::decode_message(&json!({
         "id":"m","type":"user","text":"",
         "agents":[{"name":"secret-owner"}],
-        "skills":[{"id":"opaque/skill","name":"Review","instructions":"secret instructions"}],
+        "skills":[{"id":"opaque/skill","name":"Review","text":"secret instructions"}],
         "files":[{"mime":"text/plain","source":{"type":"uri","uri":"file:///project/%23.txt"}}]
     }))
     .unwrap();
     assert!(row.completed);
     assert!(row.body.is_empty());
     assert!(
-        matches!(&row.parts[..], [Part::Text(text), Part::Skill(skill), Part::File(file)]
-        if text.text.is_empty() && skill.id == "m-skill-0" && skill.skill_id == "opaque/skill"
+        matches!(&row.parts[..], [Part::Skill(skill), Part::File(file)]
+        if skill.id == "m-skill-0" && skill.skill_id == "opaque/skill"
             && skill.name == "Review" && file.id == "m-file-0" && file.mime == "text/plain"
             && file.name.is_none() && file.uri == "file:///project/%23.txt")
     );
+}
+
+#[test]
+fn projected_file_blobs_keep_bytes_and_hide_the_old_device_path() {
+    run(async {
+        let server = Server::new(vec![window(vec![json!({
+            "mime":"image/png", "name":"shot.png", "data":"AAEC/w==",
+            "source":{"type":"file","path":"D:/device/shot.png"}
+        })])]);
+        let page = server.backend.page(json!({"kind":"latest"})).await.unwrap();
+        let Part::File(file) = &page.rows[0].parts[0] else {
+            panic!("missing historical file")
+        };
+        assert_eq!(file.name.as_deref(), Some("shot.png"));
+        assert_eq!(file.uri, "data:image/png;base64,AAEC/w==");
+        assert_eq!(
+            STANDARD
+                .decode(file.uri.split_once(',').unwrap().1)
+                .unwrap(),
+            [0, 1, 2, 255]
+        );
+    });
+}
+
+#[test]
+fn user_text_is_counted_once_across_multiple_joined_windows() {
+    let text = "a".repeat(48 * 1024);
+    let groups = (0..4).map(|part| {
+        let mut value = window(vec![]);
+        value["messages"] = Value::Array(
+            (part * 31..=part * 31 + 31)
+                .map(|id| json!({"type":"user","id":format!("message-{id}"),"text":text}))
+                .collect(),
+        );
+        history::decode(value).unwrap().rows
+    });
+    let rows = groups.fold(Vec::new(), |before, after| {
+        history::join(&before, &after).unwrap()
+    });
+    assert_eq!(rows.len(), 125);
+    assert!(
+        rows.iter()
+            .all(|row| row.parts.is_empty() && row.body == text)
+    );
+}
+
+#[test]
+fn storage_boundary_excludes_native_identity_added_to_the_window() {
+    let mut value = window(vec![]);
+    let message = &mut value["messages"][0];
+    let mut stored = message.clone();
+    let fields = stored.as_object_mut().unwrap();
+    fields.remove("id");
+    fields.remove("type");
+    let empty_name = "page.txt";
+    let mut file = inline(&[], empty_name);
+    fields.insert("files".into(), json!([file]));
+    let remaining = history::MESSAGE_BYTES - serde_json::to_vec(&stored).unwrap().len();
+    file["data"] = Value::String("a".repeat(remaining));
+    message["files"] = json!([file]);
+    assert!(serde_json::to_vec(message).unwrap().len() > history::MESSAGE_BYTES);
+    assert_eq!(history::decode(value).unwrap().rows.len(), 1);
 }
 
 #[test]
