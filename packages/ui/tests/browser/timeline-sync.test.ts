@@ -98,6 +98,7 @@ before(async () => {
       { type: "reasoning", text: "First check\n".repeat(32) },
       { type: "reasoning", text: "Second check\n".repeat(12) },
       { type: "text", text: "Checking the source." },
+      tool(id(1), "edit"),
       ...reads.slice(0, 12),
     ]),
     assistant(2, reads.slice(12)),
@@ -194,6 +195,8 @@ test("changing tool grouping keeps the selected marker or the reader on the same
   const groups = page.getByRole("group", { name: "Tool groups", exact: true })
   await page.evaluate(() => (window as any).fixture.showFilters(true))
   await header.waitFor()
+  // Load the tool renderer before measuring the regrouping rather than its cold import.
+  await page.locator(`.tool-call-message[data-part-id="${id(1)}-edit"] .tool-call-header-toggle`).waitFor()
   assert.equal(await header.getAttribute("aria-expanded"), "false")
   await clickMarker(page, marker)
   await filters.click()
