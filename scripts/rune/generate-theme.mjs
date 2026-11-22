@@ -7,7 +7,7 @@ import {root,generated,sources} from './generate-common.mjs'
 import {collectTheme,collectFileActionColors} from './generate-theme-browser.mjs'
 import {themeFixtureHtml} from './generate-theme-fixture.mjs'
 import {overflowSource} from './file-actions-source.mjs'
-import {generateWorkspaceIcons} from './parity/workspace-tree-row-icons.mjs'
+import {generateWorkspaceIcons,generateIcons} from './parity/workspace-tree-row-icons.mjs'
 import {sourcePath} from './parity/workspace-tree-row-source.mjs'
 
 const ui=path.join(root,'packages/ui'),tokens=path.join(ui,'src/styles/tokens.css')
@@ -50,6 +50,7 @@ try{
   out.sources=await sources(files)
   await generated('assets/theme.json',out)
   await generateWorkspaceIcons()
+  await generateIcons(['external-link','trash'],'src/file_row_actions/icons.rs')
 }finally{
   await browser?.close()
   await server.close()

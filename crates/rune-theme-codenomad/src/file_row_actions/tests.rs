@@ -11,6 +11,7 @@ struct App {
     coarse: bool,
     focus_within: bool,
     row_clicks: usize,
+    rtl: bool,
 }
 fn at<'a>(s: &'a mut App, key: &str) -> Option<&'a mut State> {
     (key == "files").then_some(&mut s.row)
@@ -57,6 +58,11 @@ fn view_app(s: &App, cx: &mut Cx<App>) -> El {
         rune_kit::root(
             rune::col().w_full().h_full().child(
                 rune::row()
+                    .dir(if s.rtl {
+                        rune::Direction::Rtl
+                    } else {
+                        rune::Direction::Ltr
+                    })
                     .key("row")
                     .role("treeitem")
                     .label("File")
@@ -82,6 +88,7 @@ fn runtime(width: f32) -> Runtime<App> {
             coarse: true,
             focus_within: false,
             row_clicks: 0,
+            rtl: false,
         },
         view_app,
         (400.0, 180.0),
@@ -387,4 +394,34 @@ fn explicit_focus_within_and_coarse_pointer_preserve_source_visibility() {
     });
     rt.frame(0.0);
     assert_eq!(opacity(&rt), 1.0);
+}
+
+#[test]
+fn inline_order_inherits_the_parent_direction() {
+    for rtl in [false, true] {
+        let mut rt = runtime(220.0);
+        rt.update(move |s, _| s.rtl = rtl);
+        rt.frame(0.0);
+        let pin = rt.find("files:pinned:pin").unwrap().0;
+        let open = rt.find("files:inline:open").unwrap().0;
+        let disabled = rt.find("files:inline:disabled").unwrap().0;
+        assert_eq!(pin < open && open < disabled, !rtl);
+        assert_eq!(pin > open && open > disabled, rtl);
+    }
+}
+
+#[test]
+fn hot_buttons_preserve_the_source_transparent_background() {
+    let mut rt = runtime(220.0);
+    let (x, y) = rt.find("files:inline:open").unwrap();
+    rt.pointer_move(x, y);
+    deliver(&mut rt);
+    focus(&mut rt, "files:inline:open");
+    let open = rt
+        .elements()
+        .into_iter()
+        .find(|e| e.key.as_deref() == Some("files:inline:open"))
+        .unwrap();
+    assert_eq!(open.fill, rune::Color::TRANSPARENT);
+    assert_eq!(open.opacity, 1.0);
 }

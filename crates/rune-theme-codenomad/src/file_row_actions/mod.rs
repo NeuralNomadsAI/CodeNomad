@@ -5,6 +5,7 @@ use crate::{
 };
 use rune::Tx;
 use std::rc::Rc;
+pub mod icons;
 mod view;
 pub use view::view;
 

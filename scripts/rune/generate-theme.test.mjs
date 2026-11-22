@@ -98,6 +98,18 @@ test('generated semantic metrics survive actual font changes and viewport change
       assert.deepEqual(baseline.metrics.fileRowActions,{gap:2,pinnedGap:2,inlineGap:2,overflowSlop:0.5})
       assert.deepEqual(baseline.metrics.fileRowActionFocus,{outlineWidth:1,outlineOffset:-1})
       assert.notEqual(baseline.colors['file-row-active-bg'],baseline.colors['file-row-active-hover-bg'])
+      const inline=page.locator('#file-actions-contract .file-row-inline-actions button')
+      const beforeActionStyles=await page.evaluateHandle(()=>document.activeElement)
+      try{
+      await inline.hover()
+      assert.equal(await inline.evaluate(el=>getComputedStyle(el).backgroundImage),'none','Later file-row background shorthand clears the shared hover image')
+      await inline.focus()
+      assert.equal(await inline.evaluate(el=>getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)')
+      assert.equal(await inline.evaluate(el=>getComputedStyle(el).backgroundImage),'none')
+      await inline.evaluate(el=>el.disabled=true)
+      assert.equal(await inline.evaluate(el=>getComputedStyle(el).opacity),'0.7','Disabled file actions keep the Source icon opacity')
+      await inline.evaluate(el=>el.disabled=false)
+      }finally{await beforeActionStyles.evaluate(el=>el?.focus());await beforeActionStyles.dispose()}
       const specificity=await page.addStyleTag({content:'#file-actions-contract .icon-toggle:hover {background-color:rgb(255,0,0)!important} .icon-toggle:hover {background-color:rgb(0,255,0)!important}'})
       assert.equal((await collectFileActionColors(page))['file-row-active-hover-bg'],'#ff0000ff','Actual hover must preserve specificity over later !important rules')
       await specificity.evaluate(el=>el.remove())

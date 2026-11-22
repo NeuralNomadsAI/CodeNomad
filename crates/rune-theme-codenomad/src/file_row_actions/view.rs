@@ -9,18 +9,6 @@ static MORE: Icon = Icon {
     body: r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></g>"#,
 };
 
-fn over(top: Color, bottom: Color) -> Color {
-    let [r, g, b, a] = rune::color::over(top.premul_srgb(1.0), bottom.premul_srgb(1.0));
-    if a == 0.0 {
-        return Color::TRANSPARENT;
-    }
-    Color {
-        r: rune::color::srgb_decode(r / a),
-        g: rune::color::srgb_decode(g / a),
-        b: rune::color::srgb_decode(b / a),
-        a,
-    }
-}
 fn button<S: 'static>(
     state: &State,
     at: StateAt<S>,
@@ -43,11 +31,6 @@ fn button<S: 'static>(
     } else {
         Color::TRANSPARENT
     };
-    let bg = if hover || focus {
-        over(t.color("surface-hover-overlay"), bg)
-    } else {
-        bg
-    };
     let ink = t.color(if active || hover || focus {
         "text-primary"
     } else {
@@ -62,7 +45,6 @@ fn button<S: 'static>(
     let label = item.label.clone();
     let mut e = Button::new(&label)
         .variant(ButtonVariant::Ghost)
-        .disabled(item.disabled)
         .label_with(move |_, _| {
             glyph.map_or_else(rune::el, |glyph| {
                 glyph()
@@ -74,6 +56,7 @@ fn button<S: 'static>(
             })
         })
         .build(kit(dark))
+        .disabled(item.disabled)
         .key(&key)
         .help(&label)
         .size(
