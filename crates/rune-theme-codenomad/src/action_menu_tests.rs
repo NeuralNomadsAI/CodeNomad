@@ -162,6 +162,20 @@ fn pointer_opened_container_admits_the_first_keyboard_arrow() {
     );
 }
 #[test]
+fn pointer_container_admits_home_end_and_typeahead() {
+    for (entry, target) in [
+        (Key::Home, "open"),
+        (Key::End, "last"),
+        (Key::Text("l".into()), "last"),
+    ] {
+        let mut rt = runtime();
+        rt.state.many = true;
+        tap(&mut rt, "actions:trigger");
+        key(&mut rt, entry);
+        assert_eq!(focused(&rt), Some(format!("actions:item:{target}")));
+    }
+}
+#[test]
 fn selection_runs_after_actual_focus_return_and_captures_original_descriptor() {
     let mut rt = runtime();
     tap(&mut rt, "actions:trigger");

@@ -29,6 +29,8 @@ Shared renders enable `Cx::web_focus`: Tab follows pressable controls, pointer p
 
 Shared menus focus their container when opened by pointer and the first enabled item when activated by keyboard; Up opens at the last enabled item. Confirmation scenes declare their Cancel autofocus explicitly.
 
+Home/End and typeahead from the focused menu container are tracked in [Rune issue 1364](https://github.com/anomalyco/rune/issues/1364). Their application regression test remains active as an integration gate.
+
 ## Platform
 
 - Shared code builds for native and `wasm32-unknown-unknown`; CI builds both.
