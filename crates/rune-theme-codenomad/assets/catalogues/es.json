@@ -2191,6 +2191,8 @@
   "rune.refresh": "Actualizar",
   "rune.refresh_controls": "Actualizar",
   "rune.reject": "Rechazar",
+  "rune.restore_error": "Restauración no disponible",
+  "rune.save_error": "Borradores sin guardar",
   "rune.search": "Filtrar sesiones cargadas",
   "rune.server": "Servidor",
   "rune.session_title": "Título de la sesión",

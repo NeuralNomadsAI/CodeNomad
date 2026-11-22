@@ -65,14 +65,11 @@ jobs:
         run: |
           node scripts/rune/prepare.mjs
           node scripts/rune/prepare.mjs --check
-      - uses: actions/cache@v4
+      - name: Restore trusted Cargo downloads
+        if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
+        uses: ./.github/actions/download-cache
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ${{ env.CARGO_TARGET_DIR }}
-          key: rune-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'packages/rune-app/Cargo.toml') }}
-          restore-keys: rune-${{ runner.os }}-${{ runner.arch }}-
+          kind: cargo
       - name: Check generated source and component inventory
         run: |
           node scripts/rune/generate-theme.mjs --check
@@ -105,6 +102,16 @@ jobs:
           suffix=''
           if [[ "$RUNNER_OS" == Windows ]]; then suffix='.exe'; fi
           node scripts/rune/headless.mjs --binary "$CARGO_TARGET_DIR/debug/codenomad-rune$suffix" --out "target/rune-evidence/$RUNNER_OS"
+      - name: Qualify restoration through the shared Rust server
+        run: |
+          cargo build --locked --manifest-path packages/server-rs/Cargo.toml
+          suffix=''
+          if [[ "$RUNNER_OS" == Windows ]]; then suffix='.exe'; fi
+          export RUNE_CLIENT_EXE="$CARGO_TARGET_DIR/debug/codenomad-rune$suffix"
+          export RUNE_SERVER_EXE="$CARGO_TARGET_DIR/debug/codenomad-rs$suffix"
+          node packages/rune-app/launcher-fixture.mjs --workspace-claims
+          node packages/rune-app/launcher-fixture.mjs --restore-state
+          node packages/rune-app/recovery-fixture.mjs
       - name: Compare the shared window control with Solid on Windows
         if: runner.os == 'Windows'
         run: |
@@ -119,11 +126,12 @@ jobs:
           echo 'Windows additionally compares the shared window-close control with actual Solid captures using committed thresholds. Other component/platform pairs and Rune/TUI latency collection remain to qualify. Headless virtual-clock frame timing is separate from measured interactive latency.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload native evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: rune-native-${{ runner.os }}-${{ runner.arch }}
           path: |
             target/rune-evidence/${{ runner.os }}/
             target/rune-parity/window-close/
+            packages/rune-app/fixture-profile/**/proof.json
           if-no-files-found: warn
           retention-days: 7

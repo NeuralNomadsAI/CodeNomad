@@ -13,6 +13,8 @@ pub mod http;
 pub mod recovery;
 pub mod runtime;
 mod server_path;
+pub use server_path::absolute as absolute_server_path;
+pub use server_path::same as same_server_path;
 pub mod stream;
 pub mod transport;
 pub mod wire;
@@ -30,6 +32,8 @@ pub struct Message {
     pub parts: Vec<content::Part>,
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod catalog_tests;
 #[cfg(test)]
 mod fragment_tests;
 #[cfg(test)]

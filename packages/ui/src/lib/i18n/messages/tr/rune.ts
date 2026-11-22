@@ -39,4 +39,6 @@ export const runeMessages = {
   "rune.no": "Hayır",
   "rune.older": "Önceki mesajlar",
   "rune.reconnecting": "Yeniden bağlanıyor",
+  "rune.restore_error": "Geri yükleme kullanılamıyor",
+  "rune.save_error": "Taslaklar kaydedilmedi",
 } as const

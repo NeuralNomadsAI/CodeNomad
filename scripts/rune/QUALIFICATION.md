@@ -15,6 +15,8 @@ Le scénario `headless-interaction.json` utilise la scène synthétique de 10 00
 
 Le lanceur retire les variables `RUNE_*` héritées et impose la scène synthétique ; les essais utilisent `trial-rune-headless`. Les interactions restent internes au runtime, y compris le collage simulé. Le script reçoit un chemin absolu de binaire compilé et effectue uniquement des lancements avec `--tree` et `--snap`.
 
+La CI restaure les téléchargements Cargo vérifiés par l'action partagée, puis reconstruit ses artefacts. Elle compile aussi `packages/server-rs` et exerce `launcher-fixture.mjs --workspace-claims`, `launcher-fixture.mjs --restore-state` et `recovery-fixture.mjs` sur les trois systèmes. Ces essais relient le vrai client et le vrai serveur Rust à un OpenCode simulé isolé ; les preuves JSON des profils possédés sont jointes aux artefacts du job.
+
 La feature `test-support` active les scènes, la galerie et les sondes de qualification. Avant ces builds, `check-production.mjs` vérifie les artefacts par défaut : refus des arguments de qualification, absence de marqueurs de sondes dans les binaires natif et WASM, et fonctionnement de l'inspection Rune sur le lanceur du produit.
 
 ## Parité par composant

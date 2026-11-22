@@ -75,8 +75,15 @@ pub fn run() {
     assert_eq!(rt.state.messages.len(), 2);
     assert_eq!(rt.state.messages[0].body, "Existing project history");
     rt.state.draft = TextEdit::new("unsent draft");
-    launcher::back(&mut rt.state);
-    assert!(!rt.state.launcher_visible);
+    rt.frame(1.0 / 60.0);
+    tap(&mut rt, "sessions-back");
+    wait(&mut rt, "return with retained draft", |s| {
+        s.launcher_visible && !s.launcher.as_ref().unwrap().pending
+    });
+    tap(&mut rt, "session-ses_existing");
+    wait(&mut rt, "restore existing draft", |s| {
+        !s.launcher_visible && s.phase == Phase::Ready
+    });
     assert_eq!(rt.state.draft.text, "unsent draft");
     rt.state.draft = TextEdit::new("");
     launcher::back(&mut rt.state);
@@ -127,7 +134,7 @@ pub fn run() {
             } else {
                 format!("body-{id}")
             };
-            let prefix = format!("session-stack/history/rows/{id}/");
+            let prefix = format!("/history/rows/{id}/");
             let row = rt.state.messages.iter().find(|m| m.id == id);
             let after_tool = row.is_some_and(|m| {
                 m.parts
@@ -143,7 +150,7 @@ pub fn run() {
                     .elements()
                     .into_iter()
                     .filter(|e| {
-                        e.path.starts_with(&prefix)
+                        e.path.contains(&prefix)
                             && e.key.as_deref() == Some(key.as_str())
                             && e.text.as_deref().is_some_and(|t| t.starts_with("fn main"))
                             && !e.exiting

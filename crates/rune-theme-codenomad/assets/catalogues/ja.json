@@ -2191,6 +2191,8 @@
   "rune.refresh": "更新",
   "rune.refresh_controls": "更新",
   "rune.reject": "拒否",
+  "rune.restore_error": "復元できません",
+  "rune.save_error": "下書きが保存されていません",
   "rune.search": "読み込み済みセッションを絞り込む",
   "rune.server": "サーバー",
   "rune.session_title": "セッション名",

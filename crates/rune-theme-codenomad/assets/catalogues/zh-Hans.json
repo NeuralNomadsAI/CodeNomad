@@ -2191,6 +2191,8 @@
   "rune.refresh": "刷新",
   "rune.refresh_controls": "刷新",
   "rune.reject": "拒绝",
+  "rune.restore_error": "无法恢复",
+  "rune.save_error": "草稿未保存",
   "rune.search": "筛选已加载的会话",
   "rune.server": "服务器",
   "rune.session_title": "会话标题",

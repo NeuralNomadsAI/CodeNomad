@@ -1,5 +1,6 @@
 //! Platform boundary for task execution, connection defaults and local file picking.
 mod connection;
+pub(crate) mod storage;
 pub(crate) use connection::configured_backend;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod host;
@@ -18,6 +19,30 @@ pub fn local_server_available() -> bool {
 pub fn finish() {
     #[cfg(not(target_arch = "wasm32"))]
     boot::finish();
+}
+pub fn release_records_on_exit(
+    records: Vec<(crate::backend::Backend, String)>,
+    openings: crate::workspace::opening::Openings,
+) {
+    #[cfg(not(target_arch = "wasm32"))]
+    block_on(async move {
+        openings.allow_cleanup();
+        let mut jobs = tokio::task::JoinSet::new();
+        for (backend, id) in records {
+            jobs.spawn(async move {
+                let _ = backend.release_project(&id).await;
+            });
+        }
+        let _ = tokio::time::timeout(Duration::from_secs(1), async {
+            while jobs.join_next().await.is_some() {}
+            while !openings.settled() {
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+    });
+    #[cfg(target_arch = "wasm32")]
+    let _ = (records, openings);
 }
 pub fn start_local(
     wake: rune::Waker,

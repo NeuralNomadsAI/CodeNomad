@@ -36,11 +36,11 @@ fn style(path: &str) -> Option<Style> {
     path.starts_with('/').then_some(Style::Posix)
 }
 
-pub(crate) fn absolute(path: &str) -> bool {
+pub fn absolute(path: &str) -> bool {
     style(path).is_some()
 }
 
-pub(crate) fn same(left: &str, right: &str) -> bool {
+pub fn same(left: &str, right: &str) -> bool {
     match (style(left), style(right)) {
         (Some(Style::Windows), Some(Style::Windows)) => {
             let normalize =

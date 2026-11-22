@@ -2191,6 +2191,8 @@
   "rune.refresh": "Actualiser",
   "rune.refresh_controls": "Actualiser",
   "rune.reject": "Refuser",
+  "rune.restore_error": "Restauration indisponible",
+  "rune.save_error": "Brouillons non enregistrés",
   "rune.search": "Filtrer les sessions chargées",
   "rune.server": "Serveur",
   "rune.session_title": "Titre de la session",

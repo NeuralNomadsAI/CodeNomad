@@ -39,4 +39,6 @@ export const runeMessages = {
   "rune.no": "לא",
   "rune.older": "הודעות קודמות",
   "rune.reconnecting": "מתחבר מחדש",
+  "rune.restore_error": "השחזור אינו זמין",
+  "rune.save_error": "הטיוטות לא נשמרו",
 } as const

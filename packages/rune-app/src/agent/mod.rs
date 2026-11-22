@@ -23,12 +23,7 @@ enum Result {
     Stop(bool),
 }
 pub fn navigation_blocked(s: &crate::State) -> bool {
-    s.agent.as_ref().is_some_and(|a| {
-        a.busy
-            || a.stopping
-            || a.drafts.values().any(|d| d.dirty)
-            || a.reasons.values().any(|d| !d.text.is_empty())
-    })
+    s.agent.as_ref().is_some_and(Ui::navigation_blocked)
 }
 pub struct Handle {
     jobs: Sender<Job>,
@@ -101,6 +96,12 @@ pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
     }
 }
 impl Ui {
+    pub fn navigation_blocked(&self) -> bool {
+        self.busy
+            || self.stopping
+            || self.drafts.values().any(|d| d.dirty)
+            || self.reasons.values().any(|d| !d.text.is_empty())
+    }
     pub fn toggle_picker(&mut self) {
         self.picker = !self.picker;
         if self.picker {

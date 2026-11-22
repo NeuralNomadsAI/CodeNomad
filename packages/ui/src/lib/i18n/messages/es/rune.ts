@@ -39,4 +39,6 @@ export const runeMessages = {
   "rune.no": "No",
   "rune.older": "Mensajes anteriores",
   "rune.reconnecting": "Reconectando",
+  "rune.restore_error": "Restauración no disponible",
+  "rune.save_error": "Borradores sin guardar",
 } as const

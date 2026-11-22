@@ -39,4 +39,6 @@ export const runeMessages = {
   "rune.no": "否",
   "rune.older": "较早消息",
   "rune.reconnecting": "正在重新连接",
+  "rune.restore_error": "无法恢复",
+  "rune.save_error": "草稿未保存",
 } as const

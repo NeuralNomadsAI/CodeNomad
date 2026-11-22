@@ -39,4 +39,6 @@ export const runeMessages = {
   "rune.no": "होइन",
   "rune.older": "पुराना सन्देशहरू",
   "rune.reconnecting": "पुनः जडान हुँदैछ",
+  "rune.restore_error": "पुनर्स्थापना उपलब्ध छैन",
+  "rune.save_error": "मस्यौदाहरू सुरक्षित गरिएका छैनन्",
 } as const

@@ -2191,6 +2191,8 @@
   "rune.refresh": "Refresh",
   "rune.refresh_controls": "Refresh",
   "rune.reject": "Reject",
+  "rune.restore_error": "Restore unavailable",
+  "rune.save_error": "Drafts not saved",
   "rune.search": "Filter loaded sessions",
   "rune.server": "Server",
   "rune.session_title": "Session title",

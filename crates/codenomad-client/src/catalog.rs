@@ -3,7 +3,47 @@ use crate::{
     backend::{Backend, read_json},
     history::{Result, valid_id},
 };
+use futures_lite::StreamExt;
 use serde_json::{Value, json};
+
+#[derive(Debug)]
+pub struct CreationRefused;
+impl std::fmt::Display for CreationRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("workspace creation refused before publication")
+    }
+}
+impl std::error::Error for CreationRefused {}
+
+async fn creation_response(response: reqwest::Response) -> Result<Value> {
+    if response.status() != reqwest::StatusCode::BAD_REQUEST {
+        return read_json(response.error_for_status()?).await;
+    }
+    let mut bytes = Vec::new();
+    let mut chunks = response.bytes_stream();
+    while let Some(chunk) = chunks.next().await {
+        let chunk = chunk?;
+        if bytes.len() + chunk.len() > 512 {
+            return Err("workspace creation rejection unavailable".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let message = std::str::from_utf8(&bytes)?;
+    // These terminal validations precede record publication in the shared servers.
+    if matches!(
+        message,
+        "Workspace directory is not authorized"
+            | "OpenCode location is unavailable"
+            | "Workspace folder changed during opening"
+            | "Too many open workspaces"
+            | "Too many workspace creations are already in progress"
+            | "Workspace directory is being removed"
+            | "Workspace manager is shutting down"
+    ) {
+        return Err(CreationRefused.into());
+    }
+    Err("workspace creation rejected with uncertain ownership".into())
+}
 
 #[derive(Clone, Debug)]
 pub struct Project {
@@ -21,6 +61,79 @@ pub struct Sessions {
 }
 
 impl Backend {
+    pub async fn server_id(&self) -> Result<String> {
+        server_id(
+            &read_json(
+                self.client
+                    .get(format!("{}api/meta", self.base))
+                    .send()
+                    .await?
+                    .error_for_status()?,
+            )
+            .await?,
+        )
+    }
+    /// Creates an independent occurrence; the request retains cleanup ownership until released.
+    pub async fn create_project(&self, path: &str, request_id: &str) -> Result<Project> {
+        if !crate::server_path::absolute(path) {
+            return Err(CreationRefused.into());
+        }
+        let request_id = claim(request_id)?;
+        let data = creation_response(
+            self.client
+                .post(format!("{}api/workspaces", self.base))
+                .json(&json!({"path":path,"requestId":request_id}))
+                .send()
+                .await?,
+        )
+        .await?;
+        if data["requestId"].as_str() != Some(request_id) {
+            return Err("workspace creation claim mismatch".into());
+        }
+        project(&data)
+    }
+    pub async fn cancel_project_creation(&self, request_id: &str) -> Result<()> {
+        let request_id = claim(request_id)?;
+        no_content(
+            self.client
+                .post(format!("{}api/workspaces/creation/cancel", self.base))
+                .json(&json!({"requestId":request_id}))
+                .send()
+                .await?,
+        )
+    }
+    pub async fn release_project_creation(
+        &self,
+        workspace_id: &str,
+        request_id: &str,
+    ) -> Result<()> {
+        if !valid_id(workspace_id) {
+            return Err("invalid workspace id".into());
+        }
+        let request_id = claim(request_id)?;
+        no_content(
+            self.client
+                .post(format!(
+                    "{}api/workspaces/{workspace_id}/creation/release",
+                    self.base
+                ))
+                .json(&json!({"requestId":request_id}))
+                .send()
+                .await?,
+        )
+    }
+    /// Removes only the logical record; ordinary DELETE retains its physical folder.
+    pub async fn release_project(&self, workspace_id: &str) -> Result<()> {
+        if !valid_id(workspace_id) {
+            return Err("invalid workspace id".into());
+        }
+        no_content(
+            self.client
+                .delete(format!("{}api/workspaces/{workspace_id}", self.base))
+                .send()
+                .await?,
+        )
+    }
     pub async fn projects(&self) -> Result<Vec<Project>> {
         let data = read_json(
             self.client
@@ -116,6 +229,14 @@ impl Backend {
         session(&data["data"], project)
     }
     pub async fn bind(&self, project: &Project, id: &str, fresh: bool) -> Result<Self> {
+        Ok(self.bind_session(project, id, fresh).await?.0)
+    }
+    pub async fn bind_session(
+        &self,
+        project: &Project,
+        id: &str,
+        fresh: bool,
+    ) -> Result<(Self, Session)> {
         if !valid_id(id) || id.starts_with("ses_cn_schedule_") {
             return Err("invalid session".into());
         }
@@ -130,14 +251,42 @@ impl Backend {
                 .error_for_status()?,
         )
         .await?;
-        session(&data["data"], project)?;
+        let info = session(&data["data"], project)?;
+        if info.id != id {
+            return Err("session response identity mismatch".into());
+        }
         let mut backend = self.clone();
         backend.workspace = project.id.clone();
         backend.session = id.into();
         backend.fresh_mode = fresh;
         backend.client_id = crate::http::client_id()?;
-        Ok(backend)
+        Ok((backend, info))
     }
+}
+fn server_id(data: &Value) -> Result<String> {
+    let id = data["serverId"].as_str().ok_or("invalid server identity")?;
+    if data["apiContract"].as_u64() != Some(1)
+        || id.trim().is_empty()
+        || id.encode_utf16().count() > 512
+        || id.chars().any(char::is_control)
+    {
+        return Err("invalid server identity".into());
+    }
+    Ok(id.to_owned())
+}
+fn claim(request_id: &str) -> Result<&str> {
+    let request_id = request_id.trim();
+    if request_id.is_empty() || request_id.encode_utf16().count() > 128 {
+        return Err("invalid workspace creation request".into());
+    }
+    Ok(request_id)
+}
+fn no_content(response: reqwest::Response) -> Result<()> {
+    let response = response.error_for_status()?;
+    if response.status() != reqwest::StatusCode::NO_CONTENT {
+        return Err("invalid workspace release acknowledgement".into());
+    }
+    Ok(())
 }
 fn project(data: &Value) -> Result<Project> {
     let id = data["id"]

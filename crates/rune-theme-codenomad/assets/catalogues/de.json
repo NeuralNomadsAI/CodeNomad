@@ -2191,6 +2191,8 @@
   "rune.refresh": "Aktualisieren",
   "rune.refresh_controls": "Aktualisieren",
   "rune.reject": "Ablehnen",
+  "rune.restore_error": "Wiederherstellung nicht verfügbar",
+  "rune.save_error": "Entwürfe nicht gespeichert",
   "rune.search": "Geladene Sitzungen filtern",
   "rune.server": "Server",
   "rune.session_title": "Sitzungstitel",
