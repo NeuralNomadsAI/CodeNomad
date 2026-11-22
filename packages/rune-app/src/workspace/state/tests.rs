@@ -115,7 +115,7 @@ fn draft_state() -> State {
     let mut s = init();
     let mut ui = Ui::new();
     ui.ready = true;
-    let mut l = crate::launcher::Launcher::new(std::sync::Arc::new(|| {}));
+    let mut l = crate::launcher::Launcher::fixture();
     l.connection = Some(backend(""));
     l.server_id = Some("trial-server".into());
     s.launcher = Some(l);
@@ -128,6 +128,163 @@ fn draft_state() -> State {
         },
     );
     s
+}
+
+#[test]
+fn full_tab_admission_preserves_the_project_then_reuses_only_an_admitted_slot() {
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        sync::{Arc, Mutex, mpsc},
+        time::{Duration, Instant},
+    };
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let address = format!("http://{}/", listener.local_addr().unwrap());
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let received = requests.clone();
+    let (stop, stopped) = mpsc::channel::<()>();
+    let server = std::thread::spawn(move || {
+        let mut creations = 0;
+        while matches!(stopped.try_recv(), Err(mpsc::TryRecvError::Empty)) {
+            let Ok((mut socket, _)) = listener.accept() else {
+                std::thread::sleep(Duration::from_millis(2));
+                continue;
+            };
+            socket.set_nonblocking(false).unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut bytes = Vec::new();
+            let mut byte = [0];
+            while !bytes.ends_with(b"\r\n\r\n") {
+                assert!(bytes.len() < 16384);
+                socket.read_exact(&mut byte).unwrap();
+                bytes.push(byte[0]);
+            }
+            let header = String::from_utf8(bytes).unwrap();
+            let line = header.lines().next().unwrap().to_string();
+            let length = header
+                .lines()
+                .find_map(|l| {
+                    l.split_once(':')
+                        .filter(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+                        .map(|(_, v)| v.trim().parse::<usize>().unwrap())
+                })
+                .unwrap_or(0);
+            assert!(length < 16384);
+            let mut body = vec![0; length];
+            socket.read_exact(&mut body).unwrap();
+            received.lock().unwrap().push(line.clone());
+            let (status, body) = if line == "POST /api/workspaces HTTP/1.1" {
+                creations += 1;
+                let input: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                (201,serde_json::json!({"id":format!("replacement-{creations}"),"requestId":input["requestId"],"location":{"directory":input["path"]}}).to_string())
+            } else if line.starts_with("GET /workspaces/") {
+                (200, "{\"data\":[]}".into())
+            } else {
+                (204, String::new())
+            };
+            let _ = write!(
+                socket,
+                "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    let mut state = draft_state();
+    state
+        .launcher
+        .as_mut()
+        .unwrap()
+        .connection
+        .as_mut()
+        .unwrap()
+        .base = address;
+    let mut rt = runtime(state);
+    for _ in 1..super::super::MAX_TABS {
+        rt.update(new_tab);
+    }
+    let original = Project {
+        id: "original-record".into(),
+        path: "/original".into(),
+    };
+    rt.state.launcher.as_mut().unwrap().project = Some(original.clone());
+    opened(&mut rt.state, &original);
+    rt.state.draft = TextEdit::new("KEEP THIS UNSENT DRAFT");
+    capture(&mut rt.state);
+    let before = rt.state.workspace.as_ref().unwrap().snapshot();
+    rt.state.launcher.as_mut().unwrap().folder = TextEdit::new("/replacement");
+    rt.update(crate::launcher::open);
+    assert!(!rt.state.launcher.as_ref().unwrap().pending);
+    assert!(
+        rt.state
+            .launcher
+            .as_ref()
+            .unwrap()
+            .openings
+            .pending()
+            .is_empty()
+    );
+    assert_eq!(rt.state.workspace.as_ref().unwrap().snapshot(), before);
+    assert_eq!(rt.state.draft.text, "KEEP THIS UNSENT DRAFT");
+    assert!(
+        requests.lock().unwrap().is_empty(),
+        "full admission must not dispatch any request"
+    );
+    rt.update(|s, tx| close(s, "tab-1", tx));
+    rt.state.launcher.as_mut().unwrap().folder = TextEdit::new("/replacement");
+    rt.update(crate::launcher::open);
+    let wait = |rt: &mut rune::Runtime<State>| {
+        let deadline = Instant::now() + Duration::from_secs(4);
+        while rt.state.launcher.as_ref().unwrap().pending {
+            assert!(Instant::now() < deadline);
+            rt.update(|s, tx| {
+                crate::launcher::poll(s, tx);
+            });
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(rt.state.launcher.as_ref().unwrap().error.is_none());
+    };
+    wait(&mut rt);
+    let after = rt.state.workspace.as_ref().unwrap().snapshot();
+    let last = super::super::MAX_TABS - 1;
+    assert_eq!(after.tabs.len(), super::super::MAX_TABS);
+    assert_eq!(after.active, Some(last));
+    assert_eq!(after.tabs[last - 1], before.tabs[last]);
+    assert!(
+        matches!(&after.tabs[last],Tab::Workspace(w) if w.folder=="/replacement"&&w.workspace_id.as_deref()==Some("replacement-1")&&w.drafts.is_empty())
+    );
+    assert!(rt.state.draft.text.is_empty());
+    rt.update(|s, tx| select(s, &format!("tab-{last}"), tx));
+    assert_eq!(rt.state.draft.text, "KEEP THIS UNSENT DRAFT");
+    rt.update(|s, tx| select(s, "tab-2", tx));
+    let blank_index = rt.state.workspace.as_ref().unwrap().snapshot().active;
+    rt.state.launcher.as_mut().unwrap().folder = TextEdit::new("/blank-origin");
+    rt.update(crate::launcher::open);
+    wait(&mut rt);
+    let saved = rt.state.workspace.as_ref().unwrap().snapshot();
+    assert_eq!(saved.tabs.len(), super::super::MAX_TABS);
+    assert_eq!(saved.active, blank_index);
+    assert_eq!(saved.tabs[last - 1], before.tabs[last]);
+    assert!(
+        matches!(&saved.tabs[blank_index.unwrap()],Tab::Workspace(w) if w.folder=="/blank-origin")
+    );
+    let requests = requests.lock().unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r.as_str() == "POST /api/workspaces HTTP/1.1")
+            .count(),
+        2
+    );
+    assert!(
+        !requests.iter().any(|r| r.starts_with("DELETE")),
+        "no existing record may be deleted"
+    );
+    drop(requests);
+    drop(stop);
+    server.join().unwrap();
 }
 
 #[test]

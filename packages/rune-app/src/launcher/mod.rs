@@ -42,6 +42,10 @@ enum Reply {
     Bound(Backend, String),
 }
 impl Launcher {
+    #[cfg(test)]
+    pub(crate) fn fixture() -> Self {
+        Self::with_boot(std::sync::Arc::new(|| {}), None)
+    }
     pub fn local_connection(&self) -> bool {
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -224,7 +228,12 @@ pub fn open(s: &mut State, tx: &mut Tx) {
     if !crate::workspace::input_ready(s) {
         return;
     }
-    crate::workspace::prepare_open(s, tx);
+    if !crate::workspace::prepare_open(s, tx) {
+        if let Some(l) = &mut s.launcher {
+            l.error = Some("open_error");
+        }
+        return;
+    }
     let intent = s
         .workspace
         .as_ref()

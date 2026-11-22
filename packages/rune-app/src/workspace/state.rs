@@ -176,11 +176,20 @@ fn busy(s: &State) -> bool {
 pub fn input_ready(s: &State) -> bool {
     s.workspace.as_ref().is_none_or(|ui| ui.ready)
 }
-pub fn prepare_open(s: &mut State, tx: &mut Tx) {
+pub fn prepare_open(s: &mut State, tx: &mut Tx) -> bool {
+    if busy(s) {
+        return false;
+    }
     if s.workspace
         .as_ref()
         .is_some_and(|ui| matches!(ui.entries[ui.active].saved, Tab::Workspace(_)))
     {
+        if s.workspace
+            .as_ref()
+            .is_some_and(|ui| ui.entries.len() >= super::MAX_TABS)
+        {
+            return false;
+        }
         let folder = s
             .launcher
             .as_ref()
@@ -191,6 +200,7 @@ pub fn prepare_open(s: &mut State, tx: &mut Tx) {
             l.folder = TextEdit::new(folder);
         }
     }
+    true
 }
 pub fn capture(s: &mut State) {
     let Some(ui) = &mut s.workspace else {
@@ -296,7 +306,11 @@ pub fn select(s: &mut State, id: &str, tx: &mut Tx) {
     capture(s);
 }
 pub fn new_tab(s: &mut State, tx: &mut Tx) {
-    if busy(s) || s.workspace.as_ref().is_none_or(|ui| ui.entries.len() >= 32) {
+    if busy(s)
+        || s.workspace
+            .as_ref()
+            .is_none_or(|ui| ui.entries.len() >= super::MAX_TABS)
+    {
         return;
     }
     stash(s);
