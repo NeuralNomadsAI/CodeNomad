@@ -14,6 +14,30 @@ pub struct Row<'a> {
     pub actions: Option<El>,
 }
 
+pub fn entry_icon(name: &str, expanded: Option<bool>) -> &'static Icon {
+    if let Some(expanded) = expanded {
+        return if expanded {
+            &icons::FOLDER_OPEN
+        } else {
+            &icons::FOLDER
+        };
+    }
+    let extension = name
+        .rsplit_once('.')
+        .map(|(_, ext)| ext.to_ascii_lowercase());
+    match extension.as_deref() {
+        Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "ico" | "bmp" | "avif") => {
+            &icons::IMAGE
+        }
+        Some("md" | "mdx" | "txt" | "rst") => &icons::FILE_TEXT,
+        Some(
+            "ts" | "tsx" | "js" | "jsx" | "json" | "yaml" | "yml" | "css" | "html" | "py" | "rs"
+            | "sh",
+        ) => &icons::FILE_CODE,
+        _ => &icons::FILE,
+    }
+}
+
 pub fn root(dark: bool, name: &str, directory: &str) -> El {
     let t = tokens(dark);
     let size = t.number("font-size-sm").px();
