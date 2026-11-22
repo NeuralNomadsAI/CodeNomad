@@ -39,7 +39,7 @@ pub struct State {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 #[test]
-fn owner_changes_do_not_fill_the_conversation_recovery_queue() {
+fn owner_changes_invalidate_the_intended_consumers_without_recovering_history() {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -76,6 +76,28 @@ fn owner_changes_do_not_fill_the_conversation_recovery_queue() {
                 events.try_recv().unwrap(),
                 crate::transport::Event::Preferences(crate::settings::Owner::State)
             ));
+            let data = json!({"owner":"ui","type":"storage.configChanged",
+                              "value":{"padding":"x".repeat(NATIVE_EVENT_LIMIT)}});
+            dispatch(
+                &backend,
+                1,
+                &out,
+                &state,
+                "integration-test",
+                "message",
+                &data.to_string(),
+            )
+            .await
+            .unwrap();
+            assert!(matches!(
+                events.try_recv().unwrap(),
+                crate::transport::Event::Preferences(crate::settings::Owner::Config)
+            ));
+            assert!(matches!(
+                recovery.try_recv().unwrap(),
+                Input::Workspace(1, WorkspaceEvent::UiPreferencesChanged)
+            ));
+            assert!(events.is_empty() && recovery.is_empty() && state.valid(stamp));
         });
 }
 impl State {
@@ -99,6 +121,23 @@ impl State {
                 .await;
         } else {
             out.send(Input::Preferences(owner)).await?;
+        }
+        Ok(())
+    }
+
+    async fn storage_changed(
+        &self,
+        epoch: u64,
+        owner: crate::settings::Owner,
+        out: &Sender<Input>,
+    ) -> Result<()> {
+        self.notify_preferences(owner, out).await?;
+        if owner == crate::settings::Owner::Config {
+            out.send(Input::Workspace(
+                epoch,
+                WorkspaceEvent::UiPreferencesChanged,
+            ))
+            .await?;
         }
         Ok(())
     }
@@ -172,8 +211,7 @@ pub(super) async fn dispatch(
     }
     let value: Value = serde_json::from_str(data.trim())?;
     if let Some(owner) = storage_owner(&value) {
-        state.notify_preferences(owner, out).await?;
-        return Ok(());
+        return state.storage_changed(epoch, owner, out).await;
     }
     if data.len() > NATIVE_EVENT_LIMIT {
         return Err("oversized SSE event".into());
@@ -227,9 +265,6 @@ pub(super) async fn dispatch(
 }
 
 fn workspace_event(b: &Backend, value: &Value) -> Option<WorkspaceEvent> {
-    if value["type"] == "storage.configChanged" && value["owner"] == "ui" {
-        return Some(WorkspaceEvent::UiPreferencesChanged);
-    }
     let id = value["workspaceId"].as_str()?;
     if id != b.workspace || !crate::history::valid_id(id) {
         return None;

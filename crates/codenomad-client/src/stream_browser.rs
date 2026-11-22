@@ -119,7 +119,7 @@ pub(super) async fn read(
             Some(Frame::Data(kind, data)) => {
                 dispatch(b, epoch, out, state, &connection, &kind, &data).await?
             }
-            Some(Frame::Preferences(owner)) => state.notify_preferences(owner, out).await?,
+            Some(Frame::Preferences(owner)) => state.storage_changed(epoch, owner, out).await?,
             Some(Frame::Closed) => return Err("browser event stream ended".into()),
             None => {}
         }

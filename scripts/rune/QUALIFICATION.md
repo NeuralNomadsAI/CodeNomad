@@ -20,6 +20,14 @@ Le mode `--files-state` ouvre un projet privé et sa session synthétique exista
 
 La feature `test-support` active les scènes, la galerie et les sondes de qualification. Avant ces builds, `check-production.mjs` vérifie les artefacts par défaut : refus des arguments de qualification, absence de marqueurs de sondes dans les binaires natif et WASM, et fonctionnement de l'inspection Rune sur le lanceur du produit.
 
+Le contrat SSE Préférences/Git s'exécute dans Chromium depuis la sonde WASM du client. Avec `wasm-bindgen` à la version de `Cargo.lock` et Chromium Playwright installé :
+
+```sh
+cargo build --locked -p codenomad-client --example browser-preference-events --target wasm32-unknown-unknown
+wasm-bindgen --target web --out-name probe --out-dir "$CARGO_TARGET_DIR/browser-sse/probe" "$CARGO_TARGET_DIR/wasm32-unknown-unknown/debug/examples/browser-preference-events.wasm"
+node packages/rune-app/fixtures/browser-preference-events.mjs "$CARGO_TARGET_DIR/browser-sse/probe"
+```
+
 ## Parité par composant
 
 Les composants Solid et Rune demandent des paires de captures exécutées à géométrie identique, dans chaque palette, avec références d'accessibilité et interactions dédiées. Le statut de parité reste à qualifier pour les composants de l'inventaire.
