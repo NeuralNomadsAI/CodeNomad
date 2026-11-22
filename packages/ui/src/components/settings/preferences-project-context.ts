@@ -101,7 +101,7 @@ export function createPreferencesProjectContext(
     }
     const events = serverEvents.forInstance(() => source.instanceId).on("*", event => {
       if (event.type === "workspace.created" || event.type === "workspace.started" || event.type === "workspace.error") {
-        if (emptyInventory() || event.workspace.id === source.instanceId || event.workspace.id === boundId || !boundId && sameFolder(event.workspace.path)) {
+        if (event.workspace.id === source.instanceId || event.workspace.id === boundId || !boundId && sameFolder(event.workspace.path)) {
           invalidate(event.workspace.status !== "ready")
         }
       } else if (event.type === "workspace.stopped") {
