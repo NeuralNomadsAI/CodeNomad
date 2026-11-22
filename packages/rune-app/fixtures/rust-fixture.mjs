@@ -11,7 +11,9 @@ import {FixtureStore} from './fixture-store.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requireTestSupport()
 const here = path.resolve(import.meta.dirname,'..')
-const profile = path.join(here,'fixture-profile',randomUUID())
+const artifacts = process.env.RUNE_FIXTURE_ARTIFACTS ?? path.join(here,'fixture-profile')
+assert(path.isAbsolute(artifacts),'Fixture artifacts directory must be absolute')
+const profile = path.join(artifacts,randomUUID())
 const project = path.join(profile,'projects','synthetic')
 await mkdir(project,{recursive:true})
 const session = 'ses_rune_synthetic'
@@ -109,9 +111,9 @@ try {
   })
   result=await new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',resolve)})
   if(slash) {
+    assert(!requests.includes(`POST /api/session/${session}/prompt`),'command must never fall back to a native prompt')
     assert.deepEqual(commands,[{name:'review',text:'résumé 🦀',delivery:'steer'}],
       'Rune command must reach native OpenCode once through the Rust relay')
-    assert(!requests.includes(`POST /api/session/${session}/prompt`),'command must never fall back to a native prompt')
   }
   assert.equal(result,0,'Rune client exit')
   console.log(JSON.stringify({fixture:'real-rust-server-synthetic-opencode',exitCode:result,requests},null,2))
