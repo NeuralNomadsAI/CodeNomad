@@ -16,6 +16,60 @@ async fn markup(rt: &mut Runtime<State>, http: &http::Http) {
     open(rt, http, "markup.md", case["base64"].as_str().unwrap()).await;
 }
 
+#[test]
+fn space_follows_the_reader_scroll_instead_of_activating_a_focused_link() {
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut rt = runtime(http.ui(Store::default(), "markdown-space"));
+        markup(&mut rt, &http).await;
+        rt.update(|state, _| {
+            let ui = state.files.as_mut().unwrap();
+            let scope = ui.document.scope();
+            ui.document
+                .input(scope)
+                .text
+                .push_str(&"\n\nMore text in the document.".repeat(120));
+            ui.document.changed(scope);
+        });
+        rt.frame(0.02);
+        for _ in 0..20 {
+            if rt
+                .elements()
+                .iter()
+                .any(|node| node.key.as_deref() == Some(REMOTE) && node.focused)
+            {
+                break;
+            }
+            rt.key(KeyEvent {
+                key: Key::Tab,
+                mods: Mods::default(),
+            });
+            rt.frame(0.02);
+        }
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|node| node.key.as_deref() == Some(REMOTE) && node.focused)
+        );
+        let paragraph_y = |rt: &Runtime<State>| {
+            rt.elements()
+                .into_iter()
+                .find(|node| node.text.as_deref() == Some("safe remote"))
+                .unwrap()
+                .rect[1]
+        };
+        let before = paragraph_y(&rt);
+        rt.key(KeyEvent {
+            key: Key::Text(" ".into()),
+            mods: Mods::default(),
+        });
+        rt.frame(0.02);
+        assert!(paragraph_y(&rt) < before);
+        assert!(rt.take_url_requests().is_empty());
+        http.quiet().await;
+    });
+}
+
 fn roles(node: &serde_json::Value, role: &str, name: &str) -> bool {
     (node["role"] == role && node["name"] == name)
         || node["children"]

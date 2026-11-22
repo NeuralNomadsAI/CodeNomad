@@ -52,7 +52,6 @@ export async function collectTheme(names){
     readerHeading:['.workspace-file-view .git-diff-heading',['minWidth','rowGap']],
     readerTitle:['.workspace-file-view .git-diff-heading strong',['fontSize','fontWeight','lineHeight']],
     readerDirectory:['.workspace-file-view .git-diff-heading span',['fontSize','fontWeight','lineHeight']],
-    readerToolDisabled:['.workspace-file-view button:disabled',['opacity']],
     readerMarkdown:['.workspace-markdown .markdown-body',['fontSize','fontWeight','lineHeight']],
     ...Object.fromEntries([1,2,3,4].map(level=>[`readerHeading${level}`,[`.workspace-markdown h${level}`,['fontSize','fontWeight','lineHeight']]])),
   }

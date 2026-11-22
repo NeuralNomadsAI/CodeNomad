@@ -66,7 +66,22 @@ try {
     const solid = await view.screenshot({ path: path.join(out, `${theme}-${scene}-solid.png`), animations: 'disabled' })
     const reference = await view.ariaSnapshot()
     const palette = await page.locator('html').getAttribute('data-color-scheme')
-    const geometry = await view.evaluate(el => Object.fromEntries(['header', '.workspace-markdown h1', '.workspace-image img', '.view-lines'].map(selector => [selector, el.querySelector(selector)?.getBoundingClientRect().toJSON()])))
+    const geometry = await view.evaluate(el => Object.fromEntries(['header', '.workspace-markdown h1', '.workspace-markdown img', '.workspace-image img', '.view-lines'].map(selector => [selector, el.querySelector(selector)?.getBoundingClientRect().toJSON()])))
+    const links = scene === 'markup-md' ? await checkLinks(page) : undefined
+    const chrome = tree.elements.find(n => n.key === 'file-close')
+    assert.equal(chrome.rect[0] + chrome.rect[2] - x, width - 8, 'Dismiss stays trailing')
+    if (scene === 'source') {
+      const text = tree.elements.find(n => n.key === 'file-source-text')
+      const { x: sx, y: sy } = geometry['.view-lines']
+      assert(Math.abs(text.rect[0] - x - sx) <= 2 && Math.abs(text.rect[1] - y - sy) <= 2, 'Source text origin')
+    }
+    if (scene === 'markup-md') {
+      const heading = tree.elements.find(n => n.role === 'heading' && n.text === 'Reader')
+      const { x: hx, y: hy } = geometry['.workspace-markdown h1']
+      assert(Math.abs(heading.rect[0] - x - hx) <= 1 && Math.abs(heading.rect[1] - y - hy) <= 1, 'Rendered heading origin')
+      const image = tree.elements.find(n => n.role === 'image' && n.label === 'blocked')
+      geometry.markdownImageOffset = image.rect[1] - y - geometry['.workspace-markdown img'].y
+    }
     assert.deepEqual(errors, [])
     await page.close()
     const decode = await browser.newPage()
@@ -82,7 +97,24 @@ try {
         if (col === Math.floor(width / 4) && [4, height - 42].includes(row)) samples.push([ref.pixels.slice(src, src + 3), actual.pixels.slice(dst, dst + 3)])
       }
       assert(samples.length === 2 && samples.every(([solid, rune]) => solid.every((c, i) => Math.abs(c - rune[i]) <= 1)), `${theme} ${scene}: surface palette ${JSON.stringify(samples)}`)
-      reports.push({ theme, scene, palette, pixels: [width, height], rgbMeanError: totalError / (width * height * 3), samples, reference, geometry, nativeAccessibility: tree.accessibility })
+      // A frame-wide smoke budget; discrete geometry and interaction have their own checks.
+      const rgbMeanError = totalError / (width * height * 3)
+      assert(rgbMeanError <= 1.5, `${theme} ${scene}: mean RGB error ${rgbMeanError} > 1.5`)
+      if (scene === 'source') {
+        const gutterInkRight = (image, dx, dy, firstRow) => {
+          const background = (dy + firstRow) * image.width + dx
+          const ink = []
+          for (let row = firstRow; row < firstRow + 16; row++) for (let col = 10; col < 52; col++) {
+            const offset = ((row + dy) * image.width + dx + col) * 4
+            if ([0, 1, 2].some(c => Math.abs(image.pixels[offset + c] - image.pixels[background * 4 + c]) > 45)) ink.push(col)
+          }
+          assert(ink.length > 0, 'Expected a visible first line number')
+          return Math.max(...ink)
+        }
+        const row = Math.ceil(geometry['.view-lines'].y)
+        assert(Math.abs(gutterInkRight(ref, 0, 0, row) - gutterInkRight(actual, x, y, row)) <= 2, 'Line number column')
+      }
+      reports.push({ theme, scene, palette, pixels: [width, height], rgbMeanError, samples, reference, geometry, links, nativeAccessibility: tree.accessibility })
     } finally {
       await decode.close()
     }
@@ -94,4 +126,30 @@ try {
   await stream?.close()
   await fixture?.close()
   await owner.stop()
+}
+
+async function checkLinks(page) {
+  // Use the same window click bridge as the local Tauri app, with an inert IPC receiver.
+  await page.evaluate(async () => {
+    window.readerOpens = []
+    window.__TAURI_INTERNALS__ = { invoke: async (command, { url }) => {
+      if (command !== 'open_external_url') throw Error(`Unexpected opener command: ${command}`)
+      window.readerOpens.push(url)
+    } }
+    const { installExternalLinkClicks } = await import('/src/lib/native/external-link-clicks.ts')
+    window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'
+    installExternalLinkClicks(window)
+  })
+  const anchor = page.locator('.workspace-markdown a')
+  const expected = []
+  for (const href of ['./notes.md', '#reader']) {
+    await anchor.evaluate((link, href) => { link.setAttribute('href', href); link.focus() }, href)
+    await page.keyboard.press('Space')
+    assert.deepEqual(await page.evaluate(() => window.readerOpens), expected)
+    await page.keyboard.press('Enter')
+    expected.push(new URL(href, page.url()).href)
+    await page.waitForFunction(count => window.readerOpens.length >= count, expected.length)
+    assert.deepEqual(await page.evaluate(() => window.readerOpens), expected)
+  }
+  return expected
 }

@@ -45,14 +45,11 @@ pub enum WriteResult {
 impl Backend {
     /// Workspace Markdown uses the application URL as its base, rather than a checkout path.
     pub fn file_link(&self, destination: &str) -> Option<String> {
-        if destination.trim().is_empty() {
-            return None;
-        }
-        let url = reqwest::Url::parse(&self.base)
-            .ok()?
-            .join(destination)
-            .ok()?;
-        matches!(url.scheme(), "http" | "https" | "mailto").then(|| url.into())
+        #[cfg(target_arch = "wasm32")]
+        let page = web_sys::window().and_then(|window| window.location().href().ok());
+        #[cfg(not(target_arch = "wasm32"))]
+        let page: Option<String> = None;
+        file_link(page.as_deref().unwrap_or(&self.base), destination)
     }
 
     pub async fn write_file(
@@ -192,6 +189,29 @@ impl Backend {
         relative(path, listing, directory)
     }
 }
+fn file_link(base: &str, destination: &str) -> Option<String> {
+    if destination.trim().is_empty() {
+        return None;
+    }
+    let url = reqwest::Url::parse(base).ok()?.join(destination).ok()?;
+    matches!(url.scheme(), "http" | "https" | "mailto").then(|| url.into())
+}
+
+#[cfg(test)]
+#[test]
+fn reader_links_preserve_the_base_page_context() {
+    let base = "https://example.invalid/app/?locale=he";
+    assert_eq!(
+        file_link(base, "#reader").as_deref(),
+        Some("https://example.invalid/app/?locale=he#reader")
+    );
+    assert_eq!(
+        file_link(base, "./notes.md").as_deref(),
+        Some("https://example.invalid/app/notes.md")
+    );
+    assert!(file_link(base, "file:///C:/secret.md").is_none());
+}
+
 // The listing contract emits relative slash paths. The server owns OS-specific admission.
 pub(crate) fn relative(path: &str, listing: bool, directory: &str) -> Result<()> {
     if listing && path == "." {

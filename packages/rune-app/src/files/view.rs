@@ -103,17 +103,12 @@ fn reader(s: &State) -> El {
             width
         }
     });
-    let mut actions = vec![
-        theme::toolbar_icon(
-            dark,
-            theme::Tool::Refresh,
-            t("instanceShell.rightPanel.actions.refresh"),
-            ui.reader.busy() || ui.document.pending() || ui.document.dirty(),
-            None,
-            document_action(s, |ui| ui.refresh_document(ui.document.scope())),
-        )
-        .key("file-refresh"),
-    ];
+    let mut actions = vec![button(
+        "file-refresh",
+        t("instanceShell.rightPanel.actions.refresh"),
+        ui.reader.busy() || ui.document.pending() || ui.document.dirty(),
+        document_action(s, |ui| ui.refresh_document(ui.document.scope())),
+    )];
     let mut content_view = rune::el();
     if let Some(kind) = ui.presentation.kind {
         content_view = match kind {
@@ -128,43 +123,30 @@ fn reader(s: &State) -> El {
             Kind::Text(format) => {
                 let text = ui.document.edit().text.as_str();
                 if format != Format::Source {
-                    actions.push(
-                        theme::toolbar_icon(
-                            dark,
-                            if ui.presentation.source {
-                                theme::Tool::Preview
-                            } else {
-                                theme::Tool::Source
-                            },
-                            t(if !ui.presentation.source {
-                                "instanceShell.filesShell.showSource"
-                            } else if format == Format::Mermaid {
-                                "markdown.mermaid.preview"
-                            } else {
-                                "instanceShell.filesShell.previewMarkdown"
-                            }),
-                            false,
-                            None,
-                            document_action(s, |ui| {
-                                ui.presentation.source = !ui.presentation.source
-                            }),
-                        )
-                        .key("file-source-toggle"),
-                    );
+                    actions.push(button(
+                        "file-source-toggle",
+                        t(if !ui.presentation.source {
+                            "instanceShell.filesShell.showSource"
+                        } else if format == Format::Mermaid {
+                            "markdown.mermaid.preview"
+                        } else {
+                            "instanceShell.filesShell.previewMarkdown"
+                        }),
+                        false,
+                        document_action(s, |ui| ui.presentation.source = !ui.presentation.source),
+                    ));
                 }
                 let source = ui.presentation.source || format == Format::Source;
                 if source {
                     actions.push(
-                        theme::toolbar_icon(
+                        theme::wrap_button(
                             dark,
-                            theme::Tool::Wrap,
                             t(if ui.presentation.wrap {
                                 "instanceShell.filesShell.disableWordWrap"
                             } else {
                                 "instanceShell.filesShell.enableWordWrap"
                             }),
-                            false,
-                            Some(ui.presentation.wrap),
+                            ui.presentation.wrap,
                             document_action(s, |ui| ui.presentation.wrap = !ui.presentation.wrap),
                         )
                         .key("file-wrap"),
@@ -196,13 +178,12 @@ fn reader(s: &State) -> El {
                                     }),
                             )
                         } else {
-                            theme::markdown(
+                            rune::col().pad(Space::Lg).child(theme::markdown(
                                 dark,
                                 text,
                                 t("markdown.mermaid.diagram"),
                                 document_link(s),
-                            )
-                            .pad(Space::Lg)
+                            ))
                         },
                         true,
                     )

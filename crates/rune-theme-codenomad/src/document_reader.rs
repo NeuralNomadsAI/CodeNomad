@@ -3,7 +3,7 @@ use rune::{El, Icon, ScrollSpec, TextStyle};
 use rune_kit::{Markdown, MarkdownStyle, syntax};
 
 mod toolbar;
-pub use toolbar::{Tool, toolbar_icon};
+pub use toolbar::wrap_button;
 
 pub fn surface(dark: bool) -> El {
     rune::col()
@@ -203,6 +203,7 @@ fn gutter(dark: bool, contents: &str, view_width: Option<f32>) -> El {
                 .a11y_hidden()
                 .font(style)
                 .w(width)
+                .pr(t.space(Space::Sm).px())
                 .mr(gap)
                 .align(rune::Align::End)
                 .color(t.color("text-muted"))

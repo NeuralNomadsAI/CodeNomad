@@ -385,9 +385,6 @@
         "fontWeight": 700,
         "lineHeight": 18
       },
-      "readerToolDisabled": {
-        "opacity": 0.55
-      },
       "secondary": {
         "fontSize": 11,
         "fontWeight": 500,
@@ -579,9 +576,6 @@
         "fontSize": 12,
         "fontWeight": 700,
         "lineHeight": 18
-      },
-      "readerToolDisabled": {
-        "opacity": 0.55
       },
       "secondary": {
         "fontSize": 11,
