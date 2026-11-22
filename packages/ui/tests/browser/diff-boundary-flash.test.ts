@@ -99,6 +99,56 @@ test("a live Shell group append preserves mounted cards and their wrap setting",
   } finally { await page.close() }
 })
 
+for (const live of [false, true]) test(`forming a Shell group preserves the first call's view settings (${live ? "running" : "completed"})`, async () => {
+  const { page, errors } = await openFixture()
+  try {
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(live => (window as any).fixture.startShellGroup(1, live), live)
+    const first = page.locator('.tool-call-message[data-part-id="shell-1"]')
+    const disableWrap = first.getByRole("button", { name: "Disable word wrap", exact: true })
+    const enableWrap = first.getByRole("button", { name: "Enable word wrap", exact: true })
+    const input = first.getByRole("button", { name: /^Tool Input/ })
+    await disableWrap.click()
+    await enableWrap.waitFor()
+    if (!live) {
+      assert.equal(await input.getAttribute("aria-expanded"), "true")
+      await input.click()
+      assert.equal(await input.getAttribute("aria-expanded"), "false")
+    }
+    const output = first.locator(".tool-call-output-shell .tool-call-markdown")
+    const beforeAppend = live ? await readInsideOutput(page, output) : null
+    await page.evaluate(() => (window as any).fixture.appendShell("shell-2"))
+    const group = page.getByRole("button", { name: "Shell: 2", exact: true })
+    await group.waitFor()
+    // The default on a build without group preferences is collapsed.
+    if (await group.getAttribute("aria-expanded") === "false") await group.click()
+    await page.getByText("Output from shell-2", { exact: true }).waitFor()
+    assert.equal(await enableWrap.count(), 1, "the first call keeps wrapping disabled")
+    if (beforeAppend !== null) {
+      const afterAppend = await output.evaluate(element => element.scrollTop)
+      assert.ok(Math.abs(afterAppend - beforeAppend) <= 2, `the first call keeps its nested reading position (${beforeAppend}px → ${afterAppend}px)`)
+    } else {
+      assert.equal(await input.getAttribute("aria-expanded"), "false", "the first call keeps its input closed")
+    }
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+async function readInsideOutput(page: import("playwright").Page, output: import("playwright").Locator) {
+  await output.hover()
+  const element = (await output.elementHandle())!
+  await page.waitForFunction(element => {
+    const max = element.scrollHeight - element.clientHeight
+    return max > 150 && Math.abs(element.scrollTop - max) <= 1
+  }, element)
+  await page.mouse.wheel(0, -150)
+  await page.waitForFunction(element => {
+    const max = element.scrollHeight - element.clientHeight
+    return element.scrollTop > 0 && element.scrollTop < max - 1
+  }, element)
+  return output.evaluate(element => element.scrollTop)
+}
+
 test("a reasoning part streaming into the message keeps every grouped tool body mounted", async () => {
   const { page, errors } = await openFixture()
   try {

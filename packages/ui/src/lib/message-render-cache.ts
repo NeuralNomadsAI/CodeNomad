@@ -4,7 +4,21 @@ interface MessageCacheItem {
   messageId: string
 }
 
-type ToolDisclosure = Record<string, boolean | undefined>
+export interface ToolCallViewState {
+  expanded?: boolean
+  wrap?: boolean
+  diagnosticsExpanded?: boolean
+  scrollTop?: number
+  following?: boolean
+  io?: {
+    defaultVisibility: "hidden" | "collapsed" | "expanded"
+    inputVisibility?: "hidden" | "expanded"
+    inputExpanded?: boolean
+    outputExpanded?: boolean
+  }
+}
+
+type ToolCallViews = Record<string, ToolCallViewState | undefined>
 
 export interface MessageRenderCache {
   messageItems: Map<string, MessageCacheItem>
@@ -13,8 +27,8 @@ export interface MessageRenderCache {
   /** Tool bodies (`${messageId}\u0000${partId}`) whose deferred mount already
    * released once: a remount renders them at once instead of re-deferring. */
   releasedToolBodies: Set<string>
-  /** Manual card disclosure, by the same message/part identity as body release. */
-  toolDisclosure: [ToolDisclosure, SetStoreFunction<ToolDisclosure>]
+  /** Card view state, by the same message/part identity as body release. */
+  toolViews: [ToolCallViews, SetStoreFunction<ToolCallViews>]
 }
 
 const renderCaches = new Map<string, MessageRenderCache>()
@@ -56,7 +70,7 @@ export function getSessionMessageRenderCache(instanceId: string, sessionId: stri
   if (!cache) {
     cache = {
       messageItems: new Map(), toolItems: new Map(), messageBlocks: new Map(),
-      releasedToolBodies: new Set(), toolDisclosure: createStore<ToolDisclosure>({}),
+      releasedToolBodies: new Set(), toolViews: createStore<ToolCallViews>({}),
     }
     renderCaches.set(key, cache)
   }
@@ -92,8 +106,8 @@ export function purgeMessageRenderCache(cache: MessageRenderCache, messageIds: r
   for (const key of cache.releasedToolBodies) {
     if (wasRemoved(key)) cache.releasedToolBodies.delete(key)
   }
-  const [disclosure, setDisclosure] = cache.toolDisclosure
-  for (const key of Object.keys(disclosure)) {
-    if (wasRemoved(key)) setDisclosure(key, undefined)
+  const [views, setView] = cache.toolViews
+  for (const key of Object.keys(views)) {
+    if (wasRemoved(key)) setView(key, undefined)
   }
 }

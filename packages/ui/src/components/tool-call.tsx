@@ -9,7 +9,7 @@ import { useConfig } from "../stores/preferences"
 import { activeInterruption } from "../stores/instances"
 import { getFormQueue } from "../stores/forms"
 import { copyToClipboard } from "../lib/clipboard"
-import { getSessionMessageRenderCache } from "../lib/message-render-cache"
+import { getSessionMessageRenderCache, type ToolCallViewState } from "../lib/message-render-cache"
 import type { PermissionRequest } from "../types/permission"
 import { useI18n } from "../lib/i18n"
 import { resolveToolRenderer } from "./tool-call/renderers"
@@ -85,7 +85,7 @@ interface ToolCallProps {
   sessionId: string
   isActive?: Accessor<boolean>
   onContentRendered?: () => void
-  rememberDisclosure?: boolean
+  rememberView?: boolean
   /**
    * When true, tool call starts collapsed regardless of user preferences.
    * Users can still expand/collapse manually.
@@ -153,6 +153,8 @@ function ToolCallDetails(props: {
   toolCallRootEl: () => HTMLDivElement | undefined
   scrollTopSnapshot: () => number
   setScrollTopSnapshot: (next: number) => void
+  followingSnapshot: () => boolean
+  setFollowingSnapshot: (next: boolean) => void
 }) {
   const messageVersionAccessor = createMemo(() => props.messageVersion)
   const partVersionAccessor = createMemo(() => props.partVersion)
@@ -193,6 +195,8 @@ function ToolCallDetails(props: {
   const followScroll = createFollowScroll({
     getScrollTopSnapshot: props.scrollTopSnapshot,
     setScrollTopSnapshot: props.setScrollTopSnapshot,
+    getFollowingSnapshot: props.followingSnapshot,
+    setFollowingSnapshot: props.setFollowingSnapshot,
     sentinelClassName: "tool-call-scroll-sentinel",
   })
 
@@ -600,32 +604,29 @@ export default function ToolCall(props: ToolCallProps) {
     return resolveToolExpansionDefault(preferences(), toolCallMemo()?.tool || "")
   })
 
-  const [localExpanded, setLocalExpanded] = createSignal<boolean>()
+  const [localView, setLocalView] = createStore<ToolCallViewState>({})
   const toolDisplayKey = () => `${props.messageId ?? "unknown-message"}\u0000${props.toolCall.id ?? props.toolCallId ?? ""}`
-  const toolDisclosure = () => props.rememberDisclosure && props.messageId
-    ? getSessionMessageRenderCache(props.instanceId, props.sessionId).toolDisclosure : undefined
-  const userExpanded = () => {
-    const saved = toolDisclosure()
-    return saved ? saved[0][toolDisplayKey()] : localExpanded()
+  const toolViews = () => props.rememberView && props.messageId
+    ? getSessionMessageRenderCache(props.instanceId, props.sessionId).toolViews : undefined
+  const view = () => toolViews()?.[0][toolDisplayKey()] ?? localView
+  const updateView = (patch: ToolCallViewState) => {
+    const views = toolViews()
+    if (views) views[1](toolDisplayKey(), current => ({ ...current, ...patch }))
+    else setLocalView(patch)
   }
-  const [outputWrapEnabled, setOutputWrapEnabled] = createSignal(true)
+  const userExpanded = () => view().expanded
+  const outputWrapEnabled = () => view().wrap ?? true
   const toolInputsVisibility = createMemo(() => preferences().toolInputsVisibility || "collapsed")
-  const [toolInputVisibilityOverride, setToolInputVisibilityOverride] = createSignal<"hidden" | "expanded" | null>(null)
-  const effectiveToolInputsVisibility = createMemo(() => toolInputVisibilityOverride() ?? toolInputsVisibility())
+  const ioView = () => {
+    const io = view().io
+    return io?.defaultVisibility === toolInputsVisibility() ? io : undefined
+  }
+  const updateIoView = (patch: Partial<NonNullable<ToolCallViewState["io"]>>) =>
+    updateView({ io: { ...ioView(), defaultVisibility: toolInputsVisibility(), ...patch } })
+  const effectiveToolInputsVisibility = createMemo(() => ioView()?.inputVisibility ?? toolInputsVisibility())
   const isToolInputVisible = createMemo(() => effectiveToolInputsVisibility() !== "hidden")
-  const inputDefaultExpanded = createMemo(() => effectiveToolInputsVisibility() === "expanded")
-  const [inputSectionOverride, setInputSectionOverride] = createSignal<boolean | null>(null)
-  const [outputSectionOverride, setOutputSectionOverride] = createSignal<boolean | null>(null)
-  const inputSectionExpanded = () => {
-    const override = inputSectionOverride()
-    if (override !== null) return override
-    return inputDefaultExpanded()
-  }
-  const outputSectionExpanded = () => {
-    const override = outputSectionOverride()
-    if (override !== null) return override
-    return true
-  }
+  const inputSectionExpanded = () => ioView()?.inputExpanded ?? (effectiveToolInputsVisibility() === "expanded")
+  const outputSectionExpanded = () => ioView()?.outputExpanded ?? true
 
   const renderer = createMemo(() => resolveToolRenderer(toolName()))
   const renderMarkdownStub: ToolRendererContext["renderMarkdown"] = () => null
@@ -736,31 +737,13 @@ export default function ToolCall(props: ToolCallProps) {
   })
 
   const [toolCallRootEl, setToolCallRootEl] = createSignal<HTMLDivElement | undefined>()
-  const [scrollTopSnapshot, setScrollTopSnapshot] = createSignal(0)
-  const [diagnosticsOverride, setDiagnosticsOverride] = createSignal<boolean | undefined>(undefined)
-
-  const diagnosticsExpanded = () => {
-    const override = diagnosticsOverride()
-    if (override !== undefined) return override
-    return diagnosticsDefaultExpanded()
-  }
+  const scrollTopSnapshot = () => view().scrollTop ?? 0
+  const diagnosticsExpanded = () => view().diagnosticsExpanded ?? diagnosticsDefaultExpanded()
   const diagnosticsView = createMemo(() => extractDiagnosticsView(toolState()))
 
-  const toggleInputSection = () => {
-    setInputSectionOverride((prev) => {
-      const current = prev === null ? inputSectionExpanded() : prev
-      return !current
-    })
-  }
-
-  const toggleOutputSection = () => {
-    setOutputSectionOverride((prev) => {
-      const current = prev === null ? outputSectionExpanded() : prev
-      return !current
-    })
-  }
-
-  const toggleOutputWrap = () => setOutputWrapEnabled((enabled) => !enabled)
+  const toggleInputSection = () => updateIoView({ inputExpanded: !inputSectionExpanded() })
+  const toggleOutputSection = () => updateIoView({ outputExpanded: !outputSectionExpanded() })
+  const toggleOutputWrap = () => updateView({ wrap: !outputWrapEnabled() })
 
   const statusClass = () => {
     const status = displayStatus() || "pending"
@@ -773,19 +756,12 @@ export default function ToolCall(props: ToolCallProps) {
   }
 
   function toggle() {
-    const next = !expanded()
-    const saved = toolDisclosure()
-    if (saved) saved[1](toolDisplayKey(), next)
-    else setLocalExpanded(next)
+    updateView({ expanded: !expanded() })
   }
 
-  createEffect(() => {
-    // When global preference changes, reset per-tool-call overrides so palette changes apply.
-    toolInputsVisibility()
-    setToolInputVisibilityOverride(null)
-    setInputSectionOverride(null)
-    setOutputSectionOverride(null)
-  })
+  createEffect(on(toolInputsVisibility, () => {
+    if (view().io) updateView({ io: undefined })
+  }, { defer: true }))
 
   const getRendererAction = () => renderer().getAction?.(headerRendererContext) ?? getDefaultToolAction(toolName())
   const headerOutputChrome = createMemo(() => renderer().getOutputChrome?.(headerRendererContext) ?? {})
@@ -846,7 +822,7 @@ export default function ToolCall(props: ToolCallProps) {
         onSelect: () => {
           if (!expanded()) toggle()
           const currentlyVisible = isToolInputVisible()
-          setToolInputVisibilityOverride(currentlyVisible ? "hidden" : "expanded")
+          updateIoView({ inputVisibility: currentlyVisible ? "hidden" : "expanded" })
         },
       })
     }
@@ -1012,7 +988,9 @@ export default function ToolCall(props: ToolCallProps) {
           toggleOutputSection={toggleOutputSection}
           toolCallRootEl={toolCallRootEl}
           scrollTopSnapshot={scrollTopSnapshot}
-          setScrollTopSnapshot={setScrollTopSnapshot}
+          setScrollTopSnapshot={top => { if (top !== scrollTopSnapshot()) updateView({ scrollTop: top }) }}
+          followingSnapshot={() => view().following ?? true}
+          setFollowingSnapshot={following => updateView({ following })}
         />
       </Show>
  
@@ -1022,10 +1000,7 @@ export default function ToolCall(props: ToolCallProps) {
           t,
           diagnosticsView(),
           diagnosticsExpanded(),
-          () => setDiagnosticsOverride((prev) => {
-            const current = prev === undefined ? diagnosticsDefaultExpanded() : prev
-            return !current
-          }),
+          () => updateView({ diagnosticsExpanded: !diagnosticsExpanded() }),
           diagnosticFileName(diagnosticsView().entries),
         )}
       </Show>
