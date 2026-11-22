@@ -42,7 +42,9 @@ pub(super) fn spec() -> AppSpec<Window> {
         setup: Some(|s, wake| {
             let mut prefs = s.shared.borrow_mut();
             prefs.window_wake = Some(wake);
-            prefs.refresh();
+            if prefs.backend.is_some() {
+                prefs.refresh();
+            }
         }),
         poll: Some(|s, _, tx| {
             let mut prefs = s.shared.borrow_mut();
