@@ -93,7 +93,7 @@ export async function listNativeWorktrees(context: NativeWorktreeContext, option
   }
   const native = await client.worktree.list({ projectID: current.project.id }, requestOptions)
   check()
-  const verifyCheckoutRoot = await createCheckoutRootVerifier(workspacePath)
+  const checkoutRoots = await createCheckoutRootVerifier(workspacePath, local)
   check()
   const annotations = new Map<string, Awaited<ReturnType<typeof readWorktreeAnnotations>>[number]>()
   const registeredAnnotations = await readWorktreeAnnotations(workspacePath)
@@ -153,7 +153,7 @@ export async function listNativeWorktrees(context: NativeWorktreeContext, option
     const sameRoot = await sameDirectory(checkout.root ?? mainHost, registeredDirectory)
     check()
     if (!sameRoot) throw new Error("Native worktree entry is not a checkout root")
-    await verifyCheckoutRoot(host, checkout)
+    await checkoutRoots.verify(host, checkout)
     check()
     if (seen.has(registeredDirectory)) return
     seen.add(registeredDirectory)
@@ -194,6 +194,7 @@ export async function listNativeWorktrees(context: NativeWorktreeContext, option
     check()
     throw error
   }
+  await checkoutRoots.assertCurrent()
   check()
   if (!worktrees.some(entry => entry.kind === "root")) throw new Error("Native worktree inventory is missing the opened checkout")
   return {
