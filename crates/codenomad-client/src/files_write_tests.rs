@@ -1,6 +1,6 @@
 use crate::{
     backend::Backend,
-    files::{MAX_FILE_BYTES, WriteResult},
+    files::{CreateEntry, EntryKind, MAX_FILE_BYTES, WriteResult},
     http::Http,
 };
 use serde_json::{Value, json};
@@ -36,7 +36,7 @@ fn conditional_write_preserves_scope_bytes_and_opaque_version_without_retry() {
     let b = backend(format!("http://{}/", listener.local_addr().unwrap()));
     let (out, received) = mpsc::channel();
     let worker = thread::spawn(move || {
-        for status in [204, 409, 403, 302] {
+        for status in [204, 409, 403, 302, 201, 409] {
             let (mut socket, _) = listener.accept().unwrap();
             socket
                 .set_read_timeout(Some(Duration::from_secs(3)))
@@ -102,6 +102,25 @@ fn conditional_write_preserves_scope_bytes_and_opaque_version_without_retry() {
             );
             assert!(!header.to_ascii_lowercase().contains("if-match:"));
             assert_eq!(body, json!({"contents":text,"expectedVersion":version}));
+        }
+        assert!(
+            b.create_entry("/trial", ".", "nested/name", EntryKind::File)
+                .await
+                .is_err()
+        );
+        for expected in [CreateEntry::Created, CreateEntry::NameTaken] {
+            assert_eq!(
+                b.create_entry(r"D:\Projet 日本", "src", "空.txt", EntryKind::File)
+                    .await
+                    .unwrap(),
+                expected
+            );
+            let (header, body) = received.recv_timeout(Duration::from_secs(3)).unwrap();
+            assert_eq!(
+                header.lines().next().unwrap(),
+                "POST /api/workspaces/workspace/files/entries?directory=D%3A%5CProjet+%E6%97%A5%E6%9C%AC HTTP/1.1"
+            );
+            assert_eq!(body, json!({"parent":"src","name":"空.txt","kind":"file"}));
         }
     });
     worker.join().unwrap();

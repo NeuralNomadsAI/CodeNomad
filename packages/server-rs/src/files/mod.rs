@@ -1,6 +1,7 @@
 //! Project files: listing, previews and writes under an owned checkout,
 //! the global file browser and its watches.
 pub mod browse;
+mod entries;
 pub mod links;
 pub mod node_path;
 pub mod paths;
@@ -12,6 +13,7 @@ pub fn routes() -> axum::Router<Shared> {
         .route("/api/workspaces/{id}/files", routing::get(list))
         .route("/api/workspaces/{id}/files/preview", routing::get(preview))
         .route("/api/workspaces/{id}/files/content", routing::put(put).layer(DefaultBodyLimit::max(8 * 1024 * 1024)))
+        .route("/api/workspaces/{id}/files/entries", routing::post(entries::create).layer(DefaultBodyLimit::max(16 * 1024)))
         .route("/api/filesystem", routing::get(browse::browse))
         .route("/api/filesystem/folders", routing::post(browse::create_folder))
 }

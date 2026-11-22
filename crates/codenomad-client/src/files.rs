@@ -18,6 +18,11 @@ pub enum EntryKind {
     File,
     Directory,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CreateEntry {
+    Created,
+    NameTaken,
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub name: String,
@@ -43,6 +48,42 @@ pub enum WriteResult {
 }
 
 impl Backend {
+    pub async fn create_entry(
+        &self,
+        directory: &str,
+        parent: &str,
+        name: &str,
+        kind: EntryKind,
+    ) -> Result<CreateEntry> {
+        self.file_scope(directory, parent, true)?;
+        relative(name, false, directory)?;
+        if name.contains('/') {
+            return Err("expected a single file name".into());
+        }
+        let kind = match kind {
+            EntryKind::File => "file",
+            EntryKind::Directory => "directory",
+        };
+        let response = self
+            .client
+            .post(format!(
+                "{}api/workspaces/{}/files/entries",
+                self.base, self.workspace
+            ))
+            .query(&[("directory", directory)])
+            .json(&serde_json::json!({ "parent": parent, "name": name, "kind": kind }))
+            .send()
+            .await?;
+        match response.status() {
+            reqwest::StatusCode::CREATED => Ok(CreateEntry::Created),
+            reqwest::StatusCode::CONFLICT => Ok(CreateEntry::NameTaken),
+            _ => {
+                response.error_for_status()?;
+                Err("unexpected file creation response".into())
+            }
+        }
+    }
+
     pub async fn write_file(
         &self,
         directory: &str,
