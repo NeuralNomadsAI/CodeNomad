@@ -1,4 +1,4 @@
-import { batch, createEffect, createSignal, onCleanup, onMount, Show, type Component } from "solid-js"
+import { batch, createEffect, createMemo, createSignal, onCleanup, onMount, Show, type Component } from "solid-js"
 import { Toaster } from "solid-toast"
 import AlertDialog from "./alert-dialog"
 import OpenCodeSetup from "./opencode-setup"
@@ -57,6 +57,17 @@ export const PreferencesWindow: Component = () => {
       setRequest({ ...next, scrollTop })
     }).catch(() => undefined)
   })
+  // Retaining an equivalent binding keeps provider and activation reads attached
+  // while the restored request is persisted or the scroll position changes.
+  const providerContext = createMemo(() => {
+    const bound = project(), current = request()
+    return {
+      instanceId: bound?.instanceId ?? (parseInstanceKey(current.instanceId ?? "").backendId !== "local" ? current.instanceId : "") ?? "",
+      location: bound?.location ?? current.location,
+      serverId: current.serverId,
+    }
+  }, undefined, { equals: (left, right) => left.instanceId === right.instanceId && left.serverId === right.serverId
+    && left.location?.directory === right.location?.directory && left.location?.workspaceID === right.location?.workspaceID })
   createEffect(() => {
     const instanceId = project()?.instanceId
     if (instanceId) onCleanup(() => destroyClients(instanceId))
@@ -167,7 +178,7 @@ export const PreferencesWindow: Component = () => {
     <>
       <Show when={initialized()}><SettingsScreen
         standalone
-        providerContext={{ instanceId: project()?.instanceId ?? (parseInstanceKey(request().instanceId ?? "").backendId !== "local" ? request().instanceId : "") ?? "", location: project()?.location ?? request().location, serverId: request().serverId }}
+        providerContext={providerContext()}
         projectUnavailable={parseInstanceKey(request().instanceId ?? "").backendId !== "local" && !project()}
         scrollPosition={request()}
         onScrollPositionChange={(top) => {

@@ -77,6 +77,10 @@ const nativeRequest = (page: Page, request: NativePreferencesRequest) => page.ev
 const pluginControls = (directory: string) => ({
   location: { directory }, controls: [], runtime: [], configured: { rules: [], sources: [] }, targets: [],
 })
+const requestDirectory = (request: string) => {
+  const { searchParams } = new URL(request)
+  return searchParams.get("location[directory]") ?? searchParams.get("directory")
+}
 
 for (const host of ["electron", "tauri"] as const) {
   test(`${host} Preferences reads activation and providers only for its explicit project`, async () => {
@@ -222,6 +226,10 @@ for (const host of ["electron", "tauri"] as const) {
       await waitForDepthInfo(page, "OpenCode effective depth: 2")
       assert.deepEqual(fixture.writes, [], "resolution is read-only")
       assert.deepEqual(fixture.errors, [])
+    } catch (error) {
+      console.error({ requests: fixture.requests, errors: fixture.errors, content: (await page.locator("body").innerText()).slice(0, 2500),
+        request: await page.evaluate(() => (window as any).fixtureRequest) })
+      throw error
     } finally { await page.close() }
   })
 
@@ -264,7 +272,7 @@ for (const host of ["electron", "tauri"] as const) {
       await nativeRequest(page, { section: "providers", instanceId: "second", location: { directory } })
       await page.locator(".providers-card-title").filter({ hasText: "Fixture AI" }).waitFor()
       assert.ok(fixture.requests.length > 0 && fixture.requests.every(request => new URL(request).pathname.includes("/second/")
-        && new URL(request).searchParams.get("location[directory]") === directory), "a valid explicit record preserves the selected worktree")
+        && requestDirectory(request) === directory), "a valid explicit record preserves the selected worktree")
       // Deletion still revokes the bound occurrence when its Settings section is hidden.
       await page.getByRole("button", { name: "Chat", exact: true }).click()
       fixture.inventory([first])
