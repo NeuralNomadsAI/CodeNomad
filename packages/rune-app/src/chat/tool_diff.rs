@@ -6,10 +6,10 @@ use crate::{
     screen,
     strings::{locale, t},
 };
-use rune::{El, Live, Tx, col, text};
+use rune::{El, Tx, col, text};
 use rune_theme_codenomad::{
     Space, catalogue,
-    layout::{self, Layout},
+    layout::{self, DrawnRect, Layout},
     markdown,
 };
 use std::{
@@ -20,13 +20,11 @@ use std::{
 
 const RETAINED: usize = 32;
 
-type Bounds = Live<[f32; 4]>;
-
 pub(crate) struct Preferences {
     mode: DiffMode,
     compact: bool,
     layout_epoch: u64,
-    pub(crate) history_bounds: Bounds,
+    pub(crate) history_bounds: DrawnRect,
 }
 
 impl Default for Preferences {
@@ -35,7 +33,7 @@ impl Default for Preferences {
             mode: DiffMode::Split,
             compact: false,
             layout_epoch: 0,
-            history_bounds: Live::new([0.0; 4]),
+            history_bounds: DrawnRect::new([0.0; 4]),
         }
     }
 }
@@ -85,7 +83,7 @@ fn intersects([x, y, w, h]: [f32; 4], [left, top, width, height]: [f32; 4]) -> b
 
 struct Entry {
     key: String,
-    bounds: Weak<Bounds>,
+    bounds: Weak<DrawnRect>,
     compact_mode: Option<(u64, DiffMode)>,
     patch: String,
     file: String,
@@ -119,7 +117,7 @@ impl Cache {
         key: &str,
         patch: &str,
         path: &str,
-        bounds: &Rc<Bounds>,
+        bounds: &Rc<DrawnRect>,
         preferences: &Preferences,
         wrap: bool,
     ) -> bool {
@@ -275,7 +273,7 @@ pub(super) fn body(
         .find(|entry| entry.key == key && entry.patch == patch && entry.file == path);
     let bounds = entry
         .and_then(|entry| entry.bounds.upgrade())
-        .unwrap_or_else(|| Rc::new(Live::new([0.0; 4])));
+        .unwrap_or_else(|| Rc::new(DrawnRect::new([0.0; 4])));
     let wrap_key = format!("{key}-wrap");
     let content = match entry {
         Some(entry) if entry.lines > 0 => view(s, key, entry, path),
@@ -441,7 +439,7 @@ fn admission_never_evicts_a_still_visible_diff() {
     preferences.history_bounds.set([0.0, 0.0, 100.0, 100.0]);
     let patch = "@@ -1 +1 @@\n-A\n+B";
     let cards: Vec<_> = (0..RETAINED)
-        .map(|_| Rc::new(Live::new([5.0, 5.0, 10.0, 10.0])))
+        .map(|_| Rc::new(DrawnRect::new([5.0, 5.0, 10.0, 10.0])))
         .collect();
     for (i, visible) in cards.iter().enumerate() {
         assert!(cache.load(
@@ -453,7 +451,7 @@ fn admission_never_evicts_a_still_visible_diff() {
             true
         ));
     }
-    let next = Rc::new(Live::new([5.0, 5.0, 10.0, 10.0]));
+    let next = Rc::new(DrawnRect::new([5.0, 5.0, 10.0, 10.0]));
     for _ in 0..3 {
         assert!(!cache.load("next", patch, "file.rs", &next, &preferences, true));
         assert!(cache.entries.iter().any(|entry| entry.key == "0"));
