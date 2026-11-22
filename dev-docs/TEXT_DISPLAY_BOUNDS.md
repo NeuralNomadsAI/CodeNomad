@@ -42,7 +42,7 @@ from rendering" message, without a reveal; copy returns them whole.
   updates the streaming card in place.
 - Diffs over 10 000 characters render as plain text
   (`shouldRenderDiffPayloadAsPlainText`), and the window applies to either form.
-  `apply_patch` shares one 10 000-character budget across its files: each rendered
+  `apply_patch` and multi-file `patch` share one 10 000-character budget across a call's files: each rendered
   file reveals its own diff, and files omitted entirely show a copy-only status.
 
 ## Reveal state and rendering
