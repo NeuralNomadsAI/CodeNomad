@@ -1,27 +1,46 @@
 //! Markdown pictures use a separate, credential-free client.
 use super::MAX_FILE_BYTES;
 use crate::history::Result;
+#[cfg(not(target_arch = "wasm32"))]
 use futures_lite::StreamExt;
-use reqwest::{Client, Url};
+#[cfg(not(target_arch = "wasm32"))]
+use reqwest::Client;
+use reqwest::Url;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
-pub struct Images(Client);
+#[cfg(target_arch = "wasm32")]
+mod browser;
+pub struct Images {
+    #[cfg(not(target_arch = "wasm32"))]
+    client: Client,
+}
 impl Images {
     pub fn new() -> Result<Self> {
-        #[cfg(not(target_arch = "wasm32"))]
-        let client = native_client().build()?;
-        #[cfg(target_arch = "wasm32")]
-        let client = Client::new();
-        Ok(Self(client))
+        Ok(Self {
+            #[cfg(not(target_arch = "wasm32"))]
+            client: native_client().build()?,
+        })
     }
 
     pub async fn read(&self, base: &str, source: &str, maximum: usize) -> Result<Vec<u8>> {
         let maximum = maximum.min(MAX_FILE_BYTES);
         let url = source_url(base, source).ok_or("unsupported Markdown image source")?;
-        let request = self.0.get(url).timeout(Duration::from_secs(15));
         #[cfg(target_arch = "wasm32")]
-        let request = request.fetch_credentials_omit();
-        let response = request.send().await?.error_for_status()?;
+        return browser::read(url, maximum).await;
+        #[cfg(not(target_arch = "wasm32"))]
+        self.read_native(url, maximum).await
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn read_native(&self, url: Url, maximum: usize) -> Result<Vec<u8>> {
+        let response = self
+            .client
+            .get(url)
+            .timeout(Duration::from_secs(15))
+            .send()
+            .await?
+            .error_for_status()?;
         if !response.status().is_success()
             || response
                 .content_length()
@@ -37,8 +56,18 @@ impl Images {
                 return Err("oversized Markdown image".into());
             }
             bytes.extend_from_slice(&chunk);
+            reject_svgz(&bytes)?;
         }
         Ok(bytes)
+    }
+}
+
+fn reject_svgz(bytes: &[u8]) -> Result<()> {
+    // Rune treats any gzip signature as SVGZ and decodes before applying its SVG cap.
+    if bytes.starts_with(&[0x1f, 0x8b]) {
+        Err("compressed Markdown images are unsupported".into())
+    } else {
+        Ok(())
     }
 }
 
@@ -129,8 +158,19 @@ fn native_tls_reads_a_trusted_image_and_refuses_an_unknown_certificate() {
                 unknown.is_err(),
                 "unknown certificates must not be accepted"
             );
-            let images = Images(native_client().add_root_certificate(ca).build().unwrap());
+            let images = Images {
+                client: native_client().add_root_certificate(ca).build().unwrap(),
+            };
             let bytes = images.read(&origin, picture.as_str(), 4096).await.unwrap();
             assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+            let compressed = parsed.join("compressed.png").unwrap();
+            let error = images
+                .read(&origin, compressed.as_str(), 4096)
+                .await
+                .unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "compressed Markdown images are unsupported"
+            );
         });
 }
