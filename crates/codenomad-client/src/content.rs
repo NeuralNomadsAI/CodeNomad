@@ -9,6 +9,7 @@ pub enum Part {
     Tool(Tool),
     Skill(Skill),
     File(File),
+    HiddenUserAttachments(usize),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextProvenance {
@@ -223,6 +224,7 @@ fn part_keys(parts: &[Part]) -> Vec<String> {
             Part::Tool(t) => format!("tool:{}", t.id),
             Part::Skill(s) => format!("skill:{}", s.id),
             Part::File(f) => format!("file:{}", f.id),
+            Part::HiddenUserAttachments(count) => format!("hidden-attachments:{count}"),
         })
         .collect()
 }
@@ -341,6 +343,7 @@ pub fn bytes(parts: &[Part]) -> usize {
             Part::File(f) => {
                 f.id.len() + f.uri.len() + f.mime.len() + f.name.as_ref().map_or(0, String::len)
             }
+            Part::HiddenUserAttachments(_) => 0,
         })
         .sum()
 }

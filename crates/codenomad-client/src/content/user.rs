@@ -51,11 +51,24 @@ pub(super) fn decode(value: &Value) -> Result<Vec<Part>> {
     let id = string(value, "id")?;
     let skills = list(value, "skills")?;
     let files = list(value, "files")?;
-    if skills.len() + files.len() > 1000 {
-        return Err("message part bound reached".into());
-    }
-    let mut parts = Vec::with_capacity(skills.len() + files.len());
+    const DISPLAY_LIMIT: usize = 1000;
+    let total = skills.len() + files.len();
+    let mut parts = Vec::with_capacity(total.min(DISPLAY_LIMIT) + 1);
+    let visible = |parts: &mut Vec<Part>, index: usize| {
+        if total > DISPLAY_LIMIT && index >= DISPLAY_LIMIT / 2 && index < total - DISPLAY_LIMIT / 2
+        {
+            if index == DISPLAY_LIMIT / 2 {
+                parts.push(Part::HiddenUserAttachments(total - DISPLAY_LIMIT));
+            }
+            false
+        } else {
+            true
+        }
+    };
     for (index, skill) in skills.iter().enumerate() {
+        if !visible(&mut parts, index) {
+            continue;
+        }
         parts.push(Part::Skill(Skill {
             id: format!("{id}-skill-{index}"),
             skill_id: string(skill, "id")?.into(),
@@ -63,6 +76,9 @@ pub(super) fn decode(value: &Value) -> Result<Vec<Part>> {
         }));
     }
     for (index, file) in files.iter().enumerate() {
+        if !visible(&mut parts, skills.len() + index) {
+            continue;
+        }
         let mime = string(file, "mime")?;
         let uri = match file["source"]["type"].as_str() {
             Some("uri") => string(&file["source"], "uri")?.into(),
