@@ -18,10 +18,10 @@ fn stash(s: &mut State) {
         entry.wanted_panels = s.shell.wanted;
         if let Some(l) = s.screen.launcher_mut() {
             entry.project = l.project.clone();
-            entry.sessions = l.sessions.clone();
+            entry.sessions = std::mem::take(&mut l.sessions);
             entry.listed_sessions = std::mem::take(&mut l.listed_sessions);
             entry.creation_uncertain = l.creation_uncertain;
-            entry.next = l.next.clone();
+            entry.next = l.next.take();
             entry.consumed_cursors = std::mem::take(&mut l.consumed_cursors);
             entry.visits = std::mem::take(&mut l.visits);
             entry.sidebar_edits = Some((
@@ -42,9 +42,9 @@ pub(super) fn activate(s: &mut State, tx: &mut Tx) {
     s.shell.wanted = item.wanted_panels;
     if let Some(l) = s.screen.launcher_mut() {
         l.project = item.project.clone();
-        l.sessions = item.sessions.clone();
+        l.sessions = std::mem::take(&mut item.sessions);
         l.listed_sessions = std::mem::take(&mut item.listed_sessions);
-        l.next = item.next.clone();
+        l.next = item.next.take();
         l.consumed_cursors = std::mem::take(&mut item.consumed_cursors);
         l.visits = std::mem::take(&mut item.visits);
         l.folder = TextEdit::new(match &item.saved {
