@@ -113,6 +113,9 @@ impl Ui {
         self.refresh(true)
     }
     pub fn choose_model(&mut self, reference: serde_json::Value) {
+        if !self.models.iter().any(|model| model.reference == reference) {
+            return;
+        }
         self.act(Action::Model(reference));
         self.picker = false;
     }

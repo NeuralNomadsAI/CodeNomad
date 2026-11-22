@@ -35,10 +35,14 @@ fn init() -> Gallery {
     }
 }
 fn descriptor(s: &Gallery) -> Rc<menu::Menu<Gallery>> {
-    let mut open = menu::Item::new("open", t("directoryBrowser.openCurrent"), |s: &mut Gallery, tx| {
-        event("select", tx);
-        s.dialog = true;
-    });
+    let mut open = menu::Item::new(
+        "open",
+        t("directoryBrowser.openCurrent"),
+        |s: &mut Gallery, tx| {
+            event("select", tx);
+            s.dialog = true;
+        },
+    );
     open.description = Some(t("rune.details").into());
     open.select_before_close = matches!(s.case.as_str(), "immediate" | "focus-after");
     if s.case == "focus-after" {
