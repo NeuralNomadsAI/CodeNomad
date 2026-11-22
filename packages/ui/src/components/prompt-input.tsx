@@ -1,5 +1,5 @@
 import { Suspense, createEffect, createMemo, createSignal, createUniqueId, lazy, on, onCleanup, Show } from "solid-js"
-import { ArrowDown, ArrowUp, ListEnd, Loader2, Mic, Paperclip, SendHorizontal, Volume2, X } from "lucide-solid"
+import { ArrowDown, ArrowUp, CheckSquare, ListEnd, Loader2, Paperclip, SendHorizontal, Square, X } from "lucide-solid"
 import { addAttachment, clearAttachments, removeAttachment } from "../stores/attachments"
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
 import { preparePromptSubmission, resolvePromptDelivery } from "./prompt-input/submitPrompt"
@@ -23,6 +23,7 @@ import { microphoneUse, refreshMicrophoneUse } from "../lib/microphone-lease"
 import { useLiveVoiceConversation } from "../lib/hooks/use-live-voice-conversation"
 import LiveVoiceConversationWindow, { LIVE_VOICE_CONVERSATION_WINDOW_ID } from "./live-voice-conversation-window"
 import DictationNotice from "./prompt-input/DictationNotice"
+import DictationButton from "./prompt-input/DictationButton"
 import { sessionPromptAwaitingExecution } from "../stores/session-prompt-ack"
 import type { PromptInputApi, PromptInputProps, PromptInsertMode, PromptMode } from "./prompt-input/types"
 import type { Attachment } from "../types/attachment"
@@ -808,7 +809,14 @@ export default function PromptInput(props: PromptInputProps) {
     if (props.isActive !== false && conversationModeEnabled()
       && voiceConversationEngineLoaded() && voiceConversationEngine() !== "classic") toggleConversationMode(props.instanceId)
   })
-  const liveVoiceRunning = () => liveVoice.state().phase === "starting" || liveVoice.state().phase === "live"
+  const liveVoiceRunning = () => liveVoice.state().phase === "consent" ||
+    liveVoice.state().phase === "starting" || liveVoice.state().phase === "live"
+  const conversationRunning = () => conversationIsLiveEngine() ? liveVoiceRunning() : conversationModeEnabled()
+  const [dictationSelected, setDictationSelected] = createSignal(false)
+  const dictationMode = () => dictationSelected() && preferences().showPromptVoiceInput && !conversationRunning()
+  createEffect(() => {
+    if (!dictationMode()) voiceInput.cancelRecording()
+  })
   const voiceMenuLabel = (label: string, reason: string | undefined) => reason
     ? t("voice.command.unavailable", { action: label, reason })
     : label
@@ -852,17 +860,15 @@ export default function PromptInput(props: PromptInputProps) {
       // The shortcut's own resolution: an idle session always sends normally.
       onSelect: () => void handleSend(true),
     })
-    const dictationReason = !voiceInput.isRecording() ? voiceInput.unavailableKey() : undefined
+    const dictationReason = conversationRunning() || voiceInput.state() !== "idle" ? undefined : voiceInput.unavailableKey()
     items.push({
       key: "voice",
-      label: voiceMenuLabel(voiceInput.buttonTitle(), dictationReason && t(dictationReason)),
-      icon: voiceInput.isTranscribing()
-        ? <span class="inline-flex animate-spin"><Loader2 class="h-4 w-4" aria-hidden="true" /></span>
-        : <Mic class="h-4 w-4" aria-hidden="true" />,
-      disabled: dictationReason === "voice.command.pendingTranscription",
-      selectBeforeClose: !dictationReason,
-      onSelect: dictationReason ? () => openSettingsRow("speech", "voice-dictation")
-        : voiceInput.isRecording() ? voiceInput.stopRecording : beginVoiceInput,
+      label: voiceMenuLabel(t("voice.command.dictation"), dictationReason && t(dictationReason)),
+      icon: dictationMode() ? <CheckSquare class="h-4 w-4" aria-hidden="true" /> : <Square class="h-4 w-4" aria-hidden="true" />,
+      checked: dictationMode(),
+      disabled: conversationRunning() || (!dictationMode() && dictationReason === "voice.command.pendingTranscription"),
+      onSelect: dictationReason && !dictationMode() ? () => openSettingsRow("speech", "voice-dictation")
+        : () => { setDictationSelected(!dictationMode()) },
     })
     if (voiceInput.state() !== "idle" && voiceInput.state() !== "limitReached") {
       items.push({
@@ -874,23 +880,21 @@ export default function PromptInput(props: PromptInputProps) {
       })
     }
     const liveEngine = conversationIsLiveEngine()
-    const running = liveEngine ? liveVoiceRunning() : conversationModeEnabled()
+    const running = conversationRunning()
     const retained = liveVoice.state().phase === "ended"
-    const reason = running || retained ? undefined : conversationReason()
+    const reason = running || retained || dictationMode() ? undefined : conversationReason()
     const focusLiveWindow = () => document.getElementById(LIVE_VOICE_CONVERSATION_WINDOW_ID)?.querySelector<HTMLElement>(".window-close-button") ?? undefined
     items.push({
       key: "conversation",
-      label: reason || (liveEngine && !running)
-        ? voiceMenuLabel(t("voice.command.conversation"), reason?.text)
-        : t(running ? "promptInput.conversationMode.disable.title" : "promptInput.conversationMode.enable.title"),
-      icon: <Volume2 class="h-4 w-4" aria-hidden="true" />,
-      checked: reason || liveEngine ? undefined : running,
-      disabled: Boolean(reason && !reason.row),
+      label: voiceMenuLabel(t("voice.command.conversation"), reason?.text),
+      icon: running ? <CheckSquare class="h-4 w-4" aria-hidden="true" /> : <Square class="h-4 w-4" aria-hidden="true" />,
+      checked: running,
+      disabled: dictationMode() || Boolean(reason && !reason.row),
       selectBeforeClose: liveEngine && !reason && !running && !retained && !liveVoice.needsConsent(),
       focusAfterSelect: focusLiveWindow,
       onSelect: reason ? () => { if (reason.row) openSettingsRow("speech", reason.row) }
         : !liveEngine ? () => toggleConversationMode(props.instanceId)
-        : running ? liveVoice.stop
+        : running ? () => liveVoice.state().phase === "consent" ? liveVoice.dismiss() : liveVoice.stop()
         : retained ? () => focusLiveWindow()?.focus()
         : () => { liveVoice.start() },
     })
@@ -1069,6 +1073,17 @@ export default function PromptInput(props: PromptInputProps) {
                 <span class="inline-flex animate-spin"><Loader2 class="h-3 w-3" aria-hidden="true" /></span>
                 {t("promptInput.attachFiles.reading")}
               </span>
+            </Show>
+            <Show when={dictationMode()}>
+              <DictationButton
+                title={voiceInput.buttonTitle()}
+                state={voiceInput.state()}
+                canStart={voiceInput.canStartRecording()}
+                separateCapture={voiceInput.usesRemoteCapture()}
+                start={beginVoiceInput}
+                stop={voiceInput.stopRecording}
+                cancel={voiceInput.cancelRecording}
+              />
             </Show>
             <div class="prompt-actions-menu">
               <ActionOverflowMenu
