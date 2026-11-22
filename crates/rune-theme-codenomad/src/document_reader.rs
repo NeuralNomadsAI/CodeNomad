@@ -21,12 +21,21 @@ pub fn pages(history: El, reader: Option<El>) -> El {
     }
     root
 }
-pub fn split(main: El, tree: Option<El>, expanded: bool) -> El {
+pub fn drawer_geometry() -> [f32; 3] {
+    [
+        "rightDrawerWidth",
+        "minimumRightDrawerWidth",
+        "minimumSessionCenterWidth",
+    ]
+    .map(|key| {
+        crate::document()["layout"][key]
+            .as_f64()
+            .expect("generated drawer geometry") as f32
+    })
+}
+pub fn split(main: El, tree: Option<El>, width: f32, expanded: bool) -> El {
     let minimum = crate::interruption::history_minimum(expanded);
     let main = main.grow(1.0).min_w(0.0).min_h(minimum);
-    let width = crate::document()["layout"]["rightDrawerWidth"]
-        .as_f64()
-        .expect("generated reader width") as f32;
     rune::row()
         .w_full()
         .h_full()

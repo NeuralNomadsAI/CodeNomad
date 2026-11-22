@@ -11,6 +11,7 @@ fn owner() -> Ui {
         Reads::default(),
         std::sync::Arc::new(|| {}),
     );
+    ui.host_width = Some(1000.0);
     ui.tree.activate(true);
     let read = ui.tree.take_refresh().pop().unwrap();
     assert!(ui.tree.complete(
@@ -65,9 +66,30 @@ fn suspension_preserves_selection_and_expansion_while_revoking_pending_reads() {
     assert!(!ui.rows[0].busy);
     assert!(ui.tree.take_refresh().is_empty());
     ui.activate(true);
+    assert!(ui.tree.take_refresh().is_empty());
+    ui.host_width = Some(1000.0);
+    ui.activate(true);
     let next = ui.tree.take_refresh();
     assert_eq!(next.len(), 1);
     assert_eq!(next[0].path, "src");
+}
+
+#[test]
+fn compressed_hidden_drawer_revokes_tree_reads_and_retains_its_intention() {
+    let mut ui = owner();
+    ui.panel = true;
+    ui.online = true;
+    ui.activate(true);
+    let read = ui.tree.load("src", true).unwrap();
+    ui.host_width = Some(589.0);
+    ui.activate(true);
+    assert!(read.cancelled());
+    assert!(ui.tree.take_refresh().is_empty());
+    assert!(ui.panel);
+    assert!(!ui.drawer().pinned);
+    ui.host_width = Some(1000.0);
+    ui.activate(true);
+    assert!(ui.drawer().pinned);
 }
 
 #[test]

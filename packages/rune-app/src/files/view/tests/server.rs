@@ -105,6 +105,22 @@ fn real_rust_reader_ui_contract() {
                 |node| node.key.as_deref() == Some("file-source-text") && node.visible[3] > 0.0
             )
         );
+        rt.set_viewport((589.0, 700.0), 1.0);
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        assert!(accessible(&rt.accessibility_json(), "files-panel").is_none());
+        click(&mut rt, "file-refresh");
+        settle(&mut rt).await;
+        assert_eq!(
+            rt.state.files.as_ref().unwrap().document.edit().text,
+            "été\n日本語🦀\r\n"
+        );
+        assert!(rt.state.files.as_ref().unwrap().reader.error().is_none());
+        rt.set_viewport((1000.0, 700.0), 1.0);
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
         click(&mut rt, "file-close");
         for _ in 0..30 {
             rt.frame(0.02);

@@ -11,21 +11,26 @@ pub fn toggle(s: &State) -> El {
     let Some(ui) = &s.files else {
         return rune::el();
     };
+    let drawer = ui.drawer();
     crate::launcher_view::button(
         "files-toggle",
-        t(if ui.panel {
+        t(if !drawer.room && !ui.panel {
+            "filesPanel.widenWindow"
+        } else if ui.panel {
             "instanceShell.filesShell.hideFiles"
         } else {
             "instanceShell.filesShell.showFiles"
         }),
-        ui.stopped,
+        ui.stopped || (!drawer.room && !ui.panel),
         screen::action(&s.input_scope, |s| {
             if let Some(ui) = &mut s.files {
-                ui.show(!ui.panel);
+                if ui.panel || ui.drawer().room {
+                    ui.show(!ui.panel);
+                }
             }
         }),
     )
-    .expanded(ui.panel)
+    .expanded(drawer.pinned)
 }
 fn document_action(s: &State, run: fn(&mut super::Ui)) -> impl Fn(&mut State) + 'static {
     let scope = s.files.as_ref().map(|ui| ui.document.scope());
@@ -42,7 +47,19 @@ pub fn body(s: &State, history: El, expanded: bool) -> El {
         return history;
     };
     let main = theme::pages(history, ui.reader.target().is_some().then(|| reader(s)));
-    theme::split(main, ui.panel.then(|| tree(s)), expanded)
+    let drawer = ui.drawer();
+    theme::split(main, drawer.pinned.then(|| tree(s)), drawer.width, expanded)
+        .key("files-host")
+        .on_layout_tx({
+            let scope = s.input_scope.clone();
+            move |s: &mut State, rect, tx| {
+                if s.current_scope(&scope) {
+                    if let Some(ui) = &mut s.files {
+                        ui.resize(rect[2], tx);
+                    }
+                }
+            }
+        })
 }
 fn reader(s: &State) -> El {
     let Some(ui) = &s.files else {

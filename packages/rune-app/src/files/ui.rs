@@ -27,6 +27,7 @@ pub struct Ui {
     pub tree: Tree,
     pub rows: Vec<Row>,
     pub panel: bool,
+    pub host_width: Option<f32>,
     backend: Backend,
     reads: Reads,
     collation: std::result::Result<Collation, String>,
@@ -56,6 +57,7 @@ impl Ui {
             tree: Tree::new(directory),
             rows: vec![],
             panel: false,
+            host_width: None,
             backend,
             reads,
             collation: Collation::try_default(),
@@ -73,12 +75,36 @@ impl Ui {
     }
     pub fn activate(&mut self, active: bool) {
         self.active = active;
+        if !active {
+            self.host_width = None;
+        }
         self.document.activate(active);
         self.reader.activate(active);
         self.demand();
     }
     pub fn show(&mut self, show: bool) {
         self.panel = show;
+        self.demand();
+    }
+    pub fn drawer(&self) -> super::layout::Drawer {
+        super::layout::resolve(self.host_width.unwrap_or(0.0), self.panel)
+    }
+    pub fn resize(&mut self, width: f32, tx: &mut rune::Tx) {
+        if !width.is_finite() || width < 0.0 || self.host_width == Some(width) {
+            return;
+        }
+        let was_pinned = self.drawer().pinned;
+        self.host_width = Some(width);
+        if was_pinned
+            && !self.drawer().pinned
+            && tx.focused().is_some_and(|key| {
+                key.starts_with("file-row-")
+                    || key.starts_with("file-eye-")
+                    || key == "file-tree-retry"
+            })
+        {
+            tx.focus("files-toggle", true);
+        }
         self.demand();
     }
     pub fn online(&mut self, online: bool) {
@@ -92,7 +118,8 @@ impl Ui {
         self.demand();
     }
     fn demand(&mut self) {
-        self.tree.activate(self.active && self.panel && self.online);
+        self.tree
+            .activate(self.active && self.drawer().pinned && self.online);
         self.due = Some(0.0);
         self.snapshot();
     }
@@ -263,7 +290,11 @@ impl Ui {
         if !self.incoming.is_empty() {
             (self.wake)();
         }
-        if self.active && self.panel && self.online && self.due.is_some_and(|due| now >= due) {
+        if self.active
+            && self.drawer().pinned
+            && self.online
+            && self.due.is_some_and(|due| now >= due)
+        {
             self.due = None;
             let requests = self.tree.take_refresh();
             changed |= !requests.is_empty();

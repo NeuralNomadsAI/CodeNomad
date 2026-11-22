@@ -5,6 +5,7 @@ use codenomad_client::files::{Entry, EntryKind};
 use rune::{Env, Key, KeyEvent, Mods, Runtime};
 use std::time::{Duration, Instant};
 
+mod resize;
 mod server;
 
 fn english(s: &State, cx: &mut rune::Cx<State>) -> El {
@@ -16,6 +17,9 @@ fn runtime(ui: crate::files::Ui) -> Runtime<State> {
     state.files = Some(ui);
     let mut rt = Runtime::new(state, english, (1000.0, 700.0), Env::new(false, 1.0));
     rt.frame(0.0);
+    for _ in 0..30 {
+        rt.frame(0.02);
+    }
     rt
 }
 fn accessible<'a>(node: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
@@ -99,6 +103,9 @@ fn eye_opens_real_reader_and_return_preserves_chat_draft_without_prompt() {
         state.commands = Some(commands);
         let mut rt = Runtime::new(state, english, (1000.0, 700.0), Env::new(false, 1.0));
         rt.frame(0.0);
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
         click(&mut rt, "file-row-main.rs");
         assert!(rt.state.files.as_ref().unwrap().reader.target().is_none());
         click(&mut rt, "file-row-other.rs");

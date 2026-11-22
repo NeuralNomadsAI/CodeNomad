@@ -141,6 +141,7 @@ export const instanceMessages = {
   "instanceShell.rightPanel.title": "状态面板",
   "instanceShell.rightPanel.tabs.gitChanges": "Git",
   "gitPanel.history": "历史",
+  "filesPanel.widenWindow": "文件 — 请加宽窗口",
   "filesPanel.workspace": "工作区",
   "filesPanel.commits": "提交",
   "filesPanel.gitInit.notRepository": "此文件夹不是 Git 仓库。",

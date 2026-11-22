@@ -141,6 +141,7 @@ export const instanceMessages = {
   "instanceShell.rightPanel.title": "לוח סטטוס",
   "instanceShell.rightPanel.tabs.gitChanges": "Git",
   "gitPanel.history": "היסטוריה",
+  "filesPanel.widenWindow": "קבצים — הרחבת החלון",
   "filesPanel.workspace": "סביבת עבודה",
   "filesPanel.commits": "קומיטים",
   "filesPanel.gitInit.notRepository": "תיקייה זו אינה מאגר Git.",

@@ -277,6 +277,7 @@
   "filesPanel.image.before": "之前",
   "filesPanel.readOnly": "只读",
   "filesPanel.viewer": "文件预览",
+  "filesPanel.widenWindow": "文件 — 请加宽窗口",
   "filesPanel.workspace": "工作区",
   "filesystemBrowser.actions.close": "关闭",
   "filesystemBrowser.actions.retry": "重试",

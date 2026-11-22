@@ -277,6 +277,7 @@
   "filesPanel.image.before": "Önce",
   "filesPanel.readOnly": "Salt okunur",
   "filesPanel.viewer": "Dosya önizlemesi",
+  "filesPanel.widenWindow": "Dosyalar — pencereyi genişletin",
   "filesPanel.workspace": "Çalışma alanı",
   "filesystemBrowser.actions.close": "Kapat",
   "filesystemBrowser.actions.retry": "Yeniden dene",
