@@ -9,6 +9,7 @@ struct App {
     replacement: bool,
     owner_removed: bool,
     gesture: bool,
+    focus_target: bool,
     dialog: bool,
 }
 fn at(s: &mut App) -> Option<&mut State<App>> {
@@ -22,6 +23,9 @@ fn descriptor(s: &App) -> Rc<Menu<App>> {
     item.description = Some("Details".into());
     item.checked = Some(true);
     item.select_before_close = s.gesture;
+    if s.focus_target {
+        item.focus_after_select = Some(Rc::new(|_| Some("accept".into())));
+    }
     item.on_mouse_enter = Some(Rc::new(|s, _| s.events.push("enter".into())));
     item.on_mouse_leave = Some(Rc::new(|s, _| s.events.push("leave".into())));
     if s.replacement {
@@ -60,7 +64,8 @@ fn view_app(s: &App, cx: &mut Cx<App>) -> El {
                             .on_press(|s: &mut App| s.dialog = false)
                             .build(kit(layout::dark()))
                             .key("cancel"),
-                    ),
+                    )
+                    .child(Button::new("Accept").build(kit(layout::dark())).key("accept")),
             );
         }
         rune_kit::root(rune::col().w_full().h_full().child(trigger), layers)
@@ -164,6 +169,18 @@ fn immediate_action_keeps_gesture_and_precedes_close() {
     assert_eq!(focused(&rt).as_deref(), Some("cancel"));
     deliver(&mut rt);
     assert!(rt.state.events.iter().any(|e| e.starts_with("restored:")));
+}
+#[test]
+fn gesture_target_overrides_dialog_autofocus() {
+    let mut rt = runtime();
+    rt.state.gesture = true;
+    rt.state.focus_target = true;
+    tap(&mut rt, "actions:trigger");
+    key(&mut rt, Key::Down);
+    key(&mut rt, Key::Enter);
+    assert_eq!(focused(&rt).as_deref(), Some("accept"));
+    deliver(&mut rt);
+    assert!(rt.state.events.contains(&"restored:Some(\"accept\")".into()));
 }
 #[test]
 fn escape_and_outside_dismiss_with_hover_cleanup() {
