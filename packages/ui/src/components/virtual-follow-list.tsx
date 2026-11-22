@@ -315,9 +315,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const readerSettlement = createVirtualReaderSettlement({
     enabled: () => isActive() && !autoScroll() && !scrollController.snapshot().restoring,
     align: (anchor) => {
-      const element = scrollElement(), row = itemElements.get(anchor.key)
+      const key = anchor.key
+      const element = scrollElement(), row = itemElements.get(key)
       const selected = anchor.select?.()
-      const index = findLiveIndex(anchor.key)
+      const index = findLiveIndex(key)
       if (selected === null || index === -1) return false
       const pending = selected === "pending"
       // Seek an unmounted row by its estimate, just as for a timeline jump.
@@ -1264,6 +1265,12 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   createComputed(on(() => props.layoutChange?.(), change => {
     const held = readerSettlement.held()
+    // Resolve the same reading target in the new layout rather than capturing
+    // a placeholder or another block while the original placement settles.
+    if (change?.preserve && held?.reflow) {
+      readerSettlement.resettle()
+      return
+    }
     if (held?.reflow || held?.select?.() === null) readerSettlement.cancel()
     if (!change?.preserve || !isActive()) return
     if (autoScroll()) api.notifyContentRendered()
@@ -1271,7 +1278,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       // Capture before render effects replace the old blocks; resolve the held
       // block after layout changes, using the ordinary cancellable settlement.
       const anchor = props.captureLayoutAnchor?.()
-      if (anchor) readerSettlement.hold({ ...anchor, reflow: true }, true)
+      if (anchor) readerSettlement.hold({ ...anchor, get key() { return anchor.key }, reflow: true }, true)
     }
   }, { defer: true }))
 

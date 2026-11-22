@@ -181,7 +181,9 @@ reading line; other visibility or preset changes use ordinary scroll behavior.
 If the selected marker points to that block, its identity
 qualifies the replacement, such as an individual tool represented by a collapsed
 group header. The bounded reader-settlement hold resolves the replacement and
-leaves scroll untouched if the block is gone. A shorter
+leaves scroll untouched if the block is gone. Further grouping changes during
+the hold keep the same block identity and offset, resolving its row in the
+current layout within the original deadline. A shorter
 block starts at the viewport top if the saved clipping would put its end at or
 above the reading line. At a scrollbar limit, the rail follows the block the
 reader actually reaches. A shared marker can stand for several distinct reasoning

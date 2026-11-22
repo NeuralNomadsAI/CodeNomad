@@ -55,6 +55,8 @@ export function createVirtualReaderSettlement(options: {
     cancel,
     /** The held anchor, if any. */
     held: () => anchor,
+    /** Settle another layout of the same target without extending its deadline. */
+    resettle: () => { remaining = HOLD_FRAMES },
     /** Aligns now, or after a pending render, then on each frame of the window. */
     hold: (next: VirtualItemAnchor, defer = false) => {
       cancel()

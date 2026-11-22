@@ -98,14 +98,18 @@ test("an unresolved block gets its settlement window after loading, within a fix
   pending = false
   step(29)
   assert.equal(reader.held(), anchor)
+  reader.resettle()
+  step(29)
+  assert.equal(reader.held(), anchor, "the same target settles in the changed layout")
   step(1)
   assert.equal(reader.held(), undefined)
-  assert.equal(aligned, 124)
+  assert.equal(aligned, 153)
 
   pending = true
   reader.hold(anchor)
   step(310)
   assert.equal(reader.held(), anchor)
+  reader.resettle()
   step(3)
   assert.equal(reader.held(), undefined, "a never-loaded target is released at the deadline")
   reader.hold(anchor)

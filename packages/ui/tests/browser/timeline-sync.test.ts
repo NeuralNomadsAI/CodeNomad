@@ -239,6 +239,33 @@ test("ungrouping mounts and aligns the 61st call of a collapsed 120-call group",
   assert.equal(await active(page), marker.id)
 }, longGroupStore))
 
+test("a second grouping change retains the 68th call while the tool renderer loads", { timeout: 90_000 }, () => withSession("minimal", async (page) => {
+  const { promise: held, resolve: release } = Promise.withResolvers<void>()
+  await page.route(/\/src\/components\/tool-call\.tsx(?:\?|$)/, async route => {
+    await held
+    await route.continue()
+  })
+  try {
+    const marker = (await markers(page)).find(candidate => candidate.toolPartIds?.[0] === "long-group-67-read")!
+    await clickMarker(page, marker)
+    assert.equal(await active(page), marker.id)
+    assert.equal(await page.locator(".tool-call-message").count(), 0)
+    await page.evaluate(() => (window as any).fixture.showFilters(true))
+    await page.getByRole("button", { name: "Message content", exact: true }).click()
+    await page.getByRole("button", { name: "Expand Tool groups", exact: true }).click()
+    await page.locator(".tool-call-loading").first().waitFor({ state: "attached" })
+    await page.getByRole("button", { name: "Disable tool grouping", exact: true }).click()
+    await page.getByRole("button", { name: "Explored: 120 reads", exact: true }).waitFor({ state: "detached" })
+    release()
+
+    await page.locator('.tool-call-message[data-part-id="long-group-67-read"] .tool-call-header-toggle').waitFor({ timeout: 7000 })
+    await settleTranscript(page, 450)
+    const offset = await blockOffset(page, marker)
+    assert.ok(offset !== null && Math.abs(offset) <= READING_LINE_TOLERANCE, `the original call stays at the reading line (${offset}px)`)
+    assert.equal(await active(page), marker.id)
+  } finally { release() }
+}, longGroupStore))
+
 test("a preset that merges text blocks retains the ordinary scroll position", { timeout: 90_000 }, () => withSession("everything", async (page) => {
   const reply = (await markers(page)).find(candidate => candidate.id === `${id(1)}:assistant:1`)!
   await clickMarker(page, reply)

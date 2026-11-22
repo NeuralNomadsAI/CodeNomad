@@ -928,10 +928,12 @@ export default function MessageSection(props: MessageSectionProps) {
     const partId = reading?.partId ?? segment?.toolPartIds?.[0] ?? (segment?.type === "reasoning" ? segment.partIds?.[0] : undefined)
     const identity = reading ?? (segment?.type === "tool" ? { partId } : undefined)
     const ownPart = segment?.partId
-    const group = partId ? technicalGroupForPart(messageId, partId) : undefined
-    const groupStart = group && group.parts.length > 1 && (reading?.preferGroupHeader || !isTechnicalGroupExpanded(group)) ? group.parts[0] : undefined
     return {
-      key: groupStart?.messageId ?? messageId,
+      get key() {
+        const group = partId ? technicalGroupForPart(messageId, partId) : undefined
+        return group && group.parts.length > 1 && (reading?.preferGroupHeader || !isTechnicalGroupExpanded(group))
+          ? group.parts[0].messageId : messageId
+      },
       offset,
       select: () => {
         const scroller = streamElement(), current = getSegment()
