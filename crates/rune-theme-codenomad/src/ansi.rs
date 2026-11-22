@@ -5,8 +5,8 @@ use vte::{Params, Perform};
 
 const ESCAPED: [&str; 5] = ["\\u001b", "\\u001B", "\\x1b", "\\x1B", "\\033"];
 // Rune's selection-to-HTML path scans every range at each style boundary.
-// 2,048 also covers all one-character color changes in the 10,000-unit initial window.
-const COPY_RUN_LIMIT: usize = 2048;
+// Keep both color and decoration ranges for the initial 10,000-unit window.
+const COPY_RUN_LIMIT: usize = 4096;
 const LINE_WORK_LIMIT: usize = 2_000_000;
 const WINDOW_WORK_LIMIT: usize = 16_000_000;
 
@@ -653,18 +653,20 @@ mod tests {
 
     #[test]
     fn initial_dense_colors_preserve_the_following_warning() {
-        let source = format!(
-            "{}\u{1b}[31;4mFAILED",
-            "\u{1b}[31mA\u{1b}[32mB\n".repeat(512)
-        );
-        let (text, spans, _) = styled(parse(&source));
-        let warning = spans.last().unwrap();
-        assert_eq!(
-            &text[warning.start as usize..warning.end as usize],
-            "FAILED"
-        );
-        assert_eq!(warning.color, Some(rgb(187, 0, 0)));
-        assert!(warning.underline.is_some());
+        for prefix in ["", "\u{1b}[9m"] {
+            let source = format!(
+                "{prefix}{}\u{1b}[0m\u{1b}[31;4mFAILED",
+                "\u{1b}[31mA\u{1b}[32mB\n".repeat(512)
+            );
+            let (text, spans, _) = styled(parse(&source));
+            let warning = spans.last().unwrap();
+            assert_eq!(
+                &text[warning.start as usize..warning.end as usize],
+                "FAILED"
+            );
+            assert_eq!(warning.color, Some(rgb(187, 0, 0)));
+            assert!(warning.underline.is_some());
+        }
     }
 
     #[test]
