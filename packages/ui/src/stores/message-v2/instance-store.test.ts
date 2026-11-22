@@ -729,8 +729,8 @@ describe("chunked hydration", () => {
     assert.ok(result instanceof Promise, "a large chunked hydration returns a promise")
     assert.equal(
       store.getSessionMessageIds("session").length,
-      CHUNK_SIZE,
-      "only the first chunk lands synchronously; the rest yield to the main thread",
+      0,
+      "membership lands once with the finalize pass, never as partial-list geometry",
     )
     assert.equal(store.getMessage("msg_049") !== undefined, true, "the first chunk's records are resident")
     assert.equal(store.getMessage("msg_050"), undefined, "later chunks have not committed yet")
@@ -804,7 +804,7 @@ describe("chunked hydration", () => {
 
     assert.equal(await result, false, "a fenced hydration reports that it did not complete")
     const ids = store.getSessionMessageIds("session")
-    assert.equal(ids.length, CHUNK_SIZE + 1, "the first chunk plus the newer mutation stay; later chunks never commit")
+    assert.equal(ids.length, 1, "no membership from the fenced snapshot; the newer writer owns the session")
     assert.equal(ids.includes("msg_050"), false)
     assert.equal(ids.includes("live_update"), true, "the newer writer owns the session")
   })

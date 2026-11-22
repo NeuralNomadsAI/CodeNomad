@@ -772,29 +772,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       for (const input of chunk) chunkOfServerId.set(input.id, index)
     })
 
-    // Prefix of `incomingIds` each chunk makes resident: segments follow the
-    // list's own construction, so preserved runs stay beside their preceding
-    // shared row and pending optimistic sends land with the tail.
-    const segmentLengths: Array<{ chunk: number; length: number }> = []
-    const countSegment = (ids: readonly string[], chunk: number) => {
-      if (ids.length) segmentLengths.push({ chunk, length: ids.length })
-    }
-    countSegment(plan.preservedAfter.get(undefined) ?? [], 0)
-    for (const id of plan.serverIds) {
-      countSegment([id, ...plan.preservedAfter.get(id) ?? []], chunkOfServerId.get(id)!)
-    }
-    countSegment(plan.pendingOptimisticIds, chunks.length - 1)
-    const prefixLengths: number[] = []
-    let counted = 0
-    let total = 0
-    for (let chunk = 0; chunk < chunks.length; chunk++) {
-      while (counted < segmentLengths.length && segmentLengths[counted].chunk <= chunk) {
-        total += segmentLengths[counted].length
-        counted += 1
-      }
-      prefixLengths.push(total)
-    }
-
     // Inbox admission can render before the message endpoint projects the
     // accepted prompt. Only authoritative projection confirms the send.
     if (options?.confirmPending !== false) {
@@ -802,12 +779,14 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     }
 
     const fenceToken = currentHydrationFence(sessionId)
-    // A reload of the same window keeps its membership list stable while the
-    // chunks land: rewriting the prefix would visibly shrink and regrow an
-    // already-shown page. A jump to a different window reveals its prefix
-    // progressively instead.
-    const reload = areMessageIdListsEqual(plan.previousMessageIds, plan.incomingIds)
-    let anyChange = plan.omittedIds.length > 0 || !reload
+    // Membership lands once, with the finalize pass: a progressively growing
+    // prefix would expose partial-list geometry to scroll captures (and a
+    // reload would visibly shrink and regrow an already-shown page). Chunk
+    // commits stay progressive for the expensive part - record
+    // normalization, diffing and store writes - which is what keeps the
+    // main thread interactive.
+    let anyChange = plan.omittedIds.length > 0
+      || !areMessageIdListsEqual(plan.previousMessageIds, plan.incomingIds)
 
     for (let index = 0; index < chunks.length; index++) {
       if (index > 0) {
@@ -838,9 +817,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         clearRecordDisplayCacheForMessages(instanceId, plan.omittedIds)
         hooks?.onMessagesRemoved?.(instanceId, sessionId, plan.omittedIds)
       }
-      const prefixIds = plan.incomingIds.slice(0, prefixLengths[index])
-      const currentIds = state.sessions[sessionId]?.messageIds ?? []
-      const last = index === chunks.length - 1
       batch(() => {
         for (const [id, record] of normalized) setState("messages", id, record)
         if (first && !options?.preserveOmitted && plan.omittedIds.length > 0) {
@@ -864,14 +840,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
           }))
         }
         for (const [id, version] of infoVersions) setState("messageInfoVersion", id, version)
-        if (!reload && !areMessageIdListsEqual(currentIds, prefixIds)) {
-          setState("sessions", sessionId, (session) => ({
-            ...session,
-            messageIds: prefixIds,
-            ...(last ? { updatedAt: Date.now() } : {}),
-          }))
-        }
-        recomputeLastAssistantMessageId(sessionId, reload ? undefined : prefixIds)
       })
     }
 
@@ -893,12 +861,11 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       if (usageState) {
         setState("usage", sessionId, usageState)
       }
-      if (reload) {
-        setState("sessions", sessionId, (session) => ({
-          ...session,
-          updatedAt: Date.now(),
-        }))
-      }
+      setState("sessions", sessionId, (session) => ({
+        ...session,
+        messageIds: plan.incomingIds,
+        updatedAt: Date.now(),
+      }))
       recomputeLastAssistantMessageId(sessionId, plan.incomingIds)
 
       clearLatestTodoSnapshot(sessionId)
