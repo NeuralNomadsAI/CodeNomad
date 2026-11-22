@@ -6,6 +6,7 @@ use vte::{Params, Perform};
 const ESCAPED: [&str; 5] = ["\\u001b", "\\u001B", "\\x1b", "\\x1B", "\\033"];
 // Rune reserves the high ink-index bit for synthetic bold.
 const SHAPED_RUN_LIMIT: usize = i16::MAX as usize;
+const INK_RUN_LIMIT: usize = u16::MAX as usize;
 const DECORATION_WORK_LIMIT: usize = 1_000_000;
 
 pub fn present(source: &str) -> bool {
@@ -66,6 +67,7 @@ struct Log {
     start: usize,
     style: Style,
     pending_cr: bool,
+    column: usize,
 }
 
 impl Log {
@@ -79,8 +81,24 @@ impl Log {
     fn push(&mut self, c: char) {
         if std::mem::take(&mut self.pending_cr) && c != '\n' {
             self.text.push('\n');
+            self.column = 0;
         }
-        self.text.push(c);
+        match c {
+            '\t' => {
+                // Expanding here avoids Rune's per-tab scan of every span.
+                self.text
+                    .extend(std::iter::repeat_n(' ', 4 - self.column % 4));
+                self.column = 0;
+            }
+            '\n' => {
+                self.text.push(c);
+                self.column = 0;
+            }
+            _ => {
+                self.text.push(c);
+                self.column += 1;
+            }
+        }
     }
 
     fn literal(&mut self, text: &str) {
@@ -138,7 +156,7 @@ impl Perform for Log {
                 100..=107 => set.bg = Some(palette((code - 92) as u8)),
                 39 => next.fg = None,
                 49 => next.bg = None,
-                38 | 48 => {
+                38 | 48 | 58 => {
                     let color = if let Some((&mode, values)) = param[1..].split_first() {
                         // ISO RGB separates the optional color-space slot from its three channels.
                         let values = if mode == 2 && values.len() == 4 {
@@ -158,12 +176,10 @@ impl Perform for Log {
                     } else {
                         None
                     };
-                    if let Some(color) = color {
-                        if code == 38 {
-                            set.fg = Some(color);
-                        } else {
-                            set.bg = Some(color);
-                        }
+                    match (code, color) {
+                        (38, Some(color)) => set.fg = Some(color),
+                        (48, Some(color)) => set.bg = Some(color),
+                        _ => {}
                     }
                 }
                 _ => {}
@@ -240,14 +256,28 @@ fn parse(mut source: &str) -> Log {
 
 pub fn code(source: &str, wrap: bool) -> El {
     let log = parse(source);
-    let mut spans = Vec::with_capacity(log.runs.len());
+    let mut spans = Vec::with_capacity(log.runs.len().min(INK_RUN_LIMIT));
     let mut strikes = vec![];
     let metrics = tokens(dark());
     let default = metrics.color("text-primary");
     // Rune's range decoration queries revisit the shaped line for each range.
-    let mut decorations_left = DECORATION_WORK_LIMIT / log.text.len().max(1);
+    let line_bytes = log.text.lines().map(str::len).max().unwrap_or(0).max(1);
+    let mut decoration_budget = DECORATION_WORK_LIMIT;
     let mut shaped_left = SHAPED_RUN_LIMIT;
+    let mut text = log.text.into_bytes();
     for (range, mut style) in log.runs {
+        if spans.len() == INK_RUN_LIMIT {
+            // Keep the remainder readable even if Rune cannot index more ink spans.
+            // Conceal still applies; the original source stays available to Copy.
+            if style.hidden {
+                for byte in &mut text[range] {
+                    if *byte != b'\n' {
+                        *byte = b' ';
+                    }
+                }
+            }
+            continue;
+        }
         if style.inverse {
             std::mem::swap(&mut style.fg, &mut style.bg);
         }
@@ -262,12 +292,13 @@ pub fn code(source: &str, wrap: bool) -> El {
             if let Some(bg) = style.bg.filter(|_| shaped_left > 0) {
                 span = span.bg(dim(bg), 0.0);
             }
-            if style.underline && decorations_left > 0 && shaped_left > 0 {
-                decorations_left -= 1;
+            let underline_cost = range.len().saturating_mul(line_bytes);
+            if style.underline && underline_cost <= decoration_budget && shaped_left > 0 {
+                decoration_budget -= underline_cost;
                 span = span.underline(dim(style.fg.unwrap_or(default)));
             }
-            if style.strike && decorations_left > 0 {
-                decorations_left -= 1;
+            if style.strike && text.len() <= decoration_budget {
+                decoration_budget -= text.len();
                 strikes.push((
                     range.start,
                     range.end,
@@ -286,7 +317,8 @@ pub fn code(source: &str, wrap: bool) -> El {
         }
         spans.push(span);
     }
-    super::markdown::code_body(rune::rich(log.text, spans).strikes(strikes), wrap)
+    let text = String::from_utf8(text).unwrap_or_default();
+    super::markdown::code_body(rune::rich(text, spans).strikes(strikes), wrap)
 }
 
 #[cfg(test)]
@@ -393,5 +425,36 @@ mod tests {
                 .to_string()
                 .contains(&"AB".repeat(16_000))
         );
+    }
+
+    #[test]
+    fn excess_ink_spans_cannot_panic_or_reveal_concealed_text() {
+        let source = format!(
+            "{}\u{1b}[31mA\u{1b}[8m🦀SECRET\u{1b}[0mEND",
+            "\u{1b}[31mA\u{1b}[32mB".repeat(32_767)
+        );
+        let mut rt = rune::Runtime::new(
+            source,
+            |source, _| code(source, false),
+            (640.0, 360.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        let tree = rt.accessibility_json().to_string();
+        assert!(tree.contains("END"));
+        assert!(!tree.contains("SECRET"));
+    }
+
+    #[test]
+    fn tab_stops_expand_without_costing_a_styled_rune_lookup() {
+        let log = parse("A\u{1b}[41m\tB\t\r\nC\tD");
+        assert_eq!(log.text, "A   B   \nC   D");
+    }
+
+    #[test]
+    fn unsupported_underline_color_keeps_its_parameters_atomic() {
+        let log = parse("\u{1b}[58;5;8mErreur");
+        assert_eq!(log.text, "Erreur");
+        assert!(log.runs.is_empty());
     }
 }
