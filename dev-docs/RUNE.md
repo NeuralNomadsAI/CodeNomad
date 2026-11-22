@@ -43,7 +43,7 @@ When a whole module reaches parity, its Solid and Tauri version is deleted on `f
 | Solid / Tauri | Rune | State |
 |---|---|---|
 | HTTP, SSE, pagination and recovery | CodeNomad API and contract fixtures | `crates/codenomad-client`: native contracts, 606-row recovery and authenticated browser session reading qualified |
-| Workspace file listing and preview API | Solid `api-client.ts`, shared server Files routes | `crates/codenomad-client/files`: typed bounded reads, identity validation and binary preservation qualified through HTTP fixtures; shared-server and interface qualification pending |
+| Workspace file listing and preview API | Solid `api-client.ts`, shared server Files routes | `crates/codenomad-client/files`: typed bounded reads, identities and bytes qualified through HTTP fixtures and Windows shared Rust with private files; browser execution and interface qualification pending |
 | Tokens and typography | `packages/ui/src/styles/tokens.css` | `crates/rune-theme-codenomad`: generated values; component parity qualified individually |
 | Text | Ten UI catalogues | Generated catalogues, fallback and Hebrew direction qualified |
 | Window close | `components/window-close-button.tsx` | `components/window_close_button.rs`: six Windows light/dark pairs, accessibility and interaction qualified at scale 1 |

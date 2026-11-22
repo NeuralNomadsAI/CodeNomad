@@ -306,3 +306,153 @@ fn malformed_http_errors_and_json_byte_bounds_are_preserved() {
         );
     })
 }
+
+#[test]
+#[ignore = "requires the explicit private files-fixture manifest and real Rust server"]
+fn real_rust_files_read_contract() {
+    use std::{fs, path::PathBuf};
+    let manifest = PathBuf::from(
+        std::env::var_os("RUNE_FILES_TEST_MANIFEST").expect("explicit Files manifest"),
+    );
+    let package = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let base = package
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("target/rune-files-tests");
+    assert!(manifest.is_absolute() && manifest.starts_with(&base));
+    assert_eq!(manifest.file_name().unwrap(), "manifest.json");
+    let root = fs::canonicalize(manifest.parent().unwrap()).unwrap();
+    let base = fs::canonicalize(base).unwrap();
+    assert!(
+        root.starts_with(base)
+            && root
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("trial-")
+    );
+    assert_eq!(
+        fs::canonicalize(&manifest).unwrap(),
+        root.join("manifest.json")
+    );
+    let data: Value = serde_json::from_slice(&fs::read(manifest).unwrap()).unwrap();
+    let project = data["directory"].as_str().unwrap();
+    assert_eq!(fs::canonicalize(project).unwrap(), root.join("project"));
+    let foreign = data["foreign"].as_str().unwrap();
+    assert_eq!(fs::canonicalize(foreign).unwrap(), root.join("foreign"));
+    let origin = data["origin"].as_str().unwrap();
+    let url = reqwest::Url::parse(origin).unwrap();
+    assert_eq!(url.scheme(), "http");
+    assert_eq!(url.host_str(), Some("127.0.0.1"));
+    assert!(url.port().is_some() && url.username().is_empty() && url.password().is_none());
+    let password = std::env::var("RUNE_FILES_TEST_PASSWORD").expect("ephemeral fixture password");
+    run(async {
+        let mut backend = Backend::connect(origin, &password).await.unwrap();
+        backend.workspace = data["workspaceId"].as_str().unwrap().into();
+        let rows = backend.files(project, ".").await.unwrap();
+        let folder = rows.iter().find(|r| r.path == "nested").unwrap();
+        assert_eq!(folder.kind, EntryKind::Directory);
+        assert!(
+            folder
+                .directory_identity
+                .as_ref()
+                .is_some_and(|v| !v.is_empty())
+        );
+        let again = backend.files(project, ".").await.unwrap();
+        assert_eq!(
+            again
+                .iter()
+                .find(|r| r.path == "nested")
+                .unwrap()
+                .directory_identity,
+            folder.directory_identity
+        );
+        assert!(backend.files(project, "empty").await.unwrap().is_empty());
+        let nested = backend.files(project, "nested").await.unwrap();
+        assert_eq!(nested.len(), 1);
+        assert_eq!(nested[0].path, "nested/日本語.txt");
+        let unicode = backend
+            .preview_file(project, "été 日本語.txt")
+            .await
+            .unwrap();
+        assert_eq!(unicode.bytes, "été\n日本語🦀\r\n".as_bytes());
+        let stable = backend
+            .preview_file(project, "été 日本語.txt")
+            .await
+            .unwrap();
+        assert!(unicode.version.as_ref().is_some_and(|v| !v.is_empty()));
+        assert_eq!(stable.version, unicode.version);
+        let changed = "modifié 🦀\nseconde lecture";
+        // The only write is an external filesystem edit of the validated private project.
+        fs::write(root.join("project/été 日本語.txt"), changed).unwrap();
+        let updated = backend
+            .preview_file(project, "été 日本語.txt")
+            .await
+            .unwrap();
+        assert_eq!(updated.bytes, changed.as_bytes());
+        assert_ne!(updated.version, unicode.version);
+        assert!(
+            backend
+                .preview_file(project, "empty.txt")
+                .await
+                .unwrap()
+                .bytes
+                .is_empty()
+        );
+        assert_eq!(
+            backend
+                .preview_file(project, "binary.bin")
+                .await
+                .unwrap()
+                .bytes,
+            [0, 1, 255, 128, 0, 42]
+        );
+        assert_eq!(
+            backend
+                .preview_file(project, "full.bin")
+                .await
+                .unwrap()
+                .bytes,
+            vec![0x93; MAX_FILE_BYTES]
+        );
+        assert!(
+            backend
+                .preview_file(project, "oversized.bin")
+                .await
+                .is_err()
+        );
+        assert!(backend.preview_file(project, "absent.txt").await.is_err());
+        assert!(backend.preview_file(project, "empty").await.is_err());
+        assert!(backend.files(foreign, ".").await.is_err());
+        assert!(backend.preview_file(foreign, "foreign.txt").await.is_err());
+        let outward = data["outwardLink"].as_bool().unwrap();
+        if outward {
+            assert_eq!(
+                backend
+                    .preview_file(project, "outward/foreign.txt")
+                    .await
+                    .unwrap()
+                    .bytes,
+                b"private sibling bytes"
+            );
+        }
+        let protected = data["protectedLink"].as_bool().unwrap();
+        if protected {
+            assert!(
+                backend
+                    .preview_file(project, "protected/private.txt")
+                    .await
+                    .is_err()
+            );
+        }
+        println!(
+            "{}",
+            json!({"type":"files-native-proof","result":"ok","entries":rows.len(),
+            "fileByteLimit":MAX_FILE_BYTES,"stableThenChangedVersion":true,"directoryIdentity":true,
+            "foreignDirectoryRefused":true,"outwardLinkReadable":outward,"protectedGitLinkRefused":protected,
+            "mutations":"external private file edit only"})
+        );
+    });
+}
