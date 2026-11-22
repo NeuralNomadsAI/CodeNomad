@@ -393,6 +393,38 @@ async fn fixture() -> (TcpListener, Preferences) {
     (listener, prefs)
 }
 
+#[test]
+fn settings_first_palette_slot_accepts_the_servers_explicit_nulls() {
+    for lost_receipt in [false, true] {
+        let (listener, mut prefs) = platform::block_on(fixture());
+        prefs.state.snapshot = Some(json!({"appearancePreferences":{"mode":"dark"}}));
+        prefs.set_palette(built_in().iter().find(|p| p.id == "basalt").unwrap());
+        platform::spawn(async move {
+            let write = request(&listener).await;
+            assert!(write.first.starts_with("PATCH "));
+            let mut saved = write.body.clone();
+            assert_eq!(
+                saved["appearancePreferences"]["dark"],
+                json!({
+                    "scheme":{"id":"basalt","appearance":"dark","colors":null},"presetId":null
+                })
+            );
+            saved["appearancePreferences"]["mode"] = json!("dark");
+            if lost_receipt {
+                drop(write);
+                let read = request(&listener).await;
+                assert!(read.first.starts_with("GET "));
+                read.reply(200, saved).await;
+            } else {
+                write.reply(200, saved).await;
+            }
+        });
+        assert!(prefs.flush());
+        assert_eq!(prefs.palette(true).map(|p| p.id), Some("basalt"));
+        assert_eq!(prefs.state.requested(Choice::Palette(true)), None);
+    }
+}
+
 async fn wait_until(mut check: impl FnMut() -> bool) {
     timeout(Duration::from_secs(3), async {
         while !check() {

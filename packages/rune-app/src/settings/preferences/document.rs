@@ -25,9 +25,20 @@ impl Choice {
     }
 
     fn confirmed(self, value: &'static str, snapshot: &Value) -> bool {
-        let mut patch = json!({});
-        self.put(&mut patch, value);
-        contains_patch(snapshot, &patch)
+        let appearance = &snapshot["appearancePreferences"];
+        match self {
+            Self::Locale => snapshot["settings"]["locale"] == value,
+            Self::Mode => appearance["mode"] == value,
+            Self::Palette(dark) => {
+                let mode = if dark { "dark" } else { "light" };
+                let slot = &appearance[mode];
+                slot["scheme"]["id"] == value
+                    && slot["scheme"]["appearance"] == mode
+                    // A newly created object can preserve explicit nulls in the merge.
+                    && slot["scheme"]["colors"].is_null()
+                    && slot["presetId"].is_null()
+            }
+        }
     }
 }
 
@@ -241,23 +252,5 @@ impl Document {
             }
         });
         true
-    }
-}
-
-fn contains_patch(value: &Value, patch: &Value) -> bool {
-    match patch {
-        Value::Object(entries) => {
-            value.is_object()
-                && entries.iter().all(|(key, expected)| {
-                    if expected.is_null() {
-                        value.get(key).is_none()
-                    } else {
-                        value
-                            .get(key)
-                            .is_some_and(|actual| contains_patch(actual, expected))
-                    }
-                })
-        }
-        other => value == other,
     }
 }

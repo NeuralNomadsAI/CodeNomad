@@ -17,13 +17,11 @@ use std::{
 #[derive(Default)]
 pub(super) struct Window {
     shared: Rc<RefCell<Preferences>>,
-    #[cfg(not(target_arch = "wasm32"))]
     token: Option<Rc<Cell<bool>>>,
     picker: Option<&'static str>,
     seen_revision: u64,
 }
 impl Window {
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn new(shared: Rc<RefCell<Preferences>>, token: Rc<Cell<bool>>) -> Self {
         Self {
             shared,
@@ -40,7 +38,6 @@ impl Window {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn closed(s: &mut Window, _: &mut rune::Tx) {
     s.close(super::warn_save_failed);
 }
