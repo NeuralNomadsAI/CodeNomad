@@ -141,6 +141,7 @@ const upstream=createServer(async(req,res)=>{
       return json(gitCount||linked?{directory,project:{id:'fixture_project',canonical:project,directory}}:{data:{directory:project}})
     }
     if(linked&&url.pathname==='/api/worktree')return json([{directory:project},{directory:linked}])
+    if(linked&&url.pathname==='/api/worktree/refresh'){res.writeHead(204);res.end();return}
     if(gitCount&&url.pathname==='/api/worktree')return json(Array.from({length:gitCount},(_,i)=>({directory:i?path.join(profile,`absent-checkout-${i}`):project})))
     if(url.pathname==='/api/session'&&req.method==='GET') {
       stats.lists++
@@ -164,7 +165,7 @@ const upstream=createServer(async(req,res)=>{
       if(uncertain&&stats.created===1){res.statusCode=500;return json({error:'simulated response lost after creation'})}
       return json({data:created})
     }
-    if(url.pathname==='/api/plugin')return json({location:{directory:project},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
+    if(url.pathname==='/api/plugin')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
     if(url.pathname==='/api/rpc/codenomad.session-pruning/window'){
       const {input}=JSON.parse(raw);return json({output:stores.get(input.sessionID).window(input.target)})
     }

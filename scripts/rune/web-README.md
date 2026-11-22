@@ -35,6 +35,8 @@ node packages/rune-app/fixtures/launcher-fixture.mjs --web-mobile
 
 Il vérifie l'appairage HTTPS depuis une autre origine, les sessions du dossier et des worktrees liés sans recherche, la recherche hors page, le SSE et sa reprise après la coupure de l'amont puis après un vrai redémarrage du serveur Rust sur le même port. Le toucher au centre, l'IME injectée, le redimensionnement et la conservation du brouillon lors du redémarrage et du réappairage sont vérifiés. Le profil Chromium Android portrait couvre clair, sombre et DPR 1 ; « Anciens » est signalé comme écart connu si le miroir accessible le présente comme actif ([Rune #118](https://github.com/anomalyco/rune/issues/118)).
 
+Le contrôle `--web-mobile --same-origin-pairing` ouvre les liens sans page référente ; son rapport distingue ce contrôle du parcours complet avec `Referer`.
+
 `node packages/rune-app/fixtures/launcher-fixture.mjs --web-android` utilise Chrome et le clavier logiciel d'un émulateur Android jetable déjà démarré, avec `RUNE_ANDROID_ADB` (chemin absolu), `RUNE_ANDROID_ADB_PORT` (serveur ADB privé) et `RUNE_ANDROID_SERIAL` (unique `emulator-*`). Il vérifie l'ouverture réelle du clavier, le viewport, le texte injecté par CDP et la reprise SSE. Le certificat de fixture est épinglé au lancement de Chrome. La dictée, la composition propre à Gboard et TalkBack gardent leurs essais distincts.
 
 Les libellés de démarrage et d'erreur proviennent des dix catalogues générés. `?locale=he` sélectionne par exemple l'hébreu et la direction RTL ; la valeur par défaut est `fr`. Les couleurs, dimensions et polices du démarrage consomment le thème généré et `crates/rune-theme-codenomad/assets/web-shell.css`. Le zoom du navigateur reste disponible.

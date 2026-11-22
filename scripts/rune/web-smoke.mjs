@@ -175,13 +175,13 @@ try {
         const png = await page.screenshot({path: path.join(out, `${name}-${colorScheme}.png`),scale:'css'})
         const textRegions = await page.evaluate(title => {
           const nodes = [...document.querySelectorAll('[data-rune-a11y] p, [data-rune-a11y] h1, [data-rune-a11y] h2, [data-rune-a11y] [role=heading]')]
-          const crop = (name, predicate, surface='surface-canvas') => {
+          const crop = (name, predicate, surface='surface-canvas', text='text-primary') => {
             const node = nodes.find(node => predicate(node.textContent ?? ''))
             if (!node) throw Error(`Missing drawn accessibility text region: ${name}`)
             const box = node.getBoundingClientRect()
-            return {name, rect: [box.x, box.y, box.width, box.height], surface}
+            return {name, rect: [box.x, box.y, box.width, box.height], surface, text}
           }
-          return [...(title.connected?[crop('header', text => text==='Existing history','surface-shade-light')]:[]),
+          return [...(title.connected?[crop('header', text => text==='Existing history','surface-shade-light','text-muted')]:[]),
             crop('transcript', text => text.includes(title.connected?'Existing answer':'fn main()'))]
         }, {connected:values.connected})
         const composerBox = await page.getByRole('group', {name: messages['rune.prompt'], exact: true}).boundingBox()
@@ -218,7 +218,7 @@ try {
           const existing=history.filter(row=>row.input.sessionID==='ses_existing')
           assert(existing.length>=1)
           for(const row of existing){
-            if(values.mobile&&row.body.status!=='window')continue
+            if(values.mobile&&(row.body.status!=='window'||!row.body.latest))continue
             const bodies=row.body.messages.map(message=>message.text??message.content?.[0]?.text)
             if(values.mobile)assert(bodies.includes('Existing project history')&&bodies.includes('Existing answer'))
             else assert.deepEqual(bodies,['Existing project history','Existing answer'])

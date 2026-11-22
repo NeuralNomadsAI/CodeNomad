@@ -159,7 +159,9 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
         items = items.child(button(
             "more-sessions",
             t("rune.more"),
-            disabled || l.linked.pending() || count >= launcher::MAX_BROWSED_SESSIONS,
+            disabled
+                || l.next.is_none() && l.linked.pending()
+                || count >= launcher::MAX_BROWSED_SESSIONS,
             screen::action(scope, |s| launcher::list(s, true)),
         ));
     }
