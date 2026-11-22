@@ -103,22 +103,6 @@ pub fn diff_pane(content: El, lines: usize) -> El {
         .child(content)
 }
 
-pub fn on_visible_width<S: 'static>(
-    content: El,
-    run: impl Fn(&mut S, f32, &mut rune::Tx) + 'static,
-) -> El {
-    let rect = rune::Live::new([0.0; 4]);
-    content
-        .drawn_rect_into(&rect)
-        .on_visible(move |s: &mut S, visible, tx| {
-            if visible {
-                run(s, rect.get()[2], tx);
-            } else {
-                tx.live_only();
-            }
-        })
-}
-
 fn tool_lines(lines: usize) -> f32 {
     // tool-call.css: --tool-call-line-unit and --tool-call-lines-{compact,large}.
     lines as f32 * 1.4 * tokens(dark()).text(TextRole::Mono).size

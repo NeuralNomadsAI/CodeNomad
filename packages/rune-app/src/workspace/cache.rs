@@ -57,6 +57,7 @@ impl Cache {
         s.files = self.files;
         s.git = self.git;
         s.transcript_display = self.transcript_display;
+        crate::chat::ToolDiffPreferences::sync(s);
         s.chat_title = self.title;
         s.messages = self.messages;
         s.draft = self.draft;

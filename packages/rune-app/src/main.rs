@@ -43,6 +43,7 @@ struct State {
     documents: files::document::store::Store,
     reads: platform::reads::Reads,
     transcript_display: transcript_state::Display,
+    tool_diff_preferences: chat::ToolDiffPreferences,
     screen: Screen,
     input_scope: std::rc::Rc<()>,
     rejected_edit: TextEdit,
@@ -76,6 +77,7 @@ fn init() -> State {
         documents: Default::default(),
         reads: Default::default(),
         transcript_display: Default::default(),
+        tool_diff_preferences: Default::default(),
         screen: Screen::Chat { launcher: None },
         input_scope: std::rc::Rc::new(()),
         rejected_edit: TextEdit::new(""),
@@ -314,6 +316,7 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
         }
         shell::view(s, cx, chat_view)
     })
+    .on_layout_tx(chat::ToolDiffPreferences::layout)
     .locale_direction(strings::locale())
 }
 fn chat_view(s: &State, cx: &mut Cx<State>) -> El {

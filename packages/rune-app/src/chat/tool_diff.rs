@@ -6,23 +6,80 @@ use crate::{
     screen,
     strings::{locale, t},
 };
-use rune::{El, col, text};
+use rune::{El, Tx, col, text};
 use rune_theme_codenomad::{
     Space, catalogue,
     layout::{self, Layout},
     markdown,
 };
 use std::{
-    collections::{HashSet, VecDeque},
-    ops::Range,
+    cell::Cell,
+    collections::VecDeque,
+    rc::{Rc, Weak},
     sync::Arc,
 };
 
 const RETAINED: usize = 32;
 
+pub(crate) struct Preferences {
+    mode: DiffMode,
+    compact: bool,
+    compact_mode: Option<DiffMode>,
+    wrap: bool,
+}
+
+impl Default for Preferences {
+    fn default() -> Self {
+        Self {
+            mode: DiffMode::Split,
+            compact: false,
+            compact_mode: None,
+            wrap: true,
+        }
+    }
+}
+
+impl Preferences {
+    fn effective_mode(&self) -> DiffMode {
+        if self.compact {
+            self.compact_mode.unwrap_or(DiffMode::Unified)
+        } else {
+            self.mode
+        }
+    }
+
+    pub(crate) fn layout(s: &mut State, [_, _, width, _]: [f32; 4], tx: &mut Tx) {
+        let compact = width <= 640.0;
+        if compact == s.tool_diff_preferences.compact {
+            tx.live_only();
+            return;
+        }
+        s.tool_diff_preferences.compact = compact;
+        s.tool_diff_preferences.compact_mode = None;
+        Self::sync(s);
+        s.revision += 1;
+    }
+
+    pub(crate) fn sync(s: &mut State) {
+        for entry in &mut s.transcript_display.diffs.entries {
+            s.tool_diff_preferences.apply(&mut entry.state);
+        }
+    }
+
+    fn apply(&self, state: &mut DiffState) {
+        if state.mode() != self.effective_mode() {
+            state.set_mode(self.effective_mode());
+        }
+        if state.wrap() != self.wrap {
+            state.set_wrap(self.wrap);
+        }
+    }
+}
+
 struct Entry {
     key: String,
-    message: String,
+    // Unmounting silently drops Rune's visibility handler, even without a false event.
+    visible: Weak<Cell<bool>>,
     patch: String,
     file: String,
     state: DiffState,
@@ -32,20 +89,10 @@ struct Entry {
 #[derive(Default)]
 pub(super) struct Cache {
     entries: VecDeque<Entry>,
-    visible: HashSet<String>,
     detached: DiffState,
 }
 
 impl Cache {
-    pub(super) fn visible_rows(s: &mut State, range: Range<usize>) -> bool {
-        let cache = &mut s.transcript_display.diffs;
-        cache.visible.clear();
-        if let Some(rows) = s.messages.get(range) {
-            cache.visible.extend(rows.iter().map(|row| row.id.clone()));
-        }
-        false
-    }
-
     fn read(&self, key: &str) -> &DiffState {
         self.entries
             .iter()
@@ -60,7 +107,14 @@ impl Cache {
             .map_or(&mut self.detached, |entry| &mut entry.state)
     }
 
-    fn load(&mut self, message: &str, key: &str, patch: &str, path: &str, width: f32) -> bool {
+    fn load(
+        &mut self,
+        key: &str,
+        patch: &str,
+        path: &str,
+        visible: &Rc<Cell<bool>>,
+        preferences: &Preferences,
+    ) -> bool {
         let former = self
             .entries
             .iter()
@@ -70,14 +124,17 @@ impl Cache {
             .as_ref()
             .is_some_and(|entry| entry.patch == patch && entry.file == path)
         {
-            self.entries.extend(former);
+            self.entries.extend(former.map(|mut entry| {
+                entry.visible = Rc::downgrade(visible);
+                entry
+            }));
             return false;
         }
         if self.entries.len() >= RETAINED {
             let Some(index) = self
                 .entries
                 .iter()
-                .position(|entry| !self.visible.contains(&entry.message))
+                .position(|entry| entry.visible.upgrade().is_none_or(|visible| !visible.get()))
             else {
                 return false;
             };
@@ -108,6 +165,7 @@ impl Cache {
         }
         let lines = files
             .iter()
+            .filter(|file| !file.hunks.is_empty())
             .map(|file| {
                 2 + file
                     .hunks
@@ -117,18 +175,10 @@ impl Cache {
             })
             .sum();
         let mut state = DiffState::new(files);
-        state.set_wrap(former.as_ref().is_none_or(|entry| entry.state.wrap()));
-        state.set_mode(former.as_ref().map_or(
-            if width > 640.0 {
-                DiffMode::Split
-            } else {
-                DiffMode::Unified
-            },
-            |entry| entry.state.mode(),
-        ));
+        preferences.apply(&mut state);
         self.entries.push_back(Entry {
             key: key.into(),
-            message: message.into(),
+            visible: Rc::downgrade(visible),
             patch: patch.into(),
             file: path.into(),
             state,
@@ -155,43 +205,43 @@ pub(super) fn body(
     fallback: impl FnOnce() -> El,
 ) -> El {
     let path = &path[..path.floor_char_boundary(path.len().min(4096))];
-    if let Some(entry) = s
+    let entry = s
         .transcript_display
         .diffs
         .entries
         .iter()
-        .find(|entry| entry.key == key && entry.patch == patch && entry.file == path)
-    {
-        if entry.state.files().iter().all(|file| file.hunks.is_empty()) {
-            return fallback();
-        }
-        return view(s, key, entry, path);
-    }
+        .find(|entry| entry.key == key && entry.patch == patch && entry.file == path);
+    let visible = entry
+        .and_then(|entry| entry.visible.upgrade())
+        .unwrap_or_default();
+    let content = match entry {
+        Some(entry) if entry.lines > 0 => view(s, key, entry, path),
+        _ => fallback(),
+    };
     let scope = s.input_scope.clone();
     let message = message.to_owned();
     let key = key.to_owned();
     let patch = patch.to_owned();
     let path = path.to_owned();
     let tool = tool.clone();
-    markdown::on_visible_width(
-        col()
-            .full_width()
-            .key(format!("{key}-load-{:p}", Arc::as_ptr(&tool)))
-            .child(fallback()),
-        move |s: &mut State, width, tx| {
-            if s.current_scope(&scope)
+    col()
+        .full_width()
+        .key(format!("{key}-card-{:p}-{:p}", Rc::as_ptr(&scope), Arc::as_ptr(&tool)))
+        .child(content)
+        .on_visible(move |s: &mut State, on, tx| {
+            visible.set(on);
+            if on && s.current_scope(&scope)
                 && s.messages.iter().find(|row| row.id == message).into_iter().flat_map(|row| &row.parts).any(|part|
                     matches!(part, crate::content::Part::Tool(current) if Arc::ptr_eq(current, &tool)))
                 && s.transcript_display
                     .diffs
-                    .load(&message, &key, &patch, &path, width)
+                    .load(&key, &patch, &path, &visible, &s.tool_diff_preferences)
             {
                 s.revision += 1;
             } else {
                 tx.live_only();
             }
-        },
-    )
+        })
 }
 
 fn view(s: &State, key: &str, entry: &Entry, path: &str) -> El {
@@ -209,8 +259,6 @@ fn view(s: &State, key: &str, entry: &Entry, path: &str) -> El {
     } else {
         catalogue::format(locale(), "toolCall.diff.label.withPath", &[("path", &file)])
     };
-    let mode_key = key.to_owned();
-    let wrap_key = key.to_owned();
     let (read, write) = (key.to_owned(), key.to_owned());
     let patch = entry.patch.clone();
     col()
@@ -236,14 +284,16 @@ fn view(s: &State, key: &str, entry: &Entry, path: &str) -> El {
                         }),
                         false,
                         screen::action(&s.input_scope, move |s| {
-                            s.transcript_display
-                                .diffs
-                                .edit(&mode_key)
-                                .set_mode(if split {
-                                    DiffMode::Unified
-                                } else {
-                                    DiffMode::Split
-                                });
+                            let mode = if split {
+                                DiffMode::Unified
+                            } else {
+                                DiffMode::Split
+                            };
+                            s.tool_diff_preferences.mode = mode;
+                            if s.tool_diff_preferences.compact {
+                                s.tool_diff_preferences.compact_mode = Some(mode);
+                            }
+                            Preferences::sync(s);
                             s.revision += 1;
                         }),
                     )
@@ -259,10 +309,8 @@ fn view(s: &State, key: &str, entry: &Entry, path: &str) -> El {
                         }),
                         split,
                         screen::action(&s.input_scope, move |s| {
-                            s.transcript_display
-                                .diffs
-                                .edit(&wrap_key)
-                                .set_wrap(!wrapped);
+                            s.tool_diff_preferences.wrap = !wrapped;
+                            Preferences::sync(s);
                             s.revision += 1;
                         }),
                     )
@@ -286,18 +334,19 @@ fn view(s: &State, key: &str, entry: &Entry, path: &str) -> El {
 #[test]
 fn admission_never_evicts_a_still_visible_diff() {
     let mut cache = Cache::default();
+    let preferences = Preferences::default();
     let patch = "@@ -1 +1 @@\n-A\n+B";
-    for i in 0..RETAINED {
-        let message = i.to_string();
-        assert!(cache.load(&message, &message, patch, "file.rs", 960.0));
-        cache.visible.insert(message);
+    let cards: Vec<_> = (0..RETAINED).map(|_| Rc::new(Cell::new(true))).collect();
+    for (i, visible) in cards.iter().enumerate() {
+        assert!(cache.load(&i.to_string(), patch, "file.rs", visible, &preferences));
     }
+    let next = Rc::new(Cell::new(true));
     for _ in 0..3 {
-        assert!(!cache.load("next", "next", patch, "file.rs", 960.0));
-        assert!(cache.entries.iter().any(|entry| entry.message == "0"));
+        assert!(!cache.load("next", patch, "file.rs", &next, &preferences));
+        assert!(cache.entries.iter().any(|entry| entry.key == "0"));
     }
-    cache.visible.remove("0");
-    assert!(cache.load("next", "next", patch, "file.rs", 960.0));
-    assert!(!cache.entries.iter().any(|entry| entry.message == "0"));
+    cards[0].set(false);
+    assert!(cache.load("next", patch, "file.rs", &next, &preferences));
+    assert!(!cache.entries.iter().any(|entry| entry.key == "0"));
     assert_eq!(cache.entries.len(), RETAINED);
 }

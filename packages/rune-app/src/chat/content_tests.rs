@@ -220,6 +220,96 @@ fn transcript_keeps_and_copies_a_patch_with_long_unicode_headers() {
     );
 }
 
+fn edit_cards(count: usize) -> State {
+    let cards: Vec<_> = (0..count)
+        .map(|i| {
+            json!({"type":"tool","name":"edit","id":format!("edit{i}"),
+                "state":{"status":"completed","input":{"filePath":"demo.rs"},
+                "metadata":{"diff":"@@ -1 +1 @@\n-before\n+after"}}})
+        })
+        .collect();
+    let mut state = init();
+    state.messages = vec![
+        history::decode_message(
+            &json!({"id":"cards","type":"assistant","time":{"completed":1},"content":cards}),
+        )
+        .unwrap(),
+    ];
+    state.phase = Phase::Ready;
+    state
+}
+
+#[test]
+fn transcript_edit_modes_follow_the_window_and_are_shared_between_cards() {
+    let mut rt = Runtime::new(
+        edit_cards(2),
+        |s, cx| crate::strings::with_locale("en", || view(s, cx)),
+        (1000.0, 1200.0),
+        Env::new(false, 1.0),
+    );
+    let label_count = |rt: &Runtime<State>, label: &str| {
+        rt.elements()
+            .into_iter()
+            .filter(|e| {
+                !e.exiting
+                    && e.key.as_deref().is_some_and(|key| key.ends_with("-mode"))
+                    && e.label.as_deref() == Some(label)
+            })
+            .count()
+    };
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(label_count(&rt, "Switch to unified view"), 2);
+    rt.set_viewport((500.0, 1200.0), 1.0);
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(label_count(&rt, "Switch to split view"), 2);
+    rt.set_viewport((1000.0, 1200.0), 1.0);
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    let (x, y) = rt.find("tool-cards:5:edit0-mode").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.0);
+    assert_eq!(label_count(&rt, "Switch to split view"), 2);
+    rt.update(|s, _| {
+        s.transcript_display.bind("fixture", "project", "other");
+        s.transcript_display.bind("fixture", "project", "original");
+        s.renew_scope();
+        s.revision += 1;
+    });
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(label_count(&rt, "Switch to split view"), 2);
+}
+
+#[test]
+fn scrolling_one_message_can_show_more_diffs_than_the_cache_retains() {
+    let mut rt = Runtime::new(edit_cards(33), view, (960.0, 720.0), Env::new(false, 1.0));
+    let mut seen = std::collections::HashSet::new();
+    rt.frame(0.0);
+    for y in (0..10_000).step_by(280) {
+        rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, y as f32));
+        for _ in 0..4 {
+            rt.frame(1.0 / 60.0);
+        }
+        seen.extend(
+            rt.elements()
+                .into_iter()
+                .filter_map(|e| e.key)
+                .filter(|key| key.starts_with("tool-cards:") && key.ends_with("-copy-patch")),
+        );
+        if seen.len() == 33 {
+            break;
+        }
+    }
+    assert_eq!(seen.len(), 33);
+}
+
 #[test]
 fn historical_part_gap_reveals_the_middle_without_rejecting_the_message() {
     let mut parts = vec![json!({"type":"text","text":""}); 1237];

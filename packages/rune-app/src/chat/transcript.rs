@@ -1,4 +1,4 @@
-use super::{actions::Display, document, tool_diff, tools};
+use super::{actions::Display, document, tools};
 use crate::{
     State,
     content::{Part, TextProvenance},
@@ -23,7 +23,6 @@ pub fn rows(s: &State) -> El {
     )
     .key("rows")
     .virtual_rows_version(s.revision)
-    .on_visible_rows(tool_diff::Cache::visible_rows)
 }
 
 pub fn message(s: &State, i: usize) -> El {
