@@ -57,13 +57,16 @@ fn links_expose_semantics_and_open_by_pointer_and_keyboard_while_text_stays_copy
                 .iter()
                 .any(|node| { node.key.as_deref() == Some(REMOTE) && node.focused })
         );
-        for key in [Key::Enter, Key::Text(" ".into())] {
+        for (key, opened) in [(Key::Enter, true), (Key::Text(" ".into()), false)] {
             rt.key(KeyEvent {
                 key,
                 mods: Mods::default(),
             });
             rt.frame(0.02);
-            assert_eq!(rt.take_url_requests(), [REMOTE]);
+            assert_eq!(
+                rt.take_url_requests(),
+                if opened { vec![REMOTE] } else { vec![] }
+            );
         }
 
         let paragraph = rt
@@ -110,8 +113,8 @@ fn markdown_url_gestures_keep_the_platform_scheme_gate() {
             ("file:///C:/private.txt", false),
             ("myapp://exec", false),
             ("data:text/html,payload", false),
-            ("./notes.md", false),
-            ("#reader", false),
+            ("./notes.md", true),
+            ("#reader", true),
         ];
         let markdown = urls
             .iter()
@@ -131,7 +134,16 @@ fn markdown_url_gestures_keep_the_platform_scheme_gate() {
         for (url, allowed) in urls {
             click(&mut rt, url);
             let requests = rt.take_url_requests();
-            assert_eq!(requests, if allowed { vec![url] } else { vec![] }, "{url}");
+            let expected = if url.starts_with("./") || url.starts_with('#') {
+                format!("{}{}", http.backend.base, url.trim_start_matches("./"))
+            } else {
+                url.into()
+            };
+            assert_eq!(
+                requests,
+                if allowed { vec![expected] } else { vec![] },
+                "{url}"
+            );
         }
         assert_eq!(
             rt.state

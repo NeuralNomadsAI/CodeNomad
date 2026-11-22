@@ -1,6 +1,9 @@
-use crate::{Space, TextRole, kit, layout::Layout, tokens};
-use rune::{El, ScrollSpec};
+use crate::{Length, Space, TextRole, Tokens, kit, layout::Layout, tokens};
+use rune::{El, Icon, ScrollSpec, TextStyle};
 use rune_kit::{Markdown, MarkdownStyle, syntax};
+
+mod toolbar;
+pub use toolbar::{Tool, toolbar_icon};
 
 pub fn surface(dark: bool) -> El {
     rune::col()
@@ -50,21 +53,45 @@ pub fn image(image: &rune::Image, label: &str) -> El {
                 .label(label),
         )
 }
-pub fn header(title: &str, directory: &str, actions: Vec<El>) -> El {
+pub fn header(title: &str, directory: &str, readonly: Option<&str>, actions: Vec<El>) -> El {
+    let t = tokens(crate::layout::dark());
+    let metric = |name| t.metric("readerHeader", name).px();
     rune::row()
         .items_center()
-        .gap(tokens(crate::layout::dark()).space(Space::Sm).px())
+        .gap(metric("columnGap"))
         .w_full()
         .flex_wrap()
-        .pad(Space::Sm)
+        .padding(metric("paddingTop"))
+        .fill(t.color("surface-chrome"))
+        .border_sides(
+            [0.0, 0.0, metric("borderBottomWidth"), 0.0],
+            t.color("border-divider"),
+        )
+        .border_layout()
         .child(
             rune::col()
                 .grow(1.0)
-                .min_w(0.0)
-                .child(rune::text(title).truncate().text_role(TextRole::Label))
-                .child(rune::text(directory).truncate().text_role(TextRole::Small)),
+                .min_w(t.metric("readerHeading", "minWidth").px())
+                .gap(t.metric("readerHeading", "rowGap").px())
+                .child(rune::text(title).truncate().font(font(t, "readerTitle")))
+                .child(
+                    rune::text(readonly.map_or_else(
+                        || directory.to_owned(),
+                        |label| format!("{directory} · {label}"),
+                    ))
+                    .truncate()
+                    .color(t.color("text-muted"))
+                    .font(font(t, "readerDirectory")),
+                ),
         )
         .children(actions)
+}
+fn font(t: &Tokens, role: &str) -> TextStyle {
+    TextStyle::new(
+        t.metric(role, "fontSize").px(),
+        t.metric(role, "fontWeight").px(),
+    )
+    .lh(t.metric(role, "lineHeight").px())
 }
 pub fn eye<S: 'static>(
     dark: bool,
@@ -90,16 +117,137 @@ pub fn viewport(content: El, wrap: bool) -> El {
     }
     .child(content)
 }
-pub fn source(dark: bool, path: &str, text: &str, wrap: bool) -> El {
-    let k = kit(dark);
-    let spans = syntax::SyntaxTheme::from_kit(k)
-        .spans(&syntax::highlight(syntax::lang_for_path(path), text), 0);
+pub fn source(dark: bool, path: &str, text: &str, wrap: bool, view_width: Option<f32>) -> El {
+    let t = tokens(dark);
+    let spans = syntax::highlight(syntax::lang_for_path(path), text)
+        .into_iter()
+        .filter_map(|(range, paint)| {
+            use syntax::Syntax::*;
+            let role = match paint {
+                syntax::Paint::Kind(Comment | Punctuation) => "text-muted",
+                syntax::Paint::Kind(Keyword | Type) => "accent-primary",
+                syntax::Paint::Kind(String) => "status-success",
+                syntax::Paint::Kind(Number | Attribute) => "status-warning",
+                _ => return None,
+            };
+            let mut span = rune::Span::new(range.start, range.end);
+            span.color = Some(t.color(role));
+            Some(span)
+        })
+        .collect::<Vec<_>>();
     let source = rune::rich(text, spans)
         .key("file-source-text")
         .selectable(true)
         .literal_direction()
-        .text_role(TextRole::Mono);
-    if wrap { source.w_full().wrap() } else { source }
+        .font(source_font(dark));
+    let source = if wrap {
+        source.grow(1.0).min_w(0.0).wrap_anywhere()
+    } else {
+        source
+    };
+    rune::row()
+        .w_full()
+        .literal_direction()
+        .child(gutter(dark, text, wrap.then_some(view_width).flatten()))
+        .child(source)
+}
+pub fn source_view(dark: bool, content: El, wrap: bool) -> El {
+    let t = tokens(dark);
+    viewport(content, wrap)
+        .fill(t.color("surface-inset"))
+        .px(t.space(Space::Sm).px())
+}
+pub fn source_font(dark: bool) -> TextStyle {
+    let t = tokens(dark);
+    // Monaco uses 13px and the default 1.5 line height, rounded down.
+    let mut style = t.text(TextRole::Mono);
+    style.size = 13.0;
+    style.line_height = 19.0;
+    style
+}
+fn gutter(dark: bool, contents: &str, view_width: Option<f32>) -> El {
+    use std::fmt::Write;
+    let lines = contents.as_bytes().iter().filter(|&&c| c == b'\n').count() + 1;
+    let style = source_font(dark);
+    let t = tokens(dark);
+    let width =
+        rune::text::advance("00000", style).max(rune::text::advance(&lines.to_string(), style));
+    let gap = t.space(Space::Lg).px();
+    let wrap = view_width.map(|view| (view - width - gap).max(1.0));
+    rune::memo(
+        "file-line-numbers",
+        (crate::palette_index(dark), wrap.map(f32::to_bits), contents),
+        || {
+            let mut numbers = String::new();
+            for (i, line) in contents.split('\n').enumerate() {
+                if i != 0 {
+                    numbers.push('\n');
+                }
+                let _ = write!(numbers, "{}", i + 1);
+                if let Some(wrap) = wrap.filter(|_| i + 1 < lines && !line.is_empty()) {
+                    let options = rune::text::RichLayoutOptions::new()
+                        .direction(rune::Direction::Ltr)
+                        .wrap_anywhere();
+                    let (_, height) = rune::text::measure_with(
+                        line.trim_end_matches('\r'),
+                        &[],
+                        style,
+                        Some(wrap),
+                        options,
+                    );
+                    let extra = (height / style.line_px()).round() as usize;
+                    numbers.extend(std::iter::repeat_n('\n', extra.saturating_sub(1)));
+                }
+            }
+            rune::text(numbers)
+                .a11y_hidden()
+                .font(style)
+                .w(width)
+                .mr(gap)
+                .align(rune::Align::End)
+                .color(t.color("text-muted"))
+        },
+    )
+}
+pub fn source_width(dark: bool, view: f32) -> f32 {
+    view - 2.0 * tokens(dark).space(Space::Sm).px()
+}
+pub fn mermaid_frame(dark: bool, content: El) -> El {
+    rune::col()
+        .w_full()
+        .fill(tokens(dark).color("surface-inset"))
+        .pad(Space::Md)
+        .child(content)
+}
+pub fn mermaid_error(dark: bool, message: &str, source: &str) -> El {
+    let t = tokens(dark);
+    rune::col()
+        .child(
+            rune::text(message)
+                .role("alert")
+                .font(t.text(TextRole::Small))
+                .color(t.color("text-secondary")),
+        )
+        .child(
+            rune::text(source)
+                .key("file-source-text")
+                .selectable(true)
+                .literal_direction()
+                .font(t.text(TextRole::Mono)),
+        )
+}
+fn markdown_style(dark: bool) -> MarkdownStyle {
+    let t = tokens(dark);
+    let mut style = MarkdownStyle::from_kit(kit(dark))
+        .body_font(font(t, "readerMarkdown"))
+        .strong_weight(t.number("font-weight-regular").px())
+        .link_underline(rune::Color::TRANSPARENT)
+        .link_hover(t.color("accent-hover"))
+        .code_block(t.color("surface-inset"), t.color("border-muted"));
+    for level in 1..=4 {
+        style = style.heading_font(level, font(t, &format!("readerHeading{level}")));
+    }
+    style
 }
 pub fn markdown<S: 'static>(
     dark: bool,
@@ -108,6 +256,7 @@ pub fn markdown<S: 'static>(
     open: impl Fn(&mut S, &str, &mut rune::Tx) + 'static,
 ) -> El {
     Markdown::new(text)
+        .style(markdown_style(dark))
         .tasks_read_only()
         .selectable(true)
         .scroll_wide(true)
@@ -116,5 +265,13 @@ pub fn markdown<S: 'static>(
         .build(kit(dark))
 }
 pub fn mermaid(dark: bool, text: &str) -> Option<El> {
-    rune_kit::mermaid::render(text, &MarkdownStyle::from_kit(kit(dark)))
+    let t = tokens(dark);
+    rune_kit::mermaid::render(
+        text,
+        &markdown_style(dark).diagram_surface(
+            t.color("surface-inset"),
+            rune::Color::TRANSPARENT,
+            t.color("surface-inset"),
+        ),
+    )
 }

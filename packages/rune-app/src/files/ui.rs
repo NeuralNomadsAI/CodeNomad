@@ -22,6 +22,7 @@ pub struct Row {
 }
 pub struct Ui {
     pub reading: crate::chat::reading::Position,
+    pub reader_close: crate::window_control::WindowCloseState,
     pub presentation: super::presentation::Presentation,
     pub document: Editor,
     pub reader: Reader,
@@ -48,6 +49,7 @@ impl Ui {
         let (out, incoming) = bounded(16);
         Self {
             reading: Default::default(),
+            reader_close: Default::default(),
             presentation: super::presentation::Presentation::new(wake.clone()),
             document: Editor::new(
                 backend.clone(),
@@ -226,10 +228,16 @@ impl Ui {
     }
     pub fn open(&mut self, path: String) {
         if !self.stopped {
+            self.reader_close = Default::default();
             self.presentation.reset();
             self.document
                 .open(self.tree.directory().into(), path.clone());
             self.reader.open(self.tree.directory().into(), path);
+        }
+    }
+    pub fn reader_link(&self, target: &str, tx: &mut rune::Tx) {
+        if let Some(url) = self.backend.file_link(target) {
+            let _ = tx.open_url(&url);
         }
     }
     pub fn close_reader(&mut self) {

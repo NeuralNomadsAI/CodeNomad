@@ -4,7 +4,7 @@ import path from 'node:path'
 import {createServer} from 'vite'
 import {chromium} from 'playwright'
 import {root,generated,sources} from './generate-common.mjs'
-import {collectTheme} from './generate-theme-browser.mjs'
+import {applyDefaultPalette,collectTheme} from './generate-theme-browser.mjs'
 import {themeFixtureHtml} from './generate-theme-fixture.mjs'
 import {generateWorkspaceIcons} from './parity/workspace-tree-row-icons.mjs'
 import {sourcePath} from './parity/workspace-tree-row-source.mjs'
@@ -38,7 +38,7 @@ const server=await createServer({root:ui,configFile:false,appType:'custom',cache
   plugins:[{name:'rune-theme-fixture',configureServer(instance){instance.middlewares.use('/__rune_theme',(_request,response)=>{response.setHeader('content-type','text/html');response.end(html)})}}],
   server:{host:'127.0.0.1',port:0,strictPort:false},logLevel:'error'})
 let browser
-const out={name:'CodeNomad',blend:{mode:'srgb',over:'surface-canvas'},light:{},dark:{},numbers:{},strings:{},shadows:{},metrics:{},gaps:[
+const out={name:'CodeNomad',blend:{mode:'srgb',over:'surface-canvas'},light:{},dark:{},product:{},numbers:{},strings:{},shadows:{},metrics:{},gaps:[
   'Rune-kit control geometry includes internal constants; CodeNomad shared adapters require visual qualification.',
   'CSS timing functions and Rune perceptual-duration springs have different curves; motion parity requires interaction captures.',
   'System font stacks are preserved as source strings; glyph metrics require per-platform image qualification.',
@@ -59,8 +59,13 @@ try{
     assert.equal(value.unresolved.length,0,`Unresolved ${appearance} tokens: ${value.unresolved.join(', ')}`)
     out[appearance]=value.colors
     for(const field of ['numbers','strings','shadows','metrics'])out[field][appearance]=value[field]
+    const palette=await page.evaluate(applyDefaultPalette,appearance)
+    const product=await page.evaluate(collectTheme,names)
+    assert.deepEqual(product.metrics,value.metrics,`Product palette changed ${appearance} geometry`)
+    out.product[appearance]={palette,colors:product.colors,shadows:product.shadows}
   }
-  const files=[tokens,shellFile,sessionFile,path.join(root,sourcePath),path.join(ui,'src/index.css'),path.join(ui,'tailwind.config.js'),path.join(ui,'postcss.config.js')]
+  const paletteInputs=['theme-scheme','appearance-preferences','soft-color-schemes','classic-light-surfaces','classic-dark-surfaces','color-contrast','high-contrast']
+  const files=[tokens,shellFile,sessionFile,path.join(root,sourcePath),path.join(ui,'src/index.css'),path.join(ui,'tailwind.config.js'),path.join(ui,'postcss.config.js'), ...paletteInputs.map(file=>path.join(ui,'src/lib',file+'.ts'))]
   async function walk(folder){for(const entry of await readdir(folder,{withFileTypes:true})){
     const file=path.join(folder,entry.name);if(entry.isDirectory())await walk(file);else if(file.endsWith('.css'))files.push(file)
   }}

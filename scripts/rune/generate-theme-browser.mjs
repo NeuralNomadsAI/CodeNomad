@@ -48,6 +48,13 @@ export async function collectTheme(names){
     fileRowAction:['.file-row-icon-button',['minWidth','minHeight','paddingLeft','opacity']],
     fileRowActionGlyph:['.file-row-icon-button svg',['width','height']],
     workspaceRow:['.workspace-tree-row',['minHeight','paddingTop','paddingBottom','paddingInlineEnd','columnGap','fontSize','fontWeight','lineHeight']],
+    readerHeader:['.workspace-file-view header',['paddingTop','borderBottomWidth','columnGap']],
+    readerHeading:['.workspace-file-view .git-diff-heading',['minWidth','rowGap']],
+    readerTitle:['.workspace-file-view .git-diff-heading strong',['fontSize','fontWeight','lineHeight']],
+    readerDirectory:['.workspace-file-view .git-diff-heading span',['fontSize','fontWeight','lineHeight']],
+    readerToolDisabled:['.workspace-file-view button:disabled',['opacity']],
+    readerMarkdown:['.workspace-markdown .markdown-body',['fontSize','fontWeight','lineHeight']],
+    ...Object.fromEntries([1,2,3,4].map(level=>[`readerHeading${level}`,[`.workspace-markdown h${level}`,['fontSize','fontWeight','lineHeight']]])),
   }
   const metrics={}
   for(const [name,[selector,properties]] of Object.entries(contracts)){
@@ -60,6 +67,9 @@ export async function collectTheme(names){
     }
   }
   const sourceGutter=document.querySelector('.action-overflow-content').dataset.sourceGutter
+  const toggle=document.querySelector('.workspace-file-view [aria-pressed=true]')
+  toggle.style.transition='none'
+  colors['icon-toggle-active-bg']=hex(getComputedStyle(toggle).backgroundColor)
   if(!/^\d+(?:\.\d+)?$/.test(sourceGutter))throw Error('Missing numeric ActionOverflowMenu source gutter')
   metrics.actionMenu.gutter=Number(sourceGutter)
   const workspace=document.querySelector('.workspace-tree-row')
@@ -119,4 +129,12 @@ export async function collectTheme(names){
   }finally{focused?.focus()}
   probe.remove()
   return {colors,numbers,strings,shadows,metrics,unresolved}
+}
+
+export async function applyDefaultPalette(appearance){
+  const {applyColorScheme,normalizeColorScheme}=await import('/src/lib/theme-scheme.ts')
+  const {normalizeAppearancePreferences}=await import('/src/lib/appearance-preferences.ts')
+  const {scheme}=normalizeAppearancePreferences(undefined,normalizeColorScheme('system'))[appearance]
+  applyColorScheme(scheme)
+  return scheme.id
 }

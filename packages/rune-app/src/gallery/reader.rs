@@ -20,14 +20,9 @@ fn init_scene() -> State {
         serde_json::from_str(include_str!("../../tests/fixtures/reader-content.json")).unwrap();
     let case = std::env::var("RUNE_READER_CASE").unwrap_or_else(|_| "source".into());
     let (name, bytes) = match case.as_str() {
-        "source" => (
-            "reader.rs",
-            "fn main() {\n    println!(\"été 日本語 🦀\");\n}\n"
-                .as_bytes()
-                .to_vec(),
-        ),
         "error" => ("missing.rs", vec![]),
         name => {
+            let name = if name == "source" { "reader.rs" } else { name };
             let entry = cases["images"]
                 .as_array()
                 .unwrap()

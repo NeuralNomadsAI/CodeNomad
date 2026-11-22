@@ -5,7 +5,7 @@ import {fileURLToPath} from 'node:url'
 import {test} from 'node:test'
 import {createServer} from 'vite'
 import {chromium} from 'playwright'
-import {collectTheme} from './generate-theme-browser.mjs'
+import {applyDefaultPalette,collectTheme} from './generate-theme-browser.mjs'
 import {themeFixtureHtml,sourceMenuGutter} from './generate-theme-fixture.mjs'
 import {workspaceRowContract,workspaceSource} from './parity/workspace-tree-row-source.mjs'
 
@@ -41,10 +41,11 @@ test('generated semantic metrics survive actual font changes and viewport change
     for(const appearance of ['light','dark']){
       await page.emulateMedia({colorScheme:appearance,reducedMotion:'no-preference'})
       await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/theme-contract`,{waitUntil:'networkidle'})
-      await page.evaluate(value=>document.documentElement.setAttribute('data-theme',value),appearance)
+      assert.equal(await page.evaluate(applyDefaultPalette,appearance),generated.product[appearance].palette)
       await page.keyboard.press('Tab')
       assert(await page.locator('.window-icon-button').evaluate(element=>element.matches(':focus-visible')))
       const baseline=await page.evaluate(collectTheme,names)
+      assert.deepEqual(baseline.colors,generated.product[appearance].colors)
       assert.deepEqual(baseline.metrics,generated.metrics[appearance],'Baseline must match the checked-in semantic contract')
       const familyKeys=['font-family-sans','message-part-header-font-family']
       const widths=[]

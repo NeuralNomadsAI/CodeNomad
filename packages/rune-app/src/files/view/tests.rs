@@ -9,6 +9,7 @@ mod markdown;
 mod reading;
 mod resize;
 mod server;
+mod visual;
 
 fn english(s: &State, cx: &mut rune::Cx<State>) -> El {
     crate::strings::with_locale("en", || crate::view(s, cx))
@@ -157,6 +158,7 @@ fn source_selection_copies_through_memory_clipboard() {
                 "main.rs",
                 "fn main() {}",
                 false,
+                None,
             ))
         })
     }
@@ -198,7 +200,7 @@ fn source_beyond_the_highlight_limit_remains_visible_selectable_and_copyable() {
         layout::render(cx, |_| {
             theme::surface(layout::dark()).child(
                 theme::viewport(
-                    theme::source(layout::dark(), "long.rs", &state.text, false),
+                    theme::source(layout::dark(), "long.rs", &state.text, false, None),
                     false,
                 )
                 .key("long-source-scroll"),
@@ -231,9 +233,7 @@ fn source_beyond_the_highlight_limit_remains_visible_selectable_and_copyable() {
         .find(|node| node.key.as_deref() == Some("file-source-text"))
         .unwrap();
     assert!(source.text.as_ref().unwrap().ends_with(tail));
-    let line = rune_theme_codenomad::tokens(false)
-        .text(TextRole::Mono)
-        .line_px();
+    let line = theme::source_font(false).line_px();
     let y = source.rect[1] + source.rect[3] - line / 2.0;
     for _ in 0..2 {
         rt.pointer_down(source.rect[0] + 6.0, y);
@@ -420,6 +420,7 @@ fn markdown_links_html_and_mermaid_fallback_use_only_the_loaded_document() {
                 "nul.bin" | "broken.png" => {
                     assert!(shown.contains("Preview unavailable for this binary file."))
                 }
+                "reader.rs" => assert!(shown.contains("été 日本語 🦀")),
                 _ => panic!("unknown fixture"),
             }
             assert!(rt.take_url_requests().is_empty());

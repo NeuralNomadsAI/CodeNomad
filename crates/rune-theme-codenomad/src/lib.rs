@@ -26,9 +26,25 @@ fn document() -> &'static Value {
     DOCUMENT.get_or_init(|| serde_json::from_str(THEME).expect("generated CodeNomad theme"))
 }
 pub fn theme(dark: bool) -> &'static Theme {
-    static THEMES: [OnceLock<Theme>; 2] = [const { OnceLock::new() }; 2];
-    THEMES[dark as usize]
-        .get_or_init(|| Theme::from_value(document(), dark).expect("generated CodeNomad colors"))
+    static THEMES: [OnceLock<Theme>; 4] = [const { OnceLock::new() }; 4];
+    THEMES[palette_index(dark)].get_or_init(|| {
+        let doc = document();
+        if layout::source_palette() {
+            let product = serde_json::json!({
+                "blend": doc["blend"],
+                "name": doc["name"],
+                "light": doc["product"]["light"]["colors"],
+                "dark": doc["product"]["dark"]["colors"],
+            });
+            Theme::from_value(&product, dark)
+        } else {
+            Theme::from_value(doc, dark)
+        }
+        .expect("generated CodeNomad colors")
+    })
+}
+fn palette_index(dark: bool) -> usize {
+    2 * usize::from(layout::source_palette()) + usize::from(dark)
 }
 pub fn qualification_gaps() -> &'static [Value] {
     document()["gaps"]

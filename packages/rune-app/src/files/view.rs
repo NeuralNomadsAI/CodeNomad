@@ -1,10 +1,5 @@
 use super::{document::Format, presentation::Kind};
-use crate::{
-    State,
-    components::{button, button_tx},
-    screen,
-    strings::t,
-};
+use crate::{State, components::button, screen, strings::t, window_control::scoped_close_button};
 use rune::{El, text};
 use rune_theme_codenomad::{
     Space, TextRole, document_reader as theme,
@@ -53,17 +48,16 @@ fn document_link(s: &State) -> impl Fn(&mut State, &str, &mut rune::Tx) + 'stati
         .files
         .as_ref()
         .map(|ui| (ui.document.scope(), ui.document.revision()));
-    let target = s.files.as_ref().and_then(|ui| ui.reader.target()).cloned();
     move |s, url, tx| {
         if s.current_scope(&input_scope)
-            && s.files.as_ref().is_some_and(|ui| {
+            && let Some(ui) = s.files.as_ref().filter(|ui| {
                 !ui.stopped
                     && !ui.presentation.source
                     && document == Some((ui.document.scope(), ui.document.revision()))
-                    && target.as_ref() == ui.reader.target()
+                    && ui.reader.target().is_some()
             })
         {
-            let _ = tx.open_url(url);
+            ui.reader_link(url, tx);
         }
     }
 }
@@ -71,7 +65,13 @@ pub fn body(s: &State, history: El, expanded: bool) -> El {
     let Some(ui) = &s.files else {
         return history;
     };
-    let main = theme::pages(history, ui.reader.target().is_some().then(|| reader(s)));
+    let main = theme::pages(
+        history,
+        ui.reader
+            .target()
+            .is_some()
+            .then(|| layout::with_source_palette(|| reader(s))),
+    );
     let drawer = ui.drawer();
     theme::split(main, drawer.pinned.then(|| tree(s)), drawer.width, expanded)
         .key("files-host")
@@ -95,12 +95,25 @@ fn reader(s: &State) -> El {
     };
     let dark = layout::dark();
     let scope = ui.document.scope();
-    let mut actions = vec![button(
-        "file-refresh",
-        t("instanceShell.rightPanel.actions.refresh"),
-        ui.reader.busy() || ui.document.pending() || ui.document.dirty(),
-        document_action(s, |ui| ui.refresh_document(ui.document.scope())),
-    )];
+    let drawer = ui.drawer();
+    let view_width = ui.host_width.map(|width| {
+        if drawer.pinned {
+            width - drawer.width
+        } else {
+            width
+        }
+    });
+    let mut actions = vec![
+        theme::toolbar_icon(
+            dark,
+            theme::Tool::Refresh,
+            t("instanceShell.rightPanel.actions.refresh"),
+            ui.reader.busy() || ui.document.pending() || ui.document.dirty(),
+            None,
+            document_action(s, |ui| ui.refresh_document(ui.document.scope())),
+        )
+        .key("file-refresh"),
+    ];
     let mut content_view = rune::el();
     if let Some(kind) = ui.presentation.kind {
         content_view = match kind {
@@ -115,50 +128,73 @@ fn reader(s: &State) -> El {
             Kind::Text(format) => {
                 let text = ui.document.edit().text.as_str();
                 if format != Format::Source {
-                    actions.push(button(
-                        "file-source-toggle",
-                        t(if !ui.presentation.source {
-                            "instanceShell.filesShell.showSource"
-                        } else if format == Format::Mermaid {
-                            "markdown.mermaid.preview"
-                        } else {
-                            "instanceShell.filesShell.previewMarkdown"
-                        }),
-                        false,
-                        document_action(s, |ui| ui.presentation.source = !ui.presentation.source),
-                    ));
+                    actions.push(
+                        theme::toolbar_icon(
+                            dark,
+                            if ui.presentation.source {
+                                theme::Tool::Preview
+                            } else {
+                                theme::Tool::Source
+                            },
+                            t(if !ui.presentation.source {
+                                "instanceShell.filesShell.showSource"
+                            } else if format == Format::Mermaid {
+                                "markdown.mermaid.preview"
+                            } else {
+                                "instanceShell.filesShell.previewMarkdown"
+                            }),
+                            false,
+                            None,
+                            document_action(s, |ui| {
+                                ui.presentation.source = !ui.presentation.source
+                            }),
+                        )
+                        .key("file-source-toggle"),
+                    );
                 }
                 let source = ui.presentation.source || format == Format::Source;
                 if source {
                     actions.push(
-                        button(
-                            "file-wrap",
+                        theme::toolbar_icon(
+                            dark,
+                            theme::Tool::Wrap,
                             t(if ui.presentation.wrap {
                                 "instanceShell.filesShell.disableWordWrap"
                             } else {
                                 "instanceShell.filesShell.enableWordWrap"
                             }),
                             false,
+                            Some(ui.presentation.wrap),
                             document_action(s, |ui| ui.presentation.wrap = !ui.presentation.wrap),
                         )
-                        .checked(ui.presentation.wrap),
+                        .key("file-wrap"),
                     );
-                    theme::viewport(
-                        theme::source(dark, &target.path, text, ui.presentation.wrap),
+                    theme::source_view(
+                        dark,
+                        theme::source(
+                            dark,
+                            &target.path,
+                            text,
+                            ui.presentation.wrap,
+                            view_width.map(|width| theme::source_width(dark, width)),
+                        ),
                         ui.presentation.wrap,
                     )
                 } else {
                     theme::viewport(
                         if format == Format::Mermaid {
-                            theme::mermaid(dark, text)
-                                .map(|diagram| diagram.label(t("markdown.mermaid.diagram")))
-                                .unwrap_or_else(|| {
-                                    rune::col()
-                                        .child(
-                                            rune::text(t("markdown.mermaid.failed")).role("alert"),
+                            theme::mermaid_frame(
+                                dark,
+                                theme::mermaid(dark, text)
+                                    .map(|diagram| diagram.label(t("markdown.mermaid.diagram")))
+                                    .unwrap_or_else(|| {
+                                        theme::mermaid_error(
+                                            dark,
+                                            t("markdown.mermaid.failed"),
+                                            text,
                                         )
-                                        .child(theme::source(dark, &target.path, text, true))
-                                })
+                                    }),
+                            )
                         } else {
                             theme::markdown(
                                 dark,
@@ -166,18 +202,42 @@ fn reader(s: &State) -> El {
                                 t("markdown.mermaid.diagram"),
                                 document_link(s),
                             )
+                            .pad(Space::Lg)
                         },
                         true,
                     )
+                    .key("file-rendered-scroll")
+                    .on_key(|_: &mut State, key, tx| {
+                        if matches!(&key.key, rune::Key::Text(text) if text == " ")
+                            && !key.mods.alt
+                            && !key.mods.ctrl
+                            && !key.mods.cmd
+                            && !key.mods.logo
+                        {
+                            tx.scroll_page(
+                                "file-rendered-scroll",
+                                if key.mods.shift { -1 } else { 1 },
+                            );
+                            return true;
+                        }
+                        false
+                    })
                 }
             }
         };
     }
     let input_scope = s.input_scope.clone();
-    actions.push(button_tx(
+    actions.push(scoped_close_button(
+        &ui.reader_close,
         "file-close",
-        t("gitPanel.backChat"),
-        false,
+        dark,
+        Some(t("gitPanel.backChat")),
+        move |s: &mut State| {
+            s.files
+                .as_mut()
+                .filter(|ui| ui.document.scope() == scope)
+                .map(|ui| &mut ui.reader_close)
+        },
         screen::action_tx(&input_scope, move |s, tx| {
             if let Some(ui) = &mut s.files {
                 if scope == ui.document.scope() {
@@ -187,16 +247,18 @@ fn reader(s: &State) -> El {
             }
         }),
     ));
+    let readonly =
+        (!matches!(ui.presentation.kind, Some(Kind::Text(_)))).then(|| t("filesPanel.readOnly"));
     theme::surface(dark)
         .key(format!("file-reader-{scope}"))
         .role("region")
         .label(t("filesPanel.viewer"))
-        .child(theme::header(&target.path, &target.directory, actions))
-        .child(
-            text(t("filesPanel.readOnly"))
-                .text_role(TextRole::Small)
-                .pad(Space::Sm),
-        )
+        .child(theme::header(
+            &target.path,
+            &target.directory,
+            readonly,
+            actions,
+        ))
         .children(
             ui.reader
                 .error()

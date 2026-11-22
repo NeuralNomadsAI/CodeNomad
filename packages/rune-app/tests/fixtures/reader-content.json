@@ -53,6 +53,10 @@
     {
       "name": "broken.png",
       "base64": "bWFsZm9ybWVkIGltYWdl"
+    },
+    {
+      "name": "reader.rs",
+      "base64": "Zm4gbWFpbigpIHsKICAgIHByaW50bG4hKCLDqXTDqSDml6XmnKzoqp4g8J+mgCIpOwp9Cg=="
     }
   ],
   "layouts": [

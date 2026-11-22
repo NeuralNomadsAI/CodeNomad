@@ -43,6 +43,18 @@ pub enum WriteResult {
 }
 
 impl Backend {
+    /// Workspace Markdown uses the application URL as its base, rather than a checkout path.
+    pub fn file_link(&self, destination: &str) -> Option<String> {
+        if destination.trim().is_empty() {
+            return None;
+        }
+        let url = reqwest::Url::parse(&self.base)
+            .ok()?
+            .join(destination)
+            .ok()?;
+        matches!(url.scheme(), "http" | "https" | "mailto").then(|| url.into())
+    }
+
     pub async fn write_file(
         &self,
         directory: &str,
