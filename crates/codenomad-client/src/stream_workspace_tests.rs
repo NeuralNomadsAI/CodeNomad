@@ -124,6 +124,25 @@ fn foreign_and_malformed_workspace_events_publish_no_partial_batch() {
 }
 
 #[test]
+fn a_renamed_active_session_does_not_invalidate_an_inflight_history_read() {
+    run(async {
+        let b = backend().await;
+        let (out, input) = bounded(2);
+        let state = State::default();
+        deliver(
+            &b,
+            &out,
+            &state,
+            json!({"type":"instance.event","instanceId":"owner",
+            "event":{"type":"session.renamed","data":{"sessionID":"session","title":"New"}}}),
+        )
+        .await;
+        assert!(input.is_empty());
+        assert_eq!(state.version.load(SeqCst), 0);
+    });
+}
+
+#[test]
 fn git_hints_follow_the_owned_stream_without_a_native_session_id() {
     run(async {
         let backend = backend().await;

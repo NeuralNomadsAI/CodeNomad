@@ -128,6 +128,17 @@ pub(super) async fn dispatch(
         out.send(Input::Hint(epoch, version)).await?;
     } else if own
         && value["type"] == "instance.event"
+        && !matches!(
+            native["type"].as_str(),
+            Some(
+                "session.created"
+                    | "session.forked"
+                    | "session.renamed"
+                    | "session.archived"
+                    | "session.unarchived"
+                    | "worktree.updated"
+            )
+        )
         && (native["data"]["sessionID"] == b.session
             || native["data"]["form"]["sessionID"] == b.session
             || native["type"] == "server.connected")

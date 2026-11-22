@@ -18,6 +18,7 @@ pub(super) struct Entry {
     listed_sessions: HashSet<String>,
     creation_uncertain: bool,
     next: Option<String>,
+    consumed_cursors: HashSet<u64>,
     visits: crate::launcher::Visits,
     catalogue: catalogue::Refresh,
     wanted_panels: [Option<[bool; 2]>; 2],
@@ -179,6 +180,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         listed_sessions: HashSet::new(),
         creation_uncertain: false,
         next: None,
+        consumed_cursors: HashSet::new(),
         visits: Default::default(),
         catalogue: Default::default(),
         wanted_panels: [None; 2],
@@ -364,6 +366,7 @@ fn stash(s: &mut State) {
             entry.listed_sessions = std::mem::take(&mut l.listed_sessions);
             entry.creation_uncertain = l.creation_uncertain;
             entry.next = l.next.clone();
+            entry.consumed_cursors = std::mem::take(&mut l.consumed_cursors);
             entry.visits = std::mem::take(&mut l.visits);
             entry.sidebar_edits = Some((
                 std::mem::replace(&mut l.title, TextEdit::new("")),
@@ -386,6 +389,7 @@ fn activate(s: &mut State, tx: &mut Tx) {
         l.sessions = item.sessions.clone();
         l.listed_sessions = std::mem::take(&mut item.listed_sessions);
         l.next = item.next.clone();
+        l.consumed_cursors = std::mem::take(&mut item.consumed_cursors);
         l.visits = std::mem::take(&mut item.visits);
         l.folder = TextEdit::new(match &item.saved {
             Tab::Workspace(w) => w.folder.as_str(),

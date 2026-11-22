@@ -10,12 +10,17 @@ fn row(id: &str) -> Session {
 #[test]
 fn an_admitted_page_is_not_truncated_at_the_browse_budget() {
     let mut launcher = Launcher::fixture();
-    launcher.sessions = (0..MAX_BROWSED_SESSIONS - 1)
+    launcher.sessions = (0..1_999)
         .map(|index| row(&format!("old-{index}")))
         .collect();
     let rows = (0..101).map(|i| row(&format!("more-{i}"))).collect();
     launcher.apply_listing(Sessions { rows, next: None }, true, None);
-    assert_eq!(launcher.sessions.len(), MAX_BROWSED_SESSIONS + 100);
+    assert_eq!(launcher.sessions.len(), 2_100);
+    launcher.next = Some("continue".into());
+    assert!(launcher.can_page());
+    launcher.consume_cursor("continue");
+    assert!(!launcher.can_page());
+    launcher.next = None;
     assert_eq!(launcher.sessions.last().unwrap().id, "more-100");
     assert!(launcher.next.is_none());
 }

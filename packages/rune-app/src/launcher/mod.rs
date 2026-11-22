@@ -13,15 +13,14 @@ use crate::{
     history::Result,
 };
 use codenomad_client::{Receiver, bounded, runtime::Instant};
-use rune::{Tx, edit::TextEdit};
-use std::{collections::HashSet, future::Future};
-pub const MAX_BROWSED_SESSIONS: usize = 2_000;
 pub use connection::connect;
 pub use projects::{choose_project, open, restore};
+use rune::{Tx, edit::TextEdit};
 #[cfg(feature = "test-support")]
 pub use sessions::back;
 use sessions::{bind, dismiss_origin_panel, retire_session};
 pub use sessions::{can_change_session, can_visit, choose, create, list, visit};
+use std::{collections::HashSet, future::Future};
 pub(crate) use visits::Visits;
 
 pub struct Launcher {
@@ -42,6 +41,7 @@ pub struct Launcher {
     pub sessions: Vec<Session>,
     pub listed_sessions: HashSet<String>,
     pub next: Option<String>,
+    pub(crate) consumed_cursors: HashSet<u64>,
     pub pending: bool,
     listing: bool,
     pub error: Option<&'static str>,
@@ -55,7 +55,7 @@ pub struct Launcher {
 enum Reply {
     Connected(Backend, Vec<Project>, String),
     Opened(crate::workspace::opening::Opening, Sessions, Restored),
-    Listed(Sessions, bool),
+    Listed(Sessions, Option<String>),
     Created(Backend, String, String, Option<u64>),
     Selected(Vec<String>, Option<Selection>, Option<u64>),
 }
@@ -128,6 +128,7 @@ impl Launcher {
             sessions: vec![],
             listed_sessions: HashSet::new(),
             next: None,
+            consumed_cursors: HashSet::new(),
             pending: starting,
             listing: false,
             error: None,
@@ -222,7 +223,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 }
             }
         }
-        Ok(Reply::Listed(rows, more)) => {
+        Ok(Reply::Listed(rows, cursor)) => {
+            let more = cursor.is_some();
+            if let Some(cursor) = cursor {
+                l.consume_cursor(&cursor);
+            }
             l.apply_listing(rows, more, selected.as_deref());
             if l.next.is_none() {
                 l.check_omitted_visits();

@@ -1,4 +1,7 @@
 use super::State;
+mod families;
+mod inventory;
+
 use crate::catalog::Sessions;
 use codenomad_client::{Receiver, bounded, stream::CatalogueChanges};
 use rune::Tx;
@@ -6,7 +9,7 @@ use rune::Tx;
 #[derive(Default)]
 pub(super) struct Refresh {
     due: Option<f64>,
-    request: Option<(u64, Receiver<Option<Sessions>>)>,
+    request: Option<(u64, Receiver<Option<(Sessions, bool)>>)>,
 }
 
 impl Refresh {
@@ -64,13 +67,20 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     {
         refresh.request = None;
         if refresh.due.is_none()
-            && let Some(page) = result
+            && let Some((page, authoritative)) = result
         {
             let selected = match &entry.saved {
                 super::Tab::Workspace(w) => w.active_session_id.as_deref(),
                 _ => None,
             };
-            l.apply_passive_listing(page, selected);
+            if let Some(row) = page
+                .rows
+                .iter()
+                .find(|row| Some(row.id.as_str()) == selected)
+            {
+                s.chat_title.clone_from(&row.title);
+            }
+            l.apply_passive_listing(page, selected, authoritative);
             changed = true;
         }
     }
@@ -88,12 +98,33 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
                 s.reads.clone(),
                 s.wake.clone(),
             );
+            let selected = match &entry.saved {
+                super::Tab::Workspace(w) => w.active_session_id.clone(),
+                _ => None,
+            };
             refresh.due = None;
             refresh.request = Some((l.catalogue_generation, input));
             crate::platform::spawn(async move {
                 let read = async {
+                    let can_replace = match inventory::load(
+                        &backend,
+                        &project,
+                        selected.as_deref(),
+                        &reads,
+                        &cancelled,
+                    )
+                    .await
+                    {
+                        Ok(Some(projected)) => return Some((projected, true)),
+                        Ok(None) => true,
+                        Err(_) => false,
+                    };
                     let _permit = reads.background(&cancelled).await?;
-                    backend.sessions(&project, None).await.ok()
+                    backend
+                        .sessions(&project, None)
+                        .await
+                        .ok()
+                        .map(|page| (page, can_replace))
                 };
                 let result = codenomad_client::runtime::until_closed(&out, read).await;
                 drop(owner);

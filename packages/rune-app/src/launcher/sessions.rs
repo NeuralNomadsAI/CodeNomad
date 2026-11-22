@@ -1,13 +1,36 @@
-use super::{
-    Backend, Instant, Launcher, MAX_BROWSED_SESSIONS, Reply, Session, Sessions, State, TextEdit,
-    Tx, bounded,
-};
+use super::{Backend, Instant, Launcher, Reply, Session, Sessions, State, TextEdit, Tx, bounded};
 use crate::{Phase, catalog::SessionMissing};
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    hash::{DefaultHasher, Hash, Hasher},
+};
+const MAX_SESSION_PAGES: usize = 1_000;
+
+fn cursor_hash(cursor: &str) -> u64 {
+    let mut hash = DefaultHasher::new();
+    cursor.hash(&mut hash);
+    hash.finish()
+}
 
 impl Launcher {
-    pub(crate) fn apply_passive_listing(&mut self, mut page: Sessions, selected: Option<&str>) {
-        let complete = page.next.is_none();
+    pub(super) fn consume_cursor(&mut self, cursor: &str) {
+        self.consumed_cursors.insert(cursor_hash(cursor));
+    }
+
+    pub(crate) fn can_page(&self) -> bool {
+        self.next.as_ref().is_some_and(|next| {
+            self.consumed_cursors.len() + 1 < MAX_SESSION_PAGES
+                && !self.consumed_cursors.contains(&cursor_hash(next))
+        })
+    }
+
+    pub(crate) fn apply_passive_listing(
+        &mut self,
+        mut page: Sessions,
+        selected: Option<&str>,
+        authoritative: bool,
+    ) {
+        let complete = page.next.is_none() && authoritative;
         let listed: HashSet<_> = page.rows.iter().map(|row| row.id.clone()).collect();
         let published = Instant::now();
         for id in &listed {
@@ -18,8 +41,11 @@ impl Launcher {
         }));
         self.sessions = page.rows;
         self.visits.observe_listing(&listed);
-        self.listed_sessions = listed;
-        self.next = page.next;
+        if self.next.is_none() && page.next.is_some() || complete {
+            self.listed_sessions = listed;
+            self.next = page.next;
+            self.consumed_cursors.clear();
+        }
         if complete {
             self.check_omitted_visits();
         }
@@ -40,6 +66,7 @@ impl Launcher {
                     .filter(|row| known.insert(row.id.clone())),
             );
         } else {
+            self.consumed_cursors.clear();
             self.creation_uncertain = false;
             if let Some(old) = self
                 .sessions
@@ -92,7 +119,7 @@ pub fn list(s: &mut State, more: bool) {
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
-    if l.pending || more && (l.next.is_none() || l.sessions.len() >= MAX_BROWSED_SESSIONS) {
+    if l.pending || more && !l.can_page() {
         return;
     }
     l.listing = true;
@@ -100,7 +127,7 @@ pub fn list(s: &mut State, more: bool) {
     l.job("rune.list_error", async move {
         Ok(Reply::Listed(
             b.sessions(&p, cursor.as_deref()).await?,
-            more,
+            cursor,
         ))
     });
 }

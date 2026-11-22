@@ -6,6 +6,9 @@ use crate::{
 use futures_lite::StreamExt;
 use serde_json::{Value, json};
 
+mod inventory;
+pub use inventory::{InventoryPage, InventoryScope, Member};
+
 #[derive(Debug)]
 pub struct CreationRefused;
 impl std::fmt::Display for CreationRefused {
@@ -194,39 +197,19 @@ impl Backend {
             None => request.query(&[("directory", project.path.as_str()), ("limit", "200")]),
         };
         let data = read_json(request.send().await?.error_for_status()?).await?;
-        let rows = data["data"]
-            .as_array()
-            .filter(|v| v.len() <= 200)
-            .ok_or("invalid session list")?;
-        let mut ids = std::collections::HashSet::new();
+        let page = inventory::decode_page(&data)?;
         let mut sessions = vec![];
-        for row in rows {
-            let item = session(row, project)?;
-            if !ids.insert(item.id.clone()) {
-                return Err("duplicate session".into());
+        for member in page.members {
+            if !crate::server_path::same(&member.directory, &project.path) {
+                return Err("foreign session location".into());
             }
-            let root = match row.get("parentID") {
-                None | Some(Value::Null) => true,
-                Some(Value::String(id)) if valid_id(id) => false,
-                _ => return Err("invalid session parent".into()),
-            };
-            if root && !item.id.starts_with("ses_cn_schedule_") {
-                sessions.push(item);
+            if member.parent.is_none() && !member.session.id.starts_with("ses_cn_schedule_") {
+                sessions.push(member.session);
             }
         }
-        let cursor = match data.get("cursor") {
-            None | Some(Value::Null) => None,
-            Some(Value::Object(cursor)) => cursor.get("next"),
-            _ => return Err("invalid session cursor".into()),
-        };
-        let next = match cursor {
-            None | Some(Value::Null) => None,
-            Some(Value::String(v)) if !v.is_empty() && v.len() <= 65536 => Some(v.clone()),
-            _ => return Err("invalid session cursor".into()),
-        };
         Ok(Sessions {
             rows: sessions,
-            next,
+            next: page.next,
         })
     }
     pub async fn create_session(&self, project: &Project, title: &str) -> Result<Session> {
@@ -301,6 +284,7 @@ impl Backend {
                 "{}workspaces/{}/instance/api/session/{id}",
                 self.base, project.id
             ))
+            .header("x-codenomad-session-placement", "1")
             .send()
             .await?;
         let status = response.status();
@@ -321,7 +305,25 @@ impl Backend {
             });
         }
         let data = read_json(response.error_for_status()?).await?;
-        let info = session(&data["data"], project)?;
+        let row = &data["data"];
+        let placement = row["listWorktreeSlug"]
+            .as_str()
+            .filter(|slug| valid_id(slug));
+        let info = if placement.is_some()
+            && let Some(path) = row["location"]["directory"]
+                .as_str()
+                .filter(|path| crate::absolute_server_path(path))
+        {
+            session(
+                row,
+                &Project {
+                    id: project.id.clone(),
+                    path: path.into(),
+                },
+            )?
+        } else {
+            session(row, project)?
+        };
         if info.id != id {
             return Err("session response identity mismatch".into());
         }
