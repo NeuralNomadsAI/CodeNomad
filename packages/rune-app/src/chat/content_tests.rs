@@ -193,6 +193,34 @@ fn transcript_patch_with_out_of_range_lines_uses_the_raw_fallback() {
 }
 
 #[test]
+fn transcript_keeps_and_copies_a_patch_with_long_unicode_headers() {
+    let path = format!("{}.rs", "é".repeat(1711));
+    let patch = format!("Index: {path}\n--- a/{path}\n+++ b/{path}\n@@ -1 +1 @@\n-A\n+B");
+    assert!(patch.find("@@ ").unwrap() > 10_000);
+    assert!(patch.encode_utf16().count() < 10_000);
+    let mut state = init();
+    state.messages = vec![history::decode_message(&json!({"id":"unicode","type":"assistant","time":{"completed":1},"content":[
+        {"type":"tool","name":"edit","id":"edit","state":{"status":"completed","input":{"filePath":path},
+            "metadata":{"files":[{"file":path,"patch":patch}]},"content":[{"type":"text","text":"Edited …"}]}}
+    ]})).unwrap()];
+    state.phase = Phase::Ready;
+    let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    let (x, y) = rt.find("tool-unicode:4:edit-copy-patch").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.0);
+    assert_eq!(
+        clipboard.text().as_deref().map(String::as_str),
+        Some(patch.as_str())
+    );
+}
+
+#[test]
 fn historical_part_gap_reveals_the_middle_without_rejecting_the_message() {
     let mut parts = vec![json!({"type":"text","text":""}); 1237];
     parts[0]["text"] = json!("First part");

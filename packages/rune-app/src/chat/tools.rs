@@ -159,11 +159,17 @@ fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'static str {
         parts[0] = [diff, patch, &tool.output, live]
             .into_iter()
             .find(|text| {
-                text.get(..text.floor_char_boundary(text.len().min(TOOL_LIMIT)))
-                    .is_some_and(|prefix| prefix.lines().any(|line| line.starts_with("@@ ")))
+                let bytes = text
+                    .chars()
+                    .scan(TOOL_LIMIT, |left, c| {
+                        *left = left.checked_sub(c.len_utf16())?;
+                        Some(c.len_utf8())
+                    })
+                    .sum::<usize>();
+                text[..bytes].lines().any(|line| line.starts_with("@@ "))
             })
             .unwrap_or_else(|| {
-                [diff, &tool.output]
+                [diff, patch, &tool.output]
                     .into_iter()
                     .find(|text| !text.trim().is_empty())
                     .unwrap_or_default()
