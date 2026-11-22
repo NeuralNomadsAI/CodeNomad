@@ -344,6 +344,13 @@ impl Ui {
                 if workspace_id == &self.backend.workspace =>
             {
                 self.dirty(&[Lane::Worktrees, Lane::Changes, Lane::History]);
+                if self
+                    .preview
+                    .as_ref()
+                    .is_some_and(|target| matches!(target.source, Source::Local(_)))
+                {
+                    self.dirty(&[Lane::Preview]);
+                }
             }
             WorkspaceEvent::Stopped { workspace_id } if workspace_id == &self.backend.workspace => {
                 self.stopped = true;

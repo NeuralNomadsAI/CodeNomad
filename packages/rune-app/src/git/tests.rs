@@ -388,9 +388,18 @@ fn branch_hint_holds_index_actions_until_the_new_label_is_read() {
     statuses(&mut ui, vec![change("a", true, false, 1)]);
     ui.changes.draft = TextEdit::new("a");
     assert!(ui.can_commit());
+    let row = ui
+        .changes
+        .find(ui.changes.current.as_ref().unwrap())
+        .unwrap();
+    ui.replace_preview(Preview::local(row));
+    ui.shown = false;
+    assert!(!ui.requests.slot(Lane::Preview).dirty);
     ui.event(&WorkspaceEvent::WorktreesChanged {
         workspace_id: "workspace".into(),
     });
+    assert!(ui.requests.slot(Lane::Preview).dirty);
+    ui.shown = true;
     assert!(!ui.can_commit());
     let mut inventory = ui.inventory.clone().unwrap();
     inventory.trees[0].branch = Some("feature".into());
