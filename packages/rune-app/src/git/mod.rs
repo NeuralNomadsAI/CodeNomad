@@ -419,9 +419,8 @@ impl Ui {
         }
         if let Some(tree) = self.tree().cloned() {
             if changes {
-                let revision = self.reconcile_revision.unwrap_or(self.preview_revision);
                 if self.ensure(
-                    Read::Changes(tree.clone(), self.hide_whitespace, revision),
+                    Read::Changes(tree.clone(), self.hide_whitespace, self.reconcile_revision),
                     !self.changes.ready(),
                 ) {
                     self.reconcile_revision = None;
@@ -725,10 +724,7 @@ impl Ui {
         diff: codenomad_client::git::Diff,
     ) {
         self.accept(Lane::Worktrees, Value::Worktrees(inventory));
-        self.accept(
-            Lane::Changes,
-            Value::Changes(statuses, self.preview_revision),
-        );
+        self.accept(Lane::Changes, Value::Changes(statuses, None));
         self.accept(Lane::History, Value::History(commits, false));
         self.replace_preview(Preview {
             source: Source::Local(Section::Staged),

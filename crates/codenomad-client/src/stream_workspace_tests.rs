@@ -132,6 +132,7 @@ fn git_hints_follow_the_owned_stream_without_a_native_session_id() {
         deliver(&backend, &out, &state, json!({"type":"instance.event","instanceId":"foreign","event":{"type":"filesystem.changed","data":{}}})).await;
         assert!(inbox.is_empty());
         deliver(&backend, &out, &state, json!({"type":"instance.event","instanceId":"owner","event":{"type":"filesystem.changed","data":{}}})).await;
+        deliver(&backend, &out, &state, json!({"type":"instance.event","instanceId":"owner","event":{"type":"vcs.branch.updated","data":{}}})).await;
         deliver(
             &backend,
             &out,
@@ -148,6 +149,9 @@ fn git_hints_follow_the_owned_stream_without_a_native_session_id() {
         .await;
         assert!(
             matches!(inbox.recv().await.unwrap(), Input::Workspace(7, WorkspaceEvent::NativeFilesystemChanged{workspace_id}) if workspace_id=="owner")
+        );
+        assert!(
+            matches!(inbox.recv().await.unwrap(), Input::Workspace(7, WorkspaceEvent::WorktreesChanged{workspace_id}) if workspace_id=="owner")
         );
         assert!(
             matches!(inbox.recv().await.unwrap(), Input::Workspace(7, WorkspaceEvent::WorktreesChanged{workspace_id}) if workspace_id=="owner")

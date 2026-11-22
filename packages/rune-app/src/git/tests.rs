@@ -17,7 +17,7 @@ fn change(path: impl Into<String>, staged: bool, whitespace: bool, score: u64) -
 }
 
 fn statuses(ui: &mut Ui, rows: Vec<Status>) {
-    ui.accept(Lane::Changes, Value::Changes(rows, ui.preview_revision));
+    ui.accept(Lane::Changes, Value::Changes(rows, None));
 }
 
 #[test]
@@ -353,10 +353,54 @@ fn status_before_a_reader_gesture_cannot_close_its_new_target() {
         .find(ui.changes.current.as_ref().unwrap())
         .unwrap();
     ui.replace_preview(Preview::local(row));
-    ui.accept(Lane::Changes, Value::Changes(vec![], revision));
+    ui.accept(Lane::Changes, Value::Changes(vec![], Some(revision)));
     assert!(ui.has_preview());
     statuses(&mut ui, vec![]);
     assert!(!ui.has_preview());
+}
+
+#[test]
+fn passive_status_moves_a_reader_opened_during_the_read() {
+    let mut ui = ui();
+    let mut row = change("a", false, false, 1);
+    statuses(&mut ui, vec![row.clone()]);
+    let request_revision = ui.preview_revision;
+    let selected = ui
+        .changes
+        .find(ui.changes.current.as_ref().unwrap())
+        .unwrap();
+    ui.replace_preview(Preview::local(selected));
+    assert_ne!(ui.preview_revision, request_revision);
+    row.staged = row.unstaged.take();
+    ui.accept(Lane::Changes, Value::Changes(vec![row], None));
+    assert_eq!(
+        ui.preview.as_ref().unwrap().source,
+        Source::Local(Section::Staged)
+    );
+}
+
+#[test]
+fn branch_hint_holds_index_actions_until_the_new_label_is_read() {
+    let mut ui = ui();
+    ui.mode = Mode::Changes;
+    ui.shown = true;
+    ui.online = true;
+    statuses(&mut ui, vec![change("a", true, false, 1)]);
+    ui.changes.draft = TextEdit::new("a");
+    assert!(ui.can_commit());
+    ui.event(&WorkspaceEvent::WorktreesChanged {
+        workspace_id: "workspace".into(),
+    });
+    assert!(!ui.can_commit());
+    let mut inventory = ui.inventory.clone().unwrap();
+    inventory.trees[0].branch = Some("feature".into());
+    ui.requests.slot_mut(Lane::Worktrees).dirty = false;
+    ui.accept(Lane::Worktrees, Value::Worktrees(inventory));
+    assert_eq!(ui.tree().unwrap().branch.as_deref(), Some("feature"));
+    assert!(!ui.can_commit());
+    ui.requests.slot_mut(Lane::Changes).dirty = false;
+    statuses(&mut ui, vec![change("a", true, false, 1)]);
+    assert!(ui.can_commit());
 }
 
 #[test]

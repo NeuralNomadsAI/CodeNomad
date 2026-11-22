@@ -69,7 +69,7 @@ impl Ui {
                     });
                 }
                 self.changes.replace(statuses, self.hide_whitespace);
-                if fresh && self.preview_revision == revision {
+                if fresh && revision.is_none_or(|revision| self.preview_revision == revision) {
                     self.reconcile_preview();
                 }
             }

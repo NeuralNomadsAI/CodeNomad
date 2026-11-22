@@ -87,7 +87,15 @@ pub(super) async fn dispatch(
     }
     let own = value["instanceId"] == b.workspace;
     let native = &value["event"];
-    if own && value["type"] == "instance.event" && native["type"] == "filesystem.changed" {
+    if own && value["type"] == "instance.event" && native["type"] == "vcs.branch.updated" {
+        out.send(Input::Workspace(
+            epoch,
+            WorkspaceEvent::WorktreesChanged {
+                workspace_id: b.workspace.clone(),
+            },
+        ))
+        .await?;
+    } else if own && value["type"] == "instance.event" && native["type"] == "filesystem.changed" {
         out.send(Input::Workspace(
             epoch,
             WorkspaceEvent::NativeFilesystemChanged {
