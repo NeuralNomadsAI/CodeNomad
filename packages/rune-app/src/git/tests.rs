@@ -230,15 +230,6 @@ fn no_second_commit_until_status_reconciles_and_possible_new_selection_survives(
     statuses(&mut ui, changes.clone());
     ui.changes.draft = TextEdit::new("commit draft");
     assert!(ui.can_commit());
-    ui.event(&WorkspaceEvent::FilesChanged {
-        workspace_id: "workspace".into(),
-        changes: vec![codenomad_client::transport::DirectoryChange {
-            directory: "D:/repo".into(),
-            path: ".".into(),
-        }],
-    });
-    assert!(!ui.can_commit());
-    ui.passive_due = None;
     ui.settle_mutation(
         ui.tree_epoch,
         &tree,
@@ -468,9 +459,16 @@ fn repeated_file_hints_do_not_starve_display_or_revoke_a_checked_index() {
     ui.shown = true;
     ui.online = true;
     ui.changes.draft = TextEdit::new("a");
+    let hint = WorkspaceEvent::FilesChanged {
+        workspace_id: "workspace".into(),
+        changes: vec![codenomad_client::transport::DirectoryChange {
+            directory: "D:/repo".into(),
+            path: ".".into(),
+        }],
+    };
     for step in 1..=4 {
         ui.clock = f64::from(step - 1);
-        ui.filesystem_hint();
+        ui.event(&hint);
         statuses(
             &mut ui,
             (0..step)

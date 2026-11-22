@@ -339,14 +339,6 @@ impl Ui {
                         .any(|change| same_server_path(&change.directory, &tree.directory))
                 }) =>
             {
-                // The Git worker emits "." for an explicit index mutation.
-                if self.tree().is_some_and(|tree| {
-                    changes.iter().any(|change| {
-                        change.path == "." && same_server_path(&change.directory, &tree.directory)
-                    })
-                }) {
-                    self.invalidate_index();
-                }
                 self.filesystem_hint();
             }
             WorkspaceEvent::NativeFilesystemChanged { workspace_id }
