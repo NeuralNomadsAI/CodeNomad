@@ -2204,6 +2204,10 @@ async function loadMessages(
       } else if (!(await seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false, true, true))) {
         retryAfterRevisionConflict = true
       } else {
+        // The chunked seed awaited across task boundaries: the load's
+        // authority may have ended while its chunks computed. A cancelled or
+        // superseded load must not install its window.
+        if (!isCurrent()) return false
         store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
         commitCurrentWindow(nextWindow, intent)
         markSessionMessagesLoaded(instanceId, sessionId)

@@ -722,23 +722,41 @@ describe("chunked hydration", () => {
     tokens: { input: 1, output: 1 },
   }))
 
-  it("commits a large chunked batch progressively and yields between chunks", async () => {
+  it("keeps partial hydration out of the visible store until the finalize pass", async () => {
     const store = createInstanceMessageStore("chunked-progressive")
     const result = store.hydrateMessages("session", makeInputs(CHUNK_SIZE * 2 + CHUNK_SIZE / 2), undefined, { chunked: true })
 
     assert.ok(result instanceof Promise, "a large chunked hydration returns a promise")
-    assert.equal(
-      store.getSessionMessageIds("session").length,
-      0,
-      "membership lands once with the finalize pass, never as partial-list geometry",
-    )
-    assert.equal(store.getMessage("msg_049") !== undefined, true, "the first chunk's records are resident")
-    assert.equal(store.getMessage("msg_050"), undefined, "later chunks have not committed yet")
+    assert.equal(store.getSessionMessageIds("session").length, 0, "no membership before the finalize pass")
+    assert.equal(store.getMessage("msg_049"), undefined, "no records before the finalize pass")
+    assert.equal(store.getSessionRevision("session"), 0, "nothing visible while chunks compute")
 
     const committed = await result
     assert.equal(committed, true)
     assert.equal(store.getSessionMessageIds("session").length, CHUNK_SIZE * 2 + CHUNK_SIZE / 2)
     assert.equal((store.getMessage("msg_124")?.parts["msg_124-part-0"]?.data as { text?: string })?.text, "body-124")
+  })
+
+  it("never regresses a record a live projection replaced between chunks", async () => {
+    const store = createInstanceMessageStore("chunked-live-writer")
+    const inputs = makeInputs(CHUNK_SIZE * 2)
+    const result = store.hydrateMessages("session", inputs, undefined, { chunked: true })
+
+    // A live projection rewrites one row while the chunks are between yields:
+    // like the projection path, it hydrates the full window with
+    // preserveOmitted and lands newer content for msg_070. The finalize pass
+    // must keep the newer content instead of overwriting it with the stale
+    // REST snapshot.
+    const projected = inputs.map((input, index) =>
+      index === 70
+        ? { ...input, status: "streaming" as const, updatedAt: input.updatedAt! + 500, parts: [{ type: "text" as const, text: "live SSE text" }] }
+        : input,
+    )
+    store.hydrateMessages("session", projected, undefined, { preserveOmitted: true })
+
+    assert.equal(await result, true)
+    assert.equal((store.getMessage("msg_070")?.parts["msg_070-part-0"]?.data as { text?: string })?.text, "live SSE text")
+    assert.equal(store.getSessionMessageIds("session").length, CHUNK_SIZE * 2)
   })
 
   it("reaches exactly the state of a single-pass hydrate", async () => {
