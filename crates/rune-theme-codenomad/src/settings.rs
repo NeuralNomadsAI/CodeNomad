@@ -33,6 +33,42 @@ pub fn save_warning_spec<S: 'static>(
     }
 }
 
+pub fn authentication_dialog<S: 'static>(
+    title: &str,
+    field: El,
+    error: Option<El>,
+    action: El,
+) -> El {
+    let dark = layout::dark();
+    let tokens = tokens(dark);
+    let body = col()
+        .full_width()
+        .pad(Space::Md)
+        .separate(Space::Sm)
+        .child(field)
+        .children(error)
+        .child(layout::action_row().child(action));
+    el().key("direct-recovery-layer")
+        .absolute(0.0, 0.0)
+        .full_width()
+        .full_height()
+        .center()
+        .fill(crate::kit(dark).c.scrim)
+        .child(
+            col()
+                .key("direct-recovery-dialog")
+                .role("dialog")
+                .label(title)
+                .full_width()
+                .max_w(460.0)
+                .fill(tokens.color("surface-overlay"))
+                .child(heading(title))
+                .child(body)
+                .modal(false, |_: &mut S| {})
+                .modal_click_outside(false),
+        )
+}
+
 pub fn shell_entry(tabs: El, entry: El) -> El {
     row()
         .full_width()

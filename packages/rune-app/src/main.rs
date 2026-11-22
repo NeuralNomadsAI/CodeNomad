@@ -48,6 +48,8 @@ struct State {
     transcript_display: transcript_state::Display,
     screen: Screen,
     settings: settings::Host,
+    #[cfg(not(target_arch = "wasm32"))]
+    direct_authentication: chat::authentication::Recovery,
     input_scope: std::rc::Rc<()>,
     rejected_edit: TextEdit,
     workspace: Option<workspace::Ui>,
@@ -82,6 +84,8 @@ fn init() -> State {
         transcript_display: Default::default(),
         screen: Screen::Chat { launcher: None },
         settings: Default::default(),
+        #[cfg(not(target_arch = "wasm32"))]
+        direct_authentication: Default::default(),
         input_scope: std::rc::Rc::new(()),
         rejected_edit: TextEdit::new(""),
         workspace: None,
@@ -170,6 +174,10 @@ fn request_older(s: &mut State, _: &mut Tx) {
     }
 }
 fn retry_connection(s: &mut State, tx: &mut Tx) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if chat::authentication::retry(s) {
+        return;
+    }
     if s.screen
         .launcher()
         .is_some_and(|l| l.authentication_required)
@@ -203,6 +211,10 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= launcher::poll(s, tx);
     changed |= workspace::poll(s, now, tx);
     changed |= settings::poll(s);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        changed |= chat::authentication::poll(s);
+    }
     changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
     changed |= git::poll(s, now, tx);
     if changed {
@@ -308,6 +320,8 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 if let Event::AuthenticationRequired(expired) = event {
                     s.commands = None;
                     settings::authentication_required(s, &expired);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    chat::authentication::expired(s, expired);
                 }
                 git::online(s, false);
                 if let Some(files) = &mut s.files {
@@ -330,7 +344,12 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
         if s.git.scene {
             return probes::git_scene::view(s);
         }
-        shell::view(s, cx, chat_view)
+        let body = shell::view(s, cx, chat_view);
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(dialog) = chat::authentication::dialog(s) {
+            return col().full_width().full_height().child(body).child(dialog);
+        }
+        body
     })
 }
 fn chat_view(s: &State, cx: &mut Cx<State>) -> El {

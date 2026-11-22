@@ -265,6 +265,96 @@ fn settings_sse_401_releases_the_transport_for_explicit_authentication() {
 }
 
 #[test]
+fn settings_direct_authentication_accepts_a_rotated_password_and_keeps_the_draft() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let mut backend = prefs.backend.take().unwrap();
+        backend.workspace = "project".into();
+        backend.session = "session".into();
+        attest(&listener, &backend, "fixture-profile").await;
+        let mut root = crate::init();
+        prefs.backend = Some(backend.clone());
+        *root.settings.shared.borrow_mut() = prefs;
+        root.draft = rune::edit::TextEdit::new("draft stays");
+        root.phase = crate::Phase::Ready;
+        let (out, incoming) = bounded(2);
+        root.incoming = Some(incoming);
+        out.send(Event::AuthenticationRequired(backend))
+            .await
+            .unwrap();
+        crate::poll_chat(&mut root, 2);
+        let status = request(&listener).await;
+        assert_eq!(status.first, "GET /api/auth/status HTTP/1.1");
+        status.reply(200, json!({"authenticated":false})).await;
+
+        let mut runtime = rune::Runtime::new(
+            root,
+            crate::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        let update = |runtime: &mut rune::Runtime<crate::State>| {
+            runtime.update(|s, _| {
+                crate::chat::authentication::poll(s);
+            });
+            runtime.frame(0.02);
+        };
+        wait_until(|| {
+            update(&mut runtime);
+            runtime.find("direct-recovery-password").is_some()
+        })
+        .await;
+        for password in ["old-fixture-password", "new-fixture-password"] {
+            let (x, y) = runtime.find("direct-recovery-password").unwrap();
+            runtime.pointer_down(x, y);
+            runtime.pointer_up(x, y);
+            runtime.frame(0.02);
+            runtime.paste(password);
+            runtime.frame(0.02);
+            let (x, y) = runtime.find("direct-recovery-sign-in").unwrap();
+            runtime.pointer_down(x, y);
+            runtime.pointer_up(x, y);
+            runtime.frame(0.02);
+            let login = request(&listener).await;
+            assert_eq!(login.first, "POST /api/auth/login HTTP/1.1");
+            assert_eq!(login.body["password"], password);
+            if password.starts_with("old") {
+                login.reply(401, json!({})).await;
+                wait_until(|| {
+                    update(&mut runtime);
+                    runtime
+                        .accessibility_json()
+                        .to_string()
+                        .contains("direct-recovery-error")
+                })
+                .await;
+                assert!(runtime.state.direct_authentication.password.text.is_empty());
+            } else {
+                login.reply(200, json!({"ok":true})).await;
+            }
+        }
+        let identity = request(&listener).await;
+        assert_eq!(identity.first, "GET /api/meta HTTP/1.1");
+        identity
+            .reply(200, json!({"apiContract":1,"serverId":"fixture-profile"}))
+            .await;
+        wait_until(|| {
+            update(&mut runtime);
+            runtime.state.phase == crate::Phase::Reconnecting
+        })
+        .await;
+        assert!(runtime.find("direct-recovery-dialog").is_none());
+        assert_eq!(runtime.state.draft.text, "draft stays");
+        assert!(
+            request(&listener)
+                .await
+                .first
+                .starts_with("GET /api/events?")
+        );
+    });
+}
+
+#[test]
 fn settings_launcher_retry_accepts_password_with_project_open() {
     platform::block_on(async {
         let (listener, mut prefs) = fixture().await;
