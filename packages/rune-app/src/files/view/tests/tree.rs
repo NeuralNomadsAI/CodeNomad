@@ -1,6 +1,81 @@
 use super::*;
 
 #[test]
+fn tab_selects_the_row_and_reaches_refresh_after_a_failed_listing() {
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut ui = http.ui(Store::default(), "files-tab");
+        seed(&mut ui, 2);
+        let failed = ui.tree.load(".", true).unwrap();
+        ui.tree
+            .complete(failed, Err("synthetic listing failure".into()), Ok);
+        ui.panel = true;
+        let mut rt = runtime(ui);
+        rt.poll = Some(crate::files::poll);
+        let focused = |rt: &Runtime<State>, key: &str| {
+            rt.elements()
+                .iter()
+                .any(|node| node.key.as_deref() == Some(key) && node.focused)
+        };
+        let tab = |rt: &mut Runtime<State>, shift| {
+            rt.key(KeyEvent {
+                key: Key::Tab,
+                mods: Mods {
+                    shift,
+                    ..Mods::default()
+                },
+            });
+            rt.frame(0.02);
+            rt.frame(0.02);
+        };
+        rt.update(|_, tx| tx.focus("files-toggle", true));
+        rt.frame(0.02);
+        assert!(rt.state.files.as_ref().unwrap().tree.selected().is_none());
+        for _ in 0..16 {
+            tab(&mut rt, false);
+            if focused(&rt, "file-row-file00.txt") {
+                break;
+            }
+        }
+        assert!(focused(&rt, "file-row-file00.txt"));
+        assert_eq!(
+            rt.state.files.as_ref().unwrap().tree.selected(),
+            Some("file00.txt")
+        );
+        for next in ["file-eye-file00.txt", "file-eye-file01.txt", "file-retry-."] {
+            tab(&mut rt, false);
+            assert!(focused(&rt, next), "Tab should reach {next}");
+        }
+        assert_eq!(
+            rt.state.files.as_ref().unwrap().tree.selected(),
+            Some("file00.txt")
+        );
+        tab(&mut rt, true);
+        assert!(focused(&rt, "file-eye-file01.txt"));
+
+        let a11y = rt.accessibility_json();
+        let tree = accessible(&a11y, "workspace-tree").unwrap();
+        assert_eq!(tree["role"], "tree");
+        let row = accessible(tree, "file-row-file00.txt").unwrap();
+        assert_eq!(row["role"], "tree-item");
+        assert!(accessible(row, "file-eye-file00.txt").is_some());
+        assert!(accessible(tree, "file-retry-.").is_none());
+
+        tab(&mut rt, false);
+        rt.key(KeyEvent {
+            key: Key::Enter,
+            mods: Mods::default(),
+        });
+        rt.frame(0.02);
+        assert!(rt.state.files.as_ref().unwrap().tree.busy("."));
+        http.request("GET", ".")
+            .await
+            .reply(503, serde_json::json!({"error": "still unavailable"}))
+            .await;
+    });
+}
+
+#[test]
 fn enter_toggles_the_files_panel_and_the_preview_eye() {
     crate::platform::block_on(async {
         let http = http::Http::new().await;

@@ -177,7 +177,7 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = launcher::poll(s, tx);
     changed |= poll_chat(s, 64);
     changed |= workspace::poll(s, now, tx);
-    changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
+    changed |= files::poll(s, now, tx);
     if changed {
         tx.instant();
     }

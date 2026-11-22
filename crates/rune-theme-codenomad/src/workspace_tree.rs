@@ -57,7 +57,7 @@ pub fn root(dark: bool, name: &str, directory: &str) -> El {
         )
 }
 
-pub fn workspace_body(header: El, tree: El, status: Option<El>) -> El {
+pub fn workspace_body(header: El, tree: El, status: Vec<El>) -> El {
     rune::col()
         .py(tokens(crate::layout::dark()).space(Space::Sm).px())
         .full_width()

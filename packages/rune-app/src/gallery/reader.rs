@@ -108,9 +108,7 @@ pub fn run() {
         std::process::exit(2);
     }
     rune::run(AppSpec {
-        poll: Some(|state: &mut State, _, _| {
-            state.files.as_mut().is_some_and(|files| files.poll(0.0))
-        }),
+        poll: Some(crate::files::poll),
         ..layout::app_spec(t("window.title.main"), init, view)
     });
 }

@@ -1,4 +1,4 @@
-use crate::{State, components::button, screen, strings::t};
+use crate::{State, components::button_tx, screen, strings::t};
 use rune::{El, text};
 use rune_theme_codenomad::{
     Space, document_reader as theme,
@@ -8,25 +8,6 @@ use rune_theme_codenomad::{
 
 pub(crate) fn tree(s: &State) -> El {
     layout::with_source_palette(|| tree_content(s))
-}
-
-fn toggle_preview(s: &mut State, directory: &str, path: String, tx: &mut rune::Tx) {
-    if let Some(ui) = s
-        .files
-        .as_mut()
-        .filter(|ui| !ui.stopped && ui.tree.directory() == directory)
-    {
-        if ui
-            .reader
-            .target()
-            .is_some_and(|target| target.path == path && target.directory == ui.tree.directory())
-        {
-            ui.close_reader();
-            ui.reading.restore(tx);
-        } else {
-            ui.open(path);
-        }
-    }
 }
 
 fn tree_content(s: &State) -> El {
@@ -42,6 +23,7 @@ fn tree_content(s: &State) -> El {
         .filter(|path| ui.rows.iter().any(|row| row.entry.path == *path))
         .or_else(|| ui.rows.first().map(|row| row.entry.path.as_str()));
     let mut tree = rune::col()
+        .key("workspace-tree")
         .full_width()
         .role("tree")
         .focus_group()
@@ -50,13 +32,15 @@ fn tree_content(s: &State) -> El {
         let path = row.entry.path.clone();
         let folder = row.expanded.is_some();
         let actions = (!folder).then(|| {
-            let active = ui.reader.target().is_some_and(|target| {
-                target.path == path && target.directory == ui.tree.directory()
-            });
+            let active = ui.previews(&path);
             let invoke = std::rc::Rc::new(screen::action_tx(&scope, {
                 let path = path.clone();
                 let directory = ui.tree.directory().to_owned();
-                move |s, tx| toggle_preview(s, &directory, path.clone(), tx)
+                move |s, tx| {
+                    if let Some(ui) = &mut s.files {
+                        ui.toggle_preview(&directory, &path, tx);
+                    }
+                }
             }));
             let click = invoke.clone();
             let disabled = ui.stopped;
@@ -123,29 +107,44 @@ fn tree_content(s: &State) -> El {
             })),
         );
     }
+    let mut status = Vec::new();
     for (path, error) in ui.tree.errors() {
         let path = path.clone();
-        tree = tree.child(text(error).role("alert")).child(button(
-            &format!("file-retry-{path}"),
-            t("instanceShell.rightPanel.actions.refresh"),
-            ui.stopped,
-            screen::action(&scope, move |s| {
+        let retry = std::rc::Rc::new(screen::action_tx(&scope, {
+            let path = path.clone();
+            move |s, _| {
                 if let Some(ui) = &mut s.files {
                     ui.refresh(Some(&path));
                 }
-            }),
-        ));
+            }
+        }));
+        let press = retry.clone();
+        status.push(text(error).role("alert"));
+        let control = button_tx(
+            &format!("file-retry-{path}"),
+            t("instanceShell.rightPanel.actions.refresh"),
+            ui.stopped,
+            move |s, tx| press(s, tx),
+        );
+        status.push(if ui.stopped {
+            control
+        } else {
+            super::activate_enter(control, move |s, tx| retry(s, tx))
+        });
+    }
+    if ui.tree.busy(".") {
+        status.push(
+            text(t("instanceInfo.loading"))
+                .role("status")
+                .pad(Space::Md),
+        );
     }
     let directory = ui.tree.directory();
     let name = codenomad_client::server_path_basename(directory);
     let contents = workspace_tree::workspace_body(
         workspace_tree::root(dark, name, directory).key("file-tree-root"),
         tree,
-        ui.tree.busy(".").then(|| {
-            text(t("instanceInfo.loading"))
-                .role("status")
-                .pad(Space::Md)
-        }),
+        status,
     );
     theme::surface(dark)
         .key("files-panel")
