@@ -161,7 +161,8 @@ fn reader_content(s: &State) -> El {
                         ui.presentation.wrap,
                     )
                 } else {
-                    theme::viewport(
+                    theme::rendered_viewport(
+                        dark,
                         if format == Format::Mermaid {
                             theme::mermaid_frame(
                                 dark,
@@ -183,7 +184,6 @@ fn reader_content(s: &State) -> El {
                                 document_link(s),
                             ))
                         },
-                        true,
                     )
                     .key("file-rendered-scroll")
                     .on_key(|_: &mut State, key, tx| {

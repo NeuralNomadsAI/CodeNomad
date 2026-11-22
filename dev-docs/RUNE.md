@@ -48,22 +48,22 @@ When a whole module reaches parity, its Solid and Tauri version is deleted on `f
 
 | Solid / Tauri | Rune | State |
 |---|---|---|
-| API client, HTTP/SSE recovery | `codenomad-client` | Native and browser contracts qualified |
-| `api-client.ts` Files API | `codenomad-client/files` | Native contracts qualified |
-| `useWorkspaceTree.ts` | `files/`, `platform/collation` | State qualified; full UI parity pending |
-| `WorkspaceTree.tsx` rows | Shared `workspace_tree` | Windows rows qualified; full tree pending |
-| `workspace-file-view.tsx` classification | `files/document` | Native contracts and WASM build qualified |
-| `workspace-file-editor.ts` | `files/document/editor` | Controller qualified; editor UI pending |
-| `workspace-file-view.tsx` preview | `files/view`, `document_reader` | Read-only prototype; full parity pending |
-| `tokens.css` | `rune-theme-codenomad` | Generated; qualification per component |
-| UI message catalogues | Generated catalogues | Ten locales qualified |
-| `window-close-button.tsx` | `components/window_close_button.rs` | Windows control qualified |
-| Tauri `cli_manager.rs` | `platform/host/` | Isolated Windows startup qualified |
-| Transcript, composer and launcher | `chat/`, `agent/`, `launcher/` | Native flows qualified; Solid parity pending |
-| Remote access client | Shared WASM state/views | Session reading qualified; physical mobile pending |
-| Window state | `workspace/` | Restoration qualified; complete UI parity pending |
-| `instance-tabs.tsx`, `tab-scroll.tsx` | Shared `tabs` | Interaction qualified; complete bar parity pending |
-| `action-overflow-menu.tsx` | Shared `action_menu` | Windows popup qualified; complete caller parity pending |
+| HTTP, SSE, pagination and recovery | CodeNomad API and contract fixtures | `crates/codenomad-client`: native contracts, 606-row recovery and authenticated browser session reading qualified |
+| Workspace file listing and preview API | Solid `api-client.ts`, shared server Files routes | `crates/codenomad-client/files`: typed bounded reads, identities and bytes qualified through HTTP fixtures and Windows shared Rust with private files; browser execution and interface qualification pending |
+| Workspace file tree state | `useWorkspaceTree.ts`, `WorkspaceTree.tsx` | `files/`: lazy snapshots, scoped cancellable reads, refresh coalescing and physical-subtree invalidation; native contracts exercised. `platform/collation` owns stable ICU/Intl sorting, with actual Rust WASM exercised in six browser locales under CSP. Windows/macOS/Linux shared-Rust filesystem watches and hidden-tab state exercised with simulated OpenCode; UI assembly, live reconnect and physical replacement remain pending |
+| Workspace tree row | `WorkspaceTree.tsx`, `workspace-tree.css` | Shared `workspace_tree`: generated CSS/AST geometry and Source Lucide icons; native semantics and twenty Windows light/dark LTR/RTL pairs pass reviewed regional budgets at scale one and width 360. Full tree, caller actions, motion, other dimensions and web accessibility remain pending |
+| Workspace document classification | `workspace-file-view.tsx`, `workspace-file-editor.ts` | `files/document`: borrowed strict UTF-8, BOM handling, binary fallback and Source extension precedence; native unit cases and WASM compilation pass. Reader rendering and editing require component qualification |
+| Workspace document drafts and saves | `workspace-file-editor.ts` | `files/document/editor`: window-owned drafts keyed by server, occurrence, directory and path; fresh preflight reads, snapshot writes and typed confirmation decisions. Interface and editor parity require component qualification |
+| Workspace file preview | `workspace-file-view.tsx` | `files/view` and `document_reader`: Windows reader chrome, states and link gestures qualified; editing and complete layout parity pending |
+| Tokens and typography | `packages/ui/src/styles/tokens.css` | `crates/rune-theme-codenomad`: generated values; component parity qualified individually |
+| Text | Ten UI catalogues | Generated catalogues, fallback and Hebrew direction qualified |
+| Window close | `components/window-close-button.tsx` | `components/window_close_button.rs`: six Windows light/dark pairs, accessibility and interaction qualified at scale 1 |
+| Server startup | Tauri `cli_manager.rs` | `platform/host/`: isolated Windows bootstrap, shutdown and generation qualified |
+| Chat, composer and session launcher | Solid transcript, composer and project fixtures | `chat/`, `agent/`, `launcher/`: native flows with shared Rust and simulated OpenCode qualified; Solid parity pending |
+| Browser client | Remote access contracts and Rune web target | Shared WASM state/views: six local and six authenticated session-reading contexts qualified with shared Rust and simulated OpenCode; physical mobile pending |
+| Window state | Host client-state and browser sessionStorage contracts | `workspace/` restores projects, tabs, selected sessions and drafts; shared Rust with simulated OpenCode qualified on three OS; Windows private OpenCode storage qualified with 600 imported rows across three Rune boots; browser reload/quota and in-flight creation qualified separately |
+| Project tabs | `components/instance-tabs.tsx`, `instance-tab.tsx`, `tab-scroll.tsx` | Shared rune-kit Button composite with CSS-generated geometry: select/close/New, keyboard navigation, web tab roles, direction, column sizing and focus halo qualified; SVG/text raster, complete bar parity and web tablist grouping pending |
+| Action overflow menu | `components/action-overflow-menu.tsx` | Shared `action_menu`: CSS-generated geometry, keyboard, selection, focus and item-removal contracts exercised in Rune Runtime; actual Solid fixtures and native gallery available. Six Windows popup pairs pass reviewed regional budgets; complete caller, tooltip, responsive and touch parity remains pending |
 
 ## Workspace and qualification
 
