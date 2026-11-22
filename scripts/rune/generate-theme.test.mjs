@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
-import {mkdir,mkdtemp,readFile,rm,writeFile} from 'node:fs/promises'
+import {mkdir,readFile,writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {test} from 'node:test'
-import {createServer} from 'vite'
 import {chromium} from 'playwright'
 import {collectTheme} from './generate-theme-browser.mjs'
 import {themeFixtureHtml,sourceMenuGutter} from './generate-theme-fixture.mjs'
 import {workspaceRowContract,workspaceSource} from './parity/workspace-tree-row-source.mjs'
+import {createSourceFixture,assertSourceDiagnostics} from './parity/source-context.mjs'
 
 const root=fileURLToPath(new URL('../../',import.meta.url))
 test('workspace geometry follows the actual JSX expressions and rejects unknown indents',async()=>{
@@ -22,31 +22,25 @@ test('action menu gutter follows its actual numeric JSX contract',()=>{
   assert.throws(()=>sourceMenuGutter('<Other gutter={4}></Other>'),/one source DropdownMenu/)
 })
 test('generated semantic metrics survive actual font changes and viewport changes',async()=>{
-  const temporary=path.join(root,'target/rune-codegen-tests')
+  const temporary=path.join(root,'target/rune-source-theme-context/codegen-tests')
   await mkdir(temporary,{recursive:true})
-  const cache=await mkdtemp(path.join(temporary,'vite-'))
   const css=await readFile(path.join(root,'packages/ui/src/styles/tokens.css'),'utf8')
   const generated=JSON.parse(await readFile(path.join(root,'crates/rune-theme-codenomad/assets/theme.json'),'utf8'))
   const names=[...new Set([...css.matchAll(/--([a-zA-Z0-9_-]+)\s*:/g)].map(m=>m[1]))].sort()
-  const server=await createServer({root:path.join(root,'packages/ui'),configFile:false,appType:'custom',cacheDir:cache,
-    optimizeDeps:{noDiscovery:true,entries:[]},plugins:[{name:'rune-theme-contract',configureServer(s){s.middlewares.use('/theme-contract',(_request,response)=>{
-      response.setHeader('content-type','text/html');response.end(themeFixtureHtml)
-    })}}],server:{host:'127.0.0.1',port:0},logLevel:'error'})
+  const markup=/<body>([\s\S]*)<\/body>/.exec(themeFixtureHtml)[1]
+  const fixture=await createSourceFixture('scripts/rune/generate-theme.fixture.tsx','rune-source-theme-contract',markup)
   let browser
   const evidence=[]
   try{
-    await server.listen()
     browser=await chromium.launch({headless:true})
-    const page=await browser.newPage({viewport:{width:1024,height:768}})
     for(const appearance of ['light','dark']){
-      await page.emulateMedia({colorScheme:appearance,reducedMotion:'no-preference'})
-      await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/theme-contract`,{waitUntil:'networkidle'})
-      await page.evaluate(value=>document.documentElement.setAttribute('data-theme',value),appearance)
+      const {page,diagnostics}=await fixture.open(browser,{theme:appearance},{width:1024,height:768})
+      await page.emulateMedia({reducedMotion:'no-preference'})
       await page.keyboard.press('Tab')
       assert(await page.locator('.window-icon-button').evaluate(element=>element.matches(':focus-visible')))
       const baseline=await page.evaluate(collectTheme,names)
       assert.deepEqual(baseline.metrics,generated.metrics[appearance],'Baseline must match the checked-in semantic contract')
-      const familyKeys=['font-family-sans','message-part-header-font-family']
+      const familyKeys=['font-family-sans','message-part-header-font-family','body-font-family']
       const widths=[]
       for(const family of ['"Segoe UI"','Arial','Helvetica','sans-serif','serif','monospace']){
         await page.evaluate(font=>document.documentElement.style.setProperty('--font-family-sans',font),family)
@@ -97,11 +91,11 @@ test('generated semantic metrics survive actual font changes and viewport change
       await page.locator('.window-title').evaluate(element=>element.style.lineHeight='normal')
       await assert.rejects(page.evaluate(collectTheme,names),/lineHeight requires an explicit numeric CSS value/)
       await page.setViewportSize({width:1024,height:768})
+      assertSourceDiagnostics(diagnostics)
+      await page.close()
     }
     await writeFile(path.join(temporary,'font-contract-evidence.json'),JSON.stringify(evidence,null,2)+'\n')
   }finally{
-    await browser?.close();await server.close()
-    assert(path.resolve(cache).startsWith(path.resolve(temporary)+path.sep))
-    await rm(cache,{recursive:true,force:true})
+    await browser?.close();await fixture.close()
   }
 })

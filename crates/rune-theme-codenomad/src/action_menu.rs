@@ -301,7 +301,7 @@ pub fn view<S: 'static>(
         let label = rune::text(&item.label)
             .font(
                 rune::TextStyle::new(metric("fontSize"), metric("fontWeight"))
-                    .lh(metric("lineHeight")),
+                    .lh(metric("lineHeight")).tracking(metric("letterSpacing")),
             )
             .color(t.color("text-primary"))
             .wrap_anywhere()

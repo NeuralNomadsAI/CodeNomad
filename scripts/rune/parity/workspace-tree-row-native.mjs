@@ -9,7 +9,7 @@ import {privateEnvironment} from '../../../packages/rune-app/private-profile.mjs
 const root=fileURLToPath(new URL('../../../',import.meta.url))
 const {values}=parseArgs({options:{binary:{type:'string'}}})
 assert(values.binary&&path.isAbsolute(values.binary),'--binary requires absolute offscreen example path')
-const out=path.join(root,'target/rune-parity/workspace-tree-row');await mkdir(out,{recursive:true})
+const out=path.join(root,'target/rune-source-theme-context/parity/workspace-tree-row');await mkdir(out,{recursive:true})
 const binary=path.join(out,`workspace-tree-row-gallery${process.platform==='win32'?'.exe':''}`),bytes=await readFile(values.binary)
 await copyFile(values.binary,binary)
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex')
@@ -34,7 +34,9 @@ for(const theme of ['light','dark'])for(const rtl of [false,true])for(const mode
   const tree=JSON.parse(await readFile(`${base}.json`,'utf8'))
   const row=tree.elements.find(e=>e.key==='row');assert(row)
   assert.deepEqual(row.rect,[0,0,360,30])
-  records.push({id,theme,rtl,mode,image:`${base}.png`,tree:`${base}.json`,geometry:tree.elements,accessibility:tree.accessibility})
+  const actions=mode==='file'?['preview-disabled',...(process.platform==='win32'?['open-default']:[]),'show-in-folder','copy-path']:['open-folder','open-terminal','copy-path']
+  assert.equal(tree.elements.filter(e=>actions.map(key=>key.replace('-disabled','')).includes(e.key)).length,actions.length)
+  records.push({id,theme,rtl,mode,caller:{platform:process.platform,host:'desktop-local',scope:'row-layout-and-synthetic-action-slots',actions,canOpen:false,nativeFileActionsInteraction:'pending'},image:`${base}.png`,tree:`${base}.json`,geometry:tree.elements,accessibility:tree.accessibility})
 }
 await writeFile(path.join(out,'native-evidence.json'),JSON.stringify({provenance,records},null,2)+'\n')
 console.log(`${records.length} offscreen row captures`)

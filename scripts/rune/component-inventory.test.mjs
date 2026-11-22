@@ -43,6 +43,7 @@ test('AST resolves typed inherited props, aliased state, CSS references, dynamic
   const control = sheet.components[0]
   assert.equal(control.status, 'not-converted')
   assert.deepEqual(control.parity, {visual: 'unverified', accessibility: 'unverified', interaction: 'unverified'})
+  assert.deepEqual(control.sourceContext, {required: 'product-default', fixture: 'scripts/rune/parity/source-context.fixture.tsx', qualification: 'unverified'})
   assert.deepEqual(control.props.fields.map(({name, optional}) => [name, optional]), [['disabled', true], ['onClick', false], ['title', false]])
   assert.equal(control.props.fields.find(field => field.name === 'title').declarations[0].line, 2)
   assert.equal(control.states[0].factory, 'createSignal')
@@ -82,6 +83,15 @@ test('generation is deterministic, checks changed inputs, and rejects obsolete c
   await put('target/rune-inventory/obsolete.json', '{}')
   await assert.rejects(generate({root, check: true}), /Obsolete component sheets/)
 }))
+test('copied Monaco distribution leaves source inventory unchanged while its worker remains an input', async () => fixture(async (root, put) => {
+  const before = await buildInventory(root)
+  await put('packages/ui/src/renderer/public/monaco/vs/copied.js', 'export const copied = true')
+  assert.deepEqual(await buildInventory(root), before)
+  await put('packages/ui/src/renderer/public/monaco.worker.js', 'export const worker = true')
+  const index = (await buildInventory(root)).get('dev-docs/rune-components.generated.json')
+  assert.ok(index.inputHashes['packages/ui/src/renderer/public/monaco.worker.js'])
+}))
+
 test('real Solid dismissal component has source props, translated accessible label and repository style references', async () => {
   const output = await buildInventory()
   const serialized = JSON.stringify([...output])

@@ -61,4 +61,37 @@ mod tests {
             tokens(true).color("surface-field")
         );
     }
+    #[test]
+    fn source_provider_body_and_component_tracking_reach_rune_styles() {
+        for dark in [false, true] {
+            let t = tokens(dark);
+            let body = t.text(TextRole::Body);
+            assert_eq!(
+                (body.size, body.line_height, body.weight),
+                (16.0, 24.0, 400.0)
+            );
+            assert!((body.tracking - 0.15008).abs() < f32::EPSILON);
+            assert_eq!(t.text(TextRole::Mono).tracking, 0.0);
+            let ui = kit(dark).ty.ui;
+            assert_eq!((ui.size, ui.line_height), (12.0, 18.0));
+            assert_eq!(ui.size, t.metric("input", "fontSize").px());
+            assert_eq!(ui.size, t.metric("composerInput", "fontSize").px());
+            assert_ne!(
+                ui.size, body.size,
+                "Field and reading typography have distinct Source contracts"
+            );
+            for role in [TextRole::Button, TextRole::Label, TextRole::Title] {
+                assert!(t.text(role).tracking.is_finite());
+            }
+            let mode = if dark { "dark" } else { "light" };
+            assert_eq!(
+                document()["context"]["appearances"][mode]["kind"],
+                "product-default"
+            );
+            assert_eq!(
+                document()["context"]["appearances"][mode]["palette"]["id"],
+                if dark { "mist" } else { "porcelain" }
+            );
+        }
+    }
 }

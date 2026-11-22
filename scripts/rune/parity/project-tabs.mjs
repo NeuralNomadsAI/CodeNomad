@@ -3,19 +3,15 @@ import assert from 'node:assert/strict'
 import {mkdir,readFile,writeFile} from 'node:fs/promises'
 import {createHash} from 'node:crypto'
 import {spawn} from 'node:child_process'
-import {createRequire} from 'node:module'
 import {fileURLToPath} from 'node:url'
 import path from 'node:path'
 import {parseArgs} from 'node:util'
 import {chromium} from 'playwright'
-import {createServer} from 'vite'
-import solid from 'vite-plugin-solid'
-import {createFixtureCache} from '../../../packages/ui/tests/browser/fixture-cache.ts'
-import {createFixtureShutdown} from '../../../packages/ui/tests/browser/fixture-shutdown.ts'
+import {createSourceFixture,assertSourceDiagnostics} from './source-context.mjs'
 import {buildInventory} from '../component-inventory.mjs'
 import {privateEnvironment} from '../../../packages/rune-app/private-profile.mjs'
 
-const root=fileURLToPath(new URL('../../../',import.meta.url)),require=createRequire(import.meta.url)
+const root=fileURLToPath(new URL('../../../',import.meta.url))
 const {values}=parseArgs({options:{binary:{type:'string'},'rune-dir':{type:'string'},'max-diff-ratio':{type:'string'},'max-alpha-diff-ratio':{type:'string'},'reuse-solid':{type:'boolean'}}})
 assert(!values['reuse-solid']||values.binary,'--reuse-solid requires the real gallery binary')
 assert(!values['rune-dir']||values['max-diff-ratio'],'Actual Rune comparisons require an explicit reviewed pixel threshold')
@@ -23,7 +19,7 @@ assert(!values['max-diff-ratio']||values['rune-dir']||values.binary,'Pixel compa
 if(values.binary)assert(path.isAbsolute(values.binary),'Standalone gallery binary must be absolute')
 if(values['max-alpha-diff-ratio'])assert((values.binary||values['rune-dir'])&&Number(values['max-alpha-diff-ratio'])>=0&&Number(values['max-alpha-diff-ratio'])<1,'Alpha pixel comparison requires actual captures and a reviewed threshold')
 if(values['rune-dir'])assert(path.isAbsolute(values['rune-dir'])&&Number(values['max-diff-ratio'])>=0&&Number(values['max-diff-ratio'])<1)
-const out=path.join(root,'target/rune-parity/project-tabs');await mkdir(out,{recursive:true})
+const out=path.join(root,'target/rune-source-theme-context/parity/project-tabs');await mkdir(out,{recursive:true})
 const themeContract=JSON.parse(await readFile(path.join(root,'crates/rune-theme-codenomad/assets/theme.json'),'utf8'))
 const focusEvents=[{t:0.1,type:'key',name:'Tab'},{t:0.15,type:'key',name:'Home'},{t:0.2,type:'type',text:' '}]
 function assertKeyboardFocus(tree){assert(tree.elements.some(e=>e.key==='t-tab-0'&&e.focused&&e.focusVisible),'Real keyboard focus and focus-visible are required')}
@@ -44,26 +40,21 @@ for(const name of ['instance-tabs','instance-tab','tab-scroll']){
   assert.equal(createHash('sha256').update(source.replaceAll('\r\n','\n')).digest('hex'),sheet.sha256)
   await writeFile(path.join(out,`${name}.sheet.json`),JSON.stringify(sheet,null,2));sheets.push({source:sheet.source,sha256:sheet.sha256})
 }
-const cache=await createFixtureCache(),shutdown=createFixtureShutdown(cache)
 const entry=path.join(root,'scripts/rune/parity/project-tabs.fixture.tsx')
-const dependencyRoot=path.dirname(path.dirname(require.resolve('playwright/package.json')))
-let html=''
-const server=await createServer({root:path.join(root,'packages/ui'),configFile:false,cacheDir:cache.cacheDir,
-  plugins:[shutdown.plugin,solid(),{name:'real-project-tabs-fixture',configureServer(s){s.middlewares.use('/rune-project-tabs',async(req,res)=>{res.setHeader('content-type','text/html');res.end(await s.transformIndexHtml('/rune-project-tabs',html))})}}],
-  resolve:{dedupe:['solid-js']},optimizeDeps:{entries:[entry],include:['solid-js','solid-js/web','solid-js/store','debug'],exclude:['lucide-solid']},
-  server:{host:'127.0.0.1',port:0,hmr:false,watch:null,fs:{allow:[root,dependencyRoot]}},logLevel:'error'})
-shutdown.own(server)
-let browser
+const provenance={fixtureSha256:createHash('sha256').update(await readFile(entry)).digest('hex'),theme:themeContract.context}
+let browser,source
 const records=[]
 let reusedSolid
 try{
-  html=`<html><body style="margin:0"><div id="root"></div><script type="module" src="/@fs/${entry.replaceAll('\\','/')}"></script></body></html>`
-  await server.listen();const origin=`http://127.0.0.1:${server.httpServer.address().port}`
+  source=await createSourceFixture('scripts/rune/parity/project-tabs.fixture.tsx','rune-project-tabs-product')
+  provenance.sourceContext=source.provenance
   if(values['reuse-solid']){
     const raw=await readFile(path.join(out,'evidence.json'),'utf8'),prior=JSON.parse(raw)
     assert.deepEqual(prior.sheets,sheets,'Regenerate Solid references after source changes')
+    assert.deepEqual(prior.provenance,provenance,'Regenerate Solid references after context changes')
     assert.equal(prior.records.length,10)
     for(const record of prior.records){
+      assert.equal(record.context?.kind,'product-default')
       assert.equal(record.states.length,4);assert.deepEqual(record.errors,[])
       for(const state of record.states){await readFile(path.join(out,state.solid));if(record.scene!=='overflow'){assert(state.alpha?.halo&&state.alpha.glyphs);await readFile(path.join(out,state.alpha.file));await readFile(path.join(out,state.alpha.halo.file))}}
       records.push({...record,priorAttemptFailure:record.failure,failure:undefined})
@@ -74,28 +65,16 @@ try{
   const words=JSON.parse(await readFile(path.join(root,'crates/rune-theme-codenomad/assets/catalogues/en.json'),'utf8'))
   for(const config of [{name:'desktop',width:900,locale:'en',scene:'basic'},{name:'phone-emulated',width:390,locale:'en',scene:'basic'},{name:'rtl',width:900,locale:'he',scene:'basic'},{name:'inactive',width:900,locale:'en',scene:'inactive'},{name:'overflow',width:390,locale:'en',scene:'overflow'}]){
     for(const theme of ['light','dark']){
-      const id=`${config.name}-${theme}`,page=await browser.newPage({viewport:{width:config.width,height:200},deviceScaleFactor:1,hasTouch:config.name==='phone-emulated',isMobile:config.name==='phone-emulated'})
+      const id=`${config.name}-${theme}`
+      const {page,diagnostics}=await source.open(browser,{theme,locale:config.locale,case:config.scene},{width:config.width,height:200},{hasTouch:config.name==='phone-emulated',isMobile:config.name==='phone-emulated'})
       const record={id,theme,...config,errors:[],requests:[],states:[],checks:{},startupReloads:0};records.push(record)
-      page.on('pageerror',error=>record.errors.push(error.message))
-      page.on('console',message=>{if(message.type()==='error')console.error(message.text())})
-      await page.route('**/*',route=>{
-        const url=new URL(route.request().url());assert.equal(url.origin,origin,'No external fixture request')
-        if(/^\/api\//.test(url.pathname)){
-          const method=route.request().method();record.requests.push({method,path:url.pathname})
-          if(method!=='GET'){record.errors.push(`Unexpected fixture mutation: ${method} ${url.pathname}`);return route.abort('blockedbyclient')}
-          if(url.pathname==='/api/events')return route.fulfill({contentType:'text/event-stream',body:': isolated UI fixture\n\n'})
-          return route.fulfill({json:{}})
-        }
-        return route.continue()
-      })
-      await page.emulateMedia({colorScheme:theme,reducedMotion:'reduce'})
-      await page.goto(`${origin}/rune-project-tabs?locale=${config.locale}&case=${config.scene}`)
+      record.errors=diagnostics.page;record.requests=diagnostics.api
+      record.context=await page.evaluate(()=>window.runeSourceContext.snapshot())
       // As in window-close.mjs, a cold owned Vite cache can invalidate its first module URLs.
       for(let attempt=0;attempt<3;attempt++){
         try{await page.waitForFunction(()=>globalThis.runeProjectTabs?.ready,undefined,{timeout:15000});break}
         catch(error){if(attempt===2)throw error;record.startupReloads++;await page.reload()}
       }
-      await page.evaluate(theme=>document.documentElement.setAttribute('data-theme',theme),theme)
       await page.evaluate(()=>document.fonts.ready)
       assert.equal(await page.evaluate(()=>document.fonts.status),'loaded')
       record.fontsReady=true
@@ -144,7 +123,7 @@ try{
         await add.click();await add.focus();await page.keyboard.press('Enter');await page.keyboard.press('Space')
         assert.equal((await page.evaluate(()=>runeProjectTabs.state())).actions.filter(a=>a.type==='new').length,3);record.checks.newPointerEnterSpace=true
       }
-      assert.deepEqual(record.errors,[])
+      assertSourceDiagnostics(diagnostics)
       await page.close()
     }
   }
@@ -213,8 +192,8 @@ try{
   }
 }catch(error){if(records.length)records.at(-1).failure=error.message;throw error}
 finally{
-  await browser?.close();await server.close()
+  await browser?.close();await source?.close()
   const findings=records.filter(r=>r.checks.keyboardClose===false).map(r=>({context:r.id,contract:'close-keyboard-space',result:'failed',source:'packages/ui/src/components/instance-tab.tsx',evidence:'tab-close span has role=button and tabIndex=0; Space did not dispatch onClose; pointer fallback did',nativeRequirement:'Rune retains keyboard activation; divergence requires review'}))
-  await writeFile(path.join(out,'evidence.json'),JSON.stringify({status:records.some(r=>r.failure)?'blocked-parity-fixture':values['rune-dir']||values.binary?'paired-captures-require-review':'solid-reference-only-unqualified',components:{wholeInstanceTabs:'pending',plainInstanceTabAlpha:values['max-alpha-diff-ratio']?'threshold-checked-review-required':'captures-unqualified'},sheets,reusedSolid,records,findings,pending:['Whole InstanceTabs actions, status/remote/temporary states and scrolling parity','Reviewed per-component pixel thresholds','Two independent blind reviews','Tablist browser mirror mapping upstream','Physical mobile qualification']},null,2))
+  await writeFile(path.join(out,'evidence.json'),JSON.stringify({status:records.some(r=>r.failure)?'blocked-parity-fixture':values['rune-dir']||values.binary?'paired-captures-require-review':'solid-reference-only-unqualified',components:{wholeInstanceTabs:'pending',plainInstanceTabAlpha:values['max-alpha-diff-ratio']?'threshold-checked-review-required':'captures-unqualified'},sheets,provenance,reusedSolid,records,findings,pending:['Whole InstanceTabs actions, status/remote/temporary states and scrolling parity','Reviewed per-component pixel thresholds','Two independent blind reviews','Tablist browser mirror mapping upstream','Physical mobile qualification']},null,2))
 }
 console.log(out)

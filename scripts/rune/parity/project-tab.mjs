@@ -3,33 +3,29 @@ import assert from 'node:assert/strict'
 import {mkdir,readFile,writeFile} from 'node:fs/promises'
 import {createHash} from 'node:crypto'
 import {spawn} from 'node:child_process'
-import {createRequire} from 'node:module'
 import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
 import path from 'node:path'
 import {chromium} from 'playwright'
-import {createServer} from 'vite'
-import solid from 'vite-plugin-solid'
-import {createFixtureCache} from '../../../packages/ui/tests/browser/fixture-cache.ts'
-import {createFixtureShutdown} from '../../../packages/ui/tests/browser/fixture-shutdown.ts'
+import {createSourceFixture,assertSourceDiagnostics} from './source-context.mjs'
 import {buildInventory} from '../component-inventory.mjs'
 import {privateEnvironment} from '../../../packages/rune-app/private-profile.mjs'
 
-const root=fileURLToPath(new URL('../../../',import.meta.url)),require=createRequire(import.meta.url)
+const root=fileURLToPath(new URL('../../../',import.meta.url))
 const {values}=parseArgs({options:{binary:{type:'string'},'reuse-solid':{type:'boolean'}}})
 if(values.binary)assert(path.isAbsolute(values.binary),'--binary requires an absolute gallery path')
 assert(!values['reuse-solid']||values.binary,'--reuse-solid requires a native gallery')
-const out=path.join(root,'target/rune-parity/project-tab');await mkdir(out,{recursive:true})
+const out=path.join(root,'target/rune-source-theme-context/parity/project-tab');await mkdir(out,{recursive:true})
 const entry=path.join(root,'scripts/rune/parity/project-tab.fixture.tsx')
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex')
 const themeBytes=await readFile(path.join(root,'crates/rune-theme-codenomad/assets/theme.json')),theme=JSON.parse(themeBytes)
 const inventory=await buildInventory(root),sheet=inventory.get('target/rune-inventory/components__instance-tab.json')
 await writeFile(path.join(out,'instance-tab.sheet.json'),JSON.stringify(sheet,null,2)+'\n')
-const provenance={source:sheet.source,sha256:sheet.sha256,fixtureSha256:hash(await readFile(entry)),themeSha256:hash(themeBytes)}
+const provenance={source:sheet.source,sha256:sheet.sha256,fixtureSha256:hash(await readFile(entry)),themeSha256:hash(themeBytes),sourceContext:theme.context}
 const nativeBinary=values.binary?{path:values.binary,sha256:hash(await readFile(values.binary))}:undefined
 const long='Alpha · synthetic project with a deliberately long folder label that exceeds the active and inactive tab maxima'
 const cases=[{name:'active',locale:'en',active:true},{name:'inactive',locale:'en',active:false},{name:'rtl',locale:'he',active:true},{name:'rtl-inactive',locale:'he',active:false},{name:'long',locale:'en',active:true,title:long},{name:'long-inactive',locale:'en',active:false,title:long},{name:'long-rtl',locale:'he',active:true,title:long}]
-const records=[];let browser,server
+const records=[];let browser,source
 async function execute(args,env){
   return new Promise((resolve,reject)=>{
     const child=spawn(values.binary,args,{cwd:root,env,windowsHide:true,stdio:['ignore','pipe','pipe']});let log=''
@@ -53,29 +49,15 @@ try{
     const previous=JSON.parse(await readFile(path.join(out,'evidence.json'),'utf8'))
     assert.deepEqual(previous.provenance,provenance,'Regenerate references after source/fixture/theme changes')
     assert.equal(previous.records.length,cases.length*2)
-    for(const record of previous.records){assert(record.fontsReady);assert.deepEqual(record.errors,[]);assert.equal(record.states.length,4);for(const state of record.states){await readFile(path.join(out,state.alpha.file));await readFile(path.join(out,state.alpha.halo.file))}records.push({...record,priorFailure:record.failure,failure:undefined})}
+    for(const record of previous.records){assert.equal(record.context?.kind,'product-default');assert(record.fontsReady);assert.deepEqual(record.errors,[]);assert.equal(record.states.length,4);for(const state of record.states){await readFile(path.join(out,state.alpha.file));await readFile(path.join(out,state.alpha.halo.file))}records.push({...record,priorFailure:record.failure,failure:undefined})}
   }else{
-    const cache=await createFixtureCache(),shutdown=createFixtureShutdown(cache)
-    const dependencyRoot=path.dirname(path.dirname(require.resolve('playwright/package.json')))
-    server=await createServer({root:path.join(root,'packages/ui'),configFile:false,cacheDir:cache.cacheDir,
-      plugins:[shutdown.plugin,solid(),{name:'actual-instance-tab',configureServer(s){s.middlewares.use('/rune-project-tab',async(_q,r)=>{r.setHeader('content-type','text/html');r.end(await s.transformIndexHtml('/rune-project-tab',`<html><body style="margin:0"><div id="root"></div><script type="module" src="/@fs/${entry.replaceAll('\\','/')}"></script></body></html>`))})}}],
-      resolve:{dedupe:['solid-js']},optimizeDeps:{entries:[entry],include:['solid-js','solid-js/web','solid-js/store','debug'],exclude:['lucide-solid']},
-      server:{host:'127.0.0.1',port:0,hmr:false,watch:null,fs:{allow:[root,dependencyRoot]}},logLevel:'error'})
-    shutdown.own(server);await server.listen()
-    const origin=`http://127.0.0.1:${server.httpServer.address().port}`
+    source=await createSourceFixture('scripts/rune/parity/project-tab.fixture.tsx','rune-project-tab-product')
     browser=await chromium.launch({headless:true,executablePath:process.env.CODENOMAD_BROWSER_PATH||undefined})
     for(const config of cases)for(const palette of ['light','dark']){
       const record={...config,title:config.title??'Alpha',id:`${config.name}-${palette}`,theme:palette,errors:[],requests:[],states:[],startupReloads:0};records.push(record)
-      const page=await browser.newPage({viewport:{width:900,height:200},deviceScaleFactor:1})
-      page.on('pageerror',e=>record.errors.push(e.message))
-      await page.route('**/*',route=>{const u=new URL(route.request().url());assert.equal(u.origin,origin,'No external requests')
-        if(!u.pathname.startsWith('/api/'))return route.continue()
-        const method=route.request().method();record.requests.push({method,path:u.pathname})
-        if(method!=='GET'){record.errors.push('Unexpected API mutation');return route.abort('blockedbyclient')}
-        return u.pathname==='/api/events'?route.fulfill({contentType:'text/event-stream',body:': isolated primitive fixture\n\n'}):route.fulfill({json:{}})
-      })
-      await page.emulateMedia({colorScheme:palette,reducedMotion:'reduce'})
-      await page.goto(`${origin}/rune-project-tab?${new URLSearchParams({locale:record.locale,theme:palette,title:record.title,active:String(record.active)})}`)
+      const {page,diagnostics}=await source.open(browser,{locale:record.locale,theme:palette,title:record.title,active:String(record.active)},{width:900,height:200})
+      record.errors=diagnostics.page;record.requests=diagnostics.api
+      record.context=await page.evaluate(()=>window.runeSourceContext.snapshot())
       for(let attempt=0;attempt<3;attempt++){try{await page.waitForFunction(()=>globalThis.runeProjectTab?.ready,undefined,{timeout:15000});break}catch(e){if(attempt===2)throw e;record.startupReloads++;await page.reload()}}
       await page.evaluate(()=>document.fonts.ready);assert.equal(await page.evaluate(()=>document.fonts.status),'loaded');record.fontsReady=true
       const tab=page.getByRole('tab'),frame=page.locator('#primitive-frame')
@@ -101,7 +83,7 @@ try{
       record.keyboardClose=await page.evaluate(()=>!runeProjectTab.state().present)
       if(!record.keyboardClose)await tab.locator('.tab-close').click()
       assert(await page.evaluate(()=>!runeProjectTab.state().present),'Actual pointer close by identity required')
-      assert.deepEqual(record.errors,[]);await page.close()
+      assertSourceDiagnostics(diagnostics);await page.close()
     }
   }
   if(values.binary)for(const record of records)for(const state of record.states){
@@ -142,7 +124,7 @@ try{
   }
 }catch(error){if(records.length)records.at(-1).failure=error.message;throw error}
 finally{
-  await browser?.close();await server?.close()
+  await browser?.close();await source?.close()
   await writeFile(path.join(out,'evidence.json'),JSON.stringify({status:records.some(r=>r.failure)?'blocked':values.binary?'paired-captures-require-review':'actual-solid-only',component:'plain-instance-tab',wholeInstanceTabs:'pending',provenance,nativeBinary,records,findings:records.filter(r=>r.keyboardClose===false).map(r=>({id:r.id,contract:'Solid close Space',result:'failed',nativeRequirement:'Accessible keyboard close retained'})),pending:['Reviewed regional budgets and negative-control rejection','Independent blind reviews','Status/remote/temporary/rename contexts','Physical mobile qualification']},null,2)+'\n')
 }
 console.log(out)

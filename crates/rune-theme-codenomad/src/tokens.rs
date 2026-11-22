@@ -123,6 +123,7 @@ impl Tokens {
     }
     pub fn text(&self, role: TextRole) -> TextStyle {
         let named = match role {
+            TextRole::Body => Some("body"),
             TextRole::Button => Some("button"),
             TextRole::SecondaryButton => Some("secondary"),
             TextRole::Label => Some("input"),
@@ -134,7 +135,8 @@ impl Tokens {
                 self.metric(component, "fontSize").px(),
                 self.metric(component, "fontWeight").px(),
             )
-            .lh(self.metric(component, "lineHeight").px());
+            .lh(self.metric(component, "lineHeight").px())
+            .tracking(self.metric(component, "letterSpacing").px());
         }
         let size = self
             .number(match role {
@@ -151,7 +153,13 @@ impl Tokens {
                 "line-height-normal"
             })
             .px();
-        let style = TextStyle::new(size, weight).lh(size * line);
+        let style = TextStyle::new(size, weight).lh(size * line).tracking(
+            if matches!(role, TextRole::Mono) {
+                0.0
+            } else {
+                self.metric("body", "letterSpacing").px()
+            },
+        );
         if matches!(role, TextRole::Mono) {
             style.mono()
         } else {

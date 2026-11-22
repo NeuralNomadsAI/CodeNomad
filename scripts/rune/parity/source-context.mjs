@@ -34,9 +34,9 @@ export async function createSourceFixture(entry,name='rune-source-context',marku
  const fixture=await borrowFixture({name,routes:[{path:'/fixture',html:'<html><body style="margin:0"><div id="root"></div><template id="source-contract">'+markup+'</template><script type="module" src="/@fs/'+path.resolve(root,entry).replaceAll('\\','/')+'"></script></body></html>'}]},{endpoint:daemon})
  const origin=new URL(fixture.url).origin,events=await fixtureEventStream(origin),pages=new Set()
  return {url:fixture.url,dependencies,provenance,logDirectory:daemon.logDirectory,
-  async open(browser,query={},viewport={width:960,height:640}){
+  async open(browser,query={},viewport={width:960,height:640},{hasTouch=false,isMobile=false}={}){
    armFixtureNavigationBudget(browser)
-   const page=await browser.newPage({viewport,deviceScaleFactor:1,locale:query.locale==='he'?'he-IL':'en-US'}),storage=new Map(),diagnostics={page:[],console:[],network:[],rejected:[],api:[],resources:[]}
+   const page=await browser.newPage({viewport,hasTouch,isMobile,deviceScaleFactor:1,locale:query.locale==='he'?'he-IL':'en-US'}),storage=new Map(),diagnostics={page:[],console:[],network:[],rejected:[],api:[],resources:[]}
    pages.add(page);page.once('close',()=>pages.delete(page))
    page.on('pageerror',error=>diagnostics.page.push(error.message));page.on('console',message=>{if(message.type()==='error')diagnostics.console.push(message.text())});page.on('requestfailed',request=>diagnostics.network.push({url:request.url(),error:request.failure()?.errorText}))
    page.on('response',response=>{if(response.status()>=400)diagnostics.resources.push({url:response.url(),status:response.status()})})

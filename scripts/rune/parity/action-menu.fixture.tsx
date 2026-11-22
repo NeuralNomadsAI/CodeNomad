@@ -5,8 +5,7 @@ import ActionOverflowMenu, { type ActionOverflowMenuItem } from "../../../packag
 import FileRowActions from "../../../packages/ui/src/components/instance/shell/right-panel/FileRowActions"
 import AlertDialog from "../../../packages/ui/src/components/alert-dialog"
 import { showConfirmDialog, alertDialogState } from "../../../packages/ui/src/stores/alerts"
-import { ConfigProvider } from "../../../packages/ui/src/stores/preferences"
-import { I18nProvider, preloadLocaleMessages } from "../../../packages/ui/src/lib/i18n"
+import {SourceContext,prepareSourceContext,sourceContextSettled} from './source-context.fixture'
 import "../../../packages/ui/src/index.css"
 
 const query = new URL(location.href).searchParams
@@ -43,7 +42,8 @@ const items = (): ActionOverflowMenuItem[] => {
 }
 Object.assign(window, { runeActionMenu: { ready: false, state: () => ({ events: [...events], dialog: dialog() || Boolean(alertDialogState()), present: present(), count: count(), focus: focused() }), remove: () => setPresent(false), shrink: () => setCount(0), restore: () => setCount(3) } })
 
-render(() => <ConfigProvider><I18nProvider>
+await prepareSourceContext()
+render(() => <SourceContext>
   <div id="frame" style={{ position: "absolute", left: "240px", top: "24px", width: "80px", display: "flex" }}>
     <Show when={present()}>
       <Show when={mode === "row"} fallback={
@@ -61,6 +61,6 @@ render(() => <ConfigProvider><I18nProvider>
     </Dialog.Content></Dialog.Portal>
   </Dialog>
   <AlertDialog />
-</I18nProvider></ConfigProvider>, document.getElementById("root")!)
-await preloadLocaleMessages("en")
+</SourceContext>, document.getElementById("root")!)
+await sourceContextSettled()
 ;(window as any).runeActionMenu.ready = true

@@ -1,8 +1,7 @@
 import {createSignal} from "solid-js"
 import {render} from "solid-js/web"
 import {WorkspaceTree} from "../../../packages/ui/src/components/instance/shell/right-panel/components/WorkspaceTree"
-import {ConfigProvider} from "../../../packages/ui/src/stores/preferences"
-import {I18nProvider,preloadLocaleMessages} from "../../../packages/ui/src/lib/i18n"
+import {SourceContext,prepareSourceContext,sourceContextSettled} from './source-context.fixture'
 import "../../../packages/ui/src/index.css"
 
 const query=new URL(location.href).searchParams
@@ -17,9 +16,10 @@ const tree={rows:()=>[{path,name:label,depth,type:file?"file":"directory",parent
   select:(value:string)=>{events.push("select");setState(s=>({...s,selected:value}))},
   toggle:(value:string)=>{events.push("toggle");setState(s=>({...s,expanded:s.expanded.has(value)?new Set():new Set([value])}))}}
 Object.assign(window,{runeWorkspaceRow:{ready:false,state:()=>({events,selected:state().selected,expanded:[...state().expanded]})}})
-render(()=><ConfigProvider><I18nProvider><div id="fixture" style={{width:"360px"}}>
+await prepareSourceContext()
+render(()=><SourceContext><div id="fixture" style={{width:"360px"}}>
   <WorkspaceTree tree={tree as any} t={key=>key} directory="Synthetic" instanceId="synthetic" worktreeSlug="root" canOpen={false} onOpen={()=>events.push("preview")} />
-</div></I18nProvider></ConfigProvider>,document.getElementById("root")!)
-await preloadLocaleMessages("en")
+</div></SourceContext>,document.getElementById("root")!)
+await sourceContextSettled()
 document.documentElement.dir=rtl?"rtl":"ltr"
 ;(window as any).runeWorkspaceRow.ready=true

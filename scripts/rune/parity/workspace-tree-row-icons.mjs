@@ -4,7 +4,7 @@ import path from 'node:path'
 import {ts,walk} from '../component-inventory-ast.mjs'
 import {generated} from '../generate-common.mjs'
 const require=createRequire(import.meta.url)
-const glyphs=['chevron-right','chevron-down','refresh-cw','folder','folder-open','file','file-code','file-text','image','copy','eye']
+const glyphs=['chevron-right','chevron-down','refresh-cw','folder','folder-open','file','file-code','file-text','image','copy','eye','terminal-square','external-link']
 function literal(node){
   if(ts.isStringLiteral(node)||ts.isNumericLiteral(node))return node.text
   if(ts.isArrayLiteralExpression(node))return node.elements.map(literal)

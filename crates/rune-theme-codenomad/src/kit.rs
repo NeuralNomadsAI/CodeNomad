@@ -108,7 +108,7 @@ fn build(dark: bool) -> Kit {
         style
     };
     let ty = Type {
-        ui: t.text(TextRole::Body),
+        ui: t.text(TextRole::Label),
         ui_medium: t.text(TextRole::Button),
         ui_compact: t.text(TextRole::Label),
         small: t.text(TextRole::Small),

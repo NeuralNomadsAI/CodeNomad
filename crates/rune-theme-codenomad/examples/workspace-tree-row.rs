@@ -1,4 +1,5 @@
-//! Offscreen row gallery, with synthetic content and no backend.
+//! Offscreen row/slot layout gallery for Source's platform desktop-local caller.
+//! Actions are synthetic visual slots; FileRowActions interaction has its own qualification.
 use rune::{Cx, El};
 use rune_theme_codenomad::{
     layout, tokens,
@@ -27,8 +28,10 @@ fn view(s: &Gallery, cx: &mut Cx<Gallery>) -> El {
             data: None,
         };
         let side = t.metric("fileRowAction", "minWidth").px();
-        let control = |glyph| {
+        let control = |key, glyph, disabled| {
             rune::el()
+                .key(key)
+                .disabled(disabled)
                 .size(side, side)
                 .center()
                 .child(
@@ -37,15 +40,24 @@ fn view(s: &Gallery, cx: &mut Cx<Gallery>) -> El {
                 )
                 .opacity(t.metric("fileRowAction", "opacity").px())
         };
-        let actions = rune::row()
+        let mut actions = rune::row()
             .gap(t.metric("workspaceRow", "actionGap").px())
-            .center_y()
-            .child(if file {
-                control(&icons::EYE)
-            } else {
-                rune::el()
-            })
-            .child(control(&icons::COPY))
+            .center_y();
+        if file {
+            actions = actions.child(control("preview", &icons::EYE, true));
+            if cfg!(target_os = "windows") {
+                actions = actions.child(control("open-default", &icons::EXTERNAL_LINK, false));
+            }
+            actions = actions.child(control("show-in-folder", &icons::FOLDER_OPEN, false));
+        } else {
+            actions = actions
+                // FileRowActions retains its empty pinned-actions slot before the inline group.
+                .child(rune::el())
+                .child(control("open-folder", &icons::FOLDER_OPEN, false))
+                .child(control("open-terminal", &icons::TERMINAL_SQUARE, false));
+        }
+        let actions = actions
+            .child(control("copy-path", &icons::COPY, false))
             .opacity(if s.mode == "focus" { 1.0 } else { 0.0 });
         rune::col()
             .w_full()

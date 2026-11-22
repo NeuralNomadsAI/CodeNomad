@@ -1,43 +1,31 @@
 import assert from 'node:assert/strict'
 import {mkdir,readFile,writeFile} from 'node:fs/promises'
 import {createHash} from 'node:crypto'
-import {createRequire} from 'node:module'
 import {fileURLToPath} from 'node:url'
 import path from 'node:path'
 import {chromium} from 'playwright'
-import {createServer} from 'vite'
-import solid from 'vite-plugin-solid'
-import {createFixtureCache} from '../../../packages/ui/tests/browser/fixture-cache.ts'
-import {createFixtureShutdown} from '../../../packages/ui/tests/browser/fixture-shutdown.ts'
+import {createSourceFixture,assertSourceDiagnostics} from './source-context.mjs'
 
-const root=fileURLToPath(new URL('../../../',import.meta.url)),require=createRequire(import.meta.url)
-const out=path.join(root,'target/rune-parity/action-menu');await mkdir(out,{recursive:true})
+const root=fileURLToPath(new URL('../../../',import.meta.url))
+const out=path.join(root,'target/rune-source-theme-context/parity/action-menu');await mkdir(out,{recursive:true})
 const entry=path.join(root,'scripts/rune/parity/action-menu.fixture.tsx')
 const hash=async file=>createHash('sha256').update(await readFile(path.join(root,file))).digest('hex')
 const provenance=Object.fromEntries(await Promise.all(['packages/ui/src/components/action-overflow-menu.tsx','packages/ui/src/components/instance/shell/right-panel/FileRowActions.tsx','packages/ui/src/components/alert-dialog.tsx','packages/ui/src/stores/alerts.ts','scripts/rune/parity/action-menu.fixture.tsx','scripts/rune/parity/action-menu.mjs','packages/ui/src/styles/components/dropdown.css','packages/ui/src/styles/panels/file-row-actions.css'].map(async file=>[file,await hash(file)])))
-const records=[];let browser,server
+const records=[];let browser,source
 try{
-  const cache=await createFixtureCache(),shutdown=createFixtureShutdown(cache)
-  const dependencies=path.dirname(path.dirname(require.resolve('playwright/package.json')))
-  server=await createServer({root:path.join(root,'packages/ui'),configFile:false,cacheDir:cache.cacheDir,
-    plugins:[shutdown.plugin,solid(),{name:'actual-action-overflow-menu',configureServer(s){s.middlewares.use('/rune-action-menu',async(_q,r)=>{r.setHeader('content-type','text/html');r.end(await s.transformIndexHtml('/rune-action-menu',`<html><body style="margin:0"><div id="root"></div><script type="module" src="/@fs/${entry.replaceAll('\\','/')}"></script></body></html>`))})}}],
-    resolve:{dedupe:['solid-js']},optimizeDeps:{entries:[entry],include:['solid-js','solid-js/web','solid-js/store','debug'],exclude:['lucide-solid']},
-    server:{host:'127.0.0.1',port:0,hmr:false,watch:null,fs:{allow:[root,dependencies]}},logLevel:'error'})
-  shutdown.own(server);await server.listen()
-  const origin=`http://127.0.0.1:${server.httpServer.address().port}`
+  source=await createSourceFixture('scripts/rune/parity/action-menu.fixture.tsx','rune-action-menu-product')
+  Object.assign(provenance,source.provenance)
   browser=await chromium.launch({headless:true,executablePath:process.env.CODENOMAD_BROWSER_PATH||undefined})
   const cases=['standard','immediate','immediate-target','alert-standard','alert-immediate','alert-immediate-target','dismiss','shrink','duplicate','row'].map(mode=>({mode,activation:'keyboard'}))
   cases.push(...['standard','immediate-target','alert-standard','alert-immediate-target'].map(mode=>({mode,activation:'pointer'})))
   for(const theme of ['light','dark'])for(const {mode,activation} of cases){
     const record={id:`${mode}-${theme}${activation==='pointer'?'-pointer':''}`,theme,mode,activation,errors:[],states:[]};records.push(record)
-    const page=await browser.newPage({viewport:{width:480,height:360},deviceScaleFactor:1})
+    const {page,diagnostics}=await source.open(browser,{theme,case:mode},{width:480,height:360})
     page.setDefaultTimeout(10000)
     page.setDefaultNavigationTimeout(60000)
-    page.on('pageerror',error=>record.errors.push(error.message))
-    record.requests=[]
-    await page.route('**/*',route=>{const url=new URL(route.request().url());assert.equal(url.origin,origin,'External request prohibited');if(!url.pathname.startsWith('/api/'))return route.continue();const method=route.request().method();record.requests.push({method,path:url.pathname});assert.equal(method,'GET','API mutation prohibited');return url.pathname==='/api/events'?route.fulfill({contentType:'text/event-stream',body:': isolated fixture\n\n'}):route.fulfill({json:{}})})
-    await page.emulateMedia({colorScheme:theme,reducedMotion:'reduce'})
-    await page.goto(`${origin}/rune-action-menu?${new URLSearchParams({theme,case:mode})}`,{waitUntil:'domcontentloaded'})
+    record.errors=diagnostics.page
+    record.requests=diagnostics.api
+    record.context=await page.evaluate(()=>window.runeSourceContext.snapshot())
     record.startupReloads=0
     for(let attempt=0;attempt<3;attempt++){try{await page.waitForFunction(()=>globalThis.runeActionMenu?.ready,undefined,{timeout:30000});break}catch(error){if(attempt===2)throw error;record.startupReloads++;await page.reload({waitUntil:'domcontentloaded'})}}
     await page.evaluate(()=>document.fonts.ready)
@@ -122,8 +110,8 @@ try{
       assert.equal(await page.locator('.file-row-actions').getAttribute('data-compact'),'true')
       await page.keyboard.press('Escape');record.result=await page.evaluate(()=>runeActionMenu.state())
     }
-    assert.deepEqual(record.errors,[]);await page.close()
+    assertSourceDiagnostics(diagnostics);await page.close()
   }
 }catch(error){if(records.length)records.at(-1).failure=error.message;throw error}
-finally{await browser?.close();await server?.close();await writeFile(path.join(out,'solid-evidence.json'),JSON.stringify({status:records.some(r=>r.failure)?'failed':'actual-solid-only',provenance,records,pending:['Rune comparison, regional pixel budgets and negative controls','Touch/pen, RTL and physical devices'],frame:'Actual menu in existing compact FileRowActions CSS context; row case mounts actual FileRowActions with its ResizeObserver. Structural positioning only; no component styles replaced.'},null,2)+'\n')}
+finally{await browser?.close();await source?.close();await writeFile(path.join(out,'solid-evidence.json'),JSON.stringify({status:records.some(r=>r.failure)?'failed':'product-default-requalification-pending',provenance,records,pending:['Rune comparison, regional pixel budgets and negative controls','Touch/pen, RTL and physical devices'],frame:'Actual menu in compact FileRowActions and shared product SourceContext; row case mounts actual FileRowActions with its ResizeObserver.'},null,2)+'\n')}
 console.log(out)

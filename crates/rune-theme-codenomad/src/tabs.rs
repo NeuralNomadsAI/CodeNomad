@@ -84,7 +84,7 @@ pub fn tab<S: 'static>(
     let mut theme = kit(layout::dark()).clone();
     let metric = move |key| t.metric("tabActive", key).px();
     let font =
-        rune::TextStyle::new(metric("fontSize"), metric("fontWeight")).lh(metric("lineHeight"));
+        rune::TextStyle::new(metric("fontSize"), metric("fontWeight")).lh(metric("lineHeight")).tracking(metric("letterSpacing"));
     theme.c.hover = Color::TRANSPARENT;
     theme.c.pressed = Color::TRANSPARENT;
     let ink = t.color(if selected {

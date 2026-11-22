@@ -91,7 +91,7 @@ pub fn row(dark: bool, rtl: bool, row: Row<'_>) -> El {
                 .shrink()
                 .min_w(0.0)
                 .truncate()
-                .font(TextStyle::new(m("fontSize"), m("fontWeight")).lh(m("lineHeight")))
+                .font(TextStyle::new(m("fontSize"), m("fontWeight")).lh(m("lineHeight")).tracking(m("letterSpacing")))
                 .color(ink)
                 .a11y_hidden(),
         );

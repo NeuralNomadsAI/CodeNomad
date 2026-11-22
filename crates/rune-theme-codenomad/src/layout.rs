@@ -39,7 +39,7 @@ pub fn button(label: &str, disabled: bool) -> El {
 }
 pub fn input(edit: &TextEdit) -> El {
     // Rune's low-level editor retains the application's edit accessor and submit contract.
-    rune::text_input(edit, tokens(dark()).text(TextRole::Body))
+    rune::text_input(edit, tokens(dark()).text(TextRole::Label))
         .w_full()
         .padding(tokens(dark()).space(Space::Sm).px())
         .fill(tokens(dark()).color("surface-field"))

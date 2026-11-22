@@ -30,6 +30,7 @@ export async function collectTheme(names){
     button:['.button-primary',['fontSize','fontWeight','lineHeight','minHeight','paddingLeft','paddingTop','borderTopWidth']],
     secondary:['.button-secondary',['fontSize','fontWeight','lineHeight']],
     input:['.selector-input',['fontSize','fontWeight','lineHeight','outlineWidth','outlineOffset']],
+    composerInput:['.prompt-input',['fontSize','fontWeight','lineHeight']],
     title:['.window-title',['fontSize','fontWeight','lineHeight']],
     disclosure:['.disclosure-chevron',['transitionDuration','transitionTimingFunction']],
     transition:['.transition-colors',['transitionDuration','transitionTimingFunction']],
@@ -50,6 +51,15 @@ export async function collectTheme(names){
     workspaceRow:['.workspace-tree-row',['minHeight','paddingTop','paddingBottom','paddingInlineEnd','columnGap','fontSize','fontWeight','lineHeight']],
   }
   const metrics={}
+  const body=getComputedStyle(document.body)
+  const tracking=style=>{
+    if(style.letterSpacing==='normal')return 0
+    if(!/^-?[\d.]+px$/.test(style.letterSpacing))throw Error('Unsupported Source letter spacing '+style.letterSpacing)
+    return parseFloat(style.letterSpacing)
+  }
+  metrics.body={fontSize:parseFloat(body.fontSize),fontWeight:parseFloat(body.fontWeight),lineHeight:parseFloat(body.lineHeight),letterSpacing:tracking(body)}
+  if(Object.values(metrics.body).some(value=>!Number.isFinite(value)))throw Error('Source body requires resolved numerical typography')
+  strings['body-font-family']=body.fontFamily
   for(const [name,[selector,properties]] of Object.entries(contracts)){
     const element=document.querySelector(selector),style=getComputedStyle(element)
     metrics[name]={}
@@ -58,6 +68,7 @@ export async function collectTheme(names){
       if(!key.startsWith('transition')&&!numeric)throw new Error(`${selector} ${key} requires an explicit numeric CSS value, received ${value}`)
       metrics[name][key]=numeric?Number.parseFloat(value):value
     }
+    if('fontSize'in metrics[name])metrics[name].letterSpacing=tracking(style)
   }
   const sourceGutter=document.querySelector('.action-overflow-content').dataset.sourceGutter
   if(!/^\d+(?:\.\d+)?$/.test(sourceGutter))throw Error('Missing numeric ActionOverflowMenu source gutter')

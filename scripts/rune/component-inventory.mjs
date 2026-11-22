@@ -42,6 +42,7 @@ async function filesUnder(directory) {
   for (const entry of await readdir(directory, {withFileTypes: true})) {
     if (['node_modules', 'dist', '.git'].includes(entry.name)) continue
     const file = path.join(directory, entry.name)
+    if (slash(file).endsWith('/packages/ui/src/renderer/public/monaco')) continue
     if (entry.isDirectory()) result.push(...await filesUnder(file))
     else result.push(file)
   }
@@ -163,6 +164,7 @@ export async function buildInventory(root = defaultRoot) {
     const record = {
       id, name: component.name, declaration: reference(root, component.node), status: 'not-converted',
       parity: {visual: 'unverified', accessibility: 'unverified', interaction: 'unverified'},
+      sourceContext: {required: 'product-default', fixture: 'scripts/rune/parity/source-context.fixture.tsx', qualification: 'unverified'},
       props: properties(checker, component, root), ...body, classes: classReferences,
       tokens: tokenNames.map(name => ({name, definitions: css.tokens.get(name) ?? []})),
       exports: graph.exports.get(id) ?? [], imports: graph.imports.get(id) ?? [], jsxUsages: graph.usages.get(id) ?? [],
