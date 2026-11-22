@@ -1,5 +1,6 @@
 use super::{
-    Backend, Launcher, MAX_BROWSED_SESSIONS, Reply, Session, Sessions, State, TextEdit, Tx, bounded,
+    Backend, Instant, Launcher, MAX_BROWSED_SESSIONS, Reply, Session, Sessions, State, TextEdit,
+    Tx, bounded,
 };
 use crate::{Phase, catalog::SessionMissing};
 use std::collections::HashSet;
@@ -27,9 +28,36 @@ impl Launcher {
             self.sessions = page.rows;
             self.listed_sessions = listed;
         }
-        self.visits
-            .observe_listing(&self.listed_sessions, page.next.is_none());
+        self.visits.observe_listing(&self.listed_sessions);
         self.next = page.next;
+    }
+
+    pub(super) fn listed_visits_not_seen(&self) -> Vec<String> {
+        self.visits
+            .listed_ids()
+            .filter(|id| !self.listed_sessions.contains(*id))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    pub(super) fn check_omitted_visits(&mut self) {
+        let (Some(backend), Some(project)) = (self.connection.clone(), self.project.clone()) else {
+            return;
+        };
+        let ids = self.listed_visits_not_seen();
+        if ids.is_empty() {
+            return;
+        }
+        let (out, checks) = bounded(ids.len());
+        self.visits.start_checks(&ids, checks);
+        let wake = self.wake.clone();
+        // Results belong to the listing; dropping its receiver cancels the worker.
+        crate::platform::spawn(async move {
+            backend
+                .confirm_missing_sessions(&project, ids, out, || wake())
+                .await;
+            wake();
+        });
     }
 }
 
@@ -43,6 +71,7 @@ pub fn list(s: &mut State, more: bool) {
     if l.pending || more && (l.next.is_none() || l.sessions.len() >= MAX_BROWSED_SESSIONS) {
         return;
     }
+    l.visits.cancel_checks();
     l.listing = true;
     let cursor = if more { l.next.clone() } else { None };
     l.job("rune.list_error", async move {
@@ -116,7 +145,7 @@ fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>, dismiss:
                 Ok((bound, session)) => {
                     return Ok(Reply::Selected(
                         missing,
-                        Some((bound, session.title, step)),
+                        Some((bound, session.title, step, Instant::now())),
                         dismiss,
                     ));
                 }

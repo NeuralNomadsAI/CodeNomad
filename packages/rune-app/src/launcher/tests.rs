@@ -21,7 +21,7 @@ fn an_admitted_page_is_not_truncated_at_the_browse_budget() {
 }
 
 #[test]
-fn a_full_refresh_retires_absent_listed_rows_but_not_targeted_children() {
+fn partial_refresh_keeps_history_and_omission_probes_only_previously_listed_visits() {
     let mut launcher = Launcher::fixture();
     launcher.apply_listing(
         Sessions {
@@ -49,62 +49,48 @@ fn a_full_refresh_retires_absent_listed_rows_but_not_targeted_children() {
             .map(|(_, id)| id),
         Some("a")
     );
-    launcher.apply_listing(
-        Sessions {
-            rows: vec![row("b")],
-            next: None,
-        },
-        false,
-        Some("b"),
-    );
-    assert!(launcher.visits.steps(true, Some("b")).next().is_none());
-
+    launcher.visits.record("a", None, false);
+    assert!(!launcher.listed_sessions.contains("a"));
+    assert_eq!(launcher.visits.listed_ids().next(), Some("a"));
     launcher.visits.record("child", None, false);
-    launcher.visits.record("b", None, true);
-    launcher.apply_listing(
-        Sessions {
-            rows: vec![row("b")],
-            next: None,
-        },
-        false,
-        Some("b"),
-    );
-    assert_eq!(
-        launcher
-            .visits
-            .steps(true, Some("b"))
-            .next()
-            .map(|(_, id)| id),
-        Some("child")
-    );
+    assert_eq!(launcher.listed_visits_not_seen(), ["a"]);
 }
 
 #[test]
-fn the_last_page_retires_a_visit_only_if_the_whole_traversal_omitted_it() {
-    for present in [true, false] {
-        let mut launcher = Launcher::fixture();
-        launcher.visits.record("a", None, true);
-        launcher.visits.record("b", None, true);
-        launcher.apply_listing(
+fn terminal_omission_is_not_enough_to_retire_a_visit() {
+    let mut state = crate::init();
+    crate::gallery::shell::fixture(&mut state);
+    let mut rt = rune::Runtime::new(
+        state,
+        crate::view,
+        (1000.0, 800.0),
+        rune::Env::new(false, 1.0),
+    );
+    rt.update(|s, tx| {
+        let l = s.screen.launcher_mut().unwrap();
+        l.visits.record("a", None, true);
+        l.apply_listing(
             Sessions {
                 rows: vec![row("b")],
-                next: Some("next".into()),
+                next: None,
             },
-            false,
-            Some("b"),
+            true,
+            None,
         );
-        assert!(launcher.visits.steps(true, Some("b")).next().is_some());
-        let rows = if present {
-            vec![row("a")]
-        } else {
-            vec![row("c")]
-        };
-        launcher.apply_listing(Sessions { rows, next: None }, true, Some("b"));
-        assert_eq!(
-            launcher.visits.steps(true, Some("b")).next().is_some(),
-            present
+        assert!(can_visit(s, true));
+        let (out, input) = bounded(1);
+        s.screen
+            .launcher_mut()
+            .unwrap()
+            .visits
+            .start_checks(&["a".into()], input);
+        assert!(
+            out.try_send(("a".into(), codenomad_client::runtime::Instant::now()))
+                .is_ok()
         );
-    }
+        assert!(poll(s, tx));
+        assert!(!can_visit(s, true));
+    });
 }
 
 #[test]
@@ -166,7 +152,7 @@ fn a_selection_reply_cannot_replace_a_session_that_resumed_streaming() {
     assert!(
         out.try_send(Ok(Reply::Selected(
             vec![],
-            Some((backend, "Another".into(), None)),
+            Some((backend, "Another".into(), None, Instant::now())),
             None
         )))
         .is_ok()

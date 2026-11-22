@@ -12,7 +12,7 @@ use crate::{
     catalog::{Project, Session, Sessions},
     history::Result,
 };
-use codenomad_client::{Receiver, bounded};
+use codenomad_client::{Receiver, bounded, runtime::Instant};
 use rune::{Tx, edit::TextEdit};
 use std::{collections::HashSet, future::Future};
 pub const MAX_BROWSED_SESSIONS: usize = 2_000;
@@ -57,7 +57,7 @@ enum Reply {
     Created(Backend, String, String, Option<u64>),
     Selected(Vec<String>, Option<Selection>, Option<u64>),
 }
-type Selection = (Backend, String, Option<usize>);
+type Selection = (Backend, String, Option<usize>, Instant);
 enum Restored {
     Empty,
     Bound(Backend, String),
@@ -163,12 +163,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let Some(l) = s.screen.launcher_mut() else {
         return false;
     };
-    let boot_changed = connection::poll_boot(l);
+    let mut changed = !l.pending && l.visits.poll_checks();
+    changed |= connection::poll_boot(l);
     let Some(result) = l.result.as_ref().and_then(|rx| rx.try_recv().ok()) else {
-        if boot_changed {
+        if changed {
             tx.instant();
         }
-        return boot_changed;
+        return changed;
     };
     l.result = None;
     l.pending = false;
@@ -200,7 +201,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 Restored::Empty => {}
             }
         }
-        Ok(Reply::Listed(rows, more)) => l.apply_listing(rows, more, selected.as_deref()),
+        Ok(Reply::Listed(rows, more)) => {
+            l.apply_listing(rows, more, selected.as_deref());
+            if l.next.is_none() {
+                l.check_omitted_visits();
+            }
+        }
         Ok(Reply::Created(b, title, submitted, dismiss)) => {
             if l.title.text == submitted {
                 l.title = TextEdit::new("");
@@ -223,6 +229,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.sessions.retain(|row| !missing.contains(&row.id));
             l.listed_sessions.retain(|id| !missing.contains(id));
             l.visits.forget(&missing);
+            if let Some((backend, _, _, verified)) = &selection {
+                l.visits.verified(&backend.session, *verified);
+            }
             if let Some(id) = selected
                 .as_deref()
                 .filter(|id| s.phase == Phase::Failed && missing.iter().any(|m| m == id))
@@ -231,7 +240,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 tx.instant();
                 return true;
             }
-            if let Some((b, title, visit)) = selection.filter(|(b, _, _)| {
+            if let Some((b, title, visit, _)) = selection.filter(|(b, _, _, _)| {
                 !blocked
                     || s.phase == Phase::Failed && selected.as_deref() == Some(b.session.as_str())
             }) {
@@ -255,6 +264,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             l.error = Some(key);
         }
+    }
+    if let Some(l) = s.screen.launcher_mut()
+        && !l.pending
+    {
+        l.visits.poll_checks();
     }
     tx.instant();
     true

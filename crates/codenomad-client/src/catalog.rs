@@ -250,6 +250,42 @@ impl Backend {
     pub async fn bind(&self, project: &Project, id: &str, fresh: bool) -> Result<Self> {
         Ok(self.bind_session(project, id, fresh).await?.0)
     }
+    // A session can move across a live cursor without leaving the workspace.
+    pub async fn confirm_missing_sessions(
+        &self,
+        project: &Project,
+        ids: Vec<String>,
+        missing: async_channel::Sender<(String, crate::runtime::Instant)>,
+        notify: impl Fn(),
+    ) {
+        futures_lite::future::race(
+            async {
+                for id in ids {
+                    let started = crate::runtime::Instant::now();
+                    let confirmed = futures_lite::future::race(
+                        async {
+                            self.bind_session(project, &id, false)
+                                .await
+                                .is_err_and(|error| error.is::<SessionMissing>())
+                        },
+                        async {
+                            crate::runtime::sleep(std::time::Duration::from_secs(1)).await;
+                            false
+                        },
+                    )
+                    .await;
+                    if confirmed {
+                        if missing.send((id, started)).await.is_err() {
+                            return;
+                        }
+                        notify();
+                    }
+                }
+            },
+            missing.closed(),
+        )
+        .await;
+    }
     pub async fn bind_session(
         &self,
         project: &Project,

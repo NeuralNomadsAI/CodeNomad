@@ -34,6 +34,7 @@ impl Server {
         let address = format!("http://{}", listener.local_addr().unwrap());
         let (stop, stopped) = mpsc::channel();
         let worker = thread::spawn(move || {
+            let mut withheld = vec![];
             for reply in replies {
                 let deadline = Instant::now() + Duration::from_secs(5);
                 let mut socket = loop {
@@ -87,6 +88,10 @@ impl Server {
                     (!body.is_empty()).then(|| serde_json::from_slice::<Value>(&body).unwrap()),
                     reply.body
                 );
+                if reply.status == 0 {
+                    withheld.push(socket);
+                    continue;
+                }
                 let response = if reply.status == 204 {
                     &[][..]
                 } else {
@@ -528,5 +533,49 @@ fn malformed_catalogue_data_is_not_a_terminal_session_page() {
                 .next
                 .is_none()
         );
+    });
+}
+
+#[test]
+fn catalogue_omissions_require_targeted_absence() {
+    run(async {
+        let server = Server::start(vec![
+            reply(
+                "GET /workspaces/workspace/instance/api/session/unresponsive",
+                None,
+                0,
+                json!({}),
+            ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/reordered",
+                None,
+                200,
+                json!({"data":{"id":"reordered","location":{"directory":"/trial"}}}),
+            ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/unavailable",
+                None,
+                503,
+                json!({}),
+            ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/deleted",
+                None,
+                404,
+                json!({"_tag":"SessionNotFoundError","sessionID":"deleted"}),
+            ),
+        ]);
+        let backend = Backend::connect(&server.address, "").await.unwrap();
+        let project = crate::catalog::Project {
+            id: "workspace".into(),
+            path: "/trial".into(),
+        };
+        let ids = ["unresponsive", "reordered", "unavailable", "deleted"].map(str::to_owned);
+        let (out, results) = async_channel::bounded(ids.len());
+        backend
+            .confirm_missing_sessions(&project, ids.into(), out, || {})
+            .await;
+        assert_eq!(results.try_recv().unwrap().0, "deleted");
+        assert!(results.try_recv().is_err());
     });
 }
