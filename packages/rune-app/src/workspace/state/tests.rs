@@ -111,6 +111,35 @@ fn a_press_held_on_send_is_cancelled_when_the_pending_selection_binds() {
 }
 
 #[test]
+fn retry_rebinds_when_the_event_lane_is_gone_even_if_the_command_relay_is_open() {
+    let mut s = init();
+    crate::gallery::shell::fixture(&mut s);
+    let backend = backend("session");
+    let launcher = s.screen.launcher_mut().unwrap();
+    launcher.connection = Some(backend.clone());
+    let mut ui = Ui::new();
+    ui.ready = true;
+    ui.entries[0].saved = Tab::Workspace(workspace("session", "keep this draft"));
+    ui.entries[0].binding = Some(backend);
+    s.workspace = Some(ui);
+    s.draft = TextEdit::new("keep this draft");
+    s.phase = Phase::Failed;
+    let (events, incoming) = bounded(1);
+    drop(events);
+    s.incoming = Some(incoming);
+    let (out, relay) = bounded(1);
+    s.commands = Some(out);
+    let mut rt = runtime(s);
+    rt.update(crate::retry_connection);
+    assert!(
+        rt.state.screen.launcher().unwrap().pending,
+        "retry starts a targeted read"
+    );
+    assert!(relay.try_recv().is_err());
+    assert_eq!(rt.state.draft.text, "keep this draft");
+}
+
+#[test]
 fn waiting_saved_session_keeps_its_draft_until_native_binding() {
     let mut s = init();
     let mut ui = Ui::new();

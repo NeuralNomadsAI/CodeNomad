@@ -121,6 +121,7 @@ fn local_stress() -> bool {
 
 fn send(s: &mut State, tx: &mut Tx) {
     if s.phase != Phase::Ready
+        || s.screen.launcher().is_some_and(|l| l.pending)
         || s.draft.text.trim().is_empty()
         || s.agent.as_ref().is_some_and(|a| a.blocked())
     {
@@ -155,15 +156,18 @@ fn request_older(s: &mut State, _: &mut Tx) {
     }
 }
 fn retry_connection(s: &mut State, tx: &mut Tx) {
-    if s.commands
+    if s.incoming.as_ref().is_none_or(Receiver::is_closed)
+        || s.commands.as_ref().is_none_or(Sender::is_closed)
+    {
+        if let Some(id) = workspace::active_session(s).map(str::to_owned) {
+            launcher::choose(s, id, tx);
+        }
+    } else if s
+        .commands
         .as_ref()
         .is_some_and(|c| c.try_send(Command::Retry).is_ok())
     {
         s.phase = Phase::Reconnecting;
-    } else if s.commands.as_ref().is_none_or(Sender::is_closed)
-        && let Some(id) = workspace::active_session(s).map(str::to_owned)
-    {
-        launcher::choose(s, id, tx);
     }
 }
 fn latest(_: &mut State, tx: &mut Tx) {
@@ -354,6 +358,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                             "send",
                             strings::t("promptInput.overlay.send"),
                             s.phase != Phase::Ready
+                                || s.screen.launcher().is_some_and(|l| l.pending)
                                 || s.agent.as_ref().is_some_and(|a| a.blocked()),
                             crate::screen::action_tx(&scope, send),
                         )),

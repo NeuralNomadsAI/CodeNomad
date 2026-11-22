@@ -143,6 +143,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn pending_selection_cannot_consume_the_departing_draft() {
+        let mut state = crate::init();
+        crate::gallery::shell::fixture(&mut state);
+        let (out, commands) = bounded(1);
+        state.commands = Some(out);
+        state.draft = TextEdit::new("keep this draft");
+        state.screen.launcher_mut().unwrap().pending = true;
+        let mut rt = rune::Runtime::new(
+            state,
+            crate::view,
+            (1000.0, 800.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.update(crate::send);
+        assert!(commands.try_recv().is_err());
+        assert_eq!(rt.state.draft.text, "keep this draft");
+        rt.update(|s, _| s.phase = Phase::Streaming);
+        assert!(!can_change_session(&rt.state));
+    }
+
+    #[test]
     fn a_rebind_of_the_current_session_keeps_the_last_history_until_sync() {
         let mut state = crate::init();
         crate::gallery::shell::fixture(&mut state);
@@ -166,6 +187,7 @@ mod tests {
         agent
             .reasons
             .insert("pending".into(), TextEdit::new("unsent answer"));
+        agent.busy = true;
         state.agent = Some(agent);
         state.phase = Phase::Failed;
         assert!(can_rebind(&state, "session") && crate::agent::navigation_blocked(&state));
@@ -184,6 +206,7 @@ mod tests {
             rt.state.agent.as_ref().unwrap().reasons["pending"].text,
             "unsent answer"
         );
+        assert!(rt.state.agent.as_ref().unwrap().busy);
     }
     #[test]
     fn session_choices_remain_visible_in_the_scrolling_launcher() {
@@ -393,7 +416,7 @@ pub fn list(s: &mut State, more: bool) {
     });
 }
 pub fn create(s: &mut State, _: &mut Tx) {
-    if !crate::workspace::input_ready(s) || crate::agent::navigation_blocked(s) {
+    if !can_change_session(s) {
         return;
     }
     let Some(l) = s.screen.launcher_mut() else {
@@ -434,7 +457,7 @@ fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>, dismiss:
         .is_some_and(|(id, step)| step.is_none() && can_rebind(s, id));
     if candidates.is_empty()
         || !crate::workspace::input_ready(s)
-        || !recovery && crate::agent::navigation_blocked(s)
+        || !recovery && !can_change_session(s)
     {
         return;
     }
@@ -465,6 +488,11 @@ fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>, dismiss:
         }
         Ok(Reply::Selected(missing, None, dismiss))
     });
+}
+pub fn can_change_session(s: &State) -> bool {
+    s.phase != Phase::Streaming
+        && crate::workspace::input_ready(s)
+        && !crate::agent::navigation_blocked(s)
 }
 fn can_rebind(s: &State, id: &str) -> bool {
     !s.screen.is_launcher()
@@ -713,14 +741,10 @@ fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize>, tx: &mut
         s.expanded_tools.clear();
         s.messages.clear();
         s.can_older = false;
-    } else if let Some(previous) = s.agent.take() {
-        let mut current = crate::agent::Ui::new(crate::agent::start(b.clone(), s.wake.clone()));
-        current.forms = previous.forms;
-        current.permissions = previous.permissions;
-        current.drafts = previous.drafts;
-        current.reasons = previous.reasons;
-        current.selected = previous.selected;
-        s.agent = Some(current);
+    } else if let Some(agent) = &mut s.agent {
+        // This is the same owned occurrence and session; the in-flight reply guard stays live.
+        agent.online = false;
+        agent.pending_known = false;
     }
     s.draft = TextEdit::new(draft);
     s.phase = Phase::Loading;

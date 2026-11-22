@@ -29,7 +29,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                 && super::keys(s, key, tx)
         }
     };
-    let navigation_blocked = !workspace::input_ready(s) || crate::agent::navigation_blocked(s);
+    let navigation_blocked = !launcher::can_change_session(s);
     let disabled = l.pending || navigation_blocked;
     let title = t("sessionList.header.title");
     let visit = |back| {
