@@ -481,6 +481,23 @@ fn repeated_file_hints_do_not_starve_display_or_revoke_a_checked_index() {
 }
 
 #[test]
+fn retrying_a_failed_passive_status_cannot_rearm_the_old_index() {
+    let mut ui = ui();
+    ui.mode = Mode::Changes;
+    ui.shown = true;
+    ui.online = true;
+    ui.changes.draft = TextEdit::new("a");
+    let rows = vec![change("a", true, false, 1)];
+    statuses(&mut ui, rows.clone());
+    assert!(ui.can_commit());
+    ui.read_failed(Lane::Changes, "status unavailable".into());
+    ui.requests.slot_mut(Lane::Changes).error = None;
+    assert!(!ui.can_commit());
+    statuses(&mut ui, rows);
+    assert!(ui.can_commit());
+}
+
+#[test]
 fn stage_or_unstage_a_rename_requires_both_paths_but_a_copy_requires_one() {
     let mut changes = Changes::default();
     let mut rename = change("new", true, false, 1);

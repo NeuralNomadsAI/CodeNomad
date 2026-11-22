@@ -21,9 +21,7 @@ impl Ui {
             changed = true;
             match done {
                 Completed::Read(lane, Ok(value)) => self.accept(lane, value),
-                Completed::Read(lane, Err(error)) => {
-                    self.requests.slot_mut(lane).error = Some(read_error(error));
-                }
+                Completed::Read(lane, Err(error)) => self.read_failed(lane, error),
                 Completed::Mutation(epoch, tree, action, result) => {
                     self.settle_mutation(epoch, &tree, action, result)
                 }
@@ -32,6 +30,13 @@ impl Ui {
         let before = self.loading();
         self.demand();
         changed || before != self.loading()
+    }
+
+    pub(super) fn read_failed(&mut self, lane: Lane, error: Error) {
+        if lane == Lane::Changes {
+            self.index_checked = None;
+        }
+        self.requests.slot_mut(lane).error = Some(read_error(error));
     }
 
     pub(super) fn accept(&mut self, lane: Lane, value: Value) {
