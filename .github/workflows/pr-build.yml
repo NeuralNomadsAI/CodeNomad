@@ -547,7 +547,9 @@ jobs:
           packages/ui/src/stores/restore-workspace-commit-gates.test.ts
           packages/ui/src/stores/client-state-codec.test.ts
           packages/ui/src/stores/client-state-partitions.test.ts
+          packages/ui/src/stores/client-state-delta.test.ts
           packages/ui/src/stores/client-state.test.ts
+          packages/ui/src/stores/session-catalog-persistence.test.ts
           packages/ui/src/stores/compaction-notice.test.ts
           packages/ui/src/stores/form-settlements.test.ts
           packages/ui/src/stores/instance-invalidation.test.ts
