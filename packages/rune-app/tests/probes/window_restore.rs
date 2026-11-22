@@ -219,6 +219,13 @@ pub fn run() {
             assert_eq!(rt.state.draft.text, ALPHA);
             select(&mut rt, 1, "ses_created_2");
             assert_eq!(rt.state.draft.text, BETA);
+            let (x, y) = rt.find("sessions-panel-resize").unwrap();
+            rt.pointer_down(x, y);
+            rt.frame(1.0 / 60.0);
+            rt.pointer_move(x + 50.0, y);
+            rt.frame(1.0 / 60.0);
+            rt.pointer_up(x + 50.0, y);
+            rt.frame(1.0 / 60.0);
         }
         "resume" => {
             wait(&mut rt, "automatic selected Beta", |s| {
@@ -252,6 +259,17 @@ pub fn run() {
         _ => unreachable!(),
     }
     occurrences(&mut rt);
+    let shown_width = rt
+        .elements()
+        .into_iter()
+        .find(|element| element.key.as_deref() == Some("sessions-panel"))
+        .expect("restored docked sessions panel")
+        .rect[2];
+    assert_eq!(shown_width, 390.0);
+    assert_eq!(
+        rt.state.workspace.as_ref().unwrap().snapshot().panel_widths[0],
+        Some(390)
+    );
     if stage != "prepare" {
         let saved = rt.state.workspace.as_ref().unwrap().snapshot();
         assert!(saved.tabs.iter().all(

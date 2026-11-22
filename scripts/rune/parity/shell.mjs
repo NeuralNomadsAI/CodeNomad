@@ -113,6 +113,16 @@ try {
   }
   await writeFile(path.join(out, 'evidence.json'), JSON.stringify(report, null, 2))
   for (const entry of report) assert(entry.compare.ratio <= headerBudget, `${entry.appearance}: shell header pixel budget exceeded`)
+  const rtlTree = path.join(out, 'rune-caption-rtl.json')
+  const env = {...await privateEnvironment(path.join(out, 'profiles', 'rtl')), RUNE_LOCALE: 'he', CODENOMAD_PROFILE: 'trial-shell-parity'}
+  await promisify(execFile)(binary, ['--gallery-shell', '--tree', rtlTree, '--size', '390x760', '--at', '0.4'],
+    {env, windowsHide: true, timeout: 60_000})
+  const {elements} = JSON.parse(await readFile(rtlTree, 'utf8'))
+  const caption = elements.find(node => node.key === 'rune-caption').rect
+  assert.equal(caption[0], 0)
+  for (const menu of elements.filter(node => node.key?.startsWith('window.menu.'))) {
+    assert(menu.rect[0] >= caption[2], `${menu.key} overlaps the left Windows caption controls`)
+  }
 } finally {
   try { await browser?.close() } finally { await server.close() }
 }

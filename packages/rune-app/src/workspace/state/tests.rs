@@ -435,6 +435,7 @@ fn valid_v1_with_twenty_four_empty_drafts_can_accept_new_text() {
     let snapshot = Snapshot {
         revision: 1,
         saved_at: 1,
+        panel_widths: [None; 2],
         tabs: vec![Tab::Workspace(old)],
         active: Some(0),
     };

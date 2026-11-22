@@ -149,3 +149,35 @@ fn both_grips_resize_in_the_correct_direction_in_both_locales() {
         }
     }
 }
+
+#[test]
+fn compressed_grip_starts_at_its_presented_width_and_accepts_keyboard() {
+    let mut state = init();
+    fixture(&mut state);
+    let mut rt = Runtime::new(state, english, (700.0, 900.0), Env::new(false, 1.0));
+    settle(&mut rt);
+    let width = |rt: &Runtime<State>| {
+        rt.elements()
+            .into_iter()
+            .find(|e| e.key.as_deref() == Some("sessions-panel"))
+            .unwrap()
+            .rect[2]
+    };
+    assert_eq!(width(&rt), 310.0);
+    let (x, y) = rt.find("sessions-panel-resize").unwrap();
+    rt.pointer_down(x, y);
+    settle(&mut rt);
+    rt.pointer_move(x - 20.0, y);
+    settle(&mut rt);
+    rt.pointer_up(x - 20.0, y);
+    settle(&mut rt);
+    assert_eq!(width(&rt), 290.0);
+    rt.update(|_, tx| tx.focus("sessions-panel-resize", true));
+    settle(&mut rt);
+    rt.key(KeyEvent {
+        key: Key::Left,
+        mods: Mods::default(),
+    });
+    settle(&mut rt);
+    assert!(width(&rt) < 290.0);
+}

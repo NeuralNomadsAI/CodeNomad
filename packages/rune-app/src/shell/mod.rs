@@ -9,7 +9,7 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
 };
 
-pub(crate) use panels::Panels;
+pub(crate) use panels::{Panels, toggle as toggle_panel};
 
 pub fn view(
     s: &State,
@@ -25,7 +25,7 @@ pub fn view(
         root = root.child(crate::platform::titlebar::view(cx));
     }
     if let Some(ui) = &s.workspace {
-        root = root.child(workspace::strip(s, cx));
+        root = root.child(workspace::strip(s, cx).on_background_press_tx(Panels::dismiss_outside));
         if let Some(error) = workspace::status(s) {
             root = root.child(
                 layout::action_row()

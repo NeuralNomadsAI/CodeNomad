@@ -29,6 +29,7 @@ pub struct Ui {
     next_key: u64,
     revision: u64,
     saved_at: u64,
+    panel_widths: [Option<u16>; 2],
     clock: f64,
     pub(super) persistence: Persistence,
     ready: bool,
@@ -48,6 +49,7 @@ impl Ui {
             next_key: 1,
             revision: 0,
             saved_at: 0,
+            panel_widths: [None; 2],
             clock: 0.0,
             persistence: Persistence::new(),
             ready: false,
@@ -66,6 +68,7 @@ impl Ui {
         Snapshot {
             revision: self.revision,
             saved_at: self.saved_at,
+            panel_widths: self.panel_widths,
             tabs: self.entries.iter().map(|e| {
                 let mut saved = e.saved.clone();
                 if let Tab::Workspace(w) = &mut saved {
@@ -102,6 +105,7 @@ impl Ui {
         self.next_key = self.entries.len() as u64;
         self.revision = saved.revision;
         self.saved_at = saved.saved_at;
+        self.panel_widths = saved.panel_widths;
     }
     pub(super) fn release_all(&self) {
         let records = self
@@ -252,6 +256,15 @@ pub fn capture(s: &mut State) {
 }
 pub fn draft_changed(s: &mut State, _: &mut Tx) {
     capture(s);
+}
+pub fn panel_width(s: &mut State, index: usize, width: u16) {
+    if let Some(ui) = &mut s.workspace
+        && ui.panel_widths[index] != Some(width)
+    {
+        ui.panel_widths[index] = Some(width);
+        ui.changed();
+        ui.stage();
+    }
 }
 fn stash(s: &mut State) {
     capture(s);
@@ -623,6 +636,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let loaded = ui.persistence.poll_load();
     if let Some(saved) = loaded {
         ui.hydrate(saved);
+        s.shell.restore_widths(ui.panel_widths);
     }
     let became_ready = loading && !ui.persistence.loading;
     if became_ready {

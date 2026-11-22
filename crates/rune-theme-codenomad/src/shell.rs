@@ -14,6 +14,7 @@ pub const PANEL_DEFAULT: [f32; 2] = [340.0, 260.0];
 pub enum Resize {
     Start,
     Set(f32),
+    Nudge(f32),
     End,
 }
 
@@ -24,12 +25,17 @@ pub fn panel_grip<S: 'static>(
     rtl: bool,
     held: bool,
     desired: f32,
-    resize: impl Fn(&mut S, Resize, &mut Tx) + 'static,
+    min: f32,
+    max: f32,
+    resize: impl Fn(&mut S, Resize, &mut Tx) + Clone + 'static,
 ) -> El {
     let t = tokens(layout::dark());
     let zero = Some(0.0);
     let width = t.space(Space::Xs).px();
     let accent = t.color("accent-primary");
+    let drag_resize = resize.clone();
+    let sign = if leading != rtl { 1.0 } else { -1.0 };
+    let step = t.space(Space::Sm).px();
     el().key(key)
         .w(width)
         .pin(
@@ -40,6 +46,8 @@ pub fn panel_grip<S: 'static>(
         )
         .role("separator")
         .label(label)
+        .range_value(f64::from(desired), f64::from(min), f64::from(max))
+        .focusable(true)
         .fill(if held {
             accent
         } else {
@@ -54,13 +62,22 @@ pub fn panel_grip<S: 'static>(
                     drag.data = desired;
                     Resize::Start
                 }
-                rune::Phase::Move => {
-                    let sign = if leading != rtl { 1.0 } else { -1.0 };
-                    Resize::Set(drag.data + sign * drag.dx)
-                }
+                rune::Phase::Move => Resize::Set(drag.data + sign * drag.dx),
                 rune::Phase::Up => Resize::End,
             };
-            resize(s, event, tx);
+            drag_resize(s, event, tx);
+        })
+        .on_key(move |s, event, tx| {
+            if event.mods != rune::Mods::default() {
+                return false;
+            }
+            let delta = match event.key {
+                rune::Key::Left => -step,
+                rune::Key::Right => step,
+                _ => return false,
+            };
+            resize(s, Resize::Nudge(desired + delta * sign), tx);
+            true
         })
 }
 
@@ -105,7 +122,7 @@ pub fn run<S: 'static>(
     app.run();
 }
 
-pub fn titlebar<S>(cx: &mut Cx<S>, title: &str, rtl: bool, menus: El) -> El {
+pub fn titlebar<S>(cx: &mut Cx<S>, title: &str, menus: El) -> El {
     let t = tokens(layout::dark());
     let gutter = t.space(Space::Md).px();
     let insets = cx.chrome_insets();
@@ -116,11 +133,6 @@ pub fn titlebar<S>(cx: &mut Cx<S>, title: &str, rtl: bool, menus: El) -> El {
         .leading_padding(gutter)
         .trailing_padding(gutter)
         .gap(t.space(Space::Sm).px())
-        .direction(if rtl {
-            rune::Direction::Rtl
-        } else {
-            rune::Direction::Ltr
-        })
         .fill(t.color("surface-shade-strong"))
         .leading(
             text(title)

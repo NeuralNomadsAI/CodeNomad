@@ -45,7 +45,7 @@ enum Reply {
     ),
     Listed(Sessions, bool),
     Created(Backend, String),
-    Selected(Vec<String>, Option<Selection>),
+    Selected(Vec<String>, Option<Selection>, Option<u64>),
 }
 type Selection = (Backend, String, Option<usize>);
 impl Launcher {
@@ -367,43 +367,49 @@ pub fn create(s: &mut State, _: &mut Tx) {
         ))
     });
 }
-pub fn choose(s: &mut State, id: String) -> bool {
+pub fn choose(s: &mut State, id: String, tx: &mut Tx) {
     if !s.screen.is_launcher() && crate::workspace::active_session(s) == Some(id.as_str()) {
-        return true;
+        if s.shell.floating_sessions().is_some() {
+            s.shell.close_floating(tx);
+        }
+    } else {
+        choose_from(s, vec![(id, None)], s.shell.floating_sessions());
     }
-    choose_from(s, vec![(id, None)])
 }
-fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>) -> bool {
+fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>, dismiss: Option<u64>) {
     if candidates.is_empty()
         || !crate::workspace::input_ready(s)
         || crate::agent::navigation_blocked(s)
     {
-        return false;
+        return;
     }
     let Some(l) = s.screen.launcher_mut() else {
-        return false;
+        return;
     };
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
-        return false;
+        return;
     };
     if l.pending {
-        return false;
+        return;
     }
     l.job("rune.open_error", async move {
         let mut missing = Vec::new();
         for (id, step) in candidates {
             match b.bind_session(&p, &id, false).await {
                 Ok((bound, session)) => {
-                    return Ok(Reply::Selected(missing, Some((bound, session.title, step))));
+                    return Ok(Reply::Selected(
+                        missing,
+                        Some((bound, session.title, step)),
+                        dismiss,
+                    ));
                 }
                 Err(err) if err.is::<SessionMissing>() => missing.push(id),
                 Err(err) if missing.is_empty() => return Err(err),
                 Err(_) => break,
             }
         }
-        Ok(Reply::Selected(missing, None))
+        Ok(Reply::Selected(missing, None, dismiss))
     });
-    true
 }
 pub fn can_visit(s: &State, back: bool) -> bool {
     s.screen
@@ -417,7 +423,7 @@ pub fn visit(s: &mut State, back: bool) {
         .steps(back, shown(s))
         .map(|(step, id)| (id.into(), Some(step)))
         .collect();
-    choose_from(s, candidates);
+    choose_from(s, candidates, None);
 }
 fn shown(s: &State) -> Option<&str> {
     (!s.screen.is_launcher())
@@ -517,11 +523,14 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 bind(s, b, title, None, tx);
             }
         }
-        Ok(Reply::Selected(missing, selection)) => {
+        Ok(Reply::Selected(missing, selection, dismiss)) => {
             l.sessions.retain(|row| !missing.contains(&row.id));
             l.visits.forget(&missing);
             if let Some((b, title, visit)) = selection.filter(|_| !blocked) {
                 l.show_title = false;
+                if dismiss.is_some() && dismiss == s.shell.floating_sessions() {
+                    s.shell.close_floating(tx);
+                }
                 bind(s, b, title, visit, tx);
             } else if !blocked {
                 l.error = Some("rune.open_error");

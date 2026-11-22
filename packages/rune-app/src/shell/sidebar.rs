@@ -111,9 +111,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                 selected == Some(id.as_str()),
                 disabled,
                 screen::action_tx(scope, move |s, tx| {
-                    if launcher::choose(s, id.clone()) {
-                        s.shell.close_floating(tx);
-                    }
+                    launcher::choose(s, id.clone(), tx);
                 }),
             )
             .key(key),
@@ -131,13 +129,18 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
         ));
     }
     if let Some(error) = l.error {
-        items = items.child(text(t(error)).role("alert")).child(button(
-            "refresh-sessions",
-            t("sessionList.loadError.retry"),
-            disabled,
-            screen::action(scope, |s| launcher::list(s, false)),
-        ));
+        items = items.child(text(t(error)).role("alert"));
     }
+    items = items.child(button(
+        "refresh-sessions",
+        t(if l.error.is_some() {
+            "sessionList.loadError.retry"
+        } else {
+            "rune.refresh"
+        }),
+        disabled,
+        screen::action(scope, |s| launcher::list(s, false)),
+    ));
     let mut pane = col().full_width().full_height().child(header);
     if l.show_title || s.screen.is_launcher() {
         pane = pane.child(

@@ -16,8 +16,7 @@ pub fn run(spec: AppSpec<State>, closing: fn(&mut State, &mut Tx)) {
 }
 
 pub fn view(cx: &mut Cx<State>) -> El {
-    let rtl = rune_theme_codenomad::catalogue::direction(locale()) == "rtl";
-    shell::titlebar(cx, t("window.title.main"), rtl, menus())
+    shell::titlebar(cx, t("window.title.main"), menus())
 }
 
 #[cfg(target_os = "windows")]
@@ -73,7 +72,11 @@ fn menus() -> El {
                             Some("maximize") => tx.toggle_maximized(),
                             Some("new") if s.current_scope(&scope) => workspace::new_tab(s, tx),
                             Some("left" | "right") if s.current_scope(&scope) => {
-                                s.shell.toggle(usize::from(choice == Some("right")), tx);
+                                crate::shell::toggle_panel(
+                                    s,
+                                    usize::from(choice == Some("right")),
+                                    tx,
+                                );
                             }
                             _ => {}
                         }

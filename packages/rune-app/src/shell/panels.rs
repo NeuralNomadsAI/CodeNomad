@@ -18,6 +18,7 @@ pub struct Panels {
     pub wanted: [Option<[bool; 2]>; 2],
     portrait: bool,
     floating: Option<usize>,
+    floating_epoch: u64,
     resizing: Option<usize>,
 }
 impl Default for Panels {
@@ -28,11 +29,15 @@ impl Default for Panels {
             wanted: [None; 2],
             portrait: false,
             floating: None,
+            floating_epoch: 0,
             resizing: None,
         }
     }
 }
 impl Panels {
+    pub fn restore_widths(&mut self, widths: [Option<u16>; 2]) {
+        self.preferred = std::array::from_fn(|i| widths[i].map_or(PANEL_DEFAULT[i], f32::from));
+    }
     fn wanted(&self) -> [bool; 2] {
         self.wanted[usize::from(self.portrait)].unwrap_or([!self.portrait; 2])
     }
@@ -86,7 +91,7 @@ impl Panels {
         self.docked(self.wanted())[index].is_some() || self.floating == Some(index)
     }
 
-    pub fn toggle(&mut self, index: usize, tx: &mut Tx) {
+    fn toggle(&mut self, index: usize, tx: &mut Tx) {
         if self.floating == Some(index) {
             self.close_floating(tx);
         } else if self.docked(self.wanted())[index].is_some() {
@@ -96,6 +101,7 @@ impl Panels {
             self.floating = None;
             self.set_wanted(index, true);
         } else {
+            self.floating_epoch = self.floating_epoch.wrapping_add(1);
             self.floating = Some(index);
         }
         self.dock_floating();
@@ -118,18 +124,28 @@ impl Panels {
         true
     }
 
+    pub fn floating_sessions(&self) -> Option<u64> {
+        (self.floating == Some(0)).then_some(self.floating_epoch)
+    }
+
     pub fn leave_project(&mut self) {
         self.floating = None;
         self.resizing = None;
     }
 
+    pub fn dismiss_outside(s: &mut State, tx: &mut Tx) {
+        if s.shell.floating.take().is_some() {
+            tx.instant();
+        }
+    }
+
     fn resize(&mut self, index: usize, resize: shell::Resize, tx: &mut Tx) {
         match resize {
             shell::Resize::Start => self.resizing = Some(index),
-            shell::Resize::Set(width) if self.resizing == Some(index) => {
-                let [left, right] = self.docked(self.wanted());
-                let other = [right, left][index].unwrap_or_default();
-                let max = (self.width - CENTER_MIN - other).max(PANEL_MIN[index]);
+            shell::Resize::Set(width) | shell::Resize::Nudge(width)
+                if self.resizing == Some(index) || matches!(resize, shell::Resize::Nudge(_)) =>
+            {
+                let max = self.max_width(index);
                 if width < max || self.preferred[index] <= max {
                     self.preferred[index] = width.clamp(PANEL_MIN[index], max);
                     self.dock_floating();
@@ -139,6 +155,22 @@ impl Panels {
             _ => return,
         }
         tx.instant();
+    }
+    fn max_width(&self, index: usize) -> f32 {
+        let [left, right] = self.docked(self.wanted());
+        let other = [right, left][index].unwrap_or_default();
+        (self.width - CENTER_MIN - other).clamp(
+            PANEL_MIN[index],
+            f32::from(crate::workspace::MAX_PANEL_WIDTH),
+        )
+    }
+}
+
+pub fn toggle(s: &mut State, index: usize, tx: &mut Tx) {
+    let refresh = index == 0 && !s.shell.visible(0);
+    s.shell.toggle(index, tx);
+    if refresh && s.shell.visible(0) {
+        crate::launcher::list(s, false);
     }
 }
 
@@ -183,10 +215,18 @@ pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
                 i == 0,
                 rtl,
                 s.shell.resizing == Some(i),
-                s.shell.preferred[i],
+                width,
+                PANEL_MIN[i],
+                s.shell.max_width(i),
                 move |s: &mut State, resize, tx| {
                     if s.current_scope(&scope) {
+                        let finished = matches!(resize, shell::Resize::Nudge(_))
+                            || matches!(resize, shell::Resize::End) && s.shell.resizing == Some(i);
                         s.shell.resize(i, resize, tx);
+                        if finished {
+                            let width = s.shell.preferred[i].round() as u16;
+                            crate::workspace::panel_width(s, i, width);
+                        }
                     }
                 },
             ))
@@ -223,7 +263,7 @@ pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
                 i == 0,
                 touch,
                 s.shell.visible(i),
-                crate::screen::action_tx(&s.input_scope, move |s, tx| s.shell.toggle(i, tx)),
+                crate::screen::action_tx(&s.input_scope, move |s, tx| toggle(s, i, tx)),
             ));
         }
     }
