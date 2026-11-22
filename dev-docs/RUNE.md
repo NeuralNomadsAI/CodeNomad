@@ -85,7 +85,7 @@ Git keeps checkout metadata, commit-list/detail offsets and navigation at the ta
 
 Text fragments retain native ordinals and live/partial/closed provenance. One shared helper updates both ordered parts and the display body. Open page prefixes preserve longer live text; full native endings and committed pages settle ambiguous fragments through bounded recovery reads.
 
-The Rune transcript renders native prose with kit Markdown and uses kit syntax for read, edit, shell and search output. Display windows count UTF-16 units and preserve line cuts; tool copy reads the retained native result. Tool disclosures and reveal steps belong to each project tab's live transcript state.
+The Rune transcript renders native prose with kit Markdown and uses kit syntax for read, edit, shell and search output. Shell output with ANSI sequences uses styled text from the bounded display window; per-line and window-wide work limits retain readable output on densely styled logs. Copy retains the native sequences. Display windows count UTF-16 units and preserve line cuts. Tool disclosures and reveal steps belong to each project tab's live transcript state.
 
 Persistent isolated hosts require an explicit root and `trial-*` profile. A versioned marker binds the root, profile and configuration; an OS lock covers child containment and reader drain. Window-state writes use the alpha-owned store, preserving the last complete file through atomic replacement. Browser state belongs to the current tab's sessionStorage. The snapshot uses the existing v1 field names and UTF-16 budgets; unsupported payloads require explicit recovery before any replacement.
 

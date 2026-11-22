@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import { createMemo, createRoot, createSignal } from "solid-js"
 import { createMissionStore, type MissionDisplayResponse } from "./mission-store"
 import { createMissionPanelInventory } from "./mission-panel-inventory"
 
@@ -55,4 +56,65 @@ test(`panel ${replacement} admits fresh lanes before obsolete lanes settle`, asy
     assert.equal(store.reading("east~workspace"), false)
     assert.match(store.state("east~workspace").error!, /current/)
   } finally { store.clear("east~workspace") }
+})
+
+test("mission inventory shares one projection across readers of a large family", async () => {
+  const instanceId = "panel-family", other = "panel-other", projectID = "project"
+  const missions = Array.from({ length: 16 }, (_, i) => `mission-${i}`)
+  const order = "a".repeat(43)
+  const window = (total: number) => ({ offset: 0, end: total, total, order })
+  const flags = { discardedEvents: 0, controlUnavailable: false, notificationUnavailable: false, cleanupUnavailable: false }
+  let observedAt = 1
+  const store = createMissionPanelInventory({
+    scope: id => id,
+    tasks: async () => { throw new Error("unexpected task read") },
+    read: async (_id, selector) => {
+      const envelope = { available: true as const, version: 1 as const, projectID, source: selector.source, ...flags,
+        page: { digest: order, total: 0, pieces: [] }, window: window(0) }
+      if (selector.source === "summaries") {
+        return { envelope: { ...envelope, window: window(missions.length), finishHighWater: 0 },
+          values: missions.map(id => ({ id, objective: id, status: "active", actorCount: 1, updatedAt: 1, revision: 1, coordinatorSessionId: `root-${id}` })) }
+      }
+      if (selector.source === "marks") {
+        const observations = missions.map(id => {
+          const root = `root-${id}`
+          return {
+            context: { id, projectID, revision: 1, status: "active", coordinatorSessionId: root,
+              actors: [{ sessionId: root, title: root, location: { directory: "/fixture" }, reportOwed: false, callOpen: false }], actorPage: window(1), ...flags },
+            coverage: "observed", requests: { state: "observed", items: [] },
+            activity: { actors: [{ sessionId: root, state: "running" }], family: { state: "observed",
+              members: Array.from({ length: 33 }, (_, i) => ({ sessionId: `${root}-child-${i}`, actorSessionId: root, kind: "ordinary" })) } },
+          }
+        })
+        return { envelope: { ...envelope, window: undefined, phase: "observed", observedAt }, values: [{ observations, missionPage: window(missions.length) }] }
+      }
+      return { envelope, values: [] }
+    },
+  })
+  try {
+    store.setDemand(instanceId, true)
+    await store.ensure(instanceId)
+    await store.more(instanceId, "marks", true)
+    assert.equal(store.state(instanceId).activity?.missions.length, missions.length)
+    createRoot(dispose => {
+      try {
+        const [pulse, publish] = createSignal(0)
+        const projections = new Set<unknown>()
+        for (let i = 0; i < 40; i++) createMemo(() => { pulse(); projections.add(store.state(instanceId).activity) })
+        for (let i = 1; i <= 3; i++) publish(i)
+        assert.equal(projections.size, 1, "160 reads of unchanged activity must use one retained projection")
+      } finally { dispose() }
+    })
+    const cached = store.state(instanceId)
+    await store.ensure(other)
+    assert.equal(store.state(instanceId), cached, "another panel's publication keeps the original projection")
+    observedAt++
+    await store.more(instanceId, "marks", true)
+    assert.equal(store.state(instanceId).activity?.generatedAt, observedAt)
+    store.invalidateTasks(instanceId)
+    assert.equal(store.state(instanceId).activity?.missions[0]?.actors[0]?.state, "unknown")
+  } finally {
+    store.clear(instanceId)
+    store.clear(other)
+  }
 })
