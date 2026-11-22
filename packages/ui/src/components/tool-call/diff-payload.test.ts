@@ -73,11 +73,16 @@ describe("edit tool diff payload", () => {
       assert.equal(extractDiffPayload("patch", toolState), null)
     })
 
-    const copyFiles = (files: { file: string; patch: string; status: string }[]) =>
-      patchRenderer.getOutputChrome!({
-        toolState: () => ({ ...toolState, metadata: { files } }),
+    const copyFiles = (files: { file: string; patch: string; status: string }[]) => {
+      const state: ToolState = { ...toolState, metadata: { files } }
+      const context: Pick<ToolRendererContext, "toolState" | "toolName" | "instanceId" | "sessionId"> = {
+        toolState: () => state,
         toolName: () => "patch",
-      } as ToolRendererContext)?.getCopyText?.()
+        instanceId: "fixture",
+        sessionId: "fixture",
+      }
+      return patchRenderer.getOutputChrome!(context as ToolRendererContext)?.getCopyText?.()
+    }
 
     it("copies the operation of hunk-less additions and deletions", () => {
       const added = "--- new.txt\n+++ new.txt\n"
