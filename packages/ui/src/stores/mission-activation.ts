@@ -28,6 +28,8 @@ export function useMissionActivation(
   const control = () => missionsPluginControl(state()?.snapshot)
   const unknown = () => !state()?.snapshot
   const enabled = () => !unknown() && control()?.effective !== "disabled"
+  const globalEnabled = () => control()?.global !== "disabled"
+  const projectOverride = () => control()?.controllingRule?.scope === "project" && enabled() !== globalEnabled()
   const checking = () => Boolean(active() && target() && unknown() && !state()?.error)
   const readFailed = () => Boolean(state()?.error)
   const retry = () => {
@@ -35,7 +37,7 @@ export function useMissionActivation(
     if (owner && active() && readFailed()) void pluginControlsCache.load(owner.id, owner.location, { force: true })
   }
   const [pending, setPending] = createSignal<ReturnType<typeof target>>()
-  const canToggle = () => active() && Boolean(control()) && pending() !== target()
+  const canToggle = () => active() && Boolean(control()) && pending() !== target() && !state()?.stale && !state()?.refreshing && !readFailed()
     && Boolean(state()?.snapshot?.targets.some(value => value.scope === "global"))
   let lifetime: AbortSignal | undefined
   createEffect(() => {
@@ -46,16 +48,17 @@ export function useMissionActivation(
     const release = pluginControlsCache.acquireDemand(owner.id, owner.location)
     onCleanup(() => { controller.abort(); release() })
   })
-  const toggle = async (value: boolean) => {
+  const toggle = async () => {
     const owner = target()
-    if (!owner || !canToggle() || value === enabled()) return
+    if (!owner || !canToggle()) return
+    const value = !globalEnabled()
     const operation = captureBackendOperation(owner.id, lifetime, () => target() === owner && active())
     if (!operation.current()) return
     setPending(owner)
     try {
       if (!value && !await showConfirmDialog(tGlobal("missions.activation.disableConfirm"), { variant: "warning" }, operation.signal)) return
-      if (!operation.current() || value === enabled()) return
-      await pluginControlsCache.mutate(owner.id, owner.location, MISSIONS_PLUGIN_ID, "global", value)
+      if (!operation.current() || value === globalEnabled()) return
+      await pluginControlsCache.mutate(owner.id, owner.location, MISSIONS_PLUGIN_ID, "global", value, { reconcile: true })
     } catch {
       if (operation.current()) {
         void pluginControlsCache.load(owner.id, owner.location, { force: true })
@@ -67,5 +70,5 @@ export function useMissionActivation(
       setPending(current => current === owner ? undefined : current)
     }
   }
-  return { enabled, unknown, checking, readFailed, retry, canToggle, toggle }
+  return { enabled, unknown, checking, readFailed, retry, canToggle, toggle, projectOverride, globalEnabled }
 }

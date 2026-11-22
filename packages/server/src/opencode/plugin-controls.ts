@@ -88,7 +88,6 @@ interface PluginControlsMutationFence {
 }
 
 type PathStyle = "win32" | "posix"
-const PLUGIN_CONFIG_COMMIT = "plugin-config-commit"
 
 interface ReadContext {
   connection: ServiceConnection
@@ -210,9 +209,9 @@ export class PluginControls {
           throw new PluginControlDocumentError("OpenCode configuration changed since confirmation", "conflict")
         }
         const updated = await edit(document, { entries: context.entries, path: target.path, location: context.location })
-        await this.serializeMutation(PLUGIN_CONFIG_COMMIT, () => replacePluginControlDocument(document, updated, {
+        await replacePluginControlDocument(document, updated, {
           beforeCommit: () => { assertCurrentConnection(context.connection); signal?.throwIfAborted() },
-        }, context.fileSystem))
+        }, context.fileSystem)
       } catch (error) { throw error instanceof PluginControlDocumentError ? mapDocumentError(error) : error }
       finally { release() }
     })
@@ -256,26 +255,27 @@ export class PluginControls {
               sources: snapshot.configured.sources.filter(source => at(source, target.path)),
               rules: snapshot.configured.rules.filter(rule => at(rule, target.path)) }
           }) })
-        await this.serializeMutation(PLUGIN_CONFIG_COMMIT, async () => {
-          try {
-            // Physical ordering is shared with other batches to avoid lock inversion.
-            const changed = documents.filter(({ target }) => updates[target.scope] !== undefined)
-              .sort((left, right) => left.document.writePath < right.document.writePath ? -1 : 1)
-            for (const { target, document } of changed) {
-              assertCurrentConnection(context.connection)
-              prepared.push({ scope: target.scope, write: await context.fileSystem.prepare!(document, updates[target.scope]!,
-                { beforeCommit: () => assertCurrentConnection(context.connection) }) })
-            }
-            for (const { write } of prepared) await write.verify()
-            // Commit the source removal last, after the cleanups that depend on it.
-            for (const { write } of [...prepared].sort((left, right) => Number(left.scope === scope) - Number(right.scope === scope))) {
-              assertCurrentConnection(context.connection)
-              await write.commit()
-            }
-          } finally { await Promise.allSettled(prepared.map(({ write }) => write.dispose())) }
-        })
+        // Physical ordering is shared with other batches to avoid lock inversion.
+        const changed = documents.filter(({ target }) => updates[target.scope] !== undefined)
+          .sort((left, right) => left.document.writePath < right.document.writePath ? -1 : 1)
+        for (const { target, document } of changed) {
+          assertCurrentConnection(context.connection)
+          prepared.push({ scope: target.scope, write: await context.fileSystem.prepare(document, updates[target.scope]!,
+            { beforeCommit: () => assertCurrentConnection(context.connection) }) })
+        }
+        for (const { write } of prepared) await write.verify()
+        // Locks follow physical order; commits follow safety order. The confirmed document (the source removal)
+        // commits last, after the cleanups that depend on it, so a failure in between leaves a configuration where
+        // every bare ID still follows its definition.
+        for (const { write } of [...prepared].sort((left, right) => Number(left.scope === scope) - Number(right.scope === scope))) {
+          assertCurrentConnection(context.connection)
+          await write.commit()
+        }
       } catch (error) { throw error instanceof PluginControlDocumentError ? mapDocumentError(error) : error }
-      finally { release() }
+      finally {
+        await Promise.allSettled(prepared.map(({ write }) => write.dispose()))
+        release()
+      }
     }))
   }
 
@@ -390,8 +390,8 @@ export class PluginControls {
   }
 
   mutate(workspaceId: string, request: PluginActivationMutationRequest): Promise<PluginActivationMutationResponse> {
-    // Reads and planning can overlap across scopes. Activation and source
-    // commits share a lane so a precedence check also fences sibling workspaces.
+    // Global writes share a queue within the workspace, while Project writes
+    // queue per location. The document lock fences competing replacements.
     const normalizedDirectory = request.location.directory.trim().replace(/[\\/]+$/, "").toLowerCase()
     const tailKey = request.scope === "global"
       ? `${workspaceId}\nglobal`
@@ -438,28 +438,10 @@ export class PluginControls {
         if (!control) throw new PluginControlsError("Plugin ID is not present in the authorized inventory", "forbidden")
 
         const desired: PluginScopeRuleState = request.enabled ? "enabled" : "disabled"
-        // The Missions feature switch describes this Location's effective state.
-        // Never change Global underneath a higher-priority rule that masks it here.
-        const missions = request.scope === "global" && request.pluginId === MISSIONS_PLUGIN_ID && control.managedBy === "codenomad"
-        const isEffective = (value: PluginControlsSnapshot) => request.enabled
-          === (value.controls.find(candidate => candidate.id === request.pluginId)?.effective !== "disabled")
-        const beforeCommit = async () => {
-          if (missions) await this.verifyPluginPrecedence(workspaceId, context, target.path, base.documents)
-          assertCurrentConnection(context.connection)
-        }
+        const exactDisable = !request.enabled && request.scope === "global"
+          && request.pluginId === MISSIONS_PLUGIN_ID && control.managedBy === "codenomad"
         assertCurrentConnection(context.connection)
-        if (projection.noOpSafe && control[request.scope] === desired && (!missions || isEffective(before))) {
-          if (missions) {
-            try {
-              await this.serializeMutation(PLUGIN_CONFIG_COMMIT, async () => {
-                await beforeCommit()
-                const current = await readPluginControlDocument(document.requestedPath, context.fileSystem)
-                if (!isDeepStrictEqual(current, document))
-                  throw new PluginControlDocumentError("OpenCode configuration changed; refresh before saving", "conflict")
-                assertCurrentConnection(context.connection)
-              })
-            } catch (error) { throw error instanceof PluginControlsError ? error : mapDocumentError(error) }
-          }
+        if (projection.noOpSafe && control[request.scope] === desired) {
           return {
             snapshot: before,
             rule: request.enabled ? request.pluginId : `-${request.pluginId}`,
@@ -479,7 +461,7 @@ export class PluginControls {
         // package of that name. Nothing qualifying is refused before any write.
         let edit: { remove: number[]; rule?: string; snapshot: PluginControlsSnapshot } | undefined
         for (const candidate of [...removable.length > 0 ? [{ remove: removable }, { remove: removable, rule }] : [], { remove: [] as number[], rule }]) {
-          if (missions && !request.enabled && candidate.rule === undefined) continue
+          if (exactDisable && candidate.rule === undefined) continue
           const plugins = candidate.rule === undefined ? kept : [...(candidate.remove.length > 0 ? kept : projection.plugins), candidate.rule]
           const evaluated = evaluateDocuments(base, context, { servicePath: target.path, plugins, scope: request.scope })
           const position = evaluated.documents.find(entry => entry.path && samePath(context.paths, entry.path, target.path))!.order
@@ -487,17 +469,15 @@ export class PluginControls {
           if (candidate.rule !== undefined && request.enabled
             && !definedBefore(evaluated.sequence, request.pluginId, position, plugins.length - 1)) continue
           if (enabledThrough(evaluated.sequence, request.pluginId, through) !== request.enabled) continue
-          if (missions && !isEffective(evaluated.snapshot)) continue
           edit = { ...candidate, snapshot: evaluated.snapshot }
           break
         }
-        if (!edit) throw new PluginControlsError(missions
-          ? "OpenCode's plugin order cannot reach this Missions activation state in this location"
-          : "OpenCode's plugin order cannot reach this state without a package spec", "forbidden")
+        if (!edit) throw new PluginControlsError("OpenCode's plugin order cannot reach this state without a package spec", "forbidden")
         const updated = replacePluginControlRules(document, edit.remove, new Set([request.pluginId, `-${request.pluginId}`]), edit.rule)
         try {
-          await this.serializeMutation(PLUGIN_CONFIG_COMMIT, () => replacePluginControlDocument(document, updated,
-            { beforeCommit }, context.fileSystem))
+          await replacePluginControlDocument(document, updated, {
+            beforeCommit: () => assertCurrentConnection(context.connection),
+          }, context.fileSystem)
         } catch (error) {
           throw mapDocumentError(error)
         }
@@ -509,39 +489,6 @@ export class PluginControls {
         release()
       }
     })
-  }
-
-  /** A Global feature change depends on the whole ordered configuration of the invoking Location. */
-  private async verifyPluginPrecedence(workspaceId: string, context: ReadContext, target: string, before: ConfigDocumentView[]) {
-    const changed = () => new PluginControlDocumentError("OpenCode plugin precedence changed; refresh before saving", "conflict")
-    const { paths, globalDirectory, location, fileSystem, connection } = context
-    const relevant = (documents: ConfigDocumentView[]) => documents.filter(entry => !entry.path || !samePath(paths, entry.path, target))
-      .map(({ path, plugins }) => ({ path, plugins }))
-    const expected = relevant(before)
-    const entries = await connection.client.config.get({ location: { directory: location.directory } },
-      { ...locationRequestOptions(location), signal: AbortSignal.timeout(10_000) })
-    if (!Array.isArray(entries) || entries.find(entry => entry?.type === "directory")?.path !== globalDirectory
-      || !isDeepStrictEqual(expected, relevant(configDocuments({ ...context, entries }).documents))) throw changed()
-
-    // Native watches can lag a durable write. Verify the reported dependencies
-    // and both scopes' writable layers, including files not yet seen by OpenCode.
-    const candidates = new Set(expected.flatMap(entry => entry.path ? [entry.path] : []))
-    for (const [scope, directory] of [["project", location.directory], ["global", globalDirectory]] as const)
-      for (const candidate of targetCandidates(scope, paths, directory, directory, paths)) candidates.add(candidate.servicePath)
-    const servicePaths = [...candidates].filter(candidate => !samePath(paths, candidate, target))
-    const wsl = Boolean(this.options.workspaceManager.getServiceWslDistro(workspaceId))
-    const ioPaths = wsl ? servicePaths :
-      await Promise.all(servicePaths.map(candidate => this.options.workspaceManager.getHostPathForServicePath(workspaceId, candidate)))
-    const ioStyle = wsl ? paths : hostPathStyle()
-    if (!ioPaths.every((value): value is string => typeof value === "string" && ioStyle.isAbsolute(value))) throw changed()
-    const inspected = await fileSystem.inspectMany(ioPaths)
-    for (const [index, candidate] of servicePaths.entries()) {
-      const reported = expected.find(entry => entry.path && samePath(paths, entry.path, candidate))
-      if (!inspected[index] || inspected[index]!.exists !== Boolean(reported)) throw changed()
-      if (!reported) continue
-      const document = await readPluginControlDocument(ioPaths[index]!, fileSystem)
-      if (!document.exists || !isDeepStrictEqual(reported.plugins, document.plugins)) throw changed()
-    }
   }
 
   private async readContext(workspaceId: string, input: PluginControlLocation, signal?: AbortSignal, strictDocuments = false): Promise<ReadContext> {

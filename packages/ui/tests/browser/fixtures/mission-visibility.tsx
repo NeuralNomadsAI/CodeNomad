@@ -5,7 +5,8 @@ import RightPanel from "../../../src/components/instance/shell/right-panel/Right
 import { SettingsScreen } from "../../../src/components/settings-screen"
 import { RIGHT_PANEL_TAB_STORAGE_KEY } from "../../../src/components/instance/shell/storage"
 import { initializeClientState, writeClientLayoutValue } from "../../../src/stores/client-state"
-import { ConfigProvider } from "../../../src/stores/preferences"
+import { ConfigProvider, ensureLoaded } from "../../../src/stores/preferences"
+import { activeSettingsSection } from "../../../src/stores/settings-screen"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { serverEvents } from "../../../src/lib/server-events"
@@ -16,6 +17,7 @@ import "../../../src/index.css"
 import { setSessionListFetching } from "./session-list-restored"
 
 await initializeClientState()
+await ensureLoaded()
 writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, "missions")
 const instance: Instance = { id: "mission-visibility", folder: "/fixture", port: 0, pid: 0,
   proxyPath: "/fixture", status: "ready", client: null }
@@ -23,13 +25,14 @@ function Fixture() {
   const { t } = useI18n()
   const [active, setActive] = createSignal(false)
   const [mounted, setMounted] = createSignal(true)
-  const [settings, showSettings] = createSignal(false)
+  const [settings, showSettings] = createSignal<boolean | "global">(false)
   ;(window as any).missionVisibility = {
     activate: setActive,
     warmActivation: () => pluginControlsCache.load(instance.id, { directory: instance.folder }),
     // Selection persists in the per-window view; unmounting disposes the selected toolbar.
     mount: setMounted,
     settings: showSettings,
+    settingsSection: activeSettingsSection,
     demanded: () => missionStore.demandedInstanceIds(),
     state: () => missionStore.state(instance.id),
     // Startup order: restoration has not begun, is running, then settles.
@@ -43,7 +46,8 @@ function Fixture() {
       activeSessionId={() => null} activeSession={() => null} isPhoneLayout={() => false}
       rightDrawerWidth={() => 390} rightDrawerWidthInitialized={() => true}
       onCloseRightDrawer={() => {}} promptInputApi={() => null} setContentEl={() => {}} /></Show>
-    <Show when={settings()}><SettingsScreen standalone providerContext={{ instanceId: instance.id, location: { directory: instance.folder } }} /></Show>
+    <Show when={settings()}><SettingsScreen standalone providerContext={settings() === "global" ? undefined
+      : { instanceId: instance.id, location: { directory: instance.folder } }} /></Show>
     {/* App-level host for Stop… confirmations, as in App.tsx. */}
     <AlertDialog />
   </div>

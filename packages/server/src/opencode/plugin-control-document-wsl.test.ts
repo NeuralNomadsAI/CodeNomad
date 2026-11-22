@@ -106,23 +106,6 @@ describe("WSL plugin control documents", () => {
     assert.match(prepares[0]?.[4] ?? "", /^[a-f0-9]{32}$/)
   })
 
-  it("awaits the precedence check in WSL and releases its lock without committing on conflict", async () => {
-    const scripts: string[] = []
-    const fileSystem = createWslPluginControlDocumentFileSystem("Ubuntu", async (_distro, script) => {
-      scripts.push(firstLine(script))
-      return success()
-    })
-    const target = "/home/dev/.config/opencode/opencode.jsonc"
-    const conflict = new PluginControlDocumentError("Fixture precedence changed", "conflict")
-    await assert.rejects(replacePluginControlDocument({
-      requestedPath: target, writePath: target, exists: true, mode: 0o600,
-      text: '{"plugins":[]}', byteOrderMark: false, plugins: [],
-    }, '{"plugins":["-acme"]}', {
-      beforeCommit: async () => { await Promise.resolve(); throw conflict },
-    }, fileSystem), error => error === conflict)
-    assert.deepEqual(scripts, ["# prepare-document", "# cleanup-document"])
-  })
-
   it("sends the owner nonce to WSL cleanup when authorization fails after prepare", async () => {
     const cleanups: Array<readonly string[]> = []
     const prepares: Array<readonly string[]> = []
@@ -442,7 +425,7 @@ describe("WSL plugin control documents", () => {
 
       await assert.rejects(
         replacePluginControlDocument(document, appendPluginControlRule(document, "-acme"), {
-          beforeCommit: () => { runWsl(distro!, `rm -- "$1" && mkdir -- "$1"`, target) },
+          beforeCommit: () => runWsl(distro!, `rm -- "$1" && mkdir -- "$1"`, target),
         }, fileSystem),
         (error: unknown) => error instanceof PluginControlDocumentError && error.kind === "conflict",
       )

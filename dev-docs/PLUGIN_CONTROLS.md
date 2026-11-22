@@ -288,13 +288,10 @@ when `plugin.list` omits inactive entries.
 
 **Missions** uses the existing Global activation mutation: it writes an exact
 negative rule for the verified bundled ID and uses the ordinary removal or
-verified positive rule on enable. A later rule that masks the requested state
-in the invoking Location refuses the write. Activation and source commits share
-one backend lane across workspaces; the Global Missions commit revalidates the
-ordered native documents, their on-disk rules and candidate files in both
-writable scopes before renaming, including Project changes pending native reload.
-The Missions surface follows the
-effective rule; deliberate disable (including a hand-edited rule) is omitted
+verified positive rule on enable. The mutation applies the requested Global
+state. The UI keeps the last effective display until an authoritative read of
+the opened workspace completes, then shows any deciding Project override
+beside the checkbox. Deliberate disable (including a hand-edited rule) is omitted
 from managed-plugin attention, while failures in enabled Locations stay visible.
 
 A scope without an explicit matching rule inherits predictably in the compact

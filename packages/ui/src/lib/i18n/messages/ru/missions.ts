@@ -1,4 +1,7 @@
 export const missionMessages = {
+  "missions.activation.projectOverride": "Здесь действует правило проекта.",
+  "missions.activation.globalOn": "Глобально: включено.",
+  "missions.activation.globalOff": "Глобально: отключено.",
   "missions.activation.disableConfirm": "Отключить миссии на этом сервере OpenCode? Сначала приостановите активные миссии и расписания, чтобы избежать прерванной работы и пропущенных запусков. Сохранённые данные останутся на месте.",
   "missions.followed.title": "Отслеживаемые беседы",
   "missions.followed.add": "Добавить беседу",

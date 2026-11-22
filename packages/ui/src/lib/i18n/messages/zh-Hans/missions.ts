@@ -1,4 +1,7 @@
 export const missionMessages = {
+  "missions.activation.projectOverride": "此处以项目规则为准。",
+  "missions.activation.globalOn": "全局：已启用。",
+  "missions.activation.globalOff": "全局：已停用。",
   "missions.activation.disableConfirm": "要停用此 OpenCode 服务器上的任务吗？请先暂停正在运行的任务和计划任务，以免工作中断或错过运行。已保存的数据将保留。",
   "missions.followed.title": "关注的对话",
   "missions.followed.add": "添加对话",

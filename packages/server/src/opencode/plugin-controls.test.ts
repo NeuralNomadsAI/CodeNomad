@@ -1096,47 +1096,46 @@ describe("CodeNomad-managed plugin re-enable with an exact disabling rule", () =
     assert.deepEqual(parse(fs.readFileSync(fixture.globalFile, "utf8")).plugins, ["-opencode.fork-notice"])
   })
 
-  it("refuses a Global Missions toggle masked by Project config without changing either file", async () => {
+  it("writes Global Missions activation without changing a deciding Project rule or its substituted options", async () => {
     const pluginId = "codenomad.missions"
     for (const enabled of [true, false]) {
-      const fixture = createFixture({ globalPlugins: [], projectPlugins: [enabled ? `-${pluginId}` : pluginId] })
+      const project = [enabled ? `-${pluginId}` : pluginId]
+      const fixture = createFixture({ globalPlugins: enabled ? [`-${pluginId}`] : [],
+        projectPlugins: [...project, { package: "unrelated", options: { url: "{env:OTHER_PLUGIN_URL}" } }],
+        reportedProjectPlugins: [...project, { package: "unrelated", options: { url: "https://fixture.invalid" } }],
+      })
       await installManaged(fixture, "missions", pluginId)
-      const before = [fixture.globalFile, fixture.projectFile].map(file => fs.readFileSync(file, "utf8"))
-      await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId, scope: "global", enabled }),
-        (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden")
-      assert.deepEqual([fixture.globalFile, fixture.projectFile].map(file => fs.readFileSync(file, "utf8")), before)
+      const before = fs.readFileSync(fixture.projectFile, "utf8")
+      const result = await fixture.controls.mutate("workspace", { location: fixture.location, pluginId, scope: "global", enabled })
+      assert.equal(result.changed, true)
+      assert.equal(result.snapshot.controls.find(control => control.id === pluginId)?.effective, enabled ? "disabled" : "enabled")
+      assert.deepEqual(parse(fs.readFileSync(fixture.globalFile, "utf8")).plugins, enabled ? [] : [`-${pluginId}`])
+      assert.equal(fs.readFileSync(fixture.projectFile, "utf8"), before)
     }
   })
 
-  it("refuses a Global Missions disable when another workspace writes a Project override before it commits", async () => {
+  it("writes Global Missions activation with an unrelated substituted Project option", async () => {
     const pluginId = "codenomad.missions"
-    const reached = deferred(), proceed = deferred()
-    const fixture = createFixture({ workspaceIds: ["workspace", "other"], async beforeWorktreeIdentity(id) {
-      if (id === "workspace") { reached.resolve(); await proceed.promise }
-    } })
+    const fixture = createFixture({
+      projectPlugins: [{ package: "unrelated", options: { url: "{env:OTHER_PLUGIN_URL}" } }],
+      reportedProjectPlugins: [{ package: "unrelated", options: { url: "https://fixture.invalid" } }],
+    })
     await installManaged(fixture, "missions", pluginId)
-    const before = fs.readFileSync(fixture.globalFile, "utf8")
-    const global = fixture.controls.mutate("workspace", { location: fixture.location, pluginId, scope: "global", enabled: false })
-    const outcome = global.then(() => "written", error => (error as PluginControlsError).kind)
-    await reached.promise
-    try {
-      const override = await fixture.controls.mutate("other", { location: fixture.location, pluginId, scope: "project", enabled: true })
-      assert.equal(override.changed, true)
-      assert.deepEqual(parse(fs.readFileSync(fixture.projectFile, "utf8")).plugins, [pluginId])
-    } finally { proceed.resolve() }
-    assert.equal(await outcome, "conflict", "durable Project rules take precedence even before the watcher reports them")
-    assert.equal(fs.readFileSync(fixture.globalFile, "utf8"), before)
+    const before = fs.readFileSync(fixture.projectFile, "utf8")
+    await fixture.controls.mutate("workspace", { location: fixture.location, pluginId, scope: "global", enabled: false })
+    assert.deepEqual(parse(fs.readFileSync(fixture.globalFile, "utf8")).plugins, [`-${pluginId}`])
+    assert.equal(fs.readFileSync(fixture.projectFile, "utf8"), before)
   })
 
-  it("refuses a newly created Project rule while it is missing from native config discovery", async () => {
+  it("writes Global Missions activation despite a Project rule awaiting native discovery", async () => {
     const pluginId = "codenomad.missions"
     const fixture = createFixture({ omitProjectDocument: true })
     await installManaged(fixture, "missions", pluginId)
-    const before = fs.readFileSync(fixture.globalFile, "utf8")
-    fs.writeFileSync(fixture.projectFile, JSON.stringify({ plugins: [pluginId] }))
-    await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId, scope: "global", enabled: false }),
-      (error: unknown) => error instanceof PluginControlsError && error.kind === "conflict")
-    assert.equal(fs.readFileSync(fixture.globalFile, "utf8"), before)
+    const project = JSON.stringify({ plugins: [pluginId] })
+    fs.writeFileSync(fixture.projectFile, project)
+    await fixture.controls.mutate("workspace", { location: fixture.location, pluginId, scope: "global", enabled: false })
+    assert.deepEqual(parse(fs.readFileSync(fixture.globalFile, "utf8")).plugins, [`-${pluginId}`])
+    assert.equal(fs.readFileSync(fixture.projectFile, "utf8"), project)
   })
 })
 
@@ -1159,8 +1158,6 @@ function createFixture(options: {
   omitProjectDocument?: boolean
   ownsLocation?: boolean
   assertCurrent?: (count: number) => void
-  workspaceIds?: string[]
-  beforeWorktreeIdentity?: (id: string) => Promise<void>
   worktreeDeletionFence?: { enter(identities: string[]): (() => void) | undefined }
 } = {}) {
   const root = temporaryDirectory()
@@ -1189,8 +1186,6 @@ function createFixture(options: {
     packageVersions: options.packageVersions,
     ownsLocation: options.ownsLocation,
     assertCurrent: options.assertCurrent,
-    workspaceIds: options.workspaceIds,
-    beforeWorktreeIdentity: options.beforeWorktreeIdentity,
   })
   return {
     controls: new PluginControls({
@@ -1227,8 +1222,6 @@ function fakeManager(options: {
   serviceDirectory?: string
   wslDistro?: string
   assertCurrent?: (count: number) => void
-  workspaceIds?: string[]
-  beforeWorktreeIdentity?: (id: string) => Promise<void>
 }) {
   const calls = { config: 0, plugins: 0, assertCurrent: 0, configLocations: [] as string[], pluginLocations: [] as string[] }
   const client = {
@@ -1238,7 +1231,7 @@ function fakeManager(options: {
   }
   return {
     calls,
-    get: (id: string) => (options.workspaceIds ?? ["workspace"]).includes(id) ? { id } : undefined,
+    get: (id: string) => id === "workspace" ? { id } : undefined,
     getSharedServiceConnection: async () => ({
       client,
       assertCurrent: () => {
@@ -1248,7 +1241,7 @@ function fakeManager(options: {
     }),
     ownsLocation: async () => options.ownsLocation !== false,
     getServiceDirectoryForPath: async (_id: string, directory: string) => options.serviceDirectory ?? directory,
-    getWorktreeIdentityForPath: async (id: string) => { await options.beforeWorktreeIdentity?.(id); return "fixture-worktree" },
+    getWorktreeIdentityForPath: async () => "fixture-worktree",
     getServicePathStyle: () => options.style ?? (process.platform === "win32" ? "win32" : "posix"),
     getServiceWslDistro: () => options.wslDistro,
     getHostPathForServicePath: async (_id: string, servicePath: string) => options.translate?.(servicePath) ?? servicePath,

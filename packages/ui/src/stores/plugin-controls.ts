@@ -93,6 +93,7 @@ export class PluginControlsCache {
     pluginId: string,
     scope: PluginControlScope,
     enabled: boolean,
+    options?: { reconcile?: boolean },
   ): Promise<PluginActivationMutationResponse> {
     const record = this.record(instanceId, location)
     const signal = this.signalForInstance?.(instanceId)
@@ -117,10 +118,15 @@ export class PluginControlsCache {
       const newerSnapshot = record.snapshot && record.snapshotRevision > requestRevision
         ? record.snapshot
         : undefined
-      record.snapshot = newerSnapshot ? retainRuntime(response.snapshot, newerSnapshot) : response.snapshot
+      // The feature switch waits for native effective state; its write
+      // receipt may predate a deciding Project rule.
+      if (!options?.reconcile) {
+        record.snapshot = newerSnapshot ? retainRuntime(response.snapshot, newerSnapshot) : response.snapshot
+      }
       // The write response carries pre-write inventory. Only a later read can
       // confirm a managed plugin's runtime state, even if that inventory is active.
-      if (enabled && response.reloadPending && record.snapshot.controls.some(control => control.id === pluginId && control.managedBy === "codenomad")) {
+      const controls = (options?.reconcile ? response.snapshot : record.snapshot)?.controls
+      if (enabled && response.reloadPending && controls?.some(control => control.id === pluginId && control.managedBy === "codenomad")) {
         record.runtimeUnconfirmed.add(pluginId)
       } else if (!enabled) record.runtimeUnconfirmed.delete(pluginId)
       // Alias reads dispatched during the write must also see this publication
@@ -129,7 +135,7 @@ export class PluginControlsCache {
       record.error = undefined
       record.loading = false
       record.refreshing = false
-      record.stale = record.stale || record.invalidationRevision > requestRevision || Boolean(newerSnapshot)
+      record.stale = Boolean(options?.reconcile) || record.stale || record.invalidationRevision > requestRevision || Boolean(newerSnapshot)
       if (record.inFlight) record.trailing = true
       this.publish(record)
       if (scope === "global") this.invalidateSiblingLocations(record)

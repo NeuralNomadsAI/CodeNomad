@@ -6,11 +6,11 @@ Görevler kullanılamıyorsa **OpenCode ayarları**, eksik veya başarısız bir
 
 ## Görevleri etkinleştirme ve devre dışı bırakma {#activation}
 
-**Sağ paneli özelleştir** bölümünde **Görevler** işaretini kaldırarak eklentiyi bağlı OpenCode sunucusunun genel yapılandırmasında devre dışı bırakın. Etkinleştirmek için kutuyu yeniden işaretleyin. OpenCode otomatik olarak yeniden yükler; ardından mevcut konuşmalar da bir sonraki turda yeni araç listesini kullanır. Projede daha öncelikli bir eklenti kuralı varsa projenin geçerli durumunu değiştirmek için bu kuralı OpenCode’da düzenleyin.
+**Sağ paneli özelleştir** bölümündeki **Görevler** ile eklentiyi bağlı OpenCode sunucusunun genel yapılandırmasında açıp kapatın. Onay kutusu açık çalışma alanındaki geçerli durumu gösterir. Proje kuralı öncelikliyse **i** farkı açıklar. OpenCode otomatik olarak yeniden yükler; ardından mevcut konuşmalar da bir sonraki turda yeni araç listesini kullanır.
 
 Önce etkin ve zamanlanmış görevleri duraklatın. Devre dışı bırakmak görev kayıtlarını, zamanlamaları ve konuşmaları korur. OpenCode’a gönderilmiş işler sürebilir, ancak görev araçları kullanılamaz ve zamanlanan çalıştırmalar atlanabilir. Yeniden etkinleştirdikten sonra görevlerinizi kontrol edin ve hazır olduğunuzda duraklatılanları sürdürün.
 
-Bir çalışma ağacındaki konuşmayı seçseniz de onay kutusu açık çalışma alanının durumunu gösterir. Durum okunamazsa özelleştirmeyi yeniden açın veya **Tekrar dene** seçeneğini seçin.
+Bir çalışma ağacındaki konuşmayı seçseniz de onay kutusu açık çalışma alanının durumunu gösterir. Durum okunamazsa özelleştirmeyi yeniden açın veya **Tekrar dene** seçeneğini seçin. Proje açık değilken de **Ayarlar → Görevler** bölümünden genel varsayılanları düzenleyebilirsiniz.
 
 ## Görev oluşturma {#create}
 

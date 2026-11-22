@@ -404,6 +404,25 @@ describe("plugin controls cache", () => {
     assert.equal(cache.state("instance", location).snapshot?.controls[0]?.id, "fresh")
   })
 
+  it("can retain the effective display until a post-write read confirms the deciding rule", async (t) => {
+    const pending = deferred<PluginControlsSnapshot>()
+    let reads = 0
+    const cache = new PluginControlsCache({
+      getPluginControls: async () => reads++ === 0 ? snapshot("missions", "enabled") : pending.promise,
+      setPluginActivation: async () => mutationResponse(snapshot("missions", "disabled")),
+    })
+    const location = { directory: "/repo" }
+    await cache.load("instance", location)
+    t.after(cache.acquireDemand("instance", location))
+    await cache.mutate("instance", location, "missions", "global", false, { reconcile: true })
+    assert.equal(cache.state("instance", location).snapshot?.controls[0]?.effective, "enabled")
+    assert.equal(reads, 2)
+    const result = snapshot("missions", "disabled")
+    pending.resolve(result)
+    await tick()
+    assert.equal(cache.state("instance", location).snapshot, result)
+  })
+
   it("fences requests after an instance is cleared", async () => {
     const response = deferred<PluginControlsSnapshot>()
     const cache = new PluginControlsCache({

@@ -2,6 +2,7 @@ import { For, Show, createEffect, createSignal, onCleanup, onMount, type Accesso
 import { ChevronRight } from "lucide-solid"
 import { toggleSweepGroup } from "../../../../lib/toggle-sweep"
 import { ExtensionManager } from "../../../panel-extensions/extension-manager"
+import { InfoPopoverButton } from "../../../info-popover-button"
 import type { usePanelExtensions } from "../../../panel-extensions/use-panel-extensions"
 import type { useMissionActivation } from "../../../../stores/mission-activation"
 import {
@@ -108,9 +109,8 @@ export function RightPanelCustomizationPopover(props: RightPanelCustomizationPop
                       data-toggle-sweep={missions || extension() ? undefined : toggleSweepGroup("right-panel-customization")}
                       onChange={(event) => {
                         if (missions) {
-                          const enabled = event.currentTarget.checked
                           event.currentTarget.checked = visible()
-                          void props.missionActivation.toggle(enabled)
+                          void props.missionActivation.toggle()
                           return
                         }
                         const entry = extension()
@@ -128,6 +128,12 @@ export function RightPanelCustomizationPopover(props: RightPanelCustomizationPop
                     />
                     <span>{label()}</span>
                   </label>
+                  </Show>
+                  <Show when={missions && props.missionActivation.projectOverride()}>
+                    <InfoPopoverButton label={props.t("missions.activation.projectOverride")}>
+                      {props.t("missions.activation.projectOverride")}{" "}
+                      {props.t(props.missionActivation.globalEnabled() ? "missions.activation.globalOn" : "missions.activation.globalOff")}
+                    </InfoPopoverButton>
                   </Show>
                   <Show when={missions && props.missionActivation.readFailed()}>
                     <button type="button" class="right-panel-customization-button"

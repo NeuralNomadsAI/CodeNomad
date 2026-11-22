@@ -1,4 +1,7 @@
 export const missionMessages = {
+  "missions.activation.projectOverride": "Burada proje kuralı geçerlidir.",
+  "missions.activation.globalOn": "Genel: açık.",
+  "missions.activation.globalOff": "Genel: kapalı.",
   "missions.activation.disableConfirm": "Bu OpenCode sunucusunda Görevler devre dışı bırakılsın mı? İşlerin yarıda kalmaması veya çalıştırmaların atlanmaması için etkin ve zamanlanmış görevleri önce duraklatın. Kayıtlı veriler korunur.",
   "missions.followed.title": "Takip edilen konuşmalar",
   "missions.followed.add": "Konuşma ekle",

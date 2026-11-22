@@ -6,11 +6,11 @@ Ist Missions nicht verfügbar, öffnet **OpenCode-Einstellungen** die Dienstwied
 
 ## Missionen ein- oder ausschalten {#activation}
 
-Deaktivieren Sie unter **Rechtes Panel anpassen** das Kontrollkästchen **Missionen**, um das Plugin in der globalen Konfiguration des verbundenen OpenCode-Servers auszuschalten. Setzen Sie das Häkchen erneut, um es einzuschalten. OpenCode lädt automatisch neu; danach verwenden auch bestehende Unterhaltungen beim nächsten Zug die neue Werkzeugliste. Hat ein Projekt eine vorrangige Plugin-Regel, ändern Sie diese in OpenCode, um den wirksamen Zustand des Projekts zu ändern.
+Schalten Sie unter **Rechtes Panel anpassen** mit **Missionen** das Plugin in der globalen Konfiguration des verbundenen OpenCode-Servers ein oder aus. Das Kontrollkästchen zeigt den wirksamen Zustand des geöffneten Arbeitsbereichs. Gilt eine vorrangige Projektregel, erklärt **i** den Unterschied. OpenCode lädt automatisch neu; danach verwenden auch bestehende Unterhaltungen beim nächsten Zug die neue Werkzeugliste.
 
 Pausieren Sie zuerst laufende und geplante Missionen. Beim Ausschalten bleiben Missionen, Zeitpläne und Unterhaltungen erhalten. Bereits an OpenCode gesendete Arbeit kann weiterlaufen, aber Missionswerkzeuge sind nicht verfügbar und geplante Läufe können ausfallen. Prüfen Sie nach dem Einschalten Ihre Missionen und setzen Sie pausierte Einträge fort, wenn Sie bereit sind.
 
-Das Kontrollkästchen folgt dem geöffneten Arbeitsbereich, auch bei Auswahl einer Unterhaltung in einem Worktree. Lässt sich der Zustand nicht lesen, öffnen Sie die Anpassung erneut oder wählen Sie **Erneut versuchen**.
+Das Kontrollkästchen folgt dem geöffneten Arbeitsbereich, auch bei Auswahl einer Unterhaltung in einem Worktree. Lässt sich der Zustand nicht lesen, öffnen Sie die Anpassung erneut oder wählen Sie **Erneut versuchen**. Unter **Einstellungen → Missionen** können Sie globale Vorgaben auch ohne geöffnetes Projekt bearbeiten.
 
 ## Eine Mission erstellen {#create}
 

@@ -22,6 +22,116 @@ after(async () => { await browser?.close() })
 const call = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) =>
   (window as any).missionVisibility[method](arg), { method, arg })
 const emptyPluginSnapshot = { location: { directory: "/fixture" }, targets: [], runtime: [], configured: { rules: [], sources: [] }, controls: [] }
+const globalTarget = { scope: "global" as const, path: "/daemon/opencode.jsonc", exists: true }
+function activationSnapshot(global: "default" | "disabled", override?: "enabled"): PluginControlsSnapshot {
+  return { ...emptyPluginSnapshot, targets: [globalTarget], controls: [{
+    id: "codenomad.missions", managedBy: "codenomad", builtin: false, global, project: override ?? "default",
+    effective: override ?? global, ...(override ? { controllingRule: { scope: "project", selector: "codenomad.missions", enabled: true,
+      order: 1, entryIndex: 0 } } : {}),
+  }] }
+}
+
+test("a Global write waits for a fresh effective state and explains a Project override", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  let global: "default" | "disabled" = "default"
+  const writes: boolean[] = []
+  let release!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  try {
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await page.route("**/api/workspaces/mission-visibility/plugin-controls**", async route => {
+      if (route.request().method() === "GET") {
+        if (global === "disabled") await held
+        return route.fulfill({ json: activationSnapshot(global, global === "disabled" ? "enabled" : undefined) })
+      }
+      const enabled = writes.length !== 0
+      assert.deepEqual(route.request().postDataJSON(), { location: { directory: "/fixture" }, pluginId: "codenomad.missions", scope: "global", enabled })
+      writes.push(enabled)
+      global = enabled ? "default" : "disabled"
+      return route.fulfill({ json: { snapshot: activationSnapshot(global), target: globalTarget, rule: enabled ? "codenomad.missions" : "-codenomad.missions",
+        changed: true, reloadPending: true } })
+    })
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).missionVisibility))
+    await call(page, "activate", true)
+    const tab = page.getByRole("tab", { name: "Missions", exact: true })
+    await tab.waitFor()
+    const customize = page.getByRole("button", { name: "Customize right panel" })
+    await customize.click()
+    await page.getByRole("checkbox", { name: "Missions", exact: true }).click()
+    const fresh = page.waitForRequest(request => request.method() === "GET" && request.url().includes("/plugin-controls?"), { timeout: 4500 })
+    await page.locator(".alert-dialog").getByRole("button", { name: "Confirm", exact: true }).click()
+    await fresh
+    assert.equal(await tab.count(), 1, "the write acknowledgement does not hide the tab before the effective read")
+    release()
+    if (!await page.getByRole("checkbox", { name: "Missions", exact: true }).count()) await customize.click()
+    const info = page.getByRole("button", { name: "Project rule decides Missions here.", exact: true })
+    await info.press("Enter")
+    await page.getByText("Project rule decides Missions here. Global: off.", { exact: true }).waitFor()
+    const checkbox = page.getByRole("checkbox", { name: "Missions", exact: true })
+    assert.equal(await checkbox.isChecked(), true)
+    await page.keyboard.press("Escape")
+    if (!await checkbox.count()) await customize.click()
+    await checkbox.click()
+    await info.waitFor({ state: "detached" })
+    assert.equal(await checkbox.isChecked(), true)
+    assert.deepEqual(writes, [false, true], "the checked effective state does not trap the Global switch off")
+  } finally { release(); await page.close() }
+})
+
+test("disabling the open Missions settings selects General and re-enabling preserves its palette draft", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  let global: "default" | "disabled" = "default"
+  try {
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await page.route("**/api/workspaces/mission-visibility/plugin-controls**", route => route.fulfill({ json: activationSnapshot(global) }))
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).missionVisibility))
+    await call(page, "activate", true)
+    await call(page, "settings", true)
+    const nav = page.locator(".settings-screen-nav-list")
+    const missions = nav.getByRole("button", { name: "Missions", exact: true })
+    await missions.click()
+    await page.locator(".mission-preferences").waitFor()
+    global = "disabled"
+    await call(page, "event", "config.updated")
+    await missions.waitFor({ state: "detached" })
+    await page.locator(".theme-scheme-actions button").filter({ hasText: "New" }).click()
+    const draft = page.locator(".theme-scheme-name-editor input")
+    await draft.fill("Unsaved palette")
+    global = "default"
+    await call(page, "event", "config.updated")
+    await missions.waitFor()
+    assert.equal(await call(page, "settingsSection"), "general")
+    assert.equal(await draft.inputValue(), "Unsaved palette")
+  } finally { await page.close() }
+})
+
+test("Missions defaults are editable with no project open", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  let reads = 0
+  try {
+    await page.route("**/api/**", route => {
+      if (route.request().url().includes("/subagent-depth")) reads++
+      return route.fulfill({ json: route.request().postDataJSON() ?? {} })
+    })
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).missionVisibility))
+    await call(page, "activate", true)
+    await call(page, "settings", "global")
+    await page.locator(".settings-screen-nav-list").getByRole("button", { name: "Missions", exact: true }).click({ timeout: 4500 })
+    const deletion = page.getByRole("checkbox", { name: "Deleting a mission also deletes its task conversations" })
+    assert.equal(await deletion.isEnabled(), true)
+    const delegation = page.getByRole("combobox", { name: "Task sessions", exact: true })
+    assert.equal(await delegation.isEnabled(), true)
+    const saved = (key: string, value: unknown) => page.waitForRequest(request =>
+      request.method() === "PATCH" && request.url().endsWith("/api/storage/config/ui")
+      && (JSON.stringify(request.postDataJSON()?.settings?.[key]) ?? "").includes(JSON.stringify(value)))
+    await Promise.all([saved("missionProfileDefaults", "independent"), delegation.selectOption("independent")])
+    await Promise.all([saved("missionDeleteSessions", true), deletion.check()])
+    assert.equal(reads, 0, "project depth needs a workspace")
+  } finally { await page.close() }
+})
 
 test("an unknown Missions state stays hidden and reopening retries the failed read", async () => {
   const page = await browser.newPage({ locale: "en-US" })

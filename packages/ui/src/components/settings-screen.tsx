@@ -83,8 +83,13 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
     const id = missionInstanceId()
     return props.providerContext?.workspacePath ?? (id ? instances().get(id)?.folder : undefined) ?? props.providerContext?.location?.directory
   }, () => Boolean(props.standalone || settingsOpen()) && activeSettingsSection() !== "servers" && !props.projectUnavailable)
-  const showMissions = () => Boolean(missionInstanceId() && !props.projectUnavailable && missionActivation.enabled())
+  const showMissions = () => !props.projectUnavailable && (!missionInstanceId() || missionActivation.enabled())
   const shownSection = () => activeSettingsSection() === "missions" && !showMissions() ? "general" : activeSettingsSection()
+  createEffect(() => {
+    if (activeSettingsSection() !== "missions" || showMissions() || missionActivation.checking()) return
+    setActiveSettingsSection("general")
+    void props.onSectionChange?.("general")
+  })
 
   const sections = createMemo(() => {
     const items: SettingsSectionOption[] = [

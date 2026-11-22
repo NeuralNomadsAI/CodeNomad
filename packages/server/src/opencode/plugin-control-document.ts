@@ -47,7 +47,7 @@ export interface PluginControlDocumentLoad {
 }
 
 export interface PluginControlDocumentReplaceOptions {
-  beforeCommit?: () => void | Promise<void>
+  beforeCommit?: () => void
 }
 
 export interface PluginControlDocumentFileSystem {
@@ -276,11 +276,8 @@ async function prepareHostDocument(
     await verify()
     return { verify, dispose, commit: async () => {
       await verify()
-      try { await options?.beforeCommit?.() }
-      catch (error) {
-        if (error instanceof PluginControlDocumentError) throw error
-        throw new PluginControlDocumentError("OpenCode configuration replacement is no longer authorized", "filesystem", { cause: error })
-      }
+      try { options?.beforeCommit?.() }
+      catch (error) { throw new PluginControlDocumentError("OpenCode configuration replacement is no longer authorized", "filesystem", { cause: error }) }
       await verify()
       try { await rename(temporary, document.writePath) }
       catch (error) {
