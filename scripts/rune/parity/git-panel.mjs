@@ -77,11 +77,18 @@ try {
       const { setThemePreference } = await import("/src/stores/preferences.tsx")
       await setThemePreference(theme)
     }, theme)
+    await page.waitForFunction(theme => document.documentElement.dataset.theme === theme, theme)
+    await page.evaluate(() => {
+      // Rune consumes the base CSS tokens, not the fixture's user palette overrides.
+      const { style } = document.documentElement
+      for (const name of [...style]) if (name.startsWith("--")) style.removeProperty(name)
+    })
     for (const mode of ["changes", "commits"]) {
       if (mode === "commits") {
         await page.getByRole("button", { name: "Commits", exact: true }).click()
         await page.getByText("Make Git history the starting point").waitFor()
       }
+      await page.evaluate(() => document.fonts.ready)
       const name = `${mode}-${theme}`
       await page.screenshot({ path: path.join(out, `solid-${name}.png`) })
       await writeFile(path.join(out, `solid-${name}.yaml`), await page.locator("body").ariaSnapshot())
@@ -89,9 +96,33 @@ try {
       const nodes = elements(tree)
       assert.equal(tree.dark_system, theme === "dark")
       assert(nodes.some(node => node.name?.includes("src/components/git-panel.tsx")))
-      assert(nodes.some(node => node.name?.includes(mode === "changes" ? "Changements" : "Make Git history")))
       assert(nodes.some(node => node.key === "git-diff-mode" && node.role === "button" && node.name))
-      report.push({ theme, mode, nativeNodes: nodes.length })
+      const firstCommit = nodes.find(node => node.role === "button" && node.name?.startsWith("Make Git history"))
+      if (mode === "commits") assert(firstCommit?.key)
+      else assert(nodes.some(node => node.key === "git-section-staged" && node.states.includes("expanded")))
+      const solidPanel = await page.locator(".git-panel").boundingBox()
+      const runePanel = tree.elements.find(node => node.key === "git-panel")?.rect
+      assert(solidPanel && runePanel)
+      const geometry = {}
+      for (const [label, query, key] of [
+        ["context", ".git-panel-context", "git-context"],
+        ["tools", ".git-panel-tools", "git-tools"],
+        ["modes", ".git-panel-switch", "git-mode"],
+        mode === "changes"
+          ? ["stagedHeader", ".git-change-section-header", "git-section-staged"]
+          : ["firstCommit", ".git-history-row", firstCommit.key],
+      ]) {
+        const solid = await page.locator(query).first().boundingBox()
+        const rune = tree.elements.find(node => node.key === key)?.rect
+        assert(solid && rune, `${mode}/${theme}: missing ${label} geometry`)
+        geometry[label] = {
+          solid: [solid.x - solidPanel.x, solid.y - solidPanel.y, solid.width, solid.height],
+          rune: [rune[0] - runePanel[0], rune[1] - runePanel[1], rune[2], rune[3]],
+        }
+      }
+      const row = geometry[mode === "changes" ? "stagedHeader" : "firstCommit"]
+      assert(Math.abs(row.solid[3] - row.rune[3]) <= 2, `${mode}/${theme}: row height differs by more than 2 px`)
+      report.push({ theme, mode, nativeNodes: nodes.length, geometry })
     }
     await page.close()
   }

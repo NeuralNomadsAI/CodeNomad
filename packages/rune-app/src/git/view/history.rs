@@ -46,15 +46,9 @@ pub(super) fn view(s: &State, ui: &Ui) -> El {
             .child(if refs.is_empty() {
                 el()
             } else {
-                theme::clipped(refs, TextRole::Label)
+                theme::history_refs(refs)
             })
-            .child(
-                row()
-                    .full_width()
-                    .separate(Space::Sm)
-                    .child(theme::clipped(author, TextRole::Label).remaining())
-                    .child(text(short).text_role(TextRole::Mono)),
-            );
+            .child(theme::history_meta(author, short));
         body = body.child(
             theme::history_row(
                 name,

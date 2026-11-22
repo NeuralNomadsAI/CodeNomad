@@ -327,6 +327,41 @@
         "height": 14,
         "width": 14
       },
+      "gitContext": {
+        "borderBottomWidth": 1,
+        "paddingLeft": 12,
+        "paddingTop": 12
+      },
+      "gitCount": {
+        "opacity": 0.65
+      },
+      "gitHistoryRow": {
+        "borderBottomWidth": 1,
+        "columnGap": 8,
+        "paddingLeft": 12,
+        "paddingTop": 8
+      },
+      "gitSection": {
+        "columnGap": 8
+      },
+      "gitSectionCount": {
+        "borderTopWidth": 1,
+        "fontSize": 10,
+        "lineHeight": 15,
+        "opacity": 0.65,
+        "paddingLeft": 6,
+        "paddingTop": 2
+      },
+      "gitSectionTitle": {
+        "fontSize": 11,
+        "fontWeight": 600,
+        "lineHeight": 16.5
+      },
+      "gitTools": {
+        "borderBottomWidth": 1,
+        "paddingLeft": 12,
+        "paddingTop": 8
+      },
       "input": {
         "fontSize": 12,
         "fontWeight": 400,
@@ -474,6 +509,41 @@
       "fileRowActionGlyph": {
         "height": 14,
         "width": 14
+      },
+      "gitContext": {
+        "borderBottomWidth": 1,
+        "paddingLeft": 12,
+        "paddingTop": 12
+      },
+      "gitCount": {
+        "opacity": 0.65
+      },
+      "gitHistoryRow": {
+        "borderBottomWidth": 1,
+        "columnGap": 8,
+        "paddingLeft": 12,
+        "paddingTop": 8
+      },
+      "gitSection": {
+        "columnGap": 8
+      },
+      "gitSectionCount": {
+        "borderTopWidth": 1,
+        "fontSize": 10,
+        "lineHeight": 15,
+        "opacity": 0.65,
+        "paddingLeft": 6,
+        "paddingTop": 2
+      },
+      "gitSectionTitle": {
+        "fontSize": 11,
+        "fontWeight": 600,
+        "lineHeight": 16.5
+      },
+      "gitTools": {
+        "borderBottomWidth": 1,
+        "paddingLeft": 12,
+        "paddingTop": 8
       },
       "input": {
         "fontSize": 12,
