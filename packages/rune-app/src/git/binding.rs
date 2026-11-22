@@ -1,7 +1,6 @@
 use super::{Mode, Ui};
-use crate::State;
+use crate::{State, components::diff::DiffState};
 use codenomad_client::{backend::Backend, transport::WorkspaceEvent};
-use rune_theme_codenomad::git_diff::DiffState;
 
 pub(crate) struct Binding {
     pub owner: Option<Ui>,

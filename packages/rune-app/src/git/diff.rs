@@ -1,5 +1,6 @@
+use crate::components::diff::{DiffMode, DiffState, FileDiff, parse};
 use codenomad_client::git::Diff;
-use rune_theme_codenomad::git_diff::{DiffMode, DiffState, FileDiff, Image, ImageCache, parse};
+use rune_theme_codenomad::git_diff::{Image, ImageCache};
 use std::borrow::Cow;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

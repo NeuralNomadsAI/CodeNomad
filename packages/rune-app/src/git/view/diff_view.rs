@@ -1,10 +1,13 @@
 use super::*;
 use crate::{
-    components::window_close_button,
+    components::{
+        diff::{self, DiffMode, LineRange, Side},
+        window_close_button,
+    },
     git::{Source, diff::Hidden},
 };
 use codenomad_client::git::Diff;
-use rune_theme_codenomad::git_diff::{self, DiffMode, LineRange, Side};
+use rune_theme_codenomad::git_diff::image as image_view;
 
 pub(crate) fn reader(s: &State) -> El {
     let Some(ui) = &s.git.owner else {
@@ -163,7 +166,7 @@ pub(crate) fn reader(s: &State) -> El {
                 .remaining()
                 .full_width()
                 .child(action)
-                .child(git_diff::view(
+                .child(diff::view(
                     s,
                     format!("git-diff-{}", ui.preview_revision),
                     |s: &State| {
@@ -178,7 +181,7 @@ pub(crate) fn reader(s: &State) -> El {
                             .as_mut()
                             .map_or(&mut s.git.detached_diff, |ui| &mut ui.reader.state)
                     },
-                    run_for_lines(s, target),
+                    Some(std::rc::Rc::new(run_for_lines(s, target))),
                 ))
         }
         None if lane.error.is_none() => theme::note(t("instanceInfo.loading"), "status"),
@@ -239,7 +242,7 @@ fn image_diff(ui: &Ui, path: &str, split: bool) -> El {
             continue;
         };
         let label = t(key);
-        let content = if let Some(image) = git_diff::image(image) {
+        let content = if let Some(image) = image_view(image) {
             image.role("image").label(format!("{path} · {label}"))
         } else {
             theme::note(
