@@ -123,20 +123,24 @@ pub fn transcript_rows<S: 'static>(
             move |state, index| with_appearance(appearance, || build(state, index)),
         )
 }
-pub fn composer(editor: El, in_scroll_stack: bool) -> El {
+pub fn composer<S>(editor: El, scroll_stack: Option<&rune::Cx<S>>) -> El {
     // Current prompt-input.css editor bounds. A dedicated shared variant preserves them.
-    if in_scroll_stack {
-        // Rune reveals focused controls in their nearest scroller. Let the session stack
-        // reveal the whole field when the interruption dock can push it out of view.
+    const MAX_HEIGHT: f32 = 320.0;
+    if scroll_stack.is_some_and(|cx| {
+        cx.layout_size("composer")
+            .is_none_or(|size| size[1] <= MAX_HEIGHT)
+    }) {
+        // With no inner overflow, the session stack can reveal the field directly.
         rune::col()
             .key("scroll")
             .w_full()
             .min_h(104.0)
+            .max_h(MAX_HEIGHT)
             .child(editor)
     } else {
         rune::auto_grow(editor, 1, usize::MAX)
             .min_h(104.0)
-            .max_h(320.0)
+            .max_h(MAX_HEIGHT)
     }
 }
 pub trait Layout {

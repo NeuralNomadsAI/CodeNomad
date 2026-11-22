@@ -23,7 +23,7 @@ pub fn view(s: &crate::State) -> rune::El {
                 .child(
                     git_panel::conversation_column()
                         .child(crate::git::reader(s))
-                        .child(crate::composer(s, false)),
+                        .child(crate::composer(s, None)),
                 )
                 .child(crate::git::panel(s, width, rune::el())),
         )
