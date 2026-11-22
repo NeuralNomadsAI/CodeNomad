@@ -2993,8 +2993,8 @@ dependencies = [
 name = "rune-style-policy"
 version = "0.1.0"
 dependencies = [
- "serde_json",
  "proc-macro2",
+ "serde_json",
  "syn 2.0.119",
 ]
 
