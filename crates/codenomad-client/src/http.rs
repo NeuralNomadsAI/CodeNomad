@@ -3,6 +3,8 @@ use crate::history::Result;
 use reqwest::{Client, RequestBuilder};
 use std::time::Duration;
 
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 #[derive(Clone)]
 pub struct Http(Client);
 impl Http {
@@ -12,14 +14,14 @@ impl Http {
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .cookie_store(true)
-            .timeout(Duration::from_secs(30))
+            .timeout(REQUEST_TIMEOUT)
             .build()?;
         #[cfg(target_arch = "wasm32")]
         let client = Client::new();
         Ok(Self(client))
     }
     fn request(&self, method: reqwest::Method, url: impl reqwest::IntoUrl) -> RequestBuilder {
-        let request = self.0.request(method, url).timeout(Duration::from_secs(30));
+        let request = self.0.request(method, url).timeout(REQUEST_TIMEOUT);
         #[cfg(target_arch = "wasm32")]
         let request = request.fetch_credentials_same_origin();
         request
@@ -32,6 +34,9 @@ impl Http {
     }
     pub fn put(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
         self.request(reqwest::Method::PUT, url)
+    }
+    pub fn patch(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
+        self.request(reqwest::Method::PATCH, url)
     }
     pub fn delete(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
         self.request(reqwest::Method::DELETE, url)

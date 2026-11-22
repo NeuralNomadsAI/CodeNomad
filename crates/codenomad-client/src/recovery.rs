@@ -20,6 +20,7 @@ pub enum Input {
     Opened(u64),
     Native(u64, u64, Value),
     Workspace(u64, crate::transport::WorkspaceEvent),
+    Preferences(crate::settings::Owner),
     Hint(u64, u64),
     Unavailable(u64),
     Closed(u64),
@@ -59,7 +60,13 @@ pub async fn run(
         let _ = forward.send(Input::Command(Command::Close)).await;
     });
     let mut epoch = 1;
-    let mut wire = Arc::new(stream::State::default());
+    let make_wire = || {
+        Arc::new(stream::State::observing_preferences(
+            out.clone(),
+            wake.clone(),
+        ))
+    };
+    let mut wire = make_wire();
     stream::start(backend.clone(), epoch, tx.clone(), wire.clone());
     let mut opened = false;
     let mut dirty = true;
@@ -88,7 +95,7 @@ pub async fn run(
             epoch += 1;
             repairs = 0;
             settlement_reads = 0;
-            wire = Arc::new(stream::State::default());
+            wire = make_wire();
             stream::start(backend.clone(), epoch, tx.clone(), wire.clone());
         }
         match runtime::recv_timeout(&rx, Duration::from_millis(25)).await {

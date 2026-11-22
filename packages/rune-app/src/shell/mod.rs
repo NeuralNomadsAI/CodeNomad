@@ -25,7 +25,10 @@ pub fn view(
         root = root.child(crate::platform::titlebar::view(cx));
     }
     if let Some(ui) = &s.workspace {
-        root = root.child(workspace::strip(s, cx).on_background_press_tx(Panels::dismiss_outside));
+        root = root.child(rune_theme_codenomad::settings::shell_entry(
+            workspace::strip(s, cx).on_background_press_tx(Panels::dismiss_outside),
+            crate::settings::entry(),
+        ));
         if let Some(error) = workspace::status(s) {
             root = root.child(
                 layout::action_row()

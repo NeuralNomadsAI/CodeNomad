@@ -15,6 +15,12 @@ for(const statement of entry.statements)if(ts.isVariableStatement(statement))for
   locales=value.elements.map(v=>{assert(ts.isStringLiteral(v));return v.text})
 }
 assert(locales?.length===10,'The shared catalogue must provide the ten supported locales')
+const selector=path.join(i18n,'../../components/locale-selector.tsx')
+files.push(selector)
+const languageSource=await readFile(selector,'utf8')
+const languageNames=[...languageSource.matchAll(/\{ value: "([^"]+)", label: "([^"]+)" \}/g)]
+  .map(([,id,label])=>[id,label])
+assert.deepEqual(languageNames.map(([id])=>id),locales,'LocaleSelector names must stay aligned with the catalogue')
 const rtl=/const RTL_LOCALES = new Set<Locale>\(\[([^\]]+)\]\)/.exec(await readFile(files[0],'utf8'))?.[1]
 assert(rtl,'RTL_LOCALES must remain explicit')
 for(const locale of locales){
@@ -53,6 +59,7 @@ for(const locale of locales)await generated(`assets/catalogues/${locale}.json`,c
 await generated('assets/catalogues.json',{locales,directions:Object.fromEntries(locales.map(locale=>[locale,catalogues[locale].direction])),sources:await sources(files)})
 await generated('src/generated_catalogues.rs',`// Generated from the shared UI catalogues by scripts/rune/generate-catalogues.mjs.\n`+
   `#[rustfmt::skip]\npub const SUPPORTED_LOCALES: &[&str] = &[\n    ${locales.map(v=>JSON.stringify(v)).join(', ')},\n];\n`+
+  `#[rustfmt::skip]\npub const LANGUAGE_NAMES: &[(&str, &str)] = &[\n${languageNames.map(([id,label])=>`    (${JSON.stringify(id)}, ${JSON.stringify(label)}),`).join('\n')}\n];\n`+
   `#[rustfmt::skip]\npub(super) const SOURCES: &[(&str, &str, bool)] = &[\n`+
   locales.map(locale=>{
     const fields=[JSON.stringify(locale), `include_str!("../assets/catalogues/${locale}.json")`, String(catalogues[locale].direction==='rtl')]

@@ -34,6 +34,7 @@ pub enum Command {
 pub enum Event {
     Connected(crate::backend::Backend),
     Workspace(WorkspaceEvent),
+    Preferences(crate::settings::Owner),
     AgentHint(bool),
     History(Vec<Message>),
     Sync(Page),

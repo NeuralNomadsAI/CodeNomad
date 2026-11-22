@@ -12,6 +12,8 @@ pub mod interruption;
 mod kit;
 pub mod layout;
 pub mod markdown;
+pub mod palettes;
+pub mod settings;
 pub mod shell;
 pub mod tabs;
 mod tokens;
@@ -29,6 +31,9 @@ fn document() -> &'static Value {
     DOCUMENT.get_or_init(|| serde_json::from_str(THEME).expect("generated CodeNomad theme"))
 }
 pub fn theme(dark: bool) -> &'static Theme {
+    if let Some(palette) = palettes::active(dark) {
+        return palette.theme();
+    }
     static THEMES: [OnceLock<Theme>; 2] = [const { OnceLock::new() }; 2];
     THEMES[dark as usize]
         .get_or_init(|| Theme::from_value(document(), dark).expect("generated CodeNomad colors"))

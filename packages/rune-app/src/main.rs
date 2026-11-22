@@ -19,6 +19,7 @@ mod platform;
 #[path = "../tests/probes/mod.rs"]
 mod probes;
 mod screen;
+mod settings;
 mod shell;
 mod strings;
 use screen::Screen;
@@ -44,6 +45,7 @@ struct State {
     reads: platform::reads::Reads,
     transcript_display: transcript_state::Display,
     screen: Screen,
+    settings: settings::Host,
     input_scope: std::rc::Rc<()>,
     rejected_edit: TextEdit,
     workspace: Option<workspace::Ui>,
@@ -77,6 +79,7 @@ fn init() -> State {
         reads: Default::default(),
         transcript_display: Default::default(),
         screen: Screen::Chat { launcher: None },
+        settings: Default::default(),
         input_scope: std::rc::Rc::new(()),
         rejected_edit: TextEdit::new(""),
         workspace: None,
@@ -191,6 +194,7 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = chat | transcript_state::Display::poll(s, chat, now, tx);
     changed |= launcher::poll(s, tx);
     changed |= workspace::poll(s, now, tx);
+    changed |= settings::poll(s);
     changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
     changed |= git::poll(s, now, tx);
     if changed {
@@ -226,6 +230,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     files.event(event);
                 }
             }
+            Event::Preferences(owner) => settings::invalidate(s, owner),
             Event::Sync(page) => {
                 git::online(s, true);
                 if let Some(files) = &mut s.files {
@@ -307,14 +312,13 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
     changed
 }
 fn view(s: &State, cx: &mut Cx<State>) -> El {
-    layout::render(cx, |cx| {
+    settings::render(s, cx, |cx| {
         #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
         if s.git.scene {
             return probes::git_scene::view(s);
         }
         shell::view(s, cx, chat_view)
     })
-    .locale_direction(strings::locale())
 }
 fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     let locale = strings::locale();
@@ -426,6 +430,11 @@ fn main() {
         gallery::shell::run();
         return;
     }
+    #[cfg(feature = "test-support")]
+    if platform::has_flag("--gallery-preferences") {
+        settings::gallery();
+        return;
+    }
     run_app();
 }
 #[cfg(target_arch = "wasm32")]
@@ -453,7 +462,10 @@ fn run_app() {
             ],
             ..layout::app_spec(strings::t("window.title.main"), init, view)
         },
-        workspace::finish,
+        |s, tx| {
+            settings::close(s);
+            workspace::finish(s, tx);
+        },
     );
     platform::finish();
 }

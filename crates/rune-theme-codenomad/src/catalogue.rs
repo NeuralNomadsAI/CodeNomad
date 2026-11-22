@@ -1,6 +1,6 @@
 //! Shared UI messages, lazily decoded one locale at a time with Solid's English fallback.
 use crate::generated_catalogues::SOURCES;
-pub use crate::generated_catalogues::SUPPORTED_LOCALES;
+pub use crate::generated_catalogues::{LANGUAGE_NAMES, SUPPORTED_LOCALES};
 use serde_json::{Map, Value};
 use std::sync::OnceLock;
 thread_local! { static RENDER_LOCALE: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) }; }
@@ -52,6 +52,9 @@ pub fn direction(locale: &str) -> &'static str {
     } else {
         "ltr"
     }
+}
+pub fn canonical_locale(locale: &str) -> &'static str {
+    SOURCES[index(locale)].0
 }
 pub fn message(locale: &str, key: &str) -> Option<&'static str> {
     messages(index(locale))

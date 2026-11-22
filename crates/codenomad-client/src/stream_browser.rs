@@ -7,6 +7,7 @@ use web_sys::{Event, EventSource, EventSourceInit, MessageEvent};
 enum Frame {
     Open,
     Data(String, String),
+    Preferences(crate::settings::Owner),
     Closed,
 }
 struct Source {
@@ -61,7 +62,18 @@ pub(super) async fn read(
         let source = source.clone();
         Closure::new(move |event: MessageEvent| {
             let data = event.data().as_string().unwrap_or_default();
-            if data.len() > 262144 || tx.try_send(Frame::Data(kind.into(), data)).is_err() {
+            let frame = if data.len() <= NATIVE_EVENT_LIMIT {
+                Some(Frame::Data(kind.into(), data))
+            } else if data.len() <= OWNER_EVENT_LIMIT && kind == "message" {
+                serde_json::from_str::<Value>(&data)
+                    .ok()
+                    .as_ref()
+                    .and_then(storage_owner)
+                    .map(Frame::Preferences)
+            } else {
+                None
+            };
+            if frame.is_none_or(|frame| tx.try_send(frame).is_err()) {
                 overflow.set(true);
                 source.close();
             }
@@ -107,6 +119,7 @@ pub(super) async fn read(
             Some(Frame::Data(kind, data)) => {
                 dispatch(b, epoch, out, state, &connection, &kind, &data).await?
             }
+            Some(Frame::Preferences(owner)) => state.storage_changed(epoch, owner, out).await?,
             Some(Frame::Closed) => return Err("browser event stream ended".into()),
             None => {}
         }
