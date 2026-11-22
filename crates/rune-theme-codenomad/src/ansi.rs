@@ -5,7 +5,8 @@ use vte::{Params, Perform};
 
 const ESCAPED: [&str; 5] = ["\\u001b", "\\u001B", "\\x1b", "\\x1B", "\\033"];
 // Rune's selection-to-HTML path scans every range at each style boundary.
-const COPY_RUN_LIMIT: usize = 1024;
+// 2,048 also covers all one-character color changes in the 10,000-unit initial window.
+const COPY_RUN_LIMIT: usize = 2048;
 const LINE_WORK_LIMIT: usize = 2_000_000;
 const WINDOW_WORK_LIMIT: usize = 16_000_000;
 
@@ -72,8 +73,21 @@ struct Log {
 
 impl Log {
     fn finish_run(&mut self) {
-        if self.start < self.text.len() && self.style != Style::default() {
-            self.runs.push((self.start..self.text.len(), self.style));
+        let mut style = self.style;
+        if style.inverse {
+            std::mem::swap(&mut style.fg, &mut style.bg);
+            style.inverse = false;
+        }
+        if self.start < self.text.len() && style != Style::default() {
+            if let Some((range, _)) = self
+                .runs
+                .last_mut()
+                .filter(|(range, previous)| range.end == self.start && *previous == style)
+            {
+                range.end = self.text.len();
+            } else {
+                self.runs.push((self.start..self.text.len(), style));
+            }
         }
         self.start = self.text.len();
     }
@@ -284,7 +298,7 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
     let mut line = 0..0;
     let mut ascii_runs = None;
     let mut text = log.text.into_bytes();
-    for (index, (range, mut style)) in log.runs.iter().cloned().enumerate() {
+    for (index, (range, style)) in log.runs.iter().cloned().enumerate() {
         while range.start >= line.end {
             let start = line.end;
             let end = text[start..]
@@ -300,13 +314,6 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
             });
         }
         // Rune can revisit the shaped line for every span, even for foreground-only ink.
-        if style.inverse {
-            std::mem::swap(&mut style.fg, &mut style.bg);
-            style.inverse = false;
-        }
-        if style == Style::default() {
-            continue;
-        }
         let mut charge = |cost| {
             if cost > line_budget || cost > window_budget {
                 return false;
@@ -341,7 +348,7 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
             if style.strike && charge(line.len()) {
                 let ink = Some(dim(style.fg.unwrap_or(default)));
                 if let Some(last) = strikes.last_mut().filter(|last| {
-                    last.2 == ink && separated_only_by_newlines(&text, last.1, range.start)
+                    last.2 == ink && matches!(text.get(last.1..range.start), Some(b"" | b"\n"))
                 }) {
                     last.1 = range.end;
                 } else if spans.len() + strikes.len() + 1 < COPY_RUN_LIMIT {
@@ -547,6 +554,40 @@ mod tests {
     }
 
     #[test]
+    fn dense_log_can_copy_a_real_runtime_selection() {
+        let (text, spans, strikes) = styled(parse(&"\u{1b}[31mA\u{1b}[32mB\n".repeat(4096)));
+        let mut rt = rune::Runtime::new(
+            (text, spans, strikes),
+            |(text, spans, strikes), _| {
+                rune::rich(text.as_str(), spans.clone())
+                    .strikes(strikes.iter().copied())
+                    .selectable(true)
+                    .key("log")
+            },
+            (640.0, 360.0),
+            rune::Env::new(false, 1.0),
+        );
+        let clipboard = rune::clipboard::memory();
+        rt.use_clipboard(&clipboard);
+        rt.frame(0.0);
+        rt.update(|_, tx| tx.select_all_text("log"));
+        rt.frame(0.0);
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Command('c'),
+            mods: rune::Mods {
+                cmd: true,
+                ctrl: true,
+                ..Default::default()
+            },
+        });
+        rt.frame(0.0);
+        assert_eq!(
+            clipboard.text().as_deref().map(String::as_str),
+            Some(rt.state.0.as_str())
+        );
+    }
+
+    #[test]
     fn a_uniform_ascii_line_stays_underlined_and_consecutive_crs_stay_distinct() {
         let source = format!("\u{1b}[4m{}\u{1b}[24m\r\r\nB", "A".repeat(1500));
         let (text, spans, _) = styled(parse(&source));
@@ -599,5 +640,44 @@ mod tests {
         );
         assert_eq!(warning.color, Some(rgb(187, 0, 0)));
         assert!(warning.underline.is_some());
+    }
+
+    #[test]
+    fn empty_lines_are_not_merged_into_strikethrough() {
+        let (_, _, strikes) = styled(parse("\u{1b}[9mA\n\nB"));
+        assert_eq!(
+            strikes.iter().map(|&(a, b, _)| a..b).collect::<Vec<_>>(),
+            [0..1, 3..4]
+        );
+    }
+
+    #[test]
+    fn initial_dense_colors_preserve_the_following_warning() {
+        let source = format!(
+            "{}\u{1b}[31;4mFAILED",
+            "\u{1b}[31mA\u{1b}[32mB\n".repeat(512)
+        );
+        let (text, spans, _) = styled(parse(&source));
+        let warning = spans.last().unwrap();
+        assert_eq!(
+            &text[warning.start as usize..warning.end as usize],
+            "FAILED"
+        );
+        assert_eq!(warning.color, Some(rgb(187, 0, 0)));
+        assert!(warning.underline.is_some());
+    }
+
+    #[test]
+    fn equivalent_reverse_colors_do_not_fragment_a_uniform_underline() {
+        let source = format!(
+            "\u{1b}[4;31;44m{}{}",
+            "A".repeat(3000),
+            "\u{1b}[34;41;7mA\u{1b}[31;44;27mA".repeat(180)
+        );
+        let (text, spans, _) = styled(parse(&source));
+        assert_eq!(text.len(), 3360);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].end, 3360);
+        assert!(spans[0].underline.is_some());
     }
 }
