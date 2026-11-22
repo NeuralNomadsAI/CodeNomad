@@ -1,6 +1,6 @@
 use super::window_restore::{finish, tap, type_text, wait};
 use crate::{
-    Phase, State, init, platform, poll, request_older, view,
+    Phase, State, init, poll, request_older, view,
     workspace::{self, Tab},
 };
 use rune::{Env, Runtime, text::TextSystem};
@@ -164,7 +164,6 @@ pub fn run() {
             open(&mut rt, &long, "Rune native stored-history test");
             assert_eq!(rt.state.messages.len(), 200);
             canonical(&rt, &rows);
-            canonical(&rt, &rows);
             type_text(&mut rt, "composer", LONG);
             tap(&mut rt, "project-tabs-new");
             open(&mut rt, &empty, "Rune native empty-session test");
@@ -201,5 +200,4 @@ pub fn run() {
     let proof = json!({"type":"native-store-stage","stage":stage,"nativeRowsChecked":if stage == "resume" {600} else {200},"occurrences":2,"draftsDistinct":true,"maxAnchorJumpPoints":jump,"nativeWindow":false,"scopedChat":false});
     finish(rt);
     println!("{proof}");
-    platform::finish();
 }
