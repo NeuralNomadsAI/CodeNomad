@@ -98,13 +98,21 @@ pub fn check(rows: &[Message]) -> Result<()> {
     if rows.len() > MAX_ROWS
         || rows
             .iter()
-            .map(|r| r.body.len() + crate::content::bytes(&r.parts) - crate::content::attachment_bytes(&r.parts))
+            .map(|r| {
+                r.body.len() + crate::content::bytes(&r.parts)
+                    - crate::content::attachment_bytes(&r.parts)
+            })
             .sum::<usize>()
             > MAX_BYTES
     {
         return Err("resident history limit reached".into());
     }
-    if rows.iter().map(|r| crate::content::attachment_bytes(&r.parts)).sum::<usize>() > WINDOW_BYTES {
+    if rows
+        .iter()
+        .map(|r| crate::content::attachment_bytes(&r.parts))
+        .sum::<usize>()
+        > WINDOW_BYTES
+    {
         return Err("resident attachments exceed their bound".into());
     }
     if rows.iter().any(|row| !ids.insert(&row.id)) {

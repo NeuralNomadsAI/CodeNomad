@@ -2,6 +2,54 @@ use crate::{Phase, content::Part, history, init, view};
 use rune::{Env, Runtime};
 use serde_json::json;
 #[test]
+fn user_attachments_render_as_chips_without_instructions_or_uris() {
+    crate::strings::with_locale("en", || {
+        for dark in [false, true] {
+            let row = history::decode_message(&json!({
+                "id":"user-files","type":"user","text":"",
+                "skills":[{"id":"skill","name":"Review","instructions":"PRIVATE-SKILL-INSTRUCTIONS"}],
+                "agents":[{"name":"PRIVATE-AGENT"}],
+                "files":[
+                    {"name":"Picture","mime":"image/png","source":{"type":"inline"},"data":"PRIVATE-BYTES"},
+                    {"mime":"text/plain","source":{"type":"uri","uri":"file:///private/notes.txt"}},
+                    {"mime":"application/octet-stream","source":{"type":"inline"},"data":"PRIVATE-BYTES"}
+                ]
+            })).unwrap();
+            let mut s = init();
+            s.messages = vec![row];
+            s.phase = Phase::Ready;
+            let mut rt = Runtime::new(s, view, (390.0, 700.0), Env::new(dark, 1.0));
+            for _ in 0..12 {
+                rt.frame(1.0 / 60.0);
+            }
+            for key in [
+                "user-files-skill-0",
+                "user-files-file-0",
+                "user-files-file-1",
+                "user-files-file-2",
+            ] {
+                assert!(rt.find(key).is_some(), "no rendered chip {key}");
+            }
+            assert!(rt.find("part-user-files-0").is_none());
+            let tree = rt.accessibility_json().to_string();
+            for label in ["Review", "Picture", "notes.txt", "attachment"] {
+                assert!(
+                    tree.contains(&format!("\"{label}\"")),
+                    "no accessible name {label}: {tree}"
+                );
+            }
+            for private in [
+                "PRIVATE-SKILL-INSTRUCTIONS",
+                "PRIVATE-AGENT",
+                "PRIVATE-BYTES",
+                "file:///private",
+            ] {
+                assert!(!tree.contains(private));
+            }
+        }
+    });
+}
+#[test]
 fn streamed_text_after_a_tool_reaches_the_rendered_transcript() {
     let row = history::decode_message(&json!({"id":"mixed","type":"assistant","content":[
         {"type":"text","text":"Before"},

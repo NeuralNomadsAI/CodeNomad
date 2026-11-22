@@ -1,6 +1,8 @@
 use crate::{State, content::Part, strings::t};
 use rune::{El, col, text};
-use rune_theme_codenomad::{Space, TextRole, layout::Layout};
+use rune_theme_codenomad::{
+    Space, TextRole, attachment, layout, layout::Layout, workspace_tree::icons,
+};
 fn prose(key: String, body: &str) -> El {
     let code = body.starts_with("fn ") || body.starts_with("```");
     let element = text(body)
@@ -34,10 +36,41 @@ pub fn message(s: &State, i: usize) -> El {
     if m.parts.iter().all(|p| matches!(p, Part::Text(_))) {
         return view.child(prose(format!("body-{}", m.id), &m.body));
     }
+    let mut files = layout::action_row().key("message-attachments");
+    let mut has_files = false;
     for (index, part) in m.parts.iter().enumerate() {
         match part {
             Part::Text(body) => {
-                view = view.child(prose(format!("part-{}-{index}", m.id), &body.text))
+                if !body.text.is_empty() {
+                    view = view.child(prose(format!("part-{}-{index}", m.id), &body.text));
+                }
+            }
+            Part::Skill(skill) => {
+                view = view.child(
+                    rune::row().full_width().child(
+                        attachment::chip(&skill.name, None, None)
+                            .key(skill.id.clone())
+                            .description_static(t("promptInput.skills.title")),
+                    ),
+                );
+            }
+            Part::File(file) => {
+                has_files = true;
+                let name = file.display_name();
+                let icon = if file.mime.starts_with("image/") {
+                    &icons::IMAGE
+                } else {
+                    &icons::FILE
+                };
+                files = files.child(
+                    attachment::chip(
+                        name.as_deref()
+                            .unwrap_or_else(|| t("messageItem.attachment.defaultName")),
+                        Some(icon),
+                        None,
+                    )
+                    .key(file.id.clone()),
+                );
             }
             Part::Tool(tool) => {
                 let key = format!("tool-{}-{}", m.id, tool.id);
@@ -115,5 +148,5 @@ pub fn message(s: &State, i: usize) -> El {
             }
         }
     }
-    view
+    view.children(has_files.then_some(files))
 }

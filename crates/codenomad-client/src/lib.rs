@@ -16,8 +16,8 @@ pub mod recovery;
 pub mod runtime;
 mod server_path;
 pub use server_path::absolute as absolute_server_path;
-pub use server_path::same as same_server_path;
 pub use server_path::file_uri as server_file_uri;
+pub use server_path::same as same_server_path;
 pub mod stream;
 pub mod transport;
 pub mod wire;
@@ -46,6 +46,6 @@ mod fragment_tests;
 #[cfg(test)]
 mod history_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
-mod transport_tests;
-#[cfg(all(test, not(target_arch = "wasm32")))]
 mod prompt_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod transport_tests;

@@ -338,14 +338,21 @@ pub fn bytes(parts: &[Part]) -> usize {
             Part::Text(t) => t.text.len(),
             Part::Tool(t) => t.id.len() + t.name.len() + t.input.len() + t.output.len(),
             Part::Skill(s) => s.id.len() + s.skill_id.len() + s.name.len(),
-            Part::File(f) => f.id.len() + f.uri.len() + f.mime.len() + f.name.as_ref().map_or(0, String::len),
+            Part::File(f) => {
+                f.id.len() + f.uri.len() + f.mime.len() + f.name.as_ref().map_or(0, String::len)
+            }
         })
         .sum()
 }
 pub fn attachment_bytes(parts: &[Part]) -> usize {
-    parts.iter().map(|part| match part {
-        Part::File(f) => f.id.len() + f.uri.len() + f.mime.len() + f.name.as_ref().map_or(0, String::len),
-        Part::Skill(s) => s.id.len() + s.skill_id.len() + s.name.len(),
-        _ => 0,
-    }).sum()
+    parts
+        .iter()
+        .map(|part| match part {
+            Part::File(f) => {
+                f.id.len() + f.uri.len() + f.mime.len() + f.name.as_ref().map_or(0, String::len)
+            }
+            Part::Skill(s) => s.id.len() + s.skill_id.len() + s.name.len(),
+            _ => 0,
+        })
+        .sum()
 }

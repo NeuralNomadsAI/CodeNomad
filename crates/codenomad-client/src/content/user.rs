@@ -15,6 +15,26 @@ pub struct File {
     pub mime: String,
     pub name: Option<String>,
 }
+impl File {
+    pub fn display_name(&self) -> Option<String> {
+        if let Some(name) = self.name.as_ref().filter(|name| !name.trim().is_empty()) {
+            return Some(name.clone());
+        }
+        if self
+            .uri
+            .get(..5)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:"))
+        {
+            return None;
+        }
+        reqwest::Url::parse(&self.uri).ok().and_then(|url| {
+            url.path_segments()?
+                .next_back()
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned)
+        })
+    }
+}
 fn list<'a>(value: &'a Value, key: &str) -> Result<&'a [Value]> {
     match value.get(key) {
         None => Ok(&[]),
@@ -23,7 +43,9 @@ fn list<'a>(value: &'a Value, key: &str) -> Result<&'a [Value]> {
     }
 }
 fn string<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
-    value[key].as_str().ok_or_else(|| "invalid native user attachment".into())
+    value[key]
+        .as_str()
+        .ok_or_else(|| "invalid native user attachment".into())
 }
 pub(super) fn decode(value: &Value) -> Result<Vec<Part>> {
     let id = string(value, "id")?;
@@ -37,8 +59,11 @@ pub(super) fn decode(value: &Value) -> Result<Vec<Part>> {
         provenance: TextProvenance::Closed,
     })];
     for (index, skill) in skills.iter().enumerate() {
-        parts.push(Part::Skill(Skill { id: format!("{id}-skill-{index}"),
-            skill_id: string(skill, "id")?.into(), name: string(skill, "name")?.into() }));
+        parts.push(Part::Skill(Skill {
+            id: format!("{id}-skill-{index}"),
+            skill_id: string(skill, "id")?.into(),
+            name: string(skill, "name")?.into(),
+        }));
     }
     for (index, file) in files.iter().enumerate() {
         let mime = string(file, "mime")?;
@@ -47,8 +72,12 @@ pub(super) fn decode(value: &Value) -> Result<Vec<Part>> {
             Some("inline") => format!("data:{mime};base64,{}", string(file, "data")?),
             _ => return Err("invalid native file source".into()),
         };
-        parts.push(Part::File(File { id: format!("{id}-file-{index}"), uri, mime: mime.into(),
-            name: file["name"].as_str().map(str::to_owned) }));
+        parts.push(Part::File(File {
+            id: format!("{id}-file-{index}"),
+            uri,
+            mime: mime.into(),
+            name: file["name"].as_str().map(str::to_owned),
+        }));
     }
     Ok(parts)
 }
