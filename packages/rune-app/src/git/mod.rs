@@ -1,7 +1,10 @@
+mod actions;
 mod binding;
 mod changes;
 mod diff;
 mod menu;
+mod preview;
+mod refresh;
 mod request;
 mod view;
 pub(crate) use binding::{
@@ -17,11 +20,11 @@ use codenomad_client::{
     Wake,
     backend::Backend,
     catalog::Sessions,
-    git::{Details, Page, Refusal, Repository, Section, Worktree, Worktrees},
+    git::{Details, Page, Refusal, Repository, Worktree, Worktrees},
     history::Error,
     same_server_path,
-    transport::WorkspaceEvent,
 };
+use preview::{Preview, Source};
 use request::{Completed, Lane, Mutation, MutationKind, Read, Requests, Value};
 use rune::edit::TextEdit;
 use rune_theme_codenomad::git_diff::{ImageCache, image_cache};
@@ -50,29 +53,6 @@ impl Mode {
             "changes" => Some(Self::Changes),
             "history" => Some(Self::History),
             _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Source {
-    Local(Section),
-    Commit { id: String, subject: String },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Preview {
-    source: Source,
-    path: String,
-    original_path: Option<String>,
-}
-
-impl Preview {
-    fn local(row: &changes::Row) -> Self {
-        Self {
-            source: Source::Local(row.id.section),
-            path: row.id.path.clone(),
-            original_path: row.original_path.clone(),
         }
     }
 }
@@ -202,11 +182,7 @@ impl Ui {
                 Lane::History,
                 Lane::Preferences,
             ]);
-            if self
-                .preview
-                .as_ref()
-                .is_some_and(|target| matches!(target.source, Source::Local(_)))
-            {
+            if self.has_local_preview() {
                 self.dirty(&[Lane::Preview]);
             }
         }
@@ -232,13 +208,7 @@ impl Ui {
             if shown {
                 self.retry_panel_reads();
             }
-            if shown
-                && self.mode == Mode::Changes
-                && self
-                    .preview
-                    .as_ref()
-                    .is_some_and(|target| matches!(target.source, Source::Local(_)))
-            {
+            if shown && self.mode == Mode::Changes && self.has_local_preview() {
                 self.dirty(&[Lane::Changes, Lane::Preview]);
             }
             self.demand();
@@ -320,201 +290,10 @@ impl Ui {
         }
     }
 
-    pub(crate) fn event(&mut self, event: &WorkspaceEvent) {
-        if self.stopped {
-            return;
-        }
-        match event {
-            WorkspaceEvent::UiPreferencesChanged => {
-                self.requests.slot_mut(Lane::Preferences).cancel();
-                self.dirty(&[Lane::Preferences]);
-            }
-            WorkspaceEvent::FilesChanged {
-                workspace_id,
-                changes,
-            } if workspace_id == &self.backend.workspace
-                && self.tree().is_some_and(|tree| {
-                    changes
-                        .iter()
-                        .any(|change| same_server_path(&change.directory, &tree.directory))
-                }) =>
-            {
-                self.filesystem_hint();
-            }
-            WorkspaceEvent::NativeFilesystemChanged { workspace_id }
-                if workspace_id == &self.backend.workspace =>
-            {
-                self.filesystem_hint()
-            }
-            WorkspaceEvent::WorktreesChanged { workspace_id }
-                if workspace_id == &self.backend.workspace =>
-            {
-                self.dirty(&[Lane::Worktrees]);
-                self.invalidate_checkout_content();
-            }
-            WorkspaceEvent::Stopped { workspace_id } if workspace_id == &self.backend.workspace => {
-                self.stopped = true;
-                self.reset_tree();
-                self.inventory = None;
-                self.demand();
-            }
-            _ => {}
-        }
-    }
-
-    fn filesystem_hint(&mut self) {
-        let start = *self.passive_started.get_or_insert(self.clock);
-        let soon = self.clock + 0.1;
-        self.passive_due = Some(
-            self.last_passive
-                .map_or(soon, |last| (last + 5.0).max(soon))
-                .min(start + 5.0),
-        );
-    }
-
-    fn dirty(&mut self, lanes: &[Lane]) {
-        for lane in lanes {
-            self.requests.slot_mut(*lane).dirty = true;
-        }
-    }
-
-    fn invalidate_index(&mut self) {
-        self.index_revision = self.index_revision.wrapping_add(1);
-        self.dirty(&[Lane::Changes]);
-    }
-
-    fn invalidate_checkout_content(&mut self) {
-        self.invalidate_index();
-        self.dirty(&[Lane::History]);
-        if self
-            .preview
-            .as_ref()
-            .is_some_and(|target| matches!(target.source, Source::Local(_)))
-        {
-            self.requests.slot_mut(Lane::Preview).cancel();
-            self.dirty(&[Lane::Preview]);
-        }
-    }
-
-    fn demand(&mut self) {
-        let available = self.active && self.online && !self.stopped;
-        let shown = available && self.shown;
-        let tree_wanted = shown
-            || available
-                && (self.preview.is_some() || self.requests.slot(Lane::InitSessions).dirty);
-        let git = self.repository() != Repository::Uninitialized && self.tree().is_some();
-        let changes = shown && git && self.mode == Mode::Changes;
-        let history = shown && git && self.mode == Mode::History;
-        for (lane, wanted) in [
-            (Lane::Worktrees, tree_wanted),
-            (Lane::InitSessions, available),
-            (Lane::Changes, changes),
-            (Lane::History, history),
-            (Lane::Details, history && self.history.selected.is_some()),
-            (Lane::Preview, available && self.preview.is_some()),
-            (
-                Lane::Preferences,
-                shown || available && self.preview.is_some(),
-            ),
-        ] {
-            if !wanted {
-                self.requests.slot_mut(lane).cancel();
-            }
-        }
-        if tree_wanted && self.requests.mutation.is_none() {
-            self.ensure(
-                Read::Worktrees(self.inventory.is_some()),
-                self.inventory.is_none(),
-            );
-        }
-        if shown || available && self.preview.is_some() {
-            self.ensure(Read::Preferences, false);
-        }
-        if self.requests.mutation.is_some() {
-            return;
-        }
-        if available
-            && !self.requests.slot(Lane::Worktrees).busy()
-            && let Some(root) = self
-                .inventory
-                .as_ref()
-                .and_then(|list| list.trees.iter().find(|tree| tree.slug == "root"))
-        {
-            self.ensure(Read::InitSessions(root.clone()), false);
-        }
-        if let Some(tree) = self.tree().cloned() {
-            if changes {
-                if self.ensure(
-                    Read::Changes(
-                        tree.clone(),
-                        self.hide_whitespace,
-                        self.reconcile_revision,
-                        self.index_revision,
-                    ),
-                    !self.changes.ready(),
-                ) {
-                    self.reconcile_revision = None;
-                }
-            }
-            if history {
-                self.ensure(
-                    Read::History(tree.slug.clone(), None),
-                    self.history.page.is_none(),
-                );
-                if let Some(id) = self.history.selected.clone() {
-                    self.ensure(
-                        Read::Details(tree.clone(), id),
-                        self.history.details.is_none(),
-                    );
-                }
-            }
-            if available && let Some(target) = self.preview.clone() {
-                self.ensure(Read::Preview(tree, target), self.reader.content.is_none());
-            }
-        }
-    }
-
-    fn ensure(&mut self, read: Read, missing: bool) -> bool {
-        let slot = self.requests.slot(read.lane());
-        if !slot.busy() && (slot.dirty || missing && slot.error.is_none()) {
-            self.requests.start(read);
-            return true;
-        }
-        false
-    }
-
     fn repository(&self) -> Repository {
         self.inventory
             .as_ref()
             .map_or(Repository::Unknown, |inventory| inventory.repository)
-    }
-
-    fn refresh(&mut self) {
-        self.retry_panel_reads();
-        self.dirty(&[Lane::Worktrees]);
-        if self.repository() == Repository::Git {
-            match self.mode {
-                Mode::Workspace => {}
-                Mode::Changes => {
-                    self.reconcile_revision = Some(self.preview_revision);
-                    self.invalidate_index();
-                    if self
-                        .preview
-                        .as_ref()
-                        .is_some_and(|t| matches!(t.source, Source::Local(_)))
-                    {
-                        self.dirty(&[Lane::Preview]);
-                    }
-                }
-                Mode::History => {
-                    self.dirty(&[Lane::History]);
-                    if self.history.selected.is_some() && self.history.details.is_none() {
-                        self.dirty(&[Lane::Details]);
-                    }
-                }
-            }
-        }
-        self.demand();
     }
 
     pub(crate) fn set_hide_whitespace(&mut self, hide: bool) {
@@ -570,167 +349,6 @@ impl Ui {
         self.history.file = None;
         *self.requests.slot_mut(Lane::Details) = Default::default();
     }
-
-    fn toggle_preview(&mut self, preview: Preview) -> bool {
-        if !self.can_read_panel() || self.backend.session.is_empty() {
-            return false;
-        }
-        if self.preview.as_ref() == Some(&preview) {
-            self.close_preview();
-            return false;
-        }
-        let admitted = match &preview.source {
-            Source::Local(section) => {
-                self.mode == Mode::Changes
-                    && self
-                        .changes
-                        .find(&Id {
-                            section: *section,
-                            path: preview.path.clone(),
-                        })
-                        .is_some_and(|row| row.original_path == preview.original_path)
-            }
-            Source::Commit { id, .. } => {
-                self.mode == Mode::History
-                    && self.history.details.as_ref().is_some_and(|details| {
-                        details.id == *id
-                            && details.files.iter().any(|row| row.path == preview.path)
-                    })
-            }
-        };
-        if !admitted {
-            return false;
-        }
-        self.replace_preview(preview);
-        self.demand();
-        true
-    }
-
-    fn replace_preview(&mut self, preview: Preview) {
-        self.close_preview();
-        self.preview_revision = self.preview_revision.wrapping_add(1);
-        if let Source::Local(section) = preview.source {
-            self.changes.keep_visible(Id {
-                section,
-                path: preview.path.clone(),
-            });
-        }
-        self.preview = Some(preview);
-    }
-
-    pub(crate) fn has_preview(&self) -> bool {
-        self.preview.is_some()
-    }
-    pub(crate) fn close_preview(&mut self) {
-        if self.preview.take().is_some() {
-            self.preview_revision = self.preview_revision.wrapping_add(1);
-            self.reader.clear();
-            *self.requests.slot_mut(Lane::Preview) = Default::default();
-        }
-    }
-
-    fn reconcile_preview(&mut self) {
-        let Some(target) = &self.preview else {
-            return;
-        };
-        let Source::Local(section) = target.source else {
-            return;
-        };
-        let id = Id {
-            section,
-            path: target.path.clone(),
-        };
-        let next = self.changes.equivalent(&id).map(Preview::local);
-        if next.as_ref() != Some(target) {
-            if let Some(next) = next {
-                self.replace_preview(next);
-            } else {
-                self.close_preview();
-            }
-        } else {
-            self.changes.keep_visible(id);
-        }
-    }
-
-    fn can_read_panel(&self) -> bool {
-        self.active && self.online && self.shown && !self.stopped
-    }
-
-    fn can_mutate(&self) -> bool {
-        self.can_read_panel()
-            && self.requests.mutation.is_none()
-            && self.tree().is_some()
-            && !self.requests.slot(Lane::Worktrees).busy()
-            && !self.requests.slot(Lane::Worktrees).dirty
-            && self.requests.slot(Lane::Worktrees).error.is_none()
-    }
-
-    fn can_change_index(&self) -> bool {
-        let changes = self.requests.slot(Lane::Changes);
-        let preference = self.requests.slot(Lane::Preferences);
-        self.can_mutate()
-            && self.mode == Mode::Changes
-            && self.repository() == Repository::Git
-            && self.changes.ready()
-            && self.index_checked == Some(self.index_revision)
-            && changes.error.is_none()
-            && !preference.busy()
-            && !preference.dirty
-            && preference.error.is_none()
-    }
-
-    fn mutation(&mut self, action: Mutation) {
-        if self.can_mutate()
-            && let Some(tree) = self.tree().cloned()
-        {
-            for lane in [Lane::Changes, Lane::History, Lane::Preview] {
-                self.requests.slot_mut(lane).cancel();
-            }
-            self.mutation_message = None;
-            self.reconcile_revision = Some(self.preview_revision);
-            self.requests.mutate(self.tree_epoch, tree, action);
-        }
-    }
-
-    fn move_paths(&mut self, id: &Id, focus: Option<&str>) {
-        let paths = self.changes.paths(id);
-        if self.can_change_index() && !paths.is_empty() {
-            self.pending_row_focus = self.changes.focus_order(focus);
-            self.mutation(Mutation::Paths(
-                id.section,
-                paths,
-                self.changes.selection_revision,
-            ));
-        }
-    }
-
-    fn can_commit(&self) -> bool {
-        self.can_change_index()
-            && self.changes.section(Section::Staged).next().is_some()
-            && !self.changes.draft.text.trim().is_empty()
-    }
-
-    fn commit(&mut self) {
-        if self.can_commit() {
-            let draft = self.changes.draft.text.clone();
-            self.mutation(Mutation::Commit {
-                message: draft.trim().to_owned(),
-                draft,
-            });
-        }
-    }
-
-    fn initialize(&mut self) {
-        if self.mode != Mode::Workspace
-            && self.repository() == Repository::Uninitialized
-            && let Some(root) = &self.root
-            && self
-                .tree()
-                .is_some_and(|tree| tree.slug == "root" && same_server_path(&tree.directory, root))
-        {
-            self.mutation(Mutation::Init(root.clone()));
-        }
-    }
 }
 
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
@@ -751,7 +369,7 @@ impl Ui {
         );
         self.accept(Lane::History, Value::History(commits, false));
         self.replace_preview(Preview {
-            source: Source::Local(Section::Staged),
+            source: Source::Local(codenomad_client::git::Section::Staged),
             path: path.into(),
             original_path: None,
         });

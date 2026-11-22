@@ -1,5 +1,6 @@
 use super::*;
 use codenomad_client::git::{Change, Commit, Status};
+use codenomad_client::{git::Section, transport::WorkspaceEvent};
 
 fn change(path: impl Into<String>, staged: bool, whitespace: bool, score: u64) -> Status {
     let counts = Change {
