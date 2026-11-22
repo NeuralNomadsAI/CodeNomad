@@ -5,6 +5,7 @@ import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import MessageSection from "../../../src/components/message-section"
 import { applyUiSettings } from "./ui-settings"
+import { transcriptPresetPatch } from "../../../src/components/transcript-visibility"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { addInstance } from "../../../src/stores/instances"
 import { setSessions, setActiveSession } from "../../../src/stores/session-state"
@@ -144,6 +145,21 @@ const sample = () => {
 requestAnimationFrame(sample)
 
 const nextFrame = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+let sequence = 0
+function emitToolStep(type: string, data: Record<string, unknown>) {
+  const seq = ++sequence
+  ;(sseManager as any).handleEvent(instanceId, {
+    id: `evt-shell-${seq}`, type, created: 20 + seq, durable: { aggregateID: "s", seq, version: 1 },
+    location: { directory: "/fixture" }, data: { sessionID: "s", ...data },
+  })
+}
+function appendShell(id: string) {
+  const tool = { assistantMessageID: "m-shell", id }
+  const input = { command: `make ${id}`, description: `make ${id}` }
+  emitToolStep("session.tool.input.started", { ...tool, name: "bash" })
+  emitToolStep("session.tool.called", { ...tool, input })
+  emitToolStep("session.tool.success", { ...tool, content: [{ type: "text", text: `Output from ${id}` }], metadata: {}, executed: true })
+}
 
 const [activeId, setActiveId] = createSignal("s")
 
@@ -167,6 +183,14 @@ const resetSamples = (baseline?: number) => {
 const samplesOf = () => ({ frames, missingBodyFrames, collapsedBodyFrames, missingReportFrames })
 
 ;(window as any).fixture = {
+  async startShellGroup() {
+    await applyUiSettings(transcriptPresetPatch("everything"))
+    emitToolStep("session.execution.started", {})
+    emitToolStep("session.step.started", { assistantMessageID: "m-shell", agent: "build", model, started: 20 })
+    appendShell("shell-1")
+    appendShell("shell-2")
+  },
+  appendShell,
   /** Waits until the formatted diff is rendered and its cache entry written. */
   async ready() {
     for (let guard = 0; guard < 200 && !document.querySelector(".tool-call-diff-viewer"); guard++) await nextFrame()

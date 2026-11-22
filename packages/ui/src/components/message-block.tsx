@@ -1110,7 +1110,10 @@ function ExplorationGroup(props: ExplorationGroupProps) {
       props.pendingFormToolTargets.has(`${item.messageId}:${item.partId}`),
     )
   }
-  const segments = createMemo(() => segmentExplorationItems(props.tools, isPending))
+  const segments = createMemo(() => new Map(segmentExplorationItems(props.tools, isPending).map(segment => [
+    segment.kind === "pending" ? `pending:${segment.item.key}` : segment.items[0].key,
+    segment,
+  ])))
   const completed = (items: ToolDisplayItem[]) => props.completed || items.every((item) => {
     const part = props.store().getMessage(item.messageId)?.parts[item.partId]?.data
     const status = part?.type === "tool" ? part.state?.status : undefined
@@ -1175,9 +1178,13 @@ function ExplorationGroup(props: ExplorationGroupProps) {
   }
 
   createEffect(() => {
-    const segment = segments().find((item) => item.kind === "group" && item.items.some((tool) => tool.partId === props.activePartId))
-    const key = segment?.kind === "group" ? segment.items[0]?.key : undefined
-    if (key && !expanded(key)) setExpanded(key, true)
+    const active = props.activePartId
+    if (!active) return
+    for (const [key, segment] of segments()) {
+      if (segment.kind !== "group" || !segment.items.some(tool => tool.partId === active)) continue
+      if (!expanded(key)) setExpanded(key, true)
+      return
+    }
   })
 
   const renderTool = (item: ToolDisplayItem) => (
@@ -1249,10 +1256,14 @@ function ExplorationGroup(props: ExplorationGroupProps) {
           </Show>
         </div>
       </Show>
-      <For each={segments()}>{(segment) => segment.kind === "pending"
-        ? renderTool(segment.item)
-        : (() => {
-          const key = segment.items[0].key
+      <For each={[...segments().keys()]}>{(key) => {
+          const segment = segments().get(key)!
+          if (segment.kind === "pending") return renderTool(segment.item)
+          let last = segment.items
+          const items = createMemo(() => {
+            const current = segments().get(key)
+            return current?.kind === "group" ? (last = current.items) : last
+          })
           return <>
             <Show when={props.showHeader !== false && !props.summaryTools}>
               <button
@@ -1262,18 +1273,17 @@ function ExplorationGroup(props: ExplorationGroupProps) {
                 onClick={() => toggle(key)}
               >
                 <ChevronRight class="message-technical-group-disclosure disclosure-chevron" aria-hidden="true" />
-                <Show when={!completed(props.summaryTools ?? segment.items)}><span class="inline-flex animate-spin"><Loader2 class="message-technical-group-spinner w-3.5 h-3.5" aria-hidden="true" /></span></Show>
-                <span class="message-technical-group-title">{label(props.summaryTools ?? segment.items)}</span>
+                <Show when={!completed(props.summaryTools ?? items())}><span class="inline-flex animate-spin"><Loader2 class="message-technical-group-spinner w-3.5 h-3.5" aria-hidden="true" /></span></Show>
+                <span class="message-technical-group-title">{label(props.summaryTools ?? items())}</span>
               </button>
             </Show>
             <Show when={expanded(key)}>
               <div class="message-technical-group-parts">
-                <For each={segment.items}>{renderTool}</For>
+                <For each={items()}>{renderTool}</For>
               </div>
             </Show>
           </>
-        })()
-      }</For>
+      }}</For>
     </div>
     </Show>
   )

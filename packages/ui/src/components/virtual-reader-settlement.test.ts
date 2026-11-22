@@ -1,6 +1,14 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { createVirtualReaderSettlement } from "./virtual-reader-settlement.ts"
+import { createVirtualReaderSettlement, settledReaderOffset } from "./virtual-reader-settlement.ts"
+
+test("a shorter replacement starts at the top if its old clipping would put it above the reading line", () => {
+  assert.equal(settledReaderOffset(-90, 30), 0)
+  assert.equal(settledReaderOffset(-26, 30), 0)
+  assert.equal(settledReaderOffset(-25.5, 30), -25.5)
+  assert.equal(settledReaderOffset(-90, 150), -90)
+  assert.equal(settledReaderOffset(12, 30), 12)
+})
 
 test("a hold aligns at once, then on every frame of a window that nothing extends, then releases", () => {
   const previousFrame = globalThis.requestAnimationFrame, previousCancel = globalThis.cancelAnimationFrame

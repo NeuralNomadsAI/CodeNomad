@@ -4,7 +4,7 @@ import { trackHeightDelta } from "../lib/height-delta"
 import { flushFrameBatchedMounts } from "../lib/frame-batch-schedule"
 import { attachScrollGestureRouting, findNestedScroller, getElementZoom, POINTER_CONTROL_SELECTOR, wheelDeltaUnit } from "../lib/scroll-gesture-routing"
 import { remapVirtualMeasurements } from "./virtual-follow-measurements"
-import { createVirtualReaderSettlement, type VirtualItemAnchor } from "./virtual-reader-settlement"
+import { createVirtualReaderSettlement, settledReaderOffset, type VirtualItemAnchor } from "./virtual-reader-settlement"
 import { advanceBottomPinSettlement, AnchorRestoreStabilizer, canScrollInDirection, classifyVirtualItemKeyChange, describeKeyTarget, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottomForMode, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, SCROLL_INTENT_KEYS, ScrollObservationGate, USER_SCROLL_INTENT_WINDOW_MS, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldNavigateAtBoundary, VirtualScrollController, type BottomPinSettlementState, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 import { isScrollTraceEnabled, traceScroll, type ScrollReason, type ScrollTraceEntry, type ScrollTraceKind } from "./virtual-scroll-trace"
 
@@ -325,9 +325,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       const target = anchor.element ?? (anchor.select?.() || row)
       // A detached revealed part is gone.
       if (!element || !target?.isConnected) return !anchor.element
-      // A held element keeps its requested offset; a shrinking block stays partly visible.
+      // A held block too short for the old clipping starts at the viewport top.
       const offset = anchor.element ? clampAlignmentOffset(element, anchor.offset)
-        : anchor.offset < 0 ? Math.max(anchor.offset, 1 - target.getBoundingClientRect().height) : anchor.offset
+        : anchor.offset < 0 ? settledReaderOffset(anchor.offset, target.getBoundingClientRect().height) : anchor.offset
       const delta = measureAnchorDelta(element, target, offset)
       if (Math.abs(delta) >= 1) writeScroll(anchor.element ? "align-element" : "reader-settle", { type: "dom", top: element.scrollTop + delta, record: true })
     },

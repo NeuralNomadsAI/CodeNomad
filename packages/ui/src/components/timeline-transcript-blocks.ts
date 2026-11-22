@@ -1,8 +1,7 @@
 import type { TranscriptTechnicalGroup } from "../lib/message-part-grouping"
 import type { TimelineSegment } from "./message-timeline-projection"
+import { READING_LINE_OFFSET_PX } from "./virtual-reader-settlement"
 
-// A block cut by the viewport top within this distance is already read.
-const READING_LINE_OFFSET_PX = 4
 const GROUP_HEADER_SELECTOR = ".message-technical-group-toggle"
 // Transcript blocks with a timeline marker, in document order.
 const SEGMENT_BLOCK_SELECTOR = `.message-item-base[data-message-content-start-part-id], .tool-call-message[data-part-id], ${GROUP_HEADER_SELECTOR}, .message-reasoning-card[data-part-id], .message-compaction-card, [data-message-kind="system"]`

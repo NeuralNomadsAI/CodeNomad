@@ -92,7 +92,7 @@ before(async () => {
   longStore = path.join(directory, "long.sqlite")
   createSessionStore(longStore, longMessages)
   groupedStore = path.join(directory, "grouped.sqlite")
-  const reads = Array.from({ length: 30 }, (_, n) => tool(`${id(1)}-${n}`, "read"))
+  const reads = Array.from({ length: 30 }, (_, n) => tool(`${id(1)}-${n}`, "read", n === 2 ? 48 : 6))
   createSessionStore(groupedStore, [message(0),
     assistant(1, [
       { type: "reasoning", text: "First check\n".repeat(32) },
@@ -270,6 +270,32 @@ test("tool grouping preserves the exact reasoning card being read, not the first
   await settleTranscript(page, 450)
   const after = await offset()
   assert.ok(Math.abs(before - after) <= READING_LINE_TOLERANCE, `second reasoning card moves from ${before}px to ${after}px`)
+}, groupedStore))
+
+test("a collapsed group header replaces a deeply clipped tool at the reading line", { timeout: 90_000 }, () => withSession("everything", async (page) => {
+  const markersInGroup = (await markers(page)).filter(marker => marker.toolPartIds?.[0]?.endsWith("-read"))
+  const third = markersInGroup[2]
+  const card = page.locator(`.tool-call-message[data-part-id="${third.toolPartIds![0]}"]`)
+  await card.getByText("read output", { exact: false }).first().waitFor({ state: "attached" })
+  await clickMarker(page, third)
+  const box = (await page.locator(".message-stream").boundingBox())!
+  await page.mouse.move(box.x + 6, box.y + 6)
+  await page.mouse.wheel(0, 90)
+  await settleTranscript(page, 450)
+  const clip = await blockOffset(page, third)
+  assert.ok(clip !== null && Math.abs(clip + 90) <= READING_LINE_TOLERANCE, `reading ${clip}px into the third call`)
+  assert.equal(await active(page), third.id)
+
+  await page.evaluate(() => (window as any).fixture.showFilters(true))
+  await page.getByRole("button", { name: "Message content", exact: true }).click()
+  await page.getByRole("button", { name: "Collapse Tool groups", exact: true }).click()
+  const header = page.getByRole("button", { name: "Explored: 30 reads", exact: true })
+  await header.and(page.locator('[aria-expanded="false"]')).waitFor()
+  await settleTranscript(page, 450)
+  const offset = await header.evaluate(button =>
+    button.getBoundingClientRect().top - button.closest(".message-stream")!.getBoundingClientRect().top)
+  assert.ok(Math.abs(offset) <= READING_LINE_TOLERANCE, `the replacement header starts at the reading line (${offset}px)`)
+  assert.equal(await active(page), markersInGroup[0].id, "the group header owns the line rather than the next message")
 }, groupedStore))
 
 /** The active marker stands for the block at the transcript's reading line. */

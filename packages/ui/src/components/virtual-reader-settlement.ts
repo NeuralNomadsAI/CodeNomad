@@ -5,6 +5,13 @@
  */
 export interface VirtualItemAnchor { key: string; offset: number; element?: HTMLElement; select?: () => HTMLElement | null }
 
+// A block ending at or above this line already counts as read.
+export const READING_LINE_OFFSET_PX = 4
+
+export function settledReaderOffset(offset: number, height: number) {
+  return offset < 0 && offset + height <= READING_LINE_OFFSET_PX ? 0 : offset
+}
+
 // A hold lasts the former element-alignment window, counted from its request:
 // later layout never extends it.
 const HOLD_FRAMES = 30
