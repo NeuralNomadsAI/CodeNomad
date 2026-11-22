@@ -10,7 +10,7 @@ import test from "node:test"
 import { createHexCache } from "./hex-cache.mjs"
 import { fileInfo } from "./hex-files.mjs"
 import { hexArtifacts, hexVersion } from "./hex-manifest.mjs"
-import { transcribeWithHex } from "./hex-process.mjs"
+import { createHexService } from "./hex-process.mjs"
 
 const signal = () => new AbortController().signal
 const body = { engine: "engine", model: "model contents", vad: "detector" }
@@ -267,28 +267,75 @@ test("a second preparation cannot take the shared cache lease", async t => {
 
 const fixture = fileURLToPath(new URL("hex-test-service.fixture.mjs", import.meta.url))
 function wav() {
-  return Buffer.from("524946462600000057415645666d74201000000001000100803e0000007d00000200100064617461020000000000", "hex")
+  return Buffer.from("524946462800000057415645666d74201000000001000100803e0000007d000002001000646174610400000000000000", "hex")
+}
+
+async function until(check) {
+  for (let i = 0; i < 300; i++) {
+    if (check()) return
+    await delay(10)
+  }
+  assert.fail("Hex fixture did not reach the expected state")
 }
 
 test("the owned service accepts only checked PCM and an authenticated, matching loopback handshake", async t => {
   const { root } = harness(t)
   const installation = { executable: process.execPath, support: root }
-  assert.equal(await transcribeWithHex(installation, wav(), signal(), [fixture]), "Bonjour, hello.")
+  const service = createHexService({ args: [fixture] })
+  try {
+    const use = audio => service.use(installation, "key", signal(), transcribe => transcribe(audio))
+    assert.equal(await use(wav()), "Bonjour, hello.")
+    const oversized = wav()
+    oversized.writeInt16LE(44, 44)
+    await assert.rejects(use(oversized))
+    await assert.rejects(use(Buffer.from("not a WAV")))
+  } finally { await service.stop() }
   for (const mode of ["bad-pid", "redirect"]) {
-    await assert.rejects(transcribeWithHex(installation, wav(), signal(), [fixture, mode]))
+    const invalid = createHexService({ args: [fixture, mode] })
+    await assert.rejects(invalid.use(installation, "key", signal(), transcribe => transcribe(wav())))
   }
-  await assert.rejects(transcribeWithHex(installation, Buffer.from("not a WAV"), signal(), [fixture]))
+})
+
+test("capture prewarms once, then reuses Hex until exit, idle or a changed engine", { timeout: 10_000 }, async t => {
+  const { root } = harness(t)
+  const installation = { executable: process.execPath, support: root }
+  let selected = true
+  const service = createHexService({ args: [fixture], idleMs: 1_500, isSelected: () => selected })
+  const warmed = join(root, "warmed")
+  const pids = () => readFileSync(warmed, "utf8").trim().split("\n")
+  const logs = pid => join(root, "logs", `embedded-${pid}.ndjson`)
+  try {
+    await service.use(installation, "key", signal(), async transcribe => {
+      await until(() => existsSync(warmed))
+      return transcribe(wav())
+    })
+    const first = pids()[0]
+    await service.use(installation, "key", signal(), transcribe => transcribe(wav()))
+    assert.deepEqual(pids(), [first])
+    const crash = wav()
+    crash.writeInt16LE(43, 44)
+    await assert.rejects(service.use(installation, "key", signal(), transcribe => transcribe(crash)))
+    assert.equal(existsSync(logs(first)), false)
+    await service.use(installation, "key", signal(), transcribe => transcribe(wav()))
+    assert.equal(pids().length, 2)
+    await until(() => !existsSync(logs(pids()[1])))
+    await service.use(installation, "key", signal(), transcribe => transcribe(wav()))
+    selected = false
+    await assert.rejects(service.use(installation, "key", signal(), transcribe => transcribe(wav())))
+    await until(() => !existsSync(logs(pids()[2])))
+    assert.equal(pids().length, 3)
+  } finally { await service.stop() }
 })
 
 test("cancel kills the owned inference process before settlement", { timeout: 5_000 }, async t => {
   const { root } = harness(t)
   const abort = new AbortController()
   const installation = { executable: process.execPath, support: root }
+  const service = createHexService({ args: [fixture, "blocked"] })
   const started = join(root, "started")
-  const transcription = assert.rejects(transcribeWithHex(installation, wav(), abort.signal, [fixture, "blocked"]))
+  const transcription = assert.rejects(service.use(installation, "key", abort.signal, transcribe => transcribe(wav())))
   try {
-    for (let i = 0; i < 200 && !existsSync(started); i++) await delay(10)
-    assert.equal(existsSync(started), true)
+    await until(() => existsSync(started))
     const pid = Number(readFileSync(started, "utf8"))
     abort.abort()
     await transcription
@@ -297,4 +344,66 @@ test("cancel kills the owned inference process before settlement", { timeout: 5_
     abort.abort()
     await transcription
   }
+})
+
+test("cancel before uploading audio lets the same synthetic prewarm finish", { timeout: 5_000 }, async t => {
+  const { root } = harness(t)
+  const installation = { executable: process.execPath, support: root }
+  const service = createHexService({ args: [fixture, "warm-blocked"] })
+  const abort = new AbortController()
+  const started = join(root, "warm-started")
+  const cancelled = assert.rejects(service.use(installation, "key", abort.signal, transcribe => transcribe(wav())))
+  try {
+    await until(() => existsSync(started))
+    abort.abort()
+    await cancelled
+    const pid = readFileSync(started, "utf8")
+    assert.equal(existsSync(join(root, "logs", `embedded-${pid}.ndjson`)), true)
+    writeFileSync(join(root, "warm-release"), "")
+    assert.equal(await service.use(installation, "key", signal(), transcribe => transcribe(wav())), "Bonjour, hello.")
+    assert.equal(readFileSync(join(root, "warmed"), "utf8"), `${pid}\n`)
+  } finally { await service.stop() }
+})
+
+test("closing a healthy Windows lease avoids the process-tree fallback", {
+  skip: process.platform !== "win32",
+}, async t => {
+  const { root } = harness(t)
+  const installation = { executable: process.execPath, support: root }
+  let treeStops = 0
+  const service = createHexService({ args: [fixture], stopTree: () => { treeStops++ } })
+  try {
+    await service.use(installation, "key", signal(), transcribe => transcribe(wav()))
+  } finally { await service.stop() }
+  assert.equal(treeStops, 0)
+})
+
+test("a Windows shutdown drains only the synthetic warmup before closing the service", {
+  skip: process.platform !== "win32",
+}, async t => {
+  const { root } = harness(t)
+  const installation = { executable: process.execPath, support: root }
+  const service = createHexService({ args: [fixture, "warm-blocked"], stopTree: () => assert.fail("graceful exit expected") })
+  const capture = assert.rejects(service.use(installation, "key", signal(), transcribe => transcribe(wav())))
+  await until(() => existsSync(join(root, "warm-started")))
+  const stopped = service.stop()
+  writeFileSync(join(root, "warm-release"), "")
+  await stopped
+  await capture
+  assert.ok(existsSync(join(root, "warmed")))
+  assert.equal(existsSync(join(root, "closing")), false)
+})
+
+test("a stalled Windows warmup cannot hold app shutdown open", {
+  skip: process.platform !== "win32", timeout: 5_000,
+}, async t => {
+  const { root } = harness(t)
+  const installation = { executable: process.execPath, support: root }
+  let forced = 0
+  const service = createHexService({ args: [fixture, "warm-blocked"], stopTree: () => { forced++ } })
+  const capture = assert.rejects(service.use(installation, "key", signal(), transcribe => transcribe(wav())))
+  await until(() => existsSync(join(root, "warm-started")))
+  await service.stop()
+  await capture
+  assert.equal(forced, 1)
 })

@@ -188,8 +188,14 @@ pub(crate) trait Driver: Send + Sync {
     /// Bounded read-only discovery. The plan id binds components, retained bytes and approved sources.
     fn capabilities(&self) -> Hex;
     fn prepare(&self, plan: Plan, control: Control) -> Result<(), SpeechError>;
+    fn stop(&self);
+    fn request_stop(&self);
     /// Return only after inference has stopped.
-    fn dictate(&self, control: Control) -> Result<String, SpeechError>;
+    fn dictate(
+        &self,
+        control: Control,
+        selected: Box<dyn Fn() -> bool + Send + Sync>,
+    ) -> Result<String, SpeechError>;
 }
 
 #[derive(Clone)]
@@ -200,17 +206,19 @@ impl Control {
         self.0 .0.lock().cancelled
     }
 
-    pub(crate) fn wait_for_audio(&self) -> Option<Vec<u8>> {
+    pub(crate) fn wait_for_audio(&self, interrupted: impl Fn() -> bool) -> Option<Vec<u8>> {
         let (lock, wake) = &*self.0;
-        let mut slot = lock.lock();
-        while !slot.cancelled && !slot.finish {
+        while !interrupted() {
+            let mut slot = lock.lock();
+            if slot.cancelled {
+                return None;
+            }
+            if slot.finish {
+                return slot.audio.take();
+            }
             wake.wait_for(&mut slot, Duration::from_millis(100));
         }
-        if slot.cancelled {
-            None
-        } else {
-            slot.audio.take()
-        }
+        None
     }
 
     pub(crate) fn progress(&self, value: Operation) {
@@ -471,10 +479,19 @@ impl DeviceSpeech {
                     return Err(SpeechError::Unavailable);
                 }
                 self.store.select(engine, None)?;
+                if engine != Engine::Hex {
+                    if let Some(control) = &slots.operations[Kind::Dictation as usize] {
+                        control.0 .0.lock().cancel(None);
+                        control.0 .1.notify_all();
+                    }
+                    if let Some(hex) = &self.hex {
+                        hex.request_stop();
+                    }
+                }
                 Ok(snapshot(Some(engine), caps))
             }
             Request::Prepare { plan_id } => {
-                if slots.active(Kind::Prepare) {
+                if slots.active(Kind::Prepare) || slots.active(Kind::Dictation) {
                     return Err(SpeechError::Busy);
                 }
                 let hex = self.hex.clone().ok_or(SpeechError::Unavailable)?;
@@ -516,7 +533,7 @@ impl DeviceSpeech {
                 microphone_lease_id,
                 ..
             } => {
-                if self.native_microphone_busy(&slots).is_some() {
+                if self.native_microphone_busy(&slots).is_some() || slots.active(Kind::Prepare) {
                     return Err(SpeechError::Busy);
                 }
                 if self.preferred_engine()? != Some(Engine::Hex) {
@@ -537,12 +554,20 @@ impl DeviceSpeech {
                 if !matches!(hex.capabilities(), Hex::Ready { .. }) {
                     return Err(SpeechError::Unavailable);
                 }
+                let store = self.store.clone();
                 Self::begin(
                     &mut slots.operations,
                     owner,
                     Kind::Dictation,
                     move |control| {
-                        let text = hex.dictate(control)?;
+                        let text = hex.dictate(
+                            control,
+                            Box::new(move || {
+                                store
+                                    .read()
+                                    .is_ok_and(|choice| choice.engine == Some(Engine::Hex))
+                            }),
+                        )?;
                         if text.len() > MAX_TEXT {
                             return Err(SpeechError::Failed);
                         }
@@ -642,6 +667,17 @@ impl DeviceSpeech {
                 slot.cancel(None);
                 control.0 .1.notify_all();
             }
+        }
+        if owner.is_none() {
+            if let Some(hex) = &self.hex {
+                hex.request_stop();
+            }
+        }
+    }
+
+    pub(crate) fn stop_hex(&self) {
+        if let Some(hex) = &self.hex {
+            hex.stop();
         }
     }
 

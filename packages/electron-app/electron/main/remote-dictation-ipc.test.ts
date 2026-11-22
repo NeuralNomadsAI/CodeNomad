@@ -92,7 +92,7 @@ function fixture() {
   })
   setupDeviceSpeechIPC(ipc, {
     request: (_owner, input) => { actions.push(input.action); return { ok: true, value: null } },
-    revoke: () => {}, revokeAll: () => {}, revokeRendererMicrophone: () => {},
+    revoke: () => {}, revokeAll: async () => {}, revokeRendererMicrophone: () => {},
   }, {
     resolveLocal: () => undefined,
     resolvePreferences: () => undefined,

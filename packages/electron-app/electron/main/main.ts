@@ -257,6 +257,7 @@ function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, artifact:
     isTrustedRendererOrigin: isAllowedRendererOrigin,
     navigationLifecycle,
     ...(previousRestart && { defaultRelaunchOptions: { execPath: artifact.execPath, args: artifact.appArgs } }),
+    stopSpeech: () => { remoteDictation.revoke(); return deviceSpeech.revokeAll() },
   })
   const bindClientState = setupClientStateIPC(ipcMain, clientState, (sender) => registry.resolve(sender), getAllowedOrigins)
 
@@ -451,7 +452,9 @@ function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, artifact:
     createHexSpeechDriver(join(
       process.platform === "win32" && process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "CodeNomad") : baseUserDataPath,
       "device-speech",
-    )),
+    ), () => {
+      try { return speechPreference.read().engine === "hex" } catch { return false }
+    }),
   )
   const remoteDictation = setupRemoteDictationIPC(ipcMain, {
     resolveRemote: sender => remoteWindows.resolve(sender),
@@ -470,7 +473,6 @@ function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, artifact:
     openSpeechPreferences: () => openPreferences({ section: "speech" }),
     isShuttingDown: () => navigationLifecycle.stopped,
   })
-  app.on("before-quit", () => { remoteDictation.revoke(); deviceSpeech.revokeAll() })
   setupDeviceSpeechIPC(ipcMain, deviceSpeech, {
     resolveLocal: (sender) => registry.resolve(sender)?.window,
     resolvePreferences: (sender) => preferencesWindows.resolve(sender),

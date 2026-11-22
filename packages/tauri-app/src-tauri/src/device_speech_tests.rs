@@ -65,7 +65,14 @@ impl Driver for Fake {
         Err(SpeechError::Failed)
     }
 
-    fn dictate(&self, control: Control) -> Result<String, SpeechError> {
+    fn stop(&self) {}
+    fn request_stop(&self) {}
+
+    fn dictate(
+        &self,
+        control: Control,
+        _selected: Box<dyn Fn() -> bool + Send + Sync>,
+    ) -> Result<String, SpeechError> {
         control.progress(Operation::Recording);
         self.started.send(control).unwrap();
         if let Resolution::Text(value) = self
@@ -114,8 +121,9 @@ fn unsupported_saved_engine_requires_explicit_reselection() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("choice.json");
     let device = DeviceSpeech::new(path.clone(), None);
-    let saved = json!({"version": 1, "engine": "unsupported", "revision": Uuid::new_v4().to_string()})
-        .to_string();
+    let saved =
+        json!({"version": 1, "engine": "unsupported", "revision": Uuid::new_v4().to_string()})
+            .to_string();
     fs::write(&path, &saved).unwrap();
     let read = device.request("local", Request::Read {}).unwrap();
     assert_eq!(
@@ -193,7 +201,7 @@ fn hex_microphone_claim_is_single_use_and_ends_with_its_operation() {
     let start = |owner: &str| {
         let mut slots = device.slots.lock();
         let value = DeviceSpeech::begin(&mut slots.operations, owner, Kind::Dictation, |control| {
-            control.wait_for_audio();
+            control.wait_for_audio(|| false);
             Ok(Operation::Cancelled)
         })
         .unwrap();
@@ -392,7 +400,7 @@ fn dictation_finish_and_cancellation_are_owner_fenced() {
         Err(SpeechError::NotOwned)
     );
     device.request("owner", finish()).unwrap();
-    assert!(control.wait_for_audio().is_some());
+    assert!(control.wait_for_audio(|| false).is_some());
     assert_eq!(device.request("owner", finish()), Err(SpeechError::Busy));
     device.request("owner", Request::Cancel { id }).unwrap();
     assert!(control.cancelled());

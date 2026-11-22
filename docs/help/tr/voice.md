@@ -53,6 +53,8 @@ Yerel masaüstü uygulamasında **Tercihler → Ses → Dikte** bölümünden **
 
 Ubuntu 24.04 glibc gereksinimini karşılar, Ubuntu 22.04 karşılamaz. Hex, konuşulan dili İngilizce ve Fransızca da dahil olmak üzere [Parakeet’in desteklediği diller](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) arasından otomatik algılar. Bu liste uygulama dilinden bağımsızdır.
 
+Hex, kayıt başladığında modelini arka planda yükler ve son diktenin ardından üç dakika hazır tutar.
+
 Yerel tanıma bu cihazın mikrofonunu kullanır ve yerel uygulamada açılan WSL projelerinde de çevrimdışı çalışır. Uyumlu bir uzak pencerede **Dikte et**, ayrı **Bu cihazda dikte et** penceresini açar. Gösterilen hedefi doğrulayıp **Ses girişini başlat**, **Kaydı durdur ve metne dönüştür** ve **Dikte metnini ekle** seçeneklerini kullanın; taslağa yalnızca metin döner. Uzak proje için sunucu bağlantısı yine gerekir.
 
 Linux’ta uzak bir Tauri penceresinde **API girdisini test et**, dikte motorunu değiştirmeden sunucunun ses API’sini sınar. API için her kaydı onaylamadan önce yerel mikrofon iletişim kutusundaki sunucu adresini kontrol edin. Kayıt, PulseAudio veya PipeWire’ın PulseAudio hizmetini kullanır ve yukarıda açıklanan 24 saniyelik WAV sınırı her zaman geçerlidir.
