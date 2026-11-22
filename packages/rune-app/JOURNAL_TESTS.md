@@ -169,6 +169,8 @@ Le nettoyage navigateur en vol passe avec le serveur partagé corrigé : `target
 
 Les deux revues indépendantes ont reproduit des P2 de la tranche dans `target/rune-review-{contracts,standards}/REPORT.md` : admission épuisée après seize créations rejetées, accumulation de brouillons vides rendant le snapshot impersistable et récupération d'une seule occurrence fermée au lieu de fusionner ses sessions. Corrections et contre-vérifications restent nécessaires avant intégration.
 
+Le correctif des brouillons fait passer les deux reproductions rouges (`drafts-repro.log`, `closed-drafts-repro.log`) et neuf tests Runtime dans `target/rune-review-contracts/cargo-state-green.log`. Vingt-cinq visites/retours et envois restent sérialisables ; un v1 valide à 24 vides accepte un nouveau texte. La fusion conserve les sessions disjointes et la dernière autorité de clear/send, y compris après encode/decode/hydrate, tandis qu'une occurrence intacte récupère le texte. Les sources étrangères sont séparées. Format et budgets v1 conservés ; seuls les clears protégeant un texte d'occurrence sœur occupent un champ persistant. Check WASM réussi : `.tmp-rune-review-fixes-wasm.log`.
+
 Fournir les exécutables privés dans `RUNE_CLIENT_EXE` et `RUNE_SERVER_EXE`, le cache Cargo existant et le cache Chromium privé dans `PLAYWRIGHT_BROWSERS_PATH` :
 
 ```powershell

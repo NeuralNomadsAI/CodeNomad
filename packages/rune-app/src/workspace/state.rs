@@ -6,6 +6,7 @@ use crate::{
     platform, strings,
 };
 use rune::{Cx, El, Tx, edit::TextEdit};
+use std::collections::HashSet;
 
 pub(super) struct Entry {
     key: String,
@@ -15,6 +16,7 @@ pub(super) struct Entry {
     sessions: Vec<Session>,
     next: Option<String>,
     binding: Option<Backend>,
+    cleared: HashSet<String>,
 }
 pub struct Ui {
     pub(super) openings: super::opening::Openings,
@@ -60,7 +62,21 @@ impl Ui {
         Snapshot {
             revision: self.revision,
             saved_at: self.saved_at,
-            tabs: self.entries.iter().map(|e| e.saved.clone()).collect(),
+            tabs: self.entries.iter().map(|e| {
+                let mut saved = e.saved.clone();
+                if let Tab::Workspace(w) = &mut saved {
+                    // Persist only clears protecting against another restored occurrence's text.
+                    for id in &e.cleared {
+                        if self.entries.iter().any(|other| {
+                            other.key != e.key && matches!(&other.saved, Tab::Workspace(old)
+                                if same_project(w, old) && old.drafts.get(id).is_some_and(|text| !text.is_empty()))
+                        }) {
+                            w.drafts.insert(id.clone(), String::new());
+                        }
+                    }
+                }
+                saved
+            }).collect(),
             active: Some(self.active),
         }
     }
@@ -125,7 +141,23 @@ impl Ui {
         self.staged_revision = Some(self.revision);
     }
 }
-fn entry(key: String, saved: Tab) -> Entry {
+fn same_project(a: &Workspace, b: &Workspace) -> bool {
+    a.folder == b.folder
+        && a.backend_id == b.backend_id
+        && (a.backend_id.is_none() || a.server_id == b.server_id)
+}
+fn entry(key: String, mut saved: Tab) -> Entry {
+    let mut cleared = HashSet::new();
+    if let Tab::Workspace(w) = &mut saved {
+        w.drafts.retain(|id, text| {
+            if text.is_empty() {
+                cleared.insert(id.clone());
+                false
+            } else {
+                true
+            }
+        });
+    }
     Entry {
         key,
         saved,
@@ -134,6 +166,7 @@ fn entry(key: String, saved: Tab) -> Entry {
         sessions: Vec::new(),
         next: None,
         binding: None,
+        cleared,
     }
 }
 fn busy(s: &State) -> bool {
@@ -175,9 +208,17 @@ pub fn capture(s: &mut State) {
         let owns_draft = item.binding.as_ref().is_some_and(|b| {
             b.session == key || b.session.is_empty() && key == "__no_session_draft__"
         });
-        if owns_draft && saved.drafts.get(key).map(String::as_str) != Some(s.draft.text.as_str()) {
-            saved.drafts.insert(key.into(), s.draft.text.clone());
-            changed = true;
+        if owns_draft {
+            if s.draft.text.is_empty() {
+                if saved.drafts.remove(key).is_some() {
+                    item.cleared.insert(key.into());
+                    changed = true;
+                }
+            } else if saved.drafts.get(key) != Some(&s.draft.text) {
+                saved.drafts.insert(key.into(), s.draft.text.clone());
+                item.cleared.remove(key);
+                changed = true;
+            }
         }
     }
     if changed {
@@ -290,7 +331,11 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         return;
     };
     let removed = ui.entries.remove(index);
-    if let Tab::Workspace(saved) = removed.saved {
+    if let Tab::Workspace(mut saved) = removed.saved {
+        // Clear authority belongs to this occurrence's live lifetime, outside text budgets.
+        saved
+            .drafts
+            .extend(removed.cleared.into_iter().map(|id| (id, String::new())));
         ui.closed.push(saved);
         if ui.closed.len() > 16 {
             ui.closed.remove(0);
@@ -394,17 +439,23 @@ pub fn opened(s: &mut State, project: &Project) {
             w.workspace_id = Some(project.id.clone());
         }
     } else {
-        let drafts = ui
-            .closed
-            .iter()
-            .rev()
-            .find(|w| {
-                w.folder == project.path
-                    && w.backend_id == backend_id
-                    && (backend_id.is_none() || w.server_id == l.server_id)
-            })
-            .map(|w| w.drafts.clone())
-            .unwrap_or_default();
+        let mut drafts = std::collections::BTreeMap::new();
+        item.cleared.clear();
+        for w in ui.closed.iter().filter(|w| {
+            w.folder == project.path
+                && w.backend_id == backend_id
+                && (backend_id.is_none() || w.server_id == l.server_id)
+        }) {
+            for (id, text) in &w.drafts {
+                if text.is_empty() {
+                    drafts.remove(id);
+                    item.cleared.insert(id.clone());
+                } else {
+                    drafts.insert(id.clone(), text.clone());
+                    item.cleared.remove(id);
+                }
+            }
+        }
         item.saved = Tab::Workspace(Workspace {
             backend_id: backend_id.clone(),
             server_id: if backend_id.is_some() {
