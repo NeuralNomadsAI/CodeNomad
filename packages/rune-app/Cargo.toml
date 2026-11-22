@@ -14,7 +14,7 @@ default = []
 test-support = ["rune-theme-codenomad/test-support"]
 
 [dependencies]
-async-lock = "=3.5.0"
+async-lock = "3.5.0"
 codenomad-client = { path = "../../crates/codenomad-client" }
 rune = { workspace = true }
 rune-kit = { workspace = true }
@@ -22,9 +22,9 @@ rune-theme-codenomad = { workspace = true }
 serde_json = "1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-icu_collator = "=2.4.0"
-icu_locale_core = "=2.4.0"
-sys-locale = "=0.3.2"
+icu_collator = "2.4.0"
+icu_locale_core = "2.4.0"
+sys-locale = "0.3.2"
 codenomad-host-process = { path = "../../crates/codenomad-host-process" }
 rune = { workspace = true, features = ["native-file-dialog"] }
 tokio = { version = "1", features = ["rt-multi-thread", "time", "net"] }
@@ -36,6 +36,3 @@ js-sys = "0.3"
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = ["Window", "Location", "UrlSearchParams", "Storage", "EventTarget", "PageTransitionEvent", "Request", "RequestInit", "RequestCredentials"] }
 
-[package.metadata.rune]
-repository = "https://github.com/anomalyco/rune"
-rev = "21e5342b9a4cc33eeee88071b4b1f0eafb1247d4"
