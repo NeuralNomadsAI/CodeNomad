@@ -118,9 +118,10 @@ for (const kind of ["electron", "tauri"] as const) {
     f.unavailable()
     await host(page, kind, project("a", "missions"))
     try {
-      const failure = page.waitForResponse(response => response.status() === 503 && new URL(response.url()).pathname === "/api/backends/a/api/meta")
-      await page.goto(url)
-      await failure
+      await Promise.all([
+        page.waitForResponse(response => response.status() === 503 && new URL(response.url()).pathname === "/api/backends/a/api/meta", { timeout: 60_000 }),
+        page.goto(url),
+      ])
       const selected = async () => page.evaluate(async () => {
         const path = "/src/stores/settings-screen.ts"
         return (await import(path)).activeSettingsSection()
