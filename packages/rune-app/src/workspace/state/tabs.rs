@@ -194,6 +194,9 @@ pub(super) fn close_blocked(s: &State, index: usize) -> bool {
     let Some(ui) = &s.workspace else {
         return false;
     };
+    if s.documents.has_tab_edits(&ui.entries[index].key) {
+        return true;
+    }
     if ui.active == index {
         crate::agent::navigation_blocked(s)
     } else {

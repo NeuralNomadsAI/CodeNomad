@@ -53,6 +53,47 @@ fn edit(ui: &mut Ui, text: &str) {
 fn save(ui: &mut Ui) {
     ui.save_document(ui.document.scope());
 }
+
+#[cfg(feature = "test-support")]
+#[test]
+fn returning_to_sessions_keeps_the_file_draft_and_blocks_closing_its_tab() {
+    use crate::workspace;
+    let (mut s, http) = platform::block_on(async {
+        let http = Http::new().await;
+        let mut s = crate::init();
+        crate::gallery::shell::fixture(&mut s);
+        s.workspace = Some(workspace::Ui::new());
+        workspace::connected(&mut s);
+        let project = s.screen.launcher().unwrap().project.clone().unwrap();
+        workspace::opened(&mut s, &project);
+        let mut files = http.ui(s.documents.clone(), "tab-0");
+        open(&mut files, &http, "first.txt", "YQ==", "a").await;
+        edit(&mut files, "unsaved edit");
+        s.files = Some(files);
+        (s, http)
+    });
+    crate::launcher::back(&mut s);
+    assert!(s.screen.is_launcher() && s.files.is_none());
+    let mut rt = rune::Runtime::new(s, crate::view, (1000.0, 800.0), rune::Env::new(false, 1.0));
+    rt.update(|s, tx| workspace::close(s, "tab-0", tx));
+    assert_eq!(rt.state.workspace.as_ref().unwrap().active_key(), "tab-0");
+    rt.update(|s, tx| workspace::new_tab(s, tx));
+    rt.update(|s, tx| workspace::close(s, "tab-0", tx));
+    assert_eq!(
+        rt.state.workspace.as_ref().unwrap().snapshot().tabs.len(),
+        2
+    );
+    platform::block_on(async {
+        let mut files = http.ui(rt.state.documents.clone(), "tab-0");
+        open(&mut files, &http, "first.txt", "YQ==", "unsaved edit").await;
+        edit(&mut files, "a");
+    });
+    rt.update(|s, tx| workspace::close(s, "tab-0", tx));
+    assert_eq!(
+        rt.state.workspace.as_ref().unwrap().snapshot().tabs.len(),
+        1
+    );
+}
 fn cached_listing(ui: &mut Ui) {
     use codenomad_client::files::{Entry, EntryKind};
     ui.tree.activate(true);
