@@ -4,6 +4,7 @@ import replyFrom from "@fastify/reply-from"
 import fs from "fs"
 import { isIP, type Socket } from "net"
 import path from "path"
+import { Readable } from "node:stream"
 import { finished } from "node:stream/promises"
 import { fetch } from "undici"
 import type { Logger } from "../logger"
@@ -2250,6 +2251,7 @@ function setupStaticUi(
     return
   }
 
+  const identityRefused = new WeakSet<FastifyRequest>()
   app.addHook("preHandler", (request, reply, done) => {
     const session = authManager.getSessionFromRequest(request)
     if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, remotePreviewsAllowed)) {
@@ -2257,15 +2259,28 @@ function setupStaticUi(
     }
     if (request.routeOptions.url === "/" || request.routeOptions.url === "/*") {
       // Expand the wildcard for fastify-static, which maps it to gzip alone.
-      const encodings = request.headers["accept-encoding"]?.split(",")
-      const name = (entry: string) => entry.split(";", 1)[0]!.trim().toLowerCase()
-      if (encodings?.some(entry => name(entry) === "*")) {
-        const explicit = new Set(encodings.map(name))
+      const encodings = request.headers["accept-encoding"]?.toLowerCase().split(",") ?? []
+      const name = (entry: string) => entry.split(";", 1)[0]!.trim()
+      const explicit = new Map(encodings.map(entry => [name(entry), entry]))
+      const identity = explicit.get("identity") ?? explicit.get("*")
+      if (identity && /;\s*q\s*=\s*0(?:\.0{0,3})?\s*$/.test(identity)) identityRefused.add(request)
+      if (explicit.has("*")) {
         request.headers["accept-encoding"] = encodings.flatMap(entry => name(entry) !== "*" ? [entry]
           : ["br", "gzip", "deflate"].filter(coding => !explicit.has(coding)).map(coding => entry.replace("*", coding))).join(",")
       }
     }
     done()
+  })
+
+  app.addHook("onSend", (request, reply, payload, done) => {
+    if (identityRefused.has(request) && !reply.hasHeader("content-encoding")
+      && /(?:^|,\s*)accept-encoding(?:,|$)/i.test(String(reply.getHeader("vary")))) {
+      if (payload instanceof Readable) payload.destroy()
+      for (const name of ["accept-ranges", "content-length", "content-range", "content-type", "etag", "last-modified"]) reply.removeHeader(name)
+      reply.code(406)
+      return done(null, null)
+    }
+    done(null, payload)
   })
 
   app.register(fastifyStatic, {

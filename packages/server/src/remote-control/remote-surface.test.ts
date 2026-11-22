@@ -244,6 +244,10 @@ test("negotiates precompressed static assets without loosening HTML entry admiss
     assert.equal(head.bytes.length, 0)
   }
   const headers = { "accept-encoding": "br" }
+  const rejected = await send(target(), "/only-gzip.wasm", { headers: { "accept-encoding": "br, identity;q=0" } })
+  assert.equal(rejected.status, 406)
+  assert.equal(rejected.bytes.length, 0)
+  assert.match(String(rejected.headers.vary), /(?:^|,\s*)accept-encoding(?:,|$)/i)
   for (const url of ["/index.html", "/index.html.br"]) {
     assert.equal((await send(target(), url, { headers })).status, 401)
   }
