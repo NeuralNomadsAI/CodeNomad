@@ -9,6 +9,7 @@ use std::collections::HashSet;
 pub(super) struct Cache {
     agent: Option<agent::Ui>,
     files: Option<crate::files::Ui>,
+    git: crate::git::Binding,
     tools: HashSet<String>,
     title: String,
     messages: Vec<Message>,
@@ -36,6 +37,7 @@ impl Cache {
         Self {
             agent: s.agent.take(),
             files: s.files.take(),
+            git: crate::git::Binding::take(&mut s.git),
             tools: std::mem::take(&mut s.expanded_tools),
             title: std::mem::take(&mut s.chat_title),
             messages: std::mem::take(&mut s.messages),
@@ -54,6 +56,7 @@ impl Cache {
     pub fn apply(self, s: &mut State) {
         s.agent = self.agent;
         s.files = self.files;
+        s.git = self.git;
         s.expanded_tools = self.tools;
         s.chat_title = self.title;
         s.messages = self.messages;

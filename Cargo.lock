@@ -2903,6 +2903,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rune-highlights"
+version = "0.0.1"
+source = "git+https://github.com/anomalyco/rune?rev=21e5342b9a4cc33eeee88071b4b1f0eafb1247d4#21e5342b9a4cc33eeee88071b4b1f0eafb1247d4"
+dependencies = [
+ "unicode-ident",
+ "wasmparser",
+]
+
+[[package]]
 name = "rune-image"
 version = "0.0.1"
 source = "git+https://github.com/anomalyco/rune?rev=21e5342b9a4cc33eeee88071b4b1f0eafb1247d4#21e5342b9a4cc33eeee88071b4b1f0eafb1247d4"
@@ -2925,6 +2934,7 @@ source = "git+https://github.com/anomalyco/rune?rev=21e5342b9a4cc33eeee88071b4b1
 dependencies = [
  "icu_normalizer",
  "rune",
+ "rune-highlights",
  "rune-motion",
  "unicode-segmentation",
 ]
@@ -3938,6 +3948,16 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "wasmparser"
+version = "0.245.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f08c9adee0428b7bddf3890fc27e015ac4b761cc608c822667102b8bfd6995e"
+dependencies = [
+ "bitflags 2.13.2",
+ "indexmap",
 ]
 
 [[package]]

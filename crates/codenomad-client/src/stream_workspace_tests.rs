@@ -124,6 +124,47 @@ fn foreign_and_malformed_workspace_events_publish_no_partial_batch() {
 }
 
 #[test]
+fn git_hints_follow_the_owned_stream_without_a_native_session_id() {
+    run(async {
+        let backend = backend().await;
+        let (out, inbox) = bounded(4);
+        let state = State::default();
+        deliver(&backend, &out, &state, json!({"type":"instance.event","instanceId":"foreign","event":{"type":"filesystem.changed","data":{}}})).await;
+        assert!(inbox.is_empty());
+        deliver(&backend, &out, &state, json!({"type":"instance.event","instanceId":"owner","event":{"type":"filesystem.changed","data":{}}})).await;
+        deliver(&backend, &out, &state, json!({"type":"instance.event","instanceId":"owner","event":{"type":"vcs.branch.updated","data":{}}})).await;
+        deliver(
+            &backend,
+            &out,
+            &state,
+            json!({"type":"workspace.worktreesChanged","workspaceId":"owner"}),
+        )
+        .await;
+        deliver(
+            &backend,
+            &out,
+            &state,
+            json!({"type":"storage.configChanged","owner":"ui","value":{}}),
+        )
+        .await;
+        assert!(
+            matches!(inbox.recv().await.unwrap(), Input::Workspace(7, WorkspaceEvent::NativeFilesystemChanged{workspace_id}) if workspace_id=="owner")
+        );
+        assert!(
+            matches!(inbox.recv().await.unwrap(), Input::Workspace(7, WorkspaceEvent::WorktreesChanged{workspace_id}) if workspace_id=="owner")
+        );
+        assert!(
+            matches!(inbox.recv().await.unwrap(), Input::Workspace(7, WorkspaceEvent::WorktreesChanged{workspace_id}) if workspace_id=="owner")
+        );
+        assert!(matches!(
+            inbox.recv().await.unwrap(),
+            Input::Workspace(7, WorkspaceEvent::UiPreferencesChanged)
+        ));
+        assert_eq!(state.version.load(SeqCst), 0);
+    });
+}
+
+#[test]
 fn workspace_events_cross_existing_http_stream_and_recovery_lane() {
     use std::{
         io::{Read, Write},
