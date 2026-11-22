@@ -456,6 +456,9 @@
         "height": 14,
         "width": 14
       },
+      "workspaceRoot": {
+        "glyph": 15
+      },
       "workspaceRow": {
         "actionGap": 2,
         "base": 8,
@@ -647,6 +650,9 @@
       "windowIconGlyph": {
         "height": 14,
         "width": 14
+      },
+      "workspaceRoot": {
+        "glyph": 15
       },
       "workspaceRow": {
         "actionGap": 2,

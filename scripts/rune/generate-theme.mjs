@@ -7,7 +7,7 @@ import {root,generated,sources} from './generate-common.mjs'
 import {applyDefaultPalette,collectTheme} from './generate-theme-browser.mjs'
 import {themeFixtureHtml} from './generate-theme-fixture.mjs'
 import {generateWorkspaceIcons} from './parity/workspace-tree-row-icons.mjs'
-import {sourcePath} from './parity/workspace-tree-row-source.mjs'
+import {sourcePath,workspaceRootIcon} from './parity/workspace-tree-row-source.mjs'
 import ts from 'typescript'
 
 const ui=path.join(root,'packages/ui'),tokens=path.join(ui,'src/styles/tokens.css')
@@ -44,6 +44,7 @@ const out={name:'CodeNomad',blend:{mode:'srgb',over:'surface-canvas'},light:{},d
   'System font stacks are preserved as source strings; glyph metrics require per-platform image qualification.',
 ]}
 out.layout=layout
+const rootGlyph=workspaceRootIcon(await readFile(path.join(root,sourcePath),'utf8'))
 try{
   await server.listen()
   browser=await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1024,height:768},deviceScaleFactor:1})
@@ -59,6 +60,7 @@ try{
     assert.equal(value.unresolved.length,0,`Unresolved ${appearance} tokens: ${value.unresolved.join(', ')}`)
     out[appearance]=value.colors
     for(const field of ['numbers','strings','shadows','metrics'])out[field][appearance]=value[field]
+    out.metrics[appearance]={...value.metrics,workspaceRoot:{glyph:rootGlyph}}
     const palette=await page.evaluate(applyDefaultPalette,appearance)
     const product=await page.evaluate(collectTheme,names)
     assert.deepEqual(product.metrics,value.metrics,`Product palette changed ${appearance} geometry`)

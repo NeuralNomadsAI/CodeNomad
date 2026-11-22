@@ -9,6 +9,7 @@ mod markdown;
 mod reading;
 mod resize;
 mod server;
+mod tree;
 mod visual;
 
 fn english(s: &State, cx: &mut rune::Cx<State>) -> El {

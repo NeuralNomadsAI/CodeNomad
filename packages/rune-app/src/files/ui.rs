@@ -186,6 +186,14 @@ impl Ui {
         };
         let row = &self.rows[index];
         let next = match key {
+            Key::Enter => {
+                self.select(path.into(), row.expanded.is_some());
+                return true;
+            }
+            Key::Text(key) if key == " " => {
+                self.select(path.into(), row.expanded.is_some());
+                return true;
+            }
             Key::Down => Some(
                 self.rows[(index + 1).min(self.rows.len() - 1)]
                     .entry
@@ -204,7 +212,7 @@ impl Ui {
                             .get(index + 1)
                             .filter(|child| child.parent == path)
                         {
-                            tx.focus(format!("file-row-{}", child.entry.path), true);
+                            self.focus_row(child.entry.path.clone(), tx);
                         }
                     }
                     None => return false,
@@ -215,16 +223,20 @@ impl Ui {
                 if row.expanded == Some(true) {
                     self.select(path.into(), true);
                 } else if row.parent != "." {
-                    tx.focus(format!("file-row-{}", row.parent), true);
+                    self.focus_row(row.parent.clone(), tx);
                 }
                 return true;
             }
             _ => return false,
         };
         if let Some(path) = next {
-            tx.focus(format!("file-row-{path}"), true);
+            self.focus_row(path, tx);
         }
         true
+    }
+    fn focus_row(&mut self, path: String, tx: &mut rune::Tx) {
+        tx.focus(format!("file-row-{path}"), true);
+        self.tree.select(path);
     }
     pub fn open(&mut self, path: String) {
         if !self.stopped {

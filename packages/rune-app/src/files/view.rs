@@ -2,7 +2,7 @@ use super::{document::Format, presentation::Kind};
 use crate::{State, components::button, screen, strings::t, window_control::scoped_close_button};
 use rune::{El, text};
 use rune_theme_codenomad::{
-    Space, TextRole, document_reader as theme,
+    Space, document_reader as theme,
     layout::{self, Layout},
     workspace_tree::{self, icons},
 };
@@ -65,13 +65,7 @@ pub fn body(s: &State, history: El, expanded: bool) -> El {
     let Some(ui) = &s.files else {
         return history;
     };
-    let main = theme::pages(
-        history,
-        ui.reader
-            .target()
-            .is_some()
-            .then(|| layout::with_source_palette(|| reader(s))),
-    );
+    let main = theme::pages(history, ui.reader.target().is_some().then(|| reader(s)));
     let drawer = ui.drawer();
     theme::split(main, drawer.pinned.then(|| tree(s)), drawer.width, expanded)
         .key("files-host")
@@ -86,7 +80,11 @@ pub fn body(s: &State, history: El, expanded: bool) -> El {
             }
         })
 }
-fn reader(s: &State) -> El {
+pub(crate) fn reader(s: &State) -> El {
+    layout::with_source_palette(|| reader_content(s))
+}
+
+fn reader_content(s: &State) -> El {
     let Some(ui) = &s.files else {
         return rune::el();
     };
@@ -255,7 +253,17 @@ fn reader(s: &State) -> El {
         .child(content_view.remaining())
 }
 
-fn tree(s: &State) -> El {
+pub(crate) fn tree(s: &State) -> El {
+    layout::with_source_palette(|| tree_content(s))
+}
+
+fn open_workspace(s: &mut State, path: String) {
+    if let Some(ui) = &mut s.files {
+        ui.open(path);
+    }
+}
+
+fn tree_content(s: &State) -> El {
     let Some(ui) = &s.files else {
         return rune::el();
     };
@@ -281,11 +289,7 @@ fn tree(s: &State) -> El {
                 ui.stopped,
                 screen::action(&scope, {
                     let path = path.clone();
-                    move |s| {
-                        if let Some(ui) = &mut s.files {
-                            ui.open(path.clone());
-                        }
-                    }
+                    move |s| open_workspace(s, path.clone())
                 }),
             )
             .key(format!("file-eye-{path}"))
@@ -310,13 +314,7 @@ fn tree(s: &State) -> El {
                     depth: row.depth as u32,
                     selected: ui.tree.selected() == Some(path.as_str()),
                     expanded: row.expanded,
-                    icon: if row.expanded == Some(true) {
-                        &icons::FOLDER_OPEN
-                    } else if folder {
-                        &icons::FOLDER
-                    } else {
-                        &icons::FILE
-                    },
+                    icon: row_icon(&row.entry.name, row.expanded),
                     busy: row.busy,
                     actions,
                 },
@@ -330,8 +328,10 @@ fn tree(s: &State) -> El {
             .on_key({
                 let scope = scope.clone();
                 let path = path.clone();
+                let row_key = format!("file-row-{path}");
                 move |s: &mut State, key, tx| {
-                    s.current_scope(&scope)
+                    tx.focused() == Some(row_key.as_str())
+                        && s.current_scope(&scope)
                         && s.files
                             .as_mut()
                             .is_some_and(|ui| ui.navigate(&path, &key.key, rtl, tx))
@@ -357,19 +357,49 @@ fn tree(s: &State) -> El {
             }),
         ));
     }
+    let directory = ui.tree.directory();
+    let name = directory
+        .trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(directory);
+    let contents = workspace_tree::workspace_body(
+        workspace_tree::root(dark, name, directory).key("file-tree-root"),
+        tree,
+        ui.tree.busy(".").then(|| {
+            text(t("instanceInfo.loading"))
+                .role("status")
+                .pad(Space::Md)
+        }),
+    );
     theme::surface(dark)
         .key("files-panel")
-        .child(
-            text(ui.tree.directory())
-                .text_role(TextRole::Label)
-                .pad(Space::Sm),
-        )
-        .child(theme::viewport(tree, true))
-        .children(
-            ui.tree
-                .busy(".")
-                .then(|| text(t("instanceInfo.loading")).role("status")),
-        )
+        .child(theme::viewport(contents, true))
+}
+
+fn row_icon(name: &str, expanded: Option<bool>) -> &'static rune::Icon {
+    if let Some(expanded) = expanded {
+        return if expanded {
+            &icons::FOLDER_OPEN
+        } else {
+            &icons::FOLDER
+        };
+    }
+    let extension = name
+        .rsplit_once('.')
+        .map(|(_, ext)| ext.to_ascii_lowercase());
+    match extension.as_deref() {
+        Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "ico" | "bmp" | "avif") => {
+            &icons::IMAGE
+        }
+        Some("md" | "mdx" | "txt" | "rst") => &icons::FILE_TEXT,
+        Some(
+            "ts" | "tsx" | "js" | "jsx" | "json" | "yaml" | "yml" | "css" | "html" | "py" | "rs"
+            | "sh",
+        ) => &icons::FILE_CODE,
+        _ => &icons::FILE,
+    }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

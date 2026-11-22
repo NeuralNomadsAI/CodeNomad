@@ -1,5 +1,5 @@
 //! Workspace row geometry from the Solid tree; its owner supplies actions and input policy.
-use crate::tokens;
+use crate::{Space, layout::Layout, tokens};
 use rune::{El, Icon, TextStyle, icon};
 #[path = "workspace_tree_icons.rs"]
 pub mod icons;
@@ -12,6 +12,34 @@ pub struct Row<'a> {
     pub icon: &'static Icon,
     pub busy: bool,
     pub actions: Option<El>,
+}
+
+pub fn root(dark: bool, name: &str, directory: &str) -> El {
+    let t = tokens(dark);
+    let size = t.number("font-size-sm").px();
+    rune::row()
+        .w_full()
+        .center_y()
+        .px(t.space(Space::Md).px())
+        .py(t.space(Space::Sm).px())
+        .gap(t.space(Space::Sm).px())
+        .help(directory)
+        .child(icon(&icons::FOLDER_OPEN, t.metric("workspaceRoot", "glyph").px()).a11y_hidden())
+        .child(
+            rune::text(name).truncate().font(
+                TextStyle::new(size, t.number("font-weight-medium").px())
+                    .lh(size * t.number("line-height-normal").px()),
+            ),
+        )
+}
+
+pub fn workspace_body(header: El, tree: El, status: Option<El>) -> El {
+    rune::col()
+        .py(tokens(crate::layout::dark()).space(Space::Sm).px())
+        .full_width()
+        .child(header)
+        .child(tree)
+        .children(status)
 }
 
 pub fn row(dark: bool, rtl: bool, row: Row<'_>) -> El {

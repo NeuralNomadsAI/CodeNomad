@@ -7,13 +7,14 @@ import {createServer} from 'vite'
 import {chromium} from 'playwright'
 import {applyDefaultPalette,collectTheme} from './generate-theme-browser.mjs'
 import {themeFixtureHtml,sourceMenuGutter} from './generate-theme-fixture.mjs'
-import {workspaceRowContract,workspaceSource} from './parity/workspace-tree-row-source.mjs'
+import {workspaceRootIcon,workspaceRowContract,workspaceSource} from './parity/workspace-tree-row-source.mjs'
 
 const root=fileURLToPath(new URL('../../',import.meta.url))
 test('workspace geometry follows the actual JSX expressions and rejects unknown indents',async()=>{
   assert.deepEqual(workspaceSource,{base:8,step:14,chevron:12,icon:14,busy:12})
   const source=await readFile(path.join(root,'packages/ui/src/components/instance/shell/right-panel/components/WorkspaceTree.tsx'),'utf8')
   assert.equal(workspaceRowContract(source.replace('8 + row.depth * 14','11 + row.depth * 17')).step,17)
+  assert.equal(workspaceRootIcon(source),15)
   assert.throws(()=>workspaceRowContract(source.replace('8 + row.depth * 14','row.depth * 14')),/requires base/)
 })
 test('action menu gutter follows its actual numeric JSX contract',()=>{
@@ -46,7 +47,9 @@ test('generated semantic metrics survive actual font changes and viewport change
       assert(await page.locator('.window-icon-button').evaluate(element=>element.matches(':focus-visible')))
       const baseline=await page.evaluate(collectTheme,names)
       assert.deepEqual(baseline.colors,generated.product[appearance].colors)
-      assert.deepEqual(baseline.metrics,generated.metrics[appearance],'Baseline must match the checked-in semantic contract')
+      const {workspaceRoot,...generatedMetrics}=generated.metrics[appearance]
+      assert.deepEqual(baseline.metrics,generatedMetrics,'Baseline must match the checked-in semantic contract')
+      assert.equal(workspaceRoot.glyph,15)
       const familyKeys=['font-family-sans','message-part-header-font-family']
       const widths=[]
       for(const family of ['"Segoe UI"','Arial','Helvetica','sans-serif','serif','monospace']){
