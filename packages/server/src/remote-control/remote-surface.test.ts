@@ -230,6 +230,7 @@ test("negotiates precompressed static assets without loosening HTML entry admiss
   const variants = [
     ["/app.wasm", "br, gzip", "br", br],
     ["/app.wasm", "gzip, br", "br", br],
+    ["/app.wasm", "gzip, *", "br", br],
     ["/app.wasm", "br;q=0, gzip", "gzip", gzip],
     ["/app.wasm", "br;q=0.2, gzip;q=0.8", "gzip", gzip],
     ["/app.wasm", "gzip;q=0, *;q=1, identity;q=0", "br", br],

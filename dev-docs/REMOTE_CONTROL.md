@@ -114,7 +114,7 @@ override them. An unknown value refuses startup.
   originals of at least 1 KiB. Downloadable bundles keep HTML at its
   original paths for compatible servers. Custom bundles can supply static
   variants. The server negotiates on the original URL with `Accept-Encoding`
-  and preserves its media type.
+  and preserves its media type; equal weights prefer Brotli to gzip.
   HTML entry points and their compressed variants require a paired device.
   Refusals close the connection,
   because an unread body would otherwise break the client's next keep-alive
