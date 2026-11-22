@@ -15,13 +15,29 @@ import {pendingOpenFixture} from './pending-open-fixture.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending,web=process.argv.includes('--web')||webRestore,root=path.resolve(import.meta.dirname,'../../..')
 if(!web)requireTestSupport()
-const here=path.resolve(import.meta.dirname,'..'),profile=path.join(web?path.join(root,'target/rune-web-tests'):path.join(here,'fixture-profile'),`launcher-${randomUUID()}`)
+const gitPanel=process.argv.includes('--git-panel'),gitOutput=gitPanel?process.env.RUNE_TEST_GIT_OUTPUT:undefined
+if(gitOutput)assert(path.isAbsolute(gitOutput),'Git fixture output must be absolute')
+const here=path.resolve(import.meta.dirname,'..'),profile=path.join(gitOutput??(web?path.join(root,'target/rune-web-tests'):path.join(here,'fixture-profile')),`launcher-${randomUUID()}`)
 const project=path.join(profile,'projects','synthetic');await mkdir(project,{recursive:true})
 const forbidden=path.join(profile,'forbidden');if(web)await mkdir(forbidden)
 const ui=path.resolve(root,process.env.RUNE_WEB_DIR??'target/rune-web-connected')
 const manifest=web?JSON.parse(await readFile(path.join(ui,'bundle-manifest.json'),'utf8')):null
 if(web){assert.equal(manifest.generator,'scripts/rune/bundle-web.mjs');assert.equal(manifest.testSupport,false,'Connected qualification requires the default product bundle')}
 const gitCount=Number(process.env.RUNE_TEST_GIT_COUNT??0)
+const review=path.join(path.dirname(project),'review')
+const gitEnv=gitPanel?{...await privateEnvironment(profile),GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null'}:undefined
+const git=async (...args)=>(await promisify(execFile)('git',['-C',project,...args],{windowsHide:true,env:gitEnv})).stdout
+if(gitPanel){
+  assert(!gitCount,'Git panel uses real worktrees')
+  await git('init','--quiet','-b','main')
+  await git('config','user.name','Rune Fixture')
+  await git('config','user.email','fixture@example.invalid')
+  await writeFile(path.join(project,'git-panel.txt'),'git-panel initial\n')
+  await git('add','--','git-panel.txt')
+  await git('commit','--quiet','-m','Initial Git panel fixture')
+  await git('worktree','add','--quiet','-b','review',review)
+  await writeFile(path.join(project,'git-panel.txt'),'git-panel edited\n')
+}
 if(gitCount)await promisify(execFile)('git',['init','--quiet',project],{windowsHide:true,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'NUL'}})
 const records=new Map(),stores=new Map(),streams=new Set(),requests=[]
 const stats={created:0,prompts:0,lists:0}
@@ -33,6 +49,7 @@ const restoreState=process.argv.includes('--restore-state')
 const pendingOpen=process.argv.includes('--pending-open')
 const documentState=process.argv.includes('--document-state')
 const filesState=process.argv.includes('--files-state')||documentState
+assert(!gitPanel||(!web&&!controls&&!withTools&&!uncertain&&!workspaceClaims&&!restoreState&&!pendingOpen&&!filesState),'Git panel uses its own qualification mode')
 assert(!filesState||(!web&&!controls&&!withTools&&!uncertain&&!workspaceClaims&&!restoreState&&!pendingOpen),'Files state uses its own qualification mode')
 if(filesState){await mkdir(path.join(project,'src'));await writeFile(path.join(project,'initial.txt'),'initial');await writeFile(path.join(project,'src/initial.ts'),'initial')}
 assert(!workspaceClaims||(!web&&!controls&&!withTools&&!uncertain),'Workspace claims use their own qualification mode')
@@ -96,7 +113,7 @@ const control=controls?controlsFixture({records,stores,streams,project,stats}):n
 const upstream=createServer(async(req,res)=>{
   try {
     const url=new URL(req.url,'http://127.0.0.1');requests.push(`${req.method} ${url.pathname}`)
-    if(filesState)assert(!(url.pathname==='/api/session'&&req.method==='POST')&&!url.pathname.endsWith('/prompt'),'Files state forbids native session creation and prompts')
+    if(filesState||gitPanel)assert(!(url.pathname==='/api/session'&&req.method==='POST')&&!url.pathname.endsWith('/prompt'),'Read-only native session fixture')
     assert.equal(req.headers.authorization,`Basic ${Buffer.from('opencode:fixture-native').toString('base64')}`)
     let raw='';for await(const chunk of req){raw+=chunk;assert(raw.length<262144)}
     const json=data=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(data))}
@@ -111,7 +128,16 @@ const upstream=createServer(async(req,res)=>{
       res.writeHead(200,{'content-type':'text/event-stream'});res.write(`data: ${JSON.stringify({id:randomUUID(),type:'server.connected',created:Date.now(),data:{}})}\n\n`)
       streams.add(res);req.on('close',()=>streams.delete(res));return
     }
-    if(url.pathname==='/api/location')return json(gitCount?{directory:project,project:{id:'fixture_project',canonical:project,directory:project}}:{data:{directory:project}})
+    if(url.pathname==='/api/location'){
+      if(gitPanel){
+        const directory=url.searchParams.get('location[directory]')??project
+        assert([project,review].some(owned=>path.resolve(directory)===owned))
+        return json({directory,project:{id:'fixture_project',canonical:project,directory}})
+      }
+      return json(gitCount?{directory:project,project:{id:'fixture_project',canonical:project,directory:project}}:{data:{directory:project}})
+    }
+    if(gitPanel&&url.pathname==='/api/worktree')return json([{directory:project},{directory:review}])
+    if(gitPanel&&url.pathname==='/api/worktree/refresh'&&req.method==='POST')return json({})
     if(gitCount&&url.pathname==='/api/worktree')return json(Array.from({length:gitCount},(_,i)=>({directory:i?path.join(profile,`absent-checkout-${i}`):project})))
     if(url.pathname==='/api/session'&&req.method==='GET') {
       stats.lists++
@@ -177,6 +203,7 @@ const upstream=createServer(async(req,res)=>{
 })
 await new Promise(r=>upstream.listen(0,'127.0.0.1',r))
 const env=await privateEnvironment(profile)
+if(gitPanel)env.CODENOMAD_PROFILE='trial-git-panel'
 Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled'})
 if(web)env.CNRS_FIXTURE_UI_DIR=ui
 const server=spawn(serverBinary,[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
@@ -212,18 +239,25 @@ try{
       assert.equal(stats.created,2,'Restore must not create native sessions');assert.equal(stats.prompts,stage==='prepare'?0:2,'Only explicit resumed sends submit prompts')
     }
   }else {
-    client=spawn(clientBinary,[filesState?'--probe-files-state':workspaceClaims?'--probe-workspace-claims':controls?'--probe-controls':'--probe-launcher'],{cwd:profile,windowsHide:true,stdio:[filesState?'pipe':'ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{})}})
+    client=spawn(clientBinary,[gitPanel?'--probe-git-panel':filesState?'--probe-files-state':workspaceClaims?'--probe-workspace-claims':controls?'--probe-controls':'--probe-launcher'],{cwd:profile,windowsHide:true,stdio:[filesState?'pipe':'ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState||gitPanel?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{})}})
     client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
     client.on('close',()=>{for(const gate of gates.values())gate.reject()})
   }
   if(!restoreState&&!pendingOpen){
-    const budget=web||filesState?300000:120000
+    const budget=web||filesState||gitPanel?300000:120000
     let expired=false
     const timer=setTimeout(()=>{expired=true;client.kill()},budget)
     try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
   }
-  assert.equal(result,0);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,0);if(!webRestore)assert(stats.lists>=12)}else if(workspaceClaims||pendingOpen||filesState){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
+  assert.equal(result,0);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,0);if(!webRestore)assert(stats.lists>=12)}else if(workspaceClaims||pendingOpen||filesState||gitPanel){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
+  if(gitPanel){
+    assert(clientLog.split(/\r?\n/).includes('{"type":"git-panel-proof","mounted":true}'))
+    assert.equal((await git('log','-1','--format=%s','main')).trim(),'Commit from Rune')
+    assert.equal((await git('show','main:git-panel.txt')).trim(),'git-panel edited')
+    assert.equal((await git('show','review:git-panel.txt')).trim(),'git-panel initial')
+    assert.equal(await git('status','--porcelain'),'')
+  }
   if(filesState){
     await filesChain;assert(filesProof);assert.deepEqual(filesStages.map(s=>s.stage),filesExpected)
     const version=text=>`"${createHash('sha256').update(text).digest('hex')}"`
@@ -237,7 +271,7 @@ try{
     assert(!requests.includes('POST /api/session'));assert(!requests.some(r=>r.endsWith('/prompt')))
     http=await request.newContext({baseURL:origin});assert.equal((await http.post('/api/auth/login',{data:{username:'codenomad',password:'fixture-backend'}})).status(),200);assert.deepEqual(await (await http.get('/api/workspaces')).json(),[])
   }
-  if(!web&&!controls&&!workspaceClaims&&!pendingOpen&&!filesState)assert.deepEqual(visibleProof.map(p=>p.turn),[1,2],'Both distinct assistant turns must be visible before their endings')
+  if(!web&&!controls&&!workspaceClaims&&!pendingOpen&&!filesState&&!gitPanel)assert.deepEqual(visibleProof.map(p=>p.turn),[1,2],'Both distinct assistant turns must be visible before their endings')
   if(restoreState){assert.deepEqual(restoreStages.map(s=>s.stage),['prepare','resume','verify']);assert.deepEqual(restorePrompts.map(p=>p.sessionID),['ses_created_2','ses_created_1']);for(const id of ['ses_created_1','ses_created_2']){const rows=stores.get(id).rows;assert.deepEqual(rows.map(r=>r.type),['user','assistant']);assert(rows[1].time.completed)}}
   if(gitCount)assert.equal(requests.filter(r=>r==='GET /api/worktree').length,0,'root mutations must not enumerate sibling worktrees')
   console.log(JSON.stringify({fixture:'launcher',uncertain,withTools,workspaceClaims,restoreState,webRestore,filesState,documentState,...stats,profile}))
