@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import type { ToolState } from "../../types/tool-state"
+import { patchRenderer } from "./renderers/patch"
+import type { ToolCallPart, ToolRendererContext } from "./types"
 import { extractDiffPayload } from "./utils"
 
 const patch = [
@@ -54,9 +56,9 @@ describe("edit tool diff payload", () => {
     assert.equal(extractDiffPayload("patch", state)?.diffText, patch)
   })
 
-  it("does not reduce a multi-file OpenCode 2.x patch to its first file", () => {
-    const otherPatch = patch.split("src/example.ts").join("src/other.ts")
-    const state = {
+  describe("multi-file OpenCode 2.x patch", () => {
+    const otherPatch = patch.replaceAll("src/example.ts", "src/other.ts").replace("needle", "secondNeedle")
+    const toolState = {
       status: "completed",
       input: {},
       metadata: {
@@ -67,6 +69,15 @@ describe("edit tool diff payload", () => {
       },
       output: "Applied patch to 2 files",
     } as unknown as ToolState
-    assert.equal(extractDiffPayload("patch", state), null)
+    it("does not reduce the patch to its first file", () => {
+      assert.equal(extractDiffPayload("patch", toolState), null)
+    })
+
+    it("copies and indexes all native file diffs", () => {
+      const context = { toolState: () => toolState, toolName: () => "patch" } as ToolRendererContext
+      assert.equal(patchRenderer.getOutputChrome!(context)?.getCopyText?.(), `${patch}\n${otherPatch}`)
+      const values = patchRenderer.getSearchText!({ toolCall: {} as ToolCallPart, toolState, toolName: "patch" })
+      for (const value of ["src/example.ts", "src/other.ts", patch, otherPatch]) assert.ok(values.includes(value))
+    })
   })
 })

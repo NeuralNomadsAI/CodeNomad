@@ -1,6 +1,6 @@
 # Conversaciones
 
-Los mensajes muestran Markdown, código, diferencias e imágenes compatibles de resultados de herramientas. **Contenido de los mensajes** cambia la visibilidad sin eliminar las partes almacenadas; [Historial](history.md#operation-reference) distingue los controles de visualización de la limpieza.
+Los mensajes muestran Markdown, código, diferencias e imágenes compatibles de resultados de herramientas. Los parches de varios archivos muestran las diferencias de cada archivo modificado por separado. **Contenido de los mensajes** cambia la visibilidad sin eliminar las partes almacenadas; [Historial](history.md#operation-reference) distingue los controles de visualización de la limpieza.
 
 Los encabezados de razonamiento y de herramientas muestran cuánto duró cada paso, con un contador en vivo mientras se ejecuta; no se muestran duraciones inferiores a un segundo. Cuando **Tokens** se muestra en **Contenido de los mensajes** (el preajuste **Todo** lo muestra), cada mensaje del agente termina con una línea de tokens y coste después de su texto final. Esa línea suma el mensaje y los mensajes que contienen las herramientas y el razonamiento que cubre su acción **Eliminar herramientas y razonamientos de esta respuesta**, dentro de la transcripción cargada; despliégala para ver los recuentos de razonamiento y de caché.
 

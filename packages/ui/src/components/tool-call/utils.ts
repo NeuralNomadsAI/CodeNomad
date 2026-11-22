@@ -230,9 +230,7 @@ export function extractDiffPayload(toolName: string, state?: ToolState): DiffPay
 
 // OpenCode 2.x edit/patch tool metadata: `metadata.files` is a list of FileDiff
 // entries `{ file, patch, additions, deletions, status }` rather than a
-// `metadata.diff` string. The single-file diff viewer can only present one
-// entry, so a multi-file patch is left to the renderer's own fallback instead
-// of being cut down to its first file.
+// `metadata.diff` string. Multi-file patches use the per-file renderer.
 export function readSingleFileDiff(metadata: Record<string, any>): { file?: string; patch?: string } | null {
   const files = metadata.files
   if (!Array.isArray(files) || files.length !== 1) return null

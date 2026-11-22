@@ -54,6 +54,22 @@ async function copyWithPointer(page: Page, button: Locator): Promise<string> {
   return page.evaluate(() => navigator.clipboard.readText())
 }
 
+test("multi-file patch shows both native diffs and copies them together", { timeout: 45_000 }, async () => withFixture("patch", async page => {
+  const header = page.locator(".tool-call > .tool-call-header")
+  await header.getByText(/\(2 files\)/).waitFor()
+  const files = page.locator(".tool-call-apply-patch-file")
+  await files.nth(0).getByText("Diff · first.ts", { exact: true }).waitFor()
+  await files.nth(0).getByText("firstAfter", { exact: true }).waitFor()
+  await files.nth(1).getByText("Diff · second.ts", { exact: true }).waitFor()
+  await files.nth(1).getByText("secondAfter", { exact: true }).waitFor()
+  assert.equal(await files.count(), 2)
+
+  const original = await page.evaluate(() => (window as any).fixture.patchFiles.map((file: { patch: string }) => file.patch).join("\n"))
+  await header.hover()
+  const copied = await copyWithPointer(page, header.getByRole("button", { name: "Copy tool output", exact: true }))
+  assert.equal(copied.replace(/\r\n/g, "\n"), original)
+}))
+
 for (const scenario of ["diagnostics-many", "diagnostics-long"]) {
   test(`${scenario}: desktop body copy retains original diagnostics beyond the bounded preview`, { timeout: 45_000 }, async () => withFixture(scenario, async page => {
     await page.locator(".tool-call-diagnostics-heading").click()

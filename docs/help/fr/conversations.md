@@ -1,6 +1,6 @@
 # Conversations
 
-Les messages affichent du Markdown, du code, des diffs et les images de résultats d’outils prises en charge. **Contenu des messages** change la visibilité sans supprimer les parties enregistrées ; [Historique](history.md#operation-reference) distingue les commandes d’affichage du nettoyage.
+Les messages affichent du Markdown, du code, des diffs et les images de résultats d’outils prises en charge. Un patch qui modifie plusieurs fichiers affiche un diff par fichier. **Contenu des messages** change la visibilité sans supprimer les parties enregistrées ; [Historique](history.md#operation-reference) distingue les commandes d’affichage du nettoyage.
 
 Les en-têtes de raisonnement et d’outils indiquent la durée de chaque étape, comptée en direct pendant son exécution ; les durées inférieures à une seconde ne sont pas affichées. Lorsque **Tokens** est affiché dans **Contenu des messages** (le préréglage **Tout** l’affiche), chaque message d’agent se termine par une seule ligne de tokens et de coût après son texte final. Cette ligne additionne le message et les messages contenant les outils et raisonnements que couvre son action **Supprimer les outils et raisonnements de cette réponse**, dans la transcription chargée ; dépliez-la pour les comptes de raisonnement et de cache.
 

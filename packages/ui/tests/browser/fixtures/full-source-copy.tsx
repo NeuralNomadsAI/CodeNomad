@@ -29,14 +29,19 @@ const textParts = Array.from({ length: 1237 }, (_, index) => ({
 }))
 const input = { filePath, payload: `INPUT-START ${"Untruncated input 完整 ".repeat(1200)} INPUT-END`, nested: { retained: true } }
 const output = "Distinct output: this is not the tool input"
-const name = scenario === "todo" ? "todowrite" : scenario === "error" || scenario === "input" ? "read" : "edit"
+const patchFiles = ["first", "second"].map((name) => ({
+  file: `src/${name}.ts`,
+  patch: `--- src/${name}.ts\n+++ src/${name}.ts\n@@ -1,1 +1,1 @@\n-before\n+${name}After\n`,
+  additions: 1, deletions: 1, status: "modified",
+}))
+const name = scenario === "patch" ? "patch" : scenario === "todo" ? "todowrite" : scenario === "error" || scenario === "input" ? "read" : "edit"
 const tool = {
   id: "full-source-tool", type: "tool", name, time: { created: 1, completed: 2 },
   state: scenario === "error"
     ? { status: "error", input: { filePath }, error: { type: "unknown", message: error } }
-    : { status: "completed", input: scenario === "input" ? input : { filePath },
-        metadata: scenario === "todo" ? { todos } : scenario === "input" ? {} : { diagnostics },
-        content: [{ type: "text", text: scenario === "input" ? output : "Tool completed" }] },
+    : { status: "completed", input: scenario === "patch" ? {} : scenario === "input" ? input : { filePath },
+        metadata: scenario === "patch" ? { files: patchFiles } : scenario === "todo" ? { todos } : scenario === "input" ? {} : { diagnostics },
+        content: [{ type: "text", text: scenario === "patch" ? "Applied patch to 2 files" : scenario === "input" ? output : "Tool completed" }] },
 }
 // A tool inside the omitted range proves derived projections follow the reveal.
 const hiddenTool = { id: "hidden-range-tool", type: "tool", name: "read", time: { created: 1, completed: 2 },
@@ -75,7 +80,7 @@ setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, {
 setActiveSession(instanceId, sessionId)
 await applyUiSettings({ showMessageTimeline: scenario === "parts", toolInputsVisibility: scenario === "input" ? "expanded" : "hidden", toolOutputExpansion: "expanded",
   diagnosticsExpansion: "collapsed",
-  toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { edit: "expanded", read: scenario === "parts-short-tail" ? "hidden" : "expanded", other: "expanded" } } })
+  toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { patch: "expanded", edit: "expanded", read: scenario === "parts-short-tail" ? "hidden" : "expanded", other: "expanded" } } })
 await loadMessages(instanceId, sessionId, { force: true })
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <main style={{ display: "flex", height: "800px", width: "1000px" }}>
@@ -83,4 +88,4 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   </main>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 // Expected payloads are the original inputs, never bounded renderer projections.
-;(window as any).fixture = { diagnostics, todos, error, textParts, input, output, sessionId, messageId, requests }
+;(window as any).fixture = { diagnostics, todos, error, textParts, input, output, patchFiles, sessionId, messageId, requests }

@@ -1,9 +1,18 @@
 export type ApplyPatchFile = {
+  file?: string
   filePath?: string
   relativePath?: string
-  type?: string
   diff?: string
   patch?: string
+}
+
+export function getApplyPatchFiles(metadata: Record<string, unknown>): ApplyPatchFile[] {
+  return Array.isArray(metadata.files) ? metadata.files : []
+}
+
+export function getApplyPatchFilePath(file: ApplyPatchFile): string | undefined {
+  if (typeof file?.filePath === "string") return file.filePath
+  return typeof file?.file === "string" ? file.file : undefined
 }
 
 export const APPLY_PATCH_FILE_RENDER_LIMIT = 20
@@ -20,8 +29,8 @@ export function* getApplyPatchDiagnosticPaths(diagnostics: Record<string, unknow
   for (const path in diagnostics) if (Object.prototype.hasOwnProperty.call(diagnostics, path)) yield path
 }
 
-function getApplyPatchDiff(file: ApplyPatchFile): string {
-  return typeof file.diff === "string" ? file.diff : typeof file.patch === "string" ? file.patch : ""
+export function getApplyPatchDiff(file: ApplyPatchFile): string {
+  return typeof file?.diff === "string" ? file.diff : typeof file?.patch === "string" ? file.patch : ""
 }
 
 function probeApplyPatchCopyText(file: ApplyPatchFile, limit: number) {
@@ -120,7 +129,7 @@ export function getApplyPatchFilesForRender(files: ApplyPatchFile[], diagnosticP
   for (let fileIndex = 0; fileIndex < files.length && rendered.length < limit; fileIndex += 1) {
     const file = files[fileIndex]
     scannedFiles += 1
-    const normalizedFilePaths = [file.filePath, file.relativePath]
+    const normalizedFilePaths = [getApplyPatchFilePath(file), file?.relativePath]
       .filter((path): path is string => typeof path === "string")
       .map(normalize)
     const matchesDiagnostic = normalizedFilePaths.some((path) => paths.some((diagnostic) => matchesPath(path, diagnostic.normalized)))
