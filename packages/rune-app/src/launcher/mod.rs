@@ -161,7 +161,14 @@ mod tests {
         crate::workspace::opened(&mut state, &project);
         crate::workspace::bound(&mut state, &backend);
         state.draft = TextEdit::new("held draft");
+        let mut agent =
+            crate::agent::Ui::new(crate::agent::start(backend.clone(), state.wake.clone()));
+        agent
+            .reasons
+            .insert("pending".into(), TextEdit::new("unsent answer"));
+        state.agent = Some(agent);
         state.phase = Phase::Failed;
+        assert!(can_rebind(&state, "session") && crate::agent::navigation_blocked(&state));
         let mut rt = rune::Runtime::new(
             state,
             crate::view,
@@ -173,6 +180,10 @@ mod tests {
         assert_eq!(rt.state.messages.len(), 1);
         assert_eq!(rt.state.messages[0].body, "Fixture message");
         assert!(rt.state.phase == Phase::Loading);
+        assert_eq!(
+            rt.state.agent.as_ref().unwrap().reasons["pending"].text,
+            "unsent answer"
+        );
     }
     #[test]
     fn session_choices_remain_visible_in_the_scrolling_launcher() {
@@ -418,9 +429,12 @@ pub fn choose(s: &mut State, id: String, tx: &mut Tx) {
     }
 }
 fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>, dismiss: Option<u64>) {
+    let recovery = candidates
+        .first()
+        .is_some_and(|(id, step)| step.is_none() && can_rebind(s, id));
     if candidates.is_empty()
         || !crate::workspace::input_ready(s)
-        || crate::agent::navigation_blocked(s)
+        || !recovery && crate::agent::navigation_blocked(s)
     {
         return;
     }
@@ -451,6 +465,11 @@ fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>, dismiss:
         }
         Ok(Reply::Selected(missing, None, dismiss))
     });
+}
+fn can_rebind(s: &State, id: &str) -> bool {
+    !s.screen.is_launcher()
+        && s.phase == Phase::Failed
+        && crate::workspace::active_session(s) == Some(id)
 }
 pub fn can_visit(s: &State, back: bool) -> bool {
     s.screen
@@ -559,16 +578,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     .iter()
                     .map(|row| row.id.clone())
                     .collect::<std::collections::HashSet<_>>();
-                let complete = rows.next.is_none();
-                let mut missing = Vec::new();
-                for old in l.sessions.drain(..).filter(|row| !ids.contains(&row.id)) {
-                    if Some(&old.id) == selected.as_ref() {
-                        rows.rows.push(old);
-                    } else if complete {
-                        missing.push(old.id);
-                    }
+                if let Some(old) = l
+                    .sessions
+                    .iter()
+                    .find(|row| Some(&row.id) == selected.as_ref() && !ids.contains(&row.id))
+                {
+                    rows.rows.push(old.clone());
                 }
-                l.visits.forget(&missing);
                 l.sessions = rows.rows;
             }
             l.next = rows.next;
@@ -593,7 +609,10 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         Ok(Reply::Selected(missing, selection, dismiss)) => {
             l.sessions.retain(|row| !missing.contains(&row.id));
             l.visits.forget(&missing);
-            if let Some((b, title, visit)) = selection.filter(|_| !blocked) {
+            if let Some((b, title, visit)) = selection.filter(|(b, _, _)| {
+                !blocked
+                    || s.phase == Phase::Failed && selected.as_deref() == Some(b.session.as_str())
+            }) {
                 l.show_title = false;
                 if dismiss.is_some() && dismiss == s.shell.floating_sessions() {
                     s.shell.close_floating(tx);
@@ -687,13 +706,21 @@ fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize>, tx: &mut
         }
     }
     let draft = crate::workspace::bound(s, &b);
-    crate::files::bind(s, &b);
-    s.agent = None;
     s.chat_title = title;
     if !same_session {
+        crate::files::bind(s, &b);
+        s.agent = None;
         s.expanded_tools.clear();
         s.messages.clear();
         s.can_older = false;
+    } else if let Some(previous) = s.agent.take() {
+        let mut current = crate::agent::Ui::new(crate::agent::start(b.clone(), s.wake.clone()));
+        current.forms = previous.forms;
+        current.permissions = previous.permissions;
+        current.drafts = previous.drafts;
+        current.reasons = previous.reasons;
+        current.selected = previous.selected;
+        s.agent = Some(current);
     }
     s.draft = TextEdit::new(draft);
     s.phase = Phase::Loading;

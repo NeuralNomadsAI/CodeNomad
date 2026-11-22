@@ -103,6 +103,7 @@ impl Panels {
         } else {
             self.floating_epoch = self.floating_epoch.wrapping_add(1);
             self.floating = Some(index);
+            tx.focus_when_shown(KEYS[index], tx.focus_visible());
         }
         self.dock_floating();
         tx.instant();

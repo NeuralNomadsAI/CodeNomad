@@ -188,7 +188,9 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
         match event {
             Event::Connected(backend) => {
                 s.renew_scope();
-                s.agent = Some(agent::Ui::new(agent::start(backend, s.wake.clone())));
+                if s.agent.is_none() {
+                    s.agent = Some(agent::Ui::new(agent::start(backend, s.wake.clone())));
+                }
             }
             Event::AgentHint(catalog) => {
                 if let Some(a) = s.agent.as_mut() {
