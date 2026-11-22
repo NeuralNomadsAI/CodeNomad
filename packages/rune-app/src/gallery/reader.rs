@@ -19,6 +19,48 @@ fn init_scene() -> State {
     let cases: serde_json::Value =
         serde_json::from_str(include_str!("../../tests/fixtures/reader-content.json")).unwrap();
     let case = std::env::var("RUNE_READER_CASE").unwrap_or_else(|_| "source".into());
+    let mut state = crate::init();
+    let backend = Backend {
+        client: Http::new().unwrap(),
+        base: "http://127.0.0.1:9/".into(),
+        workspace: "reader-gallery-scene".into(),
+        session: "synthetic".into(),
+        client_id: "reader-scene".into(),
+        fresh_mode: false,
+    };
+    let mut files = Ui::new(
+        backend,
+        "/synthetic".into(),
+        state.reads.clone(),
+        state.wake.clone(),
+    );
+    state.phase = Phase::Ready;
+    state.draft = rune::TextEdit::new("Synthetic draft");
+    if case == "tree" {
+        let mut entries: Vec<codenomad_client::files::Entry> = Vec::new();
+        for (name, kind) in [
+            ("src", codenomad_client::files::EntryKind::Directory),
+            ("photo.png", codenomad_client::files::EntryKind::File),
+            ("notes.md", codenomad_client::files::EntryKind::File),
+            ("main.rs", codenomad_client::files::EntryKind::File),
+        ] {
+            entries.push(codenomad_client::files::Entry {
+                name: name.into(),
+                path: name.into(),
+                kind,
+                absolute_path: None,
+                directory_identity: None,
+                size: None,
+                modified_at: None,
+            });
+        }
+        files.tree.activate(true);
+        let read = files.tree.take_refresh().pop().expect("gallery root read");
+        files.tree.complete(read, Ok(entries), Ok);
+        files.show(true);
+        state.files = Some(files);
+        return state;
+    }
     let (name, bytes) = match case.as_str() {
         "error" => ("missing.rs", vec![]),
         name => {
@@ -38,21 +80,6 @@ fn init_scene() -> State {
             )
         }
     };
-    let backend = Backend {
-        client: Http::new().unwrap(),
-        base: "http://127.0.0.1:9/".into(),
-        workspace: "reader-gallery-scene".into(),
-        session: "synthetic".into(),
-        client_id: "reader-scene".into(),
-        fresh_mode: false,
-    };
-    let mut state = crate::init();
-    let mut files = Ui::new(
-        backend,
-        "/synthetic".into(),
-        state.reads.clone(),
-        state.wake.clone(),
-    );
     files.open(name.into());
     files.reader.scene(if case == "error" {
         Err(std::io::Error::other("Synthetic read failure").into())
@@ -68,8 +95,6 @@ fn init_scene() -> State {
     files.poll(0.0);
     files.document.online(false);
     state.files = Some(files);
-    state.phase = Phase::Ready;
-    state.draft = rune::TextEdit::new("Synthetic draft");
     state.messages = crate::transport::synthetic();
     state
 }
