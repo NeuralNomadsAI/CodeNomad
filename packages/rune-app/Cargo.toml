@@ -11,9 +11,10 @@ path = "src/main.rs"
 
 [features]
 default = []
-test-support = ["rune-theme-codenomad/test-support"]
+test-support = ["rune-theme-codenomad/test-support", "dep:base64"]
 
 [dependencies]
+base64 = { version = "0.22", optional = true }
 async-lock = "3.5.0"
 codenomad-client = { path = "../../crates/codenomad-client" }
 rune = { workspace = true }

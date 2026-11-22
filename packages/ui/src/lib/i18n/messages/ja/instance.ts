@@ -141,6 +141,7 @@ export const instanceMessages = {
   "instanceShell.rightPanel.title": "ステータスパネル",
   "instanceShell.rightPanel.tabs.gitChanges": "Git",
   "gitPanel.history": "履歴",
+  "filesPanel.widenWindow": "ファイル — ウィンドウを広げる",
   "filesPanel.workspace": "ワークスペース",
   "filesPanel.commits": "コミット",
   "filesPanel.gitInit.notRepository": "このフォルダーは Git リポジトリではありません。",

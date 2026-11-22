@@ -277,6 +277,7 @@
   "filesPanel.image.before": "Antes",
   "filesPanel.readOnly": "Solo lectura",
   "filesPanel.viewer": "Vista previa del archivo",
+  "filesPanel.widenWindow": "Archivos — ampliar ventana",
   "filesPanel.workspace": "Espacio de trabajo",
   "filesystemBrowser.actions.close": "Cerrar",
   "filesystemBrowser.actions.retry": "Reintentar",

@@ -130,6 +130,7 @@ export const instanceMessages = {
   "instanceShell.rightPanel.title": "Durum Paneli",
   "instanceShell.rightPanel.tabs.gitChanges": "Git",
   "gitPanel.history": "Geçmiş",
+  "filesPanel.widenWindow": "Dosyalar — pencereyi genişletin",
   "filesPanel.workspace": "Çalışma alanı",
   "filesPanel.commits": "Commitler",
   "filesPanel.gitInit.notRepository": "Bu klasör bir Git deposu değil.",

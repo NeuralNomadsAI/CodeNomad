@@ -107,32 +107,47 @@ fn workspace_chat_keeps_history_agent_and_composer_inside_the_viewport() {
 }
 #[test]
 fn permissions_keep_actions_visible_and_reason_reachable_across_viewports() {
-    for size in [(1400.0, 900.0), (390.0, 740.0), (390.0, 320.0)] {
-        let mut state = state();
-        let ui = state.agent.as_mut().unwrap();
-        ui.selected = "permission-fixture".into();
-        ui.permissions.push(Permission {
-            id: ui.selected.clone(),
-            action: "read".into(),
-            resources: (0..40)
-                .map(|i| format!("/synthetic/resource-{i}"))
-                .collect(),
-            message: String::new(),
-            supported: true,
-        });
-        ui.reasons.insert(ui.selected.clone(), TextEdit::new(""));
-        let mut rt = runtime(state, size);
-        for key in ["allow_once", "allow_always", "reject"] {
-            if size.1 == 320.0 {
-                reveal(&mut rt, key);
-            } else {
-                visible(&rt, key);
+    for with_files in [false, true] {
+        for size in [(1400.0, 900.0), (390.0, 740.0), (390.0, 320.0)] {
+            let mut state = state();
+            if with_files {
+                let backend = crate::platform::block_on(crate::backend::Backend::connect(
+                    "http://127.0.0.1:9",
+                    "",
+                ))
+                .unwrap();
+                state.files = Some(crate::files::Ui::new(
+                    backend,
+                    "/private".into(),
+                    crate::platform::reads::Reads::default(),
+                    std::sync::Arc::new(|| {}),
+                ));
             }
+            let ui = state.agent.as_mut().unwrap();
+            ui.selected = "permission-fixture".into();
+            ui.permissions.push(Permission {
+                id: ui.selected.clone(),
+                action: "read".into(),
+                resources: (0..40)
+                    .map(|i| format!("/synthetic/resource-{i}"))
+                    .collect(),
+                message: String::new(),
+                supported: true,
+            });
+            ui.reasons.insert(ui.selected.clone(), TextEdit::new(""));
+            let mut rt = runtime(state, size);
+            for key in ["allow_once", "allow_always", "reject"] {
+                if size.1 == 320.0 {
+                    reveal(&mut rt, key);
+                } else {
+                    visible(&rt, key);
+                }
+            }
+            reveal(&mut rt, "reason-permission-fixture");
+            reveal(&mut rt, "composer");
+            reveal(&mut rt, "history");
+            reveal(&mut rt, "allow_once");
         }
-        reveal(&mut rt, "reason-permission-fixture");
-        reveal(&mut rt, "composer");
-        reveal(&mut rt, "history");
-        reveal(&mut rt, "allow_once");
     }
 }
 #[test]

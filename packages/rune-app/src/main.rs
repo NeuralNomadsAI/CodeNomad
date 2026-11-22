@@ -191,7 +191,7 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = chat | transcript_state::Display::poll(s, chat, now, tx);
     changed |= launcher::poll(s, tx);
     changed |= workspace::poll(s, now, tx);
-    changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
+    changed |= files::poll(s, now, tx);
     changed |= git::poll(s, now, tx);
     if changed {
         tx.instant();
@@ -321,7 +321,11 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     let rows = layout::transcript_rows(
         s.messages.len(),
         |s: &State, i| s.messages[i].id.clone().into(),
-        move |s: &State, i| strings::with_locale(locale, || transcript::message(s, i)),
+        move |s: &State, i| {
+            strings::with_locale(locale, || {
+                chat::reading::row(s, i, transcript::message(s, i))
+            })
+        },
     )
     .key("rows")
     .virtual_rows_version(s.revision);
@@ -330,7 +334,14 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         .as_ref()
         .is_some_and(|a| a.picker || !a.ids().is_empty());
     rune_theme_codenomad::interruption::session_surface(expanded)
-        .child(rune_theme_codenomad::interruption::history(expanded).child(rows))
+        .child(files::view::body(
+            s,
+            chat::reading::history(
+                s,
+                rune_theme_codenomad::interruption::history(expanded).child(rows),
+            ),
+            expanded,
+        ))
         .child(agent_view::view(s, cx))
         .child(composer(s))
 }
@@ -414,6 +425,11 @@ fn main() {
     #[cfg(feature = "test-support")]
     if platform::has_flag("--gallery-action-menu") {
         gallery::action_menu::run();
+        return;
+    }
+    #[cfg(feature = "test-support")]
+    if platform::has_flag("--gallery-reader") {
+        gallery::reader::run();
         return;
     }
     #[cfg(feature = "test-support")]

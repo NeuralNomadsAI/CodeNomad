@@ -141,6 +141,7 @@ export const instanceMessages = {
   "instanceShell.rightPanel.title": "स्थिति प्यानल (Status Panel)",
   "instanceShell.rightPanel.tabs.gitChanges": "Git",
   "gitPanel.history": "इतिहास",
+  "filesPanel.widenWindow": "फाइलहरू — सञ्झ्याल फराकिलो बनाउनुहोस्",
   "filesPanel.workspace": "कार्यक्षेत्र",
   "filesPanel.commits": "कमिटहरू",
   "filesPanel.gitInit.notRepository": "यो फोल्डर Git रिपोजिटरी होइन।",

@@ -141,6 +141,7 @@ export const instanceMessages = {
   "instanceShell.rightPanel.title": "Status Panel",
   "instanceShell.rightPanel.tabs.gitChanges": "Git",
   "gitPanel.history": "History",
+  "filesPanel.widenWindow": "Files — widen window",
   "filesPanel.workspace": "Workspace",
   "filesPanel.commits": "Commits",
   "filesPanel.gitInit.notRepository": "This folder is not a Git repository.",

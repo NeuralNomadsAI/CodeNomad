@@ -6,12 +6,12 @@ use rune_kit::{Elevation, Kit, Motion, Palette, Radius, StateColors, Type, css, 
 use std::sync::OnceLock;
 
 pub fn kit(dark: bool) -> &'static Kit {
-    static KITS: [OnceLock<Kit>; 2] = [const { OnceLock::new() }; 2];
-    KITS[dark as usize].get_or_init(|| build(dark))
+    static KITS: [OnceLock<Kit>; 4] = [const { OnceLock::new() }; 4];
+    KITS[crate::palette_index(dark)].get_or_init(|| build(dark))
 }
 pub fn field_kit(dark: bool) -> &'static Kit {
-    static FIELDS: [OnceLock<Kit>; 2] = [const { OnceLock::new() }; 2];
-    FIELDS[dark as usize].get_or_init(|| {
+    static FIELDS: [OnceLock<Kit>; 4] = [const { OnceLock::new() }; 4];
+    FIELDS[crate::palette_index(dark)].get_or_init(|| {
         let mut kit = kit(dark).clone();
         kit.c.bg_base = kit.c.surface_base;
         kit
@@ -97,11 +97,14 @@ fn build(dark: bool) -> Kit {
         std_icon_strong: c("text-primary"),
         std_text: c("text-primary"),
     };
+    let shadows = if crate::layout::source_palette() {
+        &document()["product"][t.mode()]["shadows"]
+    } else {
+        &document()["shadows"][t.mode()]
+    };
     let shadow = |name| {
         css::box_shadows(
-            document()["shadows"][t.mode()][name]
-                .as_str()
-                .expect("generated CSS shadow"),
+            shadows[name].as_str().expect("generated CSS shadow"),
             |color| color,
         )
     };
