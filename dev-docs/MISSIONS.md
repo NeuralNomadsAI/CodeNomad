@@ -21,9 +21,10 @@ the execution journal retains its task, report and lifecycle contracts.
 **Customize right panel → Missions** writes the connected OpenCode server's
 Global `plugins` through native plugin controls. A fresh read of the opened
 workspace's native Location drives the checkbox, tab, readers and project-bound
-Settings, matching the project-wide Missions routes. When a Project rule
-overrides the Global setting, the checkbox shows the effective state and its
-info button shows the Global setting. Config and plugin events and reconnects
+Settings, matching the project-wide Missions routes. Gestures on the checkbox
+set its requested Global state. When a Project rule overrides Global, the
+checkbox shows the effective state read-only and its info button shows the
+Global setting. Config and plugin events and reconnects
 reconcile manual edits through the shared plugin controls cache. Before the
 first successful read the checkbox is indeterminate and the feature stays
 hidden; opening customization retries a failed read and **Try again** is

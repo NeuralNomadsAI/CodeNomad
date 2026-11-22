@@ -199,7 +199,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     rightDrawerWidth: props.rightDrawerWidth,
     rightDrawerWidthInitialized: props.rightDrawerWidthInitialized,
     promptInputApi: props.promptInputApi,
-    rightPanelTab,
+    rightPanelTab: () => activeRightPanelTab()?.id ?? rightPanelTab(),
     expandedItems: rightPanelExpandedItems,
     onExpandedItemsChange: handleAccordionChange,
     customization: rightPanelCustomization,
@@ -211,7 +211,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     instanceId: props.instanceId,
     t: props.t,
     activeSessionId: props.activeSessionId,
-    isActive: () => props.isActive() && rightPanelTab() === "missions",
+    isActive: () => props.isActive() && activeRightPanelTab()?.id === "missions",
     revealConversation: restoreChat => {
       if (restoreChat) props.onRestoreConversation?.()
       if (props.isPhoneLayout()) props.onCloseRightDrawer()
@@ -225,7 +225,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const externalModules = createMemo<RightPanelModule[]>(() => extensions.entries().map(entry => {
     const id = `extension:${entry.manifest.id}`
     return { id, displayNameKey: "", origin: "external", tabs: [{ id, labelKey: "", label: entry.manifest.name, order: 1000,
-      render: () => <ExtensionPanel entry={entry} instanceId={props.instanceId} active={entry.enabled && extensions.verified() && props.isActive() && rightPanelTab() === id}
+      render: () => <ExtensionPanel entry={entry} instanceId={props.instanceId} active={entry.enabled && extensions.verified() && props.isActive() && activeRightPanelTab()?.id === id}
         context={{ apiVersion: 1, sessionId: props.activeSessionId(), locale: locale(), appearance: theme.isDark() ? "dark" : "light" }}
         host={extensionHost} />,
     }] }
@@ -292,7 +292,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                         {(tab) => (
                           <SortableRightPanelTab
                             tab={tab}
-                            active={rightPanelTab() === tab.id}
+                            active={activeRightPanelTab()?.id === tab.id}
                             tabId={tabId(tab.id)}
                             panelId={tabPanelId(tab.id)}
                             label={tab.label ?? props.t(tab.labelKey)}
@@ -323,7 +323,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
           content can grow the shell's overflow and scroll the whole window. */}
       <div class="relative flex-1 overflow-y-auto">
         <For each={visibleRightPanelTabs()}>
-          {(tab) => <Show when={rightPanelTab() === tab.id}>
+          {(tab) => <Show when={activeRightPanelTab()?.id === tab.id}>
             <div id={tabPanelId(tab.id)} role="tabpanel" aria-labelledby={tabId(tab.id)} class="h-full min-h-0">
               <Suspense fallback={<RightPanelTabFallback />}>{tab.render()}</Suspense>
             </div>

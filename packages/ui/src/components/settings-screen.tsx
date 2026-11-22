@@ -56,6 +56,7 @@ interface SettingsScreenProps {
   standalone?: boolean
   providerContext?: { instanceId?: string; location?: LocationRef; serverId?: string; workspacePath?: string }
   projectUnavailable?: boolean
+  projectResolutionFailed?: boolean
   onClose?: () => void | Promise<void>
   onSectionChange?: (section: SettingsSectionId) => void | Promise<void>
   scrollPosition?: { scrollTop?: number }
@@ -69,7 +70,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const serversEnabled = () => config.preferences().multiBackend === true && serversUsable()
   const [serverCapabilitiesResolved, setServerCapabilitiesResolved] = createSignal(false)
   onMount(() => { void getServerMeta().catch(() => {}).finally(() => setServerCapabilitiesResolved(true)) })
-  const embeddedProject = createPreferencesProjectContext(() => {
+  const { context: embeddedProject } = createPreferencesProjectContext(() => {
     const instanceId = !props.standalone && !props.providerContext ? activeInstanceId() ?? undefined : undefined
     return { section: "general", instanceId, serverId: instanceId ? backendRegistry.serverId(parseInstanceKey(instanceId).backendId) : undefined,
       workspacePath: instanceId ? instances().get(instanceId)?.folder : undefined,
@@ -87,9 +88,9 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const shownSection = () => activeSettingsSection() === "missions" && !showMissions() ? "general" : activeSettingsSection()
   createEffect(() => {
     if (activeSettingsSection() !== "missions" || showMissions()) return
-    if (missionActivation.unknown() && !missionActivation.readFailed()) return
+    if (!props.projectResolutionFailed && missionActivation.unknown() && !missionActivation.readFailed()) return
     setActiveSettingsSection("general")
-    void props.onSectionChange?.("general")
+    if (!props.projectResolutionFailed) void props.onSectionChange?.("general")
   })
 
   const sections = createMemo(() => {

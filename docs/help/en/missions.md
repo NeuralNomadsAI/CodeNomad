@@ -6,7 +6,7 @@ If Missions is unavailable, **OpenCode settings** opens runtime recovery for a m
 
 ## Turn Missions on or off {#activation}
 
-In **Customize right panel**, use **Missions** to turn the plugin on or off in the connected OpenCode server’s Global configuration. The checkbox shows the effective state of the opened workspace; when a Project rule overrides Global, **i** explains the difference. OpenCode reloads automatically; existing conversations use the new tool list on their next turn after reload.
+In **Customize right panel**, use **Missions** to turn the plugin on or off in the connected OpenCode server’s Global configuration. The checkbox shows the opened workspace’s effective state. If a Project rule overrides Global, the checkbox is read-only and **i** shows the Global setting. OpenCode reloads automatically; existing conversations use the new tool list on their next turn after reload.
 
 Pause active and scheduled Missions before turning this off. Disabling keeps Mission records, schedules and conversations. Work already sent to OpenCode can continue, but Mission tools are unavailable and scheduled runs can be missed. After enabling, check your Missions and resume paused items when ready.
 

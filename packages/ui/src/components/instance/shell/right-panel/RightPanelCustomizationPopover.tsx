@@ -109,8 +109,9 @@ export function RightPanelCustomizationPopover(props: RightPanelCustomizationPop
                       data-toggle-sweep={missions || extension() ? undefined : toggleSweepGroup("right-panel-customization")}
                       onChange={(event) => {
                         if (missions) {
+                          const enabled = event.currentTarget.checked
                           event.currentTarget.checked = visible()
-                          void props.missionActivation.toggle()
+                          void props.missionActivation.toggle(enabled)
                           return
                         }
                         const entry = extension()

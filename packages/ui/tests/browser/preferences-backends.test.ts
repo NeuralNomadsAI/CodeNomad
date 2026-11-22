@@ -106,13 +106,46 @@ async function api(page: Page, selected: () => string) {
         scopes: [{ scope: "global", path: "/global.jsonc", selection: null }, { scope: "project", path: "/homonym/opencode.jsonc", selection: null }] } : {}
     return route.fulfill({ json: value, headers: owner !== "local" && path === "/api/meta" ? { "X-CodeNomad-Backend-Authority": owner.repeat(43) } : {} })
   })
-  return { requests, errors, restore: () => { restored = true }, unavailable: () => { unavailable = true },
+  return { requests, errors, restore: () => { restored = true }, unavailable: () => { unavailable = true }, available: () => { unavailable = false },
     missing: () => { missing = true }, failWrites: () => { failWrites = true },
     failVerification: (status: "network" | 401 | 503, path = "/api/meta") => { verificationFailure = { path, status } },
     replace: () => { identity = "replacement" } }
 }
 
 for (const kind of ["electron", "tauri"] as const) {
+  test(`${kind}: offline Missions restores General without dropping its saved choice or returning over a palette draft`, async () => {
+    const page = await browser.newPage({ viewport: { width: 430, height: 800 } }), f = await api(page, () => "a")
+    f.unavailable()
+    await host(page, kind, project("a", "missions"))
+    try {
+      const failure = page.waitForResponse(response => response.status() === 503 && new URL(response.url()).pathname === "/api/backends/a/api/meta")
+      await page.goto(url)
+      await failure
+      const selected = async () => page.evaluate(async () => {
+        const path = "/src/stores/settings-screen.ts"
+        return (await import(path)).activeSettingsSection()
+      })
+      await page.waitForFunction(async () => {
+        const path = "/src/stores/settings-screen.ts"
+        return (await import(path)).activeSettingsSection() === "general"
+      }, undefined, { timeout: 6000 })
+      await page.locator(".settings-section-selector-value").getByText("General", { exact: true }).waitFor()
+      await page.locator(".theme-scheme-actions button").filter({ hasText: "New" }).click({ timeout: 4500 })
+      const draft = page.locator(".theme-scheme-name-editor input")
+      await draft.fill("Offline palette")
+      assert.equal(await page.evaluate(() => (window as any).request.section), "missions", "the next opening keeps its saved choice")
+      f.available()
+      await page.evaluate(async () => {
+        const path = "/src/stores/remote-backends.ts"
+        await (await import(path)).backendRegistry.ensure("a")
+      })
+      await page.waitForFunction(() => [...document.querySelectorAll(".settings-nav-button")].some(button => button.textContent?.trim() === "Missions"))
+      assert.equal(await selected(), "general")
+      assert.equal(await draft.inputValue(), "Offline palette")
+      assert.deepEqual(f.errors, [])
+    } finally { await page.close() }
+  })
+
   for (const reason of ["usage", "transport", "network", "401", "503", "inventory"] as const) test(`${kind}: Servers retarget ${reason === "transport" ? "masks the failed save" : `can be confirmed without the old backend (${reason})`}`, async () => {
     const page = await browser.newPage(), f = await api(page, () => "a")
     f.missing()

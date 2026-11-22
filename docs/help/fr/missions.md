@@ -6,7 +6,7 @@ Si Missions est indisponible, **Paramètres OpenCode** ouvre la récupération d
 
 ## Activer ou désactiver les Missions {#activation}
 
-Dans **Personnaliser le panneau droit**, utilisez **Missions** pour activer ou désactiver le plugin dans la configuration globale du serveur OpenCode connecté. La case affiche l’état effectif de l’espace de travail ouvert ; si une règle du projet prime sur l’état global, **i** explique la différence. OpenCode recharge automatiquement la configuration ; les conversations existantes utilisent alors la nouvelle liste d’outils dès leur prochain tour.
+Dans **Personnaliser le panneau droit**, utilisez **Missions** pour activer ou désactiver le plugin dans la configuration globale du serveur OpenCode connecté. La case affiche l’état effectif de l’espace de travail ouvert. Si une règle du projet prime, la case est en lecture seule et **i** indique l’état global. OpenCode recharge automatiquement la configuration ; les conversations existantes utilisent alors la nouvelle liste d’outils dès leur prochain tour.
 
 Mettez d’abord en pause les Missions en cours et planifiées. La désactivation conserve les Missions, leurs calendriers et les conversations. Le travail déjà envoyé à OpenCode peut continuer, mais les outils Missions deviennent indisponibles et des exécutions planifiées peuvent être manquées. Après réactivation, vérifiez vos Missions et reprenez les éléments en pause quand vous le souhaitez.
 

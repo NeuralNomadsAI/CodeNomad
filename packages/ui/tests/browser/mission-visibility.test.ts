@@ -23,10 +23,10 @@ const call = (page: Page, method: string, arg?: unknown) => page.evaluate(({ met
   (window as any).missionVisibility[method](arg), { method, arg })
 const emptyPluginSnapshot = { location: { directory: "/fixture" }, targets: [], runtime: [], configured: { rules: [], sources: [] }, controls: [] }
 const globalTarget = { scope: "global" as const, path: "/daemon/opencode.jsonc", exists: true }
-function activationSnapshot(global: "default" | "disabled", override?: "enabled"): PluginControlsSnapshot {
+function activationSnapshot(global: "default" | "disabled", override?: "enabled" | "disabled"): PluginControlsSnapshot {
   return { ...emptyPluginSnapshot, targets: [globalTarget], controls: [{
     id: "codenomad.missions", managedBy: "codenomad", builtin: false, global, project: override ?? "default",
-    effective: override ?? global, ...(override ? { controllingRule: { scope: "project", selector: "codenomad.missions", enabled: true,
+    effective: override ?? global, ...(override ? { controllingRule: { scope: "project", selector: "codenomad.missions", enabled: override === "enabled",
       order: 1, entryIndex: 0 } } : {}),
   }] }
 }
@@ -34,6 +34,7 @@ function activationSnapshot(global: "default" | "disabled", override?: "enabled"
 test("a Global write waits for a fresh effective state and explains a Project override", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   let global: "default" | "disabled" = "default"
+  let override: "enabled" | "disabled" | undefined
   const writes: boolean[] = []
   let release!: () => void
   const held = new Promise<void>(resolve => { release = resolve })
@@ -42,13 +43,13 @@ test("a Global write waits for a fresh effective state and explains a Project ov
     await page.route("**/api/workspaces/mission-visibility/plugin-controls**", async route => {
       if (route.request().method() === "GET") {
         if (global === "disabled") await held
-        return route.fulfill({ json: activationSnapshot(global, global === "disabled" ? "enabled" : undefined) })
+        return route.fulfill({ json: activationSnapshot(global, override) })
       }
-      const enabled = writes.length !== 0
-      assert.deepEqual(route.request().postDataJSON(), { location: { directory: "/fixture" }, pluginId: "codenomad.missions", scope: "global", enabled })
-      writes.push(enabled)
-      global = enabled ? "default" : "disabled"
-      return route.fulfill({ json: { snapshot: activationSnapshot(global), target: globalTarget, rule: enabled ? "codenomad.missions" : "-codenomad.missions",
+      assert.deepEqual(route.request().postDataJSON(), { location: { directory: "/fixture" }, pluginId: "codenomad.missions", scope: "global", enabled: false })
+      writes.push(false)
+      global = "disabled"
+      override = "enabled"
+      return route.fulfill({ json: { snapshot: activationSnapshot(global), target: globalTarget, rule: "-codenomad.missions",
         changed: true, reloadPending: true } })
     })
     await page.goto(url)
@@ -70,12 +71,18 @@ test("a Global write waits for a fresh effective state and explains a Project ov
     await page.getByText("Project rule decides Missions here. Global: off.", { exact: true }).waitFor()
     const checkbox = page.getByRole("checkbox", { name: "Missions", exact: true })
     assert.equal(await checkbox.isChecked(), true)
+    assert.equal(await checkbox.isDisabled(), true)
     await page.keyboard.press("Escape")
     if (!await checkbox.count()) await customize.click()
-    await checkbox.click()
-    await info.waitFor({ state: "detached" })
-    assert.equal(await checkbox.isChecked(), true)
-    assert.deepEqual(writes, [false, true], "the checked effective state does not trap the Global switch off")
+    global = "default"
+    override = "disabled"
+    await call(page, "event", "config.updated")
+    await tab.waitFor({ state: "detached" })
+    assert.equal(await checkbox.isChecked(), false)
+    assert.equal(await checkbox.isDisabled(), true, "checking an overridden effective state cannot disable Missions globally")
+    await info.press("Enter")
+    await page.getByText("Project rule decides Missions here. Global: on.", { exact: true }).waitFor()
+    assert.deepEqual(writes, [false])
   } finally { release(); await page.close() }
 })
 
@@ -144,17 +151,17 @@ test("an unknown Missions state stays hidden and reopening retries the failed re
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/workspaces/mission-visibility/plugin-controls**", route => {
       reads++
-      return fail ? route.fulfill({ status: 503, json: {} }) : route.fulfill({ json: {
-        ...emptyPluginSnapshot, targets: [{ scope: "global", path: "/daemon/opencode.jsonc", exists: true }],
-        controls: [{ id: "codenomad.missions", managedBy: "codenomad", builtin: false, effective: "disabled", global: "disabled", project: "default" }],
-      } })
+      return fail ? route.fulfill({ status: 503, json: {} }) : route.fulfill({ json: activationSnapshot("default") })
     })
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).missionVisibility))
     const refused = page.waitForResponse(response => response.url().includes("/plugin-controls?") && response.status() === 503)
     await call(page, "activate", true)
     await refused
-    await page.getByRole("tab", { name: "Status", exact: true }).waitFor()
+    const status = page.getByRole("tab", { name: "Status", exact: true })
+    assert.equal(await status.getAttribute("aria-selected"), "true")
+    await page.getByRole("tabpanel", { name: "Status", exact: true }).waitFor({ timeout: 4500 })
+    assert.equal(await call(page, "savedTab"), "missions")
     const customize = page.getByRole("button", { name: "Customize right panel" })
     const checkbox = page.getByRole("checkbox", { name: "Missions", exact: true })
     await customize.click()
@@ -169,8 +176,9 @@ test("an unknown Missions state stays hidden and reopening retries the failed re
     await retried
     await page.waitForFunction(() => [...document.querySelectorAll("label")].some(label =>
       label.textContent === "Missions" && !!label.querySelector("input:not(:disabled)")))
-    assert.equal(await checkbox.isChecked(), false)
+    assert.equal(await checkbox.isChecked(), true)
     assert.equal(await checkbox.evaluate(node => (node as HTMLInputElement).indeterminate), false)
+    await page.getByRole("tab", { name: "Missions", exact: true, selected: true }).waitFor()
     assert.ok(reads >= 2)
   } finally { await page.close() }
 })

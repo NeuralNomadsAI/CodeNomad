@@ -11,6 +11,7 @@ import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { serverEvents } from "../../../src/lib/server-events"
 import { missionStore } from "../../../src/stores/missions"
+import { getTabViewState } from "../../../src/stores/tab-view-state"
 import { pluginControlsCache } from "../../../src/stores/plugin-controls"
 import type { Instance } from "../../../src/types/instance"
 import "../../../src/index.css"
@@ -29,6 +30,7 @@ function Fixture() {
   ;(window as any).missionVisibility = {
     activate: setActive,
     warmActivation: () => pluginControlsCache.load(instance.id, { directory: instance.folder }),
+    savedTab: () => getTabViewState(instance.id).rightPanelTab,
     // Selection persists in the per-window view; unmounting disposes the selected toolbar.
     mount: setMounted,
     settings: showSettings,

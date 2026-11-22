@@ -37,8 +37,9 @@ export function useMissionActivation(
     if (owner && active() && readFailed()) void pluginControlsCache.load(owner.id, owner.location, { force: true })
   }
   const [pending, setPending] = createSignal<ReturnType<typeof target>>()
-  const canToggle = () => active() && Boolean(control()) && pending() !== target() && !state()?.stale && !state()?.refreshing && !readFailed()
+  const writable = () => active() && Boolean(control()) && !projectOverride() && !state()?.stale && !state()?.refreshing && !readFailed()
     && Boolean(state()?.snapshot?.targets.some(value => value.scope === "global"))
+  const canToggle = () => writable() && pending() !== target()
   let lifetime: AbortSignal | undefined
   createEffect(() => {
     const owner = target()
@@ -48,16 +49,15 @@ export function useMissionActivation(
     const release = pluginControlsCache.acquireDemand(owner.id, owner.location)
     onCleanup(() => { controller.abort(); release() })
   })
-  const toggle = async () => {
+  const toggle = async (value: boolean) => {
     const owner = target()
-    if (!owner || !canToggle()) return
-    const value = !globalEnabled()
+    if (!owner || !canToggle() || value === enabled()) return
     const operation = captureBackendOperation(owner.id, lifetime, () => target() === owner && active())
     if (!operation.current()) return
     setPending(owner)
     try {
       if (!value && !await showConfirmDialog(tGlobal("missions.activation.disableConfirm"), { variant: "warning" }, operation.signal)) return
-      if (!operation.current() || value === globalEnabled()) return
+      if (!operation.current() || !writable() || value === enabled()) return
       await pluginControlsCache.mutate(owner.id, owner.location, MISSIONS_PLUGIN_ID, "global", value, { reconcile: true })
     } catch {
       if (operation.current()) {
