@@ -9,11 +9,12 @@ import {assertRenderedTextContrast} from './text-contrast.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
-  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}}})
+  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'}}})
 const url = new URL(values.url)
 assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Use an isolated loopback server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
-url.searchParams.set('scene', 'synthetic')
+if(values.connected){assert(values.workspace&&values.project&&values['storage-state']);url.searchParams.delete('scene')}
+else url.searchParams.set('scene', 'synthetic')
 url.searchParams.set('locale', values.locale)
 const catalogueIndex = JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/catalogues.json'), 'utf8'))
 assert(catalogueIndex.locales.includes(values.locale), 'Select a supported locale from the generated catalogue')
@@ -33,16 +34,29 @@ try {
       const context = await browser.newContext({viewport: {width, height}, deviceScaleFactor: 1, hasTouch: touch, isMobile: touch, colorScheme,
         ...(values['storage-state'] ? {storageState: values['storage-state']} : {})})
       const page = await context.newPage()
-      const errors = [], forbiddenRequests = []
+      page.setDefaultTimeout(15000)
+      const errors = [], forbiddenRequests = [], routes=[], history=[]
+      let eventSource=false
+      page.on('response',async response=>{
+        if(!values.connected)return
+        const request=response.request(),pathname=new URL(response.url()).pathname
+        if(pathname==='/api/events'&&response.status()===200&&request.resourceType()==='eventsource')eventSource=true
+        if(pathname.endsWith('/session-history/window')&&response.ok())history.push({input:request.postDataJSON(),body:await response.json().catch(()=>null)})
+      })
       page.on('pageerror', error => errors.push({name: error.name, message: error.message}))
       // This scene has no backend. Refuse accidental API access or external resources.
       await context.route('**/*', async route => {
         const requested = new URL(route.request().url())
         if (!['http:', 'https:'].includes(requested.protocol)) return route.continue()
-        if (requested.origin !== url.origin || /^\/(api|workspaces)\//.test(requested.pathname)) {
+        const req=route.request(),p=requested.pathname,w=values.workspace
+        const protectedRoute=/^\/(api|workspaces)\//.test(p)
+        const allowed=values.connected&&((req.method()==='GET'&&(p==='/api/workspaces'||p==='/api/events'||p===`/workspaces/${w}/instance/api/model`||new RegExp(`^/workspaces/${w}/instance/api/session(?:/(ses_existing|ses_another)(?:/(permission|form))?)?$`).test(p)))||
+          (req.method()==='POST'&&(p==='/api/client-connections/pong'||(p===`/api/workspaces/${w}/session-history/window`&&['ses_existing','ses_another'].includes(req.postDataJSON()?.sessionID)))))
+        if (requested.origin !== url.origin || (protectedRoute&&!allowed)) {
           forbiddenRequests.push({origin: requested.origin, path: requested.pathname})
           return route.abort('blockedbyclient')
         }
+        if(protectedRoute){assert((await req.allHeaders()).cookie,'Protected browser requests require the fixture cookie');routes.push({method:req.method(),path:p,query:requested.search,cookie:true})}
         await route.continue()
       })
       const started = performance.now()
@@ -54,6 +68,28 @@ try {
         const firstAccessibleMs = performance.now() - started
         assert.equal(await page.locator('html').getAttribute('lang'), values.locale)
         assert.equal(await page.locator('html').getAttribute('dir'), values.locale === 'he' ? 'rtl' : 'ltr')
+        if(values.connected){
+          const press=async label=>{
+            const button=page.getByRole('button',{name:label,exact:true});await button.waitFor({state:'attached'})
+            await page.waitForFunction(label=>[...document.querySelectorAll('[data-rune-a11y] button')].some(e=>e.textContent===label&&!e.disabled&&e.getAttribute('aria-disabled')!=='true'),label)
+            const box=await button.boundingBox()
+            assert(box&&box.width>0&&box.height>0&&box.x>=-1&&box.y>=-1&&box.x+box.width<=width+1&&box.y+box.height<=height+1,`Connected control outside viewport: ${label}`)
+            await button.click({force:true})
+          }
+          const ready=async()=>{await page.getByText(messages['rune.ready'],{exact:true}).waitFor();await page.waitForTimeout(200)}
+          const reading=async()=>{await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history')&&document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing answer'),undefined,{timeout:30000});await ready()}
+          await press(messages['folderSelection.servers.dialog.connect'])
+          await press(values.project)
+          await press('Existing history');await reading()
+          await press(messages['sessionList.header.title'])
+          await press(messages['rune.more'])
+          await press('Another session')
+          await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Another session')&&!document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history'))
+          await ready()
+          await press(messages['sessionList.header.title'])
+          await press('Existing history');await reading()
+          await page.waitForFunction(label=>[...document.querySelectorAll('[data-rune-a11y] button')].some(e=>e.textContent===label&&!e.disabled&&e.getAttribute('aria-disabled')!=='true'),messages['sessionList.header.title'])
+        }else{
         // Keyboard input is scoped to this headless page and goes through Rune's DOM bridge.
         let focused = false
         for (let tab = 0; tab < 12; tab++) {
@@ -67,13 +103,14 @@ try {
         await page.locator('textarea:focus').fill(text)
         await page.waitForFunction(expected => document.activeElement?.value === expected, text)
         assert.equal(await page.locator('textarea:focus').getAttribute('aria-label'), messages['rune.prompt'])
+        }
         const canvas = await page.locator('canvas').first().boundingBox()
         assert(canvas && canvas.width > 0 && canvas.height > 0, 'Rune must draw an actual canvas')
         assert(canvas.width <= width + 1 && canvas.height <= height + 1, 'Canvas must follow the supplied viewport')
         const snapshot = await page.locator('body').ariaSnapshot()
         assert(snapshot.includes(messages['rune.latest']), 'Latest control must appear in the real accessibility mirror')
         await writeFile(path.join(out, `${name}-${colorScheme}.aria.yml`), snapshot)
-        await page.waitForLoadState('networkidle', {timeout: 30_000})
+        if(!values.connected)await page.waitForLoadState('networkidle', {timeout: 30_000})
         const png = await page.screenshot({path: path.join(out, `${name}-${colorScheme}.png`)})
         const textRegions = await page.evaluate(title => {
           const nodes = [...document.querySelectorAll('[data-rune-a11y] p, [data-rune-a11y] h1, [data-rune-a11y] h2')]
@@ -83,13 +120,13 @@ try {
             const box = node.getBoundingClientRect()
             return {name, rect: [box.x, box.y, box.width, box.height], surface: 'surface-canvas'}
           }
-          return [crop('header', text => text.startsWith(title)), crop('transcript', text => text.includes('fn main()'))]
-        }, messages['window.title.main'])
+          return [crop('header', text => text.startsWith(title.label)), crop('transcript', text => text.includes(title.connected?'Existing answer':'fn main()'))]
+        }, {label:messages['window.title.main'],connected:values.connected})
         const composerBox = await page.getByRole('group', {name: messages['rune.prompt'], exact: true}).boundingBox()
         const sendBox = await page.getByRole('button', {name: messages['promptInput.overlay.send'], exact: true}).boundingBox()
         assert(composerBox && sendBox, 'Composer group and action expose their drawn bounds')
         const {['space-md']: md, ['space-sm']: sm} = palette.numbers[colorScheme]
-        textRegions.push({name: 'composer', surface: 'surface-field', inset: sm,
+        if(!values.connected)textRegions.push({name: 'composer', surface: 'surface-field', inset: sm,
           rect: [composerBox.x + md, composerBox.y + md, composerBox.width - md * 2, sendBox.y - sm - composerBox.y - md]})
         const textContrast = await assertRenderedTextContrast(imagePage, png, textRegions, palette[colorScheme])
         const measured = await page.evaluate(() => ({boot: globalThis.__codenomadRuneBoot,
@@ -100,10 +137,18 @@ try {
         }))
         assert.equal(forbiddenRequests.length, 0, 'Synthetic web smoke must stay offline from API and external origins')
         assert.equal(errors.length, 0, 'Web app must initialize and handle multiline input without JS exceptions')
-        records.push({name, colorScheme, width, height, emulatedTouch: touch, firstAccessibleMs, canvasBounds: canvas, textContrast, ...measured, pass: true})
+        if(values.connected){
+          assert(eventSource,'Real browser EventSource must connect')
+          const existing=history.filter(row=>row.input.sessionID==='ses_existing')
+          assert(existing.length>=2)
+          for(const row of existing)assert.deepEqual(row.body.messages.map(message=>message.text??message.content?.[0]?.text),['Existing project history','Existing answer'])
+          assert(history.some(row=>row.input.sessionID==='ses_another'&&row.body.messages.length===0))
+          assert(routes.some(row=>row.query.includes('cursor=')))
+        }
+        records.push({name, colorScheme, width, height, emulatedTouch: touch, firstAccessibleMs, canvasBounds: canvas, textContrast, routes,history,eventSource,...measured, pass: true})
       } catch (error) {
         await page.screenshot({path: path.join(out, `${name}-${colorScheme}-failure.png`)}).catch(() => {})
-        await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests}, null, 2))
+        await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,mirror:await page.locator('body').ariaSnapshot()}, null, 2))
         throw error
       } finally {await context.close()}
     }
@@ -111,6 +156,6 @@ try {
 } finally {
   await browser.close()
   await writeFile(path.join(out, 'smoke-report.json'), JSON.stringify({platform: process.platform, browser: 'Chromium headless',
-    scene: 'synthetic', records, pending: ['real phone keyboard/IME/autocorrect/dictation', 'screen reader on physical device', 'phone power and sustained performance', 'Rust-server connected session flow']}, null, 2) + '\n')
+    scene: values.connected?'connected':'synthetic', records, pending: ['real phone keyboard/IME/autocorrect/dictation', 'screen reader on physical device', 'phone power and sustained performance',...(values.connected?[]:['Rust-server connected session flow'])]}, null, 2) + '\n')
 }
 console.log(`Rune web smoke evidence: ${out}`)

@@ -3,17 +3,23 @@ import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {spawn,execFile} from 'node:child_process'
 import {promisify} from 'node:util'
-import {mkdir,writeFile} from 'node:fs/promises'
-import {randomUUID} from 'node:crypto'
+import {mkdir,readFile,writeFile} from 'node:fs/promises'
+import {createHash,randomUUID} from 'node:crypto'
+import {chromium,request} from 'playwright'
 import path from 'node:path'
 import {FixtureStore} from './fixture-store.mjs'
 import {responseFor} from './fixture-response.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {controlsFixture} from './controls-fixture.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
-requireTestSupport()
-const here=import.meta.dirname,profile=path.join(here,'fixture-profile',`launcher-${randomUUID()}`)
+const web=process.argv.includes('--web'),root=path.resolve(import.meta.dirname,'../..')
+if(!web)requireTestSupport()
+const here=import.meta.dirname,profile=path.join(web?path.join(root,'target/rune-web-tests'):path.join(here,'fixture-profile'),`launcher-${randomUUID()}`)
 const project=path.join(profile,'projects','synthetic');await mkdir(project,{recursive:true})
+const forbidden=path.join(profile,'forbidden');if(web)await mkdir(forbidden)
+const ui=path.resolve(root,process.env.RUNE_WEB_DIR??'target/rune-web-connected')
+const manifest=web?JSON.parse(await readFile(path.join(ui,'bundle-manifest.json'),'utf8')):null
+if(web){assert.equal(manifest.generator,'scripts/rune/bundle-web.mjs');assert.equal(manifest.testSupport,false,'Connected qualification requires the default product bundle')}
 const gitCount=Number(process.env.RUNE_TEST_GIT_COUNT??0)
 if(gitCount)await promisify(execFile)('git',['init','--quiet',project],{windowsHide:true,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'NUL'}})
 const records=new Map(),stores=new Map(),streams=new Set(),requests=[]
@@ -35,6 +41,12 @@ const upstream=createServer(async(req,res)=>{
     assert.equal(req.headers.authorization,`Basic ${Buffer.from('opencode:fixture-native').toString('base64')}`)
     let raw='';for await(const chunk of req){raw+=chunk;assert(raw.length<262144)}
     const json=data=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(data))}
+    if(web){
+      assert(!['prompt','interrupt'].some(action=>url.pathname.endsWith(`/${action}`))&&!(url.pathname==='/api/session'&&req.method==='POST'),'Read-only web fixture')
+      if(url.pathname==='/api/config')return json([{type:'directory',path:project}])
+      if(url.pathname==='/api/model')return json({location:{directory:project},data:[]})
+      if(/^\/api\/session\/[^/]+\/(permission|form)$/.test(url.pathname))return json({data:[]})
+    }
     if(control&&await control.route(req,url,raw,json,res))return
     if(url.pathname==='/api/event') {
       res.writeHead(200,{'content-type':'text/event-stream'});res.write(`data: ${JSON.stringify({id:randomUUID(),type:'server.connected',created:Date.now(),data:{}})}\n\n`)
@@ -97,20 +109,40 @@ const upstream=createServer(async(req,res)=>{
 await new Promise(r=>upstream.listen(0,'127.0.0.1',r))
 const env=await privateEnvironment(profile)
 Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled'})
+if(web)env.CNRS_FIXTURE_UI_DIR=ui
 const server=spawn(serverBinary,[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
-let log='',client,result=1;server.stdout.on('data',d=>log+=d);server.stderr.on('data',d=>log+=d)
+let log='',client,result=1,http,staticProof,diagnostic='';server.stdout.on('data',d=>{if(log.length<1048576)log+=d});server.stderr.on('data',d=>{if(log.length<1048576)log+=d})
+const exited=new Promise(resolve=>{server.once('close',resolve);server.once('error',resolve)})
 try{
   let origin;for(const until=Date.now()+20000;!origin;){assert(Date.now()<until&&server.exitCode===null,'Rust startup');origin=log.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];if(!origin)await new Promise(r=>setTimeout(r,50))}
-  client=spawn(clientBinary,[controls?'--probe-controls':'--probe-launcher'],{cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{})}})
+  if(web){
+    http=await request.newContext({baseURL:origin,timeout:15000})
+    assert.equal((await http.get('/api/workspaces')).status(),401,'Workspace inventory requires authentication')
+    assert.equal((await http.post('/api/auth/login',{data:{username:'codenomad',password:'fixture-backend'}})).status(),200)
+    const storage=path.join(profile,'browser-storage.json');await http.storageState({path:storage})
+    const opened=await http.post('/api/workspaces',{data:{path:project}});assert(opened.ok(),`Open isolated workspace: ${await opened.text()}`)
+    const workspace=(await opened.json()).id;assert(workspace)
+    const wasm=await http.get('/app_bg.wasm');assert.equal(wasm.status(),200)
+    const sha256=createHash('sha256').update(await wasm.body()).digest('hex')
+    assert.equal(sha256,manifest.files.find(file=>file.file==='app_bg.wasm').sha256)
+    staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,serverBinary,ui}
+    client=spawn(process.execPath,[path.join(root,'scripts/rune/web-smoke.mjs'),'--url',`${origin}/`,'--connected','--workspace',workspace,'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',chromium.executablePath()],{cwd:root,env,windowsHide:true,stdio:['ignore','pipe','pipe']})
+    for(const stream of [client.stdout,client.stderr])stream.on('data',d=>{if(diagnostic.length<262144)diagnostic+=d})
+  }else client=spawn(clientBinary,[controls?'--probe-controls':'--probe-launcher'],{cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{})}})
+  const timer=setTimeout(()=>client.kill(),web?300000:120000)
   result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})
-  assert.equal(result,0);if(controls){control.done()}else{assert.equal(stats.created,1);assert.equal(stats.prompts,2)}
+  clearTimeout(timer)
+  assert.equal(result,0);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,0);assert(stats.lists>=12)}else if(controls){control.done()}else{assert.equal(stats.created,1);assert.equal(stats.prompts,2)}
   if(gitCount)assert.equal(requests.filter(r=>r==='GET /api/worktree').length,0,'root mutations must not enumerate sibling worktrees')
   console.log(JSON.stringify({fixture:'launcher',uncertain,withTools,...stats,profile}))
 }finally{
   control?.close()
-  if(client?.exitCode===null)client.kill();server.stdin.end()
-  await Promise.race([new Promise(r=>server.on('exit',r)),new Promise(r=>setTimeout(r,3000))]);if(server.exitCode===null)server.kill()
+  await http?.dispose()
+  if(client?.exitCode===null)client.kill();server.stdin.end(web?'shutdown\n':undefined)
+  await Promise.race([exited,new Promise(r=>setTimeout(r,3000))]);if(server.exitCode===null){server.kill();await Promise.race([exited,new Promise(r=>setTimeout(r,5000))])}
   for(const stream of streams)stream.destroy();upstream.closeAllConnections();upstream.close()
-  await writeFile(path.join(profile,'proof.json'),JSON.stringify({result,stats,requests},null,2));await writeFile(path.join(profile,'rust.log'),log)
+  await writeFile(path.join(profile,'proof.json'),JSON.stringify({result,stats,requests,static:staticProof,profile,project,forbidden,serverExitCode:server.exitCode},null,2));await writeFile(path.join(profile,'rust.log'),log)
+  if(web)await writeFile(path.join(profile,'browser-run.log'),diagnostic)
+  if(web)assert.equal(server.exitCode,0,'Owned Rust server must exit cleanly')
 }
 process.exitCode=result??1

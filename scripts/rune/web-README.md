@@ -13,6 +13,16 @@ Le CLI doit correspondre exactement à la version de `wasm-bindgen` dans `Cargo.
 
 Le scénario synthétique et son bundle demandent explicitement `test-support`. Pour empaqueter le produit, compiler sans cette feature puis appeler le bundler sans `--test-support`. Le manifeste conserve ce statut et la fixture synthétique exige le bundle de qualification.
 
+Le parcours connecté utilise le bundle produit sous `target/rune-web-connected`, servi par le mode de qualification du vrai serveur Rust avec l'amont OpenCode simulé existant :
+
+```powershell
+cargo build --locked --target wasm32-unknown-unknown -p codenomad-rune-app
+node scripts/rune/bundle-web.mjs --wasm "$env:CARGO_TARGET_DIR/wasm32-unknown-unknown/debug/codenomad-rune.wasm" --out target/rune-web-connected
+node packages/rune-app/launcher-fixture.mjs --web
+```
+
+Cette fixture vérifie cookies, refus sans authentification, deux pages de sessions, conversation exacte, session vide et retour, EventSource et arrêt du serveur, sans création ni envoi. Les six contextes et preuves restent sous `target/rune-web-tests/launcher-*/`.
+
 Les libellés de démarrage et d'erreur proviennent des dix catalogues générés. `?locale=he` sélectionne par exemple l'hébreu et la direction RTL ; la valeur par défaut est `fr`. Les couleurs, dimensions et polices du démarrage consomment le thème généré et `crates/rune-theme-codenomad/assets/web-shell.css`. Le zoom du navigateur reste disponible.
 
 Le runner complet crée un profil privé et un espace de travail vide, configure un exécutable OpenCode privé absent, démarre le vrai serveur Rust sur un port loopback éphémère, authentifie les seuls cookies de cette fixture et vérifie le HTML et le MIME/empreinte du module WASM. Il exécute ensuite le smoke et exige le marqueur de fermeture complète et le code de sortie zéro. Les données et preuves restent sous `target/rune-web-tests/trial-*`.

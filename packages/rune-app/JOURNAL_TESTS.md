@@ -28,6 +28,7 @@ Les essais automatiques utilisent des profils `trial-*`, des projets synthétiqu
 | Même client, même état et mêmes écrans compilés pour WebAssembly | `wasm32-unknown-unknown` | Compilation réussie ; `.tmp-rune-app-wasm-build.log` |
 | Organisation par domaine et exclusion des sondes du produit | Builds natif et WASM sans feature, puis inspection réelle du lanceur | Réussi ; `.tmp-rune-product-native.log`, `.tmp-rune-product-wasm.log` et `target/rune-production/production-report.json` |
 | Retrait d'une permission ou question pendant la saisie | Runtime Rune, snapshot autoritaire, édition en attente et réconciliation du focus | 2 tests réussis ; `.tmp-rune-pending-edit.log` |
+| Coquille web connectée, cookies, refus 401, deux pages de sessions, historique exact, session vide puis retour et EventSource | Bundle produit WASM, serveur Rust réel et OpenCode simulé, six contextes clairs/sombres bureau/tablette/téléphone | Réussi, 24 listes, aucune création ni envoi, arrêt serveur zéro ; `target/rune-web-tests/launcher-54c0e861-176c-4317-96bb-098afd95965f/proof.json` et `browser/smoke-report.json` |
 
 La réorganisation conserve les scénarios : reprise de 606 lignes avec saut d'ancre nul (`.tmp-rune-domain-recovery.log`), deux envois avec outils (`.tmp-rune-domain-launcher.log`), commandes d'agent (`.tmp-rune-domain-controls.log`), quatre captures natives (`target/rune-domain-headless/qualification.json`) et six contextes web (`target/rune-web-tests/trial-lmH7lV/proof.json`). Le contrôle de styles recompilé passe (`.tmp-rune-domain-policy.log`).
 
@@ -94,7 +95,9 @@ Les commandes de capture Solid/Rune se trouvent dans `scripts/rune/parity/README
 
 ## Campagnes OpenCode réel et presse-papiers Windows
 
-La couverture de référence du prototype comprend l'ouverture visible Windows de 10 000 messages, la sélection/copie d'un bloc dans le presse-papiers Windows, deux échanges avec OpenCode 2.3.2, une reprise de 600 messages stockés par le vrai service et une coupure pendant une réponse réelle. La comparaison finale portait sur 603 lignes et l'ancre conservée. Le choix du modèle et l'arrêt ont aussi fait l'objet d'un essai réel, avec outils interdits. Un essai de modèle a atteint son délai sans texte ; cette limite reste à qualifier.
+Le journal du prototype décrit une ouverture visible de 10 000 messages, une copie dans le presse-papiers Windows, deux échanges OpenCode et une reprise réelle de 600 messages donnant 603 lignes finales. Les traces détaillées citées pour ces cas restent à retrouver ou les essais à reproduire pour la qualification du portage.
+
+La preuve conservée du choix de modèle et de l'arrêt réel est `D:/CodeNomad/.codenomad/worktrees/rune-native-chat/packages/rune-chat/fixture-profile/controls-live-2e53761f-1dd1-443b-b51a-db47bb1b31f8/proof.json` : résultat zéro, événements texte et interruption, session nettoyée. Une répétition a atteint son délai avant le texte, consignée dans le journal source ; la disponibilité du modèle reste à qualifier.
 
 La qualification actuelle du portage s'appuie sur les exécutions du tableau et les preuves correspondantes. La validation complète de l'alpha demande les permissions et les questions avec OpenCode réel, les sessions longues réelles, la persistance des projets/onglets/brouillons et une journée de travail. Les essais réels utilisent des sessions jetables et des outils interdits sauf nécessité du cas.
 
@@ -103,7 +106,7 @@ La qualification actuelle du portage s'appuie sur les exécutions du tableau et 
 - CI Windows, macOS et Linux effectivement exécutée, avec les captures et résultats de chaque runner.
 - Raccord du collecteur de latence aux marqueurs du banc TUI, puis mesures comparables.
 - Parité visuelle, accessibilité et interactions des écrans et composants du tableau Solid/Rune.
-- Coquille web connectée : liste des sessions et lecture d'une conversation par les véritables contrats serveur.
+- Accès web HTTPS appairé, puis écriture et commandes d'agent par les véritables contrats serveur.
 - Fenêtre d'historique au-delà des 2 048 messages ou 8 Mio résidents : pagination avec éviction et restauration de l'ancre à qualifier pour les très longues sessions. La scène de charge locale utilise son propre jeu de 10 000 messages.
 - Clavier virtuel, IME, correction, dictée, lecteur d'écran, défilement tactile et consommation sur téléphone physique.
 - Installation, mises à jour signées, retour arrière et migration depuis Tauri sur les trois systèmes avant la bascule.

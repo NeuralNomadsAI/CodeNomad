@@ -24,6 +24,8 @@ Chaque défaut reçoit une reproduction minimale et une attribution : adaptation
 
 ## Vérifications reproductibles
 
+Le bundle produit est qualifié en lecture avec le vrai serveur Rust et OpenCode simulé : connexion avec cookies, deux pages de sessions, historique exact, session vide puis retour, véritable EventSource et refus 401 sans cookie. Six contextes Chromium couvrent bureau/tablette/téléphone et clair/sombre, avec contrôles dans le viewport, captures et contraste. L'accès HTTPS appairé et les appareils physiques demandent leur qualification propre.
+
 Depuis le worktree isolé, avec le `CARGO_TARGET_DIR` existant :
 
 ```powershell

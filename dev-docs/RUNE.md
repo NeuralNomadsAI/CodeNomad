@@ -48,7 +48,7 @@ When a whole module reaches parity, its Solid and Tauri version is deleted on `f
 | Window close | `components/window-close-button.tsx` | `components/window_close_button.rs`: six Windows light/dark pairs, accessibility and interaction qualified at scale 1 |
 | Server startup | Tauri `cli_manager.rs` | `platform/host/`: isolated Windows bootstrap, shutdown and generation qualified |
 | Chat, composer and session launcher | Solid transcript, composer and project fixtures | `chat/`, `agent/`, `launcher/`: native flows with shared Rust and simulated OpenCode qualified; Solid parity pending |
-| Browser client | Remote access contracts and Rune web target | Shared WASM state/views: six synthetic viewport/theme contexts qualified; connected session flow and physical mobile pending |
+| Browser client | Remote access contracts and Rune web target | Shared WASM state/views: six local and six authenticated session-reading contexts qualified with shared Rust and simulated OpenCode; physical mobile pending |
 
 ## Workspace and qualification
 
