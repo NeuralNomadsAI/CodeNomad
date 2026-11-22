@@ -1,10 +1,14 @@
 //! Ordered native message blocks. Tool data is passive; this module never executes calls.
 use crate::history::Result;
 use serde_json::Value;
+mod user;
+pub use user::{File, Skill};
 #[derive(Clone, Debug, PartialEq)]
 pub enum Part {
     Text(Text),
     Tool(Tool),
+    Skill(Skill),
+    File(File),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextProvenance {
@@ -217,6 +221,8 @@ fn part_keys(parts: &[Part]) -> Vec<String> {
                 key
             }
             Part::Tool(t) => format!("tool:{}", t.id),
+            Part::Skill(s) => format!("skill:{}", s.id),
+            Part::File(f) => format!("file:{}", f.id),
         })
         .collect()
 }
@@ -230,6 +236,9 @@ pub struct Tool {
     pub limited: bool,
 }
 pub fn decode(v: &Value) -> Result<Vec<Part>> {
+    if v["type"] == "user" {
+        return user::decode(v);
+    }
     let Some(parts) = v["content"].as_array() else {
         return Ok(vec![]);
     };
@@ -328,6 +337,15 @@ pub fn bytes(parts: &[Part]) -> usize {
         .map(|p| match p {
             Part::Text(t) => t.text.len(),
             Part::Tool(t) => t.id.len() + t.name.len() + t.input.len() + t.output.len(),
+            Part::Skill(s) => s.id.len() + s.skill_id.len() + s.name.len(),
+            Part::File(f) => f.id.len() + f.uri.len() + f.mime.len() + f.name.as_ref().map_or(0, String::len),
         })
         .sum()
+}
+pub fn attachment_bytes(parts: &[Part]) -> usize {
+    parts.iter().map(|part| match part {
+        Part::File(f) => f.id.len() + f.uri.len() + f.mime.len() + f.name.as_ref().map_or(0, String::len),
+        Part::Skill(s) => s.id.len() + s.skill_id.len() + s.name.len(),
+        _ => 0,
+    }).sum()
 }

@@ -5,6 +5,9 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
 pub const MAX_ROWS: usize = 2048;
 pub const MAX_BYTES: usize = 8 * 1024 * 1024;
+pub const MESSAGE_BYTES: usize = 16 * 1024 * 1024;
+pub const WINDOW_BYTES: usize = 24 * 1024 * 1024;
+pub(crate) const RESPONSE_BYTES: usize = WINDOW_BYTES + 64 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct Page {
@@ -35,7 +38,7 @@ pub fn decode_message(v: &Value) -> Result<Message> {
     Ok(Message {
         id: id.into(),
         role: role.into(),
-        completed: !v["time"]["completed"].is_null(),
+        completed: role == "user" || !v["time"]["completed"].is_null(),
         body,
         parts,
     })
@@ -57,6 +60,14 @@ pub fn decode(v: Value) -> Result<Page> {
         .as_array()
         .filter(|rows| rows.len() <= 200)
         .ok_or("invalid history window")?;
+    let mut window_bytes = 0;
+    for row in native {
+        let bytes = serde_json::to_vec(row)?.len();
+        window_bytes += bytes;
+        if bytes > MESSAGE_BYTES || window_bytes > WINDOW_BYTES {
+            return Err("native history window exceeds its bound".into());
+        }
+    }
     let rows = native
         .iter()
         .map(decode_message)
@@ -87,11 +98,14 @@ pub fn check(rows: &[Message]) -> Result<()> {
     if rows.len() > MAX_ROWS
         || rows
             .iter()
-            .map(|r| r.body.len() + crate::content::bytes(&r.parts))
+            .map(|r| r.body.len() + crate::content::bytes(&r.parts) - crate::content::attachment_bytes(&r.parts))
             .sum::<usize>()
             > MAX_BYTES
     {
         return Err("resident history limit reached".into());
+    }
+    if rows.iter().map(|r| crate::content::attachment_bytes(&r.parts)).sum::<usize>() > WINDOW_BYTES {
+        return Err("resident attachments exceed their bound".into());
     }
     if rows.iter().any(|row| !ids.insert(&row.id)) {
         return Err("duplicate native row".into());

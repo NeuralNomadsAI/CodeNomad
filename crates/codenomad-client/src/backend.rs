@@ -56,7 +56,7 @@ impl Backend {
     }
     pub async fn page(&self, target: Value) -> Result<Page> {
         history::decode(
-            read_json(
+            read_json_limited(
                 self.client
                     .post(format!(
                         "{}api/workspaces/{}/session-history/window",
@@ -66,6 +66,7 @@ impl Backend {
                     .send()
                     .await?
                     .error_for_status()?,
+                history::RESPONSE_BYTES,
             )
             .await?,
         )
@@ -107,9 +108,28 @@ impl Backend {
             .error_for_status()?;
         Ok(())
     }
+    pub async fn prompt(&self, input: &crate::prompt::Prompt) -> Result<crate::prompt::Acknowledgement> {
+        let body = serde_json::to_vec(input)?;
+        if body.len() > crate::prompt::MAX_BODY_BYTES {
+            return Err("prompt request body exceeds its bound".into());
+        }
+        let response = self.client
+            .post(format!("{}workspaces/{}/instance/api/session/{}/prompt", self.base, self.workspace, self.session))
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(body)
+            .send().await?.error_for_status()?;
+        let response = read_json_limited(response, crate::prompt::MAX_BODY_BYTES).await?;
+        let native = response.get("data").unwrap_or(&response);
+        if native.get("sessionID").is_some_and(|session| session != &self.session) {
+            return Err("prompt acknowledgement belongs to another session".into());
+        }
+        let id = native["id"].as_str().filter(|id| !id.is_empty()).or(input.id.as_deref())
+            .filter(|id| history::valid_id(id)).ok_or("prompt acknowledgement has no valid identity")?;
+        Ok(crate::prompt::Acknowledgement { id: id.into() })
+    }
     /// The explicit fresh-session flow retains at most its first 200 native rows.
     pub async fn fresh(&self, first: Option<&str>) -> Result<Page> {
-        let data = read_json(
+        let data = read_json_limited(
             self.client
                 .get(format!(
                     "{}workspaces/{}/instance/api/session/{}/message?limit=200&order=asc",
@@ -118,6 +138,7 @@ impl Backend {
                 .send()
                 .await?
                 .error_for_status()?,
+            history::RESPONSE_BYTES,
         )
         .await?;
         let native = data["data"]
@@ -125,7 +146,7 @@ impl Backend {
             .filter(|rows| rows.len() <= 200)
             .ok_or("fresh session response exceeds its bound")?;
         // Native cursors also anchor future reads; their presence alone is not evidence of another page.
-        let latest = read_json(
+        let latest = read_json_limited(
             self.client
                 .get(format!(
                     "{}workspaces/{}/instance/api/session/{}/message?limit=1",
@@ -134,6 +155,7 @@ impl Backend {
                 .send()
                 .await?
                 .error_for_status()?,
+            history::RESPONSE_BYTES,
         )
         .await?;
         let tail = latest["data"]

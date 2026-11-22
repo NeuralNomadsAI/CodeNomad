@@ -40,6 +40,18 @@ pub fn absolute(path: &str) -> bool {
     style(path).is_some()
 }
 
+pub fn file_uri(path: &str) -> crate::history::Result<String> {
+    let style = style(path).ok_or("absolute server path required")?;
+    if path.starts_with("\\\\") {
+        return Err("local file URI authority required".into());
+    }
+    let path = if style == Style::Windows { path.replace('\\', "/") } else { path.into() };
+    let mut uri = reqwest::Url::parse("file:///")?;
+    uri.path_segments_mut().map_err(|_| "file URI path unavailable")?
+        .clear().extend(path.strip_prefix('/').unwrap_or(&path).split('/'));
+    Ok(uri.into())
+}
+
 pub fn same(left: &str, right: &str) -> bool {
     match (style(left), style(right)) {
         (Some(Style::Windows), Some(Style::Windows)) => {

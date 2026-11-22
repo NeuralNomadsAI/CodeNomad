@@ -564,6 +564,7 @@ dependencies = [
  "futures-lite",
  "js-sys",
  "reqwest",
+ "serde",
  "serde_json",
  "tokio",
  "wasm-bindgen",
