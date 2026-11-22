@@ -278,6 +278,32 @@
   },
   "metrics": {
     "dark": {
+      "actionMenu": {
+        "borderRadius": 0,
+        "borderTopWidth": 1,
+        "gutter": 4,
+        "minWidth": 192,
+        "paddingLeft": 4,
+        "paddingTop": 4,
+        "viewportInset": 16
+      },
+      "actionMenuDisabled": {
+        "opacity": 0.5
+      },
+      "actionMenuIcon": {
+        "height": 16,
+        "width": 16
+      },
+      "actionMenuItem": {
+        "borderRadius": 0,
+        "columnGap": 8,
+        "fontSize": 13,
+        "fontWeight": 400,
+        "lineHeight": 15.6,
+        "minHeight": 32,
+        "paddingLeft": 8,
+        "paddingTop": 6.4
+      },
       "button": {
         "borderTopWidth": 1,
         "fontSize": 12,
@@ -290,6 +316,16 @@
       "disclosure": {
         "transitionDuration": "0.15s",
         "transitionTimingFunction": "ease"
+      },
+      "fileRowAction": {
+        "minHeight": 24,
+        "minWidth": 24,
+        "opacity": 0.7,
+        "paddingLeft": 0
+      },
+      "fileRowActionGlyph": {
+        "height": 14,
+        "width": 14
       },
       "input": {
         "fontSize": 12,
@@ -371,6 +407,32 @@
       }
     },
     "light": {
+      "actionMenu": {
+        "borderRadius": 0,
+        "borderTopWidth": 1,
+        "gutter": 4,
+        "minWidth": 192,
+        "paddingLeft": 4,
+        "paddingTop": 4,
+        "viewportInset": 16
+      },
+      "actionMenuDisabled": {
+        "opacity": 0.5
+      },
+      "actionMenuIcon": {
+        "height": 16,
+        "width": 16
+      },
+      "actionMenuItem": {
+        "borderRadius": 0,
+        "columnGap": 8,
+        "fontSize": 13,
+        "fontWeight": 400,
+        "lineHeight": 15.6,
+        "minHeight": 32,
+        "paddingLeft": 8,
+        "paddingTop": 6.4
+      },
       "button": {
         "borderTopWidth": 1,
         "fontSize": 12,
@@ -383,6 +445,16 @@
       "disclosure": {
         "transitionDuration": "0.15s",
         "transitionTimingFunction": "ease"
+      },
+      "fileRowAction": {
+        "minHeight": 24,
+        "minWidth": 24,
+        "opacity": 0.7,
+        "paddingLeft": 0
+      },
+      "fileRowActionGlyph": {
+        "height": 14,
+        "width": 14
       },
       "input": {
         "fontSize": 12,

@@ -6,9 +6,14 @@ import {test} from 'node:test'
 import {createServer} from 'vite'
 import {chromium} from 'playwright'
 import {collectTheme} from './generate-theme-browser.mjs'
-import {themeFixtureHtml} from './generate-theme-fixture.mjs'
+import {themeFixtureHtml,sourceMenuGutter} from './generate-theme-fixture.mjs'
 
 const root=fileURLToPath(new URL('../../',import.meta.url))
+test('action menu gutter follows its actual numeric JSX contract',()=>{
+  assert.equal(sourceMenuGutter('<DropdownMenu gutter={7}></DropdownMenu>'),7)
+  assert.throws(()=>sourceMenuGutter('<DropdownMenu gutter={spacing}></DropdownMenu>'),/numeric JSX gutter/)
+  assert.throws(()=>sourceMenuGutter('<Other gutter={4}></Other>'),/one source DropdownMenu/)
+})
 test('generated semantic metrics survive actual font changes and viewport changes',async()=>{
   const temporary=path.join(root,'target/rune-codegen-tests')
   await mkdir(temporary,{recursive:true})
@@ -55,7 +60,7 @@ test('generated semantic metrics survive actual font changes and viewport change
       await page.setViewportSize({width:640,height:900})
       assert.deepEqual((await page.evaluate(collectTheme,names)).metrics,baseline.metrics,'Viewport-dependent intrinsic dimensions leaked into the theme')
       for(const [name,metric] of Object.entries(baseline.metrics)){
-        if(['windowIcon','windowIconGlyph','tabActive','tabGlyph','tabCloseGlyph'].includes(name))continue
+        if(['windowIcon','windowIconGlyph','tabActive','tabGlyph','tabCloseGlyph','actionMenuIcon','fileRowActionGlyph'].includes(name))continue
         assert(!('width'in metric)&&!('height'in metric),`${name} retained intrinsic dimensions`)
       }
       assert.equal(baseline.metrics.windowIcon.width,24)
@@ -67,6 +72,14 @@ test('generated semantic metrics survive actual font changes and viewport change
         assert.equal(baseline.colors[`${kind}-ring`],'#3b82f680','Normalized CSS RGB channels survive translucent color extraction')
         assert.equal(baseline.colors[`${kind}-offset`],'#ffffffff')
       }
+      assert.equal(baseline.metrics.actionMenu.viewportInset,16)
+      assert.equal(baseline.metrics.actionMenuItem.minHeight,32)
+      assert.equal(baseline.metrics.actionMenuDisabled.opacity,0.5)
+      assert.deepEqual(baseline.metrics.fileRowActionGlyph,{width:14,height:14})
+      assert.deepEqual(baseline.metrics.fileRowAction,{minWidth:24,minHeight:24,paddingLeft:0,opacity:0.7})
+      await page.locator('.action-overflow-item').first().evaluate(element=>element.style.lineHeight='normal')
+      await assert.rejects(page.evaluate(collectTheme,names),/lineHeight requires an explicit numeric CSS value/)
+      await page.locator('.action-overflow-item').first().evaluate(element=>element.style.removeProperty('line-height'))
       await page.locator('.tab-base').first().evaluate(element=>element.style.boxShadow='none')
       await assert.rejects(page.evaluate(collectTheme,names),/Unsupported .tab-base focus shadow/)
       await page.locator('.tab-base').first().evaluate(element=>element.style.removeProperty('box-shadow'))

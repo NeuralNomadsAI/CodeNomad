@@ -24,6 +24,8 @@ Chaque défaut reçoit une reproduction minimale et une attribution : adaptation
 
 Les onglets CodeNomad assemblent un bouton de sélection et un bouton de fermeture frères : leurs rôles et états restent présents dans le miroir web. Le regroupement `tablist` nécessite une évolution Rune, suivie dans [l'issue 1344](https://github.com/anomalyco/rune/issues/1344), avec reproduction autonome des onglets fermables et du conteneur. Le parcours lecteur d'écran complet conserve sa qualification propre.
 
+Le miroir web omet aussi le conteneur `menu`, les entrées désactivées du Menu kit et l'état désactivé des boutons. L'arbre accessible natif porte ces rôles et états. Le contrat du miroir est suivi dans [l'issue 118](https://github.com/anomalyco/rune/issues/118#issuecomment-7076114863), avec une reproduction publique Rune/rune-kit et observation du DOM WebAssembly. Les interactions au clavier passent par le canvas et son descendant actif ; les boutons du miroir servent aux actions assistives.
+
 ## Vérifications reproductibles
 
 Le bundle produit est qualifié en lecture avec le vrai serveur Rust et OpenCode simulé : connexion avec cookies, deux pages de sessions, historique exact, session vide puis retour, véritable EventSource et refus 401 sans cookie. Six contextes Chromium couvrent bureau/tablette/téléphone et clair/sombre, avec contrôles dans le viewport, captures et contraste. L'accès HTTPS appairé et les appareils physiques demandent leur qualification propre.
