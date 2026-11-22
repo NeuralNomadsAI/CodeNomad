@@ -196,6 +196,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     }
                 }
                 s.messages = page.rows;
+                composer::reconcile(s);
                 s.can_older = page.older.is_some();
                 s.paging = false;
                 s.history_error = false;
@@ -238,11 +239,8 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     s.messages.push(m);
                 }
             }
-            Event::PromptAcknowledged {
-                attempted,
-                confirmed,
-            } => {
-                composer::acknowledge(s, &attempted, confirmed);
+            Event::PromptAcknowledged { attempted, outcome } => {
+                composer::acknowledge(s, &attempted, outcome);
                 workspace::capture(s);
             }
             Event::Text(id, event) => {

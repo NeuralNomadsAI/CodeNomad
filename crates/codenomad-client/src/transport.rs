@@ -25,6 +25,12 @@ pub enum Command {
     Close,
 }
 #[derive(Debug)]
+pub enum PromptOutcome {
+    Confirmed(String),
+    Rejected,
+    Unconfirmed,
+}
+#[derive(Debug)]
 pub enum Event {
     Connected(crate::backend::Backend),
     Workspace(WorkspaceEvent),
@@ -35,7 +41,7 @@ pub enum Event {
     Message(Message),
     PromptAcknowledged {
         attempted: String,
-        confirmed: Option<String>,
+        outcome: PromptOutcome,
     },
     Text(String, crate::content::TextEvent),
     Done,

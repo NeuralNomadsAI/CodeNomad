@@ -52,7 +52,13 @@ pub fn view(s: &State) -> El {
         .children(
             s.composer
                 .send_error
-                .then(|| text(t("rune.failed")).role("alert")),
+                .then(|| text(t("promptInput.send.errorTitle")).role("alert")),
+        )
+        .children(
+            s.composer
+                .unconfirmed
+                .as_ref()
+                .map(|_| text(t("missionsPanel.action.requestUpdateUncertain")).role("alert")),
         )
 }
 
@@ -61,7 +67,11 @@ fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
         send(s, tx, false);
         true
     } else if event.key == Key::Enter
-        && (event.mods.alt && !event.mods.ctrl && !event.mods.cmd && !event.mods.logo
+        && (!cfg!(target_os = "macos")
+            && event.mods.alt
+            && !event.mods.ctrl
+            && !event.mods.cmd
+            && !event.mods.logo
             || event.mods.shift && event.mods.cmd && !event.mods.alt)
     {
         send(s, tx, true);

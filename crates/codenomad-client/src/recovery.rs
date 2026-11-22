@@ -7,7 +7,7 @@ use crate::{
     backend::Backend,
     content::{self, Part, TextFit, TextProvenance},
     history, stream,
-    transport::{Command, Event, publish},
+    transport::{Command, Event, PromptOutcome, publish},
 };
 use serde_json::Value;
 use std::{
@@ -187,13 +187,22 @@ pub async fn run(
             }
             Some(Input::Command(Command::Prompt(prompt))) => {
                 let Some(id) = &prompt.id else { continue };
-                let admitted = opened && !dirty && !parked && wire.upstream.load(SeqCst);
-                let confirmed = if admitted {
-                    backend.prompt(&prompt).await.ok().map(|ack| ack.id)
+                let admitted = opened && !parked && wire.upstream.load(SeqCst);
+                let outcome = if admitted {
+                    match backend.prompt(&prompt).await {
+                        Ok(ack) => PromptOutcome::Confirmed(ack.id),
+                        Err(error)
+                            if error.downcast_ref()
+                                == Some(&crate::prompt::PromptError::Rejected) =>
+                        {
+                            PromptOutcome::Rejected
+                        }
+                        Err(_) => PromptOutcome::Unconfirmed,
+                    }
                 } else {
-                    None
+                    PromptOutcome::Rejected
                 };
-                if confirmed.is_some()
+                if !matches!(outcome, PromptOutcome::Rejected)
                     && !busy
                     && prompt.delivery != Some(crate::prompt::Delivery::Queue)
                 {
@@ -201,12 +210,16 @@ pub async fn run(
                     repairs = 0;
                     settlement_reads = 0;
                 }
+                if matches!(outcome, PromptOutcome::Unconfirmed) {
+                    dirty = true;
+                    quiet = Instant::now();
+                }
                 publish(
                     &out,
                     &wake,
                     Event::PromptAcknowledged {
                         attempted: id.clone(),
-                        confirmed,
+                        outcome,
                     },
                 )
                 .await;

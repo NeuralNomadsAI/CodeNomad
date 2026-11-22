@@ -1,7 +1,7 @@
 //! Commands and display events for the native prototype.
 #[cfg(any(test, feature = "test-support"))]
 use crate::{CODE, Message};
-pub use codenomad_client::transport::{Command, Event, publish, run_backend};
+pub use codenomad_client::transport::{Command, Event, PromptOutcome, publish, run_backend};
 #[cfg(test)]
 pub use codenomad_client::wire::decode_event;
 use codenomad_client::{Receiver, Sender};
@@ -56,7 +56,7 @@ async fn run_synthetic(out: Sender<Event>, input: Receiver<Command>, wake: rune:
                         &out,
                         &wake,
                         Event::PromptAcknowledged {
-                            confirmed: Some(attempted.clone()),
+                            outcome: PromptOutcome::Confirmed(attempted.clone()),
                             attempted,
                         },
                     )

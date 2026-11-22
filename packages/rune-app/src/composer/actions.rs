@@ -1,5 +1,9 @@
 use super::draft::Draft;
-use crate::{Message, Phase, State, transport::Command, workspace};
+use crate::{
+    Message, Phase, State,
+    transport::{Command, PromptOutcome},
+    workspace,
+};
 use codenomad_client::prompt::{Delivery, message_id};
 use rune::{Tx, edit::TextEdit};
 
@@ -8,6 +12,7 @@ pub struct Owner {
     pub draft: Draft,
     sending: Option<Send>,
     pub send_error: bool,
+    pub unconfirmed: Option<String>,
 }
 struct Send {
     id: String,
@@ -19,6 +24,7 @@ struct Send {
 pub fn can_send(s: &State) -> bool {
     matches!(s.phase, Phase::Ready | Phase::Streaming)
         && s.composer.sending.is_none()
+        && s.composer.unconfirmed.is_none()
         && s.composer.draft.can_send(&s.draft)
         && s.commands.as_ref().is_some_and(|tx| !tx.is_closed())
         && s.agent.as_ref().is_none_or(|a| !a.blocked())
@@ -71,7 +77,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
     workspace::draft_changed(s, tx);
 }
 
-pub fn acknowledge(s: &mut State, attempted: &str, confirmed: Option<String>) {
+pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
     if !s
         .composer
         .sending
@@ -83,8 +89,12 @@ pub fn acknowledge(s: &mut State, attempted: &str, confirmed: Option<String>) {
     let Some(send) = s.composer.sending.take() else {
         return;
     };
+    if matches!(outcome, PromptOutcome::Unconfirmed) {
+        s.composer.unconfirmed = Some(send.id);
+        return;
+    }
     let row = s.messages.iter().position(|row| row.id == attempted);
-    if let Some(confirmed) = confirmed {
+    if let PromptOutcome::Confirmed(confirmed) = outcome {
         if let Some(index) = row {
             if confirmed != attempted && s.messages.iter().any(|row| row.id == confirmed) {
                 s.messages.remove(index);
@@ -118,6 +128,16 @@ pub fn acknowledge(s: &mut State, attempted: &str, confirmed: Option<String>) {
     }
 }
 
+pub fn reconcile(s: &mut State) {
+    if s.composer
+        .unconfirmed
+        .as_ref()
+        .is_some_and(|id| s.messages.iter().any(|row| &row.id == id))
+    {
+        s.composer.unconfirmed = None;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,9 +164,17 @@ mod tests {
         assert!(rt.state.composer.draft.attachments.is_empty());
         let id = prompt.id.unwrap();
         assert_eq!(rt.state.messages[0].id, id);
-        acknowledge(&mut rt.state, "foreign", Some("other".into()));
+        acknowledge(
+            &mut rt.state,
+            "foreign",
+            PromptOutcome::Confirmed("other".into()),
+        );
         assert_eq!(rt.state.messages[0].id, id);
-        acknowledge(&mut rt.state, &id, Some("confirmed".into()));
+        acknowledge(
+            &mut rt.state,
+            &id,
+            PromptOutcome::Confirmed("confirmed".into()),
+        );
         assert_eq!(rt.state.messages[0].id, "confirmed");
         assert!(
             matches!(&rt.state.messages[0].parts[0], crate::content::Part::Skill(skill) if skill.id == "confirmed-skill-0")
@@ -170,7 +198,7 @@ mod tests {
         assert!(rt.state.messages.is_empty());
         rt.state.draft = TextEdit::new("Newer");
         let id = prompt.id.unwrap();
-        acknowledge(&mut rt.state, &id, None);
+        acknowledge(&mut rt.state, &id, PromptOutcome::Rejected);
         assert_eq!(rt.state.draft.text, "Newer");
         assert!(rt.state.composer.send_error);
 
@@ -180,8 +208,39 @@ mod tests {
         };
         assert_eq!(prompt.delivery, Some(Delivery::Steer));
         assert_eq!(rt.state.messages.len(), 1);
-        acknowledge(&mut rt.state, &prompt.id.unwrap(), None);
+        acknowledge(&mut rt.state, &prompt.id.unwrap(), PromptOutcome::Rejected);
         assert_eq!(rt.state.draft.text, "Newer");
         assert!(rt.state.messages.is_empty());
+    }
+
+    #[test]
+    fn missing_receipt_cannot_replay_and_only_original_native_id_releases_it() {
+        let (sender, receiver) = codenomad_client::bounded(1);
+        let mut s = crate::init();
+        s.phase = Phase::Ready;
+        s.commands = Some(sender);
+        s.draft = TextEdit::new("attempt");
+        let mut rt = Runtime::new(s, crate::view, (600.0, 600.0), Env::new(false, 1.0));
+        rt.update(|s, tx| send(s, tx, false));
+        let Command::Prompt(prompt) = receiver.try_recv().unwrap() else {
+            panic!("expected prompt")
+        };
+        let id = prompt.id.unwrap();
+        let row = rt.state.messages.pop().unwrap();
+        acknowledge(&mut rt.state, &id, PromptOutcome::Unconfirmed);
+        assert!(rt.state.draft.text.is_empty());
+        assert_eq!(rt.state.composer.unconfirmed.as_deref(), Some(id.as_str()));
+        rt.state.draft = TextEdit::new("new draft");
+        rt.state.messages.push(Message {
+            id: "other".into(),
+            ..row.clone()
+        });
+        reconcile(&mut rt.state);
+        rt.update(|s, tx| send(s, tx, false));
+        assert!(receiver.try_recv().is_err());
+        rt.state.messages.push(row);
+        reconcile(&mut rt.state);
+        assert!(rt.state.composer.unconfirmed.is_none());
+        assert_eq!(rt.state.draft.text, "new draft");
     }
 }

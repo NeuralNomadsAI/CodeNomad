@@ -161,7 +161,7 @@ fn consecutive_sends_keep_distinct_responses_and_reenable_send() {
         assert_eq!(body.text, prompt);
         out.send_blocking(Event::PromptAcknowledged {
             attempted: body.id.unwrap(),
-            confirmed: Some(format!("confirmed-{turn}")),
+            outcome: crate::transport::PromptOutcome::Confirmed(format!("confirmed-{turn}")),
         })
         .unwrap();
         assert!(rt.state.phase == Phase::Streaming);
