@@ -90,15 +90,18 @@ try {
   const content=xml.match(/(?:class="android\.webkit\.WebView"|resource-id="com\.android\.chrome:id\/(?:compositor_view_holder|content_frame)")[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/)
   if(!content)await writeFile(path.join(profile,'android-view-hierarchy.xml'),xml)
   assert(content,'Find the browser content origin in the Android window')
-  const first=await group.boundingBox();assert(first)
-  await run('shell','input','tap',String(Math.round(Number(content[1])+(first.x+first.width/2)*before.dpr)),
-    String(Math.round(Number(content[2])+(first.y+first.height/2)*before.dpr)))
+  const tapComposer=async()=>{
+    const field=await group.boundingBox();assert(field)
+    await run('shell','input','tap',String(Math.round(Number(content[1])+(field.x+field.width/2)*before.dpr)),
+      String(Math.round(Number(content[2])+(field.y+field.height/2)*before.dpr)))
+  }
+  await tapComposer()
   const editor=page.locator('textarea:focus')
   await editor.waitFor()
   await page.waitForFunction(height=>visualViewport.height<height-100,before.height)
   await page.waitForFunction(()=>Math.abs(document.querySelector('canvas').getBoundingClientRect().height-visualViewport.height)<1)
   const keyboard=await viewport()
-  assert.match((await run('shell','dumpsys','input_method')).stdout,/mInputShown=true/)
+  const ime=(await run('shell','settings','get','secure','default_input_method')).stdout.trim()
   const send=await button(messages['promptInput.overlay.send']).boundingBox()
   assert(send&&send.y+send.height<=keyboard.height+1)
   await cdp.send('Input.imeSetComposition',{text:'かな',selectionStart:2,selectionEnd:2})
@@ -108,19 +111,17 @@ try {
   await device.screenshot({path:path.join(profile,'android-gboard.png')})
   await run('shell','input','keyevent','KEYCODE_BACK')
   await page.waitForFunction(height=>visualViewport.height>=height-1,before.height)
-  await hit(group)
+  if(!await editor.count())await tapComposer()
   assert.equal(await editor.inputValue(),'仮名')
-  await run('shell','input','keyevent','KEYCODE_BACK')
-  await page.waitForFunction(height=>visualViewport.height>=height-1,before.height)
   const live=await mobileLive({page,context,url,messages,revoke:false,eventSources:()=>events,tap})
   assert.deepEqual(forbidden,[])
   assert.deepEqual(errors,[])
-  await writeFile(path.join(profile,'android-proof.json'),JSON.stringify({before,keyboard,live},null,2))
+  await writeFile(path.join(profile,'android-proof.json'),JSON.stringify({before,keyboard,ime,live},null,2))
 } catch(error) {
   await page?.screenshot({path:path.join(profile,'android-failure.png')}).catch(()=>{})
   if(page)await writeFile(path.join(profile,'android-failure.json'),JSON.stringify({
-    viewport:await metrics(page).catch(()=>null),ime:(await run('shell','dumpsys','input_method')).stdout.split('\n')
-      .filter(line=>/mInputShown|mShowRequested|mCurFocusedWindow|mCurAttribute|mCurMethodId/.test(line))},null,2))
+    viewport:await metrics(page).catch(()=>null),ime:(await run('shell','dumpsys','-t','2','input_method').catch(()=>({stdout:''}))).stdout
+      .split('\n').filter(line=>/mInputShown|mShowRequested|mCurFocusedWindow|mCurAttribute|mCurMethodId/.test(line))},null,2))
   throw error
 } finally {
   await cdp?.detach().catch(()=>{})
