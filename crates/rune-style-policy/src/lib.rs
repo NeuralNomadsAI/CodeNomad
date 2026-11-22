@@ -75,6 +75,7 @@ impl Policy {
                 "Runtime",
                 "Image",
                 "ImageCache",
+                "Live",
                 "TextEdit",
                 "Key",
                 "KeyEvent",
@@ -412,6 +413,8 @@ mod tests {
     #[test]
     fn allows_composition_and_nonvisual_numbers() {
         assert!(check("use rune_theme_codenomad::{Space, Layout}; fn v(){ let n = 600; column().pad(Space::Md).child(button(\"send\", false)); assert_eq!(n, 600); }").unwrap().is_empty());
+        assert!(check("use rune::Live; fn v() { let viewport = Live::new([0.; 4]); viewport.get(); }").unwrap().is_empty());
+        assert!(!check("use rune::Live; fn v() { let value = Live::new(8.); rune::el().padding(value.get()); }").unwrap().is_empty());
     }
     #[test]
     fn image_handles_allow_decode_state_and_keep_visual_dimensions_in_theme() {
