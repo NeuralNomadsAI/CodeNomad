@@ -1,20 +1,18 @@
-import { canonicalJson, sha256 } from "./client-state-partition-json"
+import { encodePartition, type EncodedPartition } from "./client-state-partition-json"
 import { normalizePersistedOutline, type PersistedOutline } from "./session-outline-persistence"
 
-const encoded = new WeakMap<PersistedOutline, Promise<{ descriptor: object; partitions: Record<string, string> }>>()
+const encoded = new WeakMap<PersistedOutline, Promise<{ descriptor: object; partitions: EncodedPartition[] }>>()
 export function encodeOutlinePartitions(value: PersistedOutline) {
   let pending = encoded.get(value)
   if (!pending) {
     pending = (async () => {
-      const partitions: Record<string, string> = Object.create(null), entryPartitions: string[] = []
+      const partitions: EncodedPartition[] = []
       // Even maximally escaped 256-character IDs fit the native 1 MiB leaf limit.
       for (let offset = 0; offset < value.entries.length; offset += 512) {
-        const text = canonicalJson({ format: 1, index: offset / 512, entries: value.entries.slice(offset, offset + 512) })
-        const key = await sha256(text)
-        partitions[key] = text; entryPartitions.push(key)
+        partitions.push(await encodePartition({ format: 1, index: offset / 512, entries: value.entries.slice(offset, offset + 512) }))
       }
       const { entries: _, ...metadata } = value
-      return { descriptor: { ...metadata, entryPartitions }, partitions }
+      return { descriptor: { ...metadata, entryPartitions: partitions.map(partition => partition.key) }, partitions }
     })()
     // Only normalized frozen indexes are memoized across frequent draft/scroll captures.
     if (Object.isFrozen(value)) encoded.set(value, pending)

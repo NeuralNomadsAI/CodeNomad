@@ -120,7 +120,7 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
       attachments: { ...pending.attachments, ...live.attachments },
       ...captureRuntimeState(id), scrollSnapshots: captureScrollSnapshots(id),
       outlineIndexes: captureSessionOutlineIndexes(id, getAuthoritativelyDeletedSessionIdsForInstance(id)),
-      sessionCatalog: captureSessionCatalog(getSessions(id)),
+      sessionCatalog: captureSessionCatalog(getSessions(id), tab),
       viewState: captureTabViewState(id),
       expandedSessionIds: [
         ...expanded.filter((sessionId) => expansionAuthority.has(sessionId)),

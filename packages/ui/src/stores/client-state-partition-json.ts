@@ -10,7 +10,10 @@ export function canonicalJson(value: unknown): string {
   return serialized
 }
 export async function sha256(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(value))
+  return hashBytes(encoder.encode(value))
+}
+async function hashBytes(value: Uint8Array<ArrayBuffer>): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", value)
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("")
 }
 
@@ -30,9 +33,10 @@ export async function encodePartition(value: unknown, maxBytes = Infinity): Prom
   const hit = cache.get(plain)
   if (hit) { cache.delete(plain); cache.set(plain, hit); return hit }
   const text = canonicalJson(value)
-  const bytes = encoder.encode(text).byteLength
+  const raw = encoder.encode(text)
+  const bytes = raw.byteLength
   if (bytes > maxBytes) return { key: "", text, bytes }
-  const encoded = { key: await sha256(text), text, bytes }
+  const encoded = { key: await hashBytes(raw), text, bytes }
   // A concurrent call for the same value may have stored it during the digest.
   const stored = cache.get(plain)
   if (stored) return stored

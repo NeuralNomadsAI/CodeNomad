@@ -1,10 +1,10 @@
 import { decodeClientSnapshot, normalizeRestorableSession } from "./client-state-codec"
 import type { ClientSnapshotV1, RestorableSessionState, RestorableWorkspaceTabState } from "./client-state-codec"
 import type { RestorableAttachment } from "./client-state-attachments-codec"
-import { canonicalJson, encodePartition, sha256 } from "./client-state-partition-json"
+import { canonicalJson, encodePartition, sha256, type EncodedPartition } from "./client-state-partition-json"
 export { canonicalJson, sha256 } from "./client-state-partition-json"
 import { encodeOutlinePartitions, decodeOutlinePartitions } from "./client-state-outline-partitions"
-import { encodeCatalogPartitions, decodeCatalogPartitions } from "./client-state-catalog-partitions"
+import { encodeCatalogPartitions, decodeCatalogPartitions, type EncodedCatalog } from "./client-state-catalog-partitions"
 import { normalizeTabViewState } from "./tab-view-state-codec"
 
 const MAX_PARTITION_BYTES = 1024 * 1024
@@ -50,11 +50,35 @@ interface SessionDocument {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 const hasOwn = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key)
+const own = <T>(value: Record<string, T> | undefined, key: string) => value && hasOwn(value, key) ? value[key] : undefined
 const isSafePersistedSessionId = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= MAX_SESSION_ID
   && value.trim().length > 0 && !UNSAFE_KEYS.has(value)
 
 type AddPartition = (value: unknown) => Promise<string>
+type SessionReference = { documentPartition: string; partitionKeys: string[] }
+type SessionInputs = Omit<SessionDocument, "attachments" | "outline"> & {
+  attachments?: RestorableAttachment[]
+  outline?: NonNullable<RestorableWorkspaceTabState["outlineIndexes"]>[string]
+}
+type EncodedLeaf = { inputs: SessionInputs; reference: SessionReference; partitions: EncodedPartition[] }
+type EncodedWorkspace = {
+  leaves: Map<string, EncodedLeaf>
+  catalog?: EncodedCatalog
+  document: Record<string, unknown>
+  partition: EncodedPartition
+}
+const graphSizes = new WeakMap<Record<string, string>, number>()
+
+// The incremental encoder receives normalized snapshots with owned JSON values.
+// Compare small recreated records by value, while sharing immutable large leaves.
+function sameJson(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((item, i) => sameJson(item, b[i]))
+  if (!isRecord(a) || !isRecord(b)) return false
+  const keys = Object.keys(a)
+  return keys.length === Object.keys(b).length && keys.every(key => hasOwn(b, key) && sameJson(a[key], b[key]))
+}
 
 function isPartitionKeyArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((key, index) =>
@@ -113,19 +137,23 @@ async function encodeAttachments(attachments: RestorableAttachment[], addPartiti
   }))
 }
 
-async function encodeSessionGraph(session: RestorableSessionState | null, legacyHomeActive = false) {
-  const generated: Record<string, string> = Object.create(null)
-  const addPartition = async (value: unknown) => {
+async function encodeSessionGraph(session: RestorableSessionState | null, legacyHomeActive = false, previous: Array<EncodedWorkspace | undefined> = []) {
+  const generated = new Map<string, EncodedPartition>()
+  const workspaces: Array<EncodedWorkspace | undefined> = []
+  const encode = async (value: unknown) => {
     const partition = await encodePartition(value, MAX_PARTITION_BYTES)
     if (partition.bytes > MAX_PARTITION_BYTES) {
       throw new Error("Client state partition exceeds the native size limit")
     }
-    generated[partition.key] = partition.text
+    return partition
+  }
+  const add = (partition: EncodedPartition) => {
+    generated.set(partition.key, partition)
     return partition.key
   }
 
   const encodedSession = session === null ? null : {
-    tabs: await Promise.all(session.tabs.map(async (tab) => {
+    tabs: await Promise.all(session.tabs.map(async (tab, tabIndex) => {
       if (tab.kind === "blank") return { kind: tab.kind }
       if (tab.kind === "sidecar") return { kind: tab.kind, sidecarId: tab.sidecarId }
 
@@ -138,42 +166,55 @@ async function encodeSessionGraph(session: RestorableSessionState | null, legacy
         ...Object.keys(tab.seenInterruptions ?? {}),
         ...Object.keys(tab.outlineIndexes ?? {}),
       ])
-      const sessions: Record<string, { documentPartition: string; partitionKeys: string[] }> = Object.create(null)
+      const old = previous[tabIndex]
+      const leaves = new Map<string, EncodedLeaf>()
+      const sessions: Record<string, SessionReference> = Object.create(null)
       for (const sessionId of [...sessionIds].sort()) {
-        const document: SessionDocument = { format: 2 }
-        if (hasOwn(tab.drafts, sessionId)) document.draft = tab.drafts[sessionId]
-        if (hasOwn(tab.attachments, sessionId)) {
-          document.attachments = await encodeAttachments(tab.attachments[sessionId]!, addPartition)
+        const inputs: SessionInputs = {
+          format: 2, draft: own(tab.drafts, sessionId), attachments: own(tab.attachments, sessionId),
+          scrollSnapshot: own(tab.scrollSnapshots, sessionId), unseenIdleSince: own(tab.unseenIdleSince, sessionId),
+          generationRecovery: own(tab.generationRecovery, sessionId), seenInterruption: own(tab.seenInterruptions, sessionId),
+          outline: own(tab.outlineIndexes, sessionId),
         }
-        if (hasOwn(tab.scrollSnapshots, sessionId)) document.scrollSnapshot = tab.scrollSnapshots[sessionId]
-        if (hasOwn(tab.unseenIdleSince, sessionId)) document.unseenIdleSince = tab.unseenIdleSince[sessionId]
-        if (hasOwn(tab.generationRecovery, sessionId)) document.generationRecovery = tab.generationRecovery[sessionId]
-        if (tab.seenInterruptions && hasOwn(tab.seenInterruptions, sessionId)) document.seenInterruption = tab.seenInterruptions[sessionId]
-        const outline = tab.outlineIndexes?.[sessionId]
-        const index = outline ? await encodeOutlinePartitions(outline) : undefined
-        if (index) { document.outline = index.descriptor; Object.assign(generated, index.partitions) }
-        const documentPartition = await addPartition(document)
-        const attachmentPartitions = (document.attachments ?? []).flatMap((attachment) => {
-          if (!isRecord(attachment) || !isRecord(attachment.source)) return []
-          const keys = attachment.source.dataPartitions ?? attachment.source.valuePartitions
-          return Array.isArray(keys) ? keys.filter((key): key is string => typeof key === "string") : []
-        })
-        sessions[sessionId] = {
-          documentPartition,
-          partitionKeys: [...new Set([documentPartition, ...attachmentPartitions, ...Object.keys(index?.partitions ?? {})])].sort(),
+        let leaf = old?.leaves.get(sessionId)
+        if (!leaf || leaf.inputs.outline !== inputs.outline || !sameJson(leaf.inputs, inputs)) {
+          const { attachments, outline, ...fields } = inputs
+          const partitions: EncodedPartition[] = []
+          const document: SessionDocument = fields
+          if (attachments) document.attachments = await encodeAttachments(attachments, async value => {
+            const partition = await encode(value)
+            partitions.push(partition)
+            return partition.key
+          })
+          if (outline) {
+            const index = await encodeOutlinePartitions(outline)
+            document.outline = index.descriptor
+            partitions.push(...index.partitions)
+          }
+          const partition = await encode(document)
+          partitions.push(partition)
+          leaf = { inputs, partitions, reference: {
+            documentPartition: partition.key, partitionKeys: [...new Set(partitions.map(value => value.key))].sort(),
+          } }
         }
+        leaves.set(sessionId, leaf)
+        sessions[sessionId] = leaf.reference
+        for (const partition of leaf.partitions) add(partition)
       }
 
       const workspace: Record<string, unknown> = { format: 2, sessions }
       if (tab.activeParentSessionId !== undefined) workspace.activeParentSessionId = tab.activeParentSessionId
       if (tab.activeSessionId !== undefined) workspace.activeSessionId = tab.activeSessionId
       if (tab.expandedSessionIds !== undefined) workspace.expandedSessionIds = tab.expandedSessionIds
-      if (tab.sessionCatalog !== undefined) workspace.catalogPartitions = await encodeCatalogPartitions(tab.sessionCatalog, addPartition)
+      const catalog = tab.sessionCatalog === undefined ? undefined : await encodeCatalogPartitions(tab.sessionCatalog, old?.catalog)
+      if (catalog) workspace.catalogPartitions = catalog.chunks.map(chunk => add(chunk.partition))
       if (tab.viewState !== undefined) workspace.viewState = tab.viewState
+      const partition = old && sameJson(old.document, workspace) ? old.partition : await encode(workspace)
+      workspaces[tabIndex] = { leaves, catalog, document: workspace, partition }
       const shell: Record<string, unknown> = {
         kind: tab.kind,
         folder: tab.folder,
-        workspacePartition: await addPartition(workspace),
+        workspacePartition: add(partition),
       }
       if (tab.occurrence !== undefined) shell.occurrence = tab.occurrence
       if (tab.projectName !== undefined) shell.projectName = tab.projectName
@@ -186,17 +227,32 @@ async function encodeSessionGraph(session: RestorableSessionState | null, legacy
     activeTabIndex: session.activeTabIndex,
     ...(legacyHomeActive ? { homeActive: true } : {}),
   }
-  const sessionPartition = await addPartition({ format: 2, session: encodedSession })
-  const partitionKeys = Object.keys(generated).sort()
+  const sessionPartition = add(await encode({ format: 2, session: encodedSession }))
+  const partitionKeys = [...generated.keys()].sort()
+  const partitions = Object.freeze(Object.fromEntries(partitionKeys.map((key) => [key, generated.get(key)!.text])))
+  graphSizes.set(partitions, [...generated.values()].reduce((bytes, partition) => bytes + partition.bytes, 0))
   return {
     sessionPartition,
     partitionKeys,
-    partitions: Object.fromEntries(partitionKeys.map((key) => [key, generated[key]!])),
+    partitions,
+    workspaces,
   }
 }
 
 export async function encodeClientSnapshotV2(snapshot: ClientSnapshotV1): Promise<EncodedClientSnapshotV2> {
-  const graph = await encodeSessionGraph(snapshot.session)
+  return snapshotV2(snapshot, await encodeSessionGraph(snapshot.session))
+}
+
+export function createClientSnapshotV2Encoder() {
+  let previous: Array<EncodedWorkspace | undefined> = []
+  return async (snapshot: ClientSnapshotV1) => {
+    const graph = await encodeSessionGraph(snapshot.session, false, previous)
+    previous = graph.workspaces
+    return snapshotV2(snapshot, graph)
+  }
+}
+
+function snapshotV2(snapshot: ClientSnapshotV1, graph: Awaited<ReturnType<typeof encodeSessionGraph>>): EncodedClientSnapshotV2 {
   const extensions: NonNullable<ClientSnapshotV2["extensions"]> = []
   if (snapshot.session?.tabs.some(tab => tab.kind === "workspace" && Object.keys(tab.outlineIndexes ?? {}).length)) extensions.push("outline-index-v1")
   if (snapshot.session?.tabs.some(tab => tab.kind === "workspace" && tab.sessionCatalog !== undefined)) extensions.push("session-catalog-v1")
@@ -221,6 +277,8 @@ export function canCommitClientSnapshotV2(encoded: EncodedClientSnapshotV2): boo
   if (root.length > MAX_ROOT_BYTES) return false
   let commitBytes = encoder.encode(root).byteLength
   if (commitBytes > MAX_ROOT_BYTES) return false
+  const cachedBytes = graphSizes.get(encoded.partitions)
+  if (cachedBytes !== undefined) return cachedBytes <= MAX_NATIVE_COMMIT_BYTES - commitBytes
   for (const key in encoded.partitions) {
     if (!hasOwn(encoded.partitions, key)) continue
     const partition = encoded.partitions[key]!
@@ -275,6 +333,7 @@ async function decodeGraph(
   persistedKeys: readonly string[],
   loaded: Map<string, string>,
   loadPartition: (key: string) => Promise<string | null>,
+  verified?: (key: string) => void,
 ): Promise<RestorableSessionState | null | undefined> {
   if (!hasExactKeys(manifest, ["format", "session"]) || canonicalJson(manifest) !== loaded.get(rootKey)) return
   if (manifest.session === null) {
@@ -294,6 +353,7 @@ async function decodeGraph(
       if (partition === undefined || encoder.encode(partition).byteLength > MAX_PARTITION_BYTES
         || await sha256(partition) !== key) return null
       loaded.set(key, partition)
+      verified?.(key)
     }
     const parsed = parseJson(partition)
     return parsed && isRecord(parsed.value) && canonicalJson(parsed.value) === partition ? parsed.value : null
@@ -543,6 +603,7 @@ export async function decodeClientSnapshotV2(
   value: unknown,
   partitionProtocolVersion: 1 | undefined,
   loadPartition: (key: string) => Promise<string | null>,
+  verified?: (key: string) => void,
 ): Promise<ClientSnapshotV1 | null> {
   const decoded = decodeRoot(value)
   if (!decoded || partitionProtocolVersion !== 1) return null
@@ -554,7 +615,8 @@ export async function decodeClientSnapshotV2(
     if (!parsed) return null
     if (isRecord(parsed.value) && parsed.value.format === 2) {
       const loaded = new Map([[decoded.partitionKey, partition]])
-      const session = await decodeGraph(parsed.value, decoded.partitionKey, decoded.partitionKeys, loaded, loadPartition)
+      verified?.(decoded.partitionKey)
+      const session = await decodeGraph(parsed.value, decoded.partitionKey, decoded.partitionKeys, loaded, loadPartition, verified)
       return session === undefined ? null : { ...decoded.root, session }
     }
     return null
