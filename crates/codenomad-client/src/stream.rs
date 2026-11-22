@@ -82,7 +82,7 @@ pub(super) async fn dispatch(
         return Ok(());
     }
     let value: Value = serde_json::from_str(data.trim())?;
-    if b.workspace.is_empty() && value["owner"] == "ui" {
+    if value["owner"] == "ui" {
         match value["type"].as_str() {
             Some("storage.configChanged") => {
                 out.send(Input::Preferences(crate::settings::Owner::Config))

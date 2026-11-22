@@ -23,7 +23,11 @@ pub(crate) fn poll(s: &mut State) -> bool {
         shared.main_wake = Some(s.wake.clone());
     }
     let bound = shared.bind(backend);
-    shared.watch(&s.wake);
+    if s.incoming.is_none() && shared.window_wake.is_some() {
+        shared.watch(&s.wake);
+    } else {
+        shared.unwatch();
+    }
     if (bound | shared.poll())
         && let Some(wake) = &shared.window_wake
     {
@@ -36,6 +40,10 @@ pub(crate) fn poll(s: &mut State) -> bool {
         shared.palette(true).map_or("", |p| p.id),
     ]);
     display != std::mem::replace(&mut s.settings.last_display, display)
+}
+
+pub(crate) fn invalidate(s: &State, owner: codenomad_client::settings::Owner) {
+    s.settings.shared.borrow_mut().invalidate(owner);
 }
 
 pub(crate) fn render(s: &State, cx: &mut Cx<State>, view: impl FnOnce(&mut Cx<State>) -> El) -> El {
@@ -77,7 +85,13 @@ fn open(host: &mut Host) {
     }
     let token = Rc::new(());
     let state = view::Window::new(host.shared.clone(), token.clone());
-    let window = crate::platform::preferences_window(view::spec(), state, view::closed);
+    let locale = host
+        .shared
+        .borrow()
+        .locale()
+        .unwrap_or_else(strings::locale);
+    let spec = strings::with_locale(locale, view::spec);
+    let window = crate::platform::preferences_window(spec, state, view::closed);
     host.window = Some((window, token));
 }
 

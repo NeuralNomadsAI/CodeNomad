@@ -15,7 +15,7 @@ use std::{
     time::Duration,
 };
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Owner {
     Config,
     State,

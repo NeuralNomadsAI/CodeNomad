@@ -70,6 +70,17 @@ impl Preferences {
         }
     }
 
+    pub fn unwatch(&mut self) {
+        self.stream = None;
+    }
+
+    pub fn invalidate(&mut self, owner: Owner) {
+        match owner {
+            Owner::Config => self.config.read = true,
+            Owner::State => self.state.read = true,
+        }
+    }
+
     fn doc(&self, owner: Owner) -> &Document {
         match owner {
             Owner::Config => &self.config,
@@ -147,17 +158,9 @@ impl Preferences {
         if self.saved(Owner::Config).is_none() || self.mode() == mode {
             return;
         }
-        let mut patch = json!({"appearancePreferences":{"mode":mode},"theme":mode});
-        if let Some(state) = self.saved(Owner::State)
-            && let Some((appearance, scheme)) = self.legacy(state)
-            && !state["appearancePreferences"][appearance]["scheme"].is_object()
-        {
-            patch["appearancePreferences"][appearance] = json!({
-                "scheme": scheme,
-                "presetId": state["activeColorSchemePresetId"],
-            });
-        }
-        self.change(Owner::State, patch);
+        // The legacy selection still supplies a missing slot. Only update the
+        // mode, so neither defaults nor another window's palette move with it.
+        self.change(Owner::State, json!({"appearancePreferences":{"mode":mode}}));
     }
 
     fn legacy(&self, state: &Value) -> Option<(&'static str, Value)> {
@@ -247,6 +250,21 @@ impl Preferences {
                 built_in().iter().find(|p| p.dark == dark && p.id == id)
             })
             .or_else(|| self.palette(dark))
+    }
+
+    pub fn step_palette(&mut self, dark: bool, step: isize) {
+        let options: Vec<_> = built_in().iter().filter(|p| p.dark == dark).collect();
+        let Some(current) = self.palette_display(dark) else {
+            return;
+        };
+        let next = options
+            .iter()
+            .position(|p| p.id == current.id)
+            .and_then(|index| index.checked_add_signed(step))
+            .and_then(|index| options.get(index));
+        if let Some(palette) = next {
+            self.set_palette(palette);
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]

@@ -211,6 +211,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     files.event(event);
                 }
             }
+            Event::Preferences(owner) => settings::invalidate(s, owner),
             Event::Sync(page) => {
                 if let Some(files) = &mut s.files {
                     files.online(true);

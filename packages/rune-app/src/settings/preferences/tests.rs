@@ -47,10 +47,7 @@ fn settings_uses_separate_owners_and_reads_back_an_uncertain_write_once() {
         assert!(prefs.poll());
         let write = request(&listener).await;
         assert_eq!(write.first, "PATCH /api/storage/state/ui HTTP/1.1");
-        assert_eq!(
-            write.body,
-            json!({"appearancePreferences":{"mode":"dark"},"theme":"dark"})
-        );
+        assert_eq!(write.body, json!({"appearancePreferences":{"mode":"dark"}}));
         write.reply(503, json!({})).await;
         let read = request(&listener).await;
         assert_eq!(
@@ -84,7 +81,7 @@ fn settings_uses_separate_owners_and_reads_back_an_uncertain_write_once() {
 }
 
 #[test]
-fn settings_migrates_legacy_slot_before_changing_mode_and_normalizes_regional_locale() {
+fn settings_mode_patch_leaves_defaults_and_legacy_slots_alone() {
     platform::block_on(async {
         let mut prefs = Preferences {
             backend: Some(Backend::connect("http://127.0.0.1:9/", "").await.unwrap()),
@@ -98,12 +95,21 @@ fn settings_migrates_legacy_slot_before_changing_mode_and_normalizes_regional_lo
         assert_eq!(prefs.palette(true).map(|p| p.id), Some("classic"));
         prefs.set_mode("light");
         assert_eq!(
-            prefs.state.pending.unwrap(),
-            json!({
-                "theme":"light","appearancePreferences":{"mode":"light",
-                    "dark":{"scheme":{"id":"classic","appearance":"dark"},"presetId":null}}
-            })
+            prefs.state.pending.take().unwrap(),
+            json!({"appearancePreferences":{"mode":"light"}})
         );
+        prefs.state.snapshot = Some(
+            json!({"appearancePreferences":{"mode":"light","dark":{"scheme":{"id":"basalt"}}}}),
+        );
+        assert_eq!(prefs.mode(), "light");
+        assert_eq!(
+            prefs.palette(true).map(|p| p.id),
+            Some("basalt"),
+            "concurrent explicit palette takes precedence"
+        );
+        prefs.config.snapshot = Some(json!({}));
+        prefs.state.snapshot = Some(json!({"appearancePreferences":{"mode":"dark"}}));
+        assert_eq!(prefs.palette(true).map(|p| p.id), Some("mist"));
     });
 }
 

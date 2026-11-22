@@ -44,13 +44,20 @@ pub(super) fn spec() -> AppSpec<Window> {
             prefs.window_wake = Some(wake);
             prefs.refresh();
         }),
-        poll: Some(|s, _, _| {
+        poll: Some(|s, _, tx| {
             let mut prefs = s.shared.borrow_mut();
             let changed = prefs.poll();
             if changed && let Some(wake) = &prefs.main_wake {
                 wake();
             }
-            prefs.revision != std::mem::replace(&mut s.seen_revision, prefs.revision)
+            let updated = prefs.revision != std::mem::replace(&mut s.seen_revision, prefs.revision);
+            if updated {
+                tx.set_title(crate::strings::with_locale(
+                    prefs.locale().unwrap_or_else(crate::strings::locale),
+                    || t("settings.title"),
+                ));
+            }
+            updated
         }),
         on_key: Some(|_, event, tx| {
             if event.key != rune::Key::Escape {
@@ -144,6 +151,36 @@ mod tests {
             assert!(trigger["states"].to_string().contains("focused"));
         }
     }
+
+    #[test]
+    fn settings_closed_palette_arrow_keeps_focus_and_advances_the_display() {
+        let state = Window::default();
+        let mut prefs = state.shared.borrow_mut();
+        prefs.fixture();
+        prefs.backend = Some(
+            crate::platform::block_on(crate::backend::Backend::connect("http://127.0.0.1:9/", ""))
+                .unwrap(),
+        );
+        drop(prefs);
+        let mut runtime = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(true, 1.0));
+        runtime.frame(0.0);
+        runtime.update(|_, tx| tx.focus("palette-trigger", true));
+        runtime.frame(0.02);
+        for name in ["Mist", "Slate", "Clay"] {
+            let event = rune::KeyEvent {
+                key: rune::Key::Down,
+                mods: rune::Mods::default(),
+            };
+            runtime.key(event.clone());
+            runtime.key_up(event);
+            runtime.frame(0.02);
+            let tree = runtime.accessibility_json();
+            let trigger = node(&tree, "palette-trigger").unwrap();
+            assert_eq!(trigger["value"], name);
+            assert!(trigger["states"].to_string().contains("focused"));
+            assert!(node(&tree, "listbox").is_none());
+        }
+    }
 }
 
 const MODES: [(&str, &str); 3] = [
@@ -221,6 +258,21 @@ fn general(s: &Window, prefs: &Preferences, layers: &mut Vec<El>) -> El {
     );
     col()
         .full_width()
+        .on_key(move |s: &mut Window, event, tx| {
+            if event.mods != rune::Mods::default()
+                || s.picker.is_some()
+                || tx.focused() != Some("palette-trigger")
+            {
+                return false;
+            }
+            let step = match event.key {
+                rune::Key::Up => -1,
+                rune::Key::Down => 1,
+                _ => return false,
+            };
+            s.shared.borrow_mut().step_palette(dark, step);
+            true
+        })
         .child(chrome::card(chrome::setting_row(language, language_picker)))
         .child(chrome::card(chrome::color_scheme(
             palette,
