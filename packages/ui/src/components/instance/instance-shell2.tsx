@@ -66,7 +66,7 @@ import {
   setPreviewSessionOwners,
 } from "../../stores/session-previews"
 import { clearSelectedSession, createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
-import { beginGesture, getSessionSurface } from "../../stores/session-surface"
+import { beginGesture, closeMissionReader, getSessionSurface } from "../../stores/session-surface"
 import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../../stores/attachments"
 
 import type { LayoutMode } from "./shell/types"
@@ -178,6 +178,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     () => props.instance.folder,
     () => props.isActiveInstance !== false,
   )
+  createEffect(() => {
+    if (missionActivation.status() === "disabled") {
+      closeMissionReader({ instanceId: props.instance.id, sessionId: activeSessionIdForInstance() })
+    }
+  })
 
   // Shell ownership keeps partially answered requests alive as session panes change.
   const [interruptionExpanded, setInterruptionExpanded] = createSignal(false)
@@ -886,7 +891,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const headerActionMenuItems = createMemo(() => buildHeaderActionMenuItems())
 
   // Readers that need no conversation: schedules and playbook details.
-  const readingWithoutConversation = () => Boolean(props.isActiveInstance) && missionActivation.enabled()
+  const readingWithoutConversation = () => Boolean(props.isActiveInstance) && missionActivation.status() === "enabled"
     && ["recurrence", "playbook"].includes(missionProjectView(props.instance.id).reader?.kind ?? "")
   const activeSessionTitle = createMemo(() => {
     if (showingInfoView()) return null
@@ -1269,7 +1274,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     activeSessions={activeSessions()}
                     instanceId={props.instance.id}
                     instanceFolder={props.instance.folder}
-                    missionsEnabled={missionActivation.enabled()}
+                    missionsEnabled={missionActivation.status() === "enabled"}
                     escapeInDebounce={props.escapeInDebounce}
                     isPhoneLayout={isPhoneLayout()}
                     focusConversationOnActivate={focusConversationSessionId() === sessionId}

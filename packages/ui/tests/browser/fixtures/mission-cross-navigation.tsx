@@ -69,6 +69,11 @@ function Fixture() {
       clearSessionCatalogState(id)
     },
     clearActive: () => clearActiveSession(id),
+    openAgentPreview: () => openSessionPreview("ses_initial", "https://example.invalid/", id, undefined,
+      { requestID: "fixture-agent-preview", instanceId: id }),
+    refreshActivation: () => (serverEvents as any).dispatchBatch([
+      { type: "instance.event", instanceId: id, event: { type: "config.updated", location: { directory: scope }, data: {} } },
+    ]),
     selectWorktree: () => {
       const session = { ...initial[1]!, location: { directory: "/fixture-worktree" } }
       setSessions(previous => new Map(previous).set(id, new Map([[initial[0]!.id, initial[0]!], [session.id, session]])))
@@ -93,6 +98,7 @@ declare global {
     missionCrossNavigation: {
       snapshot(): ReturnType<typeof snapshot>; history(): ReturnType<typeof snapshot>[]
       coldCatalogue(): Promise<void>; clearActive(): void; created(): void; selectWorktree(): void
+      openAgentPreview(): Promise<unknown>; refreshActivation(): void
       transport(status: "connected" | "disconnected"): void
     }
   }

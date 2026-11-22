@@ -4,7 +4,7 @@ import { useI18n } from "../lib/i18n"
 import { missionStore as projectMissionStore } from "../stores/missions"
 import { MissionPanelScope, scopedMissionStore } from "./mission-panel-scope"
 import { missionProjectView, navigateMissionProjectView, markMissionsFinishedSeen } from "../stores/mission-view-state"
-import { applySurface, beginGesture } from "../stores/session-surface"
+import { applySurface, beginGesture, closeMissionReader } from "../stores/session-surface"
 import { Markdown } from "./markdown"
 import { copyToClipboard } from "../lib/clipboard"
 import { MissionTaskReader } from "./mission-task-reader"
@@ -477,7 +477,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   onCleanup(() => { disposed = true; if (root?.contains(document.activeElement) && returnFocus?.isConnected) returnFocus.focus() })
   const close = () => {
     const ctx = { instanceId: props.instanceId, sessionId: activeSessionId().get(props.instanceId) ?? null }
-    applySurface(ctx, { kind: "conversation" })
+    closeMissionReader(ctx)
   }
    return <MissionPanelScope value={panel}><section ref={root} class="mission-reader window-shell" aria-label={title() ?? t("missions.control.reader.missing")}
     onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); close() } }}>

@@ -1,4 +1,4 @@
-import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, untrack, type Accessor, type Component } from "solid-js"
+import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, type Accessor, type Component } from "solid-js"
 import {
   DragDropProvider,
   DragDropSensors,
@@ -117,6 +117,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [rightPanelTab, selectRightPanelTab] = createSignal<RightPanelTab>(savedTab === "git-changes" ? "files" : savedTab)
   const setRightPanelTab = (tab: RightPanelTab) => {
     selectRightPanelTab(tab)
+    updateTabViewState(props.instanceId, { rightPanelTab: tab })
     writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, tab)
   }
   const defaultStatusSectionIds = CORE_STATUS_SECTION_ITEMS.map((section) => section.id)
@@ -134,11 +135,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const tabGroupId = `right-panel-${createUniqueId()}`
   const tabId = (id: string) => `${tabGroupId}-tab-${id}`
   const tabPanelId = (id: string) => `${tabGroupId}-panel-${id}`
-
-  createEffect(() => {
-    const tab = rightPanelTab()
-    untrack(() => updateTabViewState(props.instanceId, { rightPanelTab: tab }))
-  })
 
   const handleAccordionChange = (values: string[]) => {
     setRightPanelExpandedItems(values)
@@ -222,7 +218,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const allRightPanelTabs = createMemo(() => collectRightPanelItems<RightPanelTabModule>(rightPanelModules(), "tabs"))
   const visibleRightPanelTabs = createMemo(() =>
     applyRightPanelItemCustomization(
-      allRightPanelTabs().filter(tab => tab.id === "missions" ? missionActivation.enabled() : extensionForTab(tab.id)?.enabled ?? true),
+      allRightPanelTabs().filter(tab => tab.id === "missions" ? missionActivation.status() === "enabled" : extensionForTab(tab.id)?.enabled ?? true),
       rightPanelCustomization().tabOrder,
       // Addons have one profile-wide activation; Missions follows OpenCode's effective activation.
       rightPanelCustomization().hiddenTabIds.filter(id => !id.startsWith("extension:")),
@@ -264,13 +260,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     extraStatusContent: () => extraStatusContent(),
   })
 
-  createEffect(() => {
-    const active = activeRightPanelTab()
-    if (rightPanelTab() === "missions" && missionActivation.unknown()) return
-    if (active && active.id !== rightPanelTab()) {
-      selectRightPanelTab(active.id)
-    }
-  })
+  const rememberFallback = (event: Event) => {
+    const tab = activeRightPanelTab()
+    if (event.isTrusted && tab && tab.id !== rightPanelTab()) setRightPanelTab(tab.id)
+  }
 
   return (
     <div id={props.panelId} class="relative flex flex-col h-full" ref={props.setContentEl}>
@@ -328,7 +321,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
       {/* The tab's scroller contains its absolutely positioned descendants, so no tab
           content can grow the shell's overflow and scroll the whole window. */}
-      <div class="relative flex-1 overflow-y-auto">
+      <div class="relative flex-1 overflow-y-auto" on:click={rememberFallback} on:input={rememberFallback}>
         <For each={visibleRightPanelTabs()}>
           {(tab) => <Show when={activeRightPanelTab()?.id === tab.id}>
             <div id={tabPanelId(tab.id)} role="tabpanel" aria-labelledby={tabId(tab.id)} class="h-full min-h-0">

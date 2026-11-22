@@ -46,7 +46,7 @@ export const PreferencesWindow: Component = () => {
     await flushScroll(generation)
   }
 
-  const { context: project, unavailable: projectResolutionFailed } = createPreferencesProjectContext(request, () => initialized() && activeSettingsSection() !== "servers", (context, current) => {
+  const project = createPreferencesProjectContext(request, () => initialized() && activeSettingsSection() !== "servers", (context, current) => {
     // Share the native request queue: an explicit newer opener always wins over a late restore read.
     requestQueue = requestQueue.catch(() => undefined).then(async () => {
       if (!current()) return
@@ -181,7 +181,6 @@ export const PreferencesWindow: Component = () => {
         standalone
         providerContext={providerContext()}
         projectUnavailable={parseInstanceKey(request().instanceId ?? "").backendId !== "local" && !project()}
-        projectResolutionFailed={projectResolutionFailed()}
         scrollPosition={request()}
         onScrollPositionChange={(top) => {
           if (activeSettingsSection() !== request().section) return
@@ -189,12 +188,12 @@ export const PreferencesWindow: Component = () => {
           clearTimeout(scrollTimer)
           scrollTimer = setTimeout(() => { void flushScroll().catch(() => undefined) }, 150)
         }}
-        onSectionChange={(section) => {
+        onSectionChange={(section, top = 0) => {
           requestQueue = requestQueue.catch(() => undefined).then(async () => {
             clearTimeout(scrollTimer)
-            const next = { ...request(), section, scrollTop: 0 }
+            const next = { ...request(), section, scrollTop: top }
             await persist(() => next)
-            scrollTop = 0
+            scrollTop = top
             setRequest(next)
           })
           return requestQueue

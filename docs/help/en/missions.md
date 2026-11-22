@@ -10,7 +10,7 @@ In **Customize right panel**, use **Missions** to turn the plugin on or off in t
 
 Pause active and scheduled Missions before turning this off. Disabling keeps Mission records, schedules and conversations. Work already sent to OpenCode can continue, but Mission tools are unavailable and scheduled runs can be missed. After enabling, check your Missions and resume paused items when ready.
 
-The checkbox follows the opened workspace, even when you select a worktree conversation. If the state cannot be read, reopen customization or select **Try again**. Without an open project, **Settings → Missions** still lets you edit global defaults.
+The checkbox follows the opened workspace, even when you select a worktree conversation. If the state cannot be read, reopen customization or select **Try again**. While Missions is unavailable, you can use another tab or **General** in Settings without waiting; interacting there keeps that view selected. Without an open project, **Settings → Missions** still lets you edit global defaults.
 
 ## Create a Mission {#create}
 

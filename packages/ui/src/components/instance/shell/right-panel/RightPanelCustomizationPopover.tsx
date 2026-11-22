@@ -83,7 +83,7 @@ export function RightPanelCustomizationPopover(props: RightPanelCustomizationPop
             const label = () => tab.label ?? props.t(tab.labelKey)
             const extension = () => extensionForTab(tab.id)
             const missions = tab.id === "missions"
-            const visible = () => missions ? props.missionActivation.enabled() :
+            const visible = () => missions ? props.missionActivation.status() === "enabled" :
               extension()?.enabled ?? (tab.alwaysVisible || !props.customization().hiddenTabIds.includes(tab.id))
             return (
               <>
@@ -100,7 +100,7 @@ export function RightPanelCustomizationPopover(props: RightPanelCustomizationPop
                       type="checkbox"
                       checked={visible()}
                       ref={input => {
-                        if (missions) createEffect(() => { input.indeterminate = props.missionActivation.unknown() })
+                        if (missions) createEffect(() => { input.indeterminate = props.missionActivation.status() === "unknown" })
                       }}
                       aria-busy={missions && props.missionActivation.checking() ? true : undefined}
                       disabled={tab.alwaysVisible || (missions && !props.missionActivation.canToggle())

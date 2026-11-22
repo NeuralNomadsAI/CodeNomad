@@ -6,12 +6,12 @@ import { SettingsScreen } from "../../../src/components/settings-screen"
 import { RIGHT_PANEL_TAB_STORAGE_KEY } from "../../../src/components/instance/shell/storage"
 import { initializeClientState, writeClientLayoutValue } from "../../../src/stores/client-state"
 import { ConfigProvider, ensureLoaded } from "../../../src/stores/preferences"
-import { activeSettingsSection } from "../../../src/stores/settings-screen"
+import { activeSettingsSection, setActiveSettingsSection } from "../../../src/stores/settings-screen"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { serverEvents } from "../../../src/lib/server-events"
 import { missionStore } from "../../../src/stores/missions"
-import { getTabViewState } from "../../../src/stores/tab-view-state"
+import { getTabViewState, updateTabViewState } from "../../../src/stores/tab-view-state"
 import { pluginControlsCache } from "../../../src/stores/plugin-controls"
 import type { Instance } from "../../../src/types/instance"
 import "../../../src/index.css"
@@ -22,6 +22,7 @@ await ensureLoaded()
 writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, "missions")
 const instance: Instance = { id: "mission-visibility", folder: "/fixture", port: 0, pid: 0,
   proxyPath: "/fixture", status: "ready", client: null }
+updateTabViewState(instance.id, { rightPanelTab: "missions" })
 function Fixture() {
   const { t } = useI18n()
   const [active, setActive] = createSignal(false)
@@ -35,6 +36,7 @@ function Fixture() {
     mount: setMounted,
     settings: showSettings,
     settingsSection: activeSettingsSection,
+    restoreMissionsSettings: () => setActiveSettingsSection("missions"),
     demanded: () => missionStore.demandedInstanceIds(),
     state: () => missionStore.state(instance.id),
     // Startup order: restoration has not begun, is running, then settles.

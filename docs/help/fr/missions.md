@@ -10,7 +10,7 @@ Dans **Personnaliser le panneau droit**, utilisez **Missions** pour activer ou d
 
 Mettez d’abord en pause les Missions en cours et planifiées. La désactivation conserve les Missions, leurs calendriers et les conversations. Le travail déjà envoyé à OpenCode peut continuer, mais les outils Missions deviennent indisponibles et des exécutions planifiées peuvent être manquées. Après réactivation, vérifiez vos Missions et reprenez les éléments en pause quand vous le souhaitez.
 
-La case suit l’espace de travail ouvert, même si vous sélectionnez une conversation d’un worktree. Si l’état est indisponible, rouvrez la personnalisation ou sélectionnez **Réessayer**. Sans projet ouvert, **Paramètres → Missions** permet de modifier les valeurs globales par défaut.
+La case suit l’espace de travail ouvert, même si vous sélectionnez une conversation d’un worktree. Si l’état est indisponible, rouvrez la personnalisation ou sélectionnez **Réessayer**. En attendant, utilisez un autre onglet ou **Général** dans les paramètres ; si vous y interagissez, cette vue reste sélectionnée. Sans projet ouvert, **Paramètres → Missions** permet de modifier les valeurs globales par défaut.
 
 ## Créer une Mission {#create}
 

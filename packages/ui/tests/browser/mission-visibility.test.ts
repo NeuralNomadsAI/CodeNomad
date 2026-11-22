@@ -63,7 +63,8 @@ test("a Global write waits for a fresh effective state and explains a Project ov
     const fresh = page.waitForRequest(request => request.method() === "GET" && request.url().includes("/plugin-controls?"), { timeout: 4500 })
     await page.locator(".alert-dialog").getByRole("button", { name: "Confirm", exact: true }).click()
     await fresh
-    assert.equal(await tab.count(), 1, "the write acknowledgement does not hide the tab before the effective read")
+    assert.equal(await tab.count(), 0, "activation is unknown until the effective read returns")
+    await page.getByRole("tabpanel", { name: "Status", exact: true }).waitFor()
     release()
     if (!await page.getByRole("checkbox", { name: "Missions", exact: true }).count()) await customize.click()
     const info = page.getByRole("button", { name: "Project rule decides Missions here.", exact: true })
@@ -76,8 +77,10 @@ test("a Global write waits for a fresh effective state and explains a Project ov
     if (!await checkbox.count()) await customize.click()
     global = "default"
     override = "disabled"
+    const updated = page.waitForResponse(response => response.url().includes("/plugin-controls?") && response.ok())
     await call(page, "event", "config.updated")
-    await tab.waitFor({ state: "detached" })
+    await updated
+    await info.waitFor()
     assert.equal(await checkbox.isChecked(), false)
     assert.equal(await checkbox.isDisabled(), true, "checking an overridden effective state cannot disable Missions globally")
     await info.press("Enter")
@@ -103,6 +106,7 @@ test("disabling the open Missions settings selects General and re-enabling prese
     global = "disabled"
     await call(page, "event", "config.updated")
     await missions.waitFor({ state: "detached" })
+    assert.equal(await call(page, "settingsSection"), "missions", "fallback does not persist a choice")
     await page.locator(".theme-scheme-actions button").filter({ hasText: "New" }).click()
     const draft = page.locator(".theme-scheme-name-editor input")
     await draft.fill("Unsaved palette")
@@ -111,6 +115,61 @@ test("disabling the open Missions settings selects General and re-enabling prese
     await missions.waitFor()
     assert.equal(await call(page, "settingsSection"), "general")
     assert.equal(await draft.inputValue(), "Unsaved palette")
+  } finally { await page.close() }
+})
+
+test("the remembered Missions preferences render General while loading and after a failed read without saving General", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  let release!: () => void
+  const hold = new Promise<void>(resolve => { release = resolve })
+  try {
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await page.route("**/api/workspaces/mission-visibility/plugin-controls**", async route => {
+      await hold
+      await route.fulfill({ status: 503, json: {} })
+    })
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).missionVisibility))
+    await call(page, "restoreMissionsSettings")
+    await call(page, "activate", true)
+    await call(page, "settings", true)
+    const general = page.locator(".settings-screen-content-title").getByText("General", { exact: true })
+    const palette = page.locator(".theme-scheme-actions")
+    await general.waitFor()
+    await palette.waitFor({ timeout: 4500 })
+    assert.equal(await call(page, "settingsSection"), "missions")
+    const failure = page.waitForResponse(response => response.url().includes("/plugin-controls?") && response.status() === 503)
+    release()
+    await failure
+    await page.getByRole("button", { name: "Customize right panel" }).click()
+    await page.getByRole("group", { name: "Customize right panel" }).getByRole("button", { name: "Try again", exact: true }).waitFor()
+    assert.equal(await call(page, "settingsSection"), "missions")
+    assert.equal(await palette.isVisible(), true)
+  } finally { release(); await page.close() }
+})
+
+for (const initialFailure of [false, true]) test(`Status use preserves the fallback${initialFailure ? " after a first 503" : " after a disabled read"}`, async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  let state: "failed" | "default" | "disabled" = initialFailure ? "failed" : "disabled"
+  try {
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await page.route("**/api/workspaces/mission-visibility/plugin-controls**", route =>
+      state === "failed" ? route.fulfill({ status: 503, json: {} }) : route.fulfill({ json: activationSnapshot(state) }))
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).missionVisibility))
+    const read = page.waitForResponse(response => response.url().includes("/plugin-controls?"))
+    await call(page, "activate", true)
+    await read
+    const status = page.getByRole("tabpanel", { name: "Status", exact: true })
+    await status.waitFor()
+    assert.equal(await call(page, "savedTab"), "missions", "displaying Status alone never changes the remembered tab")
+    const plugins = status.getByRole("button", { name: "Plugins", exact: true })
+    await plugins.click()
+    assert.equal(await call(page, "savedTab"), "status", "an explicit action in Status remembers Status")
+    state = "default"
+    await call(page, "event", "config.updated")
+    await page.getByRole("tab", { name: "Missions", exact: true }).waitFor()
+    assert.equal(await status.count(), 1)
   } finally { await page.close() }
 })
 

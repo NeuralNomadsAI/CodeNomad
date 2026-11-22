@@ -23,7 +23,6 @@ export function createPreferencesProjectContext(
   const target = createMemo(() => ({ instanceId: request().instanceId, serverId: request().serverId, workspacePath: request().workspacePath, location: request().location }), undefined,
     { equals: (a, b) => key(a) === key(b) })
   const [resolved, setResolved] = createSignal<{ source: string; context: ProjectContext }>()
-  const [failedSource, setFailedSource] = createSignal<string>()
   // An explicitly closed occurrence must not silently turn into another tab of the same folder.
   const deleted = new Set<string>()
   const context = createMemo(() => {
@@ -36,23 +35,17 @@ export function createPreferencesProjectContext(
     const previous = untrack(context)
     const reusable = previous && key(previous) === sourceKey
     if (!reusable) setResolved(undefined)
-    setFailedSource(undefined)
     if (!source.instanceId) return
-    const unavailable = () => { setResolved(undefined); setFailedSource(sourceKey) }
     const { backendId, workspaceId } = parseInstanceKey(source.instanceId)
-    if (backendId === "local" && source.instanceId.includes("~")) { unavailable(); return }
-    if (backendId !== "local" && !source.serverId) { unavailable(); return }
+    if (backendId === "local" && source.instanceId.includes("~")) { setResolved(undefined); return }
+    if (backendId !== "local" && !source.serverId) { setResolved(undefined); return }
     const attachment = serverEvents.signalForInstance(source.instanceId)
     if (attachment.aborted) {
       setResolved(undefined)
-      if (backendId !== "local" && active()) {
-        let disposed = false
-        onCleanup(() => { disposed = true })
-        void backendRegistry.ensure(backendId).then(client => { if (!disposed && !client) unavailable() })
-      } else unavailable()
+      if (backendId !== "local" && active()) void backendRegistry.ensure(backendId)
       return
     }
-    if (backendId !== "local" && backendRegistry.serverId(backendId) !== source.serverId) { unavailable(); return }
+    if (backendId !== "local" && backendRegistry.serverId(backendId) !== source.serverId) { setResolved(undefined); return }
     const api = backendOf(source.instanceId).api
     const scoped = (id: string) => instanceKey(backendId, id)
     const directory = source.location?.directory
@@ -78,7 +71,7 @@ export function createPreferencesProjectContext(
         candidateIds = new Set(matches.map(workspace => scoped(workspace.id)))
         const workspace = exact ?? (matches.length === 1 ? matches[0] : undefined)
         boundId = workspace && scoped(workspace.id)
-        if (!workspace || workspace.status !== "ready" || deleted.has(scoped(workspace.id))) { unavailable(); return }
+        if (!workspace || workspace.status !== "ready" || deleted.has(scoped(workspace.id))) { setResolved(undefined); return }
         const binding: ProjectContext = {
           instanceId: scoped(workspace.id),
           ...(source.serverId ? { serverId: source.serverId } : {}),
@@ -89,23 +82,19 @@ export function createPreferencesProjectContext(
         // Publishing the same context must not invalidate an in-flight provider catalog.
         const prior = untrack(resolved)?.context
         setResolved({ source: sourceKey, context: prior && key(prior) === key(binding) ? prior : binding })
-        setFailedSource(undefined)
         if (key(binding) !== sourceKey) {
           onRebound(binding, () => current(epoch) && untrack(context)?.instanceId === binding.instanceId)
         }
       } catch {
         // Startup/reconnect may still be restoring the project. Keep project controls inactive;
         // the next matching lifecycle event, reconnect or section opening revalidates it.
-        if (current(epoch)) unavailable()
+        if (current(epoch)) setResolved(undefined)
       }
     })
     const invalidate = (revoke = false) => {
       revision++
       if (revoke) setResolved(undefined)
-      if (untrack(active) && !deleted.has(source.instanceId!)) {
-        setFailedSource(undefined)
-        scheduler.schedule("project", "urgent")
-      }
+      if (untrack(active)) scheduler.schedule("project", "urgent")
     }
     const events = serverEvents.forInstance(() => source.instanceId).on("*", event => {
       if (event.type === "workspace.created" || event.type === "workspace.started" || event.type === "workspace.error") {
@@ -116,7 +105,7 @@ export function createPreferencesProjectContext(
         // A deletion can arrive before the first inventory response reveals its candidate IDs.
         if (event.reason === "deleted") deleted.add(event.workspaceId)
         if (event.workspaceId === source.instanceId || event.workspaceId === boundId) {
-          if (event.reason === "deleted") { deleted.add(source.instanceId!); unavailable() }
+          if (event.reason === "deleted") deleted.add(source.instanceId!)
           invalidate(true)
         } else if (candidateIds.has(event.workspaceId)) invalidate()
       }
@@ -124,15 +113,12 @@ export function createPreferencesProjectContext(
     const reconnect = serverEvents.forInstance(() => source.instanceId).onOpen(() => invalidate(true))
     const transport = serverEvents.forInstance(() => source.instanceId).onTransportStatus(status => {
       if (status !== "disconnected") return
-      revision++; unavailable(); controller?.abort(); scheduler.cancel("project")
+      revision++; setResolved(undefined); controller?.abort(); scheduler.cancel("project")
     })
     let initialDemand = true
     createEffect(() => {
       if (active()) {
-        if ((!initialDemand || !reusable) && !deleted.has(source.instanceId!)) {
-          setFailedSource(undefined)
-          scheduler.schedule("project", "urgent")
-        }
+        if (!initialDemand || !reusable) scheduler.schedule("project", "urgent")
       } else {
         revision++; setResolved(undefined); controller?.abort(); scheduler.cancel("project")
       }
@@ -143,5 +129,5 @@ export function createPreferencesProjectContext(
       events(); reconnect(); transport()
     })
   })
-  return { context, unavailable: () => active() && failedSource() === key(target()) }
+  return context
 }

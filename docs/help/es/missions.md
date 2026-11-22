@@ -10,7 +10,7 @@ En **Personalizar panel derecho**, usa **Misiones** para activar o desactivar el
 
 Pausa primero las Misiones activas y programadas. La desactivación conserva las Misiones, sus calendarios y las conversaciones. El trabajo que ya se envió a OpenCode puede continuar, pero las herramientas de Misiones no están disponibles y pueden omitirse ejecuciones programadas. Al volver a activarlas, revisa tus Misiones y reanuda las que pausaste cuando quieras.
 
-La casilla sigue el espacio de trabajo abierto, incluso al seleccionar una conversación de un worktree. Si no se puede leer el estado, vuelve a abrir la personalización o selecciona **Intentar de nuevo**. Sin un proyecto abierto, **Configuración → Misiones** permite editar los valores globales predeterminados.
+La casilla sigue el espacio de trabajo abierto, incluso al seleccionar una conversación de un worktree. Si no se puede leer el estado, vuelve a abrir la personalización o selecciona **Intentar de nuevo**. Mientras Misiones no esté disponible, usa otra pestaña o **General** en la configuración; al interactuar allí, esa vista sigue seleccionada. Sin un proyecto abierto, **Configuración → Misiones** permite editar los valores globales predeterminados.
 
 ## Crear una Misión {#create}
 

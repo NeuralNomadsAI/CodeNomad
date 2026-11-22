@@ -5,6 +5,7 @@ import { ImageSettingsCard } from "../../../src/components/settings/image-settin
 import { WebSearchSettingsCard } from "../../../src/components/settings/websearch-settings-card"
 import { ConfigProvider, preferencesForBackend } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
+import { ThemeProvider } from "../../../src/lib/theme"
 import { createServerApi } from "../../../src/lib/api-client"
 import { createBackendClient, localBackend, registerBackendClient } from "../../../src/lib/backend-client"
 import { backendEvents } from "../../../src/lib/backend-events"
@@ -116,7 +117,7 @@ render(() => <ConfigProvider><I18nProvider>
     </section>
   })}
   <Toaster />
-  <Show when={showSettings()}><SettingsScreen /></Show>
+  <ThemeProvider><Show when={showSettings()}><SettingsScreen /></Show></ThemeProvider>
 </I18nProvider></ConfigProvider>, document.getElementById("root")!)
 let retainedAction: any
 ;(window as any).parity = {

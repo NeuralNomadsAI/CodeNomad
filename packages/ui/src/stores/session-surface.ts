@@ -53,6 +53,10 @@ export function getSessionSurface({ instanceId, sessionId }: SurfaceContext): Ce
   return conversation
 }
 
+export function closeMissionReader(ctx: SurfaceContext): void {
+  if (getSessionSurface(ctx).kind === "mission") applySurface(ctx, conversation)
+}
+
 /** Every explicit central-view gesture supersedes pending activation in this occurrence. */
 export function applySurface(ctx: SurfaceContext, surface: CentralSurface, gesture = beginGesture(ctx)): void {
   if (!gesture.current()) return

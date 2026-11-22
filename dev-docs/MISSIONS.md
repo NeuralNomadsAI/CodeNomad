@@ -25,10 +25,12 @@ Settings, matching the project-wide Missions routes. Gestures on the checkbox
 set its requested Global state. When a Project rule overrides Global, the
 checkbox shows the effective state read-only and its info button shows the
 Global setting. Config and plugin events and reconnects
-reconcile manual edits through the shared plugin controls cache. Before the
-first successful read the checkbox is indeterminate and the feature stays
-hidden; opening customization retries a failed read and **Try again** is
-available there. A window layout reset retains activation and restores tab order.
+reconcile manual edits through the shared plugin controls cache. Activation is
+enabled, disabled or unknown. A pending or failed read makes the checkbox
+indeterminate and hides the feature; opening customization retries a failed
+read and **Try again** is available there. A confirmed disable closes any Mission
+reader through the central surface so it releases preview arbitration. A window
+layout reset retains activation and restores tab order.
 
 When the effective state is off, OpenCode's config watcher unloads the plugin, removing
 `mission_*` from subsequent model turns in existing sessions after reload.

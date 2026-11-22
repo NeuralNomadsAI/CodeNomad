@@ -126,15 +126,12 @@ for (const kind of ["electron", "tauri"] as const) {
         const path = "/src/stores/settings-screen.ts"
         return (await import(path)).activeSettingsSection()
       })
-      await page.waitForFunction(async () => {
-        const path = "/src/stores/settings-screen.ts"
-        return (await import(path)).activeSettingsSection() === "general"
-      }, undefined, { timeout: 6000 })
       await page.locator(".settings-section-selector-value").getByText("General", { exact: true }).waitFor()
+      assert.equal(await selected(), "missions", "a rendered fallback is not a selection gesture")
       await page.locator(".theme-scheme-actions button").filter({ hasText: "New" }).click({ timeout: 4500 })
       const draft = page.locator(".theme-scheme-name-editor input")
       await draft.fill("Offline palette")
-      assert.equal(await page.evaluate(() => (window as any).request.section), "missions", "the next opening keeps its saved choice")
+      await page.waitForFunction(() => (window as any).request.section === "general")
       f.available()
       await page.evaluate(async () => {
         const path = "/src/stores/remote-backends.ts"
