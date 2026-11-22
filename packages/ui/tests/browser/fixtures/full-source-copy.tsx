@@ -1,6 +1,7 @@
 import { render } from "solid-js/web"
 import MessageSection from "../../../src/components/message-section"
 import TranscriptFilters from "../../../src/components/transcript-filters"
+import { transcriptPresetPatch } from "../../../src/components/transcript-visibility"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
@@ -13,6 +14,7 @@ import { loadMessages } from "../../../src/stores/session-api"
 import "../../../src/index.css"
 
 const scenario = new URLSearchParams(location.search).get("scenario")
+const toolDisclosureScenario = scenario === "tool-group-disclosure"
 const instanceId = "full-source-instance", sessionId = "full-source-session", messageId = "full-source-message"
 const filePath = "/fixture/example.ts"
 const diagnostics = { [filePath]: Array.from({ length: scenario === "diagnostics-long" ? 1 : 137 }, (_, index) => ({
@@ -74,6 +76,7 @@ const message = { id: messageId, type: "assistant", agent: "build", model: { pro
     : scenario === "parts-short-tail" ? [...textParts.slice(0, 1000), ...reads("tail", 499), textParts[1000]]
     // The head ends with a two-read group the test expands before revealing two more.
     : scenario === "parts-merge-expanded" ? [...textParts.slice(0, 498), ...reads("expanded", 4), ...textParts.slice(498)]
+    : toolDisclosureScenario ? [...shellCalls.slice(0, 2), tool]
     : [tool] }
 const groupTime = Date.UTC(2026, 10, 10, 9, 30)
 const messages = scenario === "tool-groups" ? [
@@ -101,10 +104,12 @@ await applyUiSettings({ showMessageTimeline: scenario === "parts", toolInputsVis
   diagnosticsExpansion: "collapsed",
   toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { patch: "expanded", edit: "expanded",
     read: scenario === "parts-short-tail" ? "hidden" : scenario === "tool-groups" ? "collapsed" : "expanded",
-    bash: "collapsed", other: "expanded" } } })
+    bash: "collapsed", other: "expanded" } },
+  ...(toolDisclosureScenario ? transcriptPresetPatch("minimal") : {}),
+})
 await loadMessages(instanceId, sessionId, { force: true })
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
-  {scenario === "tool-groups" && <header style={{ display: "flex", "justify-content": "end", width: "1000px" }}><TranscriptFilters /></header>}
+  {(scenario === "tool-groups" || toolDisclosureScenario) && <header style={{ display: "flex", "justify-content": "end", width: "1000px" }}><TranscriptFilters /></header>}
   <main style={{ display: "flex", height: scenario === "tool-groups" ? "500px" : "800px", width: "1000px" }}>
     <MessageSection instanceId={instanceId} sessionId={sessionId} isActive={true} />
   </main>

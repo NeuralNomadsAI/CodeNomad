@@ -85,6 +85,7 @@ interface ToolCallProps {
   sessionId: string
   isActive?: Accessor<boolean>
   onContentRendered?: () => void
+  rememberDisclosure?: boolean
   /**
    * When true, tool call starts collapsed regardless of user preferences.
    * Users can still expand/collapse manually.
@@ -599,7 +600,14 @@ export default function ToolCall(props: ToolCallProps) {
     return resolveToolExpansionDefault(preferences(), toolCallMemo()?.tool || "")
   })
 
-  const [userExpanded, setUserExpanded] = createSignal<boolean | null>(null)
+  const [localExpanded, setLocalExpanded] = createSignal<boolean>()
+  const toolDisplayKey = () => `${props.messageId ?? "unknown-message"}\u0000${props.toolCall.id ?? props.toolCallId ?? ""}`
+  const toolDisclosure = () => props.rememberDisclosure && props.messageId
+    ? getSessionMessageRenderCache(props.instanceId, props.sessionId).toolDisclosure : undefined
+  const userExpanded = () => {
+    const saved = toolDisclosure()
+    return saved ? saved[0][toolDisplayKey()] : localExpanded()
+  }
   const [outputWrapEnabled, setOutputWrapEnabled] = createSignal(true)
   const toolInputsVisibility = createMemo(() => preferences().toolInputsVisibility || "collapsed")
   const [toolInputVisibilityOverride, setToolInputVisibilityOverride] = createSignal<"hidden" | "expanded" | null>(null)
@@ -673,11 +681,7 @@ export default function ToolCall(props: ToolCallProps) {
     return toolVisibility() !== "hidden"
   })
 
-  const expanded = () => {
-    const override = userExpanded()
-    if (override !== null) return override
-    return defaultExpandedForTool()
-  }
+  const expanded = () => userExpanded() ?? defaultExpandedForTool()
 
   // A session switch mounts dozens of expanded tool bodies at once; rendering
   // every body inside the mounting task blocks the main thread for seconds.
@@ -692,18 +696,17 @@ export default function ToolCall(props: ToolCallProps) {
   // The birth check reads only the part's own status: an overridden header
   // status must first evaluate inside a tracked render, never in this
   // untracked setup, or its memo would freeze on a transient store state.
-  const toolBodyReleaseKey = () => `${props.messageId ?? "unknown-message"}\u0000${props.toolCall.id ?? props.toolCallId ?? ""}`
   const releaseBodyMount = () => {
     setBodyMountReleased(true)
     if (props.instanceId && props.sessionId) {
-      getSessionMessageRenderCache(props.instanceId, props.sessionId).releasedToolBodies.add(toolBodyReleaseKey())
+      getSessionMessageRenderCache(props.instanceId, props.sessionId).releasedToolBodies.add(toolDisplayKey())
     }
   }
   const [bodyMountReleased, setBodyMountReleased] = createSignal(
-    untrack(() => userExpanded() !== null || !defaultExpandedForTool()
+    untrack(() => userExpanded() !== undefined || !defaultExpandedForTool()
       || toolState()?.status === "running" || toolState()?.status === "error"
       || (Boolean(props.instanceId && props.sessionId && props.messageId)
-        && getSessionMessageRenderCache(props.instanceId!, props.sessionId!).releasedToolBodies.has(toolBodyReleaseKey()))),
+        && getSessionMessageRenderCache(props.instanceId!, props.sessionId!).releasedToolBodies.has(toolDisplayKey()))),
   )
   if (!bodyMountReleased()) {
     let bodyMountDisposed = false
@@ -712,7 +715,7 @@ export default function ToolCall(props: ToolCallProps) {
       if (!bodyMountDisposed) releaseBodyMount()
     })
   }
-  createEffect(on(userExpanded, () => { releaseBodyMount() }, { defer: true }))
+  createEffect(on(userExpanded, override => { if (override !== undefined) releaseBodyMount() }, { defer: true }))
   // A live or failed tool mounts its body at once even when the deferred
   // state began while it was still pending.
   createEffect(() => {
@@ -770,10 +773,10 @@ export default function ToolCall(props: ToolCallProps) {
   }
 
   function toggle() {
-    setUserExpanded((prev) => {
-      const current = prev === null ? defaultExpandedForTool() : prev
-      return !current
-    })
+    const next = !expanded()
+    const saved = toolDisclosure()
+    if (saved) saved[1](toolDisplayKey(), next)
+    else setLocalExpanded(next)
   }
 
   createEffect(() => {

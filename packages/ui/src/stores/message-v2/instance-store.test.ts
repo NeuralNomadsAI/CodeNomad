@@ -293,12 +293,16 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     })))
     cache.messageBlocks.set("message-0", {})
     cache.messageBlocks.set("message-200", {})
+    cache.toolDisclosure[1]("message-0\u0000call", true)
+    cache.toolDisclosure[1]("message-200\u0000call", false)
 
     store.trimSessionMessages(sessionId, 200)
 
     assert.equal(store.getSessionMessageIds(sessionId).length, 200)
     assert.equal(store.getSessionMessageIds(sessionId).includes("message-0"), false)
     assert.deepEqual([...cache.messageBlocks.keys()], ["message-200"])
+    assert.equal(cache.toolDisclosure[0]["message-0\u0000call"], undefined)
+    assert.equal(cache.toolDisclosure[0]["message-200\u0000call"], false)
     store.clearInstance()
   })
 

@@ -1,4 +1,4 @@
-import { For, Index, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack, type Accessor } from "solid-js"
+import { For, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack, type Accessor } from "solid-js"
 import { ChevronRight, Copy, ExternalLink, FoldVertical, Layers3, Loader2, Trash2, XCircle } from "lucide-solid"
 import MessageItem from "./message-item"
 import SystemMessage from "./system-message"
@@ -45,6 +45,7 @@ import {
   extractReasoningTextForRender,
   extractWholeReasoningText,
   REASONING_RENDER_CHARACTER_LIMIT,
+  type MessageRenderCache,
 } from "../lib/message-render-cache"
 import { STREAMING_INSTANT_RENDER_CHARACTER_LIMIT, STREAMING_RENDER_INTERVAL_MS } from "../lib/render-text-window"
 import { createTextWindow, HiddenTextNotice } from "./hidden-text"
@@ -448,6 +449,7 @@ function ToolCallItem(props: ToolCallItemProps) {
             instanceId={props.instanceId}
             sessionId={props.sessionId}
             isActive={props.isActive}
+            rememberDisclosure
             onContentRendered={props.onContentRendered}
             headerAction={isBackgroundableTool(toolPart()) ? (
               <button
@@ -568,8 +570,7 @@ export default function MessageBlock(props: MessageBlockProps) {
     messageItems: Map<string, ContentDisplayItem>
     toolItems: Map<string, ToolDisplayItem>
     messageBlocks: Map<string, CachedBlockEntry>
-    releasedToolBodies: Set<string>
-  }
+  } & MessageRenderCache
   const [blockRef, setBlockRef] = createSignal<HTMLDivElement>()
   const [systemDisclosureRevision, setSystemDisclosureRevision] = createSignal(0)
   const isSearchResult = () => Boolean(props.searchResultMessageIds?.().has(props.messageId))
@@ -652,7 +653,7 @@ export default function MessageBlock(props: MessageBlockProps) {
       const segmentKey = `${current.id}:content:${startPartId}`
       let cached = sessionCache.messageItems.get(segmentKey)
       const partIds = parts.flatMap((part) => typeof part.id === "string" ? [part.id] : [])
-      // Index rows observe item identity, not mutations to this plain cached
+      // Row accessors observe item identity, not mutations to this plain cached
       // object. Publish changed selections so appended/tail parts reach the row.
       if (!cached || cached.partIds.length !== partIds.length || cached.partIds.some((id, index) => id !== partIds[index])) {
         cached = {
@@ -903,6 +904,11 @@ export default function MessageBlock(props: MessageBlockProps) {
     })
   }
 
+  const itemsByKey = createMemo(() => {
+    const items = new Map<string, MessageBlockItem>()
+    for (const item of block()?.items ?? []) items.set(item.key, item)
+    return items
+  })
   const visibleItemKeys = createMemo(() => new Set((block()?.items ?? [])
     .filter(isDisplayItemVisible)
     .map((item) => item.key)))
@@ -922,9 +928,11 @@ export default function MessageBlock(props: MessageBlockProps) {
             data-search-result={isSearchResult() ? "true" : undefined}
             data-search-active={isActiveSearchResult() ? "true" : undefined}
           >
-            <Index each={resolvedBlock().items}>
-              {(item) => (
-              <Switch>
+            <For each={[...itemsByKey().keys()]}>
+              {(key) => {
+                let last = itemsByKey().get(key)!
+                const item = createMemo(() => (last = itemsByKey().get(key) ?? last))
+                return <Switch>
                 <Match when={item().type === "content"}>
                   <MessageContentItem
                     instanceId={props.instanceId}
@@ -1059,9 +1067,9 @@ export default function MessageBlock(props: MessageBlockProps) {
                     </button>
                   </div>
                 </Match>
-              </Switch>
-              )}
-            </Index>
+                </Switch>
+              }}
+            </For>
           </div>
         </Show>
       )}

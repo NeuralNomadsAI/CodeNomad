@@ -1,6 +1,10 @@
+import { createStore, type SetStoreFunction } from "solid-js/store"
+
 interface MessageCacheItem {
   messageId: string
 }
+
+type ToolDisclosure = Record<string, boolean | undefined>
 
 export interface MessageRenderCache {
   messageItems: Map<string, MessageCacheItem>
@@ -9,6 +13,8 @@ export interface MessageRenderCache {
   /** Tool bodies (`${messageId}\u0000${partId}`) whose deferred mount already
    * released once: a remount renders them at once instead of re-deferring. */
   releasedToolBodies: Set<string>
+  /** Manual card disclosure, by the same message/part identity as body release. */
+  toolDisclosure: [ToolDisclosure, SetStoreFunction<ToolDisclosure>]
 }
 
 const renderCaches = new Map<string, MessageRenderCache>()
@@ -48,7 +54,10 @@ export function getSessionMessageRenderCache(instanceId: string, sessionId: stri
   const key = makeSessionCacheKey(instanceId, sessionId)
   let cache = renderCaches.get(key)
   if (!cache) {
-    cache = { messageItems: new Map(), toolItems: new Map(), messageBlocks: new Map(), releasedToolBodies: new Set() }
+    cache = {
+      messageItems: new Map(), toolItems: new Map(), messageBlocks: new Map(),
+      releasedToolBodies: new Set(), toolDisclosure: createStore<ToolDisclosure>({}),
+    }
     renderCaches.set(key, cache)
   }
   return cache
@@ -76,8 +85,15 @@ export function purgeMessageRenderCache(cache: MessageRenderCache, messageIds: r
   for (const [key, item] of cache.toolItems) {
     if (removed.has(item.messageId)) cache.toolItems.delete(key)
   }
-  for (const key of cache.releasedToolBodies) {
+  const wasRemoved = (key: string) => {
     const separator = key.indexOf("\u0000")
-    if (separator > 0 && removed.has(key.slice(0, separator))) cache.releasedToolBodies.delete(key)
+    return separator > 0 && removed.has(key.slice(0, separator))
+  }
+  for (const key of cache.releasedToolBodies) {
+    if (wasRemoved(key)) cache.releasedToolBodies.delete(key)
+  }
+  const [disclosure, setDisclosure] = cache.toolDisclosure
+  for (const key of Object.keys(disclosure)) {
+    if (wasRemoved(key)) setDisclosure(key, undefined)
   }
 }

@@ -45,6 +45,41 @@ async function withFixture(scenario: string, run: (page: Page) => Promise<void>)
   } finally { await context.close() }
 }
 
+for (const [partId, output] of [["group-shell-0", "Command completed"], ["full-source-tool", "Tool completed"]]) {
+  test(`regrouping keeps only ${partId}'s output open`, () => withFixture("tool-group-disclosure", async page => {
+    const card = (id: string) => page.locator(`.tool-call-message[data-part-id="${id}"]`)
+    const toggle = (id: string) => card(id).locator(".tool-call-header-toggle")
+    const shellGroup = page.getByRole("button", { name: "Shell: 2", exact: true })
+    const body = card(partId).getByText(output, { exact: true })
+    if (partId === "group-shell-0") await shellGroup.click()
+    await toggle(partId).click()
+    await body.waitFor()
+    const standaloneToggle = partId === "full-source-tool" ? await toggle(partId).elementHandle() : null
+    const assertOnlyTargetOpen = async () => {
+      assert.equal(await toggle(partId).getAttribute("aria-expanded"), "true", `${partId} keeps its own disclosure`)
+      for (const other of ["group-shell-0", "group-shell-1", "full-source-tool"].filter(id => id !== partId)) {
+        assert.equal(await toggle(other).getAttribute("aria-expanded"), "false", `${other} stays closed`)
+      }
+      await body.waitFor()
+    }
+    await page.getByRole("button", { name: "Message content", exact: true }).click()
+    await page.getByRole("button", { name: "Disable tool grouping" }).click()
+    await shellGroup.waitFor({ state: "detached" })
+    await assertOnlyTargetOpen()
+    if (standaloneToggle) {
+      assert.equal(await toggle(partId).evaluate((button, original) => button === original, standaloneToggle), true,
+        "the standalone card keeps its mounted identity when it changes position")
+    }
+
+    await page.getByRole("button", { name: "Enable tool grouping" }).click()
+    await shellGroup.waitFor()
+    // An explicit group disclosure takes precedence over the preference.
+    await page.getByRole("button", { name: "Expand Tool groups" }).click()
+    await shellGroup.and(page.locator('[aria-expanded="true"]')).waitFor()
+    await assertOnlyTargetOpen()
+  }))
+}
+
 test("tool groups can be opened by default or replaced by ordinary cards without changing tool visibility", async () => {
   await withFixture("tool-groups", async page => {
     const trigger = page.getByRole("button", { name: "Message content", exact: true })

@@ -182,6 +182,9 @@ test("scrolling activates the marker of the block at the reading line", { timeou
   }
 }))
 
+// The product treats blocks reaching past the 4 px reading line as visible.
+const READING_LINE_TOLERANCE = 4
+
 test("changing tool grouping keeps the selected marker or the reader on the same block", { timeout: 90_000 }, () => withSession("minimal", async (page) => {
   // The 21st call is in a different message from the collapsed group's header.
   const marker = (await markers(page)).find(candidate => candidate.id === `${id(2)}:tool:8`)!
@@ -195,12 +198,13 @@ test("changing tool grouping keeps the selected marker or the reader on the same
   await clickMarker(page, marker)
   await filters.click()
 
-  const headerOffset = async () => (await header.boundingBox())!.y - (await stream.boundingBox())!.y
+  const headerOffset = () => header.evaluate(button =>
+    button.getBoundingClientRect().top - button.closest(".message-stream")!.getBoundingClientRect().top)
   const assertSelectedAtLine = async (collapsed = false) => {
     await settleTranscript(page, 450)
     assert.equal(await active(page), marker.id)
     const offset = collapsed ? await headerOffset() : await blockOffset(page, marker)
-    assert.ok(offset !== null && Math.abs(offset) <= 2, `${marker.id} is at the reading line (${offset}px)`)
+    assert.ok(offset !== null && Math.abs(offset) <= READING_LINE_TOLERANCE, `${marker.id} is at the reading line (${offset}px)`)
   }
   await assertSelectedAtLine(true)
 
@@ -232,13 +236,13 @@ test("changing tool grouping keeps the selected marker or the reader on the same
   await header.and(page.locator('[aria-expanded="false"]')).waitFor()
   await settleTranscript(page, 450)
   const after = await headerOffset()
-  assert.ok(before !== null && after !== null && Math.abs(before - after) <= 2, `reader's block stays at ${before}px (${after}px after collapse)`)
+  assert.ok(before !== null && Math.abs(before - after) <= READING_LINE_TOLERANCE, `reader's block stays at ${before}px (${after}px after collapse)`)
 
   // A reader on the collapsed header stays on that header when opening it.
   await groups.getByRole("button", { name: "Expand Tool groups" }).click()
   await header.and(page.locator('[aria-expanded="true"]')).waitFor()
   await settleTranscript(page, 450)
-  assert.ok(Math.abs(await headerOffset() - after) <= 2)
+  assert.ok(Math.abs(await headerOffset() - after) <= READING_LINE_TOLERANCE)
 }, groupedStore))
 
 test("tool grouping preserves the exact reasoning card being read, not the first card of its marker", { timeout: 90_000 }, () => withSession("everything", async (page) => {
@@ -247,13 +251,14 @@ test("tool grouping preserves the exact reasoning card being read, not the first
   await clickMarker(page, marker)
   const stream = page.locator(".message-stream")
   const card = page.locator(`.message-reasoning-card[data-part-id="${marker.partIds![1]}"]`)
-  const offset = async () => (await card.boundingBox())!.y - (await stream.boundingBox())!.y
+  const offset = () => card.evaluate(card =>
+    card.getBoundingClientRect().top - card.closest(".message-stream")!.getBoundingClientRect().top)
   const box = (await stream.boundingBox())!
   await page.mouse.move(box.x + 6, box.y + 6)
   await page.mouse.wheel(0, Math.round(await offset() + 8))
   await settleTranscript(page, 450)
   const before = await offset()
-  assert.ok(Math.abs(before + 8) <= 2, `reading the second reasoning card (${before}px)`)
+  assert.ok(Math.abs(before + 8) <= READING_LINE_TOLERANCE, `reading the second reasoning card (${before}px)`)
   await assertReadingLineActive(page, "inside the second reasoning card")
   await page.evaluate(() => (window as any).fixture.showFilters(true))
   await page.getByRole("button", { name: "Message content", exact: true }).click()
@@ -261,7 +266,7 @@ test("tool grouping preserves the exact reasoning card being read, not the first
   await page.locator(".message-exploration-group").first().waitFor({ state: "detached" })
   await settleTranscript(page, 450)
   const after = await offset()
-  assert.ok(Math.abs(before - after) <= 2, `second reasoning card moves from ${before}px to ${after}px`)
+  assert.ok(Math.abs(before - after) <= READING_LINE_TOLERANCE, `second reasoning card moves from ${before}px to ${after}px`)
 }, groupedStore))
 
 /** The active marker stands for the block at the transcript's reading line. */
