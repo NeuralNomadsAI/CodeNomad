@@ -48,13 +48,13 @@ export function toolGroupKind(name: string) {
   if (tool === "bash" || tool === "shell") return "shell" as const
 }
 
-export function getTechnicalGroupKind(part: ClientPart) {
+export function getTechnicalGroupKind(part: ClientPart, groupTools = true) {
   if (part.type === "reasoning") return "reasoning" as const
-  if (part.type === "tool") return toolGroupKind(part.tool)
+  if (groupTools && part.type === "tool") return toolGroupKind(part.tool)
 }
 
-export function transcriptPartKind(part: ClientPart): TranscriptRowKind {
-  return getTechnicalGroupKind(part) ?? (part.type === "tool" || part.type === "system" || part.type === "compaction" ? "part" : "content")
+export function transcriptPartKind(part: ClientPart, groupTools = true): TranscriptRowKind {
+  return getTechnicalGroupKind(part, groupTools) ?? (part.type === "tool" || part.type === "system" || part.type === "compaction" ? "part" : "content")
 }
 
 export function reasoningHasRenderableContent(part: ClientPart): boolean {

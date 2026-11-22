@@ -1444,7 +1444,7 @@ async function createSession(instanceId: string, agent?: string, location?: { di
 
     setSessions((prev) => {
       const next = new Map(prev)
-      const instanceSessions = next.get(instanceId) || new Map()
+      const instanceSessions = new Map(prev.get(instanceId))
       instanceSessions.set(session.id, session)
       next.set(instanceId, instanceSessions)
       return next
@@ -1651,14 +1651,13 @@ function removeSessionProjection(instanceId: string, sessionId: string, ownsSele
   clearSessionSeenInterruption(instanceId, sessionId)
   setSessionExpanded(instanceId, sessionId, false)
   setSessions((prev) => {
+    const held = prev.get(instanceId)
+    if (!held?.has(sessionId)) return prev
     const next = new Map(prev)
-    const instanceSessions = next.get(instanceId)
-    if (instanceSessions) {
-      instanceSessions.delete(sessionId)
-      if (instanceSessions.size === 0) {
-        next.delete(instanceId)
-      }
-    }
+    const instanceSessions = new Map(held)
+    instanceSessions.delete(sessionId)
+    if (instanceSessions.size === 0) next.delete(instanceId)
+    else next.set(instanceId, instanceSessions)
     return next
   })
 
@@ -2171,25 +2170,15 @@ async function loadMessages(
         modelID = defaultModel.modelId
       }
 
-      if (nextWindow.kind === "latest") setSessions((prev) => {
-        if (!isCurrent()) return prev
-        const next = new Map(prev)
-        const nextInstanceSessions = next.get(instanceId)
-        if (!nextInstanceSessions) return next
-        const existingSession = nextInstanceSessions.get(sessionId)
-        if (!existingSession) return next
-        nextInstanceSessions.set(sessionId, {
-          ...existingSession,
-          // Transcript metadata describes past execution, not the current
-          // selection. Only fill missing values, including when a user or native
-          // selection event changed them while this history request was pending.
-          agent: existingSession.agent || agentName,
-          model: existingSession.model.providerId && existingSession.model.modelId
-            ? existingSession.model
-            : providerID && modelID ? { providerId: providerID, modelId: modelID } : existingSession.model,
-        })
-        next.set(instanceId, nextInstanceSessions)
-        return next
+      if (nextWindow.kind === "latest") withSession(instanceId, sessionId, (existingSession) => {
+        if (!isCurrent()) return false
+        // Transcript metadata describes past execution. Only fill initially missing values.
+        const agent = existingSession.agent || agentName
+        const model = (!existingSession.model.providerId || !existingSession.model.modelId) && providerID && modelID
+          ? { providerId: providerID, modelId: modelID } : existingSession.model
+        if (agent === existingSession.agent && model === existingSession.model) return false
+        existingSession.agent = agent
+        existingSession.model = model
       })
 
       const sessionForV2 = sessions().get(instanceId)?.get(sessionId) ?? {
