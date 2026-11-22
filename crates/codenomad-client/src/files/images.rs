@@ -9,8 +9,10 @@ use reqwest::Url;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
+mod admission;
 #[cfg(target_arch = "wasm32")]
 mod browser;
+pub use admission::can_decode;
 pub struct Images {
     #[cfg(not(target_arch = "wasm32"))]
     client: Client,
@@ -27,9 +29,13 @@ impl Images {
         let maximum = maximum.min(MAX_FILE_BYTES);
         let url = source_url(base, source).ok_or("unsupported Markdown image source")?;
         #[cfg(target_arch = "wasm32")]
-        return browser::read(url, maximum).await;
+        let bytes = browser::read(url, maximum).await?;
         #[cfg(not(target_arch = "wasm32"))]
-        self.read_native(url, maximum).await
+        let bytes = self.read_native(url, maximum).await?;
+        if !can_decode(&bytes) {
+            return Err("unavailable Markdown image".into());
+        }
+        Ok(bytes)
     }
 
     #[cfg(not(target_arch = "wasm32"))]

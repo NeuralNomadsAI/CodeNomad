@@ -371,23 +371,16 @@ fn markdown_links_html_and_mermaid_fallback_use_only_the_loaded_document() {
             let mut rt = runtime(http.ui(Store::default(), "renderers"));
             open(&mut rt, &http, name, case["base64"].as_str().unwrap()).await;
             if name == "broken.png" {
-                let deadline = Instant::now() + Duration::from_secs(3);
-                while !rt
-                    .state
-                    .files
-                    .as_ref()
-                    .unwrap()
-                    .presentation
-                    .image
-                    .as_ref()
-                    .unwrap()
-                    .is_ready()
-                {
-                    assert!(Instant::now() < deadline);
-                    tokio::time::sleep(Duration::from_millis(2)).await;
-                }
-                rt.update_if(|state, _| state.files.as_mut().unwrap().poll(20.0));
-                rt.frame(0.02);
+                assert!(
+                    rt.state
+                        .files
+                        .as_ref()
+                        .unwrap()
+                        .presentation
+                        .image
+                        .is_none(),
+                    "an invalid header must not reach the decoder"
+                );
             }
             let nodes = rt.elements();
             let shown = nodes
@@ -426,6 +419,31 @@ fn markdown_links_html_and_mermaid_fallback_use_only_the_loaded_document() {
             assert!(rt.take_url_requests().is_empty());
             http.quiet().await;
         }
+    });
+}
+
+#[test]
+fn compressed_workspace_svg_is_rejected_before_the_decoder() {
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut rt = runtime(http.ui(Store::default(), "compressed-svg"));
+        open(&mut rt, &http, "drawing.svg", "H4s=").await;
+        assert!(
+            rt.state
+                .files
+                .as_ref()
+                .unwrap()
+                .presentation
+                .image
+                .is_none()
+        );
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|node| node.text.as_deref()
+                    == Some("Preview unavailable for this binary file."))
+        );
+        http.quiet().await;
     });
 }
 

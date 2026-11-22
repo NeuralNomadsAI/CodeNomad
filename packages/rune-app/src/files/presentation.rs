@@ -70,7 +70,12 @@ impl Presentation {
             .zip(reader.preview())
             .map(
                 |(target, preview)| match content(&target.path, &preview.bytes) {
-                    Content::Image(_) => Kind::Image,
+                    Content::Image(_)
+                        if codenomad_client::files::images::can_decode(&preview.bytes) =>
+                    {
+                        Kind::Image
+                    }
+                    Content::Image(_) => Kind::Binary,
                     Content::Text { format, .. } => Kind::Text(format),
                     Content::Binary => Kind::Binary,
                 },

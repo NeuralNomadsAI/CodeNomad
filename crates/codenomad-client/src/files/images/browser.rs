@@ -1,16 +1,22 @@
 use super::{Result, Url, reject_svgz};
-use js_sys::{Array, Reflect, Uint8Array};
-use wasm_bindgen::{JsCast, JsValue};
+use js_sys::{Reflect, Uint8Array};
+use wasm_bindgen::{JsCast, JsValue, closure::Closure};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
-    AbortController, AbortSignal, ReadableStreamDefaultReader, ReferrerPolicy, Request,
-    RequestCredentials, RequestInit, Response,
+    AbortController, ReadableStreamDefaultReader, ReferrerPolicy, Request, RequestCredentials,
+    RequestInit, Response, Window,
 };
 
-struct Abort(AbortController);
+struct Abort {
+    controller: AbortController,
+    window: Window,
+    timer: i32,
+    _on_timeout: Closure<dyn FnMut()>,
+}
 impl Drop for Abort {
     fn drop(&mut self) {
-        self.0.abort();
+        self.window.clear_timeout_with_handle(self.timer);
+        self.controller.abort();
     }
 }
 
@@ -20,15 +26,28 @@ fn browser_error(_: JsValue) -> Box<dyn std::error::Error + Send + Sync> {
 
 pub(super) async fn read(url: Url, maximum: usize) -> Result<Vec<u8>> {
     // Reqwest's browser builder does not expose a per-request ReferrerPolicy.
-    let abort = Abort(AbortController::new().map_err(browser_error)?);
-    let signals = Array::of2(&abort.0.signal(), &AbortSignal::timeout_with_u32(15_000));
+    let window = web_sys::window().ok_or("missing browser window")?;
+    let controller = AbortController::new().map_err(browser_error)?;
+    let deadline = controller.clone();
+    let on_timeout = Closure::wrap(Box::new(move || deadline.abort()) as Box<dyn FnMut()>);
+    let timer = window
+        .set_timeout_with_callback_and_timeout_and_arguments_0(
+            on_timeout.as_ref().unchecked_ref(),
+            15_000,
+        )
+        .map_err(browser_error)?;
+    let abort = Abort {
+        controller,
+        window,
+        timer,
+        _on_timeout: on_timeout,
+    };
     let init = RequestInit::new();
     init.set_credentials(RequestCredentials::Omit);
     init.set_referrer_policy(ReferrerPolicy::NoReferrer);
-    init.set_signal(Some(&AbortSignal::any(&signals)));
+    init.set_signal(Some(&abort.controller.signal()));
     let request = Request::new_with_str_and_init(url.as_str(), &init).map_err(browser_error)?;
-    let window = web_sys::window().ok_or("missing browser window")?;
-    let response: Response = JsFuture::from(window.fetch_with_request(&request))
+    let response: Response = JsFuture::from(abort.window.fetch_with_request(&request))
         .await
         .and_then(JsCast::dyn_into)
         .map_err(browser_error)?;

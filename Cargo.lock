@@ -645,6 +645,7 @@ dependencies = [
  "async-channel",
  "base64 0.22.1",
  "futures-lite",
+ "imagesize",
  "js-sys",
  "reqwest",
  "serde_json",
