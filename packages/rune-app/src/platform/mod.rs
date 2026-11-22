@@ -1,6 +1,8 @@
 //! Platform boundary for task execution, connection defaults and local file picking.
 pub(crate) mod collation;
 mod connection;
+#[cfg(target_arch = "wasm32")]
+pub(crate) mod pairing;
 pub(crate) mod reads;
 pub(crate) mod storage;
 pub(crate) mod titlebar;

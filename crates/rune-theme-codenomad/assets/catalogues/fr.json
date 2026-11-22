@@ -2184,6 +2184,7 @@
   "rune.older": "Messages précédents",
   "rune.open_error": "Ouverture impossible · Vérifiez le dossier ou la session",
   "rune.other_values": "Autres valeurs",
+  "rune.pairing_guide": "Sur l’hôte CodeNomad, utilisez admin.sh ou admin.ps1 pour créer un lien d’appairage. Ouvrez le lien dans un autre onglet sur cet appareil.",
   "rune.prompt": "Message",
   "rune.ready": "Prêt",
   "rune.reason": "Motif",

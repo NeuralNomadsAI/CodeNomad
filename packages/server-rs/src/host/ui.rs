@@ -46,6 +46,46 @@ impl Source {
             }
         }
     }
+
+    pub fn remote_rune(&self) -> Option<PathBuf> {
+        let Self::Dir(dir, _) = self else { return None };
+        ["index.html", "boot.js", "app_bg.wasm"].iter().all(|file| dir.join(file).is_file()).then(|| dir.clone())
+    }
+}
+
+/// The Rune bundle entry and its runtime assets; never the local SPA fallback.
+pub fn rune_asset_path<'a>(method: &Method, path: &'a str) -> Option<&'a str> {
+    if !matches!(*method, Method::GET | Method::HEAD) {
+        return None;
+    }
+    match path {
+        "/" => Some("/index.html"),
+        "/app.js"
+        | "/app_bg.wasm"
+        | "/boot.js"
+        | "/shell.css"
+        | "/theme.css"
+        | "/Inter-Medium.ttf"
+        | "/Inter-Regular.ttf"
+        | "/Inter-SemiBold.ttf" => Some(path),
+        _ if path.starts_with("/snippets/") && path.ends_with(".js") => Some(path),
+        _ => None,
+    }
+}
+
+pub async fn serve_rune(dir: &PathBuf, req: Request) -> Response {
+    let method = req.method().clone();
+    let Some(path) = rune_asset_path(&method, req.uri().path()) else { return crate::unavailable() };
+    let path = path.to_owned();
+    let mut response = asset(dir, method, path, req.headers().get(header::IF_NONE_MATCH).cloned())
+        .await
+        .unwrap_or_else(|| Status::NOT_FOUND.into_response());
+    response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-cache"));
+    response
+}
+
+pub(crate) async fn rune_pair_page(dir: &PathBuf, method: Method) -> Option<Response> {
+    asset(dir, method, "/remote-pair.html".into(), None).await
 }
 
 /// Paths no route matched: API paths stay unavailable, everything else is the UI.

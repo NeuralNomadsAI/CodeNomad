@@ -107,14 +107,21 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                 .key("session-search"),
         );
     }
-    let filter = l.search.text.to_lowercase();
+    let searching = l.show_search && !l.search.text.trim().is_empty();
+    let mut seen = std::collections::HashSet::new();
+    let sessions: Vec<_> = if searching {
+        l.search_results.rows.iter().collect()
+    } else {
+        l.sessions
+            .iter()
+            .chain(l.linked.pages.iter().flat_map(|page| &page.rows))
+            .filter(|row| seen.insert(row.id.as_str()))
+            .collect()
+    };
+    let count = sessions.len();
     let selected = workspace::active_session(s);
     let mut items = col().full_width().role("list").label(title).focus_group();
-    for session in l
-        .sessions
-        .iter()
-        .filter(|s| s.title.to_lowercase().contains(&filter))
-    {
+    for session in sessions {
         let id = session.id.clone();
         let title = if session.title.is_empty() {
             t("sessionList.session.untitled")
@@ -135,14 +142,26 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
         );
     }
     let mut items = col().full_width().child(items);
-    if l.sessions.is_empty() && !l.pending {
+    if searching && l.search_results.pending() {
+        items = items.child(text(t("rune.loading")).role("status"));
+    } else if searching && l.search_results.failed || !searching && l.linked.failed {
+        items = items.child(text(t("rune.list_error")).role("alert"));
+    } else if !searching && count == 0 && !l.pending && !l.linked.pending() {
         items = items.child(text(t("rune.empty_sessions")).pad(Space::Sm));
     }
-    if l.next.is_some() {
+    if !searching
+        && (l.next.is_some()
+            || l.linked
+                .pages
+                .as_ref()
+                .is_some_and(launcher::linked::Pages::more))
+    {
         items = items.child(button(
             "more-sessions",
             t("rune.more"),
-            disabled || l.sessions.len() >= launcher::MAX_BROWSED_SESSIONS,
+            disabled
+                || l.next.is_none() && l.linked.pending()
+                || count >= launcher::MAX_BROWSED_SESSIONS,
             screen::action(scope, |s| launcher::list(s, true)),
         ));
     }

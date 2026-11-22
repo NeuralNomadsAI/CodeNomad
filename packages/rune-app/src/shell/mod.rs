@@ -71,6 +71,10 @@ fn connection(s: &State) -> &'static str {
         Phase::Loading | Phase::Reconnecting => "instanceShell.connection.connecting",
         Phase::Ready | Phase::Streaming => "instanceShell.connection.connected",
         Phase::Failed => "instanceShell.connection.disconnected",
+        #[cfg(target_arch = "wasm32")]
+        Phase::WorkspaceMissing => "instanceShell.connection.connecting",
+        #[cfg(target_arch = "wasm32")]
+        Phase::RestoreFailed => "rune.restore_error",
     })
 }
 

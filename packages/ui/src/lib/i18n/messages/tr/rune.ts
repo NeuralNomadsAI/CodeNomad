@@ -1,4 +1,5 @@
 export const runeMessages = {
+  "rune.pairing_guide": "Eşleştirme bağlantısı oluşturmak için CodeNomad sunucusunda admin.sh veya admin.ps1 çalıştırın. Bağlantıyı bu cihazda başka bir sekmede açın.",
   "rune.loading": "Yükleniyor",
   "rune.ready": "Hazır",
   "rune.streaming": "Yanıt geliyor",

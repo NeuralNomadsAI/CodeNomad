@@ -333,9 +333,16 @@ fn header(s: &State, project: bool, docked: [Option<f32>; 2], touch: bool) -> El
 }
 
 fn connection_warning(s: &State) -> Option<El> {
+    #[cfg(target_arch = "wasm32")]
+    if s.phase == crate::Phase::WorkspaceMissing {
+        return Some(text(connection(s)).role("status"));
+    }
+    let failed = s.phase == crate::Phase::Failed;
+    #[cfg(target_arch = "wasm32")]
+    let failed = failed || s.phase == crate::Phase::RestoreFailed;
     match s.phase {
         crate::Phase::Reconnecting => Some(text(connection(s)).role("status")),
-        crate::Phase::Failed => Some(crate::components::button_tx(
+        _ if failed => Some(crate::components::button_tx(
             "connection-retry",
             strings::t("sessionList.loadError.retry"),
             false,

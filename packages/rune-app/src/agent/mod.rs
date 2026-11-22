@@ -96,6 +96,19 @@ pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
     }
 }
 impl Ui {
+    pub fn rebind(&mut self, handle: Handle) {
+        self.handle = handle;
+        self.reading = false;
+        self.trailing = None;
+        self.busy = false;
+        self.stopping = false;
+        self.error = false;
+        self.running = false;
+        self.known = false;
+        self.pending_known = false;
+        self.online = false;
+        self.refresh(true);
+    }
     pub fn navigation_blocked(&self) -> bool {
         self.busy
             || self.stopping

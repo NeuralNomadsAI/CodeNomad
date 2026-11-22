@@ -1,4 +1,5 @@
 export const runeMessages = {
+  "rune.pairing_guide": "במארח CodeNomad, השתמשו ב־admin.sh או ב־admin.ps1 ליצירת קישור צימוד. פתחו את הקישור בכרטיסייה אחרת במכשיר זה.",
   "rune.loading": "טוען",
   "rune.ready": "מוכן",
   "rune.streaming": "תגובה בתהליך",

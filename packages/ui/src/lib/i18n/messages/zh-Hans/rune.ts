@@ -1,4 +1,5 @@
 export const runeMessages = {
+  "rune.pairing_guide": "在 CodeNomad 主机上运行 admin.sh 或 admin.ps1，创建配对链接。然后在此设备的另一个标签页中打开链接。",
   "rune.loading": "加载中",
   "rune.ready": "就绪",
   "rune.streaming": "正在回复",

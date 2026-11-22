@@ -2184,6 +2184,7 @@
   "rune.older": "Older messages",
   "rune.open_error": "Opening failed · Check folder or session",
   "rune.other_values": "Other values",
+  "rune.pairing_guide": "On the CodeNomad host, run admin.sh or admin.ps1 to create a pairing link. Open the link in another tab on this device.",
   "rune.prompt": "Message",
   "rune.ready": "Ready",
   "rune.reason": "Reason",

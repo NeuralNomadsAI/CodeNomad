@@ -47,7 +47,7 @@ export async function pendingBrowser({values,m,out,storage}) {
     try {
       await stage('boot');await page.goto(base+'?locale=fr',{waitUntil:'domcontentloaded',timeout:60000});await boot()
       await stage('connect');await press(button(m['folderSelection.servers.dialog.connect']))
-      await type(m['instanceInfo.labels.folder'],values.project);await press(button(m['directoryBrowser.openCurrent']));await button('Existing history').waitFor()
+      await type(m['instanceInfo.labels.folder'],values.project);await press(button(m['directoryBrowser.openCurrent']));await button(m['window.menu.leftPanel']).waitFor()
       await stage('first-opened');await press(button(m['instanceTabs.new.ariaLabel']))
       if(mode!=='corrupt')await page.waitForFunction(key=>{try{return JSON.parse(sessionStorage.getItem(key)).session.tabs.length===2}catch{return false}},KEY)
       await type(m['instanceInfo.labels.folder'],values.project);await press(button(m['directoryBrowser.openCurrent']))
@@ -74,7 +74,7 @@ export async function pendingBrowser({values,m,out,storage}) {
       else assert(closing.some(e=>e.kind==='snapshot')&&closing.some(e=>e.kind==='marker'))
       // Reconnect only after the authoritative inventory has qualified departure.
       await press(button(m['folderSelection.servers.dialog.connect']))
-      await type(m['instanceInfo.labels.folder'],values.project);await press(button(m['directoryBrowser.openCurrent']));await button('Existing history').waitFor()
+      await type(m['instanceInfo.labels.folder'],values.project);await press(button(m['directoryBrowser.openCurrent']));await button(m['window.menu.leftPanel']).waitFor()
       const successor=(await inventory()).filter(id=>!before.includes(id));assert.equal(successor.length,1)
       await page.waitForTimeout(200);assert((await inventory()).includes(successor[0]),'old claim preserves new occurrence')
       results.push({mode,before:before.length,after:after.length,successorProtected:true,oldClaimDispatched:true,receiptUnavailableAtDeparture:true,departedDocumentReceiptDelivered:false,latePostStatus,proof,network})

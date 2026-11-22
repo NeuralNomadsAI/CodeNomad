@@ -11,7 +11,7 @@ use axum::{
 use futures_util::StreamExt;
 use regex::Regex;
 use serde_json::json;
-use std::sync::LazyLock;
+use std::{path::PathBuf, sync::LazyLock};
 
 // Intersection of the reviewed TS server-device catalog and Rust's
 // implemented endpoints. Host switches, outbound, account secrets, push,
@@ -129,7 +129,7 @@ fn route_path(uri: &axum::http::Uri) -> Option<String> {
     Some(output)
 }
 
-pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> Response {
+pub async fn admit(State((app, rune)): State<(Shared, Option<PathBuf>)>, mut req: Request, next: Next) -> Response {
     let Some(channel) = tls::https_only(&req).cloned() else { return reply(Status::FORBIDDEN, "TLS required") };
     let Some(path) = route_path(req.uri()) else { return reply(Status::BAD_REQUEST, "Invalid request path") };
     let authority = channel.origin.strip_prefix("https://").unwrap_or_default();
@@ -190,13 +190,20 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
         );
     }
     let method = req.method().clone();
+    let direct = channel.ingress || devices::direct_origin(&channel.origin);
+    let rune_ui =
+        rune.as_ref().filter(|_| !server && direct && crate::host::ui::rune_asset_path(&method, &path).is_some());
     let form_reply = !server
         && path.strip_prefix("/workspaces/").and_then(|s| s.split_once("/instance")).is_some_and(|(id, route)| {
             !id.is_empty() && !id.contains('/') && crate::missions::human_answer::form_reply(route, &method).is_some()
         });
     let backend_ui = !server && crate::previews::backend::enabled(&app) && preview_control(&path, &method);
-    let direct = channel.ingress || devices::direct_origin(&channel.origin);
     if path == "/remote-pair" && matches!(method, Method::GET | Method::HEAD) && direct && !server {
+        if let Some(dir) = &rune
+            && let Some(page) = crate::host::ui::rune_pair_page(dir, method).await
+        {
+            return cors(devices::pairing_page(page), supplied);
+        }
         return cors(next.run(req).await, supplied);
     }
     if path == "/api/remote-control/pair" && method == Method::POST && !server {
@@ -219,6 +226,7 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
     }
     if !backend_ui
         && !form_reply
+        && rune_ui.is_none()
         && !CATALOG.iter().any(|(methods, pat)| {
             methods.split(' ').any(|m| m == if method == Method::HEAD { "GET" } else { method.as_str() })
                 && pat.is_match(&path)
@@ -238,6 +246,25 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
     });
     if path == "/api/auth/status" && owner.is_none() {
         return cors(status(false), supplied);
+    }
+    if owner.is_none()
+        && rune_ui.is_some()
+        && path == "/"
+        && method == Method::GET
+        && h.get(header::ACCEPT).and_then(|v| v.to_str().ok()).is_some_and(|v| v.contains("text/html"))
+    {
+        return cors(
+            (
+                Status::FOUND,
+                [
+                    (header::LOCATION, "/remote-pair"),
+                    (header::CACHE_CONTROL, "no-store"),
+                    (header::CONNECTION, "close"),
+                ],
+            )
+                .into_response(),
+            supplied,
+        );
     }
     let Some((id, principal)) = owner else {
         return cors(reply(Status::UNAUTHORIZED, "This device is not paired"), supplied);
@@ -267,10 +294,16 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
     if !server {
         req.extensions_mut().insert(BrowserDevice(id));
     }
+    let dispatch = async {
+        match rune_ui {
+            Some(dir) => crate::host::ui::serve_rune(dir, req).await,
+            None => next.run(req).await,
+        }
+    };
     let response = tokio::select! {
         biased;
         _=principal.cancelled()=>return reply(Status::UNAUTHORIZED,"This device is not paired"),
-        response=next.run(req)=>response,
+        response=dispatch=>response,
     };
     let (parts, body) = response.into_parts();
     let body = axum::body::Body::from_stream(body.into_data_stream().take_until(principal.cancelled_owned()));

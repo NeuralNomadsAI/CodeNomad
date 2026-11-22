@@ -1,4 +1,5 @@
 export const runeMessages = {
+  "rune.pairing_guide": "जोड्ने लिङ्क बनाउन CodeNomad होस्टमा admin.sh वा admin.ps1 चलाउनुहोस्। यस उपकरणको अर्को ट्याबमा लिङ्क खोल्नुहोस्।",
   "rune.loading": "लोड हुँदैछ",
   "rune.ready": "तयार",
   "rune.streaming": "जवाफ आउँदैछ",

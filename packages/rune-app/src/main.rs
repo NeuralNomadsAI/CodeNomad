@@ -36,7 +36,7 @@ use rune_theme_codenomad::{
 use transport::{Command, Event};
 
 #[cfg(any(test, feature = "test-support"))]
-pub const CODE: &str = "fn main() {\n    println!(\"Rune · Code Nomad\");\n}";
+pub const CODE: &str = "fn main() {\n    println!(\"Rune ┬À Code Nomad\");\n}";
 pub use codenomad_client::Message;
 struct State {
     wake: codenomad_client::Wake,
@@ -45,6 +45,8 @@ struct State {
     git: git::Binding,
     documents: files::document::store::Store,
     reads: platform::reads::Reads,
+    #[cfg(target_arch = "wasm32")]
+    pairing: platform::pairing::Recovery,
     transcript_display: transcript_state::Display,
     screen: Screen,
     settings: settings::Host,
@@ -70,6 +72,10 @@ enum Phase {
     Streaming,
     Failed,
     Reconnecting,
+    #[cfg(target_arch = "wasm32")]
+    WorkspaceMissing,
+    #[cfg(target_arch = "wasm32")]
+    RestoreFailed,
 }
 fn init() -> State {
     State {
@@ -79,6 +85,8 @@ fn init() -> State {
         git: Default::default(),
         documents: Default::default(),
         reads: Default::default(),
+        #[cfg(target_arch = "wasm32")]
+        pairing: Default::default(),
         transcript_display: Default::default(),
         screen: Screen::Chat { launcher: None },
         settings: Default::default(),
@@ -170,6 +178,11 @@ fn request_older(s: &mut State, _: &mut Tx) {
     }
 }
 fn retry_connection(s: &mut State, tx: &mut Tx) {
+    #[cfg(target_arch = "wasm32")]
+    if s.phase == Phase::RestoreFailed {
+        launcher::reopen(s);
+        return;
+    }
     if s.incoming.as_ref().is_none_or(Receiver::is_closed)
         || s.commands.as_ref().is_none_or(Sender::is_closed)
     {
@@ -196,8 +209,16 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let chat = poll_chat(s, 64);
     let mut changed = chat | transcript_state::Display::poll(s, chat, now, tx);
     changed |= launcher::poll(s, tx);
+    #[cfg(target_arch = "wasm32")]
+    {
+        changed |= platform::pairing::poll(s, tx);
+    }
     changed |= workspace::poll(s, now, tx);
     changed |= settings::poll(s);
+    #[cfg(target_arch = "wasm32")]
+    if s.phase == Phase::WorkspaceMissing && !platform::pairing::required(s) {
+        changed |= launcher::reopen(s);
+    }
     changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
     changed |= git::poll(s, now, tx);
     if changed {
@@ -267,7 +288,11 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
                 s.paging = false;
             }
-            Event::Reconnecting => {
+            Event::Reconnecting | Event::ConnectionLost => {
+                #[cfg(target_arch = "wasm32")]
+                if matches!(event, Event::ConnectionLost) && !platform::pairing::required(s) {
+                    platform::pairing::observe(s);
+                }
                 git::online(s, false);
                 if let Some(files) = &mut s.files {
                     files.online(false);
@@ -280,6 +305,16 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             Event::PagingFailed => {
                 s.paging = false;
                 s.history_error = true;
+            }
+            Event::WorkspaceMissing => {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    s.phase = Phase::WorkspaceMissing;
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    s.phase = Phase::Failed;
+                }
             }
             Event::History(messages) => {
                 s.messages = messages;
@@ -300,6 +335,10 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::Done => s.phase = Phase::Ready,
             Event::Failed => {
+                #[cfg(target_arch = "wasm32")]
+                if !platform::pairing::required(s) {
+                    platform::pairing::observe(s);
+                }
                 git::online(s, false);
                 if let Some(files) = &mut s.files {
                     files.online(false);
@@ -321,7 +360,16 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
         if s.git.scene {
             return probes::git_scene::view(s);
         }
-        shell::view(s, cx, chat_view)
+        let body = shell::view(s, cx, chat_view);
+        #[cfg(target_arch = "wasm32")]
+        if platform::pairing::required(s) {
+            return col()
+                .full_width()
+                .full_height()
+                .child(platform::pairing::view(s))
+                .child(body.remaining());
+        }
+        body
     })
 }
 fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
@@ -333,10 +381,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     )
     .key("rows")
     .virtual_rows_version(s.revision);
-    let expanded = s
-        .agent
-        .as_ref()
-        .is_some_and(|a| a.picker || !a.ids().is_empty());
+    let expanded = interruption_expanded(s);
     rune_theme_codenomad::interruption::session_surface(expanded)
         .child(rune_theme_codenomad::interruption::history(expanded).child(rows))
         .child(agent_view::view(s, cx))
@@ -345,6 +390,11 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
 
 fn composer(s: &State) -> El {
     let scope = s.input_scope.clone();
+    let field = if interruption_expanded(s) {
+        layout::compact_composer
+    } else {
+        layout::composer
+    };
     col()
         .key("session-composer")
         .role("group")
@@ -353,7 +403,7 @@ fn composer(s: &State) -> El {
         .pad(Space::Md)
         .separate(Space::Sm)
         .child(
-            layout::composer(
+            field(
                 input(&s.draft)
                     .key("composer")
                     .label(strings::t("rune.prompt"))
@@ -379,7 +429,7 @@ fn composer(s: &State) -> El {
                         } else {
                             "rune.older"
                         }),
-                        s.paging || matches!(s.phase, Phase::Reconnecting | Phase::Failed),
+                        s.paging || !matches!(s.phase, Phase::Ready | Phase::Streaming),
                         crate::screen::action_tx(&scope, request_older),
                     )
                 }))
@@ -400,6 +450,12 @@ fn composer(s: &State) -> El {
                     crate::screen::action_tx(&scope, send),
                 )),
         )
+}
+
+fn interruption_expanded(s: &State) -> bool {
+    s.agent
+        .as_ref()
+        .is_some_and(|a| a.picker || !a.ids().is_empty())
 }
 
 #[cfg(not(target_arch = "wasm32"))]

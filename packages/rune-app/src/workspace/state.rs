@@ -18,6 +18,7 @@ pub(super) struct Entry {
     listed_sessions: HashSet<String>,
     creation_uncertain: bool,
     next: Option<String>,
+    linked: Option<crate::launcher::linked::Pages>,
     visits: crate::launcher::Visits,
     wanted_panels: [Option<[bool; 2]>; 2],
     sidebar_edits: Option<(TextEdit, bool, TextEdit, bool)>,
@@ -152,6 +153,15 @@ impl Ui {
         self.staged_revision = Some(self.revision);
     }
 }
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn active_workspace(s: &State) -> Option<(&str, &Workspace)> {
+    let ui = s.workspace.as_ref()?;
+    let entry = &ui.entries[ui.active];
+    let Tab::Workspace(saved) = &entry.saved else {
+        return None;
+    };
+    Some((&entry.key, saved))
+}
 fn same_project(a: &Workspace, b: &Workspace) -> bool {
     same_folder(&a.folder, &b.folder)
         && a.backend_id == b.backend_id
@@ -178,6 +188,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         listed_sessions: HashSet::new(),
         creation_uncertain: false,
         next: None,
+        linked: None,
         visits: Default::default(),
         wanted_panels: [None; 2],
         sidebar_edits: None,
@@ -306,6 +317,7 @@ fn stash(s: &mut State) {
             entry.listed_sessions = std::mem::take(&mut l.listed_sessions);
             entry.creation_uncertain = l.creation_uncertain;
             entry.next = l.next.clone();
+            entry.linked = l.linked.pages.clone();
             entry.visits = std::mem::take(&mut l.visits);
             entry.sidebar_edits = Some((
                 std::mem::replace(&mut l.title, TextEdit::new("")),
@@ -324,10 +336,11 @@ fn activate(s: &mut State, tx: &mut Tx) {
     let item = &mut ui.entries[ui.active];
     s.shell.wanted = item.wanted_panels;
     if let Some(l) = s.screen.launcher_mut() {
-        l.project = item.project.clone();
+        crate::launcher::set_project(l, item.project.clone());
         l.sessions = item.sessions.clone();
         l.listed_sessions = std::mem::take(&mut item.listed_sessions);
         l.next = item.next.clone();
+        l.linked.pages = item.linked.clone();
         l.visits = std::mem::take(&mut item.visits);
         l.folder = TextEdit::new(match &item.saved {
             Tab::Workspace(w) => w.folder.as_str(),

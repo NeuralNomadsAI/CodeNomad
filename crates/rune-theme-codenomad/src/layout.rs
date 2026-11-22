@@ -114,9 +114,19 @@ pub fn transcript_rows<S: 'static>(
         )
 }
 pub fn composer(editor: El) -> El {
-    // Current prompt-input.css editor bounds. A dedicated shared variant preserves them.
-    rune::auto_grow(editor, 1, usize::MAX)
-        .min_h(104.0)
+    composer_bounds(editor, 104.0)
+}
+pub fn compact_composer(editor: El) -> El {
+    let t = tokens(dark());
+    composer_bounds(
+        editor,
+        t.text(TextRole::Body).line_px() + t.space(Space::Sm).px() * 2.0,
+    )
+}
+fn composer_bounds(editor: El, minimum: f32) -> El {
+    // The editor owns the whole painted space, including blank lines above the minimum.
+    rune::auto_grow(editor.min_h(minimum), 1, usize::MAX)
+        .min_h(minimum)
         .max_h(320.0)
 }
 pub trait Layout {
