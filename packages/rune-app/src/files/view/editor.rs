@@ -49,10 +49,9 @@ pub(super) fn source(
             let save = document_action_tx(s, save);
             move |s, key, tx| {
                 if matches!(key.key, Key::Command('s' | 'S'))
-                    && (key.mods.ctrl || key.mods.cmd || cfg!(target_os = "macos") && key.mods.logo)
+                    && key.mods.cmd
                     && !key.mods.shift
                     && !key.mods.alt
-                    && (!key.mods.logo || cfg!(target_os = "macos"))
                 {
                     if !tx.key_repeat() {
                         save(s, tx);

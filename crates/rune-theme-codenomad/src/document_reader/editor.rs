@@ -97,7 +97,7 @@ pub fn save<S: 'static>(
     IconButton::new(&SAVE)
         .variant(IconButtonVariant::Neutral)
         .label(label)
-        .shortcut("ctrl+s")
+        .shortcut("mod+s")
         .disabled(disabled)
         .on_press_tx(press)
         .build(kit(dark))

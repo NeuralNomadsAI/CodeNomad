@@ -61,6 +61,13 @@ pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     }
 }
 impl Store {
+    /// Project tabs are unique within this window even while their reader is unmounted.
+    pub(crate) fn has_tab_edits(&self, tab_key: &str) -> bool {
+        lock(&self.0)
+            .drafts
+            .iter()
+            .any(|(key, draft)| key.instance == tab_key && lock(draft).retained())
+    }
     pub(super) fn has_edits(&self, server: &str, instance: &str) -> bool {
         lock(&self.0).drafts.iter().any(|(key, draft)| {
             key.server == server && key.instance == instance && lock(draft).retained()
@@ -97,5 +104,33 @@ impl Store {
         } else if drafts.get(key).is_some_and(|old| Arc::ptr_eq(old, shared)) {
             drafts.remove(key);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_tab_guard_reads_retained_drafts_without_a_reader() {
+        let store = Store::default();
+        let key = Key {
+            server: "one".into(),
+            instance: "tab-2".into(),
+            directory: "/project".into(),
+            path: "main.rs".into(),
+        };
+        let shared = store.open(&key);
+        {
+            let mut draft = lock(&shared);
+            draft.original = Some(Snapshot::loaded("original"));
+            draft.text = "local edit".into();
+        }
+        store.sync(&key, &shared);
+        assert!(!store.has_tab_edits("tab-1"));
+        assert!(store.has_tab_edits("tab-2"));
+        lock(&shared).text = "original".into();
+        store.sync(&key, &shared);
+        assert!(!store.has_tab_edits("tab-2"));
     }
 }

@@ -302,10 +302,12 @@ fn reader_content(s: &State) -> El {
     } else {
         (!matches!(kind, Some(Kind::Text(_)))).then(|| t("filesPanel.readOnly"))
     };
-    let save_error = ui.document.error().map(|error| match error {
-        super::document::store::Error::Conflict(Some(reason)) => reason,
-        _ => t("instanceShell.rightPanel.toast.saveError").into(),
-    });
+    let error = match ui.document.error() {
+        Some(super::document::store::Error::Conflict(Some(reason))) => Some(reason),
+        save_error => ui.reader.error().map(str::to_owned).or_else(|| {
+            save_error.map(|_| t("instanceShell.rightPanel.toast.saveError").into())
+        }),
+    };
     theme::surface(dark)
         .key(format!("file-reader-{scope}"))
         .role("region")
@@ -316,16 +318,7 @@ fn reader_content(s: &State) -> El {
             status,
             actions,
         ))
-        .children(
-            ui.reader
-                .error()
-                .map(|error| text(error).role("alert").pad(Space::Md)),
-        )
-        .children(
-            save_error
-                .filter(|_| ui.reader.error().is_none())
-                .map(|message| text(message).role("alert").pad(Space::Md)),
-        )
+        .children(error.map(|message| text(message).role("alert").pad(Space::Md)))
         .children(
             (ui.reader.busy() && ui.reader.preview().is_none()).then(|| {
                 text(t("instanceInfo.loading"))

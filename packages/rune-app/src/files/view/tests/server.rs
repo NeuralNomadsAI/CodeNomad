@@ -128,6 +128,7 @@ fn real_rust_reader_ui_contract() {
             rt.pointer_up(x + width / 2.0, y + height / 2.0);
             rt.frame(0.02);
             let ctrl = Mods {
+                cmd: true,
                 ctrl: true,
                 ..Mods::default()
             };
