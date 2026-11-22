@@ -39,7 +39,8 @@ const zipPath = path.join(tmpDir, `ui-${uiVersion}.zip`)
 try {
   const bundle = path.join(tmpDir, "bundle")
   fs.cpSync(uiBuildDir, bundle, { recursive: true })
-  await precompressUi(bundle)
+  // Compatible servers gate literal .html/.htm names; their updates keep HTML on those URLs.
+  await precompressUi(bundle, { includeHtml: false })
   // Zip the contents so index.html is at the root.
   execFileSync("/usr/bin/zip", ["-q", "-r", zipPath, "."], { cwd: bundle, stdio: "inherit" })
 

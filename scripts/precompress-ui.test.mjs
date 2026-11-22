@@ -21,3 +21,14 @@ test("precompresses a staged UI without changing original or small files", async
   assert.deepEqual(brotliDecompressSync(await readFile(`${asset}.br`)), raw)
   assert.deepEqual(gunzipSync(await readFile(`${asset}.gz`)), raw)
 })
+
+test("a compatibility archive can keep HTML only at its protected original path", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "precompressed-compat-ui-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const text = "<!-- static data -->".repeat(256)
+  await writeFile(path.join(root, "INDEX.HTML"), text)
+  await writeFile(path.join(root, "INDEX.HTML.br"), "staged sidecar")
+  await writeFile(path.join(root, "books.js"), text)
+  await precompressUi(root, { includeHtml: false })
+  assert.deepEqual((await readdir(root)).sort(), ["INDEX.HTML", "books.js", "books.js.br", "books.js.gz"])
+})
