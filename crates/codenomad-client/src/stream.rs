@@ -87,9 +87,18 @@ pub(super) async fn dispatch(
     }
     let own = value["instanceId"] == b.workspace;
     let native = &value["event"];
-    if own && value["type"] == "instance.event" && native["type"] == "command.updated" {
-        out.send(Input::Workspace(epoch, WorkspaceEvent::CommandsChanged))
-            .await?;
+    let catalogues = (own && value["type"] == "instance.event")
+        .then(|| match native["type"].as_str() {
+            Some("command.updated") => Some(WorkspaceEvent::CommandsChanged),
+            Some("agent.updated" | "skill.updated") => Some(WorkspaceEvent::MentionsChanged),
+            Some("config.updated" | "plugin.updated" | "models-dev.refreshed") => {
+                Some(WorkspaceEvent::ComposerCataloguesChanged)
+            }
+            _ => None,
+        })
+        .flatten();
+    if let Some(event) = catalogues {
+        out.send(Input::Workspace(epoch, event)).await?;
     } else if own && value["type"] == "instance.event" && native["type"] == "vcs.branch.updated" {
         out.send(Input::Workspace(
             epoch,

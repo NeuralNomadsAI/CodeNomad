@@ -12,6 +12,13 @@ pub fn whitespace(c: char) -> bool {
     c == '\u{feff}' || (c != '\u{85}' && c.is_whitespace())
 }
 
+pub fn mention_start(text: &str, offset: usize) -> bool {
+    !offset.checked_sub(1).is_some_and(|i| {
+        let lead = text.as_bytes()[i];
+        lead.is_ascii_alphanumeric() || b"_./\\:+~-".contains(&lead)
+    })
+}
+
 pub fn query(text: &str, caret: usize) -> Option<Query> {
     let before = text.get(..caret)?;
     if let Some(command) = text.strip_prefix('/') {
@@ -26,12 +33,7 @@ pub fn query(text: &str, caret: usize) -> Option<Query> {
         if whitespace(ch) {
             break;
         }
-        if ch == '@'
-            && !at.checked_sub(1).is_some_and(|i| {
-                let lead = before.as_bytes()[i];
-                lead.is_ascii_alphanumeric() || b"_./\\:+~-".contains(&lead)
-            })
-        {
+        if ch == '@' && mention_start(before, at) {
             return Some(Query::Mention(at..caret));
         }
     }

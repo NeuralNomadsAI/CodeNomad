@@ -21,6 +21,7 @@ pub struct Picker {
     dismissed: Option<usize>,
     dismissed_command: Option<String>,
     current: Option<(Query, String)>,
+    completed: Option<(Range<usize>, String)>,
     pub entries: Vec<Item>,
     pub selected: usize,
     pub generation: u64,
@@ -35,6 +36,14 @@ pub enum Item {
 }
 
 impl Item {
+    fn identity(&self) -> (std::mem::Discriminant<Self>, &str) {
+        let id = match self {
+            Self::File(item) => &item.path,
+            Self::Agent(item) | Self::Skill(item) | Self::Command(item) => &item.id,
+        };
+        (std::mem::discriminant(self), id)
+    }
+
     pub fn label(&self) -> &str {
         match self {
             Self::File(item) => &item.path,
@@ -66,6 +75,13 @@ impl Picker {
         matches!(self.current, Some((Query::Command(_), _)))
     }
 
+    pub fn mentions_changed(&mut self, reads: &Reads, wake: &Waker) {
+        if self.open() && !self.slash() {
+            self.mentions
+                .catalogue_changed(self.backend.as_ref(), reads, wake);
+        }
+    }
+
     pub fn loading(&self) -> bool {
         if self.slash() {
             self.commands.loading()
@@ -95,6 +111,7 @@ impl Picker {
     pub fn reset(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.current = None;
+        self.completed = None;
         self.dismissed = None;
         self.dismissed_command = None;
         self.entries.clear();
@@ -103,7 +120,7 @@ impl Picker {
 
     pub fn changed(&mut self, edit: &TextEdit, reads: &Reads, wake: &Waker) {
         self.commands.retain_intent(&edit.text);
-        let Some(token) = query(&edit.text, edit.range().0) else {
+        let Some(token) = self.token(edit) else {
             self.reset();
             return;
         };
@@ -146,25 +163,34 @@ impl Picker {
 
     pub fn poll(&mut self, reads: &Reads, wake: &Waker) -> bool {
         let commands = self.commands.poll(self.backend.as_ref(), reads, wake);
-        let mentions = self.mentions.poll();
-        if self.slash() && commands {
-            let active = match self.entries.get(self.selected) {
-                Some(Item::Command(command)) => Some(command.id.clone()),
-                _ => None,
-            };
+        let mentions = self.mentions.poll(self.backend.as_ref(), reads, wake);
+        if self.open() && if self.slash() { commands } else { mentions } {
+            let active = self.entries.get(self.selected).cloned();
             self.refresh_entries();
             self.selected = active
                 .and_then(|active| {
-                    self.entries.iter().position(
-                        |item| matches!(item, Item::Command(command) if command.id == active),
-                    )
+                    self.entries
+                        .iter()
+                        .position(|item| item.identity() == active.identity())
                 })
                 .unwrap_or(0);
-        } else if !self.slash() && mentions {
-            self.selected = 0;
-            self.refresh_entries();
         }
         commands || mentions
+    }
+
+    fn token(&self, edit: &TextEdit) -> Option<Query> {
+        let caret = edit.range().0;
+        if let Some((range, prefix)) = &self.completed
+            && edit.text.get(range.clone()) == Some(prefix.as_str())
+            && super::tokens::mention_start(&edit.text, range.start)
+            && edit
+                .text
+                .get(range.end..caret)
+                .is_some_and(|tail| !tail.contains(super::tokens::whitespace))
+        {
+            return Some(Query::Mention(range.start..caret));
+        }
+        query(&edit.text, caret)
     }
 
     fn refresh_entries(&mut self) {
@@ -214,9 +240,7 @@ impl Picker {
         };
         match (token, item) {
             (Query::Command(_), Item::Command(command)) => self.commands.choose(edit, command),
-            (Query::Mention(range), _)
-                if query(&edit.text, edit.range().0).as_ref() == Some(token) =>
-            {
+            (Query::Mention(range), _) if self.token(edit).as_ref() == Some(token) => {
                 let Some(keep_open) =
                     self.mentions
                         .choose(edit, draft, range.clone(), item, tab, path_only)
@@ -224,6 +248,12 @@ impl Picker {
                     return false;
                 };
                 if keep_open {
+                    let completed = range.start..edit.range().0;
+                    self.completed = edit
+                        .text
+                        .get(completed.clone())
+                        .filter(|text| text.contains(super::tokens::whitespace))
+                        .map(|text| (completed, text.to_owned()));
                     return true;
                 }
             }

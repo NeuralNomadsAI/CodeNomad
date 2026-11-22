@@ -82,9 +82,10 @@ impl Backend {
             return Err("invalid prompt file scope".into());
         }
         let query = query.trim();
-        if query.is_empty() {
+        if query.is_empty() || query.ends_with('/') {
+            let folder = query.trim_end_matches('/');
             return Ok(self
-                .files(directory, ".")
+                .files(directory, if folder.is_empty() { "." } else { folder })
                 .await?
                 .into_iter()
                 .map(|item| ProjectMatch {

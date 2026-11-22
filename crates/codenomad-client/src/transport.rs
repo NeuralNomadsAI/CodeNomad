@@ -9,6 +9,8 @@ pub struct DirectoryChange {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorkspaceEvent {
     CommandsChanged,
+    MentionsChanged,
+    ComposerCataloguesChanged,
     UiPreferencesChanged,
     NativeFilesystemChanged {
         workspace_id: String,

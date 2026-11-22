@@ -17,7 +17,8 @@ pub(super) struct Mentions {
     pub(super) directory: Option<String>,
     pub(super) catalog: Vec<Item>,
     pub(super) files: Vec<Item>,
-    catalog_read: Option<Read>,
+    pub(super) catalog_read: Option<Read>,
+    catalog_dirty: bool,
     file_read: Option<Read>,
     error: bool,
 }
@@ -27,6 +28,7 @@ impl Mentions {
         self.catalog.clear();
         self.files.clear();
         self.catalog_read = None;
+        self.catalog_dirty = false;
         self.file_read = None;
         self.error = false;
     }
@@ -51,13 +53,7 @@ impl Mentions {
         self.file_read = None;
         let Some(backend) = backend else { return };
         if opening {
-            self.catalog_read = Some(Read::start(
-                backend,
-                self.directory.clone(),
-                Lookup::Mentions,
-                reads,
-                wake,
-            ));
+            self.catalogue_changed(Some(backend), reads, wake);
         }
         self.file_read = Some(Read::start(
             backend,
@@ -68,13 +64,32 @@ impl Mentions {
         ));
     }
 
-    pub(super) fn poll(&mut self) -> bool {
+    pub(super) fn catalogue_changed(
+        &mut self,
+        backend: Option<&Backend>,
+        reads: &Reads,
+        wake: &Waker,
+    ) {
+        if self.catalog_read.is_some() {
+            self.catalog_dirty = true;
+        } else if let Some(backend) = backend {
+            self.catalog_read = Some(Read::start(backend, None, Lookup::Mentions, reads, wake));
+        }
+    }
+
+    pub(super) fn poll(&mut self, backend: Option<&Backend>, reads: &Reads, wake: &Waker) -> bool {
         let catalogue = Read::take(&mut self.catalog_read);
         let files = Read::take(&mut self.file_read);
         let changed = catalogue.is_some() || files.is_some();
         if let Some(reply) = catalogue {
-            self.observe(&reply);
-            self.catalog = reply.items;
+            if std::mem::take(&mut self.catalog_dirty) {
+                self.catalogue_changed(backend, reads, wake);
+            } else {
+                self.observe(&reply);
+                if !reply.error || !reply.items.is_empty() {
+                    self.catalog = reply.items;
+                }
+            }
         }
         if let Some(reply) = files {
             self.observe(&reply);

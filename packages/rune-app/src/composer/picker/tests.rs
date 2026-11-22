@@ -73,7 +73,7 @@ fn refreshing_the_catalogue_keeps_the_active_command_by_identity() {
 #[test]
 fn shift_enter_resolves_both_mentions_of_the_same_folder() {
     let mut rt = runtime();
-    rt.paste("Voir @docs puis @docs2 avant @doc");
+    rt.paste("Voir @docs puis user@docs et @docs2 avant @doc");
     rt.frame(0.0);
     rt.update(|s, _| {
         let picker = &mut s.composer.picker;
@@ -91,7 +91,10 @@ fn shift_enter_resolves_both_mentions_of_the_same_folder() {
             ..Mods::default()
         },
     );
-    assert_eq!(rt.state.draft.text, "Voir @docs puis @docs2 avant @docs/ ");
+    assert_eq!(
+        rt.state.draft.text,
+        "Voir @docs puis user@docs et @docs2 avant @docs/ "
+    );
     assert!(matches!(&rt.state.composer.draft.attachments[..],
         [Attachment::Path(path)] if path == "./docs"));
     let (prompt, _) = rt.state.composer.draft.prepare(
@@ -99,8 +102,87 @@ fn shift_enter_resolves_both_mentions_of_the_same_folder() {
         "msg_folder",
         codenomad_client::prompt::Delivery::Steer,
     );
-    assert_eq!(prompt.text, "Voir ./docs puis @docs2 avant ./docs/");
+    assert_eq!(
+        prompt.text,
+        "Voir ./docs puis user@docs et @docs2 avant ./docs/"
+    );
     assert!(prompt.files.is_empty());
+}
+
+#[test]
+fn a_late_mentions_catalogue_does_not_redirect_enter() {
+    let mut rt = runtime();
+    rt.paste("@doc");
+    rt.frame(0.0);
+    rt.update(|s, _| {
+        let picker = &mut s.composer.picker;
+        picker.mentions.files = ["docs/one", "docs/two"]
+            .into_iter()
+            .map(|path| {
+                Item::File(ProjectMatch {
+                    path: path.into(),
+                    kind: EntryKind::File,
+                })
+            })
+            .collect();
+        picker.refresh_entries();
+    });
+    press(&mut rt, Key::Down, Mods::default());
+    rt.update(|s, _| {
+        let picker = &mut s.composer.picker;
+        let (cancel, _) = bounded(1);
+        let (out, replies) = bounded(1);
+        picker.mentions.catalog_read = Some(Read {
+            _cancel: cancel,
+            replies,
+        });
+        out.try_send(Reply {
+            directory: "/project".into(),
+            items: vec![Item::Skill(named("docs"))],
+            error: false,
+        })
+        .ok()
+        .unwrap();
+        assert!(picker.poll(&s.reads, &s.wake));
+    });
+    press(&mut rt, Key::Enter, Mods::default());
+    assert_eq!(rt.state.draft.text, "@./docs/two ");
+}
+
+#[test]
+fn tab_navigates_a_directory_with_spaces_without_sending() {
+    let mut rt = runtime();
+    rt.paste("@rel");
+    rt.frame(0.0);
+    rt.update(|s, _| {
+        let picker = &mut s.composer.picker;
+        picker.mentions.files.push(Item::File(ProjectMatch {
+            path: "release notes".into(),
+            kind: EntryKind::Directory,
+        }));
+        picker.refresh_entries();
+    });
+    press(&mut rt, Key::Tab, Mods::default());
+    assert_eq!(rt.state.draft.text, "@release notes/");
+    assert!(rt.state.composer.picker.open());
+    assert!(!crate::composer::can_send(&rt.state));
+    rt.update(|s, _| {
+        let picker = &mut s.composer.picker;
+        picker.mentions.files.push(Item::File(ProjectMatch {
+            path: "release notes/today.md".into(),
+            kind: EntryKind::File,
+        }));
+        picker.refresh_entries();
+    });
+    press(
+        &mut rt,
+        Key::Enter,
+        Mods {
+            shift: true,
+            ..Mods::default()
+        },
+    );
+    assert_eq!(rt.state.draft.text, "@./release notes/today.md ");
 }
 
 #[test]

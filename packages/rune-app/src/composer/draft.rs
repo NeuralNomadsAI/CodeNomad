@@ -138,10 +138,11 @@ impl Draft {
                 let mut offset = 0;
                 for (start, matched) in text.match_indices(&token) {
                     let end = start + matched.len();
-                    if text[end..]
-                        .chars()
-                        .next()
-                        .is_none_or(|next| next == '/' || whitespace(next))
+                    if super::tokens::mention_start(&text, start)
+                        && text[end..]
+                            .chars()
+                            .next()
+                            .is_none_or(|next| next == '/' || whitespace(next))
                     {
                         resolved.push_str(&text[offset..start]);
                         resolved.push_str("./");

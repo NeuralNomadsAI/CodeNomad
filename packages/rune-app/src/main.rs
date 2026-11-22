@@ -208,6 +208,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             Event::AgentHint(catalog) => {
                 if catalog {
                     s.composer.picker.reconnect_commands(&s.reads, &s.wake);
+                    s.composer.picker.mentions_changed(&s.reads, &s.wake);
                 }
                 if catalog && let Some(files) = &mut s.files {
                     files.online(true);
@@ -221,6 +222,15 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::Workspace(codenomad_client::transport::WorkspaceEvent::CommandsChanged) => {
                 s.composer.picker.commands_changed(&s.reads, &s.wake);
+            }
+            Event::Workspace(codenomad_client::transport::WorkspaceEvent::MentionsChanged) => {
+                s.composer.picker.mentions_changed(&s.reads, &s.wake);
+            }
+            Event::Workspace(
+                codenomad_client::transport::WorkspaceEvent::ComposerCataloguesChanged,
+            ) => {
+                s.composer.picker.commands_changed(&s.reads, &s.wake);
+                s.composer.picker.mentions_changed(&s.reads, &s.wake);
             }
             Event::Workspace(event) => {
                 git::event(s, &event);
