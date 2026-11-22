@@ -174,12 +174,12 @@ try{
   control?.close()
   for(const gate of gates.values())gate.reject()
   await http?.dispose()
-  if(client?.exitCode===null)client.kill();server.stdin.end(web?'shutdown\n':undefined)
+  if(client?.exitCode===null)client.kill();server.stdin.on('error',()=>{});server.stdin.end('shutdown\n')
   await Promise.race([exited,new Promise(r=>setTimeout(r,3000))]);if(server.exitCode===null){server.kill();await Promise.race([exited,new Promise(r=>setTimeout(r,5000))])}
   for(const stream of streams)stream.destroy();upstream.closeAllConnections();upstream.close()
   await writeFile(path.join(profile,'proof.json'),JSON.stringify({result,stats,visibleProof,requests,static:staticProof,profile,project,forbidden,serverExitCode:server.exitCode},null,2));await writeFile(path.join(profile,'rust.log'),log)
   if(!web)await writeFile(path.join(profile,'client.log'),clientLog)
   if(web)await writeFile(path.join(profile,'browser-run.log'),diagnostic)
-  if(web)assert.equal(server.exitCode,0,'Owned Rust server must exit cleanly')
+  if(result===0)assert.equal(server.exitCode,0,'Owned Rust server must exit cleanly')
 }
 process.exitCode=result??1
