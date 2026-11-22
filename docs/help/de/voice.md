@@ -53,6 +53,8 @@ Wählen Sie in der lokalen Desktop-App unter **Einstellungen → Sprache → Dik
 
 Ubuntu 24.04 erfüllt die glibc-Anforderung, Ubuntu 22.04 hingegen nicht. Hex erkennt die gesprochene Sprache aus den [von Parakeet unterstützten Sprachen](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), darunter Englisch und Französisch. Diese Liste ist unabhängig von der App-Sprache.
 
+Hex lädt sein Modell beim Start der Aufnahme im Hintergrund und hält es nach dem letzten Diktat drei Minuten bereit.
+
 Die lokale Erkennung nutzt das Mikrofon dieses Geräts und funktioniert offline, auch für WSL-Projekte in der lokalen App. In einem kompatiblen Remote-Fenster öffnet **Diktieren** das lokale Fenster **Auf diesem Gerät diktieren**. Prüfen Sie das angezeigte Ziel und wählen Sie **Spracheingabe starten**, **Aufnahme stoppen und transkribieren** und **Transkription einfügen**. Nur der Text kehrt in den Entwurf zurück. Das Remote-Projekt braucht weiterhin seine Serververbindung.
 
 In einem Tauri-Fenster für einen entfernten Server unter Linux prüft **API-Eingabe testen** die Sprach-API des Servers, ohne die Diktat-Engine zu ändern. Prüfen Sie vor jeder API-Aufnahme die Serveradresse im nativen Mikrofondialog und bestätigen Sie die Aufnahme. Die Aufnahme nutzt PulseAudio oder den PulseAudio-Dienst von PipeWire und hat immer das oben beschriebene WAV-Limit von 24 Sekunden.

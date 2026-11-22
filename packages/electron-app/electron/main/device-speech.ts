@@ -26,6 +26,7 @@ export interface DeviceSpeechDriver {
   // Read-only discovery. A plan id covers the exact components, retained partial bytes and approved sources.
   capabilities(): DeviceSpeechCapabilities
   prepare(plan: HexPlan, control: SpeechOperationControl): Promise<void>
+  stop?(): Promise<void>
   // Resolve after inference has stopped.
   dictate(control: SpeechOperationControl): Promise<string>
 }
@@ -125,10 +126,11 @@ export class DeviceSpeech {
           const current = snapshot()
           if (input.engine === "hex" && current.hex.state !== "ready") return error("unavailable")
           const refused = this.preference.select(input.engine)
+          if (!refused && input.engine !== "hex") void this.stopHex()
           return refused ? error(refused) : ok({ ...current, engine: input.engine })
         }
         case "prepare": {
-          if (this.active("prepare")) return error("busy")
+          if (this.active("prepare") || this.active("start")) return error("busy")
           const hex = snapshot().hex
           const driver = this.hexDriver
           if (!driver || hex.state === "unavailable") return error("unavailable")
@@ -145,7 +147,7 @@ export class DeviceSpeech {
           }))
         }
         case "start": {
-          if (this.active("start")) return error("busy")
+          if (this.active("start") || this.active("prepare")) return error("busy")
           const lease = this.currentMicrophone()
           if (lease && !(lease.owner === owner && lease.id === input.microphoneLeaseId && lease.purpose === "dictation")) {
             return error("busy")
@@ -195,9 +197,16 @@ export class DeviceSpeech {
     }
   }
 
-  revokeAll(): void {
+  async revokeAll(): Promise<void> {
     this.microphone = undefined
     for (const slot of this.slots.values()) this.revoke(slot.owner)
+    await this.stopHex()
+  }
+
+  private stopHex(): Promise<void> | undefined {
+    const slot = this.slots.get("start")
+    if (slot) this.abort(slot)
+    return this.hexDriver?.stop?.()
   }
 
   revokeRendererMicrophone(owner: number): void {

@@ -22,6 +22,7 @@ interface Dependencies {
   /** Hidden windows a `--connect-server` launch owns: they never keep CodeNomad alive. */
   isLaunchWindow?(window: BrowserWindow): boolean
   flushSupportWindows?(): Promise<void>
+  stopSpeech?(): Promise<void>
   removeWindowState(id: string): Promise<boolean>
   getAllowedRendererOrigins(window: BrowserWindow): string[]
   isTrustedRendererOrigin(url: string, allowedOrigins: string[]): boolean
@@ -168,8 +169,10 @@ export class MultiwindowLifecycle {
   private startShutdown(preparedFlush?: Promise<void>): Promise<void> {
     if (this.shutdown) return this.shutdown
     const cleanup = async () => {
+      const speech = this.dependencies.stopSpeech?.()
       await (preparedFlush ?? this.flushLocalWindows())
       await this.run("aggregate state flush", () => this.dependencies.clientStateManager.flush())
+      await speech
       await this.dependencies.cliManager.shutdown()
       try {
         await this.releasePrimary()

@@ -53,6 +53,8 @@ Dans **Préférences → Voix → Dictée** sur le bureau local, sélectionnez *
 
 Ubuntu 24.04 satisfait au prérequis glibc, contrairement à Ubuntu 22.04. Hex détecte la langue parlée parmi les [langues du modèle Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), dont le français et l’anglais. Cette liste est indépendante de la langue de l’application.
 
+Hex charge son modèle en arrière-plan dès le début de l’enregistrement et le garde prêt pendant trois minutes après la dernière dictée.
+
 La reconnaissance locale utilise le microphone de cet appareil et fonctionne hors ligne, y compris pour les projets WSL ouverts dans l’application locale. Dans une fenêtre distante compatible, **Dicter** ouvre la fenêtre locale **Dicter sur cet appareil**. Vérifiez la destination affichée, puis choisissez **Démarrer la saisie vocale**, **Arrêter l'enregistrement et transcrire** et **Insérer la transcription** pour renvoyer uniquement le texte au brouillon. Le projet distant doit rester connecté à son serveur.
 
 Dans une fenêtre Tauri distante sous Linux, **Tester l'entrée API** vérifie l’API vocale du serveur sans changer le moteur de dictée. Vérifiez l’adresse du serveur dans la boîte de dialogue native du microphone avant de confirmer chaque enregistrement pour l’API. La capture utilise PulseAudio ou le service PulseAudio de PipeWire et applique toujours la limite WAV de 24 secondes décrite ci-dessus.

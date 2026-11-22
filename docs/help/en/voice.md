@@ -53,6 +53,8 @@ In local desktop **Preferences → Voice → Dictation**, set **Dictation engine
 
 Ubuntu 24.04 meets the glibc requirement; Ubuntu 22.04 does not. Hex detects the spoken language from [Parakeet’s supported languages](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), which include English and French. This list is independent of the app language.
 
+Hex loads its model in the background when you start recording and keeps it ready for three minutes after the last dictation.
+
 Local recognition uses this device's microphone and works offline, including with WSL projects opened in the local app. For a compatible remote-server window, **Dictate** opens a separate local **Dictate on this device** window. Check the destination shown there, choose **Start voice input**, then **Stop recording and transcribe** and **Insert transcript** to return only the text to the draft. A remote project still needs its server connection.
 
 In a remote Tauri window on Linux, **Test API input** checks the server’s speech API without changing the dictation engine. For each API recording, check the server address in the native microphone prompt before confirming. Capture uses PulseAudio or PipeWire’s PulseAudio service and always has the 24-second WAV limit described above.
