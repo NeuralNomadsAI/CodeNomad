@@ -1,0 +1,31 @@
+[package]
+name = "codenomad-rune-app"
+version = "0.1.0"
+edition = "2024"
+publish = false
+default-run = "codenomad-rune"
+
+[[bin]]
+name = "codenomad-rune"
+path = "src/main.rs"
+
+[dependencies]
+codenomad-client = { path = "../../crates/codenomad-client" }
+rune = { workspace = true }
+rune-kit = { workspace = true }
+rune-theme-codenomad = { workspace = true }
+serde_json = "1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+codenomad-host-process = { path = "../../crates/codenomad-host-process" }
+rune = { workspace = true, features = ["native-file-dialog"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "net"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "cookies"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Window", "Location", "UrlSearchParams"] }
+
+[package.metadata.rune]
+repository = "https://github.com/anomalyco/rune"
+rev = "21e5342b9a4cc33eeee88071b4b1f0eafb1247d4"

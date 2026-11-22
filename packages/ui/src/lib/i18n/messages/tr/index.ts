@@ -1,3 +1,4 @@
+import { runeMessages } from "./rune"
 import { mergeMessageParts } from "../merge"
 import { advancedSettingsMessages } from "./advancedSettings"
 import { appMessages } from "./app"
@@ -29,6 +30,7 @@ import { timeMessages } from "./time"
 import { toolCallMessages } from "./toolCall"
 
 export const trMessages = mergeMessageParts(
+  runeMessages,
   advancedSettingsMessages,
   appMessages,
   commandMessages,

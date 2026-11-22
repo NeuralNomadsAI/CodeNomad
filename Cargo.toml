@@ -1,0 +1,26 @@
+[workspace]
+resolver = "3"
+members = ["packages/rune-app", "crates/codenomad-client", "crates/rune-theme-codenomad", "crates/codenomad-host-process", "crates/rune-style-policy"]
+exclude = ["packages/server-rs", ".prototype-deps/rune"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+rune = { path = ".prototype-deps/rune/crates/rune", default-features = false, features = ["embedded-fonts", "accessibility", "tooling", "segmenter-dictionaries"] }
+rune-kit = { path = ".prototype-deps/rune/crates/rune-kit", default-features = false }
+serde_json = "1"
+codenomad-client = { path = "crates/codenomad-client" }
+rune-theme-codenomad = { path = "crates/rune-theme-codenomad" }
+
+[patch.crates-io]
+wgpu-hal = { path = ".prototype-deps/rune/vendor/wgpu-hal" }
+winit = { path = ".prototype-deps/rune/vendor/winit" }
+parley_engine = { path = ".prototype-deps/rune/vendor/parley_engine" }
+accesskit_windows = { path = ".prototype-deps/rune/vendor/accesskit_windows" }
+accesskit_macos = { path = ".prototype-deps/rune/vendor/accesskit_macos" }
+sctk-adwaita = { path = ".prototype-deps/rune/vendor/sctk-adwaita" }
+
+[profile.dev]
+debug = 0

@@ -1,3 +1,4 @@
+import { runeMessages } from "./rune"
 import { advancedSettingsMessages } from "./advancedSettings"
 import { appMessages } from "./app"
 import { commandMessages } from "./commands"
@@ -29,6 +30,7 @@ import { toolCallMessages } from "./toolCall"
 import { mergeMessageParts } from "../merge"
 
 export const zhHansMessages = mergeMessageParts(
+  runeMessages,
   folderSelectionMessages,
   advancedSettingsMessages,
   loadingScreenMessages,

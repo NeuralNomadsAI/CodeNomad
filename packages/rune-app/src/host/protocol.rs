@@ -1,0 +1,161 @@
+//! The existing desktop stdout/stdin protocol, with bounded passive readers.
+use serde_json::{Value, json};
+use std::{
+    io::{self, BufRead},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
+pub(super) const MAX_LINE: usize = 1024 * 1024;
+pub(super) const SHUTDOWN: &[u8] = b"codenomad:shutdown\n";
+pub(super) enum Line {
+    Token(String),
+    Ready(String),
+    Native {
+        response: String,
+        expires: Instant,
+        deadline: u64,
+    },
+    Shutdown(bool),
+    Diagnostic,
+}
+pub(super) fn classify(line: &str) -> Line {
+    if let Some(token) = line.strip_prefix("CODENOMAD_BOOTSTRAP_TOKEN:") {
+        return Line::Token(token.trim().into());
+    }
+    if let Some(raw) = line.strip_prefix("CODENOMAD_NATIVE_REQUEST:") {
+        let Ok(request) = serde_json::from_str::<Value>(raw) else {
+            return Line::Diagnostic;
+        };
+        let Some(id) = request["id"]
+            .as_str()
+            .filter(|s| !s.is_empty() && s.len() <= 128)
+        else {
+            return Line::Diagnostic;
+        };
+        let Some(method) = request["method"]
+            .as_str()
+            .filter(|s| !s.is_empty() && s.len() <= 128)
+        else {
+            return Line::Diagnostic;
+        };
+        let Some(deadline) = request["deadline"].as_u64() else {
+            return Line::Diagnostic;
+        };
+        if request["v"] != 1 {
+            return Line::Diagnostic;
+        }
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(u64::MAX);
+        let expires = Instant::now()
+            .checked_add(Duration::from_millis(deadline.saturating_sub(now)))
+            .unwrap_or_else(Instant::now);
+        let _ = method; // Unsupported capabilities are refused without reflecting their params or text.
+        let message = if now >= deadline {
+            "Native request expired before execution"
+        } else {
+            "Native capability is not implemented by this Rune host"
+        };
+        let response = format!(
+            "CODENOMAD_NATIVE_RESPONSE:{}\n",
+            json!({"v":1,"id":id,"ok":false,"error":{"code":"native_error","message":message}})
+        );
+        return Line::Native {
+            response,
+            expires,
+            deadline,
+        };
+    }
+    if line == "CODENOMAD_SHUTDOWN_STATUS:complete" {
+        return Line::Shutdown(true);
+    }
+    if line == "CODENOMAD_SHUTDOWN_STATUS:incomplete" {
+        return Line::Shutdown(false);
+    }
+    // The reference accepts whitespace between these stdout words and around ':'.
+    if let Some((label, url)) = line.split_once(':') {
+        if label.split_whitespace().eq(["Local", "Connection", "URL"]) {
+            let url = url.trim();
+            if loopback_url(url) {
+                return Line::Ready(url.into());
+            }
+        }
+    }
+    Line::Diagnostic
+}
+pub(super) fn fenced_response(response: String, expires: Instant, deadline: u64) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(u64::MAX);
+    if Instant::now() < expires && now < deadline {
+        return response;
+    }
+    // Match native_request::dispatch's expired error after queueing.
+    let raw = response
+        .trim()
+        .strip_prefix("CODENOMAD_NATIVE_RESPONSE:")
+        .unwrap();
+    let mut value: Value = serde_json::from_str(raw).unwrap();
+    value["error"]["message"] = "Native request expired before execution".into();
+    format!("CODENOMAD_NATIVE_RESPONSE:{value}\n")
+}
+pub(super) fn loopback_url(raw: &str) -> bool {
+    reqwest::Url::parse(raw).is_ok_and(|url| {
+        url.scheme() == "http"
+            && url.host_str() == Some("127.0.0.1")
+            && url.port().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.path() == "/"
+            && url.query().is_none()
+            && url.fragment().is_none()
+    })
+}
+/// Drain a whole oversized line without retaining its tail as another command.
+pub(super) fn pump(
+    mut reader: impl BufRead,
+    mut consume: impl FnMut(Option<&str>),
+) -> io::Result<()> {
+    let mut bytes = Vec::new();
+    loop {
+        bytes.clear();
+        let mut total = 0usize;
+        let mut oversized = false;
+        let mut ended = false;
+        loop {
+            let chunk = reader.fill_buf()?;
+            if chunk.is_empty() {
+                break;
+            }
+            let take = chunk
+                .iter()
+                .position(|b| *b == b'\n')
+                .map_or(chunk.len(), |i| i + 1);
+            ended = chunk.get(take - 1) == Some(&b'\n');
+            total = total.saturating_add(take);
+            if !oversized && total <= MAX_LINE {
+                bytes.extend_from_slice(&chunk[..take]);
+            } else {
+                oversized = true;
+                bytes.clear();
+            }
+            reader.consume(take);
+            if ended {
+                break;
+            }
+        }
+        if total == 0 {
+            return Ok(());
+        }
+        if oversized {
+            consume(None)
+        } else {
+            let line = String::from_utf8_lossy(&bytes);
+            consume(Some(line.trim_end()));
+        }
+        if !ended {
+            return Ok(());
+        }
+    }
+}
