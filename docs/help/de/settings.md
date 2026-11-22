@@ -109,6 +109,8 @@ Browser-/OS-Berechtigung gehört zum Gerät und zur Anwendungs-Origin; eine gesp
 
 Die ungelesene Glocken-/Verlaufszahl, die nur an den Verlauf geleitete Benachrichtigungen zählt, steuert Browser-Favicon-Punkt und natives App-Abzeichen.
 
+Wenn das System Benachrichtigungsaktionen unterstützt, zeigt ein Klick auf die Benachrichtigung die Unterhaltung an, sofern sie noch geöffnet ist. Ob das Fenster in den Vordergrund kommt, hängt von der Desktop-Umgebung ab.
+
 ## Erweiterte Optionen {#advanced}
 
 1. Öffnen Sie **Erweitert**.

@@ -33,6 +33,8 @@ export type ToastPayload = {
   duration?: number
   position?: ToastPosition
   action?: ToastAction
+  /** Session notices can navigate from the OS without adding an in-app button. */
+  systemAction?: ToastAction["onClick"]
   /** Revocation removes this owner's bubble and history entry. */
   signal?: AbortSignal
 }
@@ -383,7 +385,7 @@ function sendSystemNotification(payload: ToastPayload): void {
   if (!untrack(() => preferences().osNotificationsAllowWhenVisible) && focused) return
   const action = payload.action
   void sendOsNotification({ title: payload.title ?? "CodeNomad", body: payload.message, signal: payload.signal,
-    onClick: action ? () => runToastAction(action) : undefined }).catch((error) => {
+    onClick: payload.systemAction ?? (action ? () => runToastAction(action) : undefined) }).catch((error) => {
     console.warn("[notifications] failed to send system notification", error)
   })
 }

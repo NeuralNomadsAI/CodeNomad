@@ -17,6 +17,8 @@ import { SettingsScreen } from "../../../src/components/settings-screen"
 import { openSettings } from "../../../src/stores/settings-screen"
 import { activeAppTab, attachInstanceTab, selectInstanceTab } from "../../../src/stores/app-tabs"
 import { setActiveSessionId } from "../../../src/stores/session-selection-state"
+import { updateMissionProjectView } from "../../../src/stores/mission-view-state"
+import { getSessionSurface } from "../../../src/stores/session-surface"
 import "../../../src/stores/sessions"
 import { applyUiSettings } from "./ui-settings"
 import "../../../src/index.css"
@@ -165,5 +167,7 @@ let retainedAction: any
     next.delete(`${owner}~same`)
     return next
   }),
-  selected: () => ({ instance: activeInstanceId(), sessionA: activeSessionId().get("A~same"), sessionB: activeSessionId().get("B~same") }),
+  openMissionReader: (instanceId: string) => updateMissionProjectView(instanceId, { reader: { missionId: "mission", kind: "report", itemId: "report", instanceId } as any }),
+  surface: (instanceId: string) => getSessionSurface({ instanceId, sessionId: activeSessionId().get(instanceId) ?? null }).kind,
+  selected: () => ({ instance: activeInstanceId(), sessionA: activeSessionId().get("A~same"), sessionB: activeSessionId().get("B~same"), sessionLocal: activeSessionId().get("same") }),
 }

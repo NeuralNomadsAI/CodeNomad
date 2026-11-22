@@ -34,6 +34,7 @@ mod native_request;
 mod native_service_start;
 mod notification_badge;
 mod notification_badge_lifetime;
+mod notification_click;
 mod preferences_window;
 mod profile_selection_dialog;
 mod profile_transition;
@@ -1637,7 +1638,7 @@ fn update_fullscreen_shortcut(app: &AppHandle) {
 }
 
 #[cfg(windows)]
-fn set_windows_app_user_model_id(identifier: &str) {
+fn set_windows_app_user_model_id(identifier: &str) -> bool {
     let app_id: Vec<u16> = OsStr::new(identifier)
         .encode_wide()
         .chain(iter::once(0))
@@ -1647,11 +1648,9 @@ fn set_windows_app_user_model_id(identifier: &str) {
     if result < 0 {
         eprintln!("[tauri] failed to set AppUserModelID: {result}");
     }
-    windows_notification_identity::register(identifier);
+    let registered = windows_notification_identity::register(identifier);
+    result >= 0 && registered
 }
-
-#[cfg(not(windows))]
-fn set_windows_app_user_model_id(_identifier: &str) {}
 
 #[cfg(windows)]
 fn configure_developer_webview(
@@ -1955,7 +1954,13 @@ fn main() {
     let browser_controller = browser_controller::BrowserController::new(
         setup_scope.webview_data_directory.join("browser"),
     );
-    desktop_updater::register(tauri::Builder::default(), context.config())
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.append_invoke_initialization_script(
+        "window.__CODENOMAD_NOTIFICATION_PERMISSION__ = true;",
+    );
+    desktop_updater::register(builder, context.config())
+        .append_invoke_initialization_script("window.__CODENOMAD_NOTIFICATION_ACTIONS__ = true;")
         .plugin(single_instance)
         .plugin(tauri_plugin_dialog::init())
         // Opens links outside Linux (external_open). The renderer's own click
@@ -1992,6 +1997,7 @@ fn main() {
         ))
         .manage(local_windows::LocalWindows::default())
         .manage(notification_badge::NotificationBadge::default())
+        .manage(notification_click::NotificationClicks::default())
         .manage(window_constraints::WindowConstraints::default())
         .manage(preferences_window::PreferencesWindow::default())
         .manage(data_profile_cleanup::CleanupContext::new(
@@ -2058,6 +2064,8 @@ fn main() {
         })
         .on_page_load(|webview, payload| {
             if payload.event() == PageLoadEvent::Started {
+                webview.app_handle().state::<notification_click::NotificationClicks>()
+                    .forget_window(webview.label());
                 if !webview.label().starts_with("remote-") {
                     webview.app_handle().state::<device_speech::DeviceSpeech>().revoke(Some(webview.label()));
                 }
@@ -2108,10 +2116,10 @@ fn main() {
                 .set_host(&badge_host);
             app.state::<remote_dictation::RemoteDictation>()
                 .set_host(&badge_host);
+            notification_click::install(&badge_host);
             *setup_notification_badge_host
                 .lock()
                 .unwrap_or_else(|e| e.into_inner()) = Some(badge_host);
-            set_windows_app_user_model_id(&setup_scope.identifier);
             app.state::<AppState>().developer_mode.prepare_profile()?;
             eprintln!(
                 "[tauri-startup] in-place updates supported on this installation: {}",
@@ -2157,6 +2165,8 @@ fn main() {
             wake_lock_start,
             wake_lock_stop,
             notification_badge::notification_badge_set,
+            notification_click::notification_permission,
+            notification_click::notification_show,
             needs_local_certificate_install,
             preferences_window::open_preferences_window,
             preferences_window::preferences_window_ready,
@@ -2494,6 +2504,7 @@ fn main() {
                 event: tauri::WindowEvent::Destroyed,
                 ..
             } => {
+                app_handle.state::<notification_click::NotificationClicks>().forget_window(&label);
                 if remote_dictation::is_sheet(&label) {
                     remote_dictation::revoke(&app_handle, Some(&label));
                     remote_dictation::retired(&app_handle, &label);
@@ -3060,7 +3071,9 @@ mod menu_tests {
                 "notification:allow-request-permission",
                 "notification:allow-notify",
                 "allow-notification-badge-set",
-                "allow-client-state-renderer-flushed"
+                "allow-client-state-renderer-flushed",
+                "allow-notification-permission",
+                "allow-notification-show"
             ])
         );
 

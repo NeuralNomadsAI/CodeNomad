@@ -567,6 +567,7 @@ version = "1.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "block2",
  "cc",
  "dirs 5.0.1",
  "fs2",
@@ -576,6 +577,8 @@ dependencies = [
  "keepawake",
  "libc",
  "objc2",
+ "objc2-foundation",
+ "objc2-user-notifications",
  "objc2-web-kit",
  "open",
  "parking_lot",
@@ -604,8 +607,10 @@ dependencies = [
  "webkit2gtk",
  "webview2-com",
  "which",
+ "windows",
  "windows-core",
  "windows-sys 0.59.0",
+ "zbus",
 ]
 
 [[package]]
@@ -3041,6 +3046,8 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9df9128cbbfef73cda168416ccf7f837b62737d748333bfe9ab71c245d76613e"
 dependencies = [
+ "bitflags 2.11.0",
+ "block2",
  "objc2",
  "objc2-foundation",
 ]
