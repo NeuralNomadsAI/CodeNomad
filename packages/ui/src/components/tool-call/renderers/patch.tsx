@@ -3,6 +3,7 @@ import type { ToolRenderer } from "../types"
 import { extractDiffPayload, getRelativePath, getToolName, hasVisibleText, isToolStateCompleted, readToolStatePayload } from "../utils"
 import { applyPatchRenderer } from "./apply-patch"
 import { getApplyPatchFiles } from "./apply-patch-data"
+import { getDiffToolSearchText } from "../search-text"
 
 function hasMultiplePatchFiles(state: ToolState): boolean {
   return getApplyPatchFiles(readToolStatePayload(state).metadata).length > 1
@@ -10,7 +11,7 @@ function hasMultiplePatchFiles(state: ToolState): boolean {
 
 export const patchRenderer: ToolRenderer = {
   tools: ["patch"],
-  getSearchText: applyPatchRenderer.getSearchText,
+  getSearchText: getDiffToolSearchText,
   getAction: applyPatchRenderer.getAction,
   getTitle(context) {
     const state = context.toolState()

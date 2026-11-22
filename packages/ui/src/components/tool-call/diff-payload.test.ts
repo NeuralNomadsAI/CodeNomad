@@ -3,7 +3,7 @@ import { describe, it } from "node:test"
 
 import type { ToolState } from "../../types/tool-state"
 import { patchRenderer } from "./renderers/patch"
-import type { ToolCallPart, ToolRendererContext } from "./types"
+import type { ToolRendererContext } from "./types"
 import { extractDiffPayload } from "./utils"
 
 const patch = [
@@ -68,16 +68,31 @@ describe("edit tool diff payload", () => {
         ],
       },
       output: "Applied patch to 2 files",
-    } as unknown as ToolState
+    } satisfies ToolState
     it("does not reduce the patch to its first file", () => {
       assert.equal(extractDiffPayload("patch", toolState), null)
     })
 
-    it("copies and indexes all native file diffs", () => {
-      const context = { toolState: () => toolState, toolName: () => "patch" } as ToolRendererContext
-      assert.equal(patchRenderer.getOutputChrome!(context)?.getCopyText?.(), `${patch}\n${otherPatch}`)
-      const values = patchRenderer.getSearchText!({ toolCall: {} as ToolCallPart, toolState, toolName: "patch" })
-      for (const value of ["src/example.ts", "src/other.ts", patch, otherPatch]) assert.ok(values.includes(value))
+    const copyFiles = (files: { file: string; patch: string; status: string }[]) =>
+      patchRenderer.getOutputChrome!({
+        toolState: () => ({ ...toolState, metadata: { files } }),
+        toolName: () => "patch",
+      } as ToolRendererContext)?.getCopyText?.()
+
+    it("copies the operation of hunk-less additions and deletions", () => {
+      const added = "--- new.txt\n+++ new.txt\n"
+      const deleted = "--- old.txt\n+++ old.txt\n"
+      assert.equal(copyFiles([
+        { file: "new.txt", patch: added, status: "added" },
+        { file: "old.txt", patch: deleted, status: "deleted" },
+      ]), `A new.txt\n${added}\nD old.txt\n${deleted}`)
+    })
+
+    it("copies the rename source and destination and keeps same-basename paths distinct", () => {
+      assert.equal(copyFiles([
+        { file: "right/shared.ts", patch, status: "modified" },
+        { file: "left/shared.ts", patch: otherPatch.replaceAll("src/other.ts", "left/shared.ts"), status: "modified" },
+      ]), `R src/example.ts → right/shared.ts\n${patch}\nM left/shared.ts\n${otherPatch.replaceAll("src/other.ts", "left/shared.ts")}`)
     })
   })
 })

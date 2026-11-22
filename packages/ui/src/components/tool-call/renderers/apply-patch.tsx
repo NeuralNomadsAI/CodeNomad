@@ -4,7 +4,8 @@ import { getToolName, isToolStateCompleted, limitToolTitleForRender, readToolSta
 import { buildDiagnosticView, hasDiagnosticMessages, type DiagnosticEntry, type DiagnosticsMap } from "../diagnostics"
 import { DiagnosticsPayloadAccess } from "../diagnostics-section"
 import { getApplyPatchToolSearchText } from "../search-text"
-import { APPLY_PATCH_FILE_RENDER_LIMIT, getApplyPatchCopyAccess, getApplyPatchDiagnosticPaths, getApplyPatchDiff, getApplyPatchFilePath, getApplyPatchFiles, getApplyPatchFilesForRender, getApplyPatchPathLabel, getApplyPatchRenderData, hasApplyPatchCopyText } from "./apply-patch-data"
+import { sessions } from "../../../stores/session-state"
+import { APPLY_PATCH_FILE_RENDER_LIMIT, getApplyPatchCopyAccess, getApplyPatchDiagnosticPaths, getApplyPatchDiff, getApplyPatchFileChange, getApplyPatchFileCopyText, getApplyPatchFilePath, getApplyPatchFiles, getApplyPatchFilesForRender, getApplyPatchRenderData, hasApplyPatchCopyText } from "./apply-patch-data"
 
 function DiagnosticsInline(props: { entries: DiagnosticEntry[]; label: string; t: (key: string, params?: Record<string, unknown>) => string }) {
   return (
@@ -51,24 +52,26 @@ export const applyPatchRenderer: ToolRenderer = {
       ? t(count === 1 ? "toolCall.applyPatch.title.withFileCount.one" : "toolCall.applyPatch.title.withFileCount.other", { tool, count })
       : tool
   },
-  getOutputChrome({ toolState }) {
+  getOutputChrome({ toolState, instanceId, sessionId }) {
     const state = toolState()
     if (!state || state.status === "pending") return undefined
 
     const payload = readToolStatePayload(state)
     const files = getApplyPatchFiles(payload.metadata)
     const fallback = isToolStateCompleted(state) && typeof state.output === "string" && state.output.length > 0 ? state.output : null
-    const access = getApplyPatchCopyAccess(files, fallback)
+    const directory = sessions().get(instanceId)?.get(sessionId)?.location?.directory
+    const access = getApplyPatchCopyAccess(files, fallback, directory)
     if (!access) return undefined
     return access.language === "diff"
       ? { ...access, suppressInnerHeader: false }
       : { ...access, wrapToggle: true, suppressInnerHeader: true }
   },
-  renderBody({ toolState, renderDiff, renderMarkdown, t }) {
+  renderBody({ toolState, renderDiff, renderMarkdown, instanceId, sessionId, t }) {
     const state = toolState()
     if (!state || state.status === "pending") return null
 
     const payload = readToolStatePayload(state)
+    const directory = sessions().get(instanceId)?.get(sessionId)?.location?.directory
     const diagnosticsMap = createMemo(() => {
       const value = (payload.metadata as any).diagnostics
       return value && typeof value === "object" ? (value as DiagnosticsMap) : {}
@@ -124,9 +127,9 @@ export const applyPatchRenderer: ToolRenderer = {
           {(renderedFile, index) => {
             const file = renderedFile.file
             const filePath = getApplyPatchFilePath(file) ?? file.relativePath
-            const labelBase = file.relativePath || filePath || t("toolCall.applyPatch.fileFallback", { number: index() + 1 })
-            const label = getApplyPatchPathLabel(labelBase)
-            const fullDiff = getApplyPatchDiff(file)
+            const change = getApplyPatchFileChange(file, directory)
+            const path = change.path || t("toolCall.applyPatch.fileFallback", { number: index() + 1 })
+            const label = limitToolTitleForRender(t(change.status ? `toolCall.applyPatch.${change.status}` : "toolCall.diff.label.withPath", { path }))
             const diffText = renderedFile.diffText
             const entries = createMemo(() => diagnosticViews()[index()]?.entries ?? [])
 
@@ -134,15 +137,16 @@ export const applyPatchRenderer: ToolRenderer = {
               <div class="tool-call-apply-patch-file">
                 <Show when={diffText.trim().length > 0}>
                   {renderDiff(
-                    { diffText, copyText: fullDiff, filePath },
+                    { diffText, copyText: getApplyPatchDiff(file), filePath },
                     {
-                      label: limitToolTitleForRender(t("toolCall.diff.label.withPath", { path: label })),
+                      label,
+                      getCopyText: () => getApplyPatchFileCopyText(file, directory),
                       cacheKey: `apply_patch:${index()}`,
                       renderLimit: renderedFile.renderLimit,
                     },
                   )}
                 </Show>
-                <DiagnosticsInline entries={entries()} label={label} t={t} />
+                <DiagnosticsInline entries={entries()} label={limitToolTitleForRender(path)} t={t} />
               </div>
             )
           }}

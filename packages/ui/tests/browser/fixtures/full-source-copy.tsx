@@ -29,10 +29,15 @@ const textParts = Array.from({ length: 1237 }, (_, index) => ({
 }))
 const input = { filePath, payload: `INPUT-START ${"Untruncated input 完整 ".repeat(1200)} INPUT-END`, nested: { retained: true } }
 const output = "Distinct output: this is not the tool input"
-const patchFiles = ["first", "second"].map((name) => ({
-  file: `src/${name}.ts`,
-  patch: `--- src/${name}.ts\n+++ src/${name}.ts\n@@ -1,1 +1,1 @@\n-before\n+${name}After\n`,
-  additions: 1, deletions: 1, status: "modified",
+const patchFiles = [
+  { file: "new.txt", source: "new.txt", status: "added" },
+  { file: "old.txt", source: "old.txt", status: "deleted" },
+  { file: "right/shared.ts", source: "old/previous.ts", status: "modified", addition: "renamedAfter" },
+  { file: "left/shared.ts", source: "left/shared.ts", status: "modified", addition: "modifiedAfter" },
+].map(({ file, source, status, addition }) => ({
+  file, status, additions: Number(Boolean(addition)), deletions: Number(Boolean(addition)),
+  patch: `Index: /fixture/${source}\n===================================================================\n--- /fixture/${source}\n+++ /fixture/${source}\n`
+    + (addition ? `@@ -1,1 +1,1 @@\n-before\n+${addition}\n` : ""),
 }))
 const name = scenario === "patch" ? "patch" : scenario === "todo" ? "todowrite" : scenario === "error" || scenario === "input" ? "read" : "edit"
 const tool = {
@@ -41,7 +46,7 @@ const tool = {
     ? { status: "error", input: { filePath }, error: { type: "unknown", message: error } }
     : { status: "completed", input: scenario === "patch" ? {} : scenario === "input" ? input : { filePath },
         metadata: scenario === "patch" ? { files: patchFiles } : scenario === "todo" ? { todos } : scenario === "input" ? {} : { diagnostics },
-        content: [{ type: "text", text: scenario === "patch" ? "Applied patch to 2 files" : scenario === "input" ? output : "Tool completed" }] },
+        content: [{ type: "text", text: scenario === "patch" ? "Success. Updated the following files:\nA new.txt\nD old.txt\nM right/shared.ts\nM left/shared.ts" : scenario === "input" ? output : "Tool completed" }] },
 }
 // A tool inside the omitted range proves derived projections follow the reveal.
 const hiddenTool = { id: "hidden-range-tool", type: "tool", name: "read", time: { created: 1, completed: 2 },

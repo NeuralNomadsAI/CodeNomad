@@ -1,5 +1,4 @@
 import type { ToolSearchTextContext } from "./types"
-import { getApplyPatchFilePath, getApplyPatchFiles } from "./renderers/apply-patch-data"
 import { getQuestionReceipts } from "./renderers/question-data"
 import {
   formatUnknown,
@@ -105,16 +104,18 @@ export function getDiffToolSearchText(context: ToolSearchTextContext): string[] 
 
 export function getApplyPatchToolSearchText(context: ToolSearchTextContext): string[] {
   const values = getDiffToolSearchText(context)
-  const { metadata } = readToolStatePayload(context.toolState)
+  const { metadata, output } = readToolStatePayload(context.toolState)
+  const files = Array.isArray((metadata as any).files) ? ((metadata as any).files as any[]) : []
 
-  for (const file of getApplyPatchFiles(metadata)) {
-    appendString(values, getApplyPatchFilePath(file))
+  for (const file of files) {
+    appendString(values, file?.filePath)
     appendString(values, file?.relativePath)
     appendString(values, file?.diff)
     appendString(values, file?.patch)
   }
 
-  appendFormatted(values, metadata.diagnostics)
+  appendFormatted(values, (metadata as any).diagnostics)
+  appendFormatted(values, output)
   return values
 }
 

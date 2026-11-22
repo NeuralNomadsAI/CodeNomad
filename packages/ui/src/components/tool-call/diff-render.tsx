@@ -140,7 +140,7 @@ export function createDiffContentRenderer(params: {
         : params.t("toolCall.diff.enableWordWrap")
     const copyPatchTitle = () => params.t("toolCall.diff.copyPatch")
     const copyFullDiff = async () => {
-      const copiedDiff = payload.copyText ?? payload.diffText
+      const copiedDiff = options?.getCopyText?.() ?? payload.copyText ?? payload.diffText
       if (await copyToClipboard(copiedDiff)) options?.onFullDiffAccess?.(copiedDiff)
     }
 
