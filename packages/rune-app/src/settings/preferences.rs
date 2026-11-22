@@ -155,7 +155,7 @@ impl Preferences {
 
     pub fn locale(&self) -> Option<&'static str> {
         let id = self.saved(Owner::Config)?["settings"]["locale"].as_str()?;
-        Some(rune_theme_codenomad::catalogue::canonical_locale(id))
+        rune_theme_codenomad::catalogue::supported_locale(id)
     }
 
     pub fn locale_display(&self) -> Option<&'static str> {
@@ -312,6 +312,14 @@ impl Preferences {
         self.state.snapshot = Some(
             json!({"appearancePreferences":{"mode":"system","light":{"scheme":{"id":"light"}},"dark":{"scheme":{"id":"classic"}}}}),
         );
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture_mode(&mut self, mode: &'static str) {
+        if let Some(state) = &mut self.state.snapshot {
+            state["appearancePreferences"]["mode"] = json!(mode);
+            self.revision += 1;
+        }
     }
 }
 

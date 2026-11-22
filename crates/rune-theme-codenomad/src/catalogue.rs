@@ -19,7 +19,7 @@ pub fn with_locale<T>(locale: &'static str, render: impl FnOnce() -> T) -> T {
     render()
 }
 
-fn index(locale: &str) -> usize {
+fn matching_index(locale: &str) -> Option<usize> {
     let normalized = locale.trim().replace('_', "-").to_ascii_lowercase();
     SOURCES
         .iter()
@@ -34,12 +34,14 @@ fn index(locale: &str) -> usize {
                 .then(|| SOURCES.iter().position(|(tag, _, _)| *tag == "zh-Hans"))
                 .flatten()
         })
-        .unwrap_or_else(|| {
-            SOURCES
-                .iter()
-                .position(|(tag, _, _)| *tag == "en")
-                .expect("English catalogue")
-        })
+}
+fn index(locale: &str) -> usize {
+    matching_index(locale).unwrap_or_else(|| {
+        SOURCES
+            .iter()
+            .position(|(tag, _, _)| *tag == "en")
+            .expect("English catalogue")
+    })
 }
 fn messages(i: usize) -> &'static Map<String, Value> {
     static CATALOGUES: [OnceLock<Map<String, Value>>; SOURCES.len()] =
@@ -55,6 +57,9 @@ pub fn direction(locale: &str) -> &'static str {
 }
 pub fn canonical_locale(locale: &str) -> &'static str {
     SOURCES[index(locale)].0
+}
+pub fn supported_locale(locale: &str) -> Option<&'static str> {
+    matching_index(locale).map(|i| SOURCES[i].0)
 }
 pub fn message(locale: &str, key: &str) -> Option<&'static str> {
     messages(index(locale))

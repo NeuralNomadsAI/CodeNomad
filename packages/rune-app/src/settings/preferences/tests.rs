@@ -8,6 +8,48 @@ use tokio::{
 };
 
 #[test]
+fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
+    platform::block_on(async {
+        let (listener, mut fixture) = fixture().await;
+        let backend = fixture.backend.take().unwrap();
+        let mut root = crate::init();
+        let (events, incoming) = bounded(4);
+        root.incoming = Some(incoming);
+        assert!(root.screen.launcher().is_none());
+        assert!(
+            events
+                .try_send(crate::transport::Event::Connected(backend))
+                .is_ok()
+        );
+        assert!(crate::poll_chat(&mut root, 4));
+        super::super::poll(&mut root);
+        for _ in 0..2 {
+            let read = request(&listener).await;
+            let data = match read.first.as_str() {
+                "GET /api/storage/config/ui?authoritative=1 HTTP/1.1" => {
+                    json!({"settings":{"locale":"fr"}})
+                }
+                "GET /api/storage/state/ui?authoritative=1 HTTP/1.1" => {
+                    json!({"appearancePreferences":{"mode":"dark"}})
+                }
+                other => panic!("unexpected direct chat request: {other}"),
+            };
+            read.reply(200, data).await;
+        }
+        wait_until(|| {
+            super::super::poll(&mut root);
+            let prefs = root.settings.shared.borrow();
+            prefs.locale_ready() && prefs.palette_ready()
+        })
+        .await;
+        let prefs = root.settings.shared.borrow();
+        assert_eq!(prefs.locale(), Some("fr"));
+        assert_eq!(prefs.mode(), "dark");
+        assert!(prefs.stream.is_none(), "use the conversation event stream");
+    });
+}
+
+#[test]
 fn settings_uses_separate_owners_and_reads_back_an_uncertain_write_once() {
     platform::block_on(async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -110,6 +152,12 @@ fn settings_mode_patch_leaves_defaults_and_legacy_slots_alone() {
             "unreadable configuration does not disable appearance"
         );
         assert!(!prefs.locale_ready());
+        prefs.config.snapshot = Some(json!({"settings":{"locale":"zz-ZZ"}}));
+        assert_eq!(
+            prefs.locale(),
+            None,
+            "caller falls back to the system locale"
+        );
         prefs.config.snapshot = Some(json!({"theme":"dark","settings":{"locale":"de-DE"}}));
         assert_eq!(prefs.locale(), Some("de"));
         assert_eq!(prefs.palette(true).map(|p| p.id), Some("classic"));
@@ -210,7 +258,7 @@ fn settings_sse_refreshes_only_the_invalidated_owner() {
             "opening revalidates both owners"
         );
         prefs.main_wake = Some(wake);
-        stream.socket.write_all(b"data: {\"type\":\"storage.configChanged\",\"owner\":\"ui\",\"value\":{\"settings\":{\"locale\":\"he\"}}}\n\n").await.unwrap();
+        stream.socket.write_all(b"data: {\"type\":\"storage.configChanged\",\"owner\":\"*\",\"value\":{\"ui\":{\"settings\":{\"locale\":\"he\"}}}}\n\n").await.unwrap();
         timeout(Duration::from_secs(3), receiver.recv())
             .await
             .unwrap()
@@ -228,6 +276,37 @@ fn settings_sse_refreshes_only_the_invalidated_owner() {
             .unwrap();
         assert!(prefs.poll());
         assert_eq!(prefs.locale(), Some("he"));
+        assert!(
+            timeout(Duration::from_millis(60), listener.accept())
+                .await
+                .is_err()
+        );
+
+        stream
+            .socket
+            .write_all(
+                b"data: {\"type\":\"storage.stateChanged\",\"owner\":\"*\",\"value\":{}}\n\n",
+            )
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(3), receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(prefs.poll());
+        let read = request(&listener).await;
+        assert_eq!(
+            read.first,
+            "GET /api/storage/state/ui?authoritative=1 HTTP/1.1"
+        );
+        read.reply(200, json!({"appearancePreferences":{"mode":"dark"}}))
+            .await;
+        timeout(Duration::from_secs(3), receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(prefs.poll());
+        assert_eq!(prefs.mode(), "dark");
         assert!(
             timeout(Duration::from_millis(60), listener.accept())
                 .await
