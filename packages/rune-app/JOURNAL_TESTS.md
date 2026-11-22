@@ -29,7 +29,7 @@ Les essais automatiques utilisent des profils `trial-*`, des projets synthétiqu
 | Organisation par domaine et exclusion des sondes du produit | Builds natif et WASM sans feature, puis inspection réelle du lanceur | Réussi ; `.tmp-rune-product-native.log`, `.tmp-rune-product-wasm.log` et `target/rune-production/production-report.json` |
 | Retrait d'une permission ou question pendant la saisie | Runtime Rune, snapshot autoritaire, édition en attente et réconciliation du focus | 2 tests réussis ; `.tmp-rune-pending-edit.log` |
 | Coquille web connectée, cookies, refus 401, deux pages de sessions, historique exact, session vide puis retour et EventSource | Bundle produit WASM, serveur Rust réel et OpenCode simulé, six contextes clairs/sombres bureau/tablette/téléphone | Réussi, 24 listes, aucune création ni envoi, arrêt serveur zéro ; `target/rune-web-tests/launcher-54c0e861-176c-4317-96bb-098afd95965f/proof.json` et `browser/smoke-report.json` |
-| CI macOS ARM64 : générations, tests natifs, builds produit/qualification natif et WASM, isolation et captures offscreen | Runner GitHub sur `094409452` | Réussi ; [job 137056373946](https://github.com/NeuralNomadsAI/CodeNomad/actions/runs/44972911822/job/137056373946) ; Windows/Linux en attente |
+| CI Windows/macOS/Linux : générations, tests natifs, builds produit/qualification natif et WASM, isolation et captures offscreen ; parité Solid du contrôle de fermeture sous Windows | Runners GitHub sur `094409452` | Trois jobs réussis ; [campagne 44972911822](https://github.com/NeuralNomadsAI/CodeNomad/actions/runs/44972911822) |
 | Sonde de latence : clipping vertical/horizontal, marqueur complet, encre effectivement peinte puis effacée | Runtime Rune et peinture CPU réelle, option `test-support` | 1 test réussi ; `.tmp-rune-latency-paint-test.log` |
 | Préflight du banc TUI existant, Rune et TUI, fournisseur local avec vrai OpenCode 2.3.2 privé | Un tour, une conversation, un tour d'historique ; build Rune de développement | Dix marqueurs sur dix et cinq touches par client ; `scripts/perf/run/perf-ItYdAZ/results/` ; présence plugin fermée et serveur Rust arrêté proprement |
 
@@ -108,7 +108,7 @@ La qualification actuelle du portage s'appuie sur les exécutions du tableau et 
 
 ## Points à vérifier
 
-- CI Windows et Linux exécutée, avec leurs captures et résultats ; macOS ARM64 qualifié ci-dessus.
+- CI des derniers changements de la sonde CPU, avec ses résultats et artefacts ; la base des trois plateformes est qualifiée ci-dessus.
 - Raccord du collecteur de latence aux marqueurs du banc TUI, puis mesures comparables.
 - Parité visuelle, accessibilité et interactions des écrans et composants du tableau Solid/Rune.
 - Accès web HTTPS appairé, puis écriture et commandes d'agent par les véritables contrats serveur.

@@ -33,4 +33,11 @@ La matrice CI doit être exécutée sur ses trois runners pour qualifier les dé
 
 Le banc `scripts/perf/bench.mjs` définit le protocole : marqueurs `MARKER` de `scripts/perf/lib.mjs`, dates de réception et d'affichage, touches pendant les flux concurrents, contrôle des marqueurs attendus et mesures de p95. `perf-check.mjs` exige trois tours distincts aux niveaux 8 et 32 ; `budget-report.mjs` rapporte les ratios CodeNomad/TUI avec le plancher commun de 50 ms et les budgets existants.
 
-Le raccord Rune à ce collecteur reste à qualifier : il doit observer les marqueurs effectivement affichés et les touches traitées pendant un flux réel, sur une même horloge de mesure, puis produire les mêmes échantillons que le pilote TUI. Les durées du moteur offscreen à horloge virtuelle servent à analyser son travail de rendu. La qualification de latence attend le raccord et son exécution face à la TUI ; les rapports de cette catégorie restent à produire.
+L'adaptateur `scripts/perf/rune.mjs` pilote la sonde `tests/probes/latency.rs`, compilée avec `test-support`. Elle utilise le vrai état et le rendu CPU Rune, les clips et positions des glyphes, puis vérifie l'encre contre un tampon sans glyphes avant horodatage monotone. La mesure inclut cette validation et porte sur le tampon CPU. Le pilote corrèle les horloges et réutilise les mêmes marqueurs, touches et budgets que la TUI.
+
+Un préflight L1 d'un tour qualifie le parcours. L'admission exige des builds optimisés, trois tours L8/L32 et le contrôle des budgets, avec le vrai OpenCode privé et son fournisseur local. Le plugin d'historique utilise l'installateur du produit dans le seul profil du banc.
+
+```powershell
+node scripts/perf/bench.mjs $env:OPENCODE_TEST_BINARY --mode latency --rune-only --rune $env:RUNE_CLIENT_EXE --rune-server $env:RUNE_SERVER_EXE --rounds 3 --levels 8,32
+node scripts/perf/perf-check.mjs <results> --client rune-cpu --latency-only --summary <rapport>
+```
