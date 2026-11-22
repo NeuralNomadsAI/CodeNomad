@@ -8,6 +8,7 @@ pub mod agent_api;
 pub mod backend;
 pub mod catalog;
 pub mod content;
+pub mod files;
 pub mod history;
 pub mod http;
 pub mod recovery;
@@ -34,6 +35,8 @@ pub struct Message {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod catalog_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod files_tests;
 #[cfg(test)]
 mod fragment_tests;
 #[cfg(test)]

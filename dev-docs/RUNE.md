@@ -43,6 +43,7 @@ When a whole module reaches parity, its Solid and Tauri version is deleted on `f
 | Solid / Tauri | Rune | State |
 |---|---|---|
 | HTTP, SSE, pagination and recovery | CodeNomad API and contract fixtures | `crates/codenomad-client`: native contracts, 606-row recovery and authenticated browser session reading qualified |
+| Workspace file listing and preview API | Solid `api-client.ts`, shared server Files routes | `crates/codenomad-client/files`: typed bounded reads, identities and bytes qualified through HTTP fixtures and Windows shared Rust with private files; browser execution and interface qualification pending |
 | Tokens and typography | `packages/ui/src/styles/tokens.css` | `crates/rune-theme-codenomad`: generated values; component parity qualified individually |
 | Text | Ten UI catalogues | Generated catalogues, fallback and Hebrew direction qualified |
 | Window close | `components/window-close-button.tsx` | `components/window_close_button.rs`: six Windows light/dark pairs, accessibility and interaction qualified at scale 1 |
@@ -65,6 +66,8 @@ Each project tab owns its server record and live conversation state. Drafts rema
 Active and cached tabs share the same guard for pending replies and edited permission/question forms. Closing an inactive tab preserves the active reader and composer. Closed drafts transfer after validated session binding; independent edits and undelivered sessions retain their ownership. Tab capacity is checked before project creation.
 
 The isolated 12px SVG stroke raster discrepancy is tracked in [Rune issue 1346](https://github.com/anomalyco/rune/issues/1346), with a public API reproduction and Chromium cross-prediction controls. Component pixel budgets require separate qualification.
+
+Lazy and empty folders require branch semantics independent of loaded children. The pinned Rune Tree projects these nodes as leaves despite the directory flag and stored expansion bit; public-model, keyboard and accessibility reproductions are tracked in [Rune issue 1348](https://github.com/anomalyco/rune/issues/1348).
 
 The component index is `rune-components.generated.json`; full sheets and captures are generated under ignored `target/`. Install locked npm dependencies before generating checker-derived sheets. Each qualified component requires a gallery, explicit light/dark pixel thresholds, accessibility and simulated interactions, then two independent blind reviews. Solid/Tauri modules are removed only at complete qualified parity. Integration uses short branches and merge commits into `feat/rust-server`; its synchronization owns merges from `dev`.
 
