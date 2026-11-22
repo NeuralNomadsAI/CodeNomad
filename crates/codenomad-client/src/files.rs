@@ -61,7 +61,7 @@ impl Backend {
             .map(|row| {
                 let name = string(row, "name")?;
                 let key = string(row, "path")?;
-                relative(key, false)?;
+                relative(key, false, directory)?;
                 let (parent, leaf) = key.rsplit_once('/').unwrap_or((".", key));
                 if parent != path || leaf != name || !seen.insert(key) {
                     return Err("foreign or duplicate file entry".into());
@@ -134,17 +134,18 @@ impl Backend {
         if !valid_id(&self.workspace) || !crate::absolute_server_path(directory) {
             return Err("invalid file scope".into());
         }
-        relative(path, listing)
+        relative(path, listing, directory)
     }
 }
 // The listing contract emits relative slash paths. The server owns OS-specific admission.
-fn relative(path: &str, listing: bool) -> Result<()> {
+fn relative(path: &str, listing: bool, directory: &str) -> Result<()> {
     if listing && path == "." {
         return Ok(());
     }
     if path.is_empty()
         || path.len() > 4096
-        || crate::absolute_server_path(path)
+        || path.starts_with('/')
+        || !directory.starts_with('/') && crate::absolute_server_path(path)
         || path.contains(['\\', '\0'])
         || path.split('/').any(|part| matches!(part, "" | "." | ".."))
     {

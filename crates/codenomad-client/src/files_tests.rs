@@ -138,6 +138,37 @@ fn files_wire_encodes_server_paths_and_retains_metadata() {
 }
 
 #[test]
+fn posix_drive_like_names_remain_relative_through_listing_and_preview() {
+    run(async {
+        let mut body = preview(b"POSIX bytes");
+        body["relativePath"] = json!("a:/file");
+        let server = Server::json(vec![
+            json!([{"name":"a:","path":"a:","type":"directory"}]),
+            json!([{"name":"file","path":"a:/file","type":"file"}]),
+            body,
+        ]);
+        assert_eq!(
+            server.backend.files("/trial", ".").await.unwrap()[0].path,
+            "a:"
+        );
+        assert_eq!(
+            server.backend.files("/trial", "a:").await.unwrap()[0].path,
+            "a:/file"
+        );
+        assert_eq!(
+            server
+                .backend
+                .preview_file("/trial", "a:/file")
+                .await
+                .unwrap()
+                .bytes,
+            b"POSIX bytes"
+        );
+        assert_eq!(server.requests.lock().unwrap().len(), 3);
+    });
+}
+
+#[test]
 fn previews_preserve_unicode_binary_and_the_full_server_file_bound() {
     run(async {
         let unicode = "été\n日本語🦀".as_bytes();
@@ -244,7 +275,6 @@ fn invalid_scopes_do_not_dispatch_any_http_request() {
         for path in [
             "",
             "/absolute",
-            "D:/absolute",
             "../file",
             "a/../file",
             "a//file",
@@ -255,6 +285,12 @@ fn invalid_scopes_do_not_dispatch_any_http_request() {
             assert!(b.preview_file("/trial", path).await.is_err());
         }
         assert!(b.preview_file("/trial", ".").await.is_err());
+        for directory in ["D:/trial", r"\\server\share\trial"] {
+            for path in ["D:/absolute", "a:/file"] {
+                assert!(b.files(directory, path).await.is_err());
+                assert!(b.preview_file(directory, path).await.is_err());
+            }
+        }
         b.workspace = "foreign/route".into();
         assert!(b.files("/trial", ".").await.is_err());
         assert!(b.preview_file("/trial", "file").await.is_err());
