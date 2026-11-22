@@ -68,10 +68,10 @@ fn remote_input_test_has_a_fixed_action_and_does_not_consult_dictation_engine() 
         }
     }
     assert!(ApiMicrophonePurpose::InputTest.allows_engine(|| panic!("consulted the device choice")));
-    for engine in [Engine::Hex, Engine::System, Engine::Api] {
+    for engine in [Some(Engine::Hex), None, Some(Engine::Api)] {
         assert_eq!(
-            ApiMicrophonePurpose::Dictation.allows_engine(|| engine == Engine::Api),
-            engine == Engine::Api
+            ApiMicrophonePurpose::Dictation.allows_engine(|| engine == Some(Engine::Api)),
+            engine == Some(Engine::Api)
         );
     }
 }

@@ -58,7 +58,7 @@ function fixtureWindow(id: number) {
 function fixture() {
   const opener = fixtureWindow(1)
   const other = fixtureWindow(2)
-  let choice: SpeechEngine = "hex"
+  let choice: SpeechEngine | null = "hex"
   let localUrl: string | null = local
   let stopping = false
   let dialog = fixtureWindow(3)
@@ -109,7 +109,7 @@ function fixture() {
     request: handlers.get("remote-dictation:request")!,
     settle: (event: IpcMainInvokeEvent, value: unknown) => handlers.get("remote-dictation:settle")!(event, value) as Promise<null>,
     speech: handlers.get("device-speech:request")!,
-    choice: (value: SpeechEngine) => { choice = value },
+    choice: (value: SpeechEngine | null) => { choice = value },
     localUrl: (url: string | null) => { localUrl = url },
     shutdown: () => { stopping = true; bridge.revoke() },
     settings: () => settings, revocations, reads: () => reads, actions,
@@ -157,7 +157,7 @@ test("admission requires a focused remote opener, device mode, live local backen
   const f = fixture()
   f.choice("api")
   assert.throws(() => f.request(f.opener.event(), begin), /unavailable/)
-  f.choice("system")
+  f.choice("hex")
   for (const url of [null, "http://127.0.0.1:9948/login", "http://127.0.0.1.example:9948/"]) {
     f.localUrl(url)
     assert.throws(() => f.request(f.opener.event(), begin), /Local CodeNomad is unavailable/)
@@ -166,6 +166,16 @@ test("admission requires a focused remote opener, device mode, live local backen
   assert.throws(() => f.request(f.opener.event(), begin), /Remote dictation is unavailable/)
   f.shutdown()
   assert.throws(() => f.request(f.opener.event(), begin), /shutting down/)
+})
+
+test("an unsupported saved engine cannot open the dictation sheet", () => {
+  const f = fixture()
+  f.choice(null)
+  assert.equal(f.request(f.opener.event(), { action: "read" }), null)
+  assert.throws(() => f.request(f.opener.event(), begin), /Remote dictation is unavailable/)
+  assert.equal(f.dialog().target(), undefined)
+  f.choice("hex")
+  assert.equal(f.request(f.opener.event(), { action: "read" }), "hex")
 })
 
 test("failed remote reuse restores only the unchanged original document and never its cancelled dialog", async () => {
@@ -216,7 +226,7 @@ test("only the exact local dialog can use composer speech or settle bounded text
   assert.deepEqual(f.actions, [], "opening the dialog never starts device speech")
   for (const value of [
     { action: "read" }, { action: "start", locale: begin.locale }, { action: "status", id },
-    { action: "finish", id }, { action: "cancel", id },
+    { action: "finish", id, wav: "UklGRiYAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQIAAAAAAA==" }, { action: "cancel", id },
   ]) f.speech(dialog.event(), value)
   assert.deepEqual(f.actions, ["read", "start", "status", "finish", "cancel"])
   assert.deepEqual(f.bridge.mediaOrigins(dialog.window.webContents, true, true), [url.origin])

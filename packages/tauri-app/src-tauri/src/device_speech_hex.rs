@@ -1,5 +1,5 @@
 use crate::{
-    device_speech::{Control, Hex, Operation, Plan, SpeechError},
+    device_speech::{Control, Driver, Hex, Operation, Plan, SpeechError},
     device_speech_worker::run_worker,
     managed_node::{resolve_bundled_node_binary, resolve_desktop_speech_worker},
 };
@@ -49,15 +49,17 @@ impl HexDriver {
     pub(crate) fn new(root: PathBuf) -> Self {
         Self { root }
     }
+}
 
-    pub(crate) fn capabilities(&self) -> Hex {
+impl Driver for HexDriver {
+    fn capabilities(&self) -> Hex {
         self.run("read", "", None, None, Duration::from_secs(4))
             .ok()
             .and_then(|value| serde_json::from_value(value).ok())
             .unwrap_or(Hex::Unavailable)
     }
 
-    pub(crate) fn prepare(&self, plan: Plan, control: Control) -> Result<(), SpeechError> {
+    fn prepare(&self, plan: Plan, control: Control) -> Result<(), SpeechError> {
         self.run(
             "prepare",
             &plan.id,
@@ -68,8 +70,8 @@ impl HexDriver {
         Ok(())
     }
 
-    pub(crate) fn dictate(&self, control: Control) -> Result<String, SpeechError> {
-        control.progress(Operation::Recording { text: None });
+    fn dictate(&self, control: Control) -> Result<String, SpeechError> {
+        control.progress(Operation::Recording);
         let audio = control.wait_for_audio().ok_or(SpeechError::Failed)?;
         control.progress(Operation::Transcribing);
         self.run(
@@ -83,7 +85,9 @@ impl HexDriver {
         .map(str::to_owned)
         .ok_or(SpeechError::Failed)
     }
+}
 
+impl HexDriver {
     fn run(
         &self,
         action: &str,
@@ -102,7 +106,7 @@ impl HexDriver {
             .arg(arg)
             .env_remove("NODE_OPTIONS")
             .env_remove("NODE_PATH");
-        run_worker(command, input, control, timeout, false)
+        run_worker(command, input, control, timeout)
     }
 }
 

@@ -5,11 +5,15 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { setConversationModeEnabled } from "./conversation-speech.ts"
+import { isConversationModeEnabled, toggleConversationMode } from "./conversation-speech.ts"
 import { sendMessage } from "./session-actions.ts"
 import { handleNativeSessionEvent, handleSessionError } from "./session-events.ts"
 import { clearInstanceDeletedSessionAuthority, sessions, setSessions } from "./session-state.ts"
 import { partHasRenderableText } from "../types/message.ts"
+
+function setConversationModeEnabled(instanceId: string, enabled: boolean) {
+  if (isConversationModeEnabled(instanceId) !== enabled) toggleConversationMode(instanceId)
+}
 
 function session(instanceId: string, id: string): Session {
   return {

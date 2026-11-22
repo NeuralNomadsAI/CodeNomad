@@ -30,7 +30,7 @@ Ce sont des demandes au service configuré, pas une garantie que chaque point d�
 2. Choisissez **Tester l'entrée API**, accordez l’accès au microphone, parlez, puis **Arrêter l'enregistrement**. Vérifiez la transcription reçue.
 3. Choisissez **Tester la lecture** pour entendre l’extrait ; **Arrêter l'extrait** l’arrête.
 
-Le test de lecture utilise immédiatement le mode et le format sélectionnés, mais le point d’accès, la clé, le modèle et la voix viennent des paramètres enregistrés. **Tester l'entrée API** envoie l’audio au fournisseur API configuré, même si Hex ou la reconnaissance système est sélectionné. Aucun prompt de conversation n’est envoyé. Le fournisseur peut facturer ces tests.
+Le test de lecture utilise immédiatement le mode et le format sélectionnés, mais le point d’accès, la clé, le modèle et la voix viennent des paramètres enregistrés. **Tester l'entrée API** envoie l’audio au fournisseur API configuré, quel que soit le moteur de dictée. Aucun prompt de conversation n’est envoyé. Le fournisseur peut facturer ces tests.
 
 ## Dicter un prompt {#dictate}
 
@@ -43,13 +43,11 @@ Si l’API utilise le mode WAV de secours sur Tauri sous Linux, **Dicter** et **
 
 Les enregistrements compressés pour l’API s’arrêtent à la taille maximale et proposent les mêmes choix : **Transcrire** ou **Annuler**.
 
-Avec la reconnaissance système, un aperçu s’affiche pendant que vous parlez. Vous pouvez continuer à modifier le brouillon : seul le texte final peut y être inséré.
-
 ### Choisir un moteur sur ordinateur {#desktop-dictation}
 
 Dans **Préférences → Voix → Dictée** sur le bureau local, sélectionnez **Moteur de dictée sur cet appareil**. Ce choix vaut pour tous les projets sur cet appareil. **Fournisseur API** utilise les réglages du serveur connecté et nécessite un contexte sécurisé pour le microphone.
 
-- La **Reconnaissance système locale** fonctionne dans CodeNomad sans ouvrir le panneau de dictée de l’OS. Elle nécessite un moteur local installé pour la langue de l’application sous Windows ou macOS. Sous Linux, ou si le moteur ou la langue manque, essayez Hex s’il est proposé.
+- Si le moteur enregistré est indisponible, choisissez ici **Hex (local)** s’il est proposé, ou **Fournisseur API**. Sur un Mac Intel ou sous macOS antérieur à la version 15, utilisez **Fournisseur API**.
 - Voix indique ce qui manque à Hex, le volume à télécharger pour chaque composant et le total. Un clic sur **Activer Hex** vérifie et réutilise les fichiers compatibles, télécharge ce qui manque, puis sélectionne Hex dès qu’il est prêt. Suivez la progression dans Voix ; utilisez **Annuler l’activation de Hex** pour arrêter et **Reprendre l’activation de Hex** lorsque l’action est proposée. En cas d’échec ou d’annulation, le moteur précédent reste sélectionné. Rouvrir les préférences, sélectionner **Hex (local)** déjà prêt ou dicter avec ne déclenche aucun téléchargement.
 - Hex est proposé sur les configurations compatibles : Windows x64/arm64, Mac Apple Silicon sous macOS 15 ou plus récent, Linux x64/arm64 avec glibc 2.36 ou plus récente et les bibliothèques requises par Hex. Les Mac Intel et les systèmes Linux avec une glibc plus ancienne ou musl sont incompatibles. Le moteur et les modèles sont séparés de l’installateur CodeNomad ; aucun terminal ni clé API n’est nécessaire.
 

@@ -245,11 +245,11 @@ function Interactive() {
         pause() {}
         load() {}
       }
-      serverApi.synthesizeSpeech = (_input, signal) => {
+      serverApi.synthesizeSpeechStream = (_input, signal) => {
         probe.requested = true
-        signal?.addEventListener("abort", () => { probe.aborted = true }, { once: true })
+        signal.addEventListener("abort", () => { probe.aborted = true }, { once: true })
         // Deliberately return a late successful response despite cancellation.
-        return new Promise(resolve => { probe.release = () => resolve({ audioBase64: "AQI=", mimeType: "audio/mpeg" }) })
+        return new Promise(resolve => { probe.release = () => resolve(new Response(new Uint8Array([1, 2]), { headers: { "content-type": "audio/mpeg" } })) })
       }
       serverApi.fetchSpeechCapabilities = async () => ({
         available: true, supportsTts: true, ttsConfigured: true, supportsStt: true, sttConfigured: true,

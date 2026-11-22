@@ -21,7 +21,6 @@ import { abandonLaunchWindow, acknowledgeLaunchConnection, CONNECT_LAUNCH_TIMEOU
 import { setupCliIPC } from "./ipc"
 import { DeviceSpeech, DeviceSpeechPreference } from "./device-speech"
 import { createHexSpeechDriver } from "./device-speech-hex"
-import { createSystemSpeechDriver } from "./device-speech-system"
 import { setupDeviceSpeechIPC } from "./device-speech-ipc"
 import { setupRemoteDictationIPC } from "./remote-dictation-ipc"
 import { notificationBadgeBitmap, setupNotificationBadgeIPC } from "./notification-badge"
@@ -449,7 +448,6 @@ function runPrimary(firstIntent: LaunchIntent, nativeIdentity: string, artifact:
   const speechPreference = new DeviceSpeechPreference(join(baseUserDataPath, "device-speech", "choice.json"))
   const deviceSpeech = new DeviceSpeech(
     speechPreference,
-    createSystemSpeechDriver(app.isPackaged ? process.resourcesPath : join(app.getAppPath(), "electron", "resources")),
     createHexSpeechDriver(join(
       process.platform === "win32" && process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "CodeNomad") : baseUserDataPath,
       "device-speech",
