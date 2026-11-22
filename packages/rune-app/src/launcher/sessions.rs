@@ -13,6 +13,15 @@ fn cursor_hash(cursor: &str) -> u64 {
 }
 
 impl Launcher {
+    pub(super) fn apply_directory_refresh(&mut self, page: Sessions, selected: Option<&str>) {
+        self.creation_uncertain = false;
+        self.listed_sessions = page.rows.iter().map(|row| row.id.clone()).collect();
+        self.next = None;
+        self.consumed_cursors.clear();
+        // The first folder page cannot decide which linked sessions disappeared.
+        self.apply_passive_listing(page, selected, false);
+    }
+
     pub(super) fn consume_cursor(&mut self, cursor: &str) {
         self.consumed_cursors.insert(cursor_hash(cursor));
     }

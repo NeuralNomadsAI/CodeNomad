@@ -130,11 +130,45 @@ fn the_index_is_read_only_until_a_conversation_can_observe_it() {
     ui.mode = Mode::Changes;
     ui.requests.slot_mut(Lane::Worktrees).dirty = false;
     ui.requests.slot_mut(Lane::Preferences).dirty = false;
+    ui.requests.slot_mut(Lane::Changes).dirty = false;
     statuses(&mut ui, vec![change("a.txt", true, false, 1)]);
     ui.changes.draft = TextEdit::new("commit");
     assert!(ui.can_commit());
     ui.backend.session.clear();
     assert!(!ui.can_change_index() && !ui.can_commit());
+}
+
+#[test]
+fn commit_waits_for_index_display_to_catch_up_after_filesystem_changes() {
+    let mut ui = ui();
+    ui.online = true;
+    ui.shown = true;
+    ui.mode = Mode::Changes;
+    for lane in [Lane::Worktrees, Lane::Preferences, Lane::Changes] {
+        ui.requests.slot_mut(lane).dirty = false;
+    }
+    statuses(&mut ui, vec![change("a.txt", true, false, 1)]);
+    ui.changes.draft = TextEdit::new("commit");
+    assert!(ui.can_commit());
+    ui.filesystem_hint();
+    assert!(!ui.can_commit());
+    ui.passive_due = None;
+    ui.requests.slot_mut(Lane::Changes).dirty = true;
+    assert!(!ui.can_commit());
+    statuses(
+        &mut ui,
+        vec![
+            change("a.txt", true, false, 1),
+            change("b.txt", true, false, 1),
+        ],
+    );
+    ui.requests.slot_mut(Lane::Changes).dirty = false;
+    assert!(ui.can_commit());
+    ui.shown = false;
+    ui.activate(false);
+    ui.activate(true);
+    ui.shown = true;
+    assert!(!ui.can_commit());
 }
 
 #[test]

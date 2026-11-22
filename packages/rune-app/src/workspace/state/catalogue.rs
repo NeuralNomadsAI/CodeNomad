@@ -13,9 +13,13 @@ pub(super) struct Refresh {
 }
 
 impl Refresh {
+    pub(super) fn schedule(&mut self, now: f64) {
+        self.due.get_or_insert(now + 0.1);
+    }
+
     pub(super) fn pause(&mut self, now: f64) {
         if self.request.take().is_some() {
-            self.due.get_or_insert(now + 0.1);
+            self.schedule(now);
         }
     }
 }
@@ -39,7 +43,7 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
                 CatalogueChanges::All => true,
                 CatalogueChanges::Workspaces(ids) => ids.contains(&project.id),
             } {
-                entry.catalogue.due.get_or_insert(now + 0.1);
+                entry.catalogue.schedule(now);
             }
         }
     }
@@ -136,4 +140,44 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         }
     }
     changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{catalog::Project, workspace};
+
+    #[test]
+    fn opening_a_second_project_schedules_a_read_without_an_sse_hint() {
+        let mut state = crate::init();
+        crate::gallery::shell::fixture(&mut state);
+        state.workspace = Some(workspace::Ui::new());
+        workspace::connected(&mut state);
+        let mut rt = rune::Runtime::new(
+            state,
+            crate::view,
+            (1000.0, 800.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.update(|s, tx| {
+            workspace::opened(
+                s,
+                &Project {
+                    id: "first".into(),
+                    path: "/first".into(),
+                },
+            );
+            workspace::new_tab(s, tx);
+            workspace::opened(
+                s,
+                &Project {
+                    id: "second".into(),
+                    path: "/second".into(),
+                },
+            );
+            let ui = s.workspace.as_ref().unwrap();
+            assert!(ui.entries[ui.active].catalogue.due.is_some());
+            assert!(s.screen.launcher().unwrap().catalogue_watch.is_none());
+        });
+    }
 }

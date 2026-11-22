@@ -228,6 +228,7 @@ impl Ui {
         if !active {
             self.keep_scroll();
         } else if !self.active {
+            self.invalidate_index();
             self.retry_panel_reads();
         }
         self.active = active;
@@ -718,7 +719,11 @@ impl Ui {
     }
 
     fn can_commit(&self) -> bool {
+        let changes = self.requests.slot(Lane::Changes);
         self.can_change_index()
+            && self.passive_due.is_none()
+            && !changes.dirty
+            && !changes.busy()
             && self.changes.section(Section::Staged).next().is_some()
             && !self.changes.draft.text.trim().is_empty()
     }

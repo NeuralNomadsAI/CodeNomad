@@ -8,6 +8,29 @@ fn row(id: &str) -> Session {
 }
 
 #[test]
+fn refreshing_the_opened_folder_keeps_previously_listed_linked_sessions() {
+    let mut launcher = Launcher::fixture();
+    launcher.sessions = vec![row("root"), row("linked")];
+    launcher.creation_uncertain = true;
+    launcher.apply_directory_refresh(
+        Sessions {
+            rows: vec![row("root")],
+            next: None,
+        },
+        None,
+    );
+    assert_eq!(
+        launcher
+            .sessions
+            .iter()
+            .map(|row| row.id.as_str())
+            .collect::<Vec<_>>(),
+        ["root", "linked"]
+    );
+    assert!(!launcher.creation_uncertain);
+}
+
+#[test]
 fn an_admitted_page_is_not_truncated_at_the_browse_budget() {
     let mut launcher = Launcher::fixture();
     launcher.sessions = (0..1_999)

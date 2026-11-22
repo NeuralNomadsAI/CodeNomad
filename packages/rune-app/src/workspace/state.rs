@@ -375,7 +375,18 @@ pub fn opened(s: &mut State, project: &Project) {
     }
     item.project = Some(project.clone());
     item.binding = l.connection.clone();
+    if cfg!(target_os = "windows") {
+        item.catalogue.schedule(ui.clock);
+    }
     ui.changed();
+}
+
+pub fn schedule_catalogue(s: &mut State) {
+    if cfg!(target_os = "windows")
+        && let Some(ui) = &mut s.workspace
+    {
+        ui.entries[ui.active].catalogue.schedule(ui.clock);
+    }
 }
 pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let Some(mut ui) = s.workspace.take() else {

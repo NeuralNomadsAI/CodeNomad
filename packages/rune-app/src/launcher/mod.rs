@@ -227,13 +227,20 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
         }
         Ok(Reply::Listed(rows, cursor)) => {
-            let more = cursor.is_some();
             if let Some(cursor) = cursor {
                 l.consume_cursor(&cursor);
-            }
-            l.apply_listing(rows, more, selected.as_deref());
-            if l.next.is_none() {
-                l.check_omitted_visits();
+                l.apply_listing(rows, true, selected.as_deref());
+                if l.next.is_none() {
+                    l.check_omitted_visits();
+                }
+            } else if cfg!(target_os = "windows") {
+                l.apply_directory_refresh(rows, selected.as_deref());
+                crate::workspace::schedule_catalogue(s);
+            } else {
+                l.apply_listing(rows, false, selected.as_deref());
+                if l.next.is_none() {
+                    l.check_omitted_visits();
+                }
             }
         }
         Ok(Reply::Created(b, title, slug, submitted, dismiss)) => {
