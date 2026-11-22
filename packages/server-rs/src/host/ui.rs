@@ -76,7 +76,8 @@ pub async fn serve(source: &Source, req: Request) -> Response {
     }
 }
 
-pub(crate) fn is_html_path(mut path: &str) -> bool {
+pub(crate) fn is_html_path(path: &str) -> bool {
+    let mut path = path.trim_end_matches(['/', '.', ' ']);
     while let Some((stem, extension)) = path.rsplit_once('.') {
         match extension.to_ascii_lowercase().as_str() {
             "html" | "htm" => return true,
@@ -115,8 +116,7 @@ async fn asset(dir: &Path, method: &Method, path: &str, request_headers: &Header
         if !real.starts_with(&root) {
             continue;
         }
-        let Ok(meta) = tokio::fs::metadata(&real).await else { continue };
-        if !meta.is_file() {
+        if !tokio::fs::metadata(&real).await.is_ok_and(|meta| meta.is_file()) {
             continue;
         }
         if coding.is_none() && !identity {
@@ -124,21 +124,32 @@ async fn asset(dir: &Path, method: &Method, path: &str, request_headers: &Header
         }
         let logical = if coding.is_some() { &file } else { &real };
         let extension = logical.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+        let Ok(opened) = tokio::fs::File::open(&real).await else { continue };
+        let Ok(meta) = opened.metadata().await else { continue };
+        if !meta.is_file() {
+            continue;
+        }
         let modified = meta.modified().ok()?;
         let millis = modified.duration_since(UNIX_EPOCH).ok()?.as_millis();
         let etag = format!("W/\"{:x}-{millis:x}\"", meta.len());
-        let mut response =
-            if request_headers.get(header::IF_NONE_MATCH).is_some_and(|v| v.as_bytes() == etag.as_bytes()) {
-                Status::NOT_MODIFIED.into_response()
+        let no_cache = request_headers
+            .get_all(header::CACHE_CONTROL)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .flat_map(|v| v.split(','))
+            .any(|directive| directive.trim().eq_ignore_ascii_case("no-cache"));
+        let mut response = if !no_cache
+            && request_headers.get(header::IF_NONE_MATCH).is_some_and(|v| v.as_bytes() == etag.as_bytes())
+        {
+            Status::NOT_MODIFIED.into_response()
+        } else {
+            let body = if *method == Method::HEAD {
+                Body::empty()
             } else {
-                let body = if *method == Method::HEAD {
-                    Body::empty()
-                } else {
-                    let Ok(opened) = tokio::fs::File::open(real).await else { continue };
-                    Body::from_stream(tokio_util::io::ReaderStream::new(opened))
-                };
-                ([(header::CONTENT_LENGTH, meta.len().to_string())], body).into_response()
+                Body::from_stream(tokio_util::io::ReaderStream::new(opened))
             };
+            ([(header::CONTENT_LENGTH, meta.len().to_string())], body).into_response()
+        };
         let headers = response.headers_mut();
         if let Some((encoding, _)) = coding {
             headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static(encoding));
