@@ -190,6 +190,14 @@ impl Backend {
         session(&data["data"], project)
     }
     pub async fn bind(&self, project: &Project, id: &str, fresh: bool) -> Result<Self> {
+        Ok(self.bind_session(project, id, fresh).await?.0)
+    }
+    pub async fn bind_session(
+        &self,
+        project: &Project,
+        id: &str,
+        fresh: bool,
+    ) -> Result<(Self, Session)> {
         if !valid_id(id) || id.starts_with("ses_cn_schedule_") {
             return Err("invalid session".into());
         }
@@ -204,13 +212,16 @@ impl Backend {
                 .error_for_status()?,
         )
         .await?;
-        session(&data["data"], project)?;
+        let info = session(&data["data"], project)?;
+        if info.id != id {
+            return Err("session response identity mismatch".into());
+        }
         let mut backend = self.clone();
         backend.workspace = project.id.clone();
         backend.session = id.into();
         backend.fresh_mode = fresh;
         backend.client_id = crate::http::client_id()?;
-        Ok(backend)
+        Ok((backend, info))
     }
 }
 fn server_id(data: &Value) -> Result<String> {

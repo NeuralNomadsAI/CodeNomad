@@ -318,3 +318,67 @@ fn invalid_mutation_inputs_are_rejected_before_dispatch() {
         }
     });
 }
+
+#[test]
+fn binding_returns_the_validated_native_session_without_a_list_or_second_read() {
+    run(async {
+        let server = Server::start(vec![
+            reply(
+                "GET /workspaces/workspace/instance/api/session/off-page",
+                None,
+                200,
+                json!({"data":{"id":"off-page","title":"Session page 2","location":{"directory":"/trial"}}}),
+            ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/legacy",
+                None,
+                200,
+                json!({"data":{"id":"legacy","title":"Legacy","location":{"directory":"/trial"}}}),
+            ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/foreign",
+                None,
+                200,
+                json!({"data":{"id":"foreign","title":"Other folder","location":{"directory":"/other"}}}),
+            ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/expected",
+                None,
+                200,
+                json!({"data":{"id":"different","title":"Other session","location":{"directory":"/trial"}}}),
+            ),
+        ]);
+        let backend = Backend::connect(&server.address, "").await.unwrap();
+        let project = crate::catalog::Project {
+            id: "workspace".into(),
+            path: "/trial".into(),
+        };
+        let (bound, session) = backend
+            .bind_session(&project, "off-page", false)
+            .await
+            .unwrap();
+        assert_eq!(bound.session, "off-page");
+        assert_eq!(session.id, "off-page");
+        assert_eq!(session.title, "Session page 2");
+        assert_eq!(
+            backend
+                .bind(&project, "legacy", true)
+                .await
+                .unwrap()
+                .session,
+            "legacy"
+        );
+        assert!(
+            backend
+                .bind_session(&project, "foreign", false)
+                .await
+                .is_err()
+        );
+        assert!(
+            backend
+                .bind_session(&project, "expected", false)
+                .await
+                .is_err()
+        );
+    });
+}
