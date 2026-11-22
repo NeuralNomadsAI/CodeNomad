@@ -220,6 +220,29 @@ fn transcript_keeps_and_copies_a_patch_with_long_unicode_headers() {
     );
 }
 
+#[test]
+fn wrapped_update_patch_uses_the_shared_diff_and_copies_the_original() {
+    let patch = "```diff\n*** Begin Patch\n*** Update File: src/demo.rs\n@@\n-return 7;\n+return 8;\n*** End Patch\n```";
+    let mut state = init();
+    state.messages = vec![history::decode_message(&json!({"id":"wrapped","type":"assistant","time":{"completed":1},"content":[
+        {"type":"tool","name":"edit","id":"edit","state":{"status":"completed","metadata":{"diff":patch}}}
+    ]})).unwrap()];
+    state.phase = Phase::Ready;
+    let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    for _ in 0..24 {
+        rt.frame(1.0 / 60.0);
+    }
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("return 7;") && tree.contains("return 8;"));
+    let (x, y) = rt.find("tool-wrapped:4:edit-copy-patch").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.0);
+    assert_eq!(clipboard.text().as_deref().map(String::as_str), Some(patch));
+}
+
 fn edit_cards(count: usize) -> State {
     let cards: Vec<_> = (0..count)
         .map(|i| {
@@ -277,14 +300,50 @@ fn transcript_edit_modes_follow_the_window_and_are_shared_between_cards() {
     assert_eq!(label_count(&rt, "Switch to split view"), 2);
     rt.update(|s, _| {
         s.transcript_display.bind("fixture", "project", "other");
-        s.transcript_display.bind("fixture", "project", "original");
+        s.messages.clear();
         s.renew_scope();
         s.revision += 1;
     });
     for _ in 0..12 {
         rt.frame(1.0 / 60.0);
     }
+    rt.update(|s, _| {
+        s.transcript_display.bind("fixture", "project", "original");
+        s.messages = edit_cards(2).messages;
+        s.renew_scope();
+        s.revision += 1;
+    });
+    for _ in 0..48 {
+        rt.frame(1.0 / 60.0);
+    }
     assert_eq!(label_count(&rt, "Switch to split view"), 2);
+}
+
+#[test]
+fn compact_view_mode_and_unified_wrap_are_local_to_the_card() {
+    let mut rt = Runtime::new(edit_cards(2), view, (500.0, 1000.0), Env::new(false, 1.0));
+    let button = |rt: &Runtime<State>, key: &str| {
+        rt.elements()
+            .into_iter()
+            .find(|e| !e.exiting && e.key.as_deref() == Some(key))
+            .unwrap()
+    };
+    for _ in 0..24 {
+        rt.frame(1.0 / 60.0);
+    }
+    for (change, other) in [
+        ("tool-cards:5:edit0-wrap", "tool-cards:5:edit1-wrap"),
+        ("tool-cards:5:edit0-mode", "tool-cards:5:edit1-mode"),
+    ] {
+        let label = button(&rt, other).label;
+        assert_eq!(label, button(&rt, change).label);
+        let (x, y) = rt.find(change).unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+        assert_ne!(label, button(&rt, change).label);
+        assert_eq!(label, button(&rt, other).label);
+    }
 }
 
 #[test]
@@ -300,6 +359,9 @@ fn scrolling_one_message_can_show_more_diffs_than_the_cache_retains() {
         seen.extend(
             rt.elements()
                 .into_iter()
+                .filter(|element| {
+                    !element.exiting && element.visible[2] > 0.0 && element.visible[3] > 0.0
+                })
                 .filter_map(|e| e.key)
                 .filter(|key| key.starts_with("tool-cards:") && key.ends_with("-copy-patch")),
         );

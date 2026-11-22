@@ -166,7 +166,7 @@ fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'static str {
                         Some(c.len_utf8())
                     })
                     .sum::<usize>();
-                text[..bytes].lines().any(|line| line.starts_with("@@ "))
+                text[..bytes].lines().any(tool_diff::is_hunk)
             })
             .unwrap_or_else(|| {
                 [diff, patch, &tool.output]
