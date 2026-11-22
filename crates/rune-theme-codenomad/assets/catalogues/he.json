@@ -2191,6 +2191,8 @@
   "rune.refresh": "רענן",
   "rune.refresh_controls": "רענון",
   "rune.reject": "דחייה",
+  "rune.restore_error": "השחזור אינו זמין",
+  "rune.save_error": "הטיוטות לא נשמרו",
   "rune.search": "סנן הפעלות שנטענו",
   "rune.server": "שרת",
   "rune.session_title": "כותרת ההפעלה",

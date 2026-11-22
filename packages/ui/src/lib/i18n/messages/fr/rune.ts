@@ -39,4 +39,6 @@ export const runeMessages = {
   "rune.no": "Non",
   "rune.older": "Messages précédents",
   "rune.reconnecting": "Reconnexion",
+  "rune.restore_error": "Restauration indisponible",
+  "rune.save_error": "Brouillons non enregistrés",
 } as const

@@ -2191,6 +2191,8 @@
   "rune.refresh": "Обновить",
   "rune.refresh_controls": "Обновить",
   "rune.reject": "Отклонить",
+  "rune.restore_error": "Восстановление недоступно",
+  "rune.save_error": "Черновики не сохранены",
   "rune.search": "Фильтр загруженных сеансов",
   "rune.server": "Сервер",
   "rune.session_title": "Название сеанса",

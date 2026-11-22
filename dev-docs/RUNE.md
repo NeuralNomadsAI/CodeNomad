@@ -50,6 +50,7 @@ When a whole module reaches parity, its Solid and Tauri version is deleted on `f
 | Chat, composer and session launcher | Solid transcript, composer and project fixtures | `chat/`, `agent/`, `launcher/`: native flows with shared Rust and simulated OpenCode qualified; Solid parity pending |
 | Browser client | Remote access contracts and Rune web target | Shared WASM state/views: six local and six authenticated session-reading contexts qualified with shared Rust and simulated OpenCode; physical mobile pending |
 | Window state | Host client-state and browser sessionStorage contracts | `workspace/` bounds the text-only snapshot; `platform/storage/` provides alpha-owned native and browser adapters; UI restoration pending |
+| Project tabs | `components/instance-tabs.tsx`, `instance-tab.tsx`, `tab-scroll.tsx` | Shared rune-kit adapter in the theme: select/close/New and catalogue direction qualified; full interaction and visual parity pending |
 
 ## Workspace and qualification
 

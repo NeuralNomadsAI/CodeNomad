@@ -39,4 +39,6 @@ export const runeMessages = {
   "rune.no": "Нет",
   "rune.older": "Предыдущие сообщения",
   "rune.reconnecting": "Переподключение",
+  "rune.restore_error": "Восстановление недоступно",
+  "rune.save_error": "Черновики не сохранены",
 } as const
