@@ -8,7 +8,6 @@ pub const MAX_ROWS: usize = 2048;
 pub const MAX_BYTES: usize = 8 * 1024 * 1024;
 pub const MESSAGE_BYTES: usize = 16 * 1024 * 1024;
 pub const WINDOW_BYTES: usize = 24 * 1024 * 1024;
-pub(crate) const RESPONSE_BYTES: usize = WINDOW_BYTES + 64 * 1024;
 pub(crate) const MAX_TOOL_TEXT_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Clone, Debug)]

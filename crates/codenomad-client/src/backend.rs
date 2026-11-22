@@ -68,7 +68,7 @@ impl Backend {
                     .send()
                     .await?
                     .error_for_status()?,
-                history::RESPONSE_BYTES,
+                history::WINDOW_BYTES,
             )
             .await?,
         )

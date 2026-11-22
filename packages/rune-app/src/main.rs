@@ -26,11 +26,8 @@ use screen::Screen;
 mod workspace;
 use codenomad_client::{Receiver, Sender, bounded};
 use rune::edit::TextEdit;
-use rune::{AppSpec, Cx, El, Tx, col};
-use rune_theme_codenomad::{
-    Space,
-    layout::{self, Layout},
-};
+use rune::{AppSpec, Cx, El, Tx};
+use rune_theme_codenomad::layout::{self, Layout};
 use transport::{Command, Event};
 
 #[cfg(any(test, feature = "test-support"))]

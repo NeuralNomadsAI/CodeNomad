@@ -10,25 +10,25 @@ pub fn fixture(s: &mut State) {
         id: "header-windows".into(),
         path: "/repo".into(),
     });
-    launcher.sessions = vec![
-        Session {
-            id: "session".into(),
-            title: "Fixture conversation".into(),
-        }
-        .into(),
-    ];
+    launcher.sessions = vec![Session {
+        id: "session".into(),
+        title: "Fixture conversation".into(),
+    }];
     s.screen = Screen::Chat {
         launcher: Some(launcher),
     };
     s.chat_title = "Fixture conversation".into();
     s.phase = Phase::Ready;
-    s.messages = vec![Message {
-        id: "hello".into(),
-        role: "user".into(),
-        body: "Fixture message".into(),
-        parts: vec![],
-        completed: true,
-    }];
+    s.messages = vec![
+        Message {
+            id: "hello".into(),
+            role: "user".into(),
+            body: "Fixture message".into(),
+            parts: vec![],
+            completed: true,
+        }
+        .into(),
+    ];
 }
 
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
