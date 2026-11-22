@@ -495,9 +495,9 @@ fn server_search_follows_scoped_worktree_cursors_and_binds_the_exact_match() {
         let results = backend.search_sessions(&project, "Off page").await.unwrap();
         assert_eq!(results.len(), 1);
         let found = &results[0];
-        assert_eq!((&*found.id, &*found.directory), ("later", "/linked"));
+        assert_eq!(found.id, "later");
         let (bound, info) = backend
-            .bind_at(&project, &found.id, Some(&found.directory), false)
+            .bind_at(&project, &found.id, None, false)
             .await
             .unwrap();
         assert_eq!(bound.session, info.id);
@@ -531,5 +531,64 @@ fn workspace_absence_requires_a_successful_inventory_and_uses_occurrence_identit
         assert!(backend.workspace_missing("old").await.is_err());
         assert!(!backend.workspace_missing("old").await.unwrap());
         assert!(backend.workspace_missing("old").await.unwrap());
+    });
+}
+
+#[test]
+fn only_confirmed_absence_or_departure_retires_a_session_visit() {
+    run(async {
+        let server = Server::start(vec![
+            reply(
+                "GET /workspaces/workspace/instance/api/session/missing",
+                None,
+                404,
+                json!({"_tag":"SessionNotFoundError","sessionID":"missing"}),
+            ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/other",
+                None,
+                404,
+                json!({"_tag":"SessionNotFoundError","sessionID":"missing"}),
+            ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/unready",
+                None,
+                503,
+                json!({"_tag":"SessionNotFoundError","sessionID":"unready"}),
+            ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/moved",
+                None,
+                403,
+                json!({"reason":"session_located_elsewhere"}),
+            ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/forbidden",
+                None,
+                403,
+                json!({"error":"Session does not belong to workspace"}),
+            ),
+        ]);
+        let backend = Backend::connect(&server.address, "").await.unwrap();
+        let project = crate::catalog::Project {
+            id: "workspace".into(),
+            path: "/trial".into(),
+        };
+        for (id, missing) in [
+            ("missing", true),
+            ("other", false),
+            ("unready", false),
+            ("moved", true),
+            ("forbidden", false),
+        ] {
+            assert_eq!(
+                backend
+                    .bind_session(&project, id, false)
+                    .await
+                    .unwrap_err()
+                    .is::<crate::catalog::SessionMissing>(),
+                missing
+            );
+        }
     });
 }

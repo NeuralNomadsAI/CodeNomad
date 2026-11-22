@@ -15,6 +15,15 @@ impl std::fmt::Display for CreationRefused {
 }
 impl std::error::Error for CreationRefused {}
 
+#[derive(Debug)]
+pub struct SessionMissing;
+impl std::fmt::Display for SessionMissing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("native session is no longer available in the workspace")
+    }
+}
+impl std::error::Error for SessionMissing {}
+
 async fn creation_response(response: reqwest::Response) -> Result<Value> {
     if response.status() != reqwest::StatusCode::BAD_REQUEST {
         return read_json(response.error_for_status()?).await;
@@ -54,7 +63,6 @@ pub struct Project {
 pub struct Session {
     pub id: String,
     pub title: String,
-    pub directory: String,
 }
 pub struct Sessions {
     pub rows: Vec<Session>,
@@ -352,17 +360,32 @@ impl Backend {
         if !valid_id(id) || id.starts_with("ses_cn_schedule_") {
             return Err("invalid session".into());
         }
-        let data = read_json(
-            self.client
-                .get(format!(
-                    "{}workspaces/{}/instance/api/session/{id}",
-                    self.base, project.id
-                ))
-                .send()
-                .await?
-                .error_for_status()?,
-        )
-        .await?;
+        let response = self
+            .client
+            .get(format!(
+                "{}workspaces/{}/instance/api/session/{id}",
+                self.base, project.id
+            ))
+            .send()
+            .await?;
+        let status = response.status();
+        if matches!(
+            status,
+            reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::FORBIDDEN
+        ) {
+            let data = crate::backend::read_json_limited(response, 4096).await?;
+            let absent = status == reqwest::StatusCode::NOT_FOUND
+                && data["_tag"] == "SessionNotFoundError"
+                && data["sessionID"] == id;
+            let moved = status == reqwest::StatusCode::FORBIDDEN
+                && data["reason"] == "session_located_elsewhere";
+            return Err(if absent || moved {
+                SessionMissing.into()
+            } else {
+                "session request unavailable".into()
+            });
+        }
+        let data = read_json(response.error_for_status()?).await?;
         let directory = data["data"]["location"]["directory"]
             .as_str()
             .ok_or("missing session directory")?;
@@ -453,7 +476,6 @@ fn session_at(data: &Value, directory: &str) -> Result<Session> {
     Ok(Session {
         id: id.into(),
         title: title.into(),
-        directory: directory.into(),
     })
 }
 #[cfg(test)]

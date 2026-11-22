@@ -4,12 +4,12 @@ use crate::{
 };
 use codenomad_client::{Receiver, Sender};
 use rune::edit::TextEdit;
-use std::collections::HashSet;
 
 pub(super) struct Cache {
     agent: Option<agent::Ui>,
     files: Option<crate::files::Ui>,
-    tools: HashSet<String>,
+    git: crate::git::Binding,
+    transcript_display: crate::transcript_state::Display,
     title: String,
     messages: Vec<Message>,
     draft: TextEdit,
@@ -36,7 +36,8 @@ impl Cache {
         Self {
             agent: s.agent.take(),
             files: s.files.take(),
-            tools: std::mem::take(&mut s.expanded_tools),
+            git: crate::git::Binding::take(&mut s.git),
+            transcript_display: std::mem::take(&mut s.transcript_display),
             title: std::mem::take(&mut s.chat_title),
             messages: std::mem::take(&mut s.messages),
             draft: std::mem::replace(&mut s.draft, TextEdit::new("")),
@@ -54,7 +55,8 @@ impl Cache {
     pub fn apply(self, s: &mut State) {
         s.agent = self.agent;
         s.files = self.files;
-        s.expanded_tools = self.tools;
+        s.git = self.git;
+        s.transcript_display = self.transcript_display;
         s.chat_title = self.title;
         s.messages = self.messages;
         s.draft = self.draft;

@@ -8,7 +8,7 @@ use codenomad_client::{Receiver, Sender, bounded};
 use std::time::Duration;
 
 #[derive(Default)]
-pub(super) struct Search {
+pub(crate) struct Search {
     scope: Option<(String, String)>,
     result: Option<(Sender<()>, Receiver<Result<Vec<Session>>>)>,
     pub rows: Vec<Session>,
@@ -21,9 +21,6 @@ impl Search {
 }
 
 pub(super) fn poll(s: &mut State) -> bool {
-    if !s.screen.is_launcher() {
-        return false;
-    }
     let reads = s.reads.clone();
     let Some(l) = s.screen.launcher_mut() else {
         return false;
@@ -32,7 +29,7 @@ pub(super) fn poll(s: &mut State) -> bool {
         .project
         .as_ref()
         .zip(l.connection.as_ref())
-        .filter(|_| !l.search.text.trim().is_empty())
+        .filter(|_| l.show_search && !l.search.text.trim().is_empty())
         .map(|(p, _)| (p.id.clone(), l.search.text.trim().to_owned()));
     if l.search_results.scope != scope {
         l.search_results = Search {

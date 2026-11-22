@@ -142,6 +142,14 @@ try {
       await locator.click({force:true})
     }
     const button=name=>mirror().getByRole('button',{name,exact:true})
+    const left=m['window.menu.leftPanel']
+    const sessions=mirror().getByRole('region',{name:left,exact:true})
+    const openSessions=async()=>{
+      await button(left).waitFor()
+      if(await button(left).getAttribute('aria-expanded')!=='true')await press(button(left))
+      await sessions.waitFor()
+    }
+    const sessionRow=name=>sessions.getByRole('listitem',{name,exact:true})
     const connect=async()=>{await press(button(m['folderSelection.servers.dialog.connect']))}
     const boot=async()=>{
       await page.waitForFunction(()=>['ready','failed'].includes(globalThis.__codenomadRuneBoot?.state),undefined,{timeout:60000})
@@ -158,10 +166,12 @@ try {
       throw Error(`Real textarea focus unavailable: ${label}`)
     }
     const type=async(label,text)=>{const input=await field(label);await input.fill(text);assert.equal(await input.inputValue(),text)}
-    const ready=async()=>{await mirror().getByText(m['rune.ready'],{exact:true}).waitFor();await page.waitForTimeout(100)}
     const reading=async(session,draft)=>{
-      await ready()
-      if(session==='ses_another')await mirror().getByText('Another session',{exact:true}).waitFor()
+      await mirror().getByRole('heading',{name:session==='ses_another'?'Another session':'Existing history',exact:true}).waitFor()
+      for(const deadline=Date.now()+15000;!record.history.some(row=>row.sessionID===session&&row.status==='window');){
+        assert(Date.now()<deadline,'Restoration must read authoritative history')
+        await page.waitForTimeout(20)
+      }
       await page.waitForFunction(({existing})=>{const text=document.querySelector('[data-rune-a11y]')?.textContent??'';return existing?text.includes('Existing project history')&&text.includes('Existing answer'):!text.includes('Existing project history')&&!text.includes('Existing answer')},{existing:session==='ses_existing'})
       if(draft!==undefined)assert.equal(await (await field(m['rune.prompt'])).inputValue(),draft,'Occurrence draft must match exactly')
     }
@@ -237,10 +247,10 @@ try {
     try {
       await page.goto(url.href,{waitUntil:'domcontentloaded',timeout:60000});await boot();await connect()
       await type(m['instanceInfo.labels.folder'],values.project);await press(button(m['directoryBrowser.openCurrent']))
-      await press(button('Existing history'));await reading('ses_existing');await type(m['rune.prompt'],draftA)
+      await openSessions();await press(sessionRow('Existing history'));await reading('ses_existing');await type(m['rune.prompt'],draftA)
       await press(button(m['instanceTabs.new.ariaLabel']))
       await type(m['instanceInfo.labels.folder'],values.project);await press(button(m['directoryBrowser.openCurrent']))
-      await press(button(m['rune.more']));await press(button('Another session'));await reading('ses_another');await type(m['rune.prompt'],draftB)
+      await openSessions();await press(button(m['rune.more']));await press(sessionRow('Another session'));await reading('ses_another');await type(m['rune.prompt'],draftB)
       await selected(1);await saved([draftA,draftB]);await capture('before-reload')
       record.syntheticBFCache=await page.evaluate(({key,released,proof})=>{
         const snapshot=sessionStorage.getItem(key),marker=sessionStorage.getItem(released),documentId=globalThis.__runeRestoreProofDocumentId

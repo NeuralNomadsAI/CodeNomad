@@ -108,7 +108,7 @@ fn send(rt: &mut Runtime<State>, id: &str, turn: usize, prompt: &str) {
     tap(rt, "send");
     assert!(rt.state.draft.text.is_empty(), "submitted composer clears");
     let reply = format!("reply-{id}-{turn}");
-    let key = format!("body-{reply}");
+    let path = super::fragment_path(&reply, 0);
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut visible = false;
     while rt.state.phase != Phase::Ready {
@@ -123,8 +123,9 @@ fn send(rt: &mut Runtime<State>, id: &str, turn: usize, prompt: &str) {
                 .any(|m| m.id == reply && !m.completed)
         {
             if let Some(element) = rt.elements().into_iter().find(|e| {
-                e.key.as_deref() == Some(key.as_str())
+                e.path.contains(&path)
                     && e.text.as_deref().is_some_and(|s| {
+                        let s = super::rendered_text(s);
                         s.starts_with("fn main") && s.contains(&format!("tour {turn}"))
                     })
                     && !e.exiting
@@ -196,7 +197,7 @@ pub fn run() {
     assert!(matches!(stage.as_str(), "prepare" | "resume" | "verify"));
     let mut state = init();
     crate::setup(&mut state, std::sync::Arc::new(|| {}));
-    let mut rt = Runtime::new(state, view, (1100.0, 1200.0), Env::new(true, 1.0));
+    let mut rt = Runtime::new(state, view, (1400.0, 1200.0), Env::new(true, 1.0));
     rt.poll = Some(poll);
     rt.frame(0.0);
     tap(&mut rt, "connect");
@@ -219,6 +220,13 @@ pub fn run() {
             assert_eq!(rt.state.draft.text, ALPHA);
             select(&mut rt, 1, "ses_created_2");
             assert_eq!(rt.state.draft.text, BETA);
+            let (x, y) = rt.find("sessions-panel-resize").unwrap();
+            rt.pointer_down(x, y);
+            rt.frame(1.0 / 60.0);
+            rt.pointer_move(x + 50.0, y);
+            rt.frame(1.0 / 60.0);
+            rt.pointer_up(x + 50.0, y);
+            rt.frame(1.0 / 60.0);
         }
         "resume" => {
             wait(&mut rt, "automatic selected Beta", |s| {
@@ -252,6 +260,17 @@ pub fn run() {
         _ => unreachable!(),
     }
     occurrences(&mut rt);
+    let shown_width = rt
+        .elements()
+        .into_iter()
+        .find(|element| element.key.as_deref() == Some("sessions-panel"))
+        .expect("restored docked sessions panel")
+        .rect[2];
+    assert_eq!(shown_width, 390.0);
+    assert_eq!(
+        rt.state.workspace.as_ref().unwrap().snapshot().panel_widths[0],
+        Some(390)
+    );
     if stage != "prepare" {
         let saved = rt.state.workspace.as_ref().unwrap().snapshot();
         assert!(saved.tabs.iter().all(

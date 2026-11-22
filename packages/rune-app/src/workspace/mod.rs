@@ -6,9 +6,10 @@ mod state;
 pub(crate) use persistence::finish;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use state::active_workspace;
+pub(crate) use state::panel_width;
 pub(crate) use state::{
-    Ui, bound, capture, close, connected, draft_changed, input_ready, new_tab, opened, poll,
-    prepare_open, resume, retry, select, status, strip,
+    Ui, active_session, bound, can_new, capture, close, connected, draft_changed, input_ready,
+    new_tab, opened, poll, prepare_open, resume, retry, select, status, strip, unselect_missing,
 };
 
 use serde_json::{Map, Value, json};
@@ -19,11 +20,17 @@ const MAX_TABS: usize = 32;
 const MAX_DRAFTS: usize = 24;
 const MAX_DRAFT: usize = 32 * 1024;
 const MAX_STRINGS: usize = 96 * 1024;
+pub(crate) const MAX_PANEL_WIDTH: u16 = 16_384;
+const PANEL_WIDTH_KEYS: [&str; 2] = [
+    "opencode-session-sidebar-width-v8",
+    "opencode-session-right-drawer-width-v1",
+];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Snapshot {
     pub revision: u64,
     pub saved_at: u64,
+    pub panel_widths: [Option<u16>; 2],
     pub tabs: Vec<Tab>,
     pub active: Option<usize>,
 }
@@ -67,7 +74,21 @@ pub fn decode(bytes: &[u8]) -> Result<Snapshot, Error> {
     if integer(root.get("version"))? != 1 {
         return Err(Error::Unsupported);
     }
-    empty_map(root.get("layout"))?;
+    let layout = object(required(root, "layout")?)?;
+    fields(layout, &PANEL_WIDTH_KEYS)?;
+    let mut panel_widths = [None; 2];
+    for (side, key) in PANEL_WIDTH_KEYS.iter().enumerate() {
+        if let Some(raw) = layout.get(*key) {
+            let width = raw
+                .as_str()
+                .and_then(|s| s.parse::<f64>().ok())
+                .filter(|width| {
+                    width.is_finite() && (0.0..=f64::from(MAX_PANEL_WIDTH)).contains(width)
+                })
+                .ok_or(Error::Malformed)?;
+            panel_widths[side] = Some(width.floor() as u16);
+        }
+    }
     let revision = integer(root.get("revision"))?;
     let saved_at = integer(root.get("savedAt"))?;
     let (tabs, active) = if root.get("session") == Some(&Value::Null) {
@@ -93,6 +114,7 @@ pub fn decode(bytes: &[u8]) -> Result<Snapshot, Error> {
     let snapshot = Snapshot {
         revision,
         saved_at,
+        panel_widths,
         tabs,
         active,
     };
@@ -129,8 +151,13 @@ pub fn encode(snapshot: &Snapshot) -> Result<Vec<u8>, Error> {
         })
         .collect();
     let active = snapshot.active.map(|index| index as i64).unwrap_or(-1);
+    let layout: Map<_, _> = PANEL_WIDTH_KEYS
+        .into_iter()
+        .zip(snapshot.panel_widths)
+        .filter_map(|(key, width)| Some((key.into(), json!(width?.to_string()))))
+        .collect();
     let value = json!({"version": 1, "revision": snapshot.revision, "savedAt": snapshot.saved_at,
-        "layout": {}, "session": {"tabs": tabs, "activeTabIndex": active}});
+        "layout": layout, "session": {"tabs": tabs, "activeTabIndex": active}});
     let bytes = serde_json::to_vec(&value).map_err(|_| Error::Malformed)?;
     if bytes.len() > MAX_BYTES {
         return Err(Error::Limit);
@@ -227,6 +254,16 @@ fn validate(snapshot: &Snapshot) -> Result<(), Error> {
     if snapshot.revision > MAX_SAFE
         || snapshot.saved_at > MAX_SAFE
         || snapshot.tabs.len() > MAX_TABS
+    {
+        return Err(Error::Limit);
+    }
+    if snapshot
+        .panel_widths
+        .iter()
+        .zip(rune_theme_codenomad::shell::PANEL_MIN)
+        .any(|(width, min)| {
+            width.is_some_and(|width| f32::from(width) < min || width > MAX_PANEL_WIDTH)
+        })
     {
         return Err(Error::Limit);
     }

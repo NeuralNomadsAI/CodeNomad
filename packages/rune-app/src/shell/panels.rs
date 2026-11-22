@@ -1,0 +1,353 @@
+use super::{connection, keys, right_panel, sidebar};
+use crate::{State, strings};
+use rune::{El, Tx, col, text};
+use rune_theme_codenomad::{
+    layout::Layout,
+    shell::{
+        self, CENTER_MIN, PANEL_DEFAULT, PANEL_MIN,
+        icons::{LEFT, RIGHT},
+    },
+};
+const KEYS: [&str; 2] = ["sessions-panel-toggle", "right-panel-toggle"];
+const LABELS: [&str; 2] = ["window.menu.leftPanel", "window.menu.rightPanel"];
+const REGIONS: [&str; 2] = ["sessions-panel", "right-panel"];
+
+pub struct Panels {
+    width: f32,
+    preferred: [f32; 2],
+    right_width_initialized: bool,
+    pub wanted: [Option<[bool; 2]>; 2],
+    portrait: bool,
+    floating: Option<usize>,
+    floating_epoch: u64,
+    resizing: Option<usize>,
+}
+impl Default for Panels {
+    fn default() -> Self {
+        Self {
+            width: 0.0,
+            preferred: PANEL_DEFAULT,
+            right_width_initialized: false,
+            wanted: [None; 2],
+            portrait: false,
+            floating: None,
+            floating_epoch: 0,
+            resizing: None,
+        }
+    }
+}
+impl Panels {
+    pub fn restore_widths(&mut self, widths: [Option<u16>; 2]) {
+        for (i, width) in widths.into_iter().enumerate() {
+            if let Some(width) = width {
+                self.preferred[i] = f32::from(width);
+                self.right_width_initialized |= i == 1;
+            }
+        }
+    }
+    fn wanted(&self) -> [bool; 2] {
+        self.wanted[usize::from(self.portrait)].unwrap_or([!self.portrait; 2])
+    }
+    fn set_wanted(&mut self, index: usize, open: bool) {
+        let mut wanted = self.wanted();
+        wanted[index] = open;
+        self.wanted[usize::from(self.portrait)] = Some(wanted);
+    }
+    fn docked(&self, wanted: [bool; 2]) -> [Option<f32>; 2] {
+        let room = (self.width - CENTER_MIN).max(0.0);
+        let [left, right] = self.preferred;
+        [
+            (wanted[0] && room >= PANEL_MIN[0]).then_some(room.min(left)),
+            (wanted[1] && room >= PANEL_MIN[1] + if wanted[0] { left } else { 0.0 })
+                .then_some(right.min(room - if wanted[0] { left } else { 0.0 })),
+        ]
+    }
+
+    fn has_room(&self, index: usize) -> bool {
+        let mut wanted = self.wanted();
+        wanted[index] = true;
+        self.docked(wanted)[index].is_some()
+    }
+
+    fn measure(&mut self, width: f32, height: f32, touch: bool, tx: &mut Tx) {
+        if width > 0.0 && !self.right_width_initialized {
+            self.preferred[1] = shell::default_right_panel(width);
+            self.right_width_initialized = true;
+        }
+        self.width = width;
+        let portrait = touch && width < height;
+        if portrait != self.portrait {
+            self.portrait = portrait;
+            self.leave_project();
+        }
+        self.dock_floating();
+        if self.resizing.is_some_and(|i| !self.visible(i)) {
+            self.resizing = None;
+        }
+        tx.instant();
+    }
+
+    pub fn visible(&self, index: usize) -> bool {
+        self.docked(self.wanted())[index].is_some() || self.floating == Some(index)
+    }
+
+    fn toggle(&mut self, index: usize, tx: &mut Tx) {
+        if self.floating == Some(index) {
+            self.close_floating(tx);
+        } else if self.docked(self.wanted())[index].is_some() {
+            self.set_wanted(index, false);
+            tx.focus(KEYS[index], tx.focus_visible());
+        } else if self.has_room(index) {
+            self.floating = None;
+            self.set_wanted(index, true);
+        } else {
+            self.floating_epoch = self.floating_epoch.wrapping_add(1);
+            self.floating = Some(index);
+            tx.focus_when_shown(KEYS[index], tx.focus_visible());
+        }
+        self.dock_floating();
+        tx.instant();
+    }
+
+    fn dock_floating(&mut self) {
+        if let Some(index) = self.floating.filter(|&i| self.has_room(i)) {
+            self.set_wanted(index, true);
+            self.floating = None;
+        }
+    }
+
+    pub fn close_floating(&mut self, tx: &mut Tx) -> bool {
+        let Some(index) = self.floating.take() else {
+            return false;
+        };
+        tx.focus_when_shown(KEYS[index], tx.focus_visible());
+        tx.instant();
+        true
+    }
+
+    pub fn floating_sessions(&self) -> Option<u64> {
+        (self.floating == Some(0)).then_some(self.floating_epoch)
+    }
+    pub fn has_floating(&self) -> bool {
+        self.floating.is_some()
+    }
+
+    pub fn wrap_floating_focus(&self, backward: bool, tx: &mut Tx) -> bool {
+        let Some(index) = self.floating else {
+            return false;
+        };
+        if tx.focused().is_none() {
+            tx.focus(KEYS[index], true);
+            return true;
+        }
+        let last = if index == 0 {
+            "refresh-sessions"
+        } else {
+            KEYS[1]
+        };
+        let (from, to) = if backward {
+            (KEYS[0], last)
+        } else {
+            (last, KEYS[0])
+        };
+        if tx.focused() == Some(from) {
+            tx.focus(to, true);
+            if index == 0 && backward {
+                tx.scroll_into_view_in("session-list", last);
+            }
+            true
+        } else {
+            false
+        }
+    }
+    pub fn leave_project(&mut self) {
+        self.floating = None;
+        self.resizing = None;
+    }
+
+    pub fn dismiss_outside(s: &mut State, tx: &mut Tx) {
+        if s.shell.floating.take().is_some() {
+            tx.instant();
+        }
+    }
+
+    fn resize(&mut self, index: usize, resize: shell::Resize, tx: &mut Tx) {
+        match resize {
+            shell::Resize::Start => self.resizing = Some(index),
+            shell::Resize::Set(width) | shell::Resize::Nudge(width)
+                if self.resizing == Some(index) || matches!(resize, shell::Resize::Nudge(_)) =>
+            {
+                let max = self.max_width(index);
+                if width < max || self.preferred[index] <= max {
+                    self.preferred[index] = width.clamp(PANEL_MIN[index], max);
+                    self.dock_floating();
+                }
+            }
+            shell::Resize::End if self.resizing == Some(index) => self.resizing = None,
+            _ => return,
+        }
+        tx.instant();
+    }
+    fn max_width(&self, index: usize) -> f32 {
+        let [left, right] = self.docked(self.wanted());
+        let other = [right, left][index].unwrap_or_default();
+        (self.width - CENTER_MIN - other).clamp(
+            PANEL_MIN[index],
+            f32::from(crate::workspace::MAX_PANEL_WIDTH),
+        )
+    }
+}
+
+pub fn toggle(s: &mut State, index: usize, tx: &mut Tx) {
+    if s.shell.resizing == Some(index) {
+        s.shell.resizing = None;
+    }
+    s.shell.toggle(index, tx);
+}
+
+pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
+    let rtl = rune_theme_codenomad::catalogue::direction(strings::locale()) == "rtl";
+    let docked = if project {
+        s.shell.docked(s.shell.wanted())
+    } else {
+        [None; 2]
+    };
+    let floating = s.shell.floating.filter(|_| project);
+    let t = strings::t;
+    let inactive = |e: El| {
+        if floating.is_some() {
+            e.inert().a11y_hidden()
+        } else {
+            e
+        }
+    };
+    let panel = |i: usize, width, floating| {
+        let content = if i == 0 {
+            sidebar::view(s, touch, rtl, floating)
+        } else {
+            right_panel::view(s, touch, floating)
+        };
+        let pane = shell::panel(width, floating)
+            .key(REGIONS[i])
+            .role("region")
+            .label(t(LABELS[i]))
+            .focus_return(KEYS[i])
+            .child(content);
+        if floating {
+            pane
+        } else {
+            let scope = s.input_scope.clone();
+            pane.child(shell::panel_grip(
+                if i == 0 {
+                    "sessions-panel-resize"
+                } else {
+                    "right-panel-resize"
+                },
+                t(LABELS[i]),
+                i == 0,
+                rtl,
+                s.shell.resizing == Some(i),
+                width,
+                PANEL_MIN[i],
+                s.shell.max_width(i),
+                move |s: &mut State, resize, tx| {
+                    if s.current_scope(&scope) {
+                        let before = s.shell.preferred[i];
+                        s.shell.resize(i, resize, tx);
+                        if s.shell.preferred[i] != before {
+                            let width = s.shell.preferred[i].round() as u16;
+                            crate::workspace::panel_width(s, i, width);
+                        }
+                    }
+                },
+            ))
+        }
+    };
+    let session = crate::workspace::active_session(s);
+    let mut center = shell::conversation_column().key(match session {
+        Some(id) => format!("conversation-session-{id}"),
+        None => "conversation-draft".into(),
+    });
+    if project || !s.chat_title.is_empty() {
+        center = center.child(header(s, project, docked, touch));
+    } else if let Some(warning) = connection_warning(s) {
+        center = center.child(shell::floating_notice(warning));
+    }
+    let center = center.child(body.remaining());
+    let mut columns = shell::columns();
+    if let Some(width) = docked[0].filter(|_| floating != Some(0)) {
+        columns = columns.child(panel(0, width, false));
+    }
+    columns = columns.child(center);
+    if let Some(width) = docked[1].filter(|_| floating != Some(1)) {
+        columns = columns.child(panel(1, width, false));
+    }
+    let mut root = shell::frame()
+        .key("session-shell")
+        .on_layout_tx(move |s: &mut State, [_, _, width, height], tx| {
+            s.shell.measure(width, height, touch, tx)
+        })
+        .on_key(keys);
+    if project {
+        for i in 0..2 {
+            root = root.child(shell::toggle(
+                if (i == 0) != rtl { &LEFT } else { &RIGHT },
+                t(LABELS[i]),
+                KEYS[i],
+                i == 0,
+                touch,
+                s.shell.visible(i),
+                crate::screen::action_tx(&s.input_scope, move |s, tx| toggle(s, i, tx)),
+            ));
+        }
+    }
+    root = root.child(inactive(columns));
+    if let Some(index) = floating {
+        root = root.child(panel(index, PANEL_DEFAULT[index], true));
+    }
+    root
+}
+
+fn header(s: &State, project: bool, docked: [Option<f32>; 2], touch: bool) -> El {
+    let title = if s.chat_title.is_empty() && project {
+        s.screen
+            .launcher()
+            .and_then(|l| l.project.as_ref())
+            .map_or("", |p| &p.path)
+    } else {
+        &s.chat_title
+    };
+    let reserve = |i: usize| project && docked[i].is_none();
+    shell::header(
+        reserve(0),
+        reserve(1),
+        touch,
+        [
+            shell::spacer(),
+            shell::panel_title(title).key("chat-title").role("heading"),
+            shell::spacer(),
+            connection_warning(s).unwrap_or_else(col),
+        ],
+    )
+    .key("session-header")
+}
+
+fn connection_warning(s: &State) -> Option<El> {
+    #[cfg(target_arch = "wasm32")]
+    if s.phase == crate::Phase::WorkspaceMissing {
+        return Some(text(connection(s)).role("status"));
+    }
+    let failed = s.phase == crate::Phase::Failed;
+    #[cfg(target_arch = "wasm32")]
+    let failed = failed || s.phase == crate::Phase::RestoreFailed;
+    match s.phase {
+        crate::Phase::Reconnecting => Some(text(connection(s)).role("status")),
+        _ if failed => Some(crate::components::button_tx(
+            "connection-retry",
+            strings::t("sessionList.loadError.retry"),
+            false,
+            crate::screen::action_tx(&s.input_scope, crate::retry_connection),
+        )),
+        _ => None,
+    }
+}

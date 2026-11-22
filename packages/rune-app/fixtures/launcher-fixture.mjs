@@ -16,6 +16,8 @@ import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.m
 import {pairFixture} from '../../../scripts/rune/web-mobile.mjs'
 import {webLiveFixture} from './web-live-fixture.mjs'
 const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||process.argv.includes('--web-mobile')
+const sameOriginPairing=process.argv.includes('--same-origin-pairing')
+assert(!sameOriginPairing || webMobile&&!webAndroid,'Same-origin control is only for the Chromium mobile smoke')
 const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending,web=process.argv.includes('--web')||webRestore||webMobile,root=path.resolve(import.meta.dirname,'../../..')
 if(!web)requireTestSupport()
 const here=path.resolve(import.meta.dirname,'..'),profile=path.join(web?path.join(root,'target/rune-web-tests'):path.join(here,'fixture-profile'),`launcher-${randomUUID()}`)
@@ -104,7 +106,7 @@ function add(id,title,directory=project) {
   records.set(id,row);stores.set(id,new FixtureStore(0));return row
 }
 add('ses_existing','Existing history')
-if(webMobile)for(let i=0;i<70;i++)stores.get('ses_existing').append('assistant',`Mobile history row ${i}`)
+if(webMobile)for(let i=0;i<(webAndroid?70:210);i++)stores.get('ses_existing').append('assistant',`Mobile history row ${i}`)
 stores.get('ses_existing').append('user','Existing project history');stores.get('ses_existing').append('assistant','Existing answer')
 add('ses_another','Another session')
 if(linked){
@@ -250,7 +252,7 @@ try{
       if(!webAndroid){
         const issue=await http.post('/api/remote-control/pairings')
         assert.equal(issue.status(),200)
-        paired=await pairFixture({origin:uiOrigin,pairingUrl:(await issue.json()).url,storage,manifest,ui})
+        paired=await pairFixture({origin:uiOrigin,pairingUrl:(await issue.json()).url,storage,manifest,ui,fromLink:!sameOriginPairing})
       }
     }else await http.storageState({path:storage})
     let workspace
@@ -260,7 +262,7 @@ try{
     assert.equal(sha256,manifest.files.find(file=>file.file==='app_bg.wasm').sha256)
     staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,serverBinary,ui,paired}
     const runner=webAndroid?'web-android.mjs':webRestore?'web-restore.mjs':'web-smoke.mjs'
-    const args=webAndroid?[uiOrigin,profile,project,ui]:['--url',`${uiOrigin}/`,...(webMobile?['--mobile']:[]),...(webPending?['--pending-open']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',chromium.executablePath()]
+    const args=webAndroid?[uiOrigin,profile,project,ui]:['--url',`${uiOrigin}/`,...(webMobile?['--mobile']:[]),...(sameOriginPairing?['--same-origin-pairing']:[]),...(webPending?['--pending-open']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',chromium.executablePath()]
     const androidEnv=webAndroid?Object.fromEntries(['RUNE_ANDROID_ADB','RUNE_ANDROID_SERIAL','RUNE_ANDROID_ADB_PORT'].map(key=>[key,process.env[key]])):{}
     if(webAndroid)androidEnv.NODE_EXTRA_CA_CERTS=path.join(profile,'identity.data/tls/ca-cert.pem')
     client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})

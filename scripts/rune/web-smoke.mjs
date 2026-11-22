@@ -12,7 +12,7 @@ import {mobileLive} from './web-live.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
-  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'}}})
+  executable: {type: 'string'}, locale: {type: 'string', default: 'fr'}, 'storage-state': {type: 'string'}, connected:{type:'boolean'}, workspace:{type:'string'},project:{type:'string'},mobile:{type:'boolean'},'same-origin-pairing':{type:'boolean'}}})
 const url = new URL(values.url)
 assert(['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'Use an isolated loopback server URL')
 assert(!url.username && !url.password && ['http:', 'https:'].includes(url.protocol), 'Server URL must omit credentials')
@@ -102,48 +102,54 @@ try {
         assert.equal(await page.locator('html').getAttribute('lang'), values.locale)
         assert.equal(await page.locator('html').getAttribute('dir'), values.locale === 'he' ? 'rtl' : 'ltr')
         if(values.connected){
-          const press=async label=>{
-            const button=page.getByRole('button',{name:label,exact:true});await button.waitFor({state:'attached'})
-            await page.waitForFunction(label=>[...document.querySelectorAll('[data-rune-a11y] button')].some(e=>e.textContent===label&&!e.disabled&&e.getAttribute('aria-disabled')!=='true'),label)
+          const press=async (label,role='button')=>{
+            const button=page.getByRole(role,{name:label,exact:true});await button.waitFor({state:'attached'})
+            await button.scrollIntoViewIfNeeded()
             const box=await button.boundingBox()
             assert(box&&box.width>0&&box.height>0&&box.x>=-1&&box.y>=-1&&box.x+box.width<=width+1&&box.y+box.height<=height+1,`Connected control outside viewport: ${label}`)
             if(values.mobile)await page.touchscreen.tap(box.x+box.width/2,box.y+box.height/2)
             else await button.click({force:true})
           }
-          const ready=async()=>{await page.getByText(messages['rune.ready'],{exact:true}).waitFor();await page.waitForTimeout(200)}
-          const reading=async()=>{await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history')&&document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing answer'),undefined,{timeout:30000});await ready()}
+          const left=messages['window.menu.leftPanel']
+          const sessions=page.getByRole('region',{name:left,exact:true})
+          const openSessions=async()=>{
+            const toggle=page.getByRole('button',{name:left,exact:true})
+            await toggle.waitFor()
+            if(await toggle.getAttribute('aria-expanded')!=='true')await press(left)
+            await sessions.waitFor()
+          }
+          const row=name=>sessions.getByRole('listitem',{name,exact:true})
+          const select=async(name,id)=>{
+            await openSessions()
+            const window=page.waitForResponse(res=>res.url().endsWith('/session-history/window')&&res.ok()&&res.request().postDataJSON()?.sessionID===id)
+            await press(name,'listitem')
+            assert.equal((await (await window).json()).status,'window')
+            await page.getByRole('heading',{name,exact:true}).waitFor()
+          }
+          const reading=async()=>await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history')&&document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing answer'),undefined,{timeout:30000})
           await press(messages['folderSelection.servers.dialog.connect'])
           await press(values.project)
-          await press('Existing history');await reading()
-          await press(messages['sessionList.header.title'])
+          await openSessions()
           if(values.mobile){
-            const linked=page.getByRole('button',{name:'Linked checkout session',exact:true})
-            await linked.waitFor()
-            assert.equal(await page.getByRole('button',{name:'Linked checkout next page',exact:true}).count(),0)
-            assert.equal(await page.getByRole('button',{name:'Another session',exact:true}).count(),0)
-            const search=page.getByRole('group',{name:messages['sessionList.filter.ariaLabel'],exact:true})
-            const box=await search.boundingBox();assert(box)
-            await page.touchscreen.tap(box.x+box.width/2,box.y+box.height/2)
+            await row('Linked checkout session').waitFor()
+            assert.equal(await row('Linked checkout next page').count(),0)
+            assert.equal(await row('Another session').count(),0)
+            await press(messages['sessionList.filter.ariaLabel'])
             await page.locator('textarea:focus').fill('Another session')
-            await page.getByRole('button',{name:'Another session',exact:true}).waitFor()
+            await row('Another session').waitFor()
             assert(routes.some(row=>row.query.includes('search=Another+session')),'Use the native search before loading the next ordinary page')
-            await page.locator('textarea:focus').fill('')
+            await press(messages['sessionList.filter.ariaLabel'])
           }
           await press(messages['rune.more'])
           if(values.mobile){
+            await row('Another session').waitFor()
             await press(messages['rune.more'])
-            await press('Linked checkout next page')
+            await select('Linked checkout next page','ses_linked_next')
             await page.getByText('Linked checkout answer',{exact:true}).waitFor()
-            await ready()
-            await press(messages['sessionList.header.title'])
-            await press(messages['rune.more'])
           }
-          await press('Another session')
+          await select('Another session','ses_another')
           await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Another session')&&!document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history'))
-          await ready()
-          await press(messages['sessionList.header.title'])
-          await press('Existing history');await reading()
-          await page.waitForFunction(label=>[...document.querySelectorAll('[data-rune-a11y] button')].some(e=>e.textContent===label&&!e.disabled&&e.getAttribute('aria-disabled')!=='true'),messages['sessionList.header.title'])
+          await select('Existing history','ses_existing');await reading()
         }else{
         // Keyboard input is scoped to this headless page and goes through Rune's DOM bridge.
         let focused = false
@@ -168,15 +174,16 @@ try {
         if(!values.connected)await page.waitForLoadState('networkidle', {timeout: 30_000})
         const png = await page.screenshot({path: path.join(out, `${name}-${colorScheme}.png`),scale:'css'})
         const textRegions = await page.evaluate(title => {
-          const nodes = [...document.querySelectorAll('[data-rune-a11y] p, [data-rune-a11y] h1, [data-rune-a11y] h2')]
-          const crop = (name, predicate) => {
+          const nodes = [...document.querySelectorAll('[data-rune-a11y] p, [data-rune-a11y] h1, [data-rune-a11y] h2, [data-rune-a11y] [role=heading]')]
+          const crop = (name, predicate, surface='surface-canvas') => {
             const node = nodes.find(node => predicate(node.textContent ?? ''))
             if (!node) throw Error(`Missing drawn accessibility text region: ${name}`)
             const box = node.getBoundingClientRect()
-            return {name, rect: [box.x, box.y, box.width, box.height], surface: 'surface-canvas'}
+            return {name, rect: [box.x, box.y, box.width, box.height], surface}
           }
-          return [crop('header', text => text.startsWith(title.label)), crop('transcript', text => text.includes(title.connected?'Existing answer':'fn main()'))]
-        }, {label:messages['window.title.main'],connected:values.connected})
+          return [...(title.connected?[crop('header', text => text==='Existing history','surface-shade-light')]:[]),
+            crop('transcript', text => text.includes(title.connected?'Existing answer':'fn main()'))]
+        }, {connected:values.connected})
         const composerBox = await page.getByRole('group', {name: messages['rune.prompt'], exact: true}).boundingBox()
         const sendBox = await page.getByRole('button', {name: messages['promptInput.overlay.send'], exact: true}).boundingBox()
         assert(composerBox && sendBox, 'Composer group and action expose their drawn bounds')
@@ -193,7 +200,7 @@ try {
         }))
         if(values.mobile)measured.android=await mobileInteraction(page,{
           prompt:messages['rune.prompt'], send:messages['promptInput.overlay.send'],
-          latest:messages['rune.latest'], older:messages['rune.older'],
+          latest:messages['rune.latest'],
         })
         if(values.mobile){
           measured.network=colorScheme==='dark'?{rttMs:80,downloadBytesPerSecond:2_500_000,uploadBytesPerSecond:625_000}:'loopback'
@@ -202,15 +209,16 @@ try {
           assert(Math.abs(backingWidth-width*measured.viewport.dpr)<=1 && Math.abs(backingHeight-height*measured.viewport.dpr)<=1)
           assert.equal(measured.android.touchScroll.moved,true,'Physical touch dispatch must move the portrait transcript')
           measured.live=await mobileLive({page,context,url,messages,revoke:control,
-            eventSources:()=>eventSource,workspaces:policy.workspaces})
+            eventSources:()=>eventSource,workspaces:policy.workspaces,fromLink:!values['same-origin-pairing']})
         }
         assert.equal(forbiddenRequests.length, 0, 'Synthetic web smoke must stay offline from API and external origins')
         assert.equal(errors.length, 0, 'Web app must initialize and handle multiline input without JS exceptions')
         if(values.connected){
           assert(eventSource,'Real browser EventSource must connect')
           const existing=history.filter(row=>row.input.sessionID==='ses_existing')
-          assert(existing.length>=2)
+          assert(existing.length>=1)
           for(const row of existing){
+            if(values.mobile&&row.body.status!=='window')continue
             const bodies=row.body.messages.map(message=>message.text??message.content?.[0]?.text)
             if(values.mobile)assert(bodies.includes('Existing project history')&&bodies.includes('Existing answer'))
             else assert.deepEqual(bodies,['Existing project history','Existing answer'])
@@ -239,7 +247,7 @@ try {
           measured.departure={owned,retained,ownedRemoved:true,unownedPreserved:true}
         }
         records.push({name, colorScheme, width, height, emulatedTouch: touch, firstAccessibleMs, canvasBounds: canvas, textContrast, routes,history,eventSource,...measured,
-          ...(values.mobile?{requiredChecksPassed:true,knownGaps:measured.android.accessibility.older.status==='known-gap'?['older-button-disabled-state']:[]}:{pass:true})})
+          ...(values.mobile?{requiredChecksPassed:true,knownGaps:measured.live.older.status==='known-gap'?['older-button-disabled-state']:[]}:{pass:true})})
       } catch (error) {
         await page.screenshot({path: path.join(out, `${name}-${colorScheme}-failure.png`)}).catch(() => {})
         await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,measured,mirror:await page.locator('body').ariaSnapshot()}, null, 2))
@@ -250,6 +258,6 @@ try {
 } finally {
   await browser.close()
   await writeFile(path.join(out, 'smoke-report.json'), JSON.stringify({platform: process.platform, browser: 'Chromium headless',
-    scene: values.connected?'connected':'synthetic', records, pending: ['real phone keyboard/IME/autocorrect/dictation', 'screen reader on physical device', 'phone power and sustained performance',...(values.connected?[]:['Rust-server connected session flow'])]}, null, 2) + '\n')
+    scene: values.connected?'connected':'synthetic', pairingMode:values.mobile?(values['same-origin-pairing']?'same-origin-control':'cross-origin-link'):undefined, records, pending: ['real phone keyboard/IME/autocorrect/dictation', 'screen reader on physical device', 'phone power and sustained performance',...(values.connected?[]:['Rust-server connected session flow'])]}, null, 2) + '\n')
 }
 console.log(`Rune web smoke evidence: ${out}`)

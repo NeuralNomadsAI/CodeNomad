@@ -25,7 +25,7 @@ export async function mobileClientHints(page, browser) {
   return cdp
 }
 
-export async function pairFixture({origin, pairingUrl, storage, manifest, ui}) {
+export async function pairFixture({origin, pairingUrl, storage, manifest, ui, fromLink=true}) {
   const url = new URL(pairingUrl)
   assert.match(origin, /^https:\/\/127\.0\.0\.1:\d+$/)
   assert.equal(url.origin, origin)
@@ -64,7 +64,7 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui}) {
       return matches
     }), 'The pairing card consumes the shared overlay token')
     url.searchParams.set('locale','fr')
-    await navigatePair(page,url,{fromLink:true})
+    await navigatePair(page,url,{fromLink})
     const cookies = await context.cookies()
     assert(cookies.some(c => c.name === '__Host-codenomad_device' && c.secure && c.httpOnly && c.sameSite === 'Lax'))
     assert.equal((await (await get('/api/auth/status')).json()).authenticated, true)
@@ -82,7 +82,7 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui}) {
     const sha256 = createHash('sha256').update(await wasm.body()).digest('hex')
     assert.equal(sha256, manifest.files.find(row => row.file === 'app_bg.wasm').sha256)
     await context.storageState({path:storage})
-    return {origin, sha256, paired:true, crossOriginLink:true}
+    return {origin, sha256, paired:true, crossOriginLink:fromLink}
   } finally { await browser.close() }
 }
 
@@ -174,9 +174,6 @@ export async function mobileInteraction(page, labels) {
       await page.setViewportSize(viewport)
       return {resized:true,canvas:shown,field,button,top,bottom,retainedDraft:true,sendReachable:true}
     })
-    const olderDisabled=await role('button',labels.older).evaluate(el=>el.disabled||el.getAttribute('aria-disabled')==='true')
-    evidence.accessibility={older:{expected:'disabled',observed:olderDisabled?'disabled':'enabled',
-      status:olderDisabled?'pass':'known-gap',...(olderDisabled?{}:{issue:'https://github.com/anomalyco/rune/issues/118'})}}
     return evidence
   } finally {await cdp.detach()}
 }

@@ -69,9 +69,15 @@ pub(super) fn apply(s: &mut State, opening: Opening, backend: Backend, title: St
     workspace::capture(s);
     workspace::opened(s, &project);
     workspace::bound(s, &backend);
+    s.transcript_display
+        .bind(&backend.base, &backend.workspace, &backend.session);
     crate::files::bind(s, &backend);
+    if let Some(agent) = &mut s.agent {
+        agent.rebind(crate::agent::start(backend.clone(), s.wake.clone()));
+    }
     s.chat_title = title;
     s.renew_scope();
     attach(s, backend);
     workspace::capture(s);
+    super::list(s, false);
 }

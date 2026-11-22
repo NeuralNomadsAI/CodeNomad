@@ -13,19 +13,27 @@ export function command(action) {
   })
 }
 
-export async function mobileLive({page,context,url,messages,revoke,eventSources,workspaces,tap=(x,y)=>page.touchscreen.tap(x,y)}){
+export async function mobileLive({page,context,url,messages,revoke,eventSources,workspaces,fromLink=true,tap=(x,y)=>page.touchscreen.tap(x,y)}){
   const text=value=>page.getByText(value,{exact:true})
+  const connecting=text(messages['instanceShell.connection.connecting'])
   const before=eventSources()
   assert(before>0)
   await command('live')
   await text('Mobile live SSE only').waitFor()
   await command('cut')
-  await text(messages['rune.reconnecting']).waitFor()
+  await connecting.waitFor()
   assert.equal(await text(messages['authRecovery.pairingTitle']).count(),0)
+  let older
+  if(workspaces){
+    const button=page.getByRole('button',{name:messages['rune.older'],exact:true})
+    const disabled=await button.evaluate(el=>el.disabled||el.getAttribute('aria-disabled')==='true')
+    older={expected:'disabled',observed:disabled?'disabled':'enabled',status:disabled?'pass':'known-gap',
+      ...(disabled?{}:{issue:'https://github.com/anomalyco/rune/issues/118'})}
+  }
   await command('resume')
   await text('Mobile recovered history').waitFor()
-  await text(messages['rune.ready']).waitFor()
-  const evidence={live:true,recovered:true}
+  await connecting.waitFor({state:'hidden'})
+  const evidence={live:true,recovered:true,older}
   if(revoke){
     const draft='Draft across device revocation'
     const group=page.getByRole('group',{name:messages['rune.prompt'],exact:true})
@@ -42,7 +50,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
     const {older,witness}=await command('restart')
     assert(previous.length&&previous.every(id=>older.includes(id)),'Fixture had the browser-owned workspaces before reboot')
     await text('Mobile Rust restart history').waitFor({timeout:45000})
-    await text(messages['rune.ready']).waitFor()
+    await connecting.waitFor({state:'hidden'})
     const inventory=await context.request.get(`${url.origin}/api/workspaces`)
     assert(inventory.ok())
     const ids=(await inventory.json()).map(row=>row.id)
@@ -70,18 +78,19 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
     again.searchParams.set('locale','he')
     const tab=await context.newPage()
     try {
-      await navigatePair(tab, again, {fromLink:true})
+      await navigatePair(tab, again, {fromLink})
     } finally { await tab.close() }
     await page.bringToFront()
     if(await dialog.count())await check.click({force:true,timeout:2500}).catch(async error=>{
       if(await dialog.count())throw error
     })
     await dialog.waitFor({state:'detached'})
-    await text(messages['rune.ready']).waitFor()
+    await connecting.waitFor({state:'hidden'})
     assert.equal(await (await focus()).inputValue(),draft)
     assert(eventSources()>beforeRevoke,'Re-pairing must open a new real EventSource')
     assert.equal(page.url(),url.href,'Original document stays on its conversation')
     evidence.repairedWithDraft=true
+    evidence.crossOriginRePairLink=fromLink
   }
   await command('reset')
   return evidence

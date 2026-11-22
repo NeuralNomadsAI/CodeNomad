@@ -67,8 +67,11 @@ try {
   const button=name=>page.getByRole('button',{name,exact:true})
   await hit(button(messages['folderSelection.servers.dialog.connect']))
   await hit(button(project))
-  await hit(button('Existing history'))
-  await page.getByText(messages['rune.ready'],{exact:true}).waitFor()
+  const left=messages['window.menu.leftPanel']
+  const sessions=page.getByRole('region',{name:left,exact:true})
+  await button(left).waitFor()
+  if(await button(left).getAttribute('aria-expanded')!=='true')await hit(button(left))
+  await hit(sessions.getByRole('listitem',{name:'Existing history',exact:true}))
   await page.getByText('Existing answer',{exact:true}).waitFor()
   const group=page.getByRole('group',{name:messages['rune.prompt'],exact:true})
   const viewport=()=>metrics(page)

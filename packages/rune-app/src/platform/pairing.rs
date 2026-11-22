@@ -97,7 +97,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             crate::launcher::reopen(s);
         } else if s.commands.is_some() {
             s.history_error = false;
-            crate::retry(s);
+            crate::retry_connection(s, tx);
         } else if let Some(l) = s.screen.launcher() {
             if l.connection.is_none() {
                 crate::launcher::connect(s, tx);
