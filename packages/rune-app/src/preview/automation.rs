@@ -99,7 +99,8 @@ impl Preview {
         let deadline = v["deadline"].as_u64().unwrap_or_default();
         let mut deadline = deadline;
         if action == "wait" {
-            deadline = deadline.min(browser::now_ms() + command["timeout"].as_u64().unwrap_or(5_000).min(15_000));
+            deadline = deadline
+                .min(browser::now_ms() + command["timeout"].as_u64().unwrap_or(5_000).min(15_000));
         }
         let step = if load {
             panel.address = TextEdit::new(command["url"].as_str().unwrap_or_default());
@@ -167,7 +168,8 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             .ok()
             .and_then(|mut o| o.reply.take());
         let resolved = if panel.generation != pending.generation
-            || (pending.step.is_some() && pending.epoch != panel.epoch) {
+            || (pending.step.is_some() && pending.epoch != panel.epoch)
+        {
             Some(Err("Browser target changed".into()))
         } else if pending.deadline <= now {
             Some(Err(
@@ -175,20 +177,29 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                     "Text wait timed out"
                 } else {
                     "Browser command timed out; inspect before another action"
-                }.into(),
+                }
+                .into(),
             ))
         } else if panel.error {
             Some(Err("Ladybird preview unavailable".into()))
         } else if pending.step.is_none() && panel.loaded && panel.last_frame != 0 {
             Some(Ok(json!({"url":panel.url})))
         } else if matches!(pending.step, Some(actions::Step::Wait))
-            || reply.as_ref().is_some_and(|r| r["id"] == pending.serial) {
+            || reply.as_ref().is_some_and(|r| r["id"] == pending.serial)
+        {
             let Some(step) = pending.step.take() else {
-                pending.request.finish(Err("Unexpected browser response".into()));
+                pending
+                    .request
+                    .finish(Err("Unexpected browser response".into()));
                 return changed;
             };
             let c = &pending.request.value["params"]["command"];
-            match actions::advance(panel, c, step, reply.map(|r| r["result"].clone()).unwrap_or_default()) {
+            match actions::advance(
+                panel,
+                c,
+                step,
+                reply.map(|r| r["result"].clone()).unwrap_or_default(),
+            ) {
                 Ok(actions::Next::Return(result)) => Some(Ok(result)),
                 Ok(actions::Next::Again) => {
                     pending.step = Some(actions::Step::Wait);
@@ -213,7 +224,11 @@ pub fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             pending.request.finish(result);
         } else {
             let remaining = pending.deadline.saturating_sub(now);
-            let delay = if matches!(pending.step, Some(actions::Step::Wait)) { remaining.min(40) } else { remaining };
+            let delay = if matches!(pending.step, Some(actions::Step::Wait)) {
+                remaining.min(40)
+            } else {
+                remaining
+            };
             tx.wake_at(tx.clock() + delay as f64 * 0.001);
             preview.pending = Some(pending);
         }

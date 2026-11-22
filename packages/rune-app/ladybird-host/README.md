@@ -16,7 +16,8 @@ that were never drawn return without a GPU wait. The copy/readback path is for e
 
 1. Use `scripts/rune/prepare.mjs` at the pinned Rune revision, then apply `rune-d3d12.patch`
    inside `.prototype-deps/rune`. Keep Cargo and TEMP on `D:`. Build `codenomad-rune-app`
-   with Rust 1.99.1 and `--release --locked --features test-support`.
+   with Rust 1.99.1 and `--release --locked --features ladybird-preview,test-support`.
+   Normal builds leave `ladybird-preview` off and need no Rune patch.
 2. Reuse the no-Qt release build of Ladybird `6ecdb35ef4f81aec0428d02c21ea7a8e87c30bfa`.
    Its six CMake changes are in `ladybird-windows.patch`; apply `ladybird-hit-test.patch` for
    the private hit-test callback. Run `build.ps1 -Study <study root> -VcVars <vcvars64.bat>`.

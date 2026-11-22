@@ -111,10 +111,7 @@ public:
         auto flag = [&](StringView key) { return message.get_bool(key).value_or(false); };
         auto op = string("op"sv);
         if (auto epoch = message.get_u64("epoch"sv); epoch.has_value()) {
-            FILETIME ft;
-            GetSystemTimePreciseAsFileTime(&ft);
-            auto now = ((static_cast<u64>(ft.dwHighDateTime) << 32 | ft.dwLowDateTime) - 116444736000000000ULL) / 10'000;
-            if (*epoch != m_epoch || !m_loaded || message.get_u64("deadline"sv).value_or(0) <= now) {
+            if (!current(*epoch, message.get_u64("deadline"sv).value_or(0))) {
                 if (auto id = message.get_u64("id"sv); id.has_value())
                     fail(*id, "Browser document changed or command expired"sv);
                 return;
@@ -215,22 +212,13 @@ public:
                 page().async_get_node_id_at_position((1ULL << 63) | id,
                     { static_cast<int>(number("x"sv)), static_cast<int>(number("y"sv)) });
             } else if (op == "text"sv) {
-                auto const& state = input_method_state();
-                if (!state.is_enabled) {
-                    fail(id, "Browser field is not editable"sv);
-                    return;
-                }
-                auto text = Utf16String::from_utf8(string("text"sv));
-                if (flag("clear"sv)) {
-                    auto length = state.text_before_cursor.length_in_code_units() + state.text_after_cursor.length_in_code_units();
-                    if (length > 64 * 1024 || state.cursor_position < 0 || static_cast<size_t>(state.cursor_position) > length) {
-                        fail(id, "Browser field selection is unavailable"sv);
-                        return;
-                    }
-                    commit_text_from_input_method(text, -state.cursor_position, static_cast<i32>(length));
-                } else {
-                    commit_text_from_input_method(text);
-                }
+                auto node = message.get_i64("node"sv).value_or(-1);
+                auto previous = string("previous"sv);
+                auto length = static_cast<i32>(Utf8View { previous.bytes_as_string_view() }.length());
+                auto text = string("text"sv);
+                // LibWeb drives the focused form's native editor: normal insertText, not IME preedit.
+                auto operation = text.is_empty() ? "delete_text"_string : "insert_text"_string;
+                perform_accessibility_text_action(node, move(operation), flag("clear"sv) ? 0 : length, length, move(text));
                 reply(id, {});
             } else {
                 auto node = message.get_i64("node"sv).value_or(-1);
@@ -252,8 +240,22 @@ private:
     };
     struct AxRequest { u64 id; u64 epoch; };
 
+    bool current(u64 epoch, u64 deadline) const
+    {
+        FILETIME ft;
+        GetSystemTimePreciseAsFileTime(&ft);
+        auto now = ((static_cast<u64>(ft.dwHighDateTime) << 32 | ft.dwLowDateTime) - 116444736000000000ULL) / 10'000;
+        return epoch == m_epoch && m_loaded && deadline > now;
+    }
+
     void did_accept_presented_backing_store(i32 bitmap_id, Gfx::IntRect) override
     {
+        m_loans.remove_all_matching([&](auto& loan) {
+            if (!loan.returned || loan.page.ptr() == &page())
+                return false;
+            loan.page->release_presented_bitmap(loan.bitmap);
+            return true;
+        });
         auto frame = backing_stores().displayed_frame();
         if (!frame.has_value() || !frame->shared_image_buffer)
             return;

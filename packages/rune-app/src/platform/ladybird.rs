@@ -14,8 +14,8 @@ use std::{
 
 pub struct Frame {
     pub header: Value,
-    #[cfg(windows)]
-    pub texture: rune::native_surface::windows::LoanedTexture,
+    #[cfg(all(windows, feature = "ladybird-preview"))]
+    pub texture: rune_theme_codenomad::preview::LoanedTexture,
 }
 #[derive(Default)]
 pub struct Output {
@@ -32,9 +32,12 @@ pub struct Guest {
 
 impl Guest {
     pub fn available() -> bool {
-        cfg!(windows)
+        cfg!(all(windows, feature = "ladybird-preview"))
             && std::env::var("CODENOMAD_PROFILE").as_deref() == Ok("trial-ladybird")
             && std::env::var_os("RUNE_LADYBIRD_BIN").is_some()
+            && std::env::var_os("RUNE_HOST_ROOT").is_some_and(|p| std::path::Path::new(&p).is_absolute())
+            && std::env::var_os("RUNE_SERVER_BIN").is_some_and(|p| std::path::Path::new(&p).is_absolute())
+            && std::env::var_os("RUNE_HOST_PERSISTENT").is_none()
     }
 
     pub fn start(wake: rune::Waker) -> Option<Self> {
@@ -45,7 +48,7 @@ impl Guest {
         let output = Arc::new(Mutex::new(Output::default()));
         let offline = Arc::new(AtomicBool::new(false));
         let (send, recv) = mpsc::sync_channel(64);
-        #[cfg(windows)]
+        #[cfg(all(windows, feature = "ladybird-preview"))]
         let release = send.clone();
         let (state, failed) = (output.clone(), offline.clone());
         let stopped = failed.clone();
@@ -53,25 +56,21 @@ impl Guest {
             let env = std::env::vars_os().filter(|(key, _)| {
                 matches!(
                     key.to_string_lossy().to_ascii_uppercase().as_str(),
-                    "SYSTEMROOT"
-                        | "WINDIR"
-                        | "SYSTEMDRIVE"
-                        | "LANG"
-                        | "TEMP"
-                        | "TMP"
+                    "SYSTEMROOT" | "WINDIR" | "SYSTEMDRIVE" | "LANG" | "TEMP" | "TMP"
                 )
             });
-            let profile = std::path::PathBuf::from(
-                std::env::var_os("RUNE_HOST_ROOT").unwrap_or_default(),
-            ).join("ladybird");
+            let profile =
+                std::path::PathBuf::from(std::env::var_os("RUNE_HOST_ROOT").unwrap_or_default())
+                    .join("ladybird");
             let mut cmd = Command::new(&path);
-            cmd.arg("--headless=manual").arg("--profile-path").arg(&profile);
+            cmd.arg("--headless=manual")
+                .arg("--profile-path")
+                .arg(&profile);
             if let Some(dir) = path.parent() {
                 cmd.current_dir(dir);
             }
             let child = OwnedProcess::spawn(
-                cmd
-                    .stdin(Stdio::piped())
+                cmd.stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .env_clear()
                     .envs(env)
@@ -84,14 +83,16 @@ impl Guest {
                 && let (Some(mut input), Some(stdout)) = (child.take_stdin(), child.take_stdout())
             {
                 let started = wake.clone();
-                #[cfg(windows)]
+                #[cfg(all(windows, feature = "ladybird-preview"))]
                 use std::os::windows::io::AsHandle;
-                #[cfg(windows)]
+                #[cfg(all(windows, feature = "ladybird-preview"))]
                 let process = child.as_handle().try_clone_to_owned();
                 let reader = std::thread::spawn(move || {
-                    #[cfg(windows)]
-                    let read = process.and_then(|process| read_frames(BufReader::new(stdout), &state, &*started, process, release));
-                    #[cfg(not(windows))]
+                    #[cfg(all(windows, feature = "ladybird-preview"))]
+                    let read = process.and_then(|process| {
+                        read_frames(BufReader::new(stdout), &state, &*started, process, release)
+                    });
+                    #[cfg(not(all(windows, feature = "ladybird-preview")))]
                     let read = read_frames(BufReader::new(stdout), &state, &*started);
                     if let Err(error) = read {
                         eprintln!("Ladybird pipe: {error}");
@@ -105,11 +106,16 @@ impl Guest {
                     match recv.recv_timeout(std::time::Duration::from_millis(100)) {
                         Ok(message) if message.is_null() => break,
                         Ok(message) => {
-                            if input.write_fmt(format_args!("{message}\n")).and_then(|_| input.flush()).is_err() {
+                            if input
+                                .write_fmt(format_args!("{message}\n"))
+                                .and_then(|_| input.flush())
+                                .is_err()
+                            {
                                 break;
                             }
                         }
-                        Err(mpsc::RecvTimeoutError::Timeout) if !stopped.load(Ordering::Acquire) => {}
+                        Err(mpsc::RecvTimeoutError::Timeout)
+                            if !stopped.load(Ordering::Acquire) => {}
                         Err(_) => break,
                     }
                 }
@@ -142,13 +148,17 @@ fn read_frames(
     mut input: impl BufRead,
     out: &Mutex<Output>,
     wake: &dyn Fn(),
-    #[cfg(windows)] process: std::os::windows::io::OwnedHandle,
-    #[cfg(windows)] send: SyncSender<Value>,
+    #[cfg(all(windows, feature = "ladybird-preview"))] process: std::os::windows::io::OwnedHandle,
+    #[cfg(all(windows, feature = "ladybird-preview"))] send: SyncSender<Value>,
 ) -> std::io::Result<()> {
     let bad = || std::io::Error::other("Invalid Ladybird message");
     loop {
         let mut line = String::new();
-        if (&mut input).take(4 * 1024 * 1024 + 1024).read_line(&mut line)? == 0 {
+        if (&mut input)
+            .take(4 * 1024 * 1024 + 1024)
+            .read_line(&mut line)?
+            == 0
+        {
             return Ok(());
         }
         if !line.ends_with('\n') {
@@ -158,23 +168,28 @@ fn read_frames(
             continue;
         };
         let header: Value = serde_json::from_str(line).map_err(|_| bad())?;
-        if let Some(id) = header["frame"].as_u64() {
-            #[cfg(not(windows))]
+        if let Some(_id) = header["frame"].as_u64() {
+            #[cfg(not(all(windows, feature = "ladybird-preview")))]
             return Err(bad());
-            #[cfg(windows)]
+            #[cfg(all(windows, feature = "ladybird-preview"))]
             {
-            let foreign = header["handle"].as_u64().filter(|n| *n != 0).ok_or_else(bad)?;
-            let handle = duplicate(&process, foreign)?;
-            let send = send.clone();
-            // Producer's Skia queue completed the write before publication. The loan stays
-            // immutable until Rune retires it and wgpu completes every draw that sampled it.
-            let texture = unsafe { rune::native_surface::windows::LoanedTexture::new(handle, move || {
-                let _ = send.try_send(serde_json::json!({"op":"release","frame":id}));
-            }) };
-            let mut out = out.lock().map_err(|_| bad())?;
-            if out.frame.replace(Frame { header, texture }).is_some() {
-                out.dropped += 1;
-            }
+                let foreign = header["handle"]
+                    .as_u64()
+                    .filter(|n| *n != 0)
+                    .ok_or_else(bad)?;
+                let handle = duplicate(&process, foreign)?;
+                let send = send.clone();
+                // Producer's Skia queue completed the write before publication. The loan stays
+                // immutable until Rune retires it and wgpu completes every draw that sampled it.
+                let texture = unsafe {
+                    rune_theme_codenomad::preview::LoanedTexture::new(handle, move || {
+                        let _ = send.try_send(serde_json::json!({"op":"release","frame":_id}));
+                    })
+                };
+                let mut out = out.lock().map_err(|_| bad())?;
+                if out.frame.replace(Frame { header, texture }).is_some() {
+                    out.dropped += 1;
+                }
             }
         } else if header["id"].is_u64() {
             out.lock().map_err(|_| bad())?.reply = Some(header);
@@ -185,14 +200,30 @@ fn read_frames(
     }
 }
 
-#[cfg(windows)]
-fn duplicate(process: &std::os::windows::io::OwnedHandle, foreign: u64) -> std::io::Result<std::os::windows::io::OwnedHandle> {
+#[cfg(all(windows, feature = "ladybird-preview"))]
+fn duplicate(
+    process: &std::os::windows::io::OwnedHandle,
+    foreign: u64,
+) -> std::io::Result<std::os::windows::io::OwnedHandle> {
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
-    use windows_sys::Win32::{Foundation::{DuplicateHandle, DUPLICATE_SAME_ACCESS}, System::Threading::GetCurrentProcess};
+    use windows_sys::Win32::{
+        Foundation::{DUPLICATE_SAME_ACCESS, DuplicateHandle},
+        System::Threading::GetCurrentProcess,
+    };
     let mut handle = std::ptr::null_mut();
     // Only Rune opens a handle from the owned child. The child receives no handle to Rune.
-    if unsafe { DuplicateHandle(process.as_raw_handle(), foreign as usize as _, GetCurrentProcess(),
-        &mut handle, 0, 0, DUPLICATE_SAME_ACCESS) } == 0 {
+    if unsafe {
+        DuplicateHandle(
+            process.as_raw_handle(),
+            foreign as usize as _,
+            GetCurrentProcess(),
+            &mut handle,
+            0,
+            0,
+            DUPLICATE_SAME_ACCESS,
+        )
+    } == 0
+    {
         return Err(std::io::Error::last_os_error());
     }
     Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
@@ -200,7 +231,9 @@ fn duplicate(process: &std::os::windows::io::OwnedHandle, foreign: u64) -> std::
 
 #[cfg(all(windows, feature = "test-support"))]
 pub fn elapsed_us(qpc: u64) -> u64 {
-    use windows_sys::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
+    use windows_sys::Win32::System::Performance::{
+        QueryPerformanceCounter, QueryPerformanceFrequency,
+    };
     static FREQUENCY: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
     let frequency = *FREQUENCY.get_or_init(|| {
         let mut rate = 0;
@@ -214,4 +247,6 @@ pub fn elapsed_us(qpc: u64) -> u64 {
 }
 
 #[cfg(all(not(windows), feature = "test-support"))]
-pub fn elapsed_us(_: u64) -> u64 { 0 }
+pub fn elapsed_us(_: u64) -> u64 {
+    0
+}

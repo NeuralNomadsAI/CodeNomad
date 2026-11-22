@@ -6,14 +6,14 @@ pub struct Samples {
     pub read_us: Vec<u64>,
     pub receive_us: Vec<u64>,
     submitted_us: Vec<u64>,
-    last_at: Option<u64>,
+    pending: Option<(u64, u64)>,
 }
 
 static SAMPLES: std::sync::Mutex<RefCell<Samples>> = std::sync::Mutex::new(RefCell::new(Samples {
     read_us: Vec::new(),
     receive_us: Vec::new(),
     submitted_us: Vec::new(),
-    last_at: None,
+    pending: None,
 }));
 
 use crate::platform::ladybird::elapsed_us;
@@ -21,12 +21,15 @@ pub fn receive(frame: Value) {
     let Some(at) = frame["qpc"].as_u64() else {
         return;
     };
+    let Some(id) = frame["frame"].as_u64() else {
+        return;
+    };
     if let Ok(mut lock) = SAMPLES.lock() {
         let s = lock.get_mut();
         if s.read_us.len() < 18_000 {
             s.read_us.push(0);
             s.receive_us.push(elapsed_us(at));
-            s.last_at = Some(at);
+            s.pending = Some((id, at));
         }
     }
 }
@@ -34,13 +37,16 @@ pub fn receive(frame: Value) {
 pub fn paint_pending() -> bool {
     SAMPLES
         .lock()
-        .is_ok_and(|mut s| s.get_mut().last_at.is_some())
+        .is_ok_and(|mut s| s.get_mut().pending.is_some())
 }
-pub fn submitted() {
+pub fn submitted(frame: Option<u64>) {
     if let Ok(mut lock) = SAMPLES.lock() {
         let s = lock.get_mut();
-        if let Some(at) = s.last_at.take() {
+        if let Some((id, at)) = s.pending
+            && frame == Some(id)
+        {
             s.submitted_us.push(elapsed_us(at));
+            s.pending = None;
         }
     }
 }
@@ -53,5 +59,5 @@ pub fn take() -> Value {
             .copied()
     };
     json!({"frames":s.read_us.len(),"read_p95_us":p95(&mut s.read_us),"receive_p95_us":p95(&mut s.receive_us),
-        "submit_p95_us":p95(&mut s.submitted_us)})
+        "submit_frames":s.submitted_us.len(),"submit_p95_us":p95(&mut s.submitted_us)})
 }

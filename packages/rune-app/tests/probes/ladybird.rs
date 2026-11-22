@@ -37,14 +37,18 @@ pub fn run() {
     rt.poll = Some(poll);
     let minute = Duration::from_secs(60);
     until(&mut rt, minute, "server connection", |s| {
-        s.launcher.as_ref().is_some_and(|l| l.connection.is_some() && !l.pending)
+        s.launcher
+            .as_ref()
+            .is_some_and(|l| l.connection.is_some() && !l.pending)
             && crate::workspace::input_ready(s)
     });
     let folder = std::env::var("RUNE_TEST_FOLDER").expect("test folder");
     rt.update(|s, _| s.launcher.as_mut().unwrap().folder = TextEdit::new(folder));
     tap(&mut rt, "open-folder");
     until(&mut rt, minute, "project", |s| {
-        s.launcher.as_ref().is_some_and(|l| l.project.is_some() && !l.pending)
+        s.launcher
+            .as_ref()
+            .is_some_and(|l| l.project.is_some() && !l.pending)
     });
     rt.update(|s, _| s.launcher.as_mut().unwrap().title = TextEdit::new("Ladybird preview trial"));
     tap(&mut rt, "create-session");
@@ -96,7 +100,10 @@ pub fn run() {
         json!({"workspace":workspace,"session":session,"server":backend.base,"sidecar":sidecar})
     );
     let reload = flag.with_file_name("reload");
+    let capture = flag.with_file_name("capture");
+    let mut chat_seen = Vec::new();
     let mut resized = false;
+    let mut captured = false;
     while !flag.exists() && Instant::now() < deadline {
         if !resized && reload.exists() {
             tap(&mut rt, "ladybird-reload");
@@ -107,9 +114,34 @@ pub fn run() {
         }
         let start = Instant::now();
         rt.frame(0.016);
+        if chat_seen.len() < 25
+            && let Some(body) = rt
+                .state
+                .messages
+                .iter()
+                .rev()
+                .find(|m| m.role == "assistant" && m.body.contains("LBD0;"))
+                .map(|m| &m.body)
+        {
+            while chat_seen.len() < 25 && body.contains(&format!("LBD{};", chat_seen.len())) {
+                chat_seen.push(crate::platform::browser::now_ms());
+            }
+            if chat_seen.len() == 25 {
+                std::fs::write(
+                    flag.with_file_name("chat-seen.json"),
+                    serde_json::to_vec(&chat_seen).unwrap(),
+                )
+                .unwrap();
+            }
+        }
         if crate::preview::test_metrics::paint_pending() {
             offscreen.submit(&mut rt);
-            crate::preview::test_metrics::submitted();
+            crate::preview::test_metrics::submitted(rt.state.preview.trial_gpu_frame());
+        }
+        if !captured && capture.exists() {
+            offscreen.submit(&mut rt);
+            offscreen.save(&flag.with_file_name("rune-composite.png")).expect("Rune GPU readback");
+            captured = true;
         }
         frame_us.push(start.elapsed().as_micros() as u64);
         std::thread::sleep(Duration::from_millis(4));
@@ -117,10 +149,13 @@ pub fn run() {
     frame_us.sort_unstable();
     println!(
         "LADYBIRD_METRICS {}",
-        json!({"dpi":dpi, "runtime_frame_us_p95":frame_us.get(frame_us.len()*95/100),
+        json!({"dpi":dpi, "viewport":rt.state.preview.trial_viewport(), "runtime_frame_us_p95":frame_us.get(frame_us.len()*95/100),
         "guest":crate::preview::test_metrics::take(),"messages":rt.state.messages.len()})
     );
-    let _ = offscreen.save(&flag.with_file_name("rune-composite.png"));
+    if !captured {
+        offscreen.submit(&mut rt);
+        offscreen.save(&flag.with_file_name("rune-composite.png")).expect("Rune GPU readback");
+    }
     rt.state.preview.close();
     drop(rt);
     crate::platform::finish();

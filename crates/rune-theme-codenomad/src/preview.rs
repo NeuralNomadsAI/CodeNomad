@@ -1,5 +1,7 @@
 use crate::{Space, layout::Layout};
 pub use rune::NativeSurface as PreviewSurface;
+#[cfg(all(windows, feature = "ladybird-preview"))]
+pub use rune::native_surface::windows::LoanedTexture;
 use rune::{El, SurfaceFit, col, el};
 
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]

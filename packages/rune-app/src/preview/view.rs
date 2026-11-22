@@ -188,22 +188,21 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         Ok(mut out) => (out.state.take(), out.frame.take()),
         Err(_) => return changed,
     };
-    if let Some(state) = state
-    {
+    if let Some(state) = state {
         if let Some(error) = state["error"].as_str() {
             eprintln!("{error}");
             changed |= !p.error;
             p.error = true;
         }
         if state["generation"].as_u64() == Some(p.generation) {
-        let loaded = state["ready"] == true;
-        changed |= p.loaded != loaded;
-        p.loaded = loaded;
-        p.epoch = state["epoch"].as_u64().unwrap_or_default();
-        p.url = state["url"].as_str().unwrap_or_default().to_owned();
+            let loaded = state["ready"] == true;
+            changed |= p.loaded != loaded;
+            p.loaded = loaded;
+            p.epoch = state["epoch"].as_u64().unwrap_or_default();
+            p.url = state["url"].as_str().unwrap_or_default().to_owned();
         }
     }
-    #[cfg(windows)]
+    #[cfg(all(windows, feature = "ladybird-preview"))]
     if let Some(frame) = frame
         && let Some(id) = frame.header["frame"].as_u64()
         && id > p.last_frame
@@ -214,8 +213,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         && frame.header["dpi"].as_f64() == Some(p.viewport_px.2.into())
     {
         p.last_frame = id;
-        if p.surface.push_loaned(frame.texture, [p.viewport_px.0, p.viewport_px.1], id)
-        .is_err()
+        if p.surface
+            .push_loaned(frame.texture, [p.viewport_px.0, p.viewport_px.1], id)
+            .is_err()
         {
             p.error = true;
             changed = true;
@@ -225,7 +225,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             super::test_metrics::receive(frame.header);
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(not(all(windows, feature = "ladybird-preview")))]
     let _ = frame;
     changed | native
 }

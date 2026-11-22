@@ -12,6 +12,7 @@ path = "src/main.rs"
 [features]
 default = []
 test-support = ["rune-theme-codenomad/test-support"]
+ladybird-preview = ["rune-theme-codenomad/ladybird-preview"]
 
 [dependencies]
 async-lock = "=3.5.0"

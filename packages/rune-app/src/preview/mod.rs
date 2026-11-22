@@ -29,6 +29,12 @@ impl Preview {
     pub fn owner_for_trial(&self) -> Option<(&str, &str)> {
         self.owner.as_ref().map(|(w, s)| (w.as_str(), s.as_str()))
     }
+    pub fn trial_gpu_frame(&self) -> Option<u64> {
+        self.panel.as_ref()?.surface.timing().map(|t| t.frame_id)
+    }
+    pub fn trial_viewport(&self) -> Option<(u32, u32, f32)> {
+        self.panel.as_ref().map(|p| p.viewport_px)
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -97,7 +103,8 @@ fn permitted(raw: &str) -> bool {
             && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
             && url.username().is_empty()
             && url.password().is_none())
-            || (url.scheme() == "file"
+            || (cfg!(feature = "test-support")
+                && url.scheme() == "file"
                 && crate::platform::setting("RUNE_LADYBIRD_TEST_FILE").as_deref()
                     == Some(url.as_str()))
     })

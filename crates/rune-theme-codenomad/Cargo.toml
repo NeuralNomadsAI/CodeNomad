@@ -6,6 +6,7 @@ publish = false
 
 [features]
 test-support = []
+ladybird-preview = []
 
 [dependencies]
 rune = { workspace = true }
