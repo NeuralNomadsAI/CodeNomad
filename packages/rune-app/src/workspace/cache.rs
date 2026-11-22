@@ -8,6 +8,7 @@ use rune::edit::TextEdit;
 pub(super) struct Cache {
     agent: Option<agent::Ui>,
     files: Option<crate::files::Ui>,
+    git: crate::git::Binding,
     transcript_display: crate::transcript_state::Display,
     title: String,
     messages: Vec<Message>,
@@ -35,6 +36,7 @@ impl Cache {
         Self {
             agent: s.agent.take(),
             files: s.files.take(),
+            git: crate::git::Binding::take(&mut s.git),
             transcript_display: std::mem::take(&mut s.transcript_display),
             title: std::mem::take(&mut s.chat_title),
             messages: std::mem::take(&mut s.messages),
@@ -53,6 +55,7 @@ impl Cache {
     pub fn apply(self, s: &mut State) {
         s.agent = self.agent;
         s.files = self.files;
+        s.git = self.git;
         s.transcript_display = self.transcript_display;
         s.chat_title = self.title;
         s.messages = self.messages;

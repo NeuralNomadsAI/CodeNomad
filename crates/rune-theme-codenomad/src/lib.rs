@@ -6,6 +6,8 @@ pub mod action_menu_scene;
 pub mod ansi;
 pub mod catalogue;
 mod generated_catalogues;
+pub mod git_diff;
+pub mod git_panel;
 pub mod interruption;
 mod kit;
 pub mod layout;
