@@ -161,9 +161,11 @@ try {
   const nodes = elements(tree)
   assert(nodes.some(node => node.key === "git-section-staged" && !node.states.includes("expanded")))
   assert(nodes.some(node => node.key === "git-diff-mode" && node.states.includes("checked")))
-  const switched = JSON.parse(await readFile(native("git-changes", "dark", "mode-switch", script), "utf8"))
-  assert(elements(switched).some(node => node.role === "button" && node.name?.startsWith("Make Git history")))
-  assert(switched.elements.some(node => node.key === "segment2" && node.itemSelected))
+  for (const width of [360, 180]) {
+    const switched = JSON.parse(await readFile(native("git-changes", "dark", `mode-switch-${width}`, script, "end", width), "utf8"))
+    assert(elements(switched).some(node => node.role === "button" && node.name?.startsWith("Make Git history")), `Commits must open at ${width} px`)
+    assert(switched.elements.some(node => node.key === "segment2" && node.itemSelected), `Commits must be selected at ${width} px`)
+  }
   const compact = path.join(out, "compact-interaction.json")
   await writeFile(compact, JSON.stringify({ events: [
     { t: 0.2, type: "tap", key: "git-row-staged:menu:src/components/git-panel.tsx:trigger" },
