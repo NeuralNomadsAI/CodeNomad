@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import { describe, it } from "node:test"
 
 import { createInstanceMessageStore } from "./instance-store.ts"
+import type { MessageUpsertInput } from "./types.ts"
 import {
   buildRecordDisplayData,
   clearRecordDisplayCacheForInstance,
@@ -698,5 +699,130 @@ describe("identical re-hydration stability", () => {
     ])
     assert.notEqual(store.getMessage("msg_1"), completed, "an explicit updatedAt change must replace the record")
     assert.equal(store.getMessage("msg_1")!.updatedAt, 2000)
+  })
+})
+
+describe("chunked hydration", () => {
+  const CHUNK_SIZE = 50
+  const makeInputs = (count: number): MessageUpsertInput[] => Array.from({ length: count }, (_, index) => ({
+    id: `msg_${String(index).padStart(3, "0")}`,
+    sessionId: "session",
+    role: "assistant" as const,
+    status: "complete" as const,
+    createdAt: index + 1,
+    updatedAt: index + 1,
+    parts: [{ type: "text" as const, text: `body-${index}` }],
+  }))
+  const makeInfos = (count: number) => Array.from({ length: count }, (_, index) => ({
+    id: `msg_${String(index).padStart(3, "0")}`,
+    sessionID: "session",
+    role: "assistant" as const,
+    time: { created: index + 1, completed: index + 1 },
+    cost: 1,
+    tokens: { input: 1, output: 1 },
+  }))
+
+  it("commits a large chunked batch progressively and yields between chunks", async () => {
+    const store = createInstanceMessageStore("chunked-progressive")
+    const result = store.hydrateMessages("session", makeInputs(CHUNK_SIZE * 2 + CHUNK_SIZE / 2), undefined, { chunked: true })
+
+    assert.ok(result instanceof Promise, "a large chunked hydration returns a promise")
+    assert.equal(
+      store.getSessionMessageIds("session").length,
+      CHUNK_SIZE,
+      "only the first chunk lands synchronously; the rest yield to the main thread",
+    )
+    assert.equal(store.getMessage("msg_049") !== undefined, true, "the first chunk's records are resident")
+    assert.equal(store.getMessage("msg_050"), undefined, "later chunks have not committed yet")
+
+    const committed = await result
+    assert.equal(committed, true)
+    assert.equal(store.getSessionMessageIds("session").length, CHUNK_SIZE * 2 + CHUNK_SIZE / 2)
+    assert.equal((store.getMessage("msg_124")?.parts["msg_124-part-0"]?.data as { text?: string })?.text, "body-124")
+  })
+
+  it("reaches exactly the state of a single-pass hydrate", async () => {
+    const inputs = makeInputs(CHUNK_SIZE * 2 + 10)
+    const infos = makeInfos(CHUNK_SIZE * 2 + 10)
+    const control = createInstanceMessageStore("chunked-parity-control")
+    const chunked = createInstanceMessageStore("chunked-parity")
+
+    control.hydrateMessages("session", inputs, infos)
+    assert.equal(await chunked.hydrateMessages("session", inputs, infos, { chunked: true }), true)
+
+    assert.deepEqual(chunked.getSessionMessageIds("session"), control.getSessionMessageIds("session"))
+    for (const id of control.getSessionMessageIds("session")) {
+      const fromChunked = chunked.getMessage(id)!
+      const fromControl = control.getMessage(id)!
+      assert.equal(fromChunked.revision, fromControl.revision)
+      assert.equal(fromChunked.status, fromControl.status)
+      assert.deepEqual(fromChunked.partIds, fromControl.partIds)
+      assert.equal(
+        (fromChunked.parts[fromChunked.partIds[0]]?.data as { text?: string })?.text,
+        (fromControl.parts[fromControl.partIds[0]]?.data as { text?: string })?.text,
+      )
+    }
+    assert.equal(chunked.getSessionRevision("session"), control.getSessionRevision("session"))
+    assert.deepEqual(chunked.state.messageInfoVersion, control.state.messageInfoVersion)
+    assert.deepEqual(chunked.getSessionUsage("session"), control.getSessionUsage("session"))
+  })
+
+  it("keeps small chunked batches fully synchronous", () => {
+    const store = createInstanceMessageStore("chunked-small")
+    const result = store.hydrateMessages("session", makeInputs(CHUNK_SIZE - 5), undefined, { chunked: true })
+
+    assert.equal(result, undefined, "a batch within one chunk never defers")
+    assert.equal(store.getSessionMessageIds("session").length, CHUNK_SIZE - 5)
+    assert.equal(store.getMessage(`msg_${String(CHUNK_SIZE - 6).padStart(3, "0")}`) !== undefined, true)
+  })
+
+  it("bumps the session revision once for the whole batch", async () => {
+    let changes = 0
+    const store = createInstanceMessageStore("chunked-revision", {
+      onSessionChanged: (_instanceId, sessionId) => {
+        if (sessionId === "session") changes += 1
+      },
+    })
+    await store.hydrateMessages("session", makeInputs(CHUNK_SIZE * 3), undefined, { chunked: true })
+
+    assert.equal(changes, 1, "per-chunk commits must not each invalidate downstream caches")
+    assert.equal(store.getSessionRevision("session"), 1)
+  })
+
+  it("aborts remaining chunks when a concurrent mutation fences the batch", async () => {
+    const store = createInstanceMessageStore("chunked-fence")
+    const result = store.hydrateMessages("session", makeInputs(CHUNK_SIZE * 3), undefined, { chunked: true })
+    assert.ok(result instanceof Promise)
+
+    store.upsertMessage({
+      id: "live_update",
+      sessionId: "session",
+      role: "user",
+      status: "sending",
+      parts: [{ type: "text", text: "interrupting" }],
+    })
+
+    assert.equal(await result, false, "a fenced hydration reports that it did not complete")
+    const ids = store.getSessionMessageIds("session")
+    assert.equal(ids.length, CHUNK_SIZE + 1, "the first chunk plus the newer mutation stay; later chunks never commit")
+    assert.equal(ids.includes("msg_050"), false)
+    assert.equal(ids.includes("live_update"), true, "the newer writer owns the session")
+  })
+
+  it("rebuilds the latest todo snapshot from unchanged records too", async () => {
+    const inputs = makeInputs(CHUNK_SIZE * 2 + 5)
+    inputs[10] = {
+      ...inputs[10],
+      parts: [{ id: "todo", type: "tool" as const, tool: "todowrite", state: { status: "completed", input: {}, metadata: {}, output: "", content: [] } }],
+    }
+    const store = createInstanceMessageStore("chunked-todos")
+    store.hydrateMessages("session", inputs)
+    assert.ok(store.getLatestTodoSnapshot("session"), "the initial hydrate records the completed todo")
+
+    assert.equal(await store.hydrateMessages("session", inputs, undefined, { chunked: true }), true)
+    const snapshot = store.getLatestTodoSnapshot("session")
+    assert.ok(snapshot, "an all-unchanged re-hydration rebuilds the todo snapshot in its final pass")
+    assert.equal(snapshot?.messageId, inputs[10].id)
+    assert.equal(snapshot?.partId, "todo")
   })
 })

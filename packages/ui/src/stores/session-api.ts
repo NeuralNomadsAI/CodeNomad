@@ -2197,8 +2197,9 @@ async function loadMessages(
       }
       if (!isCurrent()) return false
       const expectedRevision = nextWindow.kind === "latest" && !initialSeed ? messageRevision : undefined
+      const seeded = seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false, true, true)
       if ((!initialSeed && hasLatestRevisionConflict())
-        || !seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false)) {
+        || !(await seeded)) {
         retryAfterRevisionConflict = true
       } else {
         store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)

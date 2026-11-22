@@ -78,6 +78,18 @@ function ensurePartId(messageId: string, part: ClientPart, index: number): strin
 const MAX_TRANSCRIPT_MEASUREMENT_BYTES = 64 * 1024 * 1024
 const MAX_TRANSCRIPT_MEASUREMENT_NODES = 500_000
 
+/** Rows a chunked hydration commits before yielding the main thread. */
+export const HYDRATE_CHUNK_SIZE = 50
+
+/** Yields to the main thread between chunk commits: `scheduler.yield` where
+ * available, otherwise a macrotask boundary (a microtask would not let input,
+ * timers or paint run between chunks). */
+function yieldToMainThread(): Promise<void> {
+  const scheduler = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler
+  if (scheduler && typeof scheduler.yield === "function") return scheduler.yield()
+  return new Promise<void>((resolve) => setTimeout(resolve, 0))
+}
+
 function clonePart(part: ClientPart): ClientPart {
   // Cloning is intentionally disabled; message parts
   // are stored as received from the backend.
@@ -243,7 +255,7 @@ export interface InstanceMessageStore {
   state: InstanceMessageState
   setState: SetStoreFunction<InstanceMessageState>
   addOrUpdateSession: (input: SessionUpsertInput) => void
-  hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>, options?: { preserveOmitted?: boolean; confirmPending?: boolean }) => void
+  hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>, options?: { preserveOmitted?: boolean; confirmPending?: boolean; chunked?: boolean }) => void | Promise<boolean>
   reconcileEmptyAuthoritativeSnapshot: (sessionId: string) => void
   reconcileAuthoritativeMessageIds: (sessionId: string, authoritativeIds: ReadonlySet<string>, baselineRevisions: ReadonlyMap<string, number>) => void
   markSendPending: (messageId: string) => void
@@ -296,6 +308,20 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   // Requests awaiting same-ID persistence confirmation.
   const pendingSendIds = new Set<string>()
+
+  // Fence tokens for chunked hydrations: a chunked hydration commits across
+  // task boundaries, so every other write to the session bumps its token and
+  // the stale snapshot stops committing (the newest writer owns the session).
+  const hydrationFences = new Map<string, number>()
+
+  function fenceSessionHydration(sessionId: string): void {
+    if (!sessionId) return
+    hydrationFences.set(sessionId, (hydrationFences.get(sessionId) ?? 0) + 1)
+  }
+
+  function currentHydrationFence(sessionId: string): number {
+    return hydrationFences.get(sessionId) ?? 0
+  }
 
   function forgetPendingSend(messageId: string): void {
     pendingSendIds.delete(messageId)
@@ -431,6 +457,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   }
 
   function rebuildUsage(sessionId: string, infos: Iterable<MessageInfo>) {
+    fenceSessionHydration(sessionId)
     const usageState = rebuildUsageStateFromInfos(infos)
     setState("usage", sessionId, usageState)
   }
@@ -582,14 +609,25 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   // client) and cross-attach its metadata. Sends the server has not yet
   // echoed are preserved via `pendingSendIds` instead (see hydrateMessages).
 
-  function hydrateMessages(
+  interface HydrationPlan {
+    revertMessageId: string | undefined
+    dedupedInputs: MessageUpsertInput[]
+    serverIds: string[]
+    serverIdSet: Set<string>
+    previousMessageIds: string[]
+    pendingOptimisticIds: string[]
+    omittedIds: string[]
+    preservedAfter: Map<string | undefined, string[]>
+    incomingIds: string[]
+    infoList: MessageInfo[] | undefined
+  }
+
+  function planHydration(
     sessionId: string,
     inputs: MessageUpsertInput[],
     infos?: Iterable<MessageInfo>,
     options?: { preserveOmitted?: boolean; confirmPending?: boolean },
-  ) {
-    if (!Array.isArray(inputs) || inputs.length === 0) return
-
+  ): HydrationPlan {
     ensureSessionEntry(sessionId)
 
     // Defensive dedupe by message id: a snapshot should not contain the same
@@ -651,6 +689,250 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       ...pendingOptimisticIds,
     ]
 
+    const isVisibleInfo = (info: MessageInfo) => !revertMessageId || info.id < revertMessageId
+    const infoList = infos ? Array.from(infos).filter(isVisibleInfo) : undefined
+
+    return {
+      revertMessageId,
+      dedupedInputs,
+      serverIds,
+      serverIdSet,
+      previousMessageIds,
+      pendingOptimisticIds,
+      omittedIds,
+      preservedAfter,
+      incomingIds,
+      infoList,
+    }
+  }
+
+  // Computes the changed records for one chunk of inputs, mirroring the
+  // synchronous pass record-for-record (unchanged records keep the resident
+  // object so their Solid subscribers stay quiet).
+  function normalizeHydrationChunk(chunk: MessageUpsertInput[]): Array<[string, MessageRecord]> {
+    const normalized: Array<[string, MessageRecord]> = []
+    const now = Date.now()
+    for (const input of chunk) {
+      const normalizedParts = normalizeParts(input.id, input.parts)
+      const previous = state.messages[input.id]
+      const partsChanged = normalizedParts
+        ? havePartsChanged(previous?.partIds, previous?.parts, normalizedParts.ids, normalizedParts.map)
+        : false
+      const statusChanged = previous ? previous.status !== input.status : true
+      const shouldBump = Boolean(input.bumpRevision || partsChanged || statusChanged)
+      // Identity reconciliation: a confirmed send reappears under its own id,
+      // so `previous` IS the optimistic record and its client-only
+      // prompt-display metadata carries over unchanged.
+      const clientPromptDisplayMetadata = resolveClientPromptDisplayText(instanceId, input, previous)
+      // The window is re-projected on every native event, so unchanged
+      // messages must keep their resident record object: replacing it would
+      // notify every Solid subscriber of that message and re-render it.
+      const recordUnchanged = Boolean(previous) && !shouldBump
+        && previous.role === input.role
+        && previous.sessionId === input.sessionId
+        && (input.createdAt === undefined || previous.createdAt === input.createdAt)
+        && (input.updatedAt === undefined || previous.updatedAt === input.updatedAt)
+        && (input.isEphemeral === undefined || previous.isEphemeral === input.isEphemeral)
+        && samePromptDisplayMetadata(clientPromptDisplayMetadata, previous.clientPromptDisplayMetadata)
+      if (recordUnchanged) continue
+      const record: MessageRecord = {
+        id: input.id,
+        sessionId: input.sessionId,
+        role: input.role,
+        status: input.status,
+        createdAt: input.createdAt ?? previous?.createdAt ?? now,
+        updatedAt: input.updatedAt ?? now,
+        isEphemeral: input.isEphemeral ?? previous?.isEphemeral ?? false,
+        clientPromptDisplayMetadata,
+        revision: previous ? previous.revision + (shouldBump ? 1 : 0) : 0,
+        partIds: normalizedParts ? normalizedParts.ids : previous?.partIds ?? [],
+        parts: normalizedParts ? normalizedParts.map : previous?.parts ?? {},
+      }
+      setPromptDisplayOverride(instanceId, input.sessionId, input.id, clientPromptDisplayMetadata)
+      normalized.push([input.id, record])
+    }
+    return normalized
+  }
+
+  // A chunked hydration commits its chunks across task boundaries, so any
+  // concurrent write to the session must fence the remaining chunks: the
+  // newest writer owns the session and the stale snapshot stops committing.
+  async function hydrateMessagesChunked(
+    sessionId: string,
+    plan: HydrationPlan,
+    options?: { preserveOmitted?: boolean; confirmPending?: boolean },
+  ): Promise<boolean> {
+    const chunks: MessageUpsertInput[][] = []
+    for (let start = 0; start < plan.dedupedInputs.length; start += HYDRATE_CHUNK_SIZE) {
+      chunks.push(plan.dedupedInputs.slice(start, start + HYDRATE_CHUNK_SIZE))
+    }
+    const infoById = new Map((plan.infoList ?? []).map((info) => [info.id as string, info]))
+    const chunkOfServerId = new Map<string, number>()
+    chunks.forEach((chunk, index) => {
+      for (const input of chunk) chunkOfServerId.set(input.id, index)
+    })
+
+    // Prefix of `incomingIds` each chunk makes resident: segments follow the
+    // list's own construction, so preserved runs stay beside their preceding
+    // shared row and pending optimistic sends land with the tail.
+    const segmentLengths: Array<{ chunk: number; length: number }> = []
+    const countSegment = (ids: readonly string[], chunk: number) => {
+      if (ids.length) segmentLengths.push({ chunk, length: ids.length })
+    }
+    countSegment(plan.preservedAfter.get(undefined) ?? [], 0)
+    for (const id of plan.serverIds) {
+      countSegment([id, ...plan.preservedAfter.get(id) ?? []], chunkOfServerId.get(id)!)
+    }
+    countSegment(plan.pendingOptimisticIds, chunks.length - 1)
+    const prefixLengths: number[] = []
+    let counted = 0
+    let total = 0
+    for (let chunk = 0; chunk < chunks.length; chunk++) {
+      while (counted < segmentLengths.length && segmentLengths[counted].chunk <= chunk) {
+        total += segmentLengths[counted].length
+        counted += 1
+      }
+      prefixLengths.push(total)
+    }
+
+    // Inbox admission can render before the message endpoint projects the
+    // accepted prompt. Only authoritative projection confirms the send.
+    if (options?.confirmPending !== false) {
+      plan.serverIds.forEach((id) => pendingSendIds.delete(id))
+    }
+
+    const fenceToken = currentHydrationFence(sessionId)
+    // A reload of the same window keeps its membership list stable while the
+    // chunks land: rewriting the prefix would visibly shrink and regrow an
+    // already-shown page. A jump to a different window reveals its prefix
+    // progressively instead.
+    const reload = areMessageIdListsEqual(plan.previousMessageIds, plan.incomingIds)
+    let anyChange = plan.omittedIds.length > 0 || !reload
+
+    for (let index = 0; index < chunks.length; index++) {
+      if (index > 0) {
+        await yieldToMainThread()
+        if (currentHydrationFence(sessionId) !== fenceToken) return false
+      }
+      const normalized = normalizeHydrationChunk(chunks[index])
+      const infoVersions: Array<[string, number]> = []
+      for (const input of chunks[index]) {
+        const info = infoById.get(input.id)
+        if (!info || !plan.serverIdSet.has(info.id as string)) continue
+        // Only bump the info version when the info content actually changed.
+        const previousInfo = messageInfoCache.get(info.id as string)
+        if (!previousInfo || !messageInfoEqual(previousInfo, info)) {
+          messageInfoCache.set(info.id as string, info)
+          infoVersions.push([info.id as string, (state.messageInfoVersion[info.id as string] ?? 0) + 1])
+        }
+      }
+      if (normalized.length || infoVersions.length) anyChange = true
+
+      const first = index === 0
+      if (first && !options?.preserveOmitted && plan.omittedIds.length > 0) {
+        plan.omittedIds.forEach((id) => {
+          messageInfoCache.delete(id)
+          forgetPendingSend(id)
+          clearPromptDisplayOverride(instanceId, sessionId, id)
+        })
+        clearRecordDisplayCacheForMessages(instanceId, plan.omittedIds)
+        hooks?.onMessagesRemoved?.(instanceId, sessionId, plan.omittedIds)
+      }
+      const prefixIds = plan.incomingIds.slice(0, prefixLengths[index])
+      const currentIds = state.sessions[sessionId]?.messageIds ?? []
+      const last = index === chunks.length - 1
+      batch(() => {
+        for (const [id, record] of normalized) setState("messages", id, record)
+        if (first && !options?.preserveOmitted && plan.omittedIds.length > 0) {
+          setState("messages", produce((draft) => {
+            plan.omittedIds.forEach((id) => {
+              delete draft[id]
+            })
+          }))
+          setState("messageInfoVersion", produce((draft) => {
+            plan.omittedIds.forEach((id) => {
+              delete draft[id]
+            })
+          }))
+          setState("permissions", produce((draft) => {
+            const omitted = new Set(plan.omittedIds)
+            plan.omittedIds.forEach((id) => {
+              delete draft.byMessage[id]
+            })
+            draft.queue = draft.queue.filter((entry) => !entry.messageId || !omitted.has(entry.messageId))
+            draft.active = draft.queue[0] ?? null
+          }))
+        }
+        for (const [id, version] of infoVersions) setState("messageInfoVersion", id, version)
+        if (!reload && !areMessageIdListsEqual(currentIds, prefixIds)) {
+          setState("sessions", sessionId, (session) => ({
+            ...session,
+            messageIds: prefixIds,
+            ...(last ? { updatedAt: Date.now() } : {}),
+          }))
+        }
+        recomputeLastAssistantMessageId(sessionId, reload ? undefined : prefixIds)
+      })
+    }
+
+    // An identical snapshot leaves the whole resident session untouched: no
+    // record replacement, no session-entry write, no revision bump.
+    if (!anyChange) return true
+
+    const usageInfos = options?.preserveOmitted && plan.infoList
+      ? new Map([
+          ...Array.from(messageInfoCache.values())
+            .filter((info) => info.sessionID === sessionId && (!plan.revertMessageId || info.id < plan.revertMessageId))
+            .map((info) => [info.id as string, info] as const),
+          ...plan.infoList.map((info) => [info.id as string, info] as const),
+        ]).values()
+      : plan.infoList
+    const usageState = usageInfos ? rebuildUsageStateFromInfos(usageInfos) : undefined
+
+    batch(() => {
+      if (usageState) {
+        setState("usage", sessionId, usageState)
+      }
+      if (reload) {
+        setState("sessions", sessionId, (session) => ({
+          ...session,
+          updatedAt: Date.now(),
+        }))
+      }
+      recomputeLastAssistantMessageId(sessionId, plan.incomingIds)
+
+      clearLatestTodoSnapshot(sessionId)
+      plan.incomingIds.forEach((messageId) => {
+        maybeUpdateLatestTodoFromRecord(state.messages[messageId])
+      })
+
+      bumpSessionRevision(sessionId)
+    })
+    return true
+  }
+
+  function hydrateMessages(
+    sessionId: string,
+    inputs: MessageUpsertInput[],
+    infos?: Iterable<MessageInfo>,
+    options?: { preserveOmitted?: boolean; confirmPending?: boolean; chunked?: boolean },
+  ): void | Promise<boolean> {
+    if (!Array.isArray(inputs) || inputs.length === 0) return
+
+    const plan = planHydration(sessionId, inputs, infos, options)
+
+    if (options?.chunked && plan.dedupedInputs.length > HYDRATE_CHUNK_SIZE) {
+      // A newer chunked snapshot supersedes an older in-flight one. Sync
+      // hydrates (per-frame projections re-projecting the same window) do
+      // not fence: committing through them matches the synchronous path's
+      // last-writer-wins semantics, so a streaming session cannot starve
+      // its own page load.
+      fenceSessionHydration(sessionId)
+      return hydrateMessagesChunked(sessionId, plan, options)
+    }
+
+    const { dedupedInputs, serverIds, serverIdSet, omittedIds, incomingIds, infoList } = plan
+
     const normalizedRecords: Record<string, MessageRecord> = {}
     const now = Date.now()
     let contentChanged = false
@@ -697,9 +979,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       }
       setPromptDisplayOverride(instanceId, input.sessionId, input.id, clientPromptDisplayMetadata)
     })
-
-    const isVisibleInfo = (info: MessageInfo) => !revertMessageId || info.id < revertMessageId
-    const infoList = infos ? Array.from(infos).filter(isVisibleInfo) : undefined
 
     const nextMessages: Record<string, MessageRecord> = { ...state.messages }
     const nextMessageInfoVersion: Record<string, number> = { ...state.messageInfoVersion }
@@ -757,14 +1036,14 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     // record replacement, no session-entry write, no revision bump. This is
     // what keeps a re-projected window from invalidating every mounted row.
     if (!contentChanged && omittedIds.length === 0 && !infoChangedAny
-      && areMessageIdListsEqual(previousMessageIds, incomingIds)) {
+      && areMessageIdListsEqual(plan.previousMessageIds, incomingIds)) {
       return
     }
 
     const usageInfos = options?.preserveOmitted && infoList
       ? new Map([
           ...Array.from(messageInfoCache.values())
-            .filter((info) => info.sessionID === sessionId && isVisibleInfo(info))
+            .filter((info) => info.sessionID === sessionId && (!plan.revertMessageId || info.id < plan.revertMessageId))
             .map((info) => [info.id as string, info] as const),
           ...infoList.map((info) => [info.id as string, info] as const),
         ]).values()
@@ -832,6 +1111,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     authoritativeIds: ReadonlySet<string>,
     baselineRevisions: ReadonlyMap<string, number>,
   ) {
+    // A structural reconcile fences an in-flight chunked hydration.
+    fenceSessionHydration(sessionId)
     const retainedIds = (state.sessions[sessionId]?.messageIds ?? [])
       .filter((id) => !baselineRevisions.has(id)
         || authoritativeIds.has(id)
@@ -868,6 +1149,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   }
 
   function updateSendRecord(messageId: string, status: "sent" | "error") {
+    fenceSessionHydration(state.messages[messageId]?.sessionId ?? "")
     const record = state.messages[messageId]
     if (!record || (record.status !== "sending" && !(status === "error" && record.status === "sent"))) return
     setState(
@@ -920,6 +1202,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   // input, so this path exists to clear stale records the server no longer
   // knows about while still preserving genuinely in-flight optimistic sends.
   function reconcileEmptyAuthoritativeSnapshot(sessionId: string) {
+    fenceSessionHydration(sessionId)
     const session = state.sessions[sessionId]
     if (!session) return
     const previousMessageIds = session.messageIds ?? []
@@ -1021,6 +1304,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   }
 
   function upsertMessage(input: MessageUpsertInput) {
+    fenceSessionHydration(input.sessionId)
     const normalizedParts = normalizeParts(input.id, input.parts)
     const shouldBump = Boolean(input.bumpRevision || normalizedParts)
     const now = Date.now()
@@ -1068,6 +1352,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   function removeMessage(messageId: string, fallbackSessionId?: string) {
     if (!messageId) return
 
+    fenceSessionHydration(state.messages[messageId]?.sessionId ?? fallbackSessionId ?? "")
     forgetPendingSend(messageId)
 
     const record = state.messages[messageId]
@@ -1123,6 +1408,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   function removeMessagePart(messageId: string, partId: string, fallbackSessionId?: string) {
     if (!messageId || !partId) return
+    fenceSessionHydration(state.messages[messageId]?.sessionId ?? fallbackSessionId ?? "")
     const message = state.messages[messageId]
     if (!message) {
       if (fallbackSessionId) bumpSessionRevision(fallbackSessionId)
@@ -1157,6 +1443,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   function replaceMessageId(options: ReplaceMessageIdOptions) {
     if (options.oldId === options.newId) return
+    fenceSessionHydration(state.messages[options.oldId]?.sessionId ?? "")
     const existing = state.messages[options.oldId]
     if (!existing) return
 
@@ -1231,6 +1518,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   function setMessageInfo(messageId: string, info: MessageInfo) {
     if (!messageId) return
+    fenceSessionHydration(info.sessionID)
     messageInfoCache.set(messageId, info)
     const nextVersion = (state.messageInfoVersion[messageId] ?? 0) + 1
     setState("messageInfoVersion", messageId, nextVersion)
@@ -1353,6 +1641,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   function setSessionRevert(sessionId: string, revert?: SessionRecord["revert"] | null) {
     if (!sessionId) return
+    fenceSessionHydration(sessionId)
     ensureSessionEntry(sessionId)
     if (revert?.messageID) {
       pruneMessagesAfterRevert(sessionId, revert.messageID)
@@ -1410,6 +1699,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   function clearSession(sessionId: string, options?: { preserveScroll?: boolean; preservePromptDisplayOverrides?: boolean; notify?: boolean }) {
     if (!sessionId) return
+
+    fenceSessionHydration(sessionId)
 
     if (!options?.preservePromptDisplayOverrides) clearPromptDisplayOverridesForSession(instanceId, sessionId)
 
@@ -1494,6 +1785,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
  
    function clearInstance() {
+     for (const sessionId of Object.keys(unwrap(state.sessions))) fenceSessionHydration(sessionId)
      clearPromptDisplayOverridesForInstance(instanceId, Object.keys(state.sessions))
      clearRecordDisplayCacheForInstance(instanceId)
      clearInstanceMessageRenderCaches(instanceId)
