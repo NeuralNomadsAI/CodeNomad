@@ -21,6 +21,19 @@ const APPLY_PATCH_SCAN_LIMIT = 10_000
 
 const operationCodes = { added: "A", deleted: "D", modified: "M", renamed: "R" } as const
 
+function patchPathKey(path: string, directory?: string): string {
+  const rooted = /^([a-z]:\/|\/\/[^/]+\/[^/]+\/?|\/)/i
+  const full = directory && !rooted.test(path) ? `${directory}${path}` : path
+  const root = rooted.exec(full)?.[0] ?? ""
+  const segments: string[] = []
+  for (const segment of full.slice(root.length).split("/")) {
+    if (!segment || segment === ".") continue
+    if (segment === ".." && segments.length && segments.at(-1) !== "..") segments.pop()
+    else if (segment !== ".." || !root) segments.push(segment)
+  }
+  return root.replace(/^[a-z]:/i, (drive) => drive.toLowerCase()) + segments.join("/")
+}
+
 export function getApplyPatchFileChange(file: ApplyPatchFile, directory?: string): { status?: keyof typeof operationCodes; path: string } {
   const root = directory?.replace(/\\/g, "/").replace(/\/?$/, "/")
   const windows = root && /^(?:[a-z]:\/|\/\/)/i.test(root)
@@ -34,13 +47,15 @@ export function getApplyPatchFileChange(file: ApplyPatchFile, directory?: string
   const status = nativeStatus === "added" || nativeStatus === "deleted" || nativeStatus === "modified" || nativeStatus === "renamed"
     ? nativeStatus
     : undefined
-  // V2 names the destination in `file`; its same-path diff headers still name the source.
-  if (target && (status === "renamed" || (status === "modified" && typeof file.file === "string"))) {
+  // V2 also reports moves as "modified": `file` is the destination and the diff names the source.
+  if (target && (status === "renamed" || ((status === "modified" || !status) && typeof file.file === "string"))) {
     const header = getApplyPatchDiff(file).slice(0, APPLY_PATCH_SCAN_LIMIT).split(/\r?\n@@ /, 1)[0]
     const sourcePath = /^Index: (.+)\r?$/m.exec(header)?.[1] ?? /^--- ([^\t\r\n]+)\r?$/m.exec(header)?.[1]
     if (sourcePath) {
       const source = relative(sourcePath)
-      if (source !== target && (status === "renamed" || directory || !source.endsWith(`/${target}`))) {
+      const sourceKey = patchPathKey(source, root)
+      const targetKey = patchPathKey(target, root)
+      if (status === "renamed" || (sourceKey !== targetKey && (root || !sourceKey.endsWith(`/${targetKey}`)))) {
         return { status: "renamed", path: `${source} → ${target}` }
       }
     }

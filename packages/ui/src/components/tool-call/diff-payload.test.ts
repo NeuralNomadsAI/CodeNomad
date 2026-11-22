@@ -3,6 +3,7 @@ import { describe, it } from "node:test"
 
 import type { ToolState } from "../../types/tool-state"
 import { patchRenderer } from "./renderers/patch"
+import { getApplyPatchFileChange, getApplyPatchFileCopyText } from "./renderers/apply-patch-data"
 import type { ToolRendererContext } from "./types"
 import { extractDiffPayload } from "./utils"
 
@@ -98,6 +99,14 @@ describe("edit tool diff payload", () => {
         { file: "right/shared.ts", patch, status: "modified" },
         { file: "left/shared.ts", patch: otherPatch.replaceAll("src/other.ts", "left/shared.ts"), status: "modified" },
       ]), `R src/example.ts → right/shared.ts\n${patch}\nM left/shared.ts\n${otherPatch.replaceAll("src/other.ts", "left/shared.ts")}`)
+    })
+
+    it("keeps a sibling edit modified when the native paths use different spellings", () => {
+      const patch = "--- D:\\repo\\sibling\\shared.txt\n+++ D:\\repo\\sibling\\shared.txt\n@@ -1,1 +1,1 @@\n-before\n+after\n"
+      const file = { file: "../sibling/shared.txt", patch, status: "modified" }
+      assert.deepEqual(getApplyPatchFileChange(file, "D:\\repo\\pkg"), { status: "modified", path: "../sibling/shared.txt" })
+      assert.equal(getApplyPatchFileCopyText(file, "d:\\repo\\pkg\\."), `M ../sibling/shared.txt\n${patch}`)
+      assert.deepEqual(getApplyPatchFileChange({ ...file, status: undefined }, "D:\\repo\\pkg"), { status: undefined, path: "../sibling/shared.txt" })
     })
   })
 })
