@@ -5,6 +5,7 @@ use crate::{
     catalog::{Project, Session},
     platform, strings,
 };
+use codenomad_client::same_server_path as same_folder;
 use rune::{Cx, El, Tx, edit::TextEdit};
 use std::collections::HashSet;
 
@@ -143,7 +144,7 @@ impl Ui {
     }
 }
 fn same_project(a: &Workspace, b: &Workspace) -> bool {
-    a.folder == b.folder
+    same_folder(&a.folder, &b.folder)
         && a.backend_id == b.backend_id
         && (a.backend_id.is_none() || a.server_id == b.server_id)
 }
@@ -337,12 +338,15 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     else {
         return;
     };
-    if s.workspace.as_ref().is_some_and(|ui| ui.active == index)
-        && crate::agent::navigation_blocked(s)
-    {
+    if close_blocked(s, index) {
         return;
     }
-    stash(s);
+    let active = s.workspace.as_ref().is_some_and(|ui| ui.active == index);
+    if active {
+        stash(s);
+    } else {
+        capture(s);
+    }
     let Some(ui) = &mut s.workspace else {
         return;
     };
@@ -381,8 +385,25 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
         ui.active.min(ui.entries.len() - 1)
     };
     ui.changed();
-    activate(s, tx);
+    if active {
+        activate(s, tx);
+    } else {
+        tx.instant();
+    }
     capture(s);
+}
+fn close_blocked(s: &State, index: usize) -> bool {
+    let Some(ui) = &s.workspace else {
+        return false;
+    };
+    if ui.active == index {
+        crate::agent::navigation_blocked(s)
+    } else {
+        ui.entries[index]
+            .cache
+            .as_ref()
+            .is_some_and(Cache::navigation_blocked)
+    }
 }
 pub fn connected(s: &mut State) {
     let Some(ui) = &mut s.workspace else {
@@ -454,11 +475,12 @@ pub fn opened(s: &mut State, project: &Project) {
             .to_string(),
         )
     };
-    let occurrence = (0..32).find(|ordinal| !ui.entries.iter().any(|entry| {
-        matches!(&entry.saved, Tab::Workspace(w) if w.folder == project.path && w.backend_id == backend_id && w.occurrence == *ordinal)
+    let occurrence = (0..super::MAX_TABS as u64).find(|ordinal| !ui.entries.iter().any(|entry| {
+        matches!(&entry.saved, Tab::Workspace(w) if same_folder(&w.folder, &project.path) && w.backend_id == backend_id && (backend_id.is_none() || w.server_id == l.server_id) && w.occurrence == *ordinal)
     })).unwrap_or(0);
     let item = &mut ui.entries[ui.active];
-    if matches!(&item.saved, Tab::Workspace(w) if w.folder == project.path) {
+    if matches!(&item.saved, Tab::Workspace(w) if same_folder(&w.folder, &project.path) && w.backend_id == backend_id && (backend_id.is_none() || w.server_id == l.server_id))
+    {
         if let Tab::Workspace(w) = &mut item.saved {
             w.workspace_id = Some(project.id.clone());
         }
@@ -466,7 +488,7 @@ pub fn opened(s: &mut State, project: &Project) {
         let mut drafts = std::collections::BTreeMap::new();
         item.cleared.clear();
         for w in ui.closed.iter().filter(|w| {
-            w.folder == project.path
+            same_folder(&w.folder, &project.path)
                 && w.backend_id == backend_id
                 && (backend_id.is_none() || w.server_id == l.server_id)
         }) {
@@ -637,7 +659,7 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
                 } else {
                     None
                 },
-                closable: !busy(s) && !(index == ui.active && crate::agent::navigation_blocked(s)),
+                closable: !busy(s) && !close_blocked(s, index),
             },
         )
         .collect();

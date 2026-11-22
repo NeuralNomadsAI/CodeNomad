@@ -640,11 +640,25 @@ fn delivery_hidden_interruptions_keep_the_active_close_guard_and_button() {
         let mut a = crate::agent::Ui::new(crate::agent::start(backend("alpha"), s.wake.clone()));
         match kind {
             "form" => {
+                a.forms.push(crate::agent_api::Form {
+                    id: "request".into(),
+                    title: "Question".into(),
+                    fields: vec![serde_json::json!({"key":"answer","type":"string"})],
+                });
+                a.selected = "request".into();
                 let mut d = crate::agent::forms::Draft::default();
                 d.choose("UNSENT FORM RESPONSE");
                 a.drafts.insert(("request".into(), "answer".into()), d);
             }
             "reason" => {
+                a.permissions.push(crate::agent_api::Permission {
+                    id: "request".into(),
+                    action: "read".into(),
+                    resources: vec!["/fixture".into()],
+                    message: String::new(),
+                    supported: true,
+                });
+                a.selected = "request".into();
                 a.reasons
                     .insert("request".into(), TextEdit::new("UNSENT REASON"));
             }
@@ -769,7 +783,19 @@ fn delivery_inactive_close_preserves_the_active_reader_and_focus() {
             .elements()
             .into_iter()
             .find(|e| e.focused)
-            .and_then(|e| e.key);
+            .map(|e| (e.key, e.edit_range));
+        assert_eq!(
+            focus.as_ref().and_then(|(key, _)| key.as_deref()),
+            Some("composer")
+        );
+        let anchor = rt
+            .elements()
+            .into_iter()
+            .find(|e| {
+                e.visible[3] > 0.0 && e.key.as_deref().is_some_and(|key| key.starts_with("body-"))
+            })
+            .map(|e| (e.key, e.rect));
+        assert!(anchor.is_some());
         let active = rt
             .state
             .workspace
@@ -788,8 +814,16 @@ fn delivery_inactive_close_preserves_the_active_reader_and_focus() {
             rt.elements()
                 .into_iter()
                 .find(|e| e.focused)
-                .and_then(|e| e.key),
+                .map(|e| (e.key, e.edit_range)),
             focus
+        );
+        assert_eq!(
+            rt.elements()
+                .into_iter()
+                .find(|e| e.visible[3] > 0.0
+                    && e.key.as_deref().is_some_and(|key| key.starts_with("body-")))
+                .map(|e| (e.key, e.rect)),
+            anchor
         );
     }
 }

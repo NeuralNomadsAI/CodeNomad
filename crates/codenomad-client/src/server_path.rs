@@ -40,7 +40,7 @@ pub fn absolute(path: &str) -> bool {
     style(path).is_some()
 }
 
-pub(crate) fn same(left: &str, right: &str) -> bool {
+pub fn same(left: &str, right: &str) -> bool {
     match (style(left), style(right)) {
         (Some(Style::Windows), Some(Style::Windows)) => {
             let normalize =
