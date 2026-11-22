@@ -19,16 +19,18 @@ pub(crate) struct Host {
 }
 
 pub(crate) fn poll(s: &mut State) -> bool {
-    let backend = s.screen.launcher().and_then(|l| l.connection.clone());
     let mut shared = s.settings.shared.borrow_mut();
     if shared.main_wake.is_none() {
         shared.main_wake = Some(s.wake.clone());
     }
-    let bound = shared.bind(backend);
-    if s.incoming.is_none() || s.phase == crate::Phase::Failed {
-        shared.watch(&s.wake);
-    } else {
+    let bound = s
+        .screen
+        .launcher()
+        .is_some_and(|launcher| shared.bind(launcher.connection.clone()));
+    if crate::workspace::has_conversation_stream(s) {
         shared.unwatch();
+    } else {
+        shared.watch(&s.wake);
     }
     if (bound | shared.poll())
         && let Some(wake) = &shared.window_wake
@@ -44,6 +46,12 @@ pub(crate) fn poll(s: &mut State) -> bool {
     display != std::mem::replace(&mut s.settings.last_display, display)
 }
 
+pub(crate) fn connected(s: &mut State, backend: &crate::backend::Backend) {
+    if s.screen.launcher().is_none() {
+        s.settings.shared.borrow_mut().bind(Some(backend.clone()));
+    }
+}
+
 pub(crate) fn invalidate(s: &State, owner: codenomad_client::settings::Owner) {
     s.settings.shared.borrow_mut().invalidate(owner);
 }
@@ -53,11 +61,7 @@ pub(crate) fn render(s: &State, cx: &mut Cx<State>, view: impl FnOnce(&mut Cx<St
 }
 
 fn render_with<S>(cx: &mut Cx<S>, prefs: &Preferences, view: impl FnOnce(&mut Cx<S>) -> El) -> El {
-    let dark = match prefs.mode() {
-        "light" => false,
-        "dark" => true,
-        _ => cx.system_dark(),
-    };
+    let dark = prefs.dark(cx.system_dark());
     let locale = prefs.locale().unwrap_or_else(strings::locale);
     use rune_theme_codenomad::layout::Layout;
     rune_theme_codenomad::settings::render(cx, dark, prefs.palette(dark), |cx| {
@@ -75,6 +79,14 @@ pub(crate) fn entry() -> El {
     .key("open-preferences");
     #[cfg(target_arch = "wasm32")]
     rune::el()
+}
+
+pub(crate) fn direct_entry(s: &State) -> El {
+    if s.workspace.is_none() && s.settings.shared.borrow().backend.is_some() {
+        entry()
+    } else {
+        rune::el()
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

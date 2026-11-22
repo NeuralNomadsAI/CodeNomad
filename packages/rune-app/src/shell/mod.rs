@@ -45,7 +45,8 @@ pub fn view(
         let body = body(s, cx, conversation).key(format!("tab-body-{}", ui.active_key()));
         root.child(body.remaining())
     } else {
-        root.child(body(s, cx, conversation).remaining())
+        root.child(crate::settings::direct_entry(s))
+            .child(body(s, cx, conversation).remaining())
     }
 }
 

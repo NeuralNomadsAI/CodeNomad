@@ -664,6 +664,20 @@ fn deliver_draft(ui: &mut Ui, id: &str) {
         w.drafts.remove(id);
     }
 }
+pub fn has_conversation_stream(s: &State) -> bool {
+    s.incoming
+        .as_ref()
+        .is_some_and(|incoming| !incoming.is_closed())
+        || s.workspace.as_ref().is_some_and(|ui| {
+            ui.entries.iter().any(|entry| {
+                entry
+                    .cache
+                    .as_ref()
+                    .is_some_and(Cache::has_conversation_stream)
+            })
+        })
+}
+
 pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let Some(mut ui) = s.workspace.take() else {
         return false;

@@ -1000,6 +1000,8 @@ fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize>, tx: &mut
         {
             crate::transport::publish(&out, &wake, crate::transport::Event::Failed).await;
         }
+        drop(out);
+        wake();
     });
     s.show_chat();
     crate::workspace::capture(s);

@@ -24,6 +24,12 @@ pub(super) struct Cache {
     input_scope: std::rc::Rc<()>,
 }
 impl Cache {
+    pub(super) fn has_conversation_stream(&self) -> bool {
+        self.incoming
+            .as_ref()
+            .is_some_and(|incoming| !incoming.is_closed())
+    }
+
     pub fn navigation_blocked(&self) -> bool {
         self.agent
             .as_ref()

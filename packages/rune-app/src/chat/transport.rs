@@ -4,7 +4,7 @@ use crate::{CODE, Message};
 pub use codenomad_client::transport::{Command, Event, publish, run_backend};
 #[cfg(test)]
 pub use codenomad_client::wire::decode_event;
-use codenomad_client::{Receiver, Sender};
+use codenomad_client::{Receiver, Sender, bounded};
 #[cfg(feature = "test-support")]
 use std::time::Duration;
 #[cfg(any(test, feature = "test-support"))]
@@ -23,7 +23,16 @@ pub fn synthetic() -> Vec<Message> {
         })
         .collect()
 }
-pub async fn run_async(out: Sender<Event>, input: Receiver<Command>, wake: rune::Waker) {
+pub fn start(s: &mut crate::State) {
+    let (out, incoming) = bounded(64);
+    let (commands, input) = bounded(1);
+    s.agent = None;
+    s.incoming = Some(incoming);
+    s.commands = Some(commands);
+    crate::platform::spawn(run_async(out, input, s.wake.clone()));
+}
+
+pub(crate) async fn run_async(out: Sender<Event>, input: Receiver<Command>, wake: rune::Waker) {
     if crate::platform::setting("RUNE_BACKEND").is_some() && !crate::local_stress() {
         let result = match crate::platform::configured_backend().await {
             Ok(backend) => run_backend(backend, out.clone(), input, wake.clone()).await,
@@ -33,6 +42,8 @@ pub async fn run_async(out: Sender<Event>, input: Receiver<Command>, wake: rune:
             eprintln!("Rune backend unavailable");
             publish(&out, &wake, Event::Failed).await;
         }
+        drop(out);
+        wake();
         return;
     }
     #[cfg(feature = "test-support")]
