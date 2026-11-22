@@ -19,19 +19,50 @@ pub(super) struct PageLease {
 }
 
 impl BrowserController {
-    fn page_generation(&self, registration: &Registration, navigation: u64) -> String {
-        format!("{}:{}:{navigation}", self.run_id, registration.generation)
+    pub(super) fn page_generation(&self, registration: &Registration, navigation: u64) -> String {
+        format!(
+            "{}:{}:{}:{navigation}",
+            self.run_id, registration.generation, registration.visibility_version
+        )
     }
 
+    #[cfg(test)]
     pub(super) fn reserve_page(
         &self,
         registration: Registration,
         operation_id: &str,
     ) -> Result<PageLease, String> {
+        self.reserve_page_for(registration, operation_id, None)
+    }
+
+    pub(super) fn reserve_page_for(
+        &self,
+        registration: Registration,
+        operation_id: &str,
+        document: Option<u64>,
+    ) -> Result<PageLease, String> {
         if uuid::Uuid::parse_str(operation_id).is_err() || operation_id.len() != 36 {
             return Err("Invalid browser page identity".into());
         }
         let mut inner = self.inner.0.lock().map_err(|error| error.to_string())?;
+        if inner.registrations.get(&registration.registration_id) != Some(&registration)
+            || !registration.visible
+        {
+            return Err(if document.is_some() {
+                STALE_TARGET
+            } else {
+                "Browser page lease is no longer current"
+            }
+            .into());
+        }
+        let navigation = inner
+            .navigation_versions
+            .get(&registration.registration_id)
+            .copied()
+            .ok_or("Browser page document is unavailable")?;
+        if document.is_some_and(|document| document != navigation) {
+            return Err(STALE_TARGET.into());
+        }
         inner
             .page_leases
             .retain(|_, lease| lease.expires > Instant::now());
@@ -48,16 +79,6 @@ impl BrowserController {
         if inner.page_leases.len() >= 32 {
             return Err("Too many browser page operations".into());
         }
-        if inner.registrations.get(&registration.registration_id) != Some(&registration)
-            || !registration.visible
-        {
-            return Err("Browser page lease is no longer current".into());
-        }
-        let navigation = inner
-            .navigation_versions
-            .get(&registration.registration_id)
-            .copied()
-            .ok_or("Browser page document is unavailable")?;
         let lease = PageLease {
             session_id: registration.session_id.clone(),
             operation_id: operation_id.into(),
@@ -222,15 +243,17 @@ impl BrowserController {
             return Ok(json!({}));
         }
         let begin = method == "browser.page.begin";
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        if begin {
+        let (lease, token) = if begin {
+            let witness = read_witness(input.get("target"))?;
+            let (registration, document, token) = self.resolve_witness(app, session_id, witness)?;
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             self.webkit_expire(app, deadline, fence);
-        }
-        let lease = if begin {
-            self.reserve_page(self.resolve(app, session_id)?, operation_id)?
+            (self.reserve_page_for(registration, operation_id, Some(document))?, token)
         } else {
-            self.page_lease(input)?
+            (self.page_lease(input)?, "")
         };
+        #[cfg(windows)]
+        let _ = token;
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         let mut lease = lease;
         let operation = if method == "browser.page.send" {
@@ -249,22 +272,18 @@ impl BrowserController {
             if begin {
                 let response =
                     self.webkit_read(app, &lease, &json!({"op":"checkpoint"}), deadline, fence)?;
-                let document = response["document"]
-                    .as_str()
-                    .ok_or("Missing WebKit document identity")?
-                    .to_string();
+                compare_webkit_document(&response, token)?;
                 self.check_page_state(&lease, deadline)?;
+                let mut inner = self.inner.0.lock().map_err(|error| error.to_string())?;
+                let current = inner.page_leases.get_mut(operation_id)
+                    .filter(|current| current.generation == lease.generation && current.expires == lease.expires)
+                    .ok_or(STALE_TARGET)?;
                 lease.generation = format!(
-                    "{}:{}:{}",
-                    self.run_id, lease.registration.generation, document
+                    "{}:{}:{}:{}",
+                    self.run_id, lease.registration.generation, lease.registration.visibility_version, token
                 );
-                lease.document = Some(document);
-                self.inner
-                    .0
-                    .lock()
-                    .map_err(|error| error.to_string())?
-                    .page_leases
-                    .insert(operation_id.into(), lease.clone());
+                lease.document = Some(token.into());
+                *current = lease.clone();
             }
             if method == "browser.page.check" {
                 return Ok(json!({ "url": url }));

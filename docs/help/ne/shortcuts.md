@@ -19,7 +19,7 @@ binding CodeNomad UI configuration मा बचत हुन्छन् र �
 
 ## Renderer default {#renderer-defaults}
 
-`Mod` को अर्थ Windows/Linux मा `Ctrl` र macOS मा `Cmd` हो। यी default हुन्, OS/native host ले key पठाउँछ भन्ने प्रत्याभूति होइनन्। दायरा महत्त्वपूर्ण छ: एउटै key गृह पृष्ठ, कम्पोजर वा खोजमा फरक कार्य हुन सक्छ।
+`Mod` को अर्थ Windows/Linux मा `Ctrl` र macOS मा `Cmd` हो। यी default हुन्, OS/native host ले key पठाउँछ भन्ने प्रत्याभूति होइनन्। दायरा महत्त्वपूर्ण छ: एउटै key खाली ट्याबमा, कम्पोजर वा खोजमा फरक कार्य हुन सक्छ।
 
 | कार्य | Default |
 | --- | --- |

@@ -1,3 +1,4 @@
+use crate::native_request::RequestFence;
 use crate::{client_state, local_windows::LocalWindows, AppState};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Condvar, Mutex};
@@ -48,6 +49,8 @@ struct ShutdownState {
     cleanup_started: bool,
     exit_allowed: bool,
     restart_requested: bool,
+    pending_automation_restart: Option<u64>,
+    automation_restart: Option<crate::developer_relaunch::RelaunchPlan>,
     update: Option<crate::desktop_updater::PreparedUpdate>,
     #[cfg(windows)]
     windows_session_end_generation: Option<u64>,
@@ -170,6 +173,66 @@ impl ShutdownCoordinator {
         Some(requests)
     }
 
+    fn can_restart_automation(state: &ShutdownState, label: &str) -> bool {
+        !state.shutdown_started
+            && !state.exit_allowed
+            && !state.restart_requested
+            && !state.local_closes.contains_key(label)
+            && !state.committed_local_closes.contains_key(label)
+            && !state.approved_local_closes.contains(label)
+    }
+
+    fn reserve_automation_restart(
+        &self,
+        label: &str,
+        fence: &RequestFence,
+    ) -> Result<u64, String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "The CodeNomad host is shutting down")?;
+        if !Self::can_restart_automation(&state, label) {
+            return Err("The CodeNomad host is shutting down".into());
+        }
+        if state.pending_automation_restart.is_some() {
+            return Err("CodeNomad restart is already pending".into());
+        }
+        fence.check()?;
+        state.next_generation += 1;
+        state.pending_automation_restart = Some(state.next_generation);
+        Ok(state.next_generation)
+    }
+
+    fn cancel_automation_restart(&self, generation: u64) {
+        if let Ok(mut state) = self.state.lock() {
+            if state.pending_automation_restart == Some(generation) {
+                state.pending_automation_restart.take();
+            }
+        }
+    }
+
+    fn begin_automation_restart(
+        &self,
+        labels: impl IntoIterator<Item = String>,
+        label: &str,
+        generation: u64,
+        plan: crate::developer_relaunch::RelaunchPlan,
+        fence: &RequestFence,
+    ) -> Option<Vec<(String, u64)>> {
+        let mut state = self.state.lock().ok()?;
+        if state.pending_automation_restart != Some(generation) {
+            return None;
+        }
+        state.pending_automation_restart.take();
+        if !Self::can_restart_automation(&state, label) {
+            return None;
+        }
+        fence.check().ok()?;
+        let requests = Self::begin_shutdown_locked(&mut state, labels)?;
+        state.automation_restart = Some(plan);
+        Some(requests)
+    }
+
     fn acknowledge_global(&self, label: &str, generation: u64) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         if state.global_pending.get(label).copied() != Some(generation) {
@@ -234,6 +297,7 @@ impl ShutdownCoordinator {
         state.cleanup_started = false;
         state.shutdown_started = false;
         state.restart_requested = false;
+        state.automation_restart.take();
         state.global_pending.clear();
         state.committed_local_closes.clear();
         #[cfg(windows)]
@@ -262,6 +326,7 @@ impl ShutdownCoordinator {
         state.update.take();
         state.shutdown_started = false;
         state.restart_requested = false;
+        state.automation_restart.take();
         state.global_pending.clear();
         PendingShutdownTimeoutAction::Cancel(state.global_requests.drain().collect())
     }
@@ -345,10 +410,10 @@ impl ShutdownCoordinator {
     }
 
     fn request_restart(&self) {
-        self.state
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .restart_requested = true;
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.automation_restart.is_none() {
+            state.restart_requested = true;
+        }
     }
 
     fn complete_cleanup(&self) -> bool {
@@ -393,6 +458,8 @@ impl ShutdownCoordinator {
         let session_deadline = Instant::now() + WINDOWS_SESSION_END_TIMEOUT;
         state.windows_session_end_generation = Some(session_generation);
         state.windows_session_end_deadline = Some(session_deadline);
+        state.pending_automation_restart.take();
+        state.automation_restart.take();
         if state.update.take().is_some() {
             state.restart_requested = false;
         }
@@ -747,6 +814,9 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
         speech.revoke(None);
     }
     std::thread::spawn(move || {
+        if let Some(speech) = app.try_state::<crate::device_speech::DeviceSpeech>() {
+            speech.stop_hex();
+        }
         client_state::capture_and_flush_all_windows(&app);
         release_workspaces(&app, RENDERER_FLUSH_TIMEOUT);
         let result = if let Some(state) = app.try_state::<AppState>() {
@@ -801,6 +871,44 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
 pub(crate) fn request_restart(app: AppHandle) {
     app.state::<ShutdownCoordinator>().request_restart();
     request(app);
+}
+
+pub(crate) fn reserve_automation_restart(
+    app: &AppHandle,
+    label: &str,
+    fence: &RequestFence,
+) -> Result<u64, String> {
+    app.state::<ShutdownCoordinator>().reserve_automation_restart(label, fence)
+}
+
+pub(crate) fn finish_automation_restart(
+    app: AppHandle,
+    label: &str,
+    generation: u64,
+    plan: Option<crate::developer_relaunch::RelaunchPlan>,
+    fence: &RequestFence,
+) {
+    let coordinator = app.state::<ShutdownCoordinator>();
+    let Some(plan) = plan else {
+        coordinator.cancel_automation_restart(generation);
+        return;
+    };
+    let labels = renderer_labels(&app);
+    let requests = coordinator.begin_automation_restart(labels, label, generation, plan, fence);
+    if let Some(requests) = requests {
+        flush_shutdown(app, requests, RENDERER_FLUSH_TIMEOUT);
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn take_automation_restart(app: &AppHandle) -> Option<crate::developer_relaunch::RelaunchPlan> {
+    let coordinator = app.state::<ShutdownCoordinator>();
+    let mut state = coordinator.state.lock().ok()?;
+    if state.exit_allowed {
+        state.automation_restart.take()
+    } else {
+        None
+    }
 }
 
 /// Set once cleanup has requested Tauri's restart; `RunEvent::Exit` then relaunches
@@ -973,6 +1081,9 @@ fn cancel_windows_session_end(app: &AppHandle) {
 #[cfg(windows)]
 pub(crate) fn request_windows_session_end(app: AppHandle) {
     let (generation, session_deadline) = prepare_windows_session_end(&app);
+    if let Some(speech) = app.try_state::<crate::device_speech::DeviceSpeech>() {
+        speech.revoke(None);
+    }
     if !app
         .state::<ShutdownCoordinator>()
         .windows_session_end_owns_shutdown(generation)
@@ -1014,6 +1125,9 @@ pub(crate) fn request_windows_session_end(app: AppHandle) {
             &cleanup_app,
             session_deadline.saturating_duration_since(Instant::now()).min(RENDERER_FLUSH_TIMEOUT),
         );
+        if let Some(speech) = cleanup_app.try_state::<crate::device_speech::DeviceSpeech>() {
+            speech.stop_hex();
+        }
         let result = {
             cleanup_app
                 .try_state::<AppState>()

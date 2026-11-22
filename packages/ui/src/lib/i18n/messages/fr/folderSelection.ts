@@ -42,11 +42,12 @@ export const folderSelectionMessages = {
   "newInstanceLauncher.searchLabel": "Rechercher un projet récent",
   "newInstanceLauncher.searchPlaceholder": "Rechercher dans les onglets récents…",
   "newInstanceLauncher.recentTitle": "Onglets récents",
+  "newInstanceLauncher.description": "Choisissez un projet récent.",
   "newInstanceLauncher.empty": "Aucun projet récent pour le moment.",
   "newInstanceLauncher.noMatch": "Aucun projet ne correspond.",
   "folderSelection.recent.switchToOpenProject": "Basculer vers le projet ouvert",
 
-  "folderSelection.clone.button": "Cloner un dépôt Git",
+  "folderSelection.clone.button": "Cloner un dépôt",
   "folderSelection.temporary.button": "Nouvel onglet temporaire",
   "folderSelection.temporary.description": "Démarrer dans un dossier vide géré par CodeNomad ; à la fermeture de l'onglet, vous pourrez le garder ou le jeter",
   "folderSelection.clone.destination.title": "Choisir la destination du clone",
@@ -64,7 +65,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.errorRequired": "L'URL du dépôt et le dossier de destination sont requis.",
   "folderSelection.actions.connectButton": "Se connecter au serveur CodeNomad",
 
-  "folderSelection.opencode": "OpenCode",
 
 
   "folderSelection.loading.title": "Démarrage de l'instance...",
@@ -114,7 +114,7 @@ export const folderSelectionMessages = {
   "projectRenameDialog.actions.cancel": "Annuler",
   "projectRenameDialog.actions.rename": "Renommer",
   "projectRenameDialog.actions.renaming": "Renommage...",
-  "newTab.temporary": "Temporaire",
+  "newTab.temporary": "Onglet temporaire",
   "newTab.title": "Nouvel onglet",
   "newTab.items.one": "{count} élément",
   "newTab.items.other": "{count} éléments",

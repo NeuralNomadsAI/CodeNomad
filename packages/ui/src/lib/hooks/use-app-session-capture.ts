@@ -24,7 +24,6 @@ import { openInstanceTabIds } from "../../stores/app-tab-membership"
 import { backendRegistry } from "../../stores/remote-backends"
 import { appSessionRestoreGateActive } from "../../stores/app-session-restore-gate"
 import { saveReloadTabSelection } from "../native/reload-tab-selection"
-import { showFolderSelection } from "../../stores/ui"
 import { cancelUnattachedWorkspaceCreations, closeWorkspace, holdWorkspaceCommits, instances, resumeWorkspaceCreations } from "../../stores/instances"
 import {
   activeParentSessionId, activeSessionId, expandedSessions, getAuthoritativeDraftSessionIdsForInstance, getPersistentExpandedSessionIds,
@@ -77,7 +76,7 @@ function captureRuntimeState(
   return { unseenIdleSince, generationRecovery, ...(Object.keys(seenInterruptions).length ? { seenInterruptions } : {}) }
 }
 export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>) {
-  const tabs = appTabs().filter(tab => tab.kind !== "blank")
+  const tabs = appTabs()
   const occurrenceKey = (project: Pick<RestorableWorkspaceTabState, "folder" | "backendId" | "serverId">) =>
     workspaceInstallationKey(project.folder, project.backendId, project.serverId)
   const nextOccurrence = new Map<string, number>()
@@ -100,6 +99,7 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
     occurrenceByInstance.set(instance.id, occurrence)
   }
   const restorableTabs: RestorableTabState[] = tabs.map((tab) => {
+    if (tab.kind === "blank") return { kind: "blank" }
     if (tab.kind === "sidecar") return { kind: "sidecar", sidecarId: tab.sidecarTab.sidecarId }
     if (tab.kind === "remote-restore") return tab.snapshot
     const id = tab.instance.id
@@ -151,7 +151,6 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
     state: {
       tabs: restorableTabs,
       activeTabIndex: tabs.findIndex(({ id }) => id === activeAppTabId()),
-      ...(showFolderSelection() ? { homeActive: true } : {}),
     },
     tabIds: tabs.map(({ id }) => id), authorities,
   }
@@ -454,7 +453,7 @@ export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: Restorable
   createEffect(() => {
     if (!enabled()) return
     const tabs = appTabs()
-    activeAppTabId(); activeParentSessionId(); activeSessionId(); expandedSessions(); showFolderSelection()
+    activeAppTabId(); activeParentSessionId(); activeSessionId(); expandedSessions()
     outlineCacheRevision(); seenInterruptionsRevision()
     checkpointSessions()
     for (const tab of tabs) if (tab.kind === "instance") {

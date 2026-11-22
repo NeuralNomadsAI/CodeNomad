@@ -2,11 +2,14 @@
 
 ## Windows, tabs and the shared service {#windows-tabs}
 
-1. Use **New instance** to open an empty tab in the current window, then choose a project. The CodeNomad logo opens Home.
+1. Use **New instance** to open an empty tab in the current window, then choose a project.
 2. Use native **Window → New Window** (`Ctrl+Shift+N` or `Cmd+Shift+N`) for a separate application window.
 3. In **Settings → Advanced**, enable **Focus existing window on second launch** if another launch should focus the most recently used window rather than open a new one.
 
 Project tabs, selected conversations and layout belong to a window. OpenCode sessions/messages belong to the shared native OpenCode service: another window can see the same conversation. Closing a project tab closes that project in CodeNomad, not its OpenCode sessions; reopen it to find them again. Another window displaying the same project connection also closes its tab and shows a notification; separately opened tabs of the same folder are unaffected. Closing a whole window, quitting or reloading preserves project connections for restoration; see [Projects](projects.md). Do not use closing windows as proof that an agent or scheduled Mission has stopped.
+
+Desktop automation stays on the window the agent inspected, even when you switch windows. The agent can list eligible local windows with `codenomad.inspect({targets:true})` and inspect another by its returned identifier.
+Native pointer and keyboard input in the app window requires its main page. Use the separate browser-preview tools for a conversation's web preview.
 
 Native application menus use CodeNomad's interface language once a window has loaded; they show English until then. **Help → About CodeNomad** (also in the macOS application menu) opens **Settings → Info** with the version, updates and diagnostics. **Help → Support CodeNomad** opens the [Support CodeNomad](sponsor.md) page in your browser.
 

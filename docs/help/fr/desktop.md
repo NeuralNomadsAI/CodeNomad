@@ -2,13 +2,16 @@
 
 ## Fenêtres, onglets et service partagé {#windows-tabs}
 
-1. Utilisez **Nouvelle instance** pour ouvrir un onglet vide dans la fenêtre actuelle, puis choisissez un projet. Le logo CodeNomad ouvre l'accueil.
+1. Utilisez **Nouvelle instance** pour ouvrir un onglet vide dans la fenêtre actuelle, puis choisissez un projet.
 2. Utilisez le menu natif **Fenêtre → Nouvelle fenêtre** (`Ctrl+Shift+N` ou `Cmd+Shift+N`) pour une fenêtre d’application séparée.
 3. Dans **Paramètres → Avancé**, activez **Focaliser la fenêtre existante au second lancement** si un autre lancement doit focaliser la dernière fenêtre utilisée au lieu d’en ouvrir une nouvelle.
 
 Les onglets de projet, conversations sélectionnées et dispositions appartiennent à une fenêtre. Les sessions/messages OpenCode appartiennent au service natif OpenCode partagé : une autre fenêtre peut voir la même conversation. Fermer un onglet de projet ferme ce projet dans CodeNomad, pas ses sessions OpenCode ; rouvrez-le pour les retrouver. Une autre fenêtre qui affiche la même connexion de projet ferme aussi son onglet et affiche une notification ; les onglets ouverts séparément sur le même dossier ne sont pas concernés. Fermer une fenêtre entière, quitter ou recharger conserve les connexions de projet pour la restauration ; voir [Projets](projects.md). Ne considérez pas la fermeture des fenêtres comme une preuve qu’un agent ou une Mission planifiée s’est arrêté.
 
 Les menus natifs de l’application utilisent la langue de l’interface de CodeNomad dès qu’une fenêtre est chargée ; ils restent en anglais jusque-là. **Aide → À propos de CodeNomad** (aussi dans le menu de l’application sur macOS) ouvre **Paramètres → Info** avec la version, les mises à jour et les diagnostics. **Aide → Soutenir CodeNomad** ouvre la page [Soutenir CodeNomad](sponsor.md) dans votre navigateur.
+
+L’automatisation reste dans la fenêtre inspectée par l’agent, même si vous changez de fenêtre. L’agent peut lister les fenêtres locales disponibles avec `codenomad.inspect({targets:true})` et en inspecter une autre par son identifiant.
+Dans la fenêtre de l’application, la souris et le clavier ne ciblent que la page principale. Pour l’aperçu web d’une conversation, utilisez les outils d’aperçu.
 
 ## Arguments de lancement de l’application {#desktop-cli}
 

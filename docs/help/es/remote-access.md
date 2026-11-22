@@ -58,6 +58,8 @@ Un administrador puede fijar la dirección de escucha: define `CODENOMAD_LOCKED_
 
 Para un alias de nombre de host, un proxy inverso o una interfaz alojada por separado, configura `CODENOMAD_ALLOWED_ORIGINS` en el backend con los orígenes de confianza de la interfaz (esquema, nombre de host y puerto). Los clientes nativos de la LAN deben enviar una cabecera `Origin` permitida en las solicitudes de modificación. Sus orígenes HTTPS también permiten al anfitrión emparejar dispositivos sin el túnel; consulta [Emparejar por HTTPS directo](remote-control.md#direct-https).
 
+Si la interfaz se aloja por separado, despliégala y recarga las pestañas y ventanas abiertas antes de actualizar el servidor. Si el servidor proporciona la interfaz, recárgalas después de actualizarlo.
+
 Usa una conexión loopback para las operaciones reservadas al anfitrión: contenido de SideCar (`/sidecars/`) y WebSockets, gestión de Control remoto (`/api/remote-control/`), puente de plugins (`/api/opencode-plugin/`), proxies remotos (`/api/remote-proxy/`), cambios de contraseña e inicialización por token. Estas operaciones requieren loopback incluso con una sesión autenticada mediante acceso directo por LAN. Solo los SideCars tienen una excepción: el ajuste **Abrir SideCars por HTTPS** del anfitrión abre su contenido y sus WebSockets a los navegadores con sesión iniciada desde un origen HTTPS de confianza ([SideCars](browser-sidecars.md#register-sidecar)). El contenido de las vistas previas activas (`/previews/`) está disponible mediante acceso directo por LAN con un token de capacidad válido.
 
 Las API de registro `/api/sidecars` siguen disponibles para los clientes directos de LAN autenticados y los dispositivos emparejados. Las vistas previas web de Control remoto siguen disponibles con su token de capacidad mientras estén activadas en el anfitrión. Para gestionar servidores e introducir credenciales de forma segura, consulta [Guardar un servidor remoto](remote-access.md#saved-servers).
@@ -113,11 +115,11 @@ Para Control remoto, pega en su lugar un enlace de emparejamiento nuevo en **URL
 
 ## Abrir un proyecto remoto en una pestaña {#remote-project-tabs}
 
-En Inicio o en una pestaña nueva, elige **Explorar** y selecciona un servidor. Pega la dirección o el enlace de emparejamiento en **Dirección o enlace del servidor** para guardarlo. Inicia sesión si se te pide. Selecciona una carpeta para explorarla; pulsa Intro en el campo de ruta o elige **Abrir** para abrirla. **Volver a Explorar** vuelve a la lista de servidores.
+En una pestaña vacía, elige **Explorar** y selecciona un servidor. Pega la dirección o el enlace de emparejamiento en **Dirección o enlace del servidor** para guardarlo. Inicia sesión si se te pide. Selecciona una carpeta para explorarla; pulsa Intro en el campo de ruta o elige **Abrir** para abrirla. **Volver a Explorar** vuelve a la lista de servidores.
 
 Los proyectos locales y remotos comparten ventana. **Pestañas recientes** muestra los accesos directos del servidor seleccionado mientras exploras. Los proyectos abiertos aquí conservan el icono y el nombre del servidor en la lista mixta. [Restaurar pestañas remotas](projects.md#restore-remote-tabs).
 
-En **Configuración → Servidores**, **Abrir** selecciona el servidor en **Explorar** y reutiliza la pestaña vacía si existe.
+En **Configuración → Servidores**, **Abrir** selecciona el servidor en **Explorar** y reutiliza una pestaña vacía si hay alguna abierta.
 
 ### `--connect-server` {#connect-server}
 

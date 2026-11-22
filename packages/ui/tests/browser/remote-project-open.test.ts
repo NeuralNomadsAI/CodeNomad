@@ -19,7 +19,7 @@ import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
-test("the real home/browser opens ordinary tabs on two relayed servers, with isolated refusal and cancellation", { timeout: 300_000 }, async t => {
+test("the real empty-tab browser opens ordinary tabs on two relayed servers, with isolated refusal and cancellation", { timeout: 300_000 }, async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-project-open-"))
   const a = await startFakeCodeNomad({ anonymous: true }), b = await startFakeCodeNomad({ anonymous: true })
   let refusal: "contract" | "426" | undefined, hold: (() => void) | undefined, holdCreate = false
@@ -164,7 +164,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
   const openSame = (page: Page) => blank(page).getByRole("button", { name: /^Same ·/ })
   const openFolder = (page: Page) => browserInBlank(page).getByRole("button", { name: "Open", exact: true })
   const serverName = (page: Page, name: string) => blank(page).locator(".remote-server-navigation bdi", { hasText: name })
-  await t.test("the first remote project opened from Home is saved in the host's recent tabs", async () => {
+  await t.test("the first remote project opened from the empty tab is saved in the host's recent tabs", async () => {
     const shortcuts = a.state.recents
     a.state.recents = []
     const page = await prepare("electron", false, async page => {
@@ -174,8 +174,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
       })
     })
     try {
-      assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot().tabs), [])
-      await page.getByRole("tab", { name: "Browse", exact: true }).click()
+      assert.deepEqual(await page.evaluate(() => (window as any).remoteOpenFixture.snapshot().tabs.map((tab: { kind: string }) => tab.kind)), ["blank"])
       await page.locator('[data-remote-server="a"]').click()
       const browse = page.locator(".remote-server-browser")
       await browse.getByRole("button", { name: "app", exact: true }).click()
@@ -425,25 +424,19 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
     delete state.remoteProjectHistory
     const page = await prepare(host), pathStart = paths.length
     const aRequestStart = a.state.requests.length
-    const browse = page.getByRole("tab", { name: "Browse", exact: true })
-    const recents = page.getByRole("tab", { name: "Recent tabs", exact: true })
-    await browse.click()
+    await page.evaluate(() => (window as any).remoteOpenFixture.openBlankTab())
     await page.getByRole("button", { name: "Open a project on Alpha" }).click()
     const inline = page.locator(".browse-menu")
-    await recents.click()
-    assert.equal(await page.getByRole("button", { name: /^Same · Alpha ·/ }).count(), 1)
-    await browse.click()
+    await page.getByRole("button", { name: /^Same · Alpha ·/ }).waitFor()
     await inline.getByRole("button", { name: "app", exact: true }).press("Enter")
     await inline.getByRole("button", { name: /Parent/ }).click()
     await inline.getByRole("button", { name: "Back to Browse" }).click()
-    await recents.click()
     assert.equal(await page.getByRole("button", { name: /^Same · Alpha ·/ }).count(), 0, "returning restores mixed recents without importing the server's shortcuts")
     assert.equal(state.remoteProjectHistory, undefined, "browse does not record opened folders")
     assert.ok(a.state.requests.slice(aRequestStart).some(request => request.path === "/api/storage/state/ui"), "the chosen server supplies its own recents")
     const alpha = page.getByRole("button", { name: /^app · Alpha ·/ })
     const alphaRow = alpha.locator("xpath=ancestor::*[contains(@class,'folder-home-recent-item')][1]")
-    const actions = alphaRow.locator("button[title='Rename workspace'], button[title='Remove from recent']")
-    await browse.click()
+    const actions = alphaRow.locator(".action-overflow-trigger")
     await page.getByRole("button", { name: "Open a project on Alpha" }).click()
     await inline.getByRole("button", { name: "app", exact: true }).click()
     await inline.getByRole("button", { name: "Open", exact: true }).click()
@@ -451,8 +444,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
     const alphaTab = page.getByRole("tab", { name: /Alpha/ })
     await alphaTab.waitFor({ timeout: 5_000 })
     assert.equal(await alphaTab.locator(".tab-label").textContent(), "app")
-    await page.evaluate(() => (window as any).remoteOpenFixture.home())
-    await browse.click()
+    await page.evaluate(() => (window as any).remoteOpenFixture.openBlankTab())
     await page.getByRole("button", { name: "Open a project on Beta" }).click()
     await inline.getByRole("button", { name: "app", exact: true }).click()
     await inline.getByRole("button", { name: "Open", exact: true }).click()
@@ -469,9 +461,9 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
     await page.waitForFunction(() => (window as any).remoteOpenFixture.snapshot().active === "instance:a~w")
     await page.locator(".new-instance-launcher").waitFor({ state: "detached" })
     assert.deepEqual(paths.slice(pathStart), ["a:/srv/projects/app", "b:/srv/projects/app"], "launcher did not create a duplicate")
-    await page.evaluate(() => (window as any).remoteOpenFixture.home())
+    await page.evaluate(() => (window as any).remoteOpenFixture.openBlankTab())
     await alpha.waitFor()
-    assert.equal(await actions.count(), 2, "the persisted recent has both actions")
+    assert.equal(await actions.count(), 1, "the persisted recent offers its actions")
     await page.getByRole("button", { name: /^app · Beta ·/ }).waitFor()
     await select(page, "a"); await blank(page).getByRole("button", { name: "Close new tab" }).click()
     assert.equal(await page.locator("[data-project-tabs]").getByRole("tab").count(), 3)
@@ -481,24 +473,26 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
     const unsolicited: string[] = []
     page.on("request", request => { if (/\/api\/(?:remote-servers|backends)\//.test(request.url())) unsolicited.push(request.url()) })
     await page.reload()
-    await recents.click()
+    await page.waitForFunction(() => !!(window as any).remoteOpenFixture)
+    await page.evaluate(() => (window as any).remoteOpenFixture.openBlankTab())
     await alpha.waitFor()
     await page.getByRole("button", { name: /^app · Beta ·/ }).waitFor()
     assert.deepEqual(unsolicited, [], "displaying persisted recents after reload does not dial a server")
     // The destination itself also remembers this exact folder, independently of the host shortcut.
     a.state.recents.push({ path: "/srv/projects/app", projectName: "app", lastAccessed: 42, password: "must-not-leak" })
     try {
-      await alphaRow.getByTitle("Remove from recent", { exact: true }).click()
+      await actions.click()
+      await page.getByRole("menuitem", { name: "Remove from recent", exact: true }).click()
       await alpha.waitFor({ state: "detached" })
-      await browse.click()
       await page.getByRole("button", { name: "Open a project on Alpha" }).click()
       await inline.getByRole("button", { name: "app", exact: true }).click()
       const open = inline.getByRole("button", { name: "Open", exact: true })
       await inline.getByRole("button", { name: /Parent/ }).waitFor()
-      assert.equal(await alpha.count(), 0, "browsing the exact removed folder does not restore it")
+      assert.equal(readRemoteProjectHistory(state.remoteProjectRecents, state.remoteProjectHistory).recents.some(row => row.policy.id === "a"), false,
+        "browsing the exact removed folder does not re-add it to the host history")
       await open.click()
       await page.getByRole("tab", { name: /Alpha/ }).waitFor({ timeout: 5_000 })
-      await page.evaluate(() => (window as any).remoteOpenFixture.home())
+      await page.evaluate(() => (window as any).remoteOpenFixture.openBlankTab())
       await alpha.waitFor({ timeout: 5_000 })
     } finally {
       a.state.recents.pop()
@@ -522,7 +516,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
           metadata: { scope: "unrestricted", currentPath: "/", displayPath: "/", rootPath: "/", homePath: "/", pathKind: "absolute" },
         }))
       })
-      await page.getByRole("tab", { name: "Browse", exact: true }).click()
+      await page.evaluate(() => (window as any).remoteOpenFixture.openBlankTab())
       await page.getByRole("button", { name: "Open a project on Alpha" }).click()
       const root = page.getByRole("button", { name: "Server root" })
       await root.waitFor({ timeout: 5_000 })
@@ -542,6 +536,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
   })
   for (const phase of ["success", "failure"] as const) await t.test(`keyboard server add in Browse: ${phase}`, async () => {
     const page = await prepare()
+    await page.evaluate(() => (window as any).remoteOpenFixture.openBlankTab())
     let release = () => {}
     let begin = () => {}
     const entered = new Promise<void>(resolve => { begin = resolve })
@@ -553,7 +548,6 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
           ? { ok: false, errorCode: "unreachable" }
           : { ok: true, normalizedUrl: "https://new.example" } }).catch(() => undefined)
       })
-      await page.getByRole("tab", { name: "Browse", exact: true }).click()
       const panel = page.locator(".browse-menu")
       const field = panel.locator("[data-server-add-field]")
       await field.fill("https://new.example")
@@ -757,7 +751,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
     a.state.overrides.set("/api/filesystem", { status: 401, body: { error: "Unauthorized" } })
     const page = await prepare(), logins = a.state.logins
     try {
-      await page.getByRole("tab", { name: "Browse", exact: true }).click()
+      await page.evaluate(() => (window as any).remoteOpenFixture.openBlankTab())
       await page.getByRole("button", { name: "Open a project on Alpha" }).click()
       const inline = page.locator(".browse-menu")
       await inline.getByLabel("Password", { exact: true }).fill("remote-password")
@@ -779,7 +773,7 @@ test("the real home/browser opens ordinary tabs on two relayed servers, with iso
     })
     const page = await prepare("web")
     try {
-      await page.getByRole("tab", { name: "Browse", exact: true }).click()
+      await page.evaluate(() => (window as any).remoteOpenFixture.openBlankTab())
       await page.getByRole("button", { name: "Open a project on Beta" }).click()
       const inline = page.locator(".browse-menu")
       const password = inline.getByLabel("Password", { exact: true })

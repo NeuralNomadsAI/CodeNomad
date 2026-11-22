@@ -7,7 +7,7 @@ import "../../../src/index.css"
 
 // The main window's title bar above its project tab bar, as App renders them in a local desktop window.
 render(() => <ConfigProvider><I18nProvider>
-  <NativeTitlebar title="CodeNomad" logo menus actions />
+  <NativeTitlebar title="CodeNomad" logo menus />
   <InstanceTabs tabs={[]} activeTabId={null} onSelect={() => {}} onClose={() => {}} onNew={() => {}} onMoveTab={() => {}} />
 </I18nProvider></ConfigProvider>, document.getElementById("root")!)
 await updatePreferences({ locale: "en" })

@@ -10,13 +10,12 @@ import {
   type RestorableSessionState,
 } from "../../stores/client-state"
 import { releaseAppSessionRestoreGate } from "../../stores/app-session-restore-gate"
-import { setShowFolderSelection } from "../../stores/ui"
 import {
   matchesRestoredServer, reconcileWorkspaceTabs, resolveRestoredActiveTabId, shouldRestoreSessionState,
 } from "../../stores/app-session-reconciliation"
 import { getAbortReason, runAbortable } from "../../stores/app-session-restore-timeout"
 import {
-  activeAppTabId, appTabs, appTabOrderRevision, appTabSelectionRevision, attachInstanceTab, getInstanceAppTabId,
+  activeAppTabId, appendBlankTab, appTabs, appTabOrderRevision, appTabSelectionRevision, attachInstanceTab, getInstanceAppTabId,
   getSidecarAppTabId, selectAppTab, setAppTabOrder,
 } from "../../stores/app-tabs"
 import {
@@ -375,6 +374,7 @@ export function useAppSessionRestore(): void {
     const recovery = createRestoreContext(snapshot, controller.signal, capture, offerRecovery, releases)
     const indexes = new Map<string, Map<number, () => boolean>>()
     const sidecars = live.filter(tab => tab.kind === "sidecar")
+    const blanks = live.filter(tab => tab.kind === "blank")
     batch(() => {
       capture.start(snapshot)
       context = recovery
@@ -386,6 +386,10 @@ export function useAppSessionRestore(): void {
         if (tab.kind === "sidecar") {
           const match = sidecars.findIndex(candidate => candidate.sidecarTab.sidecarId === tab.sidecarId)
           capture.recordRestoredTab(index, match < 0 ? null : sidecars.splice(match, 1)[0].id)
+          return
+        }
+        if (tab.kind === "blank") {
+          capture.recordRestoredTab(index, blanks.shift()?.id ?? appendBlankTab())
           return
         }
         addPlaceholder(tab, index)
@@ -487,7 +491,6 @@ export function useAppSessionRestore(): void {
   onMount(() => {
     const snapshot = applyReloadTabSelection(loadedRestorableSession())
     const shouldRestore = shouldRestoreSessionState(clientStateIsPrimary(), restorePreviousStateEnabled(), snapshot)
-    setShowFolderSelection(snapshot?.homeActive === true)
     initialRestore = (async () => {
       try {
         await capture.ready
@@ -498,11 +501,14 @@ export function useAppSessionRestore(): void {
         capture.start(snapshot!)
         await runAbortable(async (signal) => {
           context = createRestoreContext(snapshot!, signal, capture, offerRecovery)
-          if (preferences().multiBackend === true || isWebHost()) batch(() => {
+          batch(() => {
             snapshot!.tabs.forEach((tab, index) => {
-              if (tab.kind !== "workspace" || (backendIdOf(tab) === LOCAL_BACKEND_ID
-                ? !isWebHost() : preferences().multiBackend !== true)) return
-              addPlaceholder(tab, index)
+              if (tab.kind === "blank") {
+                capture.recordRestoredTab(index, appendBlankTab())
+              } else if (tab.kind === "workspace"
+                && (backendIdOf(tab) === LOCAL_BACKEND_ID ? isWebHost() : preferences().multiBackend === true)) {
+                addPlaceholder(tab, index)
+              }
             })
             context!.applyOrder()
             const requested = capture.restoredTabIds()[snapshot!.activeTabIndex]

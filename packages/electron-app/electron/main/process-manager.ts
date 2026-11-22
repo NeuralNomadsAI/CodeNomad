@@ -170,7 +170,7 @@ export class CliProcessManager extends EventEmitter {
   private shutdownStatus: "complete" | "incomplete" | null = null
   private lifecycle = new SerializedLifecycle()
 
-  constructor(private readonly nativeRequestHandler?: (method: string, params: unknown, deadline: number) => Promise<unknown>) {
+  constructor(private readonly nativeRequestHandler?: (method: string, params: unknown, deadline: number, checkAdmission: () => void) => Promise<unknown>) {
     super()
   }
 
@@ -518,9 +518,9 @@ export class CliProcessManager extends EventEmitter {
           void dispatchNativeRequest(
             child,
             request,
-            (method, params, deadline) => method === "opencode.service.start"
+            (method, params, deadline, checkAdmission) => method === "opencode.service.start"
               ? startNativeService(params, deadline)
-              : this.nativeRequestHandler?.(method, params, deadline) ?? Promise.reject(new Error(`Unsupported native method: ${method}`)),
+              : this.nativeRequestHandler?.(method, params, deadline, checkAdmission) ?? Promise.reject(new Error(`Unsupported native method: ${method}`)),
             () => this.child === child && !this.requestedStop,
           )
         }

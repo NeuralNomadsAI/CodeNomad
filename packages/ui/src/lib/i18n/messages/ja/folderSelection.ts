@@ -38,6 +38,7 @@ export const folderSelectionMessages = {
   "newInstanceLauncher.searchLabel": "最近のプロジェクトを検索",
   "newInstanceLauncher.searchPlaceholder": "最近のタブを検索…",
   "newInstanceLauncher.recentTitle": "最近のタブ",
+  "newInstanceLauncher.description": "最近のプロジェクトを選択します。",
   "newInstanceLauncher.empty": "最近のプロジェクトはまだありません。",
   "newInstanceLauncher.noMatch": "一致するプロジェクトはありません。",
   "folderSelection.recent.switchToOpenProject": "開いているプロジェクトに切り替え",
@@ -60,7 +61,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.errorRequired": "リポジトリ URL と保存先フォルダは必須です。",
   "folderSelection.actions.connectButton": "CodeNomad サーバーに接続",
 
-  "folderSelection.opencode": "OpenCode",
 
 
   "folderSelection.loading.title": "インスタンスを起動中...",
@@ -110,7 +110,7 @@ export const folderSelectionMessages = {
   "projectRenameDialog.actions.cancel": "キャンセル",
   "projectRenameDialog.actions.rename": "名前を変更",
   "projectRenameDialog.actions.renaming": "変更中...",
-  "newTab.temporary": "一時",
+  "newTab.temporary": "一時タブ",
   "newTab.title": "新しいタブ",
   "newTab.items.one": "{count} 件",
   "newTab.items.other": "{count} 件",

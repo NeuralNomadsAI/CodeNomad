@@ -797,11 +797,6 @@ export interface SpeechTranscriptionResponse {
   segments?: SpeechSegment[]
 }
 
-export interface SpeechSynthesisResponse {
-  audioBase64: string
-  mimeType: string
-}
-
 export type ConversationPermissionMode = "autonomous" | "supervised"
 export interface ConversationPermissionModeResponse {
   mode: ConversationPermissionMode

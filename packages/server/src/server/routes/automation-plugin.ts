@@ -1,10 +1,13 @@
 import { timingSafeEqual } from "node:crypto"
+import { resolve } from "node:path"
 import { isSessionNotFoundError } from "@opencode/client"
 import type { FastifyInstance, FastifyRequest } from "fastify"
 import type { AuthManager } from "../../auth/manager"
 import type { DeveloperCdp } from "../../developer-cdp"
 import type { DeveloperCdpDiagnostic, DeveloperCdpIdentity, DeveloperCdpSelection } from "../../developer-cdp"
-import type { NativeParent } from "../../native-parent"
+import { StaleDeveloperDocument } from "../../developer-cdp"
+import { parseDeveloperTarget, type DeveloperTargetSelector } from "../../automation/developer-target-selector"
+import { NativeRequestRefused, type NativeParent } from "../../native-parent"
 import { AUTOMATION_BRIDGE_PATH, parseBrowserAction, parseDeveloperAction } from "../../opencode/automation-plugin"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
@@ -27,10 +30,12 @@ import { interruptMissionTask, observeMissionTask } from "./mission-task-native"
 import { requestAdmission } from "../request-admission"
 import { MissionCreationHoldError } from "./mission-creation-holds"
 import { DeveloperInspectionTargets } from "../../automation/developer-inspection-targets"
+import { isRestartSuccessor, readDeveloperRestart, readDeveloperTarget, sameDeveloperTarget, type DeveloperTarget } from "../../automation/developer-restart"
 import { missionRecoveryControlError, missionRecoveryRejection } from "../../missions/recovery-error"
 import { verifyMissionHumanAnswer } from "./mission-human-answer"
 import { verifyRecurrenceRequest, type VerifyScheduleAgentCreation } from "./mission-recurrence-proof"
 import { BrowserPage } from "../../automation/browser-page"
+import { BROWSER_DISCOVERY_TIMEOUT_MS, browserTargetRefusal, isBrowserTarget } from "../../automation/browser-target"
 import type { SettingsService } from "../../settings/service"
 import type { SessionPermissionModes } from "../../permissions/session-mode"
 import type { RemoteControlManager } from "../../remote-control/manager"
@@ -63,8 +68,28 @@ interface DeveloperNativeStatus {
     nativeIdentity?: string
     cdpUrl?: string
     windowId?: string
+    windowInstance?: string
+    restartId?: string
   }
   logs?: DeveloperCdpDiagnostic[]
+  windows?: Array<{ windowId: string; windowInstance?: string; focused: boolean }>
+}
+
+function developerSelection(status: DeveloperNativeStatus["status"]): DeveloperCdpSelection | undefined {
+  if (status?.state !== "ready" || typeof status.runId !== "string" || typeof status.nativeIdentity !== "string"
+    || typeof status.cdpUrl !== "string" || typeof status.windowId !== "string") return undefined
+  return { endpoint: status.cdpUrl, runId: status.runId, windowId: status.windowId,
+    ...(status.windowInstance ? { windowInstance: status.windowInstance } : {}) }
+}
+
+function nativeWindowParams(window: { runId: string; windowId: string; windowInstance?: string }) {
+  return { windowId: window.windowId, runId: window.runId,
+    ...(window.windowInstance ? { windowInstance: window.windowInstance } : {}) }
+}
+
+function sameNativeWindow(window: DeveloperCdpSelection, status: DeveloperCdpSelection | undefined): boolean {
+  return window.runId === status?.runId && window.windowId === status.windowId
+    && window.windowInstance === status.windowInstance && window.endpoint === status.endpoint
 }
 
 export function isAutomationPluginRequest(
@@ -86,9 +111,11 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
   app.addHook("onClose", async () => browserPage.close())
   app.post(AUTOMATION_BRIDGE_PATH, { bodyLimit: 512 * 1024 }, async (request, reply) => {
     const lifetime = requestAdmission(request, reply)
+    let executionTimer: NodeJS.Timeout | undefined
     try {
     if (!isAutomationPluginRequest(request, deps)) return reply.code(401).send({ error: "Unauthorized automation bridge" })
-    const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown; purpose?: unknown } | undefined
+    const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown; purpose?: unknown
+      deadline?: unknown; target?: unknown; pin?: unknown; order?: unknown } | undefined
     if (body?.mode === "human-answer-verify") {
       if (!deps.settings) return reply.code(503).send({ error: "Human answer admission unavailable" })
       try { return reply.send({ result: await verifyMissionHumanAnswer(body.command,
@@ -103,10 +130,21 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         }, lifetime.signal) })
       } catch { return reply.code(403).send({ error: "Recurrence human admission unavailable" }) }
     }
-    if (!body || !["developer-probe", "developer-execute", "browser-claim", "browser-probe", "browser-execute", "mission-input", "memory-probe", "memory-input", "memory-context"].includes(String(body.mode))
+    if (!body || !["developer-probe", "developer-execute", "developer-restart", "developer-reconnect", "browser-claim", "browser-probe", "browser-execute", "mission-input", "memory-probe", "memory-input", "memory-context"].includes(String(body.mode))
       || typeof body.sessionID !== "string" || body.sessionID.length > 256) {
       return reply.code(400).send({ error: "Invalid automation bridge request" })
     }
+    const sessionID = body.sessionID
+    const rawDeveloper = body.mode === "developer-execute" ? body.command as { action?: unknown; ref?: unknown } : undefined
+    const order = typeof body.order === "string" ? /^([a-f0-9-]{36})\/(\d{1,12})$/.exec(body.order) : null
+    const inspectionOrder = order ? { source: order[1], sequence: Number(order[2]) } : undefined
+    const selecting = rawDeveloper?.action === "inspect" && (rawDeveloper.ref === undefined || rawDeveloper.ref === "")
+    const unavailableInspection = () => reply.code(404).send({
+      code: "target-gone", error: "The inspection is unavailable; choose a window in inspect({targets:true})",
+    })
+    if (selecting && body.pin !== undefined && !inspectedTargets.get(sessionID, body.pin)) return unavailableInspection()
+    const publishInspection = selecting ? inspectedTargets.begin(sessionID, inspectionOrder) : undefined
+    if (selecting && !publishInspection) return reply.code(409).send({ code: "stale-inspection", error: "A newer inspection selected the window" })
     if (body.mode === "memory-probe" || body.mode === "memory-input" || body.mode === "memory-context") {
       if (!deps.memory) return reply.code(503).send({ code: "unreadable", error: "Memory is unavailable" })
       try {
@@ -135,37 +173,201 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       const failure = missionRecoveryControlError("mission-preferences-unavailable")
       return reply.code(503).send({ error: failure.message, code: failure.code })
     }
-    const notOwner = (error: string) => reply.code(404).send({ error, ...(preferenceProbe ? { code: "mission-not-owner" } : {}) })
-     const lifecycle = commandKind === "lifecycle" || commandKind === "interrupt" || commandKind === "schedule" || commandKind === "project-control"
+    const browserDiscovery = body.mode === "browser-probe" || body.mode === "browser-claim" && !preferenceProbe && body.purpose !== "mission"
+    const notOwner = (error: string) => reply.code(404).send({ error,
+      ...(preferenceProbe ? { code: "mission-not-owner" } : browserDiscovery ? { code: "browser-not-owner" } : {}) })
+    const inventoryUnavailable = () => reply.code(503).send({ code: "inventory-unavailable", error: "The preview inventory could not be verified" })
+    let discoveryDeadline: number | undefined
+    let readSignal = lifetime.signal
+    if (browserDiscovery) {
+      if (body.deadline !== undefined && (typeof body.deadline !== "number" || !Number.isSafeInteger(body.deadline))) {
+        return reply.code(400).send({ code: "invalid-deadline", error: "Invalid browser discovery deadline" })
+      }
+      const now = Date.now()
+      discoveryDeadline = Math.min(body.deadline ?? Infinity, now + BROWSER_DISCOVERY_TIMEOUT_MS)
+      if (discoveryDeadline <= now || lifetime.signal.aborted) return inventoryUnavailable()
+      if (!deps.nativeParent.available || deps.nativeParent.browserAutomationUnavailable) {
+        return reply.code(404).send({ code: "no-preview-host", error: "Browser automation is unavailable in this host" })
+      }
+      readSignal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(discoveryDeadline - now)])
+    }
+    let executionDeadline: number | undefined
+    const executionExpired = () => executionDeadline !== undefined && (readSignal.aborted || executionDeadline <= Date.now())
+    const expiredExecution = () => reply.code(409).send({ code: "preview-expired", error: "Browser command expired before execution" })
+    if (body.mode === "browser-execute") {
+      if (body.deadline !== undefined && (typeof body.deadline !== "number" || !Number.isSafeInteger(body.deadline))) {
+        return reply.code(400).send({ code: "invalid-deadline", error: "Invalid browser command deadline" })
+      }
+      const now = Date.now()
+      executionDeadline = Math.min(body.deadline ?? Infinity, now + 90_000)
+      if (executionExpired()) return expiredExecution()
+      const deadline = new AbortController()
+      readSignal = AbortSignal.any([lifetime.signal, deadline.signal])
+      executionTimer = setTimeout(() => deadline.abort(), executionDeadline - now)
+    }
+    const lifecycle = commandKind === "lifecycle" || commandKind === "interrupt" || commandKind === "schedule" || commandKind === "project-control"
     const signal = body.mode === "mission-input"
-      ? AbortSignal.any([lifetime.signal, AbortSignal.timeout(lifecycle ? 85_000 : 30_000)]) : lifetime.signal
+      ? AbortSignal.any([lifetime.signal, AbortSignal.timeout(lifecycle ? 85_000 : 30_000)]) : readSignal
+    const discoveryExpired = () => discoveryDeadline !== undefined && (readSignal.aborted || discoveryDeadline <= Date.now())
 
+    let reconnect: { native: DeveloperNativeStatus; target: DeveloperTarget; restartId: string } | undefined
+    if (body.mode === "developer-reconnect") {
+      const expected = readDeveloperRestart(body.command)
+      if (!expected) return reply.code(400).send({ error: "Invalid developer reconnect target" })
+      let native: DeveloperNativeStatus
+      try { native = await deps.nativeParent.request<DeveloperNativeStatus>("developer.reconnect", expected, 2_000) }
+      catch { return reply.code(404).send({ error: "No matching CodeNomad relaunch" }) }
+      const target = readDeveloperTarget(native?.status)
+      if (!target || !isRestartSuccessor(expected, target, native.status.restartId)) {
+        return reply.code(404).send({ error: "No matching CodeNomad relaunch" })
+      }
+      const result = { developerTarget: target, restartId: expected.restartId }
+      // An absent window may also mean no restored project owns the session.
+      // The native receipt can prove the relaunch without disclosing renderer data.
+      if (native.status.state === "missing") return reply.send({ ...result, windowState: "missing" })
+      if (body.purpose === "confirm" || native.status.state !== "ready" || typeof native.status.cdpUrl !== "string"
+        || expected.windowInstance && !target.windowInstance) {
+        return reply.send({ ...result, windowState: "pending" })
+      }
+      reconnect = { native, target, restartId: expected.restartId }
+    }
+    const reconnectWaiting = ({ target, restartId }: NonNullable<typeof reconnect>, windowState: "pending" | "superseded" = "pending") => reply.send({
+      developerTarget: target, restartId, windowState,
+    })
     let location
     try {
       signal.throwIfAborted()
-      const client = await lifetime.wait(deps.workspaceManager.getSharedServiceClient())
+      const client = await lifetime.wait(deps.workspaceManager.getSharedServiceClient(), readSignal)
+      if (executionExpired()) return expiredExecution()
       signal.throwIfAborted()
-      location = (await lifetime.wait(client.session.get({ sessionID: body.sessionID }, { signal }))).location
+      location = (await lifetime.wait(client.session.get({ sessionID: body.sessionID }, { signal }), readSignal)).location
     } catch (error) {
+      if (executionExpired()) return expiredExecution()
+      if (reconnect) return reconnectWaiting(reconnect)
       if (preferenceProbe && (signal.aborted || !isSessionNotFoundError(error))) return preferenceUnavailable()
+      if (browserDiscovery && (discoveryExpired() || !isSessionNotFoundError(error) || error.sessionID !== body.sessionID)) return inventoryUnavailable()
       return notOwner("Session not found")
     }
-    // One validated owner is sufficient. Waiting for every unrelated inventory
-    // can exceed the plugin's discovery deadline despite a ready local owner.
+    if (executionExpired()) return expiredExecution()
+    if (discoveryExpired()) return inventoryUnavailable()
+    // Open needs the complete set for occurrence selection. Other modes can
+    // proceed with one validated owner without waiting for unrelated inventories.
+    const openingBrowser = body.mode === "browser-execute" && (body.command as { action?: unknown } | undefined)?.action === "open"
+    let workspaceIDs: string[] | undefined
     let owned: boolean, ownershipReadFailed = false
     try {
       const workspaces = deps.workspaceManager.list()
-      owned = await lifetime.wait(Promise.any(workspaces.map(async workspace => {
-        try { if (await deps.workspaceManager.ownsLocation(workspace.id, location, undefined, { signal, strict: preferenceProbe })) return true }
-        catch { ownershipReadFailed = true }
+      if (executionExpired()) return expiredExecution()
+      const reads = workspaces.map(async workspace => {
+        try { if (await deps.workspaceManager.ownsLocation(workspace.id, location, undefined, { signal, strict: preferenceProbe || browserDiscovery || openingBrowser })) return workspace.id }
+        catch (error) {
+          const failure = error as NodeJS.ErrnoException | undefined
+          const missingRoot = openingBrowser && failure?.code === "ENOENT" && failure.syscall === "realpath"
+            && typeof failure.path === "string" && resolve(failure.path) === resolve(workspace.path)
+          if (!missingRoot) ownershipReadFailed = true
+        }
         throw new Error("Not an owner")
-      }))).catch(() => false)
+      })
+      if (openingBrowser) {
+        const results = await lifetime.wait(Promise.allSettled(reads), readSignal)
+        if (executionExpired()) return expiredExecution()
+        if (ownershipReadFailed) return reply.code(409).send({ error: "Could not verify the owning project tabs" })
+        workspaceIDs = results.flatMap(result => result.status === "fulfilled" ? [result.value] : [])
+        owned = workspaceIDs.length > 0
+      } else {
+        owned = await lifetime.wait(Promise.any(reads), readSignal).then(() => true, () => false)
+      }
     } catch (error) {
+      if (executionExpired()) return expiredExecution()
       if (preferenceProbe) return preferenceUnavailable()
+      if (browserDiscovery) return inventoryUnavailable()
       throw error
     }
+    if (executionExpired()) return expiredExecution()
     if (preferenceProbe && (signal.aborted || !owned && ownershipReadFailed)) return preferenceUnavailable()
-    if (!owned) return notOwner("Session is not owned by this CodeNomad instance")
+    if (browserDiscovery && (discoveryExpired() || !owned && ownershipReadFailed)) return inventoryUnavailable()
+    if (!owned) return reconnect ? reconnectWaiting(reconnect) : notOwner("Session is not owned by this CodeNomad instance")
+
+    if (body.mode === "developer-restart") {
+      const expected = readDeveloperRestart(body.command)
+      if (!expected) return reply.code(400).send({ error: "Invalid developer restart target" })
+      const identity = inspectedTargets.get(sessionID, body.pin)
+      if (body.pin === undefined) {
+        return reply.code(404).send({ code: "inspect-required", error: "Run codenomad.inspect before restarting this window" })
+      }
+      const current = () => {
+        signal.throwIfAborted()
+        if (!identity || identity.runId !== expected.runId || identity.windowId !== expected.windowId
+          || identity.windowInstance !== expected.windowInstance || !inspectedTargets.isCurrent(sessionID, identity)) {
+          throw new Error("The inspected CodeNomad window changed; inspect again")
+        }
+        return identity
+      }
+      try {
+        const pinned = current()
+        const native = await deps.nativeParent.request<DeveloperNativeStatus>("developer.status", nativeWindowParams(pinned))
+        const target = readDeveloperTarget(native.status)
+        if (!target || !sameDeveloperTarget(expected, target) || !sameNativeWindow(pinned, developerSelection(native.status))) {
+          throw new Error("The inspected CodeNomad window changed; inspect again")
+        }
+        await deps.developerCdp.context(pinned, current)
+        current()
+        inspectedTargets.forgetRun(sessionID, expected.runId)
+        // Older hosts accepted an unscoped restart; a distinct method keeps a mixed build inert.
+        let retired = false
+        const retireRun = () => {
+          if (retired) return
+          retired = true
+          inspectedTargets.retireRun(expected.runId)
+          // An ACK precedes native shutdown; the exact window can still close and cancel it.
+          deps.developerCdp.close(expected.runId, true)
+        }
+        signal.addEventListener("abort", retireRun, { once: true })
+        let result: unknown
+        try {
+          result = await deps.nativeParent.request("developer.restartScope", expected)
+        } catch (error) {
+          if (error instanceof NativeRequestRefused) throw error
+          retireRun()
+          return reply.code(502).send({ code: "restart-outcome-unknown", error: "Native restart outcome is unknown" })
+        } finally {
+          signal.removeEventListener("abort", retireRun)
+        }
+        retireRun()
+        return reply.send({ result })
+      } catch (error) {
+        return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) })
+      }
+    }
+
+    if (reconnect) {
+      const { native, target, restartId } = reconnect
+      const canReconnect = () => inspectedTargets.canReconnect(sessionID, restartId)
+      const publish = inspectedTargets.begin(sessionID, inspectionOrder, restartId)
+      if (!publish) return reconnectWaiting(reconnect, "superseded")
+      try {
+        const identity = developerSelection(native.status)
+        if (!identity) return reconnectWaiting(reconnect)
+        const result = await deps.developerCdp.inspect(identity, undefined, { beforeRead: () => {
+          signal.throwIfAborted()
+          if (!canReconnect()) throw new Error("A newer inspection is selected")
+        } })
+        signal.throwIfAborted()
+        if (result.context.windowId !== target.windowId || result.context.windowInstance !== target.windowInstance) {
+          return reconnectWaiting(reconnect)
+        }
+        const after = await deps.nativeParent.request<DeveloperNativeStatus>("developer.status", nativeWindowParams(identity))
+        if (!sameNativeWindow(identity, developerSelection(after.status))) return reconnectWaiting(reconnect)
+        signal.throwIfAborted()
+        const { document, ...inspection } = result
+        const pin = publish({ ...identity, ...(document ? { document } : {}) })
+        if (!pin) return reconnectWaiting(reconnect, canReconnect() ? "pending" : "superseded")
+        result.diagnostics.push(...(native.logs ?? []).slice(-32))
+        return reply.send({ result: { ...inspection, pin }, developerTarget: target, restartId, windowState: "inspected" })
+      } catch {
+        return reconnectWaiting(reconnect, canReconnect() ? "pending" : "superseded")
+      }
+    }
 
     if (body.mode === "mission-input") {
       try {
@@ -208,112 +410,175 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       }
     }
 
-    if (["browser-claim", "browser-probe", "browser-execute"].includes(String(body.mode)) && !preferenceProbe && !(body.mode === "browser-claim" && body.purpose === "mission")
-      && deps.nativeParent.browserAutomationUnavailable) {
+    if (body.mode === "browser-execute" && deps.nativeParent.browserAutomationUnavailable) {
       return reply.code(409).send({ code: "unsupported", error: "Browser automation is unavailable in this host" })
     }
 
     if (body.mode === "browser-claim") {
-      // Without a desktop host this backend owns sessions only for Mission
-      // dispatch; claiming browsers too would hand the browser tools an owner
-      // that cannot open a page, or make a desktop owner ambiguous.
-      if (!deps.nativeParent.available && body.purpose !== "mission" && !preferenceProbe) {
-        return reply.code(404).send({ error: "Browser automation is unavailable in this host" })
-      }
       return reply.send({ result: { available: true, ...(preferenceProbe ? { missionCreationDefaults: true, missionPreparationStart: true } : {}) } })
     }
-    if (body.mode === "browser-probe") {
+    if (body.mode === "browser-probe" && discoveryDeadline !== undefined) {
+      if (discoveryExpired()) return inventoryUnavailable()
       try {
-        const result = await deps.nativeParent.request<{ available: boolean }>("browser.probe", { sessionID: body.sessionID })
-        return result.available ? reply.send({ result }) : reply.code(404).send({ error: "No visible browser target" })
+        const result = await lifetime.wait(deps.nativeParent.request<{ available: boolean; target?: string }>(
+          "browser.probe", { sessionID: body.sessionID }, { deadline: discoveryDeadline }))
+        if (discoveryExpired()) return inventoryUnavailable()
+        if (result?.available === false) return reply.code(404).send(browserTargetRefusal("No visible browser target"))
+        if (result?.available !== true || !isBrowserTarget(result.target)) return reply.code(409).send({ code: "unsupported", error: "The desktop host cannot pin a browser target" })
+        return reply.send({ result: { available: true, target: result.target } })
       } catch (error) {
-        return reply.code(404).send({ error: error instanceof Error ? error.message : String(error) })
+        const refusal = browserTargetRefusal(error instanceof Error ? error.message : String(error))
+        return reply.code(refusal.code === "hidden-preview" ? 404 : refusal.code === "browser-unavailable" ? 503 : 409).send(refusal)
       }
     }
-    if (body.mode === "browser-execute") {
+    if (executionDeadline !== undefined) {
       let command
       try {
         command = parseBrowserAction(body.command)
       } catch (error) {
         return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) })
       }
+      const target = command.action === "open" ? undefined : body.target
+      if (command.action !== "open" && !isBrowserTarget(target)) {
+        return reply.code(400).send({ code: "target-required", error: "A current browser target is required" })
+      }
+      if (executionExpired()) return expiredExecution()
       try {
-        const result = command.action === "open" || command.action === "navigate" || command.action === "screenshot"
-          ? await deps.nativeParent.request("browser.execute", { sessionID: body.sessionID, command })
-          : await browserPage.execute(body.sessionID, command, lifetime.signal)
+        const work = command.action === "open" || command.action === "navigate" || command.action === "screenshot"
+          ? deps.nativeParent.request("browser.execute", {
+            sessionID: body.sessionID, command, ...(target ? { target } : {}), ...(workspaceIDs ? { workspaceIDs } : {}),
+          }, { deadline: executionDeadline })
+          : browserPage.execute(body.sessionID, command, readSignal, target as string, executionDeadline)
+        const result = await lifetime.wait(work, readSignal)
+        if (executionExpired()) return expiredExecution()
         return reply.send({ result })
       } catch (error) {
-        return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) })
+        if (executionExpired()) return reply.code(409).send({ code: "preview-expired", error: "Browser command timed out; inspect before another action" })
+        const message = error instanceof Error ? error.message : String(error)
+        const code = !openingBrowser ? undefined
+          : /Multiple owning tabs/.test(message) ? "ambiguous-target"
+          : /No visible local window has the owning project tab|Owning project tabs are unavailable/.test(message) ? "no-occurrence"
+          : /Browser (?:open (?:target|renderer|registration) changed|(?:open )?navigation changed)/.test(message) ? "target-gone"
+          : /Browser preview (?:already exists|open is already in progress)/.test(message) ? "preview-in-use"
+          : undefined
+        return reply.code(409).send(code ? { error: message, code } : browserTargetRefusal(message))
       }
     }
 
+    let command
+    let explicit: DeveloperTargetSelector | undefined
+    const probe = body.mode === "developer-probe"
+    const inventory = probe && body.purpose === "targets"
+    try {
+      if (!probe) command = parseDeveloperAction(body.command)
+      if (body.target !== undefined) {
+        if (!(probe && body.purpose === "target") && (command?.action !== "inspect" || command.ref)) {
+          throw new Error("Select another window in a fresh inspection")
+        }
+        explicit = parseDeveloperTarget(body.target)
+      }
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) })
+    }
+    const pin = probe ? undefined : inspectedTargets.get(body.sessionID, body.pin)
+    if (!probe && body.pin !== undefined && !pin) {
+      return unavailableInspection()
+    }
+    const exact = explicit ?? pin
+    if (command && (command.action !== "inspect" || command.ref) && !pin) {
+      return reply.code(404).send({ code: "inspect-required", error: "Run codenomad.inspect before acting on this window" })
+    }
+    if (command?.action === "restart") {
+      return reply.code(409).send({ error: "Restart requires a fresh inspection and matching desktop automation version" })
+    }
+    if (command && command.action !== "inspect" && pin && !inspectedTargets.isCurrent(sessionID, pin)) {
+      return reply.code(409).send({ error: "The inspected CodeNomad window changed; inspect again" })
+    }
+    const unavailable = (error?: string) => reply.code(404).send(exact
+      ? { code: "target-gone", error: "The selected window is unavailable; choose a window in inspect({targets:true})" }
+      : { code: "no-window", error: error ?? "No ready local CodeNomad window for this backend" })
     let native: DeveloperNativeStatus
     try {
-      native = await deps.nativeParent.request<DeveloperNativeStatus>("developer.status", {})
+      native = await deps.nativeParent.request<DeveloperNativeStatus>(inventory ? "developer.targets" : "developer.status",
+        exact ? nativeWindowParams(exact) : {})
     } catch (error) {
-      return reply.code(404).send({ error: error instanceof Error ? error.message : String(error) })
+      return unavailable(error instanceof Error ? error.message : String(error))
     }
-    const status = native.status
-    const available = status?.state === "ready" && typeof status.runId === "string"
-      && typeof status.nativeIdentity === "string" && typeof status.cdpUrl === "string" && typeof status.windowId === "string"
-    if (!available) {
-      if (typeof status?.runId === "string") deps.developerCdp.close(status.runId)
-      return reply.code(404).send({ error: "Native automation has no active CodeNomad session" })
-    }
+    const selection = developerSelection(native.status)
+    if (!selection || exact && (selection.windowId !== exact.windowId || selection.runId !== exact.runId
+        || selection.windowInstance !== exact.windowInstance)
+      || explicit && explicit.nativeIdentity !== native.status.nativeIdentity
+      || !explicit && pin && pin.endpoint !== selection.endpoint) return unavailable()
 
-    const selection: DeveloperCdpSelection = {
-      endpoint: status.cdpUrl!,
-      runId: status.runId!,
-      windowId: status.windowId!,
-    }
-    let command
-    if (body.mode !== "developer-probe") {
-      try {
-        command = parseDeveloperAction(body.command)
-      } catch (error) {
-        return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) })
+    if (probe) {
+      const selected = { available: true, nativeIdentity: native.status.nativeIdentity, runId: selection.runId }
+      if (inventory) {
+        const local = (native.windows ?? []).slice(0, 16)
+        try {
+          const contexts = await deps.developerCdp.probeContexts(selection,
+            new Map(local.map(window => [window.windowId, window.windowInstance])), body.sessionID)
+          const windows = local.map(window => {
+            const context = contexts.get(window.windowId)
+            const visible = !!context && context.sessionId === body.sessionID && !context.instanceId?.includes("~")
+            return { windowId: window.windowId, focused: window.focused === true,
+              ...(window.windowInstance ? { windowInstance: window.windowInstance } : {}),
+              session: visible ? "visible" : context?.sessionOpen ? "open" : context ? "elsewhere" : "unknown",
+              ...(visible && context.tabId ? { tabId: context.tabId } : {}) }
+          })
+          return reply.send({ result: { ...selected, windows } })
+        } catch { return unavailable() }
       }
-    }
-    let identity: DeveloperCdpIdentity | undefined
-    try {
-      if (body.mode === "developer-probe" || command?.action === "inspect") {
-        await deps.developerCdp.context(selection)
-      } else {
-        identity = inspectedTargets.get(body.sessionID, selection)
-        await deps.developerCdp.context(identity)
+      if (!explicit) {
+        const windows = new Map([[selection.windowId, selection.windowInstance]])
+        try {
+          const contexts = await deps.developerCdp.probeContexts(selection, windows)
+          if (!contexts.has(selection.windowId)) return unavailable()
+        } catch { return unavailable() }
       }
-    } catch (error) {
-      if (body.mode !== "developer-probe") inspectedTargets.forget(body.sessionID)
-      return reply.code(404).send({ error: error instanceof Error ? error.message : String(error) })
-    }
-    identity ??= selection
-    if (body.mode === "developer-probe") {
-      return reply.send({ result: { available: true, nativeIdentity: status.nativeIdentity, runId: status.runId } })
+      return reply.send({ result: { ...selected, windowId: selection.windowId,
+        ...(selection.windowInstance ? { windowInstance: selection.windowInstance } : {}) } })
     }
 
     if (!command) return reply.code(400).send({ error: "Missing developer command" })
+    const identity: DeveloperCdpIdentity = command.action === "inspect" && !command.ref ? selection : pin ?? selection
+    const stillAvailable = async () => {
+      if (!identity.windowInstance) return true
+      const after = await deps.nativeParent.request<DeveloperNativeStatus>("developer.status", nativeWindowParams(identity))
+        .catch(() => undefined)
+      return sameNativeWindow(identity, after && developerSelection(after.status))
+    }
     try {
-      if (command.action === "restart") {
-        inspectedTargets.forget(body.sessionID)
-        const result = await deps.nativeParent.request<DeveloperNativeStatus["status"]>("developer.restart", {})
-        deps.developerCdp.close(status.runId)
-        return reply.send({ result })
-      }
       if (command.action === "inspect") {
-        const result = await deps.developerCdp.inspect(identity, { ref: command.ref, query: command.query })
+        const result = await deps.developerCdp.inspect(identity, { ref: command.ref, query: command.query,
+          ...(explicit ? { recoverUncertainRun: true } : {}) })
+        if (!await stillAvailable()) return unavailable()
         result.diagnostics.push(...(native.logs ?? []).slice(-32))
-        inspectedTargets.remember(body.sessionID, identity)
-        return reply.send({ result })
+        const nextPin = publishInspection?.({ ...identity, ...(result.document ? { document: result.document } : {}) })
+        if (publishInspection && !nextPin) return reply.code(409).send({ code: "stale-inspection", error: "A newer inspection selected the window" })
+        const { document: _document, ...inspection } = result
+        return reply.send({ result: { ...inspection, ...(nextPin ? { pin: nextPin } : {}) } })
       }
+      const checkAdmission = () => {
+        signal.throwIfAborted()
+        if (!inspectedTargets.isCurrent(sessionID, identity)) {
+          throw new Error("The inspected CodeNomad window changed; inspect again")
+        }
+      }
+      checkAdmission()
       if (command.action === "screenshot") {
-        const image = await deps.developerCdp.screenshot(identity)
+        const image = await deps.developerCdp.screenshot(identity, checkAdmission)
+        if (!await stillAvailable()) return unavailable()
         return reply.send({ result: { image: { data: image.data, mime: image.mediaType } } })
       }
-      const result = await deps.developerCdp.act(identity, command)
+      const result = await deps.developerCdp.act(identity, command, checkAdmission)
       return reply.send({ result: { ok: true, ...result } })
     } catch (error) {
+      if (error instanceof StaleDeveloperDocument) return reply.code(409).send({ code: "stale-document", error: error.message })
+      if (exact && error instanceof Error && /^(No CodeNomad page matches|CodeNomad window or active session changed|The selected window is no longer available)/.test(error.message)) {
+        return unavailable()
+      }
       return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) })
     }
-    } finally { lifetime.dispose() }
+    } finally { clearTimeout(executionTimer); lifetime.dispose() }
   })
 }

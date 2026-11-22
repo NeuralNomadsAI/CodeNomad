@@ -19,7 +19,7 @@ Las asignaciones se guardan en la configuración de interfaz de CodeNomad y afec
 
 ## Valores predeterminados del renderer {#renderer-defaults}
 
-`Mod` significa `Ctrl` en Windows/Linux y `Cmd` en macOS. Son valores predeterminados, no garantías de que el sistema operativo/anfitrión nativo entregue la tecla. El ámbito importa: la misma tecla puede ejecutar una acción distinta en la página de inicio, el editor o la búsqueda.
+`Mod` significa `Ctrl` en Windows/Linux y `Cmd` en macOS. Son valores predeterminados, no garantías de que el sistema operativo/anfitrión nativo entregue la tecla. El ámbito importa: la misma tecla puede ejecutar una acción distinta en una pestaña vacía, el editor o la búsqueda.
 
 | Acción | Valor predeterminado |
 | --- | --- |

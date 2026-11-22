@@ -15,7 +15,7 @@ before(async () => {
 after(async () => { await browser?.close() })
 
 for (const mode of ["local", "nonlocal", "sidecars", "missing", "failure"]) {
-  for (const surface of ["home", "settings"]) {
+  for (const surface of ["blank", "settings"]) {
     test(`${surface}: host-only controls require affirmative local metadata (${mode})`, async () => {
       const page = await browser.newPage({ viewport: { width: 1280, height: 1000 }, locale: "en-US" })
       const errors: string[] = []
@@ -26,8 +26,7 @@ for (const mode of ["local", "nonlocal", "sidecars", "missing", "failure"]) {
         const local = mode === "local"
         // A non-local client opens SideCars only when the host allows it over direct HTTPS.
         const sidecars = local || mode === "sidecars"
-        if (surface === "home") {
-          await page.getByRole("tab", { name: "Browse" }).click()
+        if (surface === "blank") {
           assert.equal(await page.getByRole("button", { name: "Fixture SideCar", exact: false }).count(), Number(sidecars))
           assert.equal(await page.getByRole("button", { name: "New SideCar", exact: true }).count(), 1)
         } else if (surface === "settings") {
@@ -80,14 +79,13 @@ test("listening and Remote Control locks preserve only device-local SideCar admi
   } finally { await page.close() }
 })
 
-for (const mode of ["servers", "servers-readonly", "servers-refused"]) test(`home uses host server capabilities (${mode}) with the strict flag`, async () => {
+for (const mode of ["servers", "servers-readonly", "servers-refused"]) test(`the empty tab uses host server capabilities (${mode}) with the strict flag`, async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 }, locale: "en-US" })
   try {
     for (const relay of [true, false]) {
-      await page.goto(`${url}?mode=${mode}&surface=home&scenario=saved&relay=${relay}`)
+      await page.goto(`${url}?mode=${mode}&surface=blank&scenario=saved&relay=${relay}`)
       await page.locator("html[data-meta-settled=true]").waitFor()
       await page.waitForFunction(() => (window as any).hostControlsConfig.isLoaded())
-      await page.getByRole("tab", { name: "Browse" }).click()
       assert.equal(await page.getByRole("button", { name: "Open a project on Desk", exact: true }).count(), Number(relay && mode !== "servers-refused"))
       assert.equal(await page.getByRole("textbox", { name: "Server address or link", exact: true }).count(), Number(relay && mode === "servers"))
       assert.equal(await page.getByRole("button", { name: /Fixture SideCar/ }).count(), 0)

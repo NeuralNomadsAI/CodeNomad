@@ -21,6 +21,7 @@ const logger = { error() {}, warn() {}, debug() {}, trace() {}, isLevelEnabled: 
 const pending = (id = "p", source = true) => ({ id, sessionID: "s", action: "shell", resources: ["git status"],
   message: "Inspect repository", metadata: { secret: "never-persist", diff: "FULL DIFF" },
   ...(source ? { source: { type: "tool", messageID: "m", id: "call" } } : {}) })
+const snapshot = (requestId: string, sessionID = "s") => permissionSnapshot({ ...pending(requestId), sessionID })!
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-receipts-"))
@@ -75,7 +76,7 @@ test("all decisions persist across reload, SSE-before-HTTP upgrades only the exa
   const f = await fixture()
   try {
     for (const decision of ["once", "always", "reject"] as const) {
-      const confirm = await f.receipts.prepare("w", f.connection, "s", decision, decision, "codenomad", "Because I chose it")
+      const confirm = await f.receipts.prepare("w", f.connection, snapshot(decision), decision, "Because I chose it")
       f.emit("permission.replied", { sessionID: "s", requestID: decision, reply: decision })
       await f.receipts.stop()
       await confirm()
@@ -115,7 +116,7 @@ test("stop cancels read-only recovery but drains queued events and confirmed wri
     options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true })
     began()
   }) })
-  const confirm = await f.receipts.prepare("w", f.connection, "s", "confirmed", "reject", "codenomad", "kept")
+  const confirm = await f.receipts.prepare("w", f.connection, snapshot("confirmed"), "reject", "kept")
   let releaseWrite!: () => void
   let writing!: () => void
   const writingStarted = new Promise<void>(resolve => { writing = resolve })
@@ -228,7 +229,7 @@ test("unanchored native decisions survive, pending snapshots are not receipts, d
   try {
     f.emit("permission.asked", pending("unanchored", false))
     f.emit("permission.replied", { sessionID: "s", requestID: "unanchored", reply: "always" })
-    const confirm = await f.receipts.prepare("w", f.connection, "s", "pending", "reject", "codenomad", "later")
+    const confirm = await f.receipts.prepare("w", f.connection, snapshot("pending"), "reject", "later")
     await f.receipts.stop()
     assert.deepEqual((await f.receipts.list("w", "s", { unanchored: true })).receipts.map(row => row.requestId), ["unanchored"])
     assert.deepEqual((await f.receipts.list("w", "s", { messageId: "m" })).receipts, [])
@@ -297,7 +298,7 @@ test("route validates queries and fresh session ownership, returns bounded conti
     for (const sessionId of ["__no_session_draft__", "invalid"]) {
       assert.equal((await app.inject(`/api/workspaces/w/sessions/${sessionId}/permission-receipts?unanchored=true`)).statusCode, 400)
     }
-    for (const requestId of ["a", "b", "c"]) await (await f.receipts.prepare("w", f.connection, "ses_fixture", requestId, "once", "codenomad"))()
+    for (const requestId of ["a", "b", "c"]) await (await f.receipts.prepare("w", f.connection, snapshot(requestId, "ses_fixture"), "once"))()
     for (const query of ["", "?limit=1000&messageId=m", "?unanchored=false", "?messageId=m&unanchored=true", "?messageId=m&cursor=../../other"]) {
       assert.equal((await app.inject(`${url}${query}`)).statusCode, 400)
     }
@@ -320,7 +321,7 @@ test("failed disk writes publish no success; snapshot failure prevents a native 
   try {
     await rm(f.root, { recursive: true })
     await writeFile(f.root, "not a directory")
-    await assert.rejects(f.receipts.prepare("w", f.connection, "s", "p", "once", "codenomad"))
+    await assert.rejects(f.receipts.prepare("w", f.connection, snapshot("p"), "once"))
     assert.equal(f.state.replies, 0)
     assert.equal(f.changed.length, 0)
   } finally { await f.close() }
@@ -330,6 +331,9 @@ test("manual proxy captures native success, never failed HTTP or ambiguous trans
   const f = await fixture()
   const app = Fastify()
   let forwards = 0
+  let reads = 0
+  const getPermission = f.connection.client.permission.get
+  f.connection.client.permission.get = (...args) => { reads++; return getPermission(...args) }
   Object.assign(f.connection, { endpoint: { url: "http://127.0.0.1:1" }, profile: async () => "modern", invalidate() {},
     fetch: async (url: string) => {
       forwards++
@@ -359,6 +363,7 @@ test("manual proxy captures native success, never failed HTTP or ambiguous trans
     assert.equal((await send("ambiguous")).statusCode, 500)
     await f.receipts.stop()
     assert.equal(forwards, 3)
+    assert.equal(reads, 3, "receipt preparation reuses the exact admitted permission")
     const rows = (await f.receipts.list("w", "s", { messageId: "m" })).receipts
     assert.equal(rows.length, 2)
     assert.equal(rows.find(row => row.requestId === "manual")?.origin, "codenomad")
@@ -386,7 +391,7 @@ test("manual proxy captures native success, never failed HTTP or ambiguous trans
 test("authenticated native channels and WSL hosts isolate identical session/request IDs", async () => {
   const f = await fixture()
   try {
-    await (await f.receipts.prepare("w", f.connection, "s", "p", "once", "codenomad"))()
+    await (await f.receipts.prepare("w", f.connection, snapshot("p"), "once"))()
     const otherConnection = { ...f.connection, endpoint: { ...f.connection.endpoint,
       auth: { type: "basic" as const, username: "opencode", password: "other-native-channel" } } }
     const manager = { get: f.manager.get, ownsLocation: f.manager.ownsLocation, getExistingSharedServiceConnection: f.manager.getExistingSharedServiceConnection,
@@ -407,7 +412,7 @@ test("authenticated native channels and WSL hosts isolate identical session/requ
 test("confirmed native success is not turned into retryable failure when receipt write fails", async () => {
   const f = await fixture()
   try {
-    const confirm = await f.receipts.prepare("w", f.connection, "s", "p", "once", "codenomad")
+    const confirm = await f.receipts.prepare("w", f.connection, snapshot("p"), "once")
     await rm(f.root, { recursive: true })
     await writeFile(f.root, "disk unavailable")
     await confirm()

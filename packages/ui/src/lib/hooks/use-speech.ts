@@ -1,11 +1,10 @@
 import { createEffect, createMemo, createSignal, onCleanup, type Accessor } from "solid-js"
 import { showAlertDialog } from "../../stores/alerts"
-import { serverApi } from "../api-client"
 import { useI18n } from "../i18n"
 import { loadSpeechCapabilities, speechCapabilities } from "../../stores/speech"
 import { useConfig, type SpeechSettings } from "../../stores/preferences"
-import { formatToMimeType, getSpeechPlaybackSupport } from "../speech-playback-support"
-import { createObjectUrlFromBase64, streamToMediaSource } from "../audio-utils"
+import { getSpeechPlaybackSupport } from "../speech-playback-support"
+import { playSpeech } from "../speech-playback"
 import { captureBackendOperation } from "../backend-operation"
 
 type SpeechPlaybackState = "idle" | "loading" | "playing"
@@ -31,51 +30,19 @@ export function useSpeech(options: UseSpeechOptions) {
   const { serverSettings } = useConfig()
   const [state, setState] = createSignal<SpeechPlaybackState>("idle")
 
-  let requestVersion = 0
-  let audio: HTMLAudioElement | null = null
-  let objectUrl: string | null = null
-  let mediaSource: MediaSource | null = null
-  let abortController: AbortController | null = null
+  let playback: AbortController | undefined
   let disposed = false
-  let releaseAttachment: (() => void) | undefined
 
   createEffect(() => {
     if (captureBackendOperation("").current()) void loadSpeechCapabilities()
   })
 
-  const cleanupAudio = () => {
-    releaseAttachment?.()
-    releaseAttachment = undefined
-    if (abortController) {
-      abortController.abort()
-      abortController = null
-    }
-
-    if (audio) {
-      audio.pause()
-      audio.currentTime = 0
-      audio.src = ""
-      audio.load()
-      audio = null
-    }
-
-    mediaSource = null
-
-    if (objectUrl) {
-      URL.revokeObjectURL(objectUrl)
-      objectUrl = null
-    }
-  }
-
-  const resetState = () => {
-    requestVersion += 1
-    cleanupAudio()
+  const stop = (cancel = true) => {
+    if (activePlayback === stop) activePlayback = null
+    const controller = playback
+    playback = undefined
+    if (cancel) controller?.abort()
     setState("idle")
-  }
-
-  const stop = () => {
-    if (activePlayback === resetState) activePlayback = null
-    resetState()
   }
 
   const ownerId = createMemo(options.id)
@@ -105,12 +72,14 @@ export function useSpeech(options: UseSpeechOptions) {
   }
 
   const start = async () => {
+    if (disposed || playback) return
     const ownerId = options.id()
-    // Speech is served by the renderer's local backend, independently of the conversation.
-    const operation = captureBackendOperation("", undefined, () => !disposed && options.id() === ownerId)
-    if (!operation.current()) return
     const text = options.text().trim()
-    if (!text || state() === "loading" || state() === "playing") return
+    if (!text) return
+    // Speech is served by the renderer's local backend, independently of the conversation.
+    const controller = new AbortController()
+    const operation = captureBackendOperation("", undefined, () => options.id() === ownerId)
+    if (!operation.current()) return
 
     if (!isSupported()) {
       showAlertDialog(t("messageItem.actions.speak.error.unsupported"), {
@@ -121,170 +90,45 @@ export function useSpeech(options: UseSpeechOptions) {
     }
 
     stopActivePlayback()
-    const currentRequest = ++requestVersion
-    activePlayback = resetState
+    playback = controller
+    activePlayback = stop
+    const detached = () => { if (playback === controller) stop() }
+    operation.signal.addEventListener("abort", detached, { once: true, signal: controller.signal })
     setState("loading")
-    const detached = () => { if (currentRequest === requestVersion) stop() }
-    operation.signal.addEventListener("abort", detached, { once: true })
-    releaseAttachment = () => operation.signal.removeEventListener("abort", detached)
-
-    const capabilities = (await loadSpeechCapabilities()) ?? speechCapabilities()
-    if (!operation.current() || currentRequest !== requestVersion) return
-    if (!capabilities?.available || !capabilities?.ttsConfigured || !capabilities?.supportsTts) {
-      stop()
-      showAlertDialog(t("messageItem.actions.speak.error.unavailable"), {
-        title: t("messageItem.actions.speak.error.title"),
-        variant: "error",
-      })
-      return
-    }
-
-    const support = getSpeechPlaybackSupport({
-      playbackMode: resolvedSettings().playbackMode,
-      ttsFormat: resolvedSettings().ttsFormat,
-      capabilities,
-    })
-    if (!support.available) {
-      stop()
-      const detailKey =
-        support.reason === "provider-streaming-unavailable"
-          ? "settings.speech.compatibility.streamingUnavailable"
-          : support.reason === "browser-streaming-unavailable"
-            ? "settings.speech.compatibility.browserStreamingUnavailable"
-            : "messageItem.actions.speak.error.unsupported"
-
-      showAlertDialog(t("messageItem.actions.speak.error.unavailable"), {
-        title: t("messageItem.actions.speak.error.title"),
-        detail: t(detailKey),
-        variant: "error",
-      })
-      return
-    }
-
-    const settings = resolvedSettings()
-    const format = settings.ttsFormat
-
     try {
-      if (settings.playbackMode === "streaming") {
-        await startStreamingPlayback(currentRequest, text, format, operation)
-      } else {
-        await startBufferedPlayback(currentRequest, text, format, operation)
-      }
-    } catch (error) {
-      if (currentRequest !== requestVersion || !operation.current()) {
-        if (currentRequest === requestVersion) resetState()
+      const capabilities = (await loadSpeechCapabilities()) ?? speechCapabilities()
+      if (controller.signal.aborted || !operation.current()) return
+      const settings = resolvedSettings()
+      const support = getSpeechPlaybackSupport({ ...settings, capabilities })
+      const configured = capabilities?.available && capabilities.ttsConfigured && capabilities.supportsTts
+      if (!configured || !support.available) {
+        const detailKey = configured && (
+          support.reason === "provider-streaming-unavailable" ? "settings.speech.compatibility.streamingUnavailable"
+            : support.reason === "browser-streaming-unavailable" ? "settings.speech.compatibility.browserStreamingUnavailable"
+              : "messageItem.actions.speak.error.unsupported"
+        )
+        showAlertDialog(t("messageItem.actions.speak.error.unavailable"), {
+          title: t("messageItem.actions.speak.error.title"),
+          detail: detailKey ? t(detailKey) : undefined,
+          variant: "error",
+        })
         return
       }
-      stop()
-      showAlertDialog(t("messageItem.actions.speak.error.generate"), {
+      await playSpeech(text, settings, controller.signal, () => setState("playing"))
+    } catch (error) {
+      if (controller.signal.aborted || !operation.current()) return
+      const message = t("messageItem.actions.speak.error.generate")
+      const detail = error instanceof Error ? error.message : String(error)
+      showAlertDialog(message, {
         title: t("messageItem.actions.speak.error.title"),
-        detail: error instanceof Error ? error.message : String(error),
+        detail: detail !== message ? detail : undefined,
         variant: "error",
       })
+    } finally {
+      operation.signal.removeEventListener("abort", detached)
+      // Playback has settled; a status check triggered by an HTTP 401 still owns its result.
+      if (playback === controller) stop(false)
     }
-  }
-
-  async function startBufferedPlayback(
-    currentRequest: number,
-    text: string,
-    format: "mp3" | "wav" | "opus" | "aac",
-    operation: ReturnType<typeof captureBackendOperation>,
-  ) {
-    const response = await serverApi.synthesizeSpeech({ text, format })
-
-    if (currentRequest !== requestVersion || !operation.current()) {
-      if (currentRequest === requestVersion) resetState()
-      return
-    }
-
-    const nextUrl = createObjectUrlFromBase64(response.audioBase64, response.mimeType)
-    const nextAudio = new Audio(nextUrl)
-    objectUrl = nextUrl
-    audio = nextAudio
-
-    attachPlaybackLifecycle(nextAudio)
-    setState("playing")
-    await nextAudio.play()
-  }
-
-  async function startStreamingPlayback(
-    currentRequest: number,
-    text: string,
-    format: "mp3" | "wav" | "opus" | "aac",
-    operation: ReturnType<typeof captureBackendOperation>,
-  ) {
-    if (typeof MediaSource === "undefined") {
-      throw new Error("MediaSource is not available in this browser.")
-    }
-
-    const controller = new AbortController()
-    abortController = controller
-    const response = await serverApi.synthesizeSpeechStream({ text, format }, AbortSignal.any([operation.signal, controller.signal]))
-    if (currentRequest !== requestVersion || !operation.current()) {
-      void response.body?.cancel().catch(() => {})
-      if (currentRequest === requestVersion) resetState()
-      return
-    }
-    const mimeType = response.headers.get("content-type") || formatToMimeType(format)
-
-    if (!MediaSource.isTypeSupported(mimeType)) {
-      throw new Error(`Streaming playback is not supported for ${mimeType}.`)
-    }
-
-    const stream = response.body
-    if (!stream) {
-      throw new Error("Speech stream did not include a response body.")
-    }
-
-    const nextMediaSource = new MediaSource()
-    const nextObjectUrl = URL.createObjectURL(nextMediaSource)
-    const nextAudio = new Audio(nextObjectUrl)
-    mediaSource = nextMediaSource
-    objectUrl = nextObjectUrl
-    audio = nextAudio
-
-    attachPlaybackLifecycle(nextAudio)
-
-    await new Promise<void>((resolve, reject) => {
-      const handleSourceOpen = () => {
-        if (!operation.current() || currentRequest !== requestVersion) { resolve(); return }
-        nextMediaSource.removeEventListener("sourceopen", handleSourceOpen)
-        void streamToMediaSource({
-          mediaSource: nextMediaSource,
-          stream,
-          mimeType,
-          appendErrorMessage: () => "Failed to append audio stream chunk.",
-          onPlayable: async () => {
-            if (!operation.current() || currentRequest !== requestVersion) return
-            if (state() !== "playing") {
-              setState("playing")
-            }
-            try {
-              await nextAudio.play()
-            } catch (error) {
-              reject(error)
-            }
-          },
-          onComplete: resolve,
-          onError: reject,
-        })
-      }
-
-      nextMediaSource.addEventListener("sourceopen", handleSourceOpen, { once: true })
-      nextAudio.addEventListener(
-        "error",
-        () => reject(new Error("Unable to play streamed speech.")),
-        { once: true },
-      )
-    })
-  }
-
-  function attachPlaybackLifecycle(nextAudio: HTMLAudioElement) {
-    const finish = () => {
-      if (audio === nextAudio) stop()
-    }
-    nextAudio.addEventListener("ended", finish, { once: true })
-    nextAudio.addEventListener("error", finish, { once: true })
   }
 
   const toggle = async () => {
@@ -301,7 +145,6 @@ export function useSpeech(options: UseSpeechOptions) {
     isLoading: () => state() === "loading",
     isPlaying: () => state() === "playing",
     toggle,
-    stop,
     buttonTitle: () => {
       if (state() === "loading") return t("messageItem.actions.generatingSpeech")
       if (state() === "playing") return t("messageItem.actions.stopSpeech")

@@ -8,27 +8,3 @@
   height: 28px;
   padding-left: 60px;
 }
-
-/* App actions at the right end of the macOS main window (`appActionsInTitlebar`):
-   flush on the bar like its other controls. */
-.native-titlebar-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding-inline: var(--space-xs);
-  --new-tab-bg: transparent;
-  --new-tab-hover-bg: var(--surface-interactive-hover);
-  -webkit-app-region: no-drag;
-}
-
-.native-titlebar-actions .new-tab-button {
-  width: 28px;
-  height: 28px;
-}
-
-/* The notification history opened from the bar takes the page zoom back, and its text
-   stays selectable. */
-.native-titlebar-actions .toast-history-panel {
-  zoom: var(--host-page-zoom, 1);
-  user-select: text;
-}

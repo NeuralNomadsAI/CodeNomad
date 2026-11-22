@@ -7,9 +7,10 @@ app.whenReady().then(() => {
       ...(process.env.CODENOMAD_TEST_HISTORY_CONTROLLER ? { preload: require("node:path").join(__dirname, "browser-history-preload.cjs") } : {}) } })
   if (process.env.CODENOMAD_TEST_HISTORY_CONTROLLER) {
     const { BrowserController } = require(process.env.CODENOMAD_TEST_HISTORY_CONTROLLER)
-    const controller = new BrowserController(() => {})
+    const controller = new BrowserController(() => [])
     window.webContents.on("did-attach-webview", (_event, guest) => controller.observeGuest(window.webContents, guest))
-    ipcMain.handle("fixture:browser-register", (event, payload) => controller.register(event.sender, payload))
+    // This fixture exercises guest history, independently of project-tab ownership.
+    ipcMain.handle("fixture:browser-register", (event, { instanceId: _instanceId, ...payload }) => controller.register(event.sender, payload))
     ipcMain.handle("fixture:browser-unregister", (event, id) => controller.unregister(event.sender, id))
     ipcMain.handle("fixture:browser-history", (event, id, entryId) => controller.history(event.sender, id, entryId))
   }

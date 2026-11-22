@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 import { ClientStateManager } from "./client-state"
+import { DeveloperMode } from "./developer-mode"
 import { MultiwindowLifecycle, type LifecycleWindow } from "./multiwindow-lifecycle"
 import { WindowStateTracker } from "./window-state"
 
@@ -524,10 +525,13 @@ test("final close retains its record and shutdown stops/releases once", async ()
   const events = new Map<string, Function>()
   const first = windowRecord("one", calls)
   const app = { on: (name: string, handler: Function) => events.set(name, handler), quit: () => calls.push("quit"), exit: () => calls.push("exit") }
+  let stopSpeech!: () => void
+  const speech = new Promise<void>(resolve => { stopSpeech = resolve })
   const lifecycle = new MultiwindowLifecycle({
     app: app as never,
     clientStateManager: { isPrimary: true, flush: async () => calls.push("aggregate"), drainAndReleasePrimary: async () => calls.push("release") } as never,
     cliManager: { shutdown: async () => calls.push("stop") } as never, getLocalWindows: () => [first], getAllWindows: () => [first.window],
+    stopSpeech: () => { calls.push("speech"); return speech },
     removeWindowState: async () => { calls.push("remove"); return true }, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
   })
   lifecycle.attach(first); lifecycle.registerAppEvents()
@@ -536,6 +540,10 @@ test("final close retains its record and shutdown stops/releases once", async ()
   assert.deepEqual(calls, ["prevent", "quit"])
   events.get("before-quit")?.({ preventDefault: () => calls.push("prevent-quit") })
   events.get("before-quit")?.({ preventDefault: () => calls.push("prevent-quit") })
+  await tick()
+  assert.equal(calls.filter((call) => call === "speech").length, 1)
+  assert.equal(calls.includes("exit"), false)
+  stopSpeech()
   await tick(); await tick()
   assert.equal(calls.includes("remove"), false)
   assert.equal(calls.filter((call) => call === "stop").length, 1)
@@ -549,23 +557,119 @@ test("Windows query preflush leaves the app alive until session end is confirmed
     calls.push(source.includes('flush("release")') ? "renderer:release" : "renderer:one")
   }
   const lifecycle = new MultiwindowLifecycle({
-    app: { on: () => {}, quit: () => {}, exit: () => calls.push("exit") } as never,
+    app: { on: () => {}, quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
     clientStateManager: { isPrimary: true, flush: async () => calls.push("aggregate"), drainAndReleasePrimary: async () => calls.push("release") } as never,
     cliManager: { shutdown: async () => calls.push("stop") } as never,
     getLocalWindows: () => [first], getAllWindows: () => [first.window], removeWindowState: async () => true,
     getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true, isWindows: true, sessionEndCleanupTimeoutMs: 20,
   })
   lifecycle.attach(first)
+  assert.equal(lifecycle.relaunchScopeGeneration(), 0)
   let vetoed = false
   first.events.get("query-session-end")?.({ preventDefault: () => { vetoed = true } })
+  assert.equal(lifecycle.relaunchScopeGeneration(), undefined)
   await (lifecycle as any).sessionEndPreparation
   assert.equal(vetoed, false)
+  assert.equal(lifecycle.relaunchScopeGeneration(), undefined)
+  lifecycle.requestRelaunch({ args: ["--codenomad-automation-relaunch=fixture"] })
   assert.deepEqual(calls, ["renderer:one", "native:one"])
 
   first.events.get("session-end")?.()
   await (lifecycle as any).sessionEnd
   assert.deepEqual(calls, ["renderer:one", "native:one", "renderer:one", "native:one", "aggregate", "renderer:release", "stop", "release", "exit"])
 })
+
+test("Windows query and cancellation revoke an unarmed native restart without blocking a new one", async () => {
+  const calls: string[] = []
+  const first = windowRecord("one", calls)
+  let endSessionMessage: ((wParam: Buffer) => void) | undefined
+  first.window.hookWindowMessage = (message, handler) => {
+    assert.equal(message, 0x0016)
+    endSessionMessage = wParam => handler(wParam, Buffer.alloc(8))
+  }
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: () => {}, quit: () => calls.push("quit") } as never,
+    clientStateManager: { isPrimary: true } as never, cliManager: {} as never,
+    getLocalWindows: () => [first], getAllWindows: () => [first.window], removeWindowState: async () => true,
+    getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true, isWindows: true,
+  })
+  lifecycle.attach(first)
+  const target = { nativeIdentity: "electron:test", runId: "run", windowId: "one", windowInstance: "instance" }
+  const scheduled: Array<() => void> = []
+  const mode = new DeveloperMode({
+    ...target, devtoolsDataPath: ".", windows: () => [{ ...target, focused: true }], hasWindow: () => true,
+    relaunchScopeGeneration: () => lifecycle.relaunchScopeGeneration(),
+    requestRelaunch: restart => lifecycle.requestRelaunch({ args: [restart.restartId] }),
+    schedule: callback => scheduled.push(callback),
+  })
+  const admit = (restartId: string) => mode.handleNativeRequest("developer.restartScope", { ...target, restartId })
+  const old = "8d80a777-0085-48c8-b791-d3514bd63f32", fresh = "7c3e5066-017d-4ce1-a371-187ac459c4b2"
+  await admit(old)
+  first.events.get("query-session-end")?.()
+  await (lifecycle as any).sessionEndPreparation
+  await assert.rejects(admit(fresh), /shutting down/)
+  assert.ok(endSessionMessage)
+  endSessionMessage(Buffer.alloc(8))
+  await admit(fresh)
+  scheduled[0]()
+  assert.equal(calls.includes("quit"), false)
+  await assert.rejects(admit(old), /already pending/)
+  scheduled[1]()
+  assert.equal(calls.filter(call => call === "quit").length, 1)
+})
+
+for (const outcome of ["normal", "query", "before deadline", "late success", "late failure"] as const) {
+  test(`scoped relaunch on Windows: ${outcome}`, { timeout: 2_000 }, async () => {
+    const calls: string[] = []
+    const events = new Map<string, Function>()
+    const local = windowRecord("one", calls)
+    let finishStop!: () => void
+    let failStop!: (error: Error) => void
+    let exit!: () => void
+    const stop = new Promise<void>((resolve, reject) => { finishStop = resolve; failStop = reject })
+    const exited = new Promise<void>((resolve) => { exit = resolve })
+    const lifecycle = new MultiwindowLifecycle({
+      app: {
+        on: (name: string, handler: Function) => events.set(name, handler),
+        quit: () => events.get("before-quit")?.({ preventDefault: () => {} }),
+        relaunch: () => calls.push("relaunch"),
+        exit: () => { calls.push("exit"); exit() },
+      } as never,
+      clientStateManager: { isPrimary: true, flush: async () => {}, drainAndReleasePrimary: async () => calls.push("release") } as never,
+      cliManager: { shutdown: () => { calls.push("stop"); return stop } } as never,
+      getLocalWindows: () => [local], getAllWindows: () => [local.window], removeWindowState: async () => true,
+      getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+      isWindows: true, sessionEndCleanupTimeoutMs: outcome === "before deadline" ? 50 : 5,
+    })
+    lifecycle.attach(local)
+    lifecycle.registerAppEvents()
+    lifecycle.requestRelaunch({ args: ["--codenomad-automation-relaunch=fixture"] })
+    await tick()
+    assert.equal(calls.at(-1), "stop")
+
+    if (outcome === "query") {
+      local.events.get("query-session-end")!()
+    } else if (outcome !== "normal") {
+      local.events.get("session-end")!()
+      if (outcome !== "before deadline") {
+        await exited
+        assert.equal(calls.includes("release"), false)
+      }
+    }
+    if (outcome === "late failure") failStop(new Error("late CLI failure"))
+    else finishStop()
+    await exited
+    await tick()
+    const afterStop = {
+      normal: ["release", "relaunch", "exit"],
+      query: ["release", "exit"],
+      "before deadline": ["release", "exit"],
+      "late success": ["exit", "release"],
+      "late failure": ["exit"],
+    }[outcome]
+    assert.deepEqual(calls.slice(calls.indexOf("stop") + 1), afterStop)
+  })
+}
 
 test("support windows receive session-end cleanup without local close semantics", async () => {
   const calls: string[] = []

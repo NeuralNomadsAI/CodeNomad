@@ -4,19 +4,19 @@ A project tab connects CodeNomad to a folder on the backend computer. Opening a 
 
 ## Open a project {#open-project}
 
-Click **New instance** (`+`) or press `Ctrl/Cmd+N` to open an empty tab. Pick a project from **Recent tabs** or **Browse**. The CodeNomad logo opens Home. Clone and Temporary target the local backend.
+When no tabs are restored or the last tab closes, CodeNomad shows an empty tab. Click **New instance** (`+`) or press `Ctrl/Cmd+N` to open a new empty tab. Pick a project from **Browse** or **Recent tabs**. **Temporary tab** and **Clone repository** use the local backend.
 
 In Recents, **Open** switches to a tab in this window. The green **Open elsewhere** dot marks a connection on the project’s server outside this window. Selecting the row opens a separate tab.
 
 [Open a remote project in a tab](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
 
-For a repository copy, choose **Clone Git Repo**, enter **Repository URL** and **Destination folder**, then **Clone**. **Destination folder** is prefilled with the repository name in the folder that holds your last clone, or next to your most recent project. **Browse** chooses the folder that contains the clone; you can also edit the path, including the clone's folder name.
+For a repository copy, choose **Clone repository**, enter **Repository URL** and **Destination folder**, then **Clone**. **Destination folder** is prefilled with the repository name in the folder that holds your last clone, or next to your most recent project. **Browse** chooses the folder that contains the clone; you can also edit the path, including the clone's folder name.
 
 Browsing a remote server means browsing that server's filesystem, not your phone or laptop. Opening a project does not create a separate OpenCode daemon for each tab. Conversations are native OpenCode sessions; their lifetime is not the tab's lifetime.
 
 Cloning writes a repository to the destination. **Remove the destination folder first if it already exists.** is destructive: enable it only when everything already there can be deleted. Use a fresh destination if unsure. A failed clone is not a reason to delete an existing project; inspect the reported destination and error before retrying.
 
-Recent entries are shortcuts. Home's inline controls and empty tabs' project-actions menu offer **Rename workspace** and **Remove from recent** where available; removal keeps files and conversations. Across Home, empty tabs and the quick launcher, clicking a local project, remote project or SideCar creates a new occurrence, even when already open. Its separate **Open** action (**Switch to open project**) selects the existing occurrence instead.
+Recent entries are shortcuts. The empty tab’s project-actions menu offers **Rename workspace** and **Remove from recent** where available; removal keeps files and conversations. In the empty tab and quick launcher, clicking a local project, remote project or SideCar creates a new occurrence, even when already open. Its separate **Open** action (**Switch to open project**) selects the existing occurrence instead.
 
 The **Open** action also selects a tab waiting for its server and closes the originating empty tab.
 
@@ -54,7 +54,7 @@ When you reload with restoration enabled, remote tabs keep their order, selectio
 
 ## Temporary workspaces {#temporary-workspaces}
 
-1. Choose **New temporary tab** on Home or **Temporary** above the columns in an empty tab.
+1. Choose **Temporary tab** at the top of the empty tab.
 2. Work in the empty CodeNomad-managed folder; Git is not initialized automatically.
 3. On closing the tab, choose **Keep**, **Discard** or **Cancel**. The tab menu also offers **Keep as project**.
 
@@ -64,7 +64,7 @@ When you reload with restoration enabled, remote tabs keep their order, selectio
 | Discard | Deletes the temporary workspace's conversations, files and unsent drafts | No undo; save anything needed elsewhere first |
 | Cancel | Leaves the temporary workspace open | Continue working or decide later |
 
-An untouched temporary tab, with no conversation, file or unsent draft, is discarded quietly on close. Open temporary tabs participate in normal startup restoration, but the home page has no separate list for resuming closed temporary folders.
+An untouched temporary tab, with no conversation, file or unsent draft, is discarded quietly on close. Open temporary tabs participate in normal startup restoration.
 
 Discard refuses while a conversation is running or the folder is open in another tab/window. Stop the run and close the other views first. A failed discard remains temporary: resolve the reported problem and retry rather than manually deleting a parent directory.
 

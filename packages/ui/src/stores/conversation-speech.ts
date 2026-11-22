@@ -1,11 +1,10 @@
 import { createEffect, createRoot, createSignal, on } from "solid-js"
 import { tGlobal } from "../lib/i18n"
 import { showToastNotification } from "../lib/notifications"
-import { serverApi } from "../lib/api-client"
 import { getLogger } from "../lib/logger"
 import { microphoneUse } from "../lib/microphone-lease"
-import { formatToMimeType, getSpeechPlaybackSupport } from "../lib/speech-playback-support"
-import { createObjectUrlFromBase64, streamToMediaSource } from "../lib/audio-utils"
+import { getSpeechPlaybackSupport } from "../lib/speech-playback-support"
+import { playSpeech } from "../lib/speech-playback"
 import { serverSettings } from "./preferences"
 import { loadSpeechCapabilities, speechCapabilities } from "./speech"
 import { getActiveSession, sessions } from "./session-state"
@@ -13,9 +12,6 @@ import type { ClientPart, MessageInfo } from "../types/message"
 import { messageStoreBus } from "./message-v2/bus"
 import { activeInstanceId } from "./instances"
 import { voiceConversationEngine, voiceConversationEngineLoaded, voiceConversationReadFailed } from "./voice-conversation-engine"
-
-type SpeechPlaybackMode = "streaming" | "buffered"
-type SpeechTtsFormat = "mp3" | "wav" | "opus" | "aac"
 
 interface ConversationQueueEntry {
   key: string
@@ -117,10 +113,8 @@ export function classicConversationUnavailable(): "loading" | "capabilitiesError
   }).available) return "unsupportedFormat"
 }
 
-export function setConversationModeEnabled(instanceId: string, enabled: boolean): void {
-  const previous = isConversationModeEnabled(instanceId)
-  if (previous === enabled) return
-
+export function toggleConversationMode(instanceId: string): void {
+  const enabled = !isConversationModeEnabled(instanceId)
   setConversationModeInstances((prev) => {
     const next = new Map(prev)
     if (enabled) {
@@ -134,11 +128,6 @@ export function setConversationModeEnabled(instanceId: string, enabled: boolean)
   if (!enabled) {
     clearConversationPlaybackForInstance(instanceId)
   }
-
-}
-
-export function toggleConversationMode(instanceId: string): void {
-  setConversationModeEnabled(instanceId, !isConversationModeEnabled(instanceId))
 }
 
 export function clearConversationPlaybackForSession(instanceId: string, sessionId: string): void {
@@ -240,6 +229,8 @@ async function runConversationQueue(): Promise<void> {
       } catch (error) {
         if (controller.signal.aborted) continue
         spokenKeys.delete(entry.key)
+        // The failed playback has settled; an HTTP 401 status check can still finish.
+        currentPlayback = null
         clearConversationPlaybackForInstance(entry.instanceId)
         if (!playbackErrorShown) {
           playbackErrorShown = true
@@ -255,7 +246,6 @@ async function runConversationQueue(): Promise<void> {
         log.error("Conversation playback failed", error)
         break
       } finally {
-        controller.abort()
         if (currentPlayback?.controller === controller) {
           currentPlayback = null
         }
@@ -275,7 +265,7 @@ async function runConversationQueue(): Promise<void> {
 
 async function playSummary(text: string, signal: AbortSignal): Promise<void> {
   const capabilities = (await loadSpeechCapabilities()) ?? speechCapabilities()
-  signal.throwIfAborted()
+  if (signal.aborted) throw signal.reason
   const settings = serverSettings().speech
 
   if (!capabilities?.available || !capabilities.ttsConfigured || !capabilities.supportsTts) {
@@ -297,72 +287,7 @@ async function playSummary(text: string, signal: AbortSignal): Promise<void> {
     throw new Error(tGlobal("messageItem.actions.speak.error.unsupported"))
   }
 
-  return settings.playbackMode === "streaming"
-    ? playStreamingSummary(text, settings.ttsFormat, signal)
-    : playBufferedSummary(text, settings.ttsFormat, signal)
-}
-
-async function playBufferedSummary(text: string, format: SpeechTtsFormat, signal: AbortSignal): Promise<void> {
-  const response = await serverApi.synthesizeSpeech({ text, format }, signal)
-  signal.throwIfAborted()
-  return playAudio(createObjectUrlFromBase64(response.audioBase64, response.mimeType), signal,
-    (audio, reject) => { void audio.play().catch(reject) })
-}
-
-async function playStreamingSummary(text: string, format: SpeechTtsFormat, signal: AbortSignal): Promise<void> {
-  if (typeof MediaSource === "undefined") {
-    throw new Error(tGlobal("messageItem.actions.speak.error.unsupported"))
-  }
-
-  const response = await serverApi.synthesizeSpeechStream({ text, format }, signal)
-  signal.throwIfAborted()
-  const mimeType = response.headers.get("content-type") || formatToMimeType(format)
-  const stream = response.body
-  if (!stream) {
-    throw new Error(tGlobal("messageItem.actions.speak.error.generate"))
-  }
-
-  if (!MediaSource.isTypeSupported(mimeType)) {
-    throw new Error(tGlobal("settings.speech.compatibility.browserStreamingUnavailable"))
-  }
-
-  const mediaSource = new MediaSource()
-  return playAudio(URL.createObjectURL(mediaSource), signal, (audio, reject) => {
-    mediaSource.addEventListener("sourceopen", () => {
-      if (signal.aborted) return
-      void streamToMediaSource({
-        mediaSource, stream, mimeType,
-        appendErrorMessage: () => tGlobal("messageItem.actions.speak.error.generate"),
-        onPlayable: async () => { if (!signal.aborted) await audio.play() },
-        onError: reject,
-      })
-    }, { once: true, signal })
-  })
-}
-
-async function playAudio(objectUrl: string, signal: AbortSignal, start: (audio: HTMLAudioElement, reject: (error: unknown) => void) => void) {
-  const audio = new Audio(objectUrl)
-  let stop!: () => void
-  const audioError = () => new Error(tGlobal("messageItem.actions.speak.error.generate"))
-  let failed!: () => void
-  try {
-    await new Promise<void>((resolve, reject) => {
-      stop = () => resolve()
-      failed = () => reject(audioError())
-      signal.addEventListener("abort", stop, { once: true })
-      audio.addEventListener("ended", stop, { once: true })
-      audio.addEventListener("error", failed, { once: true })
-      start(audio, reject)
-    })
-  } finally {
-    signal.removeEventListener("abort", stop)
-    audio.removeEventListener("ended", stop)
-    audio.removeEventListener("error", failed)
-    audio.pause()
-    audio.src = ""
-    audio.load()
-    URL.revokeObjectURL(objectUrl)
-  }
+  return playSpeech(text, settings, signal)
 }
 
 function extractLeadingSpokenBlock(text: string): string {
