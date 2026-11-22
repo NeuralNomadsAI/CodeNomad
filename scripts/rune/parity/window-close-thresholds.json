@@ -1,0 +1,9 @@
+{
+  "platform": "win32",
+  "scale": 1,
+  "maxChannelError": 2,
+  "maxTotalChannelError": 39,
+  "maxDifferentPixels": 34,
+  "maxExteriorDifferentPixels": 0,
+  "basis": "Observed six 24x24 production Solid/Rune crops: only Lucide glyph antialias pixels differ; maximum channel error 1 except five light-hover pixels at 2. Every background and focus outline pixel matches exactly. These are the observed maxima without added tolerance."
+}

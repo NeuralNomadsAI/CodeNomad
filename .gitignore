@@ -13,4 +13,7 @@ out/
 .codenomad/
 .tmp/
 /temp/
+/.prototype-deps/
+/target/
+/crates/*/target/
 packages/cloudflare/.wrangler/

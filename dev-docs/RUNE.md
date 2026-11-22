@@ -42,3 +42,24 @@ When a whole module reaches parity, its Solid and Tauri version is deleted on `f
 
 | Solid / Tauri | Rune | State |
 |---|---|---|
+| HTTP, SSE, pagination and recovery | CodeNomad API and contract fixtures | `crates/codenomad-client`: native contracts and 606-row recovery qualified; connected browser flow pending |
+| Tokens and typography | `packages/ui/src/styles/tokens.css` | `crates/rune-theme-codenomad`: generated values; component parity qualified individually |
+| Text | Ten UI catalogues | Generated catalogues, fallback and Hebrew direction qualified |
+| Window close | `components/window-close-button.tsx` | `components/window_close_button.rs`: six Windows light/dark pairs, accessibility and interaction qualified at scale 1 |
+| Server startup | Tauri `cli_manager.rs` | `platform/host/`: isolated Windows bootstrap, shutdown and generation qualified |
+| Chat, composer and session launcher | Solid transcript, composer and project fixtures | `chat/`, `agent/`, `launcher/`: native flows with shared Rust and simulated OpenCode qualified; Solid parity pending |
+| Browser client | Remote access contracts and Rune web target | Shared WASM state/views: six local and six authenticated session-reading contexts qualified with shared Rust and simulated OpenCode; physical mobile pending |
+
+## Workspace and qualification
+
+`packages/rune-app` holds application state and views. `crates/codenomad-client` owns typed API contracts and transports; `crates/rune-theme-codenomad` owns generated visuals/catalogues; `crates/codenomad-host-process` confines native child processes behind a safe API. Rune is pinned in the app manifest and verified by `scripts/rune/prepare.mjs --check`.
+
+Text fragments retain native ordinals and live/partial/closed provenance. One shared helper updates both ordered parts and the display body. Open page prefixes preserve longer live text; full native endings and committed pages settle ambiguous fragments through bounded recovery reads.
+
+The component index is `rune-components.generated.json`; full sheets and captures are generated under ignored `target/`. Install locked npm dependencies before generating checker-derived sheets. Each qualified component requires a gallery, explicit light/dark pixel thresholds, accessibility and simulated interactions, then two independent blind reviews. Solid/Tauri modules are removed only at complete qualified parity. Integration uses short branches and merge commits into `feat/rust-server`; its synchronization owns merges from `dev`.
+
+Tests use isolated `trial-*` profiles, owned processes and existing Cargo caches, without visible windows or writes to installed profiles, shared OpenCode or user sessions. Qualification commands and evidence are in `packages/rune-app/JOURNAL_TESTS.md` and `scripts/rune/QUALIFICATION.md`. Synthetic scenes and probes require explicit `test-support`; default native/WASM artifacts retain Rune inspection and simulated-input tooling.
+
+Browser/mobile risks and physical-device gates are in [RUNE_WEB.md](RUNE_WEB.md). The latency guard reuses `scripts/perf/` markers and TUI budgets. Webview and PTY capabilities require a short decision before implementation.
+
+Published switchover requires signed updates using the current [Tauri updater contract](TAURI_UPDATER.md), rollback, and qualification on Windows/macOS/Linux. Reuse `packages/server-rs/install/` where applicable. The final Tauri version must install the first Rune package without user action, preserving identity and data; incompatible installation contracts require a decision before switchover.

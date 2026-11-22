@@ -10,20 +10,26 @@ import { privatePath, runDirectory } from "./isolation.mjs"
 import { MARKER, p95, sleep, sseReader } from "./lib.mjs"
 import { seed, waitIdle, withSampleSessions } from "./seed.mjs"
 import { withTui } from "./tui.mjs"
+import { withRune } from "./rune.mjs"
 
 const { values, positionals: [binary] } = parseArgs({
   allowPositionals: true, options: {
     mode: { type: "string", default: "both" }, rounds: { type: "string", default: "3" },
     levels: { type: "string" }, turns: { type: "string", default: "300" },
     chunks: { type: "string", default: "200" }, tree: { type: "string", multiple: true },
+    rune: {type: "string"}, "rune-server": {type: "string"}, "rune-only": {type: "boolean"},
   },
 })
 const { mode } = values
 assert(["counters", "latency", "both"].includes(mode))
 const rounds = Number(values.rounds), chunks = Number(values.chunks), turns = Number(values.turns)
 const levels = values.levels?.split(",").map(Number)
-const trees = values.tree?.map(tree => path.resolve(tree)) ?? [fileURLToPath(new URL("../..", import.meta.url))]
-assert(Number.isInteger(rounds) && rounds > 0 && rounds * (trees.length + 1) * (levels?.length ?? 3) < 100)
+const trees = values["rune-only"] ? [] : values.tree?.map(tree => path.resolve(tree)) ?? [fileURLToPath(new URL("../..", import.meta.url))]
+assert(!values["rune-only"] || values.rune && mode === "latency", "--rune-only requires --rune and --mode latency")
+assert(Boolean(values.rune) === Boolean(values["rune-server"]), "Pass both --rune and --rune-server")
+assert(!values.rune || mode !== "counters", "Rune adapter requires a latency scenario")
+if(values.rune) for(const key of ["rune","rune-server"]) assert(path.isAbsolute(values[key]), `${key} must be absolute`)
+assert(Number.isInteger(rounds) && rounds > 0 && rounds * (trees.length + 1 + Number(Boolean(values.rune))) * (levels?.length ?? 3) < 100)
 assert(Number.isInteger(chunks) && chunks >= 8 && chunks <= 9999 && Number.isInteger(turns) && turns > 0)
 assert(levels === undefined || (new Set(levels).size === levels.length && levels.every(n => Number.isInteger(n) && n >= 1 && n <= 32)))
 assert(path.isAbsolute(binary ?? ""), "Usage: node scripts/perf/bench.mjs /absolute/path/to/opencode")
@@ -110,6 +116,7 @@ async function measure(daemon, ids, driver, countWork) {
       finalMarkerMs: shown[last] - daemonAt.get(last),
       visibleMarkerP95: p95(seen.map(key => shown[key] - daemonAt.get(key))),
     }
+    assert(Object.values(stages).every(value => Number.isFinite(value) && value >= 0), "Missing or negative displayed-marker latency")
     if (coverage) {
       assert(pageFrames >= sourceFrames * .95, `Only ${pageFrames}/${sourceFrames} SSE frames reached the renderer`)
       for (const code of codes) assert(delivered.has(finalEvents.get(code)), `Renderer missed the final native text event for ${code}`)
@@ -121,7 +128,8 @@ async function measure(daemon, ids, driver, countWork) {
     }
     await driver.clear()
     await waitIdle(daemon)
-    return { daemonFrames: sourceFrames, markers: seen.length, expectedMarkers: expected.length, stages, keys: { p95: p95(keys.map(key => key.elapsed)) }, counters, coverage }
+    return { daemonFrames: sourceFrames, markers: seen.length, expectedMarkers: expected.length, stages, keys: { p95: p95(keys.map(key => key.elapsed)) }, counters, coverage,
+      ...(driver.metadata ? {measurement: driver.metadata()} : {}) }
   } finally { await stop() }
 }
 
@@ -138,19 +146,21 @@ await withDaemon(binary, path.join(root, "daemon"), chunks, async daemon => {
     const countWork = scenario === "counters"
     const samples = levels ?? (countWork ? [8] : [8, 32])
     const entries = trees.map((tree, i) => ({ label: `cn${i}`, tree }))
+    if (!countWork && values.rune) entries.push({label: "rune-cpu", rune: values.rune})
     if (!countWork) entries.push({ label: "tui" })
     for (let round = 0; round < rounds; round++) {
       for (let i = 0; i < entries.length; i++) {
-        const { label, tree } = entries[(i + round) % entries.length]
+        const { label, tree, rune } = entries[(i + round) % entries.length]
         for (const level of samples) await withSampleSessions(daemon, templates.slice(0, level), async ids => {
           const run = async driver => {
             await sleep(3000)
-            await write(scenario, tree ? "codenomad" : "tui", label, round, level, await measure(daemon, ids, driver, countWork))
+            await write(scenario, rune ? "rune-cpu-buffer" : tree ? "codenomad" : "tui", label, round, level, await measure(daemon, ids, driver, countWork))
           }
           if (tree) await withBrowser(daemon, tree, path.join(root, `${scenario}-${label}-${round}-${level}`), !countWork, run)
+          else if(rune) await withRune(rune, values["rune-server"], daemon, ids[0], path.join(root, `${scenario}-${label}-${round}-${level}`), run)
           else await withTui(binary, daemon, ids[0], run)
         })
       }
     }
   }
-})
+}, {pruning: Boolean(values.rune)})

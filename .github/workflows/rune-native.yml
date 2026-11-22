@@ -1,0 +1,129 @@
+name: Rune native and web foundations
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [feat/rust-server]
+    paths:
+      - 'Cargo.*'
+      - 'packages/rune-app/**'
+      - 'crates/**'
+      - 'scripts/rune/**'
+      - 'packages/ui/src/**'
+      - 'packages/ui/tests/**'
+      - '.github/workflows/rune-native.yml'
+      - 'package*.json'
+  push:
+    branches: [feat/rust-server, 'codex/rune-*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rune-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  headless:
+    name: Headless Rune (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/rune-ci
+      CARGO_INCREMENTAL: '0'
+      CODENOMAD_PROFILE: trial-rune-ci
+      RUST_BACKTRACE: '1'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.99.1'
+          targets: wasm32-unknown-unknown
+          components: rustfmt
+      - name: Linux offscreen graphics dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev mesa-vulkan-drivers libvulkan1
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install generator browser
+        run: npx --workspace @codenomad/ui playwright install --with-deps chromium
+      - name: Fetch and verify pinned Rune source
+        run: |
+          node scripts/rune/prepare.mjs
+          node scripts/rune/prepare.mjs --check
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ env.CARGO_TARGET_DIR }}
+          key: rune-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'packages/rune-app/Cargo.toml') }}
+          restore-keys: rune-${{ runner.os }}-${{ runner.arch }}-
+      - name: Check generated source and component inventory
+        run: |
+          node scripts/rune/generate-theme.mjs --check
+          node scripts/rune/generate-catalogues.mjs --check
+          node scripts/rune/component-inventory.mjs --check
+          node --test scripts/rune/*.test.mjs
+          node --test scripts/perf/*.test.mjs
+      - name: Build application and run native runtime tests
+        run: |
+          cargo fmt -p codenomad-rune-app -p codenomad-client -p rune-theme-codenomad -p codenomad-host-process -p rune-style-policy -- --check
+          cargo test --locked --workspace
+          cargo run --locked -p rune-style-policy -- packages/rune-app/src
+          cargo build --locked -p codenomad-rune-app --bin codenomad-rune
+      - name: Build shared client, state and views for WebAssembly
+        run: |
+          cargo build --locked --target wasm32-unknown-unknown -p codenomad-client -p rune-theme-codenomad
+          cargo build --locked --target wasm32-unknown-unknown -p codenomad-rune-app --bin codenomad-rune
+      - name: Verify default product excludes qualification probes
+        run: |
+          suffix=''
+          if [[ "$RUNNER_OS" == Windows ]]; then suffix='.exe'; fi
+          node scripts/rune/check-production.mjs --binary "$CARGO_TARGET_DIR/debug/codenomad-rune$suffix" --wasm "$CARGO_TARGET_DIR/wasm32-unknown-unknown/debug/codenomad-rune.wasm" --out "target/rune-evidence/$RUNNER_OS/production"
+      - name: Build explicit qualification support
+        run: |
+          cargo build --locked -p codenomad-rune-app --bin codenomad-rune --features test-support
+          cargo test --locked -p codenomad-rune-app --features test-support only_character_ink
+          cargo build --locked --target wasm32-unknown-unknown -p codenomad-rune-app --bin codenomad-rune --features test-support
+      - name: Inspect and interact through Rune offscreen tooling
+        run: |
+          suffix=''
+          if [[ "$RUNNER_OS" == Windows ]]; then suffix='.exe'; fi
+          node scripts/rune/headless.mjs --binary "$CARGO_TARGET_DIR/debug/codenomad-rune$suffix" --out "target/rune-evidence/$RUNNER_OS"
+      - name: Compare the shared window control with Solid on Windows
+        if: runner.os == 'Windows'
+        run: |
+          node scripts/rune/component-inventory.mjs
+          node --import tsx scripts/rune/parity/window-close.mjs --binary "$CARGO_TARGET_DIR/debug/codenomad-rune.exe"
+          node scripts/rune/parity/compare-window-close.mjs
+      - name: Record qualification scope
+        if: always()
+        run: |
+          echo '### Rune qualification' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Runtime tests, generated-source checks and offscreen accessibility/interaction/capture checks run on this OS. Read individual step outcomes and uploaded evidence.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Windows additionally compares the shared window-close control with actual Solid captures using committed thresholds. Other component/platform pairs and Rune/TUI latency collection remain to qualify. Headless virtual-clock frame timing is separate from measured interactive latency.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload native evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rune-native-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            target/rune-evidence/${{ runner.os }}/
+            target/rune-parity/window-close/
+          if-no-files-found: warn
+          retention-days: 7

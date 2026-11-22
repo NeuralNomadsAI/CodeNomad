@@ -1,0 +1,99 @@
+//! Interchangeable native HTTP and browser fetch adapters; cookies stay in their owner.
+use crate::history::Result;
+use reqwest::{Client, RequestBuilder};
+use std::time::Duration;
+
+#[derive(Clone)]
+pub struct Http(Client);
+impl Http {
+    pub fn new() -> Result<Self> {
+        #[cfg(not(target_arch = "wasm32"))]
+        let client = Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .cookie_store(true)
+            .timeout(Duration::from_secs(30))
+            .build()?;
+        #[cfg(target_arch = "wasm32")]
+        let client = Client::new();
+        Ok(Self(client))
+    }
+    fn request(&self, method: reqwest::Method, url: impl reqwest::IntoUrl) -> RequestBuilder {
+        let request = self.0.request(method, url).timeout(Duration::from_secs(30));
+        #[cfg(target_arch = "wasm32")]
+        let request = request.fetch_credentials_same_origin();
+        request
+    }
+    pub fn get(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
+        self.request(reqwest::Method::GET, url)
+    }
+    pub fn post(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
+        self.request(reqwest::Method::POST, url)
+    }
+    pub fn delete(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
+        self.request(reqwest::Method::DELETE, url)
+    }
+}
+
+pub fn endpoint(address: &str) -> Result<String> {
+    #[cfg(target_arch = "wasm32")]
+    let origin = web_sys::window()
+        .ok_or("browser window required")?
+        .location()
+        .origin()
+        .map_err(|_| "browser origin unavailable")?;
+    #[cfg(target_arch = "wasm32")]
+    let url = reqwest::Url::parse(&origin)?.join(address.trim())?;
+    #[cfg(not(target_arch = "wasm32"))]
+    let url = reqwest::Url::parse(address.trim())?;
+    if url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err("server root endpoint required".into());
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if url.scheme() != "http" || url.host_str() != Some("127.0.0.1") {
+        return Err("explicit loopback endpoint required".into());
+    }
+    #[cfg(target_arch = "wasm32")]
+    if url.origin().ascii_serialization() != origin
+        || !(url.scheme() == "https"
+            || (url.scheme() == "http"
+                && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))))
+    {
+        return Err("same-origin HTTPS endpoint required".into());
+    }
+    Ok(url.to_string())
+}
+
+pub fn client_id() -> Result<String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        Ok(format!(
+            "rune-{}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos(),
+            SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut bytes = [0u8; 16];
+        web_sys::window()
+            .ok_or("browser window required")?
+            .crypto()
+            .map_err(|_| "browser crypto unavailable")?
+            .get_random_values_with_u8_array(&mut bytes)
+            .map_err(|_| "browser entropy unavailable")?;
+        Ok(format!(
+            "rune-{}",
+            bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
+        ))
+    }
+}

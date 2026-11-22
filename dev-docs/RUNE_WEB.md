@@ -1,0 +1,37 @@
+# Rune dans le navigateur
+
+## Contrat partagé
+
+Le client, l'état et les écrans de `packages/rune-app` ciblent le bureau et `wasm32-unknown-unknown`. Les requêtes et l'attente des événements sont asynchrones. Le navigateur utilise son origine et son magasin de cookies pour retrouver le serveur ; l'accès distant conserve les contrats HTTPS et d'appairage CodeNomad.
+
+Les capacités du bureau sont isolées par la plateforme. La sélection d'un dossier serveur conserve un chemin explicite sur le web. Le lancement d'un processus local appartient à l'hôte bureau. Les fonctions de fenêtres multiples, de fichiers, de notifications et de presse-papiers publient leurs capacités disponibles avant d'être proposées.
+
+## Risques à qualifier
+
+La révision Rune est celle épinglée dans le manifeste de l'application. Les références suivantes décrivent les mécanismes présents dans ses sources. La qualification utilisateur exige les essais indiqués dans la dernière colonne.
+
+| Risque | Mécanisme Rune inspecté | Qualification nécessaire |
+|---|---|---|
+| Clavier mobile et IME | `crates/rune/src/platform/web/bridge.js` crée un `textarea` DOM, écoute `input` et les événements de composition | Téléphones Android et iOS : focus, ouverture/fermeture du clavier, composition, correction, dictée, maintien du brouillon et sélection |
+| Accessibilité | Le même adaptateur construit un miroir DOM avec boutons et événements d'activation dans `syncA11y` | Parcours lecteur d'écran, ordre de lecture, focus, rôles, états, annonces du streaming et demandes de permission |
+| Surface utile du téléphone | `platform/web/platform.js` observe `visualViewport` et les zones sûres ; `platform/web.rs` expose les caractéristiques du pointeur | Portrait et paysage, clavier ouvert, barre du navigateur, encoche, zoom et changement de taille |
+| Défilement tactile | Adaptateurs de pointeur et conteneurs de défilement DOM | Lecture pendant le streaming, inertie, sélection, retour au bas, pagination avec ancre conservée sur un historique long |
+| Chargement et poids | Cible Rune WebAssembly et initialisation graphique asynchrone | Taille brute et compressée de chaque ressource, réseau à débit limité, démarrage à froid et à chaud, premier contenu utile |
+| Performances et consommation | Boucle web monothread avec rendu piloté par la demande | Téléphone physique : temps de trame, réactivité pendant le streaming, mémoire, chauffe et consommation sur une durée représentative |
+| Fonctions d'hôte | Adaptateur web Rune et frontière de plateforme CodeNomad | État des capacités, navigation et erreurs actionnables pour les fonctions indisponibles |
+
+Chaque défaut reçoit une reproduction minimale et une attribution : adaptation CodeNomad lorsqu'elle possède le contrat concerné, issue Rune lorsque le défaut se reproduit dans une scène Rune isolée. Les mesures de navigateur avec émulation et celles sur appareil physique sont conservées séparément dans les preuves.
+
+## Vérifications reproductibles
+
+Le bundle produit est qualifié en lecture avec le vrai serveur Rust et OpenCode simulé : connexion avec cookies, deux pages de sessions, historique exact, session vide puis retour, véritable EventSource et refus 401 sans cookie. Six contextes Chromium couvrent bureau/tablette/téléphone et clair/sombre, avec contrôles dans le viewport, captures et contraste. L'accès HTTPS appairé et les appareils physiques demandent leur qualification propre.
+
+Depuis le worktree isolé, avec le `CARGO_TARGET_DIR` existant :
+
+```powershell
+rustup target add --toolchain 1.99.1 wasm32-unknown-unknown
+cargo +1.99.1 build --locked --target wasm32-unknown-unknown -p codenomad-client -p rune-theme-codenomad
+cargo +1.99.1 build --locked --target wasm32-unknown-unknown -p codenomad-rune-app --bin codenomad-rune
+```
+
+La compilation des cibles précède la qualification de la coquille servie par le serveur. Celle-ci couvre connexion, liste des sessions et lecture avec le même code d'état et de vues. Le parcours complet sur téléphone ajoute écriture, permissions, questions et arrêt via l'accès distant, puis les notifications push.

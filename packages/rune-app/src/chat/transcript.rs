@@ -1,0 +1,109 @@
+use crate::{State, content::Part, strings::t};
+use rune::{El, col, text};
+use rune_theme_codenomad::{Space, TextRole, layout::Layout};
+fn prose(key: String, body: &str) -> El {
+    let code = body.starts_with("fn ") || body.starts_with("```");
+    let element = text(body)
+        .key(key)
+        .full_width()
+        .wrap()
+        .text_role(if code { TextRole::Mono } else { TextRole::Body })
+        .selectable(true);
+    if code {
+        element.literal_direction()
+    } else {
+        element.content_direction()
+    }
+}
+pub fn message(s: &State, i: usize) -> El {
+    let m = &s.messages[i];
+    let mut view = col()
+        .key(m.id.clone())
+        .full_width()
+        .pad(Space::Lg)
+        .separate(Space::Sm)
+        .child(
+            text(t(if m.role == "user" {
+                "user"
+            } else {
+                "assistant"
+            }))
+            .text_role(TextRole::Label),
+        );
+    if m.parts.iter().all(|p| matches!(p, Part::Text(_))) {
+        return view.child(prose(format!("body-{}", m.id), &m.body));
+    }
+    for (index, part) in m.parts.iter().enumerate() {
+        match part {
+            Part::Text(body) => {
+                view = view.child(prose(format!("part-{}-{index}", m.id), &body.text))
+            }
+            Part::Tool(tool) => {
+                let key = format!("tool-{}-{}", m.id, tool.id);
+                let expanded = s.expanded_tools.contains(&key);
+                let status = match tool.status.as_str() {
+                    "completed" => "tool_done",
+                    "error" => "tool_error",
+                    "running" => "tool_running",
+                    _ => "tool_pending",
+                };
+                let toggle = key.clone();
+                let mut block = col()
+                    .key(key.clone())
+                    .full_width()
+                    .pad(Space::Sm)
+                    .separate(Space::Sm)
+                    .inset_surface()
+                    .child(
+                        rune_theme_codenomad::layout::action_row()
+                            .separate(Space::Md)
+                            .child(text(&tool.name).text_role(TextRole::Label))
+                            .child(text(t(status)))
+                            .child(
+                                rune_theme_codenomad::layout::button(
+                                    t(if expanded { "hide_details" } else { "details" }),
+                                    false,
+                                )
+                                .key(format!("toggle-{key}"))
+                                .on_press(move |s: &mut State| {
+                                    crate::transcript_state::toggle_tool(s, &toggle);
+                                }),
+                            ),
+                    );
+                if expanded {
+                    for (label, value) in
+                        [("tool_input", &tool.input), ("tool_output", &tool.output)]
+                    {
+                        if !value.is_empty() {
+                            let reveal = format!("{key}-full-{label}");
+                            let clipped = value.chars().count() > 10_000
+                                && !s.expanded_tools.contains(&reveal);
+                            let shown = if clipped {
+                                value.chars().take(10_000).collect::<String>()
+                            } else {
+                                value.clone()
+                            };
+                            block = block
+                                .child(text(t(label)).text_role(TextRole::Label))
+                                .child(prose(format!("{key}-{label}"), &shown));
+                            if clipped {
+                                block = block.child(
+                                    rune_theme_codenomad::layout::button(t("tool_more"), false)
+                                        .key(format!("reveal-{reveal}"))
+                                        .on_press(move |s: &mut State| {
+                                            crate::transcript_state::reveal_tool_output(s, &reveal);
+                                        }),
+                                );
+                            }
+                        }
+                    }
+                    if tool.limited {
+                        block = block.child(text(t("tool_limited")));
+                    }
+                }
+                view = view.child(block);
+            }
+        }
+    }
+    view
+}

@@ -1,0 +1,11 @@
+{
+  "events": [
+    { "t": 0.1, "type": "tap", "key": "composer" },
+    { "t": 0.2, "type": "paste", "text": "Rune headless\nDeuxième ligne 🦀" },
+    { "t": 0.4, "type": "wheel", "key": "history", "dx": 0, "dy": 1200 },
+    { "t": 0.8, "type": "mark", "name": "reading" },
+    { "t": 1.0, "type": "tap", "key": "latest" },
+    { "t": 1.2, "type": "tap", "key": "composer" },
+    { "t": 1.5, "type": "mark", "name": "end" }
+  ]
+}

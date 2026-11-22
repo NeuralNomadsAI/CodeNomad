@@ -27,6 +27,8 @@ Before changing code in an area listed under [Area conventions](#area-convention
 ## Area conventions
 Paths are under `packages/ui/src/` or `packages/server/src/` unless stated.
 
+- **Native Rune application** (`packages/rune-app/`, `crates/codenomad-client/`, `crates/rune-theme-codenomad/`, `crates/codenomad-host-process/`, `scripts/rune/`): `dev-docs/RUNE.md`.
+
 - **Missions** (`missions/`, `opencode/missions-plugin.ts`, `server/routes/mission-*`, `host-lifetime/`; UI `components/mission-*`, `components/settings/missions-settings-section.tsx`, `stores/mission-*`, `styles/panels/mission-*`): `dev-docs/MISSIONS.md`; recurring schedules and Wayfinder human gates (its "Wayfinder human decision mark" section) `dev-docs/MISSIONS_RECURRING.md`.
 - **Questions, permissions and pending-request recovery** (interruption dock, conversation permission modes and receipts, `question-data.ts`, `permissions/`, `server/routes/session-permission-mode.ts`, `server/routes/pending-requests.ts`, `workspaces/pending-discovery.ts`, `stores/pending-recovery-*`): `dev-docs/NATIVE_INTERRUPTION_UX.md`.
 - **Composer** (`components/prompt-input*`, `prompt-input/`, `PromptContextControls`, `/btw`): `dev-docs/COMPOSER.md`.
@@ -47,7 +49,6 @@ Paths are under `packages/ui/src/` or `packages/server/src/` unless stated.
 - **Desktop hosts**: data profiles `dev-docs/DESKTOP_DATA_PROFILES.md`; updates and update feed `dev-docs/TAURI_UPDATER.md`; vendored Tauri crates (Tao, updater) `packages/tauri-app/vendor/README.md`; desktop runtimes (Tauri's bundled Node, Electron's integrated Node, both hosts' bundled npm) `dev-docs/RUNTIME_MAINTENANCE.md`.
 - **Public help** (`docs/help/`, help entry points): `dev-docs/USER_HELP.md`.
 - **Rust server** (`packages/server-rs/`: behaviour matches `packages/server`, checked by its comparison bench): `packages/server-rs/README.md`.
-- **Rune application** (`packages/rune-*`, Rune crates): `dev-docs/RUNE.md`.
 
 ## Multi-Language Support (i18n)
 

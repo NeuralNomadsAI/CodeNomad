@@ -1,0 +1,22 @@
+[package]
+name = "codenomad-client"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream"] }
+serde_json = "1"
+async-channel = "2.5"
+futures-lite = "2.6"
+web-time = "1.1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "cookies"] }
+tokio = { version = "1", features = ["rt", "time"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Window", "Location", "Crypto", "EventSource", "EventSourceInit", "MessageEvent", "Event"] }

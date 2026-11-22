@@ -1,0 +1,9 @@
+[package]
+name = "rune-style-policy"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+syn = { version = "2", features = ["full", "visit"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
