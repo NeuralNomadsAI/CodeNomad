@@ -10,6 +10,7 @@ import {privateEnvironment} from './private-profile.mjs'
 import {stopFixtureChild} from '../../scripts/native-fixture-guards.mjs'
 
 const repository=path.resolve(import.meta.dirname,'../..')
+const write=process.argv.includes('--write')
 const source=process.env.RUNE_SERVER_EXE,target=process.env.CARGO_TARGET_DIR
 for(const [name,value]of Object.entries({RUNE_SERVER_EXE:source,CARGO_TARGET_DIR:target}))assert(value&&path.isAbsolute(value),`${name} must be explicit and absolute`)
 assert((await stat(source)).isFile(),'Explicit Rust server is missing')
@@ -21,7 +22,7 @@ await mkdir(path.join(directory,'empty'),{recursive:true});await mkdir(path.join
 for(const [file,bytes]of [['été 日本語.txt','été\n日本語🦀\r\n'],['empty.txt',''],['binary.bin',Buffer.from([0,1,255,128,0,42])],
   ['nested/日本語.txt','nested bytes'],['full.bin',Buffer.alloc(5*1024*1024,0x93)],['oversized.bin',Buffer.alloc(5*1024*1024+1,0x93)],['.git/private.txt','protected']])await writeFile(path.join(directory,file),bytes)
 await writeFile(path.join(foreign,'foreign.txt'),'private sibling bytes')
-const proof={root,directory,foreign,result:'failed',requests:[],nativeRequests:[],links:{},client:null,shutdown:null}
+const proof={root,directory,foreign,write,result:'failed',requests:[],nativeRequests:[],links:{},client:null,shutdown:null}
 for(const [name,destination]of [['outward',foreign],['protected',path.join(directory,'.git')]]){
   try{await symlink(destination,path.join(directory,name),process.platform==='win32'?'junction':'dir');proof.links[name]={created:true}}
   catch(error){proof.links[name]={created:false,reason:error.code??'unavailable'}}
@@ -62,7 +63,12 @@ try{
   workspace=(await(await call('/api/workspaces','POST',{path:directory})).json()).id;assert(workspace)
   proxy=createServer((req,res)=>{
     const url=new URL(req.url,origin),row={method:req.method,path:url.pathname};proof.requests.push(row)
-    if(req.method!=='GET'&&!(req.method==='POST'&&url.pathname==='/api/auth/login')){
+    const privateWrite=write&&req.method==='PUT'&&url.pathname===`/api/workspaces/${workspace}/files/content`
+      &&url.searchParams.getAll('directory').length===1&&url.searchParams.getAll('path').length===1
+      &&((url.searchParams.get('directory')===directory&&['été 日本語.txt','.git/private.txt'].includes(url.searchParams.get('path')))
+        ||(url.searchParams.get('directory')===foreign&&url.searchParams.get('path')==='foreign.txt'))
+    if(req.method==='PUT'){row.directory=url.searchParams.get('directory');row.file=url.searchParams.get('path')}
+    if(req.method!=='GET'&&!(req.method==='POST'&&url.pathname==='/api/auth/login')&&!privateWrite){
       row.blocked=true;res.writeHead(403);res.end('Read-only client fixture');return
     }
     const upstream=request(url,{method:req.method,headers:{...req.headers,host:url.host}},response=>{
@@ -76,8 +82,8 @@ try{
   await new Promise((resolve,reject)=>{proxy.once('error',reject);proxy.listen(0,'127.0.0.1',resolve)})
   const manifest=path.join(root,'manifest.json')
   await writeFile(manifest,JSON.stringify({directory,foreign,workspaceId:workspace,origin:`http://127.0.0.1:${proxy.address().port}/`,
-    outwardLink:proof.links.outward.created,protectedLink:proof.links.protected.created})+'\n')
-  const args=['+1.99.1','test','--offline','--locked','-p','codenomad-client','files_tests::real_rust_files_read_contract','--','--exact','--ignored','--nocapture']
+    write,outwardLink:proof.links.outward.created,protectedLink:proof.links.protected.created})+'\n')
+  const args=['+1.99.1','test','--offline','--locked','-p','codenomad-client',...(write?['--test','files_write_server','real_rust_files_write_contract']:['--lib','files_tests::real_rust_files_read_contract']),'--','--exact','--ignored','--nocapture']
   proof.command=['cargo',...args];proof.cargoTarget=target
   const cargoEnv={...env,CARGO_TARGET_DIR:target,CARGO_INCREMENTAL:'0',RUNE_FILES_TEST_MANIFEST:manifest,RUNE_FILES_TEST_PASSWORD:password,
     CARGO_HOME:process.env.CARGO_HOME??path.join(os.homedir(),'.cargo'),RUSTUP_HOME:process.env.RUSTUP_HOME??path.join(os.homedir(),'.rustup')}
@@ -92,14 +98,27 @@ try{
   assert.equal(cargo.exitCode,0,'Ignored real Rust Files test failed; inspect client.log')
   const receipts=clientLog.split(/\r?\n/).flatMap(line=>{try{return [JSON.parse(line.slice(line.indexOf('{'),line.lastIndexOf('}')+1))]}catch{return []}}).filter(row=>row.type==='files-native-proof')
   assert.equal(receipts.length,1);assert.equal(receipts[0].result,'ok');proof.client=receipts[0]
-  assert(!proof.requests.some(row=>row.blocked),'Typed client issued only GET requests plus login')
-  proof.linkContract='Workspace reads follow outward links; protected project .git targets and foreign directory selectors are refused'
+  assert(!proof.requests.some(row=>row.blocked),'Typed client stays inside the explicit fixture request policy')
+  assert(!proof.nativeRequests.some(row=>row.method!=='GET'||row.path.includes('/session')||row.path.endsWith('/prompt')),'No native session or prompt mutations')
+  if(write){
+    const versions=proof.client.versions,contents=proof.client.contents
+    assert.equal(versions.length,4);assert.equal(new Set(versions).size,4)
+    assert.deepEqual(versions,contents.map(text=>`"${createHash('sha256').update(text).digest('hex')}"`))
+    const writes=proof.requests.filter(row=>row.method==='PUT');assert.equal(writes.length,6)
+    assert.deepEqual(writes.slice(0,4).map(row=>row.status),[204,409,204,409])
+    assert(writes.slice(4).every(row=>row.status>=400&&row.status!==409),'Refusals come from Rust ownership/path admission')
+    await assert.rejects(stat(path.join(directory,'été 日本語.txt')),error=>error.code==='ENOENT')
+    assert.equal(await readFile(path.join(foreign,'foreign.txt'),'utf8'),'private sibling bytes')
+    assert.equal(await readFile(path.join(directory,'.git/private.txt'),'utf8'),'protected')
+  }
+  if(write)proof.writeContract='Observed-version writes preserve external changes and absent files; private foreign selectors and .git targets are refused'
+  else proof.linkContract='Workspace reads follow outward links; protected project .git targets and foreign directory selectors are refused'
   proof.result='ok'
 }catch(error){failure=error;proof.error=error.message}
 finally{
   const errors=[]
   if(cargo&&cargo.exitCode===null&&cargo.signalCode===null)try{await stopFixtureChild(cargo,cargoStopped)}catch(error){errors.push(error.message)}
-  if(workspace&&server?.exitCode===null)try{const removed=await call(`/api/workspaces/${workspace}`,'DELETE');assert.equal(removed.status,204);proof.workspaceReleased=true}catch(error){errors.push(error.message)}
+  if(workspace&&server?.exitCode===null)try{const removed=await call(`/api/workspaces/${workspace}`,'DELETE');assert.equal(removed.status,204);proof.workspaceReleased=true;const remaining=await(await call('/api/workspaces')).json();assert.deepEqual(remaining,[]);proof.recordsRemaining=remaining.length}catch(error){errors.push(error.message)}
   if(server&&server.exitCode===null&&server.signalCode===null){
     server.stdin.on('error',()=>{});server.stdin.end('shutdown\n');await Promise.race([serverStopped,sleep(5000)])
     proof.shutdown={graceful:server.exitCode===0,exitCode:server.exitCode,signal:server.signalCode}

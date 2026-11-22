@@ -37,6 +37,8 @@ pub struct Message {
 mod catalog_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod files_tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod files_write_tests;
 #[cfg(test)]
 mod fragment_tests;
 #[cfg(test)]

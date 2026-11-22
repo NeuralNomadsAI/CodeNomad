@@ -115,6 +115,8 @@ jobs:
           node packages/rune-app/launcher-fixture.mjs --workspace-claims
           node packages/rune-app/launcher-fixture.mjs --restore-state
           node packages/rune-app/launcher-fixture.mjs --files-state
+          node packages/rune-app/files-fixture.mjs
+          node packages/rune-app/files-fixture.mjs --write
           node packages/rune-app/recovery-fixture.mjs
       - name: Compare shared controls with Solid on Windows
         if: runner.os == 'Windows'
@@ -146,5 +148,6 @@ jobs:
             target/rune-parity/workspace-tree-row/
             target/rune-action-menu/
             packages/rune-app/fixture-profile/**/proof.json
+            target/rune-files-tests/**/proof.json
           if-no-files-found: warn
           retention-days: 7
