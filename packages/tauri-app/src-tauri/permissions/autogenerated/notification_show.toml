@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-notification-show"
+description = "Enables the notification_show command without any pre-configured scope."
+commands.allow = ["notification_show"]
+
+[[permission]]
+identifier = "deny-notification-show"
+description = "Denies the notification_show command without any pre-configured scope."
+commands.deny = ["notification_show"]

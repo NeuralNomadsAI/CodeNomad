@@ -109,6 +109,8 @@ La permission navigateur/système appartient à l’appareil et à l’origine a
 
 Le nombre de non-lus de la cloche/de l’historique, qui ne compte que les notifications dirigées vers l’Historique, pilote le point de favicon et le badge de l’application native.
 
+Si le système prend en charge les actions de notification, un clic affiche la conversation si elle est toujours ouverte. Le passage de la fenêtre au premier plan dépend de l’environnement de bureau.
+
 ## Options avancées {#advanced}
 
 1. Ouvrez **Avancé**.
