@@ -20,14 +20,15 @@ mod platform;
 mod probes;
 mod screen;
 mod settings;
+mod shell;
 mod strings;
 use screen::Screen;
 mod workspace;
 use codenomad_client::{Receiver, Sender, bounded};
 use rune::edit::TextEdit;
-use rune::{AppSpec, Cx, El, Tx, col, text};
+use rune::{AppSpec, Cx, El, Tx, col};
 use rune_theme_codenomad::{
-    Space, TextRole,
+    Space,
     layout::{self, Layout, input},
 };
 use transport::{Command, Event};
@@ -42,12 +43,13 @@ struct State {
     git: git::Binding,
     documents: files::document::store::Store,
     reads: platform::reads::Reads,
-    expanded_tools: std::collections::HashSet<String>,
+    transcript_display: transcript_state::Display,
     screen: Screen,
     settings: settings::Host,
     input_scope: std::rc::Rc<()>,
     rejected_edit: TextEdit,
     workspace: Option<workspace::Ui>,
+    shell: shell::Panels,
     chat_title: String,
     messages: Vec<Message>,
     draft: TextEdit,
@@ -75,12 +77,13 @@ fn init() -> State {
         git: Default::default(),
         documents: Default::default(),
         reads: Default::default(),
-        expanded_tools: Default::default(),
+        transcript_display: Default::default(),
         screen: Screen::Chat { launcher: None },
         settings: Default::default(),
         input_scope: std::rc::Rc::new(()),
         rejected_edit: TextEdit::new(""),
         workspace: None,
+        shell: Default::default(),
         chat_title: String::new(),
         messages: vec![],
         draft: TextEdit::new(""),
@@ -95,6 +98,10 @@ fn init() -> State {
 }
 fn setup(s: &mut State, wake: rune::Waker) {
     s.wake = wake.clone();
+    #[cfg(feature = "test-support")]
+    if platform::scene_is("transcript") {
+        return;
+    }
     #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
     if s.git.scene {
         return;
@@ -128,6 +135,9 @@ fn local_stress() -> bool {
 
 fn send(s: &mut State, tx: &mut Tx) {
     if s.phase != Phase::Ready
+        || s.screen
+            .launcher()
+            .is_some_and(launcher::Launcher::blocks_prompt)
         || s.draft.text.trim().is_empty()
         || s.agent.as_ref().is_some_and(|a| a.blocked())
     {
@@ -161,31 +171,28 @@ fn request_older(s: &mut State, _: &mut Tx) {
         s.paging = true;
     }
 }
-fn retry(s: &mut State) {
-    let older = s.history_error && s.phase != Phase::Failed;
-    let command = if older {
-        Command::Older
-    } else {
-        Command::Retry
-    };
-    if s.commands
-        .as_ref()
-        .is_some_and(|c| c.try_send(command).is_ok())
+fn retry_connection(s: &mut State, tx: &mut Tx) {
+    if s.incoming.as_ref().is_none_or(Receiver::is_closed)
+        || s.commands.as_ref().is_none_or(Sender::is_closed)
     {
-        if older {
-            s.paging = true;
-        } else {
-            s.phase = Phase::Reconnecting;
+        if let Some(id) = workspace::active_session(s).map(str::to_owned) {
+            launcher::choose(s, id, tx);
         }
-        s.history_error = false;
+    } else if s
+        .commands
+        .as_ref()
+        .is_some_and(|c| c.try_send(Command::Retry).is_ok())
+    {
+        s.phase = Phase::Reconnecting;
     }
 }
 fn latest(_: &mut State, tx: &mut Tx) {
     tx.scroll_to_bottom_instant("history");
 }
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
-    let mut changed = launcher::poll(s, tx);
-    changed |= poll_chat(s, 64);
+    let chat = poll_chat(s, 64);
+    let mut changed = chat | transcript_state::Display::poll(s, chat, now, tx);
+    changed |= launcher::poll(s, tx);
     changed |= workspace::poll(s, now, tx);
     changed |= settings::poll(s);
     changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
@@ -206,7 +213,9 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.renew_scope();
                 git::connected(s, &backend);
                 settings::connected(s, &backend);
-                s.agent = Some(agent::Ui::new(agent::start(backend, s.wake.clone())));
+                if s.agent.is_none() {
+                    s.agent = Some(agent::Ui::new(agent::start(backend, s.wake.clone())));
+                }
             }
             Event::AgentHint(catalog) => {
                 if let Some(a) = s.agent.as_mut() {
@@ -309,44 +318,10 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
         if s.git.scene {
             return probes::git_scene::view(s);
         }
-        let scope = s.input_scope.clone();
-        let mut body = match &s.screen {
-            Screen::Launcher(_) => launcher_view::view(s),
-            Screen::Chat { .. } => chat_view(s, cx),
-        };
-        if s.workspace.is_none() {
-            return body;
-        }
-        let tabs = workspace::strip(s, cx);
-        if let Some(ui) = &s.workspace {
-            body = body.key(format!("tab-body-{}", ui.active_key()));
-        }
-        col()
-            .full_width()
-            .full_height()
-            .reading_surface()
-            .child(rune_theme_codenomad::settings::shell_entry(
-                tabs,
-                settings::entry(),
-            ))
-            .child(if let Some(error) = workspace::status(s) {
-                layout::action_row()
-                    .pad(Space::Sm)
-                    .child(text(strings::t(error)).role("alert"))
-                    .child(components::button_tx(
-                        "workspace-retry",
-                        strings::t("sessionList.loadError.retry"),
-                        false,
-                        crate::screen::action_tx(&scope, workspace::retry),
-                    ))
-            } else {
-                rune::el()
-            })
-            .child(body.remaining())
+        shell::view(s, cx, chat_view)
     })
 }
 fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
-    let scope = s.input_scope.clone();
     let locale = strings::locale();
     let rows = layout::transcript_rows(
         s.messages.len(),
@@ -355,76 +330,11 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     )
     .key("rows")
     .virtual_rows_version(s.revision);
-    let status = match s.phase {
-        Phase::Loading => "rune.loading",
-        Phase::Ready => "rune.ready",
-        Phase::Streaming => "rune.streaming",
-        Phase::Failed => "rune.failed",
-        Phase::Reconnecting => "rune.reconnecting",
-    };
     let expanded = s
         .agent
         .as_ref()
         .is_some_and(|a| a.picker || !a.ids().is_empty());
     rune_theme_codenomad::interruption::session_surface(expanded)
-        .child(
-            rune_theme_codenomad::layout::action_row()
-                .full_width()
-                .key("session-header")
-                .pad(Space::Md)
-                .separate(Space::Lg)
-                .child(
-                    text(strings::t("window.title.main"))
-                        .key("app-title")
-                        .text_role(TextRole::Title),
-                )
-                .child(if s.screen.launcher().is_some() {
-                    components::button(
-                        "sessions-back",
-                        strings::t("sessionList.header.title"),
-                        !matches!(s.phase, Phase::Ready | Phase::Failed)
-                            || (!s.draft.text.is_empty() && s.workspace.is_none())
-                            || agent::navigation_blocked(s),
-                        crate::screen::action(&scope, launcher::back),
-                    )
-                } else {
-                    settings::direct_entry(s)
-                })
-                .child(text(strings::t(status)))
-                .child(
-                    text(strings::t(if s.paging {
-                        "rune.loading"
-                    } else {
-                        "rune.older"
-                    }))
-                    .key("older")
-                    .role("button")
-                    .focusable(true)
-                    .disabled(!s.can_older || s.paging || s.phase == Phase::Reconnecting)
-                    .on_press_tx(crate::screen::action_tx(&scope, request_older)),
-                )
-                .child(if s.phase == Phase::Failed || s.history_error {
-                    text(strings::t("sessionList.loadError.retry"))
-                        .key("retry")
-                        .role("button")
-                        .focusable(true)
-                        .on_press(crate::screen::action(&scope, retry))
-                } else {
-                    rune::el()
-                })
-                .child(
-                    text(strings::t("rune.latest"))
-                        .key("latest")
-                        .role("button")
-                        .focusable(true)
-                        .on_press_tx(crate::screen::action_tx(&scope, latest)),
-                ),
-        )
-        .child(if s.chat_title.is_empty() {
-            rune::el()
-        } else {
-            text(&s.chat_title).key("chat-title").pad(Space::Md)
-        })
         .child(rune_theme_codenomad::interruption::history(expanded).child(rows))
         .child(agent_view::view(s, cx))
         .child(composer(s))
@@ -455,12 +365,38 @@ fn composer(s: &State) -> El {
             )
             .field_surface(),
         )
-        .child(components::button_tx(
-            "send",
-            strings::t("promptInput.overlay.send"),
-            s.phase != Phase::Ready || s.agent.as_ref().is_some_and(|a| a.blocked()),
-            crate::screen::action_tx(&scope, send),
-        ))
+        .child(
+            layout::action_row()
+                .children(s.can_older.then(|| {
+                    rune_theme_codenomad::shell::older_button(
+                        strings::t(if s.paging {
+                            "rune.loading"
+                        } else if s.history_error {
+                            "sessionList.loadError.retry"
+                        } else {
+                            "rune.older"
+                        }),
+                        s.paging || matches!(s.phase, Phase::Reconnecting | Phase::Failed),
+                        crate::screen::action_tx(&scope, request_older),
+                    )
+                }))
+                .child(components::button_tx(
+                    "latest",
+                    strings::t("rune.latest"),
+                    false,
+                    crate::screen::action_tx(&scope, latest),
+                ))
+                .child(components::button_tx(
+                    "send",
+                    strings::t("promptInput.overlay.send"),
+                    s.phase != Phase::Ready
+                        || s.screen
+                            .launcher()
+                            .is_some_and(launcher::Launcher::blocks_prompt)
+                        || s.agent.as_ref().is_some_and(|a| a.blocked()),
+                    crate::screen::action_tx(&scope, send),
+                )),
+        )
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -495,6 +431,11 @@ fn main() {
         settings::gallery();
         return;
     }
+    #[cfg(feature = "test-support")]
+    if platform::has_flag("--gallery-shell") {
+        gallery::shell::run();
+        return;
+    }
     run_app();
 }
 #[cfg(target_arch = "wasm32")]
@@ -502,17 +443,22 @@ fn main() {
     run_app();
 }
 fn run_app() {
-    layout::run(
+    platform::titlebar::run(
         AppSpec {
             setup: Some(setup),
             poll: Some(poll),
-            #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+            on_key: Some(shell::keys),
+            #[cfg(feature = "test-support")]
             scenes: &[
                 ("synthetic", |s| {
                     s.messages = transport::synthetic();
                     s.phase = Phase::Ready;
                 }),
+                #[cfg(not(target_arch = "wasm32"))]
+                ("transcript", probes::transcript_scene::load),
+                #[cfg(not(target_arch = "wasm32"))]
                 ("git-changes", probes::git_scene::changes),
+                #[cfg(not(target_arch = "wasm32"))]
                 ("git-commits", probes::git_scene::commits),
             ],
             ..layout::app_spec(strings::t("window.title.main"), init, view)
