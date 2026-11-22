@@ -85,12 +85,20 @@ pub(crate) fn entry() -> El {
     rune::el()
 }
 
+pub(crate) fn direct_entry(s: &State) -> El {
+    if s.workspace.is_none() && s.settings.shared.borrow().backend.is_some() {
+        entry()
+    } else {
+        rune::el()
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn open(host: &mut Host) {
     if let Some((window, token)) = &host.window
         && Rc::strong_count(token) > 1
     {
-        window.focus();
+        window.close();
         return;
     }
     let token = Rc::new(Cell::new(false));

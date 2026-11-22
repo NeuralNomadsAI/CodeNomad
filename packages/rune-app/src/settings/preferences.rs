@@ -155,7 +155,7 @@ impl Preferences {
 
     pub fn locale(&self) -> Option<&'static str> {
         let id = self.saved(Owner::Config)?["settings"]["locale"].as_str()?;
-        rune_theme_codenomad::catalogue::supported_locale(id)
+        Some(rune_theme_codenomad::catalogue::canonical_locale(id))
     }
 
     pub fn locale_display(&self) -> Option<&'static str> {

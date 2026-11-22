@@ -371,7 +371,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                         crate::screen::action(&scope, launcher::back),
                     )
                 } else {
-                    rune::el()
+                    settings::direct_entry(s)
                 })
                 .child(text(strings::t(status)))
                 .child(

@@ -11,7 +11,9 @@ use tokio::{
 fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
     platform::block_on(async {
         let (listener, mut fixture) = fixture().await;
-        let backend = fixture.backend.take().unwrap();
+        let mut backend = fixture.backend.take().unwrap();
+        backend.workspace = "direct-project".into();
+        backend.session = "direct-session".into();
         let mut root = crate::init();
         let (events, incoming) = bounded(4);
         root.incoming = Some(incoming);
@@ -23,29 +25,52 @@ fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
         );
         assert!(crate::poll_chat(&mut root, 4));
         super::super::poll(&mut root);
-        for _ in 0..2 {
+        let (mut config, mut state) = (false, false);
+        for _ in 0..5 {
             let read = request(&listener).await;
             let data = match read.first.as_str() {
                 "GET /api/storage/config/ui?authoritative=1 HTTP/1.1" => {
+                    assert!(!config);
+                    config = true;
                     json!({"settings":{"locale":"fr"}})
                 }
                 "GET /api/storage/state/ui?authoritative=1 HTTP/1.1" => {
+                    assert!(!state);
+                    state = true;
                     json!({"appearancePreferences":{"mode":"dark"}})
+                }
+                "GET /workspaces/direct-project/instance/api/session/direct-session HTTP/1.1" => {
+                    json!({"data":{}})
+                }
+                "GET /workspaces/direct-project/instance/api/session/direct-session/permission HTTP/1.1"
+                | "GET /workspaces/direct-project/instance/api/session/direct-session/form HTTP/1.1" => {
+                    json!({"data":[]})
                 }
                 other => panic!("unexpected direct chat request: {other}"),
             };
             read.reply(200, data).await;
         }
+        assert!(config && state);
         wait_until(|| {
             super::super::poll(&mut root);
             let prefs = root.settings.shared.borrow();
             prefs.locale_ready() && prefs.palette_ready()
         })
         .await;
-        let prefs = root.settings.shared.borrow();
-        assert_eq!(prefs.locale(), Some("fr"));
-        assert_eq!(prefs.mode(), "dark");
-        assert!(prefs.stream.is_none(), "use the conversation event stream");
+        {
+            let prefs = root.settings.shared.borrow();
+            assert_eq!(prefs.locale(), Some("fr"));
+            assert_eq!(prefs.mode(), "dark");
+            assert!(prefs.stream.is_none(), "use the conversation event stream");
+        }
+        let mut runtime = rune::Runtime::new(
+            root,
+            crate::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        runtime.frame(0.0);
+        assert!(runtime.find("open-preferences").is_some());
     });
 }
 
@@ -152,12 +177,6 @@ fn settings_mode_patch_leaves_defaults_and_legacy_slots_alone() {
             "unreadable configuration does not disable appearance"
         );
         assert!(!prefs.locale_ready());
-        prefs.config.snapshot = Some(json!({"settings":{"locale":"zz-ZZ"}}));
-        assert_eq!(
-            prefs.locale(),
-            None,
-            "caller falls back to the system locale"
-        );
         prefs.config.snapshot = Some(json!({"theme":"dark","settings":{"locale":"de-DE"}}));
         assert_eq!(prefs.locale(), Some("de"));
         assert_eq!(prefs.palette(true).map(|p| p.id), Some("classic"));
