@@ -500,11 +500,17 @@ fn only_confirmed_absence_or_departure_retires_a_session_visit() {
 }
 
 #[test]
-fn malformed_cursor_is_not_a_terminal_session_page() {
+fn malformed_catalogue_data_is_not_a_terminal_session_page() {
     run(async {
         let route = "GET /workspaces/workspace/instance/api/session?directory=%2Ftrial&limit=200";
         let server = Server::start(vec![
             reply(route, None, 200, json!({"data":[], "cursor":[]})),
+            reply(
+                route,
+                None,
+                200,
+                json!({"data":[{"id":"ses_a","location":{"directory":"/trial"},"parentID":false}]}),
+            ),
             reply(route, None, 200, json!({"data":[], "cursor":{}})),
         ]);
         let backend = Backend::connect(&server.address, "").await.unwrap();
@@ -512,6 +518,7 @@ fn malformed_cursor_is_not_a_terminal_session_page() {
             id: "workspace".into(),
             path: "/trial".into(),
         };
+        assert!(backend.sessions(&project, None).await.is_err());
         assert!(backend.sessions(&project, None).await.is_err());
         assert!(
             backend

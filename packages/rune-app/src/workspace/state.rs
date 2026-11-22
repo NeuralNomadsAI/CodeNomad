@@ -330,7 +330,7 @@ fn activate(s: &mut State, tx: &mut Tx) {
             Tab::Workspace(w) => w.folder.as_str(),
             _ => "",
         });
-        l.creation_uncertain = item.creation_uncertain;
+        l.creation_uncertain = std::mem::take(&mut item.creation_uncertain);
         l.error = l.creation_uncertain.then_some("rune.create_error");
         (l.title, l.show_title, l.search, l.show_search) = item
             .sidebar_edits
@@ -691,7 +691,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let error = ui.persistence.read_error || ui.persistence.write_error;
     s.workspace = Some(ui);
     if became_ready {
-        activate(s, tx);
+        resume(s, tx);
     }
     changed || became_ready || error != previous_error
 }

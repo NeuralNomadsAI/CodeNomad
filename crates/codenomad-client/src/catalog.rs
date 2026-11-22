@@ -205,7 +205,12 @@ impl Backend {
             if !ids.insert(item.id.clone()) {
                 return Err("duplicate session".into());
             }
-            if row["parentID"].is_null() && !item.id.starts_with("ses_cn_schedule_") {
+            let root = match row.get("parentID") {
+                None | Some(Value::Null) => true,
+                Some(Value::String(id)) if valid_id(id) => false,
+                _ => return Err("invalid session parent".into()),
+            };
+            if root && !item.id.starts_with("ses_cn_schedule_") {
                 sessions.push(item);
             }
         }

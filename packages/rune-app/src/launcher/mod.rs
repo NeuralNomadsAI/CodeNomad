@@ -157,14 +157,6 @@ impl Launcher {
             );
         } else {
             self.creation_uncertain = false;
-            if page.next.is_none() {
-                let missing = self
-                    .listed_sessions
-                    .difference(&listed)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                self.visits.forget(&missing);
-            }
             if let Some(old) = self
                 .sessions
                 .iter()
@@ -173,13 +165,10 @@ impl Launcher {
                 page.rows.push(old.clone());
             }
             self.sessions = page.rows;
-            if page.next.is_some() {
-                self.listed_sessions.retain(|id| self.visits.contains(id));
-                self.listed_sessions.extend(listed);
-            } else {
-                self.listed_sessions = listed;
-            }
+            self.listed_sessions = listed;
         }
+        self.visits
+            .observe_listing(&self.listed_sessions, page.next.is_none());
         self.next = page.next;
     }
 }
@@ -219,8 +208,8 @@ mod tests {
             false,
             None,
         );
-        launcher.visits.record("a", None);
-        launcher.visits.record("b", None);
+        launcher.visits.record("a", None, true);
+        launcher.visits.record("b", None, true);
         launcher.apply_listing(
             Sessions {
                 rows: vec![row("b")],
@@ -247,8 +236,8 @@ mod tests {
         );
         assert!(launcher.visits.steps(true, Some("b")).next().is_none());
 
-        launcher.visits.record("child", None);
-        launcher.visits.record("b", None);
+        launcher.visits.record("child", None, false);
+        launcher.visits.record("b", None, true);
         launcher.apply_listing(
             Sessions {
                 rows: vec![row("b")],
@@ -265,6 +254,34 @@ mod tests {
                 .map(|(_, id)| id),
             Some("child")
         );
+    }
+
+    #[test]
+    fn the_last_page_retires_a_visit_only_if_the_whole_traversal_omitted_it() {
+        for present in [true, false] {
+            let mut launcher = Launcher::fixture();
+            launcher.visits.record("a", None, true);
+            launcher.visits.record("b", None, true);
+            launcher.apply_listing(
+                Sessions {
+                    rows: vec![row("b")],
+                    next: Some("next".into()),
+                },
+                false,
+                Some("b"),
+            );
+            assert!(launcher.visits.steps(true, Some("b")).next().is_some());
+            let rows = if present {
+                vec![row("a")]
+            } else {
+                vec![row("c")]
+            };
+            launcher.apply_listing(Sessions { rows, next: None }, true, Some("b"));
+            assert_eq!(
+                launcher.visits.steps(true, Some("b")).next().is_some(),
+                present
+            );
+        }
     }
 
     #[test]
@@ -909,7 +926,8 @@ fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize>, tx: &mut
     let same_session =
         !s.screen.is_launcher() && crate::workspace::active_session(s) == Some(b.session.as_str());
     if let Some(l) = s.screen.launcher_mut() {
-        l.visits.record(&b.session, visit);
+        l.visits
+            .record(&b.session, visit, l.listed_sessions.contains(&b.session));
         if let Some(row) = l.sessions.iter_mut().find(|row| row.id == b.session) {
             row.title.clone_from(&title);
         } else {
