@@ -341,6 +341,19 @@
         "paddingLeft": 12,
         "paddingTop": 8
       },
+      "gitModeButton": {
+        "fontSize": 11,
+        "fontWeight": 400,
+        "lineHeight": 16.5,
+        "paddingLeft": 8,
+        "paddingTop": 4
+      },
+      "gitModeDivider": {
+        "borderInlineStartWidth": 1
+      },
+      "gitModes": {
+        "borderTopWidth": 1
+      },
       "gitSection": {
         "columnGap": 8
       },
@@ -523,6 +536,19 @@
         "columnGap": 8,
         "paddingLeft": 12,
         "paddingTop": 8
+      },
+      "gitModeButton": {
+        "fontSize": 11,
+        "fontWeight": 400,
+        "lineHeight": 16.5,
+        "paddingLeft": 8,
+        "paddingTop": 4
+      },
+      "gitModeDivider": {
+        "borderInlineStartWidth": 1
+      },
+      "gitModes": {
+        "borderTopWidth": 1
       },
       "gitSection": {
         "columnGap": 8
