@@ -87,8 +87,11 @@ declare global {
     emulateBrowserTarget?: (registrationId: string, preset: import("../lib/native/browser-emulation").BrowserEmulationPreset) => Promise<void>
     browserTargetHistory?: (guestWebContentsId: number, entryId?: number) => Promise<import("../lib/browser-history").NativeBrowserHistory | undefined>
     claimBrowserOpen?: (requestID: string, response: import("../lib/native/browser").BrowserOpenResponse) => Promise<boolean>
+    browserPreviewOwnership?: (input: import("../lib/native/browser").BrowserPreviewOwnershipAction) => Promise<import("../lib/native/browser").BrowserPreviewOwnership | undefined>
+    onBrowserPreviewOwnership?: (callback: (payload: import("../lib/native/browser").BrowserPreviewOwnership) => void) => () => void
+    onBrowserPreviewFocus?: (callback: (payload: { sessionId: string; instanceId: string }) => void) => () => void
     onBrowserOpenSettled?: (callback: (payload: import("../lib/native/browser").BrowserOpenSettled) => void) => () => void
-    releaseBrowserOpen?: (requestID: string, keepGuest?: boolean) => Promise<boolean>
+    releaseBrowserOpen?: (requestID: string) => Promise<boolean>
     onBrowserOpenDiscovery?: (callback: (payload: import("../lib/native/browser").BrowserOpenDiscovery) => void) => () => void
     onBrowserOpenRequest?: (callback: (payload: import("../lib/native/browser").BrowserOpenRequest) => void) => () => void
 

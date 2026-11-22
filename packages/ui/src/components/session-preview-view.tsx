@@ -1,14 +1,14 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, untrack, type Component } from "solid-js"
+import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack, type Component } from "solid-js"
 import { Portal } from "solid-js/web"
 import { useI18n } from "../lib/i18n"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
-import { previewKey, sessionPreviews, openSessionPreview, dismissSessionPreview, showSessionChatFor, updateSessionPreviewLocation, updateSessionPreviewHistory, updateSessionPreviewViewport, cancelSessionPreviewNavigation, retireSessionPreviewOpen, startSessionPreviewNavigation, type SessionPreviewRecord } from "../stores/session-previews"
+import { previewKey, sessionPreviews, openSessionPreview, dismissSessionPreview, showSessionChatFor, updateSessionPreviewLocation, updateSessionPreviewHistory, updateSessionPreviewViewport, cancelSessionPreviewNavigation, startSessionPreviewNavigation, previewBlockedByOwner, previewOwnershipRevision, focusPreviewOwner, requestSessionPreview, type SessionPreviewRecord } from "../stores/session-previews"
 import { BrowserFrame, type BrowserFrameElementTarget } from "./browser-frame"
 import { getPreviewFrameSource } from "./browser-frame-security"
 import { runtimeEnv } from "../lib/runtime-env"
 import { remotePreviewAddress, remotePreviewContent, remotePreviewSource } from "../lib/remote-preview-address"
 import type { RemotePreviewCapability } from "../../../server/src/api-types"
-import { claimNativeBrowserOpen } from "../lib/native/browser"
+import { claimNativeBrowserOpen, hasNativePreviewOwnership } from "../lib/native/browser"
 
 interface SessionPreviewViewProps {
   preview: SessionPreviewRecord
@@ -22,6 +22,11 @@ const [slot, setSlot] = createSignal<PreviewSlot>()
 
 /** Geometry moves; the guest's DOM stays attached throughout tab switches. */
 export const SessionPreviewSlot: Component<{ sessionId: string; instanceId: string; active: boolean; onInsertComment: (markdown: string) => void }> = props => {
+  const { t } = useI18n()
+  const conflict = () => previewBlockedByOwner(props.sessionId, props.instanceId)
+  const handleError = (error: unknown) => showAlertDialog(t("sessionPreview.open.title"), {
+    title: t("sessionPreview.open.title"), detail: error instanceof Error ? error.message : String(error), variant: "error",
+  })
   let element!: HTMLDivElement
   createEffect(() => {
     if (!props.active) return
@@ -29,7 +34,22 @@ export const SessionPreviewSlot: Component<{ sessionId: string; instanceId: stri
     setSlot(current)
     onCleanup(() => setSlot(previous => previous === current ? undefined : previous))
   })
-  return <div ref={element} class="flex-1 min-h-0" style={{ display: props.active ? undefined : "none" }} />
+  return <div ref={element} class="flex-1 min-h-0" style={{ display: props.active ? undefined : "none" }}>
+    <Show when={props.active && conflict()}>{blocked => <div class="h-full flex flex-col items-center justify-center gap-3 bg-surface-canvas">
+      <div role="status">{t("sessionPreview.owner.otherTab")}</div>
+      <div class="flex flex-wrap justify-center gap-2">
+        <button class="button-secondary" type="button" onClick={() => {
+          void focusPreviewOwner(props.sessionId, props.instanceId)?.catch(handleError)
+        }}>{t("sessionPreview.owner.go")}</button>
+        <Show when={blocked().owner.sameWindow}>
+          <button class="button-secondary" type="button" onClick={() => {
+            const { url, revision } = blocked()
+            void requestSessionPreview(props.sessionId, props.instanceId, url, revision).catch(handleError)
+          }}>{t("sessionPreview.owner.transfer")}</button>
+        </Show>
+      </div>
+    </div>}</Show>
+  </div>
 }
 
 export const SessionPreviewHost: Component = () => {
@@ -60,12 +80,13 @@ export const SessionPreviewHost: Component = () => {
     const preview = createMemo<SessionPreviewRecord>(previous => sessionPreviews().get(id) ?? previous, untrack(() => sessionPreviews().get(id)!))
     const activeSlot = () => {
       const current = slot()
-      return !covered() && current && previewKey(current.sessionId, current.instanceId) === id ? current : undefined
+      return !covered() && current && previewKey(current.sessionId, current.instanceId) === id
+        && (!hasNativePreviewOwnership() || current.instanceId === preview().instanceId) ? current : undefined
     }
     return <div data-session-id={preview().sessionId} data-preview-instance={activeSlot()?.instanceId} style={{
       position: "fixed", display: activeSlot() ? "flex" : "none", "z-index": 1,
       left: `${bounds()?.x ?? 0}px`, top: `${bounds()?.y ?? 0}px`, width: `${bounds()?.width ?? 0}px`, height: `${bounds()?.height ?? 0}px`,
-    }}><SessionPreviewView preview={preview()} instanceId={activeSlot()?.instanceId ?? ""} active={Boolean(activeSlot() && bounds()?.width && bounds()?.height)}
+    }}><SessionPreviewView preview={preview()} instanceId={activeSlot()?.instanceId ?? (hasNativePreviewOwnership() ? preview().instanceId : "")} active={Boolean(activeSlot() && bounds()?.width && bounds()?.height)}
       onInsertComment={text => activeSlot()?.insertComment(text)} /></div>
   }}</For></Portal>
 }
@@ -91,12 +112,6 @@ function buildCommentMarkdown(target: BrowserFrameElementTarget, comment: string
 const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
   const { t } = useI18n()
   let reportedOpen: SessionPreviewRecord["nativeOpen"]
-  const frame = createMemo<{ key: string; token: string; provisional?: boolean }>(previous => {
-    const { token, nativeOpen } = props.preview
-    // A fresh agent guest may still be owned by a native construction claim.
-    const replaced = previous?.provisional && previous.token !== token
-    return { key: replaced ? token : previous?.key ?? token, token, provisional: nativeOpen?.created }
-  })
   const [commentMode, setCommentMode] = createSignal(false)
   function showNavigationError(error: unknown) {
     if (props.active === false || props.preview.owner.signal.aborted) return
@@ -127,19 +142,17 @@ const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
 
   return (
     <div class="window-shell flex flex-1 min-h-0 flex-col bg-surface-canvas" style={{ display: props.active === false ? "none" : "flex" }} inert={props.active === false} aria-hidden={props.active === false}>
-      <For each={[frame().key]}>{() => <BrowserFrame
+      <BrowserFrame
         active={props.active}
         instanceId={props.preview.capability ? undefined : props.instanceId}
         openRequestId={props.preview.nativeOpen?.requestID}
+        ownershipRevision={previewOwnershipRevision(props.preview.sessionId, props.instanceId)}
         onNativeRegistration={async registrationId => {
           const request = props.preview.nativeOpen
           if (!request || request === reportedOpen || request.instanceId !== props.instanceId) return false
           reportedOpen = request
-          const admitted = request.current() && await claimNativeBrowserOpen(request.requestID,
+          return claimNativeBrowserOpen(request.requestID,
             { kind: "target", instanceId: request.instanceId, registrationId }).catch(() => false)
-          if (admitted && request.current()) return true
-          await retireSessionPreviewOpen(request).catch(() => {})
-          return false
         }}
         onClose={() => props.preview.capability ? dismissSessionPreview(props.preview.storageKey) : showSessionChatFor(props.preview.sessionId, props.instanceId)}
         sessionId={props.preview.sessionId}
@@ -188,7 +201,7 @@ const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
         commentMode={commentMode()}
         onToggleCommentMode={() => setCommentMode((value) => !value)}
         onCommentTarget={(target) => void handleCommentTarget(target)}
-      />}</For>
+      />
     </div>
   )
 }

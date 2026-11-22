@@ -12,7 +12,7 @@ Service Worker bleiben in entfernten Vorschauen deaktiviert.
 
 Ein Klick auf einen `localhost`- oder `127.0.0.1`-Link in einer Unterhaltung öffnet ihn in der Web-Vorschau dieser Sitzung, auf jedem Client mit verfügbarer Vorschau. Über Remote Control, wenn der Host Web-Vorschauen deaktiviert hält, oder auf einem Client ohne verfügbare Vorschau behalten solche Links ihr normales Browser-Verhalten. Strg+Klick (⌘-Klick auf macOS) oder Mittelklick öffnet den Link stattdessen im Browser.
 
-Das Schließen der lokalen Vorschau führt zum Chat zurück. Doppelte Tabs teilen die Live-Seite, bis der letzte Tab geschlossen oder das Fenster neu geladen wird.
+Die Seite der nativen Vorschau bleibt erhalten, wenn Sie zum Chat zurückkehren oder sie im selben Fenster verschieben.
 
 Jede Registerkarte speichert ihre Chat-/Vorschauwahl; die Sitzung speichert gemeinsame URL, Viewport-Vorlage und Verlauf. Gespeicherte Seiten laden erst beim ausdrücklichen erneuten Öffnen des Sitzungsbrowsers. Gespeichert werden URLs und ein Zeiger; aktive Formulare, DOM, POST-Inhalte und JavaScript-Speicher enden mit dem Dokument. Der Verlauf ist auf 32 URLs je Sitzung und ein gemeinsames Fensterbudget begrenzt; ältere Einträge können gekürzt werden. Eine wiederhergestellte URL kann neu geladen werden.
 
@@ -32,9 +32,9 @@ Wird der Neustart abgebrochen, listen Sie die offenen Fenster mit `codenomad.ins
 
 Native Vorschauen teilen Cookies, Anmeldungen und Websitespeicher über Projekte/Sitzungen innerhalb derselben Desktop-Engine und desselben Profil-/Konfigurationsbereichs, getrennt vom vertrauenswürdigen CodeNomad-Renderer. Abmelden von einer Website in einer Vorschau betrifft andere Vorschauen desselben Speichers. Dokumente, Formulare, Sitzungsspeicher, Navigationsverläufe und Automatisierungszuordnungen gehören jeweils zur Sitzung.
 
-Ein Agent öffnet die Vorschau im fokussierten lokalen Fenster mit einer Registerkarte für die Sitzung, sonst im zuletzt verwendeten geeigneten Fenster, ohne es in den Vordergrund zu holen. Hat das Fenster mehrere passende Registerkarten und ist keine davon aktiv, wählen Sie eine aus und versuchen Sie es erneut. Wenn Sie während des Öffnens die Registerkarte wechseln, bleibt Ihre Auswahl erhalten. Das Schließen der gewählten Registerkarte bricht das Öffnen ab. Wenn die Vorschau in einem anderen Fenster das Öffnen blockiert, verwenden Sie dieses Fenster. Seitenaktionen zielen auf die sichtbare native Vorschau der Sitzung.
+Jede Sitzung hat eine native Vorschau. Zeigt eine doppelte Registerkarte **Vorschau in einer anderen Registerkarte geöffnet**, wählen Sie **Zur Registerkarte**, um dorthin zu wechseln, oder **Hier öffnen**, um die Vorschau im selben Fenster zu verschieben. Die bisherige Registerkarte zeigt dann dieselbe Meldung. Nach dem Schließen der Registerkarte mit der Vorschau lässt sie sich in einer anderen öffnen.
 
-Schließen Sie eine geöffnete Datei oder den Missionsleser in der gewählten Registerkarte, bevor der Agent dort eine Vorschau öffnet. Ihre eigene Navigation hat Vorrang vor einem ausstehenden Öffnen durch den Agenten. **Aktualisieren** ist nicht verfügbar, während der Agent die erste Seite öffnet.
+Der Agent öffnet die Vorschau in der Registerkarte, der sie gehört, oder sonst in der zuletzt für die Sitzung verwendeten Registerkarte. Seitenaktionen gelten für die sichtbare native Vorschau.
 
 Vor einer Aktion oder Aufnahme erstellt der Agent einen Snapshot der Vorschau. Ändert sich die Vorschau, bricht der Befehl ab, statt eine andere Vorschau zu verwenden.
 

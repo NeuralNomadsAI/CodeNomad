@@ -68,6 +68,7 @@ fn tauri_authority_does_not_grant_parent_capabilities_to_preview_children() {
         "plugin:event|emit",
         "plugin:dialog|open",
         "browser_target_register",
+        "browser_target_ownership",
         "client_state_load",
     ] {
         assert!(

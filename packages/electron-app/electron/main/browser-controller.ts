@@ -7,6 +7,7 @@ import { executeCdpOperation } from "../../../server/src/automation/page/cdp-dri
 import { parsePageOperation, pageEnvelope } from "../../../server/src/automation/page/operations"
 import { PAGE_DRIVER_VERSION } from "../../../server/src/automation/page/protocol"
 import { setBrowserLogicalAddress } from "./browser-presentation"
+import { BrowserPreviewOwners, type PreviewOwner } from "./browser-preview-owners"
 
 const electron = () => createRequire(import.meta.url)("electron") as typeof import("electron")
 
@@ -39,13 +40,11 @@ interface OpenClaim {
   checkAdmission: () => void
   workspaceIDs: readonly string[]
   instanceId?: string
-  claimed?: boolean
-  adopted?: boolean
-  guest?: WebContents
+  ownership?: PreviewOwner<WebContents>
   target?: Registration
   dispatched?: boolean
   retirement: AbortController
-  discovery?: { resolve: (result: string | null | true) => void; reject: (error: Error) => void }
+  discovery?: { resolve: (result: string | null) => void; reject: (error: Error) => void }
 }
 
 type BrowserCommand =
@@ -81,7 +80,9 @@ export class BrowserController {
   private readonly navigationVersions = new WeakMap<WebContents, number>()
   private readonly documentRoots = new WeakMap<WebContents, number>()
   private readonly openClaims = new Map<string, OpenClaim>()
-  private readonly attaching = new WeakMap<WebContents, OpenClaim>()
+  private readonly attaching = new WeakMap<WebContents, string>()
+  private readonly previewOwners = new BrowserPreviewOwners<WebContents>()
+  private readonly ownerWindows = new Set<WebContents>()
 
   constructor(
     private readonly openCandidates: () => readonly WebContents[],
@@ -91,18 +92,73 @@ export class BrowserController {
     },
   ) {}
 
+  private publishOwnership(sessionId: string, revision: number, owner?: PreviewOwner<WebContents>) {
+    for (const window of this.ownerWindows) {
+      if (!window.isDestroyed() && window !== owner?.window) window.send("browser-target:ownership", this.ownership(sessionId, revision, window, owner))
+    }
+  }
+
+  private ownership(sessionId: string, revision: number, requester: WebContents, owner?: PreviewOwner<WebContents>) {
+    return { sessionId, revision, owner: owner ? { instanceId: owner.instanceId, sameWindow: owner.window === requester } : null }
+  }
+
+  changeOwnership(window: WebContents, input: unknown) {
+    const { action, sessionId, instanceId, revision } = (input ?? {}) as Record<string, unknown>
+    if (!validId(instanceId, 256)) throw new Error("Invalid browser occurrence")
+    if (action === "release") {
+      for (const entry of this.previewOwners.release(window, instanceId)) {
+        for (const [guest, session] of this.retainedSessions) {
+          if (session !== entry.sessionId || guest.isDestroyed() || guest.hostWebContents !== window) continue
+          this.releaseTarget(guest)
+          this.retainedSessions.delete(guest)
+          guest.close()
+        }
+        this.publishOwnership(entry.sessionId, entry.revision)
+      }
+      return
+    }
+    if (!validId(sessionId, 256)) throw new Error("Invalid browser session")
+    if (action === "used") { this.previewOwners.used(sessionId, window, instanceId); return }
+    if (action === "focus") {
+      const owner = this.previewOwners.get(sessionId)
+      if (!owner || owner.revision !== revision || owner.window.isDestroyed()) return
+      const target = this.electronApi.fromWebContents(owner.window)
+      if (!target || target.isDestroyed()) return
+      if (target.isMinimized()) target.restore()
+      if (!target.isVisible()) target.show()
+      target.focus()
+      owner.window.send("browser-target:focus-owner", { sessionId, instanceId: owner.instanceId })
+      return
+    }
+    if (action !== "request") throw new Error("Invalid browser ownership action")
+    return this.grantOwnership(sessionId, window, instanceId, typeof revision === "number" ? revision : undefined)
+  }
+
+  private grantOwnership(sessionId: string, window: WebContents, instanceId: string, revision?: number) {
+    const before = this.previewOwners.get(sessionId)
+    const { owner, previous } = this.previewOwners.request(sessionId, window, instanceId, revision)
+    if (previous) {
+      for (const registration of this.registrations.values()) {
+        if (registration.owner !== window || registration.sessionId !== sessionId) continue
+        this.releaseTarget(registration.guest)
+        // The live guest stays in this window. Its old automation witness does not.
+        this.registrations.delete(registration.registrationId)
+      }
+    }
+    if (before !== owner) this.publishOwnership(sessionId, owner.revision, owner)
+    return this.ownership(sessionId, owner.revision, window, owner)
+  }
+
   permitOpenAttachment(owner: WebContents, params: Record<string, string>): boolean {
-    const marker = /^codenomadOpen=([\da-f-]{36})$/i.exec(params.webpreferences ?? "")
+    const marker = /^codenomadPreview=(\d+)$/.exec(params.webpreferences ?? "")
     if (!marker) return params.src !== "about:blank"
-    const claim = this.openClaims.get(marker[1])
-    if (params.src !== "about:blank" || !claim?.adopted || claim.owner !== owner
-      || claim.guest || claim.target || this.attaching.has(owner) || !this.openClaimCurrent(marker[1], claim)) return false
-    try { this.checkNoForeignPreview(claim.sessionID, owner) } catch { return false }
-    this.attaching.set(owner, claim)
+    const session = this.previewOwners.sessionFor(owner, Number(marker[1]))
+    if (!session || this.attaching.has(owner) || [...this.retainedSessions].some(([guest, id]) => id === session && !guest.isDestroyed())) return false
+    this.attaching.set(owner, session)
     // Native guest construction consumes the permit synchronously; never lend
     // an unconsumed permit to a later webview from the same renderer.
     queueMicrotask(() => {
-      if (this.attaching.get(owner) === claim) this.attaching.delete(owner)
+      if (this.attaching.get(owner) === session) this.attaching.delete(owner)
     })
     return true
   }
@@ -110,11 +166,10 @@ export class BrowserController {
   guestCreated(guest: WebContents): void {
     if (guest.getType() !== "webview") return
     const owner = guest.hostWebContents
-    const claim = owner && this.attaching.get(owner)
-    if (!claim || !owner) return
+    const session = owner && this.attaching.get(owner)
+    if (!session || !owner) return
     this.attaching.delete(owner)
-    claim.guest = guest
-    this.retainedSessions.set(guest, claim.sessionID)
+    this.retainedSessions.set(guest, session)
     guest.once("destroyed", () => this.retainedSessions.delete(guest))
   }
 
@@ -175,7 +230,16 @@ export class BrowserController {
     if (previous && previous.owner !== owner) throw new Error("Browser target belongs to another window")
     setBrowserLogicalAddress(guest, input.logicalAddress)
     if (previous) this.releaseTarget(previous.guest)
-    if (input.instanceId) this.retainedSessions.set(guest, input.sessionId)
+    if (input.instanceId) {
+      const expected = this.previewOwners.get(input.sessionId)
+      if (expected?.window !== owner || expected.instanceId !== input.instanceId) {
+        throw new Error("Browser preview belongs to another tab")
+      }
+      if ([...this.retainedSessions].some(([existing, session]) => session === input.sessionId && existing !== guest && !existing.isDestroyed())) {
+        throw new Error("This session already has a native preview")
+      }
+      this.retainedSessions.set(guest, input.sessionId)
+    }
     this.registrations.set(input.registrationId, { ...input, owner, guest, generation: randomUUID(), visibilityVersion: 0 })
   }
 
@@ -236,31 +300,18 @@ export class BrowserController {
     if (typeof requestID !== "string" || !response || typeof response !== "object") return false
     const claim = this.openClaims.get(requestID)
     if (!claim || claim.owner !== owner || !this.openClaimCurrent(requestID, claim)) return false
-    const { kind, instanceId, ambiguous, registrationId } = response as Record<string, unknown>
-    if (kind === "discover" && claim.discovery && (ambiguous === true || instanceId === null
+    const { kind, instanceId, registrationId } = response as Record<string, unknown>
+    if (kind === "discover" && claim.discovery && (instanceId === null
       || (typeof instanceId === "string" && claim.workspaceIDs.includes(instanceId)))) {
       const { resolve } = claim.discovery
       claim.discovery = undefined
-      resolve(ambiguous === true ? true : instanceId as string | null)
+      resolve(instanceId as string | null)
       return true
     }
-    if (!claim.instanceId || instanceId !== claim.instanceId) return false
-    if (kind === "claim" && !claim.claimed) {
-      claim.claimed = true
-      return true
-    }
-    if (kind === "adopt" && claim.claimed && !claim.adopted) {
-      if ([...this.openClaims.values()].some(other => other !== claim && other.sessionID === claim.sessionID && other.adopted)) {
-        throw new Error("Browser preview open is already in progress")
-      }
-      this.checkNoForeignPreview(claim.sessionID, owner, claim.instanceId)
-      claim.adopted = true
-      return true
-    }
-    if (kind === "target" && claim.adopted && !claim.target && typeof registrationId === "string") {
+    if (!claim.ownership || instanceId !== claim.ownership.instanceId) return false
+    if (kind === "target" && !claim.target && typeof registrationId === "string") {
       const registration = this.registrations.get(registrationId)
       if (registration?.owner !== owner || registration.sessionId !== claim.sessionID || registration.instanceId !== instanceId
-        || (claim.guest && registration.guest !== claim.guest)
         || !this.registrationVisible(registration)) return false
       claim.target = registration
       return true
@@ -271,6 +322,7 @@ export class BrowserController {
   private openClaimCurrent(requestID: string, claim: OpenClaim): boolean {
     try { claim.checkAdmission() } catch { return false }
     return this.openClaims.get(requestID) === claim && this.openWindowVisible(claim.owner)
+      && (!claim.ownership || this.previewOwners.get(claim.sessionID) === claim.ownership)
       && claim.owner.mainFrame === claim.frame && Date.now() < (claim.target ? claim.deadline : claim.attachDeadline)
   }
 
@@ -283,8 +335,7 @@ export class BrowserController {
     claim.discovery?.reject(new Error("Browser open target changed"))
     this.openClaims.delete(requestID)
     claim.retirement.abort(new Error("Browser open target changed"))
-    if (!claim.target && claim.guest && !claim.guest.isDestroyed()) claim.guest.close()
-    if (claim.adopted && !owner.isDestroyed() && owner.mainFrame === claim.frame) {
+    if (claim.ownership && !owner.isDestroyed() && owner.mainFrame === claim.frame) {
       owner.send("browser-target:open-settled", { requestID, sessionID: claim.sessionID, instanceId: claim.instanceId, committedUrl,
         ...(preserveGuest && { keepGuest: true, ...(successorUrl && { successorUrl }) }) })
     }
@@ -295,7 +346,8 @@ export class BrowserController {
     // BrowserWindow's native getters throw once "closed" is emitted. Retain
     // the owner identity while it is alive; cleanup only compares references.
     const owner = window.webContents
-    window.once("closed", () => this.removeOwner(owner))
+    this.ownerWindows.add(owner)
+    window.once("closed", () => { this.ownerWindows.delete(owner); this.removeOwner(owner) })
     owner.on?.("did-start-navigation", (_event, _url, sameDocument, mainFrame) => {
       if (mainFrame && !sameDocument) this.removeOwner(owner)
     })
@@ -319,6 +371,7 @@ export class BrowserController {
       }
     }
     this.releaseOwnerOpens(owner)
+    for (const entry of this.previewOwners.release(owner)) this.publishOwnership(entry.sessionId, entry.revision)
   }
 
   private releaseOwnerOpens(owner: WebContents): void {
@@ -399,7 +452,13 @@ export class BrowserController {
   async open(sessionID: string, url: string, deadline: number, workspaceIDs: readonly string[], checkAdmission: () => void = () => {}): Promise<{ url: string }> {
     if (!isBrowserUrlAllowed(url)) throw new Error("Browser navigation requires a credential-free HTTP(S) URL")
     const registrationDeadline = Math.min(deadline, Date.now() + 10_000)
-    for (const owner of this.openCandidates()) {
+    const existingOwner = this.previewOwners.get(sessionID)
+    if (existingOwner && (!workspaceIDs.includes(existingOwner.instanceId) || !this.openWindowVisible(existingOwner.window))) {
+      throw new Error("The owning preview tab is unavailable")
+    }
+    const recent = this.previewOwners.lastUsed(sessionID)
+    const preferred = existingOwner ?? (recent && workspaceIDs.includes(recent.instanceId) && this.openWindowVisible(recent.window) ? recent : undefined)
+    for (const owner of preferred ? [preferred.window] : this.openCandidates()) {
       if (!this.openWindowVisible(owner)) continue
       ensureDeadline(registrationDeadline)
       const requestID = randomUUID()
@@ -411,26 +470,28 @@ export class BrowserController {
       this.openClaims.set(requestID, claim)
       try {
         check()
-        const occurrence = await withDeadline(() => new Promise<string | null | true>((resolve, reject) => {
+        const occurrence = preferred?.instanceId ?? await withDeadline(() => new Promise<string | null>((resolve, reject) => {
           claim.discovery = { resolve, reject }
-          owner.send("browser-target:discover", { requestID, workspaceIDs })
+          owner.send("browser-target:discover", { requestID, sessionID, workspaceIDs })
           // Navigation, closure or hide retires this read without trying another window.
           if (!this.openClaimCurrent(requestID, claim)) reject(new Error("Browser open target changed"))
         }), registrationDeadline)
         check()
         if (occurrence === null) continue
-        if (occurrence === true) throw new Error("Multiple owning tabs; select one before opening the preview")
-        this.checkNoForeignPreview(sessionID, owner, occurrence)
+        const actual = this.previewOwners.get(sessionID)
+        if (actual && (actual.window !== owner || actual.instanceId !== occurrence)) {
+          return this.open(sessionID, url, deadline, workspaceIDs, checkAdmission)
+        }
+        const ownership = this.grantOwnership(sessionID, owner, occurrence)
+        claim.ownership = this.previewOwners.get(sessionID)
         claim.instanceId = occurrence
-        owner.send("browser-target:open", { sessionID, requestID, instanceId: occurrence, url })
+        owner.send("browser-target:open", { sessionID, requestID, instanceId: occurrence, url, ownership })
         for (;;) {
           check()
-          this.checkNoForeignPreview(sessionID, owner, occurrence)
           if (claim.target) {
             const expected = claim.target
             const checkRegistration = () => {
               check()
-              this.checkNoForeignPreview(sessionID, owner, occurrence)
               if (this.registrations.get(expected.registrationId) !== expected || !this.registrationVisible(expected)) {
                 throw new Error("Browser open registration changed")
               }
@@ -461,19 +522,6 @@ export class BrowserController {
     if (owner.isDestroyed()) return false
     const window = this.electronApi.fromWebContents(owner)
     return Boolean(window && !window.isDestroyed() && window.isVisible() && !window.isMinimized())
-  }
-
-  private checkNoForeignPreview(sessionID: string, owner: WebContents, instanceId?: string): void {
-    for (const [guest, session] of this.retainedSessions) {
-      if (session === sessionID && !guest.isDestroyed() && guest.hostWebContents !== owner) {
-        if (instanceId) {
-          const visible = [...this.registrations.values()].filter(registration =>
-            registration.sessionId === sessionID && this.registrationVisible(registration))
-          if (visible.length === 1 && visible[0].owner === owner && visible[0].instanceId === instanceId) return
-        }
-        throw new Error("Browser preview already exists in another window")
-      }
-    }
   }
 
   private registrationVisible({ guest, owner }: Registration): boolean {
