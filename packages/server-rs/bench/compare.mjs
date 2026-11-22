@@ -15,7 +15,7 @@ import { assertPrivateProfile, outsideUserHome } from "./private-profile.mjs"
 import { browserFiles, populate } from "./files.mjs"
 import { browserWorktrees } from "./worktrees.mjs"
 
-const MODES = ["http", "files", "contract", "workspace-claims", "agent-controls", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "missions", "missions-family", "missions-calendar", "missions-wayfinder", "mission-permissions", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
+const MODES = ["http", "files", "contract", "workspace-claims", "agent-controls", "remote-session-controls", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "missions", "missions-family", "missions-calendar", "missions-wayfinder", "mission-permissions", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
 const [mode, exe] = process.argv.slice(2)
 if (mode === "prompt-admission") {
   await (await import("./prompt-admission.mjs")).run()
@@ -112,9 +112,14 @@ async function start(label, fixture, folder, password, trustedCA) {
   // `host`: both servers as the desktop hosts start them, over the whole filesystem, on equal settings.
   if (mode === "host") Object.assign(env, { CLI_UNRESTRICTED_ROOT: "true", CODENOMAD_REMOTE_CONTROL: "disabled" })
   Object.assign(env, bench?.environment?.(root) ?? {})
-  if (label === "ts" && bench?.remoteIngress) {
-    env.CNRS_PREVIEW_TEST_TUNNEL = "1"
+  if (label === "ts" && (bench?.remoteIngress || bench?.remoteDirect)) {
     delete env.CODENOMAD_REMOTE_CONTROL
+    if (bench.remoteIngress) env.CNRS_PREVIEW_TEST_TUNNEL = "1"
+    else env.CODENOMAD_ALLOWED_ORIGINS = bench.remoteDirect
+  }
+  if (label === "rs" && bench?.remoteDirect) {
+    delete env.CNRS_FIXTURE_INGRESS
+    env.CNRS_HTTPS_NAME = new URL(bench.remoteDirect).hostname
   }
   // Modes that seed `config.yaml` start both servers on equal settings.
   // Keep the Rust settings at their private positional default in modes without a seeded YAML.
@@ -487,7 +492,7 @@ try {
       for (const host of [ts, rs]) {
         const cookie = await signIn(host, password)
         hosts.push({ call: (route, init) => host.request(route, withCookie(cookie, init)), origin: host.origin, cookie,
-          ...(bench?.remoteIngress ? { secureOrigin: host.secureOrigin, ingress: host.ingress } : {}) })
+          ...(bench?.remoteIngress || bench?.remoteDirect ? { secureOrigin: host.secureOrigin, ingress: host.ingress } : {}) })
       }
       if (bench.pair) { result[mode] = await bench.pair(...hosts); return }
       await compareSides([
