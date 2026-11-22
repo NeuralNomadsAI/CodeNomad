@@ -1,4 +1,4 @@
-use super::*;
+use crate::*;
 use rune::edit::Mods;
 use rune::{Env, Key, KeyEvent, Runtime};
 use serde_json::json;

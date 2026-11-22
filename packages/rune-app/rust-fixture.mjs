@@ -8,7 +8,8 @@ import {randomUUID} from 'node:crypto'
 import {responseFor} from './fixture-response.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {FixtureStore} from './fixture-store.mjs'
-import {clientBinary,serverBinary} from './fixture-binaries.mjs'
+import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
+requireTestSupport()
 const here = import.meta.dirname
 const profile = path.join(here,'fixture-profile',randomUUID())
 const project = path.join(profile,'projects','synthetic')

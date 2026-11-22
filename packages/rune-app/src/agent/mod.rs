@@ -1,4 +1,9 @@
 //! Session-owned controls. Stop has a separate HTTP lane from catalogue and request reads.
+pub(crate) mod form_view;
+pub(crate) mod forms;
+#[cfg(test)]
+mod tests;
+pub(crate) mod view;
 #[cfg(test)]
 mod viewport_tests;
 use crate::{

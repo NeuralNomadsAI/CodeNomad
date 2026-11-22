@@ -1,6 +1,7 @@
+use super::native_transport::run;
 use crate::{
     CODE,
-    transport::{Command, Event, run},
+    transport::{Command, Event},
 };
 use std::time::Duration;
 pub fn fresh() {

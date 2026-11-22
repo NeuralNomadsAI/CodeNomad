@@ -9,6 +9,7 @@ Depuis la racine du worktree, avec les dépendances npm verrouillées du dépôt
 ```powershell
 node scripts/rune/component-inventory.mjs
 node scripts/rune/generate-theme.mjs --check
+cargo build --locked -p codenomad-rune-app --bin codenomad-rune --features test-support
 node --import tsx --test packages/ui/tests/browser/rune-window-close.test.ts
 node --import tsx scripts/rune/parity/window-close.mjs
 node --import tsx scripts/rune/parity/window-close.mjs --binary C:/chemin/cache-cargo/debug/codenomad-rune.exe

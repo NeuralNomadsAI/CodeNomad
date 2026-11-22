@@ -6,7 +6,8 @@ import path from 'node:path'
 import {prepareLive} from './live-session.mjs'
 import {connectNative} from './live-access.mjs'
 import {privateEnvironment} from './private-profile.mjs'
-import {clientBinary,serverBinary} from './fixture-binaries.mjs'
+import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
+requireTestSupport()
 const here=import.meta.dirname
 const existing=process.argv.indexOf('--reuse')
 let live

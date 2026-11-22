@@ -10,7 +10,8 @@ import {FixtureStore} from './fixture-store.mjs'
 import {responseFor} from './fixture-response.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {controlsFixture} from './controls-fixture.mjs'
-import {clientBinary,serverBinary} from './fixture-binaries.mjs'
+import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
+requireTestSupport()
 const here=import.meta.dirname,profile=path.join(here,'fixture-profile',`launcher-${randomUUID()}`)
 const project=path.join(profile,'projects','synthetic');await mkdir(project,{recursive:true})
 const gitCount=Number(process.env.RUNE_TEST_GIT_COUNT??0)

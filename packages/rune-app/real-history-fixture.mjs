@@ -6,7 +6,8 @@ import {spawn} from 'node:child_process'
 import path from 'node:path'
 import {connectNative} from './live-access.mjs'
 import {privateEnvironment} from './private-profile.mjs'
-import {clientBinary,serverBinary} from './fixture-binaries.mjs'
+import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
+requireTestSupport()
 const here=import.meta.dirname
 const file=path.resolve(process.argv[2]??'')
 assert(file.startsWith(path.join(here,'fixture-profile')+path.sep),'owned manifest required')

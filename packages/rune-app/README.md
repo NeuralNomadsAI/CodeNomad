@@ -39,7 +39,10 @@ Le mode natif explicite lance un serveur possédé par Rune si ces trois paramè
 
 ## Vérifications sans fenêtre
 
+Les sondes natives, la galerie et les scènes synthétiques sont compilées avec la feature explicite `test-support`. Le produit par défaut conserve l'inspection et les entrées simulées de Rune sur ses écrans réels. La CI vérifie les artefacts natif et WASM par défaut avant de construire ceux de qualification.
+
 ```powershell
+cargo +1.99.1 build --locked -p codenomad-rune-app --bin codenomad-rune --features test-support
 $env:RUNE_CLIENT_EXE = "$env:CARGO_TARGET_DIR/debug/codenomad-rune.exe"
 $env:RUNE_SERVER_EXE = 'D:/chemin/worktree-serveur/packages/server-rs/target/debug/codenomad-rs.exe'
 node packages/rune-app/fixture.mjs --probe-contract
@@ -52,6 +55,7 @@ node scripts/rune/headless.mjs --binary $env:RUNE_CLIENT_EXE
 ```
 
 Les fixtures créent leurs projets, profils `trial-*`, ports éphémères et processus ; OpenCode est simulé dans ces scénarios. Le serveur Rust reste réel. `RUNE_CLIENT_EXE` et `RUNE_SERVER_EXE` sélectionnent des exécutables absolus ; le client utilise sinon le cache `CARGO_TARGET_DIR`, ou `target` à la racine du workspace.
+Les runners contrôlent `--test-support-info` avant de lancer une fixture. Les implémentations des sondes vivent sous `src/probes/` et sont propres à la cible native.
 
 `controls-live.mjs` et les scripts `real-history-*` sont des essais explicites avec un OpenCode réel déjà configuré, des sessions jetables et des outils interdits. `interactive-live.mjs` ouvre une fenêtre et demande un dossier et un titre exacts ; ses essais utilisent une copie de la conversation source. Leur lancement interactif appartient à une qualification dédiée.
 

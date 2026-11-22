@@ -12,11 +12,13 @@ import {createFixtureCache} from '../../../packages/ui/tests/browser/fixture-cac
 import {createServer,version as viteVersion} from 'vite'
 import solid from 'vite-plugin-solid'
 import {createFixtureShutdown} from '../../../packages/ui/tests/browser/fixture-shutdown.ts'
+import {requireTestSupport} from '../../../packages/rune-app/fixture-binaries.mjs'
 
 const root = fileURLToPath(new URL('../../../', import.meta.url))
 const require=createRequire(import.meta.url)
 const dependencyRoot=path.dirname(path.dirname(require.resolve('playwright/package.json')))
 const {values} = parseArgs({options: {binary: {type:'string'}}})
+if(values.binary)requireTestSupport(values.binary)
 const out = path.join(root, 'target/rune-parity/window-close')
 await mkdir(out, {recursive:true})
 const inventory=JSON.parse(await readFile(path.join(root,'target/rune-inventory/components__window-close-button.json'),'utf8'))

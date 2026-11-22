@@ -6,7 +6,8 @@ import {randomUUID,createHash} from 'node:crypto'
 import path from 'node:path'
 import {connectNative} from './live-access.mjs'
 import {privateEnvironment} from './private-profile.mjs'
-import {clientBinary,serverBinary} from './fixture-binaries.mjs'
+import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
+requireTestSupport()
 const directory=path.resolve(process.argv[2]??''),title=process.argv[3]
 assert(directory&&path.isAbsolute(directory)&&title,'usage: interactive-live.mjs <project-folder> <existing-session-title>')
 const native=await connectNative(),here=import.meta.dirname

@@ -22,21 +22,25 @@ pub(crate) fn control(path: &str) -> Value {
     let base = std::env::var("RUNE_TEST_CONTROL").unwrap();
     let url = reqwest::Url::parse(&base).unwrap();
     assert_eq!(url.host_str(), Some("127.0.0.1"));
-    reqwest::blocking::Client::builder()
-        .no_proxy()
-        .build()
-        .unwrap()
-        .post(format!("{base}{path}"))
-        .timeout(Duration::from_secs(5))
-        .send()
-        .unwrap()
-        .error_for_status()
-        .unwrap()
-        .json()
-        .unwrap()
+    crate::platform::block_on(async {
+        reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .post(format!("{base}{path}"))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap()
+    })
 }
 pub(crate) fn anchor(rt: &Runtime<State>) -> (String, f32) {
-    let prefix = "#0/history/rows/";
+    let prefix = "session-stack/history/rows/";
     let row = rt
         .elements()
         .into_iter()

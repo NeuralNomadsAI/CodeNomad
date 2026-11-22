@@ -128,3 +128,77 @@ fn question_fields_model_list_and_composer_remain_scroll_reachable() {
         reveal(&mut rt, "composer");
     }
 }
+
+fn audit_settlement_during_edit(permission: bool) {
+    let mut initial = state();
+    let ui = initial.agent.as_mut().unwrap();
+    ui.selected = "audit_pending".into();
+    let key;
+    if permission {
+        ui.permissions.push(Permission {
+            id: ui.selected.clone(),
+            action: "read".into(),
+            resources: vec!["/synthetic".into()],
+            message: String::new(),
+            supported: true,
+        });
+        ui.reasons.insert(ui.selected.clone(), TextEdit::new(""));
+        key = "reason-audit_pending";
+    } else {
+        ui.forms.push(Form {
+            id: ui.selected.clone(),
+            title: "Synthetic question".into(),
+            fields: vec![json!({"key":"answer","type":"string"})],
+        });
+        agent_forms::seed(&ui.forms, &mut ui.drafts);
+        key = "field-answer";
+    }
+    let (native, results) = bounded(4);
+    ui.handle.results = results;
+    let mut rt = runtime(initial, (960.0, 760.0));
+    rt.poll = Some(crate::poll);
+    reveal(&mut rt, key);
+    let (x, y) = rt.find(key).unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.paste("draft before settlement");
+    rt.frame(0.02);
+    assert!(
+        native
+            .try_send(super::Result::Read(
+                Snapshot {
+                    models: None,
+                    current: None,
+                    session_known: true,
+                    running: false,
+                    permissions: Some(vec![]),
+                    forms: Some(vec![]),
+                },
+                false
+            ))
+            .is_ok()
+    );
+    // One queued edit races with the authoritative snapshot, as during real recovery.
+    rt.paste(" late edit");
+    rt.frame(0.02);
+    for _ in 0..12 {
+        rt.frame(0.02);
+    }
+    let ui = rt.state.agent.as_ref().unwrap();
+    assert!(ui.permissions.is_empty() && ui.forms.is_empty());
+    assert!(ui.reasons.is_empty() && ui.drafts.is_empty());
+    // Also cover focus reconciliation on removal after the queued edit.
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Tab,
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+}
+#[test]
+fn audit_permission_settled_while_reason_focused() {
+    audit_settlement_during_edit(true);
+}
+#[test]
+fn audit_question_settled_while_answer_focused() {
+    audit_settlement_during_edit(false);
+}

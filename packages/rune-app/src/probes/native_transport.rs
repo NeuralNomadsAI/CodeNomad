@@ -1,4 +1,4 @@
-//! Blocking CLI-fixture adapter. Production state uses the shared async transport.
+//! Native CLI-fixture bridge, compiled exclusively with test support.
 use crate::transport::{Command, Event};
 use std::sync::mpsc::{Receiver, SyncSender};
 pub fn run(out: SyncSender<Event>, input: Receiver<Command>, wake: rune::Waker) {

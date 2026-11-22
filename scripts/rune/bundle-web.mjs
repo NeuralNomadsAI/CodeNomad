@@ -13,7 +13,7 @@ import {constants, createBrotliCompress, createGzip} from 'node:zlib'
 import {shell, themeCss} from './web-shell.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
-const {values} = parseArgs({options: {wasm: {type: 'string'}, bindgen: {type: 'string'}, out: {type: 'string', default: 'target/rune-web'}}})
+const {values} = parseArgs({options: {wasm: {type: 'string'}, bindgen: {type: 'string'}, out: {type: 'string', default: 'target/rune-web'}, 'test-support': {type:'boolean',default:false}}})
 const target = process.env.CARGO_TARGET_DIR
 assert(target && path.isAbsolute(target), 'Set CARGO_TARGET_DIR to the absolute existing Cargo cache')
 const within = (base, file) => {const relative = path.relative(base, file); return relative !== '' && !relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative)}
@@ -41,6 +41,8 @@ assert.equal(await run(bindgen, ['--version']), `wasm-bindgen ${version}`, `Use 
 await run(process.execPath, [path.join(root, 'scripts/rune/prepare.mjs'), '--check'])
 const descriptor = await open(values.wasm, 'r')
 try {const bytes = Buffer.alloc(8); await descriptor.read(bytes, 0, 8, 0); assert(bytes.equals(Buffer.from([0,97,115,109,1,0,0,0])), 'Expected a WebAssembly module')} finally {await descriptor.close()}
+const hasSyntheticScene=(await readFile(values.wasm)).includes(Buffer.from('Synthetic message '))
+assert.equal(hasSyntheticScene,values['test-support'],'Use a default product WASM, or build --features test-support and package explicitly with --test-support')
 await mkdir(path.dirname(out), {recursive: true})
 const staging = `${out}.next-${randomUUID()}`, backup = `${out}.old-${randomUUID()}`
 const safeRemove = async directory => {assert(within(outputs, directory)); await rm(directory, {recursive: true, force: true})}
@@ -87,7 +89,7 @@ try {
     const [gzip, brotli] = await Promise.all([compressedSize(file, createGzip({level: 9})), compressedSize(file, createBrotliCompress({params: {[constants.BROTLI_PARAM_QUALITY]: 5}}))])
     entries.push({file: relative.replaceAll(path.sep, '/'), sha256: await hash(file), raw: (await stat(file)).size, gzip, brotli})
   }
-  const manifest = {generator: 'scripts/rune/bundle-web.mjs', wasmBindgen: version, tools: {node: process.versions.node, zlib: process.versions.zlib, brotli: process.versions.brotli}, inputWasm: {sha256: await hash(values.wasm), bytes: (await stat(values.wasm)).size}, cargoLockSha256: await hash(path.join(root, 'Cargo.lock')), themeSha256: await hash(themeFile), locales: index.locales, compression: {gzipLevel: 9, brotliQuality: 5}, files: entries,
+  const manifest = {generator: 'scripts/rune/bundle-web.mjs', testSupport:values['test-support'], wasmBindgen: version, tools: {node: process.versions.node, zlib: process.versions.zlib, brotli: process.versions.brotli}, inputWasm: {sha256: await hash(values.wasm), bytes: (await stat(values.wasm)).size}, cargoLockSha256: await hash(path.join(root, 'Cargo.lock')), themeSha256: await hash(themeFile), locales: index.locales, compression: {gzipLevel: 9, brotliQuality: 5}, files: entries,
     totals: Object.fromEntries(['raw', 'gzip', 'brotli'].map(key => [key, entries.reduce((sum, entry) => sum + entry[key], 0)]))}
   await writeFile(path.join(staging, 'bundle-manifest.json'), JSON.stringify(manifest, null, 2) + '\n')
   let existing = false

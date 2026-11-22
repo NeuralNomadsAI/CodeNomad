@@ -1,8 +1,6 @@
-//! Compatibility import while the application assembles the extracted client.
 use crate::history::{self, Result};
-pub use codenomad_client::backend::*;
-/// Legacy fixture configuration remains an application concern.
-pub async fn environment() -> Result<Backend> {
+use codenomad_client::backend::Backend;
+pub async fn configured_backend() -> Result<Backend> {
     let base = crate::platform::setting("RUNE_BACKEND").ok_or("missing backend")?;
     let password = crate::platform::setting("RUNE_PASSWORD").unwrap_or_default();
     let token = crate::platform::setting("RUNE_BOOTSTRAP_TOKEN");

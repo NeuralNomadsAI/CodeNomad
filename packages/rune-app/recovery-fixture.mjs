@@ -7,7 +7,8 @@ import {randomUUID} from 'node:crypto'
 import path from 'node:path'
 import {FixtureStore} from './fixture-store.mjs'
 import {privateEnvironment} from './private-profile.mjs'
-import {clientBinary,serverBinary} from './fixture-binaries.mjs'
+import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
+requireTestSupport()
 const here=import.meta.dirname
 const profile=path.join(here,'fixture-profile',`recovery-${randomUUID()}`)
 const project=path.join(profile,'projects','synthetic')
@@ -120,9 +121,14 @@ try{
   const opened=await fetch(`${base}/api/workspaces`,{method:'POST',headers:{'content-type':'application/json',cookie},body:JSON.stringify({path:project})})
   const workspace=await opened.json();assert.equal(opened.status,201)
   for(const end=Date.now()+10000;nativeStreams.size===0;){assert(Date.now()<end);await new Promise(r=>setTimeout(r,25))}
-  child=spawn(clientBinary,['--probe-recovery'],{cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,
+  child=spawn(clientBinary,['--probe-recovery'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...env,
     RUNE_BACKEND:`${base}/`,RUNE_WORKSPACE:workspace.id,RUNE_SESSION:session,RUNE_PASSWORD:'fixture-backend',RUNE_LOCALE:'fr',RUNE_TEST_CONTROL:`${base}/__test__/`}})
-  result=await new Promise((resolve,reject)=>{child.on('exit',resolve);child.on('error',reject)})
+  let clientLog=''
+  child.stdout.on('data',chunk=>clientLog+=chunk)
+  child.stderr.on('data',chunk=>clientLog+=chunk)
+  result=await new Promise((resolve,reject)=>{child.on('close',resolve);child.on('error',reject)})
+  await writeFile(path.join(profile,'client.log'),clientLog)
+  console.log(clientLog)
   assert.equal(result,0,'Headless Rune recovery probe')
   assert.equal(stats.blockedPages,1);assert.equal(stats.stalePages,1)
   assert(stats.transportConnections>=4);assert(stats.nativeConnections>=2)

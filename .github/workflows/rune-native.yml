@@ -85,6 +85,15 @@ jobs:
         run: |
           cargo build --locked --target wasm32-unknown-unknown -p codenomad-client -p rune-theme-codenomad
           cargo build --locked --target wasm32-unknown-unknown -p codenomad-rune-app --bin codenomad-rune
+      - name: Verify default product excludes qualification probes
+        run: |
+          suffix=''
+          if [[ "$RUNNER_OS" == Windows ]]; then suffix='.exe'; fi
+          node scripts/rune/check-production.mjs --binary "$CARGO_TARGET_DIR/debug/codenomad-rune$suffix" --wasm "$CARGO_TARGET_DIR/wasm32-unknown-unknown/debug/codenomad-rune.wasm" --out "target/rune-evidence/$RUNNER_OS/production"
+      - name: Build explicit qualification support
+        run: |
+          cargo build --locked -p codenomad-rune-app --bin codenomad-rune --features test-support
+          cargo build --locked --target wasm32-unknown-unknown -p codenomad-rune-app --bin codenomad-rune --features test-support
       - name: Inspect and interact through Rune offscreen tooling
         run: |
           suffix=''

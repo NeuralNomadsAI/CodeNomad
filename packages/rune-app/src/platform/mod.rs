@@ -1,4 +1,8 @@
 //! Platform boundary for task execution, connection defaults and local file picking.
+mod connection;
+pub(crate) use connection::configured_backend;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod host;
 use std::{future::Future, time::Duration};
 #[cfg(not(target_arch = "wasm32"))]
 mod boot;
@@ -113,6 +117,7 @@ pub fn has_flag(flag: &str) -> bool {
         false
     }
 }
+#[cfg(feature = "test-support")]
 pub fn synthetic_scene() -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     {

@@ -1,4 +1,5 @@
 //! One serialized opening action at a time; HTTP never runs on the UI thread.
+pub(crate) mod view;
 use crate::{
     Phase, State,
     backend::Backend,

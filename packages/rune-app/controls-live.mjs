@@ -6,7 +6,8 @@ import {randomUUID} from 'node:crypto'
 import path from 'node:path'
 import {connectNative} from './live-access.mjs'
 import {privateEnvironment} from './private-profile.mjs'
-import {clientBinary} from './fixture-binaries.mjs'
+import {requireTestSupport,clientBinary} from './fixture-binaries.mjs'
+requireTestSupport()
 const here=import.meta.dirname,profile=path.join(here,'fixture-profile',`controls-live-${randomUUID()}`)
 const project=path.join(profile,'projects','empty');await mkdir(project,{recursive:true})
 const native=await connectNative(),permissions=[{action:'*',resource:'*',effect:'deny'}]

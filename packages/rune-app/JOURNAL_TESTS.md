@@ -14,7 +14,7 @@ Les essais automatiques utilisent des profils `trial-*`, des projets synthétiqu
 |---|---|---|
 | Client HTTP asynchrone, bornes de réponse, SSE Unicode/CRLF, annulation, canaux abandonnés, chemins Windows/POSIX, scopes de session | Réseau loopback jetable et tests de contrats | 15 tests réussis ; `.tmp-rune-workspace-tests.log` |
 | Confinement des processus et arrêt des descendants possédés | Processus de fixture séparés | 2 tests réussis ; même journal |
-| Chat, multiligne, deux envois distincts, code sélectionnable, 10 000 messages, outils, questions, panne de bootstrap, petite hauteur et RTL | Véritable runtime Rune sans fenêtre | 25 tests réussis et 1 test réel séparé ignoré par défaut ; même journal |
+| Chat, multiligne, deux envois distincts, code sélectionnable, 10 000 messages, outils, questions, panne de bootstrap, petite hauteur et RTL | Véritable runtime Rune sans fenêtre | 27 tests réussis et 1 test réel séparé ignoré par défaut ; `.tmp-rune-domain-tests-final.log` |
 | Thème, catalogues, géométrie, apparence, bornes du panneau de demandes | Rust et sources CSS Solid | 7 tests et 2 exemples compile-fail réussis ; même journal |
 | Frontière des styles : méthodes visuelles, alias, macros, configurations et mutations imbriquées | Analyse AST des sources et révision Rune épinglée | 4 tests réussis et contrôle de l'application réussi ; `.tmp-rune-policy-check.log` |
 | Démarrage normal de Rune, bootstrap, inventaire de projets, libération de l'état et jonction des workers d'arrêt | Véritable serveur Rust partagé, profil neuf, exécutable OpenCode privé absent | Réussi ; `.tmp-rune-owned-startup.log` |
@@ -26,6 +26,12 @@ Les essais automatiques utilisent des profils `trial-*`, des projets synthétiqu
 | Deux réponses distinctes et ping/pong | Fixture HTTP/SSE directe | Réussi ; `.tmp-rune-direct.log` |
 | Inventaire AST, génération déterministe, invariance des métriques malgré les fontes, fins de ligne LF/CRLF et shell web | Tests Node et générateurs | 7 tests réussis ; `.tmp-rune-node-tests.log` |
 | Même client, même état et mêmes écrans compilés pour WebAssembly | `wasm32-unknown-unknown` | Compilation réussie ; `.tmp-rune-app-wasm-build.log` |
+| Organisation par domaine et exclusion des sondes du produit | Builds natif et WASM sans feature, puis inspection réelle du lanceur | Réussi ; `.tmp-rune-product-native.log`, `.tmp-rune-product-wasm.log` et `target/rune-production/production-report.json` |
+| Retrait d'une permission ou question pendant la saisie | Runtime Rune, snapshot autoritaire, édition en attente et réconciliation du focus | 2 tests réussis ; `.tmp-rune-pending-edit.log` |
+
+La réorganisation conserve les scénarios : reprise de 606 lignes avec saut d'ancre nul (`.tmp-rune-domain-recovery.log`), deux envois avec outils (`.tmp-rune-domain-launcher.log`), commandes d'agent (`.tmp-rune-domain-controls.log`), quatre captures natives (`target/rune-domain-headless/qualification.json`) et six contextes web (`target/rune-web-tests/trial-lmH7lV/proof.json`). Le contrôle de styles recompilé passe (`.tmp-rune-domain-policy.log`).
+
+L'audit lexical relu relève 48 appels `unwrap`/`expect` produit, 125 dans les tests, 103 dans les sondes et 2 au build. Les invariants concernent surtout les données générées, les fenêtres bornées et l'état UI. Les échecs de création d'exécuteur, de timers navigateur et l'empoisonnement de mutex restent à durcir. Le registre et ses empreintes sont dans `target/panic-audit.json`, avec analyse dans `target/panic-audit.md`. Les deux ordres de retrait pendant la saisie testés réussissent.
 
 Le serveur partagé est construit depuis ce worktree et son intégration Rust. Le cache de compilation réutilisé peut se trouver sous un autre worktree ; son emplacement constitue un cache, tandis que le manifeste passé à Cargo détermine les sources.
 
@@ -57,6 +63,9 @@ cargo +1.99.1 test --offline --workspace
 cargo +1.99.1 run --offline -p rune-style-policy -- packages/rune-app/src
 cargo +1.99.1 build --offline -p codenomad-rune-app --bin codenomad-rune
 cargo +1.99.1 build --offline --target wasm32-unknown-unknown -p codenomad-rune-app --bin codenomad-rune
+node scripts/rune/check-production.mjs --binary "$env:CARGO_TARGET_DIR/debug/codenomad-rune.exe" --wasm "$env:CARGO_TARGET_DIR/wasm32-unknown-unknown/debug/codenomad-rune.wasm"
+cargo +1.99.1 build --offline --locked -p codenomad-rune-app --bin codenomad-rune --features test-support
+cargo +1.99.1 build --offline --locked --target wasm32-unknown-unknown -p codenomad-rune-app --bin codenomad-rune --features test-support
 $env:RUNE_CLIENT_EXE = "$env:CARGO_TARGET_DIR/debug/codenomad-rune.exe"
 node scripts/rune/headless.mjs --binary $env:RUNE_CLIENT_EXE
 node --test scripts/rune/*.test.mjs
@@ -78,7 +87,7 @@ Le test réel de serveur enfant exige le binaire explicitement fourni :
 
 ```powershell
 $env:CODENOMAD_HOST_TEST_SERVER = $env:RUNE_SERVER_EXE
-cargo +1.99.1 test --offline -p codenomad-rune-app --bin codenomad-rune host::tests::real_serve_bootstrap_stop_and_new_generation -- --ignored --exact
+cargo +1.99.1 test --offline -p codenomad-rune-app --bin codenomad-rune platform::host::tests::real_serve_bootstrap_stop_and_new_generation -- --ignored --exact
 ```
 
 Les commandes de capture Solid/Rune se trouvent dans `scripts/rune/parity/README.md` ; celles du bundle et du smoke web dans `scripts/rune/web-README.md`. Définir `PLAYWRIGHT_BROWSERS_PATH` lorsqu'un cache de navigateur privé est utilisé.

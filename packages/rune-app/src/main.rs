@@ -1,41 +1,21 @@
 #![forbid(unsafe_code)]
 mod agent;
-mod agent_api;
-mod agent_form_view;
-mod agent_forms;
-#[cfg(not(target_arch = "wasm32"))]
-mod agent_live_probe;
-#[cfg(not(target_arch = "wasm32"))]
-mod agent_probe;
-mod agent_view;
-mod backend;
-mod catalog;
-mod content;
+pub(crate) use agent::{form_view as agent_form_view, forms as agent_forms, view as agent_view};
+pub(crate) use codenomad_client::{agent_api, backend, catalog, content, history};
+mod chat;
+pub(crate) use chat::{actions as transcript_state, transcript, transport};
+mod components;
+pub(crate) use components::window_close_button as window_control;
+#[cfg(any(test, feature = "test-support"))]
 mod gallery;
-mod history;
 #[cfg(not(target_arch = "wasm32"))]
-mod host;
+pub(crate) use platform::host;
 mod launcher;
-#[cfg(not(target_arch = "wasm32"))]
-mod launcher_probe;
-mod launcher_view;
-#[cfg(not(target_arch = "wasm32"))]
-mod native_transport;
-#[cfg(not(target_arch = "wasm32"))]
-mod owned_startup_probe;
+pub(crate) use launcher::view as launcher_view;
 mod platform;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 mod probes;
-#[cfg(not(target_arch = "wasm32"))]
-mod real_history_probe;
-#[cfg(not(target_arch = "wasm32"))]
-mod recovery_probe;
 mod strings;
-mod transcript;
-mod transcript_state;
-mod transport;
-mod window_control;
-mod wire;
 use codenomad_client::{Receiver, Sender, bounded};
 use rune::edit::TextEdit;
 use rune::{AppSpec, Cx, El, Tx, col, text};
@@ -45,6 +25,7 @@ use rune_theme_codenomad::{
 };
 use transport::{Command, Event};
 
+#[cfg(any(test, feature = "test-support"))]
 pub const CODE: &str = "fn main() {\n    println!(\"Rune · Code Nomad\");\n}";
 pub use codenomad_client::Message;
 struct State {
@@ -108,7 +89,14 @@ fn setup(s: &mut State, wake: rune::Waker) {
     platform::spawn(transport::run_async(out, input, wake));
 }
 fn local_stress() -> bool {
-    platform::synthetic_scene()
+    #[cfg(feature = "test-support")]
+    {
+        platform::synthetic_scene()
+    }
+    #[cfg(not(feature = "test-support"))]
+    {
+        false
+    }
 }
 
 fn send(s: &mut State, _: &mut Tx) {
@@ -375,40 +363,24 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    if platform::has_flag("--probe-owned-startup") {
-        owned_startup_probe::run();
+    #[cfg(feature = "test-support")]
+    if probes::dispatch() {
         return;
     }
+    #[cfg(not(feature = "test-support"))]
+    if std::env::args().any(|arg| {
+        arg.starts_with("--probe-")
+            || arg == "--test-support-info"
+            || arg.starts_with("--gallery-")
+            || arg == "--scene"
+            || arg.starts_with("--scene=")
+    }) {
+        eprintln!("Qualification commands require the test-support feature");
+        std::process::exit(2);
+    }
+    #[cfg(feature = "test-support")]
     if platform::has_flag("--gallery-window-close") {
         gallery::run();
-        return;
-    }
-    if platform::has_flag("--probe-real-controls") {
-        agent_live_probe::run();
-        return;
-    }
-    if platform::has_flag("--probe-controls") {
-        agent_probe::run();
-        return;
-    }
-    if platform::has_flag("--probe-launcher") {
-        launcher_probe::run();
-        return;
-    }
-    if platform::has_flag("--probe-real-history") {
-        real_history_probe::run();
-        return;
-    }
-    if platform::has_flag("--probe-fresh") {
-        probes::fresh();
-        return;
-    }
-    if platform::has_flag("--probe-recovery") {
-        recovery_probe::run();
-        return;
-    }
-    if platform::has_flag("--probe-contract") {
-        probes::contract();
         return;
     }
     run_app();
@@ -421,6 +393,7 @@ fn run_app() {
     rune::run(AppSpec {
         setup: Some(setup),
         poll: Some(poll),
+        #[cfg(feature = "test-support")]
         scenes: &[("synthetic", |s| {
             s.messages = transport::synthetic();
             s.phase = Phase::Ready;
@@ -429,12 +402,3 @@ fn run_app() {
     });
     platform::finish();
 }
-
-#[cfg(test)]
-mod agent_tests;
-#[cfg(test)]
-mod content_tests;
-#[cfg(test)]
-mod rtl_tests;
-#[cfg(test)]
-mod tests;

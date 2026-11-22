@@ -5,7 +5,8 @@ import {spawn} from 'node:child_process'
 import path from 'node:path'
 import {responseFor} from './fixture-response.mjs'
 import {FixtureStore} from './fixture-store.mjs'
-import {clientBinary} from './fixture-binaries.mjs'
+import {requireTestSupport,clientBinary} from './fixture-binaries.mjs'
+requireTestSupport()
 const code = 'fn main() {\n    println!("Rune · Code Nomad");\n}'
 const streams = new Set()
 let count = 0

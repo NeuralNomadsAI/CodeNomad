@@ -5,6 +5,7 @@ import {mkdir, readFile, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
+import {requireTestSupport} from '../../packages/rune-app/fixture-binaries.mjs'
 import {chromium} from 'playwright'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
 
@@ -13,6 +14,7 @@ const {values} = parseArgs({options: {
   binary: {type: 'string'}, out: {type: 'string', default: 'target/rune-headless'},
 }})
 assert(values.binary && path.isAbsolute(values.binary), 'Pass --binary with the absolute compiled codenomad-rune path')
+requireTestSupport(values.binary)
 const out = path.resolve(root, values.out)
 await mkdir(out, {recursive: true})
 const env = {...process.env, CODENOMAD_PROFILE: 'trial-rune-headless'}

@@ -4,12 +4,15 @@
 
 `packages/rune-app` contient l'application native, son état et ses vues. `crates/codenomad-client` contient le contrat typé CodeNomad, les requêtes HTTP, les événements SSE, la pagination et la reprise. Le client reçoit explicitement l'adresse, l'authentification et son propriétaire de réveil ; la sélection du profil et le rendu appartiennent à l'application.
 
+Les modules applicatifs sont groupés par domaine : `agent/`, `launcher/`, `chat/`, `components/` et `platform/`. Les sondes CLI et scènes synthétiques sont activées explicitement par la feature `test-support` ; les artefacts produit natif et WebAssembly conservent les entrées simulées et l'inspection du moteur Rune.
+
 `crates/rune-theme-codenomad` reçoit les valeurs générées depuis les styles Solid et les dix catalogues existants. `crates/codenomad-host-process` isole les primitives de confinement de processus derrière une API sûre. L'application conserve l'interdiction du code `unsafe`.
 
 Rune est épinglé à la révision déclarée dans le manifeste de l'application. La préparation vérifie cette identité et l'absence de modifications du checkout de dépendance. Une mise à jour est explicite et qualifiée sur les plateformes prises en charge. Les défauts upstream font l'objet d'une issue dans le dépôt Rune.
 
 ## Agent conventions
 
+- Privilégier le style compact du Rust de Tauri : garder une vue d'ensemble du domaine, limiter fichiers, indirections et commentaires, et concentrer les tests sur les contrats et risques réels. Une expression plus dense convient lorsqu'elle évite une abstraction bavarde et reste lisible.
 - L'intégration se fait sur `feat/rust-server`, par branches courtes issues de sa dernière version distante. La synchronisation avec `dev` reste propriétaire de ses fusions ; une tranche Rune ne fusionne jamais `dev` elle-même.
 - Garder le checkout principal, les hôtes installés, leurs profils et le daemon OpenCode partagé hors des écritures de développement. Les essais utilisent des profils `trial-*`, des sessions et répertoires propres et les caches Cargo existants.
 - Les écrans assemblent des composants `rune-kit` ou des composants CodeNomad partagés. Les besoins spécifiques deviennent des variantes ou options de ces composants ; la logique et les transitions restent dans l'état.
@@ -44,7 +47,7 @@ L'index tracé `rune-components.generated.json` conserve identités, corresponda
 | Jetons et typographie | `packages/ui/src/styles/tokens.css`, styles partagés | `crates/rune-theme-codenomad` | Génération et géométrie à qualifier |
 | Textes | `packages/ui/src/lib/i18n/messages/` | Catalogues générés consommés par le thème et l'application | Dix catalogues, fallback et sens hébreu vérifiés |
 | Contrôles partagés | Contrôles Solid et leurs fixtures | `rune-kit` et variantes CodeNomad | Inventaire ; parité à qualifier |
-| Fermeture de fenêtre | `components/window-close-button.tsx` | `packages/rune-app/src/window_control.rs`, adaptateur `window_control` du thème et galerie | Six paires Windows à échelle 1, accessibilité et activations vérifiées ; autres plateformes et échelles à qualifier |
+| Fermeture de fenêtre | `components/window-close-button.tsx` | `packages/rune-app/src/components/window_close_button.rs`, adaptateur `window_control` du thème et galerie | Six paires Windows à échelle 1, accessibilité et activations vérifiées ; autres plateformes et échelles à qualifier |
 | Démarrage du serveur | `packages/tauri-app/src-tauri/src/cli_manager.rs` | Hôte enfant de `packages/rune-app` | Bootstrap, génération et arrêt Windows vérifiés en profil isolé ; lancement quotidien à compléter |
 | Fil, composeur et ouverture de session | Fixtures du fil, du composeur et des projets | Vues et état de `packages/rune-app` | Parcours natif avec serveur partagé et OpenCode simulé vérifié ; parité Solid à qualifier |
 | Client navigateur | Contrats d'accès distant et cible web Rune | Même état et mêmes vues WASM, bundle servi par `codenomad-rs` | Scène locale sur trois viewports vérifiée ; lecture de session connectée et téléphone physique à qualifier |

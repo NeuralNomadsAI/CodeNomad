@@ -1,9 +1,6 @@
 //! Real OpenCode qualification, using Rune's CPU-only runtime and an owned fault proxy.
-use crate::{
-    Phase, State, init, poll,
-    recovery_probe::{anchor, check_anchor, control},
-    request_older, send, setup, view,
-};
+use super::recovery::{anchor, check_anchor, control};
+use crate::{Phase, State, init, poll, request_older, send, setup, view};
 use rune::{Env, Runtime};
 use serde_json::json;
 use std::time::{Duration, Instant};
