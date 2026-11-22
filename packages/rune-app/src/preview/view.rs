@@ -76,7 +76,10 @@ pub fn viewport(s: &State, cx: &mut Cx<State>) -> El {
             .on_drag(|s: &mut State, d, tx| {
                 use rune::Phase as DragPhase;
                 if let Some(p) = &mut s.preview.panel {
-                    if d.phase == DragPhase::Down { focus(p, true); }
+                    if d.phase == DragPhase::Down {
+                        tx.focus(PAGE, false);
+                        focus(p, true);
+                    }
                     p.send(json!({"op":if d.phase == DragPhase::Move {"move"} else {"pointer"},
                         "x":d.x * p.viewport_px.2,"y":d.y * p.viewport_px.2,"down":d.phase == DragPhase::Down}));
                 }
@@ -151,15 +154,17 @@ pub fn ime(s: &mut State, event: &Ime, tx: &mut Tx) -> bool {
     }
     if let Ime::Preedit(text, ..) | Ime::Commit(text) = event {
         let preedit = matches!(event, Ime::Preedit(..)) && !text.is_empty();
-        if !p.composing {
-            p.send(json!({"op":"ime","phase":"start"}));
-        }
+        let phase = match event {
+            Ime::Preedit(..) if text.is_empty() => "cancel",
+            Ime::Preedit(..) => "update",
+            _ => "end",
+        };
         p.composing = preedit;
-        return p.send(json!({"op":"ime","phase":if preedit {"update"} else {"end"},"text":text}));
+        return p.send(json!({"op":"ime","phase":phase,"text":text}));
     }
     if matches!(event, Ime::Disabled) && p.composing {
         p.composing = false;
-        return p.send(json!({"op":"ime","phase":"end","text":""}));
+        return p.send(json!({"op":"ime","phase":"cancel","text":""}));
     }
     false
 }

@@ -35,7 +35,9 @@ node packages/rune-app/tests/ladybird-live.mjs $rune $ladybirdHost $rustServer $
 
 Set `RUNE_LADYBIRD_PROBE_DPI=2` for HiDPI. The probe uses the Rune Runtime and offscreen DX12
 compositor; it does not show a window, qualify OS IME candidate placement or measure scanout.
-The run writes its evidence under `TEMP`. A screenshot is an explicit readback, not the frame transport.
+Set `RUNE_LADYBIRD_LOAD=1` for eight CPU workers and `RUNE_LADYBIRD_NO_SOLID=1` to omit the slow
+Solid control on repeated performance passes. The run writes its evidence under `TEMP`.
+A screenshot is an explicit readback, separate from the continuous frame transport.
 
 The Windows Job controls the lifetime of the guest and its services. They retain the rights of
 the OS account. The preview discards application credentials; a SideCar that requires the

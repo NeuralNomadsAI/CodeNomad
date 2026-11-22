@@ -35,8 +35,10 @@ impl Guest {
         cfg!(all(windows, feature = "ladybird-preview"))
             && std::env::var("CODENOMAD_PROFILE").as_deref() == Ok("trial-ladybird")
             && std::env::var_os("RUNE_LADYBIRD_BIN").is_some()
-            && std::env::var_os("RUNE_HOST_ROOT").is_some_and(|p| std::path::Path::new(&p).is_absolute())
-            && std::env::var_os("RUNE_SERVER_BIN").is_some_and(|p| std::path::Path::new(&p).is_absolute())
+            && std::env::var_os("RUNE_HOST_ROOT")
+                .is_some_and(|p| std::path::Path::new(&p).is_absolute())
+            && std::env::var_os("RUNE_SERVER_BIN")
+                .is_some_and(|p| std::path::Path::new(&p).is_absolute())
             && std::env::var_os("RUNE_HOST_PERSISTENT").is_none()
     }
 
@@ -90,10 +92,17 @@ impl Guest {
                 let reader = std::thread::spawn(move || {
                     #[cfg(all(windows, feature = "ladybird-preview"))]
                     let read = process.and_then(|process| {
-                        read_frames(BufReader::new(stdout), &state, &*started, process, release)
+                        read_frames(
+                            BufReader::new(stdout),
+                            &state,
+                            &started,
+                            process,
+                            release,
+                            &failed,
+                        )
                     });
                     #[cfg(not(all(windows, feature = "ladybird-preview")))]
-                    let read = read_frames(BufReader::new(stdout), &state, &*started);
+                    let read = read_frames(BufReader::new(stdout), &state, &started);
                     if let Err(error) = read {
                         eprintln!("Ladybird pipe: {error}");
                     }
@@ -102,7 +111,7 @@ impl Guest {
                 });
                 // `release` is also held by outstanding GPU loans. Explicit shutdown must not
                 // depend on those references disappearing (the device may have been lost).
-                loop {
+                while !stopped.load(Ordering::Acquire) {
                     match recv.recv_timeout(std::time::Duration::from_millis(100)) {
                         Ok(message) if message.is_null() => break,
                         Ok(message) => {
@@ -147,9 +156,10 @@ impl Drop for Guest {
 fn read_frames(
     mut input: impl BufRead,
     out: &Mutex<Output>,
-    wake: &dyn Fn(),
+    wake: &rune::Waker,
     #[cfg(all(windows, feature = "ladybird-preview"))] process: std::os::windows::io::OwnedHandle,
     #[cfg(all(windows, feature = "ladybird-preview"))] send: SyncSender<Value>,
+    #[cfg(all(windows, feature = "ladybird-preview"))] failed: &Arc<AtomicBool>,
 ) -> std::io::Result<()> {
     let bad = || std::io::Error::other("Invalid Ladybird message");
     loop {
@@ -178,12 +188,18 @@ fn read_frames(
                     .filter(|n| *n != 0)
                     .ok_or_else(bad)?;
                 let handle = duplicate(&process, foreign)?;
-                let send = send.clone();
+                let (send, failed, wake) = (send.clone(), failed.clone(), wake.clone());
                 // Producer's Skia queue completed the write before publication. The loan stays
                 // immutable until Rune retires it and wgpu completes every draw that sampled it.
                 let texture = unsafe {
                     rune_theme_codenomad::preview::LoanedTexture::new(handle, move || {
-                        let _ = send.try_send(serde_json::json!({"op":"release","frame":_id}));
+                        if send
+                            .try_send(serde_json::json!({"op":"release","frame":_id}))
+                            .is_err()
+                        {
+                            failed.store(true, Ordering::Release);
+                            wake();
+                        }
                     })
                 };
                 let mut out = out.lock().map_err(|_| bad())?;

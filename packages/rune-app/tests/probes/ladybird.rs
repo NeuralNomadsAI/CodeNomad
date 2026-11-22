@@ -101,9 +101,12 @@ pub fn run() {
     );
     let reload = flag.with_file_name("reload");
     let capture = flag.with_file_name("capture");
+    let ime = flag.with_file_name("ime");
     let mut chat_seen = Vec::new();
     let mut resized = false;
     let mut captured = false;
+    let mut input_step = 0;
+    let mut input_clock = Instant::now();
     while !flag.exists() && Instant::now() < deadline {
         if !resized && reload.exists() {
             tap(&mut rt, "ladybird-reload");
@@ -114,6 +117,37 @@ pub fn run() {
         }
         let start = Instant::now();
         rt.frame(0.016);
+        if input_step == 0
+            && ime.exists()
+            && let Some(([x, y, _, _], _)) = rt.presented("ladybird-page")
+        {
+            rt.pointer_move(x + 70., y + 30.);
+            rt.pointer_down(x + 70., y + 30.);
+            rt.pointer_up(x + 70., y + 30.);
+            input_step = 1;
+            input_clock = Instant::now();
+        } else if input_step == 1 && input_clock.elapsed() > Duration::from_millis(220) {
+            rt.update(|s, tx| {
+                assert!(crate::preview::ime(
+                    s,
+                    &rune::Ime::Preedit("日".into(), None, Vec::new()),
+                    tx
+                ));
+                assert!(crate::preview::ime(
+                    s,
+                    &rune::Ime::Commit("日本".into()),
+                    tx
+                ));
+            });
+            input_step = 2;
+            input_clock = Instant::now();
+        } else if input_step == 2 && input_clock.elapsed() > Duration::from_millis(220) {
+            rt.key(rune::KeyEvent {
+                key: rune::Key::Enter,
+                mods: rune::Mods::default(),
+            });
+            input_step = 3;
+        }
         if chat_seen.len() < 25
             && let Some(body) = rt
                 .state
@@ -140,7 +174,9 @@ pub fn run() {
         }
         if !captured && capture.exists() {
             offscreen.submit(&mut rt);
-            offscreen.save(&flag.with_file_name("rune-composite.png")).expect("Rune GPU readback");
+            offscreen
+                .save(&flag.with_file_name("rune-composite.png"))
+                .expect("Rune GPU readback");
             captured = true;
         }
         frame_us.push(start.elapsed().as_micros() as u64);
@@ -154,7 +190,9 @@ pub fn run() {
     );
     if !captured {
         offscreen.submit(&mut rt);
-        offscreen.save(&flag.with_file_name("rune-composite.png")).expect("Rune GPU readback");
+        offscreen
+            .save(&flag.with_file_name("rune-composite.png"))
+            .expect("Rune GPU readback");
     }
     rt.state.preview.close();
     drop(rt);

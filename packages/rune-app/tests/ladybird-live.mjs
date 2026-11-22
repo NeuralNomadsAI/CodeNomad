@@ -60,11 +60,13 @@ const app = createServer((req,res)=>{
   res.end(`<!doctype html><title>Ladybird form trial</title>
     <style>@font-face{font-family:Trial;src:url('/example.woff2')}body{background:#e8ecff;color:#111;font:18px sans-serif}.spin{width:60px;height:60px;background:#d43;animation:rot 1s infinite linear}@keyframes rot{to{transform:rotate(360deg)}}section{height:3000px}</style>
     <h1>Ladybird ${req.url.startsWith("/trial") ? "web" : "SideCar"}</h1>
-    <form><label>Display name <input required value="initial"></label><button>Save</button></form><output>Waiting</output>
+    <form><label>Display name <input required value="${paged.has("ime")?"":"initial"}"
+      ${paged.has("ime")?'style="position:absolute;top:20px;left:30px;width:110px"':''}></label><button>Save</button></form><output>Waiting</output>
     ${paged.has("covered") ? '<div style="position:fixed;inset:0;z-index:2;background:#ffffff18"></div>' : ""}
     <p id="features"></p><img alt="Blue swatch" src="/image.svg" onload="document.querySelector('#features').textContent+=' Image OK'">
     ${paged.has("animate") ? '<div class="spin"></div>' : ""}<section><p>Long content</p></section><footer>End marker</footer>
     <script>document.querySelector('form').onsubmit=e=>{e.preventDefault();document.querySelector('output').textContent='Saved: '+document.querySelector('input').value};
+      document.querySelector('input').addEventListener('compositionend',e=>document.querySelector('#features').textContent+=' IME:'+e.data);
       addEventListener('scroll',()=>{if(scrollY>0 && !window.scrolledOnce){ window.scrolledOnce=true;
         document.querySelector('#features').textContent+=' Scroll OK'; }});
       if(typeof document.fonts?.load === 'function') document.fonts.load('18px Trial').then(()=>document.querySelector('#features').textContent+=' Font OK',()=>{});
@@ -375,6 +377,17 @@ try {
       await tool({action:"scroll",direction:"down",amount:700})
       await wait("Scroll OK")
       return {typed,image:shot.image.data.length}
+    })
+    await check("rune-input",async()=>{
+      await navigate(content+"?ime")
+      await writeFile(path.join(root,"ime"),"")
+      try {
+        await wait("IME:日本",5_000)
+        await wait("Saved: 日本",5_000)
+        return {composition:"日本",submitted:true}
+      } catch(error) {
+        return {error:String(error),...await snap()}
+      }
     })
     await check("features",async()=>{
       await navigate(content)

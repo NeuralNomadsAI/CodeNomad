@@ -1,6 +1,8 @@
 //! Native qualification entry points, enabled exclusively by `test-support`.
 mod controls;
 mod files_state;
+#[cfg(all(windows, feature = "ladybird-preview"))]
+mod ladybird;
 mod latency;
 mod launcher;
 mod live_controls;
@@ -11,8 +13,6 @@ mod pending_live;
 mod pending_open;
 mod real_history;
 mod recovery;
-#[cfg(all(windows, feature = "ladybird-preview"))]
-mod ladybird;
 mod session_transport;
 mod window_restore;
 mod workspaces;

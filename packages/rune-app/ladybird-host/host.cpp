@@ -4,6 +4,7 @@
 #include <AK/LexicalPath.h>
 #include <AK/Utf8View.h>
 #include <LibCore/EventLoop.h>
+#include <LibCore/Promise.h>
 #include <LibGfx/ImageFormats/PNGWriter.h>
 #include <LibGfx/ShareableBitmap.h>
 #include <LibGfx/SystemTheme.h>
@@ -40,6 +41,16 @@ static void send(std::initializer_list<Member> fields)
 class PreviewApplication final : public WebView::Application {
     WEB_VIEW_APPLICATION(PreviewApplication)
     bool should_coordinate_browser_process() const override { return false; }
+    ErrorOr<LexicalPath> default_path_for_downloaded_file(ByteString const&) const override
+    {
+        return Error::from_string_literal("Downloads are disabled in the Rune preview");
+    }
+    NonnullRefPtr<Core::Promise<ByteString>> ask_user_for_download_path(ByteString const&) const override
+    {
+        auto result = Core::Promise<ByteString>::construct();
+        result->reject(Error::from_string_literal("Downloads are disabled in the Rune preview"));
+        return result;
+    }
 };
 
 class PreviewView final : public WebView::HeadlessWebView {
@@ -51,6 +62,7 @@ public:
         on_request_alert = [this](auto const&) { alert_closed(); };
         on_request_confirm = [this](auto const&) { confirm_closed(false); };
         on_request_prompt = [this](auto const&, auto const&) { prompt_closed({}); };
+        on_request_file_picker = [this](auto const&, auto) { file_picker_closed({}); };
         initialize_tab(Web::HTML::VisibilityState::Visible);
         on_load_start = [this] {
             ++m_epoch;
@@ -188,7 +200,7 @@ public:
         } else if (op == "ime"sv) {
             auto text = Utf16String::from_utf8(string("text"sv));
             auto phase = string("phase"sv);
-            if (phase == "update"sv)
+            if (phase == "update"sv || phase == "cancel"sv)
                 set_marked_text_from_input_method(text);
             if (phase == "end"sv) {
                 if (text.is_empty())
@@ -230,6 +242,7 @@ public:
     }
 
 private:
+    ViewImplementation* create_view_for_new_tab_or_window(WebView::IsPrivate) override { return nullptr; }
     struct Loan {
         u64 id;
         i32 bitmap;
@@ -251,11 +264,17 @@ private:
     void did_accept_presented_backing_store(i32 bitmap_id, Gfx::IntRect) override
     {
         m_loans.remove_all_matching([&](auto& loan) {
-            if (!loan.returned || loan.page.ptr() == &page())
+            if (loan.page.ptr() != &page() || loan.bitmap != bitmap_id)
+                loan.superseded = true;
+            if (!loan.returned || !loan.superseded)
                 return false;
             loan.page->release_presented_bitmap(loan.bitmap);
             return true;
         });
+        if (m_loans.size() >= 128) {
+            Core::EventLoop::current().quit(4);
+            return;
+        }
         auto frame = backing_stores().displayed_frame();
         if (!frame.has_value() || !frame->shared_image_buffer)
             return;
