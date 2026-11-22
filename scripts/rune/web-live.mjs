@@ -123,8 +123,9 @@ export async function navigatePair(tab, url, {fromLink=false}={}){
     void exchange.catch(()=>{})
     if(fromLink)await tab.getByRole('link',{name:'Pair',exact:true}).click({noWaitAfter:true})
     else await tab.goto(url.href,{waitUntil:'commit'})
-    assert.equal((await document).status(),200,'Serve the pairing document even with a foreign Referer')
+    const status=(await document).status()
     if(fromLink)assert.equal(observedReferrer,referrer,'Pairing navigation must carry a real cross-origin Referer')
+    assert.equal(status,200,'Serve the pairing document even with a foreign Referer')
     assert.equal((await exchange).status(),200)
     await tab.waitForURL(target=>target.pathname==='/' && target.searchParams.get('locale')===url.searchParams.get('locale'))
   } finally { await tab.unroute('**/*',routePair) }

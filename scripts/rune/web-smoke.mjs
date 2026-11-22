@@ -115,6 +115,7 @@ try {
           const openSessions=async()=>{
             const toggle=page.getByRole('button',{name:left,exact:true})
             await toggle.waitFor()
+            await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
             if(await toggle.getAttribute('aria-expanded')!=='true')await press(left)
             await sessions.waitFor()
           }

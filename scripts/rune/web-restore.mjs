@@ -146,6 +146,7 @@ try {
     const sessions=mirror().getByRole('region',{name:left,exact:true})
     const openSessions=async()=>{
       await button(left).waitFor()
+      await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))
       if(await button(left).getAttribute('aria-expanded')!=='true')await press(button(left))
       await sessions.waitFor()
     }
@@ -246,10 +247,10 @@ try {
     }
     try {
       await page.goto(url.href,{waitUntil:'domcontentloaded',timeout:60000});await boot();await connect()
-      await type(m['instanceInfo.labels.folder'],values.project);await press(button(m['directoryBrowser.openCurrent']))
+      await type(m['instanceInfo.labels.folder'],values.project);await page.keyboard.press('Enter')
       await openSessions();await press(sessionRow('Existing history'));await reading('ses_existing');await type(m['rune.prompt'],draftA)
       await press(button(m['instanceTabs.new.ariaLabel']))
-      await type(m['instanceInfo.labels.folder'],values.project);await press(button(m['directoryBrowser.openCurrent']))
+      await type(m['instanceInfo.labels.folder'],values.project);await page.keyboard.press('Enter')
       await openSessions();await press(button(m['rune.more']));await press(sessionRow('Another session'));await reading('ses_another');await type(m['rune.prompt'],draftB)
       await selected(1);await saved([draftA,draftB]);await capture('before-reload')
       record.syntheticBFCache=await page.evaluate(({key,released,proof})=>{
