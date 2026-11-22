@@ -2396,7 +2396,6 @@ function proxyPreviewFallbackFromReferer(
   }
   const rawUrl = request.raw.url ?? request.url ?? ""
   const entry = request.method === "GET" || request.method === "HEAD" ? routedPath(rawUrl) : null
-  if (entry === "/") return false
   const pathname = rawUrl.split("?")[0] ?? ""
   if (!isPreviewFallbackPath(pathname)) {
     return false
@@ -2407,7 +2406,7 @@ function proxyPreviewFallbackFromReferer(
   if (!referer) {
     return false
   }
-  if (entry === PAIR_PAGE_PATH) {
+  if (entry === "/" || entry === PAIR_PAGE_PATH) {
     // A preview's same-host resource may use this path; an external link is an app navigation.
     try {
       const source = new URL(referer)

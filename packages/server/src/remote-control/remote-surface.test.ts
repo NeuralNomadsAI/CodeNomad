@@ -512,6 +512,7 @@ test("web previews reach Remote Control through their capability while the host 
   const asset = () => send(target(), "/assets/probe.json", { headers: { cookie, referer: `${ORIGIN}/previews/${token}/page` } })
   assert.equal((await asset()).body, "{\"ok\":true}")
   assert.equal((await send(target(), "/remote-pair", { headers: { cookie, referer: `${ORIGIN}/previews/${token}/page` } })).body, "{\"ok\":true}")
+  assert.equal((await send(target(), "/;version=1", { headers: { cookie, referer: `${ORIGIN}/previews/${token}/page` } })).body, "{\"ok\":true}")
 
   const live = await upgrade(target(), `/previews/${token}/ws`)
   assert.equal(live.status, 101)
@@ -532,7 +533,7 @@ test("web previews reach Remote Control through their capability while the host 
   assert.equal((await upgrade(target(), `/previews/${token}/ws`)).status, 404)
   assert.notEqual((await asset()).body, "{\"ok\":true}")
   assert.equal(JSON.parse((await send(target(), "/api/meta", { headers: { cookie } })).body).previewsUnavailable, true)
-  assert.deepEqual(upstream.requests, [["GET", "/page", undefined], ["POST", "/form", undefined], ["GET", "/assets/probe.json", undefined], ["GET", "/remote-pair", undefined]])
+  assert.deepEqual(upstream.requests, [["GET", "/page", undefined], ["POST", "/form", undefined], ["GET", "/assets/probe.json", undefined], ["GET", "/remote-pair", undefined], ["GET", "/;version=1", undefined]])
 })
 
 test("web previews served through Remote Control stay on the preview origin", async (t) => {
