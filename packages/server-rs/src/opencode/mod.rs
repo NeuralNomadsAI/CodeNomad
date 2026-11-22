@@ -7,7 +7,9 @@ pub mod daemon;
 pub mod install;
 pub mod launch;
 pub(crate) mod login_start;
+mod prompt;
 pub mod proxy;
+mod proxy_body;
 pub mod scope;
 pub mod update;
 

@@ -4,7 +4,7 @@ use std::{sync::LazyLock, time::Duration};
 
 use axum::{
     Json,
-    body::{Body, to_bytes},
+    body::Body,
     extract::{Request, State},
     http::{Method, StatusCode as Status, header},
     response::{IntoResponse, Response},
@@ -146,6 +146,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let workspace = app.workspace(id)?;
     let route = safe_route(suffix).ok_or_else(invalid)?;
     let route = route.trim_end_matches('/');
+    let prompt = head.method == Method::POST && route.starts_with("/api/session/") && route.ends_with("/prompt");
+    let body_limit = if prompt { super::prompt::BODY_LIMIT } else { 1024 * 1024 };
     let control = controls::classify(route, &head.method);
     if !ALLOWED.iter().any(|(m, pat)| *m == head.method.as_str() && pat.is_match(route)) {
         return Err(error(Status::FORBIDDEN, "OpenCode route is not available through a workspace"));
@@ -153,6 +155,31 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     if control.is_none() && !guarded(route, &head.method) {
         return Ok(unavailable());
     }
+    let declared =
+        head.headers.get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<usize>().ok());
+    if (control.is_some() || matches!(head.method, Method::POST | Method::PUT | Method::PATCH))
+        && declared.is_some_and(|length| length > body_limit)
+    {
+        let _ = super::proxy_body::read(body, body_limit, declared).await;
+        return Err(super::proxy_body::too_large());
+    }
+    let mut pending_body = Some(body);
+    let mut prompt_directories = Vec::new();
+    let mut prompt_input = if prompt {
+        let bytes =
+            super::proxy_body::read(pending_body.take().ok_or_else(upstream_error)?, body_limit, declared).await?;
+        let data = super::prompt::parse(&head.headers, &bytes)?;
+        if data.as_object().is_some_and(schedule_input) {
+            return Err(carrier_denied());
+        }
+        // The reference rejects inline-data budgets before Location/path ownership.
+        super::prompt::budget(&data)?;
+        prompt_directories =
+            super::prompt::locations(&data, workspace.location["directory"].as_str().ok_or_else(upstream_error)?)?;
+        Some(data)
+    } else {
+        None
+    };
     // Native writes that can create or move execution state share the
     // backend's worktree mutation fence with Git, files and removal.
     let mut mutation = if head.method != Method::GET {
@@ -167,6 +194,15 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let endpoint = app.native.endpoint().ok_or_else(upstream_error)?;
     if dunce::canonicalize(opened).ok().as_ref() != Some(&workspace.path) {
         return Err(foreign());
+    }
+    let mut translated_directories = std::collections::BTreeMap::new();
+    for directory in &mut prompt_directories {
+        let translated = super::prompt::directory(&app, &workspace, directory).await?;
+        translated_directories.insert(directory.clone(), translated.clone());
+        *directory = translated;
+    }
+    if let Some(data) = &mut prompt_input {
+        super::prompt::translate(data, &translated_directories);
     }
     let mut target = endpoint.url.clone();
     target.set_query(head.uri.query());
@@ -212,10 +248,27 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
         let context = value
             .to_str()
             .ok()
-            .and_then(decode)
+            .and_then(|value| {
+                if prompt {
+                    if value.len() > 16_384 { None } else { crate::shared::decode_component(value) }
+                } else {
+                    decode(value)
+                }
+            })
             .and_then(|s| serde_json::from_str(&s).ok())
             .ok_or_else(|| error(Status::BAD_REQUEST, "Invalid location context"))?;
-        one_location(&context, directory)?;
+        if prompt {
+            let context = super::prompt::directory(&app, &workspace, super::prompt::context(&context)?).await?;
+            if prompt_directories.iter().any(|directory| directory != &context)
+                || target.query_pairs().any(|(key, value)| {
+                    matches!(key.as_ref(), "directory" | "location[directory]") && value != context.as_str()
+                })
+            {
+                return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
+            }
+        } else {
+            one_location(&context, directory)?;
+        }
     }
     let session_list = route == "/api/session" && head.method == Method::GET;
     if target.query_pairs().any(|(key, _)| {
@@ -296,19 +349,27 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let mut root_permissions = None;
     let mut input = None;
     if control.is_some() || matches!(head.method, Method::POST | Method::PUT | Method::PATCH) {
-        let contents =
-            to_bytes(body, 1024 * 1024).await.map_err(|_| error(Status::PAYLOAD_TOO_LARGE, "Request too large"))?;
-        let data: Value = if contents.is_empty() {
-            json!({})
+        let data: Value = if let Some(data) = prompt_input.take() {
+            data
         } else {
-            if !head.headers.get(header::CONTENT_TYPE).is_some_and(|v| v.as_bytes().starts_with(b"application/json")) {
-                return Err(if control.is_some() {
-                    controls::invalid("Invalid session control")
-                } else {
-                    error(Status::BAD_REQUEST, "Session request requires a JSON object")
-                });
+            let contents =
+                super::proxy_body::read(pending_body.take().ok_or_else(upstream_error)?, body_limit, declared).await?;
+            if contents.is_empty() {
+                json!({})
+            } else {
+                if !head
+                    .headers
+                    .get(header::CONTENT_TYPE)
+                    .is_some_and(|v| v.as_bytes().starts_with(b"application/json"))
+                {
+                    return Err(if control.is_some() {
+                        controls::invalid("Invalid session control")
+                    } else {
+                        error(Status::BAD_REQUEST, "Session request requires a JSON object")
+                    });
+                }
+                serde_json::from_slice(&contents).map_err(|_| error(Status::BAD_REQUEST, "Invalid JSON"))?
             }
-            serde_json::from_slice(&contents).map_err(|_| error(Status::BAD_REQUEST, "Invalid JSON"))?
         };
         if let Some(control) = control {
             if data.as_object().is_some_and(schedule_input) {
@@ -320,12 +381,19 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             }
         } else {
             let Value::Object(mut data) = data else {
-                return Err(error(Status::BAD_REQUEST, "Session request requires a JSON object"));
+                return Err(error(
+                    Status::BAD_REQUEST,
+                    if prompt {
+                        "Session input requires a JSON object"
+                    } else {
+                        "Session request requires a JSON object"
+                    },
+                ));
             };
-            if data.contains_key("parentID") {
+            if !prompt && data.contains_key("parentID") {
                 return Err(error(Status::FORBIDDEN, "Parent session creation is not available through a workspace"));
             }
-            if let Some(location) = data.get("location") {
+            if !prompt && let Some(location) = data.get("location") {
                 one_location(location, directory)?;
             }
             if schedule_input(&data) {
@@ -346,8 +414,11 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             } else {
                 &["text", "delivery", "id"]
             };
-            if data.keys().any(|key| !fields.contains(&key.as_str())) {
+            if !prompt && data.keys().any(|key| !fields.contains(&key.as_str())) {
                 return Ok(unavailable());
+            }
+            if prompt {
+                super::prompt::validate(&app, &workspace, &data).await?;
             }
             if create {
                 if !crate::worktrees::exact_root_supported(&app, &workspace).await? {
