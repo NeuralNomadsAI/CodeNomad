@@ -42,6 +42,8 @@ La línea de tiempo se oculta cuando la conversación es demasiado estrecha (men
 
 **Contenido de los mensajes** se aplica a todas las conversaciones. Elige un preajuste (**Nada**, **Mínimo**, **Equilibrado** o **Todo**) en su parte superior o en **Configuración → Chat** y después ajusta filas individuales; el menú de preajustes de **Contenido de los mensajes** muestra entonces **Personalizado**. Ocultar herramientas no las desactiva, no cambia permisos ni elimina la salida almacenada. Para mantener la fluidez de representación, los mensajes muy grandes muestran **Mostrar … más** en un hueco omitido, y los textos o salidas de herramientas muy largos se detienen en una línea **… caracteres más ocultos** con **Mostrar todo**, o **Mostrar … más** cuando queda mucho, lo que puede requerir varios pasos. Revelar cualquiera de ellos solo afecta a la visualización y no recupera contenido eliminado. Arrastra sobre sus botones de ojo o de flecha para ajustar varias filas a la vez: el primer botón del que sales cambia, y cada botón que cruzas en la misma columna toma su nuevo estado. La conversación se actualiza al soltar el botón.
 
+En **Grupos de herramientas**, desactiva el ojo para mostrar cada llamada por separado o usa la flecha para abrir los grupos de forma predeterminada. Cada tipo de herramienta conserva su propio ajuste de visibilidad. **Todo** abre los grupos de forma predeterminada; los demás preajustes los dejan colapsados.
+
 ## Compactar una sesión {#compact-session}
 
 1. Selecciona la conversación deseada.

@@ -35,11 +35,11 @@ Le test de lecture utilise immédiatement le mode et le format sélectionnés, m
 ## Dicter un prompt {#dictate}
 
 1. Gardez **Saisie vocale du prompt** activée dans **Voix** (elle l’est par défaut).
-2. Dans **Plus d'actions** de la zone de saisie, choisissez **Dicter** et autorisez le microphone. Si la dictée ou la conversation est indisponible, la commande indique pourquoi et ouvre la carte **Voix** correspondante. La dictée, le test d’entrée et la conversation en direct utilisent le microphone à tour de rôle.
-3. Choisissez **Arrêter l'enregistrement et transcrire** pour obtenir le texte ou **Annuler la dictée** pour abandonner l’enregistrement. Changer de conversation ou fermer la zone de saisie annule aussi la dictée.
+2. Dans **Plus d'actions**, cochez **Mode dictée**. Décochez le mode actif avant de choisir l’autre.
+3. Maintenez le bouton micro à côté de **Plus d'actions** (ou la barre d’espace quand le bouton a le focus), parlez, puis relâchez pour transcrire. Autorisez le microphone si nécessaire. Changer de conversation ou fermer la zone de saisie annule la dictée.
 4. Relisez le texte. Il remplace la sélection d’origine si le brouillon et la sélection n’ont pas changé ; sinon, choisissez **Insérer la transcription** en mode normal ou **Ignorer la transcription** avant de dicter de nouveau. La dictée n’envoie jamais le brouillon.
 
-Si l’API utilise le mode WAV de secours sur Tauri sous Linux, **Dicter** et **Tester l'entrée API** arrêtent l’enregistrement au bout de 24 secondes. L’extrait reste sur cet appareil jusqu’à ce que vous choisissiez **Transcrire** pour l’envoyer au fournisseur vocal ou **Annuler** pour le supprimer.
+Si l’API utilise le mode WAV de secours sur Tauri sous Linux, la dictée et **Tester l'entrée API** arrêtent l’enregistrement au bout de 24 secondes. L’extrait reste sur cet appareil jusqu’à ce que vous choisissiez **Transcrire** pour l’envoyer au fournisseur vocal ou **Annuler** pour le supprimer.
 
 Les enregistrements compressés pour l’API s’arrêtent à la taille maximale et proposent les mêmes choix : **Transcrire** ou **Annuler**.
 
@@ -55,7 +55,7 @@ Ubuntu 24.04 satisfait au prérequis glibc, contrairement à Ubuntu 22.04. Hex d
 
 Hex charge son modèle en arrière-plan dès le début de l’enregistrement et le garde prêt pendant trois minutes après la dernière dictée.
 
-La reconnaissance locale utilise le microphone de cet appareil et fonctionne hors ligne, y compris pour les projets WSL ouverts dans l’application locale. Dans une fenêtre distante compatible, **Dicter** ouvre la fenêtre locale **Dicter sur cet appareil**. Vérifiez la destination affichée, puis choisissez **Démarrer la saisie vocale**, **Arrêter l'enregistrement et transcrire** et **Insérer la transcription** pour renvoyer uniquement le texte au brouillon. Le projet distant doit rester connecté à son serveur.
+La reconnaissance locale fonctionne hors ligne, y compris pour les projets WSL ouverts dans l’application locale. Dans une fenêtre distante compatible, cliquez sur le micro pour ouvrir **Dicter sur cet appareil**. Vérifiez la destination, puis utilisez les commandes d’enregistrement et d’insertion de cette fenêtre. Seul le texte revient dans le brouillon ; le projet distant doit rester connecté à son serveur.
 
 Dans une fenêtre Tauri distante sous Linux, **Tester l'entrée API** vérifie l’API vocale du serveur sans changer le moteur de dictée. Vérifiez l’adresse du serveur dans la boîte de dialogue native du microphone avant de confirmer chaque enregistrement pour l’API. La capture utilise PulseAudio ou le service PulseAudio de PipeWire et applique toujours la limite WAV de 24 secondes décrite ci-dessus.
 
@@ -75,7 +75,7 @@ Gemini Live et OpenAI Realtime sont réservés aux sessions du serveur qui a ouv
 
 Dans **Conversation**, choisissez un **Moteur de conversation** :
 
-- **Classique** nécessite seulement une lecture configurée dans un format compatible. Dans **Plus d'actions**, choisissez **Activer le mode conversation**. CodeNomad demande à l’agent de commencer chaque réponse à un prompt envoyé par un résumé `spoken` et lit ce seul bloc terminé dans la session principale active. Le mode s’applique à l’onglet du projet jusqu’à sa désactivation ou au rechargement. Démarrer la dictée arrête la lecture du résumé.
+- **Classique** nécessite seulement une lecture configurée dans un format compatible. Dans **Plus d'actions**, cochez **Mode conversation**. CodeNomad lit le résumé `spoken` terminé de chaque réponse dans la session principale active. Le mode s’applique à l’onglet du projet jusqu’à ce que vous le décochiez ou rechargiez la page.
 - **Gemini Live** et **OpenAI Realtime** ont chacun leur **Clé API**, leur **Modèle** et une **Voix** facultative. Enregistrez les réglages du fournisseur choisi. Ouvrez la session cible, choisissez **Mode conversation** dans **Plus d'actions**, puis **Accepter et démarrer** quand la boîte de dialogue du fournisseur s’affiche. Autorisez le microphone.
 
 Si le fournisseur devient indisponible pendant que la boîte de dialogue est ouverte, choisissez **Réglages vocaux** pour ouvrir la carte **Conversation**.

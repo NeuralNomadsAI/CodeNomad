@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import fs from "node:fs/promises"
+import { syncBuiltinESMExports } from "node:module"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, it } from "node:test"
@@ -66,6 +68,52 @@ describe("configured Git checkout roots", () => {
     await assert.rejects(fixtureCatalogue(repo), /must be run in a work tree/)
   })
 
+  it("does not accept an invalid linked checkout without per-worktree config", async () => {
+    git(repo, "config", "extensions.worktreeConfig", "true")
+    const admin = git(linked, "rev-parse", "--absolute-git-dir")
+    writeFileSync(path.join(admin, "HEAD"), "invalid")
+    await assert.rejects(fixtureCatalogue(repo, [repo, linked]), /not a git repository|not a checkout root/i)
+  })
+
+  it("discards the scan if shared config changes after Git reads it", async () => {
+    git(repo, "config", "extensions.worktreeConfig", "true")
+    let changed = false
+    await assert.rejects(fixtureCatalogue(repo, [repo, linked], async directory => {
+      if (directory === linked && !changed) {
+        changed = true
+        git(repo, "config", "core.worktree", redirected)
+        assert.equal(realpathSync(git(repo, "rev-parse", "--show-toplevel")), realpathSync(redirected))
+      }
+      return directory
+    }), /Git configuration changed/)
+    assert.equal(changed, true)
+  })
+
+  it("discards the scan if a worktree config appears after its absence was observed", async t => {
+    git(repo, "config", "extensions.worktreeConfig", "true")
+    const file = path.join(realpathSync(git(linked, "rev-parse", "--absolute-git-dir")), "config.worktree")
+    const original = fs.lstat
+    let changed = false
+    const mock = t.mock.method(fs, "lstat", (async (...args: Parameters<typeof fs.lstat>) => {
+      try { return await original(...args) }
+      catch (error) {
+        if (args[0] === file && !changed && (error as NodeJS.ErrnoException).code === "ENOENT") {
+          changed = true
+          git(linked, "config", "--worktree", "core.worktree", redirected)
+        }
+        throw error
+      }
+    }) as typeof fs.lstat)
+    syncBuiltinESMExports()
+    try {
+      await assert.rejects(fixtureCatalogue(repo, [repo, linked]), /Git configuration changed/)
+      assert.equal(changed, true)
+    } finally {
+      mock.mock.restore()
+      syncBuiltinESMExports()
+    }
+  })
+
   it("checks a redirected main checkout when opened from an ordinary linked checkout", async () => {
     git(repo, "config", "core.worktree", redirected)
     assert.equal(realpathSync(git(repo, "rev-parse", "--show-toplevel")), realpathSync(redirected))
@@ -110,10 +158,11 @@ describe("configured Git checkout roots", () => {
     await assert.rejects(fixtureCatalogue(repo), /not a checkout root/)
   })
 
-  it("keeps the ordinary scan process count constant with benign includes and more checkouts", async () => {
+  it("checks only the checkout with worktree config when the extension is enabled", async () => {
     const included = path.join(temp, "benign-config")
     writeFileSync(included, "[core]\n\tbare = false\n[user]\n\tname = Test\n")
     git(repo, "config", "include.path", gitPath(included))
+    git(repo, "config", "extensions.worktreeConfig", "true")
     const other = path.join(temp, "detached checkout")
     git(repo, "worktree", "add", "--detach", other)
     const trace = path.join(temp, "git-trace.json")
@@ -124,7 +173,7 @@ describe("configured Git checkout roots", () => {
       const starts = readFileSync(trace, "utf8").trim().split("\n").map(line => JSON.parse(line))
         .filter(event => event.event === "start" && event.argv.some((arg: string) => arg.startsWith(temp)))
       assert.equal(starts.filter(event => event.argv.includes("--porcelain")).length, 1)
-      assert.equal(starts.filter(event => event.argv.includes("--includes")).length, 1)
+      assert.equal(starts.filter(event => event.argv.includes("--includes")).length, 2)
       return { result, commands: starts.map(event => event.argv.slice(3)) }
     }
     const one = await scan([repo])
@@ -132,5 +181,9 @@ describe("configured Git checkout roots", () => {
     assert.equal(many.result.worktrees.length, 3)
     assert.deepEqual(many.commands.sort(), one.commands.sort())
     assert.equal(many.result.worktrees.find(entry => entry.branch === "feature")?.removable, true)
+    git(linked, "config", "--worktree", "core.worktree", linked)
+    const configured = await scan([repo, linked, other])
+    assert.equal(configured.result.worktrees.length, 3)
+    assert.deepEqual(configured.commands.sort(), [...one.commands, ["rev-parse", "--show-toplevel"]].sort())
   })
 })

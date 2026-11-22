@@ -35,8 +35,8 @@ La prueba de reproducción usa inmediatamente el modo y el formato seleccionados
 ## Dictar un mensaje {#dictate}
 
 1. Mantén activada **Entrada de voz del prompt** en **Voz** (está activada por defecto).
-2. En el editor, abre **Más acciones → Dictar** y permite el acceso al micrófono. Si el dictado o la conversación no están disponibles, el comando indica el motivo y abre la tarjeta de **Voz** correspondiente. El dictado, la prueba de entrada y la conversación en directo usan el micrófono de uno en uno.
-3. Elige **Detener grabación y transcribir** para obtener el texto o **Cancelar el dictado** para descartar la grabación. Cambiar de conversación o cerrar el editor también cancela el dictado.
+2. En **Más acciones**, marca **Modo de dictado**. Desmarca el modo activo antes de elegir el otro.
+3. Mantén pulsado el micrófono junto a **Más acciones**, habla y suéltalo para transcribir. Concede acceso al micrófono si se solicita. En una ventana remota compatible, púlsalo para abrir los controles de dictado locales.
 4. Revisa el texto. Solo sustituye la selección original si el borrador y la selección no han cambiado. Si han cambiado, elige **Insertar la transcripción** en modo normal o **Descartar la transcripción** antes de volver a dictar. El dictado nunca envía el mensaje.
 
 Si la API recurre a WAV en Tauri para Linux, el dictado y la prueba de entrada detienen la grabación a los 24 segundos. El fragmento queda en este dispositivo hasta que elijas **Transcribir** para enviarlo al proveedor de voz o **Cancelar** para descartarlo.
@@ -55,7 +55,7 @@ Ubuntu 24.04 cumple el requisito de glibc, mientras que Ubuntu 22.04 no. Hex det
 
 Hex carga su modelo en segundo plano al iniciar la grabación y lo mantiene listo durante tres minutos tras el último dictado.
 
-El reconocimiento local usa el micrófono de este dispositivo y funciona sin conexión, también en proyectos WSL abiertos en la aplicación local. Desde una ventana remota compatible, **Dictar** abre la ventana local **Dictar en este dispositivo**. Comprueba el destino y elige **Iniciar entrada de voz**, **Detener grabación y transcribir** e **Insertar la transcripción** para devolver solo el texto al borrador. El proyecto remoto sigue necesitando conexión con su servidor.
+El reconocimiento local funciona sin conexión, también en proyectos WSL abiertos en la aplicación local. En una ventana remota compatible, pulsa el micrófono para abrir **Dictar en este dispositivo**. Comprueba el destino y usa los controles de grabación e inserción de esa ventana. Solo vuelve el texto al borrador. El proyecto remoto sigue necesitando conexión con su servidor.
 
 En una ventana remota de Tauri en Linux, **Probar entrada por API** comprueba la API de voz del servidor sin cambiar el motor de dictado. Comprueba la dirección del servidor en el cuadro de diálogo nativo del micrófono antes de confirmar cada grabación para la API. La captura usa PulseAudio o el servicio PulseAudio de PipeWire y siempre se aplica el límite de WAV de 24 segundos descrito arriba.
 
@@ -75,7 +75,7 @@ Gemini Live y OpenAI Realtime solo están disponibles para las sesiones del serv
 
 En **Conversación**, elige el **Motor de conversación**:
 
-- **Clásico** solo requiere reproducción configurada en un formato compatible. Elige **Activar modo conversación** en **Más acciones**. CodeNomad pide al agente que empiece la respuesta a cada mensaje que envías con un resumen breve `spoken` y solo lee ese bloque completo en la sesión principal activa. Se aplica a la pestaña del proyecto hasta que lo desactives o recargues. Iniciar el dictado detiene la lectura del resumen.
+- **Clásico** solo requiere reproducción configurada en un formato compatible. Marca **Modo de conversación** en **Más acciones**. CodeNomad lee el resumen `spoken` completo de la respuesta en la sesión principal activa. Se aplica a la pestaña del proyecto hasta que lo desmarques o recargues.
 - **Gemini Live** y **OpenAI Realtime** tienen cada uno su propia **Clave API**, su **Modelo** y una **Voz** opcional. Guarda los ajustes del proveedor elegido. Abre la sesión de destino, elige **Modo de conversación** en **Más acciones** y, cuando aparezca el aviso del proveedor, pulsa **Aceptar y empezar**. Permite el acceso al micrófono.
 
 Si el proveedor deja de estar disponible mientras el aviso sigue abierto, elige **Ajustes de voz** para abrir la tarjeta de conversación.

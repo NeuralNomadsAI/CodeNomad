@@ -284,8 +284,12 @@ function reject(reply: FastifyReply, status: number, error: string): void {
   reply.header("connection", "close").code(status).send({ error })
 }
 
+export function isHtmlBundlePath(pathname: string): boolean {
+  return /\.html?(?:\.(?:br|gz|deflate))*$/i.test(pathname)
+}
+
 function isStaticBundlePath(pathname: string): boolean {
-  return /\.[A-Za-z0-9]+$/.test(pathname) && !/\.html?$/i.test(pathname)
+  return /\.[A-Za-z0-9]+$/.test(pathname) && !isHtmlBundlePath(pathname)
     && !pathname.startsWith("/api/") && !pathname.startsWith("/workspaces/")
 }
 

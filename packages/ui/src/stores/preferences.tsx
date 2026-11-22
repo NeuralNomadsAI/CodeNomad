@@ -9,6 +9,7 @@ import { generateUUID } from "../lib/client-identity"
 import { sameServerSelection } from "../lib/native/server-selection-intent"
 import { readRemoteProjectHistory, RECENT_PROJECT_LIMIT, type RemoteProjectRecentEdit } from "../lib/remote-project-recent-data"
 import type { ConversationPermissionMode, RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
+import { transcriptPresetFallbacks } from "../../../server/src/settings/transcript-preset-defaults"
 import {
   ensureInstanceConfigLoaded,
   getInstanceConfig,
@@ -140,6 +141,7 @@ export interface UiSettings {
   toolOutputExpansion: ExpansionPreference
   diagnosticsExpansion: VisibilityPreference
   systemMessagesVisibility: VisibilityPreference
+  toolGroupVisibility: VisibilityPreference
   toolInputsVisibility: ToolInputsVisibilityPreference
   showUsageMetrics: boolean
   usageMetricsExpansion: ExpansionPreference
@@ -268,6 +270,7 @@ const defaultUiSettings: UiSettings = {
   toolOutputExpansion: "expanded",
   diagnosticsExpansion: "expanded",
   systemMessagesVisibility: "hidden",
+  toolGroupVisibility: "collapsed",
   toolInputsVisibility: "collapsed",
   showUsageMetrics: false,
   usageMetricsExpansion: "collapsed",
@@ -363,10 +366,7 @@ const defaultSpeechSettings: SpeechSettings = {
 function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
   const sanitized = input ?? {}
   const toolCallExpansionDefaults = normalizeToolCallExpansionDefaults(sanitized.toolCallExpansionDefaults, sanitized)
-  const usageMetricsFallback =
-    toolCallExpansionDefaults.preset === "nothing" || toolCallExpansionDefaults.preset === "minimal" || toolCallExpansionDefaults.preset === "balanced"
-      ? "collapsed"
-      : "expanded"
+  const fallback = transcriptPresetFallbacks(toolCallExpansionDefaults.preset)
   return {
     multiBackend: sanitized.multiBackend === undefined ? defaultUiSettings.multiBackend : sanitized.multiBackend === true,
     highContrast: normalizeHighContrastPreference(sanitized.highContrast),
@@ -393,6 +393,10 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       defaultUiSettings.diagnosticsExpansion,
     ),
     systemMessagesVisibility: normalizeVisibilityPreference(sanitized.systemMessagesVisibility, "hidden"),
+    toolGroupVisibility: normalizeVisibilityPreference(
+      sanitized.toolGroupVisibility,
+      fallback.toolGroupVisibility,
+    ),
     toolInputsVisibility:
       sanitized.toolInputsVisibility === "hidden" || sanitized.toolInputsVisibility === "collapsed" || sanitized.toolInputsVisibility === "expanded"
         ? sanitized.toolInputsVisibility
@@ -400,7 +404,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     showUsageMetrics: sanitized.showUsageMetrics ?? defaultUiSettings.showUsageMetrics,
     usageMetricsExpansion: normalizeExpansionPreference(
       sanitized.usageMetricsExpansion,
-      usageMetricsFallback,
+      fallback.usageMetricsExpansion,
     ),
     showProviderUsageCreditBalance:
       sanitized.showProviderUsageCreditBalance ?? defaultUiSettings.showProviderUsageCreditBalance,

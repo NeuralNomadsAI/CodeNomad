@@ -36,12 +36,15 @@ for (const host of ["electron", "tauri"]) for (const mode of ["create", "reuse",
       ].map((value, index) => ({ kind: "workspace", ...value, drafts: { __no_session_draft__: `draft-${index}` },
         attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {} })) }
       const snapshot = { version: 1, revision: 1, savedAt: 1, layout: {}, session }
-      const persisted = JSON.parse(sessionStorage.getItem("restored-state") || "null")
+      let persisted = JSON.parse(sessionStorage.getItem("restored-state") || "null")
       const load = () => ({ isPrimary: true, restoreEnabled: true, snapshot: persisted?.snapshot || snapshot, partitionProtocolVersion: 1 })
       const commit = (value: any) => {
         if ((window as any).holdSnapshotCommit) return new Promise(() => {})
-        ;(window as any).committedState = value
-        sessionStorage.setItem("restored-state", JSON.stringify(value))
+        const partitions = { ...persisted?.partitions, ...value.partitions }
+        if (value.partitionKeys.some((key: string) => !(key in partitions))) throw Error("Missing client state partition")
+        persisted = { ...value, partitions: Object.fromEntries(value.partitionKeys.map((key: string) => [key, partitions[key]])) }
+        ;(window as any).committedState = persisted
+        sessionStorage.setItem("restored-state", JSON.stringify(persisted))
         return true
       }
       ;(window as any).electronAPI = { claimClientStateAccess: async () => true, loadClientState: async () => load(),
