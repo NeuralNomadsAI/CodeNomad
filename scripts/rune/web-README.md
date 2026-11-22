@@ -3,7 +3,7 @@
 Compiler le même binaire `codenomad-rune` pour `wasm32-unknown-unknown`, puis empaqueter son fichier `.wasm` explicitement. Le cache Cargo reste celui du développeur. `bundle-web.mjs` utilise le contrat de `Rune/scripts/web-build.sh` : génération `wasm-bindgen --target web`, copie des snippets et des faces Inter complètes à côté de `app.js`.
 
 ```powershell
-$env:CARGO_TARGET_DIR = 'D:/CodeNomad/.codenomad/worktrees/rune-native-chat/packages/rune-chat/target'
+$env:CARGO_TARGET_DIR = '<chemin-absolu-vers-la-cible-Cargo-de-ce-chantier>'
 $env:RUNE_WASM_BINDGEN = '<chemin-absolu-vers-wasm-bindgen.exe>'
 cargo build --locked --target wasm32-unknown-unknown -p codenomad-rune-app --bin codenomad-rune --features test-support
 node scripts/rune/bundle-web.mjs --wasm "$env:CARGO_TARGET_DIR/wasm32-unknown-unknown/debug/codenomad-rune.wasm" --test-support
@@ -22,6 +22,8 @@ node packages/rune-app/fixtures/launcher-fixture.mjs --web
 ```
 
 Cette fixture vérifie cookies, refus sans authentification, deux pages de sessions, conversation exacte, session vide et retour, EventSource et arrêt du serveur, sans création ni envoi. Les six contextes et preuves restent sous `target/rune-web-tests/launcher-*/`.
+
+`node packages/rune-app/fixtures/launcher-fixture.mjs --web-mobile` utilise le même bundle produit avec un serveur Rust compilé, son listener HTTPS d'entrée isolé et le véritable appairage navigateur. La fixture configure le profil Chromium Android portrait, clair et sombre. Elle capture aussi les gestes tactiles, l'injection d'IME, la réduction simulée du viewport et le miroir d'accessibilité. Le certificat de test est accepté uniquement dans ces contextes loopback. Les essais du relais hébergé et du téléphone physique restent séparés.
 
 Les libellés de démarrage et d'erreur proviennent des dix catalogues générés. `?locale=he` sélectionne par exemple l'hébreu et la direction RTL ; la valeur par défaut est `fr`. Les couleurs, dimensions et polices du démarrage consomment le thème généré et `crates/rune-theme-codenomad/assets/web-shell.css`. Le zoom du navigateur reste disponible.
 

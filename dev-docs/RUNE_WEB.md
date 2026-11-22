@@ -4,6 +4,8 @@
 
 Le client, l'état et les écrans de `packages/rune-app` ciblent le bureau et `wasm32-unknown-unknown`. Les requêtes et l'attente des événements sont asynchrones. Le navigateur utilise son origine et son magasin de cookies pour retrouver le serveur ; l'accès distant conserve les contrats HTTPS et d'appairage CodeNomad.
 
+`codenomad-rs serve --ui-dir <bundle>` publie le bundle Rune sur son listener HTTPS direct. Un appareil appairé charge la page, le WASM, les scripts et les polices sur la même origine que les API. L'entrée `/` guide les appareils sans cookie vers l'appairage. L'origine directe doit être admissible et le certificat vérifié par le téléphone. Le transport OpenTunnel est porté par le serveur TypeScript.
+
 Les capacités du bureau sont isolées par la plateforme. La sélection d'un dossier serveur conserve un chemin explicite sur le web. Le lancement d'un processus local appartient à l'hôte bureau. Les fonctions de fenêtres multiples, de fichiers, de notifications et de presse-papiers publient leurs capacités disponibles avant d'être proposées.
 
 ## Risques à qualifier

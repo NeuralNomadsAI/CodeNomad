@@ -13,7 +13,9 @@ import {privateEnvironment} from './private-profile.mjs'
 import {controlsFixture} from './controls-fixture.mjs'
 import {pendingOpenFixture} from './pending-open-fixture.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
-const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending,web=process.argv.includes('--web')||webRestore,root=path.resolve(import.meta.dirname,'../../..')
+import {pairFixture} from '../../../scripts/rune/web-mobile.mjs'
+const webMobile=process.argv.includes('--web-mobile')
+const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending,web=process.argv.includes('--web')||webRestore||webMobile,root=path.resolve(import.meta.dirname,'../../..')
 if(!web)requireTestSupport()
 const here=path.resolve(import.meta.dirname,'..'),profile=path.join(web?path.join(root,'target/rune-web-tests'):path.join(here,'fixture-profile'),`launcher-${randomUUID()}`)
 const project=path.join(profile,'projects','synthetic');await mkdir(project,{recursive:true})
@@ -89,7 +91,9 @@ function add(id,title) {
   const row={id,title,projectID:'global',location:{directory:project},permissions:[{action:'*',resource:'*',effect:'deny'}],time:{created:1,busy:0,idle:1}}
   records.set(id,row);stores.set(id,new FixtureStore(0));return row
 }
-add('ses_existing','Existing history');stores.get('ses_existing').append('user','Existing project history');stores.get('ses_existing').append('assistant','Existing answer')
+add('ses_existing','Existing history')
+if(webMobile)for(let i=0;i<70;i++)stores.get('ses_existing').append('assistant',`Mobile history row ${i}`)
+stores.get('ses_existing').append('user','Existing project history');stores.get('ses_existing').append('assistant','Existing answer')
 add('ses_another','Another session')
 if(withTools)stores.get('ses_existing').rows[1].content.push({type:'tool',id:'historical-read',name:'read',state:{status:'completed',input:{file:'synthetic.rs'},content:[{type:'text',text:'fn historical() {}'}]}})
 const control=controls?controlsFixture({records,stores,streams,project,stats}):null
@@ -179,6 +183,7 @@ await new Promise(r=>upstream.listen(0,'127.0.0.1',r))
 const env=await privateEnvironment(profile)
 Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled'})
 if(web)env.CNRS_FIXTURE_UI_DIR=ui
+if(webMobile)Object.assign(env,{CODENOMAD_REMOTE_CONTROL:'',CNRS_HTTPS_BIND:'127.0.0.1:0',CNRS_HTTPS_NAME:'127.0.0.1',CNRS_FIXTURE_INGRESS:'1'})
 const server=spawn(serverBinary,[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
 let log='',client,result=1,http,staticProof,diagnostic='';server.stdout.on('data',d=>{if(log.length<1048576)log+=d});server.stderr.on('data',d=>{if(log.length<1048576)log+=d})
 const exited=new Promise(resolve=>{server.once('close',resolve);server.once('error',resolve)})
@@ -188,15 +193,22 @@ try{
     http=await request.newContext({baseURL:origin,timeout:15000})
     assert.equal((await http.get('/api/workspaces')).status(),401,'Workspace inventory requires authentication')
     assert.equal((await http.post('/api/auth/login',{data:{username:'codenomad',password:'fixture-backend'}})).status(),200)
-    const storage=path.join(profile,'browser-storage.json');await http.storageState({path:storage})
+    const storage=path.join(profile,'browser-storage.json')
+    let uiOrigin=origin, paired
+    if(webMobile){
+      uiOrigin=log.match(/^HTTPS (https:\/\/127\.0\.0\.1:\d+)\r?$/m)?.[1];assert(uiOrigin,'Rust HTTPS fixture missing')
+      const issue=await http.post('/api/remote-control/pairings')
+      assert.equal(issue.status(),200)
+      paired=await pairFixture({origin:uiOrigin,pairingUrl:(await issue.json()).url,storage,manifest})
+    }else await http.storageState({path:storage})
     let workspace
     if(!webRestore){const opened=await http.post('/api/workspaces',{data:{path:project}});assert(opened.ok(),`Open isolated workspace: ${await opened.text()}`);workspace=(await opened.json()).id;assert(workspace)}
     const wasm=await http.get('/app_bg.wasm');assert.equal(wasm.status(),200)
     const sha256=createHash('sha256').update(await wasm.body()).digest('hex')
     assert.equal(sha256,manifest.files.find(file=>file.file==='app_bg.wasm').sha256)
-    staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,serverBinary,ui}
+    staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,serverBinary,ui,paired}
     const runner=webRestore?'web-restore.mjs':'web-smoke.mjs'
-    client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),'--url',`${origin}/`,...(webPending?['--pending-open']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',chromium.executablePath()],{cwd:root,env,windowsHide:true,stdio:['ignore','pipe','pipe']})
+    client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),'--url',`${uiOrigin}/`,...(webMobile?['--mobile']:[]),...(webPending?['--pending-open']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',chromium.executablePath()],{cwd:root,env,windowsHide:true,stdio:['ignore','pipe','pipe']})
     for(const stream of [client.stdout,client.stderr])stream.on('data',d=>{if(diagnostic.length<262144)diagnostic+=d})
   }else if(pendingOpen){
     await pendingOpenFixture({origin,profile,project,env,clientBinary});result=0
@@ -223,7 +235,7 @@ try{
     try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
   }
-  assert.equal(result,0);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,0);if(!webRestore)assert(stats.lists>=12)}else if(workspaceClaims||pendingOpen||filesState){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
+  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,0);if(!webRestore)assert(stats.lists>=(webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
   if(filesState){
     await filesChain;assert(filesProof);assert.deepEqual(filesStages.map(s=>s.stage),filesExpected)
     const version=text=>`"${createHash('sha256').update(text).digest('hex')}"`
