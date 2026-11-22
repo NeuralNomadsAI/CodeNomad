@@ -85,6 +85,9 @@ mod tests {
             assert_eq!(snapshot.edited("a\nbx").wire, expected);
             assert_eq!(snapshot.edited("one").edited("a\nbx").wire, expected);
         }
-        assert_eq!(Snapshot::loaded("a\r\nb\nc").edited("a\nb\ncx").wire, "a\nb\ncx");
+        assert_eq!(
+            Snapshot::loaded("a\r\nb\nc").edited("a\nb\ncx").wire,
+            "a\nb\ncx"
+        );
     }
 }

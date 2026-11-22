@@ -302,12 +302,13 @@ fn reader_content(s: &State) -> El {
     } else {
         (!matches!(kind, Some(Kind::Text(_)))).then(|| t("filesPanel.readOnly"))
     };
-    let error = match ui.document.error() {
-        Some(super::document::store::Error::Conflict(Some(reason))) => Some(reason),
-        save_error => ui.reader.error().map(str::to_owned).or_else(|| {
-            save_error.map(|_| t("instanceShell.rightPanel.toast.saveError").into())
-        }),
-    };
+    let error =
+        match ui.document.error() {
+            Some(super::document::store::Error::Conflict(Some(reason))) => Some(reason),
+            save_error => ui.reader.error().map(str::to_owned).or_else(|| {
+                save_error.map(|_| t("instanceShell.rightPanel.toast.saveError").into())
+            }),
+        };
     theme::surface(dark)
         .key(format!("file-reader-{scope}"))
         .role("region")

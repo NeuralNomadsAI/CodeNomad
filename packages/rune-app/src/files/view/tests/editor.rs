@@ -145,11 +145,17 @@ fn binary_replacement_keeps_the_draft_visible_and_version_refusal_shows_the_reas
                 .contains("File changed while saving")
         );
         // A disappeared file can fail both the write and the automatic reread.
-        http.request("GET", "main.rs").await
-            .reply(404, serde_json::json!({"error": "File no longer exists"})).await;
+        http.request("GET", "main.rs")
+            .await
+            .reply(404, serde_json::json!({"error": "File no longer exists"}))
+            .await;
         settle(&mut rt).await;
         assert!(rt.state.files.as_ref().unwrap().reader.error().is_some());
-        assert!(rt.accessibility_json().to_string().contains("File changed while saving"));
+        assert!(
+            rt.accessibility_json()
+                .to_string()
+                .contains("File changed while saving")
+        );
         rt.update(|state, _| state.files.as_mut().unwrap().reader.refresh());
         rt.update_if(|state, _| state.files.as_mut().unwrap().poll(20.0));
         http.request("GET", "main.rs")
