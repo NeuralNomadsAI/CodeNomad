@@ -367,7 +367,6 @@ export const messagingMessages = {
   "voice.microphone.conversation": "Canlı konuşma mikrofonu kullanıyor.",
   "voice.microphone.unavailable": "Mikrofon bu pencerede kullanılamıyor.",
   "promptInput.voiceInput.error.permissionDenied": "Mikrofon erişimi macOS tarafından reddedildi.",
-  "promptInput.voiceInput.error.unsupported": "Ses girişi bu tarayıcıda desteklenmiyor.",
   "promptInput.voiceInput.error.transcribe": "Kaydedilen ses metne dönüştürülemiyor.",
   "promptInput.resizeHandle.title": "Girdi yüksekliğini değiştirmek için sürükle",
   "promptQueue.error.message": "Prompt kuyruğu güncellenemedi",

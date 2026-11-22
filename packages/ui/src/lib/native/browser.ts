@@ -25,6 +25,7 @@ export interface BrowserHostCapabilities {
   history: boolean
   emulation: boolean
   automation: boolean
+  ownership?: boolean
   reason?: "webkit" | "unsupported-platform"
 }
 
@@ -108,13 +109,47 @@ export async function emulateBrowserTarget(registrationId: string, preset: Brows
   await invoke("browser_target_action", { payload: { registrationId, action: "emulate", preset, ...(viewport ? { viewport } : {}) } })
 }
 
-export type BrowserOpenDiscovery = { requestID: string; workspaceIDs: string[] }
+export type BrowserPreviewOwnership = { sessionId: string; revision: number; owner: { instanceId: string; sameWindow: boolean } | null }
+export type BrowserPreviewOwnershipAction =
+  | { action: "request" | "focus" | "used"; sessionId: string; instanceId: string; revision?: number }
+  | { action: "ready"; sessionId: string; instanceId: string; requestID: string }
+  | { action: "release"; instanceId: string }
+
+export function hasNativePreviewOwnership() {
+  return typeof window !== "undefined" && (Boolean(window.electronAPI?.browserPreviewOwnership) ||
+    (window.__CODENOMAD_RUNTIME_HOST__ === "tauri" && window.__CODENOMAD_WINDOW_CONTEXT__ === "local"
+      && window.__CODENOMAD_BROWSER_CAPABILITIES__?.ownership === true))
+}
+
+export function changeBrowserPreviewOwnership(input: BrowserPreviewOwnershipAction): Promise<BrowserPreviewOwnership | undefined> | undefined {
+  if (!hasNativePreviewOwnership()) return
+  if (window.electronAPI?.browserPreviewOwnership) return window.electronAPI.browserPreviewOwnership(input)
+  return invoke("browser_target_ownership", { input })
+}
+
+export async function onBrowserPreviewOwnership(
+  change: (payload: BrowserPreviewOwnership) => void,
+  focus: (payload: { sessionId: string; instanceId: string }) => void,
+) {
+  if (window.electronAPI?.onBrowserPreviewOwnership) {
+    const stop = window.electronAPI.onBrowserPreviewOwnership(change)
+    const stopFocus = window.electronAPI.onBrowserPreviewFocus?.(focus)
+    return () => { stop(); stopFocus?.() }
+  }
+  if (window.__CODENOMAD_RUNTIME_HOST__ !== "tauri" || window.__CODENOMAD_WINDOW_CONTEXT__ !== "local") return () => {}
+  const view = getCurrentWebview()
+  const stop = await view.listen<BrowserPreviewOwnership>("browser-target:ownership", e => change(e.payload))
+  try {
+    const stopFocus = await view.listen<Parameters<typeof focus>[0]>("browser-target:focus-owner", e => focus(e.payload))
+    return () => { stop(); stopFocus() }
+  } catch (error) { stop(); throw error }
+}
+
+export type BrowserOpenDiscovery = { requestID: string; workspaceIDs: string[]; sessionID: string }
 export type BrowserOpenRequest = { sessionID: string; requestID: string; url: string; instanceId: string }
 export type BrowserOpenSettled = Omit<BrowserOpenRequest, "url"> & { committedUrl?: string | null; keepGuest?: boolean; successorUrl?: string | null }
 export type BrowserOpenResponse =
   | { kind: "discover"; instanceId: string | null }
-  | { kind: "discover"; ambiguous: true }
-  | { kind: "claim" | "adopt"; instanceId: string }
   | { kind: "target"; instanceId: string; registrationId: string }
 
 export async function onNativeBrowserOpen(
@@ -147,9 +182,9 @@ export async function claimNativeBrowserOpen(requestID: string, response: Browse
   return invoke<boolean>("browser_target_claim_open", { requestId: requestID, response })
 }
 
-export async function releaseNativeBrowserOpen(requestID: string, keepGuest?: boolean): Promise<boolean> {
-  if (window.electronAPI?.releaseBrowserOpen) return window.electronAPI.releaseBrowserOpen(requestID, keepGuest)
-  return invoke<boolean>("browser_target_release_open", { requestId: requestID, keepGuest })
+export async function releaseNativeBrowserOpen(requestID: string): Promise<boolean> {
+  if (window.electronAPI?.releaseBrowserOpen) return window.electronAPI.releaseBrowserOpen(requestID)
+  return invoke<boolean>("browser_target_release_open", { requestId: requestID })
 }
 
 export function onTauriBrowserNavigation(

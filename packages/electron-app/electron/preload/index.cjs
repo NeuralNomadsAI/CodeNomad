@@ -90,7 +90,18 @@ const localElectronAPI = {
   browserTargetHistory: (guestWebContentsId, entryId) => ipcRenderer.invoke("browser-target:history", guestWebContentsId, entryId),
   unregisterBrowserTarget: (registrationId) => ipcRenderer.invoke("browser-target:unregister", registrationId),
   claimBrowserOpen: (requestId, response) => ipcRenderer.invoke("browser-target:claimOpen", requestId, response),
-  releaseBrowserOpen: (requestId, keepGuest) => ipcRenderer.invoke("browser-target:releaseOpen", requestId, keepGuest),
+  browserPreviewOwnership: (input) => ipcRenderer.invoke("browser-target:ownership", input),
+  onBrowserPreviewOwnership: (callback) => {
+    const handler = (_event, payload) => callback(payload)
+    ipcRenderer.on("browser-target:ownership", handler)
+    return () => ipcRenderer.removeListener("browser-target:ownership", handler)
+  },
+  onBrowserPreviewFocus: (callback) => {
+    const handler = (_event, payload) => callback(payload)
+    ipcRenderer.on("browser-target:focus-owner", handler)
+    return () => ipcRenderer.removeListener("browser-target:focus-owner", handler)
+  },
+  releaseBrowserOpen: (requestId) => ipcRenderer.invoke("browser-target:releaseOpen", requestId),
   onBrowserOpenDiscovery: (callback) => {
     const handler = (_event, payload) => callback(payload)
     ipcRenderer.on("browser-target:discover", handler)

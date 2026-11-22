@@ -2,7 +2,7 @@ import { z } from "zod"
 import type { Readable } from "node:stream"
 import type { Logger } from "../logger"
 import type { SettingsService } from "../settings/service"
-import type { SpeechCapabilitiesResponse, SpeechSynthesisResponse, SpeechTranscriptionResponse, VoiceConversationEngine } from "../api-types"
+import type { SpeechCapabilitiesResponse, SpeechTranscriptionResponse, VoiceConversationEngine } from "../api-types"
 import { SettingsReadError } from "../settings/yaml-doc-store"
 import { OpenAICompatibleSpeechProvider } from "./providers/openai-compatible"
 import { resolveVoiceConversationProvider, voiceConversationCapabilities, type VoiceConversationProviderSettings } from "./voice-conversation-config"
@@ -53,16 +53,6 @@ export interface SynthesizeSpeechInput {
 export interface SpeechSynthesisStreamResponse {
   stream: Readable
   mimeType: string
-}
-
-export interface SpeechProvider {
-  getCapabilities(): Omit<
-    SpeechCapabilitiesResponse,
-    "separateProviders" | "sttConfigured" | "ttsConfigured" | "sttBaseUrl" | "ttsBaseUrl" | "voiceConversation" | "desktopVoiceConversationEngine"
-  >
-  transcribe(input: TranscribeAudioInput, signal?: AbortSignal): Promise<SpeechTranscriptionResponse>
-  synthesize(input: SynthesizeSpeechInput, signal?: AbortSignal): Promise<SpeechSynthesisResponse>
-  synthesizeStream(input: SynthesizeSpeechInput, signal?: AbortSignal): Promise<SpeechSynthesisStreamResponse>
 }
 
 export interface NormalizedSpeechSettings {
@@ -166,10 +156,6 @@ export class SpeechService {
     return this.createSttProvider().transcribe(input, signal)
   }
 
-  async synthesize(input: SynthesizeSpeechInput, signal?: AbortSignal): Promise<SpeechSynthesisResponse> {
-    return this.createTtsProvider().synthesize(input, signal)
-  }
-
   async synthesizeStream(input: SynthesizeSpeechInput, signal?: AbortSignal): Promise<SpeechSynthesisStreamResponse> {
     return this.createTtsProvider().synthesizeStream(input, signal)
   }
@@ -178,7 +164,7 @@ export class SpeechService {
     return ServerSpeechSettingsSchema.parse(this.settings.getOwner("config", "server") ?? {})
   }
 
-  private createSttProvider(): SpeechProvider {
+  private createSttProvider() {
     const settings = this.resolveSttSettings()
     return new OpenAICompatibleSpeechProvider({
       settings,
@@ -186,7 +172,7 @@ export class SpeechService {
     })
   }
 
-  private createTtsProvider(): SpeechProvider {
+  private createTtsProvider() {
     const settings = this.resolveTtsSettings()
     return new OpenAICompatibleSpeechProvider({
       settings,

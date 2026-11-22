@@ -53,12 +53,18 @@ function createGuest(options: GuestOptions) {
   return { guest, events, setUrl: (value: string) => { url = value }, counts: () => ({ attachCount, detachCount }) }
 }
 
-function createHarness(send: (owner: WebContents, channel: string, payload: any) => void = () => {}) {
+function createHarness(send: (owner: WebContents, channel: string, payload: any) => void = () => {}, autoReady = true) {
   const receipts: unknown[] = []
   const makeOwner = (id: number): WebContents => {
     const owner = { id, isDestroyed: () => false, send: (channel: string, payload: unknown) => {
       if (channel === "browser-target:open-settled") receipts.push(payload)
-      else send(owner, channel, payload)
+      else if (channel === "browser-target:open" || channel === "browser-target:discover") {
+        if (autoReady && channel === "browser-target:open") {
+          const { sessionID, instanceId, requestID } = payload as Record<string, unknown>
+          controller.changeOwnership(owner, { action: "ready", sessionId: sessionID, instanceId, requestID })
+        }
+        send(owner, channel, payload)
+      }
     } } as WebContents
     return owner
   }
@@ -72,9 +78,10 @@ function createHarness(send: (owner: WebContents, channel: string, payload: any)
     fromId: id => guests.get(id) ?? null, fromWebContents: () => window,
   })
   controller.observeOwner(window)
-  const add = (guest: WebContents, registrationId: string, sessionId = "session", instanceId = "tab") => {
+  const add = (guest: WebContents, registrationId: string, sessionId = "session", instanceId?: string) => {
     const host = guest.hostWebContents
     assert.ok(host)
+    if (instanceId) controller.changeOwnership(host, { action: "request", sessionId, instanceId })
     guests.set(guest.id, guest)
     controller.observeGuest(host, guest)
     controller.register(host, { sessionId, registrationId, instanceId, guestWebContentsId: guest.id })
@@ -633,23 +640,13 @@ describe("BrowserController preview lifecycle", () => {
         assert.equal(h.controller.claimOpen(h.other, requestID, { kind: "discover", instanceId: "wrong" }), false)
         assert.equal(h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: owner === h.owner ? null : "second" }), true)
       } else {
-        assert.equal(h.controller.claimOpen(h.owner, requestID, { kind: "claim", instanceId }), false)
-        assert.equal(h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId: "wrong" }), false)
-        assert.equal(h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId }), true)
+        assert.equal(h.controller.claimOpen(h.owner, requestID, { kind: "target", instanceId, registrationId: "absent" }), false)
+        assert.equal(h.controller.claimOpen(owner, requestID, { kind: "target", instanceId: "wrong", registrationId: "absent" }), false)
         assert.equal(h.controller.releaseOpen(owner, requestID), true)
       }
     })
     await assert.rejects(h.controller.open("session", "https://example.com/next", Infinity, ["second"]), /changed/)
     assert.deepEqual(trace, [[1, "browser-target:discover", undefined], [2, "browser-target:discover", undefined], [2, "browser-target:open", "second"]])
-  })
-
-  it("refuses ambiguous tabs in the best window without any mutation", async () => {
-    const h = createHarness((owner, channel, { requestID }) => {
-      assert.equal(channel, "browser-target:discover")
-      assert.equal(owner, h.owner)
-      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "discover", ambiguous: true }), true)
-    })
-    await assert.rejects(h.controller.open("session", "https://example.com/", Infinity, ["tab"]), /Multiple.*tabs/)
   })
 
   it("ignores a discovery receipt if the backend retires before native dispatch", async () => {
@@ -664,31 +661,16 @@ describe("BrowserController preview lifecycle", () => {
     }), /changed/)
   })
 
-  it("does not bypass discovery to navigate an existing preview in a different window", async () => {
-    const h = createHarness((owner, channel, { requestID }) => {
-      assert.equal(channel, "browser-target:discover")
-      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" }), true)
-    })
-    h.add(createGuest({ id: 20, owner: h.other, loadURL: async () => assert.fail("wrong window navigated") }).guest, "foreign")
-    await assert.rejects(h.controller.open("session", "https://example.com/", Infinity, ["tab"]), /another window/)
-  })
-
-  it("navigates the exact visible occurrence despite a retained guest in chat in another window", async t => {
+  it("opens in the existing owner's window without discovery or creating another guest", async t => {
     const h = createHarness((owner, channel, { requestID, instanceId }) => {
-      assert.equal(owner, h.owner)
-      if (channel === "browser-target:discover") {
-        h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
-        return
-      }
-      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId }), true)
-      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId }), true)
+      assert.equal(channel, "browser-target:open")
+      assert.equal(owner, h.other)
       assert.equal(h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "visible" }), true)
     })
-    const visible = createGuest({ id: 22, owner: h.owner })
-    const hidden = createGuest({ id: 23, owner: h.other, loadURL: async () => assert.fail("hidden guest navigated") })
-    h.add(visible.guest, "visible")
-    h.add(hidden.guest, "hidden", "session", "duplicate")
-    h.controller.unregister(h.other, "hidden")
+    const visible = createGuest({ id: 22, owner: h.other })
+    h.add(visible.guest, "visible", "session", "tab")
+    const duplicate = h.controller.changeOwnership(h.owner, { action: "request", sessionId: "session", instanceId: "duplicate" })
+    assert.deepEqual(duplicate?.owner, { instanceId: "tab", sameWindow: false })
     const load = t.mock.method(visible.guest, "loadURL", async (url: string) => {
       visible.events.emit("did-start-navigation", {}, url, false, true)
       visible.setUrl(url)
@@ -700,6 +682,34 @@ describe("BrowserController preview lifecycle", () => {
     assert.equal(load.mock.callCount(), 1)
   })
 
+  it("a renderer which cannot show the preview leaves the duplicate free to open it", async () => {
+    const h = createHarness((owner, channel, { requestID }) => {
+      if (channel === "browser-target:discover") {
+        h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
+      } else {
+        h.controller.releaseOpen(owner, requestID)
+      }
+    }, false)
+    await assert.rejects(h.controller.open("session", "https://example.com/", Infinity, ["tab", "duplicate"]), /changed/)
+    const snapshot = h.controller.changeOwnership(h.owner, { action: "request", sessionId: "session", instanceId: "duplicate" })
+    assert.equal(snapshot?.owner?.instanceId, "duplicate")
+  })
+
+  it("uses the most recently used session tab across windows when there is no owner", async () => {
+    const h = createHarness((owner, channel, { requestID, instanceId }) => {
+      assert.equal(channel, "browser-target:open")
+      assert.equal(owner, h.other)
+      assert.equal(instanceId, "older-window-tab")
+      h.controller.releaseOpen(owner, requestID)
+    })
+    h.controller.changeOwnership(h.owner, { action: "used", sessionId: "session", instanceId: "focused-window-tab" })
+    h.controller.changeOwnership(h.other, { action: "used", sessionId: "session", instanceId: "older-window-tab" })
+    h.controller.changeOwnership(h.owner, { action: "used", sessionId: "session", instanceId: "closed-tab" })
+    h.controller.changeOwnership(h.owner, { action: "release", instanceId: "closed-tab" })
+    h.controller.changeOwnership(h.owner, { action: "used", sessionId: "session", instanceId: "ineligible-tab" })
+    await assert.rejects(h.controller.open("session", "https://example.com/", Infinity, ["focused-window-tab", "older-window-tab"]), /changed/)
+  })
+
   it("requires occurrence authority for open and invalidates the prior document witness on success", async () => {
     const url = "https://example.com/next"
     const h = createHarness((owner, channel, { requestID, instanceId }) => {
@@ -707,12 +717,10 @@ describe("BrowserController preview lifecycle", () => {
         h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
         return
       }
-      h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId })
-      h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId })
       assert.equal(h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "one" }), true)
     })
     const { guest, counts } = createGuest({ id: 24, owner: h.owner, sendCommand: async () => ({ data: "png" }) })
-    h.add(guest, "one")
+    h.add(guest, "one", "session", "tab")
     const execute = (params: object) => handleNativeBrowserRequest(h.controller, "browser.execute", { sessionID: "session", ...params })
     const { target } = await h.controller.probe("session")
     const command = { action: "open", url }
@@ -738,17 +746,16 @@ describe("BrowserController preview lifecycle", () => {
           h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
           return
         }
-        assert.equal(h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId }), true)
         request = requestID
-        assert.equal(h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId }), true)
         assert.equal(h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "other-tab", navigate: true }), false)
         assert.equal(h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "exact", navigate: true }), true)
       })
-      h.add(createGuest({ id: 15, owner: h.owner, loadURL: async () => { trace.push(15) } }).guest, "other-tab", "session", "sibling")
-      h.add(createGuest({ id: 16, owner: h.owner, loadURL: async () => {
+      h.add(createGuest({ id: 15, owner: h.owner, loadURL: async () => { trace.push(15) } }).guest, "other-tab", "other-session", "sibling")
+      const { guest } = createGuest({ id: 16, owner: h.owner, loadURL: async () => {
         trace.push(16)
-        if (replace) h.add(createGuest({ id: 17, owner: h.owner }).guest, "exact")
-      } }).guest, "exact")
+        if (replace) h.controller.register(h.owner, { sessionId: "session", instanceId: "tab", registrationId: "exact", guestWebContentsId: 16 })
+      } })
+      h.add(guest, "exact", "session", "tab")
       const opening = h.controller.open("session", url, Infinity, ["tab"])
       if (replace) await assert.rejects(opening, /registration changed/)
       else assert.deepEqual(await opening, { url })
@@ -769,12 +776,10 @@ describe("BrowserController preview lifecycle", () => {
           h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
           return
         }
-        h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId })
-        h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId })
         assert.equal(h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "one" }), true)
       })
       const { guest, events, setUrl } = createGuest({ id: 22, owner: h.owner })
-      h.add(guest, "one")
+      h.add(guest, "one", "session", "tab")
       t.mock.method(guest, "loadURL", async (requested: string) => {
         assert.equal(requested, url)
         events.emit("did-start-navigation", {}, requested, fragmentOnly, true)
@@ -838,10 +843,8 @@ describe("BrowserController preview lifecycle", () => {
         h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
         return
       }
-      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId }), true)
-      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId }), true)
       const { guest } = createGuest({ id: 22, owner, loadURL: async () => { throw new Error("connection refused (-102)") } })
-      h.add(guest, "one")
+      h.add(guest, "one", "session", "tab")
       assert.equal(h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "one" }), true)
     })
     await assert.rejects(h.controller.open("session", "http://127.0.0.1:43127", Infinity, ["tab"]), /connection refused \(-102\)/)
@@ -860,8 +863,6 @@ describe("BrowserController preview lifecycle", () => {
         h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
         return
       }
-      h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId })
-      h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId })
       h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "one" })
     })
     h.add(createGuest({ id: 22, owner: h.owner, loadURL: async () => { loads++ },
@@ -869,7 +870,7 @@ describe("BrowserController preview lifecycle", () => {
         if (method === "Browser.getVersion") return { product: "Chrome/123.0.0.0" }
         if (method === "Emulation.setDeviceMetricsOverride") { occupied(); await gate }
         return {}
-      } }).guest, "one")
+       } }).guest, "one", "session", "tab")
     const emulation = h.controller.emulate(h.owner, "one", "mobile")
     let watchdog: NodeJS.Timeout | undefined
     try {
@@ -900,8 +901,6 @@ describe("BrowserController preview lifecycle", () => {
         h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
         return
       }
-      h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId })
-      h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId })
       assert.equal(h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "one" }), true)
       acknowledged()
     })
@@ -911,7 +910,7 @@ describe("BrowserController preview lifecycle", () => {
         if (method === "Emulation.setDeviceMetricsOverride") { occupied(); await gate }
         return {}
       } })
-    h.add(guest, "one")
+    h.add(guest, "one", "session", "tab")
     const emulation = h.controller.emulate(h.owner, "one", "mobile")
     await started
     const opening = h.controller.open("session", automated, Date.now() + 1000, ["tab"])
@@ -937,12 +936,10 @@ describe("BrowserController preview lifecycle", () => {
           h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
           return
         }
-        h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId })
-        h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId })
         let complete!: () => void
         const { guest, events, setUrl } = createGuest({ id: 22, owner, loading: true, stop: () => stops.push(22),
           loadURL: () => new Promise<void>(resolve => { complete = resolve }) })
-        h.add(guest, "first")
+        h.add(guest, "first", "session", "tab")
         h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "first" })
         setTimeout(() => {
           if (scenario === "backend") backendCurrent = false
@@ -965,28 +962,24 @@ describe("BrowserController preview lifecycle", () => {
     })
   }
 
-  it("refuses expired renderer construction while another window adopts", async () => {
-    let expired = ""
-    const h = createHarness((owner, channel, { requestID, instanceId }) => {
-      if (channel === "browser-target:discover") {
-        h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: owner === h.owner && expired ? null : "tab" })
-        return
-      }
-      h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId })
-      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId }), true)
-      if (!expired) { expired = requestID; return }
-      const params = (request: string) => ({ webpreferences: `codenomadOpen=${request}`, src: "about:blank" })
-      assert.equal(h.controller.permitOpenAttachment(h.owner, params(expired)), false)
-      assert.equal(h.controller.permitOpenAttachment(owner, params(requestID)), true)
-      const { guest } = createGuest({ id: 22, owner })
-      h.controller.guestCreated(guest)
-      assert.equal(h.controller.permitOpenAttachment(owner, params(requestID)), false)
-      h.add(guest, "second")
-      assert.equal(h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "second" }), true)
-    })
-    const url = "https://example.com/next"
-    await assert.rejects(h.controller.open("session", url, Date.now() + 80, ["tab"]), /timed out/)
-    assert.deepEqual(await h.controller.open("session", url, Infinity, ["tab"]), { url })
+  it("permits at most one guest for the current owner and invalidates the witness on transfer", async () => {
+    const h = createHarness()
+    const { owner, other, controller } = h
+    const first = controller.changeOwnership(owner, { action: "request", sessionId: "session", instanceId: "tab" })!
+    const params = { webpreferences: `codenomadPreview=${first.revision}`, src: "about:blank" }
+    assert.equal(controller.permitOpenAttachment(other, params), false)
+    assert.equal(controller.permitOpenAttachment(owner, params), true)
+    const { guest } = createGuest({ id: 22, owner })
+    controller.guestCreated(guest)
+    assert.equal(controller.permitOpenAttachment(owner, params), false)
+    h.add(guest, "first", "session", "tab")
+    const { target } = await controller.probe("session")
+    const transfer = controller.changeOwnership(owner, { action: "request", sessionId: "session", instanceId: "duplicate", revision: first.revision })
+    assert.equal(transfer?.owner?.instanceId, "duplicate")
+    await assert.rejects(controller.execute("session", { action: "screenshot" }, Infinity, target), /stale/)
+    assert.equal(controller.permitOpenAttachment(owner, params), false)
+    h.add(guest, "new-registration", "session", "duplicate")
+    assert.notEqual((await controller.probe("session")).target, target)
   })
 
   it("uses the remaining native budget after the exact guest is admitted", async t => {
@@ -998,9 +991,7 @@ describe("BrowserController preview lifecycle", () => {
         h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
         return
       }
-      h.controller.claimOpen(owner, requestID, { kind: "claim", instanceId })
-      h.controller.claimOpen(owner, requestID, { kind: "adopt", instanceId })
-      h.add(createGuest({ id: 22, owner, loadURL: async () => { now += 11_000 } }).guest, "first")
+      h.add(createGuest({ id: 22, owner, loadURL: async () => { now += 11_000 } }).guest, "first", "session", "tab")
       h.controller.claimOpen(owner, requestID, { kind: "target", instanceId, registrationId: "first" })
     })
     assert.deepEqual(await h.controller.open("session", url, now + 90_000, ["tab"]), { url })

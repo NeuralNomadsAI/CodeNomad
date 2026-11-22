@@ -71,12 +71,8 @@ test("disconnecting the dictation caller closes the provider upload without retr
   assert.equal(calls, 1)
 })
 
-for (const [mode, partial] of [
-  ["synthesize", false],
-  ["synthesize/stream", false],
-  ["synthesize/stream", true],
-] as const) {
-  test(`disconnecting ${mode} ${partial ? "after the first audio chunk" : "before headers"} closes the provider request`, { timeout: 8000 }, async t => {
+for (const partial of [false, true]) {
+  test(`disconnecting synthesis ${partial ? "after the first audio chunk" : "before headers"} closes the provider request`, { timeout: 8000 }, async t => {
     let started!: () => void, closed!: () => void
     const providerStarted = new Promise<void>(resolve => { started = resolve })
     const providerClosed = new Promise<void>(resolve => { closed = resolve })
@@ -93,7 +89,7 @@ for (const [mode, partial] of [
       })
     })
     const controller = new AbortController()
-    const pending = send(controller.signal, mode)
+    const pending = send(controller.signal, "synthesize/stream")
     if (partial) {
       const reader = (await pending).body!.getReader()
       assert.equal(Buffer.from((await reader.read()).value!).toString(), "audio")
@@ -109,6 +105,24 @@ for (const [mode, partial] of [
     await providerClosed
   })
 }
+
+test("the synthesis route serves full binary audio with the provider MIME type", async t => {
+  const send = await fixture(t, (request, response) => {
+    assert.equal(request.url, "/v1/audio/speech")
+    request.resume()
+    response.writeHead(200, { "Content-Type": "audio/wav" })
+    response.write(Buffer.from([0, 128]))
+    response.end(Buffer.from([255]))
+  })
+  const response = await send(undefined, "synthesize/stream")
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get("content-type"), "audio/wav")
+  assert.equal(response.headers.get("cache-control"), "no-store")
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), new Uint8Array([0, 128, 255]))
+  const removed = await send(undefined, "synthesize")
+  assert.equal(removed.status, 404)
+  await removed.body?.cancel()
+})
 
 test("a format rejection keeps the API default-format path, but transient failures are sent only once", { timeout: 8000 }, async t => {
   const bodies: string[] = []

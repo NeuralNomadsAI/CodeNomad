@@ -283,10 +283,15 @@ describe("session preview persistence", () => {
   it("an expired native open cannot publish a delayed preview response", async () => {
     const create = serverApi.createPreview, remove = serverApi.deletePreview
     const deleted: string[] = []
-    serverApi.createPreview = async () => ({ token: "expired-native-open", targetUrl: "https://example.com" }) as any
+    const delivery = new AbortController()
+    serverApi.createPreview = async () => {
+      delivery.abort()
+      return { token: "expired-native-open", targetUrl: "https://example.com" } as any
+    }
     serverApi.deletePreview = async token => { deleted.push(token); return undefined as any }
     try {
-      await assert.rejects(openSessionPreview("session", "https://example.com", "expired-native", async () => false), /no longer current/)
+      await assert.rejects(openSessionPreview("session", "https://example.com", "expired-native", undefined,
+        { requestID: "expired", instanceId: "expired-native" }, delivery.signal), { name: "AbortError" })
       assert.equal(getSessionPreview("session"), null)
       assert.deepEqual(deleted, ["expired-native-open"])
     } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }

@@ -12,24 +12,15 @@ const MAX_FRAME: u64 = 512 * 1024; // JSON escaping of up to 64 KiB of text.
 const TICK: Duration = Duration::from_millis(25);
 
 pub(crate) fn run_worker(
-    mut command: Command,
+    command: Command,
     input: Option<&[u8]>,
     control: Option<&Control>,
     timeout: Duration,
-    mut send_finish: bool,
 ) -> Result<Value, SpeechError> {
     if control.is_some_and(Control::cancelled) {
         return Err(SpeechError::Failed);
     }
-    command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    #[cfg(unix)]
-    std::os::unix::process::CommandExt::process_group(&mut command, 0);
-    #[cfg(windows)]
-    std::os::windows::process::CommandExt::creation_flags(&mut command, 0x08000000);
-    let mut process = Worker::start(command)?;
+    let mut process = OwnedChild::start(command)?;
     let stdout = process.child.stdout.take().ok_or(SpeechError::Failed)?;
     let mut stdin = process.child.stdin.take();
     let (send, receive) = sync_channel(8);
@@ -90,12 +81,6 @@ pub(crate) fn run_worker(
                 return Err(SpeechError::Failed);
             }
             drop(stdin.take());
-        } else if send_finish && control.is_some_and(Control::finish_requested) {
-            send_finish = false;
-            // One small command on an otherwise empty pipe. EOF still revokes the operation.
-            if let Some(pipe) = stdin.as_mut() {
-                let _ = pipe.write_all(b"finish\n");
-            }
         }
         match receive.recv_timeout(TICK) {
             Ok(Some(Reply::Progress { progress })) if result.is_none() => {
@@ -130,15 +115,23 @@ enum Reply {
     Error { error: SpeechError },
 }
 
-struct Worker {
-    child: Child,
+pub(super) struct OwnedChild {
+    pub(super) child: Child,
     exited: bool,
     #[cfg(windows)]
     job: crate::cli_manager::WindowsJobObject,
 }
 
-impl Worker {
-    fn start(mut command: Command) -> Result<Self, SpeechError> {
+impl OwnedChild {
+    pub(super) fn start(mut command: Command) -> Result<Self, SpeechError> {
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        #[cfg(windows)]
+        std::os::windows::process::CommandExt::creation_flags(&mut command, 0x08000000);
         #[cfg(windows)]
         let job =
             crate::cli_manager::WindowsJobObject::create().map_err(|_| SpeechError::Failed)?;
@@ -152,13 +145,40 @@ impl Worker {
         if worker.job.assign_child(&worker.child).is_err() {
             let mut worker = worker;
             let _ = worker.child.kill();
+            let _ = worker.child.wait();
+            worker.exited = true;
             return Err(SpeechError::Failed);
         }
         Ok(worker)
     }
+
+    pub(super) fn finished(&mut self) -> bool {
+        #[cfg(windows)]
+        return !matches!(self.child.try_wait(), Ok(None));
+        #[cfg(unix)]
+        {
+            // Keep the child waitable until the group has been stopped, so its
+            // ID can't be recycled between observing exit and killing the group.
+            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+            let status = unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    self.child.id() as libc::id_t,
+                    &mut info,
+                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                )
+            };
+            if status != 0 {
+                let missing = std::io::Error::last_os_error().raw_os_error() == Some(libc::ECHILD);
+                self.exited = missing;
+                return missing;
+            }
+            info.si_signo != 0
+        }
+    }
 }
 
-impl Drop for Worker {
+impl Drop for OwnedChild {
     fn drop(&mut self) {
         if self.exited {
             return;

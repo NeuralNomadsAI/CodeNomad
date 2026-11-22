@@ -336,10 +336,13 @@ test("final close retains its record and shutdown stops/releases once", async ()
   const events = new Map<string, Function>()
   const first = windowRecord("one", calls)
   const app = { on: (name: string, handler: Function) => events.set(name, handler), quit: () => calls.push("quit"), exit: () => calls.push("exit") }
+  let stopSpeech!: () => void
+  const speech = new Promise<void>(resolve => { stopSpeech = resolve })
   const lifecycle = new MultiwindowLifecycle({
     app: app as never,
     clientStateManager: { isPrimary: true, flush: async () => calls.push("aggregate"), drainAndReleasePrimary: async () => calls.push("release") } as never,
     cliManager: { shutdown: async () => calls.push("stop") } as never, getLocalWindows: () => [first], getAllWindows: () => [first.window],
+    stopSpeech: () => { calls.push("speech"); return speech },
     removeWindowState: async () => { calls.push("remove"); return true }, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
   })
   lifecycle.attach(first); lifecycle.registerAppEvents()
@@ -348,6 +351,10 @@ test("final close retains its record and shutdown stops/releases once", async ()
   assert.deepEqual(calls, ["prevent", "quit"])
   events.get("before-quit")?.({ preventDefault: () => calls.push("prevent-quit") })
   events.get("before-quit")?.({ preventDefault: () => calls.push("prevent-quit") })
+  await tick()
+  assert.equal(calls.filter((call) => call === "speech").length, 1)
+  assert.equal(calls.includes("exit"), false)
+  stopSpeech()
   await tick(); await tick()
   assert.equal(calls.includes("remove"), false)
   assert.equal(calls.filter((call) => call === "stop").length, 1)

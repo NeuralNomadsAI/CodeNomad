@@ -1,7 +1,7 @@
 import { Readable } from "node:stream"
 import OpenAI from "openai"
 import { toFile } from "openai/uploads"
-import type { SpeechSynthesisResponse, SpeechTranscriptionResponse } from "../../api-types"
+import type { SpeechTranscriptionResponse } from "../../api-types"
 import type { Logger } from "../../logger"
 import type { NormalizedSpeechSettings, SpeechSynthesisStreamResponse, SynthesizeSpeechInput, TranscribeAudioInput } from "../service"
 
@@ -16,24 +16,6 @@ export class SpeechNotConfiguredError extends Error {
 
 export class OpenAICompatibleSpeechProvider {
   constructor(private readonly options: OpenAICompatibleSpeechProviderOptions) {}
-
-  getCapabilities() {
-    const { settings } = this.options
-    return {
-      available: true,
-      configured: Boolean(settings.apiKey),
-      provider: settings.provider,
-      supportsStt: true,
-      supportsTts: true,
-      supportsStreamingTts: true,
-      baseUrl: settings.baseUrl,
-      sttModel: settings.sttModel,
-      ttsModel: settings.ttsModel,
-      ttsVoice: settings.ttsVoice,
-      ttsFormats: ["mp3", "wav", "opus", "aac"],
-      streamingTtsFormats: ["mp3", "wav", "opus", "aac"],
-    }
-  }
 
   async transcribe(input: TranscribeAudioInput, signal?: AbortSignal): Promise<SpeechTranscriptionResponse> {
     signal?.throwIfAborted()
@@ -102,28 +84,6 @@ export class OpenAICompatibleSpeechProvider {
         ...baseRequest,
         file,
       } as any, requestOptions)) as any
-    }
-  }
-
-  async synthesize(input: SynthesizeSpeechInput, signal?: AbortSignal): Promise<SpeechSynthesisResponse> {
-    const format = input.format ?? this.options.settings.ttsFormat
-
-    this.options.logger.info(
-      {
-        model: this.options.settings.ttsModel,
-        voice: this.options.settings.ttsVoice,
-        format,
-      },
-      "speech.synthesize",
-    )
-
-    const response = await this.requestSpeechAudio(input.text, format, signal)
-    const mimeType = response.headers.get("content-type") || mimeTypeForFormat(format)
-
-    const audioBuffer = Buffer.from(await response.arrayBuffer())
-    return {
-      audioBase64: audioBuffer.toString("base64"),
-      mimeType,
     }
   }
 
