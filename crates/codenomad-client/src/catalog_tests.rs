@@ -575,7 +575,7 @@ fn catalogue_omissions_require_targeted_absence() {
         backend
             .confirm_missing_sessions(&project, ids.into(), out, || {})
             .await;
-        assert_eq!(results.try_recv().unwrap(), "deleted");
+        assert_eq!(results.try_recv().unwrap().0, "deleted");
         assert!(results.try_recv().is_err());
     });
 }

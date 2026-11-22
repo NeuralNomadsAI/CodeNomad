@@ -255,12 +255,13 @@ impl Backend {
         &self,
         project: &Project,
         ids: Vec<String>,
-        missing: async_channel::Sender<String>,
+        missing: async_channel::Sender<(String, crate::runtime::Instant)>,
         notify: impl Fn(),
     ) {
         futures_lite::future::race(
             async {
                 for id in ids {
+                    let started = crate::runtime::Instant::now();
                     let confirmed = futures_lite::future::race(
                         async {
                             self.bind_session(project, &id, false)
@@ -274,7 +275,7 @@ impl Backend {
                     )
                     .await;
                     if confirmed {
-                        if missing.send(id).await.is_err() {
+                        if missing.send((id, started)).await.is_err() {
                             return;
                         }
                         notify();

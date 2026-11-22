@@ -1,5 +1,10 @@
-use codenomad_client::Receiver;
-use std::collections::HashSet;
+use codenomad_client::{Receiver, runtime::Instant};
+use std::collections::{HashMap, HashSet};
+
+type Checks = (
+    Receiver<(String, Instant)>,
+    HashMap<String, Option<Instant>>,
+);
 
 struct Visit {
     id: String,
@@ -10,12 +15,11 @@ struct Visit {
 pub struct Visits {
     ids: Vec<Option<Visit>>,
     cursor: usize,
-    checks: Option<(Receiver<String>, HashSet<String>)>,
+    checks: Option<Checks>,
 }
 
 impl Visits {
     pub fn record(&mut self, id: &str, step: Option<usize>, listed: bool) {
-        self.verified(id);
         let listed = listed || self.ids.iter().flatten().any(|v| v.id == id && v.listed);
         if let Some(step) = step.filter(|&step| self.at(step) == Some(id)) {
             self.cursor = step;
@@ -69,12 +73,17 @@ impl Visits {
             (visit.listed && seen.insert(id)).then_some(id)
         })
     }
-    pub fn set_checks(&mut self, checks: Option<Receiver<String>>) {
-        self.checks = checks.map(|rx| (rx, HashSet::new()));
+    pub fn start_checks(&mut self, ids: &[String], rx: Receiver<(String, Instant)>) {
+        self.checks = Some((rx, ids.iter().map(|id| (id.clone(), None)).collect()));
     }
-    pub fn verified(&mut self, id: &str) {
-        if let Some((_, verified)) = &mut self.checks {
-            verified.insert(id.to_owned());
+    pub fn cancel_checks(&mut self) {
+        self.checks = None;
+    }
+    pub fn verified(&mut self, id: &str, at: Instant) {
+        if let Some((_, verified)) = &mut self.checks
+            && let Some(stamp) = verified.get_mut(id)
+        {
+            *stamp = Some(at);
         }
     }
     pub fn poll_checks(&mut self) -> bool {
@@ -82,7 +91,12 @@ impl Visits {
             return false;
         };
         let missing: Vec<_> = std::iter::from_fn(|| checks.try_recv().ok())
-            .filter(|id| !verified.contains(id))
+            .filter(|(id, start)| {
+                verified
+                    .get(id)
+                    .is_some_and(|stamp| stamp.is_none_or(|stamp| *start > stamp))
+            })
+            .map(|(id, _)| id)
             .collect();
         if checks.is_closed() && checks.is_empty() {
             self.checks = None;
@@ -118,13 +132,22 @@ mod tests {
         for key in ["a", "b", "c"] {
             visits.record(key, None, true);
         }
-        let (out, input) = codenomad_client::bounded(2);
-        visits.set_checks(Some(input));
+        let (out, input) = codenomad_client::bounded(3);
+        visits.start_checks(&["a".into(), "b".into()], input);
+        let started = Instant::now();
         visits.record("b", Some(1), true);
-        out.try_send("a".into()).unwrap();
-        out.try_send("b".into()).unwrap();
+        visits.verified("b", started);
+        out.try_send(("a".into(), started)).unwrap();
+        out.try_send(("b".into(), started)).unwrap();
         assert!(visits.poll_checks());
         assert_eq!(visits.steps(true, None).next(), Some((1, "b")));
         assert!(visits.steps(true, Some("b")).next().is_none());
+        out.try_send((
+            "b".into(),
+            Instant::now() + std::time::Duration::from_secs(1),
+        ))
+        .unwrap();
+        assert!(visits.poll_checks());
+        assert!(visits.steps(true, None).next().is_none());
     }
 }

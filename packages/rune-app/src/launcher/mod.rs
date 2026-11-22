@@ -7,7 +7,7 @@ use crate::{
     catalog::{Project, Session, SessionMissing, Sessions},
     history::Result,
 };
-use codenomad_client::{Receiver, bounded};
+use codenomad_client::{Receiver, bounded, runtime::Instant};
 use rune::{Tx, edit::TextEdit};
 use std::{collections::HashSet, future::Future};
 pub const MAX_BROWSED_SESSIONS: usize = 2_000;
@@ -46,7 +46,7 @@ enum Reply {
     Created(Backend, String, String, Option<u64>),
     Selected(Vec<String>, Option<Selection>, Option<u64>),
 }
-type Selection = (Backend, String, Option<usize>);
+type Selection = (Backend, String, Option<usize>, Instant);
 enum Restored {
     Empty,
     Bound(Backend, String),
@@ -188,7 +188,7 @@ impl Launcher {
             return;
         }
         let (out, checks) = bounded(ids.len());
-        self.visits.set_checks(Some(checks));
+        self.visits.start_checks(&ids, checks);
         let wake = self.wake.clone();
         // Results belong to the listing; dropping its receiver cancels the worker.
         crate::platform::spawn(async move {
@@ -287,8 +287,11 @@ mod tests {
                 .launcher_mut()
                 .unwrap()
                 .visits
-                .set_checks(Some(input));
-            assert!(out.try_send("a".into()).is_ok());
+                .start_checks(&["a".into()], input);
+            assert!(
+                out.try_send(("a".into(), codenomad_client::runtime::Instant::now()))
+                    .is_ok()
+            );
             assert!(poll(s, tx));
             assert!(!can_visit(s, true));
         });
@@ -353,7 +356,7 @@ mod tests {
         assert!(
             out.try_send(Ok(Reply::Selected(
                 vec![],
-                Some((backend, "Another".into(), None)),
+                Some((backend, "Another".into(), None, Instant::now())),
                 None
             )))
             .is_ok()
@@ -616,7 +619,7 @@ pub fn list(s: &mut State, more: bool) {
     if l.pending || more && (l.next.is_none() || l.sessions.len() >= MAX_BROWSED_SESSIONS) {
         return;
     }
-    l.visits.set_checks(None);
+    l.visits.cancel_checks();
     l.listing = true;
     let cursor = if more { l.next.clone() } else { None };
     l.job("rune.list_error", async move {
@@ -690,7 +693,7 @@ fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>, dismiss:
                 Ok((bound, session)) => {
                     return Ok(Reply::Selected(
                         missing,
-                        Some((bound, session.title, step)),
+                        Some((bound, session.title, step, Instant::now())),
                         dismiss,
                     ));
                 }
@@ -804,7 +807,6 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
         }
         Ok(Reply::Created(b, title, submitted, dismiss)) => {
-            l.visits.verified(&b.session);
             if l.title.text == submitted {
                 l.title = TextEdit::new("");
                 l.show_title = false;
@@ -826,8 +828,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.sessions.retain(|row| !missing.contains(&row.id));
             l.listed_sessions.retain(|id| !missing.contains(id));
             l.visits.forget(&missing);
-            if let Some((backend, _, _)) = &selection {
-                l.visits.verified(&backend.session);
+            if let Some((backend, _, _, verified)) = &selection {
+                l.visits.verified(&backend.session, *verified);
             }
             if let Some(id) = selected
                 .as_deref()
@@ -837,7 +839,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 tx.instant();
                 return true;
             }
-            if let Some((b, title, visit)) = selection.filter(|(b, _, _)| {
+            if let Some((b, title, visit, _)) = selection.filter(|(b, _, _, _)| {
                 !blocked
                     || s.phase == Phase::Failed && selected.as_deref() == Some(b.session.as_str())
             }) {
