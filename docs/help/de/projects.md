@@ -6,6 +6,8 @@ Ein Projekt-Tab verbindet CodeNomad mit einem Ordner auf dem Backend-Rechner. Da
 
 Klicken Sie auf **Neue Instanz** (`+`) oder drücken Sie `Ctrl/Cmd+N`, um einen neuen leeren Tab zu öffnen. Wählen Sie ein Projekt unter **Zuletzt verwendete Tabs** oder **Durchsuchen**. Wenn keine Tabs wiederhergestellt werden oder der letzte Tab geschlossen wird, zeigt CodeNomad einen leeren Tab. Klonen und temporäre Tabs verwenden das lokale Backend.
 
+Unter den zuletzt verwendeten Tabs wechselt **Offen** zu einem Tab in diesem Fenster. Der grüne Punkt **Anderswo geöffnet** zeigt eine Verbindung auf dem Projektserver außerhalb dieses Fensters an. Ein Klick auf die Zeile öffnet einen eigenen Tab.
+
 [Ein Remote-Projekt in einem Tab öffnen](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
 
 Für eine Repository-Kopie wählen Sie **Git-Repo klonen**, geben **Repository-URL** und **Zielordner** ein und wählen **Klonen**. **Zielordner** wird mit dem Repository-Namen im Ordner, der Ihren letzten Klon enthält vorbelegt, sonst neben Ihrem zuletzt geöffneten Projekt. **Durchsuchen** wählt den Ordner, der den Klon enthält; Sie können den Pfad auch bearbeiten, einschließlich des Ordnernamens des Klons.
@@ -34,17 +36,19 @@ Tab öffnet die Suche, Pfeiltasten und Enter wählen aus, Escape setzt den Fokus
 | Tab schließen | Entfernt die CodeNomad-Projektverbindung dieses Tabs; ein anderer, separat geöffneter Tab desselben Ordners bleibt unberührt | Löscht weder Projektdateien noch nativen Verlauf, stoppt keine Sitzungen und entlädt nicht die OpenCode-Location |
 | Sitzung stoppen | Ausführung der ausgewählten Unterhaltung | Schließt weder Projekt noch löscht es dessen Verlauf |
 
-Zeigt ein anderes Fenster dieselbe Projektverbindung, schließt sich dessen Tab ebenfalls und dieses Fenster zeigt eine Benachrichtigung. Ungesendete Entwürfe und Anhänge des geschlossenen Tabs kehren zurück, wenn Sie denselben Ordner in diesem Fenster erneut öffnen; das Fenster behält sie für seine 16 zuletzt geschlossenen Projekte, bis es neu geladen oder geschlossen wird. Sie gehören nicht zur Startwiederherstellung.
+Ungesendete Entwürfe und Anhänge des geschlossenen Tabs kehren zurück, wenn Sie denselben Ordner in diesem Fenster erneut öffnen; das Fenster behält sie für seine 16 zuletzt geschlossenen Projekte, bis es neu geladen oder geschlossen wird. Sie gehören nicht zur Startwiederherstellung.
 
-Das Schließen eines ganzen Fensters, Beenden oder Neuladen schließt dessen Projektverbindungen nicht; die normale Startwiederherstellung gilt weiterhin. Stoppen Sie relevante Ausführungen ausdrücklich, wenn Sie sicherstellen müssen, dass sie beendet sind. CodeNomad entlädt niemals native Locations; die Wartung des gemeinsamen Dienstes beschreibt die [OpenCode-Einrichtung](opencode.md).
+Beim Schließen oder Neuladen eines Fensters oder Browser-Tabs und beim Beenden der App fordert CodeNomad die Server auf, die zugehörigen Projektverbindungen freizugeben. Auf einem nicht erreichbaren Server können die Einträge bestehen bleiben. Andere Fenster behalten ihre Tabs. Die Startwiederherstellung verbindet gespeicherte Tabs erneut und behält offene temporäre Ordner. Stoppen Sie Ausführungen ausdrücklich, wenn Sie sie beenden möchten. Hinweise zur Wartung des gemeinsamen Dienstes finden Sie unter [OpenCode-Einrichtung](opencode.md).
 
 Bei aktivierter Startwiederherstellung stellt jeder verbleibende Tab seine eigenen Panel-Auswahlen, Missionsauswahl und -leseansicht sowie die Wahl zwischen Chat und Web-Vorschau wieder her. Browser-URLs und Verlauf werden pro Sitzung geteilt; gespeicherte Seiten laden erst beim ausdrücklichen erneuten Öffnen der Web-Vorschau. Das Schließen einer Instanz entfernt nur ihre gespeicherte Ansicht; erneutes Öffnen des Ordners erzeugt eine neue Instanz.
+
+Ein duplizierter Browser-Tab öffnet eigene Projektverbindungen. Eine noch offene Verbindung kann nur beim Wiederherstellen desselben Tabs nach dem Verwerfen durch den Browser weiterverwendet werden.
 
 ## Remote-Tabs wiederherstellen {#restore-remote-tabs}
 
 Beim Neuladen bleiben bei aktivierter Wiederherstellung Reihenfolge, Auswahl und Entwürfe der Remote-Tabs erhalten. Ein unerreichbarer Server hinterlässt einen wartenden Tab: Wählen Sie **Wiederholen**, sobald er erreichbar ist, oder **Verbinden** mit Benutzername/Passwort oder einem Link im Feld **Neuer Kopplungslink**. Andere Server bleiben nutzbar. **Server nicht gefunden** bedeutet, dass der gespeicherte Server fehlt.
 
-**Wiederholen** verbindet erneut mit einem vorhandenen Projekt. Ist der Server erreichbar, aber das Projekt fehlt, wählen Sie **Öffnen**.
+**Wiederholen** verbindet das Projekt auf dem gespeicherten Server erneut und erstellt seine Verbindung bei Bedarf neu.
 
 **Wiederholen** stellt wartende Tabs auch bei deaktivierter automatischer Startwiederherstellung wieder her. Benachrichtigungen wählen den vorhandenen wartenden Tab aus. Prüfen Sie das Ergebnis einer unbestätigten Konversationsaktion, bevor Sie sie erneut senden.
 

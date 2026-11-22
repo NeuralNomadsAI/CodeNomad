@@ -11,6 +11,7 @@ for (const mode of ["SSE", "list"] as const) for (const response of ["before", "
   preferences().multiBackend = true
   let requestId = "", finishPost!: () => void, enterPost!: () => void
   let finishCancel!: () => void, enterCancel!: () => void, finishUser!: () => void, enterUser!: () => void
+  let posts = 0
   const post = new Promise<void>(r => { finishPost = r }), posted = new Promise<void>(r => { enterPost = r })
   const cancel = new Promise<void>(r => { finishCancel = r }), canceling = new Promise<void>(r => { enterCancel = r })
   const user = new Promise<void>(r => { finishUser = r }), userEntered = new Promise<void>(r => { enterUser = r })
@@ -22,9 +23,11 @@ for (const mode of ["SSE", "list"] as const) for (const response of ["before", "
       calls.push(`${init.method} ${path}`)
       if (path.endsWith("/creation/cancel")) { enterCancel(); await cancel; return new Response(null, { status: 204 }) }
       const body = JSON.parse(String(init.body))
-      if (body.requestId) { requestId = body.requestId; enterPost(); await post }
+      const restore = ++posts === 1
+      if (restore) { requestId = body.requestId; enterPost(); await post }
       else { enterUser(); await user }
-      return Response.json({ id: "w", requestId: body.requestId, path: "/same", binaryLabel: "user", status: "starting", proxyPath: "", createdAt: "", updatedAt: "" })
+      // This fixture deliberately returns the same UUID without a new claim to exercise the legacy fence.
+      return Response.json({ id: "w", requestId: restore ? body.requestId : undefined, path: "/same", binaryLabel: "user", status: "starting", proxyPath: "", createdAt: "", updatedAt: "" })
     } })
   client.admitRelayAuthority!("a".repeat(43))
   const unregister = registerBackendClient(client), detach = backendEvents.attach(client.id, client.events), id = `${backendId}~w`

@@ -702,13 +702,14 @@ function showInstanceToast(instanceId: string, sessionId: string | undefined | n
     label: tGlobal(sessionId ? "interruption.viewConversation" : "folderSelection.recent.switchToOpenProject"),
     onClick: async () => {
       if (!authority.current()) return
-      const { appTabs, selectAppTab, selectInstanceTab } = await import("./app-tabs")
+      const { appTabs, selectAppTab } = await import("./app-tabs")
       if (!authority.current()) return
       const waiting = appTabs().find(tab => tab.kind === "remote-restore" && tab.instanceId === instanceId)
       if (waiting) { selectAppTab(waiting.id); return }
-      if (!instances().has(instanceId)) return
+      const tab = appTabs().find(tab => tab.kind === "instance" && tab.instance.id === instanceId)
+      if (!tab) return
       if (sessionId && !sessions().get(instanceId)?.has(sessionId)) return
-      selectInstanceTab(instanceId)
+      selectAppTab(tab.id)
       if (sessionId) setActiveSessionFromList(instanceId, sessionId)
     },
   } })

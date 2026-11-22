@@ -42,6 +42,7 @@ async function host(page: Page, kind: "electron" | "tauri", initial: NativePrefe
     if (kind === "tauri") {
       const callbacks = new Map()
       w.__TAURI_INTERNALS__ = {
+        metadata: { currentWindow: { label: "preferences" }, currentWebview: { label: "preferences" } },
         transformCallback: (callback: unknown) => { const id = callbacks.size + 1; callbacks.set(id, callback); return id },
         invoke: async (command: string, args: any) => {
           if (command === "plugin:event|listen" && args.event === "preferences:section") w.open = (payload: unknown) => callbacks.get(args.handler)?.({ payload })

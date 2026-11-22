@@ -38,6 +38,7 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "Renombrar workspace",
   "folderSelection.recent.remove": "Eliminar de recientes",
   "folderSelection.recent.openBadge": "Abierta",
+  "folderSelection.recent.openElsewhere": "Abierto en otra ventana",
   "newInstanceLauncher.searchLabel": "Buscar proyectos recientes",
   "newInstanceLauncher.searchPlaceholder": "Buscar pestañas recientes…",
   "newInstanceLauncher.recentTitle": "Pestañas recientes",

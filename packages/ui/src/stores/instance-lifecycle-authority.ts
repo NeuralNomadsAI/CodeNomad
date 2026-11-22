@@ -9,6 +9,7 @@ export interface InstanceLifecycleAuthorityEvent {
   /** Absent for the local backend. */
   backendId?: BackendId
   serverId?: string
+  projectTab?: true
 }
 
 const listeners = new Set<(event: InstanceLifecycleAuthorityEvent) => void>()
@@ -27,6 +28,6 @@ export function onInstanceLifecycleAuthority(
 
 export function publishInstanceLifecycleAuthority(event: InstanceLifecycleAuthorityEvent): void {
   if (event.type === "opened") openOccurrences.add(event.instanceId)
-  if (event.type !== "opened") openOccurrences.delete(event.instanceId)
+  else openOccurrences.delete(event.instanceId)
   for (const listener of listeners) listener(event)
 }

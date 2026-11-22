@@ -57,13 +57,24 @@ function temporaryName(date: Date): string {
  * on restart, still marked temporary.
  */
 export async function openTemporaryInstance(): Promise<string> {
-  const { path } = await serverApi.createTemporaryFolder()
+  const { path, supportsCancelAndAbandon } = await serverApi.createTemporaryFolder()
+  let cancelling = false
   try {
-    const { instanceId } = await createInstance(path, temporaryName(new Date()))
+    const { instanceId } = await createInstance(path, temporaryName(new Date()), {
+      cancelOnDeparture: requestId => {
+        cancelling = true
+        // Older servers ignore requestId on abandon. Cancel the record and retain the folder.
+        return supportsCancelAndAbandon === true
+          ? serverApi.abandonTemporaryFolder(path, requestId)
+          : serverApi.cancelWorkspaceCreation(requestId, true)
+      },
+    })
     return instanceId
   } catch (error) {
     // Never leave an empty registered folder behind a failed launch.
-    await serverApi.abandonTemporaryFolder(path).catch((cleanupError) => log.warn("Failed to remove unused temporary folder", cleanupError))
+    if (!cancelling) {
+      await serverApi.abandonTemporaryFolder(path).catch((cleanupError) => log.warn("Failed to remove unused temporary folder", cleanupError))
+    }
     throw error
   }
 }

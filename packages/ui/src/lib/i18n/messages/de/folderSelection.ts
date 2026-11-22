@@ -36,6 +36,7 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "Arbeitsbereich umbenennen",
   "folderSelection.recent.remove": "Aus Liste entfernen",
   "folderSelection.recent.openBadge": "Offen",
+  "folderSelection.recent.openElsewhere": "Anderswo geöffnet",
   "newInstanceLauncher.searchLabel": "Zuletzt verwendete Projekte durchsuchen",
   "newInstanceLauncher.searchPlaceholder": "Zuletzt verwendete Tabs durchsuchen…",
   "newInstanceLauncher.recentTitle": "Zuletzt verwendete Tabs",
