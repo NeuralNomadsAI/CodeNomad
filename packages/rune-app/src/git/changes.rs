@@ -258,16 +258,25 @@ impl Changes {
     }
 
     pub fn paths(&self, id: &Id) -> Vec<String> {
-        if self.find(id).is_none() {
-            Vec::new()
-        } else if self.bulk.contains(id) {
+        let Some(row) = self.find(id) else {
+            return Vec::new();
+        };
+        let rows = if self.bulk.contains(id) {
             self.action_rows(id.section)
-                .into_iter()
-                .map(|row| row.id.path.clone())
-                .collect()
         } else {
-            vec![id.path.clone()]
-        }
+            vec![row]
+        };
+        let mut seen = HashSet::new();
+        rows.into_iter()
+            .flat_map(|row| {
+                let old = (row.change.kind == "renamed")
+                    .then(|| row.original_path.as_deref())
+                    .flatten();
+                old.into_iter().chain(std::iter::once(row.id.path.as_str()))
+            })
+            .filter(|path| seen.insert(*path))
+            .map(str::to_owned)
+            .collect()
     }
 
     pub fn focus_order(&self, focus: Option<&str>) -> Option<(Vec<Id>, usize)> {

@@ -17,7 +17,7 @@ fn change(path: impl Into<String>, staged: bool, whitespace: bool, score: u64) -
 }
 
 fn statuses(ui: &mut Ui, rows: Vec<Status>) {
-    ui.accept(Lane::Changes, Value::Changes(rows, None));
+    ui.accept(Lane::Changes, Value::Changes(rows, None, ui.index_revision));
 }
 
 #[test]
@@ -230,7 +230,13 @@ fn no_second_commit_until_status_reconciles_and_possible_new_selection_survives(
     statuses(&mut ui, changes.clone());
     ui.changes.draft = TextEdit::new("commit draft");
     assert!(ui.can_commit());
-    ui.filesystem_hint();
+    ui.event(&WorkspaceEvent::FilesChanged {
+        workspace_id: "workspace".into(),
+        changes: vec![codenomad_client::transport::DirectoryChange {
+            directory: "D:/repo".into(),
+            path: ".".into(),
+        }],
+    });
     assert!(!ui.can_commit());
     ui.passive_due = None;
     ui.settle_mutation(
@@ -353,7 +359,10 @@ fn status_before_a_reader_gesture_cannot_close_its_new_target() {
         .find(ui.changes.current.as_ref().unwrap())
         .unwrap();
     ui.replace_preview(Preview::local(row));
-    ui.accept(Lane::Changes, Value::Changes(vec![], Some(revision)));
+    ui.accept(
+        Lane::Changes,
+        Value::Changes(vec![], Some(revision), ui.index_revision),
+    );
     assert!(ui.has_preview());
     statuses(&mut ui, vec![]);
     assert!(!ui.has_preview());
@@ -372,7 +381,10 @@ fn passive_status_moves_a_reader_opened_during_the_read() {
     ui.replace_preview(Preview::local(selected));
     assert_ne!(ui.preview_revision, request_revision);
     row.staged = row.unstaged.take();
-    ui.accept(Lane::Changes, Value::Changes(vec![row], None));
+    ui.accept(
+        Lane::Changes,
+        Value::Changes(vec![row], None, ui.index_revision),
+    );
     assert_eq!(
         ui.preview.as_ref().unwrap().source,
         Source::Local(Section::Staged)
@@ -450,7 +462,7 @@ fn invalidated_status_cannot_remove_the_diff_before_its_trailing_read() {
 }
 
 #[test]
-fn repeated_file_hints_do_not_starve_the_changes_display() {
+fn repeated_file_hints_do_not_starve_display_or_revoke_a_checked_index() {
     let mut ui = ui();
     ui.mode = Mode::Changes;
     ui.shown = true;
@@ -466,8 +478,34 @@ fn repeated_file_hints_do_not_starve_the_changes_display() {
                 .collect(),
         );
         assert_eq!(ui.changes.count(), step as usize);
-        assert!(!ui.can_commit());
+        assert!(ui.can_commit());
     }
+}
+
+#[test]
+fn stage_or_unstage_a_rename_requires_both_paths_but_a_copy_requires_one() {
+    let mut changes = Changes::default();
+    let mut rename = change("new", true, false, 1);
+    rename.original_path = Some("old".into());
+    rename.staged.as_mut().unwrap().kind = "renamed".into();
+    let mut copy = change("copy", true, false, 1);
+    copy.original_path = Some("source".into());
+    copy.staged.as_mut().unwrap().kind = "copied".into();
+    changes.replace(vec![rename, copy], false);
+    assert_eq!(
+        changes.paths(&Id {
+            section: Section::Staged,
+            path: "new".into()
+        }),
+        ["old", "new"]
+    );
+    assert_eq!(
+        changes.paths(&Id {
+            section: Section::Staged,
+            path: "copy".into()
+        }),
+        ["copy"]
+    );
 }
 
 #[test]

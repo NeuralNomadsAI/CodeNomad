@@ -27,7 +27,7 @@ pub(super) enum Read {
     Preferences,
     InitSessions(Worktree),
     Worktrees(bool),
-    Changes(Worktree, bool, Option<u64>),
+    Changes(Worktree, bool, Option<u64>, u64),
     History(String, Option<(String, usize)>),
     Details(Worktree, String),
     Preview(Worktree, Preview),
@@ -37,7 +37,7 @@ pub(super) enum Value {
     Preferences(bool),
     InitSessions(Sessions),
     Worktrees(Worktrees),
-    Changes(Vec<Status>, Option<u64>),
+    Changes(Vec<Status>, Option<u64>, u64),
     History(Page, bool),
     Details(Details),
     Preview(Diff),
@@ -63,9 +63,11 @@ impl Read {
                 Value::InitSessions(backend.git_init_sessions(&root).await?)
             }
             Self::Worktrees(fresh) => Value::Worktrees(backend.git_worktrees(fresh).await?),
-            Self::Changes(tree, hide, preview_revision) => {
-                Value::Changes(backend.git_status(&tree, hide).await?, preview_revision)
-            }
+            Self::Changes(tree, hide, preview_revision, index_revision) => Value::Changes(
+                backend.git_status(&tree, hide).await?,
+                preview_revision,
+                index_revision,
+            ),
             Self::History(slug, cursor) => Value::History(
                 backend
                     .git_history(

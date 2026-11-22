@@ -92,6 +92,8 @@ pub(crate) struct Ui {
     slug: String,
     scope: std::rc::Rc<()>,
     tree_epoch: u64,
+    index_revision: u64,
+    index_checked: Option<u64>,
     picker: bool,
     zones: [[f32; 4]; 2],
     body_bounds: [f32; 4],
@@ -137,6 +139,8 @@ impl Ui {
             slug: "root".into(),
             scope: std::rc::Rc::new(()),
             tree_epoch: 0,
+            index_revision: 0,
+            index_checked: None,
             picker: false,
             zones: [[0.0; 4]; 2],
             body_bounds: [0.0; 4],
@@ -191,6 +195,7 @@ impl Ui {
         }
         self.online = online;
         if online {
+            self.invalidate_index();
             self.dirty(&[
                 Lane::Worktrees,
                 Lane::Changes,
@@ -294,6 +299,7 @@ impl Ui {
 
     fn reset_tree(&mut self) {
         self.tree_epoch = self.tree_epoch.wrapping_add(1);
+        self.index_checked = None;
         self.scope = std::rc::Rc::new(());
         self.picker = false;
         let open = self.changes.open;
@@ -333,6 +339,14 @@ impl Ui {
                         .any(|change| same_server_path(&change.directory, &tree.directory))
                 }) =>
             {
+                // The Git worker emits "." for an explicit index mutation.
+                if self.tree().is_some_and(|tree| {
+                    changes.iter().any(|change| {
+                        change.path == "." && same_server_path(&change.directory, &tree.directory)
+                    })
+                }) {
+                    self.invalidate_index();
+                }
                 self.filesystem_hint();
             }
             WorkspaceEvent::NativeFilesystemChanged { workspace_id }
@@ -343,7 +357,8 @@ impl Ui {
             WorkspaceEvent::WorktreesChanged { workspace_id }
                 if workspace_id == &self.backend.workspace =>
             {
-                self.dirty(&[Lane::Worktrees, Lane::Changes, Lane::History]);
+                self.invalidate_index();
+                self.dirty(&[Lane::Worktrees, Lane::History]);
                 if self
                     .preview
                     .as_ref()
@@ -376,6 +391,11 @@ impl Ui {
         for lane in lanes {
             self.requests.slot_mut(*lane).dirty = true;
         }
+    }
+
+    fn invalidate_index(&mut self) {
+        self.index_revision = self.index_revision.wrapping_add(1);
+        self.dirty(&[Lane::Changes]);
     }
 
     fn demand(&mut self) {
@@ -427,7 +447,12 @@ impl Ui {
         if let Some(tree) = self.tree().cloned() {
             if changes {
                 if self.ensure(
-                    Read::Changes(tree.clone(), self.hide_whitespace, self.reconcile_revision),
+                    Read::Changes(
+                        tree.clone(),
+                        self.hide_whitespace,
+                        self.reconcile_revision,
+                        self.index_revision,
+                    ),
                     !self.changes.ready(),
                 ) {
                     self.reconcile_revision = None;
@@ -480,7 +505,7 @@ impl Ui {
                 Mode::Workspace => self.dirty(&[Lane::Worktrees]),
                 Mode::Changes => {
                     self.reconcile_revision = Some(self.preview_revision);
-                    self.dirty(&[Lane::Changes]);
+                    self.invalidate_index();
                     if self
                         .preview
                         .as_ref()
@@ -507,7 +532,7 @@ impl Ui {
         self.hide_whitespace = hide;
         self.changes.project(hide);
         self.requests.slot_mut(Lane::Changes).cancel();
-        self.dirty(&[Lane::Changes]);
+        self.invalidate_index();
         if let Some(target) = &self.preview {
             self.reader.rebuild(&target.path, hide);
         }
@@ -655,13 +680,11 @@ impl Ui {
             && self.mode == Mode::Changes
             && self.repository() == Repository::Git
             && self.changes.ready()
-            && !changes.busy()
-            && !changes.dirty
+            && self.index_checked == Some(self.index_revision)
             && changes.error.is_none()
             && !preference.busy()
             && !preference.dirty
             && preference.error.is_none()
-            && self.passive_due.is_none()
     }
 
     fn mutation(&mut self, action: Mutation) {
@@ -730,7 +753,10 @@ impl Ui {
         diff: codenomad_client::git::Diff,
     ) {
         self.accept(Lane::Worktrees, Value::Worktrees(inventory));
-        self.accept(Lane::Changes, Value::Changes(statuses, None));
+        self.accept(
+            Lane::Changes,
+            Value::Changes(statuses, None, self.index_revision),
+        );
         self.accept(Lane::History, Value::History(commits, false));
         self.replace_preview(Preview {
             source: Source::Local(Section::Staged),

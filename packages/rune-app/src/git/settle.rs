@@ -57,7 +57,7 @@ impl Ui {
                     }
                 }
             }
-            Value::Changes(mut statuses, revision) => {
+            Value::Changes(mut statuses, revision, index_revision) => {
                 // Keep Changes readable while generated files keep arriving. An
                 // older display snapshot grants neither a write nor reader adoption.
                 let fresh = !self.requests.slot(lane).dirty && self.passive_due.is_none();
@@ -69,6 +69,9 @@ impl Ui {
                     });
                 }
                 self.changes.replace(statuses, self.hide_whitespace);
+                if index_revision == self.index_revision {
+                    self.index_checked = Some(index_revision);
+                }
                 if fresh && revision.is_none_or(|revision| self.preview_revision == revision) {
                     self.reconcile_preview();
                 }
@@ -133,7 +136,8 @@ impl Ui {
         if init {
             self.dirty(&[Lane::Worktrees, Lane::InitSessions]);
         }
-        self.dirty(&[Lane::Changes, Lane::History]);
+        self.invalidate_index();
+        self.dirty(&[Lane::History]);
         self.invalidated_files = true;
         if epoch != self.tree_epoch || !self.tree().is_some_and(|tree| same_tree(origin, tree)) {
             return;
