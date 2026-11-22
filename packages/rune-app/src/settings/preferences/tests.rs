@@ -6,6 +6,7 @@ use tokio::{
     net::TcpListener,
     time::timeout,
 };
+mod conversation;
 
 #[test]
 fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
@@ -43,7 +44,8 @@ fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
                     json!({"data":{}})
                 }
                 "GET /workspaces/direct-project/instance/api/session/direct-session/permission HTTP/1.1"
-                | "GET /workspaces/direct-project/instance/api/session/direct-session/form HTTP/1.1" => {
+                | "GET /workspaces/direct-project/instance/api/session/direct-session/form HTTP/1.1" =>
+                {
                     json!({"data":[]})
                 }
                 other => panic!("unexpected direct chat request: {other}"),

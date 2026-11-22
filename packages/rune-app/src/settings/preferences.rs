@@ -189,6 +189,14 @@ impl Preferences {
         }
     }
 
+    pub(super) fn dark(&self, system_dark: bool) -> bool {
+        match self.mode() {
+            "light" => false,
+            "dark" => true,
+            _ => system_dark,
+        }
+    }
+
     pub fn set_mode(&mut self, mode: &'static str) {
         if !self.mode_ready() || self.backend.is_none() || self.mode_display() == mode {
             return;

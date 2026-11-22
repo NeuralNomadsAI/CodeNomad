@@ -33,6 +33,8 @@ pub async fn run_async(out: Sender<Event>, input: Receiver<Command>, wake: rune:
             eprintln!("Rune backend unavailable");
             publish(&out, &wake, Event::Failed).await;
         }
+        drop(out);
+        wake();
         return;
     }
     #[cfg(feature = "test-support")]

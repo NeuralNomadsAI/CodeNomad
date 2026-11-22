@@ -5,8 +5,8 @@ mod persistence;
 mod state;
 pub(crate) use persistence::finish;
 pub(crate) use state::{
-    Ui, bound, capture, close, connected, draft_changed, input_ready, new_tab, opened, poll,
-    prepare_open, resume, retry, select, status, strip,
+    Ui, bound, capture, close, connected, draft_changed, has_conversation_stream, input_ready,
+    new_tab, opened, poll, prepare_open, resume, retry, select, status, strip,
 };
 
 use serde_json::{Map, Value, json};

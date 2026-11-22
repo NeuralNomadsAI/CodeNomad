@@ -27,10 +27,10 @@ pub(crate) fn poll(s: &mut State) -> bool {
         .screen
         .launcher()
         .is_some_and(|launcher| shared.bind(launcher.connection.clone()));
-    if s.incoming.is_none() || s.phase == crate::Phase::Failed {
-        shared.watch(&s.wake);
-    } else {
+    if crate::workspace::has_conversation_stream(s) {
         shared.unwatch();
+    } else {
+        shared.watch(&s.wake);
     }
     if (bound | shared.poll())
         && let Some(wake) = &shared.window_wake
@@ -61,11 +61,7 @@ pub(crate) fn render(s: &State, cx: &mut Cx<State>, view: impl FnOnce(&mut Cx<St
 }
 
 fn render_with<S>(cx: &mut Cx<S>, prefs: &Preferences, view: impl FnOnce(&mut Cx<S>) -> El) -> El {
-    let dark = match prefs.mode() {
-        "light" => false,
-        "dark" => true,
-        _ => cx.system_dark(),
-    };
+    let dark = prefs.dark(cx.system_dark());
     let locale = prefs.locale().unwrap_or_else(strings::locale);
     use rune_theme_codenomad::layout::Layout;
     rune_theme_codenomad::settings::render(cx, dark, prefs.palette(dark), |cx| {

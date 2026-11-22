@@ -94,8 +94,8 @@ fn owner_changes_invalidate_the_intended_consumers_without_recovering_history() 
                 crate::transport::Event::Preferences(crate::settings::Owner::Config)
             ));
             assert!(matches!(
-                recovery.try_recv().unwrap(),
-                Input::Workspace(1, WorkspaceEvent::UiPreferencesChanged)
+                events.try_recv().unwrap(),
+                crate::transport::Event::Workspace(WorkspaceEvent::UiPreferencesChanged)
             ));
             assert!(events.is_empty() && recovery.is_empty() && state.valid(stamp));
         });
@@ -133,11 +133,13 @@ impl State {
     ) -> Result<()> {
         self.notify_preferences(owner, out).await?;
         if owner == crate::settings::Owner::Config {
-            out.send(Input::Workspace(
-                epoch,
-                WorkspaceEvent::UiPreferencesChanged,
-            ))
-            .await?;
+            let event = WorkspaceEvent::UiPreferencesChanged;
+            if let Some((events, wake)) = &self.preferences {
+                crate::transport::publish(events, wake, crate::transport::Event::Workspace(event))
+                    .await;
+            } else {
+                out.send(Input::Workspace(epoch, event)).await?;
+            }
         }
         Ok(())
     }
@@ -168,6 +170,10 @@ pub fn start(backend: Backend, epoch: u64, out: Sender<Input>, state: Arc<State>
             eprintln!("Rune event stream unavailable");
         }
         let _ = out.send(Input::Closed(epoch)).await;
+        if let Some(wake) = state.preferences.as_ref().map(|(_, wake)| wake.clone()) {
+            drop(state);
+            wake();
+        }
     });
 }
 

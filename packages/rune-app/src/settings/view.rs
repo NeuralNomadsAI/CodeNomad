@@ -18,10 +18,25 @@ use std::{
 pub(super) struct Window {
     shared: Rc<RefCell<Preferences>>,
     token: Option<Rc<Cell<bool>>>,
-    picker: Option<&'static str>,
-    palette_mode: Option<&'static str>,
+    picker: Cell<Option<Picker>>,
     seen_revision: u64,
 }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Picker {
+    Locale,
+    Palette(bool),
+}
+
+impl Picker {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Locale => "locale",
+            Self::Palette(_) => "palette",
+        }
+    }
+}
+
 impl Window {
     pub fn new(shared: Rc<RefCell<Preferences>>, token: Rc<Cell<bool>>) -> Self {
         Self {
@@ -38,19 +53,16 @@ impl Window {
         }
     }
 
-    fn toggle_picker(&mut self, key: &'static str) {
-        self.picker = (self.picker != Some(key)).then_some(key);
-        self.palette_mode = (self.picker == Some("palette")).then(|| self.shared.borrow().mode());
+    fn toggle_picker(&self, picker: Picker) {
+        self.picker
+            .set((self.picker.get() != Some(picker)).then_some(picker));
     }
 
-    fn close_palette_if_mode_changed(&mut self, mode: &'static str, tx: &mut rune::Tx) -> bool {
-        if self.picker != Some("palette") || self.palette_mode == Some(mode) {
-            return false;
+    fn close_palette_on_slot_change(&self, dark: bool) {
+        // Removing the kit modal returns focus to its trigger.
+        if self.picker.get() == Some(Picker::Palette(!dark)) {
+            self.picker.set(None);
         }
-        self.picker = None;
-        self.palette_mode = None;
-        tx.return_focus("palette-trigger", tx.focus_visible());
-        true
     }
 }
 
@@ -103,9 +115,7 @@ pub(super) fn spec() -> AppSpec<Window> {
                     || t("settings.title"),
                 ));
             }
-            let mode = prefs.mode();
-            drop(prefs);
-            s.close_palette_if_mode_changed(mode, tx) | updated
+            updated
         }),
         on_key: Some(|_, event, tx| {
             if event.key != rune::Key::Escape {
@@ -122,13 +132,15 @@ pub(super) fn spec() -> AppSpec<Window> {
 
 fn view(s: &Window, cx: &mut Cx<Window>) -> El {
     let prefs = s.shared.borrow();
+    let system_dark = cx.system_dark();
+    s.close_palette_on_slot_change(prefs.dark(system_dark));
     render_with(cx, &prefs, |_| {
         let section = t("settings.nav.general");
         let nav = chrome::nav(
             t("settings.title"),
             t("settings.navigationAriaLabel"),
             [("settings-general", section, true)],
-            |s: &mut Window, _| s.picker = None,
+            |s: &mut Window, _| s.picker.set(None),
         );
         let mut layers = Vec::new();
         let status = if let Some(error) = prefs.error().or_else(|| {
@@ -149,7 +161,7 @@ fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         } else {
             rune::el()
         };
-        let content = [status, general(s, &prefs, &mut layers)];
+        let content = [status, general(s, &prefs, system_dark, &mut layers)];
         chrome::frame(nav, chrome::pane("general", section, content), layers)
     })
 }
@@ -211,7 +223,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_mode_update_closes_the_palette_menu_and_returns_keyboard_focus() {
+    fn settings_palette_menu_tracks_effective_appearance_and_returns_keyboard_focus() {
         let state = Window::default();
         state.shared.borrow_mut().fixture();
         let mut runtime = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
@@ -234,11 +246,12 @@ mod tests {
         assert!(menu.to_string().contains("Linen"));
         assert!(menu.to_string().contains("focused"));
 
-        let poll = spec().poll.unwrap();
-        runtime.update(|s, tx| {
-            s.shared.borrow_mut().fixture_mode("dark");
-            assert!(poll(s, 0.02, tx));
-        });
+        runtime.update(|s, _| s.shared.borrow_mut().fixture_mode("light"));
+        runtime.frame(0.02);
+        let tree_after_same_slot = runtime.accessibility_json();
+        assert_eq!(node(&tree_after_same_slot, "listbox").unwrap(), menu);
+        runtime.update(|s, _| s.shared.borrow_mut().fixture_mode("system"));
+        runtime.set_system_dark(true);
         runtime.frame(0.02);
         let tree = runtime.accessibility_json();
         assert!(node(&tree, "listbox").is_none());
@@ -255,6 +268,9 @@ mod tests {
                 .to_string()
                 .contains("Basalt")
         );
+        runtime.update(|s, _| s.shared.borrow_mut().fixture_mode("light"));
+        runtime.frame(0.02);
+        assert!(node(&runtime.accessibility_json(), "listbox").is_none());
     }
 
     #[test]
@@ -357,7 +373,7 @@ const MODES: [(&str, &str); 3] = [
     ),
 ];
 
-fn general(s: &Window, prefs: &Preferences, layers: &mut Vec<El>) -> El {
+fn general(s: &Window, prefs: &Preferences, system_dark: bool, layers: &mut Vec<El>) -> El {
     let locale = prefs
         .locale_display()
         .unwrap_or_else(crate::strings::locale);
@@ -365,7 +381,7 @@ fn general(s: &Window, prefs: &Preferences, layers: &mut Vec<El>) -> El {
     let labels: Vec<_> = LANGUAGE_NAMES.iter().map(|(_, label)| *label).collect();
     let language_picker = select(
         s,
-        "locale",
+        Picker::Locale,
         language,
         &labels,
         LANGUAGE_NAMES
@@ -402,35 +418,37 @@ fn general(s: &Window, prefs: &Preferences, layers: &mut Vec<El>) -> El {
     let current = prefs.palette_display(dark).map(|p| t(p.label));
     let palette_picker = select(
         s,
-        "palette",
+        Picker::Palette(dark),
         palette,
         &labels,
         current,
         !prefs.palette_ready(),
         layers,
         move |s, value| {
-            if let Some(palette) = palettes::built_in()
-                .iter()
-                .find(|p| p.dark == dark && t(p.label) == value)
+            let mut prefs = s.shared.borrow_mut();
+            if prefs.dark(system_dark) == dark
+                && let Some(palette) = palettes::built_in()
+                    .iter()
+                    .find(|p| p.dark == dark && t(p.label) == value)
             {
-                s.shared.borrow_mut().set_palette(palette);
+                prefs.set_palette(palette);
             }
         },
     );
     col()
         .full_width()
         .on_key(move |s: &mut Window, event, tx| {
-            if event.mods != rune::Mods::default() || s.picker.is_some() {
+            if event.mods != rune::Mods::default() || s.picker.get().is_some() {
                 return false;
             }
             if event.key == rune::Key::Enter && !tx.key_repeat() {
                 match tx.focused() {
                     Some("locale-trigger") if s.shared.borrow().locale_ready() => {
-                        s.picker = Some("locale");
+                        s.toggle_picker(Picker::Locale);
                         return true;
                     }
                     Some("palette-trigger") if s.shared.borrow().palette_ready() => {
-                        s.toggle_picker("palette");
+                        s.toggle_picker(Picker::Palette(dark));
                         return true;
                     }
                     _ => {}
@@ -444,7 +462,10 @@ fn general(s: &Window, prefs: &Preferences, layers: &mut Vec<El>) -> El {
                 rune::Key::Down => 1,
                 _ => return false,
             };
-            s.shared.borrow_mut().step_palette(dark, step);
+            let mut prefs = s.shared.borrow_mut();
+            if prefs.dark(system_dark) == dark {
+                prefs.step_palette(dark, step);
+            }
             true
         })
         .child(chrome::card(chrome::setting_row(language, language_picker)))
@@ -458,7 +479,7 @@ fn general(s: &Window, prefs: &Preferences, layers: &mut Vec<El>) -> El {
 
 fn select(
     s: &Window,
-    key: &'static str,
+    picker: Picker,
     label: &str,
     options: &[&str],
     current: Option<&str>,
@@ -468,19 +489,15 @@ fn select(
 ) -> El {
     // Pick callbacks run outside the scoped render.
     let locale = crate::strings::locale();
-    let control = chrome::picker(key, label, options)
+    let control = chrome::picker(picker.key(), label, options)
         .current(current)
         .disabled(disabled)
-        .open(s.picker == Some(key))
-        .on_toggle(move |s: &mut Window| s.toggle_picker(key))
-        .on_close(|s: &mut Window| s.picker = None)
-        .on_choose(move |s: &mut Window, value, tx| {
-            if s.picker == Some(key) {
-                let mode = s.shared.borrow().mode();
-                if s.close_palette_if_mode_changed(mode, tx) {
-                    return;
-                }
-                s.picker = None;
+        .open(s.picker.get() == Some(picker))
+        .on_toggle(move |s: &mut Window| s.toggle_picker(picker))
+        .on_close(|s: &mut Window| s.picker.set(None))
+        .on_choose(move |s: &mut Window, value, _| {
+            if s.picker.get() == Some(picker) {
+                s.picker.set(None);
                 crate::strings::with_locale(locale, || choose.clone()(s, value));
             }
         });
