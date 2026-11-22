@@ -109,11 +109,11 @@ import { guardServerPairRequest, isServerPairExchange, SERVER_PAIR_PATH } from "
 import { gateRemoteRequest, isHostOnlyPath, isHtmlBundlePath, isBackendUiRoute, isMemoryRelayRoute, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
 import { createBackendUiAccess } from "../codenomad-servers/ui-caller"
 import { createRelayPrincipalBinding } from "../codenomad-servers/relay-principal"
-import { isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
+import { isLocalRequest, isRemoteRequest, isRemoteSocket } from "../remote-control/request-origin"
 import type { RemotePreviewCapabilities } from "../codenomad-servers/preview-capabilities"
 import { PreviewBodyBudget, previewBodyKind, previewDocumentStream, rewritePreviewText } from "../codenomad-servers/preview-body"
 import { registerDirectOriginPolicy } from "./direct-origin"
-import { verifiedDirectHttpsOrigin } from "../remote-control/direct-https"
+import { verifiedDirectHttpsOrigin, verifiedDirectServerOrigin } from "../remote-control/direct-https"
 import { createSideCarDirectHttpsAccess, isSideCarContentPath, sidecarsOverDirectHttpsEnabled } from "./sidecar-direct-https"
 import { framesNoBody } from "./bodiless-request"
 import { addProxiedHttpMethods } from "./proxied-http-methods"
@@ -632,7 +632,9 @@ export function createHttpServer(deps: HttpServerDeps) {
   if (deps.uiDevServerUrl) {
     setupDevProxy(app, deps.uiDevServerUrl, deps.authManager, deps.previewManager, proxyLogger, remotePreviewsAllowed)
   } else {
-    setupStaticUi(app, deps.uiStaticDir, uiEntry, deps.authManager, deps.previewManager, proxyLogger, remotePreviewsAllowed)
+    setupStaticUi(app, deps.uiStaticDir, uiEntry, deps.authManager, deps.previewManager, proxyLogger, remotePreviewsAllowed,
+      request => isRemoteSocket(request.raw.socket) || request.protocol === "https"
+        || verifiedDirectServerOrigin(request, remoteGate.directHttpsOrigins?.() ?? []) !== undefined)
   }
 
   return {
@@ -2251,6 +2253,7 @@ function setupStaticUi(
   previewManager: PreviewManager,
   logger: Logger,
   remotePreviewsAllowed: () => boolean,
+  httpsEntry: (request: FastifyRequest) => boolean,
 ) {
   if (!uiDir) {
     app.log.warn("UI static directory not provided; API endpoints only")
@@ -2281,7 +2284,7 @@ function setupStaticUi(
   }
   app.addHook("preHandler", (request, reply, done) => {
     const session = authManager.getSessionFromRequest(request)
-    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, remotePreviewsAllowed)) {
+    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, remotePreviewsAllowed, httpsEntry)) {
       return
     }
     if (!("previewCapability" in request.routeOptions.config)
@@ -2331,7 +2334,7 @@ function setupStaticUi(
     }
 
     const session = authManager.getSessionFromRequest(request)
-    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, remotePreviewsAllowed)) {
+    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, remotePreviewsAllowed, httpsEntry)) {
       return
     }
 
@@ -2389,6 +2392,7 @@ function proxyPreviewFallbackFromReferer(
   previewManager: PreviewManager,
   logger: Logger,
   remotePreviewsAllowed: () => boolean,
+  httpsEntry?: (request: FastifyRequest) => boolean,
 ): boolean {
   // Remote Control serves preview content only while its host allows it.
   if (isRemoteRequest(request) && !remotePreviewsAllowed()) {
@@ -2406,11 +2410,13 @@ function proxyPreviewFallbackFromReferer(
   if (!referer) {
     return false
   }
-  if (entry === "/" || entry === PAIR_PAGE_PATH) {
-    // A preview's same-host resource may use this path; an external link is an app navigation.
+  if (httpsEntry && (entry === "/" || entry === PAIR_PAGE_PATH)) {
+    // A preview's same-origin resource may use this path; an external link is an app navigation.
+    const host = request.headers.host
+    if (!host || /[\s/\\@?#]/.test(host)) return false
     try {
-      const source = new URL(referer)
-      if (source.host !== new URL(`${source.protocol}//${request.headers.host}`).host) return false
+      const target = new URL(`${httpsEntry(request) ? "https" : "http"}://${host}`)
+      if (new URL(referer, target).origin !== target.origin) return false
     } catch { return false }
   }
 

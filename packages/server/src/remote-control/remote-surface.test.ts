@@ -202,6 +202,8 @@ test("an unpaired remote browser reaches only the pairing surface", async (t) =>
   for (const method of ["GET", "HEAD"]) {
     const headers = { cookie, accept: "text/html", referer: "https://outside.invalid/previews/external" }
     assert.equal((await send(target(), "/remote-pair", { method, headers })).status, 200)
+    const httpReferer = { ...headers, referer: `http://${HOST}/previews/external` }
+    assert.equal((await send(target(), "/remote-pair", { method, headers: httpReferer })).headers["referrer-policy"], "no-referrer")
     assert.equal((await send(target(), "/?source=external", { method, headers })).status, 200)
     assert.equal((await send(target(), "/;source=external", { method, headers })).status, 200)
   }
@@ -511,7 +513,7 @@ test("web previews reach Remote Control through their capability while the host 
   // A paired device's root-relative asset resolves through the preview named by its Referer.
   const asset = () => send(target(), "/assets/probe.json", { headers: { cookie, referer: `${ORIGIN}/previews/${token}/page` } })
   assert.equal((await asset()).body, "{\"ok\":true}")
-  assert.equal((await send(target(), "/remote-pair", { headers: { cookie, referer: `${ORIGIN}/previews/${token}/page` } })).body, "{\"ok\":true}")
+  assert.equal((await send(target(), "/remote-pair", { headers: { cookie, referer: `/previews/${token}/page` } })).body, "{\"ok\":true}")
   assert.equal((await send(target(), "/;version=1", { headers: { cookie, referer: `${ORIGIN}/previews/${token}/page` } })).body, "{\"ok\":true}")
 
   const live = await upgrade(target(), `/previews/${token}/ws`)
