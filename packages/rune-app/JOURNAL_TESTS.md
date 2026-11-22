@@ -343,3 +343,31 @@ Le JSON porte reviewState=reviewed et la comparaison rejouée produit reviewed-t
 La [CI45005432895](https://github.com/NeuralNomadsAI/CodeNomad/actions/runs/45005432895), source 6ad4f345a, termine SUCCESS sur Windows/macOS/Linux. Les trois jobs passent compilation et tests natifs, WASM, exclusion des sondes du produit, galerie offscreen de vingt lignes et restauration via le serveur Rust partagé, dont le nouveau mode --files-state. Windows passe aussi les vingt paires Solid/Rune, 208 mutations négatives et les six paires du menu. Preuves et logs `target/rune-files-ci/run45005432895-{status,compact}.json`, `run45005432895.log` et son résumé.
 
 Après fetch de origin/feat/rust-server à e63f3d2ff, le commit de fusion réel conserve les deux parents e63f3d2ff et 6ad4f345a. La reprise locale réussit 162 tests/documentations, quatre ignorés, fmt explicite des cinq packages, check WASM des trois crates partagées et garde de styles. Logs `target/rune-files-integration-{tests,wasm,style}.log`. Les seuls ajouts après cette validation sont ce compte rendu et la portée trois OS dans RUNE.md. La tranche livre le modèle et la primitive partagée ; panneau, actions de ligne, lecteur et qualification de reconnexion du modèle réel continuent séparément. Aucun module Solid retiré.
+
+
+## FileRowActions : premier checkpoint du composant partagé
+
+La branche courte codex/rune-file-actions-20261122 part de l'intégration e63f3d2ff dans le worktree isolé rune-file-actions-20261122. La fiche Source générée précède le portage. Le composant réutilise les boutons rune-kit et le menu partagé ; checked=false reste épinglé, les secondaires compactes restent mesurables et inertes, les gaps consomment le clic et le menu reste ouvert pendant les redimensionnements. Le propriétaire fournit le budget de la ligne, le focus-within complet et le pointeur grossier. La tolérance 0,5 est extraite de l'AST Source ; le tri des boutons suit les groupes Source.
+
+`cargo +1.99.1 test --locked --offline -p rune-theme-codenomad --lib` réussit 29 tests, dont huit nouveaux ; fmt du package et check WASM du thème réussissent. Les touches Enter/Espace exécutent chaque action une seule fois sans activer la ligne. Les trois tests Node et generate-theme.mjs --check passent. Les couleurs actives sont lues après vrai survol Chromium : un contre-exemple CSS avec deux règles !important de spécificités différentes révélait une couleur erronée dans une tentative de cascade simulée ; le test impose désormais le rendu réel. Source-over réutilise l'API Rune existante.
+
+Logs `target/root-file-actions-checkpoint-{tests,wasm,codegen,generated}.log` et preuve initiale `target/root-file-actions-style-proof.json`. Cache Cargo D existant et incremental0 conservés. Les fixtures Source, l'isolation du clic sous mouvement réduit et la comparaison raster sont encore en préparation ; aucune parité complète ni vue applicative qualifiée à ce checkpoint. La copie C du journal attend la fusion de la foundation Files pour conserver toutes ses sections.
+
+## Lecteur Workspace : propriétaire asynchrone
+
+Worktree de cette qualification : `D:/CodeNomad/.codenomad/worktrees/rune-workspace-reader-20261122`, branche `codex/rune-workspace-reader-20261122`. Les preuves FileRowActions ci-dessus appartiennent au worktree frère `rune-file-actions-20261122`.
+
+Le lecteur retient sa cible session/dossier/chemin et le dernier aperçu complet. Remplacement, fermeture, suspension et destruction annulent la lecture et écartent les réponses périmées. Une reconnexion revalide le contenu ; masquer le panneau conserve le lecteur. Les invalidations passent par le regroupement Files existant. Les sept tests HTTP loopback retiennent des corps réels pour vérifier remplacement, admission indépendante, annulation, conservation après erreur, trente refresh réduits à un passage suivant, suspension et changement de dossier.
+
+Commandes, avec CARGO_TARGET_DIR pointant sur le cache existant rune-native-chat/packages/rune-chat/target et CARGO_INCREMENTAL=0 :
+
+```powershell
+cargo +1.99.1 fmt -p codenomad-rune-app --check
+cargo +1.99.1 test --locked --offline --workspace
+cargo +1.99.1 check --locked --offline -p codenomad-rune-app --target wasm32-unknown-unknown
+cargo +1.99.1 run --locked --offline -p rune-style-policy -- packages/rune-app/src
+```
+
+Résultats : 169 tests et documentations réussis, quatre ignorés ; compilation WASM, formatage et garde de styles réussis. Preuves `target/rune-reader-owner/{workspace-tests.log,wasm-check.log,style-scan.log,rapport.md}`. Deux relecteurs neufs à l'aveugle ne retiennent aucun défaut moyen ou bloquant : `target/review-workspace-reader-contracts/REPORT.md` (sept tests réexécutés indépendamment) et `target/review-workspace-reader-standards/review.md` (revue statique).
+
+Portée : propriétaire de données et cycle de vie, sans vue de lecture, codecs, sélection, édition ni sauvegarde. HTTP simulé ; le parcours lecteur avec serveur partagé et reconnexion SSE réelle reste à qualifier. Aucune fenêtre ouverte ni donnée utilisateur utilisée.
