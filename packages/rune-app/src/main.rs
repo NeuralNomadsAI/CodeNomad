@@ -14,6 +14,7 @@ mod launcher;
 pub(crate) use launcher::view as launcher_view;
 mod platform;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+#[path = "../tests/probes/mod.rs"]
 mod probes;
 mod strings;
 use codenomad_client::{Receiver, Sender, bounded};

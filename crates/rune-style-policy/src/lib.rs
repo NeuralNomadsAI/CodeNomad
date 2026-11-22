@@ -174,6 +174,17 @@ impl<'ast> Visit<'ast> for Policy {
         }
         visit::visit_expr_assign(self, node);
     }
+    fn visit_item_mod(&mut self, node: &'ast ItemMod) {
+        let qualification = node.ident == "probes" && node.content.is_none() && node.attrs.len() == 2
+            && node.attrs.iter().any(|a| matches!(&a.meta, Meta::List(m)
+                if m.path.is_ident("cfg") && m.tokens.to_string() == "all (feature = \"test-support\" , not (target_arch = \"wasm32\"))"))
+            && node.attrs.iter().any(|a| matches!(&a.meta, Meta::NameValue(m)
+                if m.path.is_ident("path") && matches!(&m.value, Expr::Lit(e)
+                    if matches!(&e.lit, Lit::Str(s) if s.value() == "../tests/probes/mod.rs"))));
+        if !qualification {
+            visit::visit_item_mod(self, node);
+        }
+    }
     fn visit_attribute(&mut self, node: &'ast Attribute) {
         let name = node.path().segments.last().unwrap().ident.to_string();
         if name == "derive" {
@@ -392,6 +403,19 @@ mod tests {
     #[test]
     fn allows_composition_and_nonvisual_numbers() {
         assert!(check("use rune_theme_codenomad::{Space, Layout}; fn v(){ let n = 600; column().pad(Space::Md).child(button(\"send\", false)); assert_eq!(n, 600); }").unwrap().is_empty());
+    }
+    #[test]
+    fn qualification_path_requires_exact_native_feature_gate() {
+        let source = "#[cfg(all(feature = \"test-support\", not(target_arch = \"wasm32\")))] #[path = \"../tests/probes/mod.rs\"] mod probes;";
+        assert!(check(source).unwrap().is_empty());
+        for invalid in [
+            source.replace("test-support", "other"),
+            source.replace("not(target_arch", "any(target_arch"),
+            source.replace("tests/probes", "src/bypass"),
+            source.replace("mod probes", "mod other"),
+        ] {
+            assert!(!check(&invalid).unwrap().is_empty(), "{invalid}");
+        }
     }
     #[test]
     fn allows_local_values_named_like_builders() {

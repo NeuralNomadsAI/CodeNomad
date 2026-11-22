@@ -422,6 +422,12 @@
       "resolution": "external-dependency-requires-installed-contract"
     },
     {
+      "specifier": "@kobalte/core/tooltip",
+      "file": "packages/ui/src/components/folder-selection-view.tsx",
+      "line": 12,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
       "specifier": "node:assert/strict",
       "file": "packages/ui/src/components/form-request-tool-target.test.ts",
       "line": 1,
@@ -2996,6 +3002,18 @@
       "resolution": "external-dependency-requires-installed-contract"
     },
     {
+      "specifier": "solid-js",
+      "file": "packages/ui/src/components/recent-open-elsewhere.tsx",
+      "line": 1,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "@kobalte/core/tooltip",
+      "file": "packages/ui/src/components/recent-open-elsewhere.tsx",
+      "line": 2,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
       "specifier": "solid-js/web",
       "file": "packages/ui/src/components/recent-tab-icon.tsx",
       "line": 1,
@@ -3014,9 +3032,15 @@
       "resolution": "external-dependency-requires-installed-contract"
     },
     {
-      "specifier": "lucide-solid",
+      "specifier": "@kobalte/core/tooltip",
       "file": "packages/ui/src/components/recent-tabs-menu.tsx",
       "line": 2,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "lucide-solid",
+      "file": "packages/ui/src/components/recent-tabs-menu.tsx",
+      "line": 3,
       "resolution": "external-dependency-requires-installed-contract"
     },
     {
@@ -5432,7 +5456,7 @@
       "resolution": "external-dependency-requires-installed-contract"
     },
     {
-      "specifier": "@tauri-apps/api/event",
+      "specifier": "@tauri-apps/api/webview",
       "file": "packages/ui/src/lib/hooks/use-app-session-capture.ts",
       "line": 2,
       "resolution": "external-dependency-requires-installed-contract"
@@ -6440,9 +6464,15 @@
       "resolution": "external-dependency-requires-installed-contract"
     },
     {
-      "specifier": "@tauri-apps/api/core",
+      "specifier": "@tauri-apps/api/webview",
       "file": "packages/ui/src/lib/native/preferences-window.ts",
       "line": 3,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "@tauri-apps/api/core",
+      "file": "packages/ui/src/lib/native/preferences-window.ts",
+      "line": 4,
       "resolution": "external-dependency-requires-installed-contract"
     },
     {
@@ -18092,21 +18122,33 @@
       "resolution": "external-dependency-requires-installed-contract"
     },
     {
-      "specifier": "node:test",
+      "specifier": "node:events",
       "file": "packages/ui/tests/browser/project-tab-restore.test.ts",
       "line": 2,
       "resolution": "external-dependency-requires-installed-contract"
     },
     {
-      "specifier": "node:url",
+      "specifier": "node:http",
       "file": "packages/ui/tests/browser/project-tab-restore.test.ts",
       "line": 3,
       "resolution": "external-dependency-requires-installed-contract"
     },
     {
-      "specifier": "playwright",
+      "specifier": "node:test",
+      "file": "packages/ui/tests/browser/project-tab-restore.test.ts",
+      "line": 4,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "node:url",
       "file": "packages/ui/tests/browser/project-tab-restore.test.ts",
       "line": 5,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "playwright",
+      "file": "packages/ui/tests/browser/project-tab-restore.test.ts",
+      "line": 7,
       "resolution": "external-dependency-requires-installed-contract"
     },
     {
@@ -19976,15 +20018,21 @@
       "resolution": "external-dependency-requires-installed-contract"
     },
     {
-      "specifier": "node:test",
+      "specifier": "node:http",
       "file": "packages/ui/tests/browser/tab-view-persistence.test.ts",
       "line": 2,
       "resolution": "external-dependency-requires-installed-contract"
     },
     {
-      "specifier": "playwright",
+      "specifier": "node:test",
       "file": "packages/ui/tests/browser/tab-view-persistence.test.ts",
       "line": 3,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "playwright",
+      "file": "packages/ui/tests/browser/tab-view-persistence.test.ts",
+      "line": 4,
       "resolution": "external-dependency-requires-installed-contract"
     },
     {
@@ -20648,7 +20696,7 @@
     "packages/ui/src/renderer/main.tsx"
   ],
   "inputHashes": {
-    "packages/ui/src/App.tsx": "475eef143733c23e5108a7000e88aeea9417a24dc21479928d07f9c0f832de60",
+    "packages/ui/src/App.tsx": "b2e5a0326fb3b61e2d987cd85c35f747e9f59d3a9a2da912dfb6b3543db1550c",
     "packages/ui/src/components/action-overflow-menu.tsx": "675372011edc9d61da102bc1d4fbfce7eca2461cb315614ea6fb93dff9abeaf1",
     "packages/ui/src/components/advanced-settings-modal.tsx": "15990ca0a37b1c6be4cbcc2b5061d5dad0b31d1f9efbc3525fa3f4c3cb4f83b0",
     "packages/ui/src/components/agent-selector.tsx": "fe031ec718ecc7f0f6c0812d8f3868e502b83522e274b747c36140982c388369",
@@ -20666,7 +20714,7 @@
     "packages/ui/src/components/browse-menu.tsx": "eb356889299948d2a072ae20e5fa0e683e401a1cce10a157f87b74ee515b9201",
     "packages/ui/src/components/browser-frame-security.test.ts": "5634555298b7f152440d093679eeaaaf3f90d60399b88a242b5c75e953ee9a5c",
     "packages/ui/src/components/browser-frame-security.ts": "d028bcc36447684817e6c37bd1482e78f72d5781cef5311469d60bf84aeba132",
-    "packages/ui/src/components/browser-frame.tsx": "ee1bd0fcb99a51626dd51d113d416603e8d9ac7a1dc4ba8770f8b05666284b6b",
+    "packages/ui/src/components/browser-frame.tsx": "37005e68a2d6bdab5248d1d90a18a708d63c3004389be73575d7906b0666c13b",
     "packages/ui/src/components/command-palette.tsx": "fbe51dbd8a79f13f422e6e1b7ba769e68cd85655d2202c3c751eb428582b33f3",
     "packages/ui/src/components/context-meter.tsx": "92a899f637025b1455f4b6e75474c1807efaa64b474702a5dd4222f54f405736",
     "packages/ui/src/components/diff-viewer.tsx": "7981734af8ec1ff116d8d8347a024447c825e854d90eb9b2ba71b89bede5cf0a",
@@ -20682,7 +20730,7 @@
     "packages/ui/src/components/files-preview-view.tsx": "1672ff244219cea2b40bc311ad65c47b5b022fb83a125138cff0f50f98ef7c8d",
     "packages/ui/src/components/focus-conversation.test.ts": "f9a66a1e1f153b7354423b4c6279ded04d8575ee187f10e21504422db0f7b10d",
     "packages/ui/src/components/focus-conversation.ts": "f7fde922cec36e6da1cb903be6b8bec74f8608b8c7c688a3ddf1ba84d77eba6d",
-    "packages/ui/src/components/folder-selection-view.tsx": "a48247fcf648b5d6257b753f582e4ec493389513e52e533f49c363ed71bf4d1c",
+    "packages/ui/src/components/folder-selection-view.tsx": "749c6f34f84e63625f6d610b983bb390a7591e0b597e5cff5aca89c3e25128e1",
     "packages/ui/src/components/form-request-tool-target.test.ts": "c061abf419db55569adaf60272a0179a5fa33b3940499a994cf208022f5676ef",
     "packages/ui/src/components/form-request-tool-target.ts": "d5c32d544af98dc6b2b0cb0965589bd801ddd4a5bb43ae7cd4ec943e56e64449",
     "packages/ui/src/components/form-request.test.ts": "3bfbd2ea7caac2070de0d575704cc9aa077cc4aced8879dfb35d0010cff064f2",
@@ -20698,7 +20746,7 @@
     "packages/ui/src/components/instance-tab.tsx": "d4eddc6bd924e2ed017c4317c7447b75a5ee850ea6e39e2408dd04d8fd86e5cc",
     "packages/ui/src/components/instance-tabs.tsx": "16df4c462b7bd346c96dcb97db2372c2e9ea1142178f4c451ea0f663ff18270c",
     "packages/ui/src/components/instance-welcome-view.tsx": "d76ceb9ef048c8b74d78efcb70c2c682f65a03d091f8f2b39fcef97235f2e0fe",
-    "packages/ui/src/components/instance/instance-shell2.tsx": "d1ac0ba0507fa1cb1b55ae2aeea0c1d045c69c87546941f388020f4cddbf8237",
+    "packages/ui/src/components/instance/instance-shell2.tsx": "9ed475d0a59935991feda3f0e47c87117649a9d0a5c30d9f506348073b138a62",
     "packages/ui/src/components/instance/shell/HostedDrawer.tsx": "a138fe311f6d9b29c7e539731a43b1878e5530355455e4669787b973a56cb30b",
     "packages/ui/src/components/instance/shell/SessionSidebar.tsx": "cb59ff1e692c08e9920d23eb981b6adb13632e07ff1ec897b194a640e67f122f",
     "packages/ui/src/components/instance/shell/ShellPanelToggle.tsx": "699416354306769d7e56d81d2005894cd0d0a8483f3a98db12b88b423206df71",
@@ -20765,12 +20813,12 @@
     "packages/ui/src/components/load-error-state.tsx": "5772f6f7debb3c3d3f777ad3a7b394aca830406f0aa3cf572122b3a6c0bdba47",
     "packages/ui/src/components/locale-selector.tsx": "8ebfca291fbd2213b4290cf6220e985a13bde507e725a51f080c4098b69d1182",
     "packages/ui/src/components/markdown-mermaid.tsx": "a0a6db27d1cd39145af7ea1eea75f2bfaa4c3c2981f955e577ae3fa4f3dd15c9",
-    "packages/ui/src/components/markdown-session-links.ts": "e7864508cb8afe959558261b747aba11d64fda62eb611357296dd0ef6a2a9b17",
+    "packages/ui/src/components/markdown-session-links.ts": "6f6799f418de1e60f6b17dfe71c35bb3f0140542186e2592e616117b2a7b6d4f",
     "packages/ui/src/components/markdown.tsx": "20a9e2a24313aa0b42d95ad1b051ecd121cf92926dac51d1bb264f7cb33723e0",
     "packages/ui/src/components/measured-action-overflow.ts": "4c0ed8b0c7fff778bcb59993389fe26455934a6804327884221531c1852b7c37",
     "packages/ui/src/components/mermaid-diagram.tsx": "0b7a1f2c26edff383f4f4db916ec3f3af60459a24a38404aa63dda2bd2f66d7d",
     "packages/ui/src/components/message-anchors.ts": "4e4561fad115da8e7d396622a4c226d9f6872bac5bc7a2aa5b029ca9d051c540",
-    "packages/ui/src/components/message-block.tsx": "108bf0bd07a71eef8ac238cf1a34bdc9259641e073a73b941dd5fe144305fe2e",
+    "packages/ui/src/components/message-block.tsx": "ca00b7035412f784bbe885e3c6941bb5b470566befbab65bb3d3c705c80f90b3",
     "packages/ui/src/components/message-content-icons.ts": "b369ca3494315026e4fec04a42bc26d0ca6d66d9ad850f9bae777e8dc0d1c97c",
     "packages/ui/src/components/message-history-pagination.test.ts": "0792d49aea611b001a551d2ae0bd9688f5f4886f9b56598d064e477b72eed55b",
     "packages/ui/src/components/message-history-pagination.ts": "4ddeabf53474185930b4fa0af6d352f4ea0fabc4828477cb5dc418204a136e45",
@@ -20916,9 +20964,9 @@
     "packages/ui/src/components/plugin-system-attention.tsx": "079ec6d445ac48e188c04abe6303f4741788251959c6f712b00d908a6b4346b1",
     "packages/ui/src/components/preferences-window.tsx": "0514ecba91e21897712906c244ceca921490c322f3d45ea091ba942ba4f1cece",
     "packages/ui/src/components/project-rename-dialog.tsx": "19bbc419926d6998dd81a0a2336678a945ce62879c8c61bf07784c2e4ba4ce1d",
-    "packages/ui/src/components/prompt-input.tsx": "4d94832d5df34b52eb375eaf897d85539da683ce41a8d533e11f40c034d7b979",
+    "packages/ui/src/components/prompt-input.tsx": "7e47a3a4711949544425e4f7fa585da178e4b7675f851c3e7da3b514182e3240",
     "packages/ui/src/components/prompt-input/DesignAgentNotice.tsx": "0a7b6195e701c57f8acf85859c66b9cc1f843d35eeb3bd0ae2badf42e00b8b0d",
-    "packages/ui/src/components/prompt-input/DictationNotice.tsx": "c4073372b248b247ce5ee25fb5c81c6f3889a201ae153349d333b3307ba7ca43",
+    "packages/ui/src/components/prompt-input/DictationNotice.tsx": "922ac66ecd0a2385a22bb4b03cb31e24eb513ad5ff28d25c7bef6114ec6cdcb3",
     "packages/ui/src/components/prompt-input/PromptAsideWindow.tsx": "ebbae2e712375bd4ca4c971f74c20739e40422e501a35bb73dbcc9869d76fa47",
     "packages/ui/src/components/prompt-input/PromptAttachmentsBar.tsx": "b3453c59b6c8f7b8ee872f47336cfc4cf1769d0b542a74ab2b59f753ef397809",
     "packages/ui/src/components/prompt-input/PromptContextControls.tsx": "2d982306f82e48ea60022c8fda8bdd6ef576d05f54fa46a782df7f0a7ee77260",
@@ -20930,9 +20978,9 @@
     "packages/ui/src/components/prompt-input/dictation-snapshot.ts": "79964af5de16071d3bba5216808be7bb1f5629652c2d3140423c7c05ff7992e6",
     "packages/ui/src/components/prompt-input/height-state.test.ts": "0110caaa89e6d881549427e6cc37a983287c06318495670853ebe4ff6b31c1d4",
     "packages/ui/src/components/prompt-input/height-state.ts": "8377757bf39d25244ae1d30eb6a26e942966f827b081f3f441eb634ae567f852",
-    "packages/ui/src/components/prompt-input/hex-recording-controller.ts": "b7ad59a1ecde8e16c89354418a52fe57f529e1e9a32da7aebf2f2e568ece2b15",
+    "packages/ui/src/components/prompt-input/hex-recording-controller.ts": "47bfa868fa2a3ef2afa472f2a270d15884d208b7f7c8aa571a04a93602ebf1df",
     "packages/ui/src/components/prompt-input/recording-controller.test.ts": "5fd9af28a48c04d4a76ca05b94833cce51d8b054a98ad44b9c4d2768ea3b68df",
-    "packages/ui/src/components/prompt-input/recording-controller.ts": "1b0108dd852c129cfad59331b752065cbbb45cfaa0ee03655de43c6a5c54b343",
+    "packages/ui/src/components/prompt-input/recording-controller.ts": "791c780a41e025cc04648361c0de307f9fa2577718a1cd39ab033ad0ebdc1c77",
     "packages/ui/src/components/prompt-input/recovered-drafts.tsx": "648effecb9f164233a38f611ddd72d2907f06908306895b08b515cce96e84372",
     "packages/ui/src/components/prompt-input/submitPrompt.test.ts": "146a3216c08f453f14d5c9c785a3bf8a8055250f9379c5f45213c30385221362",
     "packages/ui/src/components/prompt-input/submitPrompt.ts": "b3cc2e449c9749d3266edf67408bbe32118f18a08899e47dbea95702c1e1c756",
@@ -20940,7 +20988,7 @@
     "packages/ui/src/components/prompt-input/type-to-focus.ts": "e7c351ef047548fd706f5992f9f2b21531e521fa8b5686becd65ada631efaef2",
     "packages/ui/src/components/prompt-input/types.ts": "37b10108beec3be8f8a416c04dcd9c8ee3e9a87746ed7582435e2dcb60957b2f",
     "packages/ui/src/components/prompt-input/useDeviceAttachments.ts": "c61163184db11476bc6bbd9a84cb602ae8ef513275453564cdc84c4242009355",
-    "packages/ui/src/components/prompt-input/useDeviceDictation.ts": "c6a47c57e3ee14bb3918227b031429a868d04fae83d4b983749f3e6f8bfd0b34",
+    "packages/ui/src/components/prompt-input/useDeviceDictation.ts": "976c9669ffe633a72e08a8836a9ee093cf134476cc9e598e7a602b2435e578b9",
     "packages/ui/src/components/prompt-input/usePromptAside.ts": "c656ac50a383a0495c2e89dc80e953686bb77b67a7a8651aebaaacac5e1fbecb",
     "packages/ui/src/components/prompt-input/usePromptAttachments.ts": "b6d161f7c71fb5a695393a31f808a571effd5652e22b1f77d05848f62aef3ba4",
     "packages/ui/src/components/prompt-input/usePromptKeyDown.test.ts": "b273f9df2368e498da4cdc083d740c5f15ad914509cc39f7075f473d97eea6ba",
@@ -20949,19 +20997,20 @@
     "packages/ui/src/components/prompt-input/usePromptState.test.ts": "0075a738542438a8824f7ebb3b2b133f076ebc01971fdb33d7753de24d712590",
     "packages/ui/src/components/prompt-input/usePromptState.ts": "067fe6d8b3d8f8659ae9517ff18f9edb61628ad1c54d62b9d68bf6bef82b6970",
     "packages/ui/src/components/prompt-input/usePromptViewport.ts": "6d31c3f8644a132916d3f31f0807ee04fc70471d21f8f30929024caf7c7799ab",
-    "packages/ui/src/components/prompt-input/usePromptVoiceInput.ts": "2ec886f72d703322540bb110bf51f3a0fbe379dba19aad18d61e48ed2281a66f",
-    "packages/ui/src/components/prompt-input/useRemoteDictation.ts": "918714f841a08049ea07285d5c0bfbca003f304c6a3f78c5dcdaa2fd98140ce1",
+    "packages/ui/src/components/prompt-input/usePromptVoiceInput.ts": "ccbd3738ff1f25019e70ac5fec79be141ac6808f9ffa822d5c302daf119316da",
+    "packages/ui/src/components/prompt-input/useRemoteDictation.ts": "a1488e137ea70067ba4e2dd95b08cda65007318ce78954a43a5180763d7b0e5c",
     "packages/ui/src/components/provider-auth/provider-accounts.tsx": "c6cb9b71c9424d9191e153f26e06697c5c5e424282982b0b72e7361f10a1c12e",
     "packages/ui/src/components/provider-auth/provider-auth-form.tsx": "8025fed50f4a3223a7eecfaf941d54395f1257d19db1de2da9b76507e163bed7",
     "packages/ui/src/components/provider-auth/provider-manager-modal.tsx": "ce67675c58bda3bdd787a8486b640550fc2b614da50a327e8fd79bbabd560e31",
     "packages/ui/src/components/provider-auth/provider-model-visibility-manager.tsx": "8bae4110b0a8fc33fcd5c141849ff88f7f13c757d8eed2d0ac42314afe58a120",
     "packages/ui/src/components/provider-auth/provider-options.test.ts": "ccbf30c274f090762733565c99e73402f274de937799984773015f73e8ef985a",
     "packages/ui/src/components/provider-auth/provider-options.ts": "97f80a10abffcdd3a69dcd2bd4a7eeb819912164ace785f2dc1ac15f172a587d",
+    "packages/ui/src/components/recent-open-elsewhere.tsx": "b32a80d91ad93ab7bbeb4953cc4b259cccdd8a03bc75e19f644f0fef380214f3",
     "packages/ui/src/components/recent-tab-icon.tsx": "2c9cc6a8358262099ede40fad501918e1efae83ef9495b19cb915c0ec7d818ce",
-    "packages/ui/src/components/recent-tabs-menu.tsx": "624fee002088972a036159d39cd815b9ab8c3c6f84c049bea4d7986093cae962",
-    "packages/ui/src/components/remote-dictation-window.tsx": "51ce9df50495f93a314ce24a7f8691215836202cfc9eb4b4f124dde15ff9dfa3",
+    "packages/ui/src/components/recent-tabs-menu.tsx": "e61a280710972d122a6c50569bc083b6e42be30a6b256df6b3278de5726e345e",
+    "packages/ui/src/components/remote-dictation-window.tsx": "9697dfe3554c067204c033ccd5a9cc074dbb47936974399ee8ac5d777db848d1",
     "packages/ui/src/components/remote-recent-session.tsx": "a75033b915a63805c7bb3ccacf19e7c409873df6a69ec5f07c4b9297fd753948",
-    "packages/ui/src/components/remote-restore-view.tsx": "2d4d0831078a94f8440e8389a4d68c960c4065e9f8e827cfc127f6cdf59fc663",
+    "packages/ui/src/components/remote-restore-view.tsx": "0ef777d2b9b55ad9809e18c6684ad35981571aed60006c639521881149aa0e7c",
     "packages/ui/src/components/remote-server-browser.tsx": "617bb63973affaa8e84b177ccea52edbd92fc10cc3749559e28f045e139e7936",
     "packages/ui/src/components/remote-server-dialog.tsx": "aa0ce39a7bfe1db57d09af528839bf44b3ce842557a03b2d14f9f2be32b85fe6",
     "packages/ui/src/components/remote-server-signin.tsx": "a3f9ba2c960e7d2a1c5b0499eb0b7e27dee908adedd2aed07287b180280c02e8",
@@ -20979,7 +21028,7 @@
     "packages/ui/src/components/session-outline-projection.test.ts": "d079c594b4e837a26c0082d13802501209d835f3a0a850324e4ab15f33385ffd",
     "packages/ui/src/components/session-outline-projection.ts": "f7fef4fb33a0d3599fae18b2f3fa8d5e5b90b63f29705da229e33f2cf561ef5b",
     "packages/ui/src/components/session-picker.tsx": "4eee2816e81f50fbc333ef1ca9dc03f0ac0dba92c4cbe2972f394b63699f520e",
-    "packages/ui/src/components/session-preview-view.tsx": "6142ff1c7f526868e88cc80f4b3167a13dfff22600faee61348bd2e2e74c0908",
+    "packages/ui/src/components/session-preview-view.tsx": "94212c657c560d8537eaf5eb4792762b2097f5e534c08e7c7610e7e79bfcce49",
     "packages/ui/src/components/session-rename-dialog.tsx": "e1ad310e437efcca1df6c2c651fd7c1d6c76f9351378f21a10e839aa0d1681c8",
     "packages/ui/src/components/session-row-overflow.ts": "a8110c5ceb679d0ccc6de10daa4bd0d96aea099be7e3e18b751307f80c7c5427",
     "packages/ui/src/components/session/context-usage-panel.tsx": "ee669af8c07a32693dc8e390ab169aad7ce8670ea28b460ac06d847eb2060882",
@@ -20994,7 +21043,7 @@
     "packages/ui/src/components/session/session-goal-line.tsx": "bb4052e8272378b2ba8e25f2f2550fec70df6ea25ad7f2772820fed60fb914d9",
     "packages/ui/src/components/session/session-idle-attention.test.ts": "4ec013fa1bfbcaab447f2581752c7d249e3603b606fa6876b8def81b3cef928b",
     "packages/ui/src/components/session/session-idle-attention.ts": "fb33449edf97bd1eb42bc241393684329efa1caad4869ac139cf5cf4ae9da4ee",
-    "packages/ui/src/components/session/session-view.tsx": "40b220c4774ef58e86e455f3afe729fcbedd26c1154b47c4ae532d91c77e8318",
+    "packages/ui/src/components/session/session-view.tsx": "14519c3ba2df6f789e9ac436f9379f6d429beb5b4dad69079fd5f5705efffc69",
     "packages/ui/src/components/session/timeline-rail-boundary.ts": "825888dc7727a3a0a49a986166f0fe34595b772574fc6b6f005ec3611a7fc0e3",
     "packages/ui/src/components/settings-screen.tsx": "da81571d21c5037616360ac7db062c9091b6ec172b26fb08df77dbe4ffda2bc1",
     "packages/ui/src/components/settings/advanced-settings-section.tsx": "3b55229d8aad8c2c9c209af1efc1479ac94bf1e26b21dd818cdd6211a6e66f69",
@@ -21006,7 +21055,7 @@
     "packages/ui/src/components/settings/client-os.ts": "fc3c93ed43f1d05c586435cce9083fe2797a78e8a13a029df7d5242c28c90599",
     "packages/ui/src/components/settings/config-files-settings-section.tsx": "535e42d92726366abe9ff70ecb664ea4b03755899ec6b87b9e77e9d5a7b525cc",
     "packages/ui/src/components/settings/data-profiles-settings.tsx": "95e76550fdfdbeb452dc8061127de7c99c5782458aadea029dee8c05cfabd82b",
-    "packages/ui/src/components/settings/device-speech-settings.tsx": "f1906fe6944e2c903eefe3a62f41f62af22e0c6e77ee3ac427f993ef7b2a1382",
+    "packages/ui/src/components/settings/device-speech-settings.tsx": "d2d46f2aa707ba336ae0a64af0264ea7af51728a83919898b2d3e5407492a935",
     "packages/ui/src/components/settings/general-settings-section.tsx": "ddb0ae4164cbb4f2f8434f319b9d579346ddf2ffed8b32d6fd70f432cf2b7dfc",
     "packages/ui/src/components/settings/hotkeys-settings-section.tsx": "591de6503284f808adac422b5f64fb56c3365812264e9ce5c950f94180747f10",
     "packages/ui/src/components/settings/image-settings-card.tsx": "61603df8dc74c238e9335a089199423c9fbbd6d4260a8ec9d5bc8b46a998f742",
@@ -21048,7 +21097,7 @@
     "packages/ui/src/components/settings/useImageSettings.ts": "20237d21f98469e9598fc5116700ce9d90ee8fa0a9cac9b73df0f01bbcf349d5",
     "packages/ui/src/components/settings/useWebSearchSettings.ts": "1aab8d9b236ca18e2457480393bf1b29e68d376740d0e38845915a37702e9d09",
     "packages/ui/src/components/settings/voice-conversation-card.tsx": "51e0cc3c6c425ec1a529cc674584461dc5b4c86e16106a80597f95e6e9c0dfda",
-    "packages/ui/src/components/settings/voice-dictation-card.tsx": "53268e3c1e819729c327cf89cfc64a7ce35b2241c611813be40aace375cab9af",
+    "packages/ui/src/components/settings/voice-dictation-card.tsx": "270fc9306f35a99b5e5dcf87362df8cf61b66be4a439f9dc532b2e2b53280268",
     "packages/ui/src/components/settings/voice-manual-credentials.tsx": "087e0ab8b9084693e288dd9ee1302eb5a2724d6f91749b78a454d62e2b959f42",
     "packages/ui/src/components/settings/voice-playback-card.tsx": "c86983caede9efba74197cf212da7e142d138700f73aa6d1a7d29bc0a9d945fe",
     "packages/ui/src/components/settings/voice-settings-fields.tsx": "21930dafd7e7990c56a81fc953443038ecce02df7e6eec5918c564b9c821ad5e",
@@ -21151,7 +21200,7 @@
     "packages/ui/src/lib/agent-memory-api.ts": "133187858b5cecd142a4d7281322b504e46a6fc5743de3561e67da02a9b9db1d",
     "packages/ui/src/lib/ansi.ts": "68b2e964e83278749a49be77d54714518a046093679bf6610a5fb54905c9bcf3",
     "packages/ui/src/lib/api-base.ts": "0b5063845be262462079e90a040ff3036474ace1cf1e816cf701e75d9ae55f09",
-    "packages/ui/src/lib/api-client.ts": "dcde0c225dcfdf1d62db44a4d4385e3f3f6a87b07a35ae379eca58a9e0a1a4e6",
+    "packages/ui/src/lib/api-client.ts": "e3c35f48afc31e4a3b64e372c851fc1a2432bf28463b7468277ea94377cdc1b0",
     "packages/ui/src/lib/appearance-preferences.test.ts": "f45a453aca2a0c2a00f9387212b67cd1659d412d8636c5bbde50be3bd9db636c",
     "packages/ui/src/lib/appearance-preferences.ts": "38845fb143946c497fe04e9114e5b2b05df69971687cd46a5da8e8f6a285f1f2",
     "packages/ui/src/lib/assistant-meta.test.ts": "eea8219fdd130c0ee85a076f97043c5dd472ab387244cdcb0861fb9e94629ad3",
@@ -21159,10 +21208,10 @@
     "packages/ui/src/lib/attachment-mentions.test.ts": "a2c69f98d0311984b7ddad6c9df87dd9478fd89fdf05d6fa42708343a6924714",
     "packages/ui/src/lib/attachment-mentions.ts": "ab30f96429b675f40a5a2543df5edac498994db220b6439753caeb79ffe84bdd",
     "packages/ui/src/lib/attachment-placeholders.ts": "b78a0521ea34ae0a45b581ca9a105786fc8a49f239cfc02868861e3c854a67fb",
-    "packages/ui/src/lib/audio-utils.test.ts": "3787e1fdf3707810999fff2c0b0349da0982d7aca57b2431d58c603f4fda44a2",
-    "packages/ui/src/lib/audio-utils.ts": "deac7332d9119b3780b08cf57f622ab753cb119f5bed8b5ba890bc251f7722a6",
-    "packages/ui/src/lib/auth-recovery.test.ts": "fee6d3a7689addb8c9e19499571dfa5c1d710f6f4b4b5e5c520fec8e333ae8e4",
-    "packages/ui/src/lib/auth-recovery.ts": "ec768940f1d0b95b8150b844c936c1452c251421981fb6b2859e37a5b1ba01d1",
+    "packages/ui/src/lib/audio-utils.test.ts": "1ffd267992e3d1d36548bdc61774ef56a390c00ba4c9e95a9ccc1f41ec475062",
+    "packages/ui/src/lib/audio-utils.ts": "e425d9f8d7f11e77e82d352e903f7b32ad15e18e0e5f53fa1597e19db2b7d076",
+    "packages/ui/src/lib/auth-recovery.test.ts": "292ced73f4680426eefaa5903f57de502a7a6e273605603164d9509f2d69722b",
+    "packages/ui/src/lib/auth-recovery.ts": "530a4a33628878cf6a8916b13e42ece526e4bfd8598a50e0f497144464af3733",
     "packages/ui/src/lib/automation-input.ts": "eb96d450838942220362918efc785cf9a02b5a3dc1bde8ae67f6b210d0b27288",
     "packages/ui/src/lib/backend-async-inventory.test.ts": "a331d94d5562b23e96a224b4eeb8cb85bcb5bbab5e995352093a1275f2838eff",
     "packages/ui/src/lib/backend-capabilities.ts": "04dab534d1a8c92717f6f75d52532a764557cd0e927fd4875681b0b1d0829b9b",
@@ -21253,14 +21302,14 @@
     "packages/ui/src/lib/hooks/use-active-session-message-load.test.ts": "e6b9bed50addbf13525a1e6db97b3a0128c10254fe0578afcd802e2c1165305b",
     "packages/ui/src/lib/hooks/use-active-session-message-load.ts": "aef77c52db4b5997a788d1fc843c27033dbed246e69dc94cfa4db32fea582bd7",
     "packages/ui/src/lib/hooks/use-app-lifecycle.ts": "e2579929137469cddda9e27ab2ccd35efff317b589c704f74b7a6f684bc3242f",
-    "packages/ui/src/lib/hooks/use-app-session-capture.test.ts": "467d9f9d0471f38adba7c615ea77bfb4086a00a67ecf9e2269f00de043f5ab8b",
-    "packages/ui/src/lib/hooks/use-app-session-capture.ts": "0b4179416e85a31fa9af5916090a1b4d34eb4ef3585fe1b3d22bbf954fe6e28d",
-    "packages/ui/src/lib/hooks/use-app-session-restore.ts": "723bb7a13241a7c1570470488c8c6d5e0a6544e602125807e35fa9f435cb20e5",
+    "packages/ui/src/lib/hooks/use-app-session-capture.test.ts": "a3df8d367efb846aac8053900a3556167208105970aaa10c38ea1ed892a3a178",
+    "packages/ui/src/lib/hooks/use-app-session-capture.ts": "3887c93e357876b999464f718f8afe3e26b76ab10a86477f01876273150b56e1",
+    "packages/ui/src/lib/hooks/use-app-session-restore.ts": "e9a237d217d09f852b9d8ca452410105a4a08ce4b416ca1faacd8ba272797113",
     "packages/ui/src/lib/hooks/use-commands.ts": "ca4abdf8b7a27d09f952ed1fb3e0c9ff562b63fbdefeb8c1f26ab0f505cbd600",
     "packages/ui/src/lib/hooks/use-desktop-connection-launch.ts": "3748e838723c9e848a40856c7b415d4463f58a7a0e3f97aa71863ad428c7cb4e",
     "packages/ui/src/lib/hooks/use-electron-folder-launch.test.ts": "cbc4665733b204b3d4b7870e5a623ba8b728e75304d9b5a6ae8c34c5975b8e15",
     "packages/ui/src/lib/hooks/use-electron-folder-launch.ts": "b9b8e334e7cf683e348245f1d4526b3fc69301d4e656c7a3c8aac1e01af16b71",
-    "packages/ui/src/lib/hooks/use-folder-drop.ts": "a90b2507441d55fc5f3d8839ba3728d744effd29c78fde8a068de26695e363f4",
+    "packages/ui/src/lib/hooks/use-folder-drop.ts": "cafc35501eea7163090598aba698394145d0bd61d9ac43a74e1c8decfb497360",
     "packages/ui/src/lib/hooks/use-foreground-refresh.test.ts": "06208da5344865fe355a12438ccdbab625e5855841603abb0977c4289ca7955e",
     "packages/ui/src/lib/hooks/use-foreground-refresh.ts": "6bec521b3d3d433d682396a24007baffc435953abe71fc5412551bb6130df327",
     "packages/ui/src/lib/hooks/use-global-cache.ts": "e9dc6dd7102000bd726ffb06983a91be0046d0bf24d022d80f332fb481f2fb6e",
@@ -21268,7 +21317,7 @@
     "packages/ui/src/lib/hooks/use-instance-metadata.ts": "9c9e01e92be61e3430ee390b492144b54583aa72fc56a692ca22ab0a31f2869f",
     "packages/ui/src/lib/hooks/use-live-voice-conversation.ts": "3eae91d007dc00068da8e3f10a216c53300ad576e9877bd6a2c45a979fabf087",
     "packages/ui/src/lib/hooks/use-remote-server-profiles.ts": "7b0dcb3757348450be551287d985cc940d1543de0dac735850c477f797ebfefe",
-    "packages/ui/src/lib/hooks/use-speech.ts": "ae43b4e114accafdced492aa8ca5968234340c22e19f8acdec4ceb815c8d7287",
+    "packages/ui/src/lib/hooks/use-speech.ts": "f25e4d22c034b218fe109fc897204f3d1102cb3a58bec17b4a4a026813beb38d",
     "packages/ui/src/lib/hooks/use-transcription-test.ts": "ef088794be196b25284e833d08083c45857de9c2eb955d3da3a29a547475218d",
     "packages/ui/src/lib/host-server-meta.ts": "11c3e75060746fceabfa46f4045afe79d29815ee1ac593ab2e34ef2dbf198609",
     "packages/ui/src/lib/hotkey-bindings.test.ts": "9e99fbdfc0ac2b1a657a169ae2367e72184bfe0064396ba4b0c382512edad023",
@@ -21284,7 +21333,7 @@
     "packages/ui/src/lib/i18n/messages/de/commands.ts": "3c927b49cc647e08358326d7440088c5daeea14a2444f2cf95baba72e96c1e1b",
     "packages/ui/src/lib/i18n/messages/de/dialogs.ts": "3c9a17dc36ab1238a06535c5f5029935e66b3b380e889a5e582fe50ce2abd343",
     "packages/ui/src/lib/i18n/messages/de/filesystem.ts": "d8451b2e965da0fddfefcfbda7b171fd5697c00ddd51d0d83d226083105fc220",
-    "packages/ui/src/lib/i18n/messages/de/folderSelection.ts": "dee423d1753fa62315101730d5eabe119d0421b8a2585e9f9d0d1fbee38e0de9",
+    "packages/ui/src/lib/i18n/messages/de/folderSelection.ts": "49305536328c346b9aa81c30e73f6031e2511928cac9170b3a435064579f4a0d",
     "packages/ui/src/lib/i18n/messages/de/hotkeys.ts": "9cafd88f40f387bae4733441181b2aacbb0dc4b6963aed8f70b8c920e5d23daf",
     "packages/ui/src/lib/i18n/messages/de/index.ts": "97abe998a815f7a7753908e60a9df56b966cd6fe13c1e483def2dae05853189c",
     "packages/ui/src/lib/i18n/messages/de/instance.ts": "b7a3a5f9e963d67a391e085e25e4d544a2745e243502c2b08957d25ce62ef460",
@@ -21292,7 +21341,7 @@
     "packages/ui/src/lib/i18n/messages/de/loadingScreen.ts": "ec5be186b59e635eac1071f57fe6a03004a9f8f333d9e97ed40f385cf249ee4a",
     "packages/ui/src/lib/i18n/messages/de/logs.ts": "99c4d9dd684ee71c7a9942ad63faf2042f643f12073131ee625838be8f796c47",
     "packages/ui/src/lib/i18n/messages/de/markdown.ts": "418c39b0e7961f6b35d5809cfefb2c068476f10772212f2e0096dae38d110b64",
-    "packages/ui/src/lib/i18n/messages/de/messaging.ts": "9eee73676628b43d74659f043bc6d3fd931a774d4b72cd5c8c3fe672cd5e34b0",
+    "packages/ui/src/lib/i18n/messages/de/messaging.ts": "267f3185e91469cd6f99ffa68942e718a4aa4567d6af69330e3e090bef83ee4d",
     "packages/ui/src/lib/i18n/messages/de/mission-recovery.ts": "0cf317433a248ed28c744737c00d37f5cc6a1e6a0930d860c38dc0b5cd30bfcb",
     "packages/ui/src/lib/i18n/messages/de/mission-scheduling.ts": "b7830d0883665b1b63550bfce9d4bea5b0782fda4dc86754a09187e31aff31bb",
     "packages/ui/src/lib/i18n/messages/de/missions-create.ts": "98a446c4a98c84793db97c1e83d3863442104a2e7ea459039810d011dd5c595e",
@@ -21304,8 +21353,8 @@
     "packages/ui/src/lib/i18n/messages/de/remoteAccess.ts": "0c070c72fb1510350e6d4589d5c2767011eda03cebba9626e3f62cedbd81744d",
     "packages/ui/src/lib/i18n/messages/de/remoteControl.ts": "29ebf065ab66de53e6126fea292b71e9575619a4616082e1d9b8f11f4a3b8aa0",
     "packages/ui/src/lib/i18n/messages/de/rune.ts": "c481b5a77a20a6cf8a7bd7004e101750e509eccd50b28f1d71510fed5391a958",
-    "packages/ui/src/lib/i18n/messages/de/session.ts": "f3caab87730a52c32fc4eb23deebca49770fcbd3fb5dbcff3219ad50ba0a2f77",
-    "packages/ui/src/lib/i18n/messages/de/settings.ts": "a146a52a8b36d8ae360e5e85cdf7288967bf5fb282e6ce45d0a75e3ec2eaebd3",
+    "packages/ui/src/lib/i18n/messages/de/session.ts": "079e73c6b14a30520451c4637f46ed25747e69853f7a56ae35d562e1dfb56778",
+    "packages/ui/src/lib/i18n/messages/de/settings.ts": "6446f8810a93c66fd161010dc69c5a87966bee09fed72a3594c72e91b334ca75",
     "packages/ui/src/lib/i18n/messages/de/time.ts": "5b0e3cb04d9c2d3923f63e7e53b0d34cc2d0bbc1da21ec57a5bc04fcb96d0fa4",
     "packages/ui/src/lib/i18n/messages/de/toolCall.ts": "bf8ebd0fbb5314cc4b7577e94d79d42a95078f7f2f8fd3b72c5e1e8554b26996",
     "packages/ui/src/lib/i18n/messages/en/advancedSettings.ts": "78bd63fbc64512b8c24838a26806da5e6c1fb31b9ed4def0957387725a236e02",
@@ -21314,7 +21363,7 @@
     "packages/ui/src/lib/i18n/messages/en/commands.ts": "59427afa638c54657fe6af0a7583edb03972aa4068849a9885fc1d0b4df1ea7d",
     "packages/ui/src/lib/i18n/messages/en/dialogs.ts": "3dd31bda06d62a0fd94b0328aa2a04656dc5423590129d93a6582feaa555af4d",
     "packages/ui/src/lib/i18n/messages/en/filesystem.ts": "a16a5380639bf2d0c65f5b0e692c568fe85da011becf81aacda35851e65202cd",
-    "packages/ui/src/lib/i18n/messages/en/folderSelection.ts": "ba1b32caca7b9ed5b888c8532df6ec974217ca7b1d5f533418e4bfa04e7bd9b4",
+    "packages/ui/src/lib/i18n/messages/en/folderSelection.ts": "c58a61084aaa9b6a4d0bc23a612c2b9f346e4b360f0bfbdfcf499a6492c0d0d3",
     "packages/ui/src/lib/i18n/messages/en/hotkeys.ts": "50cbd719632268ceb1b8f5d98ad2cbd62b5a44e324a73ed5a674c46935da12fe",
     "packages/ui/src/lib/i18n/messages/en/index.ts": "f351c3274b4b35f946ac082aa9c9b28028e801aa268f55aa9068f05dae761dc2",
     "packages/ui/src/lib/i18n/messages/en/instance.ts": "7912b5d1c65ba5f471a8577e5a8d87a26508ba740619c7001f7edafd3e22fb91",
@@ -21322,7 +21371,7 @@
     "packages/ui/src/lib/i18n/messages/en/loadingScreen.ts": "3c6465e9c38c5624a1c88cd59a30bbcb0b539e6801d8e743f3ef44e7f1fbd2b9",
     "packages/ui/src/lib/i18n/messages/en/logs.ts": "c2f8bf44ff1c1cfdbaa4ae8ac444d641d627b5572282416948808080068a7a3e",
     "packages/ui/src/lib/i18n/messages/en/markdown.ts": "98fc0db95715513634899f2fb05849a326783c0adb912d9d41e953d5b3dc8dc2",
-    "packages/ui/src/lib/i18n/messages/en/messaging.ts": "72b7770d320d6fc143146c7f0d1305ba3814a8163f6fafb78fcf00de19c1ff0a",
+    "packages/ui/src/lib/i18n/messages/en/messaging.ts": "7d4aa211c9c8f1ecdaacb57a39ad51af3abadbe1ba0f227a6b4cc314764f3ac0",
     "packages/ui/src/lib/i18n/messages/en/mission-recovery.ts": "209b7bf4307baf633a9e3bcb04a15abb4e754de89407964ce6d33101600997d9",
     "packages/ui/src/lib/i18n/messages/en/mission-scheduling.ts": "b6b96fdfd7a9231d14144d4452ba1af0335cf6af4dda691d3e0da812ef4ad6f9",
     "packages/ui/src/lib/i18n/messages/en/missions-create.ts": "588683b25632d6f0af2cc68d1cb7f90f45a9f5c0bbda8bf8bdc447f4e8326235",
@@ -21334,8 +21383,8 @@
     "packages/ui/src/lib/i18n/messages/en/remoteAccess.ts": "b1f0ae6c193b6bc28de7f95fda687559f48e7966af22e68ad1e0c0d7e2784b57",
     "packages/ui/src/lib/i18n/messages/en/remoteControl.ts": "f8205ac6cabb2c7ab1d407f9a980c708ad10cdda01cf43b809f79f420c2f7dc7",
     "packages/ui/src/lib/i18n/messages/en/rune.ts": "fe590db30d25a70c2b9c9e04ad215a5debf41bc8bbf9c5d38ac48cbc4568e1ed",
-    "packages/ui/src/lib/i18n/messages/en/session.ts": "bc1578c0a78e63df41f1a44529dd0a6fbf77073d6541764541b1474adc2efcdb",
-    "packages/ui/src/lib/i18n/messages/en/settings.ts": "1664cc9d6b42d63009b0f9ff12e63fe170847f041f08484ec9a7679b74d0082a",
+    "packages/ui/src/lib/i18n/messages/en/session.ts": "47a036d2fc98f78c203565a2847696695be87b767d5571bb180038763ae7a23c",
+    "packages/ui/src/lib/i18n/messages/en/settings.ts": "a5b16a45a5df18006ff79c6c536654e25adf39f89783ff1d4db0ea661ae962c8",
     "packages/ui/src/lib/i18n/messages/en/time.ts": "1021ea17c34c4fa505144269b398d5320d182aa88238d47bc50d176afa41f389",
     "packages/ui/src/lib/i18n/messages/en/toolCall.ts": "a937552d706fe55895ff21b0cc5ca41eb8324ea4f7efbc8d37e5003d6dd69875",
     "packages/ui/src/lib/i18n/messages/es/advancedSettings.ts": "3c91df877e81c2e004a1b1e68b4bcb371842c577ae9b6780496d547e7a425c09",
@@ -21344,7 +21393,7 @@
     "packages/ui/src/lib/i18n/messages/es/commands.ts": "9307ed0d575740ee2e095fdde157727518215b231a4f8fd7409e9aa06014a5ce",
     "packages/ui/src/lib/i18n/messages/es/dialogs.ts": "d83f254ae8bb09d45a8c232789fc2b74750cca2d4b1ff241d21ac4724298a0bf",
     "packages/ui/src/lib/i18n/messages/es/filesystem.ts": "bbf5dd767dce2c8f49d9f1e91c5bab6e5dcb012d65ae7c8c363a0d3384d8ea11",
-    "packages/ui/src/lib/i18n/messages/es/folderSelection.ts": "82cfb6aa1fe00e1e622ccf86cde1ae88042f87bf43886d7f9513b7a913c6e78c",
+    "packages/ui/src/lib/i18n/messages/es/folderSelection.ts": "f9138965590f5dfc59a81ece097c7c8d68137d73097ebcc13e74ecd040835abc",
     "packages/ui/src/lib/i18n/messages/es/hotkeys.ts": "29cb2405c371437199f268a240ad1311dc350e956b33cb91086f0868eeca602e",
     "packages/ui/src/lib/i18n/messages/es/index.ts": "1fd06977f99be2fe7dcbdbe971cad0ce43830adecaee83c280ca789e8ac94260",
     "packages/ui/src/lib/i18n/messages/es/instance.ts": "19eab7fc022e5c5d87ece22a4fdaa123a00789c71006ac242046be4957055f5f",
@@ -21352,7 +21401,7 @@
     "packages/ui/src/lib/i18n/messages/es/loadingScreen.ts": "b7693d859a736c32abcbc9dc0c32a264da512c6d3e5f8de2489559a1bdc264e1",
     "packages/ui/src/lib/i18n/messages/es/logs.ts": "b573b1a156ca0d7dfb950b7294770eb119b0845d16b7eea6547256e8d98b3bd7",
     "packages/ui/src/lib/i18n/messages/es/markdown.ts": "f421a5543b33e6d5302f95ae8bb06a34c50ff1bb343529c53fe6ade845e8e9d8",
-    "packages/ui/src/lib/i18n/messages/es/messaging.ts": "6995585c9b159ab8f3a172e9d83a946d53f8272da364a3bb7ccd7b14f4ce431f",
+    "packages/ui/src/lib/i18n/messages/es/messaging.ts": "9192e1692ddae07c12c3a6b4eb08c115012711b1e214f574d537c8f89157d9bc",
     "packages/ui/src/lib/i18n/messages/es/mission-recovery.ts": "92ac11174bb220ec7128a2dfe290042a1f5df271be343e092bd6adefa689ef2a",
     "packages/ui/src/lib/i18n/messages/es/mission-scheduling.ts": "661a4b249d727136f3c84cd3ad2c722701e62ef3e08c32ed1364e51e634e3938",
     "packages/ui/src/lib/i18n/messages/es/missions-create.ts": "45030f45da0a55e426c25ea6adc0ebfdd01c16051dbf3e15861712d11cd6355b",
@@ -21364,8 +21413,8 @@
     "packages/ui/src/lib/i18n/messages/es/remoteAccess.ts": "f51c1ea87f9fda046861e782f44ca8f486100ce1a4cf7a600ec22e14ec03f9c8",
     "packages/ui/src/lib/i18n/messages/es/remoteControl.ts": "37bf7fe88da7417d83abbf86f3b428cd4d697d60223940a56833d8839a58d380",
     "packages/ui/src/lib/i18n/messages/es/rune.ts": "ef0de168d09e54974b1dff2e0ed375dcd923bd01c337bde4f57674dc52416981",
-    "packages/ui/src/lib/i18n/messages/es/session.ts": "82fb2ab850946dca2f0aca724e67af442a8088a0835ecd9ec363436beef79d47",
-    "packages/ui/src/lib/i18n/messages/es/settings.ts": "d54368f6f547b3177c827d0a94ccbb5613a8014703393eb181ed710eb95b7703",
+    "packages/ui/src/lib/i18n/messages/es/session.ts": "3509dbe21917cb5c257f2fdecca1cb0b0b726915358c15ffa3c3a9ac52960294",
+    "packages/ui/src/lib/i18n/messages/es/settings.ts": "cf5ec829b94f3abe3db1529703caeb4f1e44e6213399e06ca5074d562567767b",
     "packages/ui/src/lib/i18n/messages/es/time.ts": "9a7d68d1ac61f9e03f7230f73727b0fee406fd06307b49b00492b450a90fef40",
     "packages/ui/src/lib/i18n/messages/es/toolCall.ts": "e9552da02e91f601ab6c393d24e0e9bb73d7979ae82dc66c1804019733f42601",
     "packages/ui/src/lib/i18n/messages/fr/advancedSettings.ts": "dfa1a201b57c0792034fc638203379657643f39e30de37edea6bfb71548d5ee3",
@@ -21374,7 +21423,7 @@
     "packages/ui/src/lib/i18n/messages/fr/commands.ts": "a545047a10cc07ec63ad52dfe11697c05cdb6597a15e5ffcc3ee0ed4e2ba292d",
     "packages/ui/src/lib/i18n/messages/fr/dialogs.ts": "265afcee56fd7c89fe2c90f0f59dc446f2a208074c8b622675ae0f0f78d4bb0b",
     "packages/ui/src/lib/i18n/messages/fr/filesystem.ts": "5007b7340dcd7a729a46eff5c8dbba63568836a9f796a8f0d34d893df2c343c4",
-    "packages/ui/src/lib/i18n/messages/fr/folderSelection.ts": "a8d42d34b8e415e7b694994c86d9858ce47e3ef63be736931126520bac6e19d4",
+    "packages/ui/src/lib/i18n/messages/fr/folderSelection.ts": "f23355f1784523cbe5e3d3c4306e74557ef5e9e11aa8b36d9454ef43ac085d36",
     "packages/ui/src/lib/i18n/messages/fr/hotkeys.ts": "e9cbda9f267cc1bbef824f4f9e5ffabfbe9aeb8a289ebe215c2f939c96ae20c0",
     "packages/ui/src/lib/i18n/messages/fr/index.ts": "801d453af143de43f9703f764b4a47d90757c3fd7511aceb7c8d6f2b98db52de",
     "packages/ui/src/lib/i18n/messages/fr/instance.ts": "fddc7ae6d3f0317b6c7d0a9de20cded7780f43da0605a6b6b0c1193cdc02c07d",
@@ -21382,7 +21431,7 @@
     "packages/ui/src/lib/i18n/messages/fr/loadingScreen.ts": "d9534a17b1f0a342c42352565701970892c4c8c1928469aa0f0b43c91a233ee1",
     "packages/ui/src/lib/i18n/messages/fr/logs.ts": "fbf08ac0ec1716fb73493fa308cbb4e289b0dc68cd2c0962b49b1f2394d283c8",
     "packages/ui/src/lib/i18n/messages/fr/markdown.ts": "4dd39b7ef982efd48d7cc41f81e9d2151d6b3839df0f6397582480159ebcb0ca",
-    "packages/ui/src/lib/i18n/messages/fr/messaging.ts": "418c47e3104e76d5330e163f563b240a669d1487771b06ed27522a9f20699585",
+    "packages/ui/src/lib/i18n/messages/fr/messaging.ts": "f198d86ab8972cf24d60b7fffda865585ba32ce53e245e935b1d4dc26395e45e",
     "packages/ui/src/lib/i18n/messages/fr/mission-recovery.ts": "a638c1fdbdf35aec3f8161eadd88eb501aad6f9f3584bac1575cbab69aa82833",
     "packages/ui/src/lib/i18n/messages/fr/mission-scheduling.ts": "59b645458b968386e799b2e9150e2917b17484657f4293ee8083aa743dc1c9e7",
     "packages/ui/src/lib/i18n/messages/fr/missions-create.ts": "be90402b8aae7eba8a464de35bd9d0994198041d978dc7a98a765488d53501df",
@@ -21394,8 +21443,8 @@
     "packages/ui/src/lib/i18n/messages/fr/remoteAccess.ts": "d4e627ddc598bab7553d133288cded70cb3e47677e27b1535b5deaee5510057d",
     "packages/ui/src/lib/i18n/messages/fr/remoteControl.ts": "a4224c51a92a4ce3c153cf069fa396f30164a7aa1fad03221a62a267d68afc4f",
     "packages/ui/src/lib/i18n/messages/fr/rune.ts": "52d5302f41731d7a02e1fb861240f25f31544efdff52c614dc2f6625804cb19f",
-    "packages/ui/src/lib/i18n/messages/fr/session.ts": "4055611372bd7608e678f5ce492a75cd11d04d13fce443b7ba0a99ee809878ec",
-    "packages/ui/src/lib/i18n/messages/fr/settings.ts": "fb3769d3135704584d7e46299acdc144e4000467d1d61e9f0b3957df0e3b27e9",
+    "packages/ui/src/lib/i18n/messages/fr/session.ts": "62ec3b75a607d1546a46d0455d3b4fd647f09c03bcfe03ca872121c389e5cc91",
+    "packages/ui/src/lib/i18n/messages/fr/settings.ts": "34b048d9d59bebb0089722b184c8a738f501d60e3c0ff957830b1d527c4a5652",
     "packages/ui/src/lib/i18n/messages/fr/time.ts": "4ba4ae9bf412ef14213ad7c0b27386bb7d14757a0c5641377d890d1b62f3b75e",
     "packages/ui/src/lib/i18n/messages/fr/toolCall.ts": "3ee588f6fd3bf3831110a6e9c952d2bca09afd5adb1297f12b77a7ba69b01a6d",
     "packages/ui/src/lib/i18n/messages/he/advancedSettings.ts": "888b8c5113fca34a3a8ecd29d5efd1c5f4c36489e9872d65a5ccceb5836fd9d1",
@@ -21404,7 +21453,7 @@
     "packages/ui/src/lib/i18n/messages/he/commands.ts": "58bd798680222279bbba1328b5c44d5e3cc1efbca33fb07c70b2313f8020781f",
     "packages/ui/src/lib/i18n/messages/he/dialogs.ts": "316cc384bad7f7ec0f448df6e491526a306902b1399ca728059e6f6c5e7bd663",
     "packages/ui/src/lib/i18n/messages/he/filesystem.ts": "7f66dae1c9f53afb174b88a3c9f34c21514271bad49cd9f63dccd47cca260897",
-    "packages/ui/src/lib/i18n/messages/he/folderSelection.ts": "d79e598f9d3adc9ee59c426e73963c7a3f7b4976632be5bbecc0887f881cdbe2",
+    "packages/ui/src/lib/i18n/messages/he/folderSelection.ts": "a7717f9e4cb5df56aaed34892ef6f1c3075bfbff22592f98c93a44a1081bcc35",
     "packages/ui/src/lib/i18n/messages/he/hotkeys.ts": "ee54bdb75ccf11fe725118aa92206e31ba306c0bf217f3b168a64f108972c8eb",
     "packages/ui/src/lib/i18n/messages/he/index.ts": "07d064a99978164fed1ba3b06d1d8d0acccdcc7af59b77482d69515f0b061289",
     "packages/ui/src/lib/i18n/messages/he/instance.ts": "a697283913decaf7cf5b992bcc0bea8a523d83fa1ed99146a052f2b036484cc6",
@@ -21412,7 +21461,7 @@
     "packages/ui/src/lib/i18n/messages/he/loadingScreen.ts": "d474bf35b5b736c58e65fa424337c732f127542b06b177d3ac16fb0c317b522e",
     "packages/ui/src/lib/i18n/messages/he/logs.ts": "f40fbe476cce03c65719b7f4a10bcb0fba1f0ff75cb56871f21fa9e6d3bf24d9",
     "packages/ui/src/lib/i18n/messages/he/markdown.ts": "c23614b12f255bcfdb7a88411e16ea36da4d4b515d28bb777ef62419088d9c6c",
-    "packages/ui/src/lib/i18n/messages/he/messaging.ts": "6d55f20324bbab8c63bbd9e34102799137592ee380fbefafb696396e1afeef82",
+    "packages/ui/src/lib/i18n/messages/he/messaging.ts": "6e80715d08b31d8d6c0bd797de413cede66ab8f317f9008c8f7fd0e09cdda145",
     "packages/ui/src/lib/i18n/messages/he/mission-recovery.ts": "fa7f8b0ea163a4078df44723986651119140671cce4f7948ae328932357afaf0",
     "packages/ui/src/lib/i18n/messages/he/mission-scheduling.ts": "8471408ec9965927dbcaa75e7ca4867d3d5353a9af8da686c7384479662509f7",
     "packages/ui/src/lib/i18n/messages/he/missions-create.ts": "5b3a5a7fb627c5038d7c0c0519963bdb1b41e24c453f60448e9701e706dc3c67",
@@ -21424,8 +21473,8 @@
     "packages/ui/src/lib/i18n/messages/he/remoteAccess.ts": "cc0d3ed258ba01ef195ed52c631245e57bf84c5bd54f969e3e02d6e3df358192",
     "packages/ui/src/lib/i18n/messages/he/remoteControl.ts": "cc741fd49982f84271d8933b517638ab804164c1a364783671d8a3c33cd13b7d",
     "packages/ui/src/lib/i18n/messages/he/rune.ts": "7f2dab9cfab321c46a82a437a9890ea090514fb27805d5623dd5a8306cff2990",
-    "packages/ui/src/lib/i18n/messages/he/session.ts": "9b0a2ad354776c09f0e4d9f7bec781ab136929496b2469b6b8bc217dc7aa20ef",
-    "packages/ui/src/lib/i18n/messages/he/settings.ts": "674328c081b83ae07c199a6145937f9f52e9bce3298ce488c98aaf0d70337eeb",
+    "packages/ui/src/lib/i18n/messages/he/session.ts": "6c434ec08f213d7db56bf64a0fa47607e4f6a95c7567cea9cc9f46a765c4b569",
+    "packages/ui/src/lib/i18n/messages/he/settings.ts": "39e7ddbc24251e5f188c1cd7362ca57796da4e5fc595d6d80f8da00ae5564386",
     "packages/ui/src/lib/i18n/messages/he/time.ts": "794cc08188e23f608cdbdb9e278aa5ac4b1e598b792114b97f526f07c0e8652a",
     "packages/ui/src/lib/i18n/messages/he/toolCall.ts": "bf940fbba2d8ad19ce404d1b20574365dad058827de9a18fd26a9712f20895c9",
     "packages/ui/src/lib/i18n/messages/integrations-locales.test.ts": "09fcd4b24cbedec5dfa9604eff57559f72777925821b4ac8ed64005b93643b06",
@@ -21435,7 +21484,7 @@
     "packages/ui/src/lib/i18n/messages/ja/commands.ts": "8b401eb49632c02aef9d7272cb808708110af4d686d05bb1959608cf134775e9",
     "packages/ui/src/lib/i18n/messages/ja/dialogs.ts": "b49c91479499b0be552b97cbfafc09bae42ad54c482873064b9d4391f8a39c01",
     "packages/ui/src/lib/i18n/messages/ja/filesystem.ts": "530595f3adcc5a957184ff8a0de22ff4e5e608996cb734cec78816f934a82aea",
-    "packages/ui/src/lib/i18n/messages/ja/folderSelection.ts": "ed2c512fdc05ed477daa22c216d40013c0c00b1f25e975d707bf13d114be76f9",
+    "packages/ui/src/lib/i18n/messages/ja/folderSelection.ts": "492b1d4daef74189640ada199256cf39b35bd0b7a59d424aefb69daf6e110530",
     "packages/ui/src/lib/i18n/messages/ja/hotkeys.ts": "33fc8dbc245b870278e78831a29392de742b3843d17b12f62b878d61afbddd7c",
     "packages/ui/src/lib/i18n/messages/ja/index.ts": "6254381ac0643d89326a53b18ba696bd2ea59dc2f479765eba77aeb2ef167314",
     "packages/ui/src/lib/i18n/messages/ja/instance.ts": "a73258b71253d592a8c5da82cbb4ad8ba5a1836e4231d697bbf28ea0f500483e",
@@ -21443,7 +21492,7 @@
     "packages/ui/src/lib/i18n/messages/ja/loadingScreen.ts": "c9c072694cd64f78b2d3e53dd3df329d621488d9867febdc50084837e50809c3",
     "packages/ui/src/lib/i18n/messages/ja/logs.ts": "19cd71f31e25e2e5e27eeaa69cff4861bd3feb39c96fe2a4e35b11f65da0d8a4",
     "packages/ui/src/lib/i18n/messages/ja/markdown.ts": "65a76d4af0f0fbe46b9cada993f4e48b444251ae807a49cf8818b36414e45c88",
-    "packages/ui/src/lib/i18n/messages/ja/messaging.ts": "54e93cff8b77c5a3a50246ed0e18161c83b1ee5fe5c36dcbb78607c17be690d9",
+    "packages/ui/src/lib/i18n/messages/ja/messaging.ts": "5d8014d96adc3f875b0d58735b62d433ea02e75ab07e7b9ca941604ee0908578",
     "packages/ui/src/lib/i18n/messages/ja/mission-recovery.ts": "c9efc37c5a9a05d1f338af18ef5b4503388a1f6edc2eae3db35310dbd835ed5c",
     "packages/ui/src/lib/i18n/messages/ja/mission-scheduling.ts": "b8b9a74f9cbfcbcee164907ae7224e9b97be83499dc504da73d41277b67e3f5d",
     "packages/ui/src/lib/i18n/messages/ja/missions-create.ts": "0af4ddc06793161fe98fa247658b331ebed16b4b660a7d092bb3138c2084f4b4",
@@ -21455,8 +21504,8 @@
     "packages/ui/src/lib/i18n/messages/ja/remoteAccess.ts": "8c86e267442de68af1a5290df70c6a9492ea3b65aeed6bfae6f56fadef898607",
     "packages/ui/src/lib/i18n/messages/ja/remoteControl.ts": "380b959161248150007dc9729677348bd8c0927ddf2ab9f30ffac7ae3fadbd8f",
     "packages/ui/src/lib/i18n/messages/ja/rune.ts": "80c46fed1b4561df5d39ee43b634daa7f8655edaf38f1c7899bc589ea3ec3cd0",
-    "packages/ui/src/lib/i18n/messages/ja/session.ts": "74153e7efd99ff125a81f901e99817df8f782cce48d8afe5a6a2624d19175e8e",
-    "packages/ui/src/lib/i18n/messages/ja/settings.ts": "1b22253ff7192a46592dbfacc41cc6984eadd11c575e98e823f76d60431ff566",
+    "packages/ui/src/lib/i18n/messages/ja/session.ts": "960c6df4acf09c71489e3de38b534b0bfd60c5d5c25cb18a33f4afe4e5b4b709",
+    "packages/ui/src/lib/i18n/messages/ja/settings.ts": "f0a6dfb04cfb8b37784dd22e52536fa057eb12679905adc97c7cb9f784c4a1c0",
     "packages/ui/src/lib/i18n/messages/ja/time.ts": "8ddb7bbc69081b3e15b92586899e5ad215c17e77dd8ac8dc3e8c1adc5fa5659f",
     "packages/ui/src/lib/i18n/messages/ja/toolCall.ts": "01f73ce6cfc57219ccff103d38a0bdbd7e2ad465e63aa209dc731c3faae098e1",
     "packages/ui/src/lib/i18n/messages/merge.ts": "0906bb95d0b939898e8094a03a92a7d3475713a0054dbf1a3e18838bfb086254",
@@ -21469,7 +21518,7 @@
     "packages/ui/src/lib/i18n/messages/ne/commands.ts": "3c12c9c24794ec900aa84f4ab4a593fd1b9897fe7ca0f0187541f88690822204",
     "packages/ui/src/lib/i18n/messages/ne/dialogs.ts": "d5910e57831bbfbd8f9bc337aedd9d9dfa195c93b6ccaaabcddcdbf50754ae42",
     "packages/ui/src/lib/i18n/messages/ne/filesystem.ts": "fa066464686cd851088550be3ad6e9914edaaab85d0de707ba4f5aa69feeb407",
-    "packages/ui/src/lib/i18n/messages/ne/folderSelection.ts": "a74afef31b2e1bf51c88d0d9578cda202494f8c69ed36f3cb0f312f62cf780ce",
+    "packages/ui/src/lib/i18n/messages/ne/folderSelection.ts": "be2e87a00388eaa25fa4792c9f49ab977954ff4609f3762c3366f067d68f1763",
     "packages/ui/src/lib/i18n/messages/ne/hotkeys.ts": "63a8f19c0a8958cd6c2616f5bd7f99230b29538538c8a120c65802d295e14f25",
     "packages/ui/src/lib/i18n/messages/ne/index.ts": "aaff33164d6460dd7fbb02b2413984417cc4061e475f7813fcd2ee7ca49c223f",
     "packages/ui/src/lib/i18n/messages/ne/instance.ts": "6db2cb7ab36849054f037c463e5d37a974fdcd4e003609ae3ec701742f060221",
@@ -21477,7 +21526,7 @@
     "packages/ui/src/lib/i18n/messages/ne/loadingScreen.ts": "2cd3e3cab986a544c1eeefb15fd7062f5a2c8b56e94814744e5b5471fcbbe250",
     "packages/ui/src/lib/i18n/messages/ne/logs.ts": "ebad18b56d58f9c3caa73c8705be048ee6e72a40588b231f245af0f219269938",
     "packages/ui/src/lib/i18n/messages/ne/markdown.ts": "a25464076e3269f8a526b297f736e5bb317cf156250511ed3cbe93470ec7fac7",
-    "packages/ui/src/lib/i18n/messages/ne/messaging.ts": "2e942bc445dcb66e95afb0364df4831d763e649b5f64138dc8be0d9849238d0a",
+    "packages/ui/src/lib/i18n/messages/ne/messaging.ts": "9a78f4fc227e61869c2c5e030c54aa6a29cef5ee739504ec69d8f07b24f6d8f9",
     "packages/ui/src/lib/i18n/messages/ne/mission-recovery.ts": "d14216c1ac5160515bf0668ddc7360336fd6f07d41ef8190449c317965b88948",
     "packages/ui/src/lib/i18n/messages/ne/mission-scheduling.ts": "a78ac701a5b33e02c3c62249d7b5d04c1d4d658d1b615ae667cab83e4855c9c1",
     "packages/ui/src/lib/i18n/messages/ne/missions-create.ts": "fcc3000ee8f570df4b3d6b731a483e4a178c43f605c3fa556366e37affd5835c",
@@ -21489,8 +21538,8 @@
     "packages/ui/src/lib/i18n/messages/ne/remoteAccess.ts": "0fd4d0e11c2bc4b56b8dc518852a19627dcfe9849d7e93525f0b3102a471f8f5",
     "packages/ui/src/lib/i18n/messages/ne/remoteControl.ts": "9dd3f30bdd3970b6414a8fafdf8aeff1cb3f2cbb3be9206a6f8a73c8819c9b26",
     "packages/ui/src/lib/i18n/messages/ne/rune.ts": "83949b2a0f6d3437288c69eb903a5ab9a31c39f323e73bdeb597ba0de9468c8f",
-    "packages/ui/src/lib/i18n/messages/ne/session.ts": "ceaaf5a5acac00e801843d4c7803cc6142cefb0b331e298f4f2e71d9644feafd",
-    "packages/ui/src/lib/i18n/messages/ne/settings.ts": "989ae37c7230c1399089aa3d45c7e50afcca20e989a36b24a707b172469d6f5a",
+    "packages/ui/src/lib/i18n/messages/ne/session.ts": "6a5ad6f5b2e43179e11c7174b3bc7720debe3bc832d0095fe775b4cb5f30818e",
+    "packages/ui/src/lib/i18n/messages/ne/settings.ts": "a1ff0c64074479d90805b8493b0f243cef335c2c47bfae1e9e27d3417afea6b0",
     "packages/ui/src/lib/i18n/messages/ne/time.ts": "a12f410ab472f3d81fd15e8fca5fb7adb3b1b3a128f790079fbd0f7d84a48ab9",
     "packages/ui/src/lib/i18n/messages/ne/toolCall.ts": "935ce9b53062f45e6c387076d6223dfc73cb3bfbad06d04a92dbb6bf820888d6",
     "packages/ui/src/lib/i18n/messages/provider-usage-locales.test.ts": "8368275be1e3c66a09e6a571a7ae57253c9f6efa05539b6b202a221f0d30bc88",
@@ -21500,7 +21549,7 @@
     "packages/ui/src/lib/i18n/messages/ru/commands.ts": "ef0f928cfb13ea86820f84e67048e682ca214d7a7dd469729358b1ec5855b523",
     "packages/ui/src/lib/i18n/messages/ru/dialogs.ts": "620058e4c79b9906f2dea151b2cc249015eb99ef99228d8b4e3559da2d856900",
     "packages/ui/src/lib/i18n/messages/ru/filesystem.ts": "c4b1a82a05f111decb6bd63fec4f260ff66452aac4c5c04e57dfd98fdbb06bec",
-    "packages/ui/src/lib/i18n/messages/ru/folderSelection.ts": "7b6d2d3c5ad91c36d6f4bffdf63933a6d04e75c3eab23909f3d218258bc4e41d",
+    "packages/ui/src/lib/i18n/messages/ru/folderSelection.ts": "a74f3efefe1ef5a783dc27ddb89ced814a76caa893b0d59f5d1e7850498c1e6a",
     "packages/ui/src/lib/i18n/messages/ru/hotkeys.ts": "52a3192ba0bd2ea1941748a93f1fdb850c9d11cd22dd76c6dd5bfd4ff6af7dd1",
     "packages/ui/src/lib/i18n/messages/ru/index.ts": "ae69b59d829719b5b3d113c0f32114ae394f3ee796fc38c4f4d113163d273f8a",
     "packages/ui/src/lib/i18n/messages/ru/instance.ts": "4b1aa66665ec443c05088893a785a62d1fc6f9944f287608e804592fb247b4ef",
@@ -21508,7 +21557,7 @@
     "packages/ui/src/lib/i18n/messages/ru/loadingScreen.ts": "449dd9e2e8e509443bbf8bf592d81457777cbcdc4073e53b9f95520db16736f2",
     "packages/ui/src/lib/i18n/messages/ru/logs.ts": "2757c603749c541e484f66a3be413954775016e6860ffcd5da3d1abc10dff292",
     "packages/ui/src/lib/i18n/messages/ru/markdown.ts": "e9498236b51bef4b5eaa663533345cfd0dd55235595b0f5aaa1b75b7ffe903c8",
-    "packages/ui/src/lib/i18n/messages/ru/messaging.ts": "b26764a8ce989062080d5a086259d4a7c06810e7d246e4d0c06887105b2e9fb3",
+    "packages/ui/src/lib/i18n/messages/ru/messaging.ts": "555467f5ef12beba869f209d320a884adbef22c8828d632ba6533328266e0f03",
     "packages/ui/src/lib/i18n/messages/ru/mission-recovery.ts": "22352cda3009d00933355edf45e51b4f55f0fb0a63219ce25c23210c7a88fc28",
     "packages/ui/src/lib/i18n/messages/ru/mission-scheduling.ts": "9cd5342165a7b31be13aa6f5142ea70412fc51b0dd2b063cc308df853a66e8ec",
     "packages/ui/src/lib/i18n/messages/ru/missions-create.ts": "801f4c12f70153da8cc935aef0b11d6a5b65f739132a19f0b3722cff6bb7f225",
@@ -21520,8 +21569,8 @@
     "packages/ui/src/lib/i18n/messages/ru/remoteAccess.ts": "6a1fb1da90dc7d34ccfc8320ef58e90f957163abb23280bb4a06bcdff2528012",
     "packages/ui/src/lib/i18n/messages/ru/remoteControl.ts": "8cd3b24dc4568a27433636ede0eac914809957acc378f41ad79970ee8ff06672",
     "packages/ui/src/lib/i18n/messages/ru/rune.ts": "9883f2638f2e5392796c7e0505307e348175b866ab2c170a01032a9136fe30ce",
-    "packages/ui/src/lib/i18n/messages/ru/session.ts": "ca832d32ec11abbc50fe49353b2408a4fa4bb18f0b2dace88ab0a1d182005f1b",
-    "packages/ui/src/lib/i18n/messages/ru/settings.ts": "64918bab65891912b44714981a28361e3c4fa343e2e69914798aeffbbc998b1e",
+    "packages/ui/src/lib/i18n/messages/ru/session.ts": "1ab28e2821b9d8f77b822fe0db2e2d6881c72c597b0790cd9bed614b33b5e90e",
+    "packages/ui/src/lib/i18n/messages/ru/settings.ts": "d99263c915386e094914151f9993083eef8d2f4de1b84a13b7af3f3f8592bcab",
     "packages/ui/src/lib/i18n/messages/ru/time.ts": "3e905f3e3c2216b26f0c87492bf184b87d64b314996fee46ec0de2c281f24ffd",
     "packages/ui/src/lib/i18n/messages/ru/toolCall.ts": "6c41977b0e008df31794ca4ba97c4e8ad43959e4c51532b382799e30ded82636",
     "packages/ui/src/lib/i18n/messages/tr/advancedSettings.ts": "e9f816c712ff363eb0166f6ec86ee6232ba91c7fd9827f6109a6ed5c1a1b4d82",
@@ -21530,7 +21579,7 @@
     "packages/ui/src/lib/i18n/messages/tr/commands.ts": "dbb7c0b8d3546e3e3edaa3f4dd43ab810fcdee452b2faaf0725a8e5a88ca5ba4",
     "packages/ui/src/lib/i18n/messages/tr/dialogs.ts": "5dd967b0fd16b48df2b90735c09915be574e19ca1341468abe615b43889efe61",
     "packages/ui/src/lib/i18n/messages/tr/filesystem.ts": "be50857ea21e86b5f7da0dd2919690f700d66a618806d71bb0e8306ef8d74a0e",
-    "packages/ui/src/lib/i18n/messages/tr/folderSelection.ts": "fce3e5839c4d8655180438d34ec9aef53b7194119fc1a0fe8ff27a6a72ba7fe7",
+    "packages/ui/src/lib/i18n/messages/tr/folderSelection.ts": "fe3b4db047e5a5d96c653d0566212a2babc4cd3fb6753c5e697226b1482959e5",
     "packages/ui/src/lib/i18n/messages/tr/hotkeys.ts": "7334696bf77bdc6ec7545a8c61f6f2e1405478f9e4542ece2367182bd3e99972",
     "packages/ui/src/lib/i18n/messages/tr/index.ts": "dd879a8454893d2b25b1fbbf09b7bcc46e917cc8784f3097a9c64d628b0b4878",
     "packages/ui/src/lib/i18n/messages/tr/instance.ts": "1879720c6ffb9712f8a5f8cb0392e97c54d84dfbd4a3adf3145d847f298d6604",
@@ -21538,7 +21587,7 @@
     "packages/ui/src/lib/i18n/messages/tr/loadingScreen.ts": "956fefee128ee4754df8b8fcc8a2df4f5a1c5f313b9eb462b9285107eb53c49f",
     "packages/ui/src/lib/i18n/messages/tr/logs.ts": "d1f15ff7485838591fd75ab312da33f0e0881f8b3af4d09169c67bf3649e227c",
     "packages/ui/src/lib/i18n/messages/tr/markdown.ts": "870381a85d9289974a52d14c4da1ba2a673d50e5deffc6f7a0613861da28dae1",
-    "packages/ui/src/lib/i18n/messages/tr/messaging.ts": "2b30f70e34b146e7412761cef717c7bb324f31b0fb2e02496bdc5e0fa23ea5c8",
+    "packages/ui/src/lib/i18n/messages/tr/messaging.ts": "84cd10f04f16e0b8f6881ed1a5770c91761467c3b6b88c9d0ec8e8e8931afbfa",
     "packages/ui/src/lib/i18n/messages/tr/mission-recovery.ts": "5fb19f3f5d661e2157205a62ed2c94dd681f85f92c4d1d7a1ad002d118d34903",
     "packages/ui/src/lib/i18n/messages/tr/mission-scheduling.ts": "ecd7208f039166a3bb3931e9c8abbb0f6225d6733758e12ca7312934a26e4bbf",
     "packages/ui/src/lib/i18n/messages/tr/missions-create.ts": "4d1be2b4ae8031fad69761f8cfc28bf76623a1e53a9bd20acc5f7baeac0d95e6",
@@ -21550,8 +21599,8 @@
     "packages/ui/src/lib/i18n/messages/tr/remoteAccess.ts": "26ce2d7f1419713b85c6887d37537a8eacd7ff220a0c247778c709a05cd158f4",
     "packages/ui/src/lib/i18n/messages/tr/remoteControl.ts": "f977299aaa21ac54b1716bfc3681ebc208cf4d2fde8d9afa64c3bd3d10e651ee",
     "packages/ui/src/lib/i18n/messages/tr/rune.ts": "d5900e345dfc08af1198d907f3a8c78be74d8df01a44fb0cb66f996abd342d07",
-    "packages/ui/src/lib/i18n/messages/tr/session.ts": "36f0494c01c1632d54b78dc50175b16b0c1ca72e4f2fd9143ed6414283c70c16",
-    "packages/ui/src/lib/i18n/messages/tr/settings.ts": "efcb83a029886658ece6c38e58828862d67d570150584aab35b3556c1646ca51",
+    "packages/ui/src/lib/i18n/messages/tr/session.ts": "714f984bcf9874b78017049be507116f9f40239ae4b81e6392d2e94f57f2dad6",
+    "packages/ui/src/lib/i18n/messages/tr/settings.ts": "c458fcd40cd75ffb9f6bb8c9c54dc17ab3b216637e427d7b6de92660931fb033",
     "packages/ui/src/lib/i18n/messages/tr/time.ts": "41024ae94363893ccae86b4ba62b97eb77e7baa058673052b7bd62b2c04bd9f3",
     "packages/ui/src/lib/i18n/messages/tr/toolCall.ts": "0fc8e716d5dbcc758f0160b4cfaab436e5323a61a56e35d2a37330eff45ea793",
     "packages/ui/src/lib/i18n/messages/voice-locales.test.ts": "316dabd4271d3da26c9e468ea74d837e792ea291dda42760d98c44216e17cbaf",
@@ -21561,7 +21610,7 @@
     "packages/ui/src/lib/i18n/messages/zh-Hans/commands.ts": "c8dc6e3303b574a567e6f7a4e67ae687372aeed7535f987887e9ea46afb76db4",
     "packages/ui/src/lib/i18n/messages/zh-Hans/dialogs.ts": "03cc275acfca12f9b6ff8fd30f74dcadf4bfd2d62036b586850770ba1da3d3f6",
     "packages/ui/src/lib/i18n/messages/zh-Hans/filesystem.ts": "aff267655f29c491cd8892339c01e0901dd90602ac3440a7ae4a8e9907cff7df",
-    "packages/ui/src/lib/i18n/messages/zh-Hans/folderSelection.ts": "a61b51811966b14a4763c0ae528a70bd07a710453e8843f5643a6607cea15abf",
+    "packages/ui/src/lib/i18n/messages/zh-Hans/folderSelection.ts": "51c7215b5e9708eb6984e50783a18f9fc4087ee0488c7abb21d6c78c28ba99e7",
     "packages/ui/src/lib/i18n/messages/zh-Hans/hotkeys.ts": "502e26e6c95a4187a94c742022b8e03811230f23be511adb0476e1f124e69a07",
     "packages/ui/src/lib/i18n/messages/zh-Hans/index.ts": "ce29fa71314af919e95275cf68026e9a97c6eae307f20266703a640e07307660",
     "packages/ui/src/lib/i18n/messages/zh-Hans/instance.ts": "6097d9ab759bef347940f76766b07e2f55af22cc4963201d3a0725e21fa0badc",
@@ -21569,7 +21618,7 @@
     "packages/ui/src/lib/i18n/messages/zh-Hans/loadingScreen.ts": "a7a7a3c4b7adeca9b365dfdff37007bbc6cb44e453f2f5744655868fbefd8baa",
     "packages/ui/src/lib/i18n/messages/zh-Hans/logs.ts": "b079d4d1e99578139dae4ab67091fd5892bb06d4338ec75eb97bfb747a782232",
     "packages/ui/src/lib/i18n/messages/zh-Hans/markdown.ts": "88f7ae16dca626cabd19105c0065db01017f47c325c6ada18b783d74a147ed50",
-    "packages/ui/src/lib/i18n/messages/zh-Hans/messaging.ts": "eb9e0001cfeb2b6375070d28dd11b9c1a5481cb808b5b3260a214183a79ae8c2",
+    "packages/ui/src/lib/i18n/messages/zh-Hans/messaging.ts": "946d9fb37c8b5d21320ef6c644844554014eb3bfe099f9c03b6a24d7bb81e768",
     "packages/ui/src/lib/i18n/messages/zh-Hans/mission-recovery.ts": "a4dcb1fec8a99c8513b737e04d566f391cb60a6504ae7071029664f397784542",
     "packages/ui/src/lib/i18n/messages/zh-Hans/mission-scheduling.ts": "eaeadbdc97fbe6d4ec64968d0c164097602c544fbb99ed0d6e42a92a1009a784",
     "packages/ui/src/lib/i18n/messages/zh-Hans/missions-create.ts": "29c3eafa21604664c1f9451999986e7d4bd96f0347e57fa2589437d04c346cab",
@@ -21581,8 +21630,8 @@
     "packages/ui/src/lib/i18n/messages/zh-Hans/remoteAccess.ts": "9d5f7fb90193e572fab6fced7313efc072d6d46fd1e461804072cd4dac1e5eb5",
     "packages/ui/src/lib/i18n/messages/zh-Hans/remoteControl.ts": "b8c279a7980b26614c2f6498ec9dee56a03e00d0fa85a94073029e2f193a92dc",
     "packages/ui/src/lib/i18n/messages/zh-Hans/rune.ts": "4a5a4139fd3f80a58069e9818c5336e776cb2613e05b31e20a7b826740eff6f7",
-    "packages/ui/src/lib/i18n/messages/zh-Hans/session.ts": "24fe7ad40edc0bd53b0c99d0bca376e3bc4c60a972f55889cc252ef702cca5da",
-    "packages/ui/src/lib/i18n/messages/zh-Hans/settings.ts": "fce529255a095e77f1a280e177a58771c383fc54c14357853474c727e964371d",
+    "packages/ui/src/lib/i18n/messages/zh-Hans/session.ts": "4ffc801a00b4ed473c8e021b4913469e06c93708700e9f8bbb142b163682c15e",
+    "packages/ui/src/lib/i18n/messages/zh-Hans/settings.ts": "20cbeb7c1265edd1ea75ac4eba8476f226e30f10afb970180066061769fba086",
     "packages/ui/src/lib/i18n/messages/zh-Hans/time.ts": "e7bc30806467e8b7935076b1f441d7babd6f0e6315f7b7da39f575984a0e93dd",
     "packages/ui/src/lib/i18n/messages/zh-Hans/toolCall.ts": "20ca6bb6b01086bdde2d259f66368688ebb7d10dc19124351e6f5dd0490c7f4f",
     "packages/ui/src/lib/instance-label.ts": "efc28dd6d93832cd287e571d9605e0590b9fe33c74cf7875e204189c3937a581",
@@ -21685,13 +21734,13 @@
     "packages/ui/src/lib/native/browser-emulation.json": "5bee9229b1226d638c989ebbf1043a09bfd11fe20f610481ef6d3637fdaf9c22",
     "packages/ui/src/lib/native/browser-emulation.ts": "ef4bcf610f826014fce24076ebacc7bf6a6d6a8f5bb85a536a09a24c5be2d1dc",
     "packages/ui/src/lib/native/browser.test.ts": "ed198ee4704dfcc33ba716cba5fe990a827b96455a246512233bbf020b54d8ff",
-    "packages/ui/src/lib/native/browser.ts": "983b102a27de038015b19d9861c82b345fa5a1d0c602dca65f52d157130a29fa",
+    "packages/ui/src/lib/native/browser.ts": "7817eff1fe649cd6da4a0a4be2902c968fd869c9e8511f48cc2b1b89293a3a37",
     "packages/ui/src/lib/native/cli.ts": "7ae0bad02e7e99b5cc2f50d056047c5d63195a876e2eea92604109284cbd6238",
-    "packages/ui/src/lib/native/client-state.ts": "1a19a8ac4825178b54a5eb00a6493156ffa340a3ab37eebae53678f6ca74a0db",
+    "packages/ui/src/lib/native/client-state.ts": "eca31593b77f359d1eb2676976d54dd4447b68b53b9f4b6549692395ed6f6226",
     "packages/ui/src/lib/native/clipboard-attachments.ts": "595127943c4dd3d721b181ef376cb2b993b905a74fdbb83be2a06c4d25e76276",
     "packages/ui/src/lib/native/data-profiles.ts": "f80f0513b8ac04a3b6da5f2ea407943ae7f054637ccfbe5ac53cbf8aa57e232a",
     "packages/ui/src/lib/native/desktop-file-drop.ts": "5296987793010b93d4e33f1534f98650a49417c70eb71e822076584526489d02",
-    "packages/ui/src/lib/native/device-speech.ts": "dcaafe0daccf3a6aaf2ea6c6afe6ecd2a38cf0f826ab63529ec56f832520a0b7",
+    "packages/ui/src/lib/native/device-speech.ts": "6597e38142344a545512110e1e6b9e72c733364da88d6028c2ee77972ea65d31",
     "packages/ui/src/lib/native/electron/functions.ts": "4113a95dbad98da59a798a6097734415884951dab128d8ad300ee1d217cb65c8",
     "packages/ui/src/lib/native/external-link-clicks.ts": "2288cb744c5337087b156b750440d1fb03f4587ae4a57cf8e8ae432a15ec572c",
     "packages/ui/src/lib/native/file-path.ts": "55d720c924b000a784fda2bf6d395c0b1fab5c52a3ad24e721ed9a57eb6378b7",
@@ -21704,10 +21753,10 @@
     "packages/ui/src/lib/native/native-functions.ts": "84387ab0bd50684bb038c6fe5df4d77a6513e3e2b298734cc3122a1666e66e63",
     "packages/ui/src/lib/native/notification-badge.ts": "49ffc36b48faccdf030f99ea5bfa15df8a98d6c6805a173f8433c1703034ddce",
     "packages/ui/src/lib/native/preferences-window.test.ts": "ae36e8cbd797c714403734514ac186b49f4914b78c69663fdeb4cb9ff8a5089f",
-    "packages/ui/src/lib/native/preferences-window.ts": "8b7a61459ad55ee93c8ef68a06a2cc7c8683a2f48db52c277c0cd682b2e94983",
+    "packages/ui/src/lib/native/preferences-window.ts": "6598068fc1211aa7e65c3aebe4574459b0454537994b49429e88ba73e1da3bc0",
     "packages/ui/src/lib/native/reload-tab-selection.ts": "00e2ae4afd11ad064d4a8e2d48de413dd989926be495aaa3bacafc91c017e396",
     "packages/ui/src/lib/native/remote-api-microphone.ts": "1faa8220442da2bf1143a642714b5d775b9d47d4b2ab90c798550c1dfcab2181",
-    "packages/ui/src/lib/native/remote-dictation.ts": "8597833300f5f4fcf933e22d9d9c4d7f6b0fbf1deed8aaca4e6b5a2255668caa",
+    "packages/ui/src/lib/native/remote-dictation.ts": "5230992fd280d01d36bcf285d1ccc34dac8e66f0a54b6172a3d513e85ac38e6c",
     "packages/ui/src/lib/native/remote-preview-guards.cjs": "db41d64d5081a6c750594b61f6e0bee3f1818872686ea3a4abbaad8ea848813d",
     "packages/ui/src/lib/native/remote-unavailable.test.ts": "50aec16edf7560988f3150d0d5785981c915d82712e246a04a55d312d5ec494f",
     "packages/ui/src/lib/native/remote-unavailable.ts": "5782b7f5df18eea79de1fafa19e67927f84e613059d7a081f42c6ffcaab53915",
@@ -21752,7 +21801,7 @@
     "packages/ui/src/lib/reasoning-summary.ts": "1e621a6802996004693b8449f76205301abf1f8a7bf731d4a756899a240b58e0",
     "packages/ui/src/lib/recent-folder-display.test.ts": "7a440c5c8978c4ec1377c62979368867352e7655b9c1907681ecb579c70fb08c",
     "packages/ui/src/lib/recent-folder-display.ts": "8b9fe0a1fe6831c969ed96ce8ed901866fb03e0051a687176b7fc58d21a2f56d",
-    "packages/ui/src/lib/recent-open-target.ts": "642a572f0f69f4745f3c9dfba91d20df9530ec63e20b09f716bd3336eb827221",
+    "packages/ui/src/lib/recent-open-target.ts": "51eb713413f6ed9d24b1403f144d976fe4c5e69d8022718a8fff11416f019004",
     "packages/ui/src/lib/remote-access-addresses.test.ts": "a2d20d5ec31d070d3924f310f0e0d7fbb9fa79e8e91598dd440910aa3d66df18",
     "packages/ui/src/lib/remote-access-addresses.ts": "e14dc9a9f22e259d6529d7abbe14aa88c5dfbf2c2419713f7504f5c6405f7f03",
     "packages/ui/src/lib/remote-pairing-link.test.ts": "a39e00dde1fcf62f1ca7709ab32a21229930a9653b3d104dbe89092a07484c09",
@@ -21795,11 +21844,12 @@
     "packages/ui/src/lib/shortcuts/input.ts": "f1163ffb10afa5400ae3d8d005405f170c59180454a5d45be29e32fecab1c71a",
     "packages/ui/src/lib/shortcuts/navigation.ts": "45d9a699a1354223ee3d3859abcb88c3c91fcbe60a6b2e1789d97b9b46594d97",
     "packages/ui/src/lib/soft-color-schemes.ts": "299f45e7064127a6e59a8dc73a5ca069551e4916d6f8b34552ae1db77eded992",
-    "packages/ui/src/lib/speech-capabilities.test.ts": "e6ee9be08e7d46115d4515c8cc2cc85ba7b0e32823af1a56b9a57eea9c94cd43",
+    "packages/ui/src/lib/speech-capabilities.test.ts": "e8ec6541cccfbb54036533751349e3ae15e65a877362149e6600a179e8284b5d",
     "packages/ui/src/lib/speech-card.test.ts": "7789844df84e00e35ff2ac0542d123a982dcfe9a3b6ddb4f94d78f92273633d6",
     "packages/ui/src/lib/speech-dir-save.ts": "e42c18c29476c1afeaa0633372072b412cccdba4b714a97156e617b64e0cb5fa",
     "packages/ui/src/lib/speech-patch.ts": "76fc30bee4a125ee608c45272ba0bdebece974517c7ea75680a7310f71e89e86",
-    "packages/ui/src/lib/speech-playback-support.ts": "d58608957b991b5b3a9a91aa1bdd7e09a601b2ab8a90a47e664f7c23cd3fab2a",
+    "packages/ui/src/lib/speech-playback-support.ts": "579e45c2a6b175467b8adae28c741d7e8ad4d2b1268395e968a522936e855ac6",
+    "packages/ui/src/lib/speech-playback.ts": "1c1293bd34e2dc6b487b9b1ce700ad2be7ac8f123b939261d4809ee28d70079d",
     "packages/ui/src/lib/sse-manager.ts": "ee68bb5483e0863ba8e544e9c5f96e89c1075392ebf75ab12383bb0e9cd77762",
     "packages/ui/src/lib/storage-owner-read-fence.test.ts": "cda09718127b823734eba322aba07b7f4f1c0648ab96e4cfba871234fe7e7e17",
     "packages/ui/src/lib/storage.test.ts": "7ec72008aa047c966c55200eb478c114ce325f8c096ac7a01db66242c7bb57af",
@@ -21820,7 +21870,7 @@
     "packages/ui/src/lib/tool-content.ts": "1829f5c4f87882b54bc9f629d3863e7f29c53df4ce886c8ef37e2c1270b766d7",
     "packages/ui/src/lib/trailing-resync.test.ts": "92927dfbb22e9e2c8205047b56a61ff33caeeb10aff12899ebfd2c6207bcb1ff",
     "packages/ui/src/lib/trailing-resync.ts": "5df1a3811d0c6a6ecf76a6c753a3a9ecfc63461bc36b7efa969bb936fdf73269",
-    "packages/ui/src/lib/web-session-client-state.ts": "d92c645e9a7cfb0408f5da953885c9703c550451aece63a7757baea5a4815641",
+    "packages/ui/src/lib/web-session-client-state.ts": "3ddc4b19927b54793358aa079f27d016e6c8f3eb05f3a5f39e106010caf982fe",
     "packages/ui/src/lib/web-tab-title.test.ts": "07265e006a33772d6572f76a6c4c8ada7c24a02b65f69adcf91de8d089bbb382",
     "packages/ui/src/lib/web-tab-title.ts": "8cf9c04f6f7730e9f6c9b8791e6232a7381e0834f41b9de3a20835a114354265",
     "packages/ui/src/lib/websearch-form.test.ts": "b4ecd436f4bea2ee36fc2a0b8cfb5b510cd9699aba88e3215e6dc354124f4f88",
@@ -21840,13 +21890,13 @@
     "packages/ui/src/renderer/public/monaco.worker.js": "6034d9ed3e4eff8b5c1f78d368af2b8f6461765e0dc508107f9bfc51248d0ca5",
     "packages/ui/src/stores/abort-created-workspace-cleanup.test.ts": "610a65cc7fb9b554d189ff2a9a62d55a65c0baf57e02aff4bbaf218824f071ec",
     "packages/ui/src/stores/abort-created-workspace-cleanup.ts": "99f37644bd395f222b88e4215a48e998bcf7f5c6489257b9fef36ab5dfaf025b",
-    "packages/ui/src/stores/agent-memory-cleanup.ts": "6fda2802468e3ec1cc7dd9e9fc61a1e1eeda8921a6e444bd3bb39bc11bca3d72",
+    "packages/ui/src/stores/agent-memory-cleanup.ts": "e034225870a3e4d7a0d2a84f07098207c4b51dbf0161af0ad53ade32a020ea30",
     "packages/ui/src/stores/agent-memory.ts": "d2cbfd7c943d9fc6697c5fbb39928e9e0b657af882410a271d72d2b2ed714635",
     "packages/ui/src/stores/alerts.ts": "f718b1bc51ad01388dd2485b554551e957a92bc88edabf49fea4e44150a7a09c",
     "packages/ui/src/stores/app-session-prompt-hydration.test.ts": "56d234f6b1a439ae4be2e7941a47d975557d82e21f012ecd2262c97ce4bfc9cb",
     "packages/ui/src/stores/app-session-prompt-hydration.ts": "d811cca76e94c3e8fab4f6153f52491cd4446266e815e327e587963a3e4d6d4a",
-    "packages/ui/src/stores/app-session-reconciliation.test.ts": "22d52911a0459267da13e29780073750e7acce0b94a0a144f870b1bfe06f9343",
-    "packages/ui/src/stores/app-session-reconciliation.ts": "bb82f79c84d65285f13fc67b6485c9eef0bbcf0fe8338790c7b745c6adffedd6",
+    "packages/ui/src/stores/app-session-reconciliation.test.ts": "ac20188773831b7d855e1dc854a86553ea15e9cda4cb910da5b99bb4112638a5",
+    "packages/ui/src/stores/app-session-reconciliation.ts": "0734fd813c15ad7074b7449221770a45b8e2bad7b2069807a47bb4ab39ed5cbe",
     "packages/ui/src/stores/app-session-restore-gate.ts": "5c403fcbd1b20abc476e46581de5860ee894125491669438afe95ab8161ef3c8",
     "packages/ui/src/stores/app-session-restore-queue.test.ts": "b0e267b9be1e2414c924f79110bc1d247c8eeb68f1a527a2e486605054e45e93",
     "packages/ui/src/stores/app-session-restore-queue.ts": "0afdc546a2e6c7f53235032b66969727bfe3ea8c589154fe9a51bd6ae8143a3d",
@@ -21861,15 +21911,15 @@
     "packages/ui/src/stores/app-tab-close.ts": "957bc133454375ad06b40bbca4a7000107732c3052674623b39a0522d8928341",
     "packages/ui/src/stores/app-tab-membership.ts": "677b896aa07feacc347c5d91646e8049f8aca5949223167a139bf0037e2b7181",
     "packages/ui/src/stores/app-tabs.test.ts": "813f77d4def725188b2424bb85d289fc5340923f9ec3b1592d5abd3b6f4227ac",
-    "packages/ui/src/stores/app-tabs.ts": "cfedc8a988ad09b995688b73712b36875aa3d4324acfa9fa52e293a6c92f5ae1",
+    "packages/ui/src/stores/app-tabs.ts": "4491014fdf24570088c3e44dcf9e3cdcae4f41b0b4ba99d54235fb8a3887b3de",
     "packages/ui/src/stores/appearance-preferences.test.ts": "e6493e4a265470ec55027c539c4bf33af6c51cf4c233f2aafc579e13d0039c48",
     "packages/ui/src/stores/attachments.test.ts": "8607e3208585988411a5e2d33bd2df4d7d44622e0da4d485b51764d16fb49603",
     "packages/ui/src/stores/attachments.ts": "5fc40eb54665789e076d913a707a8b07fa91183378219dd3bdb5c83652891c22",
     "packages/ui/src/stores/backend-action-lifetime.test.ts": "483e4ef01cdef7e599731029609277495070eb4a324f98998365df536e437e23",
     "packages/ui/src/stores/backend-demand-lifetime.test.ts": "e6b5340a84bfe9c4cc382eaab81e563be7a3c600438027147640a9f4ace35189",
-    "packages/ui/src/stores/backend-instance-identity.test.ts": "b210cc0fe5ca09fc13abdaaf4a7390325546219eebf0f1e7dafad4415ad9bdc3",
+    "packages/ui/src/stores/backend-instance-identity.test.ts": "23d0f48603ea2edc235eb32e24201de5819cd4814b3a69a250837c0945403f13",
     "packages/ui/src/stores/backend-preferences.test.ts": "521cfa75ac01ae6305ecbf4e47ef2b8a72a324c16ddb2640c950a64087ca2649",
-    "packages/ui/src/stores/backend-preview-routing.test.ts": "2bed46a92581f697dcc2b7f46345ced37e76fae2c9d0b3ab5369b8eef8c0ac4d",
+    "packages/ui/src/stores/backend-preview-routing.test.ts": "0fd1cd338fea4889711660aae5c1b47e54520c1e5a7243b42a42e73e5ba83d7e",
     "packages/ui/src/stores/backend-registry-interleavings.test.ts": "a85d40fdebb2c5cae6276f79cbb0e66f972c9254ca1addac75b2ccbf1e4af122",
     "packages/ui/src/stores/backend-registry.test.ts": "693b92784e4a6234b2317516860c28c3cf30f3ec5f6af5990799942b84e03436",
     "packages/ui/src/stores/backend-registry.ts": "bc4049eb7ea7acfe2792925ad726dfb0432b5f42708ea65bed828784627fd571",
@@ -21889,8 +21939,8 @@
     "packages/ui/src/stores/client-state-partition-json.ts": "5e689d7cff778098cb317f45d06ec13825661d38f117da982d6a8e8fa83f46ff",
     "packages/ui/src/stores/client-state-partitions.test.ts": "d5bd7ddf2d3b54d256d9ec143b78f706e712a92234bf3fed046491dbb420468a",
     "packages/ui/src/stores/client-state-partitions.ts": "b74a3e1c346de24378a2a758cdf0910b433c07537a15165e2dd3d8c1c07869e2",
-    "packages/ui/src/stores/client-state.test.ts": "c9ebdefeb2fa38f9902804cd1ed884f6d2be35f49fe7709d09de750ab283e6b7",
-    "packages/ui/src/stores/client-state.ts": "df100ecfcfd10b53ec8dc697fe5c007f1d4f7ac32bfb64c47a1cf08c5fc25096",
+    "packages/ui/src/stores/client-state.test.ts": "87c7f1a1a050b518ccaec8457d9081d22e2dff40f89a45726c78d3d344934e73",
+    "packages/ui/src/stores/client-state.ts": "915287e84b23544eedcd7a1682848d9c25db79178f8f640d7ee2288523be66bf",
     "packages/ui/src/stores/closed-workspace-drafts.test.ts": "19117865cb28068279f842b46fbf6c5020ba6d403f72f1d8897f58922b1ccf0a",
     "packages/ui/src/stores/closed-workspace-drafts.ts": "691f80008e9835dd2c308a8c4400e6497e6a46ebb57657ad68db317a5d740d15",
     "packages/ui/src/stores/command-palette.ts": "d76e2e9f3d590ede8456b5a45d27ba29a1867f72e829e2eeb0a9bb6eda95d1d1",
@@ -21901,7 +21951,7 @@
     "packages/ui/src/stores/composer-focus.ts": "d57d096f8c793600e6c982f1d71b7d598e8dbf3beb66b0e371a9eac3903cd516",
     "packages/ui/src/stores/connection-resync-gate.test.ts": "2f199bcfa8b7d442cbeb87466b96517eb7bc0dc55eaf15a2686a2ec16ad2cfdd",
     "packages/ui/src/stores/connection-resync-gate.ts": "a71fe7ca42d11ee2de19de7755e2a83fbdb96304547fd3416335cfac4760ff5e",
-    "packages/ui/src/stores/conversation-speech.ts": "3b35885035e5319f22e99f2633d2fd3642c4fb84428780b8081d864765c0b494",
+    "packages/ui/src/stores/conversation-speech.ts": "c5d88237bc50502035919240bffd2f650f5eb4bd5f4d642db8f00a32756ffae0",
     "packages/ui/src/stores/desktop-updates.ts": "90b7f64c6586d8530a17e88700c9b3e30c0db8896ca345fd71187a3a4bbbb324",
     "packages/ui/src/stores/files-preview.ts": "9a2683beeeee81dda5d6fe20cbc379056709c54c9b6795550469badbf1078cad",
     "packages/ui/src/stores/form-settlements.test.ts": "711f2232e4fb6d5b0488954200eb697bb3aa3257109b28f9033536373e3fb379",
@@ -21916,17 +21966,17 @@
     "packages/ui/src/stores/instance-config.tsx": "c2979a4d1f5e5bb4b55091a29af146524b2d9be936dcd7f25fbaa2ca1d0cf936",
     "packages/ui/src/stores/instance-invalidation.test.ts": "79a6f0a02e7c8901e082bdc3f3368d2730bfc947f2bb7101d146d303c6d9ff4c",
     "packages/ui/src/stores/instance-invalidation.ts": "cf05c0c4fccf9108a1f48f02188453acc3ae7e8aab5a088152616384cf4aedc3",
-    "packages/ui/src/stores/instance-lifecycle-authority.ts": "0e8ad7076edf35ab80cec2b8fa543a6bbb7ddb41d5d737870478d83e5ae05d45",
+    "packages/ui/src/stores/instance-lifecycle-authority.ts": "4353f8dfebc53466785cd20cfee1188d663794d7356027eb339da7ff9f4f4a3e",
     "packages/ui/src/stores/instance-metadata.ts": "92675ac8120ee2f373bb95430b41b4a61d98c6163d08ee72c935ab6235cf5ee7",
     "packages/ui/src/stores/instance-reconnect-reconciliation.test.ts": "f2404ee0ec7d02c635172f5ee2579633ecb888b55b0d3369b098168439318a2a",
     "packages/ui/src/stores/instance-runtime-authority.test.ts": "203be63c4c35dc6091a8df143d061aaaf2152883319d4099faf1b92ddd7f47e5",
     "packages/ui/src/stores/instance-startup-priority.test.ts": "1f494d24e3d1bda219e062638bcf05d6db1b6067539d5582e9fbe1a098a0f95e",
-    "packages/ui/src/stores/instances-backend-lifecycle.test.ts": "ba0bb36c15d1134b72f2aa9d73f2b9b1ae39350861cba509c61978c5c0a55571",
+    "packages/ui/src/stores/instances-backend-lifecycle.test.ts": "89dcac0c67cae9bc72593050c542f40f9cbd1ab38c00fd9a45a6069bcaa2dbd0",
     "packages/ui/src/stores/instances-cancellation-flight.test.ts": "8888f6647cb5b6ee77d22502b1d38894a9ef114484fce0f046ad0e5a8a189ed1",
     "packages/ui/src/stores/instances-pending-compaction.test.ts": "3634e8cc2e296e3783db311a72cc28585f4e804c6006b777478209bc6338f14d",
     "packages/ui/src/stores/instances-pending-requests.test.ts": "2160c5114dbe2cacf088e9c6dffbd000e1230820395366724dd1a39e718f71af",
-    "packages/ui/src/stores/instances-restore-ownership.test.ts": "3fdd7f5b199447ff6b0cd8179379d050e85b879f6c5a69f106569e1e84970a71",
-    "packages/ui/src/stores/instances.ts": "043cb4c8725bb98e36c36f8de75cd6db8ef28e7c191817993320cd30588e39a6",
+    "packages/ui/src/stores/instances-restore-ownership.test.ts": "3409d45d080a0812ade9c5eb23dc7f8e6c6c148a7125e5b680ee8088fe3eace1",
+    "packages/ui/src/stores/instances.ts": "71eb69e40a2f38f3235ff51836d0575851355ad8cd445d3a2e0946f0cd2b0a20",
     "packages/ui/src/stores/integration-bindings-store.test.ts": "c1a0e61f47a2f25c638a3891350afd1af1e8fd6fc9c60fe5423b7a113d7cec0c",
     "packages/ui/src/stores/integration-bindings-store.ts": "74c7a7968b8791c119afb8c9141243e1ab5fb90fb3a81a87cca36ccfc6acae69",
     "packages/ui/src/stores/integrations-store.test.ts": "16c2dd5e80e7801c96fabc4f2ec95fa3bef757d06a78794af68304e4556fc3b9",
@@ -22047,12 +22097,12 @@
     "packages/ui/src/stores/project-names.test.ts": "81e417bc56c79417f9d64f36a38e09c8f4ebdeb90f5f4be9f6a86c25897e4c34",
     "packages/ui/src/stores/project-names.ts": "64dc366a8f4eed5ca6491b3d50184ef370e002bf77a0a259532715d9d947a35e",
     "packages/ui/src/stores/prompt-transcripts.ts": "b8e3f70dfc6d454e2024b5bdaacfb2d90d6252eba7abafaed0fa234cda2f244f",
-    "packages/ui/src/stores/recent-projects.test.ts": "0675844493d86368a2718169918f4712d8c4b13a2330a6e40330c96e4fdb3de6",
+    "packages/ui/src/stores/recent-projects.test.ts": "4a26fc0528dd74ddc642fa6b0ec0613d4d6771663ee3bde4f939624212356bd9",
     "packages/ui/src/stores/recent-projects.ts": "83987633f0c058e09ad45e14dfea394957e8f3c254e3c611bc2cf37b26fcf9b8",
     "packages/ui/src/stores/releases.ts": "ee0061a17fc009877565c53157f619b21b3b15bc75c2cf22484a75204de61bb5",
     "packages/ui/src/stores/remote-backends.ts": "d41353b1a6c1c61dad1ee16939505f8ba8728d3ae5a303626cc9237704dd8a77",
-    "packages/ui/src/stores/remote-project-open.ts": "7a86372cb83d1d3e885385ec0877156c9455449b5ebf50c1c40a609ebbd5d286",
-    "packages/ui/src/stores/remote-restore-tabs.ts": "ecb58a5f8f4d4c575d0fea5f1f6a1224ab758b6eb739e9e5836dcd12f3a7ef2e",
+    "packages/ui/src/stores/remote-project-open.ts": "8351232c2e4323ff50a7a280f94cf9c43f76c8e6e01e841131a0e26825d0c1cd",
+    "packages/ui/src/stores/remote-restore-tabs.ts": "1d507c8473e9b4ddf0fb61beb15e0cf2e51c7194eb43ba5e5e7f15dbb3f407a0",
     "packages/ui/src/stores/remote-server-removal.ts": "9d170e209cba7531f48752718f43782432cb9c210c291ba20d4225f245829c91",
     "packages/ui/src/stores/remote-server-usage.test.ts": "98293a20870a8786e4081d058b7d10811e27d02770915ab06f27a29ab5add88a",
     "packages/ui/src/stores/remote-server-usage.ts": "999c7b9efa02266ac6d0c3fd75f759041117999aae1a67ebfd393f4f18dff375",
@@ -22062,7 +22112,7 @@
     "packages/ui/src/stores/restore-workspace-commit-gates.ts": "4d8f2cd7e67ad7f174285fe8b44598c7112bcc6501614516390d82fa6e2f9a61",
     "packages/ui/src/stores/runtime-contract.test.ts": "2ae28c654e33a6d28ab2c7432aab8b1ba58ef7a6b7e80668ecd871c9c7dfad58",
     "packages/ui/src/stores/session-action-queue.ts": "983256c99f318cc0a1f614c43df9e4a015f3609814b013aa209b079d2eaf021f",
-    "packages/ui/src/stores/session-actions.test.ts": "3fe7eb2cb29d4c2fbc96b2f86867b38ccee8f0179021a8a17346e90dbf3b9f3e",
+    "packages/ui/src/stores/session-actions.test.ts": "fc9f0614dbafa09cb68be2ca62ea4119c6a5206ef07d28ec1b8351e6429fa5db",
     "packages/ui/src/stores/session-actions.ts": "0fe0d6ee60b7d0659d7968a4ec4059bb03d9d0a25e5bbb1058a2bf0d8ff330b8",
     "packages/ui/src/stores/session-api-running-open.test.ts": "1027d7ae90214d8407f55d6db1b989990a7b973f2deb68d69f6947ede8ad8d51",
     "packages/ui/src/stores/session-api.ts": "46f107adaf1c67ad4156811dc11d05a51e241f62eb101ff9e73379c5e9bb019d",
@@ -22081,7 +22131,7 @@
     "packages/ui/src/stores/session-default-model.test.ts": "2f6bece57e1ddc94c4be80535b64f6f9d277c340c15aa5e847da5a7c122b9715",
     "packages/ui/src/stores/session-deletion-reconciliation.test.ts": "316ba42a469ae6f34046633ba685218e0ba1c3e1cbb41e2dd8580ff72f00d14c",
     "packages/ui/src/stores/session-draft-recovery.ts": "d452e52b001bfd33e4d4b08fe0be5fd89646a8ec68883a5fa4f1d3774c1fc796",
-    "packages/ui/src/stores/session-events.ts": "2b9fc7ed5af47bb3d29e24a9c1a280fd6deddbe642d630ea7530e46e8460e200",
+    "packages/ui/src/stores/session-events.ts": "881df7e1f599527255561809de7e971ee814c8a7d60b60bc27791f772238f8e9",
     "packages/ui/src/stores/session-favorites.test.ts": "0bc36543a58b9f8856157e28925a0d883e68f3e9b37ab988dfc411221aa110cb",
     "packages/ui/src/stores/session-favorites.ts": "eae2858ed828c51247c737cef3a4bd00f99c3c24466d651eda2c4926e19b0a25",
     "packages/ui/src/stores/session-fork.test.ts": "51e533198b2c3d74e79e44b68e4fa00b6b2798416f13e71b5812154d2e177566",
@@ -22123,8 +22173,8 @@
     "packages/ui/src/stores/session-pagination.test.ts": "18931938f01a4108fc638d6c6cfb4de93d79a44c2212d8b9b9372ae7dc46184a",
     "packages/ui/src/stores/session-pending-state.test.ts": "25e640347e829b60d2d827027db06f13387e2dddcd4421a17820cff51b7c2856",
     "packages/ui/src/stores/session-pending-state.ts": "b136d085d58a244a59008c976362ae1c796c91649c53644b82a3a7ff0027de9b",
-    "packages/ui/src/stores/session-previews.test.ts": "23a6529863db16837297cf60608718b0b67490dd83d79eb9f4ea07bf871be05e",
-    "packages/ui/src/stores/session-previews.ts": "70f529f04ff113c4cc5033d7c3cf9f7489837297b596f992849978e1653fde42",
+    "packages/ui/src/stores/session-previews.test.ts": "4c2309137ce5eb38fa5deb09bd72ee1e2f482b5dcf8fc4b3158b8de1242e94cf",
+    "packages/ui/src/stores/session-previews.ts": "0f8f67af0223bb1a42e0801dc7cab6374ac50f44f69d406cb2e9fb136d8d958a",
     "packages/ui/src/stores/session-prompt-ack.ts": "be07ab4bbb1f0fec8367cd7c0be369993e659a3246c06b3c4e89bab1917da1fc",
     "packages/ui/src/stores/session-pruning-events.test.ts": "c8fcf7d8c06fd7ab162d7e6e26602dadc10c128701e1f2189e082909d90b99d7",
     "packages/ui/src/stores/session-pruning-events.ts": "5e14e31b74f14d142309ee245afe586325d5098aaa4179824f532728a953e770",
@@ -22134,14 +22184,14 @@
     "packages/ui/src/stores/session-request-authority.test.ts": "444f20e85f8424d001929170bc0b4ee3446bca33c8f91b20b2f19f37b9c1cc94",
     "packages/ui/src/stores/session-search.ts": "a1d53c538b433537c35d4602608a1e50c66ef63f55c4074403a8aba87ef759bf",
     "packages/ui/src/stores/session-selection-state.ts": "bce038235888eb66f690dab0f639690bf5095d1148f64286cf8304ce6fbf9014",
-    "packages/ui/src/stores/session-send-lifecycle.test.ts": "d16d6df1dbfb1dfc4ad5bdf5d38cf659fb66758e262b49dbc248e58fa56ac4f9",
+    "packages/ui/src/stores/session-send-lifecycle.test.ts": "377b281475b760200f2bbc1db8fa1a5f5c3a686cb6a8f41f0c2d2aaaffd35757",
     "packages/ui/src/stores/session-state.ts": "0fb6aced0a31c443803195dc2f36acaf865ee4f2e4fdeaa10cd29e0b902ca2b0",
     "packages/ui/src/stores/session-status.test.ts": "e1b333b04e7eb2e8033f9f3486f7277876c02b5383536cee8e964f277e7c5c3d",
     "packages/ui/src/stores/session-status.ts": "a378edd200e24641b3da6f2251982380f743206ffb51fd4dcf2b1cbc42e0e0d5",
     "packages/ui/src/stores/session-subsession-activity.test.ts": "c46f388c4dcdf9afadc23b5d35e2944fe81af14e1658f4f22f915e02b58619b7",
     "packages/ui/src/stores/session-surface-passive.test.ts": "211485235feec51ae0fac765d9df5a36b8d246c80f910cbd0e1290c854cb9a58",
     "packages/ui/src/stores/session-surface.test.ts": "62a0f114b7119e90e104e19be0ec26d6599f0603ff982c7822990ec0c0692ed4",
-    "packages/ui/src/stores/session-surface.ts": "29cca9449477d5e7ee2413c2234dd9506d551bbcfbe519342d22ecdd77ab3ba3",
+    "packages/ui/src/stores/session-surface.ts": "98fc9ecfafad6a7e8996c2e97e10d6d3cf59e1ee2e7b90d9b3b6d3d7be05e400",
     "packages/ui/src/stores/session-transcript-memory.ts": "eb7f8e7d5c7101089602fb16cc111829b57365527131ea2f3caa46d91cfc3490",
     "packages/ui/src/stores/session-transcript-visibility.ts": "48bf779f8e88d472184601679b82d131c72be72f74b6197b99fe1a2dec6f5728",
     "packages/ui/src/stores/session-tree.test.ts": "b2803f18fea0db3e2533184a1cd4b8719b8e291a4082b16caa7d7f51d6cc3c10",
@@ -22158,15 +22208,15 @@
     "packages/ui/src/stores/shell-store.ts": "db704b0c89feae0ff7d44bf781b22508a723ae5ed1f2e5a494ee5bf9537e0e48",
     "packages/ui/src/stores/shells.ts": "3c4668138a6cdecf0f4eaf470175ad091d76f7ef38a1bb172f88ee39adbd61b3",
     "packages/ui/src/stores/sidecars.ts": "562d379597da145c2da9be21106d96d607f20f7588cc4f0b7b76b132aed98453",
-    "packages/ui/src/stores/speech.ts": "c84083e32784eee811ee811ec4ca9fd37e69ec9deacd5496bbd67ad05f965d11",
+    "packages/ui/src/stores/speech.ts": "7f4f966b0727eed3328509faa49f1621447332514afe48e1d79956fbba49b6d1",
     "packages/ui/src/stores/tab-view-state-codec.ts": "1a5c2c4d7f6dbf94be0c0bee0e4b52616987188c7284096a4052e29245f6af0c",
     "packages/ui/src/stores/tab-view-state-local.test.ts": "be7b9d7db0746e1404c2e3ae20bc0e85dbe410ab4bae8ae70339d38116f55c83",
     "packages/ui/src/stores/tab-view-state-local.ts": "8ace6268cf30389fa14bd9fbee924f3175e793fd0a1b588312cfc8ecda7b3584",
     "packages/ui/src/stores/tab-view-state-migration.ts": "3b31b871a148f41459ea148595fc2a0bca631f4af408ee7a62d4c5da80d61b24",
     "packages/ui/src/stores/tab-view-state.test.ts": "6d63e05b07671093357429707d659f7138dd76c24e4cd470810578f4b3b827d0",
     "packages/ui/src/stores/tab-view-state.ts": "4059d0d0af7d8d6f50c89e1ef75eb977d2362df0cc9f0635e33b9cf22dda0e62",
-    "packages/ui/src/stores/temporary-instances.test.ts": "b3303a8a7db158c305e2fab030d5f25732f53d2dfc812833d18576791e11119c",
-    "packages/ui/src/stores/temporary-instances.ts": "bf146b64a4d7f70913459226a07b45ebd9890aaaf288e071a005f60629338435",
+    "packages/ui/src/stores/temporary-instances.test.ts": "e14a99d31cca9cba77d3116b5f9ed454f81d748e0f158ccd6b2f37248d22c489",
+    "packages/ui/src/stores/temporary-instances.ts": "d7b6057f3b32879beb0f0cbaf9aeff003ed813ed2da2da5afc6303011103fe82",
     "packages/ui/src/stores/timeline-previews.ts": "56387fcdf1fa6325f61750e501ce3fb5b2f22d2dd1e69433f1c51182a11c7ea5",
     "packages/ui/src/stores/tool-call-state.ts": "0dcae74efb603d96d5a5b9d139eff993f6626f2229e11adc76c23e33243394db",
     "packages/ui/src/stores/ui.ts": "53df657f00bc0f6909d94b83b2b3d9cc7769fc73fe3a4604c95cdd77598e912a",
@@ -22174,11 +22224,11 @@
     "packages/ui/src/stores/wake-lock-eligibility.ts": "5a1434d2fed4ad6bb59ba0f832a311f812c788f8c8b36651433b7bbd42a64c0c",
     "packages/ui/src/stores/workspace-capabilities.ts": "d4f87e5eb2e0f5552d53a01797c1c574846d8bf7ee5688f2d502de580131cd67",
     "packages/ui/src/stores/workspace-creation-attachment-replacement.test.ts": "4ded39ad143e038ea42742ef8af458340a2e6bb8a537f125018dd37a400e02a3",
-    "packages/ui/src/stores/workspace-creation-cancellation-admission.test.ts": "a2072dbd88298f3af7493a033bac038b1d38b34eb93c623d3843dc8d6b3bf538",
-    "packages/ui/src/stores/workspace-creation-cancellation-order.test.ts": "58115826766e875cd888e5bc25dbb5c467743a3aeb67b535dd93449cf2d698e2",
+    "packages/ui/src/stores/workspace-creation-cancellation-admission.test.ts": "cd3532a3a9f26747622408f024e9e8870da2a60a768bf3e168a6227761c355cc",
+    "packages/ui/src/stores/workspace-creation-cancellation-order.test.ts": "7e9ab4631414b6122be864ce97c4e99300e05b0a095c4322bd457642bd7a1247",
     "packages/ui/src/stores/workspace-creation-request-identity.test.ts": "33a7869791610aa03461db6aa8e0e512338630ea80e05406e5cc475633878fcf",
     "packages/ui/src/stores/workspace-creation-settlement.test.ts": "147a9f6f81cbaa81bafa3b8f6038a4f71c10df23fd97eda02dd92c00ca90b8d5",
-    "packages/ui/src/stores/workspace-list-reconciliation-fence.test.ts": "aebcab0ef67f4bc35146b03aaf0c5488da822766da3564b2543c2f95cc6e5973",
+    "packages/ui/src/stores/workspace-list-reconciliation-fence.test.ts": "e3ff70568f7deef6a6820a1c636a097d3cdf6bc49f611b3e766e25599d94a1e7",
     "packages/ui/src/stores/workspace-list-reconciliation-fence.ts": "76b27af2d2b3daa2814a22b4fbe98c92a7e30f8b5cc1aea6762f4384cf16b92c",
     "packages/ui/src/stores/workspace-load-readiness.test.ts": "d68f8bd38fe42f9cc632ffa32e4375852ce6047ba9e9fac5979257a9431021fb",
     "packages/ui/src/stores/workspace-load-readiness.ts": "ae47bfab3dcfd4c04dd9f5fdc73ff105d19d6e678342ef91308b8278b0ecc51c",
@@ -22333,7 +22383,7 @@
     "packages/ui/src/types/attachment.ts": "f724f6fd2540cba0125e911572fcd6b56ec61170108751a6d11060019c07ed9d",
     "packages/ui/src/types/diff.d.ts": "8686f5322eda7314a232bb7e3c9037bd37dff5347ee313e865a44f0494134db3",
     "packages/ui/src/types/electron-webview.d.ts": "89d1036e2a4379ddd435a5fc75968e31dae056f5a5d740e43e5c1a09d0d5552f",
-    "packages/ui/src/types/global.d.ts": "ac21228f2ebcc5c1a5a6feef701787c2a213671bdc081d8357aa4cbcb1a17577",
+    "packages/ui/src/types/global.d.ts": "87ca8fc6641bb5aea0c0aa06be5eb7bb527d4567993c30197f8078f445f2ffbd",
     "packages/ui/src/types/instance.ts": "9625a70cc5f980e00efacd0b3d5b8a2b6c9f85730a790c5f2f4121cc1dc10370",
     "packages/ui/src/types/message.ts": "ec99def539142f41ee3c10680ebaffd27616f36330e30149e7192d933041e37a",
     "packages/ui/src/types/permission.test.ts": "4b36b9d00730c2bd9848450d1d86930388fcca667cdda859572437f506ef5c2a",
@@ -22346,7 +22396,7 @@
     "packages/ui/tests/backend-relay-authority.test.ts": "bdf7a0b025d8d9ef0a08747dc8bc7082db1aa7b2e433da572e62fb502333c204",
     "packages/ui/tests/browser/agent-memory.test.ts": "802c3453715e578e7b061b3e602943d9f277bc7e8020be42acab5d5906409162",
     "packages/ui/tests/browser/alert-dialog.test.ts": "72e2fe8eeb14165010d383b2061d07bb2ddc88eb452c7f72ec7ee4531b3cb35a",
-    "packages/ui/tests/browser/appearance.test.ts": "09216faa550b39985d76ae59de84d0635c939cbe253550d9181dc16b3c8432a2",
+    "packages/ui/tests/browser/appearance.test.ts": "6878de33278e0fcb2d8f08cef0c7bbc85009f39990392bc8d5f100b5d0fbba85",
     "packages/ui/tests/browser/auth-recovery.test.ts": "79c53af6793a922bccc3dbf4318cebef0794b5a9b5fc9ca5e547978802905c62",
     "packages/ui/tests/browser/automation-drag-window.test.ts": "dfa84d64a2f17969c5fc3043944dc9874d7a3ff9da726275500c682ff276e0a9",
     "packages/ui/tests/browser/automation-forms.test.ts": "cf7c14094f54b91117927d0415822f76861eaa7e55d7fdf0ff528065b7fdee2f",
@@ -22358,7 +22408,7 @@
     "packages/ui/tests/browser/automation-webkit-page.test.ts": "c1a67937cf7f97d7d28262e454ec2808ef6c0abdc126ea73a0dda03770ff80bb",
     "packages/ui/tests/browser/backend-capabilities.test.ts": "39058feda37b360ee4ff69fc3a18860f092bceda9228f3e502b0e4ed785cc713",
     "packages/ui/tests/browser/backend-consumers.test.ts": "3e1cf011a68498585d259e975780c7e79809e0dd64dde1ade776caf75afcbaa7",
-    "packages/ui/tests/browser/backend-instance-state.test.ts": "1e1ac297f2eea5504d47409d0415ce33d7a45ef8b6e0adc51cc57cc27e66d21e",
+    "packages/ui/tests/browser/backend-instance-state.test.ts": "3bd52ed7854c43af99813d640a455579df80341466cadd3cfd8ab669a58a3788",
     "packages/ui/tests/browser/backend-media-relay.test.ts": "4a174ac6f0687f08a0733070cc7698efad301ebbd0d4c953dae8b1fc5425be57",
     "packages/ui/tests/browser/backend-media-routing.test.ts": "322f2c94831b5ffb374e6524d3d95d446d1659d380cee090b7b147193e249fca",
     "packages/ui/tests/browser/backend-media-security.test.ts": "44f6482fefc91a10abe386243af70401d2c6ac5db097cdde116aa55c5408807d",
@@ -22366,7 +22416,7 @@
     "packages/ui/tests/browser/backend-parity.test.ts": "47b96381c1cd096bdcb5a946e993a9c334bcb1ea9132d0fd5a10a18db9cfbbde",
     "packages/ui/tests/browser/backend-preferences.test.ts": "9f178014446626a3c552e438817b92165f17a598afe5ea247f41ccb2f8e7173e",
     "packages/ui/tests/browser/backend-preview-routing.test.ts": "0fb94eeac33e2a475ba5dd59e85cd4bc3f8500dae45b78ce1faff133e5c3f752",
-    "packages/ui/tests/browser/backend-registry.test.ts": "3603432a0f52eef640450a726e4ec97719cc30553514047df4c6eda2499b6fda",
+    "packages/ui/tests/browser/backend-registry.test.ts": "e23ce832cdba31ca0de3ec8085c54b8e72102a87571591f553023cb61749a72c",
     "packages/ui/tests/browser/backend-relay-eventsource.test.ts": "c8a4ac9df763295ca2bdbc6759e99855a8de711420c1ecb68b8dd1b39bc032a2",
     "packages/ui/tests/browser/backend-usage-routing.test.ts": "55cc82e5a3208700b4cf3d97b6350ef2331c556b285822b5283883ef8d139daf",
     "packages/ui/tests/browser/background-shells.test.ts": "3da8eb7ced76037e2d7a51d0ba8faeab0ef7950cf016da4e1aac3a56e9d762b9",
@@ -22377,7 +22427,7 @@
     "packages/ui/tests/browser/compaction-notification.test.ts": "e9966c745bcf8a778ebcd938828b4c0eb70ad46736539d153773e6d16a57689d",
     "packages/ui/tests/browser/compaction-responsiveness.test.ts": "be37a188565eba8d2f03200721400f5cc1b5a74b0067bb87970a696ea1156da6",
     "packages/ui/tests/browser/composer-alternate-send.test.ts": "77d9be4a7ee262f6e51d1aeb8d05e40e97c6ef818f65a6be7130b85aa986eb3f",
-    "packages/ui/tests/browser/composer-dictation.test.ts": "4a23d2242c4d7a4a1ddaf00a2bb5b292e252785ac8c0fb712fe69cbe8d3e85d3",
+    "packages/ui/tests/browser/composer-dictation.test.ts": "e64adef741237a811b9138069d0def48a1113a5cb9ee6af4b0d6f66cc540f303",
     "packages/ui/tests/browser/composer-draft-safety.test.ts": "452ea387b53ef8bfbd396853964ab17400a4568c4ae23a80640c102ed590a90a",
     "packages/ui/tests/browser/composer-history-focus.test.ts": "43fd838a6c662c0ed4bfd1d6b21cd21f4e46533a0bd3582419b43067aa9ca001",
     "packages/ui/tests/browser/composer-mobile-height.test.ts": "3c22f4852c0e5edfc94ed0f231e7d3463e0ec4b7c3bfcaf8c923b19ee445f773",
@@ -22385,10 +22435,10 @@
     "packages/ui/tests/browser/composer-resume-typing.test.ts": "23b41a8032382af06686fb6fd2456f02eca67485422c63a51d9fbf0d2093caa0",
     "packages/ui/tests/browser/config-file-target.test.ts": "1b198d9502543adc2d6d5fc2b983b64b4501297ae4057a905e91f1c6a7d8becb",
     "packages/ui/tests/browser/conversation-permissions.test.ts": "af5e3bd9c1dacef00325de8094cabe8291f042db599e1c614411ad6f8a4be02f",
-    "packages/ui/tests/browser/data-profiles.test.ts": "d31a093ccc4d337a79e073b42ff0380727fd22fdb41f3402066ed7a1546b61e7",
-    "packages/ui/tests/browser/desktop-updates.test.ts": "b1948c2fcee6278080053dc7544badbb9d101003bfe7036b24869410087e43db",
+    "packages/ui/tests/browser/data-profiles.test.ts": "94833ed1fd73cf0d95e95cdf8571e978b2aab69978aa20a29196afaa1fe9ba85",
+    "packages/ui/tests/browser/desktop-updates.test.ts": "bb1251f1401f1e6e020059930efee9f2c182cb0c96e44f13219b80d48d339d51",
     "packages/ui/tests/browser/device-upload-lifecycle.test.ts": "e9ac6a92080c892b7b6fd76a5efbf60dc822a83eadbea7af3bfc16913f27d850",
-    "packages/ui/tests/browser/device-upload.test.ts": "773731055911d7fc50d3ea0a3ad5a71b239ba3c0e3c9bdfa121dc55401796845",
+    "packages/ui/tests/browser/device-upload.test.ts": "956a1c0552a58b8dd2da92d744a1d186058ff3c0f03d6d8a93ff25fc1e308779",
     "packages/ui/tests/browser/diff-boundary-flash.test.ts": "3dafd0e02d1cd16ac25ec1af99532d699cfc66567620a9f90681e2f380ed8bf6",
     "packages/ui/tests/browser/directory-browser.test.ts": "831887476b519202bdba980b6b64eeb50d07519e573258de08d2212dd9bda088",
     "packages/ui/tests/browser/drawer-accessibility.test.ts": "8cc7401bd7f3b17850ad6be31318dafc32312838fb3172fb0ffffda2ec887117",
@@ -22431,7 +22481,7 @@
     "packages/ui/tests/browser/fixtures/appearance.tsx": "5ec303e4f6690d50a8c1abb08781f1c7ffbac1a3d0a5569b94a13472d41aa573",
     "packages/ui/tests/browser/fixtures/auth-recovery.tsx": "5ace7583600bb6fdbbc0b77875a512c8d5a30649b888ef3195fa4b0e69f742f3",
     "packages/ui/tests/browser/fixtures/automation-drag-window.tsx": "2d2c028fe4bb5de8255b9e8078d58fedac02bb4b40d5646fd7a88eb8cd167dde",
-    "packages/ui/tests/browser/fixtures/automation-preview-electron.cjs": "a789f78a2b0065baa41e38a94836f72c2b338c08c387f1476d21138b119044bf",
+    "packages/ui/tests/browser/fixtures/automation-preview-electron.cjs": "fa007b6d7b0fb90965808c27686b62723f682e8769efc6232ceca155aef99607",
     "packages/ui/tests/browser/fixtures/automation-preview-engine.ts": "cf9a0f57562d1511247f8538088bad89ea17b43b6e1b1489dc0b4ff5e7603f37",
     "packages/ui/tests/browser/fixtures/backend-capabilities.tsx": "75a8f3ff253f98c8b2ce9c293d6c11f019427e14b1fc86bb3088cec339b771d3",
     "packages/ui/tests/browser/fixtures/backend-consumers.tsx": "823da2637b97563941dad5d8b6ced8aef214d009fbd6b28b23971655150fa660",
@@ -22441,13 +22491,13 @@
     "packages/ui/tests/browser/fixtures/backend-parity.tsx": "b94365d7e881f6c18b1df28a13185d90debc0bd37d1676af9182d49b5eb8ac1f",
     "packages/ui/tests/browser/fixtures/backend-preferences.tsx": "0dd188d8f4fe4103562523c13215524617d4e193f482a582e8a2b69c5decc8c6",
     "packages/ui/tests/browser/fixtures/backend-preview-routing.tsx": "2e9ece242eca717e085f2a97277939113267573a3f42bc6525e73ae66ae89bb9",
-    "packages/ui/tests/browser/fixtures/backend-registry.tsx": "e8d5f74dcf313153005ae3798eb338db12812de150f713981324a75007875a56",
+    "packages/ui/tests/browser/fixtures/backend-registry.tsx": "a8aff3e41505e8bd5a1915789306cf7c51b6952f083076dc5491a77e52761e7f",
     "packages/ui/tests/browser/fixtures/backend-usage-routing.tsx": "139717fb0e3acadd53a42ba4e69fc771b4978679082617a2c905d466d98e23ab",
     "packages/ui/tests/browser/fixtures/background-shells.tsx": "ce92089df33180042eb8efad56ad2e3596b53706585f07de2626007bcc580a19",
     "packages/ui/tests/browser/fixtures/brand-logo.tsx": "19bc90006bede61493d9f2d0167b2d2d96ee71de3faf8d9f6eedc6b06497833f",
     "packages/ui/tests/browser/fixtures/browser-emulation-electron.cjs": "b642239bbdf0c4a21e3e42a20f929491b5f746ad5cbf2122e6b170830e6898c6",
-    "packages/ui/tests/browser/fixtures/browser-frame-native-bridge.ts": "85a2e3be62889e18a4b7359ce14c957b50ac33b599af9d06b118c3029be25de9",
-    "packages/ui/tests/browser/fixtures/browser-frame-native-electron.cjs": "b1f3ba81d52f2c9df3393666ac876f70ffa1dc01f69611e7c4c2ff8f66687a4d",
+    "packages/ui/tests/browser/fixtures/browser-frame-native-bridge.ts": "0b4aaca82e0af6abda066a1d2178a150a2c6f1938448d7c23aa4a3fde59d2f04",
+    "packages/ui/tests/browser/fixtures/browser-frame-native-electron.cjs": "fd3f84c67528fe4b00f28f45a9ae0c1aa91c2ae7c730f75b0ba1cf99c7bb46cd",
     "packages/ui/tests/browser/fixtures/browser-frame-native.tsx": "e24deb7e61dd807d9bbd915cb9aa2c6d19b286eb148a20bffc9e992bee5f831a",
     "packages/ui/tests/browser/fixtures/browser-history-preload.cjs": "55ce34d19d64c7333b04d2a04504f70ab3d4fbd6539de97e9fe76ad4ece1153f",
     "packages/ui/tests/browser/fixtures/closed-tab-drafts.tsx": "310ecc4217db9985a94fd81bb0d44260a5daea81eb1b0a69ba0a907a24647e9c",
@@ -22468,7 +22518,7 @@
     "packages/ui/tests/browser/fixtures/empty-tab.tsx": "9b8b7ce9535ffe8d7dc108942f5a608cf8e6ca5dade1cd822c264f75460bff36",
     "packages/ui/tests/browser/fixtures/environment-variables-editor.tsx": "72bf4d6c7ae45d33a4482699cad8fa144b4d92884261b0987b811ecec0deee2d",
     "packages/ui/tests/browser/fixtures/event-subscriber-isolation.tsx": "027d77aa0ceec1961c51709bf64cac19b1b7adc2dcfc712156cf81401dc8b593",
-    "packages/ui/tests/browser/fixtures/external-link-clicks.ts": "eb547dd51b0af82eacc3147e09d10ed9a3151550dbd6b9a222ea3309037e703e",
+    "packages/ui/tests/browser/fixtures/external-link-clicks.ts": "c4b48ccd38f798c766b0f43e56cb510f55d040fadbadcab6f6d3b45699a91165",
     "packages/ui/tests/browser/fixtures/file-preview-panel.tsx": "a9793f66152469f6e90e36f8b45ffc006151c59b99cda3fee4c21cf5dca6feb2",
     "packages/ui/tests/browser/fixtures/file-search-retry.tsx": "7ba7bc9a8c2fe7f1ffa92ca1e017ec5013395dfe12a6cd4ec20e43815653dd5d",
     "packages/ui/tests/browser/fixtures/fork.tsx": "186759a91ba8eadca4b21d22bf4fed04f2ff81070beec154b3334c1281fa486b",
@@ -22492,7 +22542,7 @@
     "packages/ui/tests/browser/fixtures/interruption-dock.tsx": "48dfe567cb5ac2bfc46b07c7eecae8466e1c8bf2ce259c30b30887b39ee55498",
     "packages/ui/tests/browser/fixtures/launch-errors.tsx": "c2787aef2775bc938771529b109efa7f4ec4a3146f4c35a5f67903423cc865b1",
     "packages/ui/tests/browser/fixtures/live-voice-audio.tsx": "790cfa1248c02d965e1ba9f8b775fa6f9aa9579e050a38d2b038f6c292af9e9c",
-    "packages/ui/tests/browser/fixtures/live-voice-session.tsx": "2f5fa2e0171c4ad4d6ff302ea999ac062093dc97db60a3332c1ff65f20c8345a",
+    "packages/ui/tests/browser/fixtures/live-voice-session.tsx": "c9dc5b925520f522daeeb1769409ff3feafbba13dc4cd9dabc2dc9d1cc963d02",
     "packages/ui/tests/browser/fixtures/macos-titlebar.tsx": "fc83f878e9d77eb8efcc9cbcf14322fb318d32a7d2b037f09af49a7a30c059b6",
     "packages/ui/tests/browser/fixtures/markdown-latest-request.tsx": "08a4aae09beb79074bae510f09bff2775ac6c1f2e3d4b1dce4ad749f1671fae0",
     "packages/ui/tests/browser/fixtures/markdown-loopback-link.tsx": "c617bba06abb0238f479e14c3aefdb0c60cbb620ef08afc78afa1ba72b780a7e",
@@ -22533,7 +22583,7 @@
     "packages/ui/tests/browser/fixtures/navigation.tsx": "e0453064267f644e000c15e729604a00741accac8f60e573a8715395749892de",
     "packages/ui/tests/browser/fixtures/nested-scroll.tsx": "af365626b0c8857f6463edb66908199f1765243e82b2785c54744274d909b228",
     "packages/ui/tests/browser/fixtures/new-instance-launcher-state.ts": "ba40ae793c405274aa09763a662a6c60aba28ef3a9fcfbf3c65e8680dbdb6649",
-    "packages/ui/tests/browser/fixtures/new-instance-launcher.tsx": "694d841558e6129d28b75203f9405ee9c768a08f2a22eff1b2b43758d42bb0cb",
+    "packages/ui/tests/browser/fixtures/new-instance-launcher.tsx": "13dc974ffb537eefb2fe895e0fda9a31bf1112a6cec7e13b551fb90305adfa65",
     "packages/ui/tests/browser/fixtures/notification-icon-badge.ts": "d8088fbd161b80560dbb0d7b7c25d3be107fc525546e07c5bff47a4a097f9f05",
     "packages/ui/tests/browser/fixtures/opencode-login-start.tsx": "99243d7a7bf1def2250b32553090f36ab9ada556f4b8277e4405bd55c2fbb04b",
     "packages/ui/tests/browser/fixtures/opencode-setup.tsx": "2465f286987953d12f8f246c5f8fbce6979e934b8b57b1cac7af7984950ee4a7",
@@ -22547,13 +22597,13 @@
     "packages/ui/tests/browser/fixtures/plugin-controls.tsx": "b51c7e4fbfd281a7fbc5dca4dbfef7e8082a224df8cae5abba3ebc7960c37660",
     "packages/ui/tests/browser/fixtures/plugin-packages.tsx": "e14c7996d23cf2c01a6e626766c9d5fdb23d84f409893a69cfef8915bb54759f",
     "packages/ui/tests/browser/fixtures/plugin-sources.tsx": "1ec3df76131388ef34156d61c68929549e8227de829bda026b86ae6a87edf72c",
-    "packages/ui/tests/browser/fixtures/preferences-cleanup.ts": "85eb2a0288a2296b0b2946fe11a82cbde1fbbd006abf7d28672a4b16afb94dc5",
+    "packages/ui/tests/browser/fixtures/preferences-cleanup.ts": "41a56b470ab0a378619d7a97fac7c0c9e24145e49c6f3cb084e612f5183ef2d8",
     "packages/ui/tests/browser/fixtures/preferences-provider-state.ts": "85e71bbdba39ccef29799bbd4fd02d71984288a6c462a01a2a1f737fa1fccd90",
     "packages/ui/tests/browser/fixtures/preferences-window.tsx": "c8a695f957c8d662b1bffab9265774005b8c194fca240989dbb2965ab644c259",
     "packages/ui/tests/browser/fixtures/product-fixture-server.ts": "5954f110d1de78fb994194a1dd8ce095ce871e8ad707d56e4eae778859dcea1e",
     "packages/ui/tests/browser/fixtures/project-git-lifecycle.tsx": "ce2fdb0414d64c73ee94a9c40e989018b44590ef399998d6a4ff22bb4dfb5f27",
     "packages/ui/tests/browser/fixtures/project-tab-close.tsx": "66c8e32413f251a310dae0a16992c0b51abcb0caa3d3a7f7f727a28977ccafc7",
-    "packages/ui/tests/browser/fixtures/project-tab-restore.tsx": "88a4328e794859b62f0f3a0426375260273493ae7ee5406720bde8dfc78947b1",
+    "packages/ui/tests/browser/fixtures/project-tab-restore.tsx": "a6763bc8214be42f8b832aab26f12b9d3ab0ab6a4728ae71280c576af57e1d7a",
     "packages/ui/tests/browser/fixtures/provider-accounts-preview.css": "778c0a6b80e34db08b38816a8b263f378613062d4c3990506aebf2b98bae28c4",
     "packages/ui/tests/browser/fixtures/provider-accounts-preview.tsx": "2f9c985cb74c0d0d35daf459fe30da9064b35beb43ec9c23af7f275f769aca34",
     "packages/ui/tests/browser/fixtures/provider-accounts.tsx": "908ba819032ba9998a4bd1ba2694eed5011a142ec56bfb5933902d58a972f5bc",
@@ -22569,7 +22619,7 @@
     "packages/ui/tests/browser/fixtures/remote-secret-entry.tsx": "1286d09be6dd5e515f558656e6713d96f53cbeca520707577641ba9a7d3d2775",
     "packages/ui/tests/browser/fixtures/remote-server-pairing-api.ts": "6704101bedfdf8f48dac8938052f36cf5d2c4dc0eecc8af69987231fb33ada75",
     "packages/ui/tests/browser/fixtures/remote-server-pairing.tsx": "6b65c94db958b869c10a367a7fe3e1ceb93c8d89a9fbc549e247a9d088769075",
-    "packages/ui/tests/browser/fixtures/remote-tab-restore.tsx": "77827afcd4516b436840978655726841aaef0a104f1aeab4569d211ce828b021",
+    "packages/ui/tests/browser/fixtures/remote-tab-restore.tsx": "ae838254ae32e9abc1c6208ddbcb41990f6abb53fc181ca87aaae2016677b850",
     "packages/ui/tests/browser/fixtures/render-cost-mount.tsx": "a2c0d1ebc46fe7fbba10cfc97d037d13a9dd388fa7017fafe0b0247a59aad30b",
     "packages/ui/tests/browser/fixtures/render-cost-timeline.tsx": "d825cccf5784d4af0eab4dca8f7786666c29ce0cd602f1244cae2ec0b0ca116a",
     "packages/ui/tests/browser/fixtures/render-cost.tsx": "3e936a835e960f08e8d38754653788859f32232c1db5c833c6f92e48049ffd9e",
@@ -22584,8 +22634,8 @@
     "packages/ui/tests/browser/fixtures/service-usage.tsx": "6f3ee54b0771adb21a0a67872b0172e290cd092f3a3edb001791c30d851aadd8",
     "packages/ui/tests/browser/fixtures/session-archives.tsx": "bf37398a13f45280eb293b21f67b3904dc0f963c43eb90490a901e0be27428f8",
     "packages/ui/tests/browser/fixtures/session-aside.tsx": "f5fce1d20faf11e7f5980417350eeb06e9659e7dcffde4861768c01c1e4d88bf",
-    "packages/ui/tests/browser/fixtures/session-browser-history.tsx": "2dd9342473c7fe06c40126bdd513595b179b3df9c499f3fc8fec828d57fdd684",
-    "packages/ui/tests/browser/fixtures/session-capture.tsx": "5f6f9d78693c68ad490c76223b00303d2bbc0b4f167e90c4353022b8a9f16173",
+    "packages/ui/tests/browser/fixtures/session-browser-history.tsx": "71229596f4b4059144066a2b91e8611d127dab4bdc582356b585de1129a80baa",
+    "packages/ui/tests/browser/fixtures/session-capture.tsx": "0bd50e1fa3a74cf6a91329ceffc867506dce2de03b93303a814b206931a917b3",
     "packages/ui/tests/browser/fixtures/session-child-activity.tsx": "d75ac7196beddc1a680a3f8117cafec4907e44d9de090c7a0e1576bf1c51ffef",
     "packages/ui/tests/browser/fixtures/session-create-feedback.tsx": "16e8d722e3dc5ebe011624dbc6b021e42e584be6120692e9c2de5b9b4efa9e62",
     "packages/ui/tests/browser/fixtures/session-delete-scale.tsx": "b64910b453e2948596a80caf442f5c38a2dd70a19a473d64a658949e69ba884a",
@@ -22595,12 +22645,12 @@
     "packages/ui/tests/browser/fixtures/session-interrupt.tsx": "b528e126af9d43ab4ec655a66fbe77a0e2a0dcbe9a6015e7fd2c0efb8b0bf2b4",
     "packages/ui/tests/browser/fixtures/session-list-restored.ts": "954130039cc34182c857dfc122172d96c9614dfdea9255109cb1391ac12c30a8",
     "packages/ui/tests/browser/fixtures/session-search.tsx": "4dce2848f5827d37be1c2559a2596602d53aac7bf9074488ef3ede9f7df5e9fa",
-    "packages/ui/tests/browser/fixtures/session-status-clear.tsx": "289bf46ce583fdffd1940ff823aca1ea610826752c40ef8fe356fa69aecfc60e",
+    "packages/ui/tests/browser/fixtures/session-status-clear.tsx": "d351a89a38e24792b4e378ec3863fabd732b99b6234f3a8f42e1c075e1bd4a46",
     "packages/ui/tests/browser/fixtures/session.tsx": "adf53b74e86cb9e248d1371ab6e00b20fc27f769cbfd24d3738328896b0f5789",
     "packages/ui/tests/browser/fixtures/settings-info-tip.tsx": "bd1b5c3b13a043399ac69883ad955e11ff626e6856b8b5e8f7604cc799364e92",
-    "packages/ui/tests/browser/fixtures/sidecar-sandbox.tsx": "14378117f9c8efe964ecaa9b451471c7ed532f24bfab3201eb8a58f8fdf84033",
+    "packages/ui/tests/browser/fixtures/sidecar-sandbox.tsx": "fae562922d926e0ab57fbd8a68f1fac4298884d3a508ae6ba988965e2cc8a150",
     "packages/ui/tests/browser/fixtures/skills.tsx": "b9614c95a055aa4cd5b3a5cd469731d42dfd4b74fb5b67bd9e76336554bdf9ef",
-    "packages/ui/tests/browser/fixtures/speech-lifecycle.tsx": "0528fc49ad49a16787229296c7879cfe9e15b3d78336b248b7e5856849ba4d56",
+    "packages/ui/tests/browser/fixtures/speech-lifecycle.tsx": "0140b626bd695d675c8508482d3e9b786838b46482bb15e9b871a344d046b69e",
     "packages/ui/tests/browser/fixtures/startup-state-owner.tsx": "c98c4d867120287a15d37f8d25798e4b77f8da08600a653b918ae601444a0f6e",
     "packages/ui/tests/browser/fixtures/status-panel.tsx": "61be6f40fa2afaab5fbfda2fd0d28fefe5670553410487eea5620c93cb9fcd0c",
     "packages/ui/tests/browser/fixtures/status-tokens.tsx": "ca4d1cd3e9dc8c3158179a97441f9bbee7dacdf5442703e4d120b91bf0adb1f4",
@@ -22656,9 +22706,9 @@
     "packages/ui/tests/browser/interruption-dock.test.ts": "f907c3a7f37a879e9ac5b1a8b20da388470b4e15de42e1e6065826a04aba5e8c",
     "packages/ui/tests/browser/interruption-selection.test.ts": "20d0712321bc87d67d84606c2f080a2019497ac402a91ff07fd5f36e6ac5eca9",
     "packages/ui/tests/browser/launch-errors.test.ts": "22163c0fa213a670ab2e5a4218ff16b9fb3cda4ae59c4e80ad308d0383290890",
-    "packages/ui/tests/browser/live-voice-audio.test.ts": "39b4c2256a66820cb6850c39b39fe81572203e7f2da9ba794656225531d4f77d",
+    "packages/ui/tests/browser/live-voice-audio.test.ts": "ff43533538c3a38d983ab3d9e037c9dcca327a5afa7f0e4c7294d130747687fe",
     "packages/ui/tests/browser/live-voice-session.test.ts": "c6f1a7621c37b426286dfa51ff1e135f5064833eb1dd5e78b786593b27733b64",
-    "packages/ui/tests/browser/loading-phase.test.ts": "cfd300a2e21df1a16c0fd4180af6960aa4c023f31de31dec70457069ccee5bc6",
+    "packages/ui/tests/browser/loading-phase.test.ts": "ab4ec2df8c581f1ed3729c3f4dd007e53d616d9e22f1ba2eeabfbf010c3239c7",
     "packages/ui/tests/browser/macos-titlebar.test.ts": "b339ba325764768c97da3587a3896c6a4e0a6eaa8907b7662abc15e861eba447",
     "packages/ui/tests/browser/markdown-latest-request.test.ts": "81fc22f32fcc0eca17102597ee1b1a3e466fda7e4b7cc5ed07052ff638740b0c",
     "packages/ui/tests/browser/markdown-loopback-link.test.ts": "d80a2a83e796e0a35079e1417096091903a7e6d62b5a7effb5cb0e318dbc272b",
@@ -22731,8 +22781,8 @@
     "packages/ui/tests/browser/mobile-interruption.test.ts": "d9d881579df4adecac2243e31bdc5f5a953c52e12c4af98b196032ee61b0f4de",
     "packages/ui/tests/browser/model-favorites-mode.test.ts": "8b6ddd1d609db758e0113be26909b02b82d7092ab8e267f8cda7a85ff7ba351d",
     "packages/ui/tests/browser/native-mission-integration.qualification.ts": "b2af356b7a529c84fef4bdcf026f97b52d30ecb9ff719b7acbe5e3556f5f01c5",
-    "packages/ui/tests/browser/new-instance-launcher.test.ts": "03b43d0da4e6f91f10557a6ae38b8bcb96075e62eb12c9def68884f121e65c0b",
-    "packages/ui/tests/browser/notification-icon-badge.test.ts": "e169f006f28468af9c77db33b8ecbf748f98fe4f3008206601af66047cdc2727",
+    "packages/ui/tests/browser/new-instance-launcher.test.ts": "986cead45a0d6fa346bacd6203578e895551006d856873bccc29dceff24d2946",
+    "packages/ui/tests/browser/notification-icon-badge.test.ts": "6b882b946c19665216139cace3351c819e98aeeefc17d1ef81eafa10632c49f2",
     "packages/ui/tests/browser/notification-routing.test.ts": "9b95cdc6aa393a03f14b7454907c11bf97efee0f7e2efd41c6fb047b92b58911",
     "packages/ui/tests/browser/opencode-login-start.test.ts": "1861a39eafd98e8b87b210362e168614b5d9704478c7ba78ace3af668e228b28",
     "packages/ui/tests/browser/opencode-logs.test.ts": "d895302d4ed5e6348ae34092b340ee0fb6f644e9d207dc322a12543ec9b3ab65",
@@ -22750,30 +22800,30 @@
     "packages/ui/tests/browser/plugin-controls.test.ts": "0cef35ad576b6e320f30af0b5030dd74b7df8e6cbc2af6b31bcf7c0e72c23943",
     "packages/ui/tests/browser/plugin-packages.test.ts": "8284afcf700c6f10c01db0715492369879a027f8ca7734cb4a50ec3d6e83bc3b",
     "packages/ui/tests/browser/plugin-sources.test.ts": "97ab22ba1e8e44d3b9ca123e3f5c1004f4eb0ce9d4efc1b6bc1eac800227576c",
-    "packages/ui/tests/browser/preferences-backends.test.ts": "4afe4125cc048cb412a9c802c4b718952e179f3954708da153c0d5ebfa6c8e42",
-    "packages/ui/tests/browser/preferences-startup-state.test.ts": "e88274c3c74642b1a1bea0019c082edf3d798b7ec950ff13f86b6a99b71db0d7",
-    "packages/ui/tests/browser/preferences-startup.test.ts": "4647edbe7aa6bd564561c5abe83376983065ed1ed61954b087e6b330d410a1b8",
+    "packages/ui/tests/browser/preferences-backends.test.ts": "7fe17f74a44dafb4ab0d1da4dd5230ff2dd6d5e43b6be5dcca8a0d0f0c33f3d1",
+    "packages/ui/tests/browser/preferences-startup-state.test.ts": "9f5cef59d03c8fcd4e77d726ca5b3c6b55b0c809a690a8132f0d1872edbe3547",
+    "packages/ui/tests/browser/preferences-startup.test.ts": "8027b5b3747f02e3cc9ba0b78cc72abb83c42b78b6d2faab70921a1d377b2a6e",
     "packages/ui/tests/browser/preferences-window.test.ts": "675269dabdeba36ee27c35039ee57ab129177c1b859ca3243e01eed5de3ea04e",
     "packages/ui/tests/browser/project-git-lifecycle.test.ts": "fcf7c21f3f14d753e8e374648ca321ac14415405ebc381d9263c85a93b152cb9",
     "packages/ui/tests/browser/project-tab-close.test.ts": "e98e5321440f35f46d37f51171f9d4fd6bf4da0ea733052bdabb24078f3373f1",
-    "packages/ui/tests/browser/project-tab-restore.test.ts": "4e442203c425bcb86be5b6ec0b259233ae01535c434033577a4c506f1733b2ef",
+    "packages/ui/tests/browser/project-tab-restore.test.ts": "1bd05c55b159235a1ec3007f5e2a0466ba54857a4155532d0cc1335050d34cfd",
     "packages/ui/tests/browser/provider-accounts.test.ts": "38b7b31be794b722e1fd53c4e67d1ebc046a1a6b8e6e97ab9954544bb9a405fd",
     "packages/ui/tests/browser/provider-usage.test.ts": "827685e76d54916473931e6e466632df7a7932d9a54e867e88b5df7fcd014bc4",
     "packages/ui/tests/browser/reasoning-collapse.test.ts": "0674c048c492e3af8826cd354bb84ec164fc1bdd2618be7f786cf458f71b8c14",
     "packages/ui/tests/browser/reasoning-stream.test.ts": "122b87347313772e9ed0e41240a4c1f0ca29523ceb8309471aa338f41d843c2a",
     "packages/ui/tests/browser/remote-access-settings.test.ts": "4cac3df3f5aa364f9baf206b2af0c109cba2b8fba7085d69b6ed2a035758d1e9",
     "packages/ui/tests/browser/remote-control-settings.test.ts": "21623c27085e781e08021648012785cb4039a745987fd7e43073a02272d0c992",
-    "packages/ui/tests/browser/remote-dictation-window.test.ts": "969d2f8d0fa6e4dcd691bb5f03445f4537891f371e3e32cec82227b270b16d21",
+    "packages/ui/tests/browser/remote-dictation-window.test.ts": "35c9dbb17f7bd8b1a2cc011a823896983df64666ab775a5553a40e837011d314",
     "packages/ui/tests/browser/remote-preview-capabilities.test.ts": "b704c1c44a3114dc4bc5d6fbc5adf56e487856b187f7229690a2d74307b6aeb0",
     "packages/ui/tests/browser/remote-preview-metadata.test.ts": "2d5ae7fbf177e28b110da8f8d2bd3527d794cee2c53e9d569e8867c7ff8f9645",
     "packages/ui/tests/browser/remote-preview-origin-isolation.test.ts": "0e1d901d010ff578af2ae45dc8154159d3bb8d808efee9c7c2836864162c16aa",
     "packages/ui/tests/browser/remote-preview-path-isolation.test.ts": "42a90213ac1ac421cb32a5c41edf2d50e3a530af4130e7c1dbe61e3a6b3f88a7",
-    "packages/ui/tests/browser/remote-project-open.test.ts": "aa89c4a6ee315d8fa1f0f6ad114f652da0d0b8633e24b341efda15fd23e5dae1",
+    "packages/ui/tests/browser/remote-project-open.test.ts": "e97ba7c48a0ace9ee57535905466b3084ab9cec53cb8612a74c148e140454cbb",
     "packages/ui/tests/browser/remote-secret-entry.test.ts": "f2db5654481cb3d2cd44162b95b83b31dfc2f3355e0477564b25f5a4af7fae98",
     "packages/ui/tests/browser/remote-server-pairing.test.ts": "c1d9188c9fa2812ab3344720558d263c9843721a7469c1d7b1aff1ba6a8717c3",
-    "packages/ui/tests/browser/remote-tab-restore.test.ts": "113e69f18010b220621837ea215356a5cab99ee483fbc565ea0ce3ea43eaeaed",
-    "packages/ui/tests/browser/remote-tab-web-reload.test.ts": "a53f5b50d5a62ff4ea32df0db8634a7f7c2f010ef97a365827c1bed26942ae82",
-    "packages/ui/tests/browser/remote-web-restore.test.ts": "357e35709b56d93463f083ea05825fb9f35cedadbe5a949accdec0167bfba8a8",
+    "packages/ui/tests/browser/remote-tab-restore.test.ts": "8efa85478f3619532e256f93b39ea7d2011432fa8a7babb2a02268fd149ad285",
+    "packages/ui/tests/browser/remote-tab-web-reload.test.ts": "bf9ffa09010f42a98daea212960bb4bf3d7bb00a2ec9fdee7c86d6b8b89ed0d9",
+    "packages/ui/tests/browser/remote-web-restore.test.ts": "07d817092bbd0e3ac1911dfc9c26d2703777a81c424790fb8738efda2de525d7",
     "packages/ui/tests/browser/render-cost-mount.test.ts": "ceb84928e75e3a559ed2b7e55af31f96d6edff4818773b101050681395e45e71",
     "packages/ui/tests/browser/render-cost.test.ts": "8d2ff05e7994e27aa68759bf9b47e5ff357f2148d4aaa042c31af7ff19c8c1b4",
     "packages/ui/tests/browser/reveal-truncated-text.test.ts": "70aadfedc0c2f9fdd6f0fdd06d6b11790f8c79b1a30282428639c3c89d483a6a",
@@ -22790,8 +22840,8 @@
     "packages/ui/tests/browser/session-aside-harness.test.ts": "ea9fc7822549a43cc868ebf297e66984dfaff4894edc72502b9d069ba9749731",
     "packages/ui/tests/browser/session-aside-harness.ts": "eb1658b821d6f9dd183be3686516011d23e6c3e5b7d1d17f78fc79687404922d",
     "packages/ui/tests/browser/session-aside.test.ts": "b3b095b4efaaa24c0eda706019ecdc2567c93c640b60862dd951834a626ffa97",
-    "packages/ui/tests/browser/session-browser-history.test.ts": "f7992e79b2275d7fec7f2e2da63ff617f57d5b1bbc1bbbf679ee14fab66cd77d",
-    "packages/ui/tests/browser/session-capture.test.ts": "1a8ee1e9be69911ca81e328d5f862f519e0c4c81aeab4aef0ba17e699036fb3d",
+    "packages/ui/tests/browser/session-browser-history.test.ts": "d33d468004e1cd4cade668d94147746fa27560353c8b5827cae0f80cbc1874d4",
+    "packages/ui/tests/browser/session-capture.test.ts": "753191a1c067692383c8859f30995d67ddfc25614da13622f40016cfc320bca3",
     "packages/ui/tests/browser/session-child-activity.test.ts": "6b9c399f03d8d061debf42f6cb79f70dbe8c0ed921150c19d65f426bfff621ea",
     "packages/ui/tests/browser/session-create-feedback.test.ts": "7ecaec784a63851129f678f3fbbd09558d314a6d948a45db9f4c1e0268a44627",
     "packages/ui/tests/browser/session-delete-responsiveness.test.ts": "cef5846851834437ecb57dd4562e28b74193db9f6e486043c2633b90111885cf",
@@ -22805,14 +22855,14 @@
     "packages/ui/tests/browser/session-retention-accounting.test.ts": "7c5a55ca7cb50cf5963c6976c8715a27dd69eabe29281be1d421cd3ddbcc0b1d",
     "packages/ui/tests/browser/session-search.test.ts": "ed12591ccd5497cc8c7e04161516f3b82d7d4869a46d88577b131b9a3130cb10",
     "packages/ui/tests/browser/session-status-clear.test.ts": "95e96e9718da81a2159ccc3887f0cee158e76b7ff9f762d21c10b57a7e373b92",
-    "packages/ui/tests/browser/settings-info-tip.test.ts": "9642f4d17b1ef1e27d4ac7ea12b10b6685224ef1af4b8a4ed8254434a00ff7c5",
+    "packages/ui/tests/browser/settings-info-tip.test.ts": "6a1cfee697ca676f672e4d5bff7228e3f9ebde163ea7a71cbff8251bc6d40c08",
     "packages/ui/tests/browser/shard.mjs": "f9646b6f2d957f8fbd755d051882ea2d3d756428c91933a788a5ee25ab5514ae",
     "packages/ui/tests/browser/shell-navigation.test.ts": "93b2bc65935c7eed48d28f4c2a56fbf5c7cdd16b8cd589b4d6b300866f7ec4ba",
     "packages/ui/tests/browser/sidecar-sandbox.test.ts": "d316c1e75835614aded3b805540fcd9f517d707453b23eca8aa076d11865cec8",
     "packages/ui/tests/browser/skills.test.ts": "e11d48304b2c578dbf0213f2d8e054358f44ba3de09328a2c6628e61d2a7f5bb",
     "packages/ui/tests/browser/source-scroll-delivery.test.ts": "419f62ace1ddc93744978c77b4ae7c740053bac266ecc8f4c49b8051dcc52b0c",
     "packages/ui/tests/browser/source-scroll-delivery.ts": "03d65657df87213b30b59e4e0ee5025d1c9356aa145295b3019af2c91cc4f3a5",
-    "packages/ui/tests/browser/speech-lifecycle.test.ts": "21330ac362af0e5afde353e17dba6ed1108ebfc7295963fa4445e0c442b30521",
+    "packages/ui/tests/browser/speech-lifecycle.test.ts": "40976a9b8f4a92a268265dc09fb99710890a002b6afbd8792e8c6c14c3581e41",
     "packages/ui/tests/browser/status-panel.test.ts": "9d5144dd3227abc123a686af17f94ef76fe99d5fa8a2ec33f7a8decbbd4c728e",
     "packages/ui/tests/browser/status-tokens.test.ts": "299af391245a5cf3cd29ed838d6b9c744f95c9d87ac7c1cd85afc5226a2ce302",
     "packages/ui/tests/browser/stream-delta-churn.test.ts": "50564b10598def905b61664d73772c2ece32a8213491ec799214bfbfe5610e36",
@@ -22821,7 +22871,7 @@
     "packages/ui/tests/browser/system-messages.test.ts": "3ed2783e9f35f1c1ab97ae735cd3e21cf7af3de4c5521c5c6c0c1255e9d1357d",
     "packages/ui/tests/browser/system-notification-focus.test.ts": "bfa78e358713ac7033f7d665648674f4326a059066e146bc7cb0e4d3231e3661",
     "packages/ui/tests/browser/tab-chrome.test.ts": "187f7a30a685944c447db5adc51fb79884583ad89914f1bbf7e79ca7169d0853",
-    "packages/ui/tests/browser/tab-view-persistence.test.ts": "2c5860473aeeec5f326aa4aa49d420707799408aa3019325b146a5db194af0b4",
+    "packages/ui/tests/browser/tab-view-persistence.test.ts": "7c2d5ae1762d62527c0645571fc11c41dac0903067abe2a3f6ea254e34170ed1",
     "packages/ui/tests/browser/task-copy.test.ts": "de85e92f5504bfe8c7f293aa91c9aaddd721fb0419a6f6da1fbd45975e955b05",
     "packages/ui/tests/browser/timeline-sync-session.ts": "6f7f0fff0f3cbc57e1fd86f1e1a538585004e5ca449f39e1093a767dd4ee603c",
     "packages/ui/tests/browser/timeline-sync.qualification.ts": "3372571dd2b2e4c303934fb9341038a60de3e2ece586cb5fcde816d70071d549",
@@ -22854,12 +22904,12 @@
     "scripts/rune/component-inventory-ast.mjs": "3db80f65a676f5faad7a9c4e1ee17ce78b7ba4aea4de58c69bab8f091aacaea5",
     "scripts/rune/component-inventory.mjs": "7a559cd7db44494e622407d03d3e6d29bd1717235a68332af904cb744de44fca"
   },
-  "componentCount": 311,
+  "componentCount": 313,
   "modules": [
     {
       "source": "packages/ui/src/App.tsx",
       "sheet": "target/rune-inventory/App.json",
-      "sheetSha256": "3e3a19d87761a4149039f2d48b7f0b19c54814c7ad8ac99564c4bd67b090d816",
+      "sheetSha256": "601e5a1ea3cda89a1e4ac7b6ea377751522aad096ce71cc1b62df0fcc4278334",
       "components": [
         {
           "id": "packages/ui/src/App.tsx#App",
@@ -22872,7 +22922,7 @@
     {
       "source": "packages/ui/src/components/action-overflow-menu.tsx",
       "sheet": "target/rune-inventory/components__action-overflow-menu.json",
-      "sheetSha256": "279d479ca84b7835493097f40549a55373b608c01c792e3685ae5be0568c0c83",
+      "sheetSha256": "e68e29daaf3abf46f33fc8047e17f0b2991b204c9e13a5f89861f5d53e2ea000",
       "components": [
         {
           "id": "packages/ui/src/components/action-overflow-menu.tsx#ActionOverflowMenu",
@@ -22911,7 +22961,7 @@
     {
       "source": "packages/ui/src/components/alert-dialog.tsx",
       "sheet": "target/rune-inventory/components__alert-dialog.json",
-      "sheetSha256": "1852e8e49ae93bcdbb86ab5848266fd6aa22af1548639fef8696c9b1a5dc1a06",
+      "sheetSha256": "64d0a620de38fe09ab24271b684b0a62394a02c85f78820dffda3dff45c2f630",
       "components": [
         {
           "id": "packages/ui/src/components/alert-dialog.tsx#AlertDialog",
@@ -22937,7 +22987,7 @@
     {
       "source": "packages/ui/src/components/app-viewport.tsx",
       "sheet": "target/rune-inventory/components__app-viewport.json",
-      "sheetSha256": "6178bfef8fd76f96f0307a8bef12e21e7264fe95376fc1d337782ae2b2962cb2",
+      "sheetSha256": "43bb77afd1ff4b3ec4e264fa6dfa8170a56979ac31fe9028e43528a0df6e2c66",
       "components": [
         {
           "id": "packages/ui/src/components/app-viewport.tsx#AppViewport",
@@ -22963,7 +23013,7 @@
     {
       "source": "packages/ui/src/components/auth-recovery-dialog.tsx",
       "sheet": "target/rune-inventory/components__auth-recovery-dialog.json",
-      "sheetSha256": "c33ca05852b7fcd9699bd1111526e0f4cabb4dcb58898b1dbe4418fb1c92c5e1",
+      "sheetSha256": "a54bd60c876f3c9dbd0437b5a5c011199d2756bf6f1ff51368578cba4f60a72e",
       "components": [
         {
           "id": "packages/ui/src/components/auth-recovery-dialog.tsx#AuthRecoveryDialog",
@@ -22989,7 +23039,7 @@
     {
       "source": "packages/ui/src/components/brand-icons.tsx",
       "sheet": "target/rune-inventory/components__brand-icons.json",
-      "sheetSha256": "3bbb79603e29960316c23793bd376d3f97553015c26f4c0eaa330eff2a47e366",
+      "sheetSha256": "ba835cb279b4919294afbef90ddca50366c284ca4add5654285c601d3be8618c",
       "components": [
         {
           "id": "packages/ui/src/components/brand-icons.tsx#GitHubMarkIcon",
@@ -23007,7 +23057,7 @@
     {
       "source": "packages/ui/src/components/brand-logo.tsx",
       "sheet": "target/rune-inventory/components__brand-logo.json",
-      "sheetSha256": "1bbeca661ed412dc40382a99dc449ca3283619bfd6fe2542c95a4e1749499468",
+      "sheetSha256": "6615e508ecb2ee3346b32b4561d0bec0de816544f5879a5d0995735f66180b5e",
       "components": [
         {
           "id": "packages/ui/src/components/brand-logo.tsx#BrandLogo",
@@ -23033,7 +23083,7 @@
     {
       "source": "packages/ui/src/components/browse-menu.tsx",
       "sheet": "target/rune-inventory/components__browse-menu.json",
-      "sheetSha256": "26291cf5039fab884ed436fee897e6bdaf9652ae1fb3c990c59e4337f2137afe",
+      "sheetSha256": "f8434c75f68170b18b345f852ba584f81fff9fafca9658c843f02122df824274",
       "components": [
         {
           "id": "packages/ui/src/components/browse-menu.tsx#BrowseMenu",
@@ -23051,7 +23101,7 @@
     {
       "source": "packages/ui/src/components/browser-frame.tsx",
       "sheet": "target/rune-inventory/components__browser-frame.json",
-      "sheetSha256": "906e3ff9cb94ea781d24a3196438e7c630e6c6237649cda035acdc099e353682",
+      "sheetSha256": "ab6785d1ac0e66b3a7eaeb54096330f9f73704d50a299ae7c569d422a359b66e",
       "components": [
         {
           "id": "packages/ui/src/components/browser-frame.tsx#BrowserFrame",
@@ -23064,7 +23114,7 @@
     {
       "source": "packages/ui/src/components/command-palette.tsx",
       "sheet": "target/rune-inventory/components__command-palette.json",
-      "sheetSha256": "ac2839f601d2ae613610040671e20823c5c246b975484a2012a39f1aeea676c9",
+      "sheetSha256": "7c2b4c5e0a035f37a933960937e2d1d5c1de9fb928335e8043a0682d692a6016",
       "components": [
         {
           "id": "packages/ui/src/components/command-palette.tsx#CommandPalette",
@@ -23077,7 +23127,7 @@
     {
       "source": "packages/ui/src/components/context-meter.tsx",
       "sheet": "target/rune-inventory/components__context-meter.json",
-      "sheetSha256": "9f8255069b6ecffb10c9b676e2414e8c920f089c24f84324e7816b2b6c77144f",
+      "sheetSha256": "10d11557a89b0494834f47b0a292576a68f319f2941da3b2664bdd04b8d1cec9",
       "components": [
         {
           "id": "packages/ui/src/components/context-meter.tsx#ContextMeter",
@@ -23142,7 +23192,7 @@
     {
       "source": "packages/ui/src/components/entry-count.tsx",
       "sheet": "target/rune-inventory/components__entry-count.json",
-      "sheetSha256": "d9f8a2d1a47daada943d9e6a3c8cb326e9218b92b1afcee76348b60f818e155d",
+      "sheetSha256": "bfe389a931f22c64585e118b804e8aba19f1d7b2768045d9b2786bdb6c97cba0",
       "components": [
         {
           "id": "packages/ui/src/components/entry-count.tsx#EntryCount",
@@ -23194,7 +23244,7 @@
     {
       "source": "packages/ui/src/components/files-preview-view.tsx",
       "sheet": "target/rune-inventory/components__files-preview-view.json",
-      "sheetSha256": "1084e7ae81a354c2437c05a34a530be7117815ead2f4223ea6ce58e80807ca78",
+      "sheetSha256": "581646ebcc7836285ef4b5af7949a9c17dbcbf5d6b7707c5249b986aa915511f",
       "components": [
         {
           "id": "packages/ui/src/components/files-preview-view.tsx#FilesPreviewView",
@@ -23207,7 +23257,7 @@
     {
       "source": "packages/ui/src/components/folder-selection-view.tsx",
       "sheet": "target/rune-inventory/components__folder-selection-view.json",
-      "sheetSha256": "53e00d0e7a7bf2d5a5582a12a2bb5048326221f8d6e48d4196727dcbb16f1903",
+      "sheetSha256": "8c88ecd6731a942b3b3c2be16e0806db1adce7f2f44c859560f3c99ee58d6d69",
       "components": [
         {
           "id": "packages/ui/src/components/folder-selection-view.tsx#FolderSelectionView",
@@ -23264,7 +23314,7 @@
     {
       "source": "packages/ui/src/components/hidden-text.tsx",
       "sheet": "target/rune-inventory/components__hidden-text.json",
-      "sheetSha256": "b986e9623ef080063008ed19a3f1df0582b447cc68d53796ee24da988db60234",
+      "sheetSha256": "5ee3a79a41ecd4f4b5cc986d68d647f93449cfde5393a761a5d0432b38004736",
       "components": [
         {
           "id": "packages/ui/src/components/hidden-text.tsx#HiddenTextNotice",
@@ -23336,7 +23386,7 @@
     {
       "source": "packages/ui/src/components/instance-disconnected-modal.tsx",
       "sheet": "target/rune-inventory/components__instance-disconnected-modal.json",
-      "sheetSha256": "cdf3b86daf294918d95ee67b881cbe0c58fde33ad6d864ae6a5da1afeb9297f8",
+      "sheetSha256": "a9f7ac22d08318dfe5c85524617a273acc21c94cd44bb3e63db9c003af9857ca",
       "components": [
         {
           "id": "packages/ui/src/components/instance-disconnected-modal.tsx#InstanceDisconnectedModal",
@@ -23375,7 +23425,7 @@
     {
       "source": "packages/ui/src/components/instance-tabs.tsx",
       "sheet": "target/rune-inventory/components__instance-tabs.json",
-      "sheetSha256": "ab17abf3cad145824868fd4a49638b3987878e7ff4ca102cd2e2445945f9f923",
+      "sheetSha256": "13c74cc4f1b87f5cdbc7cd4aa63338f8d84cbc103c4afe7fa71c0a13865aef7e",
       "components": [
         {
           "id": "packages/ui/src/components/instance-tabs.tsx#AppTabContent",
@@ -23408,7 +23458,7 @@
     {
       "source": "packages/ui/src/components/instance-welcome-view.tsx",
       "sheet": "target/rune-inventory/components__instance-welcome-view.json",
-      "sheetSha256": "093aececa55a662af883842c1406bc87d465147662e132cee7bc0685befea5d4",
+      "sheetSha256": "6535f0d82c9c81921eeb655fc9dfe48ce16d39f3c5f4be2962f3deb97f0f8f96",
       "components": [
         {
           "id": "packages/ui/src/components/instance-welcome-view.tsx#InstanceWelcomeView",
@@ -23421,7 +23471,7 @@
     {
       "source": "packages/ui/src/components/instance/instance-shell2.tsx",
       "sheet": "target/rune-inventory/components__instance__instance-shell2.json",
-      "sheetSha256": "974a722b3c1bc710c49059a5548e7b0e4f9eaa5500b515a2cd6833678f7c96a4",
+      "sheetSha256": "c99cb008566b748d2e7b5214a193ac6a9fafa8f2e23ad45de0de1a9878923082",
       "components": [
         {
           "id": "packages/ui/src/components/instance/instance-shell2.tsx#InstanceShell2",
@@ -23434,7 +23484,7 @@
     {
       "source": "packages/ui/src/components/instance/shell/HostedDrawer.tsx",
       "sheet": "target/rune-inventory/components__instance__shell__HostedDrawer.json",
-      "sheetSha256": "f4f8797905df022a006275002e4a3fe9de5bcf75640dca81211b6deda3760e72",
+      "sheetSha256": "b55fcf5f5b4779ae9ed86f0c29da8b2eac041bb823082bf58e77b74e9db52eb3",
       "components": [
         {
           "id": "packages/ui/src/components/instance/shell/HostedDrawer.tsx#HostedDrawer",
@@ -23499,7 +23549,7 @@
     {
       "source": "packages/ui/src/components/instance/shell/right-panel/RightPanel.tsx",
       "sheet": "target/rune-inventory/components__instance__shell__right-panel__RightPanel.json",
-      "sheetSha256": "51b71ca9ad0479d7c594c01c5ab8273986de1cbf3135b4bfbfcba883a850b029",
+      "sheetSha256": "b3587492c5139c398892252f0c7951f378110e6588769379816f2e1e26007ad8",
       "components": [
         {
           "id": "packages/ui/src/components/instance/shell/right-panel/RightPanel.tsx#RightPanelTabFallback",
@@ -23594,7 +23644,7 @@
     {
       "source": "packages/ui/src/components/instance/shell/SessionSidebar.tsx",
       "sheet": "target/rune-inventory/components__instance__shell__SessionSidebar.json",
-      "sheetSha256": "cf05ab66aea0bfa915a45ade18e02e5440b09e32be240e03c2c98bc449eb235b",
+      "sheetSha256": "66bb0dff96b8eda6e8b01bd79d04bdfcc11d744fd8f0b0c35c39ca12d13a48ef",
       "components": [
         {
           "id": "packages/ui/src/components/instance/shell/SessionSidebar.tsx#SessionSidebar",
@@ -23607,7 +23657,7 @@
     {
       "source": "packages/ui/src/components/instance/shell/ShellPanelToggle.tsx",
       "sheet": "target/rune-inventory/components__instance__shell__ShellPanelToggle.json",
-      "sheetSha256": "524d78acb2d32332a878b0918388117310b8ede21ccb3bfb312e24237106a649",
+      "sheetSha256": "df3981a4dc092b8c3f20dfa3b3e7835daef3278dfa4195d8384ad3e7d63f1949",
       "components": [
         {
           "id": "packages/ui/src/components/instance/shell/ShellPanelToggle.tsx#ShellPanelToggle",
@@ -23651,7 +23701,7 @@
     {
       "source": "packages/ui/src/components/interruption-dock.tsx",
       "sheet": "target/rune-inventory/components__interruption-dock.json",
-      "sheetSha256": "9197c8a4fcd333f596a304e39f56103786589015d17aba62720d2e3dfa3b5441",
+      "sheetSha256": "19c559ddaa8a192b47ff2ee29fe1ee7c3bdce841827a36ce8858d9ca83fdfe03",
       "components": [
         {
           "id": "packages/ui/src/components/interruption-dock.tsx#InterruptionDock",
@@ -23677,7 +23727,7 @@
     {
       "source": "packages/ui/src/components/live-voice-conversation-window.tsx",
       "sheet": "target/rune-inventory/components__live-voice-conversation-window.json",
-      "sheetSha256": "6503b55f1667ccffc283c7328864241c24304cbecdc62739f6262895046bfbdf",
+      "sheetSha256": "1fd6b0d57509c2e2527ef5aeca19f904b0fcfa77da385a38df3dedb5e02cc214",
       "components": [
         {
           "id": "packages/ui/src/components/live-voice-conversation-window.tsx#LiveVoiceConversationWindow",
@@ -23736,7 +23786,7 @@
     {
       "source": "packages/ui/src/components/markdown.tsx",
       "sheet": "target/rune-inventory/components__markdown.json",
-      "sheetSha256": "507d5a01a32c8aead2fbaeba10ef902c783ab5fbe74a42dabab8cbe14e3a1cfa",
+      "sheetSha256": "4e62ccd2fb4ee1982a5798e1a346f5c58cda4b1ad6d74cf983614a0085dc8693",
       "components": [
         {
           "id": "packages/ui/src/components/markdown.tsx#Markdown",
@@ -23762,7 +23812,7 @@
     {
       "source": "packages/ui/src/components/message-block.tsx",
       "sheet": "target/rune-inventory/components__message-block.json",
-      "sheetSha256": "d70de141ccb3d62519e6ce85cf3e0464e34d222d30e83b13b82ab610a53d984a",
+      "sheetSha256": "9d9e9e5a25ec094dcfe8511218a34a9fd8ba27ec2526b7022c9c4af950dadb82",
       "components": [
         {
           "id": "packages/ui/src/components/message-block.tsx#ToolCallFallback",
@@ -23815,7 +23865,7 @@
     {
       "source": "packages/ui/src/components/message-item.tsx",
       "sheet": "target/rune-inventory/components__message-item.json",
-      "sheetSha256": "585ff4ee360d64d70b76265a701e8aab916a6a81bb889a6784ec58317bb96f9a",
+      "sheetSha256": "15abc9a1f57e78b094a31dcce58df8b33d228385f681095e8a185d505e9321ce",
       "components": [
         {
           "id": "packages/ui/src/components/message-item.tsx#MessageItem",
@@ -23872,7 +23922,7 @@
     {
       "source": "packages/ui/src/components/message-section.tsx",
       "sheet": "target/rune-inventory/components__message-section.json",
-      "sheetSha256": "9203e56b73bc6092d9b4dddf4c4fbabfe7cfeeefae82137aa10b8bbd6dbba604",
+      "sheetSha256": "e8b75e43535408be331466e5c6a8936e006337274afc56c012513d66e3597977",
       "components": [
         {
           "id": "packages/ui/src/components/message-section.tsx#TimelinePlacement",
@@ -23903,7 +23953,7 @@
     {
       "source": "packages/ui/src/components/message-usage.tsx",
       "sheet": "target/rune-inventory/components__message-usage.json",
-      "sheetSha256": "abd2465e40a9a5c9eaf32e46caae545bd4acb6fa01b0feec8d7ae4a2158e4db1",
+      "sheetSha256": "44544056dfda6362e0bc7f8812c292d55c42efa15a45329e26d0f9f3b6956cb2",
       "components": [
         {
           "id": "packages/ui/src/components/message-usage.tsx#MessageUsage",
@@ -24250,7 +24300,7 @@
     {
       "source": "packages/ui/src/components/mission-reader.tsx",
       "sheet": "target/rune-inventory/components__mission-reader.json",
-      "sheetSha256": "a4640f880a5749420c9c5a02f051ef06a7dacb8943f3e935c793ef6e77bc7aee",
+      "sheetSha256": "f2b39d86db02d9da5208807025b8799aaaad337e4a033d9e130894f5777ad3bd",
       "components": [
         {
           "id": "packages/ui/src/components/mission-reader.tsx#MissionReaderSection",
@@ -24527,7 +24577,7 @@
     {
       "source": "packages/ui/src/components/native-titlebar.tsx",
       "sheet": "target/rune-inventory/components__native-titlebar.json",
-      "sheetSha256": "64cf90f7d2e7018334a3ea1aa086911950ba1c51f1355b4b5bf9b36f96e5616b",
+      "sheetSha256": "00772917042a559141afe75bfdc51bf4e56d83764d8de9088bbe4451ebfdf53e",
       "components": [
         {
           "id": "packages/ui/src/components/native-titlebar.tsx#NativeTitlebar",
@@ -24553,7 +24603,7 @@
     {
       "source": "packages/ui/src/components/new-instance-launcher.tsx",
       "sheet": "target/rune-inventory/components__new-instance-launcher.json",
-      "sheetSha256": "cd140351bd430730becac1c88c385982414b50558bf06680867a9ac458fab4b8",
+      "sheetSha256": "7701ff838f26ab3f33b3ce7b38c3f32fa4eabc786c82638317b017e38ae87032",
       "components": [
         {
           "id": "packages/ui/src/components/new-instance-launcher.tsx#NewInstanceLauncher",
@@ -24579,7 +24629,7 @@
     {
       "source": "packages/ui/src/components/opencode-setup.tsx",
       "sheet": "target/rune-inventory/components__opencode-setup.json",
-      "sheetSha256": "466e7a2f354450b227f54db2926b059269200e64223ac2c1af38705063c778b7",
+      "sheetSha256": "74770d4c75509d2b653c65650ec70bdb05cc80eb20cf65fb291af6802c952d75",
       "components": [
         {
           "id": "packages/ui/src/components/opencode-setup.tsx#OpenCodeSetup",
@@ -24654,7 +24704,7 @@
     {
       "source": "packages/ui/src/components/part-duration.tsx",
       "sheet": "target/rune-inventory/components__part-duration.json",
-      "sheetSha256": "02a1b5ea66e1d90bdfff726e7a6fd1d50a0919f6904095ad80ae4cb862f7766e",
+      "sheetSha256": "062c7484b555d9fd88d5a866284fedcb7e5499753411a371f78b5b731326133d",
       "components": [
         {
           "id": "packages/ui/src/components/part-duration.tsx#PartDuration",
@@ -24680,7 +24730,7 @@
     {
       "source": "packages/ui/src/components/permission-notification-banner.tsx",
       "sheet": "target/rune-inventory/components__permission-notification-banner.json",
-      "sheetSha256": "11e58c6a0aa7697161ba960f587a051f177e39a871ba3b9af82208715313c028",
+      "sheetSha256": "cca54bb52c0de887ce95462b70d49d40bae01abd5848d13dc7d44b988cd55ead",
       "components": [
         {
           "id": "packages/ui/src/components/permission-notification-banner.tsx#PermissionNotificationBanner",
@@ -24812,7 +24862,7 @@
     {
       "source": "packages/ui/src/components/project-rename-dialog.tsx",
       "sheet": "target/rune-inventory/components__project-rename-dialog.json",
-      "sheetSha256": "2c8542b0609e48a0a64404d5d0077c19a66245567d2658b0a58ab3e1a549bbb9",
+      "sheetSha256": "7ab2e93d57b08ec1f9a44f895889953e57b2e463cb0c3cfdbd7f0ff4628dabbc",
       "components": [
         {
           "id": "packages/ui/src/components/project-rename-dialog.tsx#ProjectRenameDialog",
@@ -24825,7 +24875,7 @@
     {
       "source": "packages/ui/src/components/prompt-input.tsx",
       "sheet": "target/rune-inventory/components__prompt-input.json",
-      "sheetSha256": "4c9f06f2f80e5c067d529bdbe73abf3f1ae5d869f7980d452b7baca7542adc5a",
+      "sheetSha256": "38b02785ec33623b3c3e102770e5678c275150b898d0cd4349927ce872021897",
       "components": [
         {
           "id": "packages/ui/src/components/prompt-input.tsx#PromptInput",
@@ -24838,7 +24888,7 @@
     {
       "source": "packages/ui/src/components/prompt-input/DesignAgentNotice.tsx",
       "sheet": "target/rune-inventory/components__prompt-input__DesignAgentNotice.json",
-      "sheetSha256": "e30383d2c01f6018f2e70924edde40f1c849b6171fdeeea28b977e24b11bb075",
+      "sheetSha256": "114986e0745ad4c88bd32d78f5eadc565f3d7ba4745f0cd07ed6b4c9fece6a39",
       "components": [
         {
           "id": "packages/ui/src/components/prompt-input/DesignAgentNotice.tsx#DesignAgentNotice",
@@ -24851,7 +24901,7 @@
     {
       "source": "packages/ui/src/components/prompt-input/DictationNotice.tsx",
       "sheet": "target/rune-inventory/components__prompt-input__DictationNotice.json",
-      "sheetSha256": "abfe49b4ccd2590d3e483a4e0d4392ded1881ab590a5c00056139402c8314e04",
+      "sheetSha256": "36352682e10ecbdb0da72c00ef77088549de832079d9927ac3469116e6a70f5d",
       "components": [
         {
           "id": "packages/ui/src/components/prompt-input/DictationNotice.tsx#DictationNotice",
@@ -24864,7 +24914,7 @@
     {
       "source": "packages/ui/src/components/prompt-input/PromptAsideWindow.tsx",
       "sheet": "target/rune-inventory/components__prompt-input__PromptAsideWindow.json",
-      "sheetSha256": "d0caf70b71c418780bb7cc7b9f83bc38aad19e6087a6ef75ae7e6d48d314f544",
+      "sheetSha256": "f4541e5545cd508e3b2f4f2ed74397b1897042f908e91661dd77d143d16f8608",
       "components": [
         {
           "id": "packages/ui/src/components/prompt-input/PromptAsideWindow.tsx#PromptAsideWindow",
@@ -24877,7 +24927,7 @@
     {
       "source": "packages/ui/src/components/prompt-input/PromptAttachmentsBar.tsx",
       "sheet": "target/rune-inventory/components__prompt-input__PromptAttachmentsBar.json",
-      "sheetSha256": "816534dfb5a3a90b6b24b0e88a0f760188bc48b8f64dc8c0dec09bf49122ac52",
+      "sheetSha256": "313942ec0332094ac9e3d5b93d6a3aac4fad5b9c842990b31aca17e64f8f9c93",
       "components": [
         {
           "id": "packages/ui/src/components/prompt-input/PromptAttachmentsBar.tsx#PromptAttachmentsBar",
@@ -24890,7 +24940,7 @@
     {
       "source": "packages/ui/src/components/prompt-input/PromptContextControls.tsx",
       "sheet": "target/rune-inventory/components__prompt-input__PromptContextControls.json",
-      "sheetSha256": "4d3ad3e323abffe686f87852ce142c2be2aa36e9074be2131e6fe25ea603ddfd",
+      "sheetSha256": "76626829b5576cb4c29d83be6bb821685e50199a699af4112986ac58943869e7",
       "components": [
         {
           "id": "packages/ui/src/components/prompt-input/PromptContextControls.tsx#PromptContextControls",
@@ -24903,7 +24953,7 @@
     {
       "source": "packages/ui/src/components/prompt-input/recovered-drafts.tsx",
       "sheet": "target/rune-inventory/components__prompt-input__recovered-drafts.json",
-      "sheetSha256": "e4524fc5a095bc9e5b42f7b62c0376424492a1f714bb2e18ded26e60c5d6e495",
+      "sheetSha256": "cdbd38f9402f1235b1ea1670221184b064ab7391cd616b838dc8e616e6f716c8",
       "components": [
         {
           "id": "packages/ui/src/components/prompt-input/recovered-drafts.tsx#RecoveredDrafts",
@@ -24966,9 +25016,27 @@
       "testReferenceCount": 28
     },
     {
+      "source": "packages/ui/src/components/recent-open-elsewhere.tsx",
+      "sheet": "target/rune-inventory/components__recent-open-elsewhere.json",
+      "sheetSha256": "efccea54fe7e9925fc8e21b791828ba374684f7dbdcbbf6a69f6bdb590b00811",
+      "components": [
+        {
+          "id": "packages/ui/src/components/recent-open-elsewhere.tsx#RecentOpenElsewhere",
+          "name": "RecentOpenElsewhere",
+          "status": "not-converted"
+        },
+        {
+          "id": "packages/ui/src/components/recent-open-elsewhere.tsx#RecentOpenElsewhereTooltip",
+          "name": "RecentOpenElsewhereTooltip",
+          "status": "not-converted"
+        }
+      ],
+      "testReferenceCount": 8
+    },
+    {
       "source": "packages/ui/src/components/recent-tab-icon.tsx",
       "sheet": "target/rune-inventory/components__recent-tab-icon.json",
-      "sheetSha256": "8ba6106e2f74eadf776d62d1a2a706adbf640d694b39f8aa6279fe6b5b13a73e",
+      "sheetSha256": "281446bfb5b07090e6d2e3aabdeebcea7b4ea172772df8195c7e45f0ad653cb8",
       "components": [
         {
           "id": "packages/ui/src/components/recent-tab-icon.tsx#RecentTabIcon",
@@ -24981,7 +25049,7 @@
     {
       "source": "packages/ui/src/components/recent-tabs-menu.tsx",
       "sheet": "target/rune-inventory/components__recent-tabs-menu.json",
-      "sheetSha256": "dc24e2f45ac6ad85b5424a688b78d4c1235eb588749b81b2a121b7fbd76ce1b7",
+      "sheetSha256": "5469e6631ad37597183372b6305d3a18200cbb707fb3f6351eac19a85bc2aca9",
       "components": [
         {
           "id": "packages/ui/src/components/recent-tabs-menu.tsx#RecentTabsMenu",
@@ -24994,7 +25062,7 @@
     {
       "source": "packages/ui/src/components/remote-dictation-window.tsx",
       "sheet": "target/rune-inventory/components__remote-dictation-window.json",
-      "sheetSha256": "21c5080990dee4f23752742963720d6905d77dc37e1c1df333989e432a89c380",
+      "sheetSha256": "eb7920df82ea4835a316a29fef8092b75c3cfcaa2dd9b2f5292c5b9651deaaba",
       "components": [
         {
           "id": "packages/ui/src/components/remote-dictation-window.tsx#RemoteDictationWindow",
@@ -25007,7 +25075,7 @@
     {
       "source": "packages/ui/src/components/remote-recent-session.tsx",
       "sheet": "target/rune-inventory/components__remote-recent-session.json",
-      "sheetSha256": "1a5d25ab336e6fdc717edd2d61631819d3295fc6df75207b59669dfb4eac803f",
+      "sheetSha256": "15a958a3c7f5f87049b519c166c043cfedf3356f92b834054dc4ccf211c257a1",
       "components": [
         {
           "id": "packages/ui/src/components/remote-recent-session.tsx#RemoteRecentSession",
@@ -25020,7 +25088,7 @@
     {
       "source": "packages/ui/src/components/remote-restore-view.tsx",
       "sheet": "target/rune-inventory/components__remote-restore-view.json",
-      "sheetSha256": "1bbb6f7b750263fe88bd1bdc0056db270a204fd9cee2ffbfe7348e95c40fcca6",
+      "sheetSha256": "b482d69602c6b00c9d5889a7665e629f8a6caf6691cf3bde408734a3813a6cea",
       "components": [
         {
           "id": "packages/ui/src/components/remote-restore-view.tsx#RemoteRestoreView",
@@ -25064,7 +25132,7 @@
     {
       "source": "packages/ui/src/components/remote-server-signin.tsx",
       "sheet": "target/rune-inventory/components__remote-server-signin.json",
-      "sheetSha256": "aecba116972978b83f83f739be21439702119d62718f7cc3e0067fdf1e7a12a0",
+      "sheetSha256": "ead33d02f8cb08aa3ce4c78789c53b80a7aaa874093425c29aca656ea0772518",
       "components": [
         {
           "id": "packages/ui/src/components/remote-server-signin.tsx#RemoteServerSignin",
@@ -25077,7 +25145,7 @@
     {
       "source": "packages/ui/src/components/server-add-field.tsx",
       "sheet": "target/rune-inventory/components__server-add-field.json",
-      "sheetSha256": "b91c9639d0e87b42872733a0026b7b7eb81b516571bd12a89b758e6a05db7f32",
+      "sheetSha256": "1298f8e6dc0f123588cefae7ba1de290a6496cce0e8584a282dba938ed4971fb",
       "components": [
         {
           "id": "packages/ui/src/components/server-add-field.tsx#ServerAddField",
@@ -25116,7 +25184,7 @@
     {
       "source": "packages/ui/src/components/session-list.tsx",
       "sheet": "target/rune-inventory/components__session-list.json",
-      "sheetSha256": "9108205558901c8296c2ebda5b87f3a0578545972830d261bdc0a81343c635d3",
+      "sheetSha256": "57fa6a67e9c7c8d304357caea78b7ebcff3f53e89c86ba8f1f3e72be4c05a93f",
       "components": [
         {
           "id": "packages/ui/src/components/session-list.tsx#SessionList",
@@ -25147,7 +25215,7 @@
     {
       "source": "packages/ui/src/components/session-preview-view.tsx",
       "sheet": "target/rune-inventory/components__session-preview-view.json",
-      "sheetSha256": "04bc1f8e08b9a06b54644bdfab785e530b951eb83496b7eb5a01293bef580896",
+      "sheetSha256": "5dd582769724303db12354a10494c984a3d734bba093c33423ab1d828c5bb3f3",
       "components": [
         {
           "id": "packages/ui/src/components/session-preview-view.tsx#SessionPreviewSlot",
@@ -25258,7 +25326,7 @@
     {
       "source": "packages/ui/src/components/session/session-view.tsx",
       "sheet": "target/rune-inventory/components__session__session-view.json",
-      "sheetSha256": "a8a4c5a53d1fbb161949d68ec125be408cb22c1cb9836ce55e78f202e5a52244",
+      "sheetSha256": "b5869342b872b96a0d239791a66b3e28c73f25182d93c561f2baba3428557765",
       "components": [
         {
           "id": "packages/ui/src/components/session/session-view.tsx#SessionView",
@@ -25271,7 +25339,7 @@
     {
       "source": "packages/ui/src/components/settings-screen.tsx",
       "sheet": "target/rune-inventory/components__settings-screen.json",
-      "sheetSha256": "0f014df5716701410c16882f6ccb6c8aca57e5d74bf08c2df677cb7512714dce",
+      "sheetSha256": "f11dd872964a387aed776a607e522aa98caec0f69781a9883df8a518cffc545e",
       "components": [
         {
           "id": "packages/ui/src/components/settings-screen.tsx#SettingsScreen",
@@ -25323,7 +25391,7 @@
     {
       "source": "packages/ui/src/components/settings/behavior-setting-rows.tsx",
       "sheet": "target/rune-inventory/components__settings__behavior-setting-rows.json",
-      "sheetSha256": "f7d27f8808b3502785b5b6e346d31fe0d92dc2c5f1b4d889504e47e3147aa8fe",
+      "sheetSha256": "7842b37978fd04e2d6fd433b72a073bd46e8c40b56b3d71d8c4d6332e71e35e3",
       "components": [
         {
           "id": "packages/ui/src/components/settings/behavior-setting-rows.tsx#BehaviorSettingRows",
@@ -25380,7 +25448,7 @@
     {
       "source": "packages/ui/src/components/settings/device-speech-settings.tsx",
       "sheet": "target/rune-inventory/components__settings__device-speech-settings.json",
-      "sheetSha256": "1141bb10b2212d01ddab9aacf522196fd65d1461a2edcdef94c09f57176e1a82",
+      "sheetSha256": "d6618acc64d3764aae9846621dc521e0a1b75c5849907d873b882971139f3341",
       "components": [
         {
           "id": "packages/ui/src/components/settings/device-speech-settings.tsx#DeviceSpeechSettings",
@@ -25814,7 +25882,7 @@
     {
       "source": "packages/ui/src/components/settings/voice-dictation-card.tsx",
       "sheet": "target/rune-inventory/components__settings__voice-dictation-card.json",
-      "sheetSha256": "d9a0a1657d7fbe537adc1d0e1769b6206d89542ad716dee220365e2b13fcbdb4",
+      "sheetSha256": "250fb069db5a8edb40ad31719ae757d25b011fa8a969c13f7a758e779312fb6f",
       "components": [
         {
           "id": "packages/ui/src/components/settings/voice-dictation-card.tsx#VoiceDictationCard",
@@ -25853,7 +25921,7 @@
     {
       "source": "packages/ui/src/components/settings/voice-settings-fields.tsx",
       "sheet": "target/rune-inventory/components__settings__voice-settings-fields.json",
-      "sheetSha256": "e39a461f36e47ea5e21beae04ba7307316b395d137edcd2984c7e50282c28eb5",
+      "sheetSha256": "ff23a234a5613a8d2d7869e4ed57e11d9e7da5e81e54c7334185fb70a244fef4",
       "components": [
         {
           "id": "packages/ui/src/components/settings/voice-settings-fields.tsx#VoiceSettingsCard",
@@ -25920,7 +25988,7 @@
     {
       "source": "packages/ui/src/components/sidecar-view.tsx",
       "sheet": "target/rune-inventory/components__sidecar-view.json",
-      "sheetSha256": "e5224749c3a65162da6a361643e898c71cbba34af1991f0076e1aa2d53876d92",
+      "sheetSha256": "b2fa12b9cef8adcde8ea49d545a4d1750b7eb424f3434020537fdc839a5637ad",
       "components": [
         {
           "id": "packages/ui/src/components/sidecar-view.tsx#SideCarView",
@@ -25933,7 +26001,7 @@
     {
       "source": "packages/ui/src/components/speech-action-button.tsx",
       "sheet": "target/rune-inventory/components__speech-action-button.json",
-      "sheetSha256": "0ed4a8444d2a2d5145b8062647991231e52d95bbf8df966171acf13d1f53c313",
+      "sheetSha256": "4ca00edd3b0f87aeb523a565cbca1ca36847aa7a71ff9ee0855b22b89f2cb858",
       "components": [
         {
           "id": "packages/ui/src/components/speech-action-button.tsx#SpeechActionButton",
@@ -25946,7 +26014,7 @@
     {
       "source": "packages/ui/src/components/system-message.tsx",
       "sheet": "target/rune-inventory/components__system-message.json",
-      "sheetSha256": "322d5a64d2e3024ff4702ee59d43314ba3fdfda38dce57f1f3dfd472a1461f47",
+      "sheetSha256": "4147f577c69a5fdb78c4f2b02ee88cb970ee66347981a11d8469879feb4b0c3c",
       "components": [
         {
           "id": "packages/ui/src/components/system-message.tsx#SystemMessage",
@@ -26011,7 +26079,7 @@
     {
       "source": "packages/ui/src/components/tool-call.tsx",
       "sheet": "target/rune-inventory/components__tool-call.json",
-      "sheetSha256": "d3cc2a588dcedcc10db3e5a56625c6bf24a051738fa81645a9079be704b56a6e",
+      "sheetSha256": "ac5a494ee1a22d8b99756b0134eaa158aa3f27b72915d692a5eae624ea3ea481",
       "components": [
         {
           "id": "packages/ui/src/components/tool-call.tsx#ToolStatusIndicator",
@@ -26163,7 +26231,7 @@
     {
       "source": "packages/ui/src/components/transcript-filters.tsx",
       "sheet": "target/rune-inventory/components__transcript-filters.json",
-      "sheetSha256": "e584b68351c6ba431cdf466ecbd9c168f7e6b45320cf19a942b46791f45d87c3",
+      "sheetSha256": "e1da9398aa6c161ce3cfbc99fb7111ba9031312dae869aad00b5a97c0cd505ff",
       "components": [
         {
           "id": "packages/ui/src/components/transcript-filters.tsx#TranscriptFilters",
@@ -26202,7 +26270,7 @@
     {
       "source": "packages/ui/src/components/version-pill.tsx",
       "sheet": "target/rune-inventory/components__version-pill.json",
-      "sheetSha256": "d1d61b93d5ad6e609912f1e12ed545aaede979ea188c86e25d56a59e2ac121e8",
+      "sheetSha256": "fc2ce217d1ad7f072c1208c542ab40dcbe5a5696f827c126e55faee2b3612f4e",
       "components": [
         {
           "id": "packages/ui/src/components/version-pill.tsx#VersionPill",
@@ -26228,7 +26296,7 @@
     {
       "source": "packages/ui/src/components/window-close-button.tsx",
       "sheet": "target/rune-inventory/components__window-close-button.json",
-      "sheetSha256": "1d8a9b4843bf29f4116e9513ff6326aa68c22ec0dcb43e5e0de47ddba5d4ccee",
+      "sheetSha256": "1dcd51cce5d258b4be0c3d1715fc4d810db21b98f97dac6d2d066cc5ee0642e4",
       "components": [
         {
           "id": "packages/ui/src/components/window-close-button.tsx#WindowCloseButton",
@@ -26267,7 +26335,7 @@
     {
       "source": "packages/ui/src/lib/contexts/instance-metadata-context.tsx",
       "sheet": "target/rune-inventory/lib__contexts__instance-metadata-context.json",
-      "sheetSha256": "63f6077c233c5346cc85ca7c6f6df8a3d11645b1361f790ff90d722919ae3d54",
+      "sheetSha256": "20e22b9bd643e0bacb4deb115a62544058c03b186f1f4d8fe20bd9a28793aa80",
       "components": [
         {
           "id": "packages/ui/src/lib/contexts/instance-metadata-context.tsx#InstanceMetadataProvider",
@@ -26280,7 +26348,7 @@
     {
       "source": "packages/ui/src/lib/i18n/index.tsx",
       "sheet": "target/rune-inventory/lib__i18n__index.json",
-      "sheetSha256": "2235549a81519ebf05184c5b4c23310aae6b4177f9f2875c2c35d82a222e7fa9",
+      "sheetSha256": "733c152b6ec040a7f675b793bd0f8bdb41bc5b0f05b3823cdb7abc45239b181a",
       "components": [
         {
           "id": "packages/ui/src/lib/i18n/index.tsx#I18nProvider",
@@ -26293,7 +26361,7 @@
     {
       "source": "packages/ui/src/lib/theme.tsx",
       "sheet": "target/rune-inventory/lib__theme.json",
-      "sheetSha256": "8fa8f492e229637fc24c33c60f4970bc31580dc8c46b13bd0e1bca8ebb4ee9ba",
+      "sheetSha256": "2488f4ed5a13f0f3cd4630e6430881dd14ba3a7a26bf543b7ec24cca1177ed9f",
       "components": [
         {
           "id": "packages/ui/src/lib/theme.tsx#ThemeProvider",
@@ -26332,7 +26400,7 @@
     {
       "source": "packages/ui/src/stores/instance-config.tsx",
       "sheet": "target/rune-inventory/stores__instance-config.json",
-      "sheetSha256": "cf303d9ce2c2b5110241350baea0ae2adc6d9dac571e9a8b0cbfef1932e90ccb",
+      "sheetSha256": "16fa6ffe52ce35761513b232a44a7725360a6f91eafc3333807b0b9d84314e2b",
       "components": [
         {
           "id": "packages/ui/src/stores/instance-config.tsx#InstanceConfigProvider",
@@ -26345,7 +26413,7 @@
     {
       "source": "packages/ui/src/stores/preferences.tsx",
       "sheet": "target/rune-inventory/stores__preferences.json",
-      "sheetSha256": "796fd41f61d53812cdb40799ff6cba8061688a01ebc3f0837311b6b4d5996224",
+      "sheetSha256": "464669f39ce456c7b521fd84cf7581a2babb371119ec33330b66ceb6b2201626",
       "components": [
         {
           "id": "packages/ui/src/stores/preferences.tsx#ConfigProvider",

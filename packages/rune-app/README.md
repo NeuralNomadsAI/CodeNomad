@@ -55,7 +55,7 @@ node scripts/rune/headless.mjs --binary $env:RUNE_CLIENT_EXE
 ```
 
 Les fixtures créent leurs projets, profils `trial-*`, ports éphémères et processus ; OpenCode est simulé dans ces scénarios. Le serveur Rust reste réel. `RUNE_CLIENT_EXE` et `RUNE_SERVER_EXE` sélectionnent des exécutables absolus ; le client utilise sinon le cache `CARGO_TARGET_DIR`, ou `target` à la racine du workspace.
-Les runners contrôlent `--test-support-info` avant de lancer une fixture. Les implémentations des sondes vivent sous `src/probes/` et sont propres à la cible native.
+Les runners contrôlent `--test-support-info` avant de lancer une fixture. Les implémentations des sondes vivent sous `tests/probes/` et sont propres à la cible native.
 
 `controls-live.mjs` et les scripts `real-history-*` sont des essais explicites avec un OpenCode réel déjà configuré, des sessions jetables et des outils interdits. `interactive-live.mjs` ouvre une fenêtre et demande un dossier et un titre exacts ; ses essais utilisent une copie de la conversation source. Leur lancement interactif appartient à une qualification dédiée.
 
