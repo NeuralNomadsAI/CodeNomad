@@ -1,4 +1,4 @@
-use super::actions::Display;
+use super::{actions::Display, links};
 use crate::{
     State, screen,
     strings::{locale, t},
@@ -19,6 +19,7 @@ const STEP: usize = 250_000;
 pub(super) fn prose(s: &State, key: String, source: &str, streaming: bool) -> El {
     let group = key.clone();
     let scope = s.input_scope.clone();
+    let link_scope = scope.clone();
     let unwrapped = s.transcript_display.unwrapped(&key);
     let steps = s.transcript_display.steps(&key);
     let version = s.transcript_display.stream_version();
@@ -41,8 +42,10 @@ pub(super) fn prose(s: &State, key: String, source: &str, streaming: bool) -> El
                     } else {
                         HIGHLIGHT_LIMIT
                     },
-                |_: &mut State, url, tx| {
-                    let _ = tx.open_url(url);
+                move |s: &mut State, url, tx| {
+                    if s.current_scope(&link_scope) {
+                        let _ = tx.open_url(&links::external(url));
+                    }
                 },
                 {
                     let unwrapped = unwrapped.clone();

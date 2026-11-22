@@ -293,15 +293,18 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
         block = block
             .child(
                 layout::action_row()
-                    .child(layout::button(
-                        t(if wrap {
-                            "toolCall.diff.disableWordWrap"
-                        } else {
-                            "toolCall.diff.enableWordWrap"
-                        }),
-                        false,
-                        screen::action(&s.input_scope, move |s| Display::toggle(s, &wrap_key)),
-                    ))
+                    .child(
+                        layout::button(
+                            t(if wrap {
+                                "toolCall.diff.disableWordWrap"
+                            } else {
+                                "toolCall.diff.enableWordWrap"
+                            }),
+                            false,
+                            screen::action(&s.input_scope, move |s| Display::toggle(s, &wrap_key)),
+                        )
+                        .checked(wrap),
+                    )
                     .child(text(lang).text_role(TextRole::Label)),
             )
             .child(markdown::tool_pane(
