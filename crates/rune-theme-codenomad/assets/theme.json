@@ -789,7 +789,7 @@
     "packages/ui/src/styles/messaging/timeline-preview.css": "88f6372da4e65c1f95b07937a4d5525cb7d547f3a4642de11e84aefd7e1b0cf8",
     "packages/ui/src/styles/messaging/timeline-scrollbar.css": "d2eb3b5f60cfbfdba8ed68280905e3614c5e938019694a0b2d6b580bc53bc56c",
     "packages/ui/src/styles/messaging/timeline-virtual-list.css": "a5e587cda423ee8ee04160f78c12fcc2ced7a3fb2bd9cea4b10cbacceddd3edf",
-    "packages/ui/src/styles/messaging/tool-call.css": "fcea5f63aa3284e06313ac4644d3fa4972aad60253996ca4338605a5d335b903",
+    "packages/ui/src/styles/messaging/tool-call.css": "2ed4e039601a5f9af93caccc12f954d46835bd0ddf8fbc5f9adcd2668a41961e",
     "packages/ui/src/styles/messaging/tool-call/execute.css": "f9ef202fa1827e14735ceb798830518c618ce05cb206e89ea713504771b6ee17",
     "packages/ui/src/styles/messaging/tool-call/images.css": "5d1a3ccbcb665615339b0a4b70e476b6b9caa9af0cf018cfbf0610bdc61e8395",
     "packages/ui/src/styles/messaging/tool-call/question.css": "af5f3f8d1f5a59bb6e471619dd52d5ae48405f26f5ddb8e3bf7479e04e5ef41d",
