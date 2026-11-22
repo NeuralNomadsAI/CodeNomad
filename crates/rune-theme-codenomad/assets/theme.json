@@ -118,6 +118,8 @@
     "tab-active-hover-bg": "#202020ff",
     "tab-active-text": "#cfd4dcff",
     "tab-border": "#3a3a3aff",
+    "tab-close-hover-bg": "#ef4444ff",
+    "tab-close-hover-fg": "#ffffffff",
     "tab-inactive-bg": "#2a2a2aff",
     "tab-inactive-hover-bg": "#212529ff",
     "tab-inactive-text": "#999999ff",
@@ -251,6 +253,8 @@
     "tab-active-hover-bg": "#f4f4f5ff",
     "tab-active-text": "#111827ff",
     "tab-border": "#e0e0e0ff",
+    "tab-close-hover-bg": "#ef4444ff",
+    "tab-close-hover-fg": "#ffffffff",
     "tab-inactive-bg": "#f5f5f5ff",
     "tab-inactive-hover-bg": "#f8fafcff",
     "tab-inactive-text": "#475569ff",
@@ -290,6 +294,40 @@
         "fontSize": 11,
         "fontWeight": 500,
         "lineHeight": 16.5
+      },
+      "tabActive": {
+        "borderBottomWidth": 1,
+        "borderLeftWidth": 1,
+        "borderRadius": 0,
+        "borderRightWidth": 1,
+        "borderTopWidth": 1,
+        "columnGap": 8,
+        "fontSize": 12,
+        "fontWeight": 400,
+        "height": 39,
+        "lineHeight": 18,
+        "maxWidth": 300,
+        "paddingBottom": 0,
+        "paddingLeft": 12,
+        "paddingRight": 12,
+        "paddingTop": 0
+      },
+      "tabClose": {
+        "paddingBottom": 2,
+        "paddingLeft": 2,
+        "paddingRight": 2,
+        "paddingTop": 2
+      },
+      "tabCloseGlyph": {
+        "height": 12,
+        "width": 12
+      },
+      "tabGlyph": {
+        "height": 16,
+        "width": 16
+      },
+      "tabInactive": {
+        "maxWidth": 200
       },
       "title": {
         "fontSize": 12,
@@ -339,6 +377,40 @@
         "fontSize": 11,
         "fontWeight": 500,
         "lineHeight": 16.5
+      },
+      "tabActive": {
+        "borderBottomWidth": 1,
+        "borderLeftWidth": 1,
+        "borderRadius": 0,
+        "borderRightWidth": 1,
+        "borderTopWidth": 1,
+        "columnGap": 8,
+        "fontSize": 12,
+        "fontWeight": 400,
+        "height": 39,
+        "lineHeight": 18,
+        "maxWidth": 300,
+        "paddingBottom": 0,
+        "paddingLeft": 12,
+        "paddingRight": 12,
+        "paddingTop": 0
+      },
+      "tabClose": {
+        "paddingBottom": 2,
+        "paddingLeft": 2,
+        "paddingRight": 2,
+        "paddingTop": 2
+      },
+      "tabCloseGlyph": {
+        "height": 12,
+        "width": 12
+      },
+      "tabGlyph": {
+        "height": 16,
+        "width": 16
+      },
+      "tabInactive": {
+        "maxWidth": 200
       },
       "title": {
         "fontSize": 12,

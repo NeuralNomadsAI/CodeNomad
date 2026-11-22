@@ -67,6 +67,10 @@ Le serveur partagé est construit depuis ce worktree et son intégration Rust. L
 
 Le banc des onglets projet conserve 24 paires Solid/Rune réelles (huit contextes, trois états), trois fiches AST, arbres accessibles et six scripts d'entrées Rune par identité sous `target/rune-parity/project-tabs/evidence.json`. Les écarts pixel diagnostiqués vont de 15,07 % à 56,75 % ; aucun seuil d'admission n'est choisi, la parité reste ouverte. Le composant Solid de fermeture répond au clic mais pas à Espace dans les six contextes de base ; le comportement clavier accessible Rune reste conservé. Commande : `node --import tsx scripts/rune/parity/project-tabs.mjs --binary <galerie-absolue>`. Détails dans `scripts/rune/parity/project-tabs.md`.
 
+Le port de la géométrie utilise les métriques CSS générées et partage le SVG de fermeture existant. Alpha mesure 104,609 px côté Solid et 104,6 px côté Rune, pour 39 px de haut. La campagne étendue conserve 40 paires de barres et 32 paires de crops Alpha ; les écarts exacts RGBA Alpha restent de 6,30 % à 10,26 %, sans admission. Encres identiques, empreinte du texte alignée et Segoe UI confirmé côté Solid ; le rendu anticrénelé diffère. Les captures nommées focus ont `focused=true` et `focusVisible=false` côté Rune : une véritable navigation clavier et un contrôle régional sont à qualifier. Retirer Close améliore le ratio global (302→289 pixels différents), ce qui impose des négatifs par région ; voir `target/rune-parity/project-tabs/residual-analysis.md`.
+
+Un défaut de taille de la bande dans la colonne de l'application est reproduit par un vrai Runtime 390×844 : 422 px au lieu de 39. Le correctif partagé donne 39 px de bande et 805 px de conversation. Douze tests thème réussissent, avec preuves `.tmp-rune-strip-column-red.log` et `.tmp-rune-strip-column-green.log` ; les captures de l'application WASM avec cette correction demandent leur revalidation.
+
 ## Parité du contrôle de fermeture
 
 La fixture charge le véritable composant Solid, ses fournisseurs et ses styles. Le composant Rune possède une scène de galerie et utilise les métriques générées de ces styles.

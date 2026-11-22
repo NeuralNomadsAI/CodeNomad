@@ -16,10 +16,12 @@ import {buildInventory} from '../component-inventory.mjs'
 import {privateEnvironment} from '../../../packages/rune-app/private-profile.mjs'
 
 const root=fileURLToPath(new URL('../../../',import.meta.url)),require=createRequire(import.meta.url)
-const {values}=parseArgs({options:{binary:{type:'string'},'rune-dir':{type:'string'},'max-diff-ratio':{type:'string'}}})
+const {values}=parseArgs({options:{binary:{type:'string'},'rune-dir':{type:'string'},'max-diff-ratio':{type:'string'},'max-alpha-diff-ratio':{type:'string'},'reuse-solid':{type:'boolean'}}})
+assert(!values['reuse-solid']||values.binary,'--reuse-solid requires the real gallery binary')
 assert(!values['rune-dir']||values['max-diff-ratio'],'Actual Rune comparisons require an explicit reviewed pixel threshold')
 assert(!values['max-diff-ratio']||values['rune-dir']||values.binary,'Pixel comparisons require actual Rune captures')
 if(values.binary)assert(path.isAbsolute(values.binary),'Standalone gallery binary must be absolute')
+if(values['max-alpha-diff-ratio'])assert((values.binary||values['rune-dir'])&&Number(values['max-alpha-diff-ratio'])>=0&&Number(values['max-alpha-diff-ratio'])<1,'Alpha pixel comparison requires actual captures and a reviewed threshold')
 if(values['rune-dir'])assert(path.isAbsolute(values['rune-dir'])&&Number(values['max-diff-ratio'])>=0&&Number(values['max-diff-ratio'])<1)
 const out=path.join(root,'target/rune-parity/project-tabs');await mkdir(out,{recursive:true})
 async function execute(program,args,env=process.env){
@@ -50,12 +52,24 @@ const server=await createServer({root:path.join(root,'packages/ui'),configFile:f
 shutdown.own(server)
 let browser
 const records=[]
+let reusedSolid
 try{
   html=`<html><body style="margin:0"><div id="root"></div><script type="module" src="/@fs/${entry.replaceAll('\\','/')}"></script></body></html>`
   await server.listen();const origin=`http://127.0.0.1:${server.httpServer.address().port}`
+  if(values['reuse-solid']){
+    const raw=await readFile(path.join(out,'evidence.json'),'utf8'),prior=JSON.parse(raw)
+    assert.deepEqual(prior.sheets,sheets,'Regenerate Solid references after source changes')
+    assert.equal(prior.records.length,10)
+    for(const record of prior.records){
+      assert.equal(record.states.length,4);assert.deepEqual(record.errors,[])
+      for(const state of record.states){await readFile(path.join(out,state.solid));if(record.scene!=='overflow'){assert(state.alpha);await readFile(path.join(out,state.alpha.file))}}
+      records.push({...record,priorAttemptFailure:record.failure,failure:undefined})
+    }
+    reusedSolid={sha256:createHash('sha256').update(raw).digest('hex'),sheets}
+  }else{
   browser=await chromium.launch({headless:true,executablePath:process.env.CODENOMAD_BROWSER_PATH||undefined})
   const words=JSON.parse(await readFile(path.join(root,'crates/rune-theme-codenomad/assets/catalogues/en.json'),'utf8'))
-  for(const config of [{name:'desktop',width:900,locale:'en',scene:'basic'},{name:'phone-emulated',width:390,locale:'en',scene:'basic'},{name:'rtl',width:900,locale:'he',scene:'basic'},{name:'overflow',width:390,locale:'en',scene:'overflow'}]){
+  for(const config of [{name:'desktop',width:900,locale:'en',scene:'basic'},{name:'phone-emulated',width:390,locale:'en',scene:'basic'},{name:'rtl',width:900,locale:'he',scene:'basic'},{name:'inactive',width:900,locale:'en',scene:'inactive'},{name:'overflow',width:390,locale:'en',scene:'overflow'}]){
     for(const theme of ['light','dark']){
       const id=`${config.name}-${theme}`,page=await browser.newPage({viewport:{width:config.width,height:200},deviceScaleFactor:1,hasTouch:config.name==='phone-emulated',isMobile:config.name==='phone-emulated'})
       const record={id,theme,...config,errors:[],requests:[],states:[],checks:{},startupReloads:0};records.push(record)
@@ -63,7 +77,12 @@ try{
       page.on('console',message=>{if(message.type()==='error')console.error(message.text())})
       await page.route('**/*',route=>{
         const url=new URL(route.request().url());assert.equal(url.origin,origin,'No external fixture request')
-        if(/^\/api\//.test(url.pathname)){record.requests.push({method:route.request().method(),path:url.pathname});return route.fulfill({json:{}})}
+        if(/^\/api\//.test(url.pathname)){
+          const method=route.request().method();record.requests.push({method,path:url.pathname})
+          if(method!=='GET'){record.errors.push(`Unexpected fixture mutation: ${method} ${url.pathname}`);return route.abort('blockedbyclient')}
+          if(url.pathname==='/api/events')return route.fulfill({contentType:'text/event-stream',body:': isolated UI fixture\n\n'})
+          return route.fulfill({json:{}})
+        }
         return route.continue()
       })
       await page.emulateMedia({colorScheme:theme,reducedMotion:'reduce'})
@@ -77,15 +96,27 @@ try{
       const strip=page.locator('.tab-bar-instance');await strip.waitFor()
       const tabs=page.getByRole('tab'),first=tabs.first()
       assert.equal(await tabs.count(),config.scene==='overflow'?8:2)
-      assert.equal(await first.getAttribute('aria-selected'),'true')
-      for(const state of ['rest','hover','focus']){
+      assert.equal(await first.getAttribute('aria-selected'),config.scene==='inactive'?'false':'true')
+      for(const state of ['rest','hover','close-hover','focus']){
         await page.mouse.move(config.width-1,190)
         if(state==='hover')await tabs.nth(1).hover()
+        if(state==='close-hover')await first.locator('.tab-close').hover()
         if(state==='focus'){await first.focus();await page.keyboard.press('Space');assert(await first.evaluate(e=>e.matches(':focus-visible')),'Focus capture requires real keyboard focus-visible')}
         const filename=`solid-${id}-${state}.png`;await strip.screenshot({path:path.join(out,filename),animations:'disabled'})
         const a11y=await strip.ariaSnapshot();await writeFile(path.join(out,`solid-${id}-${state}.aria.yml`),a11y)
         const geometry=await strip.evaluate(el=>({bounds:el.getBoundingClientRect().toJSON(),tabs:[...el.querySelectorAll('[role=tab]')].map(tab=>{const s=getComputedStyle(tab);return {label:tab.textContent,selected:tab.getAttribute('aria-selected'),bounds:tab.getBoundingClientRect().toJSON(),font:s.font,fontSize:s.fontSize,lineHeight:s.lineHeight,background:s.backgroundColor,color:s.color,borderRadius:s.borderRadius}})}))
-        record.states.push({state,solid:filename,a11y,geometry})
+        const item={state,solid:filename,a11y,geometry};record.states.push(item)
+        if(config.scene!=='overflow'){
+          if(state==='hover')await first.hover()
+          const file=`solid-alpha-${id}-${state}.png`;let png,retries=0
+          for(let attempt=0;attempt<3;attempt++){
+            try{png=await first.screenshot({path:path.join(out,file),animations:'disabled'});break}
+            catch(error){if(attempt===2||!error.message.includes('not attached'))throw error;retries++;await page.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));if(state==='hover')await first.hover();if(state==='close-hover')await first.locator('.tab-close').hover()}
+          }
+          const bounds=await first.boundingBox()
+          item.alpha={file,bounds,retries,width:png.readUInt32BE(16),height:png.readUInt32BE(20),selected:await first.getAttribute('aria-selected')==='true',a11y:await first.ariaSnapshot()}
+          await writeFile(path.join(out,`solid-alpha-${id}-${state}.aria.yml`),item.alpha.a11y)
+        }
       }
       if(config.scene==='basic'){
         await tabs.nth(1).click();assert.equal((await page.evaluate(()=>runeProjectTabs.state())).active,'tab-1');record.checks.pointerSelect=true
@@ -104,10 +135,11 @@ try{
       await page.close()
     }
   }
+  }
   if(values.binary)for(const record of records)for(const state of record.states){
     const prefix=`rune-${record.id}-${state.state}`,tree=path.join(out,`${prefix}.json`),snap=path.join(out,`${prefix}.png`),script=path.join(out,`${prefix}.script.json`)
     const bounds=state.geometry.bounds;assert(Number.isInteger(bounds.width)&&Number.isInteger(bounds.height),'Use the actual integer Solid crop dimensions')
-    const events=state.state==='hover'?[{t:0.1,type:'move',key:'t-tab-1'}]:state.state==='focus'?[{t:0.1,type:'key',name:'Tab'}]:[]
+    const events=state.state==='hover'?[{t:0.1,type:'move',key:'t-tab-1'}]:state.state==='close-hover'?[{t:0.1,type:'move',key:'c-tab-0'}]:state.state==='focus'?[{t:0.1,type:'tap',key:'t-tab-0'},{t:0.2,type:'type',text:' '}]:[]
     await writeFile(script,JSON.stringify({events}))
     const env={...await privateEnvironment(path.join(out,'native-profiles',prefix)),RUNE_PARITY_LOCALE:record.locale,RUNE_PARITY_CASE:record.scene}
     const log=await execute(values.binary,['--script',script,'--tree',tree,'--snap',snap,'--size',`${bounds.width}x${bounds.height}`,'--theme',record.theme,'--scale','1','--at','0.5'],env)
@@ -121,6 +153,20 @@ try{
     if(state.state==='focus')assert(nodes.some(n=>n.key==='t-tab-0'&&n.states?.includes('focused')))
     assert(nodes.some(n=>n.key==='project-tabs-new'&&n.role==='button'))
     state.rune=snap;state.nativeTabs=tabs.map(n=>({key:n.key,name:n.name,states:n.states,bounds:n.bounds}))
+  }
+  if(values.binary)for(const record of records)for(const state of record.states.filter(s=>s.alpha)){
+    const prefix=`rune-alpha-${record.id}-${state.state}`,tree=path.join(out,`${prefix}.json`),snap=path.join(out,`${prefix}.png`),script=path.join(out,`${prefix}.script.json`)
+    const events=state.state==='hover'?[{t:0.1,type:'move',key:'t-tab-0'}]:state.state==='close-hover'?[{t:0.1,type:'move',key:'c-tab-0'}]:state.state==='focus'?[{t:0.1,type:'tap',key:'t-tab-0'},{t:0.2,type:'type',text:' '}]:[]
+    await writeFile(script,JSON.stringify({events}))
+    const env={...await privateEnvironment(path.join(out,'native-profiles',prefix)),RUNE_PARITY_LOCALE:record.locale,RUNE_PARITY_CASE:record.scene,RUNE_PARITY_PRIMITIVE:'true'}
+    const log=await execute(values.binary,['--script',script,'--tree',tree,'--snap',snap,'--size',`${state.alpha.width}x${state.alpha.height}`,'--theme',record.theme,'--scale','1','--at','0.5'],env)
+    await writeFile(path.join(out,`${prefix}.log`),log)
+    const actual=JSON.parse(await readFile(tree,'utf8')),nodes=[]
+    function walk(n){if(!n)return;nodes.push(n);for(const c of n.children??[])walk(c)}walk(actual.accessibility)
+    const tabs=nodes.filter(n=>n.role==='tab');assert.equal(tabs.length,1)
+    assert.equal(Boolean(tabs[0].states?.includes('selected')),state.alpha.selected)
+    assert(nodes.some(n=>n.key==='c-tab-0'&&n.role==='button'))
+    state.alpha.rune=snap;state.alpha.tree=tree;state.alpha.nativeTabs=tabs
   }
   if(values.binary)for(const record of records.filter(r=>r.scene==='basic')){
     const prefix=`rune-${record.id}-interaction`,tree=path.join(out,`${prefix}.json`),snap=path.join(out,`${prefix}.png`),script=path.join(out,`${prefix}.script.json`),bounds=record.states[0].geometry.bounds
@@ -142,10 +188,14 @@ try{
     await readFile(rune)
     await execute(process.execPath,[path.join(root,'scripts/rune/qualify-pixels.mjs'),'--component','project-tabs','--theme',record.theme,'--solid',path.join(out,state.solid),'--rune',rune,'--max-diff-ratio',values['max-diff-ratio'],'--report',path.join(out,`pixels-${record.id}-${state.state}.json`)])
   }
+  if(values['max-alpha-diff-ratio'])for(const record of records)for(const state of record.states.filter(s=>s.alpha)){
+    const rune=path.join(values['rune-dir']??out,`rune-alpha-${record.id}-${state.state}.png`)
+    await execute(process.execPath,[path.join(root,'scripts/rune/qualify-pixels.mjs'),'--component','project-tab-alpha','--theme',record.theme,'--solid',path.join(out,state.alpha.file),'--rune',rune,'--max-diff-ratio',values['max-alpha-diff-ratio'],'--report',path.join(out,`pixels-alpha-${record.id}-${state.state}.json`)])
+  }
 }catch(error){if(records.length)records.at(-1).failure=error.message;throw error}
 finally{
   await browser?.close();await server.close()
   const findings=records.filter(r=>r.checks.keyboardClose===false).map(r=>({context:r.id,contract:'close-keyboard-space',result:'failed',source:'packages/ui/src/components/instance-tab.tsx',evidence:'tab-close span has role=button and tabIndex=0; Space did not dispatch onClose; pointer fallback did',nativeRequirement:'Rune retains keyboard activation; divergence requires review'}))
-  await writeFile(path.join(out,'evidence.json'),JSON.stringify({status:records.some(r=>r.failure)?'blocked-parity-fixture':values['rune-dir']||values.binary?'paired-captures-require-review':'solid-reference-only-unqualified',sheets,records,findings,pending:['Native/Rune component gallery captures and corresponding accessibility+inputs','Reviewed per-component pixel thresholds','Two independent blind reviews','Tablist browser mirror mapping upstream','Physical mobile qualification']},null,2))
+  await writeFile(path.join(out,'evidence.json'),JSON.stringify({status:records.some(r=>r.failure)?'blocked-parity-fixture':values['rune-dir']||values.binary?'paired-captures-require-review':'solid-reference-only-unqualified',components:{wholeInstanceTabs:'pending',plainInstanceTabAlpha:values['max-alpha-diff-ratio']?'threshold-checked-review-required':'captures-unqualified'},sheets,reusedSolid,records,findings,pending:['Whole InstanceTabs actions, status/remote/temporary states and scrolling parity','Reviewed per-component pixel thresholds','Two independent blind reviews','Tablist browser mirror mapping upstream','Physical mobile qualification']},null,2))
 }
 console.log(out)

@@ -36,6 +36,11 @@ export function collectTheme(names){
     windowIcon:['.window-icon-button',['width','height','borderRadius']],
     windowIconGlyph:['.window-icon-button svg',['width','height']],
     windowIconFocus:['.window-icon-button:focus-visible',['outlineWidth','outlineOffset']],
+    tabActive:['.tab-base.tab-active',['height','maxWidth','fontSize','fontWeight','lineHeight','paddingLeft','paddingRight','paddingTop','paddingBottom','borderTopWidth','borderRightWidth','borderBottomWidth','borderLeftWidth','borderRadius','columnGap']],
+    tabInactive:['.tab-base.tab-inactive',['maxWidth']],
+    tabGlyph:['.tab-base > svg',['width','height']],
+    tabClose:['.tab-close',['paddingLeft','paddingRight','paddingTop','paddingBottom']],
+    tabCloseGlyph:['.tab-close > svg',['width','height']],
   }
   const metrics={}
   for(const [name,[selector,properties]] of Object.entries(contracts)){
@@ -47,6 +52,14 @@ export function collectTheme(names){
       metrics[name][key]=numeric?Number.parseFloat(value):value
     }
   }
+  // These exact selectors declare the close hover colors independently of the palette.
+  const declarations=[]
+  function rules(list,parent=''){for(const rule of list){const selector=rule.selectorText?.replaceAll('&',parent)??parent;if(selector.split(',').some(s=>s.trim()==='.tab-close:hover')&&rule.style)declarations.push(rule.style.cssText);if(rule.cssRules)rules(rule.cssRules,selector)}}
+  for(const sheet of document.styleSheets)rules(sheet.cssRules)
+  if(!declarations.length)throw Error('Missing .tab-close:hover CSS contract')
+  probe.style.cssText=declarations.join(';')
+  colors['tab-close-hover-bg']=hex(getComputedStyle(probe).backgroundColor)
+  colors['tab-close-hover-fg']=hex(getComputedStyle(probe).color)
   probe.remove()
   return {colors,numbers,strings,shadows,metrics,unresolved}
 }

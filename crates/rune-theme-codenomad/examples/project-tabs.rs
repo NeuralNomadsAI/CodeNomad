@@ -11,6 +11,7 @@ struct Gallery {
     rows: Vec<(String, String)>,
     active: String,
     next: usize,
+    primitive: bool,
 }
 fn init() -> Gallery {
     let locale = std::env::var("RUNE_PARITY_LOCALE").unwrap_or_else(|_| "en".into());
@@ -30,9 +31,14 @@ fn init() -> Gallery {
         .collect();
     Gallery {
         locale,
-        active: "tab-0".into(),
+        active: if std::env::var("RUNE_PARITY_CASE").as_deref() == Ok("inactive") {
+            "tab-1".into()
+        } else {
+            "tab-0".into()
+        },
         next: rows.len(),
         rows,
+        primitive: std::env::var("RUNE_PARITY_PRIMITIVE").as_deref() == Ok("true"),
     }
 }
 fn view(s: &Gallery, cx: &mut Cx<Gallery>) -> El {
@@ -47,33 +53,46 @@ fn view(s: &Gallery, cx: &mut Cx<Gallery>) -> El {
                 closable: true,
             })
             .collect();
-        let strip = tabs::strip(
-            cx,
-            &s.locale,
-            &items,
-            Some(&s.active),
-            |s, id, _| {
-                s.active = id.into();
-                println!("project-tabs-select:{id}");
-            },
-            |s, id, _| {
-                s.rows.retain(|(key, _)| key != id);
-                println!("project-tabs-close:{id}");
-            },
-            |s, _| {
-                let id = format!("blank-{}", s.next);
-                s.next += 1;
-                s.rows.push((
-                    id.clone(),
-                    catalogue::message(&s.locale, "newTab.title")
-                        .unwrap()
-                        .into(),
-                ));
-                s.active = id;
-                println!("project-tabs-new");
-            },
-        );
-        rune::col()
+        let select = |s: &mut Gallery, id: &str, _: &mut rune::Tx| {
+            s.active = id.into();
+            println!("project-tabs-select:{id}");
+        };
+        let close = |s: &mut Gallery, id: &str, _: &mut rune::Tx| {
+            s.rows.retain(|(key, _)| key != id);
+            println!("project-tabs-close:{id}");
+        };
+        let strip = if s.primitive {
+            tabs::tab(
+                &s.locale,
+                &items[0],
+                s.active == items[0].id,
+                true,
+                select,
+                close,
+            )
+        } else {
+            tabs::strip(
+                cx,
+                &s.locale,
+                &items,
+                Some(&s.active),
+                select,
+                close,
+                |s, _| {
+                    let id = format!("blank-{}", s.next);
+                    s.next += 1;
+                    s.rows.push((
+                        id.clone(),
+                        catalogue::message(&s.locale, "newTab.title")
+                            .unwrap()
+                            .into(),
+                    ));
+                    s.active = id;
+                    println!("project-tabs-new");
+                },
+            )
+        };
+        rune::row()
             .w_full()
             .h_full()
             .fill(tokens(cx.system_dark()).color("surface-secondary"))

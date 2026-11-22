@@ -55,7 +55,7 @@ test('generated semantic metrics survive actual font changes and viewport change
       await page.setViewportSize({width:640,height:900})
       assert.deepEqual((await page.evaluate(collectTheme,names)).metrics,baseline.metrics,'Viewport-dependent intrinsic dimensions leaked into the theme')
       for(const [name,metric] of Object.entries(baseline.metrics)){
-        if(['windowIcon','windowIconGlyph'].includes(name))continue
+        if(['windowIcon','windowIconGlyph','tabActive','tabGlyph','tabCloseGlyph'].includes(name))continue
         assert(!('width'in metric)&&!('height'in metric),`${name} retained intrinsic dimensions`)
       }
       assert.equal(baseline.metrics.windowIcon.width,24)

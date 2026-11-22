@@ -17,7 +17,7 @@ const [tabs, setTabs] = createSignal<AppTabRecord[]>(names.map((name, i) => ({
   kind: "instance", id: `tab-${i}`, instance: { id: `fixture-${i}`, folder: `/synthetic/${name}`,
     projectName: name, status: "ready", client: null, port: 0, pid: 0, proxyPath: "/synthetic-only" },
 })))
-const [active, setActive] = createSignal<string | null>("tab-0")
+const [active, setActive] = createSignal<string | null>(query.get("case")==="inactive"?"tab-1":"tab-0")
 const actions: { type: string; id?: string }[] = []
 Object.assign(window, { runeProjectTabs: {
   ready: false, state: () => ({ active: active(), ids: tabs().map(tab => tab.id), actions: [...actions] }),

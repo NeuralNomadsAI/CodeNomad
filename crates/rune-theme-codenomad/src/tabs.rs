@@ -1,11 +1,11 @@
 //! Project occurrence tabs; interaction comes from rune-kit, visuals from CodeNomad tokens.
 use crate::{
-    Length, Space, catalogue, kit,
+    Length, catalogue, kit,
     layout::{self, Layout},
     tokens,
 };
 use rune::{Color, Cx, El, Icon, Tx};
-use rune_kit::{Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant};
+use rune_kit::{Button, ButtonVariant};
 use std::rc::Rc;
 
 // Lucide Plus, as used by Solid instance-tabs.tsx.
@@ -13,6 +13,12 @@ static PLUS: Icon = Icon {
     name: "lucide-plus",
     view: 24.0,
     body: r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></g>"#,
+};
+// Lucide FolderOpen, the imported source used by InstanceTab.
+static FOLDER: Icon = Icon {
+    name: "lucide-folder-open",
+    view: 24.0,
+    body: r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></g>"#,
 };
 
 #[derive(Clone, Copy)]
@@ -50,8 +56,188 @@ pub struct ProjectTab<'a> {
     pub status: Option<Status>,
     pub closable: bool,
 }
+pub fn tab<S: 'static>(
+    locale: &str,
+    tab: &ProjectTab<'_>,
+    selected: bool,
+    first: bool,
+    on_select: impl Fn(&mut S, &str, &mut Tx) + 'static,
+    on_close: impl Fn(&mut S, &str, &mut Tx) + 'static,
+) -> El {
+    let t = tokens(layout::dark());
+    let mut theme = kit(layout::dark()).clone();
+    let metric = move |key| t.metric("tabActive", key).px();
+    let font =
+        rune::TextStyle::new(metric("fontSize"), metric("fontWeight")).lh(metric("lineHeight"));
+    theme.c.hover = Color::TRANSPARENT;
+    theme.c.pressed = Color::TRANSPARENT;
+    let ink = t.color(if selected {
+        "tab-active-text"
+    } else {
+        "tab-inactive-text"
+    });
+    let background = t.color(if selected {
+        "surface-shade-light"
+    } else {
+        "surface-secondary"
+    });
+    let select = Rc::new(on_select);
+    let close = Rc::new(on_close);
+    let key = format!("t-{}", tab.id);
+    let id = tab.id.to_owned();
+    let action = select.clone();
+    let title = tab.title.to_owned();
+    let mut select_button = Button::new(tab.title)
+        .variant(ButtonVariant::Ghost)
+        .label_with(move |_, _| {
+            rune::row()
+                .items_center()
+                .gap(metric("columnGap"))
+                .child(
+                    rune::icon(&FOLDER, t.metric("tabGlyph", "width").px())
+                        .color(ink)
+                        .a11y_hidden(),
+                )
+                .child(
+                    rune::text(title)
+                        .font(font)
+                        .color(ink)
+                        .truncate()
+                        .dir(rune::Direction::Auto),
+                )
+        })
+        .on_press_tx(move |s, tx| {
+            action(s, &id, tx);
+            tx.scroll_into_view_in("project-tabs-scroll", format!("t-{id}"));
+        })
+        .build(&theme)
+        .key(key.clone())
+        .label(tab.title)
+        .focus_selected(selected)
+        .h_full()
+        .padding(0.0)
+        .shrink()
+        .min_w(0.0)
+        .no_focus_ring();
+    if tab.closable {
+        let (id, action) = (tab.id.to_owned(), close.clone());
+        select_button = select_button.on_middle_press(move |s, tx| action(s, &id, tx));
+    }
+    if let Some(status) = tab.status {
+        select_button = select_button.description(catalogue::format(
+            locale,
+            "instanceTab.status.ariaLabel",
+            &[("status", catalogue::message(locale, status.key()).unwrap())],
+        ));
+    }
+    let border = metric("borderTopWidth");
+    let end = metric("borderRightWidth");
+    let start = if first {
+        metric("borderLeftWidth")
+    } else {
+        0.0
+    };
+    let (left, right) = if catalogue::direction(locale) == "rtl" {
+        (end, start)
+    } else {
+        (start, end)
+    };
+    let (id, action) = (tab.id.to_owned(), select);
+    let mut slot = rune::row()
+        .key(format!("occurrence-{}", tab.id))
+        .h(metric("height"))
+        .max_w(
+            t.metric(
+                if selected { "tabActive" } else { "tabInactive" },
+                "maxWidth",
+            )
+            .px(),
+        )
+        .items_center()
+        .gap(metric("columnGap"))
+        .px(metric("paddingLeft"))
+        .pt(metric("paddingTop"))
+        .pb(metric("paddingBottom")
+            + if selected {
+                metric("borderBottomWidth")
+            } else {
+                0.0
+            })
+        .radius(metric("borderRadius"))
+        .fill(background)
+        .hover(t.color(if selected {
+            "surface-shade-light"
+        } else {
+            "tab-inactive-hover-bg"
+        }))
+        .border_sides(
+            [
+                border,
+                right,
+                if selected {
+                    0.0
+                } else {
+                    metric("borderBottomWidth")
+                },
+                left,
+            ],
+            t.color("tab-border"),
+        )
+        .border_layout()
+        .focus_ring_for(
+            key,
+            t.metric("windowIconFocus", "outlineWidth").px(),
+            border,
+            t.color("accent-primary"),
+        )
+        .on_press_tx(move |s, tx| action(s, &id, tx))
+        .role("group")
+        .label(tab.title)
+        .child(select_button.role("tab"));
+    if let Some(status) = tab.status {
+        let side = t.length(Length::Icon).px() / 2.0;
+        slot = slot.child(
+            rune::el()
+                .size(side, side)
+                .radius(side / 2.0)
+                .fill(t.color(status.color()))
+                .a11y_hidden(),
+        );
+    }
+    if tab.closable {
+        let glyph = t.metric("tabCloseGlyph", "width").px();
+        let padding = t.metric("tabClose", "paddingLeft").px();
+        let label = catalogue::message(locale, "instanceTab.actions.close.ariaLabel").unwrap();
+        let id = tab.id.to_owned();
+        slot = slot.child(
+            Button::new(label)
+                .variant(ButtonVariant::Ghost)
+                .label_with(move |_, _| {
+                    rune::icon(&crate::window_control::CLOSE, glyph)
+                        .color(ink)
+                        .group_color(t.color("tab-close-hover-fg"))
+                        .a11y_hidden()
+                })
+                .on_press_tx(move |s, tx| close(s, &id, tx))
+                .build(&theme)
+                .key(format!("c-{}", tab.id))
+                .label(label)
+                .size(glyph + padding * 2.0, glyph + padding * 2.0)
+                .padding(padding)
+                .radius(metric("borderRadius"))
+                .hover_group()
+                .hover(t.color("tab-close-hover-bg"))
+                .focus_ring(
+                    t.metric("windowIconFocus", "outlineWidth").px(),
+                    border,
+                    t.color("accent-primary"),
+                ),
+        );
+    }
+    slot.locale_direction(locale)
+}
 pub fn strip<S: 'static>(
-    cx: &mut Cx<S>,
+    _cx: &mut Cx<S>,
     locale: &str,
     tabs: &[ProjectTab<'_>],
     active: Option<&str>,
@@ -62,16 +248,6 @@ pub fn strip<S: 'static>(
     let dark = layout::dark();
     let t = tokens(dark);
     let word = |key| catalogue::message(locale, key).expect("generated tab catalogue key");
-    let mut theme = kit(dark).clone();
-    let size = t.number("font-size-sm").px();
-    theme.ty.ui_compact = rune::TextStyle::new(size, t.number("font-weight-regular").px())
-        .lh(size * t.number("line-height-normal").px());
-    theme.ty.ui_medium = theme.ty.ui_compact;
-    theme.c.text_base = t.color("tab-active-text");
-    theme.c.text_faint = t.color("tab-inactive-text");
-    // The square occurrence slot paints the state; the kit pill remains transparent.
-    theme.c.hover = Color::TRANSPARENT;
-    theme.c.pressed = Color::TRANSPARENT;
     let new_size = t.length(Length::TouchCompact).px();
     let new = rune::row()
         .key("project-tabs-new")
@@ -97,104 +273,17 @@ pub fn strip<S: 'static>(
         );
     let select = Rc::new(on_select);
     let close = Rc::new(on_close);
-    let height = t.length(Length::Chrome).px() + t.space(Space::Xs).px()
-        - t.metric("button", "borderTopWidth").px();
-    let minimum = t.length(Length::TouchTarget).px();
-    let width = cx
-        .layout_size("project-tabs")
-        .map(|size| ((size[0] - new_size) / tabs.len().max(1) as f32).max(minimum))
-        .unwrap_or(minimum);
-    let items = tabs.iter().map(|tab| {
-        let selected = active == Some(tab.id);
-        let description = tab
-            .status
-            .map(|status| {
-                catalogue::format(
-                    locale,
-                    "instanceTab.status.ariaLabel",
-                    &[("status", word(status.key()))],
-                )
-            })
-            .unwrap_or_default();
-        let ink = t.color(if selected {
-            "tab-active-text"
-        } else {
-            "tab-inactive-text"
-        });
-        let background = t.color(if selected {
-            "surface-shade-light"
-        } else {
-            "surface-secondary"
-        });
-        let title = tab.title.to_owned();
-        let font = theme.ty.ui_compact;
-        let (id, key, action) = (tab.id.to_owned(), format!("t-{}", tab.id), select.clone());
-        let reveal = key.clone();
-        let mut tab_button = Button::new(tab.title)
-            .variant(ButtonVariant::Ghost)
-            .label_with(move |_, _| {
-                rune::text(title)
-                    .font(font)
-                    .color(ink)
-                    .truncate()
-                    .dir(rune::Direction::Auto)
-            })
-            .on_press_tx(move |s, tx| {
-                action(s, &id, tx);
-                tx.scroll_into_view_in("project-tabs-scroll", reveal.clone());
-            })
-            .build(&theme)
-            .key(key)
-            .role("tab")
-            .label(tab.title)
-            .description(description)
-            .focus_selected(selected)
-            .h(height)
-            .grow(1.0)
-            .shrink()
-            .min_w(0.0)
-            .radius(t.number("radius-md").px())
-            .fill(background)
-            .hover(t.color(if selected {
-                "surface-shade-light"
-            } else {
-                "tab-inactive-hover-bg"
-            }));
-        if tab.closable {
-            let (id, action) = (tab.id.to_owned(), close.clone());
-            tab_button = tab_button.on_middle_press(move |s, tx| action(s, &id, tx));
-        }
-        // Share the measured viewport until Solid's intrinsic/max widths are generated.
-        let mut slot = rune::row()
-            .key(format!("occurrence-{}", tab.id))
-            .w(width)
-            .h(height)
-            .items_center()
-            .fill(background)
-            .child(tab_button.role("tab"));
-        if let Some(status) = tab.status {
-            let side = t.length(Length::Icon).px() / 2.0;
-            slot = slot.child(
-                rune::el()
-                    .size(side, side)
-                    .radius(side / 2.0)
-                    .fill(t.color(status.color()))
-                    .a11y_hidden(),
-            );
-        }
-        if tab.closable {
-            let (id, action) = (tab.id.to_owned(), close.clone());
-            slot = slot.child(
-                IconButton::new(theme.glyph.close)
-                    .control_size(ControlSize::Small)
-                    .variant(IconButtonVariant::GhostMuted)
-                    .label(word("instanceTab.actions.close.ariaLabel"))
-                    .on_press_tx(move |s, tx| action(s, &id, tx))
-                    .build(&theme)
-                    .key(format!("c-{}", tab.id)),
-            );
-        }
-        slot
+    let height = t.metric("tabActive", "height").px();
+    let items = tabs.iter().enumerate().map(|(i, descriptor)| {
+        let (select, close) = (select.clone(), close.clone());
+        tab(
+            locale,
+            descriptor,
+            active == Some(descriptor.id),
+            i == 0,
+            move |s, id, tx| select(s, id, tx),
+            move |s, id, tx| close(s, id, tx),
+        )
     });
     let ids: Vec<_> = tabs.iter().map(|tab| tab.id.to_owned()).collect();
     let active_index = tabs
@@ -230,7 +319,8 @@ pub fn strip<S: 'static>(
         });
     rune::row()
         .key("project-tabs")
-        .grow(1.0)
+        .w_full()
+        .h(height)
         .shrink()
         .min_w(0.0)
         .items_center()
@@ -393,6 +483,39 @@ mod tests {
         let point = rt.find("project-tabs-new").unwrap();
         tap(&mut rt, point);
         assert_eq!(rt.state.new, 1);
+    }
+    #[test]
+    fn strip_keeps_css_height_in_a_phone_column() {
+        fn column(s: &App, cx: &mut Cx<App>) -> El {
+            rune::col()
+                .w_full()
+                .h_full()
+                .child(view(s, cx))
+                .child(rune::el().key("conversation").w_full().grow(1.0))
+        }
+        let mut rt = rune::Runtime::new(
+            App {
+                active: "a".into(),
+                closed: vec![],
+                new: 0,
+                locale: "en",
+            },
+            column,
+            (390.0, 844.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        let elements = rt.elements();
+        let bounds = |key| {
+            elements
+                .iter()
+                .find(|e| e.key.as_deref() == Some(key))
+                .unwrap()
+                .rect
+        };
+        let height = tokens(false).metric("tabActive", "height").px();
+        assert_eq!(bounds("project-tabs"), [0.0, 0.0, 390.0, height]);
+        assert_eq!(bounds("conversation"), [0.0, height, 390.0, 844.0 - height]);
     }
     #[test]
     fn direction_and_words_follow_the_catalogue() {
