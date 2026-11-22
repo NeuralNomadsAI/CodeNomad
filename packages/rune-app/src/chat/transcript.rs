@@ -1,210 +1,156 @@
-use crate::{State, content::Part, strings::t};
+use super::{actions::Display, document, tools};
+use crate::{
+    State,
+    content::{Part, TextProvenance},
+    screen,
+    strings::{locale, t},
+};
 use rune::{El, col, text};
 use rune_theme_codenomad::{
-    Space, TextRole, attachment, layout, layout::Layout, workspace_tree::icons,
+    Space, TextRole, catalogue,
+    layout::{self, Layout},
+    markdown,
 };
-fn prose(key: String, body: &str) -> El {
-    let code = body.starts_with("fn ") || body.starts_with("```");
-    let element = text(body)
-        .key(key)
-        .full_width()
-        .wrap()
-        .text_role(if code { TextRole::Mono } else { TextRole::Body })
-        .selectable(true);
-    if code {
-        element.literal_direction()
-    } else {
-        element.content_direction()
-    }
-}
+
+const PART_LIMIT: usize = 1000;
+
 pub fn message(s: &State, i: usize) -> El {
-    let scope = s.input_scope.clone();
     let m = &s.messages[i];
+    let mut header = layout::action_row().child(
+        text(t(if m.role == "user" {
+            "messageItem.speaker.you"
+        } else {
+            "messageItem.speaker.assistant"
+        }))
+        .text_role(TextRole::Label),
+    );
+    if !m.body.trim().is_empty() {
+        let id = m.id.clone();
+        header = header.child(
+            markdown::copy_button(
+                t("messageItem.actions.copy"),
+                screen::action_tx(&s.input_scope, move |s, tx| {
+                    let Some(row) = s.messages.iter().find(|row| row.id == id) else {
+                        return;
+                    };
+                    if row.role == "user" || row.parts.is_empty() {
+                        tx.copy(row.body.as_str());
+                    } else {
+                        let prose = row
+                            .parts
+                            .iter()
+                            .filter_map(|part| match part {
+                                Part::Text(body) if !body.text.trim().is_empty() => {
+                                    Some(body.text.as_str())
+                                }
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>();
+                        tx.copy(prose.join("\n\n"));
+                    }
+                }),
+            )
+            .key(format!("copy-message-{}", m.id)),
+        );
+    }
     let mut view = col()
         .key(m.id.clone())
         .full_width()
         .pad(Space::Lg)
         .separate(Space::Sm)
-        .child(
-            text(t(if m.role == "user" {
-                "messageItem.speaker.you"
-            } else {
-                "messageItem.speaker.assistant"
-            }))
-            .text_role(TextRole::Label),
-        );
-    if m.parts.iter().all(|p| matches!(p, Part::Text(_))) {
-        return view.child(prose(format!("body-{}", m.id), &m.body));
+        .child(header);
+    let mut ordinal = 0;
+    if (m.role == "user" || m.parts.is_empty()) && !m.body.is_empty() {
+        view = view.child(document::prose(s, format!("body-{}", m.id), &m.body, false));
     }
-    if m.role == "user" && !m.body.is_empty() {
-        view = view.child(prose(format!("body-{}", m.id), &m.body));
-    }
-    let mut files = layout::action_row().key("message-attachments");
-    let mut has_files = false;
-    let steps = |step| format!("attachments-{}-{step}", m.id);
-    let is_expanded = |key: &str| {
-        s.expanded_tools
-            .get(&m.id)
-            .is_some_and(|keys| keys.contains(key))
+    let gap_key = format!("parts-gap-{}", m.id);
+    let initial = if m.parts.len() > PART_LIMIT {
+        PART_LIMIT / 2
+    } else {
+        m.parts.len()
     };
-    let shown = 500
-        + (0..m.parts.len().div_ceil(1000))
-            .take_while(|&step| is_expanded(&steps(step)))
-            .count()
-            * 1000;
-    let hidden = m.parts.len().saturating_sub(shown + 500);
+    let tail = m.parts.len().saturating_sub(PART_LIMIT / 2);
+    let head = initial.saturating_add(
+        s.transcript_display
+            .steps(&gap_key)
+            .saturating_mul(PART_LIMIT),
+    );
+    let mut reveal_start = (head > initial).then(|| head.saturating_sub(PART_LIMIT));
     for (index, part) in m.parts.iter().enumerate() {
-        if m.role == "user" && (shown..shown + hidden).contains(&index) {
-            if index == shown {
-                let count = hidden.min(1000).to_string();
-                let label = rune_theme_codenomad::catalogue::format(
-                    crate::strings::locale(),
-                    "messageBlock.hiddenParts.show",
-                    &[("count", &count)],
-                );
-                let key = steps((shown - 500) / 1000);
-                let button = crate::components::button(
-                    &key,
-                    &label,
-                    false,
-                    crate::screen::action(&scope, {
-                        let key = key.clone();
-                        let message = m.id.clone();
-                        move |s| crate::transcript_state::reveal_tool_output(s, &message, &key)
-                    }),
-                );
-                if matches!(part, Part::File(_)) {
-                    has_files = true;
-                    files = files.child(button);
+        if index == head && head < tail {
+            let hidden = tail - head;
+            let notice = catalogue::format(
+                locale(),
+                if hidden == 1 {
+                    "messageBlock.hiddenParts.one"
                 } else {
-                    view = view.child(button);
-                }
-            }
-            continue;
-        }
-        match part {
-            Part::Text(body) => {
-                if !body.text.is_empty() {
-                    view = view.child(prose(format!("part-{}-{index}", m.id), &body.text));
-                }
-            }
-            Part::Skill(skill) => {
-                view = view.child(
-                    rune::row().full_width().child(
-                        attachment::chip(&skill.name, None, None)
-                            .key(skill.id.clone())
-                            .description_static(t("promptInput.skills.title")),
-                    ),
-                );
-            }
-            Part::File(file) => {
-                has_files = true;
-                let icon = if file.mime.starts_with("image/") {
-                    &icons::IMAGE
-                } else {
-                    &icons::FILE
-                };
-                let name = file
-                    .name
-                    .as_deref()
-                    .unwrap_or_else(|| t("messageItem.attachment.defaultName"));
-                let button = file
-                    .reference
-                    .clone()
-                    .filter(|_| crate::platform::attachment_export_available())
-                    .map(|reference| {
-                        let label = super::attachments::download_label(name);
-                        let name = name.to_owned();
-                        crate::components::button(
-                            &format!("download-{}", file.id),
+                    "messageBlock.hiddenParts.other"
+                },
+                &[("count", &hidden.to_string())],
+            );
+            let label = catalogue::format(
+                locale(),
+                "messageBlock.hiddenParts.show",
+                &[("count", &hidden.min(PART_LIMIT).to_string())],
+            );
+            let key = gap_key.clone();
+            view = view.child(
+                layout::action_row()
+                    .key(gap_key.clone())
+                    .child(text(notice))
+                    .child(
+                        layout::button_tx(
                             &label,
-                            !s.attachments.available(),
-                            crate::screen::action(&scope, move |s| {
-                                super::attachments::Reader::request(s, &reference, &name)
+                            false,
+                            screen::action_tx(&s.input_scope, move |s, tx| {
+                                tx.scroll_key_to(format!("{key}-start"), 0.0);
+                                if tx.by_keys() {
+                                    tx.focus(format!("{key}-start"), true);
+                                }
+                                Display::reveal_next(s, &key);
                             }),
                         )
-                    });
-                files =
-                    files.child(attachment::chip(name, Some(icon), button).key(file.id.clone()));
-            }
-            Part::Tool(tool) => {
-                let key = format!("tool-{}-{}", m.id, tool.id);
-                let expanded = is_expanded(&key);
-                let status = match tool.status.as_str() {
-                    "completed" => "toolCall.status.completed",
-                    "error" => "rune.tool_error",
-                    "running" => "toolCall.status.running",
-                    _ => "rune.tool_pending",
-                };
-                let toggle = key.clone();
-                let message = m.id.clone();
-                let mut block = col()
-                    .key(key.clone())
-                    .full_width()
-                    .pad(Space::Sm)
-                    .separate(Space::Sm)
-                    .inset_surface()
-                    .child(
-                        rune_theme_codenomad::layout::action_row()
-                            .separate(Space::Md)
-                            .child(text(&tool.name).text_role(TextRole::Label))
-                            .child(text(t(status)))
-                            .child(
-                                rune_theme_codenomad::layout::button(
-                                    t(if expanded {
-                                        "rune.hide_details"
-                                    } else {
-                                        "rune.details"
-                                    }),
-                                    false,
-                                    crate::screen::action(&scope, move |s: &mut State| {
-                                        crate::transcript_state::toggle_tool(s, &message, &toggle);
-                                    }),
-                                )
-                                .key(format!("toggle-{key}")),
-                            ),
-                    );
-                if expanded {
-                    for (key_part, label, value) in [
-                        ("tool_input", "rune.tool_input", &tool.input),
-                        ("tool_output", "toolCall.task.sections.output", &tool.output),
-                    ] {
-                        if !value.is_empty() {
-                            let reveal = format!("{key}-full-{key_part}");
-                            let clipped = value.chars().count() > 10_000 && !is_expanded(&reveal);
-                            let shown = if clipped {
-                                value.chars().take(10_000).collect::<String>()
-                            } else {
-                                value.clone()
-                            };
-                            block = block
-                                .child(text(t(label)).text_role(TextRole::Label))
-                                .child(prose(format!("{key}-{key_part}"), &shown));
-                            if clipped {
-                                let button_key = format!("reveal-{reveal}");
-                                let message = m.id.clone();
-                                block = block.child(
-                                    rune_theme_codenomad::layout::button(
-                                        t("messageBlock.hiddenText.showAll"),
-                                        false,
-                                        crate::screen::action(&scope, move |s: &mut State| {
-                                            crate::transcript_state::reveal_tool_output(
-                                                s, &message, &reveal,
-                                            );
-                                        }),
-                                    )
-                                    .key(button_key),
-                                );
-                            }
-                        }
-                    }
-                    if tool.limited {
-                        block = block.child(text(t("rune.tool_limited")));
-                    }
+                        .key(format!("reveal-{gap_key}")),
+                    ),
+            );
+        }
+        let visible = index < head || index >= tail;
+        let body = match part {
+            Part::Text(body) => {
+                let key = format!("fragment-{}:{ordinal}", m.id);
+                ordinal += 1;
+                if visible && !body.text.trim().is_empty() {
+                    Some(document::prose(
+                        s,
+                        key,
+                        &body.text,
+                        !m.completed && body.provenance != TextProvenance::Closed,
+                    ))
+                } else {
+                    None
                 }
-                view = view.child(block);
+            }
+            Part::Tool(tool) if visible => Some(tools::view(s, &m.id, tool)),
+            Part::Tool(_) => None,
+            Part::Skill(skill) if visible => Some(super::attachments::skill_chip(skill)),
+            Part::File(file) if visible => Some(super::attachments::file_chip(s, file)),
+            Part::Skill(_) | Part::File(_) => None,
+        };
+        if let Some(body) = body {
+            if reveal_start.is_some_and(|first| index >= first) {
+                view = view.child(
+                    col()
+                        .key(format!("{gap_key}-start"))
+                        .focusable(true)
+                        .tab_index(-1)
+                        .full_width()
+                        .child(body),
+                );
+                reveal_start = None;
+            } else {
+                view = view.child(body);
             }
         }
     }
-    view.children(has_files.then_some(files))
+    view
 }

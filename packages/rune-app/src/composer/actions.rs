@@ -27,6 +27,10 @@ struct Send {
 
 pub fn can_send(s: &State) -> bool {
     matches!(s.phase, Phase::Ready | Phase::Streaming)
+        && !s
+            .screen
+            .launcher()
+            .is_some_and(crate::launcher::Launcher::blocks_prompt)
         && !s.history_detached
         && s.composer.sending.is_none()
         && !s.composer.picker.open()

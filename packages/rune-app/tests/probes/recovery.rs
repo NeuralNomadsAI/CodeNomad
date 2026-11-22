@@ -47,11 +47,12 @@ pub(crate) fn anchor(rt: &Runtime<State>) -> (String, f32) {
         .find(|e| {
             e.visible[3] > 2.0
                 && e.path
-                    .split_once(prefix)
-                    .is_some_and(|(_, tail)| !tail.contains('/'))
+                    .rsplit_once(prefix)
+                    .map(|(_, tail)| tail)
+                    .is_some_and(|tail| !tail.contains('/'))
         })
         .expect("visible native row");
-    (row.path.split_once(prefix).unwrap().1.into(), row.rect[1])
+    (row.path.rsplit_once(prefix).unwrap().1.into(), row.rect[1])
 }
 pub(crate) fn check_anchor(rt: &Runtime<State>, anchor: &(String, f32)) -> f32 {
     let y = rt

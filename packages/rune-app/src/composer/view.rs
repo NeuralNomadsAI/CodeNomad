@@ -17,14 +17,36 @@ pub fn view(s: &State) -> El {
         .on_key(move |s: &mut State, event, tx| s.current_scope(&edit_scope) && key(s, event, tx))
         .build(field_kit(layout::dark()))
         .key("composer");
-    let mut actions = layout::action_row().child(
-        layout::button_tx(
-            t("promptInput.overlay.send"),
-            !can_send(s),
-            screen::action_tx(&scope, |s, tx| send(s, tx, false)),
+    let mut actions = layout::action_row()
+        .children(
+            (s.can_older || s.history_error && s.phase != Phase::Failed).then(|| {
+                rune_theme_codenomad::shell::older_button(
+                    t(if s.paging {
+                        "rune.loading"
+                    } else if s.history_error {
+                        "sessionList.loadError.retry"
+                    } else {
+                        "rune.older"
+                    }),
+                    s.paging || matches!(s.phase, Phase::Reconnecting | Phase::Failed),
+                    screen::action_tx(&scope, crate::request_older),
+                )
+            }),
         )
-        .key("send"),
-    );
+        .child(crate::components::button_tx(
+            "latest",
+            t("rune.latest"),
+            false,
+            screen::action_tx(&scope, crate::latest),
+        ))
+        .child(
+            layout::button_tx(
+                t("promptInput.overlay.send"),
+                !can_send(s),
+                screen::action_tx(&scope, |s, tx| send(s, tx, false)),
+            )
+            .key("send"),
+        );
     if stop {
         actions = actions.child(
             layout::button(

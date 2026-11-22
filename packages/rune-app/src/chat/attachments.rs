@@ -135,3 +135,39 @@ pub fn error(s: &State) -> Option<rune::El> {
         .error
         .then(|| rune::text(t("rune.open_error")).role("alert"))
 }
+
+pub fn skill_chip(skill: &crate::content::Skill) -> rune::El {
+    rune_theme_codenomad::attachment::chip(&skill.name, None, None)
+        .key(skill.id.clone())
+        .description_static(t("promptInput.skills.title"))
+}
+
+pub fn file_chip(s: &State, file: &crate::content::File) -> rune::El {
+    use rune_theme_codenomad::{attachment, workspace_tree::icons};
+    let icon = if file.mime.starts_with("image/") {
+        &icons::IMAGE
+    } else {
+        &icons::FILE
+    };
+    let name = file
+        .name
+        .as_deref()
+        .unwrap_or_else(|| t("messageItem.attachment.defaultName"));
+    let button = file
+        .reference
+        .clone()
+        .filter(|_| platform::attachment_export_available())
+        .map(|reference| {
+            let label = download_label(name);
+            let name = name.to_owned();
+            crate::components::button(
+                &format!("download-{}", file.id),
+                &label,
+                !s.attachments.available(),
+                crate::screen::action(&s.input_scope, move |s| {
+                    Reader::request(s, &reference, &name)
+                }),
+            )
+        });
+    attachment::chip(name, Some(icon), button).key(file.id.clone())
+}

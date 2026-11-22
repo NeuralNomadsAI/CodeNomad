@@ -55,6 +55,7 @@ impl Backend {
         })
     }
     pub async fn page(&self, target: Value) -> Result<Page> {
+        // Match the broker's window envelope; other endpoints retain their own limits.
         history::decode(
             read_json_limited(
                 self.client

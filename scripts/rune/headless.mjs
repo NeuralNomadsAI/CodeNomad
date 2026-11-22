@@ -59,7 +59,11 @@ async function run(theme, at, name) {
   const finalMessageVisible = Boolean(finalRect && intersects(finalRect, historyRect)
     && intersects(finalRect, [0, 0, ...data.viewport]))
   assert.equal(finalMessageVisible, name === 'edited', 'Wheel must leave the last message; Latest must restore it')
-  if (name === 'edited') canvasByTheme.set(theme, data.elements[0].fill)
+  if (name === 'edited') {
+    const canvas = data.elements.find(element => element.key === 'application-shell')
+    assert.equal(canvas?.fill, palette[theme]['surface-canvas'], 'App canvas must use the resolved token')
+    canvasByTheme.set(theme, canvas.fill)
+  }
   assert(data.accessibility, 'Rune must emit its actual accessibility tree')
   const nodes = []
   function walk(node) {if (!node || typeof node !== 'object') return; nodes.push(node); for (const child of node.children ?? []) walk(child)}
@@ -76,11 +80,11 @@ async function run(theme, at, name) {
   assert.match(composer.role, /text/i, 'Composer must expose a text input role')
   assert(composer.name, 'Composer needs an accessible name')
   assert.equal(composer.value, 'Rune headless\nDeuxième ligne 🦀', 'Simulated paste must reach the real composer')
-  for (const key of ['send', 'latest', 'older']) {
+  for (const key of ['send', 'latest']) {
     assert.equal(byKey(key)?.role, 'button', `${key} must expose a button role`)
     assert(byKey(key)?.name, `${key} needs an accessible name`)
   }
-  assert(byKey('older').states?.includes('disabled'), 'Synthetic history has no older page')
+  assert(!byKey('older'), 'Synthetic history has no older page')
   if (name === 'edited') assert(composer.states?.includes('focused'), 'Simulated focus must reach composer')
   const png = await readFile(snap)
   assert(png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])), 'Rune snapshot must be PNG')
@@ -88,7 +92,7 @@ async function run(theme, at, name) {
   if (name === 'edited') {
     const element = key => data.elements.find(element => element.key === key)
     textContrast = await assertRenderedTextContrast(imagePage, png, [
-      {name: 'header', rect: element('app-title').rect, surface: 'surface-canvas'},
+      ...(element('app-title') ? [{name: 'titlebar', rect: element('app-title').rect, surface: 'surface-shade-strong', text: 'text-secondary'}] : []),
       {name: 'transcript', rect: finalRect, surface: 'surface-canvas'},
       {name: 'composer', rect: composer.bounds, surface: 'surface-field'},
     ], palette[theme])

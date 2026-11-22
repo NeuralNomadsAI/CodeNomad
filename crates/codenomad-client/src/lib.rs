@@ -10,6 +10,7 @@ pub mod backend;
 pub mod catalog;
 pub mod content;
 pub mod files;
+pub mod git;
 pub mod history;
 pub mod http;
 pub mod prompt;

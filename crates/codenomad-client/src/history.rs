@@ -9,6 +9,7 @@ pub const MAX_BYTES: usize = 8 * 1024 * 1024;
 pub const MESSAGE_BYTES: usize = 16 * 1024 * 1024;
 pub const WINDOW_BYTES: usize = 24 * 1024 * 1024;
 pub(crate) const RESPONSE_BYTES: usize = WINDOW_BYTES + 64 * 1024;
+pub(crate) const MAX_TOOL_TEXT_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct Page {
@@ -137,6 +138,14 @@ pub fn check(rows: &[Row]) -> Result<()> {
         > WINDOW_BYTES
     {
         return Err("resident attachments exceed their bound".into());
+    }
+    if rows
+        .iter()
+        .map(|row| crate::content::tool_text_bytes(&row.parts))
+        .sum::<usize>()
+        > MAX_TOOL_TEXT_BYTES
+    {
+        return Err("resident tool text limit reached".into());
     }
     if rows.iter().any(|row| !ids.insert(&row.id)) {
         return Err("duplicate native row".into());

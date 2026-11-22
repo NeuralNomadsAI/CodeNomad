@@ -16,7 +16,7 @@ pub fn synthetic() -> Vec<crate::history::Row> {
             id: format!("synthetic-{i}"),
             role: if i % 2 == 0 { "user" } else { "assistant" }.into(),
             body: if i == 9999 {
-                CODE.into()
+                format!("```rust\n{CODE}\n```")
             } else {
                 format!("Synthetic message {i}\nUnicode: été · 日本語 · 🦀")
             },

@@ -29,6 +29,137 @@ fn runtime(s: State) -> rune::Runtime<State> {
 }
 
 #[test]
+fn panel_visibility_returns_only_with_its_own_project_tab() {
+    let mut s = init();
+    let mut ui = Ui::new();
+    ui.ready = true;
+    ui.entries.push(entry("tab-1".into(), Tab::Blank));
+    s.workspace = Some(ui);
+    let mut rt = runtime(s);
+    rt.update(|s, tx| {
+        s.shell.wanted = [Some([false, true]), None];
+        select(s, "tab-1", tx);
+        assert_eq!(s.shell.wanted, [None; 2]);
+        s.shell.wanted = [Some([true, false]), None];
+        select(s, "tab-0", tx);
+        assert_eq!(s.shell.wanted, [Some([false, true]), None]);
+        select(s, "tab-1", tx);
+        assert_eq!(s.shell.wanted, [Some([true, false]), None]);
+    });
+}
+
+#[test]
+fn sidebar_search_and_title_edits_are_kept_only_by_their_origin_tab() {
+    let mut s = init();
+    crate::gallery::shell::fixture(&mut s);
+    let mut ui = Ui::new();
+    ui.ready = true;
+    ui.entries.push(entry("tab-1".into(), Tab::Blank));
+    s.workspace = Some(ui);
+    let mut rt = runtime(s);
+    rt.update(|s, tx| {
+        let launcher = s.screen.launcher_mut().unwrap();
+        launcher.search = TextEdit::new("alpha");
+        launcher.title = TextEdit::new("unsent title");
+        launcher.show_title = true;
+        launcher.show_search = true;
+        select(s, "tab-1", tx);
+        assert!(s.screen.launcher().unwrap().search.text.is_empty());
+        select(s, "tab-0", tx);
+        let launcher = s.screen.launcher().unwrap();
+        assert_eq!(launcher.search.text, "alpha");
+        assert_eq!(launcher.title.text, "unsent title");
+        assert!(launcher.show_title && launcher.show_search);
+    });
+}
+
+#[test]
+fn a_press_held_on_send_is_cancelled_when_the_pending_selection_binds() {
+    let mut s = init();
+    crate::gallery::shell::fixture(&mut s);
+    let mut ui = Ui::new();
+    ui.ready = true;
+    let mut saved = workspace("old-session", "Old draft");
+    saved
+        .drafts
+        .insert("new-session".into(), "New draft".into());
+    ui.entries[0].saved = Tab::Workspace(saved);
+    ui.entries[0].binding = Some(backend("old-session"));
+    let (old_commands, old) = bounded(1);
+    s.commands = Some(old_commands);
+    s.draft = TextEdit::new("Old draft");
+    s.workspace = Some(ui);
+    let mut rt = runtime(s);
+    for _ in 0..8 {
+        rt.frame(0.02);
+    }
+    let (x, y) = rt.find("send").unwrap();
+    rt.pointer_down(x, y);
+    rt.frame(0.02);
+    let (new_commands, new) = bounded(1);
+    rt.update(move |s, tx| {
+        s.draft = TextEdit::new(bound(s, &backend("new-session")));
+        s.commands = Some(new_commands);
+        s.renew_scope();
+        tx.instant();
+    });
+    rt.frame(0.02);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    assert!(old.try_recv().is_err() && new.try_recv().is_err());
+    assert_eq!(rt.state.draft.text, "New draft");
+}
+
+#[test]
+fn retry_rebinds_when_the_event_lane_is_gone_even_if_the_command_relay_is_open() {
+    let mut s = init();
+    crate::gallery::shell::fixture(&mut s);
+    let backend = backend("session");
+    let launcher = s.screen.launcher_mut().unwrap();
+    launcher.connection = Some(backend.clone());
+    let mut ui = Ui::new();
+    ui.ready = true;
+    ui.entries[0].saved = Tab::Workspace(workspace("session", "keep this draft"));
+    ui.entries[0].binding = Some(backend);
+    s.workspace = Some(ui);
+    s.draft = TextEdit::new("keep this draft");
+    s.phase = Phase::Failed;
+    let (events, incoming) = bounded(1);
+    drop(events);
+    s.incoming = Some(incoming);
+    let (out, relay) = bounded(1);
+    s.commands = Some(out);
+    let mut rt = runtime(s);
+    rt.update(crate::retry_connection);
+    assert!(
+        rt.state.screen.launcher().unwrap().pending,
+        "retry starts a targeted read"
+    );
+    assert!(relay.try_recv().is_err());
+    assert_eq!(rt.state.draft.text, "keep this draft");
+}
+
+#[test]
+fn confirmed_missing_selection_does_not_block_future_project_restoration() {
+    let mut s = init();
+    let mut ui = Ui::new();
+    ui.ready = true;
+    ui.entries[0].saved = Tab::Workspace(workspace("missing", "saved draft"));
+    ui.entries[0].binding = Some(backend("missing"));
+    s.workspace = Some(ui);
+    s.draft = TextEdit::new("unsent latest");
+    assert!(!unselect_missing(&mut s, "another"));
+    assert!(unselect_missing(&mut s, "missing"));
+    let snapshot = s.workspace.as_ref().unwrap().snapshot();
+    let saved = super::super::decode(&super::super::encode(&snapshot).unwrap()).unwrap();
+    let Tab::Workspace(project) = &saved.tabs[0] else {
+        panic!("workspace must remain")
+    };
+    assert_eq!(project.active_session_id, None);
+    assert_eq!(project.drafts["missing"], "unsent latest");
+}
+
+#[test]
 fn waiting_saved_session_keeps_its_draft_until_native_binding() {
     let mut s = init();
     let mut ui = Ui::new();
@@ -415,6 +546,7 @@ fn valid_v1_with_twenty_four_empty_drafts_can_accept_new_text() {
     let snapshot = Snapshot {
         revision: 1,
         saved_at: 1,
+        panel_widths: [None; 2],
         tabs: vec![Tab::Workspace(old)],
         active: Some(0),
     };

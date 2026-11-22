@@ -154,6 +154,15 @@ impl Text {
         })
     }
 }
+fn transcript_text_owner(key: &str) -> bool {
+    key.starts_with("body-")
+        || key.strip_prefix("fragment-").is_some_and(|part| {
+            part.rsplit_once(':').is_some_and(|(_, ordinal)| {
+                !ordinal.is_empty() && ordinal.bytes().all(|c| c.is_ascii_digit())
+            })
+        })
+}
+
 fn texts<S: 'static>(rt: &Runtime<S>) -> Result<BTreeMap<String, Text>, String> {
     let tree = rt.accessibility_tree();
     let nodes: HashMap<_, _> = tree.nodes.iter().map(|(id, n)| (*id, n)).collect();
@@ -188,8 +197,7 @@ fn texts<S: 'static>(rt: &Runtime<S>) -> Result<BTreeMap<String, Text>, String> 
         let owner = node
             .author_id()
             .filter(|key| {
-                owners.contains_key(*key)
-                    && (*key == "composer" || key.starts_with("body-") || key.starts_with("part-"))
+                owners.contains_key(*key) && (*key == "composer" || transcript_text_owner(key))
             })
             .map(str::to_owned)
             .or(owner);
@@ -384,7 +392,7 @@ fn measure() -> Result<(), String> {
         let mut visible = Vec::new();
         if armed {
             for (owner, text) in &text {
-                if !owner.starts_with("body-") && !owner.starts_with("part-") {
+                if !transcript_text_owner(owner) {
                     continue;
                 }
                 for marker in markers(&text.value) {

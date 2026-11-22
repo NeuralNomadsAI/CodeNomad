@@ -1,13 +1,14 @@
 //! Ordered native message blocks. Tool data is passive; this module never executes calls.
 use crate::history::Result;
 use serde_json::Value;
+use std::{mem::size_of, sync::Arc};
 mod user;
 pub(crate) use user::digest as attachment_digest;
 pub use user::{File, Reference, Skill};
 #[derive(Clone, Debug, PartialEq)]
 pub enum Part {
     Text(Text),
-    Tool(Tool),
+    Tool(Arc<Tool>),
     Skill(Skill),
     File(File),
 }
@@ -233,9 +234,12 @@ pub struct Tool {
     pub id: String,
     pub name: String,
     pub status: String,
-    pub input: String,
+    pub input: Value,
+    pub metadata: Value,
     pub output: String,
-    pub limited: bool,
+    pub error: String,
+    bytes: usize,
+    output_bytes: usize,
 }
 pub fn decode(v: &Value) -> Result<Vec<Part>> {
     if v["type"] == "user" {
@@ -244,14 +248,17 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
     let Some(parts) = v["content"].as_array() else {
         return Ok(vec![]);
     };
-    if parts.len() > 1000 {
-        return Err("message part bound reached".into());
+    if parts.len() > crate::history::MAX_BYTES / size_of::<Part>() {
+        return Err("resident history limit reached".into());
     }
     let mut result = vec![];
+    let mut resident = parts.len() * size_of::<Part>();
+    let mut tool_text = 0usize;
     let mut ids = std::collections::HashSet::new();
     for part in parts {
         if part["type"] == "text" {
             if let Some(text) = part["text"].as_str() {
+                charge(&mut resident, text.len())?;
                 let closed = !v["time"]["completed"].is_null()
                     || !part["native"].is_null()
                     || !part["state"].is_null();
@@ -279,68 +286,96 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                 .filter(|s| s.len() <= 256)
                 .ok_or("invalid tool name")?;
             let state = &part["state"];
-            let status = state["status"].as_str().unwrap_or("streaming").to_string();
-            let mut limited = false;
-            let input = bounded(&state["input"], &mut limited);
-            let output = if status == "error" {
-                bounded(&state["error"]["message"], &mut limited)
-            } else {
-                let mut output = String::new();
-                if let Some(parts) = state["content"].as_array() {
-                    for item in parts {
-                        if item["type"] == "text" {
-                            output.push_str(item["text"].as_str().unwrap_or_default());
-                            output.push('\n');
-                        }
-                        if output.len() > 256 * 1024 {
-                            limited = true;
-                            break;
-                        }
-                    }
-                }
-                truncate(&output, &mut limited)
-            };
-            result.push(Part::Tool(Tool {
+            let status = state["status"].as_str().unwrap_or("streaming");
+            let text_parts = state["content"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|item| item["type"] == "text")
+                .filter_map(|item| item["text"].as_str());
+            let error = state["error"]["message"].as_str().unwrap_or_default();
+            let (input_nodes, input_text) = resident_json(&state["input"]);
+            let (metadata_nodes, metadata_text) = resident_json(&state["metadata"]);
+            let output_bytes = metadata_text
+                + error.len()
+                + text_parts
+                    .clone()
+                    .map(|text| text.len() + 1)
+                    .sum::<usize>()
+                    .saturating_sub(1);
+            let bytes = id.len()
+                + name.len()
+                + status.len()
+                + size_of::<Tool>()
+                + input_nodes
+                + input_text
+                + metadata_nodes;
+            charge(&mut resident, bytes)?;
+            tool_text = tool_text.saturating_add(output_bytes);
+            if tool_text > crate::history::MAX_TOOL_TEXT_BYTES {
+                return Err("resident tool text limit reached".into());
+            }
+            result.push(Part::Tool(Arc::new(Tool {
                 id: id.into(),
                 name: name.into(),
-                status,
-                input,
-                output,
-                limited,
-            }));
+                status: status.into(),
+                input: state["input"].clone(),
+                metadata: state["metadata"].clone(),
+                output: text_parts.collect::<Vec<_>>().join("\n"),
+                error: error.into(),
+                bytes,
+                output_bytes,
+            })));
         }
     }
     Ok(result)
 }
-fn truncate(v: &str, limited: &mut bool) -> String {
-    if v.len() <= 256 * 1024 {
-        return v.into();
+fn charge(resident: &mut usize, added: usize) -> Result<()> {
+    *resident = resident.saturating_add(added);
+    if *resident > crate::history::MAX_BYTES {
+        return Err("resident history limit reached".into());
     }
-    *limited = true;
-    let mut end = 256 * 1024;
-    while !v.is_char_boundary(end) {
-        end -= 1;
-    }
-    v[..end].into()
+    Ok(())
 }
-fn bounded(v: &Value, limited: &mut bool) -> String {
+
+fn resident_json(v: &Value) -> (usize, usize) {
+    let root = size_of::<Value>();
     match v {
-        Value::Null => String::new(),
-        Value::String(s) => truncate(s, limited),
-        _ => truncate(
-            &serde_json::to_string_pretty(v).unwrap_or_default(),
-            limited,
-        ),
+        Value::Array(items) => items.iter().fold((root, 0), |(nodes, text), item| {
+            let (child, bytes) = resident_json(item);
+            (nodes + child, text + bytes)
+        }),
+        Value::Object(items) => items.iter().fold((root, 0), |(nodes, text), (key, item)| {
+            let (child, bytes) = resident_json(item);
+            (
+                nodes + key.len() + size_of::<String>() * 2 + child,
+                text + bytes,
+            )
+        }),
+        Value::String(s) => (root, s.len()),
+        _ => (root, 0),
     }
 }
+
 pub fn bytes(parts: &[Part]) -> usize {
+    std::mem::size_of_val(parts)
+        + parts
+            .iter()
+            .map(|p| match p {
+                Part::Text(t) => t.text.len(),
+                Part::Tool(t) => t.bytes,
+                Part::Skill(s) => s.id.len() + s.skill_id.len() + s.name.len(),
+                Part::File(f) => file_bytes(f),
+            })
+            .sum::<usize>()
+}
+
+pub(crate) fn tool_text_bytes(parts: &[Part]) -> usize {
     parts
         .iter()
-        .map(|p| match p {
-            Part::Text(t) => t.text.len(),
-            Part::Tool(t) => t.id.len() + t.name.len() + t.input.len() + t.output.len(),
-            Part::Skill(s) => s.id.len() + s.skill_id.len() + s.name.len(),
-            Part::File(f) => file_bytes(f),
+        .filter_map(|part| match part {
+            Part::Tool(tool) => Some(tool.output_bytes),
+            _ => None,
         })
         .sum()
 }
