@@ -1,9 +1,9 @@
 import { decodeClientSnapshot, normalizeRestorableSession } from "./client-state-codec"
 import type { ClientSnapshotV1, RestorableSessionState, RestorableWorkspaceTabState } from "./client-state-codec"
 import type { RestorableAttachment } from "./client-state-attachments-codec"
-import { canonicalJson, encodePartition, sha256, type EncodedPartition } from "./client-state-partition-json"
+import { canonicalJson, encodePartition, sameJson, sha256, type EncodedPartition } from "./client-state-partition-json"
 export { canonicalJson, sha256 } from "./client-state-partition-json"
-import { encodeOutlinePartitions, decodeOutlinePartitions } from "./client-state-outline-partitions"
+import { encodeOutlinePartitions, decodeOutlinePartitions, type EncodedOutline } from "./client-state-outline-partitions"
 import { encodeCatalogPartitions, decodeCatalogPartitions, type EncodedCatalog } from "./client-state-catalog-partitions"
 import { normalizeTabViewState } from "./tab-view-state-codec"
 
@@ -61,7 +61,7 @@ type SessionInputs = Omit<SessionDocument, "attachments" | "outline"> & {
   attachments?: RestorableAttachment[]
   outline?: NonNullable<RestorableWorkspaceTabState["outlineIndexes"]>[string]
 }
-type EncodedLeaf = { inputs: SessionInputs; reference: SessionReference; partitions: EncodedPartition[] }
+type EncodedLeaf = { inputs: SessionInputs; reference: SessionReference; partitions: EncodedPartition[]; index?: EncodedOutline }
 type EncodedWorkspace = {
   leaves: Map<string, EncodedLeaf>
   catalog?: EncodedCatalog
@@ -69,16 +69,6 @@ type EncodedWorkspace = {
   partition: EncodedPartition
 }
 const graphSizes = new WeakMap<Record<string, string>, number>()
-
-// The incremental encoder receives normalized snapshots with owned JSON values.
-// Compare small recreated records by value, while sharing immutable large leaves.
-function sameJson(a: unknown, b: unknown): boolean {
-  if (a === b) return true
-  if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((item, i) => sameJson(item, b[i]))
-  if (!isRecord(a) || !isRecord(b)) return false
-  const keys = Object.keys(a)
-  return keys.length === Object.keys(b).length && keys.every(key => hasOwn(b, key) && sameJson(a[key], b[key]))
-}
 
 function isPartitionKeyArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((key, index) =>
@@ -186,14 +176,14 @@ async function encodeSessionGraph(session: RestorableSessionState | null, legacy
             partitions.push(partition)
             return partition.key
           })
-          if (outline) {
-            const index = await encodeOutlinePartitions(outline)
+          const index = outline ? await encodeOutlinePartitions(outline, leaf?.index) : undefined
+          if (index) {
             document.outline = index.descriptor
             partitions.push(...index.partitions)
           }
           const partition = await encode(document)
           partitions.push(partition)
-          leaf = { inputs, partitions, reference: {
+          leaf = { inputs, partitions, index, reference: {
             documentPartition: partition.key, partitionKeys: [...new Set(partitions.map(value => value.key))].sort(),
           } }
         }
@@ -244,6 +234,8 @@ export async function encodeClientSnapshotV2(snapshot: ClientSnapshotV1): Promis
 }
 
 export function createClientSnapshotV2Encoder() {
+  // The serialized save queue passes owned, normalized snapshots. Match recreated
+  // records by value and reuse their immutable encoded partitions across captures.
   let previous: Array<EncodedWorkspace | undefined> = []
   return async (snapshot: ClientSnapshotV1) => {
     const graph = await encodeSessionGraph(snapshot.session, false, previous)

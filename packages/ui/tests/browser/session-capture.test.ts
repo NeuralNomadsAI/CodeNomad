@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { chromium } from "playwright"
+import type { NativeClientStatePartitionCommit } from "../../src/lib/native/client-state"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
@@ -31,17 +32,21 @@ test("capture defers only busy usage through both real-store effects and keeps f
         let sequence = 0
         w.receipts = []; w.acks = []; w.mode = "accept"
         const load = () => ({ isPrimary: true, restoreEnabled: true, snapshot: null, partitionProtocolVersion: 1 })
-        const commit = async (token: string, payload: unknown) => {
+        const commit = async (token: string, payload: NativeClientStatePartitionCommit) => {
           w.receipts.push({ token, payload: structuredClone(payload) })
           if (w.holdNextCommit) {
             w.holdNextCommit = false
             await new Promise<void>(resolve => { w.finishHeldCommit = resolve })
           }
           if (w.mode === "fail") throw Error("synthetic write failure")
-          return w.mode !== "refuse"
+          if (w.mode === "refuse") return false
+          const partitions = { ...w.persisted?.partitions, ...payload.partitions }
+          if (payload.partitionKeys.some(key => !(key in partitions))) throw Error("Missing client state partition")
+          w.persisted = { ...payload, partitions: Object.fromEntries(payload.partitionKeys.map(key => [key, partitions[key]])) }
+          return true
         }
         w.electronAPI = { claimClientStateAccess: async () => true, loadClientState: async () => load(),
-          loadClientStatePartition: async () => null, commitClientStatePartitions: async (token: string, payload: unknown) => commit(token, payload) }
+          loadClientStatePartition: async () => null, commitClientStatePartitions: async (token: string, payload: NativeClientStatePartitionCommit) => commit(token, payload) }
         w.__TAURI_INTERNALS__ = {
           metadata: { currentWindow: { label: "local-fixture" }, currentWebview: { label: "local-fixture" } },
           transformCallback: (fn: Function) => { callbacks.set(++sequence, fn); return sequence },
@@ -125,7 +130,7 @@ test("capture defers only busy usage through both real-store effects and keeps f
         assert.deepEqual(deletes, [], "no records are released before approval")
         const [saved, live] = await page.evaluate(async () => {
           const w = window as any
-          const snapshot = await w.fixture.decode(w.receipts.at(-1).payload)
+          const snapshot = await w.fixture.decode(w.persisted)
           return [snapshot.session.tabs[0].drafts.parent, w.fixture.draftValue("first", "parent")]
         })
         await page.evaluate(async host => {
@@ -218,15 +223,14 @@ test("capture defers only busy usage through both real-store effects and keeps f
 
       before = await count()
       await page.evaluate(() => { (window as any).mode = "fail"; (window as any).fixture.draft("failed write") }); await settle()
-      assert.equal(await count(), before + 1, "a failed checkpoint attempts one write")
+       assert.equal(await count(), before + 2, "a failed delta retries with the complete graph")
       await page.evaluate(() => { (window as any).mode = "accept"; return (window as any).fixture.flushStore() })
-      assert.equal(await count(), before + 2, "explicit flush retains dirty work after failure")
+       assert.equal(await count(), before + 3, "explicit flush retains dirty work after failure")
 
-      // The payload still contains complete partitions and an atomically decodable root.
+       // Decode the full graph published by the mock host, not just the last delta.
       const decoded = await page.evaluate(async () => {
         const w = window as any
-        const receipt = w.receipts.at(-1)
-        return { state: await w.fixture.decode(receipt.payload), tokens: w.receipts.map((r: any) => r.token) }
+         return { state: await w.fixture.decode(w.persisted), tokens: w.receipts.map((r: any) => r.token) }
       })
       assert.deepEqual(decoded.state.session, await state())
       assert.equal(new Set(decoded.tokens).size, 1, "one native owner token")
