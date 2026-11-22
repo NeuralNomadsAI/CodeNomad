@@ -6549,6 +6549,18 @@
     },
     {
       "specifier": "node:assert/strict",
+      "file": "packages/ui/src/lib/notification-click.test.ts",
+      "line": 1,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "node:test",
+      "file": "packages/ui/src/lib/notification-click.test.ts",
+      "line": 2,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "node:assert/strict",
       "file": "packages/ui/src/lib/notification-routing.test.ts",
       "line": 1,
       "resolution": "external-dependency-requires-installed-contract"
@@ -6580,6 +6592,18 @@
     {
       "specifier": "node:test",
       "file": "packages/ui/src/lib/opencode-api.test.ts",
+      "line": 2,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "node:assert/strict",
+      "file": "packages/ui/src/lib/os-notifications.test.ts",
+      "line": 1,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "node:test",
+      "file": "packages/ui/src/lib/os-notifications.test.ts",
       "line": 2,
       "resolution": "external-dependency-requires-installed-contract"
     },
@@ -9575,6 +9599,12 @@
       "specifier": "@opencode/client",
       "file": "packages/ui/src/stores/session-events.ts",
       "line": 14,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "solid-js",
+      "file": "packages/ui/src/stores/session-events.ts",
+      "line": 31,
       "resolution": "external-dependency-requires-installed-contract"
     },
     {
@@ -21770,13 +21800,16 @@
     "packages/ui/src/lib/native/view-menu.ts": "ef1df2d78e6e3ba5da98957d94733099382a96e4408e70f4c2a1484579d39950",
     "packages/ui/src/lib/native/wake-lock.ts": "48a67fe6c06dbff31aaaff9f56ee972d7c4b8735b63f1471c6f341621a50d997",
     "packages/ui/src/lib/native/window-controls.ts": "ffbd7373c0d3819819289cb52769267bb3f3a1b64634a44cb8cf32af59b97c7f",
+    "packages/ui/src/lib/notification-click.test.ts": "da241c5389d2317cbb26e15c3eea99422a240083015217dcb7f10f91a6d6c664",
+    "packages/ui/src/lib/notification-click.ts": "a4d9586481abca27e804fd6b8bf54100384f247b95d7412c3feed1058e8bc6a6",
     "packages/ui/src/lib/notification-icon-badge.ts": "695a836650db60eb34886e1baae1bbc5fd71e04dd5c33607f39542bc9197de9c",
     "packages/ui/src/lib/notification-routing.test.ts": "19f3b69b774ed31ec54cc781838d4fd973a17bcec4c6aebd225d660a2fd9d14f",
     "packages/ui/src/lib/notification-routing.ts": "2dfceef57b13db18adc558553a65ac31f1ea73c0d35084fa74e92df76c042bb9",
-    "packages/ui/src/lib/notifications.tsx": "9e5ce1f902db040c91ac222016b850292748bbaf69ca221a928b8a7d601437aa",
+    "packages/ui/src/lib/notifications.tsx": "453cb39e3a037c3b1e050cb9a96b85963f1de7bc4c7c685e8051918c249c0b05",
     "packages/ui/src/lib/opencode-api.test.ts": "d8646fcebfe87d8d809f13c7cf415e885a499263edbbb43755b0e004a173ce77",
     "packages/ui/src/lib/opencode-api.ts": "103e9abbedf9a6eb709dd2b33096c9d62d207959423dbfeaf90d7f4678e79225",
-    "packages/ui/src/lib/os-notifications.ts": "3c4542ea5a39019bc4d69e7d51a5102358762581d10e5d5ff80efb6449fe5111",
+    "packages/ui/src/lib/os-notifications.test.ts": "6fab148a42147e33c82fc301205ee0255eb88efbb3928f0daaa83b610a5664e4",
+    "packages/ui/src/lib/os-notifications.ts": "6ac3b3a5c8dd3f65fd148d6973cf1aac624921c49d9c95c0dbdf1e7b63c7322b",
     "packages/ui/src/lib/palette-quality.test.ts": "9065052ebf635de7a888399890889a71aa998120aa099df032ed60be8fad6fc6",
     "packages/ui/src/lib/panel-extensions-api.ts": "ed316e8c373c29e3b7e22cca8e426716c151fab4edc683ce5cfd46eb8a34bd76",
     "packages/ui/src/lib/panel-extensions-backend.ts": "8440445a0268eac08c50f4e9a86fa564d6c2abaa44977dcd94f35fc2d352094d",
@@ -21888,6 +21921,100 @@
     "packages/ui/src/renderer/prototype/prototype.css": "a495eb2aeab78eb6fe2a5fc9d44d742073e76f965123f7080a5f2021cf69f2c9",
     "packages/ui/src/renderer/public/hex-pcm-processor.js": "5de22a3b47eb5bcd52620818d7902963e7c7753092e507448a3b5a5dcf5354d5",
     "packages/ui/src/renderer/public/monaco.worker.js": "6034d9ed3e4eff8b5c1f78d368af2b8f6461765e0dc508107f9bfc51248d0ca5",
+    "packages/ui/src/renderer/public/monaco/vs/base/browser/ui/codicons/codicon/codicon.ttf": "0f1d5219934e96e83b8db162d60b4d8c09b5de1e7d38031cbafe4a3c0f2889c9",
+    "packages/ui/src/renderer/public/monaco/vs/base/worker/workerMain.js": "dbe4aa4f2874f5768e8d98e94281667c0bc493e02dd9760adca930699ff3279b",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/abap/abap.js": "dc732450731b12d051879da8f2338fa30168af60c8fdbe60bfadfe74068b4d7b",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/apex/apex.js": "96d67c25a6cdf6ade6542e737cead9f6441d2d8bcae85d2989d44477ef276165",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/azcli/azcli.js": "579b894877cdded3c2c6b8ef90a30ece802fbed44d9dab9ae12221a4be485e9a",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/bat/bat.js": "75cbd235b127d3eef0a6b90cd83edc049cb264381971cba3d0fce660f9e5a68f",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/bicep/bicep.js": "94fb7442cec7b669ff87aeb58d0d7c264830f0bd72072647b563d4c49698f48a",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/cameligo/cameligo.js": "b667c861eeb35eca8dd39ebe952a251c66e104267cd16344856a6cd6c1e88c57",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/clojure/clojure.js": "1ac122e851515c788c65589dfabe18fa40b03a90d67b6c835bf27fdd678d8fc5",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/coffee/coffee.js": "4756a8c0d68cc19b2490403f39b22bcf3a518364eace045eaf87ca36fc7a3124",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/cpp/cpp.js": "52124e8e802797f89ca8e4415c6b9d63a55264de54ea1b38b5aa663159c46c1b",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/csharp/csharp.js": "efe2ca37b83f691348ccfa1b310fe4ddd1f42653fe13f4354e4e724e39153e95",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/csp/csp.js": "4b05496f741b764550cddb54651233e618e2aed867e4891fd2575191a10cc4fe",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/css/css.js": "92220aad32d0a817016e500ff7f7d1b072d6c8c36367742c133f83882c1b7ffe",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/cypher/cypher.js": "00135bea5372b4c0e8cf411b18853968e39f041605bf5252a2c8105849d6fb9c",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/dart/dart.js": "9ed4583d2ad0605822f006d25c04525e5869891f884808a43c79c1a96b658473",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/dockerfile/dockerfile.js": "0de466e07b2045975ebdfe8ee61fc6adeba7aa5a36bb7bb0b1532762650fb342",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/ecl/ecl.js": "0d9dd1b6eb7dd32d114d3ed87803afb1216ce9bd917dedc37f32bb139292ddc7",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/elixir/elixir.js": "89f7bd4629f8261e33fed69c2efddcd66d01b8346392ac74c453e2116e809dd9",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/flow9/flow9.js": "9982918be402c06f9c703345648f7bc625d38eb9b15da88124d79418217575ba",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/freemarker2/freemarker2.js": "6a9b441e058915a320129a4ab64c5778cf99ffc2b7f6661b7ca5a07d2a434efa",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/fsharp/fsharp.js": "f53a2d0921e03d232f07f0014cdd07d99558ad98d3478717ccd74e968434248c",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/go/go.js": "b94f30b9854f995a608da2bac17802da8cc83234a34b374b307569df850ec839",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/graphql/graphql.js": "5bab64815245a9e79fe922f0d010d5028395f31c92b3aa4e187113c968b6c58b",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/handlebars/handlebars.js": "55f04266be83009aebd6b25a5fa46452f524c99d17ad17c4b18c24b8e6f89496",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/hcl/hcl.js": "14b490d77d2d02678b17ae34b1796f5fa31a32be2569f834b65b60a429bf97bf",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/html/html.js": "001b44bd88d864aa5cd165d2c326d0ea253f80647a88b92683759eaee4b0702d",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/ini/ini.js": "25e9a52de4fd77a5f87bf22baa94703d2bcee82d119f93cf58921a751f3c203f",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/java/java.js": "f5a6e854d70a317188bdc3000928665d811bc1ad63237312f8954e10037a28b1",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/javascript/javascript.js": "169988c69c81eeccdd58435c502efcb7d6c1a667da072f0bba3a0022f8b85e46",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/julia/julia.js": "03319b1c3b9d780c9ec06575a2c349d5e48f262bd7af42716007efbccdb563ed",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/kotlin/kotlin.js": "d736176b14856a1ebb09bdfd043a898da4b97cc3c5145b0996832f8ef73baa1c",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/less/less.js": "47c17c686d409d11023d1b9e470d7e4c4971d8418fe6ffb6d7844a8f27a6c979",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/lexon/lexon.js": "d97e007cca8271a087222884eb94e9b17b2b02eaca0c933888ee2e2d773afd78",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/liquid/liquid.js": "47765d89a06e1c9d06895c35249534dfcad1b748a039e8ffc0ac66f97d456b8f",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/lua/lua.js": "5d46959daacfc940fc177d59e1dcf75fc18b0aa3d0ccf18594316c297c71da86",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/m3/m3.js": "b8301f00a5efd7104ce3166542ba0b544e477999509d0c646133de9625fd7a3a",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/markdown/markdown.js": "0e3ddec8d09da9e89b0e8f46786f30b781982f759f29c5e6c22b0b4b00acae78",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/mdx/mdx.js": "f7969b7c567c43ced6303da0f5c080c97d65b09932ca2ec56bb406c0074bcf6f",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/mips/mips.js": "52628efb022d4042fd4986eb25573e7c57761a58927ca7692aeed0d63cc8943a",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/msdax/msdax.js": "5f419eb81cb11ebda7a368724a2fba75e5b75489ae5aee64e358077959205659",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/mysql/mysql.js": "5516f47c461e3c2db7bf70bb061c80011bd57e3db48da5a407f62a8681a49d85",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/objective-c/objective-c.js": "ac02b80f4ecaf3650cac477ce9f9fc810d7dfc9083805adeba6b272c85548712",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/pascal/pascal.js": "9bef71e3ff29a179df2f36090501f30719c4d20156b943cbfbbd719898743dd4",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/pascaligo/pascaligo.js": "b46f6456a71622af82592bfec7aaf68e3d71d1d3792f8153f9f2e62b1e3fe1f0",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/perl/perl.js": "ed897b714002e7089e1c10074e3694db1d4d702ebb52cf84de63bd9e093f9add",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/pgsql/pgsql.js": "08d8e6d366aec43961a38fe17142f44339752b05928c68a35c65de90f930ddd5",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/php/php.js": "ce048845100cdc880feb2e6d13474eb9963bb0e76beb6d7a9363d25acd6c44c8",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/pla/pla.js": "20f527dafd1b353840ba7f0b1dde986474b106a18e859eac8ef0b46cb1adf8a2",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/postiats/postiats.js": "da8833778aab6f7d9ea0ab7349d0e1b10739a3c8e1e712c4fe01bd0323f8da9e",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/powerquery/powerquery.js": "3270ec1992045a0fedeef66cbb14245c8183dc5f12cd4dfe71dd21eeeda48da9",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/powershell/powershell.js": "948d8bccfa1045b07b87f1d8f9c9058a507d2a167aad14f3b83c64b6523e588c",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/protobuf/protobuf.js": "1ec0534959a0499a9165892506f98c465cdc9a7c25ad3868a20e9c99e71db335",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/pug/pug.js": "158264e710b017168f70696b910e47585f0b81358d65f5cd934f46b23b71c02a",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/python/python.js": "043c66f7b48025022bd6fc15db72ea18d566534c4e8859774e6f52f23210d720",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/qsharp/qsharp.js": "6d718f23d8606e554dbfe1fccaedfb991d9abb5234ab846f034af3c93d75a287",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/r/r.js": "b717d83cb4dfd7129826e2d9d42e39a5e099b49b434b2bfab85de3e3a459dc65",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/razor/razor.js": "1887bd1f50cd42c344ca2060eb6c3faa60bb2d9f554880c8924c80d6d8084046",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/redis/redis.js": "f7a90a1c8e21b8ab30fff50986acbcc9ac83f2574729dada292f65243841377b",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/redshift/redshift.js": "b566247e8c2d17fabb0b31b072487bc9631420899b829d8d26ea3f9c6b564527",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/restructuredtext/restructuredtext.js": "ff914084b03c669e101d35406a65b5d1f3b1ce2415a1d9c4201fb941546361e5",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/ruby/ruby.js": "69da50c3194c76a3530dc36309ea85a933c75aa9e7058cf29e7516ac80951729",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/rust/rust.js": "37dc707b3ea97d761a3bab49359d32fd7b641f58bad4e2fd8c4c1cd0800cb4d2",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/sb/sb.js": "acfd18f27b1cc052d78cb7a762ba9502e9fd4d9292e7e2b271302a8377a445bb",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/scala/scala.js": "d513b09bbfbc050b372beac78e2584608212046ad068a08f8ab4e0dd1207b621",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/scheme/scheme.js": "8b78b406fbe3040658387262678eeb00e2029c7a767a4212590130ae0686551d",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/scss/scss.js": "6cf67bc2644efec58329cf02036c11215524007fe09ac2460ab46989bc6ae3cf",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/shell/shell.js": "fd62075e804809482b0ffa432f40b927564527fc4150f5251072e8ac455a6886",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/solidity/solidity.js": "5dee98e9f5a38c98589fdbc594f9f5461f7ec9792d76ede6270218e77ebc75e9",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/sophia/sophia.js": "3e3f4067b39cc667b3bac7da769dd811650c7c9dc9e074362ab7e7d1c5b47c5f",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/sparql/sparql.js": "da82319ca8f88c2cca55b324b07390b558669b1b96cd540cf808425c1b9faca5",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/sql/sql.js": "17d3fa62658c8d29a806dbf786b8b5f90f913845daa18b24896710164a1661d8",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/st/st.js": "9607a2e6eef6cc1a195b23885a7138b539f1b08b83033769ec4a130c8d42d649",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/swift/swift.js": "cdc358689959b892a4b0a0d284e405adc22603bf9a8202fd8d4d1e4a0d16ae9a",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/systemverilog/systemverilog.js": "c570635e92cfe48a6795319a366b550126126d23277d6157aa58b260a3e34f84",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/tcl/tcl.js": "44ae6a3a45937c23d03704880a81acb3bcc1f511303b0d8105ff68a68db1e1a7",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/twig/twig.js": "d24fa72811b4a2f80b4f596f78042c03045df005c80ff9716693ce4b1b5ce409",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/typescript/typescript.js": "c4da8cd5fa6ea11fb7e9734f512b848877c1b5bf7f0faea76402ceb4da618887",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/typespec/typespec.js": "4e0eddfae2fc8524a552056f6f7efa2b4d0fe422952664fbe1c5bcc0493c84d1",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/vb/vb.js": "93fbb1402356f40341924c2de339c9def343b949220ef065cca9f97ee896a30d",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/wgsl/wgsl.js": "b5044b6ae1d2c58fa4c3a944c3d52632a88366bc0f22aa4e2e0e8da12e727f8e",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/xml/xml.js": "d5cc3332e96b3300636a1677e535d16e8fa444538dcea17abe7b7ccdba6aab55",
+    "packages/ui/src/renderer/public/monaco/vs/basic-languages/yaml/yaml.js": "f4407dcc5601eec349552548557f3656a907b094575e7395402390aa08f8d7f2",
+    "packages/ui/src/renderer/public/monaco/vs/editor/editor.main.css": "857bc0beafefbcc83ab5cf3510e929391c0314add43ee1a4cb8ecaf4726abbac",
+    "packages/ui/src/renderer/public/monaco/vs/editor/editor.main.js": "90b588bc0b624e24052a576e1bcab2eaffec7bc666895188862eebd9c9745782",
+    "packages/ui/src/renderer/public/monaco/vs/language/css/cssMode.js": "4d30d446fe1afe1e93325c6e2f363e67f4ca402fec5fccbb66b9a6342b191930",
+    "packages/ui/src/renderer/public/monaco/vs/language/css/cssWorker.js": "83e129c073104332b16b9bdc69dca3446534abd77aa6a9edc63b7b957f6816f1",
+    "packages/ui/src/renderer/public/monaco/vs/language/html/htmlMode.js": "0766d33510c464c14f09607a8fe85c1925c0b827844b72a87742e9b37af310bb",
+    "packages/ui/src/renderer/public/monaco/vs/language/html/htmlWorker.js": "2c246b7c0288fe575bc3bc187fe394a3ac27c2e7db7df52f154b5ac39097a67c",
+    "packages/ui/src/renderer/public/monaco/vs/language/json/jsonMode.js": "9200ffce4ac390675f6cb4c64ffaf4b4d8e650d3888caf631709cb136615e379",
+    "packages/ui/src/renderer/public/monaco/vs/language/json/jsonWorker.js": "4b197c4165e356a04857e9317ec3d536fdbb92b91077bc483590c4f51056e3df",
+    "packages/ui/src/renderer/public/monaco/vs/language/typescript/tsMode.js": "fb2707ee84013e2be4c58f5654e3d623ccf73cfc33dbcdd0bf82a780945cfcf1",
+    "packages/ui/src/renderer/public/monaco/vs/language/typescript/tsWorker.js": "ffdf8b0d4d41c145afae6919beba110336860759dce0bdadc2a145c06a1a48ed",
+    "packages/ui/src/renderer/public/monaco/vs/loader.js": "28f3584fd04b182dfce15a9a1ce35b25bea22b31464aee500372bed18b7fee1a",
     "packages/ui/src/stores/abort-created-workspace-cleanup.test.ts": "610a65cc7fb9b554d189ff2a9a62d55a65c0baf57e02aff4bbaf218824f071ec",
     "packages/ui/src/stores/abort-created-workspace-cleanup.ts": "99f37644bd395f222b88e4215a48e998bcf7f5c6489257b9fef36ab5dfaf025b",
     "packages/ui/src/stores/agent-memory-cleanup.ts": "e034225870a3e4d7a0d2a84f07098207c4b51dbf0161af0ad53ade32a020ea30",
@@ -22131,7 +22258,7 @@
     "packages/ui/src/stores/session-default-model.test.ts": "2f6bece57e1ddc94c4be80535b64f6f9d277c340c15aa5e847da5a7c122b9715",
     "packages/ui/src/stores/session-deletion-reconciliation.test.ts": "316ba42a469ae6f34046633ba685218e0ba1c3e1cbb41e2dd8580ff72f00d14c",
     "packages/ui/src/stores/session-draft-recovery.ts": "d452e52b001bfd33e4d4b08fe0be5fd89646a8ec68883a5fa4f1d3774c1fc796",
-    "packages/ui/src/stores/session-events.ts": "881df7e1f599527255561809de7e971ee814c8a7d60b60bc27791f772238f8e9",
+    "packages/ui/src/stores/session-events.ts": "a3ac1e59a0e4c37c694a888cc0bb23bfc26867a6219fc69916dd1b01b7b2e368",
     "packages/ui/src/stores/session-favorites.test.ts": "0bc36543a58b9f8856157e28925a0d883e68f3e9b37ab988dfc411221aa110cb",
     "packages/ui/src/stores/session-favorites.ts": "eae2858ed828c51247c737cef3a4bd00f99c3c24466d651eda2c4926e19b0a25",
     "packages/ui/src/stores/session-fork.test.ts": "51e533198b2c3d74e79e44b68e4fa00b6b2798416f13e71b5812154d2e177566",
@@ -22383,7 +22510,7 @@
     "packages/ui/src/types/attachment.ts": "f724f6fd2540cba0125e911572fcd6b56ec61170108751a6d11060019c07ed9d",
     "packages/ui/src/types/diff.d.ts": "8686f5322eda7314a232bb7e3c9037bd37dff5347ee313e865a44f0494134db3",
     "packages/ui/src/types/electron-webview.d.ts": "89d1036e2a4379ddd435a5fc75968e31dae056f5a5d740e43e5c1a09d0d5552f",
-    "packages/ui/src/types/global.d.ts": "87ca8fc6641bb5aea0c0aa06be5eb7bb527d4567993c30197f8078f445f2ffbd",
+    "packages/ui/src/types/global.d.ts": "0d1e4a7cf9ff2c5d1a51db1fbda20dd1350a87851501eb176f3501c6c21504f0",
     "packages/ui/src/types/instance.ts": "9625a70cc5f980e00efacd0b3d5b8a2b6c9f85730a790c5f2f4121cc1dc10370",
     "packages/ui/src/types/message.ts": "ec99def539142f41ee3c10680ebaffd27616f36330e30149e7192d933041e37a",
     "packages/ui/src/types/permission.test.ts": "4b36b9d00730c2bd9848450d1d86930388fcca667cdda859572437f506ef5c2a",
@@ -22413,7 +22540,7 @@
     "packages/ui/tests/browser/backend-media-routing.test.ts": "322f2c94831b5ffb374e6524d3d95d446d1659d380cee090b7b147193e249fca",
     "packages/ui/tests/browser/backend-media-security.test.ts": "44f6482fefc91a10abe386243af70401d2c6ac5db097cdde116aa55c5408807d",
     "packages/ui/tests/browser/backend-media-views.test.ts": "04ea718be6875804f0832c69edf68979c02ed71c9534ae75a58c2efa17b2246d",
-    "packages/ui/tests/browser/backend-parity.test.ts": "e225c3d412f9a4a2377bf34fda4383ee15ef5fa298ad2a8160795412a2fcee97",
+    "packages/ui/tests/browser/backend-parity.test.ts": "35c90334483bf64d11eddbb9e9d1eb402dcedc8deff57e13e0303fc0d190cd65",
     "packages/ui/tests/browser/backend-preferences.test.ts": "9f178014446626a3c552e438817b92165f17a598afe5ea247f41ccb2f8e7173e",
     "packages/ui/tests/browser/backend-preview-routing.test.ts": "0fb94eeac33e2a475ba5dd59e85cd4bc3f8500dae45b78ce1faff133e5c3f752",
     "packages/ui/tests/browser/backend-registry.test.ts": "e23ce832cdba31ca0de3ec8085c54b8e72102a87571591f553023cb61749a72c",
@@ -22488,7 +22615,7 @@
     "packages/ui/tests/browser/fixtures/backend-media-routing.tsx": "1219d1f10caa5309108f44d795439c5fdb2cb5f700b5fa665814c63aa444197b",
     "packages/ui/tests/browser/fixtures/backend-media-security.tsx": "7daa8d3a3acbd0c379d5cf72e6672d326ba333c7f449c7617f597296f16465a2",
     "packages/ui/tests/browser/fixtures/backend-media-views.tsx": "7b9ea204ec3d216c2a4b98eda066896b8faa8a415f08c36b6ebfaa50284a93d4",
-    "packages/ui/tests/browser/fixtures/backend-parity.tsx": "ec5e4e89ac57cae4cb59aba3598cd91d4625f6dfea2ca2c2371d933d3dd93a9e",
+    "packages/ui/tests/browser/fixtures/backend-parity.tsx": "a459b1c4240ed22a6d80d74037af90965c81a9c0334255dfc65bd1b4db2e3af9",
     "packages/ui/tests/browser/fixtures/backend-preferences.tsx": "0dd188d8f4fe4103562523c13215524617d4e193f482a582e8a2b69c5decc8c6",
     "packages/ui/tests/browser/fixtures/backend-preview-routing.tsx": "2e9ece242eca717e085f2a97277939113267573a3f42bc6525e73ae66ae89bb9",
     "packages/ui/tests/browser/fixtures/backend-registry.tsx": "a8aff3e41505e8bd5a1915789306cf7c51b6952f083076dc5491a77e52761e7f",
@@ -22909,7 +23036,7 @@
     {
       "source": "packages/ui/src/App.tsx",
       "sheet": "target/rune-inventory/App.json",
-      "sheetSha256": "601e5a1ea3cda89a1e4ac7b6ea377751522aad096ce71cc1b62df0fcc4278334",
+      "sheetSha256": "3de7ae6e9ebdcfb96520eaa0f0512ef49187b23857647a2d084b6a6e27d927d4",
       "components": [
         {
           "id": "packages/ui/src/App.tsx#App",
@@ -22935,7 +23062,7 @@
     {
       "source": "packages/ui/src/components/advanced-settings-modal.tsx",
       "sheet": "target/rune-inventory/components__advanced-settings-modal.json",
-      "sheetSha256": "e1e5d9f81575f1c9127fcf27eb180910508dbf6d09e8ce4aa415d88298c25493",
+      "sheetSha256": "2b24522e250500a3c6ac9d674ab71418bda3b5d30c6c09369597bc4eac3b05e2",
       "components": [
         {
           "id": "packages/ui/src/components/advanced-settings-modal.tsx#AdvancedSettingsModal",
@@ -22961,7 +23088,7 @@
     {
       "source": "packages/ui/src/components/alert-dialog.tsx",
       "sheet": "target/rune-inventory/components__alert-dialog.json",
-      "sheetSha256": "64d0a620de38fe09ab24271b684b0a62394a02c85f78820dffda3dff45c2f630",
+      "sheetSha256": "07a53d278d0884645fa4cf14547a727a19e794a8ab5c7da5e4b62b175f45c5a1",
       "components": [
         {
           "id": "packages/ui/src/components/alert-dialog.tsx#AlertDialog",
@@ -23101,7 +23228,7 @@
     {
       "source": "packages/ui/src/components/browser-frame.tsx",
       "sheet": "target/rune-inventory/components__browser-frame.json",
-      "sheetSha256": "ab6785d1ac0e66b3a7eaeb54096330f9f73704d50a299ae7c569d422a359b66e",
+      "sheetSha256": "9aeecbaeb3d620ec830229e4290951c1a217a89046b7f02e249f787cb148b6d9",
       "components": [
         {
           "id": "packages/ui/src/components/browser-frame.tsx#BrowserFrame",
@@ -23114,7 +23241,7 @@
     {
       "source": "packages/ui/src/components/command-palette.tsx",
       "sheet": "target/rune-inventory/components__command-palette.json",
-      "sheetSha256": "7c2b4c5e0a035f37a933960937e2d1d5c1de9fb928335e8043a0682d692a6016",
+      "sheetSha256": "778baada980c99fec378e2b424642d601e17bbf8d07ea79ee0b8e1bdf4e22fba",
       "components": [
         {
           "id": "packages/ui/src/components/command-palette.tsx#CommandPalette",
@@ -23166,7 +23293,7 @@
     {
       "source": "packages/ui/src/components/directory-browser-dialog.tsx",
       "sheet": "target/rune-inventory/components__directory-browser-dialog.json",
-      "sheetSha256": "5a97faee5608b01cf6e544e034459ac55c15a445dbcc8506569dc1a524d8b510",
+      "sheetSha256": "9095297066cb44ad1aee5ed386b976c491a9748097b756effb53217b390c3e5c",
       "components": [
         {
           "id": "packages/ui/src/components/directory-browser-dialog.tsx#DirectoryBrowserDialog",
@@ -23386,7 +23513,7 @@
     {
       "source": "packages/ui/src/components/instance-disconnected-modal.tsx",
       "sheet": "target/rune-inventory/components__instance-disconnected-modal.json",
-      "sheetSha256": "a9f7ac22d08318dfe5c85524617a273acc21c94cd44bb3e63db9c003af9857ca",
+      "sheetSha256": "f5db43420fd87fe243691e23b0ac13444f9b8451af90a2d755c67649152fc18c",
       "components": [
         {
           "id": "packages/ui/src/components/instance-disconnected-modal.tsx#InstanceDisconnectedModal",
@@ -23471,7 +23598,7 @@
     {
       "source": "packages/ui/src/components/instance/instance-shell2.tsx",
       "sheet": "target/rune-inventory/components__instance__instance-shell2.json",
-      "sheetSha256": "c99cb008566b748d2e7b5214a193ac6a9fafa8f2e23ad45de0de1a9878923082",
+      "sheetSha256": "79542442c995dd335ff629836f808086062f0639d7d44e97b48f399999625f74",
       "components": [
         {
           "id": "packages/ui/src/components/instance/instance-shell2.tsx#InstanceShell2",
@@ -23760,7 +23887,7 @@
     {
       "source": "packages/ui/src/components/load-error-state.tsx",
       "sheet": "target/rune-inventory/components__load-error-state.json",
-      "sheetSha256": "7220146ba4c8461ec5c4f1234772684853063f23def585a27ca90dd08f95ccef",
+      "sheetSha256": "01eac4aea99bab20b974cf9b1e241af2482352a375daadd1c569042efcb2cf3b",
       "components": [
         {
           "id": "packages/ui/src/components/load-error-state.tsx#LoadErrorState",
@@ -24590,7 +24717,7 @@
     {
       "source": "packages/ui/src/components/new-instance-dialogs.tsx",
       "sheet": "target/rune-inventory/components__new-instance-dialogs.json",
-      "sheetSha256": "88a2968a9604ca670cbd0a4971130b395531a682fec1b4bf4268340adaff44b1",
+      "sheetSha256": "1691d1b7190d98ac7cbabe4fd3435774d94462395c94545b6d01c8a54c63c01c",
       "components": [
         {
           "id": "packages/ui/src/components/new-instance-dialogs.tsx#Dialogs",
@@ -24629,7 +24756,7 @@
     {
       "source": "packages/ui/src/components/opencode-setup.tsx",
       "sheet": "target/rune-inventory/components__opencode-setup.json",
-      "sheetSha256": "74770d4c75509d2b653c65650ec70bdb05cc80eb20cf65fb291af6802c952d75",
+      "sheetSha256": "b8af86e1f5ebd376309be48a94b2f33ce51601e9352b2ca57d606ff73139f844",
       "components": [
         {
           "id": "packages/ui/src/components/opencode-setup.tsx#OpenCodeSetup",
@@ -24862,7 +24989,7 @@
     {
       "source": "packages/ui/src/components/project-rename-dialog.tsx",
       "sheet": "target/rune-inventory/components__project-rename-dialog.json",
-      "sheetSha256": "7ab2e93d57b08ec1f9a44f895889953e57b2e463cb0c3cfdbd7f0ff4628dabbc",
+      "sheetSha256": "fe8c1a2440af1d9651995b75f7c8504979c920591003aa1f966c8093bab11074",
       "components": [
         {
           "id": "packages/ui/src/components/project-rename-dialog.tsx#ProjectRenameDialog",
@@ -25114,7 +25241,7 @@
     {
       "source": "packages/ui/src/components/remote-server-dialog.tsx",
       "sheet": "target/rune-inventory/components__remote-server-dialog.json",
-      "sheetSha256": "872f01ac67a3fe5290ddea82650f82114d710898991a8e1306e39680744af8d5",
+      "sheetSha256": "0e0806753dc63447fe359f7a0ecf5e213208ef7642f4711cd35ec52166404748",
       "components": [
         {
           "id": "packages/ui/src/components/remote-server-dialog.tsx#ServerEditor",
@@ -25202,7 +25329,7 @@
     {
       "source": "packages/ui/src/components/session-picker.tsx",
       "sheet": "target/rune-inventory/components__session-picker.json",
-      "sheetSha256": "50a76bccdd841e95f742987a70e00950687ab900492c555853d5dded5881e998",
+      "sheetSha256": "f6d1e5e804ee7d9fdfc46c1ff138d2df18a1059a3c029f037cdb315ddf1de2eb",
       "components": [
         {
           "id": "packages/ui/src/components/session-picker.tsx#SessionPicker",
@@ -25238,7 +25365,7 @@
     {
       "source": "packages/ui/src/components/session-rename-dialog.tsx",
       "sheet": "target/rune-inventory/components__session-rename-dialog.json",
-      "sheetSha256": "1b7131288f183c86ce4c8d67a16bd72fdbcdcb099007790df3082268abf41c88",
+      "sheetSha256": "5f2b284615c0588af9bdbe4163d003176f68f25e52a1ebc2cad0a4a2cad69164",
       "components": [
         {
           "id": "packages/ui/src/components/session-rename-dialog.tsx#SessionRenameDialog",
@@ -25287,7 +25414,7 @@
     {
       "source": "packages/ui/src/components/session/provider-usage-console.tsx",
       "sheet": "target/rune-inventory/components__session__provider-usage-console.json",
-      "sheetSha256": "4ff05926db6da2722d2e8f211f9094063221f440fbeae8aea90ff4738d5e521a",
+      "sheetSha256": "c9554a6037de5c4d7a79825ba9e696f0248b847bb70a9c47d56d006b2cbf437d",
       "components": [
         {
           "id": "packages/ui/src/components/session/provider-usage-console.tsx#ProviderUsageConsole",
@@ -25339,7 +25466,7 @@
     {
       "source": "packages/ui/src/components/settings-screen.tsx",
       "sheet": "target/rune-inventory/components__settings-screen.json",
-      "sheetSha256": "f11dd872964a387aed776a607e522aa98caec0f69781a9883df8a518cffc545e",
+      "sheetSha256": "4e94718142a112ff1b0faa6548b358d1343659eb3933e7d14f2462e4efb229fe",
       "components": [
         {
           "id": "packages/ui/src/components/settings-screen.tsx#SettingsScreen",
@@ -25487,7 +25614,7 @@
     {
       "source": "packages/ui/src/components/settings/image-settings-card.tsx",
       "sheet": "target/rune-inventory/components__settings__image-settings-card.json",
-      "sheetSha256": "4442e2610ef63c998571b6473d7d9e91733c202539c041aed97b5c46ee1ecef5",
+      "sheetSha256": "193f26e06865f456ecb8f252b2ba12738f011f5452027a5dded3526f0b318073",
       "components": [
         {
           "id": "packages/ui/src/components/settings/image-settings-card.tsx#ImageSettingsCard",
@@ -25962,7 +26089,7 @@
     {
       "source": "packages/ui/src/components/settings/websearch-settings-card.tsx",
       "sheet": "target/rune-inventory/components__settings__websearch-settings-card.json",
-      "sheetSha256": "1454ccc1dfd1ea7b81f150d810f4c50f9e10d4799b7d39d3f40009d11034492f",
+      "sheetSha256": "a048cecd9047825983d98a629541ddb41c665b7535210bf596767f7f0335034c",
       "components": [
         {
           "id": "packages/ui/src/components/settings/websearch-settings-card.tsx#WebSearchSettingsCard",
@@ -26296,7 +26423,7 @@
     {
       "source": "packages/ui/src/components/window-close-button.tsx",
       "sheet": "target/rune-inventory/components__window-close-button.json",
-      "sheetSha256": "1dcd51cce5d258b4be0c3d1715fc4d810db21b98f97dac6d2d066cc5ee0642e4",
+      "sheetSha256": "56a68b79beea6a554e63f507b5f55234e45ed729307c5c6cd5e7e2a318e967c4",
       "components": [
         {
           "id": "packages/ui/src/components/window-close-button.tsx#WindowCloseButton",
@@ -26322,7 +26449,7 @@
     {
       "source": "packages/ui/src/components/worktree-selector.tsx",
       "sheet": "target/rune-inventory/components__worktree-selector.json",
-      "sheetSha256": "cdc236e162e8c1b1439de2d84639a6407acc4a1c326d7d6be742acd8c174b7df",
+      "sheetSha256": "db855c04ce27743c5f8d4518c16d8e18d495d238f458577c68407077112cd5f3",
       "components": [
         {
           "id": "packages/ui/src/components/worktree-selector.tsx#WorktreeSelector",
@@ -26348,7 +26475,7 @@
     {
       "source": "packages/ui/src/lib/i18n/index.tsx",
       "sheet": "target/rune-inventory/lib__i18n__index.json",
-      "sheetSha256": "733c152b6ec040a7f675b793bd0f8bdb41bc5b0f05b3823cdb7abc45239b181a",
+      "sheetSha256": "637f79375d93ed777239915e540cdbe99589b5424ce9a9256543cf2583082eae",
       "components": [
         {
           "id": "packages/ui/src/lib/i18n/index.tsx#I18nProvider",
@@ -26413,7 +26540,7 @@
     {
       "source": "packages/ui/src/stores/preferences.tsx",
       "sheet": "target/rune-inventory/stores__preferences.json",
-      "sheetSha256": "464669f39ce456c7b521fd84cf7581a2babb371119ec33330b66ceb6b2201626",
+      "sheetSha256": "7a73fb9cd784c5b483c238c805e269cf40bd43e61adf43aaf9bc7953ade80aa9",
       "components": [
         {
           "id": "packages/ui/src/stores/preferences.tsx#ConfigProvider",
