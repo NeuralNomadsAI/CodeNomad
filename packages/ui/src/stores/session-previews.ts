@@ -305,10 +305,10 @@ function restoreSessionPreview(sessionId: string, instanceId: string): Promise<S
   const storageKey = previewKey(sessionId, instanceId)
   if (managed(instanceId) && !isPreviewOwner(sessionId, instanceId)) return Promise.resolve(null)
   const current = getSessionPreview(sessionId, instanceId)
-  if (current) return Promise.resolve(current)
+  if (current && !current.interruptedOpenId) return Promise.resolve(current)
   adoptLegacyTabPreview(instanceId, sessionId)
   const stored = savedPreview(sessionId, instanceId)
-  if (!stored?.targetUrl) return Promise.resolve(null)
+  if (!stored?.targetUrl || stored.targetUrl === current?.targetUrl) return Promise.resolve(current)
   const running = operations.get(storageKey)
   const ownOperation = running?.instanceId === instanceId && running.current()
   const pending = ownOperation ? restorePromises.get(storageKey) : undefined
@@ -324,11 +324,12 @@ function restoreSessionPreview(sessionId: string, instanceId: string): Promise<S
       owner: { client: operation.client, signal: operation.signal },
       viewport: stored.viewport, history: parseBrowserHistory(stored.history, preview.targetUrl) }
     const superseded = getSessionPreview(sessionId, instanceId)
-    if (superseded) {
+    if (superseded && superseded !== current) {
       void releasePreview(operation.client, preview)
       return superseded
     }
     publishPreview(record)
+    if (current) void releasePreview(current.owner.client, current)
     return record
   }).finally(() => {
     finishOperation(storageKey, operation)
@@ -375,7 +376,7 @@ export function updateSessionPreviewHistory(storageKey: string, history: Browser
   const targetUrl = historyUrl(history.urls[history.index])
   if (!current || current.owner.signal.aborted || current.nativeOpen || !targetUrl) return
   if (current.capability && history.urls.some(url => !historyUrl(url) || new URL(url).hostname.endsWith(".preview.localhost"))) return
-  const next = withLiveMode({ ...current, targetUrl, history: parseBrowserHistory(history, targetUrl) })
+  const next = withLiveMode({ ...current, targetUrl, history: parseBrowserHistory(history, targetUrl), interruptedOpenId: undefined })
   setSessionPreviews(previous => new Map(previous).set(storageKey, next))
   storePreview(current.sessionId, current.instanceId, next)
 }

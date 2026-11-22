@@ -243,8 +243,7 @@ test("duplicate remote occurrences isolate gestures, capabilities and recovery a
   assert.equal(getSessionPreview("same", siblingId), null, "revocation drops live authority, retaining sibling saved state")
 })
 
-function appCallback(name: string, boundaries: Record<string, unknown>) {
-  const file = "../App.tsx"
+function appCallback(name: string, boundaries: Record<string, unknown>, file = "../App.tsx") {
   const source = readFileSync(new URL(file, import.meta.url), "utf8")
   const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
   let handler: string | undefined
@@ -260,6 +259,22 @@ function appCallback(name: string, boundaries: Record<string, unknown>) {
   }).outputText
   return new Function(...Object.keys(boundaries), javascript)(...Object.values(boundaries))
 }
+
+test("Electron retires the outstanding load before reading its queued history", async () => {
+  const calls: string[] = []
+  const observed = "https://example.com/loading"
+  const startNavigation = appCallback("startNavigation", {
+    browserHost: "electron", browserRegistrationId: "guest", historyGuestId: () => 1,
+    props: { openRequestId: "pending" }, capabilities: { history: true }, journal: {},
+    untrack: (fn: () => boolean) => fn(), registrationReady: () => true, webviewObservedUrl: observed,
+    disposed: false, interruptedCandidate: undefined, preparingHistory: undefined,
+    releaseNativeBrowserOpen: async (id: string) => { calls.push(id); return true },
+    readBrowserHistory: async () => { calls.push("read"); return { entries: [{ id: 2, url: observed }], index: 0 } },
+    retireInterruptedEntry: () => {},
+  }, "../components/browser-frame.tsx")
+  await startNavigation()
+  assert.deepEqual(calls, ["pending", "read"])
+})
 
 test("App discovers only admitted local occurrences and prefers the last used tab for the session", async () => {
   const tab = (id: string) => ({ kind: "instance", instance: { id, status: "ready", client: {} } })
@@ -379,8 +394,8 @@ test("autonomous opens respect newer tab selection and save only the exact nativ
   updateSessionPreviewHistory(failed.storageKey, { urls: [older, committed, url], index: 2 })
   assert.deepEqual(savedSessionBrowser(sessionId), saved, "pending or failed opens leave the previous cursor intact")
   settleSessionPreviewOpen(sessionId, instanceId, "fails-with-saved-history")
-  await closeSessionPreview(failed.storageKey)
-  const restored = await restoreSessionPreview(sessionId, duplicate)
+  showSessionChatFor(sessionId, instanceId)
+  const restored = await restoreSessionPreview(sessionId, instanceId)
   assert.equal(restored?.targetUrl, committed)
   assert.deepEqual(restored?.history, saved?.history)
   assert.deepEqual(requested, [url, url, url, committed])

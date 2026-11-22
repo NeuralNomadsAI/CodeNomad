@@ -18,6 +18,7 @@ import {
   unregisterTauriBrowserTarget,
   updateTauriBrowserTarget,
   readBrowserHistory,
+  releaseNativeBrowserOpen,
   goToBrowserHistoryEntry,
 } from "../lib/native/browser"
 import { getBrowserFramePolicy, normalizeBrowserPreviewUrl } from "./browser-frame-security"
@@ -224,6 +225,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
   const [historyBusy, setHistoryBusy] = createSignal(false)
   let historyRead = 0
   let historyTravelVersion = 0
+  let preparingHistory: Promise<void> | undefined
   const historyGuestId = () => webviewReady ? webviewRef?.getWebContentsId() : undefined
   const logicalHistory = (value: NativeBrowserHistory): NativeBrowserHistory => {
     if (!props.isolatedSource) return value
@@ -252,14 +254,14 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     setHistoryBusy(journal?.traversing ?? false)
   }
   const captureHistory = async (confirmedUrl?: string) => {
-    if (props.openRequestId || !journal || !capabilities.history || disposed
+    if (props.openRequestId || (preparingHistory && !confirmedUrl) || !journal || !capabilities.history || disposed
       || !(browserHost === "electron" ? webviewReady : untrack(registrationReady))) return
     const sequence = ++historyRead
     const registration = browserRegistrationId
     const guestId = historyGuestId()
     try {
       const value = await readBrowserHistory(registration, guestId)
-      if (props.openRequestId || disposed || sequence !== historyRead || registration !== browserRegistrationId || guestId !== historyGuestId()) return
+      if (props.openRequestId || (preparingHistory && !confirmedUrl) || disposed || sequence !== historyRead || registration !== browserRegistrationId || guestId !== historyGuestId()) return
       // CDP can report the destination cursor before Chromium emits its commit
       // event. Publishing that intent as a prop would start a second navigation.
       const currentUrl = confirmedUrl ?? (browserHost === "electron" ? webviewObservedUrl : nativeTarget())
@@ -292,13 +294,20 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     const registration = browserRegistrationId
     const guestId = historyGuestId()
     const observed = browserHost === "electron" ? webviewObservedUrl : untrack(nativeTarget)
-    return readBrowserHistory(registration, guestId).then(value => {
+    // Electron reads history through the same queue as the pending load. Retire
+    // only that load; the owner and the guest remain available for navigation.
+    const ready = browserHost === "electron" ? releaseNativeBrowserOpen(requestId).catch(() => false) : Promise.resolve()
+    const preparing = ready.then(() => readBrowserHistory(registration, guestId)).then(value => {
       const entry = value.entries[value.index]
       if (!disposed && entry && entry.url === observed && registration === browserRegistrationId && guestId === historyGuestId()) {
         interruptedCandidate = { requestId, registration, guestId, id: entry.id }
         retireInterruptedEntry()
       }
-    }).catch(() => {})
+    }).catch(() => {}).finally(() => {
+      if (preparingHistory === preparing) preparingHistory = undefined
+    })
+    preparingHistory = preparing
+    return preparing
   }
 
   const framePolicy = getBrowserFramePolicy(runtimeEnv, { trustedSameOrigin: props.trustedSameOrigin, isolatedOrigin: props.isolatedSource && !props.opaqueSource })
