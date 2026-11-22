@@ -207,11 +207,14 @@ impl Backend {
     }
 }
 pub async fn read_json(response: Response) -> Result<Value> {
+    read_json_limited(response, 2 * 1024 * 1024).await
+}
+pub(crate) async fn read_json_limited(response: Response, limit: usize) -> Result<Value> {
     let mut bytes = Vec::new();
     let mut chunks = response.bytes_stream();
     while let Some(chunk) = chunks.next().await {
         let chunk = chunk?;
-        if bytes.len() + chunk.len() > 2 * 1024 * 1024 {
+        if chunk.len() > limit.saturating_sub(bytes.len()) {
             return Err("oversized response".into());
         }
         bytes.extend_from_slice(&chunk);
