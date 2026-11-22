@@ -55,8 +55,10 @@ impl Backend {
         })
     }
     pub async fn page(&self, target: Value) -> Result<Page> {
+        // Match the broker's window envelope; other endpoints retain their own limits.
+        const HISTORY_WINDOW_BYTES: usize = 24 * 1024 * 1024;
         history::decode(
-            read_json(
+            read_json_limited(
                 self.client
                     .post(format!(
                         "{}api/workspaces/{}/session-history/window",
@@ -66,6 +68,7 @@ impl Backend {
                     .send()
                     .await?
                     .error_for_status()?,
+                HISTORY_WINDOW_BYTES,
             )
             .await?,
         )

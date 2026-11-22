@@ -56,6 +56,16 @@ impl Server {
                 }
                 request.push(byte[0]);
             }
+            let length = String::from_utf8_lossy(&request)
+                .lines()
+                .filter_map(|line| line.split_once(':'))
+                .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+                .unwrap_or_default();
+            assert!(length <= 16384, "fixture request body exceeds its bound");
+            if socket.read_exact(&mut vec![0; length]).is_err() {
+                return;
+            }
             let header = if streaming {
                 "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"
                     .to_owned()
@@ -142,6 +152,49 @@ fn async_http_decodes_json_and_rejects_an_oversized_streamed_body() {
         );
     });
 }
+
+#[test]
+fn history_window_reads_large_valid_pages_without_relaxing_its_ceiling() {
+    run(async {
+        let source = "x".repeat(45 * 1024);
+        let messages: Vec<_> = (0..50)
+            .map(|i| {
+                json!({
+                    "id": format!("msg_{i}"),
+                    "type": "assistant",
+                    "time": {"completed": 1},
+                    "content": [{"type": "tool", "name": "read", "id": "tool", "state": {
+                        "status": "completed",
+                        "content": [{"type": "text", "text": source}]
+                    }}]
+                })
+            })
+            .collect();
+        let payload = serde_json::to_vec(&json!({
+            "status": "window", "messages": messages, "older": null, "newer": null, "latest": true,
+        }))
+        .unwrap();
+        assert!(payload.len() > 2 * 1024 * 1024);
+        let server = Server::start(payload, false);
+        let mut backend = Backend::connect(&server.address, "").await.unwrap();
+        backend.workspace = "workspace".into();
+        backend.session = "session".into();
+        let page = backend.page(json!({"kind": "latest"})).await.unwrap();
+        assert_eq!(page.rows.len(), 50);
+        let [crate::content::Part::Tool(tool)] = page.rows.last().unwrap().parts.as_slice() else {
+            panic!("expected the read tool from the page")
+        };
+        assert_eq!(tool.output, source);
+
+        let oversized = Server::start(vec![b' '; 24 * 1024 * 1024 + 1], false);
+        let mut backend = Backend::connect(&oversized.address, "").await.unwrap();
+        backend.workspace = "workspace".into();
+        backend.session = "session".into();
+        let error = backend.page(json!({"kind": "latest"})).await.unwrap_err();
+        assert_eq!(error.to_string(), "oversized response");
+    });
+}
+
 #[test]
 fn async_sse_scopes_epochs_and_cancellation_invalidates_the_snapshot_fence() {
     run(async {
