@@ -2,7 +2,13 @@ use super::{State, activate_enter, document_action_tx, layout, t, theme};
 use crate::files::{Ui, document::editor::Decision};
 use rune::{El, Key, TextEdit};
 
-pub(super) fn source(s: &State, ui: &Ui, path: &str, actions: &mut Vec<El>) -> Option<El> {
+pub(super) fn source(
+    s: &State,
+    ui: &Ui,
+    path: &str,
+    view_width: Option<f32>,
+    actions: &mut Vec<El>,
+) -> Option<El> {
     if !ui.document.editable() {
         return None;
     }
@@ -21,7 +27,7 @@ pub(super) fn source(s: &State, ui: &Ui, path: &str, actions: &mut Vec<El>) -> O
     });
 
     let input_scope = s.input_scope.clone();
-    let field = theme::editor::field(dark, path, ui.document.edit(), path, wrap)
+    let field = theme::editor::field(dark, path, ui.document.edit(), path, wrap, view_width)
         .on_edit(move |s: &mut State| -> &mut TextEdit {
             if s.current_scope(&input_scope)
                 && let Some(ui) = &mut s.files
@@ -35,7 +41,13 @@ pub(super) fn source(s: &State, ui: &Ui, path: &str, actions: &mut Vec<El>) -> O
         }))
         .on_submit(document_action_tx(s, |ui, _| {
             let scope = ui.document.scope();
-            ui.document.input(scope).insert("\n");
+            let edit = ui.document.input(scope);
+            let crlf = edit
+                .text
+                .split_inclusive('\n')
+                .next()
+                .is_some_and(|line| line.ends_with("\r\n"));
+            edit.insert(if crlf { "\r\n" } else { "\n" });
             ui.document.changed(scope);
         }))
         .on_key({
@@ -57,7 +69,13 @@ pub(super) fn source(s: &State, ui: &Ui, path: &str, actions: &mut Vec<El>) -> O
         })
         .build(theme::editor::code_kit(dark))
         .key("file-editor");
-    Some(theme::source_view(dark, field, wrap))
+    Some(theme::editor::editor_view(
+        dark,
+        field,
+        &ui.document.edit().text,
+        wrap,
+        view_width,
+    ))
 }
 
 pub(super) fn decision(s: &State, ui: &Ui) -> Option<El> {

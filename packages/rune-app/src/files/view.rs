@@ -186,6 +186,7 @@ fn reader_content(s: &State) -> El {
                 }
                 let source = ui.presentation.source || format == Format::Source;
                 if source {
+                    let field = editor::source(s, ui, &target.path, view_width, &mut actions);
                     actions.push(
                         theme::wrap_button(
                             dark,
@@ -201,7 +202,7 @@ fn reader_content(s: &State) -> El {
                         )
                         .key("file-wrap"),
                     );
-                    editor::source(s, ui, &target.path, &mut actions).unwrap_or_else(|| {
+                    field.unwrap_or_else(|| {
                         theme::source_view(
                             dark,
                             theme::source(

@@ -101,9 +101,9 @@ fn real_rust_reader_ui_contract() {
             "été\n日本語🦀\r\n"
         );
         assert!(
-            rt.elements().iter().any(
-                |node| node.key.as_deref() == Some("file-source-text") && node.visible[3] > 0.0
-            )
+            rt.elements()
+                .iter()
+                .any(|node| editable_source(&node.path, &node.role) && node.visible[3] > 0.0)
         );
         rt.set_viewport((589.0, 700.0), 1.0);
         for _ in 0..30 {

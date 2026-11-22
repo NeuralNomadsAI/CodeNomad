@@ -82,7 +82,7 @@ try {
     const chrome = tree.elements.find(n => n.key === 'file-close')
     assert.equal(chrome.rect[0] + chrome.rect[2] - x, width - 8, 'Dismiss stays trailing')
     if (scene === 'source') {
-      const text = tree.elements.find(n => n.key === 'file-source-text')
+      const text = tree.elements.find(n => n.role === 'textbox' && n.path.includes('/file-editor/'))
       const { x: sx, y: sy } = geometry['.view-lines']
       assert(Math.abs(text.rect[0] - x - sx) <= 2 && Math.abs(text.rect[1] - y - sy) <= 2, 'Source text origin')
     }

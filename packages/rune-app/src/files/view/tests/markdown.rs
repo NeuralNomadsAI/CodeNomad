@@ -126,7 +126,11 @@ fn enter_activates_the_focused_view_toggle_and_refresh() {
             rt.frame(0.02);
         };
         activate(&mut rt, "file-source-toggle");
-        assert!(rt.find("file-source-text").is_some());
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|node| editable_source(&node.path, &node.role))
+        );
         activate(&mut rt, "file-refresh");
         rt.update_if(|state, _| state.files.as_mut().unwrap().poll(20.0));
         http.request("GET", "markup.md")

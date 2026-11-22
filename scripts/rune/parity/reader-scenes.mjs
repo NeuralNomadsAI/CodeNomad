@@ -54,8 +54,8 @@ for(const locale of locales){
     assert(!accessible.some(node=>node.key==='history'),`${name}: hidden history stays outside accessibility`)
     if(['small.png','large.png','sample.svg','sample.avif'].includes(scene))assert(data.elements.some(node=>node.role==='img'&&visible(node)),`${name}: decoded visible image`)
     if(scene==='error'||scene==='unsupported.mmd'||scene==='unreadable.mmd')assert(accessible.some(node=>node.role==='alert'),`${name}: accessible error`)
-    if(scene==='source'||scene.endsWith('.mmd')&&scene!=='valid.mmd')assert(data.elements.some(node=>node.key==='file-source-text'),`${name}: selectable source`)
-    if(scene==='source')assert(data.elements.some(node=>node.key==='file-source-text'&&node.text.includes('fn main()')),`${name}: actual document text`)
+    if(scene.endsWith('.mmd')&&scene!=='valid.mmd')assert(data.elements.some(node=>node.key==='file-source-text'),`${name}: selectable source`)
+    if(scene==='source')assert(data.elements.some(node=>node.role==='textbox'&&node.path.includes('/file-editor/')&&node.text.includes('fn main()')),`${name}: actual editable document`)
     records.push({scene,locale,theme,tree,image,log:`${base}.log`,at,accessibility:true,
       treeSha256:hash(await readFile(tree)),imageSha256:hash(await readFile(image))})
   }

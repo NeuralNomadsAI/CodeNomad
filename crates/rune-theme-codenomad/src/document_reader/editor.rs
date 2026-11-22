@@ -4,9 +4,28 @@ use rune_kit::{ButtonVariant, IconButton, IconButtonVariant, TextArea};
 use std::sync::OnceLock;
 
 // Rune's TextArea keeps the multiline editor; a full-width scroll surface determines wrap.
-pub fn field(dark: bool, path: &str, edit: &TextEdit, label: &str, wrap: bool) -> TextArea {
+// Pinned TextArea metrics in rune-kit/src/controls/text_input.rs.
+const INSET: f32 = 8.0;
+const LINE_HEIGHT: f32 = 17.5;
+fn drawing_width(dark: bool, text: &str, viewport_width: f32) -> f32 {
+    let style = code_kit(dark).ty.ui;
+    let lines = text.as_bytes().iter().filter(|&&c| c == b'\n').count() + 1;
+    (source_width(dark, viewport_width)
+        - gutter_width(style, lines)
+        - tokens(dark).space(Space::Lg).px())
+    .max(0.0)
+}
+pub fn field(
+    dark: bool,
+    path: &str,
+    edit: &TextEdit,
+    label: &str,
+    wrap: bool,
+    viewport_width: Option<f32>,
+) -> TextArea {
+    let viewport_width = viewport_width.map(|width| drawing_width(dark, &edit.text, width));
     let available = if wrap {
-        None
+        viewport_width
     } else {
         let style = code_kit(dark).ty.ui;
         let span = edit
@@ -15,13 +34,41 @@ pub fn field(dark: bool, path: &str, edit: &TextEdit, label: &str, wrap: bool) -
             .map(|line| rune::text::advance(line, style))
             .fold(0.0, f32::max);
         // TextArea owns 8 points of inset on each side at this Rune pin.
-        Some(span.ceil() + 16.0 + 1.0)
+        Some((span.ceil() + 2.0 * INSET + 1.0).max(viewport_width.unwrap_or_default()))
     };
     TextArea::new(edit)
         .label(label)
         .width(available)
         .spellcheck(false)
+        .wrap_anywhere()
         .spans(source_spans(dark, path, &edit.text))
+}
+
+pub fn editor_view(
+    dark: bool,
+    field: El,
+    text: &str,
+    wrap: bool,
+    viewport_width: Option<f32>,
+) -> El {
+    // The gutter's wrap width excludes the TextArea's inner chrome; its logical lines
+    // use the same line spacing as the editor.
+    let width = if wrap {
+        viewport_width.map(|width| source_width(dark, width) - 2.0 * INSET)
+    } else {
+        None
+    };
+    let mut style = code_kit(dark).ty.ui;
+    style.line_height = LINE_HEIGHT;
+    source_view(
+        dark,
+        rune::row()
+            .w_full()
+            .literal_direction()
+            .child(gutter_style(dark, text, width, style).pt(INSET))
+            .child(field),
+        wrap,
+    )
 }
 
 pub fn code_kit(dark: bool) -> &'static rune_kit::Kit {
@@ -79,6 +126,7 @@ pub fn confirmation<S: 'static>(
         })
         .build(kit(dark))
         .key("file-decision-confirm");
+    let enter = decide.clone();
     let card = rune::col()
         .w_full()
         .max_w(t.length(Length::TouchTarget).px() * 10.0)
@@ -96,6 +144,15 @@ pub fn confirmation<S: 'static>(
                 .child(cancel)
                 .child(confirm),
         )
+        .on_key(move |s: &mut S, key, tx| {
+            if key.key != rune::Key::Enter || key.mods != rune::Mods::default() {
+                return false;
+            }
+            if !tx.key_repeat() {
+                enter(s, tx.focused() == Some("file-decision-confirm"), tx);
+            }
+            true
+        })
         .modal_tx(true, move |s, tx| decide(s, false, tx));
     rune::col()
         .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))

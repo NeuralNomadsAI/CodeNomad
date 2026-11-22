@@ -203,17 +203,26 @@ pub fn source_font(dark: bool) -> TextStyle {
     style
 }
 fn gutter(dark: bool, contents: &str, view_width: Option<f32>) -> El {
+    gutter_style(dark, contents, view_width, source_font(dark))
+}
+fn gutter_width(style: TextStyle, lines: usize) -> f32 {
+    rune::text::advance("00000", style).max(rune::text::advance(&lines.to_string(), style))
+}
+fn gutter_style(dark: bool, contents: &str, view_width: Option<f32>, style: TextStyle) -> El {
     use std::fmt::Write;
     let lines = contents.as_bytes().iter().filter(|&&c| c == b'\n').count() + 1;
-    let style = source_font(dark);
     let t = tokens(dark);
-    let width =
-        rune::text::advance("00000", style).max(rune::text::advance(&lines.to_string(), style));
+    let width = gutter_width(style, lines);
     let gap = t.space(Space::Lg).px();
     let wrap = view_width.map(|view| (view - width - gap).max(1.0));
     rune::memo(
         "file-line-numbers",
-        (crate::palette_index(dark), wrap.map(f32::to_bits), contents),
+        (
+            crate::palette_index(dark),
+            wrap.map(f32::to_bits),
+            style.line_px().to_bits(),
+            contents,
+        ),
         || {
             let mut numbers = String::new();
             for (i, line) in contents.split('\n').enumerate() {
