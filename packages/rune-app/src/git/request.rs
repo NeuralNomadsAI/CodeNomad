@@ -100,7 +100,7 @@ impl Read {
 }
 
 pub(super) enum Mutation {
-    Paths(Section, Vec<String>),
+    Paths(Section, Vec<String>, u64),
     Commit { message: String, draft: String },
     Init(String),
 }
@@ -122,7 +122,7 @@ impl Mutation {
     }
     async fn send(&self, tree: &Worktree, backend: &Backend) -> Result<()> {
         match self {
-            Self::Paths(from, paths) => backend.git_move_paths(tree, *from, paths).await,
+            Self::Paths(from, paths, _) => backend.git_move_paths(tree, *from, paths).await,
             Self::Commit { message, .. } => backend.git_commit(&tree.slug, message).await,
             Self::Init(directory) => backend.git_init(directory).await,
         }

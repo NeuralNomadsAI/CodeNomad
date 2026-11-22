@@ -253,14 +253,26 @@ fn no_second_commit_until_status_reconciles_and_possible_new_selection_survives(
         section: Section::Unstaged,
         path: "b".into(),
     };
+    let selection_revision = ui.changes.selection_revision;
     ui.changes.select(id.clone(), true, false);
     ui.settle_mutation(
         ui.tree_epoch,
         &tree,
-        Mutation::Paths(Section::Staged, vec!["a".into()]),
+        Mutation::Paths(Section::Staged, vec!["a".into()], selection_revision),
         Ok(()),
     );
     assert!(ui.changes.bulk.contains(&id));
+    ui.settle_mutation(
+        ui.tree_epoch,
+        &tree,
+        Mutation::Paths(
+            Section::Staged,
+            vec!["a".into()],
+            ui.changes.selection_revision,
+        ),
+        Ok(()),
+    );
+    assert!(ui.changes.bulk.is_empty());
 }
 
 #[test]
@@ -360,10 +372,31 @@ fn invalidated_status_cannot_remove_the_diff_before_its_trailing_read() {
     ui.filesystem_hint();
     statuses(&mut ui, vec![]);
     assert!(ui.has_preview());
-    assert_eq!(ui.changes.count(), 1);
+    assert_eq!(ui.changes.count(), 0);
     ui.passive_due = None;
     statuses(&mut ui, vec![row]);
     assert!(ui.has_preview());
+}
+
+#[test]
+fn repeated_file_hints_do_not_starve_the_changes_display() {
+    let mut ui = ui();
+    ui.mode = Mode::Changes;
+    ui.shown = true;
+    ui.online = true;
+    ui.changes.draft = TextEdit::new("a");
+    for step in 1..=4 {
+        ui.clock = f64::from(step - 1);
+        ui.filesystem_hint();
+        statuses(
+            &mut ui,
+            (0..step)
+                .map(|n| change(n.to_string(), true, false, 1))
+                .collect(),
+        );
+        assert_eq!(ui.changes.count(), step as usize);
+        assert!(!ui.can_commit());
+    }
 }
 
 #[test]

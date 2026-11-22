@@ -33,6 +33,7 @@ pub(super) struct Changes {
     rows: Vec<Rc<Row>>,
     pub current: Option<Id>,
     pub bulk: HashSet<Id>,
+    pub selection_revision: u64,
     anchor: Option<Id>,
     pins: HashSet<Id>,
     shown: [usize; 2],
@@ -48,6 +49,7 @@ impl Default for Changes {
             rows: Vec::new(),
             current: None,
             bulk: HashSet::new(),
+            selection_revision: 0,
             anchor: None,
             pins: HashSet::new(),
             shown: [ROW_LIMIT; 2],
@@ -202,6 +204,7 @@ impl Changes {
         if self.find(&id).is_none() {
             return;
         }
+        self.selection_revision = self.selection_revision.wrapping_add(1);
         if range {
             let visible: Vec<_> = SECTIONS
                 .into_iter()
@@ -227,6 +230,13 @@ impl Changes {
         }
         self.pins.insert(id);
         self.pins.extend(self.bulk.iter().cloned());
+    }
+
+    pub fn finish_bulk(&mut self, revision: u64) {
+        if self.selection_revision == revision {
+            self.bulk.clear();
+            self.anchor = None;
+        }
     }
 
     pub fn keep_visible(&mut self, id: Id) {

@@ -112,6 +112,7 @@ pub(crate) struct Ui {
     open_menu: Option<Id>,
     changes_scroll: ScrollBookmark,
     history_scroll: ScrollBookmark,
+    detail_scroll: ScrollBookmark,
     reader: diff::Reader,
     images: ImageCache,
     preview: Option<Preview>,
@@ -156,6 +157,7 @@ impl Ui {
             open_menu: None,
             changes_scroll: ScrollBookmark::default(),
             history_scroll: ScrollBookmark::default(),
+            detail_scroll: ScrollBookmark::default(),
             reader: diff::Reader::default(),
             preview: None,
             preview_revision: 0,
@@ -253,6 +255,7 @@ impl Ui {
     fn keep_scroll(&self) {
         self.changes_scroll.retain_for_remount();
         self.history_scroll.retain_for_remount();
+        self.detail_scroll.retain_for_remount();
     }
 
     fn retry_panel_reads(&mut self) {
@@ -300,6 +303,7 @@ impl Ui {
         self.changes.open = open;
         self.changes_scroll = ScrollBookmark::default();
         self.history_scroll = ScrollBookmark::default();
+        self.detail_scroll = ScrollBookmark::default();
         self.history = History::default();
         self.mutation_message = None;
         self.reconcile_revision = None;
@@ -538,6 +542,7 @@ impl Ui {
     }
 
     fn back_to_history(&mut self) {
+        self.detail_scroll = ScrollBookmark::default();
         self.history.selected = None;
         self.history.details = None;
         self.history.file = None;
@@ -671,7 +676,11 @@ impl Ui {
         let paths = self.changes.paths(id);
         if self.can_change_index() && !paths.is_empty() {
             self.pending_row_focus = self.changes.focus_order(focus);
-            self.mutation(Mutation::Paths(id.section, paths));
+            self.mutation(Mutation::Paths(
+                id.section,
+                paths,
+                self.changes.selection_revision,
+            ));
         }
     }
 

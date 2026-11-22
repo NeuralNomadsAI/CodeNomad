@@ -58,9 +58,9 @@ impl Ui {
                 }
             }
             Value::Changes(mut statuses, revision) => {
-                if self.requests.slot(lane).dirty || self.passive_due.is_some() {
-                    return;
-                }
+                // Keep Changes readable while generated files keep arriving. An
+                // older display snapshot grants neither a write nor reader adoption.
+                let fresh = !self.requests.slot(lane).dirty && self.passive_due.is_none();
                 if let Some(collation) = &self.collation {
                     statuses.sort_by(|a, b| {
                         collation
@@ -69,7 +69,7 @@ impl Ui {
                     });
                 }
                 self.changes.replace(statuses, self.hide_whitespace);
-                if self.preview_revision == revision {
+                if fresh && self.preview_revision == revision {
                     self.reconcile_preview();
                 }
             }
@@ -158,7 +158,10 @@ impl Ui {
                     crate::strings::t("instanceShell.gitChanges.commit.success").into(),
                 ))
             }
-            (Mutation::Paths(..), Ok(())) => None,
+            (Mutation::Paths(_, _, revision), Ok(())) => {
+                self.changes.finish_bulk(revision);
+                None
+            }
             (Mutation::Init(_), Err(error)) => Some((false, init_error(error))),
             (_, Err(error)) => Some((false, read_error(error))),
         };

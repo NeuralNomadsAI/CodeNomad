@@ -92,7 +92,7 @@ pub(super) fn view(s: &State, ui: &Ui) -> El {
 }
 
 fn details(s: &State, ui: &Ui) -> El {
-    let mut body = theme::scroll().key("git-history-detail").child(
+    let mut body = theme::saved_scroll::<State>("git-history-detail", &ui.detail_scroll).child(
         button(
             s,
             t("filesPanel.commits"),
