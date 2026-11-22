@@ -163,7 +163,7 @@ fn history(rt: &Runtime<State>, turn: usize, prompt: &str) {
     assert!(rt.state.messages[1].completed);
     assert!(rt.state.draft.text.is_empty());
 }
-fn finish(mut rt: Runtime<State>) {
+pub(super) fn finish(mut rt: Runtime<State>) {
     rt.update(workspace::finish);
     assert!(
         workspace::status(&rt.state).is_none(),
