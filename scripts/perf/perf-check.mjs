@@ -16,9 +16,12 @@ const { values, positionals: [directory] } = parseArgs({
     client: { type: "string", default: "cn0" }, summary: { type: "string" },
     base: { type: "string" },
     calibrate: { type: "boolean" }, measure: { type: "boolean" },
+    "latency-only": {type: "boolean"},
   },
 })
 assert(directory, "Pass the benchmark results directory")
+const latencyOnly = values["latency-only"]
+assert(!(latencyOnly && (values.calibrate || values.measure)), "Latency-only validation uses committed budgets without recalibration")
 const load = file => JSON.parse(readFileSync(file, "utf8"))
 const median = values => {
   assert(values.length && values.every(Number.isFinite), "Missing or invalid measurement")
@@ -26,11 +29,18 @@ const median = values => {
 }
 const records = readdirSync(directory).filter(file => /-r\d+-L\d+\.json$/.test(file)).map(file => ({ ...load(path.join(directory, file)), file }))
 const counters = records.filter(r => r.scenario === "counters" && r.label === values.client)
-assert(counters.length, `Missing counter samples for ${values.client}`)
+assert(latencyOnly || counters.length, `Missing counter samples for ${values.client}`)
 for (const record of records) {
   assert(Number.isInteger(record.daemonFrames) && record.daemonFrames > 0
     && Number.isInteger(record.expectedMarkers) && Number.isInteger(record.markers)
     && record.markers > 0 && record.markers <= record.expectedMarkers, `Invalid sample: ${record.file}`)
+  if(record.label === "rune-cpu") {
+    assert(record.kind === "rune-cpu-buffer" && record.measurement?.endpoint === "rune-cpu-buffer", "Rune samples must name their measured CPU-buffer endpoint")
+    assert(Number.isInteger(record.measurement.paintedFrames)&&record.measurement.paintedFrames>0,"Rune samples require actual CPU-painted frames")
+    const clocks=[record.measurement.clock?.start,record.measurement.clock?.end]
+    assert(clocks.every(clock=>clock && [clock.offsetMs,clock.lowerOffsetMs,clock.upperOffsetMs,clock.uncertaintyMs,clock.minimumRoundTripMs].every(Number.isFinite)
+      && clock.samples > 0 && clock.uncertaintyMs >= 0 && clock.minimumRoundTripMs >= 0), "Rune samples require observed start/end clock correlation")
+  }
 }
 const assets = assetsDirectory(values.tree)
 const solidDir = path.join(values.tree, "node_modules/solid-js")
@@ -65,8 +75,8 @@ function latency(level, selector) {
 function checkRounds(samples, name) {
   assert.deepEqual(samples.map(row => row.round).sort(), [0, 1, 2], `Expected distinct rounds 0–2 for ${name}`)
 }
-const counter = byLevel[8]
-checkRounds(counters.filter(row => row.level === 8), "counters at L8")
+const counter = latencyOnly ? undefined : byLevel[8]
+if(!latencyOnly)checkRounds(counters.filter(row => row.level === 8), "counters at L8")
 const ratios = Object.fromEntries([8, 32].map(level => [level, {
   finalMarker: latency(level, r => r.stages.finalMarkerMs),
   keysP95: latency(level, r => r.keys.p95),
@@ -91,7 +101,7 @@ if (values.base) {
   }
   budgets.callsByFile = base.callsByFile
 }
-const { report, failures } = budgetReport(budgets, counter, ratios)
+const { report, failures } = budgetReport(budgets, counter, ratios, {clientName: values.client === "rune-cpu" ? "Rune CPU buffer" : "CodeNomad"})
 console.log(report)
 if (values.summary) appendFileSync(values.summary, report)
 for (const failure of failures) console.error(`::error title=Performance budget exceeded::${failure}`)

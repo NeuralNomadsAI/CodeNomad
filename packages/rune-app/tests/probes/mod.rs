@@ -1,5 +1,6 @@
 //! Native qualification entry points, enabled exclusively by `test-support`.
 mod controls;
+mod latency;
 mod launcher;
 mod live_controls;
 mod native_transport;
@@ -15,6 +16,7 @@ pub fn dispatch() -> bool {
         return true;
     }
     for (flag, run) in [
+        ("--probe-latency", latency::run as fn()),
         ("--probe-owned-startup", owned_startup::run as fn()),
         ("--probe-real-controls", live_controls::run),
         ("--probe-controls", controls::run),

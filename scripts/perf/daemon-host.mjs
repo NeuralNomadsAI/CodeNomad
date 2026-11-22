@@ -9,7 +9,7 @@ import { stopFixtureChild } from "../native-fixture-guards.mjs"
 import { privatePath } from "./isolation.mjs"
 import { json, now, sleep } from "./lib.mjs"
 
-export async function withDaemon(cli, root, chunks, run) {
+export async function withDaemon(cli, root, chunks, run, {pruning: pruningEnabled = false} = {}) {
   assert(path.isAbsolute(cli), "Pass the absolute path to the pinned OpenCode binary")
   root = privatePath(root)
   const project = privatePath(path.join(root, "project"))
@@ -91,6 +91,10 @@ export async function withDaemon(cli, root, chunks, run) {
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ model: "fixture/fixture", providers: { fixture: {
     package: "@opencode/ai/providers/openai-compatible", settings: { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only" }, models: { fixture: {} },
   } } })
+  let pruning
+  try {
+    if(pruningEnabled){const {preparePruning}=await import('./pruning.mjs');pruning=await preparePruning(root,env.OPENCODE_CONFIG_DIR)}
+  } catch(error){provider.closeAllConnections();await new Promise(resolve=>provider.close(resolve));throw error}
   const child = spawn(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { cwd: project, env, windowsHide: true })
   const stopped = new Promise(resolve => child.once("close", resolve))
   let output = "", spawnError
@@ -107,7 +111,8 @@ export async function withDaemon(cli, root, chunks, run) {
     const call = (method, route, body) => json(`${url}${route}`, { method, body, headers: { authorization } })
     const info = await call("GET", "/api/info")
     assert.equal(info.pid, child.pid, "Bench daemon did not prove its identity")
-    await run({ project, env, url, password, authorization, call, markers, pid: child.pid, cli,
+    await pruning?.activate({project,url,authorization},()=>assert.equal(child.exitCode,null,'Owned pruning daemon exited'))
+    await run({ project, env, url, password, authorization, call, markers, pid: child.pid, cli, pruning,
       arm(pass, size) {
         const { promise: start, resolve: release } = Promise.withResolvers()
         batch = { pass, size, start, release, ready: new Set() }
@@ -115,7 +120,7 @@ export async function withDaemon(cli, root, chunks, run) {
     })
     if (providerError) throw providerError
   } finally {
-    try { await stopFixtureChild(child, stopped) } finally {
+    try {try{await pruning?.close()}finally{await stopFixtureChild(child, stopped)}} finally {
       provider.closeAllConnections()
       batch?.release()
       await new Promise(resolve => provider.close(resolve))
