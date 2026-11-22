@@ -304,13 +304,10 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::Done => s.phase = Phase::Ready,
-            Event::AuthenticationRequired | Event::Failed => {
-                if matches!(event, Event::AuthenticationRequired) {
+            Event::AuthenticationRequired(_) | Event::Failed => {
+                if let Event::AuthenticationRequired(expired) = event {
                     s.commands = None;
-                    settings::authentication_required(s);
-                    if let Some(launcher) = s.screen.launcher_mut() {
-                        launcher.authentication_required = true;
-                    }
+                    settings::authentication_required(s, &expired);
                 }
                 git::online(s, false);
                 if let Some(files) = &mut s.files {

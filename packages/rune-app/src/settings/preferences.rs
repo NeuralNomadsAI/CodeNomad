@@ -58,7 +58,11 @@ impl Preferences {
             .backend
             .as_ref()
             .zip(owner.as_ref())
-            .is_some_and(|(old, new)| old.base == new.base);
+            .is_some_and(|(old, new)| {
+                old.base == new.base
+                    && old.client.server_identity().is_some()
+                    && old.client.server_identity() == new.client.server_identity()
+            });
         self.config.rebind(same_address);
         self.state.rebind(same_address);
         self.backend = owner;
@@ -125,6 +129,19 @@ impl Preferences {
         self.revision += 1;
         if let Some(wake) = &self.window_wake {
             wake();
+        }
+    }
+
+    pub fn observe_authentication(&mut self) -> bool {
+        if self
+            .stream
+            .as_ref()
+            .is_some_and(PreferencesWatch::take_authentication_required)
+        {
+            self.require_authentication();
+            true
+        } else {
+            false
         }
     }
 

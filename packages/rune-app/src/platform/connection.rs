@@ -12,6 +12,9 @@ pub async fn configured_backend(bootstrap: bool) -> Result<Backend> {
     if !history::valid_id(&backend.workspace) || !history::valid_id(&backend.session) {
         return Err("invalid scope".into());
     }
-    backend.fresh_mode = crate::platform::setting("RUNE_EMPTY_SESSION").as_deref() == Some("1");
+    backend.fresh_mode =
+        bootstrap && crate::platform::setting("RUNE_EMPTY_SESSION").as_deref() == Some("1");
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = backend.server_id().await;
     Ok(backend)
 }

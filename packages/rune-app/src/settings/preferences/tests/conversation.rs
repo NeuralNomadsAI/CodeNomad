@@ -247,7 +247,7 @@ fn settings_sse_401_releases_the_transport_for_explicit_authentication() {
         assert!(sse.first.starts_with("GET /api/events?"));
         sse.reply(401, json!({})).await;
         until(&events, |event| {
-            matches!(event, Event::AuthenticationRequired)
+            matches!(event, Event::AuthenticationRequired(_))
         })
         .await;
         assert!(
@@ -256,6 +256,74 @@ fn settings_sse_401_releases_the_transport_for_explicit_authentication() {
                 .unwrap()
                 .is_err()
         );
+        assert!(
+            timeout(Duration::from_millis(600), listener.accept())
+                .await
+                .is_err()
+        );
+    });
+}
+
+#[test]
+fn settings_launcher_retry_accepts_password_with_project_open() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.take().unwrap();
+        let mut root = crate::init();
+        let mut launcher = crate::launcher::Launcher::fixture();
+        launcher.project = Some(crate::catalog::Project {
+            id: "project".into(),
+            path: "C:/fixture".into(),
+        });
+        launcher.connection = Some(backend.clone());
+        root.screen = crate::Screen::Chat {
+            launcher: Some(launcher),
+        };
+        let (out, incoming) = bounded(2);
+        root.incoming = Some(incoming);
+        out.send(Event::AuthenticationRequired(backend))
+            .await
+            .unwrap();
+        crate::poll_chat(&mut root, 2);
+
+        let mut runtime = rune::Runtime::new(
+            root,
+            crate::view,
+            (1100.0, 760.0),
+            rune::Env::new(false, 1.0),
+        );
+        runtime.update(crate::retry_connection);
+        runtime.frame(0.0);
+        let (x, y) = runtime.find("server-password").unwrap();
+        runtime.pointer_down(x, y);
+        runtime.pointer_up(x, y);
+        runtime.frame(0.02);
+        runtime.paste("isolated-fixture-password");
+        runtime.frame(0.02);
+        assert_eq!(
+            runtime.state.screen.launcher().unwrap().password.text,
+            "isolated-fixture-password"
+        );
+        runtime.update(crate::launcher::connect);
+        let request = request(&listener).await;
+        assert_eq!(request.first, "POST /api/auth/login HTTP/1.1");
+        assert_eq!(request.body["password"], "isolated-fixture-password");
+        request.reply(503, json!({})).await;
+    });
+}
+
+#[test]
+fn settings_expired_fallback_requests_authentication_without_reopening_sse() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let wake: rune::Waker = Arc::new(|| {});
+        prefs.watch(&wake);
+        let reader = request(&listener).await;
+        assert!(reader.first.contains("-preferences"));
+        reader.reply(401, json!({})).await;
+        wait_until(|| prefs.observe_authentication()).await;
+        prefs.watch(&wake);
+        assert!(!prefs.locale_ready());
         assert!(
             timeout(Duration::from_millis(600), listener.accept())
                 .await

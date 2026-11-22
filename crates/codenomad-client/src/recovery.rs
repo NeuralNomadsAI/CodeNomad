@@ -131,7 +131,7 @@ pub async fn run(
                 }
             }
             Some(Input::AuthenticationRequired(e)) if e == epoch => {
-                publish(&out, &wake, Event::AuthenticationRequired).await;
+                publish(&out, &wake, Event::AuthenticationRequired(backend.clone())).await;
                 return Ok(());
             }
             Some(Input::Unavailable(e)) if e == epoch => {

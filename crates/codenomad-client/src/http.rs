@@ -1,12 +1,15 @@
 //! Interchangeable native HTTP and browser fetch adapters; cookies stay in their owner.
 use crate::history::Result;
 use reqwest::{Client, RequestBuilder};
-use std::time::Duration;
+use std::{
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
-pub struct Http(Client);
+pub struct Http(Client, Arc<OnceLock<String>>);
 impl Http {
     pub fn new() -> Result<Self> {
         #[cfg(not(target_arch = "wasm32"))]
@@ -18,7 +21,16 @@ impl Http {
             .build()?;
         #[cfg(target_arch = "wasm32")]
         let client = Client::new();
-        Ok(Self(client))
+        Ok(Self(client, Arc::new(OnceLock::new())))
+    }
+    pub fn same_connection(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.1, &other.1)
+    }
+    pub fn server_identity(&self) -> Option<&str> {
+        self.1.get().map(String::as_str)
+    }
+    pub(crate) fn verify_server_identity(&self, id: &str) -> bool {
+        self.1.get_or_init(|| id.to_owned()) == id
     }
     fn request(&self, method: reqwest::Method, url: impl reqwest::IntoUrl) -> RequestBuilder {
         let request = self.0.request(method, url).timeout(REQUEST_TIMEOUT);
@@ -41,6 +53,14 @@ impl Http {
     pub fn delete(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
         self.request(reqwest::Method::DELETE, url)
     }
+}
+
+pub(crate) fn authentication_expired(error: &crate::history::Error) -> bool {
+    cfg!(not(target_arch = "wasm32"))
+        && error
+            .downcast_ref::<reqwest::Error>()
+            .and_then(reqwest::Error::status)
+            == Some(reqwest::StatusCode::UNAUTHORIZED)
 }
 
 pub fn endpoint(address: &str) -> Result<String> {

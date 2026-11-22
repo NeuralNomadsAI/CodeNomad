@@ -81,10 +81,10 @@ impl PreferencesWatch {
                     for epoch in 1u64.. {
                         let (output, events) = crate::bounded(16);
                         let state = stream::State::default();
-                        futures_lite::future::zip(
+                        let (result, ()) = futures_lite::future::zip(
                             async {
                                 let output = output;
-                                let _ = stream::read(&backend, epoch, &output, &state).await;
+                                stream::read(&backend, epoch, &output, &state).await
                             },
                             async {
                                 while let Ok(event) = events.recv().await {
@@ -101,6 +101,13 @@ impl PreferencesWatch {
                             },
                         )
                         .await;
+                        if result
+                            .as_ref()
+                            .is_err_and(crate::http::authentication_expired)
+                        {
+                            notices.fetch_or(4, SeqCst);
+                            break;
+                        }
                         runtime::sleep(Duration::from_millis(250 * (1 << epoch.min(5)))).await;
                     }
                 },
@@ -124,8 +131,12 @@ impl PreferencesWatch {
     }
 
     pub fn take(&self) -> (bool, bool) {
-        let bits = self.dirty.swap(0, SeqCst);
+        let bits = self.dirty.fetch_and(!3, SeqCst);
         (bits & 1 != 0, bits & 2 != 0)
+    }
+
+    pub fn take_authentication_required(&self) -> bool {
+        self.dirty.fetch_and(!4, SeqCst) & 4 != 0
     }
 
     pub fn stop(self) -> crate::Receiver<()> {

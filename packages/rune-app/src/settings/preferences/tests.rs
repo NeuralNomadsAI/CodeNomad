@@ -80,13 +80,21 @@ fn settings_direct_chat_uses_the_authenticated_conversation_backend() {
 fn settings_reattaching_the_same_address_keeps_newer_choices_and_does_not_replay_old_patches() {
     platform::block_on(async {
         let (listener, mut prefs) = fixture().await;
+        attest(
+            &listener,
+            prefs.backend.as_ref().unwrap(),
+            "fixture-profile",
+        )
+        .await;
         prefs.set_locale("fr");
         prefs.poll();
         let write = request(&listener).await;
         assert_eq!(write.body, json!({"settings":{"locale":"fr"}}));
         prefs.set_locale("de");
         let address = prefs.backend.as_ref().unwrap().base.clone();
-        prefs.bind(Some(Backend::connect(&address, "").await.unwrap()));
+        let next = Backend::connect(&address, "").await.unwrap();
+        attest(&listener, &next, "fixture-profile").await;
+        prefs.bind(Some(next));
         assert_eq!(prefs.locale_display(), Some("de"));
         prefs.poll();
         let state = request(&listener).await;
@@ -108,6 +116,42 @@ fn settings_reattaching_the_same_address_keeps_newer_choices_and_does_not_replay
         })
         .await;
         assert!(prefs.error().is_none());
+    });
+}
+
+async fn attest(listener: &TcpListener, backend: &Backend, id: &str) {
+    let (out, identity) = bounded(1);
+    let backend = backend.clone();
+    platform::spawn(async move {
+        out.send(backend.server_id().await).await.unwrap();
+    });
+    let request = request(listener).await;
+    assert_eq!(request.first, "GET /api/meta HTTP/1.1");
+    request
+        .reply(200, json!({"apiContract":1,"serverId":id}))
+        .await;
+    assert_eq!(
+        timeout(Duration::from_secs(3), identity.recv())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
+        id
+    );
+}
+
+#[test]
+fn settings_same_address_different_server_profile_does_not_inherit_unsent_writes() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let before = prefs.backend.as_ref().unwrap();
+        attest(&listener, before, "profile-a").await;
+        let after = Backend::connect(&before.base, "").await.unwrap();
+        attest(&listener, &after, "profile-b").await;
+        prefs.set_locale("fr");
+        prefs.bind(Some(after));
+        assert_eq!(prefs.locale_display(), None);
+        assert_eq!(prefs.config.requested(Choice::Locale), None);
     });
 }
 

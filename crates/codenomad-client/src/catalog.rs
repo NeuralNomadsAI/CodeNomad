@@ -71,7 +71,7 @@ pub struct Sessions {
 
 impl Backend {
     pub async fn server_id(&self) -> Result<String> {
-        server_id(
+        let id = server_id(
             &read_json(
                 self.client
                     .get(format!("{}api/meta", self.base))
@@ -80,7 +80,12 @@ impl Backend {
                     .error_for_status()?,
             )
             .await?,
-        )
+        )?;
+        if self.client.verify_server_identity(&id) {
+            Ok(id)
+        } else {
+            Err("Server identity changed".into())
+        }
     }
     /// Creates an independent occurrence; the request retains cleanup ownership until released.
     pub async fn create_project(&self, path: &str, request_id: &str) -> Result<Project> {

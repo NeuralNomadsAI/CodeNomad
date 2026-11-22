@@ -415,9 +415,17 @@ pub fn connect(s: &mut State, _: &mut Tx) {
         l.address.text.clone()
     };
     let password = l.password.text.clone();
+    let expected_server = if l.authentication_required {
+        l.server_id.clone()
+    } else {
+        None
+    };
     l.job("rune.connect_error", async move {
         let b = Backend::connect(&address, &password).await?;
         let server_id = b.server_id().await?;
+        if expected_server.is_some_and(|expected| expected != server_id) {
+            return Err("Server identity changed during authentication".into());
+        }
         let projects = b.projects().await?;
         Ok(Reply::Connected(b, projects, server_id))
     });
@@ -641,6 +649,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             if reauthenticated
                 && let Some(id) = crate::workspace::active_session(s).map(str::to_owned)
             {
+                s.show_chat();
                 choose(s, id, tx);
             } else {
                 crate::workspace::resume(s, tx);
@@ -863,9 +872,18 @@ fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize>, tx: &mut
         s.messages.clear();
         s.can_older = false;
     } else if let Some(agent) = &mut s.agent {
-        // This is the same owned occurrence and session; the in-flight reply guard stays live.
-        agent.online = false;
-        agent.pending_known = false;
+        if s.commands.is_none() {
+            let mut reauthenticated =
+                crate::agent::Ui::new(crate::agent::start(b.clone(), s.wake.clone()));
+            reauthenticated.drafts = std::mem::take(&mut agent.drafts);
+            reauthenticated.reasons = std::mem::take(&mut agent.reasons);
+            *agent = reauthenticated;
+            crate::files::bind(s, &b);
+        } else {
+            // This is the same owned occurrence and session; the in-flight reply guard stays live.
+            agent.online = false;
+            agent.pending_known = false;
+        }
     }
     s.draft = TextEdit::new(draft);
     s.phase = Phase::Loading;

@@ -156,13 +156,9 @@ pub fn start(backend: Backend, epoch: u64, out: Sender<Input>, state: Arc<State>
         let result = read(&backend, epoch, &out, &state).await;
         state.alive.store(false, SeqCst);
         state.version.fetch_add(1, SeqCst);
-        let expired = cfg!(not(target_arch = "wasm32"))
-            && result.as_ref().is_err_and(|error| {
-                error
-                    .downcast_ref::<reqwest::Error>()
-                    .and_then(reqwest::Error::status)
-                    == Some(reqwest::StatusCode::UNAUTHORIZED)
-            });
+        let expired = result
+            .as_ref()
+            .is_err_and(crate::http::authentication_expired);
         if result.is_err() {
             eprintln!("Rune event stream unavailable");
         }

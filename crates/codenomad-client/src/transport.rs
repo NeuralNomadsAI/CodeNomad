@@ -42,7 +42,7 @@ pub enum Event {
     Message(Message),
     Text(String, crate::content::TextEvent),
     Done,
-    AuthenticationRequired,
+    AuthenticationRequired(crate::backend::Backend),
     Failed,
     Reconnecting,
     PagingFailed,
