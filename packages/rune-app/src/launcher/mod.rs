@@ -56,7 +56,7 @@ enum Reply {
     Connected(Backend, Vec<Project>, String),
     Opened(crate::workspace::opening::Opening, Sessions, Restored),
     Listed(Sessions, Option<String>),
-    Created(Backend, String, String, Option<u64>),
+    Created(Backend, String, String, String, Option<u64>),
     Selected(Vec<String>, Option<Selection>, Option<u64>),
 }
 type Selection = (Backend, String, Option<usize>, Instant, String);
@@ -236,7 +236,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 l.check_omitted_visits();
             }
         }
-        Ok(Reply::Created(b, title, submitted, dismiss)) => {
+        Ok(Reply::Created(b, title, slug, submitted, dismiss)) => {
             if l.title.text == submitted {
                 l.title = TextEdit::new("");
                 l.show_title = false;
@@ -251,7 +251,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 );
             } else {
                 dismiss_origin_panel(s, dismiss, tx);
-                bind(s, b, title, None, "root", tx);
+                bind(s, b, title, None, &slug, tx);
             }
         }
         Ok(Reply::Selected(missing, selection, dismiss)) => {

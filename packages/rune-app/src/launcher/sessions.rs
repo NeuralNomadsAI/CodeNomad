@@ -149,12 +149,8 @@ pub fn create(s: &mut State, _: &mut Tx) {
     // A create request is never automatically retried. Refresh reconciles a lost response.
     l.job("rune.create_error", async move {
         let session = b.create_session(&p, &title).await?;
-        Ok(Reply::Created(
-            b.bind(&p, &session.id, true).await?,
-            session.title,
-            title,
-            dismiss,
-        ))
+        let (backend, _, slug) = b.bind_session_placed(&p, &session.id, true).await?;
+        Ok(Reply::Created(backend, session.title, slug, title, dismiss))
     });
 }
 pub fn choose(s: &mut State, id: String, tx: &mut Tx) {
