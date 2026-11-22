@@ -171,6 +171,8 @@ Les deux revues indépendantes ont reproduit des P2 de la tranche dans `target/r
 
 Le correctif des brouillons fait passer les deux reproductions rouges (`drafts-repro.log`, `closed-drafts-repro.log`) et neuf tests Runtime dans `target/rune-review-contracts/cargo-state-green.log`. Vingt-cinq visites/retours et envois restent sérialisables ; un v1 valide à 24 vides accepte un nouveau texte. La fusion conserve les sessions disjointes et la dernière autorité de clear/send, y compris après encode/decode/hydrate, tandis qu'une occurrence intacte récupère le texte. Les sources étrangères sont séparées. Format et budgets v1 conservés ; seuls les clears protégeant un texte d'occurrence sœur occupent un champ persistant. Check WASM réussi : `.tmp-rune-review-fixes-wasm.log`.
 
+Le refus de création est désormais typé uniquement pour les validations prépublication établies par les serveurs partagés. Trente-deux refus authentiques de dossiers absents puis une ouverture valide passent dans `fixture-profile/launcher-384e505f-f397-4580-b82d-79ff9441d48e/pending-open-proof.json`, inventaire final zéro et serveur arrêté avec code zéro. POST sans reçu, ACK tardif et panne du stockage passent encore ; le premier conserve son incertitude. Six tests catalogue, trois tests opening, build Windows et check WASM réussissent (`.tmp-rune-opening-capacity-*.log`). Les erreurs réseau, réponses génériques/malformées et annulations dont la publication est incertaine gardent leur propriété et la borne d'admission ; le stub générique de la revue conserve donc intentionnellement cette incertitude.
+
 Fournir les exécutables privés dans `RUNE_CLIENT_EXE` et `RUNE_SERVER_EXE`, le cache Cargo existant et le cache Chromium privé dans `PLAYWRIGHT_BROWSERS_PATH` :
 
 ```powershell

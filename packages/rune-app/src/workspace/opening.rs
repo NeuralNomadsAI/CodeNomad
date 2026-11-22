@@ -110,6 +110,11 @@ impl Openings {
         claim.project = Some(id.into());
         Ok(())
     }
+    fn refused(&self, request: &str) {
+        if let Ok(mut state) = self.state() {
+            state.entries.retain(|claim| claim.request != request);
+        }
+    }
     fn transfer(&self, request: &str, generation: u64) -> Result<()> {
         let mut state = self.state()?;
         let index = state.entries.iter().position(|c| {
@@ -287,7 +292,15 @@ impl Pending {
                 .ok_or("opening intent expired")?;
             claim.sent = true;
         }
-        let project = self.backend.create_project(path, &self.request).await?;
+        let project = match self.backend.create_project(path, &self.request).await {
+            Ok(project) => project,
+            Err(error) => {
+                if error.is::<codenomad_client::catalog::CreationRefused>() {
+                    self.owner.refused(&self.request);
+                }
+                return Err(error);
+            }
+        };
         self.owner.confirmed(&self.request, &project.id)?;
         if !self.owner.current(&self.request, self.generation) {
             return Err("opening intent expired".into());

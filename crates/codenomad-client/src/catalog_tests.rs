@@ -300,7 +300,7 @@ fn invalid_mutation_inputs_are_rejected_before_dispatch() {
                 .await
                 .unwrap_err()
                 .to_string(),
-            "absolute folder required"
+            "workspace creation refused before publication"
         );
         for id in ["", "../other", "workspace?discard=true"] {
             assert_eq!(
@@ -316,6 +316,63 @@ fn invalid_mutation_inputs_are_rejected_before_dispatch() {
                 "invalid workspace id"
             );
         }
+    });
+}
+
+#[test]
+fn only_known_prepublication_rejections_are_definitive() {
+    run(async {
+        for (status, text, definitive) in [
+            (400, "Workspace directory is not authorized", true),
+            (400, "Workspace creation request mine was cancelled", false),
+            (400, "Workspace directory is being removed", true),
+            (
+                400,
+                "Too many workspace creations are already in progress",
+                true,
+            ),
+            (
+                400,
+                "Workspace creation request mine is already in use",
+                false,
+            ),
+            (400, "Workspace creation request other was cancelled", false),
+            (400, "HTTP 400 invalid folder", false),
+            (
+                400,
+                "{\"error\":\"Workspace directory is not authorized\"}",
+                false,
+            ),
+            (500, "Workspace directory is not authorized", false),
+        ] {
+            let server = Server::start(vec![Reply {
+                request: "POST /api/workspaces".into(),
+                body: Some(json!({"path":"/trial","requestId":"mine"})),
+                status,
+                response: text.as_bytes().to_vec(),
+            }]);
+            let backend = Backend::connect(&server.address, "").await.unwrap();
+            let error = backend.create_project("/trial", "mine").await.unwrap_err();
+            assert_eq!(
+                error.is::<crate::catalog::CreationRefused>(),
+                definitive,
+                "{status}: {text}"
+            );
+        }
+        let server = Server::start(vec![Reply {
+            request: "POST /api/workspaces".into(),
+            body: Some(json!({"path":"/trial","requestId":"mine"})),
+            status: 400,
+            response: vec![b'x'; 513],
+        }]);
+        let backend = Backend::connect(&server.address, "").await.unwrap();
+        assert!(
+            !backend
+                .create_project("/trial", "mine")
+                .await
+                .unwrap_err()
+                .is::<crate::catalog::CreationRefused>()
+        );
     });
 }
 

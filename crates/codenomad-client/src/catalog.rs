@@ -3,7 +3,47 @@ use crate::{
     backend::{Backend, read_json},
     history::{Result, valid_id},
 };
+use futures_lite::StreamExt;
 use serde_json::{Value, json};
+
+#[derive(Debug)]
+pub struct CreationRefused;
+impl std::fmt::Display for CreationRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("workspace creation refused before publication")
+    }
+}
+impl std::error::Error for CreationRefused {}
+
+async fn creation_response(response: reqwest::Response) -> Result<Value> {
+    if response.status() != reqwest::StatusCode::BAD_REQUEST {
+        return read_json(response.error_for_status()?).await;
+    }
+    let mut bytes = Vec::new();
+    let mut chunks = response.bytes_stream();
+    while let Some(chunk) = chunks.next().await {
+        let chunk = chunk?;
+        if bytes.len() + chunk.len() > 512 {
+            return Err("workspace creation rejection unavailable".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let message = std::str::from_utf8(&bytes)?;
+    // These terminal validations precede record publication in the shared servers.
+    if matches!(
+        message,
+        "Workspace directory is not authorized"
+            | "OpenCode location is unavailable"
+            | "Workspace folder changed during opening"
+            | "Too many open workspaces"
+            | "Too many workspace creations are already in progress"
+            | "Workspace directory is being removed"
+            | "Workspace manager is shutting down"
+    ) {
+        return Err(CreationRefused.into());
+    }
+    Err("workspace creation rejected with uncertain ownership".into())
+}
 
 #[derive(Clone, Debug)]
 pub struct Project {
@@ -36,16 +76,15 @@ impl Backend {
     /// Creates an independent occurrence; the request retains cleanup ownership until released.
     pub async fn create_project(&self, path: &str, request_id: &str) -> Result<Project> {
         if !crate::server_path::absolute(path) {
-            return Err("absolute folder required".into());
+            return Err(CreationRefused.into());
         }
         let request_id = claim(request_id)?;
-        let data = read_json(
+        let data = creation_response(
             self.client
                 .post(format!("{}api/workspaces", self.base))
                 .json(&json!({"path":path,"requestId":request_id}))
                 .send()
-                .await?
-                .error_for_status()?,
+                .await?,
         )
         .await?;
         if data["requestId"].as_str() != Some(request_id) {

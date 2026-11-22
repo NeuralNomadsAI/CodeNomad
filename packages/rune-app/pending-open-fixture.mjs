@@ -6,7 +6,7 @@ import path from 'node:path'
 
 export async function pendingOpenFixture({origin,profile,project,env,clientBinary}) {
   const proofs=[]
-  for(const mode of ['post','ack','quota']) {
+  for(const mode of ['capacity','post','ack','quota']) {
     const gate=path.join(profile,`pending-${mode}.held`)
     let first=true,held,original,creates=0,cancels=0,forwarded=false
     const proxy=createServer(async(req,res)=>{
@@ -26,7 +26,7 @@ export async function pendingOpenFixture({origin,profile,project,env,clientBinar
         })
         if(req.method==='POST'&&url.pathname==='/api/workspaces') {
           creates++
-          if(first){
+          if(first&&mode!=='capacity'){
             first=false
             if(mode==='post') {held=()=>{forwarded=true;return forward()};await writeFile(gate,'held');return}
             await forward(true);return
@@ -57,7 +57,7 @@ export async function pendingOpenFixture({origin,profile,project,env,clientBinar
     const timer=setTimeout(()=>client.kill(),60000)
     try {
       const code=await new Promise((resolve,reject)=>{client.once('exit',resolve);client.once('error',reject)})
-      assert.equal(code,0,`Pending creation ${mode}`);assert(proof);assert.equal(creates,2);assert(cancels>=1);assert.equal(proof.recordsRemaining,0)
+      assert.equal(code,0,`Pending creation ${mode}`);assert(proof);assert.equal(creates,mode==='capacity'?33:2);if(mode!=='capacity')assert(cancels>=1);assert.equal(proof.recordsRemaining,0)
       proofs.push({...proof,creates,cancels,confirmedOldRecord:!!original})
     }finally{clearTimeout(timer);proxy.closeAllConnections();await new Promise(r=>proxy.close(r));await writeFile(path.join(profile,`pending-${mode}.log`),output)}
   }

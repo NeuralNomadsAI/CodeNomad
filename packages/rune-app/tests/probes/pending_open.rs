@@ -35,6 +35,10 @@ pub fn run() {
     );
     let gate = PathBuf::from(std::env::var("RUNE_TEST_PENDING_GATE").unwrap());
     let case = std::env::var("RUNE_TEST_PENDING_CASE").unwrap();
+    if case == "capacity" {
+        capacity();
+        return;
+    }
     let mut old = window();
     wait(&mut old, "held creation", |_| gate.exists());
     let openings = old.state.launcher.as_ref().unwrap().openings.clone();
@@ -118,5 +122,51 @@ pub fn run() {
         "{}",
         serde_json::json!({"type":"pending-open-proof","case":case,"recordsRemaining":0,"successorProtected":true,"latePublicationRejected":true,"unresolvedClaimsRetained":openings.pending().len(),"nativeWindow":false})
     );
+    platform::finish();
+}
+
+fn capacity() {
+    platform::block_on(async {
+        let backend = Backend::connect(
+            &std::env::var("RUNE_BACKEND").unwrap(),
+            &std::env::var("RUNE_PASSWORD").unwrap(),
+        )
+        .await
+        .unwrap();
+        let owner = workspace::opening::Openings::default();
+        let folder = std::env::var("RUNE_TEST_FOLDER").unwrap();
+        let missing = PathBuf::from(&folder).join("missing-fixture-folder");
+        assert!(!missing.exists());
+        for _ in 0..32 {
+            let error = owner
+                .begin(backend.clone(), "tab-0")
+                .unwrap()
+                .create(missing.to_str().unwrap())
+                .await
+                .err()
+                .expect("missing folder refused");
+            assert!(error.is::<codenomad_client::catalog::CreationRefused>());
+            assert!(
+                owner.pending().is_empty(),
+                "terminal refusal releases admission"
+            );
+        }
+        assert!(backend.projects().await.unwrap().is_empty());
+        let opening = owner
+            .begin(backend.clone(), "tab-0")
+            .unwrap()
+            .create(&folder)
+            .await
+            .unwrap();
+        let id = opening.project.id.clone();
+        opening.adopt().unwrap();
+        assert_eq!(backend.projects().await.unwrap().len(), 1);
+        backend.release_project(&id).await.unwrap();
+        assert!(backend.projects().await.unwrap().is_empty());
+        println!(
+            "{}",
+            serde_json::json!({"type":"pending-open-proof","case":"capacity","definitiveRefusals":32,"successfulOpenAfterRefusals":true,"recordsRemaining":0,"nativeWindow":false})
+        );
+    });
     platform::finish();
 }
