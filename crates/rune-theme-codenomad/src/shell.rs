@@ -1,0 +1,329 @@
+//! Geometry shared by the application bar and conversation panels.
+pub mod icons;
+use crate::{Length, Space, TextRole, kit, layout, tokens};
+use rune::{App, AppSpec, Cx, El, Icon, Tx, col, el, row, text};
+use rune_kit::{
+    Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, SidebarRow, WindowTitlebar,
+};
+
+// Solid's shell/storage.ts and instance-shell2.tsx own these layout breakpoints.
+pub const CENTER_MIN: f32 = 390.0;
+pub const PANEL_MIN: [f32; 2] = [220.0, 200.0];
+pub const PANEL_DEFAULT: [f32; 2] = [340.0, 260.0];
+
+pub enum Resize {
+    Start,
+    Set(f32),
+    End,
+}
+
+pub fn panel_grip<S: 'static>(
+    key: &str,
+    label: &str,
+    leading: bool,
+    rtl: bool,
+    held: bool,
+    desired: f32,
+    resize: impl Fn(&mut S, Resize, &mut Tx) + 'static,
+) -> El {
+    let t = tokens(layout::dark());
+    let zero = Some(0.0);
+    let width = t.space(Space::Xs).px();
+    let accent = t.color("accent-primary");
+    el().key(key)
+        .w(width)
+        .pin(
+            (!leading).then_some(0.0),
+            zero,
+            leading.then_some(0.0),
+            zero,
+        )
+        .role("separator")
+        .label(label)
+        .fill(if held {
+            accent
+        } else {
+            rune::Color::TRANSPARENT
+        })
+        .hover(accent)
+        .cursor(rune::Cursor::ResizeColumn)
+        .on_drag(move |s, drag, tx| {
+            let event = match drag.phase {
+                rune::Phase::Down => {
+                    drag.data = desired;
+                    Resize::Start
+                }
+                rune::Phase::Move => {
+                    let sign = if leading != rtl { 1.0 } else { -1.0 };
+                    Resize::Set(drag.data + sign * drag.dx)
+                }
+                rune::Phase::Up => Resize::End,
+            };
+            resize(s, event, tx);
+        })
+}
+
+fn titlebar_height() -> f32 {
+    tokens(layout::dark()).length(Length::Chrome).px()
+}
+
+pub fn run<S: 'static>(
+    spec: AppSpec<S>,
+    closing: fn(&mut S, &mut Tx),
+    native_chrome: bool,
+    locale: &'static str,
+) {
+    let mut app = App::new(spec).on_close(closing).on_quit(closing);
+    if native_chrome {
+        rune::labels::set_locale(locale);
+        rune::labels::set_direction(if crate::catalogue::direction(locale) == "rtl" {
+            rune::Direction::Rtl
+        } else {
+            rune::Direction::Ltr
+        });
+        rune::labels::set_labels(move |label| {
+            use rune::labels::Label;
+            crate::catalogue::message(
+                locale,
+                match label {
+                    Label::Cut => "window.menu.native.cut",
+                    Label::Copy => "window.menu.native.copy",
+                    Label::Paste => "window.menu.native.paste",
+                    Label::SelectAll => "window.menu.native.selectAll",
+                    Label::Undo => "window.menu.native.undo",
+                    Label::Redo => "window.menu.native.redo",
+                    Label::Minimize => "window.controls.minimize",
+                    Label::Close => "window.controls.close",
+                    _ => return None,
+                },
+            )
+            .map(str::to_owned)
+        });
+        app = app.titlebar(rune::Titlebar::new(titlebar_height()));
+    }
+    app.run();
+}
+
+pub fn titlebar<S>(cx: &mut Cx<S>, title: &str, rtl: bool, menus: El) -> El {
+    let t = tokens(layout::dark());
+    let gutter = t.space(Space::Md).px();
+    let insets = cx.chrome_insets();
+    cx.caption_color(t.color("text-primary"));
+    WindowTitlebar::from_insets(insets)
+        .key("native-titlebar")
+        .height(titlebar_height())
+        .leading_padding(gutter)
+        .trailing_padding(gutter)
+        .gap(t.space(Space::Sm).px())
+        .direction(if rtl {
+            rune::Direction::Rtl
+        } else {
+            rune::Direction::Ltr
+        })
+        .fill(t.color("surface-shade-strong"))
+        .leading(
+            text(title)
+                .key("app-title")
+                .font(t.text(TextRole::Small))
+                .color(t.color("text-secondary"))
+                .truncate(),
+        )
+        .leading(menus)
+        .build(kit(layout::dark()))
+}
+
+pub fn titlebar_menu<S: 'static>(label: &str, activate: impl Fn(&mut S, &mut Tx) + 'static) -> El {
+    Button::new(label)
+        .variant(ButtonVariant::GhostMuted)
+        .control_size(ControlSize::Small)
+        .on_press_tx(activate)
+        .build(kit(layout::dark()))
+}
+
+pub fn open_titlebar_menu<S: 'static>(
+    tx: &mut Tx,
+    anchor: &str,
+    items: impl IntoIterator<Item = (&'static str, &'static str, bool, bool)>,
+    pick: impl FnOnce(&mut S, Option<&str>, &mut Tx) + 'static,
+) {
+    #[cfg(target_os = "windows")]
+    tx.popup_menu(
+        rune::PopupMenu::new().items(items.into_iter().map(|(id, name, enabled, checked)| {
+            rune::PopupItem::new(id, name)
+                .enabled(enabled)
+                .checked(checked)
+        })),
+        anchor,
+        pick,
+    );
+    #[cfg(not(target_os = "windows"))]
+    let _ = (tx, anchor, items, pick);
+}
+
+pub fn frame() -> El {
+    col().w_full().h_full().min_w(0.0).min_h(0.0)
+}
+
+pub fn columns() -> El {
+    row().w_full().h_full().min_w(0.0).min_h(0.0)
+}
+
+pub fn conversation_column() -> El {
+    col().grow(1.0).min_w(0.0).h_full().min_h(0.0)
+}
+
+pub fn empty_conversation(title: &str) -> El {
+    col().w_full().h_full().center().child(text(title))
+}
+
+pub fn panel(width: f32, floating: bool) -> El {
+    let base = col()
+        .h_full()
+        .min_h(0.0)
+        .fill(tokens(layout::dark()).color("surface-secondary"));
+    if floating { cover(base) } else { base.w(width) }
+}
+
+pub fn cover(element: El) -> El {
+    element.pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+}
+
+pub fn header(left: bool, right: bool, touch: bool, actions: impl IntoIterator<Item = El>) -> El {
+    let t = tokens(layout::dark());
+    let inset = |reserve| {
+        if reserve {
+            t.space(Space::Xs).px() + control_size(touch) + t.space(Space::Sm).px()
+        } else {
+            t.space(Space::Md).px()
+        }
+    };
+    let line = t.number("panel-header-action-center").px() * 2.0;
+    let border = t.metric("tabActive", "borderBottomWidth").px();
+    col()
+        .w_full()
+        .h(t.length(Length::PanelHeader).px())
+        .fill(t.color("surface-shade-light"))
+        .border_sides([0.0, 0.0, border, 0.0], t.color("tab-border"))
+        .child(
+            row()
+                .h(line)
+                .pl(inset(left))
+                .pr(inset(right))
+                .items_center()
+                .gap(t.space(Space::Xs).px())
+                .children(actions),
+        )
+}
+
+pub fn control(icon: &'static Icon, label: &'static str, touch: bool) -> IconButton {
+    IconButton::new(icon)
+        .label(label)
+        .variant(IconButtonVariant::GhostMuted)
+        .control_size(if touch {
+            ControlSize::Large
+        } else {
+            ControlSize::Regular
+        })
+}
+
+pub fn session_row<S: 'static>(
+    title: &str,
+    selected: bool,
+    disabled: bool,
+    select: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    let mut row = SidebarRow::new(title).selected(selected);
+    if !disabled {
+        row = row.on_select(select);
+    }
+    row.build(kit(layout::dark())).disabled(disabled)
+}
+
+fn control_size(touch: bool) -> f32 {
+    tokens(layout::dark())
+        .length(if touch {
+            Length::TouchCompact
+        } else {
+            Length::IconButton
+        })
+        .px()
+}
+
+pub fn toggle<S: 'static>(
+    icon: &'static Icon,
+    label: &'static str,
+    key: &'static str,
+    leading: bool,
+    touch: bool,
+    open: bool,
+    activate: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    let t = tokens(layout::dark());
+    let side = t.space(Space::Xs).px();
+    let top = t.number("panel-header-action-center").px() - control_size(touch) / 2.0;
+    let mut kit = kit(layout::dark()).clone();
+    if open {
+        let tint = t
+            .color("accent-primary")
+            .mix(t.color("text-on-accent"), 0.2)
+            .mix(t.color("surface-base"), 0.1);
+        kit.c.pressed = tint.alpha(0.44);
+        kit.c.hover = tint.alpha(0.56);
+    }
+    let button = control(icon, label, touch)
+        .expanded(open)
+        .on_press_tx(activate)
+        .build(&kit)
+        .key(key);
+    let size = control_size(touch);
+    row()
+        .size(size, size)
+        .center()
+        .pin(
+            leading.then_some(side),
+            Some(top),
+            (!leading).then_some(side),
+            None,
+        )
+        .raise()
+        .child(button)
+}
+
+pub fn panel_title(title: &str) -> El {
+    let t = tokens(layout::dark());
+    text(title)
+        .font(t.text(TextRole::Small))
+        .color(t.color("text-muted"))
+        .truncate()
+        .min_w(0.0)
+        .shrink()
+}
+
+pub fn spacer() -> El {
+    el().grow(1.0).min_w(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn panel_breakpoints_follow_solid() {
+        let storage = include_str!("../../../packages/ui/src/components/instance/shell/storage.ts");
+        let shell =
+            include_str!("../../../packages/ui/src/components/instance/instance-shell2.tsx");
+        assert!(shell.contains(&format!("MIN_SESSION_CENTER_WIDTH = {CENTER_MIN}")));
+        for (key, value) in [
+            ("DEFAULT_SESSION_SIDEBAR_WIDTH", PANEL_DEFAULT[0]),
+            ("MIN_SESSION_SIDEBAR_WIDTH", PANEL_MIN[0]),
+            ("RIGHT_DRAWER_WIDTH", PANEL_DEFAULT[1]),
+            ("MIN_RIGHT_DRAWER_WIDTH", PANEL_MIN[1]),
+        ] {
+            assert!(
+                storage
+                    .lines()
+                    .any(|line| line == format!("export const {key} = {value}"))
+            );
+        }
+    }
+}

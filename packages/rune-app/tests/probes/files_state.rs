@@ -71,11 +71,7 @@ pub fn run() {
             .launcher()
             .is_some_and(|l| l.project.is_some() && !l.pending)
     });
-    launcher::choose(
-        &mut rt.state,
-        "ses_existing".into(),
-        "Existing history".into(),
-    );
+    launcher::choose(&mut rt.state, "ses_existing".into());
     wait(&mut rt, "existing session", |s| {
         !s.screen.is_launcher() && s.phase == Phase::Ready && s.files.is_some()
     });

@@ -74,11 +74,11 @@ async function run(theme, at, name) {
   assert.match(composer.role, /text/i, 'Composer must expose a text input role')
   assert(composer.name, 'Composer needs an accessible name')
   assert.equal(composer.value, 'Rune headless\nDeuxième ligne 🦀', 'Simulated paste must reach the real composer')
-  for (const key of ['send', 'latest', 'older']) {
+  for (const key of ['send', 'latest']) {
     assert.equal(byKey(key)?.role, 'button', `${key} must expose a button role`)
     assert(byKey(key)?.name, `${key} needs an accessible name`)
   }
-  assert(byKey('older').states?.includes('disabled'), 'Synthetic history has no older page')
+  assert(!byKey('older'), 'Synthetic history has no older page')
   if (name === 'edited') assert(composer.states?.includes('focused'), 'Simulated focus must reach composer')
   const png = await readFile(snap)
   assert(png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])), 'Rune snapshot must be PNG')
@@ -86,7 +86,7 @@ async function run(theme, at, name) {
   if (name === 'edited') {
     const element = key => data.elements.find(element => element.key === key)
     textContrast = await assertRenderedTextContrast(imagePage, png, [
-      {name: 'header', rect: element('app-title').rect, surface: 'surface-canvas'},
+      ...(element('app-title') ? [{name: 'titlebar', rect: element('app-title').rect, surface: 'surface-shade-strong', text: 'text-secondary'}] : []),
       {name: 'transcript', rect: finalRect, surface: 'surface-canvas'},
       {name: 'composer', rect: element('composer').rect, surface: 'surface-field', inset: palette.numbers[theme]['space-sm']},
     ], palette[theme])

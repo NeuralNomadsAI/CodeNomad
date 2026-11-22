@@ -76,10 +76,9 @@ pub fn run() {
     assert_eq!(rt.state.messages[0].body, "Existing project history");
     rt.state.draft = TextEdit::new("unsent draft");
     rt.frame(1.0 / 60.0);
-    tap(&mut rt, "sessions-back");
-    wait(&mut rt, "return with retained draft", |s| {
-        s.screen.is_launcher() && !s.screen.launcher().unwrap().pending
-    });
+    tap(&mut rt, "sessions-panel-toggle");
+    assert!(rt.find("session-ses_existing").is_none());
+    tap(&mut rt, "sessions-panel-toggle");
     tap(&mut rt, "session-ses_existing");
     wait(&mut rt, "restore existing draft", |s| {
         !s.screen.is_launcher() && s.phase == Phase::Ready

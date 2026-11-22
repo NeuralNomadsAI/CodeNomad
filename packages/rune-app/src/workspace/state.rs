@@ -16,6 +16,8 @@ pub(super) struct Entry {
     project: Option<Project>,
     sessions: Vec<Session>,
     next: Option<String>,
+    visits: crate::launcher::Visits,
+    wanted_panels: [Option<[bool; 2]>; 2],
     binding: Option<Backend>,
     cleared: HashSet<String>,
     pending_drafts: HashSet<String>,
@@ -167,6 +169,8 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         project: None,
         sessions: Vec::new(),
         next: None,
+        visits: Default::default(),
+        wanted_panels: [None; 2],
         binding: None,
         cleared,
         pending_drafts: HashSet::new(),
@@ -178,6 +182,13 @@ fn busy(s: &State) -> bool {
 }
 pub fn input_ready(s: &State) -> bool {
     s.workspace.as_ref().is_none_or(|ui| ui.ready)
+}
+pub fn active_session(s: &State) -> Option<&str> {
+    let ui = s.workspace.as_ref()?;
+    match &ui.entries[ui.active].saved {
+        Tab::Workspace(w) => w.active_session_id.as_deref(),
+        Tab::Blank => None,
+    }
 }
 pub fn prepare_open(s: &mut State, tx: &mut Tx) -> bool {
     if busy(s) {
@@ -251,28 +262,37 @@ fn stash(s: &mut State) {
     if let Some(ui) = &mut s.workspace {
         let entry = &mut ui.entries[ui.active];
         entry.cache = Some(cache);
-        if let Some(l) = s.screen.launcher() {
+        entry.wanted_panels = s.shell.wanted;
+        if let Some(l) = s.screen.launcher_mut() {
             entry.project = l.project.clone();
             entry.sessions = l.sessions.clone();
             entry.next = l.next.clone();
+            entry.visits = std::mem::take(&mut l.visits);
         }
     }
 }
 fn activate(s: &mut State, tx: &mut Tx) {
+    s.shell.leave_project();
     let Some(ui) = &mut s.workspace else {
         return;
     };
     let item = &mut ui.entries[ui.active];
+    s.shell.wanted = item.wanted_panels;
     if let Some(l) = s.screen.launcher_mut() {
         l.project = item.project.clone();
         l.sessions = item.sessions.clone();
         l.next = item.next.clone();
+        l.visits = std::mem::take(&mut item.visits);
         l.folder = TextEdit::new(match &item.saved {
             Tab::Workspace(w) => w.folder.as_str(),
             _ => "",
         });
         l.error = None;
         l.creation_uncertain = false;
+        l.title = TextEdit::new("");
+        l.search = TextEdit::new("");
+        l.show_title = false;
+        l.show_search = false;
     }
     if let Some(cache) = item.cache.take() {
         cache.apply(s);
@@ -305,6 +325,7 @@ pub fn select(s: &mut State, id: &str, tx: &mut Tx) {
         return;
     };
     if s.workspace.as_ref().is_some_and(|ui| ui.active == index) {
+        s.shell.leave_project();
         return;
     }
     stash(s);
@@ -315,12 +336,14 @@ pub fn select(s: &mut State, id: &str, tx: &mut Tx) {
     activate(s, tx);
     capture(s);
 }
-pub fn new_tab(s: &mut State, tx: &mut Tx) {
-    if busy(s)
-        || s.workspace
+pub fn can_new(s: &State) -> bool {
+    !busy(s)
+        && s.workspace
             .as_ref()
-            .is_none_or(|ui| ui.entries.len() >= super::MAX_TABS)
-    {
+            .is_some_and(|ui| ui.entries.len() < super::MAX_TABS)
+}
+pub fn new_tab(s: &mut State, tx: &mut Tx) {
+    if !can_new(s) {
         return;
     }
     stash(s);

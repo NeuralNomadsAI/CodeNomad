@@ -1,14 +1,16 @@
 //! One serialized opening action at a time; HTTP never runs on the UI thread.
 pub(crate) mod view;
+mod visits;
 use crate::{
     Phase, State,
     backend::Backend,
-    catalog::{Project, Session, Sessions},
+    catalog::{Project, Session, SessionMissing, Sessions},
     history::Result,
 };
 use codenomad_client::{Receiver, bounded};
 use rune::{Tx, edit::TextEdit};
 use std::future::Future;
+pub(crate) use visits::Visits;
 
 pub struct Launcher {
     pub address: TextEdit,
@@ -16,6 +18,9 @@ pub struct Launcher {
     pub folder: TextEdit,
     pub title: TextEdit,
     pub search: TextEdit,
+    pub show_title: bool,
+    pub show_search: bool,
+    pub visits: Visits,
     pub connection: Option<Backend>,
     pub server_id: Option<String>,
     pub projects: Vec<Project>,
@@ -39,10 +44,12 @@ enum Reply {
         Option<(Backend, String)>,
     ),
     Listed(Sessions, bool),
-    Bound(Backend, String),
+    Created(Backend, String),
+    Selected(Vec<String>, Option<Selection>),
 }
+type Selection = (Backend, String, Option<usize>);
 impl Launcher {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn fixture() -> Self {
         Self::with_boot(std::sync::Arc::new(|| {}), None)
     }
@@ -89,6 +96,9 @@ impl Launcher {
             folder: TextEdit::new(""),
             title: TextEdit::new(""),
             search: TextEdit::new(""),
+            show_title: false,
+            show_search: false,
+            visits: Visits::default(),
             connection: None,
             server_id: None,
             projects: vec![],
@@ -154,7 +164,14 @@ mod tests {
             state.screen = crate::Screen::Launcher(launcher);
             let mut runtime =
                 rune::Runtime::new(state, crate::view, viewport, rune::Env::new(false, 1.0));
-            runtime.frame(0.0);
+            for _ in 0..8 {
+                runtime.frame(1.0 / 60.0);
+            }
+            if viewport.0 < 610.0 {
+                let (x, y) = runtime.find("sessions-panel-toggle").unwrap();
+                runtime.pointer_down(x, y);
+                runtime.pointer_up(x, y);
+            }
             runtime.update(|_, tx| {
                 tx.scroll_into_view("session-existing");
                 tx.instant();
@@ -328,7 +345,7 @@ pub fn list(s: &mut State, more: bool) {
     });
 }
 pub fn create(s: &mut State, _: &mut Tx) {
-    if !crate::workspace::input_ready(s) {
+    if !crate::workspace::input_ready(s) || crate::agent::navigation_blocked(s) {
         return;
     }
     let Some(l) = s.screen.launcher_mut() else {
@@ -344,27 +361,71 @@ pub fn create(s: &mut State, _: &mut Tx) {
     // A create request is never automatically retried. Refresh reconciles a lost response.
     l.job("rune.create_error", async move {
         let session = b.create_session(&p, &title).await?;
-        Ok(Reply::Bound(
+        Ok(Reply::Created(
             b.bind(&p, &session.id, true).await?,
             session.title,
         ))
     });
 }
-pub fn choose(s: &mut State, id: String, title: String) {
-    if !crate::workspace::input_ready(s) {
-        return;
+pub fn choose(s: &mut State, id: String) -> bool {
+    if !s.screen.is_launcher() && crate::workspace::active_session(s) == Some(id.as_str()) {
+        return true;
+    }
+    choose_from(s, vec![(id, None)])
+}
+fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>) -> bool {
+    if candidates.is_empty()
+        || !crate::workspace::input_ready(s)
+        || crate::agent::navigation_blocked(s)
+    {
+        return false;
     }
     let Some(l) = s.screen.launcher_mut() else {
-        return;
+        return false;
     };
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
-        return;
+        return false;
     };
+    if l.pending {
+        return false;
+    }
     l.job("rune.open_error", async move {
-        Ok(Reply::Bound(b.bind(&p, &id, false).await?, title))
+        let mut missing = Vec::new();
+        for (id, step) in candidates {
+            match b.bind_session(&p, &id, false).await {
+                Ok((bound, session)) => {
+                    return Ok(Reply::Selected(missing, Some((bound, session.title, step))));
+                }
+                Err(err) if err.is::<SessionMissing>() => missing.push(id),
+                Err(err) if missing.is_empty() => return Err(err),
+                Err(_) => break,
+            }
+        }
+        Ok(Reply::Selected(missing, None))
     });
+    true
+}
+pub fn can_visit(s: &State, back: bool) -> bool {
+    s.screen
+        .launcher()
+        .is_some_and(|l| l.visits.steps(back, shown(s)).next().is_some())
+}
+pub fn visit(s: &mut State, back: bool) {
+    let Some(l) = s.screen.launcher() else { return };
+    let candidates = l
+        .visits
+        .steps(back, shown(s))
+        .map(|(step, id)| (id.into(), Some(step)))
+        .collect();
+    choose_from(s, candidates);
+}
+fn shown(s: &State) -> Option<&str> {
+    (!s.screen.is_launcher())
+        .then(|| crate::workspace::active_session(s))
+        .flatten()
 }
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
+    let blocked = crate::agent::navigation_blocked(s);
     let Some(l) = s.screen.launcher_mut() else {
         return false;
     };
@@ -424,7 +485,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.creation_uncertain = false;
             crate::workspace::opened(s, &project);
             if let Some((backend, title)) = restored {
-                bind(s, backend, title, tx);
+                bind(s, backend, title, None, tx);
             }
         }
         Ok(Reply::Listed(rows, more)) => {
@@ -441,8 +502,30 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             l.next = rows.next;
         }
-        Ok(Reply::Bound(b, title)) => {
-            bind(s, b, title, tx);
+        Ok(Reply::Created(b, title)) => {
+            l.title = TextEdit::new("");
+            l.show_title = false;
+            if blocked {
+                l.sessions.insert(
+                    0,
+                    Session {
+                        id: b.session,
+                        title,
+                    },
+                );
+            } else {
+                bind(s, b, title, None, tx);
+            }
+        }
+        Ok(Reply::Selected(missing, selection)) => {
+            l.sessions.retain(|row| !missing.contains(&row.id));
+            l.visits.forget(&missing);
+            if let Some((b, title, visit)) = selection.filter(|_| !blocked) {
+                l.show_title = false;
+                bind(s, b, title, visit, tx);
+            } else if !blocked {
+                l.error = Some("rune.open_error");
+            }
         }
         Err(error) => {
             let key = match error.to_string().as_str() {
@@ -512,7 +595,19 @@ pub fn restore(s: &mut State, saved: crate::workspace::Workspace) {
         Ok(Reply::Opened(opening, rows, bound))
     });
 }
-fn bind(s: &mut State, b: Backend, title: String, tx: &mut Tx) {
+fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize>, tx: &mut Tx) {
+    if let Some(l) = s.screen.launcher_mut() {
+        l.visits.record(&b.session, visit);
+        if !l.sessions.iter().any(|row| row.id == b.session) {
+            l.sessions.insert(
+                0,
+                Session {
+                    id: b.session.clone(),
+                    title: title.clone(),
+                },
+            );
+        }
+    }
     let draft = crate::workspace::bound(s, &b);
     crate::files::bind(s, &b);
     s.agent = None;
@@ -542,6 +637,7 @@ fn bind(s: &mut State, b: Backend, title: String, tx: &mut Tx) {
     crate::workspace::capture(s);
     tx.scroll_to_bottom_instant("history");
 }
+#[cfg(feature = "test-support")]
 pub fn back(s: &mut State) {
     if !matches!(s.phase, Phase::Ready | Phase::Failed)
         || (!s.draft.text.is_empty() && s.workspace.is_none())

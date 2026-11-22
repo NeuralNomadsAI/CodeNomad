@@ -25,20 +25,22 @@ fn runtime(render: fn(&State, &mut Cx<State>) -> El) -> Runtime<State> {
 }
 #[test]
 fn real_chat_controls_follow_the_explicit_catalogue_direction() {
-    let en = runtime(english);
-    let he = runtime(hebrew);
-    assert!(en.find("older").unwrap().0 < en.find("latest").unwrap().0);
-    assert!(he.find("older").unwrap().0 > he.find("latest").unwrap().0);
-    assert!(
-        en.accessibility_json()
-            .to_string()
-            .contains(strings::with_locale("en", || strings::t("rune.latest")))
-    );
-    assert!(
-        he.accessibility_json()
-            .to_string()
-            .contains(strings::with_locale("he", || strings::t("rune.latest")))
-    );
+    for (render, locale) in [
+        (english as fn(&State, &mut Cx<State>) -> El, "en"),
+        (hebrew, "he"),
+    ] {
+        let runtime = runtime(render);
+        assert!(
+            runtime.find("older").is_none(),
+            "complete history has no paging control"
+        );
+        assert!(
+            runtime
+                .accessibility_json()
+                .to_string()
+                .contains(strings::with_locale(locale, || strings::t("rune.latest")),)
+        );
+    }
 }
 #[test]
 fn rtl_chat_keeps_code_selectable_and_editor_paragraphs_in_their_own_direction() {

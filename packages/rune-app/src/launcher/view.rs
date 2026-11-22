@@ -2,7 +2,7 @@ use crate::{State, launcher, strings::t};
 use rune::{El, ScrollSpec, col, text};
 use rune_theme_codenomad::{
     Space, TextRole, field_kit,
-    layout::{self, Layout, hinted_field, literal_field},
+    layout::{self, Layout, literal_field},
 };
 #[cfg(test)]
 mod tests;
@@ -78,94 +78,19 @@ pub fn view(s: &State) -> El {
                         crate::screen::action_tx(&scope, launcher::open),
                     )),
             );
-        if l.project.is_none() {
-            for p in &l.projects {
-                let path = p.path.clone();
-                body = body.child(
-                    button_tx(
-                        &format!("project-{}", p.id),
-                        &p.path,
-                        l.pending || waiting,
-                        crate::screen::action_tx(&scope, move |s: &mut State, tx| {
-                            launcher::choose_project(s, &path, tx);
-                        }),
-                    )
-                    .literal_direction(),
-                );
-            }
-        } else {
-            body = body
-                .child(
-                    rune_theme_codenomad::layout::action_row()
-                        .separate(Space::Sm)
-                        .child(text(t("sessionList.header.title")).text_role(TextRole::Title))
-                        .child(button(
-                            "refresh-sessions",
-                            t("rune.refresh"),
-                            l.pending || waiting,
-                            crate::screen::action(&scope, |s: &mut State| launcher::list(s, false)),
-                        )),
+        for p in &l.projects {
+            let path = p.path.clone();
+            body = body.child(
+                button_tx(
+                    &format!("project-{}", p.id),
+                    &p.path,
+                    l.pending || waiting,
+                    crate::screen::action_tx(&scope, move |s: &mut State, tx| {
+                        launcher::choose_project(s, &path, tx);
+                    }),
                 )
-                .child(
-                    hinted_field(&l.search, t("rune.search"))
-                        .label(t("rune.search"))
-                        .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Search))
-                        .build(field_kit(layout::dark()))
-                        .key("session-search"),
-                );
-            let filter = l.search.text.to_lowercase();
-            let mut items = col().full_width().separate(Space::Xs);
-            for session in l
-                .sessions
-                .iter()
-                .filter(|s| s.title.to_lowercase().contains(&filter))
-            {
-                let id = session.id.clone();
-                let title = session.title.clone();
-                items = items.child(
-                    button(
-                        &format!("session-{id}"),
-                        if session.title.is_empty() {
-                            t("sessionList.session.untitled")
-                        } else {
-                            &session.title
-                        },
-                        l.pending || waiting,
-                        crate::screen::action(&scope, move |s: &mut State| {
-                            launcher::choose(s, id.clone(), title.clone())
-                        }),
-                    )
-                    .full_width(),
-                );
-            }
-            if l.sessions.is_empty() {
-                items = items.child(text(t("rune.empty_sessions")));
-            }
-            if l.next.is_some() {
-                items = items.child(button(
-                    "more-sessions",
-                    t("rune.more"),
-                    l.pending || waiting || l.sessions.len() >= 2000,
-                    crate::screen::action(&scope, |s: &mut State| launcher::list(s, true)),
-                ));
-            }
-            body = body
-                .child(col().key("session-list").full_width().child(items))
-                .child(text(t("sessionList.actions.newSession.title")))
-                .child(
-                    hinted_field(&l.title, t("rune.session_title"))
-                        .label(t("rune.session_title"))
-                        .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Title))
-                        .on_submit(crate::screen::action_tx(&scope, launcher::create))
-                        .build(field_kit(layout::dark()))
-                        .key("session-title"),
-                )
-                .child(button_tx(
-                    "create-session",
-                    t("rune.create"),
-                    l.pending || waiting || l.creation_uncertain || l.title.text.trim().is_empty(),
-                    crate::screen::action_tx(&scope, launcher::create),
-                ));
+                .literal_direction(),
+            );
         }
     }
     if l.pending {
