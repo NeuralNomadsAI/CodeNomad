@@ -154,12 +154,16 @@ fn request_older(s: &mut State, _: &mut Tx) {
         s.paging = true;
     }
 }
-fn retry_connection(s: &mut State) {
+fn retry_connection(s: &mut State, tx: &mut Tx) {
     if s.commands
         .as_ref()
         .is_some_and(|c| c.try_send(Command::Retry).is_ok())
     {
         s.phase = Phase::Reconnecting;
+    } else if s.commands.as_ref().is_none_or(Sender::is_closed)
+        && let Some(id) = workspace::active_session(s).map(str::to_owned)
+    {
+        launcher::choose(s, id, tx);
     }
 }
 fn latest(_: &mut State, tx: &mut Tx) {

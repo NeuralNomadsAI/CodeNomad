@@ -10,6 +10,7 @@ use crate::{
 use codenomad_client::{Receiver, bounded};
 use rune::{Tx, edit::TextEdit};
 use std::future::Future;
+pub const MAX_BROWSED_SESSIONS: usize = 2_000;
 pub(crate) use visits::Visits;
 
 pub struct Launcher {
@@ -336,6 +337,9 @@ pub fn list(s: &mut State, more: bool) {
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
+    if more && (l.next.is_none() || l.sessions.len() >= MAX_BROWSED_SESSIONS) {
+        return;
+    }
     let cursor = if more { l.next.clone() } else { None };
     l.job("rune.list_error", async move {
         Ok(Reply::Listed(
@@ -369,7 +373,10 @@ pub fn create(s: &mut State, _: &mut Tx) {
     });
 }
 pub fn choose(s: &mut State, id: String, tx: &mut Tx) {
-    if !s.screen.is_launcher() && crate::workspace::active_session(s) == Some(id.as_str()) {
+    if !s.screen.is_launcher()
+        && crate::workspace::active_session(s) == Some(id.as_str())
+        && s.phase != Phase::Failed
+    {
         if s.shell.floating_sessions().is_some() {
             s.shell.close_floating(tx);
         }
@@ -501,6 +508,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 l.creation_uncertain = false;
             }
             if more {
+                let remaining = MAX_BROWSED_SESSIONS.saturating_sub(l.sessions.len());
                 let mut ids = l
                     .sessions
                     .iter()
@@ -509,7 +517,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 l.sessions.extend(
                     rows.rows
                         .into_iter()
-                        .filter(|row| ids.insert(row.id.clone())),
+                        .filter(|row| ids.insert(row.id.clone()))
+                        .take(remaining),
                 );
             } else {
                 let ids = rows
@@ -520,9 +529,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 let complete = rows.next.is_none();
                 let mut missing = Vec::new();
                 for old in l.sessions.drain(..).filter(|row| !ids.contains(&row.id)) {
-                    if !complete || Some(&old.id) == selected.as_ref() {
+                    if Some(&old.id) == selected.as_ref() {
                         rows.rows.push(old);
-                    } else {
+                    } else if complete {
                         missing.push(old.id);
                     }
                 }

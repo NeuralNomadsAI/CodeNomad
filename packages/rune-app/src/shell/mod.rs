@@ -72,6 +72,9 @@ fn connection(s: &State) -> &'static str {
 
 pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     use rune::{Key, Mods};
+    if event.key == Key::Tab && !event.mods.ctrl && !event.mods.cmd && !event.mods.alt {
+        return s.shell.wrap_floating_focus(event.mods.shift, tx);
+    }
     if tx.key_repeat() {
         return false;
     }

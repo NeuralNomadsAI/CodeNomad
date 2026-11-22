@@ -30,7 +30,8 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                 && s.shell.close_floating(tx)
         }
     };
-    let disabled = l.pending || !workspace::input_ready(s) || crate::agent::navigation_blocked(s);
+    let navigation_blocked = !workspace::input_ready(s) || crate::agent::navigation_blocked(s);
+    let disabled = l.pending || navigation_blocked;
     let title = t("sessionList.header.title");
     let visit = |back| {
         let (key, help) = if back {
@@ -41,12 +42,25 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                 "sessionList.history.forwardTitle",
             )
         };
+        let available = !navigation_blocked && launcher::can_visit(s, back);
+        let visit_scope = scope.clone();
         shell::control(if back != rtl { &BACK } else { &FORWARD }, t(key), touch)
             .help(t(help))
-            .disabled(disabled || !launcher::can_visit(s, back))
+            .disabled(!available)
             .on_press(screen::action(scope, move |s| launcher::visit(s, back)))
             .build(kit(layout::dark()))
             .key(key)
+            .on_key(move |s: &mut State, event, tx| {
+                if available && event.key == rune::Key::Enter && event.mods == rune::Mods::default()
+                {
+                    if !tx.key_repeat() && s.current_scope(&visit_scope) {
+                        launcher::visit(s, back);
+                    }
+                    true
+                } else {
+                    false
+                }
+            })
     };
     let mut header = shell::header(
         true,
@@ -129,7 +143,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
         items = items.child(button(
             "more-sessions",
             t("rune.more"),
-            disabled || l.sessions.len() >= 2000,
+            disabled || l.sessions.len() >= launcher::MAX_BROWSED_SESSIONS,
             screen::action(scope, |s| launcher::list(s, true)),
         ));
     }
@@ -143,7 +157,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
         } else {
             "rune.refresh"
         }),
-        disabled,
+        !workspace::input_ready(s),
         screen::action(scope, |s| launcher::list(s, false)),
     ));
     let mut pane = col().full_width().full_height().child(header);

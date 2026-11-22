@@ -128,6 +128,27 @@ impl Panels {
         (self.floating == Some(0)).then_some(self.floating_epoch)
     }
 
+    pub fn wrap_floating_focus(&self, backward: bool, tx: &mut Tx) -> bool {
+        let Some(index) = self.floating else {
+            return false;
+        };
+        let last = if index == 0 {
+            "refresh-sessions"
+        } else {
+            KEYS[1]
+        };
+        let (from, to) = if backward {
+            (KEYS[0], last)
+        } else {
+            (last, KEYS[0])
+        };
+        if tx.focused() == Some(from) {
+            tx.focus(to, true);
+            true
+        } else {
+            false
+        }
+    }
     pub fn leave_project(&mut self) {
         self.floating = None;
         self.resizing = None;
@@ -231,7 +252,11 @@ pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
             ))
         }
     };
-    let mut center = shell::conversation_column().key("conversation");
+    let session = crate::workspace::active_session(s);
+    let mut center = shell::conversation_column().key(match session {
+        Some(id) => format!("conversation-session-{id}"),
+        None => "conversation-draft".into(),
+    });
     if project || !s.chat_title.is_empty() {
         center = center.child(header(s, project, docked, touch));
     } else if let Some(warning) = connection_warning(s) {
@@ -299,11 +324,11 @@ fn header(s: &State, project: bool, docked: [Option<f32>; 2], touch: bool) -> El
 fn connection_warning(s: &State) -> Option<El> {
     match s.phase {
         crate::Phase::Reconnecting => Some(text(connection(s)).role("status")),
-        crate::Phase::Failed => Some(crate::components::button(
+        crate::Phase::Failed => Some(crate::components::button_tx(
             "connection-retry",
             strings::t("sessionList.loadError.retry"),
             false,
-            crate::screen::action(&s.input_scope, crate::retry_connection),
+            crate::screen::action_tx(&s.input_scope, crate::retry_connection),
         )),
         _ => None,
     }

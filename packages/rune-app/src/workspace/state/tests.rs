@@ -74,6 +74,43 @@ fn sidebar_search_and_title_edits_are_kept_only_by_their_origin_tab() {
 }
 
 #[test]
+fn a_press_held_on_send_is_cancelled_when_the_pending_selection_binds() {
+    let mut s = init();
+    crate::gallery::shell::fixture(&mut s);
+    let mut ui = Ui::new();
+    ui.ready = true;
+    let mut saved = workspace("old-session", "Old draft");
+    saved
+        .drafts
+        .insert("new-session".into(), "New draft".into());
+    ui.entries[0].saved = Tab::Workspace(saved);
+    ui.entries[0].binding = Some(backend("old-session"));
+    let (old_commands, old) = bounded(1);
+    s.commands = Some(old_commands);
+    s.draft = TextEdit::new("Old draft");
+    s.workspace = Some(ui);
+    let mut rt = runtime(s);
+    for _ in 0..8 {
+        rt.frame(0.02);
+    }
+    let (x, y) = rt.find("send").unwrap();
+    rt.pointer_down(x, y);
+    rt.frame(0.02);
+    let (new_commands, new) = bounded(1);
+    rt.update(move |s, tx| {
+        s.draft = TextEdit::new(bound(s, &backend("new-session")));
+        s.commands = Some(new_commands);
+        s.renew_scope();
+        tx.instant();
+    });
+    rt.frame(0.02);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    assert!(old.try_recv().is_err() && new.try_recv().is_err());
+    assert_eq!(rt.state.draft.text, "New draft");
+}
+
+#[test]
 fn waiting_saved_session_keeps_its_draft_until_native_binding() {
     let mut s = init();
     let mut ui = Ui::new();

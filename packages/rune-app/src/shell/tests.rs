@@ -225,3 +225,56 @@ fn escape_from_the_search_editor_closes_its_floating_panel() {
                 && element.key.as_deref() == Some("sessions-panel-toggle"))
     );
 }
+
+#[test]
+fn keyboard_focus_wraps_at_the_visible_floating_drawer_edges() {
+    let mut state = init();
+    fixture(&mut state);
+    let mut rt = Runtime::new(state, english, (600.0, 900.0), Env::new(false, 1.0));
+    settle(&mut rt);
+    let focused = |rt: &Runtime<State>, key| {
+        rt.elements()
+            .iter()
+            .any(|e| e.focused && e.key.as_deref() == Some(key))
+    };
+    for (toggle, last) in [
+        ("sessions-panel-toggle", "refresh-sessions"),
+        ("right-panel-toggle", "right-panel-toggle"),
+    ] {
+        if !rt
+            .state
+            .shell
+            .visible(usize::from(toggle == "right-panel-toggle"))
+        {
+            click(&mut rt, toggle);
+        }
+        rt.update(|_, tx| tx.focus("sessions-panel-toggle", true));
+        settle(&mut rt);
+        rt.key(KeyEvent {
+            key: Key::Tab,
+            mods: Mods {
+                shift: true,
+                ..Mods::default()
+            },
+        });
+        settle(&mut rt);
+        assert!(focused(&rt, last));
+        rt.key_up(KeyEvent {
+            key: Key::Tab,
+            mods: Mods {
+                shift: true,
+                ..Mods::default()
+            },
+        });
+        rt.key(KeyEvent {
+            key: Key::Tab,
+            mods: Mods::default(),
+        });
+        settle(&mut rt);
+        assert!(focused(&rt, "sessions-panel-toggle"));
+        rt.key_up(KeyEvent {
+            key: Key::Tab,
+            mods: Mods::default(),
+        });
+    }
+}
