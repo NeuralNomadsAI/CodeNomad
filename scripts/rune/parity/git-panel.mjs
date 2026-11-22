@@ -145,7 +145,7 @@ try {
     }
     await page.close()
   }
-  const script = path.join(out, "interaction.json")
+  const script = path.join(out, "interaction-script.json")
   await writeFile(script, JSON.stringify({ events: [
     { t: 0.2, type: "tap", key: "git-row-staged:file:src/components/git-panel.tsx" },
     { t: 0.4, type: "tap", key: "git-diff-mode" },
@@ -161,8 +161,9 @@ try {
   const nodes = elements(tree)
   assert(nodes.some(node => node.key === "git-section-staged" && !node.states.includes("expanded")))
   assert(nodes.some(node => node.key === "git-diff-mode" && node.states.includes("checked")))
-  const switched = elements(JSON.parse(await readFile(native("git-changes", "dark", "mode-switch", script), "utf8")))
-  assert(switched.some(node => node.role === "button" && node.name?.startsWith("Make Git history")))
+  const switched = JSON.parse(await readFile(native("git-changes", "dark", "mode-switch", script), "utf8"))
+  assert(elements(switched).some(node => node.role === "button" && node.name?.startsWith("Make Git history")))
+  assert(switched.elements.some(node => node.key === "segment2" && node.itemSelected))
   const compact = path.join(out, "compact-interaction.json")
   await writeFile(compact, JSON.stringify({ events: [
     { t: 0.2, type: "tap", key: "git-row-staged:menu:src/components/git-panel.tsx:trigger" },
