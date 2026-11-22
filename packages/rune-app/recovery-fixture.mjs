@@ -6,6 +6,7 @@ import {mkdir,writeFile} from 'node:fs/promises'
 import {randomUUID} from 'node:crypto'
 import path from 'node:path'
 import {FixtureStore} from './fixture-store.mjs'
+import {textStream} from './fixture-response.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requireTestSupport()
@@ -17,7 +18,7 @@ const session='ses_recovery_synthetic'
 const store=new FixtureStore(600)
 const nativeStreams=new Set(),proxyStreams=new Set()
 const stats={pages:0,latestReads:0,prompts:0,transportConnections:0,nativeConnections:0,blockedPages:0,stalePages:0}
-let blockOlder=false,staleOlder=false,liveRow,busy=0,idle=1
+let blockOlder=false,staleOlder=false,liveRow,liveText,busy=0,idle=1
 const record=()=>({id:session,projectID:'global',location:{directory:project},time:{created:1,busy,idle}})
 const emit=(type,data)=>{
   const event={id:randomUUID(),type,created:Date.now(),location:{directory:project},data:{sessionID:session,...data}}
@@ -55,9 +56,9 @@ const native=createServer(async(req,res)=>{
   if(url.pathname===`/api/session/${session}/prompt`){
     assert.equal(req.method,'POST');assert.equal(JSON.parse(raw).text,'Recovery synthetic prompt')
     stats.prompts++;busy=Date.now();store.append('user',JSON.parse(raw).text)
-    liveRow=store.append('assistant','début',false)
+    liveRow=store.append('assistant','',false)
     emit('session.step.started',{assistantMessageID:liveRow.id,agent:'fixture',model:{providerID:'fixture',id:'fixture'}})
-    emit('session.text.delta',{assistantMessageID:liveRow.id,ordinal:0,delta:'début'})
+    liveText=textStream(liveRow,emit);liveText.append('début')
     return json({data:{id:'inbox-recovery'}})
   }
   res.statusCode=404;return json({_tag:'RpcError',type:'rpc.method_not_found',message:'Synthetic method unavailable'})
@@ -83,9 +84,8 @@ try{
       if(action==='stale-older')staleOlder=true
       if(action==='transport-cut'){
         cutTransport()
-        liveRow.content[0].text='début · milieu 🦀 · fin';liveRow.time.completed=Date.now();idle=Date.now()
+        liveText.append(' · milieu 🦀 · fin');liveText.close();liveRow.time.completed=Date.now();idle=Date.now()
         store.append('user','missed question');store.append('assistant','missed answer')
-        emit('session.text.delta',{assistantMessageID:liveRow.id,ordinal:0,delta:' · milieu 🦀 · fin'})
         emit('session.execution.succeeded',{})
       }
       if(action==='replay'){

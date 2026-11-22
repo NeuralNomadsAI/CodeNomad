@@ -5,7 +5,7 @@ import {spawn} from 'node:child_process'
 import {mkdir, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {randomUUID} from 'node:crypto'
-import {responseFor} from './fixture-response.mjs'
+import {responseFor,textStream} from './fixture-response.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {FixtureStore} from './fixture-store.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
@@ -60,8 +60,9 @@ const upstream = createServer(async(req,res)=>{
     const stored=store.append('assistant','',false);stored.id=replyID
     emit('session.step.started',{assistantMessageID:replyID,agent:'fixture',model:{providerID:'fixture',id:'fixture'}})
     json({data:{id:`inbox-synthetic-${currentTurn}`}})
-    for(const character of response){stored.content[0].text+=character;emit('session.text.delta',{assistantMessageID:replyID,ordinal:0,delta:character});await new Promise(r=>setTimeout(r,10))}
-    stored.time.completed=Date.now()
+    const text=textStream(stored,emit)
+    for(const character of response){text.append(character);await new Promise(r=>setTimeout(r,15))}
+    text.close();stored.time.completed=Date.now()
     emit('session.execution.succeeded',{});return
   }
   res.statusCode=404;json({_tag:'RpcError',type:'rpc.method_not_found',message:'Synthetic fixture: unsupported'})

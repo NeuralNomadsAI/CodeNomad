@@ -38,9 +38,25 @@ fn opens_ten_thousand_rows_with_bounded_mounts_and_scrolls() {
     let (out, incoming) = bounded(64);
     rt.state.incoming = Some(incoming);
     rt.poll = Some(poll);
-    out.send_blocking(Event::Delta(
-        "synthetic-9999".into(),
-        "\nstreamed while reading".into(),
+    out.send_blocking(Event::Message(Message {
+        id: "streaming-reading".into(),
+        role: "assistant".into(),
+        body: String::new(),
+        parts: vec![],
+        completed: false,
+    }))
+    .unwrap();
+    out.send_blocking(Event::Text(
+        "streaming-reading".into(),
+        content::TextEvent::Start { ordinal: Some(0) },
+    ))
+    .unwrap();
+    out.send_blocking(Event::Text(
+        "streaming-reading".into(),
+        content::TextEvent::Delta {
+            ordinal: Some(0),
+            text: "\nstreamed while reading".into(),
+        },
     ))
     .unwrap();
     rt.frame(1.0 / 60.0);
@@ -59,6 +75,7 @@ fn opens_ten_thousand_rows_with_bounded_mounts_and_scrolls() {
 fn long_realistic_paragraph_occupies_multiple_lines_in_the_transcript() {
     let mut state = init();
     state.messages = vec![Message {
+        completed: true,
         parts: vec![],
         id: "long-paragraph".into(),
         role: "assistant".into(),
@@ -99,14 +116,26 @@ fn multiline_input_submits_once_and_stream_preserves_unicode() {
     rt.state.incoming = Some(incoming);
     rt.poll = Some(poll);
     out.send_blocking(Event::Message(Message {
+        completed: false,
         parts: vec![],
         id: "live".into(),
         role: "assistant".into(),
         body: "".into(),
     }))
     .unwrap();
-    out.send_blocking(Event::Delta("live".into(), "été 🦀".into()))
-        .unwrap();
+    out.send_blocking(Event::Text(
+        "live".into(),
+        content::TextEvent::Start { ordinal: Some(0) },
+    ))
+    .unwrap();
+    out.send_blocking(Event::Text(
+        "live".into(),
+        content::TextEvent::Delta {
+            ordinal: Some(0),
+            text: "été 🦀".into(),
+        },
+    ))
+    .unwrap();
     out.send_blocking(Event::Done).unwrap();
     rt.frame(1.0 / 60.0);
     assert_eq!(rt.state.messages.last().unwrap().body, "été 🦀");
@@ -134,8 +163,16 @@ fn consecutive_sends_keep_distinct_responses_and_reenable_send() {
                 json!({"assistantMessageID":format!("reply-{turn}")}),
             ),
             (
+                "session.text.started",
+                json!({"assistantMessageID":format!("reply-{turn}"),"ordinal":0}),
+            ),
+            (
                 "session.text.delta",
-                json!({"assistantMessageID":format!("reply-{turn}"),"delta":format!("Réponse {turn} 🦀")}),
+                json!({"assistantMessageID":format!("reply-{turn}"),"ordinal":0,"delta":format!("Réponse {turn} 🦀")}),
+            ),
+            (
+                "session.text.ended",
+                json!({"assistantMessageID":format!("reply-{turn}"),"ordinal":0,"text":format!("Réponse {turn} 🦀")}),
             ),
             ("session.execution.succeeded", json!({})),
         ] {
@@ -194,7 +231,7 @@ fn selects_code_and_routes_copy_to_memory_clipboard() {
 fn v2_events_are_scoped_to_workspace_and_session() {
     let mut v = json!({"type":"instance.event","instanceId":"w","event":{"type":"session.text.delta", "data":{"sessionID":"s","assistantMessageID":"m","ordinal":0,"delta":"🦀"}}});
     assert!(
-        matches!(transport::decode_event(&v,"w","s"), Some(Event::Delta(id, text)) if id=="m" && text=="🦀")
+        matches!(transport::decode_event(&v,"w","s"), Some(Event::Text(id, content::TextEvent::Delta {ordinal:Some(0),text})) if id=="m" && text=="🦀")
     );
     assert!(transport::decode_event(&v, "other", "s").is_none());
     assert!(transport::decode_event(&v, "w", "other").is_none());

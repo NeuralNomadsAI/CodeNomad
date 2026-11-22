@@ -1,6 +1,8 @@
 //! Background-only exercise of the real Rune widgets and opening actions.
 use crate::{Phase, State, init, launcher, poll, view};
 use rune::{Env, Runtime, edit::TextEdit};
+use serde_json::json;
+use std::io::Write;
 use std::time::{Duration, Instant};
 fn wait(rt: &mut Runtime<State>, label: &str, predicate: impl Fn(&State) -> bool) {
     let until = Instant::now() + Duration::from_secs(20);
@@ -109,7 +111,9 @@ pub fn run() {
     assert!(rt.state.messages.is_empty());
     let mut fragments = 0;
     let mut tool_running = false;
+    let with_tools = std::env::var_os("RUNE_TEST_TOOLS").is_some();
     for turn in 1..=2 {
+        let mut visible = false;
         rt.state.draft = TextEdit::new(format!("Functional turn {turn} · été 日本語 🦀"));
         rt.frame(1.0 / 60.0);
         tap(&mut rt, "send");
@@ -117,6 +121,51 @@ pub fn run() {
         while rt.state.phase != Phase::Ready {
             assert!(Instant::now() < until, "send {turn}");
             rt.frame(1.0 / 60.0);
+            let id = format!("reply-ses_created_1-{turn}");
+            let key = if with_tools {
+                format!("part-{id}-2")
+            } else {
+                format!("body-{id}")
+            };
+            let prefix = format!("session-stack/history/rows/{id}/");
+            let row = rt.state.messages.iter().find(|m| m.id == id);
+            let after_tool = row.is_some_and(|m| {
+                m.parts
+                    .iter()
+                    .any(|p| matches!(p,crate::content::Part::Tool(t) if t.status=="completed"))
+            });
+            if !visible
+                && rt.state.phase == Phase::Streaming
+                && row.is_some_and(|m| m.role == "assistant" && !m.completed)
+                && (!with_tools || after_tool)
+            {
+                let matches: Vec<_> = rt
+                    .elements()
+                    .into_iter()
+                    .filter(|e| {
+                        e.path.starts_with(&prefix)
+                            && e.key.as_deref() == Some(key.as_str())
+                            && e.text.as_deref().is_some_and(|t| t.starts_with("fn main"))
+                            && !e.exiting
+                            && e.opacity > 0.99
+                            && e.visible[2] >= 50.0
+                            && e.visible[3] >= 14.0
+                            && e.visible[0] <= e.rect[0] + 0.5
+                            && e.visible[1] <= e.rect[1] + 0.5
+                    })
+                    .collect();
+                if let [element] = matches.as_slice() {
+                    assert_eq!(rt.state.messages.iter().filter(|m| m.id == id).count(), 1);
+                    println!(
+                        "{}",
+                        json!({"type":"launcher-stream-visible","turn":turn,"assistantMessageID":id,
+                        "afterTool":after_tool,"phase":"Streaming","path":element.path,"key":element.key,
+                        "rect":element.rect,"visible":element.visible,"prefix":"fn main"})
+                    );
+                    std::io::stdout().flush().unwrap();
+                    visible = true;
+                }
+            }
             tool_running |= rt
                 .state
                 .messages
@@ -134,6 +183,11 @@ pub fn run() {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert_eq!(rt.state.messages.len(), turn * 2);
+        assert!(
+            visible,
+            "new assistant code must reach its clipped ElementInfo before completion"
+        );
+        assert!(rt.state.messages.last().unwrap().parts.iter().all(|p|!matches!(p,crate::content::Part::Text(t) if t.provenance!=crate::content::TextProvenance::Closed)),"native text endings must close every fragment");
         assert!(
             rt.state
                 .messages

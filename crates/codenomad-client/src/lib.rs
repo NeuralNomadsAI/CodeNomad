@@ -25,10 +25,13 @@ pub type Wake = std::sync::Arc<dyn Fn() + Send + Sync>;
 pub struct Message {
     pub id: String,
     pub role: String,
+    pub completed: bool,
     pub body: String,
     pub parts: Vec<content::Part>,
 }
 
+#[cfg(test)]
+mod fragment_tests;
 #[cfg(test)]
 mod history_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]

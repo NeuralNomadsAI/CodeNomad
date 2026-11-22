@@ -89,11 +89,15 @@ pub fn contract() {
                 assert_eq!(messages.last().unwrap().body, CODE);
                 commands.send(Command::Send(prompts[0].into())).unwrap();
             }
-            Event::Delta(id, delta) => {
+            Event::Text(id, crate::content::TextEvent::Delta { text: delta, .. }) => {
                 assert_eq!(id, active);
                 chunks += 1;
                 body.push_str(&delta);
             }
+            Event::Text(
+                _,
+                crate::content::TextEvent::Start { .. } | crate::content::TextEvent::End { .. },
+            ) => {}
             Event::Done => {
                 let expected = format!(
                     "fn main() {{\n    println!({});\n}}",

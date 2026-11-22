@@ -1,6 +1,7 @@
 // Native contract fixture only: no model, shell, file tool or user project is executed.
 import assert from 'node:assert/strict'
 import {randomUUID} from 'node:crypto'
+import {textStream} from './fixture-response.mjs'
 export function controlsFixture({records,stores,streams,project,stats}) {
   const session='ses_existing'
   const permissions=['once','always','reject'].map(decision=>({id:`per_${decision}`,sessionID:session,action:'read',resources:['synthetic.rs'],message:'Synthetic permission'}))
@@ -12,7 +13,7 @@ export function controlsFixture({records,stores,streams,project,stats}) {
   const formDetails=new Map(forms.map(f=>[f.id,{...f,state:{status:'pending'}}]))
   const models=[{id:'fixture-model',providerID:'fixture',name:'Synthetic model',enabled:true,variants:[{id:'fast'}],headers:{Authorization:'fixture-never-render-this'}},
     {id:'disabled',providerID:'fixture',name:'Disabled',enabled:false}]
-  let failed=false,slow=false,timer
+  let failed=false,slow=false,timer,liveText
   const emit=(type,data)=>{for(const stream of streams)stream.write(`data: ${JSON.stringify({id:randomUUID(),type,created:Date.now(),location:{directory:project},data})}\n\n`)}
   return {
     async route(req,url,raw,json,res){
@@ -25,10 +26,11 @@ export function controlsFixture({records,stores,streams,project,stats}) {
         store.append('user',body.text);const reply=store.append('assistant','',false)
         record.time.busy=Date.now();stats.prompts++;slow=true
         emit('session.step.started',{sessionID:id,assistantMessageID:reply.id,agent:'fixture',model:{id:'fixture-model',providerID:'fixture'}})
+        liveText=textStream(reply,(type,data)=>emit(type,{sessionID:id,...data}))
         json({data:{id:'inbox-controls'}})
         const form={id:'form_live',sessionID:id,title:'Live question',fields:[{key:'value',type:'string'}]};forms.push(form)
         for(let i=0;i<20;i++)emit('form.created',{form})
-        timer=setInterval(()=>{reply.content[0].text+='fragment ';emit('session.text.delta',{sessionID:id,assistantMessageID:reply.id,delta:'fragment '})},80)
+        timer=setInterval(()=>liveText.append('fragment '),80)
         return true
       }
       if(action==='permission'&&req.method==='GET'){json({data:id===session?permissions:[]});return true}
@@ -60,7 +62,7 @@ export function controlsFixture({records,stores,streams,project,stats}) {
         forms.splice(index,1);emit(req.method==='DELETE'?'form.cancelled':'form.replied',{sessionID:id,id:request});json({data:{}});return true
       }
       if(action==='interrupt'){assert.deepEqual(JSON.parse(raw),{resume:false});records.get(id).time.idle=Date.now()+1;stats.interrupt=(stats.interrupt??0)+1;
-        clearInterval(timer);slow=false;emit('session.execution.interrupted',{sessionID:id});json({data:{interrupted:true}});return true}
+        clearInterval(timer);liveText.close();slow=false;emit('session.execution.interrupted',{sessionID:id});json({data:{interrupted:true}});return true}
       if(action==='fixture-slow'){slow=true;json({data:{}});return true}
       return false
     },

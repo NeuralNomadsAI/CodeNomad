@@ -2,8 +2,9 @@
 import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {spawn} from 'node:child_process'
+import {randomUUID} from 'node:crypto'
 import path from 'node:path'
-import {responseFor} from './fixture-response.mjs'
+import {responseFor,textStream} from './fixture-response.mjs'
 import {FixtureStore} from './fixture-store.mjs'
 import {requireTestSupport,clientBinary} from './fixture-binaries.mjs'
 requireTestSupport()
@@ -37,18 +38,18 @@ const server = createServer(async (req, res) => {
     store.append('user',JSON.parse(raw).text)
     const stored=store.append('assistant','',false);stored.id=messageID
     const emit = (type, data) => {
-      const event = {type:'instance.event', instanceId:workspace, event:{id:`event-${count}-${Date.now()}`,type,
+      const event = {type:'instance.event', instanceId:workspace, event:{id:randomUUID(),type,
         created:Date.now(),location:{directory:'synthetic'}, data:{sessionID:session,...data}}}
       for (const stream of streams) stream.write(`data: ${JSON.stringify(event)}\n\n`)
     }
     emit('session.step.started', {assistantMessageID:messageID,agent:'fixture',model:{providerID:'fixture',id:'fixture'}})
     res.end(JSON.stringify({data:{id:`inbox-fixture-${count}`}}))
+    const text=textStream(stored,emit)
     for (const character of responseFor(count,JSON.parse(raw).text)) {
-      stored.content[0].text+=character
-      emit('session.text.delta', {assistantMessageID:messageID,ordinal:0,delta:character})
+      text.append(character)
       await new Promise(r => setTimeout(r, 10))
     }
-    stored.time.completed=Date.now()
+    text.close();stored.time.completed=Date.now()
     emit('session.execution.succeeded', {})
     return
   }

@@ -8,7 +8,7 @@ import {createHash,randomUUID} from 'node:crypto'
 import {chromium,request} from 'playwright'
 import path from 'node:path'
 import {FixtureStore} from './fixture-store.mjs'
-import {responseFor} from './fixture-response.mjs'
+import {responseFor,textStream} from './fixture-response.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {controlsFixture} from './controls-fixture.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
@@ -27,6 +27,27 @@ const stats={created:0,prompts:0,lists:0}
 const uncertain=process.argv.includes('--uncertain-create')
 const withTools=process.argv.includes('--with-tools')
 const controls=process.argv.includes('--controls')
+const gates=new Map(),visibleProof=[]
+let clientLog='',clientLines=''
+function visibleGate(turn,replyID) {
+  return new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>{gates.delete(turn);reject(Error(`Missing visible streaming ACK for turn ${turn}`))},10000)
+    gates.set(turn,{replyID,resolve:()=>{clearTimeout(timer);gates.delete(turn);resolve()},reject:()=>{clearTimeout(timer);gates.delete(turn);reject(Error('Launcher probe ended before visible streaming ACK'))}})
+  })
+}
+function clientOutput(chunk) {
+  clientLog=(clientLog+chunk).slice(-262144);process.stdout.write(chunk)
+  clientLines+=chunk
+  if(clientLines.length>65536){for(const gate of gates.values())gate.reject();clientLines='';return}
+  for(let at;(at=clientLines.indexOf('\n'))>=0;){
+    const line=clientLines.slice(0,at);clientLines=clientLines.slice(at+1)
+    let ack;try{ack=JSON.parse(line)}catch{continue}
+    if(ack.type!=='launcher-stream-visible')continue
+    const gate=gates.get(ack.turn)
+    if(!gate||ack.assistantMessageID!==gate.replyID||ack.phase!=='Streaming'||ack.afterTool!==withTools){for(const item of gates.values())item.reject();continue}
+    visibleProof.push(ack);gate.resolve()
+  }
+}
 function add(id,title) {
   const row={id,title,projectID:'global',location:{directory:project},permissions:[{action:'*',resource:'*',effect:'deny'}],time:{created:1,busy:0,idle:1}}
   records.set(id,row);stores.set(id,new FixtureStore(0));return row
@@ -92,19 +113,28 @@ const upstream=createServer(async(req,res)=>{
         json({data:{id:`inbox-${turn}`}})
         let tool
         if(withTools){
+          const preface=textStream(reply,emit);preface.append(`Preparing turn ${turn}`);preface.close()
           tool={type:'tool',id:`tool-${turn}`,name:'read',state:{status:'streaming'}};reply.content.push(tool)
           emit('session.tool.input.started',{assistantMessageID:reply.id,id:tool.id,name:'read'});await new Promise(r=>setTimeout(r,350))
           tool.state={status:'running',input:{file:'synthetic.rs'}}
           emit('session.tool.called',{assistantMessageID:reply.id,id:tool.id,input:tool.state.input,executed:true});await new Promise(r=>setTimeout(r,350))
+          tool.state={...tool.state,status:'completed',content:[{type:'text',text:`Synthetic output ${turn}`}]}
+          emit('session.tool.success',{assistantMessageID:reply.id,id:tool.id,content:tool.state.content,executed:true})
         }
         const characters=Array.from(responseFor(turn,body.text)),size=withTools?3:1
-        for(let i=0;i<characters.length;i+=size){const c=characters.slice(i,i+size).join('');reply.content[0].text+=c;emit('session.text.delta',{assistantMessageID:reply.id,ordinal:0,delta:c});await new Promise(r=>setTimeout(r,withTools?150:8))}
-        if(tool){tool.state={...tool.state,status:'completed',content:[{type:'text',text:`Synthetic output ${turn}`}]} ;emit('session.tool.success',{assistantMessageID:reply.id,id:tool.id,content:tool.state.content,executed:true})}
+        const text=textStream(reply,emit,withTools?1:0)
+        for(let i=0;i<characters.length;i+=size){
+          const gate=i<7&&i+size>=7?visibleGate(turn,reply.id):null
+          text.append(characters.slice(i,i+size).join(''))
+          if(gate)await gate
+          await new Promise(r=>setTimeout(r,15))
+        }
+        text.close()
         reply.time.completed=Date.now();record.time.idle=Date.now();emit('session.execution.succeeded',{});return
       }
     }
     res.statusCode=404;json({_tag:'RpcError',type:'rpc.method_not_found',message:'Unsupported fixture route'})
-  }catch(error){console.error(error);res.statusCode=500;res.end('{}')}
+  }catch(error){console.error(error);if(!res.writableEnded){res.statusCode=500;res.end('{}')}}
 })
 await new Promise(r=>upstream.listen(0,'127.0.0.1',r))
 const env=await privateEnvironment(profile)
@@ -128,20 +158,27 @@ try{
     staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,serverBinary,ui}
     client=spawn(process.execPath,[path.join(root,'scripts/rune/web-smoke.mjs'),'--url',`${origin}/`,'--connected','--workspace',workspace,'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',chromium.executablePath()],{cwd:root,env,windowsHide:true,stdio:['ignore','pipe','pipe']})
     for(const stream of [client.stdout,client.stderr])stream.on('data',d=>{if(diagnostic.length<262144)diagnostic+=d})
-  }else client=spawn(clientBinary,[controls?'--probe-controls':'--probe-launcher'],{cwd:profile,windowsHide:true,stdio:'inherit',env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{})}})
+  }else {
+    client=spawn(clientBinary,[controls?'--probe-controls':'--probe-launcher'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{})}})
+    client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
+    client.on('close',()=>{for(const gate of gates.values())gate.reject()})
+  }
   const timer=setTimeout(()=>client.kill(),web?300000:120000)
   result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})
   clearTimeout(timer)
   assert.equal(result,0);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,0);assert(stats.lists>=12)}else if(controls){control.done()}else{assert.equal(stats.created,1);assert.equal(stats.prompts,2)}
+  if(!web&&!controls)assert.deepEqual(visibleProof.map(p=>p.turn),[1,2],'Both distinct assistant turns must be visible before their endings')
   if(gitCount)assert.equal(requests.filter(r=>r==='GET /api/worktree').length,0,'root mutations must not enumerate sibling worktrees')
   console.log(JSON.stringify({fixture:'launcher',uncertain,withTools,...stats,profile}))
 }finally{
   control?.close()
+  for(const gate of gates.values())gate.reject()
   await http?.dispose()
   if(client?.exitCode===null)client.kill();server.stdin.end(web?'shutdown\n':undefined)
   await Promise.race([exited,new Promise(r=>setTimeout(r,3000))]);if(server.exitCode===null){server.kill();await Promise.race([exited,new Promise(r=>setTimeout(r,5000))])}
   for(const stream of streams)stream.destroy();upstream.closeAllConnections();upstream.close()
-  await writeFile(path.join(profile,'proof.json'),JSON.stringify({result,stats,requests,static:staticProof,profile,project,forbidden,serverExitCode:server.exitCode},null,2));await writeFile(path.join(profile,'rust.log'),log)
+  await writeFile(path.join(profile,'proof.json'),JSON.stringify({result,stats,visibleProof,requests,static:staticProof,profile,project,forbidden,serverExitCode:server.exitCode},null,2));await writeFile(path.join(profile,'rust.log'),log)
+  if(!web)await writeFile(path.join(profile,'client.log'),clientLog)
   if(web)await writeFile(path.join(profile,'browser-run.log'),diagnostic)
   if(web)assert.equal(server.exitCode,0,'Owned Rust server must exit cleanly')
 }

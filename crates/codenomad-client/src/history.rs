@@ -26,31 +26,18 @@ pub fn decode_message(v: &Value) -> Result<Message> {
         .filter(|id| valid_id(id))
         .ok_or("invalid message id")?;
     let role = v["type"].as_str().ok_or("missing message type")?;
+    let parts = crate::content::decode(v)?;
     let body = if role == "user" {
         v["text"].as_str().unwrap_or_default().into()
     } else {
-        v["content"]
-            .as_array()
-            .map(|parts| {
-                parts
-                    .iter()
-                    .filter_map(|p| {
-                        if p["type"] == "text" {
-                            p["text"].as_str()
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .unwrap_or_default()
+        crate::content::text_body(&parts)
     };
     Ok(Message {
         id: id.into(),
         role: role.into(),
+        completed: !v["time"]["completed"].is_null(),
         body,
-        parts: crate::content::decode(v)?,
+        parts,
     })
 }
 fn cursor(v: &Value, kind: &str) -> Result<Option<Value>> {

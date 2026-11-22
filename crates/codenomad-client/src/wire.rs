@@ -20,15 +20,33 @@ pub fn decode_native(e: &Value) -> Option<Event> {
                 .filter(|id| crate::history::valid_id(id))?
                 .into(),
             role: "assistant".into(),
+            completed: false,
             body: String::new(),
             parts: vec![],
         })),
-        "session.text.delta" => Some(Event::Delta(
+        "session.text.started" | "session.text.delta" | "session.text.ended" => Some(Event::Text(
             data["assistantMessageID"]
                 .as_str()
                 .filter(|id| crate::history::valid_id(id))?
                 .into(),
-            data["delta"].as_str()?.into(),
+            {
+                let ordinal = if data["ordinal"].is_null() {
+                    None
+                } else {
+                    Some(data["ordinal"].as_u64().filter(|o| *o < 1000)? as usize)
+                };
+                match e["type"].as_str()? {
+                    "session.text.started" => crate::content::TextEvent::Start { ordinal },
+                    "session.text.delta" => crate::content::TextEvent::Delta {
+                        ordinal,
+                        text: data["delta"].as_str()?.into(),
+                    },
+                    _ => crate::content::TextEvent::End {
+                        ordinal,
+                        text: data["text"].as_str()?.into(),
+                    },
+                }
+            },
         )),
         "session.execution.succeeded" | "session.execution.interrupted" => Some(Event::Done),
         "session.execution.failed" | "session.deleted" | "session.revert.committed" => {

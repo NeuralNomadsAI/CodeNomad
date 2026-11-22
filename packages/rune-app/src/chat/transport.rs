@@ -11,6 +11,7 @@ use std::time::Duration;
 pub fn synthetic() -> Vec<Message> {
     (0..10_000)
         .map(|i| Message {
+            completed: true,
             parts: vec![],
             id: format!("synthetic-{i}"),
             role: if i % 2 == 0 { "user" } else { "assistant" }.into(),
@@ -57,6 +58,7 @@ async fn run_synthetic(out: Sender<Event>, input: Receiver<Command>, wake: rune:
             &out,
             &wake,
             Event::Message(Message {
+                completed: false,
                 parts: vec![],
                 id: id.clone(),
                 role: "assistant".into(),
@@ -64,18 +66,45 @@ async fn run_synthetic(out: Sender<Event>, input: Receiver<Command>, wake: rune:
             }),
         )
         .await;
+        publish(
+            &out,
+            &wake,
+            Event::Text(
+                id.clone(),
+                crate::content::TextEvent::Start { ordinal: Some(0) },
+            ),
+        )
+        .await;
         for chunk in CODE.chars().collect::<Vec<_>>().chunks(3) {
             crate::platform::sleep(Duration::from_millis(35)).await;
             if !publish(
                 &out,
                 &wake,
-                Event::Delta(id.clone(), chunk.iter().collect()),
+                Event::Text(
+                    id.clone(),
+                    crate::content::TextEvent::Delta {
+                        ordinal: Some(0),
+                        text: chunk.iter().collect(),
+                    },
+                ),
             )
             .await
             {
                 return;
             }
         }
+        publish(
+            &out,
+            &wake,
+            Event::Text(
+                id,
+                crate::content::TextEvent::End {
+                    ordinal: Some(0),
+                    text: CODE.into(),
+                },
+            ),
+        )
+        .await;
         publish(&out, &wake, Event::Done).await;
     }
 }

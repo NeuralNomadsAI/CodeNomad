@@ -5,6 +5,7 @@ use crate::{
 };
 use crate::{
     backend::Backend,
+    content::{self, Part, TextFit, TextProvenance},
     history, stream,
     transport::{Command, Event, publish},
 };
@@ -66,7 +67,9 @@ pub async fn run(
     let mut first: Option<String> = None;
     let mut older: Option<Value> = None;
     let mut known = HashSet::<String>::new();
-    let mut seeded = HashSet::<String>::new();
+    let mut owed = HashSet::<(String, usize)>::new();
+    let mut repairs = 0u8;
+    let mut settlement_reads = 0u8;
     let mut resident = Vec::<crate::Message>::new();
     let mut parked = false;
     let mut seen = Seen {
@@ -82,6 +85,8 @@ pub async fn run(
         if retry.is_some_and(|at| Instant::now() >= at) {
             retry = None;
             epoch += 1;
+            repairs = 0;
+            settlement_reads = 0;
             wire = Arc::new(stream::State::default());
             stream::start(backend.clone(), epoch, tx.clone(), wire.clone());
         }
@@ -136,13 +141,12 @@ pub async fn run(
                 {
                     let stamp = wire.version.load(SeqCst);
                     match backend.page(target).await {
-                        Ok(page) if wire.valid(stamp) => {
+                        Ok(page) if wire.valid(stamp) && rx.is_empty() => {
                             if let Ok(joined) = history::join(&page.rows, &resident) {
                                 resident = joined;
                                 older = page.older.clone();
                                 first = resident.first().map(|r| r.id.clone());
-                                seeded.extend(page.rows.iter().map(|r| r.id.clone()));
-                                known.extend(seeded.iter().cloned());
+                                known.extend(page.rows.iter().map(|r| r.id.clone()));
                                 publish(&out, &wake, Event::Older(page)).await;
                             } else {
                                 publish(&out, &wake, Event::PagingFailed).await;
@@ -164,6 +168,8 @@ pub async fn run(
             Some(Input::Command(Command::Send(body))) => {
                 if opened && !dirty && !parked && wire.upstream.load(SeqCst) {
                     busy = true;
+                    repairs = 0;
+                    settlement_reads = 0;
                     if backend.send(body).await.is_err() {
                         eprintln!("Rune prompt delivery failed");
                         publish(&out, &wake, Event::Failed).await;
@@ -188,6 +194,20 @@ pub async fn run(
                     .unwrap_or_default();
                 match kind {
                     "session.step.started" => {
+                        if let Some(prior) = resident.iter().find(|row| row.id == id) {
+                            if !can_restart(prior) {
+                                if !dirty && repairs < 3 {
+                                    repairs += 1;
+                                    dirty = true;
+                                    quiet = Instant::now() + Duration::from_millis(100);
+                                }
+                                continue;
+                            }
+                        }
+                        if !busy {
+                            repairs = 0;
+                            settlement_reads = 0;
+                        }
                         busy = true;
                         if let Some(Event::Message(row)) = crate::wire::decode_native(&native) {
                             if known.insert(row.id.clone()) {
@@ -199,19 +219,46 @@ pub async fn run(
                             }
                         }
                     }
-                    "session.text.delta" => {
-                        if !known.contains(id) || seeded.contains(id) {
+                    "session.text.started" | "session.text.delta" | "session.text.ended" => {
+                        let Some(Event::Text(_, event)) = crate::wire::decode_native(&native)
+                        else {
+                            continue;
+                        };
+                        let row = resident.iter_mut().find(|r| r.id == id);
+                        let ordinal = event.ordinal().or_else(|| {
+                            row.as_ref().and_then(|r| {
+                                r.parts
+                                    .iter()
+                                    .filter(|p| matches!(p, Part::Text(_)))
+                                    .count()
+                                    .checked_sub(1)
+                            })
+                        });
+                        let fit = match row {
+                            Some(row) => content::apply_text(row, &event)?,
+                            None => TextFit::Repair,
+                        };
+                        if event.is_end() && fit == TextFit::Applied {
+                            if let Some(ordinal) = ordinal {
+                                owed.remove(&(id.into(), ordinal));
+                            }
+                        }
+                        if matches!(fit, TextFit::Repair | TextFit::Settlement) {
+                            if let Some(ordinal) = ordinal {
+                                if owed.len() >= 4096 && !owed.contains(&(id.into(), ordinal)) {
+                                    return Err("text repair target limit reached".into());
+                                }
+                                owed.insert((id.into(), ordinal));
+                            }
+                        }
+                        if fit == TextFit::Repair && !dirty && repairs < 3 {
+                            repairs += 1;
                             dirty = true;
                             quiet = Instant::now() + Duration::from_millis(100);
-                        } else if let Some(delta) = native["data"]["delta"].as_str() {
-                            if let Some(row) = resident.iter_mut().find(|r| r.id == id) {
-                                if row.body.len() + delta.len() > 256 * 1024 {
-                                    return Err("live text budget reached".into());
-                                }
-                                row.body.push_str(delta);
-                            }
+                        }
+                        if matches!(fit, TextFit::Applied | TextFit::Settlement) {
                             history::check(&resident)?;
-                            publish(&out, &wake, Event::Delta(id.into(), delta.into())).await;
+                            publish(&out, &wake, Event::Text(id.into(), event)).await;
                         }
                     }
                     kind if kind.starts_with("session.tool.") => {
@@ -229,10 +276,7 @@ pub async fn run(
                         publish(&out, &wake, Event::Failed).await;
                         return Err("session scope or history changed".into());
                     }
-                    "server.connected"
-                    | "session.inbox.enqueued"
-                    | "session.inbox.delivered"
-                    | "session.text.ended" => {
+                    "server.connected" | "session.inbox.enqueued" | "session.inbox.delivered" => {
                         dirty = true;
                         quiet = Instant::now() + Duration::from_millis(100);
                     }
@@ -241,7 +285,13 @@ pub async fn run(
             }
             _ => {}
         }
-        if dirty && !parked && opened && wire.upstream.load(SeqCst) && Instant::now() >= quiet {
+        if dirty
+            && !parked
+            && opened
+            && wire.upstream.load(SeqCst)
+            && Instant::now() >= quiet
+            && rx.is_empty()
+        {
             let stamp = wire.version.load(SeqCst);
             let snapshot = if initial && backend.fresh_mode {
                 backend.empty().await
@@ -251,17 +301,42 @@ pub async fn run(
                 backend.restore(first.as_deref()).await
             };
             match snapshot {
-                Ok(page) if wire.valid(stamp) => {
+                Ok(mut page) if wire.valid(stamp) && rx.is_empty() => {
+                    content::merge_page(&resident, &mut page.rows)?;
+                    owed.retain(|(id, ordinal)| {
+                        !page
+                            .rows
+                            .iter()
+                            .find(|r| &r.id == id)
+                            .and_then(|r| {
+                                r.parts
+                                    .iter()
+                                    .filter_map(|p| match p {
+                                        Part::Text(t) => Some(t),
+                                        _ => None,
+                                    })
+                                    .nth(*ordinal)
+                            })
+                            .is_some_and(|t| t.provenance == TextProvenance::Closed)
+                    });
                     fence = stamp;
                     attempts = 0;
                     dirty = false;
                     initial = false;
                     first = page.rows.first().map(|r| r.id.clone());
                     older = page.older.clone();
-                    seeded = page.rows.iter().map(|r| r.id.clone()).collect();
-                    known = seeded.clone();
+                    known = page.rows.iter().map(|r| r.id.clone()).collect();
                     resident = page.rows.clone();
                     let done = (terminal || busy) && !page.running;
+                    if done && !owed.is_empty() {
+                        settlement_reads += 1;
+                        if settlement_reads > 3 {
+                            return Err("text settlement remains unconfirmed".into());
+                        }
+                        dirty = true;
+                        quiet = Instant::now() + Duration::from_millis(100);
+                        continue;
+                    }
                     busy = page.running;
                     terminal = false;
                     if !publish(&out, &wake, Event::Sync(page)).await {
@@ -274,13 +349,90 @@ pub async fn run(
                 Ok(_) => {
                     quiet = Instant::now() + Duration::from_millis(200);
                 }
-                Err(_) => {
-                    eprintln!("Rune history refresh failed");
+                Err(error) => {
+                    eprintln!("Rune history refresh failed: {}", read_diagnostic(&error));
                     dirty = false;
                     parked = true;
                     publish(&out, &wake, Event::Failed).await;
                 }
             }
         }
+    }
+}
+fn can_restart(row: &crate::Message) -> bool {
+    !row.completed && row.body.is_empty() && row.parts.iter().all(|part|
+        matches!(part,Part::Text(text) if text.text.is_empty() && text.provenance==TextProvenance::Live))
+}
+fn read_diagnostic(error: &history::Error) -> String {
+    if let Some(http) = error.downcast_ref::<reqwest::Error>() {
+        return format!(
+            "http status={:?} timeout={} decode={}",
+            http.status().map(|s| s.as_u16()),
+            http.is_timeout(),
+            http.is_decode()
+        );
+    }
+    if let Some(json) = error.downcast_ref::<serde_json::Error>() {
+        return format!(
+            "json {:?} at {}:{}",
+            json.classify(),
+            json.line(),
+            json.column()
+        );
+    }
+    match error.to_string().as_str() {
+        "history unavailable or anchor changed" => "window unavailable or anchor changed",
+        "resident anchor missing" => "resident anchor missing",
+        "invalid history cursor" => "invalid history cursor",
+        "history cursor did not advance" => "history cursor did not advance",
+        "history page did not advance" => "history page did not advance",
+        "history windows lost their overlap" => "history windows lost their overlap",
+        "recovery page budget reached" => "recovery page budget reached",
+        "invalid history window" => "invalid history window",
+        "inconsistent latest marker" => "inconsistent latest marker",
+        "resident history limit reached" => "resident history limit reached",
+        "oversized response" => "oversized response",
+        _ => "contract validation",
+    }
+    .into()
+}
+#[cfg(test)]
+mod diagnostic_tests {
+    #[test]
+    fn a_replayed_start_cannot_restart_a_row_that_already_produced_output() {
+        use crate::{
+            content::{Part, Text, TextProvenance},
+            history,
+        };
+        use serde_json::json;
+        let mut row =
+            history::decode_message(&json!({"id":"assistant","type":"assistant","content":[]}))
+                .unwrap();
+        assert!(super::can_restart(&row));
+        row.parts.push(Part::Text(Text {
+            text: String::new(),
+            provenance: TextProvenance::Live,
+        }));
+        assert!(super::can_restart(&row));
+        row.completed = true;
+        assert!(!super::can_restart(&row));
+        row.completed = false;
+        row.parts[0] = Part::Text(Text {
+            text: "already painted".into(),
+            provenance: TextProvenance::Live,
+        });
+        assert!(!super::can_restart(&row));
+        let tool = history::decode_message(&json!({"id":"assistant","type":"assistant","content":[
+            {"type":"tool","id":"read","name":"read","state":{"status":"running"}}
+        ]}))
+        .unwrap();
+        assert!(!super::can_restart(&tool));
+    }
+    #[test]
+    fn unknown_error_details_are_private_and_known_anchor_failures_are_distinct() {
+        let unknown: crate::history::Error = "credential text that must stay private".into();
+        assert_eq!(super::read_diagnostic(&unknown), "contract validation");
+        let anchor: crate::history::Error = "resident anchor missing".into();
+        assert_eq!(super::read_diagnostic(&anchor), "resident anchor missing");
     }
 }

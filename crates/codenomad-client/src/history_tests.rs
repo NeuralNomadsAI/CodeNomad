@@ -9,6 +9,7 @@ fn rows(ids: &[&str]) -> Vec<Message> {
             parts: vec![],
             id: (*id).into(),
             role: "assistant".into(),
+            completed: true,
             body: format!("body {id}"),
         })
         .collect()
@@ -34,6 +35,7 @@ fn broken_overlap_duplicate_ids_and_resident_overflow_fail_closed() {
             parts: vec![],
             id: format!("m{i}"),
             role: "user".into(),
+            completed: true,
             body: "x".into(),
         })
         .collect::<Vec<_>>();

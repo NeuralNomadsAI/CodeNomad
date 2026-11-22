@@ -113,6 +113,7 @@ fn send(s: &mut State, _: &mut Tx) {
         .is_some_and(|c| c.try_send(Command::Send(body.clone())).is_ok())
     {
         s.messages.push(Message {
+            completed: true,
             id: format!("rune-user-{}", s.revision),
             role: "user".into(),
             body,
@@ -221,10 +222,11 @@ fn poll(s: &mut State, _: f64, tx: &mut Tx) -> bool {
                     s.messages.push(m);
                 }
             }
-            Event::Delta(id, delta) => {
+            Event::Text(id, event) => {
                 if let Some(m) = s.messages.iter_mut().find(|m| m.id == id) {
-                    if m.body.len() + delta.len() <= 256 * 1024 {
-                        m.body.push_str(&delta);
+                    match content::apply_text(m, &event) {
+                        Ok(content::TextFit::Repair) | Err(_) => s.history_error = true,
+                        _ => {}
                     }
                 }
             }

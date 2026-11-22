@@ -35,7 +35,9 @@ pub fn message(s: &State, i: usize) -> El {
     }
     for (index, part) in m.parts.iter().enumerate() {
         match part {
-            Part::Text(body) => view = view.child(prose(format!("part-{}-{index}", m.id), body)),
+            Part::Text(body) => {
+                view = view.child(prose(format!("part-{}-{index}", m.id), &body.text))
+            }
             Part::Tool(tool) => {
                 let key = format!("tool-{}-{}", m.id, tool.id);
                 let expanded = s.expanded_tools.contains(&key);

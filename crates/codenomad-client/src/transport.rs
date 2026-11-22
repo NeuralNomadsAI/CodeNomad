@@ -16,7 +16,7 @@ pub enum Event {
     Sync(Page),
     Older(Page),
     Message(Message),
-    Delta(String, String),
+    Text(String, crate::content::TextEvent),
     Done,
     Failed,
     Reconnecting,

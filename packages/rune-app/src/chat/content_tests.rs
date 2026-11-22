@@ -2,6 +2,39 @@ use crate::{Phase, content::Part, history, init, view};
 use rune::{Env, Runtime};
 use serde_json::json;
 #[test]
+fn streamed_text_after_a_tool_reaches_the_rendered_transcript() {
+    let row = history::decode_message(&json!({"id":"mixed","type":"assistant","content":[
+        {"type":"text","text":"Before"},
+        {"type":"tool","id":"read_1","name":"read","state":{"status":"completed"}},
+        {"type":"text","text":"After"}
+    ]}))
+    .unwrap();
+    let (out, input) = crate::bounded(4);
+    let mut state = init();
+    state.messages = vec![row];
+    state.phase = Phase::Streaming;
+    state.incoming = Some(input);
+    let mut rt = Runtime::new(state, view, (960.0, 760.0), Env::new(false, 1.0));
+    rt.poll = Some(crate::poll);
+    rt.frame(0.0);
+    out.try_send(crate::transport::Event::Text(
+        "mixed".into(),
+        crate::content::TextEvent::Delta {
+            ordinal: Some(1),
+            text: " MKAA000008K".into(),
+        },
+    ))
+    .unwrap();
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(rt.state.messages[0].body.contains("MKAA000008K"));
+    assert!(
+        rt.accessibility_json().to_string().contains("MKAA000008K"),
+        "A streamed fragment must reach the actual text view"
+    );
+}
+#[test]
 fn native_tools_preserve_order_and_reveal_real_input_output_on_demand() {
     let raw = json!({"id":"native_msg","type":"assistant","content":[
         {"type":"text","text":"Before"},
@@ -11,7 +44,7 @@ fn native_tools_preserve_order_and_reveal_real_input_output_on_demand() {
     ]});
     let row = history::decode_message(&raw).unwrap();
     assert!(
-        matches!(&row.parts[..],[Part::Text(a),Part::Tool(_),Part::Text(b),Part::Tool(_)] if a=="Before"&&b=="After")
+        matches!(&row.parts[..],[Part::Text(a),Part::Tool(_),Part::Text(b),Part::Tool(_)] if a.text=="Before"&&b.text=="After")
     );
     let mut s = init();
     s.messages = vec![row];
