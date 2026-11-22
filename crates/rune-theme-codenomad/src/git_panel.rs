@@ -147,6 +147,7 @@ fn history_action<S: 'static>(
 ) -> El {
     let t = tokens(dark());
     let metric = |name| t.metric("gitHistoryRow", name).px();
+    let focus_width = t.metric("windowIconFocus", "outlineWidth").px();
     let body = row()
         .full_width()
         .px(metric("paddingLeft"))
@@ -158,7 +159,7 @@ fn history_action<S: 'static>(
         )
         .border_layout()
         .hover(t.color("surface-hover"))
-        .focus_highlight(t.color("focus-ring-color"))
+        .focus_ring(focus_width, -focus_width, t.color("focus-ring-color"))
         .role("button")
         .label(name)
         .focusable(!disabled)
@@ -194,7 +195,7 @@ pub fn history_summary(id: &str, message: &str, count: String) -> El {
                 .font(small.mono())
                 .color(muted),
         )
-        .child(text(message).wrap().content_direction())
+        .child(text(message).wrap_anywhere().content_direction())
         .child(text(count).font(small).color(muted))
 }
 

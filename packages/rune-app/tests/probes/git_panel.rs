@@ -56,10 +56,10 @@ pub(super) fn run() {
     wait(&mut rt, "conversation", |rt| {
         !rt.state.screen.is_launcher() && rt.state.phase == Phase::Ready
     });
-    if rt.find("right-panel-tabs").is_none() {
+    if rt.find("right-panel-tab-1").is_none() {
         tap(&mut rt, "right-panel-toggle");
     }
-    tap(&mut rt, "right-panel-tabs/segment1");
+    tap(&mut rt, "right-panel-tab-1");
     wait(&mut rt, "Files mounted", |rt| rt.find("git-mode").is_some());
     tap_mode(&mut rt, 1);
     wait(&mut rt, "working-tree status", |rt| {
