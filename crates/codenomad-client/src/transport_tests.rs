@@ -156,42 +156,68 @@ fn async_http_decodes_json_and_rejects_an_oversized_streamed_body() {
 #[test]
 fn history_window_reads_large_valid_pages_without_relaxing_its_ceiling() {
     run(async {
-        let source = "x".repeat(45 * 1024);
-        let messages: Vec<_> = (0..50)
-            .map(|i| {
-                json!({
-                    "id": format!("msg_{i}"),
-                    "type": "assistant",
-                    "time": {"completed": 1},
-                    "content": [{"type": "tool", "name": "read", "id": "tool", "state": {
-                        "status": "completed",
-                        "content": [{"type": "text", "text": source}]
-                    }}]
+        const ROWS: usize = 50;
+        const WINDOW: usize = 24 * 1024 * 1024;
+        let payload = |size: usize, last_extra: usize| {
+            let messages: Vec<_> = (0..ROWS)
+                .map(|i| {
+                    json!({
+                        "id": format!("msg_{i}"),
+                        "type": "assistant",
+                        "agent": "build",
+                        "model": {"providerID": "fixture", "id": "fixture"},
+                        "time": {"created": 1, "completed": 2},
+                        "content": [{"type": "tool", "name": "read", "id": "tool", "state": {
+                            "status": "completed",
+                            "input": {"filePath": "fixture.txt"},
+                            "metadata": {},
+                            "content": [{"type": "text", "text": "x".repeat(size +
+                                if i == ROWS - 1 { last_extra } else { 0 })}]
+                        }}]
+                    })
                 })
-            })
-            .collect();
-        let payload = serde_json::to_vec(&json!({
-            "status": "window", "messages": messages, "older": null, "newer": null, "latest": true,
-        }))
-        .unwrap();
-        assert!(payload.len() > 2 * 1024 * 1024);
-        let server = Server::start(payload, false);
-        let mut backend = Backend::connect(&server.address, "").await.unwrap();
-        backend.workspace = "workspace".into();
-        backend.session = "session".into();
-        let page = backend.page(json!({"kind": "latest"})).await.unwrap();
-        assert_eq!(page.rows.len(), 50);
-        let [crate::content::Part::Tool(tool)] = page.rows.last().unwrap().parts.as_slice() else {
-            panic!("expected the read tool from the page")
+                .collect();
+            serde_json::to_vec(&json!({
+                "status": "window", "messages": messages, "older": null, "newer": null,
+                "resume": {"kind": "latest"}, "latest": true,
+            }))
+            .unwrap()
         };
-        assert_eq!(tool.output, source);
+        async fn read(payload: Vec<u8>) -> crate::history::Result<crate::history::Page> {
+            let server = Server::start(payload, false);
+            let mut backend = Backend::connect(&server.address, "").await.unwrap();
+            backend.workspace = "workspace".into();
+            backend.session = "session".into();
+            backend.page(json!({"kind": "latest"})).await
+        }
+        async fn assert_page(payload: Vec<u8>, tail_bytes: usize) {
+            let page = read(payload).await.unwrap();
+            assert_eq!(page.rows.len(), ROWS);
+            let [crate::content::Part::Tool(tool)] = page.rows.last().unwrap().parts.as_slice()
+            else {
+                panic!("expected the read tool from the page")
+            };
+            assert_eq!(tool.output.len(), tail_bytes);
+            assert!(tool.output.bytes().all(|byte| byte == b'x'));
+        }
+        let usual = 45 * 1024;
+        let regression = payload(usual, 0);
+        assert!(regression.len() > 2 * 1024 * 1024);
+        let remaining = WINDOW - regression.len();
+        assert_page(regression, usual).await;
 
-        let oversized = Server::start(vec![b' '; 24 * 1024 * 1024 + 1], false);
-        let mut backend = Backend::connect(&oversized.address, "").await.unwrap();
-        backend.workspace = "workspace".into();
-        backend.session = "session".into();
-        let error = backend.page(json!({"kind": "latest"})).await.unwrap_err();
-        assert_eq!(error.to_string(), "oversized response");
+        let size = usual + remaining / ROWS;
+        let tail = remaining % ROWS;
+        let at_limit = payload(size, tail);
+        assert_eq!(at_limit.len(), WINDOW);
+        assert_page(at_limit, size + tail).await;
+
+        let over_limit = payload(size, tail + 1);
+        assert_eq!(over_limit.len(), WINDOW + 1);
+        assert_eq!(
+            read(over_limit).await.unwrap_err().to_string(),
+            "oversized response"
+        );
     });
 }
 
