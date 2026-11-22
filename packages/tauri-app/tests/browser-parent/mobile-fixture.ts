@@ -7,10 +7,11 @@ const parent=new NativeParent(process.stdout,true),page=new BrowserPage(parent)
 installShutdownStdinHandler(process.stdin,async()=>{},line=>parent.handleLine(line))
 const [base,output]=process.argv.slice(2),request=(method:string,input:object={})=>parent.request<any>(method,{sessionID:'fixture-session',...input},20000)
 const probe=(target?:string)=>request('fixture.mobile-probe',{target})
+const browserTarget=async():Promise<string>=>(await request('browser.probe')).target
 async function until(check:(v:any)=>boolean,target?:string){const end=Date.now()+8000;let last;do{try{last=await probe(target);if(check(last))return last}catch{}await new Promise(r=>setTimeout(r,40))}while(Date.now()<end);throw new Error('Mobile observation did not settle: '+JSON.stringify(last))}
 async function main(){
  assert.equal(parent.browserAutomationUnavailable,false)
- await request('browser.execute',{command:{action:'open',url:base+'/mobile'}})
+ await request('browser.execute',{workspaceIDs:["fixture-tab"],command:{action:'open',url:base+'/mobile'}})
  await request('fixture.mobile-init',{url:base+'/mobile'})
  const primary=await until(v=>v.ua===v.httpUA,'primary'),other=await until(v=>v.ua===v.httpUA,'other'),baseline=await until(v=>v.ua===v.httpUA)
  const rows=[]
@@ -34,9 +35,10 @@ async function main(){
  const beforeZoomed=await probe()
  await request('fixture.mobile-profile',{preset:'mobile',viewport:{width:390,height:844}})
  const zoomed=await until(v=>v.inner[0]===390&&v.inner[1]===844&&v.ua===v.httpUA&&v.load!==beforeZoomed.load)
- const snapshot=await page.execute('fixture-session',{action:'snapshot'})
+ const target=await browserTarget()
+ const snapshot=await page.execute('fixture-session',{action:'snapshot'},undefined,target)
  const ref=/button "Touch target" \[([^\]]+)\]/.exec(snapshot.snapshot as string)![1]
- await page.execute('fixture-session',{action:'click',ref})
+ await page.execute('fixture-session',{action:'click',ref},undefined,target)
  const clicked=await until(v=>v.events.some((e:any)=>e.type==='click'))
  assert.equal(clicked.events.filter((e:any)=>e.type==='click').length,1)
  assert.ok(clicked.events.every((e:any)=>e.trusted))
@@ -58,9 +60,10 @@ async function main(){
  const reset=await until(v=>v.ua===baseline.ua&&v.httpUA===baseline.ua&&v.inner[0]===600&&v.inner[1]===400)
  assert.notEqual(reset.load,currentLoad)
  assert.equal((await probe('other')).ua,other.ua)
- const resetSnapshot=await page.execute('fixture-session',{action:'snapshot'})
+ const resetTarget=await browserTarget()
+ const resetSnapshot=await page.execute('fixture-session',{action:'snapshot'},undefined,resetTarget)
  const resetRef=/button "Touch target" \[([^\]]+)\]/.exec(resetSnapshot.snapshot as string)![1]
- await page.execute('fixture-session',{action:'click',ref:resetRef})
+ await page.execute('fixture-session',{action:'click',ref:resetRef},undefined,resetTarget)
  const resetClicked=await until(v=>v.events.some((e:any)=>e.type==='click'))
  assert.equal(resetClicked.events.some((e:any)=>e.type==='touchstart'),false,'reset restores mouse input')
  await request('fixture.mobile-profile',{preset:'mobile'})

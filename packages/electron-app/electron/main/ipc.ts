@@ -7,6 +7,7 @@ import { openWorkspaceTarget, type WorkspaceEditor, type WorkspaceOpenTarget } f
 import { popupTitlebarMenu, setWorkspaceMenuEnabled, type TitlebarMenu } from "./menu"
 import { requireHttpUrl } from "./navigation-security"
 import { validateMainFrame } from "./ipc-security"
+import { setupNotificationIPC } from "./notification-ipc"
 import type { BrowserController } from "./browser-controller"
 
 interface LocalSender {
@@ -121,6 +122,7 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
       sessionId: string
       registrationId: string
       guestWebContentsId: number
+      instanceId?: string
     })
     return { ok: true }
   })
@@ -132,16 +134,12 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     const { window } = local(event)
     return dependencies.browserController.history(window.webContents, guestId, entryId)
   })
-  ipcMain.handle("browser-target:claimOpen", async (event, requestID: unknown) => {
+  ipcMain.handle("browser-target:claimOpen", async (event, requestID: unknown, response: unknown) => {
     const window = local(event).window
-    const claimed = dependencies.browserController.claimOpen(window.webContents, requestID)
-    if (claimed) {
-      if (window.isMinimized()) window.restore()
-      window.show()
-      window.focus()
-    }
-    return claimed
+    return dependencies.browserController.claimOpen(window.webContents, requestID, response)
   })
+  ipcMain.handle("browser-target:ownership", (event, input: unknown) =>
+    dependencies.browserController.changeOwnership(local(event).window.webContents, input))
   ipcMain.handle("browser-target:releaseOpen", async (event, requestID: unknown) => {
     const { window } = local(event)
     return dependencies.browserController.releaseOpen(window.webContents, requestID)
@@ -225,14 +223,5 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     await dependencies.openLocalWindow()
     return { ok: true }
   })
-  ipcMain.handle("notifications:show", async (event, payload: { title?: unknown; body?: unknown }): Promise<{ ok: boolean; reason?: string }> => {
-    anyTrusted(event)
-    if (!Notification.isSupported()) return { ok: false, reason: "unsupported" }
-    try {
-      new Notification({ title: typeof payload?.title === "string" ? payload.title : "CodeNomad", body: typeof payload?.body === "string" ? payload.body : "" }).show()
-      return { ok: true }
-    } catch (error) {
-      return { ok: false, reason: error instanceof Error ? error.message : String(error) }
-    }
-  })
+  setupNotificationIPC(ipcMain, anyTrusted, options => Notification.isSupported() ? new Notification(options) : undefined)
 }

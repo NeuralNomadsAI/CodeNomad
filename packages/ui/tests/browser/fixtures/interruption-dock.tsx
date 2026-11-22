@@ -24,6 +24,7 @@ import { getQuestionToolSearchText } from "../../../src/components/tool-call/sea
 import { reloadWorktrees, getWorktrees } from "../../../src/stores/worktrees"
 import "../../../src/index.css"
 import { installActivationFrameGate } from "./activation-frame-gate"
+import { automationInputActive } from "../../../src/lib/automation-input"
 
 const instanceId = "interruptions", sessionId = "s", toolId = "question-tool"
 let messageId = "msg_0000"
@@ -146,6 +147,7 @@ function App() {
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><App /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 const store = messageStoreBus.getOrCreate(instanceId)
 ;(window as any).fixture = {
+  automationInputActive,
   activationFrames, active: setActive, conversationFocus: setConversationFocus, phone: setPhone,
   focusHandled: () => focusHandled,
   replies, replyOptions, windows,

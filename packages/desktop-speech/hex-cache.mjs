@@ -2,12 +2,12 @@ import { createHash } from "node:crypto"
 import { chmodSync, realpathSync, renameSync, rmSync } from "node:fs"
 import { createServer } from "node:net"
 import { arch, homedir, platform, release } from "node:os"
-import { delimiter, isAbsolute, join } from "node:path"
+import { delimiter, dirname, isAbsolute, join } from "node:path"
 import { artifactReceipt, candidateDirectory, cleanCopy, ensureDirectory, fileInfo, hashFile, HexFailure, publish, readReceipt } from "./hex-files.mjs"
 import { download } from "./hex-download.mjs"
-import { hexArtifacts, hexVersion } from "./hex-manifest.mjs"
+import { hexArtifacts, hexVersion, modelId } from "./hex-manifest.mjs"
 import { macExecutable, materializeMac, macCandidates, verifyMac } from "./hex-macos.mjs"
-import { checkHex, transcribeWithHex } from "./hex-process.mjs"
+import { checkHex, createHexService } from "./hex-process.mjs"
 
 function* existing(name, candidates, bytes) {
   for (const directory of candidates.filter(Boolean)) {
@@ -73,7 +73,10 @@ export function createHexCache(root, {
   reuse = (component, artifact) => reuseFiles(component, artifact, host),
   request = fetch,
   probe = checkHex,
+  isSelected,
+  stopTree,
 } = {}) {
+  const service = createHexService({ isSelected, stopTree })
   const versionDir = join(root, `hex-${hexVersion}`)
   const engineDir = join(versionDir, `${host}-${arch()}`)
   const models = join(versionDir, "models")
@@ -178,6 +181,7 @@ export function createHexCache(root, {
       const candidate = inspect()
       const installation = candidate && getInstallation(candidate)
       progress({ state: "verifying" })
+      await service.stop()
       await probe(installation, signal)
       signal.throwIfAborted()
       if (inspect()?.plan.id !== candidate.plan.id) throw new HexFailure("planChanged")
@@ -229,13 +233,38 @@ export function createHexCache(root, {
     return { executable: current.parts.find(part => part.component === "engine").executable, support: versionDir }
   }
 
-  async function transcribe(wav, signal) {
+  async function verified(signal) {
     const current = inspect()
     if (!current?.ready) throw new HexFailure("unavailable")
-    const installation = getInstallation(current)
     if (host === "darwin" && !await verifyMac(join(engineDir, "Hex.app"), signal)) throw new HexFailure("unavailable")
-    if (inspect()?.plan.id !== current.plan.id) throw new HexFailure("unavailable")
-    return transcribeWithHex(installation, wav, signal)
+    const latest = inspect()
+    if (!latest?.ready || latest.plan.id !== current.plan.id) throw new HexFailure("unavailable")
+    return current
   }
-  return { capabilities, prepare, transcribe }
+
+  async function nativeInstallation(signal) {
+    const current = await verified(signal)
+    const installation = getInstallation(current)
+    const files = [join(engineDir, "ready.json"), ...current.parts.flatMap(part => part.mac
+      ? [part.executable, join(dirname(dirname(part.executable)), "Info.plist"),
+        join(engineDir, "mac-app.verified.json"), ...(part.file ? [part.path] : [])]
+      : [part.path, `${part.path}.verified.json`])]
+    const directories = [root, versionDir, engineDir, models]
+    if (host === "darwin") {
+      const macos = dirname(installation.executable)
+      directories.push(macos, dirname(macos), dirname(dirname(macos)))
+    }
+    return { ...installation, key: current.plan.id, version: hexVersion, model: modelId, files, directories }
+  }
+
+  async function use(signal, run) {
+    let current
+    try { current = await verified(signal) }
+    catch (error) { if (!signal.aborted) await service.stop(); throw error }
+    return service.use(getInstallation(current), current.plan.id, signal, transcribe => run(wav => transcribe(wav, () => {
+      const latest = inspect()
+      if (!latest?.ready || latest.plan.id !== current.plan.id) throw new HexFailure("unavailable")
+    })))
+  }
+  return { capabilities, prepare, nativeInstallation, use, stop: service.stop }
 }

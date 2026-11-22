@@ -32,7 +32,6 @@ import type {
   OpenCodeUpdateResponse,
   OpenCodeUpdateStatus,
   SpeechCapabilitiesResponse,
-  SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
   VoiceConversationEngine,
   SideCar,
@@ -219,6 +218,7 @@ async function sendRequest<T>(ctx: BackendHttp, path: string, init?: RequestInit
 
 async function sendRawRequest(ctx: BackendHttp, path: string, init?: RequestInit): Promise<Response> {
   const url = ctx.url(path)
+  const signal = init?.signal
   const headers = normalizeHeaders(init?.headers)
   if (init?.body !== undefined && !headers["Content-Type"]) {
     headers["Content-Type"] = "application/json"
@@ -228,12 +228,15 @@ async function sendRawRequest(ctx: BackendHttp, path: string, init?: RequestInit
   const startedAt = Date.now()
   logHttp(`${method} ${path}`)
 
-  init?.signal?.throwIfAborted()
+  if (signal?.aborted) throw signal.reason
   const response = await ctx.fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
-  init?.signal?.throwIfAborted()
+  if (signal?.aborted) {
+    void response.body?.cancel().catch(() => {})
+    throw signal.reason
+  }
   if (!response.ok) {
     const message = await readErrorMessage(response)
-    init?.signal?.throwIfAborted()
+    if (signal?.aborted) throw signal.reason
     logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
     throw new Error(message || `Request failed with ${response.status}`)
   }
@@ -374,10 +377,11 @@ export function createServerApi(ctx: BackendHttp) {
         signal: options?.signal,
       })
     },
-    cancelWorkspaceCreation(requestId: string): Promise<void> {
+    cancelWorkspaceCreation(requestId: string, keepalive = false): Promise<void> {
       return request("/api/workspaces/creation/cancel", {
         method: "POST",
         body: JSON.stringify({ requestId }),
+        keepalive,
       })
     },
     releaseWorkspaceCreation(id: string, requestId: string): Promise<void> {
@@ -548,15 +552,15 @@ export function createServerApi(ctx: BackendHttp) {
         body: JSON.stringify({ password }),
       })
     },
-    deleteWorkspace(id: string): Promise<void> {
+    deleteWorkspace(id: string, keepalive = false): Promise<void> {
       id = parseInstanceKey(id).workspaceId
-      return request(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" })
+      return request(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE", keepalive })
     },
-    createTemporaryFolder(): Promise<{ path: string }> {
+    createTemporaryFolder(): Promise<{ path: string; supportsCancelAndAbandon?: boolean }> {
       return request("/api/workspaces/temporary", { method: "POST" })
     },
-    abandonTemporaryFolder(path: string): Promise<void> {
-      return request("/api/workspaces/temporary/abandon", { method: "POST", body: JSON.stringify({ path }) })
+    abandonTemporaryFolder(path: string, requestId?: string): Promise<void> {
+      return request("/api/workspaces/temporary/abandon", { method: "POST", body: JSON.stringify({ path, requestId }), keepalive: true })
     },
     keepTemporaryWorkspace(id: string): Promise<void> {
       return request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(id).workspaceId)}/keep`, { method: "POST" })
@@ -805,16 +809,9 @@ export function createServerApi(ctx: BackendHttp) {
         signal,
       })
     },
-    synthesizeSpeech(payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" }, signal?: AbortSignal): Promise<SpeechSynthesisResponse> {
-      return request<SpeechSynthesisResponse>("/api/speech/synthesize", {
-        method: "POST",
-        body: JSON.stringify(payload),
-        signal,
-      })
-    },
     synthesizeSpeechStream(
       payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" },
-      signal?: AbortSignal,
+      signal: AbortSignal,
     ): Promise<Response> {
       return requestRaw("/api/speech/synthesize/stream", {
         method: "POST",

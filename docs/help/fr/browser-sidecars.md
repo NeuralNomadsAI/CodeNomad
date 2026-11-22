@@ -12,7 +12,7 @@ Les service workers restent désactivés dans les aperçus distants.
 
 Cliquer sur un lien `localhost` ou `127.0.0.1` dans une conversation l'ouvre dans l'aperçu web de cette session, sur tout client où les aperçus sont disponibles. Via Remote Control lorsque l'hôte garde les aperçus web désactivés, ou sur un client où les aperçus sont autrement indisponibles, ces liens conservent leur comportement normal dans le navigateur. Ctrl+clic (⌘-clic sur macOS) ou clic milieu ouvre le lien dans votre navigateur à la place.
 
-Fermer l’aperçu local ramène au chat. Les onglets en double partagent la page active jusqu’à la fermeture du dernier onglet ou au rechargement de la fenêtre.
+L’aperçu natif conserve sa page lorsque vous revenez au chat ou que vous le déplacez dans la même fenêtre.
 
 Chaque onglet enregistre son choix chat/aperçu ; la session enregistre l’URL, le modèle de viewport et l’historique partagés. Les pages enregistrées se chargent seulement à la réouverture explicite du navigateur de session. La persistance conserve les URL et un curseur ; formulaires actifs, DOM, corps POST et mémoire JavaScript disparaissent avec le document. L’historique est limité à 32 URL par session et à un budget partagé par fenêtre ; les anciennes entrées peuvent être retirées. Restaurer une URL peut recharger la page.
 
@@ -26,9 +26,17 @@ Pour le Contrôle à distance, **Aperçus web** est activé par défaut dans **P
 
 ## Connexions partagées et limites d’automatisation {#signins-automation}
 
+Sur Electron et Tauri pour Windows, le redémarrage automatisé (`codenomad.act`, `restart`) relance le même exécutable avec le profil et la configuration inspectés. Il réinspecte la fenêtre d’origine si elle est restaurée ; sinon, il signale son absence sans inspecter d’autre fenêtre. Une inspection réussie pendant la reconnexion reste prioritaire.
+
+Si le redémarrage est annulé, listez les fenêtres ouvertes avec `codenomad.inspect` et `targets: true`, puis inspectez la fenêtre voulue avec son `target`.
+
 Les aperçus natifs partagent cookies, connexions et stockage de site entre projets/sessions dans le même moteur de bureau et périmètre profil/configuration, séparément du moteur de rendu de confiance CodeNomad. Se déconnecter d’un site dans un aperçu affecte les autres qui utilisent ce stockage. Documents, formulaires, stockage de session, historiques de navigation et rattachements d’automatisation appartiennent à chaque session.
 
-Un agent ouvre le navigateur partagé de la session dans un onglet qui la contient, de préférence l’onglet actif. L’onglet choisi reste fixé pendant l’ouverture ; sa fermeture annule cette ouverture. Les actions sur la page ciblent l’aperçu natif visible de la session ; les aperçus masqués sont exclus.
+Chaque session a un seul aperçu natif. Si un onglet dupliqué affiche **Aperçu ouvert dans un autre onglet**, choisissez **Y aller** pour le retrouver ou **L’ouvrir ici** pour le déplacer dans la même fenêtre. L’ancien onglet affiche alors le même message. Fermer l’onglet propriétaire permet de rouvrir l’aperçu ailleurs.
+
+L’agent ouvre l’aperçu dans son onglet propriétaire ou, à défaut, dans le dernier onglet utilisé pour la session. Les actions sur la page ciblent l’aperçu natif visible.
+
+L’agent prend un instantané avant d’agir sur l’aperçu ou de le capturer. Si l’aperçu change, la commande s’arrête au lieu de viser un autre aperçu.
 
 | Client | Implémentation de l’aperçu | Automatisation navigateur par agent | Modèles mobiles |
 | --- | --- | --- | --- |

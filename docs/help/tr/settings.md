@@ -4,7 +4,7 @@ Tercihler, proje ayarları, sağlayıcılar, istatistikler ve bellek düzenleme 
 
 ## Ayarları açın ve kapsamını belirleyin {#open-settings}
 
-1. Sekme çubuğundaki (macOS masaüstü uygulamasında başlık çubuğundaki) veya ana sayfadaki **Ayarları aç** dişli simgesiyle **Ayarlar** öğesini açın. Model seçicideki **Provider'ları yönet**, Görevler panelinin dişli simgesi veya bildirim geçmişindeki **Ayarlar** dişli simgesi gibi kısayollar ilgili bölümü doğrudan açar.
+1. Sekme çubuğundaki **Ayarları aç** dişli simgesiyle **Ayarlar** öğesini açın. Model seçicideki **Provider'ları yönet**, Görevler panelinin dişli simgesi veya bildirim geçmişindeki **Ayarlar** dişli simgesi gibi kısayollar ilgili bölümü doğrudan açar.
 2. Bir bölüm seçin. Yerel Electron ve Tauri pencereleri bir yerel Tercihler penceresini açar veya odaklar; tarayıcı ve uzak görünümler yerleşik ayarlar ekranını kullanır.
 3. Ayrılmadan önce ayarın kapsamını ve herhangi bir **Kaydet** eylemini kontrol edin.
 
@@ -85,7 +85,7 @@ Yerleşik düzen proje değişikliği değil, pencere yerleşimidir. Uzantı ona
 ## Konuşma dökümü ayrıntıları ve ileti düzenleyicisi boyutu {#transcript-composer}
 
 1. Konuşma dökümü ayrıntısı varsayılanlarını seçmek için **Sohbet** öğesini açın. Ön ayarlar **Hiçbir şey**, **Minimal**, **Dengeli** ve **Her şey**'dir; bireysel değişiklikler **Özel** öğesini üretir.
-2. Düşünme, tanılama, araç girdileri, tokenlar, sistem mesajları ve her araç türü için her satırın **Varsayılan durum** ayarını (**Gizli**, **Daraltılmış** veya **Genişletilmiş**) belirleyin ya da bu seçimleri paylaşan, konuşmanın **Mesaj içeriği** açılır penceresini kullanın.
+2. Her satırın **Varsayılan durum** ayarını (**Gizli**, **Daraltılmış** veya **Genişletilmiş**) belirleyin ya da aynı ayarları kullanan **Mesaj içeriği** açılır penceresini kullanın. **Araç grupları** için **Devre dışı** her çağrıyı ayrı kartta gösterir; **Daraltılmış** ve **Genişletilmiş** grupların başlangıç durumunu belirler.
 3. **Genel** bölümünde gerektiği gibi **Mesaj zaman çizelgesini göster**, **İlk/en son mesaj oklarını zaman çizelgesinin altına yerleştir**, **Araç çağrısı diff'lerini böl** ve **Gönderilen istemleri kuyruğa al** (oturum çalışırken gönderilen istemleri yönlendirmek yerine kuyruğa alır) seçeneklerini işaretleyin.
 4. Yeniden boyutlandırma kontrolünü kullanarak ileti düzenleyicisini yeniden boyutlandırın; uzun taslaklar alanın içinde kayar.
 
@@ -99,7 +99,7 @@ Başka bir CodeNomad sunucusundaki proje sekmesinin bildirimleri sunucu adını 
 
 Görevlerin teknik oturumları sıkıştırıldığında bildirim gösterilmez.
 
-1. **Bildirimler** öğesini açın. Her bildirim türü için nerede görüneceğini işaretleyin: **Ekranda** (geçici bir baloncuk), **Geçmiş** (sekme çubuğundaki, macOS masaüstü uygulamasında başlık çubuğundaki zilin bildirim geçmişinde saklanır) ve **Sistem** (işletim sistemi bildirimi). Birkaçını tek seferde ayarlamak için bir kutu satırı veya sütunu üzerinde sürükleyin.
+1. **Bildirimler** öğesini açın. Her bildirim türü için nerede görüneceğini işaretleyin: **Ekranda** (geçici bir baloncuk), **Geçmiş** (sekme çubuğundaki zilin bildirim geçmişinde saklanır) ve **Sistem** (işletim sistemi bildirimi). Birkaçını tek seferde ayarlamak için bir kutu satırı veya sütunu üzerinde sürükleyin.
 2. Bir **Sistem** kutusunu işaretlemek gerekirse izin ister. **Sistem bildirimleri** altında, izin eksikken **İzin iste** yeniden izin ister.
 3. Bu pencere odaktayken de sistem bildirimlerini almak için **Uygulama odaktayken bildir** seçeneğini etkinleştirin. Aksi halde pencere ekranda açık kalsa bile odakta olmadığında bildirimler görünür.
 
@@ -108,6 +108,8 @@ Varsayılan olarak **Bir oturum yanıtınızı bekliyor** ve **Bir oturum tamaml
 Tarayıcı/İşletim Sistemi izni cihaza ve uygulama kaynağına aittir; kaydedilmiş bir tercih bir reddi geçersiz kılamaz. Engellenirse tarayıcı veya işletim sistemi ayarlarında bildirimleri etkinleştirin ve ardından buraya geri dönün. Desteklenmeyen ortamlarda Sistem sütunu devre dışı kalır.
 
 Yalnızca Geçmiş'e yönlendirilen bildirimleri sayan zil/okunmamış geçmiş sayısı, tarayıcı favicon noktasını ve yerel uygulama rozetini yönlendirir.
+
+Sistem bildirim eylemlerini destekliyorsa, bildirime tıkladığınızda konuşma hâlâ açıksa gösterilir. Pencerenin öne gelip gelmemesi masaüstü ortamına bağlıdır.
 
 ## Gelişmiş seçenekler {#advanced}
 

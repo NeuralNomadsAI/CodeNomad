@@ -13,10 +13,10 @@ mod client_state;
 mod data_profile;
 mod data_profile_cleanup;
 mod developer_mode;
+mod developer_relaunch;
 mod device_speech;
 mod device_speech_hex;
 mod device_speech_ipc;
-mod device_speech_system;
 mod device_speech_worker;
 mod embedded_view;
 mod external_open;
@@ -34,6 +34,7 @@ mod native_request;
 mod native_service_start;
 mod notification_badge;
 mod notification_badge_lifetime;
+mod notification_click;
 mod preferences_window;
 mod profile_selection_dialog;
 mod profile_transition;
@@ -315,8 +316,11 @@ pub(crate) fn handle_native_request(
             .browser_controller
             .handle_native(app, method, params, deadline, fence),
         "opencode.service.start" => native_service_start::start(params, deadline),
-        "developer.status" => state.developer_mode.native_snapshot(app),
-        "developer.restart" => state.developer_mode.request_restart(app),
+        "developer.status" | "developer.targets" => state
+            .developer_mode
+            .native_snapshot(app, params, method == "developer.targets"),
+        "developer.restartScope" => state.developer_mode.request_restart(app, params, fence),
+        "developer.reconnect" => state.developer_mode.reconnect(app, params),
         _ => Err(format!("Unsupported native request: {method}")),
     }
 }
@@ -421,7 +425,10 @@ fn window_control(
     require_preferences_or_local_app_webview(&webview, &state)?;
     let window = webview.window();
     match action.as_str() {
-        "minimize" => window.minimize(),
+        "minimize" => {
+            state.browser_controller.revoke_window_visibility(window.label());
+            window.minimize()
+        }
         "maximize" => {
             if window.is_maximized().unwrap_or(false) {
                 window.unmaximize()
@@ -587,31 +594,37 @@ fn browser_target_unregister(
 #[tauri::command]
 fn browser_target_claim_open(
     webview: tauri::Webview,
-    app: AppHandle,
     state: tauri::State<'_, AppState>,
     request_id: String,
+    response: browser_controller::OpenResponse,
 ) -> Result<bool, String> {
     require_local_app_webview(&webview, &state)?;
-    let claimed = state
+    state
         .browser_controller
-        .claim_open(webview.label(), &request_id);
-    if claimed {
-        crate::local_windows::focus(&app, webview.label());
-    }
-    Ok(claimed)
+        .claim_open(webview.label(), &request_id, response)
+}
+
+#[tauri::command]
+fn browser_target_ownership(
+    webview: tauri::Webview,
+    state: tauri::State<'_, AppState>,
+    input: browser_controller::OwnershipAction,
+) -> Result<Option<serde_json::Value>, String> {
+    require_local_app_webview(&webview, &state)?;
+    state.browser_controller.change_ownership(webview.app_handle(), webview.label(), input)
 }
 
 #[tauri::command]
 fn browser_target_release_open(
     webview: tauri::Webview,
-    app: AppHandle,
     state: tauri::State<'_, AppState>,
     request_id: String,
 ) -> Result<bool, String> {
     require_local_app_webview(&webview, &state)?;
-    Ok(state
-        .browser_controller
-        .release_open(&app, webview.label(), &request_id))
+    Ok(state.browser_controller.release_open(
+        webview.label(),
+        &request_id,
+    ))
 }
 
 fn release_remote_proxy_session_cleanup(app: &AppHandle, session_id: &str) {
@@ -1625,7 +1638,7 @@ fn update_fullscreen_shortcut(app: &AppHandle) {
 }
 
 #[cfg(windows)]
-fn set_windows_app_user_model_id(identifier: &str) {
+fn set_windows_app_user_model_id(identifier: &str) -> bool {
     let app_id: Vec<u16> = OsStr::new(identifier)
         .encode_wide()
         .chain(iter::once(0))
@@ -1635,11 +1648,9 @@ fn set_windows_app_user_model_id(identifier: &str) {
     if result < 0 {
         eprintln!("[tauri] failed to set AppUserModelID: {result}");
     }
-    windows_notification_identity::register(identifier);
+    let registered = windows_notification_identity::register(identifier);
+    result >= 0 && registered
 }
-
-#[cfg(not(windows))]
-fn set_windows_app_user_model_id(_identifier: &str) {}
 
 #[cfg(windows)]
 fn configure_developer_webview(
@@ -1763,7 +1774,7 @@ fn request_final_application_window_close(app: AppHandle, label: String, local_w
         // resumes at the next launch.
         if still_final {
             shutdown::request(app);
-        } else if local_window {
+        } else if local_window || label.starts_with("remote-") {
             shutdown::request_local_window_close(app, label);
         } else {
             dispatch_approved_auxiliary_close(&app, &label);
@@ -1824,6 +1835,7 @@ fn app_context<R: tauri::Runtime>() -> tauri::Context<R> {
 }
 
 fn main() {
+    let started_at = Instant::now();
     #[cfg(windows)]
     if let Some(code) = cli_manager::run_windows_cli_launcher_if_requested() {
         std::process::exit(code);
@@ -1833,8 +1845,19 @@ fn main() {
     let cwd = std::env::current_dir().unwrap_or_default();
     let home = dirs::home_dir().unwrap_or_else(|| cwd.clone());
     let local_data = dirs::data_local_dir().unwrap_or_else(|| home.clone());
-    let cli_config = std::env::var("CLI_CONFIG").ok();
-    let backend_config = identity::resolve_selected_config(cli_config.as_deref(), &cwd, &home);
+    let launch_arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    let handoff = match developer_relaunch::Handoff::take(&launch_arguments) {
+        Ok(handoff) if cfg!(windows) || handoff.is_none() => handoff,
+        _ => {
+            eprintln!("[tauri] invalid CodeNomad automation relaunch");
+            std::process::exit(1);
+        }
+    };
+    let backend_config = if let Some(ref handoff) = handoff {
+        handoff.config.clone()
+    } else {
+        identity::resolve_selected_config(std::env::var("CLI_CONFIG").ok().as_deref(), &cwd, &home)
+    };
     // Native listening/certificate readers and every backend spawn must select
     // this same ORIGINAL source, resolved before any startup cwd can change.
     // Process-wide set_var happens while the process is still single-threaded: before the startup
@@ -1848,27 +1871,43 @@ fn main() {
     configure_developer_environment();
     #[cfg(target_os = "linux")]
     appimage_environment::prefer_x11_display();
-    let identity::LaunchProfile {
-        key: profile,
-        pinned: profile_pinned,
-    } = resolve_launch_profile_or_exit(cli_config.as_deref(), &cwd, &home);
-    let scope = identity::resolve_scope(&profile, cli_config.as_deref(), &cwd, &home, &local_data);
+    let launch_profile = handoff.as_ref().map_or_else(
+        || resolve_launch_profile_or_exit(backend_config.as_deref(), &cwd, &home),
+        |handoff| identity::LaunchProfile {
+            key: handoff.profile.clone(),
+            pinned: handoff.pinned,
+        },
+    );
+    let profile_pinned = launch_profile.pinned;
+    let scope = identity::resolve_scope(
+        &launch_profile.key,
+        backend_config.as_deref(),
+        &cwd,
+        &home,
+        &local_data,
+    );
+    let executable = std::env::current_exe()
+        .ok()
+        .map(|path| std::fs::canonicalize(&path).unwrap_or(path));
+    let developer_identity = executable.as_deref().map_or_else(String::new, |path| {
+        developer_relaunch::native_identity(
+            &scope.profile, &scope.config_identity, backend_config.as_deref(), path,
+        )
+    });
+    if handoff.as_ref().is_some_and(|handoff| handoff.restart.native_identity != developer_identity) {
+        eprintln!("[tauri] CodeNomad automation relaunch scope changed");
+        std::process::exit(1);
+    }
     let (devtools_active_port, webview_data_directory, developer_browser_arguments) =
         configure_developer_webview(&scope).expect("configure native automation browser profile");
-    let executable = std::env::current_exe()
-        .map(|path| std::fs::canonicalize(&path).unwrap_or(path))
-        .unwrap_or_default();
-    let developer_identity =
-        Sha256::digest(format!("{}\0{}", scope.identifier, executable.display()).as_bytes())[..8]
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-    let developer_mode = developer_mode::DeveloperMode::new(
-        format!("tauri:{developer_identity}"),
-        devtools_active_port,
-    );
+    let developer_mode = developer_mode::DeveloperMode::new(developer_identity, devtools_active_port)
+        .with_launch_scope(
+            executable,
+            launch_profile,
+            backend_config.clone(),
+            handoff.map(|handoff| (handoff.restart, started_at)),
+        );
 
-    let launch_arguments = std::env::args().skip(1).collect::<Vec<_>>();
     // Before the single-instance plugin can forward a `|` that would split into other arguments.
     #[cfg(windows)]
     if let Some(message) = launch::pipe_argument_error(&launch_arguments) {
@@ -1886,6 +1925,9 @@ fn main() {
     let single_instance = tauri_plugin_single_instance::init(move |app, args, callback_cwd| {
         let cwd = std::path::PathBuf::from(callback_cwd);
         let arguments = args.into_iter().skip(1).collect::<Vec<_>>();
+        if arguments == [developer_relaunch::MARKER] {
+            return;
+        }
         #[cfg(windows)]
         let intent = launch::parse_windows_forwarded_launch_intent(&arguments, &cwd);
         #[cfg(not(windows))]
@@ -1912,7 +1954,13 @@ fn main() {
     let browser_controller = browser_controller::BrowserController::new(
         setup_scope.webview_data_directory.join("browser"),
     );
-    desktop_updater::register(tauri::Builder::default(), context.config())
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.append_invoke_initialization_script(
+        "window.__CODENOMAD_NOTIFICATION_PERMISSION__ = true;",
+    );
+    desktop_updater::register(builder, context.config())
+        .append_invoke_initialization_script("window.__CODENOMAD_NOTIFICATION_ACTIONS__ = true;")
         .plugin(single_instance)
         .plugin(tauri_plugin_dialog::init())
         // Opens links outside Linux (external_open). The renderer's own click
@@ -1949,6 +1997,7 @@ fn main() {
         ))
         .manage(local_windows::LocalWindows::default())
         .manage(notification_badge::NotificationBadge::default())
+        .manage(notification_click::NotificationClicks::default())
         .manage(window_constraints::WindowConstraints::default())
         .manage(preferences_window::PreferencesWindow::default())
         .manage(data_profile_cleanup::CleanupContext::new(
@@ -1974,9 +2023,7 @@ fn main() {
                 identity::electron_user_data_base(&home)
                     .join("device-speech")
                     .join("choice.json"),
-                Some(std::sync::Arc::new(
-                    device_speech_system::SystemDriver::default(),
-                )),
+                None,
             )
             .with_hex(
                 if cfg!(windows) {
@@ -2017,6 +2064,8 @@ fn main() {
         })
         .on_page_load(|webview, payload| {
             if payload.event() == PageLoadEvent::Started {
+                webview.app_handle().state::<notification_click::NotificationClicks>()
+                    .forget_window(webview.label());
                 if !webview.label().starts_with("remote-") {
                     webview.app_handle().state::<device_speech::DeviceSpeech>().revoke(Some(webview.label()));
                 }
@@ -2067,10 +2116,10 @@ fn main() {
                 .set_host(&badge_host);
             app.state::<remote_dictation::RemoteDictation>()
                 .set_host(&badge_host);
+            notification_click::install(&badge_host);
             *setup_notification_badge_host
                 .lock()
                 .unwrap_or_else(|e| e.into_inner()) = Some(badge_host);
-            set_windows_app_user_model_id(&setup_scope.identifier);
             app.state::<AppState>().developer_mode.prepare_profile()?;
             eprintln!(
                 "[tauri-startup] in-place updates supported on this installation: {}",
@@ -2116,6 +2165,8 @@ fn main() {
             wake_lock_start,
             wake_lock_stop,
             notification_badge::notification_badge_set,
+            notification_click::notification_permission,
+            notification_click::notification_show,
             needs_local_certificate_install,
             preferences_window::open_preferences_window,
             preferences_window::preferences_window_ready,
@@ -2162,6 +2213,7 @@ fn main() {
             browser_target_action,
             browser_target_unregister,
             browser_target_claim_open,
+            browser_target_ownership,
             browser_target_release_open
         ]))
         .on_menu_event(|app_handle, event| {
@@ -2233,6 +2285,7 @@ fn main() {
                 // Window menu
                 "minimize" => {
                     if let Some(webview) = local_windows::targeted_window(app_handle) {
+                        app_handle.state::<AppState>().browser_controller.revoke_window_visibility(webview.window().label());
                         let _ = webview.window().minimize();
                     }
                 }
@@ -2301,7 +2354,7 @@ fn main() {
                 // App menu (macOS)
                 "hide" => {
                     if let Some(webview) = local_windows::targeted_window(app_handle) {
-                        let _ = webview.window().hide();
+                        let _ = app_handle.state::<AppState>().browser_controller.hide_owner(&webview.window());
                     }
                 }
                 "hide_others" => {
@@ -2332,6 +2385,12 @@ fn main() {
             }
             #[cfg(target_os = "linux")]
             tauri::RunEvent::Exit => appimage_exit::stop_mounted_children(),
+            #[cfg(windows)]
+            tauri::RunEvent::Exit => {
+                if let Some(plan) = shutdown::take_automation_restart(app_handle) {
+                    plan.relaunch_and_exit(app_handle);
+                }
+            }
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Exit if shutdown::restart_on_exit() => {
                 macos_relaunch::relaunch_and_exit(&app_handle)
@@ -2404,10 +2463,10 @@ fn main() {
                     return;
                 }
                 let local_window = identity::local_window_id(&label).is_ok();
-                if local_window {
+                if local_window || label.starts_with("remote-") {
                     let consumed = shutdown::consume_local_window_close(&app_handle, &label);
                     let in_flight = shutdown::local_window_close_in_flight(&app_handle, &label);
-                    let launch_window = app_handle
+                    let launch_window = local_window && app_handle
                         .state::<local_windows::LocalWindows>()
                         .is_connect_only(&label);
                     match local_close_event_action(consumed, in_flight, launch_window) {
@@ -2435,7 +2494,7 @@ fn main() {
                     request_final_application_window_close(app_handle.clone(), label, local_window);
                     return;
                 }
-                if local_window {
+                if local_window || label.starts_with("remote-") {
                     api.prevent_close();
                     shutdown::request_local_window_close(app_handle.clone(), label);
                 }
@@ -2445,6 +2504,7 @@ fn main() {
                 event: tauri::WindowEvent::Destroyed,
                 ..
             } => {
+                app_handle.state::<notification_click::NotificationClicks>().forget_window(&label);
                 if remote_dictation::is_sheet(&label) {
                     remote_dictation::revoke(&app_handle, Some(&label));
                     remote_dictation::retired(&app_handle, &label);
@@ -3010,7 +3070,10 @@ mod menu_tests {
                 "notification:allow-is-permission-granted",
                 "notification:allow-request-permission",
                 "notification:allow-notify",
-                "allow-notification-badge-set"
+                "allow-notification-badge-set",
+                "allow-client-state-renderer-flushed",
+                "allow-notification-permission",
+                "allow-notification-show"
             ])
         );
 
@@ -3035,7 +3098,7 @@ mod menu_tests {
             .iter()
             .any(|permission| permission
                 .as_str()
-                .is_some_and(|value| value.starts_with("allow-cli"))));
+                .is_some_and(|value| value.starts_with("allow-cli-"))));
     }
 
     #[test]

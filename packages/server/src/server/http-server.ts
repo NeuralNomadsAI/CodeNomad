@@ -4,6 +4,7 @@ import replyFrom from "@fastify/reply-from"
 import fs from "fs"
 import { isIP, type Socket } from "net"
 import path from "path"
+import { AsyncLocalStorage } from "node:async_hooks"
 import { finished } from "node:stream/promises"
 import { fetch } from "undici"
 import type { Logger } from "../logger"
@@ -17,6 +18,7 @@ import { registerWorkspaceRoutes } from "./routes/workspaces"
 import { registerTemporaryWorkspaceRoutes } from "./routes/temporary-workspaces"
 import { syncSessionGitContext } from "../workspaces/session-git-context"
 import { syncSessionMemoryContext } from "../workspaces/session-memory-context"
+import { admitSessionControl, currentSessionControl, controlKind } from "./session-control-admission"
 import { assertOrdinaryMissionScheduleBody, assertOrdinaryMissionScheduleSession, MissionScheduleInputError } from "./mission-schedule-input-guard"
 import { readGitStatus } from "../workspaces/git-requirement"
 import { registerSettingsRoutes } from "./routes/settings"
@@ -104,7 +106,7 @@ import { guardProxyListener, proxyConnector, ProxyDestinationDenied } from "./pr
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
 import { guardServerPairRequest, isServerPairExchange, SERVER_PAIR_PATH } from "../remote-control/server-pairing"
-import { gateRemoteRequest, isHostOnlyPath, isBackendUiRoute, isMemoryRelayRoute, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
+import { gateRemoteRequest, isHostOnlyPath, isHtmlBundlePath, isBackendUiRoute, isMemoryRelayRoute, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
 import { createBackendUiAccess } from "../codenomad-servers/ui-caller"
 import { createRelayPrincipalBinding } from "../codenomad-servers/relay-principal"
 import { isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
@@ -439,7 +441,7 @@ export function createHttpServer(deps: HttpServerDeps) {
       return
     }
 
-    if (!session && wantsHtml(request)) {
+    if (!session && (wantsHtml(request) || isHtmlBundlePath(pathname))) {
       reply.redirect("/login")
       return
     }
@@ -447,6 +449,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     done()
   })
 
+  const uiEntry = findUiEntry(deps.uiStaticDir)
   app.get("/", async (request, reply) => {
     const session = deps.authManager.getSessionFromRequest(request)
     if (!session) {
@@ -460,8 +463,10 @@ export function createHttpServer(deps: HttpServerDeps) {
     }
 
     const uiDir = deps.uiStaticDir
-    const indexPath = path.join(uiDir, "index.html")
+    const indexPath = path.join(uiDir, uiEntry)
     if (uiDir && fs.existsSync(indexPath)) {
+      reply.header("cache-control", "no-store")
+      if (reply.sendFile) return reply.sendFile(uiEntry, { cacheControl: false })
       reply.type("text/html").send(fs.readFileSync(indexPath, "utf-8"))
       return
     }
@@ -627,7 +632,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   if (deps.uiDevServerUrl) {
     setupDevProxy(app, deps.uiDevServerUrl, deps.authManager, deps.previewManager, proxyLogger, remotePreviewsAllowed)
   } else {
-    setupStaticUi(app, deps.uiStaticDir, deps.authManager, deps.previewManager, proxyLogger, remotePreviewsAllowed)
+    setupStaticUi(app, deps.uiStaticDir, uiEntry, deps.authManager, deps.previewManager, proxyLogger, remotePreviewsAllowed)
   }
 
   return {
@@ -686,6 +691,7 @@ export function createHttpServer(deps: HttpServerDeps) {
 }
 
 export interface InstanceProxyWorkspaceManager {
+  captureWorkspaceOperation?: WorkspaceManager["captureWorkspaceOperation"]
   getServiceWslDistro?: WorkspaceManager["getServiceWslDistro"]
   get(id: string): ReturnType<WorkspaceManager["get"]>
   getSharedServiceEndpoint(id: string): ReturnType<WorkspaceManager["getSharedServiceEndpoint"]>
@@ -1080,6 +1086,9 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
     reply.code(403).send({ error: "OpenCode route is not available through a workspace" })
     return
   }
+  const kind = controlKind(request.method, pathname.replace(/\/+$/, ""))
+  const sessionControl = kind && !isGlobalFormAction(pathname, request.method) ? kind : undefined
+  const workspaceOperation = sessionControl ? workspaceManager.captureWorkspaceOperation?.(workspaceId) : undefined
 
   const isMutation = request.method !== "GET" && request.method !== "HEAD"
     && !(request.method === "POST" && SESSION_SETTLEMENT_WAIT.test(pathname.replace(/\/+$/, "")))
@@ -1520,12 +1529,31 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         }
       }
     }
-    const formReply = request.method === "POST" && pathname.match(/^\/api\/session\/[^/]+\/form\/([^/]+)\/reply\/?$/)
+    const formReply = request.method === "POST" && pathname.match(/^\/api\/session\/[^/]+\/form\/([^/]+)\/reply\/*$/)
+    const control = authorizedSession && sessionControl ? { session: authorizedSession, client: await clientForRequest(), signal } : undefined
+    const controlCurrent = async () => {
+      if (control && !await wait(currentSessionControl(control))) return false
+      connection?.assertCurrent()
+      if (workspaceManager.captureWorkspaceOperation) {
+        try { return workspaceOperation?.current() === true } catch { return false }
+      }
+      return workspaceManager.get(workspaceId)?.path === workspace.path
+    }
+    const result = control && sessionControl && await wait(admitSessionControl(sessionControl, {
+      pathname: pathname.replace(/\/+$/, ""), query: targetUrl.searchParams, body: request.body, ...control,
+    }))
+    if (result && "status" in result) {
+      if (result.reconcile && connection && authorizedSessionDirectory && await controlCurrent().catch(() => false)) {
+        grantPendingReconciliation(connection, workspaceId, authorizedSessionDirectory)
+      }
+      releaseMutation?.()
+      return reply.code(result.status).send(result.body)
+    }
     if (formReply && sessionId && sessionId !== "global" && connection && args.humanAnswers
       && request.headers[HUMAN_ANSWER_HEADER] === "1") {
       grantPendingReconciliation(connection, workspaceId, authorizedSessionDirectory ?? runtimeLocation.directory)
       try {
-        const result = await replyMissionHumanAnswer(request, workspaceId, sessionId, decodeURIComponent(formReply[1]),
+        const result = await replyMissionHumanAnswer(request, workspaceId, sessionId, formReply[1],
           args.humanAnswers, connection, signal)
         if (result) {
           releaseMutation?.()
@@ -1538,22 +1566,21 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
         return reply.code(409).send({ error: "Human answer outcome unavailable; do not replay the native answer" })
       }
     }
-    const permissionReply = request.method === "POST" && pathname.match(/^\/api\/session\/[^/]+\/permission\/([^/]+)\/reply\/?$/)
-    const permissionBody = body as { decision?: unknown; message?: unknown } | undefined
-    const confirmPermission = permissionReply && connection && args.permissionReceipts && sessionId
-      && permissionBody && ["once", "always", "reject"].includes(String(permissionBody.decision))
-      && (permissionBody.message === undefined || typeof permissionBody.message === "string")
-      ? await args.permissionReceipts.prepare(workspaceId, connection, sessionId, permissionReply[1],
-        permissionBody.decision as "once" | "always" | "reject", "codenomad", permissionBody.message as string | undefined)
+    const confirmPermission = result && connection && args.permissionReceipts
+      ? await wait(args.permissionReceipts.prepare(workspaceId, connection, result.request, result.decision, result.message))
       : undefined
     const confirmDeletion = request.method === "DELETE" && /^\/api\/session\/[^/]+\/?$/.test(pathname)
       && connection && args.permissionReceipts && sessionId
       ? await args.permissionReceipts.prepareDeletion(workspaceId, connection, sessionId) : undefined
     connection?.assertCurrent()
     // Recheck after authorization and receipt preparation, before forwarding.
+    if (control && !await controlCurrent()) {
+      releaseMutation?.()
+      return reply.code(403).send({ error: "Location does not belong to workspace" })
+    }
+    connection?.assertCurrent()
     if (deferList()) return reply.header("Retry-After", "30").header("Cache-Control", "no-store").code(503).send({ error: PENDING_DISCOVERY_DEFERRED })
-    if (connection && ((request.method === "POST" && /^\/api\/session\/[^/]+\/(?:permission|form)\/[^/]+\/reply\/?$/.test(pathname))
-      || (request.method === "DELETE" && /^\/api\/session\/[^/]+\/form\/[^/]+\/?$/.test(pathname)))) {
+    if (connection && kind && kind !== "interrupt") {
       grantPendingReconciliation(connection, workspaceId, authorizedSessionDirectory ?? runtimeLocation.directory)
     }
     if (request.method === "POST" && /^\/api\/session\/[^/]+\/(?:prompt|command|shell)\/?$/.test(pathname)) {
@@ -1879,8 +1906,8 @@ function getSessionRouteId(pathname: string): string | null {
 }
 
 function isGlobalFormAction(pathname: string, method: string): boolean {
-  return (method === "POST" && /^\/api\/session\/global\/form\/[^/]+\/reply\/?$/.test(pathname))
-    || (method === "DELETE" && /^\/api\/session\/global\/form\/[^/]+\/?$/.test(pathname))
+  return (method === "POST" && /^\/api\/session\/global\/form\/[^/]+\/reply\/*$/.test(pathname))
+    || (method === "DELETE" && /^\/api\/session\/global\/form\/[^/]+\/*$/.test(pathname))
 }
 
 async function authorizeSessionList(
@@ -2207,9 +2234,19 @@ function normalizeInstanceSuffix(pathSuffix: string | undefined) {
   return trimmed.length === 0 ? "/" : `/${trimmed}`
 }
 
+function findUiEntry(dir: string): string {
+  const name = "index.html"
+  if (!dir || !fs.existsSync(path.join(dir, name))) return name
+  try {
+    const entries = fs.readdirSync(dir)
+    return entries.includes(name) ? name : entries.find(entry => entry.toLowerCase() === name) ?? name
+  } catch { return name }
+}
+
 function setupStaticUi(
   app: FastifyInstance,
   uiDir: string,
+  uiEntry: string,
   authManager: AuthManager,
   previewManager: PreviewManager,
   logger: Logger,
@@ -2225,21 +2262,66 @@ function setupStaticUi(
     return
   }
 
+  const identityRefused = new AsyncLocalStorage<{ original?: string }>()
+  const negotiate = (request: FastifyRequest) => {
+    // Only GET applies Range; Fastify's sender also sees the raw HEAD headers.
+    if (request.method === "HEAD") delete request.raw.headers.range
+    // Expand the wildcard for fastify-static, which maps it to gzip alone.
+    const encodings = request.headers["accept-encoding"]?.toLowerCase().split(",") ?? []
+    const explicit = new Map(encodings.map(entry => [entry.split(";", 1)[0]!.trim(), entry]))
+    const quality = (entry: string) => Number(/;\s*q\s*=\s*([01](?:\.\d{0,3})?)\s*$/.exec(entry)?.[1] ?? 1)
+    const identity = explicit.get("identity"), wildcard = explicit.get("*")
+    const identityQuality = identity === undefined ? undefined : quality(identity)
+    if (wildcard || identityQuality !== undefined) {
+      request.headers["accept-encoding"] = ["br", "gzip", "deflate"]
+        .map(coding => explicit.get(coding) ?? wildcard?.replace("*", coding))
+        .filter(entry => entry !== undefined && quality(entry) >= (identityQuality ?? 0)).join(",")
+    }
+    return (identityQuality ?? (wildcard && quality(wildcard))) === 0
+  }
   app.addHook("preHandler", (request, reply, done) => {
     const session = authManager.getSessionFromRequest(request)
     if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, remotePreviewsAllowed)) {
       return
     }
+    if (!("previewCapability" in request.routeOptions.config)
+      && (request.routeOptions.url === "/" || request.routeOptions.url === "/*") && negotiate(request)) {
+      return identityRefused.run({}, done)
+    }
     done()
+  })
+
+  app.addHook("onSend", (request, reply, payload, done) => {
+    if (identityRefused.getStore() !== undefined && reply.statusCode === 406) {
+      reply.header("vary", "Origin, Accept-Encoding").removeHeader("content-length").removeHeader("content-type")
+      return done(null, "")
+    }
+    done(null, payload)
   })
 
   app.register(fastifyStatic, {
     root: uiDir,
     prefix: "/",
-    decorateReply: false,
+    preCompressed: true,
+    allowedPath: (file, _root, request) => {
+      // Both authorization checks use logical paths, including a selected index.
+      const refused = identityRefused.getStore()
+      if (refused) refused.original = path.basename(file)
+      return !isHtmlBundlePath(file) || Boolean(authManager.getSessionFromRequest(request))
+    },
+    onFile: (file) => {
+      const refused = identityRefused.getStore()
+      if (!refused) return
+      const selected = path.basename(file)
+      if (/\.(?:br|gz|deflate)$/.test(selected) && selected !== refused.original) return
+      throw Object.assign(new Error("No acceptable static representation"), { statusCode: 406 })
+    },
+    setHeaders: (reply, file) => {
+      if (isHtmlBundlePath(file)) reply.header("cache-control", "no-store")
+    },
   })
 
-  const indexPath = path.join(uiDir, "index.html")
+  const indexPath = path.join(uiDir, uiEntry)
 
   app.setNotFoundHandler((request: FastifyRequest, reply: FastifyReply) => {
     const url = request.raw.url ?? ""
@@ -2253,13 +2335,18 @@ function setupStaticUi(
       return
     }
 
-    if (!session && wantsHtml(request)) {
-      reply.redirect("/login")
+    if (!session) {
+      if (wantsHtml(request)) reply.redirect("/login")
+      else reply.header("cache-control", "no-store").code(404).send({ message: "Not Found" })
       return
     }
 
     if (fs.existsSync(indexPath)) {
-      reply.type("text/html").send(fs.readFileSync(indexPath, "utf-8"))
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        return reply.header("cache-control", "no-store").type("text/html").send(fs.readFileSync(indexPath, "utf-8"))
+      }
+      const rejectIdentity = identityRefused.getStore() !== undefined || negotiate(request)
+      return rejectIdentity ? identityRefused.run({}, () => reply.sendFile(uiEntry)) : reply.sendFile(uiEntry)
     } else {
       reply.code(404).send({ message: "UI bundle missing" })
     }

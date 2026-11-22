@@ -86,6 +86,9 @@ export const messagingMessages = {
   "history.pruning": "Cleaning: {count} / {total} messages",
   "transcriptFilters.title": "Message content",
   "transcriptFilters.systemMessages": "System",
+  "transcriptFilters.toolGroups": "Tool groups",
+  "transcriptFilters.toolGroups.enable": "Enable tool grouping",
+  "transcriptFilters.toolGroups.disable": "Disable tool grouping",
   "messageBlock.system.label": "System",
   "messageBlock.hiddenParts.one": "1 item hidden",
   "messageBlock.hiddenParts.other": "{count} items hidden",
@@ -395,7 +398,6 @@ export const messagingMessages = {
   "voice.microphone.conversation": "Live conversation is using the microphone.",
   "voice.microphone.unavailable": "The microphone is unavailable in this window.",
   "promptInput.voiceInput.error.permissionDenied": "Microphone access was denied by macOS.",
-  "promptInput.voiceInput.error.unsupported": "Voice input is not supported in this browser.",
   "promptInput.voiceInput.error.transcribe": "Unable to transcribe the recorded audio.",
   "promptInput.resizeHandle.title": "Drag to resize input height",
 } as const

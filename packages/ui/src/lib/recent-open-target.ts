@@ -7,6 +7,9 @@ import { sidecarTabs, sidecars } from "../stores/sidecars"
 import { preferencesForBackend } from "../stores/preferences"
 import { createMemo } from "solid-js"
 import { sidecarsAllowed } from "./server-meta"
+import { workspaceIdentity } from "../stores/app-session-reconciliation"
+import { instances } from "../stores/instances"
+import { openInstanceTabIds } from "../stores/app-tab-membership"
 
 export type LaunchableRecent = RecentProject | {
   kind: "sidecar"; key: string; path: string; projectName: string; lastAccessed: number
@@ -29,6 +32,18 @@ export const launchableRecents = createMemo<readonly LaunchableRecent[]>(() => {
 export function recentOpenTarget(recent: LaunchableRecent) {
   if (recent.kind === "sidecar") return appTabs().find(tab => tab.kind === "sidecar" && tab.sidecarTab.sidecarId === recent.path)
   return findOpenProjectTab(recent.path, recent.backendId)
+}
+
+const projectsOpenElsewhere = createMemo(() => {
+  const own = openInstanceTabIds()
+  return new Set([...instances().values()]
+    .filter(instance => instance.status === "ready" && !own.has(instance.id))
+    .map(instance => workspaceIdentity(instance.folder, instance.backendId)))
+})
+
+export function recentOpenElsewhere(recent: LaunchableRecent): boolean {
+  return recent.kind !== "sidecar" && !recentOpenTarget(recent)
+    && projectsOpenElsewhere().has(workspaceIdentity(recent.path, recent.backendId))
 }
 
 export function recentAccessibleName(recent: LaunchableRecent): string {

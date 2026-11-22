@@ -8,14 +8,13 @@ function resolveWindowContext() {
   return context === "local" || context === "preferences" || context === "dictation" ? context : "remote"
 }
 
-function resolveWindowId() {
-  const prefix = "--codenomad-window-id="
+function resolveWindowArgument(prefix) {
   const arg = process.argv.find((value) => typeof value === "string" && value.startsWith(prefix))
   return arg ? arg.slice(prefix.length) : null
 }
 
 const windowContext = resolveWindowContext()
-const windowId = resolveWindowId()
+const windowId = resolveWindowArgument("--codenomad-window-id=")
 
 const localElectronAPI = {
   onCliStatus: (callback) => {
@@ -68,6 +67,11 @@ const localElectronAPI = {
   deviceSpeech: (request) => ipcRenderer.invoke("device-speech:request", request),
   setWakeLock: (enabled) => ipcRenderer.invoke("power:setWakeLock", Boolean(enabled)),
   showNotification: (payload) => ipcRenderer.invoke("notifications:show", payload),
+  onNotificationClick: (callback) => {
+    const handler = (_event, actionId) => callback(actionId)
+    ipcRenderer.on("notifications:click", handler)
+    return () => ipcRenderer.removeListener("notifications:click", handler)
+  },
   setNotificationBadge: (count) => ipcRenderer.invoke("notifications:setBadge", count),
   openRemoteWindow: (payload) => ipcRenderer.invoke("remote:openWindow", payload),
   openPreferences: (section, context, toggle, resume) => ipcRenderer.invoke("preferences:open", section, context, Boolean(toggle), Boolean(resume)),
@@ -90,12 +94,33 @@ const localElectronAPI = {
   emulateBrowserTarget: (registrationId, preset) => ipcRenderer.invoke("browser-target:emulate", registrationId, preset),
   browserTargetHistory: (guestWebContentsId, entryId) => ipcRenderer.invoke("browser-target:history", guestWebContentsId, entryId),
   unregisterBrowserTarget: (registrationId) => ipcRenderer.invoke("browser-target:unregister", registrationId),
-  claimBrowserOpen: (requestId) => ipcRenderer.invoke("browser-target:claimOpen", requestId),
+  claimBrowserOpen: (requestId, response) => ipcRenderer.invoke("browser-target:claimOpen", requestId, response),
+  browserPreviewOwnership: (input) => ipcRenderer.invoke("browser-target:ownership", input),
+  onBrowserPreviewOwnership: (callback) => {
+    const handler = (_event, payload) => callback(payload)
+    ipcRenderer.on("browser-target:ownership", handler)
+    return () => ipcRenderer.removeListener("browser-target:ownership", handler)
+  },
+  onBrowserPreviewFocus: (callback) => {
+    const handler = (_event, payload) => callback(payload)
+    ipcRenderer.on("browser-target:focus-owner", handler)
+    return () => ipcRenderer.removeListener("browser-target:focus-owner", handler)
+  },
   releaseBrowserOpen: (requestId) => ipcRenderer.invoke("browser-target:releaseOpen", requestId),
+  onBrowserOpenDiscovery: (callback) => {
+    const handler = (_event, payload) => callback(payload)
+    ipcRenderer.on("browser-target:discover", handler)
+    return () => ipcRenderer.removeListener("browser-target:discover", handler)
+  },
   onBrowserOpenRequest: (callback) => {
     const handler = (_event, payload) => callback(payload)
     ipcRenderer.on("browser-target:open", handler)
     return () => ipcRenderer.removeListener("browser-target:open", handler)
+  },
+  onBrowserOpenSettled: (callback) => {
+    const handler = (_event, payload) => callback(payload)
+    ipcRenderer.on("browser-target:open-settled", handler)
+    return () => ipcRenderer.removeListener("browser-target:open-settled", handler)
   },
 }
 
@@ -105,6 +130,7 @@ const remoteElectronAPI = {
   requestMicrophoneAccess: localElectronAPI.requestMicrophoneAccess,
   setWakeLock: localElectronAPI.setWakeLock,
   showNotification: localElectronAPI.showNotification,
+  onNotificationClick: localElectronAPI.onNotificationClick,
   setNotificationBadge: localElectronAPI.setNotificationBadge,
   // Honoured only from the unavailable-server document the host loaded, with the token it issued for it.
   retryRemoteWindow: (token) => ipcRenderer.invoke("remote:retry", token),
@@ -119,6 +145,7 @@ const preferencesElectronAPI = {
   deviceSpeech: localElectronAPI.deviceSpeech,
   openDialog: localElectronAPI.openDialog,
   showNotification: localElectronAPI.showNotification,
+  onNotificationClick: localElectronAPI.onNotificationClick,
   openRemoteWindow: localElectronAPI.openRemoteWindow,
   getZoomFactor: localElectronAPI.getZoomFactor,
   getPreferencesSection: () => ipcRenderer.invoke("preferences:getSection"),
@@ -165,4 +192,7 @@ contextBridge.exposeInMainWorld(
 )
 contextBridge.exposeInMainWorld("__CODENOMAD_WINDOW_CONTEXT__", windowContext)
 contextBridge.exposeInMainWorld("__CODENOMAD_WINDOW_ID__", windowContext === "local" ? windowId : null)
+if (windowContext === "local") {
+  contextBridge.exposeInMainWorld("__CODENOMAD_WINDOW_INSTANCE__", resolveWindowArgument("--codenomad-window-instance="))
+}
 contextBridge.exposeInMainWorld("__CODENOMAD_RUNTIME_HOST__", "electron")

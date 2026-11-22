@@ -4,8 +4,12 @@ import { addInstance } from "../../../src/stores/instances"
 import { setSessions } from "../../../src/stores/session-state"
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { runMemoryCleanup } from "../../../src/stores/agent-memory-cleanup"
+import { attachInstanceTabMembership, detachInstanceTabMembership } from "../../../src/stores/app-tab-membership"
 
-export const releaseCleanupOpener = (instanceId: string) => backendOf(instanceId).sdk.destroyClientsForInstance(instanceId)
+export function releaseCleanupOpener(instanceId: string) {
+  detachInstanceTabMembership(instanceId)
+  backendOf(instanceId).sdk.destroyClientsForInstance(instanceId)
+}
 
 /** Simulated opener SDK; the cleanup action and backend memory HTTP remain real. */
 export function installCleanupOpener(instanceId: string) {
@@ -28,6 +32,7 @@ export function installCleanupOpener(instanceId: string) {
   ;(backendOf(instanceId).sdk as any).clients.set(`${instanceId}:/workspaces/${workspaceId}/instance`, client)
   addInstance({ id: instanceId, ...(backendId === "local" ? {} : { backendId }), folder: "/homonym", port: 0, pid: 0,
     proxyPath: `/workspaces/${workspaceId}/instance`, status: "ready", client })
+  attachInstanceTabMembership(instanceId)
   setSessions(previous => new Map(previous).set(instanceId, new Map()))
   messageStoreBus.getOrCreate(instanceId)
   ;(window as any).fixtureRunCleanup = runMemoryCleanup

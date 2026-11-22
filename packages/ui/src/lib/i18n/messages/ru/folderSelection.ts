@@ -40,9 +40,11 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "Переименовать рабочее пространство",
   "folderSelection.recent.remove": "Убрать из недавних",
   "folderSelection.recent.openBadge": "Открыта",
+  "folderSelection.recent.openElsewhere": "Открыто в другом окне",
   "newInstanceLauncher.searchLabel": "Поиск по недавним проектам",
   "newInstanceLauncher.searchPlaceholder": "Поиск по недавним вкладкам…",
   "newInstanceLauncher.recentTitle": "Недавние вкладки",
+  "newInstanceLauncher.description": "Выберите недавний проект.",
   "newInstanceLauncher.empty": "Недавних проектов пока нет.",
   "newInstanceLauncher.noMatch": "Нет подходящих проектов.",
   "folderSelection.recent.switchToOpenProject": "Перейти к открытому проекту",
@@ -65,7 +67,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.errorRequired": "URL репозитория и папка назначения обязательны.",
   "folderSelection.actions.connectButton": "Подключить сервер CodeNomad",
 
-  "folderSelection.opencode": "OpenCode",
 
 
   "folderSelection.loading.title": "Запуск экземпляра…",
@@ -115,7 +116,7 @@ export const folderSelectionMessages = {
   "projectRenameDialog.actions.cancel": "Отмена",
   "projectRenameDialog.actions.rename": "Переименовать",
   "projectRenameDialog.actions.renaming": "Переименование...",
-  "newTab.temporary": "Временная",
+  "newTab.temporary": "Временная вкладка",
   "newTab.title": "Новая вкладка",
   "newTab.items.one": "{count} элемент",
   "newTab.items.other": "{count} элементов",

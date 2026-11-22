@@ -1,11 +1,15 @@
 use crate::{
-    device_speech::{Control, Hex, Operation, Plan, SpeechError},
+    device_speech::{Control, Driver, Hex, Operation, Plan, SpeechError},
     device_speech_worker::run_worker,
     managed_node::{resolve_bundled_node_binary, resolve_desktop_speech_worker},
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::Value;
 use std::{path::PathBuf, process::Command, time::Duration};
+
+#[path = "device_speech_hex_service.rs"]
+mod service;
+use service::{HexService, Installation};
 
 const MAX_WAV: usize = 44 + 16_000 * 2 * 120;
 
@@ -43,21 +47,28 @@ pub(crate) fn decode_wav(value: &str) -> Option<Vec<u8>> {
 
 pub(crate) struct HexDriver {
     root: PathBuf,
+    service: HexService,
 }
 
 impl HexDriver {
     pub(crate) fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            service: HexService::default(),
+        }
     }
+}
 
-    pub(crate) fn capabilities(&self) -> Hex {
+impl Driver for HexDriver {
+    fn capabilities(&self) -> Hex {
         self.run("read", "", None, None, Duration::from_secs(4))
             .ok()
             .and_then(|value| serde_json::from_value(value).ok())
             .unwrap_or(Hex::Unavailable)
     }
 
-    pub(crate) fn prepare(&self, plan: Plan, control: Control) -> Result<(), SpeechError> {
+    fn prepare(&self, plan: Plan, control: Control) -> Result<(), SpeechError> {
+        self.stop();
         self.run(
             "prepare",
             &plan.id,
@@ -68,22 +79,54 @@ impl HexDriver {
         Ok(())
     }
 
-    pub(crate) fn dictate(&self, control: Control) -> Result<String, SpeechError> {
-        control.progress(Operation::Recording { text: None });
-        let audio = control.wait_for_audio().ok_or(SpeechError::Failed)?;
-        control.progress(Operation::Transcribing);
-        self.run(
-            "transcribe",
-            &audio.len().to_string(),
-            Some(&audio),
-            Some(&control),
-            Duration::from_secs(150),
-        )?
-        .as_str()
-        .map(str::to_owned)
-        .ok_or(SpeechError::Failed)
+    fn stop(&self) {
+        self.service.stop();
     }
 
+    fn request_stop(&self) {
+        self.service.request_stop();
+    }
+
+    fn dictate(
+        &self,
+        control: Control,
+        selected: Box<dyn Fn() -> bool + Send + Sync>,
+    ) -> Result<String, SpeechError> {
+        let installation = self
+            .run(
+                "installation",
+                "",
+                None,
+                Some(&control),
+                Duration::from_secs(30),
+            )
+            .and_then(|value| {
+                serde_json::from_value::<Installation>(value).map_err(|_| SpeechError::Failed)
+            });
+        let installation = match installation {
+            Ok(installation) => installation,
+            Err(error) => {
+                if !control.cancelled() {
+                    self.stop();
+                }
+                return Err(error);
+            }
+        };
+        control.progress(Operation::Recording);
+        self.service.dictate(
+            installation,
+            selected,
+            || control.cancelled(),
+            |interrupted| {
+                let audio = control.wait_for_audio(interrupted)?;
+                control.progress(Operation::Transcribing);
+                Some(audio)
+            },
+        )
+    }
+}
+
+impl HexDriver {
     fn run(
         &self,
         action: &str,
@@ -102,7 +145,7 @@ impl HexDriver {
             .arg(arg)
             .env_remove("NODE_OPTIONS")
             .env_remove("NODE_PATH");
-        run_worker(command, input, control, timeout, false)
+        run_worker(command, input, control, timeout)
     }
 }
 

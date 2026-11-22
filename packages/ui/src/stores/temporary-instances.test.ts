@@ -23,15 +23,15 @@ serverApi.discardTemporaryWorkspace = async (id, options) => {
   if (discardError) throw discardError
 }
 serverApi.createTemporaryFolder = async () => { calls.push("create"); return { path: "D:\\temp\\20261009-120000-dead" } }
-serverApi.createWorkspace = async (payload: any) => { createdName = payload?.name; throw new Error("opencode_update_required") }
-serverApi.abandonTemporaryFolder = async (path) => { calls.push(`abandon:${path}`) }
+serverApi.createWorkspace = async payload => { createdName = payload.name; throw new HttpResponseError("opencode_update_required", 426, null) }
+serverApi.abandonTemporaryFolder = async (path, requestId?: string) => { calls.push(`abandon:${path}${requestId ? `:${requestId}` : ""}`) }
 
 const { tGlobal } = await import("../lib/i18n")
 const { clearToastHistory, getToastHistory } = await import("../lib/notifications")
 const { backendEvents, serverEvents } = await import("../lib/server-events")
 const { alertDialogState } = await import("./alerts")
 const { activeAppTabId, appTabs, attachInstanceTab, selectInstanceTab } = await import("./app-tabs")
-const { addInstance, instances, removeInstance, updateInstance } = await import("./instances")
+const { addInstance, cancelUnattachedWorkspaceCreations, instances, removeInstance, resumeWorkspaceCreations, updateInstance } = await import("./instances")
 const { closeTemporaryInstance, keepTemporaryInstance, openTemporaryInstance } = await import("./temporary-instances")
 const { clearInstanceDraftPrompts, getSessionDraftPrompt, setSessionDraftPrompt, setSessions } = await import("./session-state")
 
@@ -326,4 +326,36 @@ test("a failed launch removes the folder it just created", async () => {
     await assert.rejects(openTemporaryInstance(), /opencode_update_required/)
     assert.deepEqual(calls, ["create", "abandon:D:\\temp\\20261009-120000-dead"])
   } finally { reset() }
+})
+
+for (const supportsCancelAndAbandon of [true, undefined]) test(
+  supportsCancelAndAbandon ? "release abandons only the newly allocated folder" : "release only cancels creation on an older server",
+  async t => {
+  openEmpty("captured")
+  const path = "D:\\temp\\20261009-120000-dead"
+  t.mock.method(serverApi, "createTemporaryFolder", async () => {
+    calls.push("create")
+    return { path, supportsCancelAndAbandon }
+  })
+  let markPosted!: (id: string) => void
+  const posted = new Promise<string>(resolve => { markPosted = resolve })
+  t.mock.method(serverApi, "createWorkspace", (...[payload, options]: Parameters<typeof serverApi.createWorkspace>) => {
+    markPosted(payload.requestId!)
+    const signal = options!.signal!
+    return new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+    })
+  })
+  t.mock.method(serverApi, "cancelWorkspaceCreation", async (id: string, keepalive: boolean) => { calls.push(`cancel:${id}:${keepalive}`) })
+  try {
+    const opening = assert.rejects(openTemporaryInstance(), /Window is releasing workspace records/)
+    const requestId = await posted
+    await cancelUnattachedWorkspaceCreations(new Set(["captured"]))
+    await opening
+    assert.deepEqual(calls, ["create", supportsCancelAndAbandon ? `abandon:${path}:${requestId}` : `cancel:${requestId}:true`])
+    assert.ok(tabOpen("captured"))
+  } finally {
+    resumeWorkspaceCreations()
+    reset("captured")
+  }
 })

@@ -30,15 +30,17 @@ const client: any = {
 const query = new URLSearchParams(location.search)
 const saved = query.get("saved"), saveDelay = Number(query.get("saveDelay") ?? 0)
 let config: any = { settings: { locale: "en", ...(saved === null ? {} : { showUsageMetrics: saved === "true", usageMetricsExpansion: "expanded" }) } }
-serverApi.fetchConfigOwner = async () => config
 let saves = 0, inFlight = 0, maxInFlight = 0, systemChecks = 0
-serverApi.patchConfigOwner = async (_owner, patch: any) => {
-  saves += 1
-  maxInFlight = Math.max(maxInFlight, ++inFlight)
-  // ?saveDelay=<ms> keeps each save pending like a slow server.
-  try { if (saveDelay) await new Promise(resolve => setTimeout(resolve, saveDelay)) } finally { inFlight -= 1 }
-  config = { ...config, ...patch, settings: { ...config.settings, ...patch.settings } }
-  return config
+if (!query.has("legacyEverything")) {
+  serverApi.fetchConfigOwner = async () => config
+  serverApi.patchConfigOwner = async (_owner, patch: any) => {
+    saves += 1
+    maxInFlight = Math.max(maxInFlight, ++inFlight)
+    // ?saveDelay=<ms> keeps each save pending like a slow server.
+    try { if (saveDelay) await new Promise(resolve => setTimeout(resolve, saveDelay)) } finally { inFlight -= 1 }
+    config = { ...config, ...patch, settings: { ...config.settings, ...patch.settings } }
+    return config
+  }
 }
 serverApi.fetchStateOwner = async () => ({} as any)
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)

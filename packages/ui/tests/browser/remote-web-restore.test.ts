@@ -18,10 +18,10 @@ before(async () => {
 })
 after(async () => { await browser?.close() })
 
-for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"]) test(`web mobile HTTP: ${mode}, A/B identities and explicit recovery`, { timeout: 120_000 }, async () => {
+for (const mode of ["present", "offline", "missing", "rate-limited", "uncertain"]) test(`web mobile HTTP: ${mode}, A/B identities and explicit recovery`, { timeout: 120_000 }, async () => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true,
     userAgent: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/130.0.0.0 Mobile Safari/537.36" })
-  let page = await context.newPage()
+  const page = await context.newPage()
   page.setDefaultTimeout(15_000)
   page.setDefaultNavigationTimeout(60_000)
   const errors: string[] = [], creates: string[] = [], requestIds: string[] = []
@@ -43,7 +43,7 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
     }
   })
   let healthy = mode !== "offline"
-  const inventories = new Map(["a", "b"].map(id => [id, !["reuse", "offline"].includes(mode) && id === "b" ? [] : [
+  const inventories = new Map(["a", "b"].map(id => [id, !["present", "offline"].includes(mode) && id === "b" ? [] : [
     descriptor("sibling", "/same"), descriptor("same", "/same"),
   ]]))
   await context.route(url => /^\/(?:api|workspaces)\//.test(url.pathname), async route => {
@@ -51,7 +51,7 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
     const owner = /^\/api\/backends\/([ab])/.exec(pathname)?.[1]
     const path = owner ? pathname.slice(`/api/backends/${owner}`.length) : pathname
     let body: any = {}
-    if (path.startsWith("/api/storage/")) body = owner ? {} : path.endsWith("/config/ui") ? { settings: { multiBackend: true } }
+    if (path.startsWith("/api/storage/")) body = owner ? {} : path.endsWith("/config/ui") ? { settings: { multiBackend: true, locale: "en" } }
       : path.endsWith("/state/ui") ? { remoteServers: ["a", "b"].map(id => ({
         id, name: `Server ${id.toUpperCase()}`, baseUrl: `https://${id}.test`, skipTlsVerify: false, createdAt: "", updatedAt: "",
       })) } : {}
@@ -65,10 +65,10 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
         assert(owner, "web restore must never create a local workspace")
         creates.push(owner)
         requestIds.push(request.postDataJSON().requestId)
-        if (creates.length === 1 && ["rate-limited", "uncertain"].includes(mode)) {
+        if (owner === "b" && creates.filter(id => id === "b").length === 1 && ["rate-limited", "uncertain"].includes(mode)) {
           return route.fulfill({ status: mode === "rate-limited" ? 429 : 499, json: { error: "refused" } })
         }
-        body = { ...descriptor("opened", "/same"), requestId: request.postDataJSON().requestId }
+        body = { ...descriptor(`opened-${creates.length}`, "/same"), requestId: request.postDataJSON().requestId }
         inventories.get(owner)!.push(body)
       } else body = owner ? inventories.get(owner) : []
     } else if (path.endsWith("/worktrees")) body = { isGitRepo: false, worktrees: [] }
@@ -82,10 +82,10 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
     const tabs = () => page.evaluate(() => (window as any).restoreFixture.tabs())
     let state = await tabs()
     assert.equal(state.length, 2)
-    assert.equal(state[0].id, "instance:a~same", "saved record wins over folder occurrence zero")
+    assert.match(state[0].id, /^instance:a~opened-/, "HTTP creates a new record even when the saved one still exists")
     assert.equal(state[0].drafts.__no_session_draft__, "draft-a")
     assert.equal(state[1].drafts.__no_session_draft__, "draft-b")
-    assert.deepEqual(creates, [], "automatic restoration creates nothing")
+    assert.deepEqual([...creates].sort(), mode === "offline" ? ["a"] : ["a", "b"], "only admitted servers receive a new record")
     if (mode === "offline") {
       assert.equal(state[1].kind, "remote-restore")
       await page.getByRole("button", { name: "Connect", exact: true }).click()
@@ -93,29 +93,19 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
       assert.equal(await page.getByLabel("New pairing link", { exact: true }).isDisabled(), true)
       healthy = true
       await page.getByRole("button", { name: "Retry", exact: true }).click()
-    } else if (!["reuse", "offline"].includes(mode)) {
+    } else if (["rate-limited", "uncertain"].includes(mode)) {
       assert.equal(state[1].kind, "remote-restore")
       await page.getByRole("button", { name: "Retry", exact: true }).click()
-      assert.deepEqual(creates, [], "Retry only rebinds web records")
-      await page.getByRole("button", { name: "Open", exact: true }).click()
-      if (["rate-limited", "uncertain"].includes(mode)) {
-        const settled = () => page.waitForFunction(() => {
-          const button = document.querySelector<HTMLButtonElement>("[data-remote-restore] button")
-          return !button || !button.disabled
-        })
-        await settled()
-        await page.getByRole("button", { name: "Open", exact: true }).click()
-        await settled()
-        if (mode === "uncertain") {
-          assert.deepEqual(creates, ["b"], "an uncertain 499 never replays its creation")
-          assert.equal((await tabs())[1].drafts.__no_session_draft__, "draft-b")
-          return
-        }
+      await page.waitForFunction(() => !document.querySelector("[data-remote-restore] button:disabled"))
+      if (mode === "uncertain") {
+        assert.deepEqual([...creates].sort(), ["a", "b"], "an uncertain 499 never replays its creation")
+        assert.equal((await tabs())[1].drafts.__no_session_draft__, "draft-b")
+        return
       }
     }
     await page.waitForFunction(() => (window as any).restoreFixture.tabs().every((tab: any) => tab.kind === "instance"))
-    const expectedCreates = mode === "rate-limited" ? ["b", "b"] : mode === "missing" ? ["b"] : []
-    assert.deepEqual(creates, expectedCreates, "only explicit Open creates a missing occurrence")
+    const expectedCreates = mode === "rate-limited" ? ["a", "b", "b"] : ["a", "b"]
+    assert.deepEqual([...creates].sort(), expectedCreates)
     for (const id of requestIds) assert.match(id, /^restore-[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i, "HTTP creation IDs use the shared cryptographic UUID helper")
     state = await tabs()
     assert.deepEqual(state.map((tab: any) => tab.drafts.__no_session_draft__), ["draft-a", "draft-b"])
@@ -131,20 +121,11 @@ for (const mode of ["reuse", "offline", "missing", "rate-limited", "uncertain"])
     })
     await page.reload()
     await page.locator('[data-restoring="false"]').waitFor()
-    assert.deepEqual(await tabs(), state, "reload keeps backend binding, order and drafts")
+    const reloaded = await tabs()
+    assert.deepEqual(reloaded.map((tab: any) => tab.drafts), state.map((tab: any) => tab.drafts))
+    assert.ok(reloaded.every((tab: any, index: number) => tab.id !== state[index].id))
     assert.deepEqual(await views(), ["status", "files"])
-    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: false })))
-    // A fresh renderer receives only the browser-cloned sessionStorage, as after mobile discard.
-    const replacement = page.waitForEvent("popup")
-    await page.evaluate(() => window.open(location.href))
-    const discarded = page
-    page = await replacement
-    page.on("pageerror", error => errors.push(error.message))
-    await discarded.close()
-    await page.locator('[data-restoring="false"]').waitFor()
-    assert.deepEqual(await tabs(), state, "discarded page restores its tab-owned snapshot")
-    assert.deepEqual(await views(), ["status", "files"])
-    assert.deepEqual(creates, expectedCreates)
+    assert.deepEqual(creates.sort(), [...expectedCreates, "a", "b"].sort())
     assert.deepEqual(errors, [])
   } finally { await context.close() }
 })
@@ -154,18 +135,20 @@ function descriptor(id: string, path: string) {
 }
 
 for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "failed-reconnect"
-  ? "web reload keeps failed reconnect status after a deferred first-open inventory"
+  ? "web discard keeps failed reconnect status after a deferred first-open inventory"
   : mode === "disappears"
-  ? "web reload preserves the active remote tab when the next inventory omits its project during hydration"
-  : "web reload restores the active remote tab when SSE opens during its inventory", { timeout: 90_000 }, async () => {
+  ? "web discard preserves the active remote tab for Retry when inventory omits its project during hydration"
+  : "web discard restores the active remote tab when SSE opens during its inventory", { timeout: 90_000 }, async () => {
   const context = await browser.newContext(), page = await context.newPage()
   const creates: string[] = []
   const disappears = mode === "disappears", failedReconnect = mode === "failed-reconnect"
-  let reload = false, reads = 0, remotePresent = true, remoteAvailable = true
+  let reload = false, reads = 0, remotePresent = true, remoteAvailable = true, remoteId = "same"
   const releaseHydration = Promise.withResolvers<void>(), omitProject = Promise.withResolvers<void>()
   await context.addInitScript(disappears => {
     ;(window as any).__name = (value: unknown) => value
     Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: "web", __CODENOMAD_WINDOW_CONTEXT__: "remote" })
+    window.addEventListener("pagehide", event => event.stopImmediatePropagation(), { capture: true })
+    Object.defineProperty(document, "wasDiscarded", { value: true })
     let openRemote: () => void
     let connections = 0
     Object.assign(window, { openRemoteEvents: () => openRemote(), remoteConnections: () => connections })
@@ -206,9 +189,12 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
     else if (path === "/api/workspaces") {
       if (request.method() === "POST") {
         creates.push(pathname)
-        return route.fulfill({ status: 500, json: {} })
+        assert.ok(disappears && remote && !remotePresent)
+        remoteId = "recreated"
+        remotePresent = true
+        body = { ...descriptor(remoteId, "/remote"), requestId: request.postDataJSON().requestId }
       }
-      if (remote && reload && ++reads === 1) {
+      else if (remote && reload && ++reads === 1) {
         // Dispatch open while the admission request is held. Wait for the
         // handler's module import before letting the response reach Chromium.
         await page.evaluate(async () => {
@@ -222,12 +208,12 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
           await page.waitForFunction(() => (window as any).restoreFixture.state() === "unreachable")
         }
       }
-      if (remote && reload && disappears && reads === 2) {
+      if (request.method() !== "POST" && remote && reload && disappears && reads === 2) {
         // Wait until the admitted record owns the tab and its saved session read is in flight.
         await omitProject.promise
         remotePresent = false
       }
-      body = remote && !remotePresent ? [] : [descriptor("same", remote ? "/remote" : "/local")]
+      if (request.method() !== "POST") body = remote && !remotePresent ? [] : [descriptor(remote ? remoteId : "same", remote ? "/remote" : "/local")]
     } else if (path.endsWith("/worktrees")) body = { isGitRepo: false, worktrees: [] }
     else if (remote && path.endsWith("/instance/api/session/held-session")) {
       if (reload) await releaseHydration.promise
@@ -265,10 +251,10 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
       remoteAvailable = true
       await page.evaluate(() => (window as any).restoreFixture.disconnect())
       await page.waitForFunction(() => (window as any).remoteConnections() === 2)
-      await page.evaluate(async () => {
-        ;(window as any).openRemoteEvents()
-        await (window as any).restoreFixture.waitForInventory()
-      })
+      const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === "/api/backends/a/api/workspaces")
+      await page.evaluate(() => (window as any).openRemoteEvents())
+      await refreshed
+      await page.waitForFunction(() => (window as any).restoreFixture.state() === "compatible")
       assert.equal(reads, 2, "the next valid opening refreshes inventory once")
       assert.equal(await state(), "compatible")
       await page.getByRole("button", { name: "Retry", exact: true }).click()
@@ -286,8 +272,6 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
         return !f.tabs().some((tab: any) => tab.id === "instance:a~same")
       })
       assert.equal(await page.locator('[data-restoring="true"]').count(), 1, "hydration remains pending at removal")
-      releaseHydration.resolve()
-      await restored()
       const tabs = () => page.evaluate(() => (window as any).restoreFixture.tabs())
       const state = await tabs()
       assert.equal(state.length, 2, "the missing remote project keeps its tab")
@@ -297,21 +281,17 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
       assert.equal(state[1].folder, "/remote")
       assert.deepEqual(state[1].drafts, { __no_session_draft__: "/remote", "held-session": "unsent conversation draft" })
       assert.equal(await page.evaluate(() => (window as any).restoreFixture.active()), state[1].id)
-      const placeholder = page.locator('[data-remote-restore="a"]')
-      const retry = placeholder.getByRole("button", { name: "Retry", exact: true })
-      await retry.click()
-      await page.waitForFunction(() => !document.querySelector("[data-remote-restore] button:disabled"))
-      assert.equal(reads, 3, "Retry reads inventory while the project remains absent")
-      assert.deepEqual(await tabs(), state)
-      remotePresent = true
-      await retry.click()
-      await page.locator('[data-ready]').filter({ hasText: "instance:a~same" }).waitFor()
+      releaseHydration.resolve()
+      await restored()
+      assert.deepEqual(creates, [])
+      await page.getByRole("button", { name: "Retry", exact: true }).click()
+      await page.locator('[data-ready]').filter({ hasText: "instance:a~recreated" }).waitFor()
       await page.waitForFunction(() => (window as any).restoreFixture.tabs()[1]?.drafts["held-session"] === "unsent conversation draft")
-      assert.deepEqual((await tabs()).map((tab: any) => tab.id), expected)
+      assert.deepEqual((await tabs()).map((tab: any) => tab.id), ["instance:same", "instance:a~recreated"])
       assert.deepEqual((await tabs())[1].drafts, state[1].drafts)
-      assert.equal(await page.evaluate(() => (window as any).restoreFixture.view("a~same")?.rightPanelTab), "files")
-      assert.equal(reads, 4)
-      assert.deepEqual(creates, [], "reload and both retries only rebind existing workspaces")
+      assert.equal(await page.evaluate(() => (window as any).restoreFixture.view("a~recreated")?.rightPanelTab), "files")
+      assert.equal(reads, 3)
+      assert.deepEqual(creates, ["/api/backends/a/api/workspaces"], "Retry replaces the unavailable record")
       return
     }
     assert.deepEqual(await restored(), expected, "both existing occurrences must rebind without Retry")
@@ -331,11 +311,11 @@ for (const mode of ["reuse", "disappears", "failed-reconnect"]) test(mode === "f
 })
 
 const primaryCases = [
-  ...[false, true].flatMap(multiBackend => ["open", "retry"].map(recovery => ({ multiBackend, recovery, initiallyUnavailable: false }))),
-  { multiBackend: false, recovery: "retry", initiallyUnavailable: true },
+  ...[false, true].map(multiBackend => ({ multiBackend, initiallyUnavailable: false })),
+  { multiBackend: false, initiallyUnavailable: true },
 ]
-for (const { multiBackend, recovery, initiallyUnavailable } of primaryCases) {
-  test(`web missing primary record preserves its occurrence (${multiBackend}, ${recovery}, unavailable=${initiallyUnavailable})`, async () => {
+for (const { multiBackend, initiallyUnavailable } of primaryCases) {
+  test(`web missing primary record preserves its occurrence (multiBackend=${multiBackend}, unavailable=${initiallyUnavailable})`, async () => {
     const context = await browser.newContext(), page = await context.newPage()
     page.setDefaultTimeout(15_000)
     page.setDefaultNavigationTimeout(60_000)
@@ -358,12 +338,12 @@ for (const { multiBackend, recovery, initiallyUnavailable } of primaryCases) {
       const request = route.request(), path = new URL(request.url()).pathname
       assert.equal(path.startsWith("/api/backends/"), false, "primary recovery keeps its host API")
       let body: any = {}
-      if (path.startsWith("/api/storage/")) body = path.endsWith("/config/ui") ? { settings: { multiBackend } } : {}
+      if (path.startsWith("/api/storage/")) body = path.endsWith("/config/ui") ? { settings: { multiBackend, locale: "en" } } : {}
       else if (path === "/api/meta") body = { apiContract: CODENOMAD_API_CONTRACT, serverId: "local", localRequest: false }
       else if (path === "/api/workspaces") {
         if (request.method() === "POST") {
           creates.push(request.postDataJSON().path)
-          body = { ...descriptor("opened", "/same"), requestId: request.postDataJSON().requestId }
+          body = { ...descriptor(`opened-${creates.length}`, "/same"), requestId: request.postDataJSON().requestId }
           projects.push(body)
         } else {
           reads++
@@ -376,36 +356,28 @@ for (const { multiBackend, recovery, initiallyUnavailable } of primaryCases) {
     })
     const tabs = () => page.evaluate(() => (window as any).restoreFixture.tabs())
     const waitReady = () => page.locator('[data-restoring="false"]').waitFor()
-    const waitIdle = () => page.waitForFunction(() => !document.querySelector<HTMLButtonElement>("[data-remote-restore] button:disabled"))
     try {
       await page.goto(url)
       await waitReady()
       assert.equal((await tabs()).length, 1, "the missing primary record keeps its tab")
       assert.equal((await tabs())[0].drafts.__no_session_draft__, "primary-backend-draft")
-      assert.deepEqual(creates, [])
-      await page.evaluate(() => window.dispatchEvent(new Event("pagehide")))
-      await page.reload()
-      await waitReady()
-      assert.equal((await tabs())[0].kind, "remote-restore")
-      assert.equal((await tabs())[0].drafts.__no_session_draft__, "primary-backend-draft")
-      assert.equal(await page.getByRole("button", { name: "Connect", exact: true }).count(), 0)
-      unavailable = false
-      const before = reads
-      await page.getByRole("button", { name: "Retry", exact: true }).click()
-      await waitIdle()
-      assert.ok(reads > before, "Retry reads the primary inventory")
-      assert.deepEqual(creates, [], "reload and Retry never create")
-      if (recovery === "retry") projects.push(descriptor("resumed", "/same"))
-      await page.getByRole("button", { name: recovery === "retry" ? "Retry" : "Open", exact: true }).click()
+      if (initiallyUnavailable) {
+        assert.equal((await tabs())[0].kind, "remote-restore")
+        assert.deepEqual(creates, [])
+        unavailable = false
+        const before = reads
+        await page.getByRole("button", { name: "Retry", exact: true }).click()
+        await page.waitForFunction(() => (window as any).restoreFixture.tabs()[0]?.kind === "instance")
+        assert.ok(reads > before, "Retry reads the primary inventory")
+      }
       await page.waitForFunction(() => (window as any).restoreFixture.tabs()[0]?.kind === "instance")
       assert.equal((await tabs())[0].drafts.__no_session_draft__, "primary-backend-draft")
-      assert.deepEqual(creates, recovery === "open" ? ["/same"] : [])
-      await page.evaluate(() => window.dispatchEvent(new Event("pagehide")))
+      assert.deepEqual(creates, ["/same"])
       await page.reload()
       await waitReady()
-      assert.equal((await tabs())[0].id, `instance:${recovery === "open" ? "opened" : "resumed"}`)
+      assert.equal((await tabs())[0].id, "instance:opened-2")
       assert.equal((await tabs())[0].drafts.__no_session_draft__, "primary-backend-draft")
-      assert.deepEqual(creates, recovery === "open" ? ["/same"] : [])
+      assert.deepEqual(creates, ["/same", "/same"])
       assert.deepEqual(errors, [])
     } finally { await context.close() }
   })

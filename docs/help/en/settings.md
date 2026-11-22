@@ -4,7 +4,7 @@ Preferences uses the selected project's server for project settings, providers, 
 
 ## Open settings and identify the scope {#open-settings}
 
-1. Open **Settings** with the **Open settings** gear in the tab bar (the title bar in the macOS desktop app) or on the home page. Shortcuts such as **Manage Providers** in the model selector, the Missions panel gear or the **Settings** gear in the notification history open the matching section directly.
+1. Open **Settings** with the **Open settings** gear in the tab bar. Shortcuts such as **Manage Providers** in the model selector, the Missions panel gear or the **Settings** gear in the notification history open the matching section directly.
 2. Select a section. Local Electron and Tauri windows open or focus one native Preferences window; browser and remote views use the embedded settings screen.
 3. Check the setting's scope and any **Save** action before leaving.
 
@@ -85,7 +85,7 @@ Built-in layout is window layout, not a project mutation. Extension checkboxes a
 ## Transcript detail and composer size {#transcript-composer}
 
 1. Open **Chat** to choose transcript detail defaults. Presets are **Nothing**, **Minimal**, **Balanced** and **Everything**; individual changes produce **Custom**.
-2. Set each row's **Default state** (**Hidden**, **Collapsed** or **Expanded**) for thinking, diagnostics, tool inputs, tokens, system messages and each tool type, or use the conversation's **Message content** popup, which shares these choices.
+2. Set each row's **Default state** (**Hidden**, **Collapsed** or **Expanded**), or use the conversation's **Message content** popup, which shares these choices. For **Tool groups**, **Disabled** gives each call its own card; **Collapsed** and **Expanded** set how groups open.
 3. In **General**, check **Show the message timeline**, **Put the first/latest message arrows under the timeline**, **Split tool-call diffs** and **Queue sent prompts** (queue prompts sent while a session works instead of steering it) as needed.
 4. Resize the composer using its resize control; long drafts scroll inside the field.
 
@@ -99,7 +99,7 @@ For a project tab on another CodeNomad server, notifications include the server 
 
 Compaction of technical Mission sessions is silent.
 
-1. Open **Notifications**. For each kind of notification, check where it appears: **On screen** (a temporary bubble), **History** (kept in the notification history of the bell in the tab bar, or the title bar in the macOS desktop app) and **System** (an operating-system notification). Drag across a row or column of boxes to set several at once.
+1. Open **Notifications**. For each kind of notification, check where it appears: **On screen** (a temporary bubble), **History** (kept in the notification history of the bell in the tab bar) and **System** (an operating-system notification). Drag across a row or column of boxes to set several at once.
 2. Checking a **System** box asks for permission if needed. Under **System notifications**, **Request permission** asks again while permission is missing.
 3. Enable **Notify when the app is focused** to keep system notifications while this window is focused. Otherwise they appear whenever it is not, even if it stays open on screen.
 
@@ -108,6 +108,8 @@ By default, **A session needs your answer** and **A session finished** go to Sys
 Browser/OS permission belongs to the device and application origin; a saved preference cannot override a denial. If blocked, enable notifications in browser or operating-system settings, then return here. Unsupported environments keep the System column disabled.
 
 The bell/history unread count, which only counts notifications routed to History, drives the browser favicon dot and native application badge.
+
+If your system supports notification actions, clicking a notification opens the conversation if it’s still open. Whether the window comes to the front depends on your desktop environment.
 
 ## Advanced options {#advanced}
 

@@ -4,7 +4,7 @@ import { chromium, type Page } from "playwright"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
-async function fixturePage(run: (page: Page) => Promise<void>) {
+async function fixturePage(run: (page: Page) => Promise<void>, manageServers = false) {
   const fixture = await borrowFixture({ name: "backend-parity", routes: [{ path: "/fixture", html:
     '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/backend-parity.tsx"></script></body></html>' }] })
   const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
@@ -34,6 +34,9 @@ async function fixturePage(run: (page: Page) => Promise<void>) {
     }
   })
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  if (manageServers) await page.route("**/api/meta", route => route.fulfill({ json: {
+    localRequest: false, serversUsable: true, serversManageable: true, secretEntryAllowed: false,
+  } }))
   try {
     await page.goto(fixture.url)
     await page.waitForFunction(() => Boolean((window as any).parity) && document.querySelectorAll(".image-settings select:not(:disabled)").length === 3
@@ -140,12 +143,14 @@ test("web system notification clicks navigate to the qualified session and revok
   assert.deepEqual(await page.evaluate(() => (window as any).parity.history()), [], "System-only routing creates no history action")
   for (const owner of ["A", "B"]) {
     await page.evaluate(owner => {
+      ;(window as any).parity.openMissionReader(`${owner}~same`)
       const notice = (window as any).systemNotifications.find((item: any) => item.title === `Server ${owner} · ${owner}`)
       notice.dispatchEvent(new Event("click"))
     }, owner)
     await page.waitForFunction(owner => (window as any).parity.selected().instance === `${owner}~same`, owner)
     const selected = await page.evaluate(() => (window as any).parity.selected())
     assert.equal(selected[`session${owner}`], "ses_homonym")
+    assert.equal(await page.evaluate(owner => (window as any).parity.surface(`${owner}~same`), owner), "conversation", "The click shows the conversation over a Mission reader")
   }
   await page.evaluate(() => {
     ;(window as any).parity.detach()
@@ -157,6 +162,49 @@ test("web system notification clicks navigate to the qualified session and revok
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
   assert.equal((await page.evaluate(() => (window as any).parity.selected())).instance, "B~same")
 }))
+
+for (const host of ["electron", "tauri"] as const) {
+  test(`${host} system clicks select the exact local and qualified remote sessions`, async () => fixturePage(async page => {
+    await page.evaluate(async host => {
+      const w = window as any
+      await w.parity.systemRouting()
+      w.__CODENOMAD_RUNTIME_HOST__ = host
+      const notices: Array<{ title: string; actionId: string }> = w.systemNotifications
+      const show = async (notice: typeof notices[number]) => { notices.push(notice); return { ok: true } }
+      if (host === "electron") {
+        w.electronAPI = { showNotification: show, onNotificationClick: (callback: typeof w.clickNative) => { w.clickNative = callback } }
+      } else {
+        w.__CODENOMAD_NOTIFICATION_ACTIONS__ = true
+        w.__TAURI_INTERNALS__ = { invoke: (command: string, args: typeof notices[number]) =>
+          command === "notification_show" ? show(args) : undefined }
+        w.clickNative = (id: string) => dispatchEvent(new CustomEvent("codenomad:notification-click", { detail: id }))
+      }
+      w.parity.notify("local")
+      w.parity.notify("A")
+      w.parity.notify("B")
+    }, host)
+    await page.waitForFunction(() => (window as any).systemNotifications.length === 3)
+    for (const [title, key, session] of [["local", "same", "sessionLocal"], ["Server B · B", "B~same", "sessionB"]]) {
+      await page.evaluate(title => {
+        const w = window as any
+        w.clickNative(w.systemNotifications.find((notice: any) => notice.title === title).actionId)
+      }, title)
+      await page.waitForFunction(({ key, session }) => {
+        const selected = (window as any).parity.selected()
+        return selected.instance === key && selected[session] === "ses_homonym"
+      }, { key, session })
+    }
+    const selected = await page.evaluate(async () => {
+      const w = window as any
+      w.parity.detach()
+      w.parity.reattach()
+      w.clickNative(w.systemNotifications.find((notice: any) => notice.title === "Server A · A").actionId)
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      return w.parity.selected().instance
+    })
+    assert.equal(selected, "B~same")
+  }))
+}
 
 test("embedded Settings Missions reads the selected qualified project's worktree Location", async () => fixturePage(async page => {
   for (const owner of ["A", "B"]) {
@@ -173,21 +221,19 @@ test("embedded Settings Missions reads the selected qualified project's worktree
 }))
 
 test("web clients manage and select saved servers through embedded Settings without a native bridge", async () => fixturePage(async page => {
-  await page.route("**/api/meta", route => route.fulfill({ json: {
-    localRequest: false, serversUsable: true, serversManageable: true, secretEntryAllowed: false,
-  } }))
   await page.evaluate(() => (window as any).parity.openServers())
-  const row = page.locator('[data-remote-server="A"]')
-  await row.waitFor()
-  assert.equal(await page.getByRole("textbox", { name: "Server address or link" }).isVisible(), true)
-  assert.equal(await page.getByRole("button", { name: "Add SSH server", exact: true }).isVisible(), true)
-  assert.equal(await page.getByRole("button", { name: "Edit server: Server A", exact: true }).count(), 1)
+  await page.waitForFunction(() => [
+    'input[aria-label="Server address or link"]',
+    'button[aria-label="Add SSH server"]',
+    'button[aria-label="Edit server: Server A"]',
+  ].every(selector => document.querySelector(`.settings-screen-shell ${selector}`)?.checkVisibility()))
+  const open = await page.waitForFunction(() => document.querySelector<HTMLButtonElement>('.settings-screen-shell button[aria-label="Open: Server A"]'))
+  await open.asElement()!.click()
+  await page.waitForFunction(() => (window as any).parity.serverSelection()?.id === "A")
   const id = await page.evaluate(async () => {
     Object.defineProperty(crypto, "randomUUID", { value: undefined })
     return (await (window as any).parity.addServer()).id
   })
   assert.match(id, /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i)
-  await row.getByRole("button", { name: "Open: Server A", exact: true }).click()
-  await page.waitForFunction(() => (window as any).parity.serverSelection()?.id === "A")
   assert.equal(await page.evaluate(() => Boolean(window.electronAPI || (window as any).__TAURI_INTERNALS__)), false)
-}))
+}, true))

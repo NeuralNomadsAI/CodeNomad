@@ -486,6 +486,8 @@ test("V3 window records isolate state, tokens, partitions, clear, and removal", 
   assert.equal(await manager.loadClientStatePartition(keyB, "token-b", windowB), contentB)
 
   assert.equal(await manager.removeWindow(windowA), true)
+  assert.doesNotThrow(() => manager.resetRendererAccessToken(windowA), "the closing renderer can be destroyed after its record is forgotten")
+  assert.doesNotThrow(() => manager.assertRendererAccessToken("token-b", windowB))
   const envelope = JSON.parse(readFileSync(h.statePath, "utf8"))
   assert.equal(envelope.activeWindowId, windowB)
   assert.deepEqual(envelope.windowOrder, [windowB])
@@ -597,9 +599,9 @@ test("partition commits validate protocol and hashes", async (t) => {
   assert.throws(() => manager.commitClientStatePartitions({
     protocolVersion: 1, snapshot: partitionRoot([key]), partitions: { [key]: content }, partitionKeys: [key, key],
   }), /partition keys/)
-  assert.throws(() => manager.commitClientStatePartitions({
+  await assert.rejects(manager.commitClientStatePartitions({
     protocolVersion: 1, snapshot: partitionRoot([key]), partitions: {}, partitionKeys: [key],
-  }), /do not match the root/)
+  }), /Missing or invalid client state partition/)
   assert.throws(() => manager.commitClientStatePartitions({
     protocolVersion: 1, snapshot: partitionRoot([key]), partitions: { [key]: content, [partitionKey("extra")]: "extra" }, partitionKeys: [key],
   }), /do not match the root/)
@@ -646,6 +648,37 @@ test("partition commit/read preserves the old root on failure and clear sweeps",
   await manager.clearClientState()
   assert.equal(existsSync(join(h.directory, "partitions", oldKey)), false)
   assert.equal(existsSync(join(h.directory, "partitions", nextKey)), false)
+})
+
+test("partition subsets verify omitted data and retain shared files across queued window mutations", async (t) => {
+  const h = harness(t, { version: 1, restoreEnabled: true })
+  const manager = h.create()
+  const a = manager.activeWindowId
+  const b = "11111111-1111-4111-8111-111111111111"
+  await manager.addWindow(b)
+  const shared = "shared", key = partitionKey(shared)
+  const added = "added", addedKey = partitionKey(added)
+  const partitionKeys = [key, addedKey].sort()
+  const root = partitionRoot(partitionKeys)
+  await manager.commitClientStatePartitions({
+    protocolVersion: 1, snapshot: partitionRoot([key]), partitionKeys: [key], partitions: { [key]: shared },
+  }, undefined, a)
+  const delta = { protocolVersion: 1, snapshot: root, partitionKeys, partitions: { [addedKey]: added } }
+  assert.throws(() => manager.commitClientStatePartitions({ ...delta, partitions: { [addedKey]: "wrong" } }, undefined, b), /digest mismatch/)
+  const path = join(h.directory, "partitions", key)
+  writeFileSync(path, "corrupt")
+  await assert.rejects(manager.commitClientStatePartitions(delta, undefined, b), /Missing or invalid/)
+  assert.equal(manager.loadClientState(b).snapshot, null)
+  writeFileSync(path, shared)
+  assert.deepEqual(await Promise.all([
+    manager.commitClientStatePartitions(delta, undefined, b),
+    manager.removeWindow(a),
+  ]), [true, true])
+  assert.equal(await manager.loadClientStatePartition(key, undefined, b), shared)
+  assert.deepEqual(manager.loadClientState(b).snapshot, root)
+  await manager.removeWindow(b)
+  assert.equal(existsSync(path), false)
+  assert.equal(existsSync(join(h.directory, "partitions", addedKey)), false)
 })
 
 test("supported v2 window writes persist metadata and monolithic saves collect partitions", async (t) => {

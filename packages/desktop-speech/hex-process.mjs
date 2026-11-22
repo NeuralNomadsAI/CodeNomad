@@ -3,6 +3,7 @@ import { rm } from "node:fs/promises"
 import { createServer } from "node:net"
 import { request } from "node:http"
 import { dirname, join } from "node:path"
+import { setTimeout as delay } from "node:timers/promises"
 import { ensureDirectory, HexFailure } from "./hex-files.mjs"
 import { hexVersion, modelId } from "./hex-manifest.mjs"
 
@@ -17,27 +18,42 @@ export function validWav(wav) {
     wav.toString("ascii", 36, 40) === "data" && wav.readUInt32LE(40) === wav.length - 44 && wav.length % 2 === 0
 }
 
-export async function withChild(executable, args, options, signal, run) {
+export async function withChild(executable, args, options, signal, run, stopTree) {
   signal.throwIfAborted()
   const child = spawn(executable, args, { ...options, windowsHide: true, stdio: ["pipe", "pipe", "ignore"] })
+  const startedBy = new Date()
   const closed = new Promise(resolve => {
     child.on("error", () => {})
     child.once("close", code => resolve(code))
   })
   child.stdin.on("error", () => {})
   child.stdout.on("error", () => {})
-  const kill = () => {
+  let stopping
+  const stop = () => stopping ??= (async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      try {
+        if (child.pid && options.detached) {
+          try { process.kill(-child.pid, "SIGKILL") } catch (error) { if (error.code !== "ESRCH") throw error }
+        } else if (child.pid && stopTree) {
+          child.stdin.end()
+          // Hex normally exits when the lease closes. Inventory is for force-stop.
+          await Promise.race([closed, delay(350, undefined, { ref: false })])
+          if (child.exitCode === null && child.signalCode === null) await stopTree(child.pid, startedBy)
+        }
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL")
+      }
+    }
     child.stdin.destroy()
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL")
-  }
-  signal.addEventListener("abort", kill, { once: true })
+  })()
+  const abort = () => { void stop().catch(() => {}) }
+  signal.addEventListener("abort", abort, { once: true })
   try {
     signal.throwIfAborted()
     return await run(child, closed)
   } finally {
-    signal.removeEventListener("abort", kill)
-    kill()
-    await closed
+    signal.removeEventListener("abort", abort)
+    try { await stop() } finally { await closed }
   }
 }
 
@@ -93,7 +109,7 @@ async function denyOutbound(action) {
   finally { await new Promise(resolve => proxy.close(resolve)) }
 }
 
-async function withHex({ executable, support }, signal, args, run) {
+async function withHex({ executable, support }, signal, args, run, resident = false, stopTree) {
   return denyOutbound(async proxy => {
     const env = Object.fromEntries(["HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR", "SystemDrive", "TEMP", "TMP", "TMPDIR"]
       .filter(key => process.env[key]).map(key => [key, process.env[key]]))
@@ -107,20 +123,22 @@ async function withHex({ executable, support }, signal, args, run) {
     startup.addEventListener("abort", startLimit, { once: true })
     let pid
     try {
-      return await withChild(executable, args, { cwd: dirname(executable), env },
+      return await withChild(executable, args, { cwd: dirname(executable), env, detached: resident && process.platform !== "win32" },
         AbortSignal.any([signal, startAbort.signal]), async child => {
         pid = child.pid
         const ready = JSON.parse(await readBounded(child.stdout, 2048, true))
-        const match = /^http:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})$/.exec(ready?.url)
+        const match = typeof ready?.url === "string" && /^http:\/\/127\.0\.0\.1:([1-9][0-9]{0,4})$/.exec(ready.url)
         const port = Number(match?.[1])
         if (!match || port > 65_535 || ready.type !== "ready" || ready.apiVersion !== "2" ||
-            ready.pid !== child.pid || !/^hex_[0-9a-f]{64}$/.test(ready.token)) throw new HexFailure()
+            ready.pid !== child.pid || typeof ready.token !== "string" ||
+            !/^hex_[0-9a-f]{64}$/.test(ready.token)) throw new HexFailure()
         child.stdout.resume()
         const health = await localRequest(port, ready.token, "/health", AbortSignal.any([signal, startup]))
         if (health?.apiVersion !== "2" || health.version !== hexVersion) throw new HexFailure()
         startup.removeEventListener("abort", startLimit)
-        return run((path, wav) => localRequest(port, ready.token, path, signal, wav))
-      })
+        return run((path, wav, limit = signal) => localRequest(port, ready.token, path,
+          AbortSignal.any([signal, limit]), wav), child)
+      }, stopTree)
     } finally {
       // Hex deletes this lease log on graceful exit; also remove it after forced termination.
       try {
@@ -139,12 +157,100 @@ export function checkHex(installation, signal) {
   })
 }
 
-export async function transcribeWithHex(installation, wav, signal, args = ["service", "--embedded"]) {
+// Hex loads on transcription, not /health. One zero PCM sample loads the
+// verified model without touching the microphone or a model-download endpoint.
+const silence = Buffer.from("524946462600000057415645666d74201000000001000100803e0000007d00000200100064617461020000000000", "hex")
+
+async function transcribe(request, wav) {
   if (!validWav(wav)) throw new HexFailure()
-  return withHex(installation, signal, args, async request => {
-    // Parakeet v3 auto-detects English and French. Never route output through Hex processing.
-    const result = await request(`/transcriptions?model=${modelId}&language=auto`, wav)
-    if (typeof result?.transcript !== "string" || Buffer.byteLength(result.transcript) > 64 * 1024) throw new HexFailure()
-    return result.transcript
-  })
+  const result = await request(`/transcriptions?model=${modelId}&language=auto`, wav)
+  if (typeof result?.transcript !== "string" || Buffer.byteLength(result.transcript) > 64 * 1024) throw new HexFailure()
+  return result.transcript
+}
+
+export function createHexService({ args = ["service", "--embedded"], idleMs = 180_000, isSelected, stopTree } = {}) {
+  let current
+  async function stop() {
+    const entry = current
+    entry?.retire()
+    await entry?.closed
+  }
+
+  function start(installation, key) {
+    const abort = new AbortController()
+    const retired = new AbortController()
+    const { promise: ready, resolve, reject } = Promise.withResolvers()
+    let warming
+    const retire = () => {
+      if (retired.signal.aborted) return
+      retired.abort()
+      // Closing stdin mid-load makes Hex's own shutdown timer look like a
+      // Windows GPU crash. Drain only the bounded synthetic request.
+      if (process.platform === "win32" && warming) {
+        void Promise.race([warming.catch(() => {}), delay(2_000, undefined, { ref: false })])
+          .then(() => abort.abort())
+      } else abort.abort()
+    }
+    const entry = { key, signal: AbortSignal.any([abort.signal, retired.signal]), retire, ready, idle: undefined }
+    void ready.catch(() => {})
+    const selected = isSelected && setInterval(() => {
+      if (!isSelected()) retire()
+    }, 1_000).unref()
+    entry.closed = withHex(installation, abort.signal, args, async (request, child) => {
+      child.once("exit", () => abort.abort())
+      warming = transcribe((path, wav) => request(path, wav, AbortSignal.timeout(120_000)), silence)
+      try { await warming } finally { warming = undefined }
+      abort.signal.throwIfAborted()
+      resolve(request)
+      await new Promise(resolve => abort.signal.addEventListener("abort", resolve, { once: true }))
+    }, true, stopTree).catch(reject).finally(() => {
+      abort.abort()
+      if (current === entry) current = undefined
+      clearInterval(selected)
+      clearTimeout(entry.idle)
+    })
+    return entry
+  }
+
+  async function use(installation, key, signal, run) {
+    if (current && (current.key !== key || current.signal.aborted)) await stop()
+    signal.throwIfAborted()
+    if (isSelected && !isSelected()) throw new HexFailure("unavailable")
+    const entry = current ??= start(installation, key)
+    clearTimeout(entry.idle)
+    let uploaded = false
+    const { promise: stopped, reject } = Promise.withResolvers()
+    const onStop = () => reject(new HexFailure())
+    const cancel = () => {
+      // A cancelled recording owns no audio in Hex until the POST. Let its
+      // synthetic prewarm finish so a stopped GPU load isn't seen as a crash.
+      if (uploaded) entry.retire()
+      onStop()
+    }
+    signal.addEventListener("abort", cancel, { once: true })
+    entry.signal.addEventListener("abort", onStop, { once: true })
+    try {
+      const text = await Promise.race([stopped, run(async (wav, check) => {
+        const request = await entry.ready
+        entry.signal.throwIfAborted()
+        signal.throwIfAborted()
+        if (isSelected && !isSelected()) throw new HexFailure("unavailable")
+        check?.()
+        uploaded = true
+        return transcribe(request, wav)
+      })])
+      entry.signal.throwIfAborted()
+      if (isSelected && !isSelected()) throw new HexFailure("unavailable")
+      return text
+    } catch (error) {
+      if (!signal.aborted || uploaded) entry.retire()
+      throw error
+    } finally {
+      signal.removeEventListener("abort", cancel)
+      entry.signal.removeEventListener("abort", onStop)
+      if (entry.signal.aborted) await entry.closed
+      else entry.idle = setTimeout(entry.retire, idleMs).unref()
+    }
+  }
+  return { use, stop }
 }

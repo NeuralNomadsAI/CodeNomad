@@ -86,6 +86,9 @@ export const messagingMessages = {
   "history.pruning": "Limpiando: {count} / {total} mensajes",
   "transcriptFilters.title": "Contenido de los mensajes",
   "transcriptFilters.systemMessages": "Sistema",
+  "transcriptFilters.toolGroups": "Grupos de herramientas",
+  "transcriptFilters.toolGroups.enable": "Activar la agrupación de herramientas",
+  "transcriptFilters.toolGroups.disable": "Desactivar la agrupación de herramientas",
   "messageBlock.system.label": "Sistema",
   "messageBlock.hiddenParts.one": "1 elemento oculto",
   "messageBlock.hiddenParts.other": "{count} elementos ocultos",
@@ -398,6 +401,5 @@ export const messagingMessages = {
   "voice.microphone.conversation": "La conversación en directo está usando el micrófono.",
   "voice.microphone.unavailable": "El micrófono no está disponible en esta ventana.",
   "promptInput.voiceInput.error.permissionDenied": "macOS denegó el acceso al micrófono.",
-  "promptInput.voiceInput.error.unsupported": "La entrada de voz no es compatible con este navegador.",
   "promptInput.voiceInput.error.transcribe": "No se pudo transcribir el audio grabado.",
 } as const

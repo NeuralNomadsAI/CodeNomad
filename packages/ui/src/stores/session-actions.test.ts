@@ -21,7 +21,7 @@ import {
   updateSessionAgent,
   updateSessionModel,
 } from "./session-actions.ts"
-import { setConversationModeEnabled } from "./conversation-speech.ts"
+import { isConversationModeEnabled, toggleConversationMode } from "./conversation-speech.ts"
 import { getModelThinkingSelection, setModelThinkingSelection } from "./preferences"
 import { sessions, setAgents, setProviders, setSessions, withSession } from "./session-state.ts"
 import { loadMessages } from "./session-api.ts"
@@ -30,6 +30,10 @@ import { messageStoreBus } from "./message-v2/bus.ts"
 import { contentRevision } from "../../../server/src/opencode/session-pruning/revision.ts"
 import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
+
+function setConversationModeEnabled(instanceId: string, enabled: boolean) {
+  if (isConversationModeEnabled(instanceId) !== enabled) toggleConversationMode(instanceId)
+}
 
 const instanceId = "session-actions"
 const sessionId = "session"

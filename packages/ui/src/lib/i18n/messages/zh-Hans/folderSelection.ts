@@ -34,9 +34,11 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "重命名工作区",
   "folderSelection.recent.remove": "从最近列表移除",
   "folderSelection.recent.openBadge": "已打开",
+  "folderSelection.recent.openElsewhere": "已在其他窗口打开",
   "newInstanceLauncher.searchLabel": "搜索最近的项目",
   "newInstanceLauncher.searchPlaceholder": "搜索最近的标签页…",
   "newInstanceLauncher.recentTitle": "最近的标签页",
+  "newInstanceLauncher.description": "选择最近的项目。",
   "newInstanceLauncher.empty": "还没有最近的项目。",
   "newInstanceLauncher.noMatch": "没有匹配的项目。",
   "folderSelection.recent.switchToOpenProject": "切换到已打开的项目",
@@ -59,7 +61,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.errorRequired": "仓库 URL 和目标文件夹为必填项。",
   "folderSelection.actions.connectButton": "连接 CodeNomad 服务器",
 
-  "folderSelection.opencode": "OpenCode",
 
 
   "folderSelection.loading.title": "正在启动实例...",
@@ -109,7 +110,7 @@ export const folderSelectionMessages = {
   "projectRenameDialog.actions.cancel": "取消",
   "projectRenameDialog.actions.rename": "重命名",
   "projectRenameDialog.actions.renaming": "正在重命名...",
-  "newTab.temporary": "临时",
+  "newTab.temporary": "临时标签页",
   "newTab.title": "新标签页",
   "newTab.items.one": "{count} 个项目",
   "newTab.items.other": "{count} 个项目",

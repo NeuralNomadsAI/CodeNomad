@@ -30,7 +30,7 @@ Bunlar yapılandırılmış hizmete yönelik isteklerdir; her uyumlu uç noktan�
 2. **API girdisini test et** öğesini seçin, mikrofon izni verin, konuşun ve ardından **Kaydı durdur** öğesini seçin. Döndürülen transkripsiyonu kontrol edin.
 3. Örneği dinlemek için **Oynatmayı test et** öğesini seçin; **Örneği durdur** bunu bitirir.
 
-Oynatma testi seçilen modu ve biçimi hemen kullanır, ancak uç nokta, anahtar, model ve ses kayıtlı ayarlardan gelir. Hex veya sistem tanıma seçili olsa bile **API girdisini test et**, sesi yapılandırılmış API sağlayıcısına gönderir. Sohbete bir istem göndermez. Sağlayıcı bu testleri ücretlendirebilir.
+Oynatma testi seçilen modu ve biçimi hemen kullanır, ancak uç nokta, anahtar, model ve ses kayıtlı ayarlardan gelir. **API girdisini test et**, dikte motorundan bağımsız olarak sesi yapılandırılmış API sağlayıcısına gönderir. Sohbete bir istem göndermez. Sağlayıcı bu testleri ücretlendirebilir.
 
 ## Bir istemi dikte edin {#dictate}
 
@@ -43,17 +43,17 @@ API, Linux’ta Tauri ile WAV yedek modunu kullanıyorsa dikte ve giriş testi k
 
 API için sıkıştırılan kayıtlar da boyut sınırında durur ve **Yazıya dök** ile **İptal et** seçeneklerini sunar.
 
-Sistem konuşma tanıma açıkken, konuştukça bir önizleme görünür. Taslağı düzenlemeye devam edebilirsiniz; yalnızca son döküm taslağa eklenebilir.
-
 ### Masaüstünde motor seçin {#desktop-dictation}
 
 Yerel masaüstü uygulamasında **Tercihler → Ses → Dikte** bölümünden **Bu cihazdaki dikte motoru** seçeneğini ayarlayın. Seçim cihazdaki tüm projeler için geçerlidir. **API sağlayıcısı**, bağlı sunucunun ayarlarını kullanır ve mikrofon için güvenli bir bağlam gerektirir.
 
-- **Yerel sistem konuşma tanıma**, işletim sisteminin dikte panelini açmadan CodeNomad içinde çalışır. Windows veya macOS’ta uygulamanın dili için yüklü bir yerel tanıyıcı gerekir. Linux’ta veya tanıyıcı ya da dil eksikse, sunuluyorsa Hex’i deneyin.
+- Kayıtlı motor kullanılamıyorsa burada varsa **Hex (yerel)** veya **API sağlayıcısı** seçin. Intel Mac’lerde ve macOS 15 öncesi sürümlerde **API sağlayıcısı** kullanın.
 - Ses bölümünde Hex için eksik bileşenler, her bileşenin indirme boyutu ve toplam boyut gösterilir. **Hex’i etkinleştir** düğmesine bir kez basmak uyumlu dosyaları doğrulayıp yeniden kullanır, eksikleri indirir ve hazır olduğunda Hex’i seçer. İlerlemeyi burada izleyin. **Hex etkinleştirmesini iptal et** ile durdurabilir, seçenek sunulduğunda **Hex etkinleştirmesini sürdür** ile devam edebilirsiniz. Başarısızlık veya iptal durumunda önceki motor seçili kalır. Ayarları açmak, hazır **Hex (yerel)** seçeneğini seçmek veya onunla dikte etmek yeniden indirme başlatmaz.
 - Hex, uygun Windows x64/arm64, macOS 15 veya üzeri Apple Silicon ve gerekli kütüphanelerle birlikte glibc 2.36 veya üzeri Linux x64/arm64 cihazlarında sunulur. Intel Mac’ler ile eski glibc veya musl kullanan Linux sistemleri uyumlu değildir. Motor ve modeller CodeNomad yükleyicisinden ayrıdır; terminal veya API anahtarı gerekmez.
 
 Ubuntu 24.04 glibc gereksinimini karşılar, Ubuntu 22.04 karşılamaz. Hex, konuşulan dili İngilizce ve Fransızca da dahil olmak üzere [Parakeet’in desteklediği diller](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) arasından otomatik algılar. Bu liste uygulama dilinden bağımsızdır.
+
+Hex, kayıt başladığında modelini arka planda yükler ve son diktenin ardından üç dakika hazır tutar.
 
 Yerel tanıma, yerel uygulamada açılan WSL projelerinde de çevrimdışı çalışır. Uyumlu bir uzak pencerede **Bu cihazda dikte et** penceresini açmak için mikrofona tıklayın. Hedefi doğrulayın ve bu penceredeki kayıt ve ekleme denetimlerini kullanın. Taslağa yalnızca metin döner. Uzak proje için sunucu bağlantısı yine gerekir.
 

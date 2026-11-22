@@ -2,6 +2,38 @@
 use super::*;
 
 impl BrowserController {
+    pub(in crate::browser_controller) fn webkit_target_document(
+        &self,
+        app: &AppHandle,
+        registration: &Registration,
+        version: u64,
+        deadline: Instant,
+        fence: &crate::native_request::RequestFence,
+    ) -> Result<String, String> {
+        let webview = app
+            .get_webview(&registration.webview_label)
+            .ok_or(STALE_TARGET)?;
+        let controller = self.clone();
+        let expected = registration.clone();
+        let app = app.clone();
+        let fence = fence.clone();
+        let bytes = crate::embedded_view::input::read(
+            &webview,
+            crate::embedded_view::input::Read::Page(r#"{"op":"checkpoint"}"#.into()),
+            deadline,
+            move || {
+                fence.check()?;
+                controller.check_witness_state(&app, &expected, version)
+            },
+        )?;
+        let response: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+        response["document"]
+            .as_str()
+            .filter(|token| !token.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| "Missing WebKit document identity".into())
+    }
+
     pub(super) fn webkit_read(
         &self,
         app: &AppHandle,
@@ -43,7 +75,11 @@ impl BrowserController {
                 held: lease.held.clone(),
             }
         } else {
-            crate::embedded_view::input::Read::Page(operation.to_string())
+            let mut request = operation.clone();
+            if let Some(document) = &lease.document {
+                request["expectedDocument"] = json!(document);
+            }
+            crate::embedded_view::input::Read::Page(request.to_string())
         };
         let bytes = crate::embedded_view::input::read(
             &webview,

@@ -6,7 +6,7 @@ import { showToastNotification, ToastHandle } from "../lib/notifications"
 import { getLogger } from "../lib/logger"
 import { tGlobal } from "../lib/i18n"
 import { supportsDesktopUpdateChecks } from "../lib/native/updates"
-import { hasInstances, showFolderSelection } from "./ui"
+import { hasInstances } from "./ui"
 
 const log = getLogger("actions")
 
@@ -40,7 +40,7 @@ function ensureVisibilityEffect() {
 
   createEffect(() => {
     const support = supportInfo()
-    const shouldShow = Boolean(support && support.supported === false) && (!hasInstances() || showFolderSelection())
+    const shouldShow = Boolean(support && support.supported === false) && !hasInstances()
 
     if (!shouldShow || !support || support.supported !== false) {
       dismissActiveToast()

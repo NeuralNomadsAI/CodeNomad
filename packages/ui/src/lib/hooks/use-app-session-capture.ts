@@ -1,13 +1,14 @@
 import { createEffect, createMemo, createSignal, onCleanup, onMount, untrack } from "solid-js"
-import { listen } from "@tauri-apps/api/event"
+import { getCurrentWebview } from "@tauri-apps/api/webview"
 import { getLogger } from "../logger"
 import { acknowledgeNativeClientStateNavigationFlush, acknowledgeNativeClientStateRendererFlush } from "../native/client-state"
-import { isElectronHost, isLocalWindow, isTauriHost } from "../runtime-env"
+import { isElectronHost, isLocalWindow, isTauriHost, isWebHost } from "../runtime-env"
 import {
-  clientStateIsPrimary, flushClientState, restorePreviousStateEnabled, updateRestorableSession,
+  clientStateIsPrimary, flushClientState, loadedRestorableSession, restorePreviousStateEnabled, updateRestorableSession,
   type RestorableSessionState, type RestorableTabState, type RestorableWorkspaceTabState,
 } from "../../stores/client-state"
 import { storage } from "../storage"
+import { completeWebSessionRestore, markWebSessionRecordsReleased } from "../web-session-client-state"
 import { matchesRestoredServer, workspaceInstallationKey } from "../../stores/app-session-reconciliation"
 import {
   createRestorableSessionPreservation, createRestoredTabCommitGuard, markPreservedWorkspaceRemoved,
@@ -19,10 +20,11 @@ import {
   type RestorableWorkspaceRuntimeAuthority,
 } from "../../stores/app-session-snapshot-merge"
 import { activeAppTab, activeAppTabId, appTabs, getInstanceAppTabId } from "../../stores/app-tabs"
+import { openInstanceTabIds } from "../../stores/app-tab-membership"
+import { backendRegistry } from "../../stores/remote-backends"
 import { appSessionRestoreGateActive } from "../../stores/app-session-restore-gate"
 import { saveReloadTabSelection } from "../native/reload-tab-selection"
-import { showFolderSelection } from "../../stores/ui"
-import { instances } from "../../stores/instances"
+import { cancelUnattachedWorkspaceCreations, closeWorkspace, holdWorkspaceCommits, instances, resumeWorkspaceCreations } from "../../stores/instances"
 import {
   activeParentSessionId, activeSessionId, expandedSessions, getAuthoritativeDraftSessionIdsForInstance, getPersistentExpandedSessionIds,
   getAuthoritativeSessionExpansionIdsForInstance, getAuthoritativelyDeletedSessionIdsForInstance,
@@ -74,7 +76,7 @@ function captureRuntimeState(
   return { unseenIdleSince, generationRecovery, ...(Object.keys(seenInterruptions).length ? { seenInterruptions } : {}) }
 }
 export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<string>>) {
-  const tabs = appTabs().filter(tab => tab.kind !== "blank")
+  const tabs = appTabs()
   const occurrenceKey = (project: Pick<RestorableWorkspaceTabState, "folder" | "backendId" | "serverId">) =>
     workspaceInstallationKey(project.folder, project.backendId, project.serverId)
   const nextOccurrence = new Map<string, number>()
@@ -97,6 +99,7 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
     occurrenceByInstance.set(instance.id, occurrence)
   }
   const restorableTabs: RestorableTabState[] = tabs.map((tab) => {
+    if (tab.kind === "blank") return { kind: "blank" }
     if (tab.kind === "sidecar") return { kind: "sidecar", sidecarId: tab.sidecarTab.sidecarId }
     if (tab.kind === "remote-restore") return tab.snapshot
     const id = tab.instance.id
@@ -117,7 +120,7 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
       attachments: { ...pending.attachments, ...live.attachments },
       ...captureRuntimeState(id), scrollSnapshots: captureScrollSnapshots(id),
       outlineIndexes: captureSessionOutlineIndexes(id, getAuthoritativelyDeletedSessionIdsForInstance(id)),
-      sessionCatalog: captureSessionCatalog(getSessions(id)),
+      sessionCatalog: captureSessionCatalog(getSessions(id), tab),
       viewState: captureTabViewState(id),
       expandedSessionIds: [
         ...expanded.filter((sessionId) => expansionAuthority.has(sessionId)),
@@ -148,12 +151,13 @@ export function captureState(scrollAuthority: ReadonlyMap<string, ReadonlySet<st
     state: {
       tabs: restorableTabs,
       activeTabIndex: tabs.findIndex(({ id }) => id === activeAppTabId()),
-      ...(showFolderSelection() ? { homeActive: true } : {}),
     },
     tabIds: tabs.map(({ id }) => id), authorities,
   }
 }
-export function useAppSessionCapture() {
+export type WorkspaceReleaseResults = ReadonlyMap<string, Promise<"released" | "unconfirmed">>
+
+export function useAppSessionCapture(recoverReleasedTabs?: (snapshot: RestorableSessionState, results: WorkspaceReleaseResults) => void) {
   const [started, setStarted] = createSignal(false)
   const enabled = () => started() && clientStateIsPrimary() && restorePreviousStateEnabled()
   // Snapshot the scalar inputs of catalog/runtime capture and prompt hydration.
@@ -207,34 +211,89 @@ export function useAppSessionCapture() {
   const mergedState = () => {
     // Flush can run before the hydration effect; move prompt bytes before
     // merge applies the native deletion tombstones to the saved tab.
-    for (const instanceId of instances().keys()) hydratePreservedPrompts(instanceId, true)
+    for (const instanceId of openInstanceTabIds()) hydratePreservedPrompts(instanceId, true)
     const captured = captureState(scrollAuthority)
     return mergeRestorableSessionState(captured.state, preservation, {
       currentTabIds: captured.tabIds, currentTabAuthorities: captured.authorities,
     })
   }
+  const recoveryState = () => {
+    if (enabled()) return mergedState()
+    if (!started() && clientStateIsPrimary() && restorePreviousStateEnabled()) return loadedRestorableSession() ?? undefined
+    return captureState(scrollAuthority).state
+  }
   let nativeShutdownGeneration: number | null = null
+  let releasing: Promise<unknown> | undefined
+  let releaseResults: WorkspaceReleaseResults = new Map()
+  let preparedTabs: RestorableSessionState | undefined
+  const captureWorkspaceRecords = () => {
+    const records = new Map<string, Pick<RestorableWorkspaceTabState, "backendId" | "serverId">>()
+    for (const tab of appTabs()) {
+      if (tab.kind === "instance") records.set(tab.instance.id, tab.instance)
+      if (tab.kind === "remote-restore" && tab.instanceId && tab.snapshot.backendId
+        && matchesRestoredServer(tab.snapshot, backendRegistry.serverId(tab.snapshot.backendId))) {
+        records.set(tab.instanceId, tab.snapshot)
+      }
+    }
+    return records
+  }
+  let preparedRecords: ReturnType<typeof captureWorkspaceRecords> | undefined
+  let unlockInput: (() => void) | undefined
+  const lockInput = () => {
+    if (unlockInput) return
+    // Close can keep this document visible while the host saves its snapshot.
+    const root = document.documentElement
+    const wasInert = root.inert
+    root.inert = true
+    // Keys retargeted to the document can still reach global shortcuts.
+    const blockShortcut = (event: KeyboardEvent) => {
+      event.preventDefault()
+      event.stopImmediatePropagation()
+    }
+    window.addEventListener("keydown", blockShortcut, true)
+    unlockInput = () => {
+      root.inert = wasInert
+      window.removeEventListener("keydown", blockShortcut, true)
+      unlockInput = undefined
+    }
+  }
+  const resumeCapture = () => {
+    resumeWorkspaceCreations()
+    // If startup has not begun, it can still restore directly from the loaded snapshot.
+    if (releasing && preparedTabs && started()) recoverReleasedTabs?.(preparedTabs, releaseResults)
+    preparedTabs = undefined
+    preparedRecords = undefined
+    nativeShutdownGeneration = null
+    releasing = undefined
+    releaseResults = new Map()
+    unlockInput?.()
+    schedule()
+  }
   const capture = () => {
     timer = null
-    if (enabled() && !disposed && nativeShutdownGeneration === null) {
+    if (enabled() && !disposed && !releasing && nativeShutdownGeneration === null) {
       const state = mergedState()
       if (state.tabs.length > 0) nativeFallbackState = state
       updateRestorableSession(state)
     }
   }
   const schedule = () => {
-    if (!enabled() || disposed || nativeShutdownGeneration !== null) return
+    if (!enabled() || disposed || releasing || nativeShutdownGeneration !== null) return
     if (timer) clearTimeout(timer)
     timer = setTimeout(capture, CAPTURE_DEBOUNCE_MS)
   }
   const flush = async (nativeShutdownGenerationRequest?: number) => {
     const nativeShutdown = nativeShutdownGenerationRequest !== undefined
-    if (nativeShutdown) nativeShutdownGeneration = nativeShutdownGenerationRequest
+    if (nativeShutdown) {
+      nativeShutdownGeneration = nativeShutdownGenerationRequest
+      holdWorkspaceCommits()
+      lockInput()
+    }
     // Record a scroll that has not settled yet; it may reschedule the capture cleared below.
     messageStoreBus.flushScrollSnapshots()
     if (timer) clearTimeout(timer)
     timer = null
-    if (enabled()) {
+    if (enabled() && !releasing) {
       const current = mergedState()
       const state = nativeShutdown
         && current.tabs.length === 0
@@ -242,30 +301,66 @@ export function useAppSessionCapture() {
         ? nativeFallbackState!
         : current
       updateRestorableSession(state)
+      if (nativeShutdown) preparedTabs = state
+    } else if (nativeShutdown && !releasing && recoverReleasedTabs) {
+      preparedTabs = recoveryState()
     }
+    if (nativeShutdown && !releasing) preparedRecords = captureWorkspaceRecords()
     await Promise.all([
       flushClientState(),
       ...(nativeShutdown ? [storage.flushWrites()] : []),
     ])
   }
+  const release = (deleteTabs = true) => {
+    if (releasing) return releasing
+    // Only occurrences owned at capture can be released by record ID.
+    const records = preparedRecords ?? captureWorkspaceRecords()
+    const cancellations = cancelUnattachedWorkspaceCreations(new Set(records.keys()))
+    const results = new Map<string, Promise<"released" | "unconfirmed">>()
+    if (deleteTabs) for (const [id, tab] of records) {
+      if (tab.backendId && !matchesRestoredServer(tab, backendRegistry.serverId(tab.backendId))) continue
+      results.set(id, closeWorkspace(id, { keepalive: true, silent: true }).then(() => "released", () => "unconfirmed"))
+    }
+    releaseResults = results
+    return releasing = Promise.allSettled([
+      cancellations, ...results.values(),
+    ])
+  }
+  const awaitRelease = async () => {
+    lockInput()
+    // The local backend also carries the remote relay. Quit has to send
+    // releases before stopping it, and must be able to recover on refusal.
+    if (recoverReleasedTabs) preparedTabs ??= recoveryState()
+    const pending = release()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([pending, new Promise<void>(resolve => { timer = setTimeout(resolve, 750) })])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
   const nativeUnlisteners: Array<() => void> = []
   let nativeDisposed = false
-  const register = <T extends { generation: number }>(event: string, acknowledge: (payload: T) => void | Promise<void>, nativeShutdown: boolean) => listen<T>(event, ({ payload }) => {
-    void flush(nativeShutdown ? payload.generation : undefined).then(() => acknowledge(payload)).catch((error) => log.error(`Failed to handle ${event}`, error))
+  const nativeView = isTauriHost() && isLocalWindow() ? getCurrentWebview() : undefined
+  const register = (event: string, acknowledge: (generation: number) => void | Promise<void>, nativeShutdown: boolean) => nativeView!.listen<{
+    generation: number
+    prepareGeneration?: number
+  }>(event, ({ payload: { generation, prepareGeneration } }) => {
+    // A replacement document can receive release without having seen prepare.
+    if (prepareGeneration !== undefined) nativeShutdownGeneration = prepareGeneration
+    void (prepareGeneration !== undefined ? awaitRelease() : flush(nativeShutdown ? generation : undefined))
+      .then(() => acknowledge(generation)).catch((error) => log.error(`Failed to handle ${event}`, error))
   }).then((unlisten) => {
     if (nativeDisposed) unlisten()
     else nativeUnlisteners.push(unlisten)
   }).catch((error) => log.error(`Failed to listen for ${event}`, error))
-  const ready = isTauriHost() && isLocalWindow()
+  const ready = nativeView
     ? Promise.all([
-        register<{ generation: number }>("client-state:flush-requested",
-          ({ generation }) => acknowledgeNativeClientStateRendererFlush(generation), true),
-        register<{ generation: number }>("client-state:navigation-flush-requested",
-          ({ generation }) => acknowledgeNativeClientStateNavigationFlush(generation), false),
-        listen<{ generation: number }>("client-state:flush-cancelled", ({ payload }) => {
+        register("client-state:flush-requested", acknowledgeNativeClientStateRendererFlush, true),
+        register("client-state:navigation-flush-requested", acknowledgeNativeClientStateNavigationFlush, false),
+        nativeView.listen<{ generation: number }>("client-state:flush-cancelled", ({ payload }) => {
           if (nativeShutdownGeneration !== payload.generation) return
-          nativeShutdownGeneration = null
-          schedule()
+          resumeCapture()
         }).then((unlisten) => {
           if (nativeDisposed) unlisten()
           else nativeUnlisteners.push(unlisten)
@@ -288,6 +383,7 @@ export function useAppSessionCapture() {
       instanceLifecycleTokens.delete(instanceId)
     }),
     onInstanceLifecycleAuthority((event) => {
+      if (releasing || !(event.projectTab || event.type === "unavailable" && openInstanceTabIds().has(event.instanceId))) return
       const lifecycleToken = ++nextInstanceLifecycleToken
       instanceLifecycleTokens.set(event.instanceId, lifecycleToken)
       // A fresh page has no startup snapshot. Capture live work before an
@@ -357,7 +453,7 @@ export function useAppSessionCapture() {
   createEffect(() => {
     if (!enabled()) return
     const tabs = appTabs()
-    activeAppTabId(); activeParentSessionId(); activeSessionId(); expandedSessions(); showFolderSelection()
+    activeAppTabId(); activeParentSessionId(); activeSessionId(); expandedSessions()
     outlineCacheRevision(); seenInterruptionsRevision()
     checkpointSessions()
     for (const tab of tabs) if (tab.kind === "instance") {
@@ -377,8 +473,18 @@ export function useAppSessionCapture() {
     }
   })
   onMount(() => {
-    const flushNow = () => void flush()
-    const useBrowserLifecycleFlush = !isLocalWindow()
+    const web = isWebHost()
+    const pageHide = (event: PageTransitionEvent) => {
+      if (event.persisted || releasing) return
+      if (web) void flush().catch(error => log.warn("Could not flush client state", error))
+      void release(!web || markWebSessionRecordsReleased())
+    }
+    const nativeFlush: NonNullable<Window["__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__"]> = async closing => {
+      if (closing === "cancel") resumeCapture()
+      else if (closing === "prepare") await flush(0)
+      else if (closing === "release") await awaitRelease()
+      else await flush()
+    }
     const electronLocal = isElectronHost() && isLocalWindow()
     const saveSelection = () => {
       const tab = enabled() && !appSessionRestoreGateActive()
@@ -389,27 +495,20 @@ export function useAppSessionCapture() {
         : tab?.kind === "remote-restore" ? tab.snapshot
         : tab?.kind === "sidecar" ? { kind: "sidecar", sidecarId: tab.sidecarTab.sidecarId } : undefined)
     }
-    if (useBrowserLifecycleFlush) {
-      window.addEventListener("pagehide", flushNow)
-      window.addEventListener("beforeunload", flushNow)
-    }
-    if (electronLocal) {
-      window.addEventListener("pagehide", saveSelection)
-      window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ = flush
-    }
+    window.addEventListener("pagehide", pageHide)
+    if (electronLocal) window.addEventListener("pagehide", saveSelection)
+    if (isElectronHost() || isTauriHost()) window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ = nativeFlush
     onCleanup(() => {
       if (electronLocal) window.removeEventListener("pagehide", saveSelection)
-      if (useBrowserLifecycleFlush) {
-        window.removeEventListener("pagehide", flushNow)
-        window.removeEventListener("beforeunload", flushNow)
-      }
-      if (window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ === flush) {
+      window.removeEventListener("pagehide", pageHide)
+      if (window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ === nativeFlush) {
         delete window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__
       }
     })
   })
   onCleanup(() => {
     disposed = true
+    unlockInput?.()
     if (timer) clearTimeout(timer)
     timer = null
     hydrationController.abort(new Error("App session capture disposed"))
@@ -419,6 +518,11 @@ export function useAppSessionCapture() {
   })
   return {
     ready,
+    commitRestore() {
+      if (!isWebHost()) return
+      completeWebSessionRestore()
+      schedule()
+    },
     start(snapshot?: RestorableSessionState) {
       if (snapshot) preservation = createRestorableSessionPreservation(snapshot)
       nativeFallbackState = snapshot?.tabs.length ? snapshot : null
@@ -430,7 +534,10 @@ export function useAppSessionCapture() {
       schedule()
     },
     createRestoredTabCommitGuard(index: number) {
-      return preservation ? createRestoredTabCommitGuard(preservation, index) : () => false
+      const owner = preservation
+      if (!owner) return () => false
+      const current = createRestoredTabCommitGuard(owner, index)
+      return () => preservation === owner && current()
     },
     removeRestoredTab(index: number) {
       const tab = preservation?.sourceTabs[index]

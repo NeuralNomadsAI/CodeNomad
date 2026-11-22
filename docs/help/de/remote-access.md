@@ -58,6 +58,8 @@ Ein Administrator kann die Abhöradresse festlegen: Setzen Sie `CODENOMAD_LOCKED
 
 Setzen Sie für einen Hostnamen-Alias, Reverse-Proxy oder eine separat gehostete Oberfläche `CODENOMAD_ALLOWED_ORIGINS` im Backend auf die vertrauenswürdigen Origins der Oberfläche (Schema, Hostname und Port). Native LAN-Clients müssen bei schreibenden Anfragen einen erlaubten `Origin`-Header mitsenden. Seine HTTPS-Origins erlauben dem Host außerdem, Geräte ohne Tunnel zu koppeln; siehe [Über direktes HTTPS koppeln](remote-control.md#direct-https).
 
+Stellen Sie eine separat gehostete Oberfläche zuerst bereit und laden Sie offene Tabs und Fenster neu, bevor Sie den Server aktualisieren. Stellt der Server die Oberfläche bereit, laden Sie sie nach dem Update neu.
+
 Verwenden Sie eine Loopback-Verbindung für dem Host vorbehaltene Vorgänge: SideCar-Inhalte (`/sidecars/`) und WebSockets, Fernsteuerungsverwaltung (`/api/remote-control/`), Plugin-Brücke (`/api/opencode-plugin/`), Remote-Proxys (`/api/remote-proxy/`), Passwortänderungen und Token-Ersteinrichtung. Diese Vorgänge erfordern auch bei angemeldetem direktem LAN-Zugriff Loopback. Nur SideCars haben eine Ausnahme: Die Host-Einstellung **SideCars über HTTPS öffnen** gibt ihre Inhalte und WebSockets für Browser frei, die über einen vertrauenswürdigen HTTPS-Origin angemeldet sind ([SideCars](browser-sidecars.md#register-sidecar)). Inhalte aktiver Vorschauen (`/previews/`) sind mit einem gültigen Berechtigungstoken über direkten LAN-Zugriff verfügbar.
 
 Die Registrierungs-APIs `/api/sidecars` bleiben für authentifizierte direkte LAN-Clients und gekoppelte Geräte verfügbar. Web-Vorschauen der Fernsteuerung bleiben mit ihrem Berechtigungstoken verfügbar, solange sie auf dem Host aktiviert sind. Hinweise zur Serververwaltung und zur sicheren Eingabe von Zugangsdaten: [Remote-Server speichern](remote-access.md#saved-servers).
@@ -113,11 +115,11 @@ Fügen Sie für Fernsteuerung stattdessen einen frischen Kopplungslink in **Serv
 
 ## Ein Remote-Projekt in einem Tab öffnen {#remote-project-tabs}
 
-Wählen Sie auf der Startseite oder in einem neuen Tab **Durchsuchen** und dann einen Server. Fügen Sie eine Adresse oder einen Kopplungslink in **Serveradresse oder -link** ein. Melden Sie sich bei Bedarf an. Klicken Sie auf einen Ordner, um ihn zu durchsuchen. Drücken Sie im Pfadfeld die Eingabetaste oder wählen Sie **Öffnen**, um ihn zu öffnen. Mit **Zurück zu Durchsuchen** gelangen Sie zur Serverliste.
+Wählen Sie in einem leeren Tab **Durchsuchen** und dann einen Server. Fügen Sie eine Adresse oder einen Kopplungslink in **Serveradresse oder -link** ein. Melden Sie sich bei Bedarf an. Klicken Sie auf einen Ordner, um ihn zu durchsuchen. Drücken Sie im Pfadfeld die Eingabetaste oder wählen Sie **Öffnen**, um ihn zu öffnen. Mit **Zurück zu Durchsuchen** gelangen Sie zur Serverliste.
 
 Lokale und entfernte Projekte teilen sich das Fenster. **Zuletzt verwendete Tabs** zeigt beim Durchsuchen die Einträge des ausgewählten Servers. In der gemischten Liste stehen Serversymbol und Servername bei den hier geöffneten Projekten. [Remote-Tabs wiederherstellen](projects.md#restore-remote-tabs).
 
-Unter **Einstellungen → Server** wählt **Öffnen** den Server in **Durchsuchen** und verwendet den leeren Tab, falls vorhanden.
+Unter **Einstellungen → Server** wählt **Öffnen** den Server in **Durchsuchen** und verwendet einen bereits geöffneten leeren Tab, falls vorhanden.
 
 ### `--connect-server` {#connect-server}
 

@@ -1,7 +1,6 @@
 use crate::device_speech_hex::{decode_wav, valid_audio_encoding, HexDriver};
 #[cfg(target_os = "linux")]
 use crate::device_speech_ipc::remote_microphone::RemoteMicrophone;
-use crate::device_speech_system::{resolve_locale, SystemReason};
 use parking_lot::{Condvar, Mutex};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -26,7 +25,6 @@ const MAX_TEXT: usize = 64 * 1024;
 #[serde(rename_all = "camelCase")]
 pub(crate) enum Engine {
     Api,
-    System,
     Hex,
 }
 
@@ -34,11 +32,9 @@ pub(crate) enum Engine {
 #[serde(rename_all = "camelCase")]
 pub(crate) enum SpeechError {
     Unavailable,
-    LocaleUnavailable,
     Busy,
     NotOwned,
     PlanChanged,
-    PermissionDenied,
     Failed,
 }
 
@@ -80,8 +76,7 @@ pub(crate) enum Request {
     },
     Finish {
         id: String,
-        #[serde(default, deserialize_with = "provided")]
-        wav: Option<String>,
+        wav: String,
     },
     Cancel {
         id: String,
@@ -120,9 +115,7 @@ impl Request {
             Self::ClaimMicrophone { id, .. } | Self::ReleaseMicrophone { id } => {
                 microphone_id(id).is_some()
             }
-            Self::Finish { id, wav } => {
-                valid_id(id) && wav.as_deref().is_none_or(valid_audio_encoding)
-            }
+            Self::Finish { id, wav } => valid_id(id) && valid_audio_encoding(wav),
             Self::Status { id } | Self::Cancel { id } => valid_id(id),
             #[cfg(target_os = "linux")]
             Self::AuthorizeApiMicrophone { id } | Self::RevokeApiMicrophone { id } => valid_id(id),
@@ -160,33 +153,11 @@ pub(crate) enum Hex {
     NeedsPreparation { plan: Plan },
 }
 
-#[derive(Clone, Serialize)]
-pub(crate) struct Capabilities {
-    pub(crate) system: System,
-    pub(crate) system_locales: Option<Vec<String>>,
-    pub(crate) system_reason: Option<SystemReason>,
-    pub(crate) hex: Hex,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) enum System {
-    Unavailable,
-    Ready,
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "state", rename_all = "camelCase")]
 pub(crate) enum Operation {
     Starting,
-    Recording {
-        #[serde(
-            default,
-            deserialize_with = "recording_text",
-            skip_serializing_if = "Option::is_none"
-        )]
-        text: Option<String>,
-    },
+    Recording,
     Transcribing,
     Verifying,
     Downloading {
@@ -204,14 +175,6 @@ pub(crate) enum Operation {
     },
 }
 
-fn recording_text<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
-    let text = String::deserialize(d)?;
-    if text.len() > MAX_TEXT {
-        return Err(serde::de::Error::custom("oversized recording text"));
-    }
-    Ok(Some(text))
-}
-
 impl Operation {
     fn terminal(&self) -> bool {
         matches!(
@@ -223,14 +186,15 @@ impl Operation {
 
 pub(crate) trait Driver: Send + Sync {
     /// Bounded read-only discovery. The plan id binds components, retained bytes and approved sources.
-    fn capabilities(&self) -> Capabilities;
+    fn capabilities(&self) -> Hex;
     fn prepare(&self, plan: Plan, control: Control) -> Result<(), SpeechError>;
-    /// Return only after release of capture/inference. Observe OS permission and never fall back to API.
+    fn stop(&self);
+    fn request_stop(&self);
+    /// Return only after inference has stopped.
     fn dictate(
         &self,
-        engine: Engine,
-        locale: String,
         control: Control,
+        selected: Box<dyn Fn() -> bool + Send + Sync>,
     ) -> Result<String, SpeechError>;
 }
 
@@ -242,26 +206,19 @@ impl Control {
         self.0 .0.lock().cancelled
     }
 
-    pub(crate) fn finish_requested(&self) -> bool {
-        self.0 .0.lock().finish
-    }
-
-    pub(crate) fn wait_for_audio(&self) -> Option<Vec<u8>> {
+    pub(crate) fn wait_for_audio(&self, interrupted: impl Fn() -> bool) -> Option<Vec<u8>> {
         let (lock, wake) = &*self.0;
-        let mut slot = lock.lock();
-        while !slot.cancelled && !slot.finish {
+        while !interrupted() {
+            let mut slot = lock.lock();
+            if slot.cancelled {
+                return None;
+            }
+            if slot.finish {
+                return slot.audio.take();
+            }
             wake.wait_for(&mut slot, Duration::from_millis(100));
         }
-        if slot.cancelled {
-            None
-        } else {
-            slot.audio.take()
-        }
-    }
-
-    pub(crate) fn revoke_permission(&self) {
-        self.0 .0.lock().cancel(Some(SpeechError::PermissionDenied));
-        self.0 .1.notify_all();
+        None
     }
 
     pub(crate) fn progress(&self, value: Operation) {
@@ -275,10 +232,10 @@ impl Control {
                     Operation::Downloading { .. } | Operation::Verifying
                 ) | (
                     Kind::Dictation,
-                    Operation::Recording { .. } | Operation::Transcribing
+                    Operation::Recording | Operation::Transcribing
                 )
             )
-            && !(slot.finish && matches!(value, Operation::Recording { .. }))
+            && !(slot.finish && matches!(value, Operation::Recording))
         {
             slot.state = value;
         }
@@ -324,7 +281,6 @@ struct Slot {
     expires: Instant,
     deadline: Instant,
     finish: bool,
-    expects_audio: bool,
     audio: Option<Vec<u8>>,
     #[cfg(target_os = "linux")]
     microphone_claimed: bool,
@@ -390,8 +346,7 @@ impl Slots {
 
 pub(crate) struct DeviceSpeech {
     store: Store,
-    driver: Option<Arc<dyn Driver>>,
-    hex: Option<Arc<HexDriver>>,
+    hex: Option<Arc<dyn Driver>>,
     slots: Mutex<Slots>,
     #[cfg(target_os = "linux")]
     api_microphone: microphone::ApiMicrophone,
@@ -415,11 +370,10 @@ impl DeviceSpeech {
         false
     }
 
-    pub(crate) fn new(path: PathBuf, driver: Option<Arc<dyn Driver>>) -> Self {
+    pub(crate) fn new(path: PathBuf, hex: Option<Arc<dyn Driver>>) -> Self {
         Self {
             store: Store(path),
-            driver,
-            hex: None,
+            hex,
             slots: Mutex::default(),
             #[cfg(target_os = "linux")]
             api_microphone: Default::default(),
@@ -444,23 +398,13 @@ impl DeviceSpeech {
         None
     }
 
-    fn capabilities(&self) -> Capabilities {
-        let mut capabilities = self.driver.as_ref().map_or(
-            Capabilities {
-                system: System::Unavailable,
-                system_locales: None,
-                system_reason: None,
-                hex: Hex::Unavailable,
-            },
-            |driver| driver.capabilities(),
-        );
-        if let Some(hex) = &self.hex {
-            capabilities.hex = hex.capabilities();
-        }
-        capabilities
+    fn capabilities(&self) -> Hex {
+        self.hex
+            .as_ref()
+            .map_or(Hex::Unavailable, |hex| hex.capabilities())
     }
 
-    pub(crate) fn preferred_engine(&self) -> Result<Engine, SpeechError> {
+    pub(crate) fn preferred_engine(&self) -> Result<Option<Engine>, SpeechError> {
         self.store.read().map(|preference| preference.engine)
     }
 
@@ -490,18 +434,7 @@ impl DeviceSpeech {
                 entry.take();
             }
         }
-        let snapshot = |engine: Engine, capabilities: Capabilities| {
-            let mut value = json!({
-                "engine": engine, "system": capabilities.system, "hex": capabilities.hex,
-            });
-            if let Some(locales) = capabilities.system_locales {
-                value["systemLocales"] = json!(locales);
-            }
-            if let Some(reason) = capabilities.system_reason {
-                value["systemReason"] = json!(reason);
-            }
-            value
-        };
+        let snapshot = |engine, hex| json!({ "engine": engine, "hex": hex });
         match input {
             Request::ClaimMicrophone { id, purpose } => {
                 let id = microphone_id(&id).ok_or(SpeechError::Unavailable)?;
@@ -542,17 +475,27 @@ impl DeviceSpeech {
                     return Err(SpeechError::Busy);
                 }
                 let caps = self.capabilities();
-                if !engine_ready(engine, &caps) {
+                if engine == Engine::Hex && !matches!(caps, Hex::Ready { .. }) {
                     return Err(SpeechError::Unavailable);
                 }
                 self.store.select(engine, None)?;
-                Ok(snapshot(engine, caps))
+                if engine != Engine::Hex {
+                    if let Some(control) = &slots.operations[Kind::Dictation as usize] {
+                        control.0 .0.lock().cancel(None);
+                        control.0 .1.notify_all();
+                    }
+                    if let Some(hex) = &self.hex {
+                        hex.request_stop();
+                    }
+                }
+                Ok(snapshot(Some(engine), caps))
             }
             Request::Prepare { plan_id } => {
-                if slots.active(Kind::Prepare) {
+                if slots.active(Kind::Prepare) || slots.active(Kind::Dictation) {
                     return Err(SpeechError::Busy);
                 }
-                let (plan, needs_preparation) = match self.capabilities().hex {
+                let hex = self.hex.clone().ok_or(SpeechError::Unavailable)?;
+                let (plan, needs_preparation) = match hex.capabilities() {
                     Hex::Ready { plan } => (plan, false),
                     Hex::NeedsPreparation { plan } => (plan, true),
                     Hex::Unavailable => return Err(SpeechError::Unavailable),
@@ -562,28 +505,15 @@ impl DeviceSpeech {
                 }
                 let revision = self.store.read()?.revision;
                 let store = self.store.clone();
-                let hex = self.hex.clone();
-                let driver = self.driver.clone();
                 Self::begin(
                     &mut slots.operations,
                     owner,
                     Kind::Prepare,
-                    false,
                     move |control| {
                         if needs_preparation {
-                            match &hex {
-                                Some(hex) => hex.prepare(plan, control.clone())?,
-                                None => driver
-                                    .as_ref()
-                                    .ok_or(SpeechError::Unavailable)?
-                                    .prepare(plan, control.clone())?,
-                            }
+                            hex.prepare(plan, control.clone())?;
                         }
-                        let capability = match hex {
-                            Some(hex) => hex.capabilities(),
-                            None => driver.ok_or(SpeechError::Unavailable)?.capabilities().hex,
-                        };
-                        if !matches!(capability, Hex::Ready { .. }) {
+                        if !matches!(hex.capabilities(), Hex::Ready { .. }) {
                             return Err(SpeechError::Failed);
                         }
                         // Linearize selection against host-side cancellation.
@@ -600,56 +530,44 @@ impl DeviceSpeech {
                 )
             }
             Request::Start {
-                locale,
-                engine: expected,
                 microphone_lease_id,
+                ..
             } => {
-                if self.native_microphone_busy(&slots).is_some() {
+                if self.native_microphone_busy(&slots).is_some() || slots.active(Kind::Prepare) {
                     return Err(SpeechError::Busy);
                 }
-                let engine = self.store.read()?.engine;
+                if self.preferred_engine()? != Some(Engine::Hex) {
+                    return Err(SpeechError::Unavailable);
+                }
                 if let Some(lease) = &slots.microphone {
-                    if engine == Engine::Api
-                        || !lease.matches(
-                            owner,
-                            microphone_lease_id.as_deref().and_then(microphone_id),
-                            MicrophonePurpose::Dictation,
-                        )
-                    {
+                    if !lease.matches(
+                        owner,
+                        microphone_lease_id.as_deref().and_then(microphone_id),
+                        MicrophonePurpose::Dictation,
+                    ) {
                         return Err(SpeechError::Busy);
                     }
                 } else if microphone_lease_id.is_some() {
                     return Err(SpeechError::NotOwned);
                 }
-                if engine == Engine::Api || expected.is_some_and(|expected| expected != engine) {
+                let hex = self.hex.clone().ok_or(SpeechError::Unavailable)?;
+                if !matches!(hex.capabilities(), Hex::Ready { .. }) {
                     return Err(SpeechError::Unavailable);
                 }
-                let capabilities = self.capabilities();
-                if !engine_ready(engine, &capabilities) {
-                    return Err(SpeechError::Unavailable);
-                }
-                if engine == Engine::System
-                    && capabilities
-                        .system_locales
-                        .as_ref()
-                        .is_some_and(|locales| resolve_locale(locales, &locale).is_none())
-                {
-                    return Err(SpeechError::LocaleUnavailable);
-                }
-                let hex = self.hex.clone().filter(|_| engine == Engine::Hex);
-                let driver = self.driver.clone();
+                let store = self.store.clone();
                 Self::begin(
                     &mut slots.operations,
                     owner,
                     Kind::Dictation,
-                    hex.is_some(),
                     move |control| {
-                        let text = match hex {
-                            Some(hex) => hex.dictate(control)?,
-                            None => driver
-                                .ok_or(SpeechError::Unavailable)?
-                                .dictate(engine, locale, control)?,
-                        };
+                        let text = hex.dictate(
+                            control,
+                            Box::new(move || {
+                                store
+                                    .read()
+                                    .is_ok_and(|choice| choice.engine == Some(Engine::Hex))
+                            }),
+                        )?;
                         if text.len() > MAX_TEXT {
                             return Err(SpeechError::Failed);
                         }
@@ -688,19 +606,8 @@ impl DeviceSpeech {
                             if slot.finish {
                                 return Err(SpeechError::Busy);
                             }
-                            if slot.expects_audio {
-                                slot.audio = Some(
-                                    wav.as_deref()
-                                        .and_then(decode_wav)
-                                        .ok_or(SpeechError::Failed)?,
-                                );
-                            } else if wav.is_some() {
-                                return Err(SpeechError::Unavailable);
-                            }
+                            slot.audio = Some(decode_wav(&wav).ok_or(SpeechError::Failed)?);
                             slot.finish = true;
-                            if let Operation::Recording { text } = &mut slot.state {
-                                *text = None;
-                            }
                             control.0 .1.notify_all();
                             Ok(Value::Null)
                         }
@@ -761,13 +668,23 @@ impl DeviceSpeech {
                 control.0 .1.notify_all();
             }
         }
+        if owner.is_none() {
+            if let Some(hex) = &self.hex {
+                hex.request_stop();
+            }
+        }
+    }
+
+    pub(crate) fn stop_hex(&self) {
+        if let Some(hex) = &self.hex {
+            hex.stop();
+        }
     }
 
     fn begin(
         slots: &mut [Option<Control>; 2],
         owner: &str,
         kind: Kind,
-        expects_audio: bool,
         work: impl FnOnce(Control) -> Result<Operation, SpeechError> + Send + 'static,
     ) -> Result<Value, SpeechError> {
         let id = Uuid::new_v4().to_string();
@@ -786,7 +703,6 @@ impl DeviceSpeech {
                 expires: now + LEASE,
                 deadline: now + Duration::from_secs(seconds),
                 finish: false,
-                expects_audio,
                 audio: None,
                 #[cfg(target_os = "linux")]
                 microphone_claimed: false,
@@ -823,14 +739,6 @@ impl DeviceSpeech {
         });
         slots[kind as usize] = Some(control);
         Ok(json!({ "id": id }))
-    }
-}
-
-fn engine_ready(engine: Engine, caps: &Capabilities) -> bool {
-    match engine {
-        Engine::Api => true,
-        Engine::System => caps.system == System::Ready,
-        Engine::Hex => matches!(caps.hex, Hex::Ready { .. }),
     }
 }
 

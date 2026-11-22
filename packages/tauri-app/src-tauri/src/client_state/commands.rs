@@ -176,10 +176,24 @@ pub fn client_state_clear(
 pub fn client_state_renderer_flushed(
     app: AppHandle,
     webview: Webview,
+    app_state: State<'_, AppState>,
     state: State<'_, ClientState>,
     access_token: String,
     generation: u64,
 ) -> Result<(), String> {
+    if webview.label().starts_with("remote-") {
+        let label = webview.label().to_string();
+        crate::shutdown::renderer_flushed(app, label.clone(), label, generation);
+        return Ok(());
+    }
+    // Forgetting a window revokes snapshot writes before the release ACK.
+    // A trusted renderer can still finish its own approved release generation.
+    let window_id = trusted_window_id(&webview)?;
+    if validate_claim_origin(&local_window_url(&webview)?, &window_id, &app_state, &state).is_ok()
+        && crate::shutdown::finish_local_release(&app, webview.label(), generation)
+    {
+        return Ok(());
+    }
     let (window_id, _) = validate_access(&webview, &state, &access_token)?;
     crate::shutdown::renderer_flushed(app, webview.label().to_string(), window_id, generation);
     Ok(())

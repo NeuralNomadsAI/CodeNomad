@@ -9,6 +9,7 @@ import { generateUUID } from "../lib/client-identity"
 import { sameServerSelection } from "../lib/native/server-selection-intent"
 import { readRemoteProjectHistory, RECENT_PROJECT_LIMIT, type RemoteProjectRecentEdit } from "../lib/remote-project-recent-data"
 import type { ConversationPermissionMode, RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
+import { transcriptPresetFallbacks } from "../../../server/src/settings/transcript-preset-defaults"
 import {
   ensureInstanceConfigLoaded,
   getInstanceConfig,
@@ -140,6 +141,7 @@ export interface UiSettings {
   toolOutputExpansion: ExpansionPreference
   diagnosticsExpansion: VisibilityPreference
   systemMessagesVisibility: VisibilityPreference
+  toolGroupVisibility: VisibilityPreference
   toolInputsVisibility: ToolInputsVisibilityPreference
   showUsageMetrics: boolean
   usageMetricsExpansion: ExpansionPreference
@@ -268,6 +270,7 @@ const defaultUiSettings: UiSettings = {
   toolOutputExpansion: "expanded",
   diagnosticsExpansion: "expanded",
   systemMessagesVisibility: "hidden",
+  toolGroupVisibility: "collapsed",
   toolInputsVisibility: "collapsed",
   showUsageMetrics: false,
   usageMetricsExpansion: "collapsed",
@@ -363,10 +366,7 @@ const defaultSpeechSettings: SpeechSettings = {
 function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
   const sanitized = input ?? {}
   const toolCallExpansionDefaults = normalizeToolCallExpansionDefaults(sanitized.toolCallExpansionDefaults, sanitized)
-  const usageMetricsFallback =
-    toolCallExpansionDefaults.preset === "nothing" || toolCallExpansionDefaults.preset === "minimal" || toolCallExpansionDefaults.preset === "balanced"
-      ? "collapsed"
-      : "expanded"
+  const fallback = transcriptPresetFallbacks(toolCallExpansionDefaults.preset)
   return {
     multiBackend: sanitized.multiBackend === undefined ? defaultUiSettings.multiBackend : sanitized.multiBackend === true,
     highContrast: normalizeHighContrastPreference(sanitized.highContrast),
@@ -393,6 +393,10 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       defaultUiSettings.diagnosticsExpansion,
     ),
     systemMessagesVisibility: normalizeVisibilityPreference(sanitized.systemMessagesVisibility, "hidden"),
+    toolGroupVisibility: normalizeVisibilityPreference(
+      sanitized.toolGroupVisibility,
+      fallback.toolGroupVisibility,
+    ),
     toolInputsVisibility:
       sanitized.toolInputsVisibility === "hidden" || sanitized.toolInputsVisibility === "collapsed" || sanitized.toolInputsVisibility === "expanded"
         ? sanitized.toolInputsVisibility
@@ -400,7 +404,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     showUsageMetrics: sanitized.showUsageMetrics ?? defaultUiSettings.showUsageMetrics,
     usageMetricsExpansion: normalizeExpansionPreference(
       sanitized.usageMetricsExpansion,
-      usageMetricsFallback,
+      fallback.usageMetricsExpansion,
     ),
     showProviderUsageCreditBalance:
       sanitized.showProviderUsageCreditBalance ?? defaultUiSettings.showProviderUsageCreditBalance,
@@ -496,6 +500,7 @@ function cloneArray<T>(value: unknown, mapper: (item: any) => T | null): T[] {
 
 function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
   const source = input ?? {}
+  const receivedAt = new Date().toISOString()
   return {
     recentFolders: cloneArray<RecentFolder>(source.recentFolders, (f) => {
       if (!f || typeof f !== "object") return null
@@ -529,7 +534,7 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
       if (!id || !name || !baseUrl) return null
       const ssh = (server as RemoteServerProfile).ssh
       if (ssh !== undefined && (!ssh || typeof ssh.host !== "string" || !ssh.host.trim())) return null
-      const createdAt = typeof (server as any).createdAt === "string" ? (server as any).createdAt : new Date().toISOString()
+      const createdAt = typeof (server as any).createdAt === "string" ? (server as any).createdAt : receivedAt
       const updatedAt = typeof (server as any).updatedAt === "string" ? (server as any).updatedAt : createdAt
       const lastConnectedAt = typeof (server as any).lastConnectedAt === "string" ? (server as any).lastConnectedAt : undefined
       return {

@@ -86,6 +86,9 @@ export const messagingMessages = {
   "history.pruning": "Очистка: {count} / {total} сообщений",
   "transcriptFilters.title": "Содержимое сообщений",
   "transcriptFilters.systemMessages": "Система",
+  "transcriptFilters.toolGroups": "Группы инструментов",
+  "transcriptFilters.toolGroups.enable": "Включить группировку инструментов",
+  "transcriptFilters.toolGroups.disable": "Отключить группировку инструментов",
   "messageBlock.system.label": "Система",
   "messageBlock.hiddenParts.one": "1 элемент скрыт",
   "messageBlock.hiddenParts.other": "Скрыто элементов: {count}",
@@ -398,6 +401,5 @@ export const messagingMessages = {
   "voice.microphone.conversation": "Микрофон используется для разговора в реальном времени.",
   "voice.microphone.unavailable": "Микрофон недоступен в этом окне.",
   "promptInput.voiceInput.error.permissionDenied": "macOS запретила доступ к микрофону.",
-  "promptInput.voiceInput.error.unsupported": "Голосовой ввод не поддерживается в этом браузере.",
   "promptInput.voiceInput.error.transcribe": "Не удалось расшифровать записанное аудио.",
 } as const

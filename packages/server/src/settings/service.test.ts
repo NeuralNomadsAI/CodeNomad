@@ -114,6 +114,24 @@ describe("SettingsService config persistence", () => {
     assert.deepEqual(result, { logLevel: "INFO", opencodeBinary: "opencode2", sidecars: [{ id: "one" }] })
   })
 
+  it("preserves only implicit transcript defaults changed by a switch to Custom", () => {
+    const toolCallExpansionDefaults = { preset: "custom" }
+    const cases = [
+      { preset: "everything", expected: { toolGroupVisibility: "expanded" } },
+      { preset: "everything", saved: { toolGroupVisibility: "hidden" }, expected: { toolGroupVisibility: "hidden" } },
+      { preset: "everything", patch: { toolGroupVisibility: "collapsed" }, expected: { toolGroupVisibility: "collapsed" } },
+      { preset: "everything", saved: { toolGroupVisibility: "hidden" }, patch: { toolGroupVisibility: null }, expected: {} },
+      { preset: "balanced", expected: { usageMetricsExpansion: "collapsed" } },
+      { preset: "custom", expected: {} },
+    ]
+    for (const { preset, saved, patch, expected } of cases) {
+      const ui = { settings: { toolCallExpansionDefaults: { preset }, ...saved } }
+      const service = serviceWithStore({ reloadAuthoritative: () => ({ ui }), replace: (value: unknown) => value })
+      const result = service.mergePatchDoc("config", { ui: { settings: { toolCallExpansionDefaults, ...patch } } })
+      assert.deepEqual(result.ui, { settings: { toolCallExpansionDefaults, ...expected } })
+    }
+  })
+
   it("keeps only known update feeds", () => {
     const owner = (updateFeed: unknown) => serviceWithStore({
       reloadAuthoritative: () => ({}),

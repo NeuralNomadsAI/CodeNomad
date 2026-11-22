@@ -58,6 +58,8 @@ Bir yönetici dinleme adresini sabitleyebilir: `CODENOMAD_LOCKED_HOST` değişke
 
 Ana bilgisayar adı takma adı, ters proxy veya ayrı barındırılan arayüz için arka uçta `CODENOMAD_ALLOWED_ORIGINS` değerini arayüzün güvenilir origin adreslerine (şema, ana bilgisayar adı ve port) ayarlayın. Yerel LAN istemcileri, değişiklik isteklerinde izin verilen bir `Origin` başlığı göndermelidir. HTTPS origin adresleri, ana bilgisayarın cihazları tünel olmadan eşleştirmesine de olanak tanır; bkz. [Doğrudan HTTPS ile eşleştirin](remote-control.md#direct-https).
 
+Arayüz ayrı barındırılıyorsa, sunucuyu güncellemeden önce arayüzü dağıtın ve açık sekme ve pencereleri yeniden yükleyin. Arayüzü sunucu sunuyorsa, bunları güncellemeden sonra yeniden yükleyin.
+
 Ana bilgisayara özel işlemler için loopback bağlantısı kullanın: SideCar içeriği (`/sidecars/`) ve WebSocket'ler, Uzaktan Kontrol yönetimi (`/api/remote-control/`), eklenti köprüsü (`/api/opencode-plugin/`), uzak proxy'ler (`/api/remote-proxy/`), parola değişikliği ve belirteçle ilk kurulum. Doğrudan LAN erişimiyle oturum açıldığında da bu işlemler loopback gerektirir. Tek istisna SideCars'tır: ana bilgisayardaki **SideCars'ı HTTPS üzerinden aç** ayarı, içeriklerini ve WebSocket'lerini güvenilir bir HTTPS origin üzerinden oturum açmış tarayıcılara açar ([SideCars](browser-sidecars.md#register-sidecar)). Etkin önizleme içeriği (`/previews/`), geçerli bir yetenek belirteciyle doğrudan LAN erişiminde kullanılabilir.
 
 `/api/sidecars` kayıt API'leri, kimliği doğrulanmış doğrudan LAN istemcileri ve eşleştirilmiş cihazlar için kullanılabilir kalır. Uzaktan Kontrol web önizlemeleri, ana bilgisayarda etkin oldukları sürece yetenek belirteçleriyle kullanılabilir. Sunucu yönetimi ve güvenli kimlik bilgisi girişi için bkz. [Uzak sunucuyu kaydedin](remote-access.md#saved-servers).
@@ -113,11 +115,11 @@ Uzaktan Kontrol için bunun yerine **Sunucu URL'si** öğesine yeni bir eşleşt
 
 ## Uzak projeyi sekmede açma {#remote-project-tabs}
 
-Ana sayfada veya yeni sekmede **Gözat** bölümünden sunucuyu seçin. Sunucuyu kaydetmek için adresini veya eşleme bağlantısını yapıştırın. Gerekirse oturum açın. Klasörde gezinmek için klasöre tıklayın; açmak için yol alanında Enter tuşuna basın veya **Aç** düğmesine basın. Geri düğmesi sunucu listesine döner.
+Boş sekmede **Gözat** bölümünden sunucuyu seçin. Sunucuyu kaydetmek için adresini veya eşleme bağlantısını yapıştırın. Gerekirse oturum açın. Klasörde gezinmek için klasöre tıklayın; açmak için yol alanında Enter tuşuna basın veya **Aç** düğmesine basın. Geri düğmesi sunucu listesine döner.
 
 Yerel ve uzak projeler aynı pencerede açılır. Gezinirken **Son sekmeler** seçili sunucunun kısayollarını gösterir. Karma listede burada açtığınız projelerin sunucu simgesi ve adı görünür. [Uzak sekmeleri geri yükleme](projects.md#restore-remote-tabs).
 
-**Ayarlar → Sunucular** bölümünde **Aç**, sunucuyu **Gözat** içinde seçer ve varsa boş sekmeyi kullanır.
+**Ayarlar → Sunucular** bölümünde **Aç**, sunucuyu **Gözat** içinde seçer ve varsa açık bir boş sekmeyi kullanır.
 
 ### `--connect-server` {#connect-server}
 

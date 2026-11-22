@@ -16,6 +16,8 @@ import type { MessageRecord } from "../stores/message-v2/types"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { ensureSessionAncestorsExpanded, sessions, selectSessionFromList } from "../stores/sessions"
 import { selectInstanceTab } from "../stores/app-tabs"
+import { openInstanceTabIds } from "../stores/app-tab-membership"
+import { parseInstanceKey } from "../lib/backend-identity"
 import { useI18n, type I18nContextValue } from "../lib/i18n"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { withHotkey } from "../lib/hotkeys"
@@ -114,7 +116,7 @@ interface TaskSessionLocation {
 function findTaskSessionLocation(sessionId: string, preferredInstanceId?: string): TaskSessionLocation | null {
   if (!sessionId) return null
 
-  if (preferredInstanceId) {
+  if (preferredInstanceId && openInstanceTabIds().has(preferredInstanceId)) {
     const session = sessions().get(preferredInstanceId)?.get(sessionId)
     if (session) {
       return {
@@ -127,6 +129,8 @@ function findTaskSessionLocation(sessionId: string, preferredInstanceId?: string
 
   const allSessions = sessions()
   for (const [instanceId, sessionMap] of allSessions) {
+    if (!openInstanceTabIds().has(instanceId)
+      || preferredInstanceId && parseInstanceKey(instanceId).backendId !== parseInstanceKey(preferredInstanceId).backendId) continue
     const session = sessionMap?.get(sessionId)
     if (session) {
       return {
@@ -140,6 +144,7 @@ function findTaskSessionLocation(sessionId: string, preferredInstanceId?: string
 }
 
 function navigateToTaskSession(location: TaskSessionLocation) {
+  if (!openInstanceTabIds().has(location.instanceId)) return
   selectInstanceTab(location.instanceId)
   ensureSessionAncestorsExpanded(location.instanceId, location.sessionId)
   selectSessionFromList(location.instanceId, location.sessionId)
@@ -525,6 +530,7 @@ interface MessageBlockProps {
   thinkingDefaultExpanded: () => boolean
   usageMetricsVisibility: () => VisibilityPreference
   systemMessagesVisibility?: () => VisibilityPreference
+  toolGroupVisibility?: () => VisibilityPreference
   toolVisibility: (toolName: string) => VisibilityPreference
   onRevert?: (messageId: string) => void
   onFork?: (messageId?: string) => void
@@ -603,6 +609,7 @@ export default function MessageBlock(props: MessageBlockProps) {
     if (!current) return null
 
     const messageInfoVersion = props.store().state.messageInfoVersion[current.id] ?? 0
+    const groupTools = props.toolGroupVisibility?.() !== "hidden"
 
     const cacheSignature = [
       current.id,
@@ -612,6 +619,7 @@ export default function MessageBlock(props: MessageBlockProps) {
       props.thinkingDefaultExpanded() ? 1 : 0,
       props.usageMetricsVisibility(),
       props.systemMessagesVisibility?.() ?? "hidden",
+      groupTools,
       props.technicalGroupingSignature?.() ?? "",
     ].join("|")
 
@@ -688,7 +696,7 @@ export default function MessageBlock(props: MessageBlockProps) {
     const rows = groupTranscriptRows(displayData.hiddenCount > 0
       ? [...shown(orderedParts.slice(0, displayData.gapIndex)), null, ...shown(orderedParts.slice(displayData.gapIndex))]
       : shown(orderedParts), (part) => {
-      const kind = transcriptPartKind(part)
+      const kind = transcriptPartKind(part, groupTools)
       if (kind === "content" || kind === "part") return { kind }
       const partId = typeof part.id === "string" ? part.id : ""
       return { kind, groupId: partId ? props.technicalGroupForPart?.(current.id, partId)?.id : undefined }
@@ -947,23 +955,25 @@ export default function MessageBlock(props: MessageBlockProps) {
                   />
                 </Match>
                 <Match when={item().type === "tool"}>
-                  <Show when={visibleItemKeys().has((item() as ToolDisplayItem).key)}>
-                    <div
-                      class="tool-call-message"
-                      data-key={(item() as ToolDisplayItem).key}
-                      data-part-id={(item() as ToolDisplayItem).partId}
-                      data-delete-technical-selected={technicalCleanupPartKeys().has((item() as ToolDisplayItem).key) ? "true" : undefined}
-                    >
-                      <ToolCallItem
-                        instanceId={props.instanceId}
-                        sessionId={props.sessionId}
-                        isActive={props.isActive}
-                        store={props.store}
-                        messageId={(item() as ToolDisplayItem).messageId}
-                        partId={(item() as ToolDisplayItem).partId}
-                        onContentRendered={props.onContentRendered}
-                      />
-                    </div>
+                  <Show keyed when={visibleItemKeys().has((item() as ToolDisplayItem).key) && item() as ToolDisplayItem}>
+                    {tool => (
+                      <div
+                        class="tool-call-message"
+                        data-key={tool.key}
+                        data-part-id={tool.partId}
+                        data-delete-technical-selected={technicalCleanupPartKeys().has(tool.key) ? "true" : undefined}
+                      >
+                        <ToolCallItem
+                          instanceId={props.instanceId}
+                          sessionId={props.sessionId}
+                          isActive={props.isActive}
+                          store={props.store}
+                          messageId={tool.messageId}
+                          partId={tool.partId}
+                          onContentRendered={props.onContentRendered}
+                        />
+                      </div>
+                    )}
                   </Show>
                 </Match>
                 <Match when={item().type === "exploration"}>
@@ -983,7 +993,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                       activePartId={activeSearchMatch()?.partId}
                       showHeader={technicalGroupStartsHere((item() as ExplorationDisplayItem).technicalGroup)}
                       expanded={(item() as ExplorationDisplayItem).technicalGroup
-                        ? () => props.isTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!.id, false) ?? false
+                        ? () => props.isTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!.id, props.toolGroupVisibility?.() === "expanded") ?? false
                         : undefined}
                       onExpandedChange={(item() as ExplorationDisplayItem).technicalGroup
                         ? (expanded) => props.setTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!.id, expanded)

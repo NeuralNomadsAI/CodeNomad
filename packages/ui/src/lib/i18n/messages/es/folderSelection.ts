@@ -38,9 +38,11 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "Renombrar workspace",
   "folderSelection.recent.remove": "Eliminar de recientes",
   "folderSelection.recent.openBadge": "Abierta",
+  "folderSelection.recent.openElsewhere": "Abierto en otra ventana",
   "newInstanceLauncher.searchLabel": "Buscar proyectos recientes",
   "newInstanceLauncher.searchPlaceholder": "Buscar pestañas recientes…",
   "newInstanceLauncher.recentTitle": "Pestañas recientes",
+  "newInstanceLauncher.description": "Elige un proyecto reciente.",
   "newInstanceLauncher.empty": "Todavía no hay proyectos recientes.",
   "newInstanceLauncher.noMatch": "Ningún proyecto coincide.",
   "folderSelection.recent.switchToOpenProject": "Cambiar al proyecto abierto",
@@ -63,7 +65,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.errorRequired": "La URL del repositorio y la carpeta de destino son obligatorias.",
   "folderSelection.actions.connectButton": "Conectar servidor CodeNomad",
 
-  "folderSelection.opencode": "OpenCode",
 
 
   "folderSelection.loading.title": "Iniciando instancia...",
@@ -113,7 +114,7 @@ export const folderSelectionMessages = {
   "projectRenameDialog.actions.cancel": "Cancelar",
   "projectRenameDialog.actions.rename": "Renombrar",
   "projectRenameDialog.actions.renaming": "Renombrando...",
-  "newTab.temporary": "Temporal",
+  "newTab.temporary": "Pestaña temporal",
   "newTab.title": "Nueva pestaña",
   "newTab.items.one": "{count} elemento",
   "newTab.items.other": "{count} elementos",

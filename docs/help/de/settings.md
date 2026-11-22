@@ -4,7 +4,7 @@ Das Einstellungsfenster verwendet den Server des ausgewählten Projekts für Pro
 
 ## Einstellungen öffnen und Geltungsbereich erkennen {#open-settings}
 
-1. Öffnen Sie **Einstellungen** über das Zahnrad **Einstellungen öffnen** in der Tab-Leiste (in der macOS-Desktop-App in der Titelleiste) oder auf der Startseite. Direktzugänge wie **Anbieter verwalten** in der Modellauswahl, das Zahnrad des Missionspanels oder das Zahnrad **Einstellungen** im Benachrichtigungsverlauf öffnen direkt den passenden Abschnitt.
+1. Öffnen Sie **Einstellungen** über das Zahnrad **Einstellungen öffnen** in der Tab-Leiste. Direktzugänge wie **Anbieter verwalten** in der Modellauswahl, das Zahnrad des Missionspanels oder das Zahnrad **Einstellungen** im Benachrichtigungsverlauf öffnen direkt den passenden Abschnitt.
 2. Wählen Sie einen Abschnitt. Lokale Electron-/Tauri-Fenster öffnen oder fokussieren ein natives Einstellungsfenster; Browser-/Remote-Ansichten verwenden die eingebettete Einstellungsseite.
 3. Prüfen Sie vor dem Verlassen den Geltungsbereich und mögliche **Speichern**-Aktionen.
 
@@ -85,7 +85,7 @@ Integriertes Layout ist Fensterlayout, keine Projektänderung. Erweiterungskäst
 ## Verlaufsdetails und Eingabegröße {#transcript-composer}
 
 1. Öffnen Sie **Chat**, um Standarddetails des Verlaufs zu wählen. Vorgaben sind **Nichts**, **Minimal**, **Ausgewogen** und **Alles**; Einzeländerungen erzeugen **Benutzerdefiniert**.
-2. Legen Sie für Denken, Diagnosen, Werkzeugeingaben, Tokens, Systemnachrichten und jeden Werkzeugtyp den **Standardzustand** jeder Zeile fest (**Ausgeblendet**, **Eingeklappt** oder **Erweitert**), oder verwenden Sie das Popup **Nachrichteninhalt** der Unterhaltung, das diese Auswahl teilt.
+2. Legen Sie den **Standardzustand** jeder Zeile fest (**Ausgeblendet**, **Eingeklappt** oder **Erweitert**), oder verwenden Sie das Popup **Nachrichteninhalt** der Unterhaltung mit denselben Einstellungen. Bei **Werkzeuggruppen** zeigt **Deaktiviert** jeden Aufruf auf einer eigenen Karte; **Eingeklappt** und **Erweitert** legen den Anfangszustand der Gruppen fest.
 3. Aktivieren Sie unter **Allgemein** nach Bedarf **Nachrichten-Zeitleiste anzeigen**, **Pfeile für erste/neueste Nachricht unter der Zeitleiste anzeigen**, **Diffs von Tool-Aufrufen geteilt anzeigen** und **Gesendete Prompts in die Warteschlange stellen** (Prompts, die während der Arbeit einer Sitzung gesendet werden, einreihen statt sie einzuschieben).
 4. Ändern Sie die Größe des Eingabefelds über dessen Größensteuerung; lange Entwürfe scrollen im Feld.
 
@@ -99,7 +99,7 @@ Bei einem Projekt-Tab auf einem anderen CodeNomad-Server enthalten Benachrichtig
 
 Die Komprimierung technischer Missionssitzungen bleibt stumm.
 
-1. Öffnen Sie **Benachrichtigungen**. Markieren Sie für jede Art von Benachrichtigung, wo sie erscheint: **Auf dem Bildschirm** (eine vorübergehende Blase), **Verlauf** (im Benachrichtigungsverlauf der Glocke in der Tab-Leiste, in der macOS-Desktop-App in der Titelleiste, aufbewahrt) und **System** (eine Betriebssystembenachrichtigung). Ziehen Sie über eine Zeile oder Spalte von Kästchen, um mehrere auf einmal einzustellen.
+1. Öffnen Sie **Benachrichtigungen**. Markieren Sie für jede Art von Benachrichtigung, wo sie erscheint: **Auf dem Bildschirm** (eine vorübergehende Blase), **Verlauf** (im Benachrichtigungsverlauf der Glocke in der Tab-Leiste aufbewahrt) und **System** (eine Betriebssystembenachrichtigung). Ziehen Sie über eine Zeile oder Spalte von Kästchen, um mehrere auf einmal einzustellen.
 2. Das Markieren eines **System**-Kästchens fragt bei Bedarf nach der Berechtigung. Unter **Systembenachrichtigungen** fragt **Berechtigung anfordern** erneut, solange die Berechtigung fehlt.
 3. Aktivieren Sie **Benachrichtigen, wenn die App im Fokus ist**, um Systembenachrichtigungen auch zu erhalten, während dieses Fenster im Fokus ist. Sonst erscheinen sie, sobald es nicht im Fokus ist, auch wenn es geöffnet auf dem Bildschirm bleibt.
 
@@ -108,6 +108,8 @@ Standardmäßig gehen **Eine Sitzung wartet auf Ihre Antwort** und **Eine Sitzun
 Browser-/OS-Berechtigung gehört zum Gerät und zur Anwendungs-Origin; eine gespeicherte Einstellung kann Ablehnung nicht übersteuern. Aktivieren Sie bei Blockade Benachrichtigungen in Browser-/OS-Einstellungen und kehren Sie hierher zurück. Nicht unterstützte Umgebungen lassen die Spalte System deaktiviert.
 
 Die ungelesene Glocken-/Verlaufszahl, die nur an den Verlauf geleitete Benachrichtigungen zählt, steuert Browser-Favicon-Punkt und natives App-Abzeichen.
+
+Wenn das System Benachrichtigungsaktionen unterstützt, zeigt ein Klick auf die Benachrichtigung die Unterhaltung an, sofern sie noch geöffnet ist. Ob das Fenster in den Vordergrund kommt, hängt von der Desktop-Umgebung ab.
 
 ## Erweiterte Optionen {#advanced}
 

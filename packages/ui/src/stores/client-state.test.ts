@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { describe, it } from "node:test"
+import { after, before, describe, it } from "node:test"
 import { encodeClientSnapshotV2 } from "./client-state-partitions.ts"
 import { normalizePersistedOutline } from "./session-outline-persistence.ts"
 import { compactMissionKey } from "./tab-view-state-migration.ts"
@@ -402,6 +402,14 @@ describe("secondary hosts", () => {
 
 describe("plain web tab session", () => {
   const SNAPSHOT_KEY = "codenomad.client-state.v1"
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document")
+  before(() => {
+    Object.defineProperty(globalThis, "document", { configurable: true, value: { wasDiscarded: false } })
+  })
+  after(() => {
+    if (originalDocument) Object.defineProperty(globalThis, "document", originalDocument)
+    else Reflect.deleteProperty(globalThis, "document")
+  })
   const bootWeb = async (tab: MemoryStorage, storage = new MemoryStorage()) => {
     Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: storage, sessionStorage: tab } })
     const state = await import(`./client-state.ts?test=${moduleId++}`) as ClientState
@@ -521,6 +529,29 @@ describe("plain web tab session", () => {
 })
 
 describe("partitioned client state", () => {
+  for (const refusal of ["throw", "false"] as const) it(`resends the exact full snapshot after a delta ${refusal}`, async () => {
+    const encoded = await encodeClientSnapshotV2(snapshot("restored"))
+    const commits: any[] = []
+    const state = await boot({
+      loadClientState: async () => loadResult(encoded.root, true, 1),
+      loadClientStatePartition: async (_token, key) => encoded.partitions[key] ?? null,
+      commitClientStatePartitions: async (_token, value) => {
+        commits.push(value)
+        if (commits.length === 1) {
+          assert.deepEqual(Object.keys(value.partitions), [])
+          if (refusal === "throw") throw new Error("Missing client state partition")
+          return false
+        }
+        return true
+      },
+    })
+    state.writeClientLayoutValue(layoutKey, "420")
+    await state.flushClientState()
+    assert.equal(commits.length, 2)
+    assert.deepEqual(commits[1].snapshot, commits[0].snapshot)
+    assert.deepEqual(commits[1].partitions, encoded.partitions)
+    assert.equal(state.clientStateIsPrimary(), true)
+  })
   for (const kind of ["clear", "disable"] as const) it(`${kind}: removes optional persisted indexes and prevents their recapture`, async () => {
     const sessionState = { activeTabIndex: 0, tabs: [{ kind: "workspace" as const, folder: "/repo", activeSessionId: "s",
       drafts: { s: "draft" }, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {},

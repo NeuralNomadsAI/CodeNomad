@@ -86,6 +86,9 @@ export const messagingMessages = {
   "history.pruning": "ניקוי: {count} / {total} הודעות",
   "transcriptFilters.title": "תוכן ההודעות",
   "transcriptFilters.systemMessages": "מערכת",
+  "transcriptFilters.toolGroups": "קבוצות כלים",
+  "transcriptFilters.toolGroups.enable": "הפעלת קיבוץ כלים",
+  "transcriptFilters.toolGroups.disable": "ביטול קיבוץ כלים",
   "messageBlock.system.label": "מערכת",
   "messageBlock.hiddenParts.one": "פריט אחד הוסתר",
   "messageBlock.hiddenParts.other": "{count} פריטים הוסתרו",
@@ -395,7 +398,6 @@ export const messagingMessages = {
   "voice.microphone.conversation": "השיחה החיה משתמשת במיקרופון.",
   "voice.microphone.unavailable": "המיקרופון אינו זמין בחלון זה.",
   "promptInput.voiceInput.error.permissionDenied": "הגישה למיקרופון נדחתה על ידי macOS.",
-  "promptInput.voiceInput.error.unsupported": "קלט קולי אינו נתמך בדפדפן זה.",
   "promptInput.voiceInput.error.transcribe": "לא ניתן היה לתמלל את האודיו שהוקלט.",
   "promptInput.resizeHandle.title": "גרור כדי לשנות את גובה שדה הקלט",
 } as const

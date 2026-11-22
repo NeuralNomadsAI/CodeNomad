@@ -1,6 +1,6 @@
 # Unterhaltungen
 
-Nachrichten stellen Markdown, Code, Diffs und unterstützte Bilder aus Werkzeugergebnissen dar. **Nachrichteninhalt** ändert die Sichtbarkeit, ohne gespeicherte Teile zu löschen; [Verlauf](history.md#operation-reference) unterscheidet Anzeigeeinstellungen und Bereinigung.
+Nachrichten stellen Markdown, Code, Diffs und unterstützte Bilder aus Werkzeugergebnissen dar. Patches mit mehreren Dateien zeigen Änderungen pro Datei bis zur Anzeigegrenze; beim Kopieren der Werkzeugausgabe werden alle Dateien berücksichtigt. **Nachrichteninhalt** ändert die Sichtbarkeit, ohne gespeicherte Teile zu löschen; [Verlauf](history.md#operation-reference) unterscheidet Anzeigeeinstellungen und Bereinigung.
 
 Kopfzeilen von Denkprozessen und Werkzeugen zeigen, wie lange jeder Schritt gedauert hat, und zählen live mit, solange er läuft; Dauern unter einer Sekunde werden nicht angezeigt. Wenn **Tokens** in **Nachrichteninhalt** angezeigt wird (die Voreinstellung **Alles** zeigt sie), endet jede Agentennachricht nach ihrem letzten Text mit einer Token- und Kostenzeile. Diese Zeile summiert die Nachricht und die Nachrichten mit den Werkzeugen und Denkprozessen, die ihre Aktion **Tools und Denkprozesse aus dieser Antwort entfernen** abdeckt, innerhalb des geladenen Verlaufs; klappen Sie sie für Denk- und Cache-Zähler auf.
 

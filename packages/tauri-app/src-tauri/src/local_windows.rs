@@ -9,9 +9,9 @@ use url::Url;
 const MAX_LOCAL_WINDOWS: usize = 16;
 const MAX_FOLDER_ATTEMPTS: u8 = 3;
 #[cfg(target_os = "windows")]
-const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'local'; window.__CODENOMAD_BROWSER_CAPABILITIES__ = Object.freeze({embedding:true,history:true,emulation:true,automation:true});";
+const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'local'; window.__CODENOMAD_BROWSER_CAPABILITIES__ = Object.freeze({embedding:true,history:true,emulation:true,automation:true,ownership:true});";
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'local'; window.__CODENOMAD_BROWSER_CAPABILITIES__ = Object.freeze({embedding:true,history:true,emulation:true,automation:true,reason:'webkit'});";
+const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'local'; window.__CODENOMAD_BROWSER_CAPABILITIES__ = Object.freeze({embedding:true,history:true,emulation:true,automation:true,ownership:true,reason:'webkit'});";
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 const LOCAL_WINDOW_CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'local'; window.__CODENOMAD_BROWSER_CAPABILITIES__ = Object.freeze({embedding:false,history:false,emulation:false,automation:false,reason:'unsupported-platform'});";
 
@@ -41,10 +41,11 @@ fn local_window_initial_url() -> WebviewUrl {
 
 /// The initialization script every document of a local webview runs. The boot
 /// splash guards itself to the top-level about:blank document.
-fn local_window_initialization_script(id: &str) -> String {
+fn local_window_initialization_script(id: &str, instance: &str) -> String {
     format!(
-        "{LOCAL_WINDOW_CONTEXT_SCRIPT} window.__CODENOMAD_WINDOW_ID__ = {};{BOOT_SPLASH_SCRIPT}",
-        serde_json::to_string(id).unwrap()
+        "{LOCAL_WINDOW_CONTEXT_SCRIPT} window.__CODENOMAD_WINDOW_ID__ = {}; window.__CODENOMAD_WINDOW_INSTANCE__ = {};{BOOT_SPLASH_SCRIPT}",
+        serde_json::to_string(id).unwrap(),
+        serde_json::to_string(instance).unwrap()
     )
 }
 
@@ -63,6 +64,7 @@ fn local_window_initial_destination(backend_target: Option<&str>) -> String {
 pub(crate) struct LocalWindowRecord {
     pub(crate) id: String,
     pub(crate) label: String,
+    automation_instance: String,
     pub(crate) persisted: bool,
     pending_folders: VecDeque<PendingFolder>,
     pending_connections: VecDeque<PendingConnection>,
@@ -232,6 +234,7 @@ impl Registry {
             pending_connections: VecDeque::new(),
             connect_only,
             renderer_ready: false,
+            automation_instance: uuid::Uuid::new_v4().to_string(),
             workspace_menu_enabled: false,
             view_menu_state: None,
         };
@@ -270,6 +273,25 @@ impl Registry {
             .iter()
             .find(|label| self.records.contains_key(*label))
             .cloned()
+    }
+
+    fn automation_labels(&self, focused: Option<&str>) -> Vec<(String, String)> {
+        let mut windows = self
+            .mru
+            .iter()
+            .filter_map(|label| {
+                self.records
+                    .get(label)
+                    .filter(|record| record.renderer_ready && !record.connect_only)
+                    .map(|record| (label.clone(), record.automation_instance.clone()))
+            })
+            .collect::<Vec<_>>();
+        if let Some(index) =
+            focused.and_then(|focused| windows.iter().position(|(label, _)| label == focused))
+        {
+            windows[..=index].rotate_right(1);
+        }
+        windows
     }
 }
 
@@ -321,6 +343,23 @@ impl LocalWindows {
 
     pub(crate) fn mru_label(&self) -> Option<String> {
         self.registry.lock().ok()?.mru_label()
+    }
+
+    pub(crate) fn automation_labels(&self) -> Vec<(String, String)> {
+        let Ok(registry) = self.registry.lock() else {
+            return Vec::new();
+        };
+        registry.automation_labels(None)
+    }
+
+    pub(crate) fn automation_window_current(&self, label: &str, incarnation: &str) -> bool {
+        self.registry.lock().is_ok_and(|registry| {
+            registry.records.get(label).is_some_and(|record| {
+                record.renderer_ready
+                    && !record.connect_only
+                    && record.automation_instance == incarnation
+            })
+        })
     }
 
     pub(crate) fn mark_focused(&self, app: &AppHandle, label: &str) {
@@ -608,6 +647,17 @@ pub(crate) fn focused_local_window(app: &AppHandle) -> Option<Webview> {
     app.get_webview(&label)
 }
 
+pub(crate) fn browser_open_candidates(app: &AppHandle) -> Result<Vec<(String, String)>, String> {
+    let focused = focused_window(app);
+    let windows = app.state::<LocalWindows>();
+    let registry = windows.registry.lock().map_err(|error| error.to_string())?;
+    Ok(registry.automation_labels(focused.as_ref().map(Webview::label)))
+}
+
+pub(crate) fn browser_open_window_current(app: &AppHandle, label: &str, incarnation: &str) -> bool {
+    app.state::<LocalWindows>().automation_window_current(label, incarnation)
+}
+
 /// The update flow lives in application windows. Preferences and remote windows
 /// hand it to the most recently used application window instead of skipping it.
 fn select_update_label(focused: Option<&str>, mru: Option<&str>) -> Option<String> {
@@ -672,7 +722,7 @@ fn build_local_window(
     connect_only: bool,
 ) -> Result<LocalWindowRecord, String> {
     let record = register(app, id.clone(), persisted, connect_only)?;
-    let script = local_window_initialization_script(&id);
+    let script = local_window_initialization_script(&id, &record.automation_instance);
     let data_directory = app
         .state::<crate::AppState>()
         .webview_data_directory
@@ -741,6 +791,13 @@ fn build_local_window(
         return Err(error);
     }
     crate::notification_badge::bind_webview(window.as_ref(), badge_binding);
+    if let Err(error) = app
+        .state::<crate::AppState>()
+        .browser_controller
+        .observe_owner(&window.as_ref().window())
+    {
+        eprintln!("[browser] could not schedule preview owner visibility observer: {error}");
+    }
     crate::remote_dictation::bind_termination(window.as_ref(), None);
     #[cfg(target_os = "linux")]
     crate::device_speech_ipc::bind_microphone(&window, false);

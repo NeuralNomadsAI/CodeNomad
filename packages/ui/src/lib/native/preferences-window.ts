@@ -1,5 +1,6 @@
 import type { LocationRef } from "@opencode/client"
 import { listen } from "@tauri-apps/api/event"
+import { getCurrentWebview } from "@tauri-apps/api/webview"
 import { invoke } from "@tauri-apps/api/core"
 import { isElectronHost, isTauriHost, runtimeEnv } from "../runtime-env"
 import type { SettingsSectionId } from "../../stores/settings-screen"
@@ -89,15 +90,16 @@ export async function acceptNativePreferencesRequest(request: NativePreferencesR
 
 export async function onNativePreferencesFlushRequested(flush: (generation?: number) => Promise<void>): Promise<() => void> {
   if (isElectronHost()) {
-    window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ = flush
+    const flushBeforeShutdown = () => flush()
+    window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ = flushBeforeShutdown
     return () => {
-      if (window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ === flush) {
+      if (window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ === flushBeforeShutdown) {
         delete window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__
       }
     }
   }
   if (isTauriHost()) {
-    return listen<{ generation: number }>("client-state:flush-requested", event => {
+    return getCurrentWebview().listen<{ generation: number }>("client-state:flush-requested", event => {
       void flush(event.payload.generation).catch(error => getLogger("actions").warn("Preferences shutdown flush failed", error))
     })
   }

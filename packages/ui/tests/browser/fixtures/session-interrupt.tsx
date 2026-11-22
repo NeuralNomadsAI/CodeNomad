@@ -3,7 +3,6 @@ import { render } from "solid-js/web"
 import PromptInput from "../../../src/components/prompt-input"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
 import FolderSelectionView from "../../../src/components/folder-selection-view"
-import { showFolderSelection, setShowFolderSelection } from "../../../src/stores/ui"
 import { setHotkeyRecording } from "../../../src/lib/hotkeys"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
@@ -15,6 +14,7 @@ import { useAppLifecycle } from "../../../src/lib/hooks/use-app-lifecycle"
 import type { Session } from "../../../src/types/session"
 import "../../../src/index.css"
 
+const [blank, setBlank] = createSignal(false)
 const instanceId = "interrupt-instance"
 const [selected, setSelected] = createSignal("ses_parent")
 const client = getRootClient(instanceId)
@@ -29,19 +29,18 @@ setSessions(new Map([[instanceId, new Map([
 ])]]))
 function Fixture() {
   useAppLifecycle({
-    setEscapeInDebounce: () => {}, handleNewInstanceRequest: () => setShowFolderSelection(true), handleCloseActiveTab: async () => {},
-    handleNewSession: async () => {}, handleCloseSession: async () => {}, showFolderSelection,
-    setShowFolderSelection, getActiveInstance: () => instances().get(instanceId)!,
+    setEscapeInDebounce: () => {}, handleNewInstanceRequest: () => setBlank(true), handleCloseActiveTab: async () => setBlank(false),
+    handleNewSession: async () => {}, handleCloseSession: async () => {},
+    getActiveInstance: () => blank() ? null : instances().get(instanceId)!,
     getActiveSessionIdForInstance: selected,
   })
   return <>
-    <Show when={!showFolderSelection()}>
+    <Show when={!blank()}>
       <PromptInput instanceId={instanceId} instanceFolder="/fixture" sessionId={selected()} isActive={true}
         isSessionBusy={true} onAbortSession={() => abortSession(instanceId, selected())} onSend={async () => {}} />
     </Show>
-    <Show when={showFolderSelection()}>
-      <FolderSelectionView onSelectFolder={() => {}} onSelectExistingInstance={() => {}}
-        onClose={() => setShowFolderSelection(false)} />
+    <Show when={blank()}>
+      <FolderSelectionView onSelectFolder={() => {}} onSelectExistingInstance={() => {}} />
     </Show>
   </>
 }

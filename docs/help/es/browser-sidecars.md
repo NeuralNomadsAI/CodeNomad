@@ -12,7 +12,7 @@ Los service workers permanecen desactivados en las vistas previas remotas.
 
 Pulsar un enlace `localhost` o `127.0.0.1` en una conversación lo abre en la vista previa web de esa sesión, en cualquier cliente donde las vistas previas estén disponibles. A través de Remote Control cuando el host mantiene las vistas previas web desactivadas, o en un cliente donde las vistas previas no están disponibles de otro modo, esos enlaces conservan su comportamiento normal del navegador. Ctrl+clic (⌘-clic en macOS) o clic central abre el enlace en tu navegador en su lugar.
 
-Cerrar la vista previa local devuelve la pestaña al chat. Las pestañas duplicadas comparten la página activa hasta cerrar la última o recargar la ventana.
+La vista previa nativa conserva la página al volver al chat o al moverla dentro de la misma ventana.
 
 Cada pestaña guarda su elección de chat/vista previa; la sesión guarda la URL, la plantilla de viewport y el historial compartidos. Las páginas guardadas se cargan solo al reabrir explícitamente el navegador de sesión. Se conservan URL y un cursor; formularios activos, DOM, cuerpos POST y memoria JavaScript terminan con el documento. El historial se limita a 32 URL por sesión y a un presupuesto compartido por ventana; las entradas antiguas pueden recortarse. Restaurar una URL puede cargar de nuevo la página.
 
@@ -26,9 +26,17 @@ En Control remoto, **Vistas previas web** está activado por defecto en **Config
 
 ## Inicios de sesión compartidos y límites de automatización {#signins-automation}
 
+En Electron y Tauri para Windows, el reinicio automatizado (`codenomad.act`, `restart`) vuelve a iniciar el perfil, la configuración y la compilación inspeccionados. Si se restaura la ventana original, la vuelve a inspeccionar; si no, informa de su ausencia sin inspeccionar otra ventana. Una inspección que se complete correctamente durante la reconexión tiene prioridad.
+
+Si se cancela el reinicio, usa `codenomad.inspect` con `targets: true` para listar las ventanas abiertas y luego inspecciona la que quieras mediante su `target`.
+
 Las vistas previas nativas comparten cookies, inicios de sesión y almacenamiento de sitios entre proyectos/sesiones dentro del mismo motor de escritorio y ámbito de perfil/configuración, separados del renderer de confianza de CodeNomad. Cerrar sesión en un sitio desde una vista previa afecta a las demás que usen ese almacén. Documentos, formularios, almacenamiento de sesión, historiales de navegación y vínculos de automatización pertenecen a cada sesión.
 
-Un agente abre el navegador compartido de la sesión en una pestaña que la contiene, preferiblemente la activa. La pestaña elegida permanece fija durante la apertura; cerrarla cancela esa apertura. Las acciones sobre la página se dirigen a la vista previa nativa visible de la sesión; las ocultas quedan excluidas.
+Cada sesión tiene una sola vista previa nativa. Si una pestaña duplicada muestra **Vista previa abierta en otra pestaña**, elige **Ir a la pestaña** para encontrarla o **Abrir aquí** para moverla dentro de la misma ventana. La pestaña anterior muestra entonces el mismo mensaje. Al cerrar la pestaña que contiene la vista previa, puedes abrirla en otra.
+
+El agente abre la vista previa en la pestaña que la contiene o, si aún no está abierta, en la última pestaña usada para esa sesión. Las acciones sobre la página se aplican a la vista previa nativa visible.
+
+El agente toma una instantánea antes de interactuar con la vista previa o capturarla. Si la vista previa cambia, el comando se detiene en lugar de usar otra.
 
 | Cliente | Implementación de vista previa | Automatización de navegador del agente | Plantillas móviles |
 | --- | --- | --- | --- |

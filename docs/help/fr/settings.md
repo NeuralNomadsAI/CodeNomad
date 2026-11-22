@@ -4,7 +4,7 @@ Preferences utilise le serveur du projet sélectionné pour ses réglages, fourn
 
 ## Ouvrir les paramètres et identifier leur portée {#open-settings}
 
-1. Ouvrez **Paramètres** avec l’engrenage **Ouvrir les paramètres** de la barre d’onglets (de la barre de titre dans l’application de bureau macOS) ou de l’accueil. Des raccourcis comme **Gérer les fournisseurs** dans le sélecteur de modèle, l’engrenage du panneau Missions ou l’engrenage **Paramètres** de l’historique des notifications ouvrent directement la section correspondante.
+1. Ouvrez **Paramètres** avec l’engrenage **Ouvrir les paramètres** de la barre d’onglets. Des raccourcis comme **Gérer les fournisseurs** dans le sélecteur de modèle, l’engrenage du panneau Missions ou l’engrenage **Paramètres** de l’historique des notifications ouvrent directement la section correspondante.
 2. Sélectionnez une section. Les fenêtres locales Electron et Tauri ouvrent ou focalisent une unique fenêtre native Preferences ; les vues navigateur et distantes utilisent l’écran de paramètres intégré.
 3. Vérifiez la portée du réglage et toute action **Enregistrer** avant de quitter.
 
@@ -85,7 +85,7 @@ La disposition intégrée est propre à la fenêtre, pas une modification du pro
 ## Détail de transcription et taille de saisie {#transcript-composer}
 
 1. Ouvrez **Chat** pour choisir les niveaux de détail par défaut. Les préréglages sont **Rien**, **Minimal**, **Équilibré** et **Tout** ; les changements individuels produisent **Personnalisé**.
-2. Réglez l’**État par défaut** de chaque ligne (**Masqué**, **Réduit** ou **Développé**) pour la réflexion, les diagnostics, les entrées d’outils, les tokens, les messages système et chaque type d’outil, ou utilisez le menu **Contenu des messages** de la conversation, qui partage ces choix.
+2. Réglez l’**État par défaut** de chaque ligne (**Masqué**, **Réduit** ou **Développé**), ou utilisez le menu **Contenu des messages** de la conversation, qui partage ces choix. Pour **Groupes d’outils**, **Désactivé** affiche une carte par appel ; **Réduit** et **Développé** règlent l’ouverture des groupes.
 3. Dans **Général**, cochez au besoin **Afficher la chronologie des messages**, **Placer les flèches premier/dernier message sous la chronologie**, **Scinder les diffs des appels d’outils** et **Mettre les prompts envoyés en file d’attente** (mettre en file les prompts envoyés pendant qu’une session travaille au lieu de l’orienter).
 4. Redimensionnez la zone de saisie avec sa commande ; les longs brouillons défilent dans le champ.
 
@@ -99,7 +99,7 @@ Pour un onglet de projet sur un autre serveur CodeNomad, les notifications indiq
 
 La compaction des sessions techniques des Missions reste silencieuse.
 
-1. Ouvrez **Notifications**. Pour chaque type de notification, cochez où elle apparaît : **À l'écran** (une bulle temporaire), **Historique** (conservée dans l’historique des notifications de la cloche de la barre d’onglets, ou de la barre de titre dans l’application de bureau macOS) et **Système** (une notification du système d’exploitation). Faites glisser le pointeur sur une ligne ou une colonne de cases pour en régler plusieurs d'un coup.
+1. Ouvrez **Notifications**. Pour chaque type de notification, cochez où elle apparaît : **À l'écran** (une bulle temporaire), **Historique** (conservée dans l’historique des notifications de la cloche de la barre d’onglets) et **Système** (une notification du système d’exploitation). Faites glisser le pointeur sur une ligne ou une colonne de cases pour en régler plusieurs d'un coup.
 2. Cocher une case **Système** demande l’autorisation si nécessaire. Sous **Notifications système**, **Demander l'autorisation** relance la demande tant que l’autorisation manque.
 3. Activez **Notifier lorsque l'application est au premier plan** pour garder les notifications système pendant que cette fenêtre est au premier plan. Sinon, elles s’affichent dès qu’elle ne l’est pas, même si elle reste ouverte à l’écran.
 
@@ -108,6 +108,8 @@ Par défaut, **Une session attend votre réponse** et **Une session est terminé
 La permission navigateur/système appartient à l’appareil et à l’origine applicative ; une préférence enregistrée ne peut pas contourner un refus. Si elle est bloquée, activez les notifications dans les paramètres du navigateur ou du système, puis revenez ici. Les environnements non pris en charge gardent la colonne Système désactivée.
 
 Le nombre de non-lus de la cloche/de l’historique, qui ne compte que les notifications dirigées vers l’Historique, pilote le point de favicon et le badge de l’application native.
+
+Si le système prend en charge les actions de notification, un clic affiche la conversation si elle est toujours ouverte. Le passage de la fenêtre au premier plan dépend de l’environnement de bureau.
 
 ## Options avancées {#advanced}
 

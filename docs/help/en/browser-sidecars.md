@@ -12,7 +12,7 @@ Service workers stay disabled in remote previews.
 
 Clicking a `localhost` or `127.0.0.1` link in a conversation opens it in that session's web preview, on every client where previews are available. Through Remote Control when the host keeps web previews off, or on a client where previews are otherwise unavailable, such links keep their normal browser behavior. Ctrl+click (⌘-click on macOS) or middle-click opens the link in your browser instead.
 
-The local preview close button returns the tab to chat. Duplicate tabs share the live page until the last occurrence closes or the window reloads.
+The native preview keeps its live page when you return to chat or move it to another tab in the same window.
 
 Each tab saves its chat/preview choice; the session saves its shared URL, viewport template and history. Saved pages load only when you explicitly reopen the session browser. Persistence keeps URLs and a cursor; live forms, DOM, POST bodies and JavaScript memory end with the document. History is bounded to 32 URLs per session and a shared window budget; older entries may be trimmed. Restoring a URL may load a fresh page.
 
@@ -26,9 +26,17 @@ For Remote Control, **Web previews** is on by default under **Settings → Remot
 
 ## Shared sign-ins and automation boundaries {#signins-automation}
 
+On Electron and Windows Tauri, the desktop automation restart (`codenomad.act`, `restart`) relaunches the inspected profile, configuration and build. It inspects the original window again if restored; otherwise it reports the missing window and leaves other windows uninspected. A successful inspection during reconnection takes precedence.
+
+If the restart is cancelled, use `codenomad.inspect` with `targets: true` to list the open windows, then inspect the window you want by its `target`.
+
 Native previews share cookies, sign-ins and site storage across projects/sessions within the same desktop engine and profile/configuration scope, separately from the trusted CodeNomad renderer. Logging out of a site in one preview affects other previews using that store. Documents, forms, session storage, navigation histories and automation attachments belong to each session.
 
-An agent opens the session's shared browser in an owning tab, using the active tab when possible. The chosen tab stays fixed while opening; closing it cancels that open. Page actions target the session's visible native preview; hidden previews are excluded.
+Each session has one native preview. If a duplicate tab shows **Preview open in another tab**, choose **Go to tab** to find it, or **Open here** to move it within the same window. The previous tab then shows the same message. Closing the owning tab frees the preview for another tab.
+
+An agent opens the preview in its owning tab or, if there is none, the last tab used for the session. Page actions target the visible native preview.
+
+The agent takes a snapshot before acting on or capturing the preview. If the preview changes, the command stops instead of using a different preview.
 
 | Client | Preview implementation | Agent browser automation | Mobile templates |
 | --- | --- | --- | --- |

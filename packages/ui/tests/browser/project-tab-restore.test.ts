@@ -1,4 +1,6 @@
 import assert from "node:assert/strict"
+import { EventEmitter, once } from "node:events"
+import { createServer, request as forwardRequest } from "node:http"
 import { before, after, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { borrowFixture } from "./fixture-borrow"
@@ -18,6 +20,172 @@ before(async () => {
   armFixtureNavigationBudget(browser)
 })
 after(async () => { await browser?.close() })
+
+test("reloading cancels an accepted project opening whose POST reply is still held", async () => {
+  const admitted = Promise.withResolvers<void>(), respond = Promise.withResolvers<void>()
+  const cancelled = new EventEmitter()
+  let requestId: string | undefined, cancelledId: string | undefined
+  const record = { id: "held", path: "D:/first", status: "ready", proxyPath: "/workspaces/held/instance",
+    binaryId: "fixture", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() }
+  const inventory = [{ ...record, id: "other-window" }]
+  const server = createServer(async (req, res) => {
+    const target = new URL(req.url!, url)
+    // Observe keepalive at the real HTTP listener: navigation detaches Playwright routing.
+    if (!/^\/(?:api|workspaces)\//.test(target.pathname)) {
+      const upstream = forwardRequest(target, incoming => {
+        res.writeHead(incoming.statusCode!, incoming.headers)
+        incoming.pipe(res)
+      })
+      upstream.on("error", () => res.writeHead(502).end())
+      upstream.end()
+      return
+    }
+    let body: unknown = {}
+    if (req.method === "POST") {
+      const chunks = []
+      for await (const chunk of req) chunks.push(chunk)
+      const input = JSON.parse(Buffer.concat(chunks).toString())
+      if (target.pathname === "/api/workspaces") {
+        requestId = input.requestId
+        inventory.push(record)
+        admitted.resolve()
+        await respond.promise
+        body = { ...record, requestId }
+      } else if (target.pathname === "/api/workspaces/creation/cancel") {
+        cancelledId = input.requestId
+        if (requestId && requestId === cancelledId) inventory.splice(inventory.indexOf(record), 1)
+        res.writeHead(204).end()
+        cancelled.emit("received")
+        return
+      }
+    } else if (target.pathname === "/api/workspaces") body = inventory
+    res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(body))
+  })
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
+  const page = await browser.newPage()
+  try {
+    await page.addInitScript(() => {
+      ;(window as any).__name = (value: unknown) => value
+      Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: "web", EventSource: class extends EventTarget { close() {} } })
+    })
+    await page.goto(`http://127.0.0.1:${(server.address() as { port: number }).port}${new URL(url).pathname}`)
+    await page.locator('[data-restoring="false"]').waitFor()
+    await page.evaluate(() => { void (window as any).runtimeRecovery.openFirst().catch(() => {}) })
+    await admitted.promise
+    assert.deepEqual(await page.evaluate(() => (window as any).tabViews.ids()), [])
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true })))
+    assert.equal(cancelledId, undefined)
+    const receipt = once(cancelled, "received", { signal: AbortSignal.timeout(10_000) })
+    void receipt.catch(() => {})
+    await page.reload()
+    await page.locator('[data-restoring="false"]').waitFor()
+    await receipt
+    assert.ok(requestId)
+    assert.equal(cancelledId, requestId)
+    assert.deepEqual(inventory.map(row => row.id), ["other-window"])
+    assert.deepEqual(await page.evaluate(() => (window as any).tabViews.ids()), [])
+  } finally {
+    respond.resolve()
+    await page.close()
+    server.closeAllConnections()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  }
+})
+
+for (const decision of ["release", "cancel"] as const) test(`native close holds an in-flight opening until ${decision}`, async () => {
+  const page = await browser.newPage()
+  const admitted = Promise.withResolvers<string>(), respond = Promise.withResolvers<void>()
+  const deletes: string[] = [], cancellations: string[] = []
+  try {
+    await page.addInitScript(() => {
+      const w = window as any
+      w.__name = (value: unknown) => value
+      Object.assign(w, { __CODENOMAD_RUNTIME_HOST__: "electron", __CODENOMAD_WINDOW_CONTEXT__: "local",
+        EventSource: class extends EventTarget { close() {} } })
+      w.electronAPI = {
+        claimClientStateAccess: async () => true,
+        loadClientState: async () => ({
+          isPrimary: true, restoreEnabled: true, snapshot: { version: 1, revision: 1, savedAt: 1, layout: {},
+            session: { activeTabIndex: 0, tabs: ["a", "b"].map(id => ({ kind: "workspace", folder: `D:/${id}` })) } },
+        }),
+        saveClientState: async (_token: string, snapshot: unknown) => {
+          if (!w.holdWrite) return true
+          w.holdWrite = false
+          w.prepared = snapshot
+          await new Promise<void>(resolve => { w.finishWrite = resolve })
+          return true
+        },
+      }
+      const json = Response.prototype.json
+      Response.prototype.json = async function () {
+        const body = await json.call(this)
+        // Cross a task boundary after the opening response is decoded.
+        if (body?.id === "first") setTimeout(() => { w.openResponseRead = true }, 0)
+        return body
+      }
+    })
+    await page.route(/\/(?:api|workspaces)\//, async route => {
+      const request = route.request(), path = new URL(request.url()).pathname
+      if (!/^\/(?:api|workspaces)\//.test(path)) return route.continue()
+      if (path === "/api/workspaces" && request.method() === "POST") {
+        const { path: folder, requestId } = request.postDataJSON()
+        const id = folder.split("/").at(-1)
+        if (id === "first") {
+          admitted.resolve(requestId)
+          await respond.promise
+        }
+        return route.fulfill({ json: { id, path: folder, requestId, status: "ready", port: 1234,
+          proxyPath: `/workspaces/${id}/instance`, binaryId: "fixture", createdAt: "", updatedAt: "" } })
+      }
+      if (path === "/api/workspaces/creation/cancel") cancellations.push(request.postDataJSON().requestId)
+      if (path.startsWith("/api/workspaces/") && request.method() === "DELETE") deletes.push(path.split("/").at(-1)!)
+      return route.fulfill({ json: path === "/api/workspaces" ? [] : {} })
+    })
+    await page.goto(url)
+    await page.locator('[data-restoring="false"]').waitFor()
+    const ids = () => page.evaluate(() => (window as any).tabViews.ids())
+    assert.deepEqual(await ids(), ["a", "b"])
+    await page.evaluate(() => {
+      const w = window as any
+      w.opening = w.runtimeRecovery.openFirst().then(() => "opened", (error: Error) => error.message)
+    })
+    const requestId = await admitted.promise
+    await page.evaluate(() => {
+      const w = window as any
+      w.holdWrite = true
+      w.preparing = window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__!("prepare")
+    })
+    await page.waitForFunction(() => Boolean((window as any).finishWrite))
+    respond.resolve()
+    await page.waitForFunction(() => (window as any).openResponseRead)
+    const duringWrite = await ids()
+    await page.evaluate(async () => {
+      const w = window as any
+      w.finishWrite()
+      await w.preparing
+    })
+    assert.deepEqual(await page.evaluate(() => (window as any).prepared.session.tabs.map((tab: any) => tab.workspaceId)), ["a", "b"])
+    assert.deepEqual(deletes, [])
+    assert.deepEqual(cancellations, [])
+    await page.evaluate(phase => window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__!(phase), decision)
+    const outcome = await page.evaluate(() => (window as any).opening)
+    if (decision === "release") {
+      assert.deepEqual(deletes.sort(), ["a", "b"], "release only the records in the prepared snapshot")
+      assert.deepEqual(cancellations, [requestId])
+      assert.match(outcome, /Window is releasing workspace records/)
+      assert.ok(!(await ids()).includes("first"))
+    } else {
+      assert.deepEqual(deletes, [])
+      assert.deepEqual(cancellations, [])
+      assert.equal(outcome, "opened")
+      assert.deepEqual(await ids(), ["a", "b", "first"])
+    }
+    assert.deepEqual(duringWrite, ["a", "b"], "the opening must not attach during the native write")
+  } finally {
+    respond.resolve()
+    await page.close()
+  }
+})
 
 for (const host of ["electron", "tauri"] as const) for (const mode of ["normal", "user", "timeout", "catalog", "foreground", "foreground-user", "foreground-existing", "foreground-git", "foreground-inventory", "foreground-catalog", "foreground-history", "foreground-slow", "foreground-runtime-update", "foreground-runtime-continue", "foreground-runtime-user", "foreground-runtime-closed", "foreground-runtime-failure", "foreground-runtime-settings", "foreground-runtime-disposed", "foreground-runtime-discovered", "foreground-runtime-late", "foreground-runtime-refused-again", "foreground-runtime-manual-pending", "foreground-runtime-manual-same", "foreground-runtime-concurrent-continue"] as const) {
 const userSelection = mode === "user" || mode === "foreground-user"
@@ -49,10 +217,17 @@ test(`${host} restores the active project and saved session identity before hydr
       }))
      } }
      const catalogMode = ${JSON.stringify(mode)}.endsWith('catalog') || ${JSON.stringify(mode)} === 'foreground-history'
-     const persisted = catalogMode ? JSON.parse(sessionStorage.getItem('catalog-state') || 'null') : null
+      let persisted = catalogMode ? JSON.parse(sessionStorage.getItem('catalog-state') || 'null') : null
      const load = () => ({ isPrimary: true, restoreEnabled: true, snapshot: persisted?.snapshot || snapshot,
        ...(catalogMode ? { partitionProtocolVersion: 1 } : {}) })
-     const commit = value => { window.committedState = value; sessionStorage.setItem('catalog-state', JSON.stringify(value)); return true }
+      const commit = value => {
+        const partitions = { ...persisted?.partitions, ...value.partitions }
+        if (value.partitionKeys.some(key => !(key in partitions))) throw Error('Missing client state partition')
+        persisted = { ...value, partitions: Object.fromEntries(value.partitionKeys.map(key => [key, partitions[key]])) }
+        window.committedState = persisted
+        sessionStorage.setItem('catalog-state', JSON.stringify(persisted))
+        return true
+      }
      window.electronAPI = {
       claimClientStateAccess: async () => true,
        loadClientState: async () => load(),
@@ -62,6 +237,7 @@ test(`${host} restores the active project and saved session identity before hydr
     }
     if (${JSON.stringify(host)} === 'tauri') {
       window.__TAURI_INTERNALS__ = {
+        metadata: { currentWindow: { label: 'local-fixture' }, currentWebview: { label: 'local-fixture' } },
         transformCallback: () => 1,
         invoke: async (command, args) => {
            if (command === 'client_state_load') return load()
@@ -250,8 +426,9 @@ test(`${host} restores the active project and saved session identity before hydr
       else if (mode !== "foreground-runtime-closed") assert.equal(await second.getAttribute("aria-selected"), "true")
       assert.equal(await page.getByRole("tab").count(), ["foreground-runtime-closed", "foreground-runtime-failure"].includes(mode) ? 1 : 2)
       assert.equal(creations.filter(folder => folder === "D:/second").length, ["foreground-runtime-refused-again", "foreground-runtime-concurrent-continue"].includes(mode) ? 3 : 2)
-      assert.equal(creations.filter(folder => folder === "D:/first").length, manualPending ? 3 : ["foreground-runtime-failure", "foreground-runtime-discovered"].includes(mode) ? 1 : 2,
+      assert.equal(creations.filter(folder => folder === "D:/first").length, manualPending ? 3 : mode === "foreground-runtime-failure" ? 1 : 2,
         "never duplicate a manually reopened tab or replay a non-426 failure")
+      if (mode === "foreground-runtime-user" || manualPending) await second.click()
       if (mode !== "foreground-runtime-closed") await page.getByText("Saved transcript visible before secondary hydration", { exact: true }).first().waitFor()
       const count = creations.length
       assert.equal(await page.evaluate(() => (window as any).runtimeRecovery.canContinueOpenCodeSetup()), false,

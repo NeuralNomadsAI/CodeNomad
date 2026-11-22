@@ -86,6 +86,9 @@ export const messagingMessages = {
   "history.pruning": "सफा गर्दै: {count} / {total} सन्देश",
   "transcriptFilters.title": "सन्देशको सामग्री",
   "transcriptFilters.systemMessages": "प्रणाली",
+  "transcriptFilters.toolGroups": "उपकरण समूहहरू",
+  "transcriptFilters.toolGroups.enable": "उपकरण समूहीकरण सक्रिय गर्नुहोस्",
+  "transcriptFilters.toolGroups.disable": "उपकरण समूहीकरण निष्क्रिय गर्नुहोस्",
   "messageBlock.system.label": "प्रणाली",
   "messageBlock.hiddenParts.one": "1 वस्तु लुकाइएको छ",
   "messageBlock.hiddenParts.other": "{count} वस्तुहरू लुकाइएका छन्",
@@ -395,7 +398,6 @@ export const messagingMessages = {
   "voice.microphone.conversation": "प्रत्यक्ष कुराकानीले माइक्रोफोन प्रयोग गरिरहेको छ।",
   "voice.microphone.unavailable": "यो विन्डोमा माइक्रोफोन उपलब्ध छैन।",
   "promptInput.voiceInput.error.permissionDenied": "macOS द्वारा माइक्रोफोन पहुँच अस्वीकार गरियो।",
-  "promptInput.voiceInput.error.unsupported": "यस ब्राउजरमा ध्वनि इनपुट समर्थित छैन।",
   "promptInput.voiceInput.error.transcribe": "रेकर्ड गरिएको अडियो ट्रान्सक्राइब गर्न असमर्थ।",
   "promptInput.resizeHandle.title": "इनपुट उचाइ परिवर्तन गर्न तान्नुहोस्",
 } as const

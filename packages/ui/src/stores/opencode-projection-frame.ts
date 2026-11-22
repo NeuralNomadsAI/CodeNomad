@@ -1,4 +1,5 @@
 import type { Data } from "@opencode/client/solid"
+import { batch } from "solid-js"
 import { getLogger } from "../lib/logger"
 import { captureBackendOperation } from "../lib/backend-operation"
 
@@ -173,15 +174,18 @@ function drain(bypassActiveGate: boolean, matches?: (key: string) => boolean): v
   // A scoped drain leaves the other sessions on their already armed wake:
   // re-arming it would let repeated retirements elsewhere postpone them.
   if (!pending.size) disarm()
-  for (const entry of entries) {
-    try {
-      applyProjection(entry, bypassActiveGate)
-    } catch (error) {
-      log.error("Failed to project coalesced transcript page", {
-        instanceId: entry.instanceId, sessionId: entry.sessionId, error,
-      })
+  // Family-wide readers can depend on several pages published in this frame.
+  batch(() => {
+    for (const entry of entries) {
+      try {
+        applyProjection(entry, bypassActiveGate)
+      } catch (error) {
+        log.error("Failed to project coalesced transcript page", {
+          instanceId: entry.instanceId, sessionId: entry.sessionId, error,
+        })
+      }
     }
-  }
+  })
   // Projections scheduled while draining need a wake (a no-op when one is armed).
   if (pending.size) requestScheduledRun()
 }

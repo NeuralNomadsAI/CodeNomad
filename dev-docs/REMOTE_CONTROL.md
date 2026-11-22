@@ -108,9 +108,15 @@ override them. An unknown value refuses startup.
   `devices.ts` stores only the opt-out, `PUT /api/remote-control/previews` is
   host-only, and turning it off also closes live preview WebSockets. Remote
   `/api/meta` reports `previewsUnavailable` while it is off, so the UI hides
-  its preview entry. Static UI bundle files stay public, as
-  on local listeners, because browsers fetch the PWA manifest without cookies.
-  Every other path requires a paired device. Refusals close the connection,
+  its preview entry. Static UI bundle files stay public, as on local listeners,
+  because browsers fetch the PWA manifest without cookies. Packaged and
+  downloadable bundles include smaller `.br` and `.gz` variants beside
+  originals of at least 1 KiB. Downloadable bundles keep HTML at its
+  original paths for compatible servers. Custom bundles can supply static
+  variants. The server negotiates on the original URL with `Accept-Encoding`
+  and preserves its media type; equal weights prefer Brotli to gzip.
+  HTML entry points and their compressed variants require a paired device.
+  Refusals close the connection,
   because an unread body would otherwise break the client's next keep-alive
   request.
 - Server-to-server `POST /api/remote-control/pair` accepts a valid one-use
@@ -286,6 +292,7 @@ This environment variable is a comma-separated list of exact HTTP(S) origins,
 for example `https://code.example.test,https://ui.example.test:8443`. Paths,
 credentials, opaque origins and wildcards fail startup. Configure DNS aliases,
 reverse-proxy public origins and separately hosted UIs here, then restart.
+For a separately hosted UI, deploy it and reload open tabs and windows before updating the backend.
 Forwarding headers grant neither origins nor local privileges; a proxy connected
 over loopback has the privileges of its loopback transport and needs an enforcing
 trusted perimeter. The configured UI development origin is admitted for local

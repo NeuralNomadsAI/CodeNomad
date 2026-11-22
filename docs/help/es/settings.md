@@ -4,7 +4,7 @@ Preferencias usa el servidor del proyecto seleccionado para sus ajustes, proveed
 
 ## Abrir la configuración e identificar el ámbito {#open-settings}
 
-1. Abre **Configuración** con el engranaje **Abrir configuración** de la barra de pestañas (la barra de título en la aplicación de escritorio de macOS) o de la página de inicio. Accesos directos como **Gestionar proveedores** en el selector de modelos, el engranaje del panel Misiones o el engranaje **Configuración** del historial de notificaciones abren directamente la sección correspondiente.
+1. Abre **Configuración** con el engranaje **Abrir configuración** de la barra de pestañas. Accesos directos como **Gestionar proveedores** en el selector de modelos, el engranaje del panel Misiones o el engranaje **Configuración** del historial de notificaciones abren directamente la sección correspondiente.
 2. Selecciona una sección. Las ventanas locales de Electron y Tauri abren o enfocan una única ventana nativa de Preferencias; las vistas de navegador y remotas usan la pantalla de configuración integrada.
 3. Comprueba el ámbito del ajuste y cualquier acción de **Guardar** antes de salir.
 
@@ -85,7 +85,7 @@ La disposición integrada es disposición de ventana, no una modificación del p
 ## Detalle de la transcripción y tamaño del editor {#transcript-composer}
 
 1. Abre **Chat** para elegir los valores de detalle de la transcripción. Los preajustes son **Nada**, **Mínimo**, **Equilibrado** y **Todo**; los cambios individuales producen **Personalizado**.
-2. Establece el **Estado predeterminado** de cada fila (**Oculto**, **Colapsado** o **Expandido**) para el razonamiento, los diagnósticos, las entradas de herramientas, los tokens, los mensajes del sistema y cada tipo de herramienta, o usa el popup **Contenido de los mensajes** de la conversación, que comparte estas elecciones.
+2. Establece el **Estado predeterminado** de cada fila (**Oculto**, **Colapsado** o **Expandido**) o usa el popup **Contenido de los mensajes** de la conversación, que comparte estas opciones. En **Grupos de herramientas**, **Desactivado** muestra una tarjeta por llamada; **Colapsado** y **Expandido** determinan el estado inicial de los grupos.
 3. En **General**, marca **Mostrar la cronología de mensajes**, **Colocar las flechas de primer/último mensaje bajo la cronología**, **Dividir los diffs de las llamadas a herramientas** y **Poner en cola los prompts enviados** (pone en cola los prompts enviados mientras una sesión trabaja en lugar de dirigirla) según necesites.
 4. Cambia el tamaño del editor con su control; los borradores largos se desplazan dentro del campo.
 
@@ -99,7 +99,7 @@ Para una pestaña de proyecto en otro servidor CodeNomad, las notificaciones inc
 
 La compactación de las sesiones técnicas de las misiones no genera avisos.
 
-1. Abre **Notificaciones**. Para cada tipo de notificación, marca dónde aparece: **En pantalla** (una burbuja temporal), **Historial** (se conserva en el historial de notificaciones de la campana de la barra de pestañas, o de la barra de título en la aplicación de escritorio de macOS) y **Sistema** (una notificación del sistema operativo). Arrastra sobre una fila o columna de casillas para ajustar varias a la vez.
+1. Abre **Notificaciones**. Para cada tipo de notificación, marca dónde aparece: **En pantalla** (una burbuja temporal), **Historial** (se conserva en el historial de notificaciones de la campana de la barra de pestañas) y **Sistema** (una notificación del sistema operativo). Arrastra sobre una fila o columna de casillas para ajustar varias a la vez.
 2. Marcar una casilla **Sistema** pide permiso si hace falta. En **Notificaciones del sistema**, **Solicitar permiso** vuelve a pedirlo mientras falte el permiso.
 3. Activa **Notificar cuando la app tenga el foco** para conservar las notificaciones del sistema mientras esta ventana tiene el foco. Si no, aparecen en cuanto no lo tiene, aunque siga abierta en pantalla.
 
@@ -108,6 +108,8 @@ Por defecto, **Una sesión espera tu respuesta** y **Una sesión ha terminado** 
 El permiso del navegador/sistema operativo pertenece al dispositivo y al origen de la aplicación; una preferencia guardada no puede anular una denegación. Si está bloqueado, activa las notificaciones en los ajustes del navegador o sistema operativo y vuelve aquí. Los entornos no compatibles mantienen desactivada la columna Sistema.
 
 El recuento de no leídos de la campana/historial, que solo cuenta las notificaciones dirigidas a Historial, controla el punto del favicon del navegador y el indicador nativo de la aplicación.
+
+Si el sistema admite acciones de notificación, al hacer clic en una notificación se muestra la conversación si sigue abierta. Que la ventana pase al primer plano depende del entorno de escritorio.
 
 ## Opciones avanzadas {#advanced}
 

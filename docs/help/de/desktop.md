@@ -2,13 +2,16 @@
 
 ## Fenster, Tabs und gemeinsamer Dienst {#windows-tabs}
 
-1. Öffnen Sie mit **Neue Instanz** einen leeren Tab im aktuellen Fenster und wählen Sie ein Projekt. Das CodeNomad-Logo öffnet die Startseite.
+1. Öffnen Sie mit **Neue Instanz** einen leeren Tab im aktuellen Fenster und wählen Sie ein Projekt.
 2. Verwenden Sie das native **Fenster → Neues Fenster** (`Ctrl+Shift+N` oder `Cmd+Shift+N`) für ein separates Anwendungsfenster.
 3. Aktivieren Sie unter **Einstellungen → Erweitert** die Option **Vorhandenes Fenster beim zweiten Start fokussieren**, wenn ein weiterer Start das zuletzt verwendete Fenster fokussieren statt ein neues öffnen soll.
 
 Projekt-Tabs, ausgewählte Unterhaltungen und Layout gehören zum Fenster. OpenCode-Sitzungen/-Nachrichten gehören zum gemeinsamen nativen OpenCode-Dienst: Andere Fenster können dieselbe Unterhaltung sehen. Das Schließen eines Projekt-Tabs schließt das Projekt in CodeNomad, nicht seine OpenCode-Sitzungen; öffnen Sie es erneut, um sie wiederzufinden. Ein anderes Fenster, das dieselbe Projektverbindung anzeigt, schließt seinen Tab ebenfalls und zeigt eine Benachrichtigung; separat geöffnete Tabs desselben Ordners sind nicht betroffen. Das Schließen eines ganzen Fensters, Beenden oder Neuladen bewahrt Projektverbindungen für die Wiederherstellung; siehe [Projekte](projects.md). Verwenden Sie geschlossene Fenster nicht als Beweis, dass Agent oder geplante Mission gestoppt wurde.
 
 Native Anwendungsmenüs verwenden die Oberflächensprache von CodeNomad, sobald ein Fenster geladen ist; bis dahin erscheinen sie auf Englisch. **Hilfe → Über CodeNomad** (auch im macOS-Anwendungsmenü) öffnet **Einstellungen → Info** mit Version, Updates und Diagnose. **Hilfe → CodeNomad unterstützen** öffnet die Seite [CodeNomad unterstützen](sponsor.md) im Browser.
+
+Die Desktop-Automatisierung bleibt im vom Agenten geprüften Fenster, auch wenn Sie das Fenster wechseln. Mit `codenomad.inspect({targets:true})` kann der Agent die verfügbaren lokalen Fenster auflisten und ein anderes anhand seiner Kennung prüfen.
+Native Maus- und Tastatureingaben im App-Fenster sind nur auf dessen Hauptseite möglich. Für die Webvorschau einer Unterhaltung gibt es eigene Werkzeuge.
 
 ## Desktop-Startargumente {#desktop-cli}
 

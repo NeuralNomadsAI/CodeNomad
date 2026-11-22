@@ -27,7 +27,7 @@ import { useI18n } from "../../lib/i18n"
 import type { PromptDelivery, PromptInputApi, PromptInsertMode } from "../prompt-input/types"
 import { clearConversationPlaybackForSession } from "../../stores/conversation-speech"
 import { useConfig } from "../../stores/preferences"
-import { getSessionPreview } from "../../stores/session-previews"
+import { getSessionPreview, previewBlockedByOwner } from "../../stores/session-previews"
 import { SessionPreviewSlot } from "../session-preview-view"
 import { FilesPreviewView } from "../files-preview-view"
 import { closeFilePreview } from "../../stores/files-preview"
@@ -127,7 +127,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     return current.kind === "file" ? current.target : null
   })
   // A restored web choice has metadata only until explicit opening allocates its guest.
-  const centralPreview = () => props.isActive !== false && surface().kind === "web" && Boolean(preview())
+  const centralPreview = () => props.isActive !== false && surface().kind === "web"
+    && Boolean(preview() || previewBlockedByOwner(props.sessionId, props.instanceId))
 
   let promptInputApi: PromptInputApi | null = null
   let pendingPromptText: string | null = null

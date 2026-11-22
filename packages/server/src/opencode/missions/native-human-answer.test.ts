@@ -103,7 +103,8 @@ async function fixture(asker: "ses_child" | "ses_root" = "ses_child", questions:
   const auth = new AuthManager({ configPath: path.join(directory, "auth.yaml"), username: "human", generateToken: true }, pino({ level: "silent" }) as never)
   const cookie = auth.createSession("human")
   let ordinary = false
-  const connection = { endpoint: { url: "http://127.0.0.1:1" }, client: { session: { get: nativeGet },
+  const connection = { endpoint: { url: "http://127.0.0.1:1" }, client: { session: { get: nativeGet,
+    form: { get: async () => ({ ...form, state }) } },
     rpc: () => ({ ...native, scheduleCarrierRead: async () => ({ owned: false }) }) }, assertCurrent: () => {},
     fetch: async (_url: unknown, init: { body: string }) => {
       ordinary = true

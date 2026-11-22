@@ -58,6 +58,8 @@ An administrator can fix the listening address: set `CODENOMAD_LOCKED_HOST` mach
 
 For a hostname alias, reverse proxy or separately hosted UI, set `CODENOMAD_ALLOWED_ORIGINS` on the backend to the trusted UI origins (scheme, hostname and port). Native LAN clients must supply an allowed `Origin` header for mutations. Its HTTPS origins also let the host pair devices without the tunnel; see [Pair over direct HTTPS](remote-control.md#direct-https).
 
+When updating a separately hosted UI, deploy the UI and reload open tabs and windows before updating the server. If the server serves the UI, reload open tabs and windows after the update.
+
 Use a loopback connection for host-only operations: SideCar content (`/sidecars/`) and WebSockets, Remote Control management (`/api/remote-control/`), the plugin bridge (`/api/opencode-plugin/`), remote proxies (`/api/remote-proxy/`), password changes and token bootstrap. These require loopback even when signed in through direct LAN access. Only SideCars have an exception: the host's **Open SideCars over HTTPS** setting opens their content and WebSockets to browsers signed in through a trusted HTTPS origin ([SideCars](browser-sidecars.md#register-sidecar)). Live preview content (`/previews/`) is available over direct LAN access with a valid capability token.
 
 The `/api/sidecars` registration APIs remain available to authenticated direct LAN clients and paired devices. Remote Control web previews remain available with their capability token while enabled on the host. For authenticated server management and secure credential entry, see [Save a remote server](remote-access.md#saved-servers).
@@ -113,11 +115,11 @@ For Remote Control, paste a fresh pairing link into **Server URL** instead. The 
 
 ## Open a remote project in a tab {#remote-project-tabs}
 
-On Home or in a new tab, choose **Browse**, then a server. Paste an address or pairing link into **Server address or link** to save a server. Sign in if asked. Click a folder to enter it; press Enter in the path field or choose **Open** (the arrow) to open it. **Back to Browse** returns to the server list.
+In an empty tab, choose **Browse**, then a server. Paste an address or pairing link into **Server address or link** to save a server. Sign in if asked. Click a folder to enter it; press Enter in the path field or choose **Open** (the arrow) to open it. **Back to Browse** returns to the server list.
 
 Local and remote projects share the same window. **Recent tabs** shows the selected server’s shortcuts while you browse; mixed recents show the server icon and name for projects opened here. [Restore remote tabs](projects.md#restore-remote-tabs).
 
-In **Settings → Servers**, **Open** selects the server in **Browse**, reusing the empty tab if present.
+In **Settings → Servers**, **Open** selects the server in **Browse**, reusing an empty tab if one is open.
 
 ### `--connect-server` {#connect-server}
 

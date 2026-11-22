@@ -86,6 +86,9 @@ export const messagingMessages = {
   "history.pruning": "Nettoyage : {count} / {total} messages",
   "transcriptFilters.title": "Contenu des messages",
   "transcriptFilters.systemMessages": "Système",
+  "transcriptFilters.toolGroups": "Groupes d’outils",
+  "transcriptFilters.toolGroups.enable": "Activer le regroupement des outils",
+  "transcriptFilters.toolGroups.disable": "Désactiver le regroupement des outils",
   "messageBlock.system.label": "Système",
   "messageBlock.hiddenParts.one": "1 élément masqué",
   "messageBlock.hiddenParts.other": "{count} éléments masqués",
@@ -398,6 +401,5 @@ export const messagingMessages = {
   "voice.microphone.conversation": "La conversation en direct utilise le micro.",
   "voice.microphone.unavailable": "Le micro est indisponible dans cette fenêtre.",
   "promptInput.voiceInput.error.permissionDenied": "macOS a refusé l'accès au microphone.",
-  "promptInput.voiceInput.error.unsupported": "La saisie vocale n'est pas prise en charge dans ce navigateur.",
   "promptInput.voiceInput.error.transcribe": "Impossible de transcrire l'audio enregistré.",
 } as const

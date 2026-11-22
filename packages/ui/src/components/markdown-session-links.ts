@@ -5,7 +5,7 @@ import { showAlertDialog } from "../stores/alerts"
 import { activeInstanceId, instances } from "../stores/instances"
 import { openFilePreview } from "../stores/files-preview"
 import { getWorktreeForDirectory } from "../stores/worktrees"
-import { openSessionPreview } from "../stores/session-previews"
+import { requestSessionPreview } from "../stores/session-previews"
 import { activeSessionId, sessions } from "../stores/session-state"
 import { isLoopbackHttpUrl } from "./browser-frame-security"
 
@@ -13,7 +13,7 @@ import { isLoopbackHttpUrl } from "./browser-frame-security"
 // the session; failures surface through the shared alert dialog.
 const openLoopbackPreview = (instanceId: string, sessionId: string, url: string) => {
   const operation = captureBackendOperation(instanceId)
-  void openSessionPreview(sessionId, url, instanceId).catch((error) => {
+  void requestSessionPreview(sessionId, instanceId, url).catch((error) => {
     if (!operation.current()) return
     if (error instanceof Error && error.name === "AbortError") return
     if (activeInstanceId() !== instanceId || activeSessionId().get(instanceId) !== sessionId) return

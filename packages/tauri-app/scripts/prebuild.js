@@ -14,7 +14,6 @@ const uiLoadingDest = path.resolve(root, "src-tauri", "resources", "ui-loading")
 const resourcesRoot = path.resolve(root, "src-tauri", "resources")
 const { prepareBundledNodeRuntime } = require(path.join(workspaceRoot, "scripts", "prepare-node-runtime.cjs"))
 const { copyPackagedServerResources, stagePackagedServer } = require(path.join(workspaceRoot, "scripts", "desktop-server-resources.cjs"))
-const { buildTauriSystemSpeech } = require(path.join(workspaceRoot, "scripts", "desktop-system-speech.cjs"))
 
 const serverPrepareUiCommand = "npm run prepare-ui --workspace @neuralnomads/codenomad"
 
@@ -76,7 +75,7 @@ function ensureServerBuild() {
 function ensureUiBuild() {
   const loadingHtml = path.join(uiDist, "loading.html")
   if (fs.existsSync(loadingHtml)) {
-    return
+    return false
   }
 
   console.log("[prebuild] ui build missing; running workspace build...")
@@ -88,6 +87,7 @@ function ensureUiBuild() {
   if (!fs.existsSync(loadingHtml)) {
     throw new Error("[prebuild] ui loading assets missing after build")
   }
+  return true
 }
 
 function syncServerUiBundle() {
@@ -163,8 +163,7 @@ async function main() {
   requireRootBuildDependencies()
   await ensureMonacoAssets()
   ensureServerBuild()
-  ensureUiBuild()
-  syncServerUiBundle()
+  if (ensureUiBuild()) syncServerUiBundle()
   const staged = stagePackagedServer({
     workspaceRoot,
     serverRoot,
@@ -184,7 +183,6 @@ async function main() {
       const name = `hex-${module}.mjs`
       fs.copyFileSync(path.join(speechRoot, name), path.join(speechDest, name))
     }
-    buildTauriSystemSpeech(resourcesRoot, staged.target)
   } finally {
     fs.rmSync(staged.stagingRoot, { recursive: true, force: true })
   }

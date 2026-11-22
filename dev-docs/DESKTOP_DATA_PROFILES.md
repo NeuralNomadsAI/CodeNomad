@@ -21,13 +21,22 @@ Precedence, evaluated by both Electron (`electron/main/data-profile.ts`) and Tau
 3. Unpackaged (npm/dev) runs — the `dev` profile.
 4. Packaged builds — the remembered choice (made in the profile manager or by the automatic choice), otherwise the automatic choice below, otherwise the default profile.
 
-Updating CodeNomad or changing the update feed never changes the profile. Tauri restarts (developer mode, **Restart in <name>**, update installation) keep the process environment, so a launch pinned by `CODENOMAD_PROFILE`, its alias or `CLI_CONFIG` reopens the same profile: on macOS the host runs the bundle's executable (the one its `Info.plist` names, which an update may rename) directly in its own process group, without inherited stdio, instead of Tauri's LaunchServices relaunch, which starts the new instance with launchd's environment (`src-tauri/src/macos_relaunch.rs`).
+Updating CodeNomad or changing the update feed never changes the profile. Tauri restarts (**Restart in <name>**, update installation) keep the process environment, so a launch pinned by `CODENOMAD_PROFILE`, its alias or `CLI_CONFIG` reopens the same profile: on macOS the host runs the bundle's executable (the one its `Info.plist` names, which an update may rename) directly in its own process group, without inherited stdio, instead of Tauri's LaunchServices relaunch, which starts the new instance with launchd's environment (`src-tauri/src/macos_relaunch.rs`).
+
+An [automation restart](BROWSER_AUTOMATION.md#desktop-instrumentation) keeps the running profile's exact storage key and configuration source for that launch, without changing the profile manager's next choice.
 
 ### `CODENOMAD_PROFILE` grammar
 
 After trimming ASCII whitespace and lowercasing ASCII letters: 1–64 characters from `a-z`, `0-9`, `.`, `_`, `-`, starting with a letter or digit. Non-ASCII and other characters are rejected. `default` and `stable` both mean the default profile. An invalid value shows an error and quits; it never opens another profile. Both hosts run the shared vectors in `packages/electron-app/electron/main/data-profile-vectors.json`.
 
 ### Storage
+
+Partition commits carry the complete root and any partition bodies not confirmed
+by the renderer's last load or commit. Both hosts verify supplied bodies and
+verify omitted files on disk under the publication transaction; the 256 MiB
+limit applies to the complete graph. Publication and partition collection are
+serialized across windows, retaining the union of their roots. A failed delta
+retries once with all partition bodies.
 
 The default profile with the default config uses the unscoped locations (`~/.codenomad/client-state/v2`, Electron's `userData`, Tauri's stable identifier and WebView directory). Every other profile/config pair uses `<scope> = <key>-sha256(key + "\0" + configIdentity)[0..16]`, i.e. `%APPDATA%/CodeNomad/scopes/<scope>` (Electron `userData` and both hosts' client state) and `…-v2/scopes/<scope>` (Tauri WebView), plus a scoped Tauri identifier. The default profile's key is `stable`, so existing folders such as `dev-<hash>` and `dev-v2-<hash>` are reached with `CODENOMAD_PROFILE=dev` / `dev-v2`.
 

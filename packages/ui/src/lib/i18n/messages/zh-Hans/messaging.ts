@@ -86,6 +86,9 @@ export const messagingMessages = {
   "history.pruning": "正在清理：{count} / {total} 条消息",
   "transcriptFilters.title": "消息内容",
   "transcriptFilters.systemMessages": "系统",
+  "transcriptFilters.toolGroups": "工具分组",
+  "transcriptFilters.toolGroups.enable": "启用工具分组",
+  "transcriptFilters.toolGroups.disable": "关闭工具分组",
   "messageBlock.system.label": "系统",
   "messageBlock.hiddenParts.one": "已隐藏 1 项内容",
   "messageBlock.hiddenParts.other": "已隐藏 {count} 项内容",
@@ -397,7 +400,6 @@ export const messagingMessages = {
   "voice.microphone.conversation": "实时对话正在使用麦克风。",
   "voice.microphone.unavailable": "此窗口无法使用麦克风。",
   "promptInput.voiceInput.error.permissionDenied": "macOS 已拒绝麦克风访问。",
-  "promptInput.voiceInput.error.unsupported": "此浏览器不支持语音输入。",
   "promptInput.voiceInput.error.transcribe": "无法转写录制的音频。",
   "promptInput.resizeHandle.title": "拖动以调整输入框高度",
 } as const

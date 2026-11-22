@@ -4,8 +4,10 @@ Bir proje sekmesi CodeNomad'i arka uç bilgisayarındaki bir klasöre bağlar. S
 
 ## Bir proje açın {#open-project}
 
-Boş sekme açmak için **Yeni instance** (`+`) veya `Ctrl/Cmd+N` kullanın. **Son sekmeler** ya da **Gözat** üzerinden proje seçin. CodeNomad logosu Ana Sayfayı açar. Klonlama ve geçici sekmeler yerel sunucuyu kullanır.
+Yeni bir boş sekme açmak için **Yeni instance** (`+`) veya `Ctrl/Cmd+N` kullanın. **Son sekmeler** ya da **Gözat** üzerinden proje seçin. Geri yüklenecek sekme olmadığında veya son sekme kapatıldığında CodeNomad boş bir sekme gösterir. Klonlama ve geçici sekmeler yerel sunucuyu kullanır.
 
+
+Son sekmelerde **Aç**, bu penceredeki sekmeye geçer. Yeşil **Başka bir pencerede açık** noktası, projenin sunucusunda bu pencerenin dışında bir bağlantı olduğunu gösterir. Satırı seçmek ayrı bir sekme açar.
 
 [Uzak projeyi sekmede açma](remote-access.md#remote-project-tabs) · [SideCars](browser-sidecars.md#register-sidecar)
 
@@ -15,7 +17,7 @@ Uzak bir sunucuya göz atmak, telefonunuzun veya dizüstü bilgisayarınızın d
 
 Klonlama hedefe bir depo yazar. **Hedef klasör zaten varsa önce onu kaldırın.** yıkıcıdır: yalnızca zaten orada olan her şeyin silinebildiği durumlarda etkinleştirin. Emin değilseniz yeni bir hedef kullanın. Başarısız bir klon, mevcut bir projeyi silmek için bir neden değildir; yeniden denemeden önce bildirilen hedefi ve hatayı inceleyin.
 
-Son kullanılanlar kısayoldur. Ana sayfanın satır içi düğmeleri ve boş sekmelerin eylem menüsü uygun olduğunda **Workspace'i yeniden adlandır** ve **Son kullanılanlardan kaldır** sunar; dosyalar ve konuşmalar korunur. Ana sayfa, boş sekme ve hızlı başlatıcıda yerel/uzak proje veya SideCar satırına tıklamak, zaten açık olsa da yeni bir örnek oluşturur. Ayrı **Aç** eylemi (**Açık projeye geç**) mevcut örneği seçer.
+Son kullanılanlar kısayoldur. Boş sekmenin eylem menüsü uygun olduğunda **Workspace'i yeniden adlandır** ve **Son kullanılanlardan kaldır** sunar; dosyalar ve konuşmalar korunur. Boş sekme ve hızlı başlatıcıda yerel/uzak proje veya SideCar satırına tıklamak, zaten açık olsa da yeni bir örnek oluşturur. Ayrı **Aç** eylemi (**Açık projeye geç**) mevcut örneği seçer.
 
 Açık sekmeye geçme eylemi sunucusunu bekleyen sekmeyi de seçer ve başlangıçtaki boş sekmeyi kapatır.
 
@@ -35,23 +37,25 @@ Tab aramayı açar, oklar ve Enter seçim yapar, Escape odağı `+` düğmesine 
 | Sekmeyi Kapat | O sekmenin CodeNomad proje bağlantısını kaldırır; aynı klasörde ayrı açılmış başka bir sekme etkilenmez | Proje dosyalarını veya yerel geçmişi silmez, oturumları durdurmaz veya OpenCode'un Location bağlamını kaldırmaz |
 | Oturumu durdur | Seçilen görüşmenin yürütülmesi | Projeyi kapatmaz veya geçmişini silmez |
 
-Aynı proje bağlantısını başka bir pencere gösteriyorsa oradaki sekme de kapanır ve o pencere bir bildirim gösterir. Kapatılan sekmenin gönderilmemiş taslakları ve ekleri, aynı klasörü o pencerede yeniden açtığınızda geri gelir; pencere bunları yeniden yüklenene veya kapanana kadar en son kapatılan 16 proje için tutar. Başlangıç geri yüklemesine dahil değildir.
+Kapatılan sekmenin gönderilmemiş taslakları ve ekleri, aynı klasörü o pencerede yeniden açtığınızda geri gelir; pencere bunları yeniden yüklenene veya kapanana kadar en son kapatılan 16 proje için tutar. Başlangıç geri yüklemesine dahil değildir.
 
-Bir pencerenin tamamını kapatmak, uygulamadan çıkmak veya yeniden yüklemek proje bağlantılarını kapatmaz; normal başlangıç geri yüklemesi yine uygulanır. Yürütmenin bittiğini doğrulamak istiyorsanız ilgili çalıştırmaları açıkça durdurun. CodeNomad yerel Location bağlamlarını hiçbir zaman kaldırmaz; paylaşılan hizmetin bakımı [OpenCode kurulumu](opencode.md) bölümünde açıklanır.
+Bir pencereyi veya tarayıcı sekmesini kapattığınızda ya da yenilediğinizde veya uygulamadan çıktığınızda CodeNomad sunuculardan ilgili proje bağlantılarını bırakmalarını ister. Sunucuya ulaşılamazsa kayıtlar sunucuda kalabilir. Diğer pencerelerin sekmeleri açık kalır. Başlangıçta geri yükleme, kayıtlı sekmeleri yeniden bağlar ve açık geçici klasörleri korur. Yürütmeyi sonlandırmak için ilgili çalıştırmaları açıkça durdurun; paylaşılan hizmetin bakımı için [OpenCode kurulumu](opencode.md) bölümüne bakın.
 
 Başlangıç geri yüklemesi etkinken kalan her sekme kendi panel tercihlerini, Görev seçimini ve okuyucusunu, sohbet veya web önizlemesi seçimini geri yükler. Tarayıcı URL'leri ve geçmişi oturum başına paylaşılır; kayıtlı sayfalar yalnızca web önizlemesi açıkça yeniden açıldığında yüklenir. Bir örneği kapatmak yalnızca o örneğin kayıtlı görünümünü kaldırır; klasörü yeniden açmak yeni bir örnek oluşturur.
+
+Bir tarayıcı sekmesini çoğaltmak, o sekmeye ait ayrı proje bağlantıları açar. Açık kalan bir bağlantı yalnızca tarayıcının bellekten çıkardığı aynı sekme yeniden açıldığında kullanılabilir.
 
 ## Uzak sekmeleri geri yükleme {#restore-remote-tabs}
 
 Geri yükleme açıkken yeniden yüklediğinizde uzak sekmelerin sırası, seçimi ve taslakları korunur. Kullanılamayan sunucu bekleyen bir sekme bırakır: sunucu döndüğünde **Yeniden dene**, ya da kullanıcı adı/parola veya **Yeni eşleştirme bağlantısı** alanındaki bağlantıyla **Bağlan** seçin. Diğer sunucular kullanılabilir kalır. **Sunucu bulunamadı**, kayıtlı sunucunun eksik olduğunu gösterir.
 
-**Yeniden dene**, var olan bir projeye yeniden bağlanır. Sunucuya erişilebiliyor ancak proje bulunamıyorsa **Aç** seçeneğini kullanın.
+**Yeniden dene**, kayıtlı sunucudaki projeye yeniden bağlanır ve gerekirse bağlantıyı yeniden oluşturur.
 
 **Yeniden dene**, başlangıçta otomatik geri yükleme kapalıyken de bekleyen sekmeleri kurtarır. Bildirimler mevcut bekleyen sekmeyi seçer. Onaylanmamış bir konuşma işlemini yeniden göndermeden önce sonucunu kontrol edin.
 
 ## Geçici çalışma alanları {#temporary-workspaces}
 
-1. Ana sayfada **Yeni geçici sekme** veya boş sekmenin sütunları üstünde **Geçici** seçin.
+1. Boş sekmenin üstündeki **Geçici sekme** düğmesini seçin.
 2. Boş CodeNomad tarafından yönetilen klasörde çalışın; Git otomatik olarak başlatılmıyor.
 3. Sekmeyi kapatırken **Sakla**, **At** veya **İptal** öğesini seçin. Sekme menüsü ayrıca **Proje olarak sakla** öğesini de sunar.
 
@@ -61,7 +65,7 @@ Geri yükleme açıkken yeniden yüklediğinizde uzak sekmelerin sırası, seçi
 | At | Geçici çalışma alanının konuşmalarını, dosyalarını ve gönderilmemiş taslaklarını siler | Geri alma yok; ihtiyaç duyulan her şeyi önce başka bir yere kaydedin |
 | İptal | Geçici çalışma alanını açık bırakır | Çalışmaya devam edin veya daha sonra karar verin |
 
-Hiçbir konuşma, dosya veya gönderilmemiş taslak içermeyen, dokunulmamış bir geçici sekme, kapatıldığında sessizce atılır. Açık geçici sekmeler normal başlangıç geri yüklemesine katılır, ancak ana sayfada kapatılan geçici klasörlerin devam ettirilmesi için ayrı bir liste yoktur.
+Hiçbir konuşma, dosya veya gönderilmemiş taslak içermeyen, dokunulmamış bir geçici sekme, kapatıldığında sessizce atılır. Açık geçici sekmeler normal başlangıç geri yüklemesine katılır.
 
 Bir konuşma çalışırken veya klasör başka sekmede/pencerede açıkken At işlemi reddedilir. Önce çalıştırmayı durdurup diğer görünümleri kapatın. Atma başarısız olursa çalışma alanı geçici kalır: üst dizini elle silmek yerine bildirilen sorunu çözüp yeniden deneyin.
 
