@@ -313,6 +313,14 @@ impl Preferences {
             json!({"appearancePreferences":{"mode":"system","light":{"scheme":{"id":"light"}},"dark":{"scheme":{"id":"classic"}}}}),
         );
     }
+
+    #[cfg(test)]
+    pub(super) fn fixture_mode(&mut self, mode: &'static str) {
+        if let Some(state) = &mut self.state.snapshot {
+            state["appearancePreferences"]["mode"] = json!(mode);
+            self.revision += 1;
+        }
+    }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

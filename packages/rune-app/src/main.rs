@@ -205,6 +205,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             Event::Connected(backend) => {
                 s.renew_scope();
                 git::connected(s, &backend);
+                settings::connected(s, &backend);
                 s.agent = Some(agent::Ui::new(agent::start(backend, s.wake.clone())));
             }
             Event::AgentHint(catalog) => {
@@ -387,7 +388,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                         crate::screen::action(&scope, launcher::back),
                     )
                 } else {
-                    rune::el()
+                    settings::direct_entry(s)
                 })
                 .child(text(strings::t(status)))
                 .child(

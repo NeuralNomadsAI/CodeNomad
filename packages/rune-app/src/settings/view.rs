@@ -19,6 +19,7 @@ pub(super) struct Window {
     shared: Rc<RefCell<Preferences>>,
     token: Option<Rc<Cell<bool>>>,
     picker: Option<&'static str>,
+    palette_mode: Option<&'static str>,
     seen_revision: u64,
 }
 impl Window {
@@ -35,6 +36,21 @@ impl Window {
         if !self.token.take().is_some_and(|token| token.get()) {
             super::settle_close(&self.shared, warn);
         }
+    }
+
+    fn toggle_picker(&mut self, key: &'static str) {
+        self.picker = (self.picker != Some(key)).then_some(key);
+        self.palette_mode = (self.picker == Some("palette")).then(|| self.shared.borrow().mode());
+    }
+
+    fn close_palette_if_mode_changed(&mut self, mode: &'static str, tx: &mut rune::Tx) -> bool {
+        if self.picker != Some("palette") || self.palette_mode == Some(mode) {
+            return false;
+        }
+        self.picker = None;
+        self.palette_mode = None;
+        tx.return_focus("palette-trigger", tx.focus_visible());
+        true
     }
 }
 
@@ -87,7 +103,9 @@ pub(super) fn spec() -> AppSpec<Window> {
                     || t("settings.title"),
                 ));
             }
-            updated
+            let mode = prefs.mode();
+            drop(prefs);
+            s.close_palette_if_mode_changed(mode, tx) | updated
         }),
         on_key: Some(|_, event, tx| {
             if event.key != rune::Key::Escape {
@@ -190,6 +208,53 @@ mod tests {
             assert!(trigger["states"].to_string().contains("collapsed"));
             assert!(trigger["states"].to_string().contains("focused"));
         }
+    }
+
+    #[test]
+    fn settings_mode_update_closes_the_palette_menu_and_returns_keyboard_focus() {
+        let state = Window::default();
+        state.shared.borrow_mut().fixture();
+        let mut runtime = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+        let press = |rt: &mut Runtime<Window>, key| {
+            let event = rune::KeyEvent {
+                key,
+                mods: rune::Mods::default(),
+            };
+            rt.key(event.clone());
+            rt.key_up(event);
+            rt.frame(0.02);
+        };
+        runtime.frame(0.0);
+        runtime.update(|_, tx| tx.focus("palette-trigger", true));
+        runtime.frame(0.02);
+        press(&mut runtime, rune::Key::Enter);
+        press(&mut runtime, rune::Key::Down);
+        let tree = runtime.accessibility_json();
+        let menu = node(&tree, "listbox").unwrap();
+        assert!(menu.to_string().contains("Linen"));
+        assert!(menu.to_string().contains("focused"));
+
+        let poll = spec().poll.unwrap();
+        runtime.update(|s, tx| {
+            s.shared.borrow_mut().fixture_mode("dark");
+            assert!(poll(s, 0.02, tx));
+        });
+        runtime.frame(0.02);
+        let tree = runtime.accessibility_json();
+        assert!(node(&tree, "listbox").is_none());
+        assert!(
+            node(&tree, "palette-trigger").unwrap()["states"]
+                .to_string()
+                .contains("focused")
+        );
+        press(&mut runtime, rune::Key::Enter);
+        let tree = runtime.accessibility_json();
+        assert!(
+            node(&tree, "listbox")
+                .unwrap()
+                .to_string()
+                .contains("Basalt")
+        );
     }
 
     #[test]
@@ -365,7 +430,7 @@ fn general(s: &Window, prefs: &Preferences, layers: &mut Vec<El>) -> El {
                         return true;
                     }
                     Some("palette-trigger") if s.shared.borrow().palette_ready() => {
-                        s.picker = Some("palette");
+                        s.toggle_picker("palette");
                         return true;
                     }
                     _ => {}
@@ -407,10 +472,14 @@ fn select(
         .current(current)
         .disabled(disabled)
         .open(s.picker == Some(key))
-        .on_toggle(move |s: &mut Window| s.picker = (s.picker != Some(key)).then_some(key))
+        .on_toggle(move |s: &mut Window| s.toggle_picker(key))
         .on_close(|s: &mut Window| s.picker = None)
-        .on_choose(move |s: &mut Window, value, _| {
+        .on_choose(move |s: &mut Window, value, tx| {
             if s.picker == Some(key) {
+                let mode = s.shared.borrow().mode();
+                if s.close_palette_if_mode_changed(mode, tx) {
+                    return;
+                }
                 s.picker = None;
                 crate::strings::with_locale(locale, || choose.clone()(s, value));
             }
