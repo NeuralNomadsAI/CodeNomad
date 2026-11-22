@@ -144,7 +144,6 @@ pub(super) fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::{catalog::Project, workspace};
 
     #[test]

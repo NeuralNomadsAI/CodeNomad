@@ -518,7 +518,7 @@ fn invalidated_status_cannot_remove_the_diff_before_its_trailing_read() {
 }
 
 #[test]
-fn repeated_file_hints_do_not_starve_display_or_revoke_a_checked_index() {
+fn repeated_file_hints_keep_rows_and_path_actions_but_suspend_commit() {
     let mut ui = ui();
     ui.mode = Mode::Changes;
     ui.shown = true;
@@ -541,7 +541,8 @@ fn repeated_file_hints_do_not_starve_display_or_revoke_a_checked_index() {
                 .collect(),
         );
         assert_eq!(ui.changes.count(), step as usize);
-        assert!(ui.can_commit());
+        assert!(ui.can_change_index());
+        assert!(!ui.can_commit());
     }
 }
 
