@@ -1,89 +1,155 @@
 //! Session-scoped control admission beside the ordinary workspace relay.
 use crate::{
-    App, Error, error,
+    App, Error,
     opencode::{Endpoint, read_json, upstream_error},
 };
-use axum::http::{Method, StatusCode as Status};
-use serde_json::Value;
-use std::{sync::Arc, time::Duration};
+use axum::{
+    Json,
+    http::{Method, StatusCode as Status},
+};
+use serde_json::{Value, json};
+use std::time::Duration;
 
-pub fn permission(route: &str, method: &Method) -> Option<String> {
-    if method != Method::POST {
+#[derive(Clone, Copy)]
+pub(super) enum Control<'a> {
+    Interrupt,
+    Permission(&'a str),
+    FormReply(&'a str),
+    FormCancel(&'a str),
+}
+
+pub(super) fn classify<'a>(route: &'a str, method: &Method) -> Option<Control<'a>> {
+    let mut parts = route.strip_prefix("/api/session/")?.split('/');
+    if matches!(parts.next()?, "" | "active" | "global") {
         return None;
     }
-    let parts: Vec<_> = route.strip_prefix("/api/session/")?.split('/').collect();
-    (parts.len() == 4 && parts[1] == "permission" && parts[3] == "reply" && crate::opencode::valid_id(parts[2]))
-        .then(|| parts[2].into())
-}
-pub fn valid_reply(input: &Value) -> bool {
-    input.as_object().is_some_and(|v| v.keys().all(|k| matches!(k.as_str(), "decision" | "message")))
-        && matches!(input["decision"].as_str(), Some("once" | "always" | "reject"))
-        && (input.get("message").is_none()
-            || input["message"].as_str().is_some_and(|s| s.encode_utf16().count() <= 4096))
-}
-pub fn form_cancel(route: &str, method: &Method) -> Option<String> {
-    if method != Method::DELETE {
-        return None;
+    match (method, parts.next(), parts.next(), parts.next(), parts.next()) {
+        (&Method::POST, Some("interrupt"), None, None, None) => Some(Control::Interrupt),
+        (&Method::POST, Some("permission"), Some(id), Some("reply"), None) if !id.is_empty() => {
+            Some(Control::Permission(id))
+        }
+        (&Method::POST, Some("form"), Some(id), Some("reply"), None) if !id.is_empty() => Some(Control::FormReply(id)),
+        (&Method::DELETE, Some("form"), Some(id), None, None) if !id.is_empty() => Some(Control::FormCancel(id)),
+        _ => None,
     }
-    let parts: Vec<_> = route.strip_prefix("/api/session/")?.split('/').collect();
-    (parts.len() == 3 && parts[1] == "form" && crate::opencode::valid_id(parts[2])).then(|| parts[2].into())
 }
-pub fn valid_interrupt(input: &Value) -> bool {
-    input.as_object().is_some_and(|v| v.keys().all(|k| k == "resume"))
-        && (input.get("resume").is_none() || input["resume"].is_boolean())
+
+pub(super) fn invalid(message: &str) -> Error {
+    (Status::BAD_REQUEST, Json(json!({ "error": message, "message": message })))
 }
-pub async fn pending_form(app: &App, endpoint: &Arc<Endpoint>, session: &str, request: &str) -> Result<Value, Error> {
-    pending_request(app, endpoint, session, request, "form").await
-}
-pub async fn pending(app: &App, endpoint: &Arc<Endpoint>, session: &str, request: &str) -> Result<Value, Error> {
-    pending_request(app, endpoint, session, request, "permission").await
-}
-async fn pending_request(
-    app: &App,
-    endpoint: &Arc<Endpoint>,
-    session: &str,
-    request: &str,
-    kind: &str,
-) -> Result<Value, Error> {
-    let missing = || {
-        error(
-            Status::CONFLICT,
-            if kind == "form" {
-                "Question is no longer pending for this session"
-            } else {
-                "Permission is no longer pending for this session"
-            },
-        )
-    };
-    let url = endpoint.url.join(&format!("/api/session/{session}/{kind}/{request}")).map_err(|_| upstream_error())?;
-    let response = app
-        .native
-        .client
-        .get(url)
-        .basic_auth("opencode", Some(&endpoint.password))
-        .timeout(Duration::from_secs(5))
-        .send()
-        .await
-        .map_err(|_| upstream_error())?;
-    if response.status() == Status::NOT_FOUND {
-        return Err(missing());
+
+impl Control<'_> {
+    pub(super) fn validate(self, input: &Value, target: &reqwest::Url) -> Result<(), Error> {
+        let data = input.as_object().ok_or_else(|| invalid("Invalid session control"))?;
+        let fields = |allowed: &[&str]| data.keys().all(|key| allowed.contains(&key.as_str()));
+        match self {
+            Self::Interrupt => {
+                let mut resume = target.query_pairs().filter(|(key, _)| key == "resume");
+                if !fields(&["resume"])
+                    || data.get("resume").is_some_and(|value| !value.is_boolean())
+                    || resume.next().is_some_and(|(_, value)| !matches!(value.as_ref(), "true" | "false"))
+                    || resume.next().is_some()
+                {
+                    return Err(invalid("Invalid interruption request"));
+                }
+            }
+            Self::Permission(_) => {
+                if !fields(&["decision", "message"])
+                    || !matches!(input["decision"].as_str(), Some("once" | "always" | "reject"))
+                    || data.get("message").is_some_and(|v| v.as_str().is_none_or(|s| s.encode_utf16().count() > 4096))
+                {
+                    return Err(invalid("Invalid permission decision"));
+                }
+            }
+            Self::FormReply(_) if !fields(&["answer"]) => return Err(invalid("Invalid question request")),
+            Self::FormCancel(_) if !data.is_empty() => return Err(invalid("Invalid question request")),
+            _ => {}
+        }
+        Ok(())
     }
-    if !response.status().is_success() {
-        return Err(upstream_error());
+
+    pub(super) async fn pending(self, app: &App, endpoint: &Endpoint, session: &str) -> Result<Option<Value>, Error> {
+        let permission = matches!(self, Self::Permission(_));
+        let (kind, request) = match self {
+            Self::Interrupt => return Ok(None),
+            Self::Permission(id) => ("permission", id),
+            Self::FormReply(id) | Self::FormCancel(id) => ("form", id),
+        };
+        let (tag, missing) = if permission {
+            (
+                "PermissionNotFoundError",
+                json!({"_tag":"PermissionNotFoundError","requestID":request,
+                "message":"Permission is no longer pending for this session"}),
+            )
+        } else {
+            (
+                "FormNotFoundError",
+                json!({"_tag":"FormNotFoundError","id":request,
+                "message":"Question is no longer pending for this session"}),
+            )
+        };
+        let mut url = endpoint.url.clone();
+        url.path_segments_mut()
+            .map_err(|_| upstream_error())?
+            .clear()
+            .extend(["api", "session", session, kind, request]);
+        let response = app
+            .native
+            .client
+            .get(url)
+            .basic_auth("opencode", Some(&endpoint.password))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+            .map_err(|_| upstream_error())?;
+        let status = response.status();
+        let value = read_json(response, 2 * 1024 * 1024).await.map_err(|_| upstream_error())?;
+        if status == Status::NOT_FOUND && value["_tag"] == tag {
+            return Err((Status::NOT_FOUND, Json(missing)));
+        }
+        if !status.is_success() {
+            return Err(upstream_error());
+        }
+        let row = &value["data"];
+        if !row.is_object() {
+            return Err(upstream_error());
+        }
+        if row["id"] != request || row["sessionID"] != session {
+            return Err((Status::NOT_FOUND, Json(missing)));
+        }
+        if permission {
+            return Ok(Some(row.clone()));
+        }
+        if row.get("state").is_none_or(Value::is_null) {
+            return Err(upstream_error());
+        }
+        if row["state"]["status"] != "pending" {
+            return Err((
+                Status::CONFLICT,
+                Json(json!({"_tag":"FormAlreadySettledError","id":request,
+                "message":"Question is no longer pending for this session"})),
+            ));
+        }
+        Ok(None)
     }
-    let value = read_json(response, 2 * 1024 * 1024).await.map_err(|_| upstream_error())?;
-    let row = &value["data"];
-    if row["id"] != request || row["sessionID"] != session || (kind == "form" && row["state"]["status"] != "pending") {
-        return Err(missing());
-    }
-    Ok(row.clone())
 }
+
 #[test]
-fn only_exact_permission_replies_enter_control_admission() {
-    assert_eq!(permission("/api/session/s/permission/per_one/reply", &Method::POST).as_deref(), Some("per_one"));
-    assert!(permission("/api/session/s/form/per_one/reply", &Method::POST).is_none());
-    assert!(permission("/api/session/s/permission/per_one/reply/extra", &Method::POST).is_none());
-    assert!(!valid_reply(&serde_json::json!({"decision":"allow"})));
-    assert!(!valid_reply(&serde_json::json!({"decision":"once","metadata":{}})));
-    assert!(valid_reply(&serde_json::json!({"decision":"reject","message":"explicit refusal"})));
+fn controls_validate_the_native_query_and_exact_body_fields() {
+    let url = |query| reqwest::Url::parse(&format!("http://localhost/?{query}")).unwrap();
+    let route = "/api/session/s/interrupt";
+    let interrupt = classify(route, &Method::POST).unwrap();
+    for query in ["", "resume=true", "resume=false"] {
+        assert!(interrupt.validate(&json!({}), &url(query)).is_ok());
+    }
+    for query in ["resume=no", "resume=false&resume=true"] {
+        assert_eq!(interrupt.validate(&json!({}), &url(query)).unwrap_err().0, Status::BAD_REQUEST);
+    }
+    let permission = classify("/api/session/s/permission/p/reply", &Method::POST).unwrap();
+    assert!(permission.validate(&json!({"decision":"reject","message":"reason"}), &url("")).is_ok());
+    assert!(permission.validate(&json!({"decision":["once"]}), &url("")).is_err());
+    assert!(permission.validate(&json!({"decision":"once","message":"💡".repeat(2049)}), &url("")).is_err());
+    let cancel = classify("/api/session/s/form/q", &Method::DELETE).unwrap();
+    assert!(cancel.validate(&json!({"extra":true}), &url("")).is_err());
+    assert!(classify("/api/session/s/form/q/reply/extra", &Method::POST).is_none());
 }

@@ -14,8 +14,8 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 use super::{
-    NativeBody, SESSION_LOCATED_ELSEWHERE, SESSION_PLACEMENT_HEADER, native_rpc_absent, read_json, session_directory,
-    session_record, upstream_error,
+    NativeBody, SESSION_LOCATED_ELSEWHERE, SESSION_PLACEMENT_HEADER, controls, native_rpc_absent, read_json,
+    session_directory, session_record, upstream_error,
 };
 use crate::missions::human_answer;
 use crate::{App, Error, Shared, error, not_found, unavailable};
@@ -59,9 +59,7 @@ fn guarded(route: &str, method: &Method) -> bool {
     (*method == Method::POST && route == "/api/session")
         || (*method == Method::POST
             && route.starts_with("/api/session/")
-            && ["/prompt", "/agent", "/model", "/fork", "/interrupt"].iter().any(|suffix| route.ends_with(suffix)))
-        || super::controls::permission(route, method).is_some()
-        || super::controls::form_cancel(route, method).is_some()
+            && ["/prompt", "/agent", "/model", "/fork"].iter().any(|suffix| route.ends_with(suffix)))
         || (*method == Method::PATCH && route.strip_prefix("/api/session/").is_some_and(|r| !r.contains('/')))
         || (matches!(*method, Method::PUT | Method::DELETE)
             && route.starts_with("/api/experimental/session/")
@@ -148,13 +146,11 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let workspace = app.workspace(id)?;
     let route = safe_route(suffix).ok_or_else(invalid)?;
     let route = route.trim_end_matches('/');
-    let form = human_answer::form_reply(route, &head.method);
-    let permission = super::controls::permission(route, &head.method);
-    let cancel_form = super::controls::form_cancel(route, &head.method);
+    let control = controls::classify(route, &head.method);
     if !ALLOWED.iter().any(|(m, pat)| *m == head.method.as_str() && pat.is_match(route)) {
         return Err(error(Status::FORBIDDEN, "OpenCode route is not available through a workspace"));
     }
-    if form.is_none() && !guarded(route, &head.method) {
+    if control.is_none() && !guarded(route, &head.method) {
         return Ok(unavailable());
     }
     // Native writes that can create or move execution state share the
@@ -299,88 +295,72 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     let permissions_patch = session.is_some() && head.method == Method::PATCH;
     let mut root_permissions = None;
     let mut input = None;
-    if matches!(head.method, Method::POST | Method::PUT | Method::PATCH) {
+    if control.is_some() || matches!(head.method, Method::POST | Method::PUT | Method::PATCH) {
         let contents =
             to_bytes(body, 1024 * 1024).await.map_err(|_| error(Status::PAYLOAD_TOO_LARGE, "Request too large"))?;
         let data: Value = if contents.is_empty() {
             json!({})
         } else {
             if !head.headers.get(header::CONTENT_TYPE).is_some_and(|v| v.as_bytes().starts_with(b"application/json")) {
-                return Err(error(Status::BAD_REQUEST, "Session request requires a JSON object"));
+                return Err(if control.is_some() {
+                    controls::invalid("Invalid session control")
+                } else {
+                    error(Status::BAD_REQUEST, "Session request requires a JSON object")
+                });
             }
             serde_json::from_slice(&contents).map_err(|_| error(Status::BAD_REQUEST, "Invalid JSON"))?
         };
-        let Value::Object(mut data) = data else {
-            return Err(error(Status::BAD_REQUEST, "Session request requires a JSON object"));
-        };
-        if data.contains_key("parentID") {
-            return Err(error(Status::FORBIDDEN, "Parent session creation is not available through a workspace"));
-        }
-        if let Some(location) = data.get("location") {
-            one_location(location, directory)?;
-        }
-        if schedule_input(&data) {
-            return Err(carrier_denied());
-        }
-        let fields: &[&str] = if create {
-            &["title", "location", "agent", "model"]
-        } else if fork {
-            &["before"]
-        } else if permissions_patch {
-            &["permissions"]
-        } else if permission.is_some() {
-            &["decision", "message"]
-        } else if route.ends_with("/interrupt") {
-            &["resume"]
-        } else if form.is_some() {
-            &["answer"]
-        } else if route.ends_with("/agent") {
-            &["agent"]
-        } else if route.ends_with("/model") {
-            &["model"]
-        } else if route.contains("/instructions/entries/") {
-            &["value"]
+        if let Some(control) = control {
+            if data.as_object().is_some_and(schedule_input) {
+                return Err(carrier_denied());
+            }
+            control.validate(&data, &target)?;
+            if head.method != Method::DELETE {
+                input = Some(data);
+            }
         } else {
-            &["text", "delivery", "id"]
-        };
-        if data.keys().any(|key| !fields.contains(&key.as_str())) {
-            if permission.is_some() {
-                return Err(error(Status::BAD_REQUEST, "Invalid permission decision"));
+            let Value::Object(mut data) = data else {
+                return Err(error(Status::BAD_REQUEST, "Session request requires a JSON object"));
+            };
+            if data.contains_key("parentID") {
+                return Err(error(Status::FORBIDDEN, "Parent session creation is not available through a workspace"));
             }
-            if route.ends_with("/interrupt") {
-                return Err(error(Status::BAD_REQUEST, "Invalid interruption request"));
+            if let Some(location) = data.get("location") {
+                one_location(location, directory)?;
             }
-            if form.is_some() {
-                return Err(error(Status::BAD_REQUEST, "Invalid question reply"));
+            if schedule_input(&data) {
+                return Err(carrier_denied());
             }
-            return Ok(unavailable());
-        }
-        if permission.is_some() && !super::controls::valid_reply(&Value::Object(data.clone())) {
-            return Err(error(Status::BAD_REQUEST, "Invalid permission decision"));
-        }
-        if route.ends_with("/interrupt") && data.get("resume").is_some_and(|v| !v.is_boolean()) {
-            return Err(error(Status::BAD_REQUEST, "Invalid interruption request"));
-        }
-        if create {
-            if !crate::worktrees::exact_root_supported(&app, &workspace).await? {
+            let fields: &[&str] = if create {
+                &["title", "location", "agent", "model"]
+            } else if fork {
+                &["before"]
+            } else if permissions_patch {
+                &["permissions"]
+            } else if route.ends_with("/agent") {
+                &["agent"]
+            } else if route.ends_with("/model") {
+                &["model"]
+            } else if route.contains("/instructions/entries/") {
+                &["value"]
+            } else {
+                &["text", "delivery", "id"]
+            };
+            if data.keys().any(|key| !fields.contains(&key.as_str())) {
                 return Ok(unavailable());
             }
-            data.insert("location".into(), json!({"directory": directory}));
-            root_permissions = crate::sessions::permission_mode::new_root(&app, &endpoint, directory, true).await?;
-            if let Some(block) = &root_permissions {
-                data.insert("permissions".into(), block.clone());
+            if create {
+                if !crate::worktrees::exact_root_supported(&app, &workspace).await? {
+                    return Ok(unavailable());
+                }
+                data.insert("location".into(), json!({"directory": directory}));
+                root_permissions = crate::sessions::permission_mode::new_root(&app, &endpoint, directory, true).await?;
+                if let Some(block) = &root_permissions {
+                    data.insert("permissions".into(), block.clone());
+                }
             }
+            input = Some(Value::Object(data));
         }
-        input = Some(Value::Object(data));
-    }
-    if head.method == Method::POST
-        && route.ends_with("/interrupt")
-        && !super::controls::valid_interrupt(input.as_ref().ok_or_else(upstream_error)?)
-    {
-        return Err(error(Status::BAD_REQUEST, "Invalid interruption request"));
-    }
-    if let Some(request) = form.map(str::to_owned).or(cancel_form) {
-        super::controls::pending_form(&app, &endpoint, session.ok_or_else(upstream_error)?, &request).await?;
     }
     let _rules_lock = if permissions_patch {
         let id = session.ok_or_else(upstream_error)?;
@@ -450,7 +430,12 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     if !app.native.endpoint().is_some_and(|current| std::sync::Arc::ptr_eq(&current, &endpoint)) {
         return Err(upstream_error());
     }
-    if let Some(form) = form {
+    let permission_snapshot = if let Some(control) = control {
+        control.pending(&app, &endpoint, session.ok_or_else(upstream_error)?).await?
+    } else {
+        None
+    };
+    if let Some(form) = human_answer::form_reply(route, &head.method) {
         if human_answer::reply(
             &app,
             &workspace,
@@ -470,41 +455,31 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
             return Err(upstream_error());
         }
     }
-    let permission_snapshot = if let Some(request) = &permission {
-        let session = session.ok_or_else(upstream_error)?;
-        let snapshot = super::controls::pending(&app, &endpoint, session, request).await?;
-        let fresh = super::session_record_at(&app, &endpoint, session).await?;
-        if actual
-            .as_ref()
-            .is_none_or(|prior| prior["location"] != fresh["location"] || prior["projectID"] != fresh["projectID"])
-        {
-            return Err(foreign());
-        }
-        Some(snapshot)
+    let receipt = if let Some(request) = permission_snapshot {
+        Some(
+            crate::sessions::receipts::prepare(&app, &endpoint, &request, input.as_ref().ok_or_else(upstream_error)?)
+                .await?,
+        )
     } else {
         None
     };
-    if let Some(request) = permission_snapshot.as_ref() {
-        crate::sessions::receipts::capture(&app, request).await?;
-    }
-    if permission.is_some()
-        || form.is_some()
-        || super::controls::form_cancel(route, &head.method).is_some()
-        || route.ends_with("/interrupt")
-    {
-        let fresh = super::session_record_at(&app, &endpoint, session.ok_or_else(upstream_error)?).await?;
+    if control.is_some() {
+        let fresh = super::session_record_at(&app, &endpoint, session.ok_or_else(upstream_error)?)
+            .await
+            .map_err(|e| if e.0 == Status::NOT_FOUND { foreign() } else { e })?;
         if actual.as_ref().is_none_or(|prior| {
             ["id", "location", "projectID", "parentID", "fork"].iter().any(|key| prior[*key] != fresh[*key])
                 || prior["time"]["created"] != fresh["time"]["created"]
         }) {
             return Err(foreign());
         }
-        app.workspace(id)?;
+        if !crate::sessions::permission_mode::workspace_current(&app, &workspace) {
+            return Err(foreign());
+        }
         if !app.native.endpoint().is_some_and(|current| std::sync::Arc::ptr_eq(&current, &endpoint)) {
             return Err(upstream_error());
         }
     }
-    let permission_input = permission_snapshot.as_ref().and(input.clone());
     let mut upstream = app.native.client.request(head.method, target).basic_auth("opencode", Some(&endpoint.password));
     if let Some(accept) = head.headers.get(header::ACCEPT) {
         upstream = upstream.header(header::ACCEPT, accept);
@@ -515,8 +490,8 @@ pub async fn relay(State(app): State<Shared>, request: Request) -> Result<Respon
     principal.live()?;
     let response = upstream.send().await.map_err(|_| upstream_error())?;
     if response.status().is_success() {
-        if let (Some(snapshot), Some(input)) = (permission_snapshot, permission_input) {
-            if let Err(error) = crate::sessions::receipts::confirmed(&app, &workspace, &snapshot, &input).await {
+        if let Some(receipt) = receipt {
+            if let Err(error) = receipt.confirm(&app, &workspace).await {
                 eprintln!("Permission confirmed; receipt persistence failed: {}", error.0);
             }
         }
