@@ -115,7 +115,7 @@ try {
     { t: 0.6, type: "mark", name: "end" },
   ] }))
   const menu = elements(JSON.parse(await readFile(native("git-changes", "dark", "compact", compact, "end", 180), "utf8")))
-  assert(menu.some(node => node.role === "menuitem" && node.key?.endsWith(":item:stage")))
+  assert(menu.some(node => node.role === "menu-item" && node.key?.endsWith(":item:stage") && node.states.includes("focused")))
   await writeFile(path.join(out, "report.json"), JSON.stringify(report, null, 2) + "\n")
   console.log(`Git captures and accessibility trees: ${out}`)
 } finally {

@@ -184,3 +184,59 @@ pub fn changes(additions: u64, deletions: u64) -> El {
                 .color(t.color("status-error")),
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scroll_returns_to_last_offset_after_the_view_unmounts() {
+        #[derive(Default)]
+        struct Test {
+            bookmark: ScrollBookmark,
+            hidden: bool,
+        }
+        fn view(test: &Test, _: &mut rune::Cx<Test>) -> El {
+            let mut root = col().full_width().full_height().child(
+                crate::layout::button("toggle", false, |test: &mut Test| {
+                    if !test.hidden {
+                        test.bookmark.retain_for_remount();
+                    }
+                    test.hidden = !test.hidden;
+                })
+                .key("toggle"),
+            );
+            if !test.hidden {
+                root = root.child(
+                    saved_scroll::<Test>("list", &test.bookmark)
+                        .children((0..100).map(|n| text(format!("entry {n}")))),
+                );
+            }
+            root
+        }
+        let mut rt = rune::Runtime::new(
+            Test::default(),
+            view,
+            (340.0, 300.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        rt.set_wheel_glide(false);
+        rt.wheel(160.0, 170.0, -420.0);
+        for _ in 0..20 {
+            rt.frame(1.0 / 60.0);
+        }
+        let offset = rt.state.bookmark.0.get().0;
+        assert!(offset > 100.0, "offset {offset}");
+        for _ in 0..2 {
+            let (x, y) = rt.find("toggle").unwrap();
+            rt.pointer_down(x, y);
+            rt.pointer_up(x, y);
+            for _ in 0..10 {
+                rt.frame(1.0 / 60.0);
+            }
+        }
+        assert!(!rt.state.hidden);
+        assert_eq!(rt.state.bookmark.0.get(), (offset, false));
+    }
+}
