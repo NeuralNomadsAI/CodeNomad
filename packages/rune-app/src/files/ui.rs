@@ -1,4 +1,9 @@
-use super::{reader::Reader, request::Read, state::Tree};
+use super::{
+    document::{editor::Editor, store::Store},
+    reader::Reader,
+    request::Read,
+    state::Tree,
+};
 use crate::platform::{self, collation::Collation, reads::Reads};
 use codenomad_client::{
     Receiver, Sender, Wake, backend::Backend, bounded, files::Entry, history::Result,
@@ -16,6 +21,7 @@ pub struct Row {
     pub busy: bool,
 }
 pub struct Ui {
+    pub document: Editor,
     pub reader: Reader,
     pub tree: Tree,
     pub rows: Vec<Row>,
@@ -38,6 +44,12 @@ impl Ui {
     pub fn new(backend: Backend, directory: String, reads: Reads, wake: Wake) -> Self {
         let (out, incoming) = bounded(16);
         Self {
+            document: Editor::new(
+                backend.clone(),
+                Store::default(),
+                backend.workspace.clone(),
+                wake.clone(),
+            ),
             reader: Reader::new(backend.clone(), reads.clone(), wake.clone()),
             tree: Tree::new(directory),
             rows: vec![],
@@ -59,6 +71,7 @@ impl Ui {
     }
     pub fn activate(&mut self, active: bool) {
         self.active = active;
+        self.document.activate(active);
         self.reader.activate(active);
         self.demand();
     }
@@ -67,6 +80,7 @@ impl Ui {
         self.demand();
     }
     pub fn online(&mut self, online: bool) {
+        self.document.online(online && !self.stopped);
         self.reader.online(online && !self.stopped);
         if online && !self.online {
             self.tree.invalidate_all();
@@ -105,6 +119,7 @@ impl Ui {
             }
             WorkspaceEvent::Stopped { workspace_id } if workspace_id == self.backend.workspace => {
                 self.tree.close();
+                self.document.close();
                 self.reader.close();
                 self.pending = None;
                 self.stopped = true;
@@ -133,15 +148,37 @@ impl Ui {
     }
     pub fn open(&mut self, path: String) {
         if !self.stopped {
+            self.document
+                .open(self.tree.directory().into(), path.clone());
             self.reader.open(self.tree.directory().into(), path);
         }
     }
     pub fn close_reader(&mut self) {
+        self.document.close();
         self.reader.close();
+    }
+    pub fn with_documents(mut self, store: Store, instance: String) -> Self {
+        self.document = Editor::new(self.backend.clone(), store, instance, self.wake.clone());
+        self
+    }
+    pub fn save_document(&mut self, scope: u64) {
+        self.document.save(scope, &mut self.reader);
+    }
+    pub fn refresh_document(&mut self, scope: u64) {
+        self.document.refresh(scope, &mut self.reader);
+    }
+    pub fn confirm_document(&mut self, id: u64, accepted: bool) {
+        self.document.confirm(id, accepted, &mut self.reader);
     }
     pub fn poll(&mut self, now: f64) -> bool {
         self.clock = now;
         let mut changed = false;
+        if self.document.take_write() && !self.stopped {
+            self.tree.invalidate_all();
+            self.pending = None;
+            self.due = Some(0.0);
+            changed = true;
+        }
         if self.pending.as_ref().is_some_and(|(due, _)| now >= *due) {
             if let Some((_, changes)) = self.pending.take() {
                 let mut reader_changed = changes.is_none();
@@ -191,9 +228,13 @@ impl Ui {
             .is_some_and(|target| target.directory != self.tree.directory())
         {
             self.reader.close();
+            self.document.close();
             changed = true;
         }
-        changed | self.reader.poll(now)
+        self.reader
+            .activate(self.active && !self.document.writing());
+        changed |= self.reader.poll(now);
+        changed | self.document.poll(&mut self.reader)
     }
     fn launch(&mut self, requests: Vec<Read>) {
         for read in requests {

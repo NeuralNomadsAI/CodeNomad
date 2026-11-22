@@ -172,6 +172,8 @@ pub fn run() {
     );
     assert_ne!(hidden["version"], resumed["version"]);
     reader_versions.push(resumed);
+    let document = (std::env::var("RUNE_TEST_DOCUMENT_STATE").as_deref() == Ok("1"))
+        .then(|| super::files_document::run(&mut rt));
     let replacement = super::files_reader::fences(&mut rt);
     assert_eq!(rt.state.messages.len(), 2);
     assert!(rt.state.files.as_ref().unwrap().tree.errors().is_empty());
@@ -180,9 +182,9 @@ pub fn run() {
     println!(
         "{}",
         json!({"type":"files-state-proof","headless":true,"interfaceQualified":false,
-        "existingSession":"ses_existing","stages":7,"rows":final_rows,"recordsRemaining":0,
+        "existingSession":"ses_existing","stages":7+5*usize::from(document.is_some()),"rows":final_rows,"recordsRemaining":0,
         "selectionRetained":true,"expansionRetained":true,"hiddenSnapshotRetained":true,
-        "readerVersions":reader_versions,"readerReplacement":replacement,
+        "readerVersions":reader_versions,"readerReplacement":replacement,"document":document,
         "readerHiddenLive":true,"readerSuspensionRetained":true,
         "readerQueuedCloseAndReplacementFenced":true,"readerClosed":true})
     );

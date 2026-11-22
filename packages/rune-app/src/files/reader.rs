@@ -27,6 +27,7 @@ pub struct Reader {
     error: Option<String>,
     pending: Option<Pending>,
     sequence: u64,
+    settled: (u64, bool),
     active: bool,
     online: bool,
     dirty: bool,
@@ -47,6 +48,7 @@ impl Reader {
             error: None,
             pending: None,
             sequence: 0,
+            settled: (0, false),
             active: true,
             online: false,
             dirty: false,
@@ -66,6 +68,14 @@ impl Reader {
     pub fn busy(&self) -> bool {
         self.pending.is_some()
     }
+    pub fn receipt(&self) -> (u64, bool) {
+        self.settled
+    }
+    pub fn reread(&mut self) -> u64 {
+        self.cancel();
+        self.refresh();
+        self.sequence + 1
+    }
     pub fn open(&mut self, directory: String, path: String) {
         self.close();
         self.target = Some(Target {
@@ -81,6 +91,7 @@ impl Reader {
         self.preview = None;
         self.error = None;
         self.dirty = false;
+        self.settled = (0, false);
     }
     fn cancel(&mut self) {
         if let Some(pending) = self.pending.take() {
@@ -129,6 +140,7 @@ impl Reader {
             if self.target.as_ref() != Some(&target) {
                 continue;
             }
+            self.settled = (id, result.is_ok());
             match result {
                 Ok(preview) => {
                     self.preview = Some(preview);
