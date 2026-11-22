@@ -104,7 +104,7 @@ pub(crate) fn reader(s: &State) -> El {
         |s: &mut State| &mut s.git.close,
         run(s, |s, tx| {
             crate::git::close_preview(s);
-            tx.focus("files-panel-toggle", tx.focus_visible());
+            tx.focus("composer", tx.focus_visible());
         }),
     ));
 

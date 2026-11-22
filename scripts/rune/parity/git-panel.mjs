@@ -32,14 +32,14 @@ function elements(tree) {
   return nodes
 }
 
-function native(scene, theme, stem, script) {
+function native(scene, theme, stem, script, mark = "end") {
   const tree = path.join(out, `${stem}.json`)
   const png = path.join(out, `${stem}.png`)
   const env = { ...process.env, RUNE_LOCALE: "fr", CODENOMAD_PROFILE: "trial-git-parity" }
   for (const key of Object.keys(env)) if (key.startsWith("RUNE_") && key !== "RUNE_LOCALE") delete env[key]
   const args = ["--scene", scene, "--theme", theme, "--tree", tree, "--snap", png,
     "--size", `${viewport.width}x${viewport.height}`, "--scale", "1"]
-  if (script) args.push("--script", script, "--at", "mark:end")
+  if (script) args.push("--script", script, "--at", `mark:${mark}`)
   const result = spawnSync(binary, args, { cwd: root, env, windowsHide: true, encoding: "utf8", timeout: 120_000 })
   assert.equal(result.status, 0, result.stderr || result.error?.message)
   return tree
@@ -96,10 +96,14 @@ try {
   }
   const script = path.join(out, "interaction.json")
   await writeFile(script, JSON.stringify({ events: [
-    { t: 0.2, type: "tap", key: "git-diff-mode" },
-    { t: 0.4, type: "tap", key: "git-section-staged" },
-    { t: 0.6, type: "mark", name: "end" },
+    { t: 0.2, type: "tap", key: "git-row-staged:file:src/components/git-panel.tsx" },
+    { t: 0.4, type: "tap", key: "git-diff-mode" },
+    { t: 0.6, type: "mark", name: "selected" },
+    { t: 0.8, type: "tap", key: "git-section-staged" },
+    { t: 1.0, type: "mark", name: "end" },
   ] }))
+  const selected = elements(JSON.parse(await readFile(native("git-changes", "dark", "selection", script, "selected"), "utf8")))
+  assert(selected.some(node => node.key === "git-row-staged:file:src/components/git-panel.tsx" && node.states.includes("checked")))
   const tree = JSON.parse(await readFile(native("git-changes", "dark", "interaction", script), "utf8"))
   const nodes = elements(tree)
   assert(nodes.some(node => node.key === "git-section-staged" && !node.states.includes("expanded")))

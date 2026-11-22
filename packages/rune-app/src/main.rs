@@ -92,8 +92,8 @@ fn init() -> State {
 }
 fn setup(s: &mut State, wake: rune::Waker) {
     s.wake = wake.clone();
-    #[cfg(feature = "test-support")]
-    if s.git.owner.is_some() {
+    #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+    if s.git.scene {
         return;
     }
     let scoped = ["RUNE_BACKEND", "RUNE_WORKSPACE", "RUNE_SESSION"]
@@ -299,6 +299,10 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
 }
 fn view(s: &State, cx: &mut Cx<State>) -> El {
     layout::render(cx, |cx| {
+        #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+        if s.git.scene {
+            return probes::git_scene::view(s);
+        }
         let scope = s.input_scope.clone();
         let mut body = match &s.screen {
             Screen::Launcher(_) => launcher_view::view(s),
@@ -379,7 +383,6 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                     rune::el()
                 })
                 .child(text(strings::t(status)))
-                .child(git::toggle(s))
                 .child(
                     text(strings::t(if s.paging {
                         "rune.loading"
@@ -414,14 +417,9 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         } else {
             text(&s.chat_title).key("chat-title").pad(Space::Md)
         })
-        .child(git::surface(
-            s,
-            rune_theme_codenomad::interruption::history(expanded).child(rows),
-            col()
-                .full_width()
-                .child(agent_view::view(s, cx))
-                .child(composer(s)),
-        ))
+        .child(rune_theme_codenomad::interruption::history(expanded).child(rows))
+        .child(agent_view::view(s, cx))
+        .child(composer(s))
 }
 
 fn composer(s: &State) -> El {

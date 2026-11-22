@@ -30,13 +30,10 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
         return workspace;
     };
     let title = t("instanceShell.rightPanel.tabs.files");
-    let mode = MODES.iter().position(|mode| *mode == ui.mode);
+    let mode = MODES.iter().position(|mode| *mode == super::mode(s));
     let set_mode = action(s, move |s, i, _| {
         if let Some(mode) = MODES.get(i).copied() {
-            if let Some(ui) = &mut s.git.owner {
-                ui.set_mode(mode);
-            }
-            super::binding::sync_files(s);
+            super::set_mode(s, mode);
         }
     });
     let selector = theme::modes(&MODE_NAMES.map(t), title, mode, set_mode).key("git-mode");
@@ -178,8 +175,9 @@ fn worktree_picker(ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El {
     let mut labels: Vec<_> = trees.iter().map(|(label, _)| label.clone()).collect();
     let mut seen = std::collections::HashSet::new();
     for (i, label) in labels.iter_mut().enumerate() {
-        if !seen.insert(label.clone()) {
-            *label = format!("{label} · {}", trees[i].1);
+        while !seen.insert(label.clone()) {
+            label.push_str(" · ");
+            label.push_str(&trees[i].1);
         }
     }
     let current = trees

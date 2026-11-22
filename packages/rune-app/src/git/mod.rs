@@ -4,8 +4,8 @@ mod diff;
 mod request;
 mod view;
 pub(crate) use binding::{
-    Binding, close_preview, connected, event, has_preview, online, poll, project_opened, show,
-    surface, toggle,
+    Binding, close_preview, connected, event, has_preview, mode, online, poll, project_opened,
+    set_mode, show,
 };
 pub(crate) use view::{panel, reader};
 
@@ -30,6 +30,25 @@ pub(crate) enum Mode {
     Workspace,
     Changes,
     History,
+}
+
+impl Mode {
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            Self::Workspace => "workspace",
+            Self::Changes => "changes",
+            Self::History => "history",
+        }
+    }
+
+    pub(crate) fn restore(key: &str) -> Option<Self> {
+        match key {
+            "workspace" => Some(Self::Workspace),
+            "changes" => Some(Self::Changes),
+            "history" => Some(Self::History),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -552,6 +571,7 @@ impl Ui {
 
     fn can_change_index(&self) -> bool {
         let changes = self.requests.slot(Lane::Changes);
+        let preference = self.requests.slot(Lane::Preferences);
         self.can_mutate()
             && self.mode == Mode::Changes
             && self.repository() == Repository::Git
@@ -559,6 +579,8 @@ impl Ui {
             && !changes.busy()
             && !changes.dirty
             && changes.error.is_none()
+            && !preference.busy()
+            && !preference.dirty
     }
 
     fn mutation(&mut self, action: Mutation) {

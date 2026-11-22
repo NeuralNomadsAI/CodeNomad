@@ -4,6 +4,26 @@ use codenomad_client::{
     backend::Backend,
     git::{Change, Commit, Diff, Page, Repository, Status, Worktree, Worktrees},
 };
+use rune_theme_codenomad::{Space, git_panel, layout::Layout};
+
+pub fn view(s: &crate::State) -> rune::El {
+    rune::col()
+        .full_width()
+        .full_height()
+        .reading_surface()
+        .child(rune::text("CodeNomad").pad(Space::Md))
+        .child(
+            rune::row()
+                .full_width()
+                .remaining()
+                .child(
+                    git_panel::conversation_column()
+                        .child(crate::git::reader(s))
+                        .child(crate::composer(s)),
+                )
+                .child(crate::git::panel(s, 360.0, rune::el())),
+        )
+}
 
 pub fn changes(s: &mut crate::State) {
     setup(s, Mode::Changes);
@@ -107,5 +127,6 @@ fn setup(s: &mut crate::State, mode: Mode) {
         after: "export function openGitPanel() {\n  return {\n    title: \"Git\",\n    view: \"history\",\n    diffPlacement: \"conversation\",\n    preserveDraft: true,\n  }\n}\n".into(),
     });
     s.git.owner = Some(ui);
+    s.git.scene = true;
     s.phase = crate::Phase::Ready;
 }

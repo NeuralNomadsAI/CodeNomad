@@ -1,14 +1,14 @@
-use super::{Mode, Ui, panel, reader};
-use crate::{State, strings::t};
+use super::{Mode, Ui};
+use crate::State;
 use codenomad_client::{backend::Backend, transport::WorkspaceEvent};
-use rune::{El, row};
-use rune_theme_codenomad::{git_diff::DiffState, git_panel, layout::Layout};
+use rune_theme_codenomad::git_diff::DiffState;
 
 pub(crate) struct Binding {
     pub owner: Option<Ui>,
     pub(super) detached_diff: DiffState,
     pub(super) close: crate::components::window_close_button::WindowCloseState,
-    width: f32,
+    #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+    pub scene: bool,
 }
 
 impl Default for Binding {
@@ -17,7 +17,8 @@ impl Default for Binding {
             owner: None,
             detached_diff: DiffState::new(vec![]),
             close: Default::default(),
-            width: rune_theme_codenomad::layout::initial_window().0,
+            #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+            scene: false,
         }
     }
 }
@@ -72,7 +73,10 @@ pub(super) fn sync_files(s: &mut State) {
     if let Some(owner) = &s.git.owner
         && let Some(files) = &mut s.files
     {
-        files.show(owner.shown && owner.mode() == Mode::Workspace);
+        let visible = owner.shown && owner.mode() == Mode::Workspace;
+        if files.panel != visible {
+            files.show(visible);
+        }
         if let Some(tree) = owner.tree()
             && !codenomad_client::same_server_path(files.tree.directory(), &tree.directory)
         {
@@ -140,16 +144,20 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut rune::Tx) -> bool {
     changed
 }
 
-pub(crate) fn toggle(s: &State) -> El {
-    let Some(owner) = &s.git.owner else {
-        return rune::el();
-    };
-    view_button(s, owner.shown)
-}
-
 pub(crate) fn show(s: &mut State, visible: bool) {
     if let Some(owner) = &mut s.git.owner {
         owner.show(visible);
+    }
+    sync_files(s);
+}
+
+pub(crate) fn mode(s: &State) -> Mode {
+    s.git.owner.as_ref().map_or(Mode::Workspace, Ui::mode)
+}
+
+pub(crate) fn set_mode(s: &mut State, mode: Mode) {
+    if let Some(owner) = &mut s.git.owner {
+        owner.set_mode(mode);
     }
     sync_files(s);
 }
@@ -162,48 +170,4 @@ pub(crate) fn close_preview(s: &mut State) {
     if let Some(owner) = &mut s.git.owner {
         owner.close_preview();
     }
-}
-
-fn view_button(s: &State, shown: bool) -> El {
-    let scope = s.input_scope.clone();
-    crate::components::button(
-        "files-panel-toggle",
-        t("instanceShell.rightPanel.tabs.files"),
-        false,
-        crate::screen::action(&scope, |s| {
-            show(s, !s.git.owner.as_ref().is_some_and(|owner| owner.shown));
-        }),
-    )
-    .expanded(shown)
-}
-
-// The shell owns the transcript/composer and supplies the Workspace body.
-pub(crate) fn surface(s: &State, conversation: El, footer: El) -> El {
-    let Some(owner) = &s.git.owner else {
-        return rune::col()
-            .full_width()
-            .remaining()
-            .child(conversation)
-            .child(footer);
-    };
-    let content = if has_preview(s) {
-        reader(s)
-    } else {
-        conversation
-    };
-    let center = git_panel::conversation_column()
-        .child(content.remaining())
-        .child(footer);
-    if !owner.shown {
-        return center.full_width();
-    }
-    let width = git_panel::dock_width(s.git.width);
-    row()
-        .full_width()
-        .full_height()
-        .remaining()
-        .key("git-surface")
-        .on_layout(|s: &mut State, [_, _, width, _]| s.git.width = width)
-        .child(center)
-        .child(panel(s, width, rune::el()))
 }

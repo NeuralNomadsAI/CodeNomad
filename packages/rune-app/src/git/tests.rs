@@ -298,3 +298,11 @@ fn action_focus_reaches_same_file_in_its_new_section() {
         )
     );
 }
+
+#[test]
+fn files_mode_uses_only_the_persisted_source_values() {
+    for mode in [Mode::Workspace, Mode::Changes, Mode::History] {
+        assert!(Mode::restore(mode.key()).is_some_and(|saved| saved == mode));
+    }
+    assert!(Mode::restore("other").is_none());
+}

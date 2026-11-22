@@ -16,11 +16,6 @@ pub use icons::{
     MINUS, PLUS, ROWS, UNFOLD_VERTICAL, WRAP_TEXT,
 };
 
-pub fn dock_width(window: f32) -> f32 {
-    // instance-shell2.tsx: clampRightWidth(innerWidth * .35).
-    (window * 0.35).clamp(200.0, 1200.0)
-}
-
 pub fn selector_width(panel: f32) -> f32 {
     panel - 2.0 * tokens(dark()).space(Space::Md).px()
 }
