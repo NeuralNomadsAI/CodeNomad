@@ -1539,7 +1539,7 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       pathname: pathname.replace(/\/+$/, ""), query: targetUrl.searchParams, body: request.body, ...control,
     }))
     if (result && "status" in result) {
-      if (result.reconcile && connection && authorizedSessionDirectory && await controlCurrent()) {
+      if (result.reconcile && connection && authorizedSessionDirectory && await controlCurrent().catch(() => false)) {
         grantPendingReconciliation(connection, workspaceId, authorizedSessionDirectory)
       }
       releaseMutation?.()

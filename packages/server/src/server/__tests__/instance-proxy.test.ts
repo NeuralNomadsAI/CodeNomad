@@ -353,31 +353,44 @@ describe("instance proxy location enforcement", () => {
   it("preserves SDK errors for stale controls and permits only their owned reconciliation during compaction", async () => {
     const { app, manager, requestCount } = await harness()
     const connection = (await manager.getSharedServiceConnection!("workspace"))!
-    manager.getSharedServiceConnection = async () => connection
     connection.client.permission.get = async () => { throw { _tag: "PermissionNotFoundError" } }
     connection.client.session.form = {
       get: async () => ({ id: "q", sessionID: "owned", state: { status: "answered" } }),
     } as unknown as OpenCodeClient["session"]["form"]
-    observePendingDiscovery(connection, {
-      id: "compaction", created: 1, type: "session.compaction.started",
-      durable: { aggregateID: "owned", seq: 1, version: 1 },
-      data: { sessionID: "owned", reason: "auto", text: "summary" },
-    } as any)
     const client = OpenCode.make({ baseUrl: "http://localhost/workspaces/workspace/instance/", fetch: async (input, init) => {
       const url = new URL(input as URL)
       const response = await app.inject({ method: init?.method as "POST" | "DELETE", url: url.pathname + url.search,
         headers: Object.fromEntries(new Headers(init?.headers)), payload: init?.body as string | undefined })
       return new Response(response.body, { status: response.statusCode, headers: { "content-type": "application/json" } })
     } })
-    await assert.rejects(client.permission.reply({ sessionID: "owned", requestID: "p", decision: "once" }),
-      error => isPermissionNotFoundError(error) && Boolean(error.message))
-    await assert.rejects(client.session.form.cancel({ sessionID: "owned", formID: "q" }),
-      error => isFormAlreadySettledError(error) && Boolean(error.message))
-    assert.equal(requestCount(), 0)
     const headers = { [PENDING_RECONCILIATION_HEADER]: "1" }
-    for (const [directory, status] of [["/repo/worktree", 200], ["/repo", 503]] as const) {
-      assert.equal((await app.inject({ url: `/workspaces/workspace/instance/api/form?location[directory]=${directory}`, headers })).statusCode, status)
+    const list = (directory: string) => app.inject({ url: `/workspaces/workspace/instance/api/form?location[directory]=${directory}`, headers })
+    const permission = () => client.permission.reply({ sessionID: "owned", requestID: "p", decision: "once" })
+    const form = () => client.session.form.cancel({ sessionID: "owned", formID: "q" })
+    const typedPermission = (error: unknown) => isPermissionNotFoundError(error) && Boolean(error.message)
+    for (const [send, typed] of [[permission, typedPermission],
+      [form, (error: unknown) => isFormAlreadySettledError(error) && Boolean(error.message)]] as const) {
+      const fresh = { ...connection }
+      manager.getSharedServiceConnection = async () => fresh
+      observePendingDiscovery(fresh, {
+        id: "compaction", created: 1, type: "session.compaction.started",
+        durable: { aggregateID: "owned", seq: 1, version: 1 },
+        data: { sessionID: "owned", reason: "auto", text: "summary" },
+      } as any)
+      assert.equal((await list("/repo/worktree")).statusCode, 503)
+      const before = requestCount()
+      await assert.rejects(send(), typed)
+      assert.equal(requestCount(), before)
+      assert.equal((await list("/repo/worktree")).statusCode, 200)
+      assert.equal((await list("/repo")).statusCode, 503)
     }
+    const getSession = connection.client.session.get
+    connection.client.permission.get = async () => {
+      connection.client.session.get = async () => { throw new Error("Session reread unavailable") }
+      throw { _tag: "PermissionNotFoundError" }
+    }
+    try { await assert.rejects(permission(), typedPermission) }
+    finally { connection.client.session.get = getSession }
   })
   it("rejects native parent creation even when the claimed location is owned", async () => {
     const { app, sessionGets, requestCount } = await harness()
