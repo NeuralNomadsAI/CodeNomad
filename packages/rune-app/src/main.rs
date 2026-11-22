@@ -307,14 +307,12 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
                 layout::action_row()
                     .pad(Space::Sm)
                     .child(text(strings::t(error)).role("alert"))
-                    .child(
-                        launcher_view::button(
-                            "workspace-retry",
-                            strings::t("sessionList.loadError.retry"),
-                            false,
-                        )
-                        .on_press_tx(crate::screen::action_tx(&scope, workspace::retry)),
-                    )
+                    .child(launcher_view::button_tx(
+                        "workspace-retry",
+                        strings::t("sessionList.loadError.retry"),
+                        false,
+                        crate::screen::action_tx(&scope, workspace::retry),
+                    ))
             } else {
                 rune::el()
             })
@@ -362,8 +360,8 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                         !matches!(s.phase, Phase::Ready | Phase::Failed)
                             || (!s.draft.text.is_empty() && s.workspace.is_none())
                             || agent::navigation_blocked(s),
+                        crate::screen::action(&scope, launcher::back),
                     )
-                    .on_press(crate::screen::action(&scope, launcher::back))
                 } else {
                     rune::el()
                 })
@@ -438,14 +436,12 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                     )
                     .field_surface(),
                 )
-                .child(
-                    launcher_view::button(
-                        "send",
-                        strings::t("promptInput.overlay.send"),
-                        s.phase != Phase::Ready || s.agent.as_ref().is_some_and(|a| a.blocked()),
-                    )
-                    .on_press_tx(crate::screen::action_tx(&scope, send)),
-                ),
+                .child(launcher_view::button_tx(
+                    "send",
+                    strings::t("promptInput.overlay.send"),
+                    s.phase != Phase::Ready || s.agent.as_ref().is_some_and(|a| a.blocked()),
+                    crate::screen::action_tx(&scope, send),
+                )),
         )
 }
 

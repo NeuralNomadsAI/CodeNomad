@@ -25,9 +25,17 @@ pub fn with_appearance<T>(dark: bool, render: impl FnOnce() -> T) -> T {
     let _restore = Restore(APPEARANCE.replace(dark));
     render()
 }
-pub fn button(label: &str, disabled: bool) -> El {
+pub fn button<S: 'static>(label: &str, disabled: bool, press: impl Fn(&mut S) + 'static) -> El {
+    button_tx(label, disabled, move |s, _| press(s))
+}
+pub fn button_tx<S: 'static>(
+    label: &str,
+    disabled: bool,
+    press: impl Fn(&mut S, &mut rune::Tx) + 'static,
+) -> El {
     rune_kit::Button::new(label)
         .disabled(disabled)
+        .on_press_tx(press)
         .build(kit(dark()))
 }
 pub fn input(edit: &TextEdit) -> El {
@@ -136,9 +144,10 @@ mod tests {
                 if direct {
                     rune_kit::Button::new("Save")
                         .disabled(disabled)
+                        .on_press(|_: &mut (bool, bool)| {})
                         .build(kit(dark()))
                 } else {
-                    button("Save", disabled)
+                    button("Save", disabled, |_: &mut (bool, bool)| {})
                 }
             })
         }
