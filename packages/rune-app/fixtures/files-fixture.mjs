@@ -91,7 +91,7 @@ try{
     :['-p','codenomad-client',...(write?['--test','files_write_server','real_rust_files_write_contract']:['--lib','files_tests::real_rust_files_read_contract'])]
   const args=['+1.99.1','test','--offline','--locked',...test,'--','--exact','--ignored','--nocapture']
   proof.command=['cargo',...args];proof.cargoTarget=target
-  const cargoEnv={...env,CARGO_TARGET_DIR:target,CARGO_INCREMENTAL:'0',RUNE_FILES_TEST_MANIFEST:manifest,RUNE_FILES_TEST_PASSWORD:password,
+  const cargoEnv={...env,CARGO_TARGET_DIR:target,CARGO_INCREMENTAL:'0',CARGO_BUILD_JOBS:process.env.CARGO_BUILD_JOBS??'4',RUNE_FILES_TEST_MANIFEST:manifest,RUNE_FILES_TEST_PASSWORD:password,
     CARGO_HOME:process.env.CARGO_HOME??path.join(os.homedir(),'.cargo'),RUSTUP_HOME:process.env.RUSTUP_HOME??path.join(os.homedir(),'.rustup')}
   cargo=spawn('cargo',args,{cwd:repository,env:cargoEnv,windowsHide:true,stdio:['ignore','pipe','pipe']})
   let cargoError
