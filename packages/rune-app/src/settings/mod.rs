@@ -23,7 +23,7 @@ pub(crate) fn poll(s: &mut State) -> bool {
         shared.main_wake = Some(s.wake.clone());
     }
     let bound = shared.bind(backend);
-    if s.incoming.is_none() && shared.window_wake.is_some() {
+    if s.incoming.is_none() {
         shared.watch(&s.wake);
     } else {
         shared.unwatch();
@@ -80,7 +80,7 @@ fn open(host: &mut Host) {
     if let Some((window, token)) = &host.window
         && Rc::strong_count(token) > 1
     {
-        window.focus();
+        window.close();
         return;
     }
     let token = Rc::new(());

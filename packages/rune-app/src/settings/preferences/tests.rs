@@ -140,6 +140,35 @@ fn settings_palette_changes_remain_available_and_coalesce_during_an_in_flight_wr
 }
 
 #[test]
+fn settings_mode_write_fences_palette_until_the_new_color_slot_is_known() {
+    platform::block_on(async {
+        let mut prefs = Preferences {
+            backend: Some(Backend::connect("http://127.0.0.1:9/", "").await.unwrap()),
+            ..Preferences::default()
+        };
+        prefs.fixture();
+        let linen = built_in()
+            .iter()
+            .find(|palette| palette.id == "linen")
+            .unwrap();
+        prefs.set_mode("dark");
+        assert!(!prefs.palette_ready());
+        prefs.set_palette(linen);
+        assert_eq!(
+            prefs.state.pending.as_ref().unwrap(),
+            &json!({"appearancePreferences":{"mode":"dark"}})
+        );
+        prefs.state.writing = prefs.state.pending.take();
+        prefs.set_palette(linen);
+        assert!(prefs.state.pending.is_none());
+        prefs.state.writing = None;
+        prefs.state.read_failed = true;
+        assert!(!prefs.palette_ready());
+        assert!(!prefs.ready(Owner::State));
+    });
+}
+
+#[test]
 fn settings_sse_refreshes_only_the_invalidated_owner() {
     platform::block_on(async {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

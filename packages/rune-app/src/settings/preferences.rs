@@ -13,6 +13,7 @@ struct Document {
     flight: Option<Receiver<Reply>>,
     barrier: Option<Receiver<Reply>>,
     uncertain: bool,
+    read_failed: bool,
 }
 struct Reply {
     snapshot: Option<Value>,
@@ -99,6 +100,7 @@ impl Preferences {
             && doc.pending.is_none()
             && !doc.read
             && !doc.uncertain
+            && !doc.read_failed
     }
 
     pub fn error(&self) -> Option<&'static str> {
@@ -138,6 +140,25 @@ impl Preferences {
     pub fn locale(&self) -> Option<&'static str> {
         let id = self.saved(Owner::Config)?["settings"]["locale"].as_str()?;
         Some(rune_theme_codenomad::catalogue::canonical_locale(id))
+    }
+
+    pub fn locale_display(&self) -> Option<&'static str> {
+        [&self.config.pending, &self.config.writing]
+            .into_iter()
+            .flatten()
+            .find_map(|patch| patch["settings"]["locale"].as_str())
+            .map(rune_theme_codenomad::catalogue::canonical_locale)
+            .or_else(|| self.locale())
+    }
+
+    pub fn locale_ready(&self) -> bool {
+        self.config.snapshot.is_some() && !self.config.read_failed && !self.config.uncertain
+    }
+
+    pub fn set_locale(&mut self, locale: &'static str) {
+        if self.locale_ready() && self.backend.is_some() && Some(locale) != self.locale_display() {
+            self.config.pending = Some(json!({"settings":{"locale":locale}}));
+        }
     }
 
     pub fn mode(&self) -> &'static str {
@@ -237,7 +258,13 @@ impl Preferences {
     }
 
     pub fn palette_ready(&self) -> bool {
-        self.state.snapshot.is_some() && !self.state.uncertain
+        self.state.snapshot.is_some()
+            && !self.state.uncertain
+            && !self.state.read_failed
+            && [&self.state.pending, &self.state.writing]
+                .into_iter()
+                .flatten()
+                .all(|patch| patch["appearancePreferences"]["mode"].is_null())
     }
 
     pub fn palette_display(&self, dark: bool) -> Option<&'static Palette> {
@@ -298,7 +325,8 @@ impl Document {
             if self.writing.take().is_some() || !self.read {
                 self.error = reply.error;
                 self.uncertain = reply.uncertain || self.uncertain && reply.snapshot.is_none();
-                if self.uncertain {
+                self.read_failed = reply.snapshot.is_none();
+                if self.uncertain || self.read_failed {
                     self.pending = None;
                 }
                 if let Some(snapshot) = reply.snapshot {

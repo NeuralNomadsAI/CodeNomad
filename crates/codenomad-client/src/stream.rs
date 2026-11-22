@@ -19,8 +19,74 @@ pub struct State {
     pub version: AtomicU64,
     pub alive: AtomicBool,
     pub upstream: AtomicBool,
+    preferences: Option<(Sender<crate::transport::Event>, crate::Wake)>,
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn owner_changes_do_not_fill_the_conversation_recovery_queue() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let backend = Backend::connect("http://127.0.0.1:9/", "").await.unwrap();
+            let (out, recovery) = crate::bounded(4);
+            let (send, events) = crate::bounded(4);
+            let state = State::observing_preferences(send, Arc::new(|| {}));
+            opened(1, &out, &state).await.unwrap();
+            assert!(matches!(recovery.try_recv().unwrap(), Input::Opened(1)));
+            assert!(matches!(
+                events.try_recv().unwrap(),
+                crate::transport::Event::Preferences(crate::settings::Owner::Config)
+            ));
+            assert!(matches!(
+                events.try_recv().unwrap(),
+                crate::transport::Event::Preferences(crate::settings::Owner::State)
+            ));
+            let stamp = state.version.load(SeqCst);
+            dispatch(
+                &backend,
+                1,
+                &out,
+                &state,
+                "integration-test",
+                "message",
+                r#"{"owner":"ui","type":"storage.stateChanged","value":{}}"#,
+            )
+            .await
+            .unwrap();
+            assert!(recovery.is_empty() && state.valid(stamp));
+            assert!(matches!(
+                events.try_recv().unwrap(),
+                crate::transport::Event::Preferences(crate::settings::Owner::State)
+            ));
+        });
 }
 impl State {
+    pub(crate) fn observing_preferences(
+        out: Sender<crate::transport::Event>,
+        wake: crate::Wake,
+    ) -> Self {
+        Self {
+            preferences: Some((out, wake)),
+            ..Self::default()
+        }
+    }
+
+    async fn notify_preferences(
+        &self,
+        owner: crate::settings::Owner,
+        out: &Sender<Input>,
+    ) -> Result<()> {
+        if let Some((events, wake)) = &self.preferences {
+            crate::transport::publish(events, wake, crate::transport::Event::Preferences(owner))
+                .await;
+        } else {
+            out.send(Input::Preferences(owner)).await?;
+        }
+        Ok(())
+    }
     pub fn valid(&self, version: u64) -> bool {
         self.version.load(SeqCst) == version
             && self.alive.load(SeqCst)
@@ -55,6 +121,14 @@ pub(super) async fn opened(epoch: u64, out: &Sender<Input>, state: &State) -> Re
     state.alive.store(true, SeqCst);
     state.upstream.store(true, SeqCst);
     out.send(Input::Opened(epoch)).await?;
+    if state.preferences.is_some() {
+        state
+            .notify_preferences(crate::settings::Owner::Config, out)
+            .await?;
+        state
+            .notify_preferences(crate::settings::Owner::State, out)
+            .await?;
+    }
     Ok(())
 }
 pub(super) async fn dispatch(
@@ -85,11 +159,13 @@ pub(super) async fn dispatch(
     if value["owner"] == "ui" {
         match value["type"].as_str() {
             Some("storage.configChanged") => {
-                out.send(Input::Preferences(crate::settings::Owner::Config))
+                state
+                    .notify_preferences(crate::settings::Owner::Config, out)
                     .await?
             }
             Some("storage.stateChanged") => {
-                out.send(Input::Preferences(crate::settings::Owner::State))
+                state
+                    .notify_preferences(crate::settings::Owner::State, out)
                     .await?
             }
             _ => {}

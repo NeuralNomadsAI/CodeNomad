@@ -9,7 +9,6 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
     palettes, settings as chrome,
 };
-use serde_json::json;
 use std::{cell::RefCell, rc::Rc};
 
 #[derive(Default)]
@@ -198,7 +197,9 @@ const MODES: [(&str, &str); 3] = [
 ];
 
 fn general(s: &Window, prefs: &Preferences, layers: &mut Vec<El>) -> El {
-    let locale = crate::strings::locale();
+    let locale = prefs
+        .locale_display()
+        .unwrap_or_else(crate::strings::locale);
     let language = t("folderSelection.language.ariaLabel");
     let labels: Vec<_> = LANGUAGE_NAMES.iter().map(|(_, label)| *label).collect();
     let language_picker = select(
@@ -210,13 +211,11 @@ fn general(s: &Window, prefs: &Preferences, layers: &mut Vec<El>) -> El {
             .iter()
             .find(|(id, _)| *id == locale)
             .map(|(_, label)| *label),
-        !prefs.ready(Owner::Config),
+        !prefs.locale_ready(),
         layers,
         |s, value| {
             if let Some((id, _)) = LANGUAGE_NAMES.iter().find(|(_, label)| *label == value) {
-                s.shared
-                    .borrow_mut()
-                    .change(Owner::Config, json!({"settings":{"locale":id}}));
+                s.shared.borrow_mut().set_locale(id);
             }
         },
     );

@@ -60,7 +60,13 @@ pub async fn run(
         let _ = forward.send(Input::Command(Command::Close)).await;
     });
     let mut epoch = 1;
-    let mut wire = Arc::new(stream::State::default());
+    let make_wire = || {
+        Arc::new(stream::State::observing_preferences(
+            out.clone(),
+            wake.clone(),
+        ))
+    };
+    let mut wire = make_wire();
     stream::start(backend.clone(), epoch, tx.clone(), wire.clone());
     let mut opened = false;
     let mut dirty = true;
@@ -89,16 +95,10 @@ pub async fn run(
             epoch += 1;
             repairs = 0;
             settlement_reads = 0;
-            wire = Arc::new(stream::State::default());
+            wire = make_wire();
             stream::start(backend.clone(), epoch, tx.clone(), wire.clone());
         }
         match runtime::recv_timeout(&rx, Duration::from_millis(25)).await {
-            Some(Input::Preferences(owner)) => {
-                if !publish(&out, &wake, Event::Preferences(owner)).await {
-                    wire.cancelled.store(true, SeqCst);
-                    return Ok(());
-                }
-            }
             Some(Input::Workspace(e, event)) if e == epoch => {
                 if !publish(&out, &wake, Event::Workspace(event)).await {
                     wire.cancelled.store(true, SeqCst);
