@@ -508,7 +508,6 @@ impl Ui {
         self.changes.project(hide);
         self.requests.slot_mut(Lane::Changes).cancel();
         self.dirty(&[Lane::Changes]);
-        self.reconcile_preview();
         if let Some(target) = &self.preview {
             self.reader.rebuild(&target.path, hide);
         }

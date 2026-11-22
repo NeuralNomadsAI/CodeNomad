@@ -380,6 +380,24 @@ fn passive_status_moves_a_reader_opened_during_the_read() {
 }
 
 #[test]
+fn whitespace_preference_does_not_close_a_diff_using_the_cached_status() {
+    let mut ui = ui();
+    ui.hide_whitespace = false;
+    statuses(&mut ui, vec![change("a", false, true, 1)]);
+    let selected = ui
+        .changes
+        .find(ui.changes.current.as_ref().unwrap())
+        .unwrap();
+    ui.replace_preview(Preview::local(selected));
+    ui.set_hide_whitespace(true);
+    assert_eq!(ui.changes.count(), 0);
+    assert!(ui.has_preview());
+    ui.requests.slot_mut(Lane::Changes).dirty = false;
+    statuses(&mut ui, vec![change("a", false, false, 1)]);
+    assert!(ui.has_preview());
+}
+
+#[test]
 fn branch_hint_holds_index_actions_until_the_new_label_is_read() {
     let mut ui = ui();
     ui.mode = Mode::Changes;
