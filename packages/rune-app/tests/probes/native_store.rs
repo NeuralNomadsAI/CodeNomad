@@ -162,6 +162,8 @@ pub fn run() {
     match stage.as_str() {
         "prepare" => {
             open(&mut rt, &long, "Rune native stored-history test");
+            assert_eq!(rt.state.messages.len(), 200);
+            canonical(&rt, &rows);
             canonical(&rt, &rows);
             type_text(&mut rt, "composer", LONG);
             tap(&mut rt, "project-tabs-new");
@@ -175,6 +177,7 @@ pub fn run() {
         "resume" => {
             wait(&mut rt, "automatic long session", |s| ready(s, &long));
             assert_eq!(rt.state.draft.text, LONG);
+            assert_eq!(rt.state.messages.len(), 200);
             canonical(&rt, &rows);
             jump = paginate(&mut rt, &rows);
             type_text(&mut rt, "composer", UPDATED);
@@ -189,6 +192,7 @@ pub fn run() {
             assert_eq!(rt.state.draft.text, EMPTY);
             select(&mut rt, 0, &long);
             assert_eq!(rt.state.draft.text, UPDATED);
+            assert_eq!(rt.state.messages.len(), 200);
             canonical(&rt, &rows);
             snapshot(&mut rt, &long, &empty, UPDATED);
         }
