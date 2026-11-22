@@ -1,6 +1,7 @@
 use crate::{Length, Space, TextRole, Tokens, kit, layout::Layout, tokens};
 use rune::{El, Icon, ScrollSpec, TextStyle};
 pub use rune_kit::markdown::CodeFrame;
+use rune_kit::markdown::{Block, parse};
 use rune_kit::{Markdown, MarkdownStyle, syntax};
 
 pub mod editor;
@@ -310,6 +311,7 @@ pub fn markdown<S: 'static>(
     open: impl Fn(&mut S, &str, &mut rune::Tx) + 'static,
     wrap: impl Fn(usize, &str) -> bool + 'static,
     code_header: impl Fn(&CodeFrame<'_>) -> El + 'static,
+    image: impl Fn(&str) -> Option<rune::Image> + 'static,
 ) -> El {
     Markdown::new(text)
         .style(markdown_style(dark))
@@ -319,8 +321,31 @@ pub fn markdown<S: 'static>(
         .code_wrap(wrap)
         .code_frame(move |body, code| rune::col().w_full().child(code_header(code)).child(body))
         .on_link_tx(open)
+        .images(image)
         .diagram_frame(move |diagram, _| diagram.label(diagram_label))
         .build(kit(dark))
+}
+pub fn markdown_image_sources(text: &str) -> Vec<String> {
+    fn collect(blocks: Vec<Block>, found: &mut Vec<String>) {
+        for block in blocks {
+            match block {
+                Block::Image { src, .. } => found.push(src),
+                Block::Quote(items) => collect(items, found),
+                Block::List { items, .. } => {
+                    for item in items {
+                        collect(item, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if !text.contains("![") {
+        return Vec::new();
+    }
+    let mut found = Vec::new();
+    collect(parse(text), &mut found);
+    found
 }
 pub fn code_header(dark: bool, language: &str, wrap: El, copy: El) -> El {
     let t = tokens(dark);

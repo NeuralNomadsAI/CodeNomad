@@ -1,4 +1,5 @@
 //! Scoped workspace files; directory ownership and physical paths stay with the server.
+pub mod images;
 use crate::{
     backend::{Backend, read_json, read_json_limited},
     history::{Result, valid_id},

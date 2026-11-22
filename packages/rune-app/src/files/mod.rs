@@ -1,5 +1,6 @@
 pub mod document;
 mod layout;
+mod markdown_images;
 mod presentation;
 pub mod reader;
 pub mod request;

@@ -43,13 +43,8 @@ impl Http {
         ui
     }
     pub async fn request(&self, method: &str, path: &str) -> Request {
-        let (mut socket, _) = wait(self.listener.accept()).await.unwrap();
-        let mut bytes = Vec::new();
-        while !bytes.ends_with(b"\r\n\r\n") {
-            bytes.push(wait(socket.read_u8()).await.unwrap());
-            assert!(bytes.len() <= 32768);
-        }
-        let header = String::from_utf8(bytes).unwrap();
+        let request = self.accept().await;
+        let header = &request.header;
         assert!(
             header.starts_with(&format!("{method} /api/workspaces/owned/files/")),
             "{header}"
@@ -58,6 +53,16 @@ impl Http {
             header.contains(&format!("path={path}")) && header.contains("directory=%2Fprivate"),
             "{header}"
         );
+        request
+    }
+    pub async fn accept(&self) -> Request {
+        let (mut socket, _) = wait(self.listener.accept()).await.unwrap();
+        let mut bytes = Vec::new();
+        while !bytes.ends_with(b"\r\n\r\n") {
+            bytes.push(wait(socket.read_u8()).await.unwrap());
+            assert!(bytes.len() <= 32768);
+        }
+        let header = String::from_utf8(bytes).unwrap();
         let length = header
             .lines()
             .find_map(|line| {
@@ -90,6 +95,12 @@ impl Http {
     }
 }
 impl Request {
+    pub async fn send(mut self, header: &str, body: &[u8]) {
+        wait(self.socket.write_all(header.as_bytes()))
+            .await
+            .unwrap();
+        wait(self.socket.write_all(body)).await.unwrap();
+    }
     pub async fn reply(self, status: u16, body: serde_json::Value) {
         self.try_reply(status, body).await.unwrap();
     }
