@@ -635,11 +635,13 @@ impl ClientState {
     }
 
     fn collect_partitions(&self, access_valid: &dyn Fn() -> bool) {
-        let retained = self
+        let Ok(retained) = self
             .state
             .lock()
             .map(|state| state.retained_partition_keys())
-            .unwrap_or_default();
+        else {
+            return;
+        };
         if let Err(err) = self
             .partition_store()
             .sweep(&retained, &|| self.is_primary() && access_valid())

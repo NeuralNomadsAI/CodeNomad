@@ -6,6 +6,7 @@ import os from "node:os"
 import fs from "node:fs"
 import path from "node:path"
 import test, { type TestContext } from "node:test"
+import { brotliCompressSync, gzipSync } from "node:zlib"
 import { FAKE_TUNNEL_HOST, startRemoteSurface } from "./test-support/surface"
 import { backendAdmissionFixture, backendAuthorityHeader, backendBootstrap, assertServerCapabilities, assertPrivateBackendReply } from "./test-support/backend-admission"
 
@@ -142,6 +143,7 @@ interface Reply {
   status: number
   headers: http.IncomingHttpHeaders
   body: string
+  bytes: Buffer
 }
 
 // Speaks plain HTTP to the ingress, as the in-process TLS terminator does.
@@ -152,10 +154,12 @@ function send(target: string, pathname: string, options: { method?: string; head
       hostname, port: Number(port), path: pathname, method: options.method ?? "GET",
       headers: { host: HOST, ...options.headers },
     }, (response) => {
-      let body = ""
-      response.setEncoding("utf8")
-      response.on("data", (chunk) => { body += chunk })
-      response.on("end", () => resolve({ status: response.statusCode ?? 0, headers: response.headers, body }))
+      const chunks: Buffer[] = []
+      response.on("data", (chunk: Buffer) => chunks.push(chunk))
+      response.on("end", () => {
+        const bytes = Buffer.concat(chunks)
+        resolve({ status: response.statusCode ?? 0, headers: response.headers, body: bytes.toString(), bytes })
+      })
     })
     request.on("error", reject)
     request.end(options.body)
@@ -202,6 +206,91 @@ test("the static UI bundle stays public while HTML entry points require pairing"
   assert.equal((await send(target(), "/index.html")).status, 401)
   assert.equal((await send(target(), "/api/test/echo.json")).status, 401)
   assert.equal((await send(target(), "/sidecars/example/app.js")).status, 404)
+})
+
+test("negotiates precompressed static assets without loosening HTML entry admission", async t => {
+  const { target, code, registryPath } = await startRemoteSurface(t)
+  const ui = path.join(path.dirname(registryPath), "ui")
+  const wasm = Buffer.from("static byte fixture ".repeat(200))
+  const br = brotliCompressSync(wasm)
+  const gzip = gzipSync(wasm)
+  fs.writeFileSync(path.join(ui, "app.wasm"), wasm)
+  fs.writeFileSync(path.join(ui, "app.wasm.br"), br)
+  fs.writeFileSync(path.join(ui, "app.wasm.gz"), gzip)
+  fs.writeFileSync(path.join(ui, "only-gzip.wasm"), wasm)
+  fs.writeFileSync(path.join(ui, "only-gzip.wasm.gz"), gzip)
+  fs.writeFileSync(path.join(ui, "archive#1.gz"), gzip)
+  fs.writeFileSync(path.join(ui, "archive%.gz"), gzip)
+  const index = fs.readFileSync(path.join(ui, "index.html"))
+  fs.writeFileSync(path.join(ui, "index.html.br"), brotliCompressSync(index))
+  fs.mkdirSync(path.join(ui, "nested.assets"))
+  fs.writeFileSync(path.join(ui, "nested.assets", "index.html"), index)
+  fs.writeFileSync(path.join(ui, "nested.assets", "index.html.br"), brotliCompressSync(index))
+
+  const variants = [
+    ["/app.wasm", "br, gzip", "br", br],
+    ["/app.wasm", "gzip, br", "br", br],
+    ["/app.wasm", "gzip, *", "br", br],
+    ["/app.wasm", "br;q=0, gzip", "gzip", gzip],
+    ["/app.wasm", "br;q=0.2, gzip;q=0.8", "gzip", gzip],
+    ["/app.wasm", "gzip;q=0, *;q=1, identity;q=0", "br", br],
+    ["/app.wasm", "identity", undefined, wasm],
+    ["/app.wasm", "identity;q=1, br;q=0.1", undefined, wasm],
+    ["/only-gzip.wasm", "br, gzip", "gzip", gzip],
+  ] as const
+  for (const [route, accept, encoding, bytes] of variants) {
+    const headers = { "accept-encoding": accept }
+    const response = await send(target(), route, { headers })
+    assert.equal(response.status, 200)
+    assert.equal(response.headers["content-encoding"], encoding)
+    assert.equal(response.headers["content-type"], "application/wasm")
+    assert.match(String(response.headers.vary), /(?:^|,\s*)accept-encoding(?:,|$)/i)
+    assert.deepEqual(response.bytes, bytes)
+    const head = await send(target(), route, { method: "HEAD", headers })
+    assert.equal(head.headers["content-encoding"], encoding)
+    assert.equal(Number(head.headers["content-length"]), bytes.length)
+    assert.equal(head.bytes.length, 0)
+  }
+  const headers = { "accept-encoding": "br" }
+  for (const extra of [{}, { range: "bytes=9999-" }, { "if-match": '"unrelated"' }] as Record<string, string>[]) {
+    const rejected = await send(target(), "/only-gzip.wasm", { headers: { "accept-encoding": "br, identity;q=0", ...extra } })
+    assert.equal(rejected.status, 406)
+    assert.equal(rejected.bytes.length, 0)
+    assert.match(String(rejected.headers.vary), /(?:^|,\s*)accept-encoding(?:,|$)/i)
+  }
+  assert.equal((await send(target(), "/archive%231.gz", { headers: { "accept-encoding": "br, identity;q=0" } })).status, 406)
+  assert.equal((await send(target(), "/archive%25.gz", { headers: { "accept-encoding": "br, identity;q=0" } })).status, 406)
+  for (const url of ["/index.html", "/index.html.br"]) {
+    assert.equal((await send(target(), url, { headers })).status, 401)
+  }
+  assert.equal((await send(target(), "/absent.wasm", { headers })).status, 404)
+  const hidden = await send(target(), "/nested.assets", { headers })
+  assert.equal(hidden.status, 404)
+  assert.equal(hidden.headers["cache-control"], "no-store")
+  const cookie = await pair(target(), code)
+  const rangedHead = await send(target(), "/", { method: "HEAD", headers: { cookie, "accept-encoding": "br", range: "bytes=0-0" } })
+  assert.equal(rangedHead.status, 200)
+  assert.equal(Number(rangedHead.headers["content-length"]), brotliCompressSync(index).length)
+  const rangedFallback = await send(target(), "/settings", {
+    method: "POST", headers: {
+      cookie, origin: ORIGIN, "accept-encoding": "br", range: "bytes=0-0",
+      "if-modified-since": String(rangedHead.headers["last-modified"]),
+    },
+  })
+  assert.equal(rangedFallback.status, 200)
+  assert.deepEqual(rangedFallback.bytes, index)
+  const rejectedHead = await send(target(), "/", { method: "HEAD", headers: { cookie, "accept-encoding": "identity;q=0" } })
+  assert.equal(rejectedHead.status, 406)
+  assert.equal(Number(rejectedHead.headers["content-length"] ?? 0), 0)
+  assert.equal(rejectedHead.headers["content-type"], undefined)
+  for (const route of ["/", "/settings"]) {
+    const page = await send(target(), route, { headers: { "accept-encoding": "br, identity;q=0", cookie, accept: "text/html" } })
+    assert.equal(page.status, 200)
+    assert.equal(page.headers["content-encoding"], "br")
+    assert.equal(page.headers["cache-control"], "no-store")
+    assert.match(String(page.headers["content-type"]), /^text\/html\b/)
+    assert.deepEqual(page.bytes, brotliCompressSync(index))
+  }
 })
 
 test("pairing requires the public origin and issues a host-only secure cookie once", async (t) => {

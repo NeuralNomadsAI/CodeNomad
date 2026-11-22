@@ -6,7 +6,7 @@ import { observeListEnd } from "../lib/list-end-observer"
 import { preserveListFocus } from "../lib/preserve-list-focus"
 import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
-import { clearSessionIdleFade, getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
+import { clearSessionIdleFade, getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus, shouldShowSessionStatusForRow } from "../stores/session-status"
 import { Archive, ArchiveRestore, Bot, User, Copy, Trash2, Pencil, ShieldAlert, Search, Square, CheckSquare, MinusSquare, Split, RotateCw, Star } from "lucide-solid"
 import { childActivityKind, childActivityLabel } from "./session-child-activity"
 import LoadErrorState from "./load-error-state"
@@ -173,10 +173,11 @@ const SessionList: Component<SessionListProps> = (props) => {
   })
   const sessionListError = createMemo(() => getSessionListError(props.instanceId))
   // Over the listed sessions only, like the rows and the tab indicator.
+  const listedSessions = createMemo(() => getListedSessionMap(props.instanceId))
   const descendantActivity = createMemo(() => collectDescendantActivity(
-    getListedSessionMap(props.instanceId),
+    listedSessions(),
     session => !session.retry && session.generationRecovery !== "interrupted"
-      && shouldShowSessionStatus(props.instanceId, session.id, now(), preferences().keepUnseenSubagentIdleStatus),
+      && shouldShowSessionStatusForRow(props.instanceId, session, now(), preferences().keepUnseenSubagentIdleStatus),
   ))
 
   createEffect(() => {

@@ -1,13 +1,17 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import { createMemo, createRoot } from "solid-js"
 import { Schema } from "effect"
 import { EventManifest } from "@opencode/schema/event-manifest"
 import type { OpenCodeEvent } from "@opencode/client"
 import { sdkManager } from "../lib/sdk-manager.ts"
+import { serverEvents } from "../lib/server-events.ts"
 import { addInstance, handleInstanceInvalidation, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { applyOpenCodeDataEvent, captureOpenCodeRowSnapshot, destroyOpenCodeData, projectOpenCodeMessages } from "./opencode-data.ts"
 import { setActiveSession, setSessions, getSessionInfo } from "./session-state.ts"
+import { retainSessionTranscriptVisible } from "./session-transcript-visibility.ts"
+import type { WorkspaceEventPayload } from "../../../server/src/api-types.ts"
 
 const sessionId = "ses_frame"
 const model = { providerID: "fixture", id: "fixture" }
@@ -17,14 +21,14 @@ type Data = ReturnType<typeof applyOpenCodeDataEvent>
 // Validate the actual installed native wire schema, including durable envelopes.
 function eventFactory() {
   let sequence = 0
-  return (type: string, payload: Record<string, unknown> = {}): OpenCodeEvent => {
+  return (type: string, payload: Record<string, unknown> = {}, target = sessionId): OpenCodeEvent => {
     const definition = EventManifest.Latest.get(type as any) as any
     assert.ok(definition, type)
     const seq = ++sequence
     return Schema.decodeUnknownSync(definition)({
       id: `evt_${seq}`, type, created: seq, location: { directory: "/fixture" },
-      ...(definition.durable ? { durable: { aggregateID: sessionId, seq, version: definition.durable.version } } : {}),
-      data: { sessionID: sessionId, ...payload },
+      ...(definition.durable ? { durable: { aggregateID: target, seq, version: definition.durable.version } } : {}),
+      data: { sessionID: target, ...payload },
     }) as OpenCodeEvent
   }
 }
@@ -117,6 +121,49 @@ test("a same-task delta burst projects once at the next frame", ctx => {
     assert.equal(hydration.mock.callCount(), 1, "one frame projects the whole burst once")
     assert.equal(f.storeText(streamId), joined, "the projected page carries every admitted delta")
   } finally {
+    clock.restore()
+    f.cleanup()
+  }
+})
+
+test("a frame publishes watched child pages with one reactive flush", ctx => {
+  const clock = frameClock()
+  const f = fixture("frame-visible-family")
+  const children = Array.from({ length: 110 }, (_, i) => `ses_child_${i}`)
+  const watched = children.slice(0, 23)
+  const messageId = (i: number) => `msg_family_${i}`
+  const authority = { signal: new AbortController().signal, current: () => true }
+  const release = watched.map(id => retainSessionTranscriptVisible(f.instanceId, id, authority))
+  const dispatch = serverEvents as unknown as { dispatchBatch(events: WorkspaceEventPayload[]): void }
+  try {
+    const hydration = ctx.mock.method(f.store, "hydrateMessages")
+    createRoot(dispose => {
+      try {
+        let renders = 0
+        const rows = createMemo(() => {
+          renders++
+          return watched.map((_, i) => f.storeText(messageId(i)))
+        })
+        for (const [index, id] of children.entries()) {
+          const assistantMessageID = messageId(index), ordinal = 0
+          const events = [
+            f.make("session.step.started", { assistantMessageID, agent: "build", model, started: 500 }, id),
+            f.make("session.text.started", { assistantMessageID, ordinal }, id),
+            ...Array.from({ length: 3 }, () => f.make("session.text.delta", { assistantMessageID, ordinal, delta: "x" }, id)),
+          ]
+          for (const event of events) dispatch.dispatchBatch([{ type: "instance.event", instanceId: f.instanceId, event }])
+        }
+        assert.equal(hydration.mock.callCount(), 0)
+        clock.fire()
+        assert.deepEqual(rows(), watched.map(() => "xxx"))
+        assert.equal(hydration.mock.callCount(), watched.length, "each watched page hydrates once; the other children don't publish")
+        assert.equal(renders, 2, "a cross-session reader runs once initially and once for the entire frame")
+      } finally {
+        dispose()
+      }
+    })
+  } finally {
+    for (const off of release) off()
     clock.restore()
     f.cleanup()
   }
