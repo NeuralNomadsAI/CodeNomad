@@ -87,8 +87,18 @@ impl Ui {
         self.demand();
     }
     pub fn show(&mut self, show: bool) {
+        if self.panel == show {
+            return;
+        }
         self.panel = show;
         self.demand();
+    }
+    pub fn browse(&mut self, directory: String) {
+        if self.tree.directory() != directory {
+            self.close_reader();
+            self.tree.switch(directory);
+            self.demand();
+        }
     }
     pub fn drawer(&self) -> super::layout::Drawer {
         super::layout::resolve(self.host_width.unwrap_or(0.0), self.panel)

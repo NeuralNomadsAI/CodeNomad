@@ -82,7 +82,7 @@ pub fn body(s: &State, history: El, expanded: bool) -> El {
     let Some(ui) = &s.files else {
         return history;
     };
-    let main = theme::pages(history, ui.reader.target().is_some().then(|| reader(s)));
+    let main = theme::pages(history, super::has_preview(s).then(|| reader(s)));
     let drawer = ui.drawer();
     theme::split(main, drawer.pinned.then(|| tree(s)), drawer.width, expanded)
         .key("files-host")
