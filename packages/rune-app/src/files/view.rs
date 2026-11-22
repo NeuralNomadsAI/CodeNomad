@@ -1,10 +1,6 @@
 use super::{document::Format, presentation::Kind};
 use crate::{
-    State,
-    components::{button, button_tx},
-    screen,
-    strings::t,
-    window_control::scoped_close_button,
+    State, components::button_tx, screen, strings::t, window_control::scoped_close_button,
 };
 use rune::{El, text};
 use rune_theme_codenomad::{
@@ -20,7 +16,16 @@ pub fn toggle(s: &State) -> El {
         return rune::el();
     };
     let drawer = ui.drawer();
-    button(
+    let disabled = ui.stopped || (!drawer.room && !ui.panel);
+    let toggle = std::rc::Rc::new(screen::action_tx(&s.input_scope, |s, _| {
+        if let Some(ui) = &mut s.files {
+            if ui.panel || ui.drawer().room {
+                ui.show(!ui.panel);
+            }
+        }
+    }));
+    let press = toggle.clone();
+    let control = button_tx(
         "files-toggle",
         t(if !drawer.room && !ui.panel {
             "filesPanel.widenWindow"
@@ -29,16 +34,15 @@ pub fn toggle(s: &State) -> El {
         } else {
             "instanceShell.filesShell.showFiles"
         }),
-        ui.stopped || (!drawer.room && !ui.panel),
-        screen::action(&s.input_scope, |s| {
-            if let Some(ui) = &mut s.files {
-                if ui.panel || ui.drawer().room {
-                    ui.show(!ui.panel);
-                }
-            }
-        }),
+        disabled,
+        move |s, tx| press(s, tx),
     )
-    .expanded(drawer.pinned)
+    .expanded(drawer.pinned);
+    if disabled {
+        control
+    } else {
+        activate_enter(control, move |s, tx| toggle(s, tx))
+    }
 }
 fn document_action_tx(
     s: &State,
@@ -64,8 +68,9 @@ fn reader_action(
     if disabled {
         return control;
     }
-    let enter = document_action_tx(s, run);
-    // The native Kit reserves Return for a default button; the reader has HTML-style actions.
+    activate_enter(control, document_action_tx(s, run))
+}
+fn activate_enter(control: El, enter: impl Fn(&mut State, &mut rune::Tx) + 'static) -> El {
     control.on_key(move |s: &mut State, key, tx| {
         if key.key != rune::Key::Enter || key.mods != rune::Mods::default() {
             return false;

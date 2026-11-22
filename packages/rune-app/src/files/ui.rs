@@ -245,7 +245,9 @@ impl Ui {
         true
     }
     fn focus_row(&mut self, path: String, tx: &mut rune::Tx) {
-        tx.focus(format!("file-row-{path}"), true);
+        let key = format!("file-row-{path}");
+        tx.focus(&key, true);
+        tx.scroll_into_view_in("workspace-tree-scroll", key);
         self.tree.select(path);
     }
     pub fn open(&mut self, path: String) {

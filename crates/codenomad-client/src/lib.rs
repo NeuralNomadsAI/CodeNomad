@@ -15,6 +15,7 @@ pub mod recovery;
 pub mod runtime;
 mod server_path;
 pub use server_path::absolute as absolute_server_path;
+pub use server_path::basename as server_path_basename;
 pub use server_path::same as same_server_path;
 pub mod stream;
 pub mod transport;

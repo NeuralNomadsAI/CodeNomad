@@ -10,9 +10,22 @@ pub(crate) fn tree(s: &State) -> El {
     layout::with_source_palette(|| tree_content(s))
 }
 
-fn open_workspace(s: &mut State, path: String) {
-    if let Some(ui) = &mut s.files {
-        ui.open(path);
+fn toggle_preview(s: &mut State, directory: &str, path: String, tx: &mut rune::Tx) {
+    if let Some(ui) = s
+        .files
+        .as_mut()
+        .filter(|ui| !ui.stopped && ui.tree.directory() == directory)
+    {
+        if ui
+            .reader
+            .target()
+            .is_some_and(|target| target.path == path && target.directory == ui.tree.directory())
+        {
+            ui.close_reader();
+            ui.reading.restore(tx);
+        } else {
+            ui.open(path);
+        }
     }
 }
 
@@ -31,31 +44,44 @@ fn tree_content(s: &State) -> El {
     let mut tree = rune::col()
         .full_width()
         .role("tree")
+        .focus_group()
         .label(t("filesPanel.workspace"));
     for row in &ui.rows {
         let path = row.entry.path.clone();
         let folder = row.expanded.is_some();
         let actions = (!folder).then(|| {
+            let active = ui.reader.target().is_some_and(|target| {
+                target.path == path && target.directory == ui.tree.directory()
+            });
+            let invoke = std::rc::Rc::new(screen::action_tx(&scope, {
+                let path = path.clone();
+                let directory = ui.tree.directory().to_owned();
+                move |s, tx| toggle_preview(s, &directory, path.clone(), tx)
+            }));
+            let click = invoke.clone();
+            let disabled = ui.stopped;
             theme::eye(
                 dark,
                 &format!("{} · {}", t("filesPanel.viewer"), path),
-                ui.stopped,
-                screen::action(&scope, {
-                    let path = path.clone();
-                    move |s| open_workspace(s, path.clone())
-                }),
+                disabled,
+                active,
+                move |s, tx| click(s, tx),
             )
             .key(format!("file-eye-{path}"))
-            .on_key(|_: &mut State, key, _| {
-                matches!(
-                    key.key,
-                    rune::Key::Up
-                        | rune::Key::Down
-                        | rune::Key::Left
-                        | rune::Key::Right
-                        | rune::Key::Home
-                        | rune::Key::End
-                )
+            .on_key(move |s: &mut State, key, tx| match key.key {
+                rune::Key::Enter if !disabled && key.mods == rune::Mods::default() => {
+                    if !tx.key_repeat() {
+                        invoke(s, tx);
+                    }
+                    true
+                }
+                rune::Key::Up
+                | rune::Key::Down
+                | rune::Key::Left
+                | rune::Key::Right
+                | rune::Key::Home
+                | rune::Key::End => true,
+                _ => false,
             })
         });
         tree = tree.child(
@@ -111,12 +137,7 @@ fn tree_content(s: &State) -> El {
         ));
     }
     let directory = ui.tree.directory();
-    let name = directory
-        .trim_end_matches(['/', '\\'])
-        .rsplit(['/', '\\'])
-        .next()
-        .filter(|name| !name.is_empty())
-        .unwrap_or(directory);
+    let name = codenomad_client::server_path_basename(directory);
     let contents = workspace_tree::workspace_body(
         workspace_tree::root(dark, name, directory).key("file-tree-root"),
         tree,
@@ -128,5 +149,5 @@ fn tree_content(s: &State) -> El {
     );
     theme::surface(dark)
         .key("files-panel")
-        .child(theme::viewport(contents, true))
+        .child(theme::viewport(contents, true).key("workspace-tree-scroll"))
 }

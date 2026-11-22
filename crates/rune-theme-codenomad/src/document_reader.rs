@@ -98,14 +98,35 @@ pub fn eye<S: 'static>(
     dark: bool,
     label: &str,
     disabled: bool,
-    press: impl Fn(&mut S) + 'static,
+    active: bool,
+    press: impl Fn(&mut S, &mut rune::Tx) + 'static,
 ) -> El {
-    rune_kit::IconButton::new(kit(dark).glyph.eye)
+    let k = kit(dark);
+    let mut selected;
+    let k = if active && !disabled {
+        selected = k.clone();
+        let tint = tokens(dark).color("icon-toggle-active-bg");
+        selected.c.hover = tint;
+        selected.c.pressed = tint;
+        &selected
+    } else {
+        k
+    };
+    rune_kit::IconButton::new(k.glyph.eye)
         .label(label)
+        .help(label)
         .disabled(disabled)
         .variant(rune_kit::IconButtonVariant::Ghost)
-        .on_press(press)
-        .build(kit(dark))
+        .state(if active && !disabled {
+            rune_kit::State::Pressed
+        } else if disabled {
+            rune_kit::State::Disabled
+        } else {
+            rune_kit::State::Rest
+        })
+        .on_press_tx(press)
+        .build(k)
+        .checked(active)
 }
 pub fn viewport(content: El, wrap: bool) -> El {
     let view = rune::col().w_full().grow(1.0).min_h(0.0);
