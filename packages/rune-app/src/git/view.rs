@@ -11,10 +11,10 @@ use crate::{
     strings::{locale, t},
 };
 use codenomad_client::git::{Repository, Section};
-use rune::{El, Tx, col, el, row, text};
+use rune::{El, Tx, col, el, text};
 use rune_theme_codenomad::{
     Space, TextRole, catalogue, field_kit, git_panel as theme,
-    git_panel::ButtonLook::{Flat, Neutral, Section as SectionButton, Submit, WithIcon},
+    git_panel::ButtonLook::{Flat, Neutral, Submit, WithIcon},
     layout::{self, Layout, dark},
 };
 
@@ -38,7 +38,8 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
     });
     let selector = theme::modes(&MODE_NAMES.map(t), title, mode, set_mode).key("git-mode");
     let mut overlay = Vec::new();
-    let header = theme::header()
+    let context = theme::context()
+        .key("git-context")
         .child(
             layout::action_row()
                 .child(theme::branch(branch(ui)).key("git-branch"))
@@ -63,18 +64,17 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
                     }),
                 )),
         )
-        .child(worktree_picker(ui, width, &mut overlay))
-        .child(selector)
-        .child(if ui.mode == Mode::Changes && ui.changes.ready() {
-            text(file_count(ui.changes.count())).text_role(TextRole::Label)
-        } else {
-            el()
-        });
+        .child(worktree_picker(ui, width, &mut overlay));
+    let mut tools = theme::tools().key("git-tools").child(selector);
+    if ui.mode == Mode::Changes && ui.changes.ready() {
+        tools = tools.child(theme::count(file_count(ui.changes.count())).key("git-count"));
+    }
     let mut panel = theme::panel()
         .key("git-panel")
         .role("region")
         .label(title)
-        .child(header);
+        .child(context)
+        .child(tools);
     let mode_lanes: &[Lane] = match ui.mode {
         Mode::Workspace => &[Lane::Worktrees],
         Mode::Changes => &[Lane::Worktrees, Lane::Changes, Lane::Preferences],
@@ -284,12 +284,11 @@ fn changes_view(s: &State, ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El {
                 }
             }))
             .child(
-                button(
-                    s,
-                    format!("{name} · {count}"),
-                    SectionButton(open),
-                    false,
-                    move |ui, _| ui.changes.open[i] = !ui.changes.open[i],
+                theme::section_button(
+                    name,
+                    count,
+                    open,
+                    handler(s, move |ui, _| ui.changes.open[i] = !ui.changes.open[i]),
                 )
                 .key(format!("git-section-{}", section.key())),
             );

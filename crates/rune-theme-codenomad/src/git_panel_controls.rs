@@ -14,7 +14,6 @@ pub enum ButtonLook {
     Flat,
     Submit,
     WithIcon(&'static Glyph),
-    Section(bool),
 }
 
 pub fn button<S: 'static>(
@@ -29,16 +28,6 @@ pub fn button<S: 'static>(
         ButtonLook::Flat => button.variant(ButtonVariant::Ghost),
         ButtonLook::Submit => button.variant(ButtonVariant::Submit),
         ButtonLook::WithIcon(glyph) => button.variant(ButtonVariant::Ghost).icon(glyph),
-        ButtonLook::Section(open) => {
-            button
-                .variant(ButtonVariant::Ghost)
-                .expanded(open)
-                .icon(if open {
-                    &super::CHEVRON_DOWN
-                } else {
-                    &super::CHEVRON_RIGHT
-                })
-        }
     };
     button.build(kit(dark()))
 }
@@ -98,6 +87,66 @@ pub fn modes<S: 'static>(
         .width(None)
         .on_pick(select)
         .build(kit(dark()))
+}
+
+pub fn section_button<S: 'static>(
+    name: &str,
+    count: usize,
+    open: bool,
+    press: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    let t = crate::tokens(dark());
+    let title = |property| t.metric("gitSectionTitle", property).px();
+    let chip = |property| t.metric("gitSectionCount", property).px();
+    let title_font =
+        rune::TextStyle::new(title("fontSize"), title("fontWeight")).lh(title("lineHeight"));
+    let label = format!("{name} · {count}");
+    let name = name.to_uppercase();
+    let counter = text(count.to_string())
+        .font(
+            rune::TextStyle::new(chip("fontSize"), t.number("font-weight-regular").px())
+                .lh(chip("lineHeight")),
+        )
+        .color(t.color("text-muted"))
+        .fill(t.color("surface-inset"))
+        .radius(t.number("chip-radius").px())
+        .opacity(chip("opacity"))
+        .px(chip("paddingLeft"))
+        .py(chip("paddingTop"))
+        .border(chip("borderTopWidth"), t.color("border-base"))
+        .border_layout();
+    Button::new(label)
+        .variant(ButtonVariant::GhostMuted)
+        .control_size(ControlSize::Large)
+        .expanded(open)
+        .label_with(move |_, ink| {
+            row()
+                .full_width()
+                .items_center()
+                .gap(t.metric("gitSection", "columnGap").px())
+                .child(
+                    rune::icon(
+                        if open {
+                            &super::CHEVRON_DOWN
+                        } else {
+                            &super::CHEVRON_RIGHT
+                        },
+                        t.length(crate::Length::Icon).px(),
+                    )
+                    .color(ink),
+                )
+                .child(
+                    text(name)
+                        .font(title_font)
+                        .color(ink)
+                        .truncate()
+                        .remaining(),
+                )
+                .child(counter)
+        })
+        .on_press_tx(press)
+        .build(kit(dark()))
+        .full_width()
 }
 
 pub fn worktree_picker<S: 'static>(

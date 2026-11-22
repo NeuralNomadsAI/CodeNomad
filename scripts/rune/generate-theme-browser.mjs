@@ -48,6 +48,13 @@ export async function collectTheme(names){
     fileRowAction:['.file-row-icon-button',['minWidth','minHeight','paddingLeft','opacity']],
     fileRowActionGlyph:['.file-row-icon-button svg',['width','height']],
     workspaceRow:['.workspace-tree-row',['minHeight','paddingTop','paddingBottom','paddingInlineEnd','columnGap','fontSize','fontWeight','lineHeight']],
+    gitContext:['.git-panel-context',['paddingLeft','paddingTop','borderBottomWidth']],
+    gitTools:['.git-panel-tools',['paddingLeft','paddingTop','borderBottomWidth']],
+    gitHistoryRow:['.git-history-row',['paddingLeft','paddingTop','columnGap','borderBottomWidth']],
+    gitCount:['.git-panel-count',['opacity']],
+    gitSection:['.git-change-section-header',['columnGap']],
+    gitSectionTitle:['.git-change-section-title',['fontSize','fontWeight','lineHeight']],
+    gitSectionCount:['.git-change-section-count',['fontSize','lineHeight','paddingLeft','paddingTop','borderTopWidth','opacity']],
   }
   const metrics={}
   for(const [name,[selector,properties]] of Object.entries(contracts)){
