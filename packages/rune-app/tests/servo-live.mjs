@@ -259,7 +259,8 @@ try {
     if(solid) await check("solid",async()=>{
       const vite=path.join(solid,"..","..","node_modules","vite","dist","node","index.js")
       const source=`import {createServer} from ${JSON.stringify(pathToFileURL(vite).href)};
-        const v=await createServer({cacheDir:${JSON.stringify(path.join(root,"solid-cache"))},server:{port:0,host:'127.0.0.1'}});
+        const v=await createServer({cacheDir:${JSON.stringify(path.join(root,"solid-cache"))},server:{port:0,host:'127.0.0.1',
+          fs:{allow:${JSON.stringify([path.resolve(solid,"../.."),path.join(root,"solid-cache")])}}}});
         await v.listen(); console.log('VITE '+v.httpServer.address().port);`
       const launch=path.join(root,"solid.mjs")
       await writeFile(launch,source)
@@ -281,6 +282,9 @@ try {
           args:["--disable-background-networking","--disable-notifications"]})
         try {
           const page=await browser.newPage()
+          const errors=[]
+          page.on("pageerror",e=>errors.push(e.message))
+          page.on("response",r=>{if(r.status()>=400) errors.push(`${r.status()} ${new URL(r.url()).pathname}`)})
           await page.goto(`http://127.0.0.1:${port}/`,{timeout:12000})
           await delay(800)
           const comparison=await page.locator("body").innerText()
@@ -288,10 +292,13 @@ try {
           await page.getByRole("textbox",{name:"Display name"}).fill("Chromium")
           await page.getByRole("button",{name:"Save"}).click()
           await page.getByText("Saved: Chromium",{exact:true}).waitFor()
-          return {...snapshot,entryStatus,entryDetail,chromium:{solid:comparison.slice(0,350),form:status?.status()}}
+          return {...snapshot,entryStatus,entryDetail,chromium:{solid:comparison.slice(0,350),form:status?.status(),errors:errors.slice(0,8)}}
         } catch(error) {
           return {...snapshot,entryStatus,entryDetail,chromiumError:String(error)}
-        } finally { await browser.close() }
+        } finally {
+          await browser.close()
+          await writeFile(path.join(root,"solid-vite.log"),output)
+        }
       }
       return {...snapshot,result:"compare solid.png",entryStatus,entryDetail}
     })

@@ -238,7 +238,8 @@ pub fn execute(
                 .as_str()
                 .filter(|s| s.len() <= 32_768)
                 .ok_or("Invalid text length")?;
-            click(point(aim(true)?), MouseButton::Primary);
+            aim(true)?;
+            view.set_focused(true);
             dom(json!({"action":"prepare","ref":c["ref"],"clear":c["clear"]}))?;
             for (state, data) in [
                 (CompositionState::Start, ""),

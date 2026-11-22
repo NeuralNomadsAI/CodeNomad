@@ -50,7 +50,10 @@
       if (!e || !visible(e) || e.disabled || e.readOnly) return error('Input is unavailable');
       if (document.activeElement !== e) e.focus({preventScroll:true});
       if (document.activeElement !== e) return error('Input focus changed');
-      if (arg.clear) e.select(); else e.setSelectionRange(e.value.length,e.value.length);
+      e.setSelectionRange(arg.clear ? 0 : e.value.length,e.value.length);
+      if (e.selectionStart !== (arg.clear ? 0 : e.value.length) || e.selectionEnd !== e.value.length) {
+        return error('Input selection was refused');
+      }
       result={};
       break;
     case 'focus':
