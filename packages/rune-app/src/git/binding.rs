@@ -166,7 +166,7 @@ pub(crate) fn close_preview(s: &mut State) {
 
 fn view_button(s: &State, shown: bool) -> El {
     let scope = s.input_scope.clone();
-    crate::launcher_view::button(
+    crate::components::button(
         "files-panel-toggle",
         t("instanceShell.rightPanel.tabs.files"),
         false,

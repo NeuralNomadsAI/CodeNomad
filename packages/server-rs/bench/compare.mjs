@@ -17,6 +17,10 @@ import { browserWorktrees } from "./worktrees.mjs"
 
 const MODES = ["http", "files", "contract", "workspace-claims", "agent-controls", "depth", "worktree-gone", "links", "search", "memory", "design", "automation", "missions", "missions-family", "missions-calendar", "missions-wayfinder", "mission-permissions", "host", "sidecars", "usage", "providers", "previews", "remote-previews", "solid"]
 const [mode, exe] = process.argv.slice(2)
+if (mode === "prompt-admission") {
+  await (await import("./prompt-admission.mjs")).run()
+  process.exit(process.exitCode ?? 0)
+}
 assert(MODES.includes(mode) && path.isAbsolute(exe ?? ""), `usage: node compare.mjs <${MODES.join("|")}> <absolute opencode executable>`)
 const bin = rustBinary()
 const bench = mode === "solid" ? undefined : await import(`./${mode === "http" ? "worktrees" : mode}.mjs`)
