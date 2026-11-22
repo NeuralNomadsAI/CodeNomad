@@ -17,7 +17,7 @@ fn contains(s: &State, path: &str) -> bool {
         .as_ref()
         .is_some_and(|f| f.rows.iter().any(|r| r.entry.path == path))
 }
-fn wait(rt: &mut Runtime<State>, label: &str, condition: impl Fn(&State) -> bool) {
+pub(super) fn wait(rt: &mut Runtime<State>, label: &str, condition: impl Fn(&State) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(25);
     while !condition(&rt.state) {
         assert!(Instant::now() < deadline, "Files state timeout: {label}");
@@ -28,13 +28,13 @@ fn wait(rt: &mut Runtime<State>, label: &str, condition: impl Fn(&State) -> bool
         rt.frame(1.0 / 60.0);
     }
 }
-fn settle(rt: &mut Runtime<State>) {
+pub(super) fn settle(rt: &mut Runtime<State>) {
     for _ in 0..600 {
         rt.frame(1.0 / 60.0);
         std::thread::sleep(Duration::from_millis(5));
     }
 }
-fn stage(rt: &Runtime<State>, stage: &str) {
+pub(super) fn stage(rt: &Runtime<State>, stage: &str) {
     println!(
         "{}",
         json!({"type":"files-state-stage","stage":stage,"rows":paths(&rt.state)})
@@ -90,6 +90,7 @@ pub fn run() {
     wait(&mut rt, "expanded listing", |s| {
         contains(s, "src/initial.ts")
     });
+    let mut reader_versions = super::files_reader::open(&mut rt);
     rt.state
         .files
         .as_mut()
@@ -125,6 +126,12 @@ pub fn run() {
     rt.state.files.as_mut().unwrap().show(false);
     stage(&rt, "hidden");
     settle(&mut rt);
+    let hidden = super::files_reader::content(&mut rt, "Reader hidden · 日本語\nthird version");
+    assert_ne!(
+        reader_versions.last().unwrap()["version"],
+        hidden["version"]
+    );
+    reader_versions.push(hidden.clone());
     assert_eq!(paths(&rt.state), cached);
     assert_eq!(
         rt.state.files.as_ref().unwrap().tree.selected(),
@@ -147,6 +154,7 @@ pub fn run() {
     stage(&rt, "tabbed");
     settle(&mut rt);
     rt.update(|s, tx| workspace::select(s, &tab, tx));
+    assert_eq!(super::files_reader::snapshot(&rt.state), hidden);
     assert!(rt.state.files.as_ref().unwrap().panel);
     assert_eq!(
         rt.state.files.as_ref().unwrap().tree.selected(),
@@ -158,6 +166,13 @@ pub fn run() {
         "restored occurrence catches inactive mutation",
         |s| contains(s, "tabbed.txt"),
     );
+    let resumed = super::files_reader::content(
+        &mut rt,
+        "Reader resumed · quatrième\nversion after suspension",
+    );
+    assert_ne!(hidden["version"], resumed["version"]);
+    reader_versions.push(resumed);
+    let replacement = super::files_reader::fences(&mut rt);
     assert_eq!(rt.state.messages.len(), 2);
     assert!(rt.state.files.as_ref().unwrap().tree.errors().is_empty());
     let final_rows = paths(&rt.state);
@@ -165,7 +180,10 @@ pub fn run() {
     println!(
         "{}",
         json!({"type":"files-state-proof","headless":true,"interfaceQualified":false,
-        "existingSession":"ses_existing","stages":6,"rows":final_rows,"recordsRemaining":0,
-        "selectionRetained":true,"expansionRetained":true,"hiddenSnapshotRetained":true})
+        "existingSession":"ses_existing","stages":7,"rows":final_rows,"recordsRemaining":0,
+        "selectionRetained":true,"expansionRetained":true,"hiddenSnapshotRetained":true,
+        "readerVersions":reader_versions,"readerReplacement":replacement,
+        "readerHiddenLive":true,"readerSuspensionRetained":true,
+        "readerQueuedCloseAndReplacementFenced":true,"readerClosed":true})
     );
 }
