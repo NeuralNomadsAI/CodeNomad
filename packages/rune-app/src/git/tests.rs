@@ -471,6 +471,36 @@ fn repeated_file_hints_do_not_starve_the_changes_display() {
 }
 
 #[test]
+fn surviving_preview_is_pinned_again_when_its_row_returns() {
+    let mut ui = ui();
+    let entries: Vec<_> = (0..=200)
+        .map(|n| change(format!("{n:04}"), false, false, u64::from(n == 200)))
+        .collect();
+    statuses(&mut ui, entries.clone());
+    let last = ui.changes.current.clone().unwrap();
+    let row = ui.changes.find(&last).unwrap();
+    ui.replace_preview(Preview::local(row));
+    let first = ui
+        .changes
+        .visible(Section::Unstaged)
+        .next()
+        .unwrap()
+        .id
+        .clone();
+    ui.changes.select(first, false, false);
+    ui.filesystem_hint();
+    statuses(&mut ui, entries[..200].to_vec());
+    assert!(ui.has_preview());
+    ui.passive_due = None;
+    statuses(&mut ui, entries);
+    assert!(
+        ui.changes
+            .visible(Section::Unstaged)
+            .any(|row| row.id == last)
+    );
+}
+
+#[test]
 fn switching_modes_and_refresh_owe_failed_reads_but_stale_preferences_cannot_stage() {
     let mut ui = ui();
     ui.mode = Mode::Changes;

@@ -619,19 +619,19 @@ impl Ui {
         let Source::Local(section) = target.source else {
             return;
         };
-        let next = self
-            .changes
-            .equivalent(&Id {
-                section,
-                path: target.path.clone(),
-            })
-            .map(Preview::local);
+        let id = Id {
+            section,
+            path: target.path.clone(),
+        };
+        let next = self.changes.equivalent(&id).map(Preview::local);
         if next.as_ref() != Some(target) {
             if let Some(next) = next {
                 self.replace_preview(next);
             } else {
                 self.close_preview();
             }
+        } else {
+            self.changes.keep_visible(id);
         }
     }
 
