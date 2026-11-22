@@ -23,7 +23,7 @@ Kit builders consume the mapped `Kit` directly. Keep visual configuration before
 
 `TextInput` and `TextArea` use the cached `field_kit` variant, whose base surface resolves to `surface-field` before building. The general Kit retains the canvas role for reading components.
 
-Shared button factories accept their action before building the Kit control. Disabled buttons omit pointer and keyboard actions; application callbacks retain their captured screen scope.
+Controls shared by screens live in `components/` or the theme. Application button factories accept their action before building the Kit control. Disabled buttons omit pointer and keyboard actions; application callbacks retain their captured screen scope.
 
 ## Platform
 
