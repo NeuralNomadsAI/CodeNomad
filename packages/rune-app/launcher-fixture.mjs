@@ -37,17 +37,19 @@ if(filesState){await mkdir(path.join(project,'src'));await writeFile(path.join(p
 assert(!workspaceClaims||(!web&&!controls&&!withTools&&!uncertain),'Workspace claims use their own qualification mode')
 assert(!restoreState||(!web&&!controls&&!withTools&&!uncertain&&!workspaceClaims),'Restore uses its own qualification mode')
 const gates=new Map(),visibleProof=[],restoreStages=[],restorePrompts=[]
-const filesStages=[],filesExpected=['create','rename','delete','collapsed','hidden','tabbed']
+const filesStages=[],filesExpected=['reader-visible','create','rename','delete','collapsed','hidden','tabbed']
+const readerTexts=['initial','Reader visible · été 🦀\nsecond version','Reader hidden · 日本語\nthird version','Reader resumed · quatrième\nversion after suspension']
 let filesChain=Promise.resolve(),filesProof
 async function filesStage(ack) {
   assert.equal(ack.stage,filesExpected[filesStages.length]);filesStages.push(ack)
   switch(ack.stage){
+    case 'reader-visible': await writeFile(path.join(project,'src/initial.ts'),readerTexts[1]);break
     case 'create': await writeFile(path.join(project,'new.txt'),'created');await writeFile(path.join(project,'src/nested.ts'),'nested');break
     case 'rename': await rename(path.join(project,'new.txt'),path.join(project,'renamed.txt'));break
     case 'delete': await unlink(path.join(project,'renamed.txt'));await unlink(path.join(project,'src/nested.ts'));break
     case 'collapsed': await writeFile(path.join(project,'src/collapsed.ts'),'collapsed');break
-    case 'hidden': await writeFile(path.join(project,'hidden.txt'),'hidden');break
-    case 'tabbed': await writeFile(path.join(project,'tabbed.txt'),'tabbed');break
+    case 'hidden': await writeFile(path.join(project,'hidden.txt'),'hidden');await writeFile(path.join(project,'src/initial.ts'),readerTexts[2]);break
+    case 'tabbed': await writeFile(path.join(project,'tabbed.txt'),'tabbed');await writeFile(path.join(project,'src/initial.ts'),readerTexts[3]);break
   }
   client.stdin.write(`${JSON.stringify({stage:ack.stage})}\n`)
 }
@@ -208,7 +210,18 @@ try{
   }
   if(!restoreState&&!pendingOpen){const timer=setTimeout(()=>client.kill(),web?300000:120000);try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}}
   assert.equal(result,0);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,0);if(!webRestore)assert(stats.lists>=12)}else if(workspaceClaims||pendingOpen||filesState){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
-  if(filesState){await filesChain;assert(filesProof);assert.deepEqual(filesStages.map(s=>s.stage),filesExpected);assert(!requests.includes('POST /api/session'));assert(!requests.some(r=>r.endsWith('/prompt')));http=await request.newContext({baseURL:origin});assert.equal((await http.post('/api/auth/login',{data:{username:'codenomad',password:'fixture-backend'}})).status(),200);assert.deepEqual(await (await http.get('/api/workspaces')).json(),[])}
+  if(filesState){
+    await filesChain;assert(filesProof);assert.deepEqual(filesStages.map(s=>s.stage),filesExpected)
+    const version=text=>`"${createHash('sha256').update(text).digest('hex')}"`
+    assert.deepEqual(filesProof.readerVersions.map(p=>p.text),readerTexts)
+    assert.deepEqual(filesProof.readerVersions.map(p=>p.version),readerTexts.map(version))
+    for(const preview of filesProof.readerVersions){assert.equal(preview.path,'src/initial.ts');assert.equal(path.resolve(preview.directory),project);assert.equal(preview.session,'ses_existing');assert(preview.workspace)}
+    assert.equal(new Set(filesProof.readerVersions.map(p=>p.workspace)).size,1)
+    assert.equal(filesProof.readerReplacement.path,'initial.txt');assert.equal(filesProof.readerReplacement.text,'initial');assert.equal(filesProof.readerReplacement.version,version('initial'))
+    for(const key of ['readerHiddenLive','readerSuspensionRetained','readerQueuedCloseAndReplacementFenced','readerClosed'])assert.equal(filesProof[key],true)
+    assert(!requests.includes('POST /api/session'));assert(!requests.some(r=>r.endsWith('/prompt')))
+    http=await request.newContext({baseURL:origin});assert.equal((await http.post('/api/auth/login',{data:{username:'codenomad',password:'fixture-backend'}})).status(),200);assert.deepEqual(await (await http.get('/api/workspaces')).json(),[])
+  }
   if(!web&&!controls&&!workspaceClaims&&!pendingOpen&&!filesState)assert.deepEqual(visibleProof.map(p=>p.turn),[1,2],'Both distinct assistant turns must be visible before their endings')
   if(restoreState){assert.deepEqual(restoreStages.map(s=>s.stage),['prepare','resume','verify']);assert.deepEqual(restorePrompts.map(p=>p.sessionID),['ses_created_2','ses_created_1']);for(const id of ['ses_created_1','ses_created_2']){const rows=stores.get(id).rows;assert.deepEqual(rows.map(r=>r.type),['user','assistant']);assert(rows[1].time.completed)}}
   if(gitCount)assert.equal(requests.filter(r=>r==='GET /api/worktree').length,0,'root mutations must not enumerate sibling worktrees')
