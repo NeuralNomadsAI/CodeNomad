@@ -188,6 +188,77 @@ fn source_selection_copies_through_memory_clipboard() {
 }
 
 #[test]
+fn source_beyond_the_highlight_limit_remains_visible_selectable_and_copyable() {
+    struct Scene {
+        text: String,
+    }
+    fn view(state: &Scene, cx: &mut rune::Cx<Scene>) -> El {
+        layout::render(cx, |_| {
+            theme::surface(layout::dark()).child(
+                theme::viewport(
+                    theme::source(layout::dark(), "long.rs", &state.text, false),
+                    false,
+                )
+                .key("long-source-scroll"),
+            )
+        })
+    }
+    let prefix = "// synthetic source line for selection\n".repeat(4000);
+    assert!(prefix.len() > 128 * 1024);
+    let tail = "TAIL_MARKER_AFTER_HIGHLIGHT // été 🦀";
+    let start = prefix.len();
+    let mut rt = Runtime::new(
+        Scene {
+            text: prefix + tail,
+        },
+        view,
+        (600.0, 320.0),
+        Env::new(false, 1.0),
+    );
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    rt.frame(0.0);
+    rt.update(|_, tx| tx.scroll_to_bottom_instant("long-source-scroll"));
+    for _ in 0..10 {
+        rt.frame(0.02);
+    }
+    assert_eq!(rt.scroll_at_bottom("long-source-scroll"), Some(true));
+    let source = rt
+        .elements()
+        .into_iter()
+        .find(|node| node.key.as_deref() == Some("file-source-text"))
+        .unwrap();
+    assert!(source.text.as_ref().unwrap().ends_with(tail));
+    let line = rune_theme_codenomad::tokens(false)
+        .text(TextRole::Mono)
+        .line_px();
+    let y = source.rect[1] + source.rect[3] - line / 2.0;
+    for _ in 0..2 {
+        rt.pointer_down(source.rect[0] + 6.0, y);
+        rt.pointer_up(source.rect[0] + 6.0, y);
+        rt.frame(0.02);
+    }
+    assert_eq!(
+        rt.selected_text().as_deref(),
+        Some("TAIL_MARKER_AFTER_HIGHLIGHT")
+    );
+    rt.update(|_, tx| tx.select_text("file-source-text", start..start + tail.len()));
+    rt.frame(0.02);
+    rt.key(KeyEvent {
+        key: Key::Command('c'),
+        mods: Mods {
+            cmd: true,
+            ..Mods::default()
+        },
+    });
+    rt.frame(0.02);
+    assert_eq!(
+        clipboard.text().map(|text| text.to_string()).as_deref(),
+        Some(tail)
+    );
+}
+
+#[test]
 fn private_image_bytes_decode_and_fit_without_enlarging_intrinsic_sizes() {
     crate::platform::block_on(async {
         let cases: serde_json::Value =
