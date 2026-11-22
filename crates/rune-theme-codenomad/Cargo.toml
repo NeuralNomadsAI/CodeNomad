@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[features]
+preview-probe = []
+
 [dependencies]
 rune = { workspace = true }
 rune-kit = { workspace = true }

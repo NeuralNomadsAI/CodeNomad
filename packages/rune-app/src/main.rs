@@ -82,7 +82,9 @@ fn init() -> State {
 fn setup(s: &mut State, wake: rune::Waker) {
     s.wake = wake.clone();
     #[cfg(not(target_arch = "wasm32"))]
-    { s.preview.listen(wake.clone()); }
+    {
+        s.preview.listen(wake.clone());
+    }
     let scoped = ["RUNE_BACKEND", "RUNE_WORKSPACE", "RUNE_SESSION"]
         .iter()
         .all(|key| platform::setting(key).is_some());
@@ -166,7 +168,9 @@ fn latest(_: &mut State, tx: &mut Tx) {
 fn poll(s: &mut State, _: f64, tx: &mut Tx) -> bool {
     let mut changed = launcher::poll(s, tx);
     #[cfg(not(target_arch = "wasm32"))]
-    { changed |= preview::poll(s, tx); }
+    {
+        changed |= preview::poll(s, tx);
+    }
     changed |= s.agent.as_mut().is_some_and(|a| a.poll());
     for _ in 0..64 {
         let Some(event) = s.incoming.as_ref().and_then(|r| r.try_recv().ok()) else {
@@ -175,7 +179,9 @@ fn poll(s: &mut State, _: f64, tx: &mut Tx) -> bool {
         match event {
             Event::Connected(backend) => {
                 #[cfg(not(target_arch = "wasm32"))]
-                { s.preview.bind(&backend); }
+                {
+                    s.preview.bind(&backend);
+                }
                 s.agent = Some(agent::Ui::new(agent::start(backend, s.wake.clone())));
             }
             Event::AgentHint(catalog) => {
@@ -307,9 +313,13 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
                     .child(text(strings::t(status)))
                     .child({
                         #[cfg(not(target_arch = "wasm32"))]
-                        { preview::toolbar(s) }
+                        {
+                            preview::toolbar(s)
+                        }
                         #[cfg(target_arch = "wasm32")]
-                        { rune::el() }
+                        {
+                            rune::el()
+                        }
                     })
                     .child(
                         text(strings::t(if s.paging { "loading" } else { "older" }))
@@ -344,9 +354,13 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
             .child(rune_theme_codenomad::interruption::history(expanded).child(rows))
             .child({
                 #[cfg(not(target_arch = "wasm32"))]
-                { preview::viewport(s, cx) }
+                {
+                    preview::viewport(s, cx)
+                }
                 #[cfg(target_arch = "wasm32")]
-                { rune::el() }
+                {
+                    rune::el()
+                }
             })
             .child(agent_view::view(s, cx))
             .child(
@@ -426,8 +440,12 @@ fn run_app() {
         ..layout::app_spec(strings::t("title"), init, view)
     };
     #[cfg(not(target_arch = "wasm32"))]
-    rune_theme_codenomad::preview::run(app, preview::ime, preview::window_focus,
-        cfg!(feature = "test-support") && platform::has_flag("--preview-hidden"));
+    rune_theme_codenomad::preview::run(
+        app,
+        preview::ime,
+        preview::window_focus,
+        preview::visibility,
+    );
     #[cfg(target_arch = "wasm32")]
     rune::run(app);
     platform::finish();

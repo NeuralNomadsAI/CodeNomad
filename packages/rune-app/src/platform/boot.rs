@@ -114,26 +114,50 @@ pub fn start(wake: rune::Waker) -> Option<Receiver<Result<(Backend, LocalHost)>>
     Some(input)
 }
 
-fn configure_preview_trial(config: &mut crate::host::LaunchConfig, root: &std::path::Path) -> Result<()> {
-    let binary = PathBuf::from(super::setting("RUNE_TRIAL_OPENCODE_BIN").ok_or("missing private CLI")?);
-    let profile = PathBuf::from(super::setting("RUNE_TRIAL_OPENCODE_PROFILE").ok_or("missing private CLI profile")?);
-    let parent = root.parent().ok_or("missing trial parent")?.canonicalize()?;
-    if !binary.is_absolute() || !binary.is_file() || !profile.is_absolute()
-        || !profile.canonicalize()?.starts_with(&parent) {
+fn configure_preview_trial(
+    config: &mut crate::host::LaunchConfig,
+    root: &std::path::Path,
+) -> Result<()> {
+    let binary =
+        PathBuf::from(super::setting("RUNE_TRIAL_OPENCODE_BIN").ok_or("missing private CLI")?);
+    let profile = PathBuf::from(
+        super::setting("RUNE_TRIAL_OPENCODE_PROFILE").ok_or("missing private CLI profile")?,
+    );
+    let parent = root
+        .parent()
+        .ok_or("missing trial parent")?
+        .canonicalize()?;
+    if !binary.is_absolute()
+        || !binary.is_file()
+        || !profile.is_absolute()
+        || !profile.canonicalize()?.starts_with(&parent)
+    {
         return Err("Invalid private OpenCode setup".into());
     }
-    std::fs::write(&config.config_file, serde_json::to_vec(&serde_json::json!({
-        "server":{"opencodeBinary":binary}
-    }))?)?;
+    std::fs::write(
+        &config.config_file,
+        serde_json::to_vec(&serde_json::json!({
+            "server":{"opencodeBinary":binary}
+        }))?,
+    )?;
     for (key, path) in [
-        ("HOME", ""), ("USERPROFILE", ""), ("APPDATA", "AppData/Roaming"),
-        ("LOCALAPPDATA", "AppData/Local"), ("XDG_CONFIG_HOME", "xdg-config"),
-        ("XDG_DATA_HOME", "xdg-data"), ("XDG_STATE_HOME", "xdg-state"), ("XDG_CACHE_HOME", "xdg-cache"),
+        ("HOME", ""),
+        ("USERPROFILE", ""),
+        ("APPDATA", "AppData/Roaming"),
+        ("LOCALAPPDATA", "AppData/Local"),
+        ("XDG_CONFIG_HOME", "xdg-config"),
+        ("XDG_DATA_HOME", "xdg-data"),
+        ("XDG_STATE_HOME", "xdg-state"),
+        ("XDG_CACHE_HOME", "xdg-cache"),
         ("ProgramData", "ProgramData"),
     ] {
-        config.environment.insert(key.into(), profile.join(path).into_os_string());
+        config
+            .environment
+            .insert(key.into(), profile.join(path).into_os_string());
     }
-    config.environment.insert("CNRS_PROVISION_PLUGINS".into(), "automation".into());
+    config
+        .environment
+        .insert("CNRS_PROVISION_PLUGINS".into(), "automation".into());
     config.preview = true;
     Ok(())
 }

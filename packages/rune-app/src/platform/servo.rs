@@ -44,12 +44,25 @@ impl Guest {
         let (state, failed) = (output.clone(), offline.clone());
         let stopped = failed.clone();
         std::thread::spawn(move || {
+            let env = std::env::vars_os().filter(|(key, _)| {
+                matches!(
+                    key.to_string_lossy().to_ascii_uppercase().as_str(),
+                    "SYSTEMROOT"
+                        | "WINDIR"
+                        | "SYSTEMDRIVE"
+                        | "LANG"
+                        | "TEMP"
+                        | "TMP"
+                        | "RUNE_SERVO_TEST_FILE"
+                        | "RUNE_SERVO_CONSOLE"
+                )
+            });
             let child = OwnedProcess::spawn(
                 Command::new(path)
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
-                    .env_remove("RUNE_PASSWORD")
-                    .env_remove("RUNE_BOOTSTRAP_TOKEN"),
+                    .env_clear()
+                    .envs(env),
             );
             if let Ok(mut child) = child
                 && let (Some(mut input), Some(stdout)) = (child.take_stdin(), child.take_stdout())
@@ -61,7 +74,11 @@ impl Guest {
                     started();
                 });
                 while let Ok(message) = recv.recv() {
-                    if input.write_fmt(format_args!("{message}\n")).and_then(|_| input.flush()).is_err() {
+                    if input
+                        .write_fmt(format_args!("{message}\n"))
+                        .and_then(|_| input.flush())
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -71,7 +88,11 @@ impl Guest {
             stopped.store(true, Ordering::Release);
             wake();
         });
-        Some(Self { output, offline, send })
+        Some(Self {
+            output,
+            offline,
+            send,
+        })
     }
 
     pub fn send(&self, message: Value) -> bool {
@@ -93,7 +114,10 @@ fn read_frames(
         if !line.ends_with('\n') {
             return Err(bad());
         }
-        let header: Value = serde_json::from_str(&line).map_err(|_| bad())?;
+        let Some(line) = line.strip_prefix("SERVO:") else {
+            continue;
+        };
+        let header: Value = serde_json::from_str(line).map_err(|_| bad())?;
         if header["frame"].is_u64() {
             let size = |key| header[key].as_u64().filter(|n| (1..=2560).contains(n));
             let len = 4 * size("w").ok_or_else(bad)? * size("h").ok_or_else(bad)?;

@@ -3,7 +3,10 @@ use {
     super::Panel,
     crate::{State, platform::servo::Guest, strings},
     rune::{Cx, El, Ime, Key, KeyEvent, Tx},
-    rune_theme_codenomad::{Space, layout::{self, Layout, input}},
+    rune_theme_codenomad::{
+        Space,
+        layout::{self, Layout, input},
+    },
     serde_json::json,
     std::sync::atomic::Ordering,
 };
@@ -28,7 +31,9 @@ pub fn toolbar(s: &State) -> El {
 }
 
 pub fn viewport(s: &State, cx: &mut Cx<State>) -> El {
-    let Some(panel) = &s.preview.panel else { return rune::el() };
+    let Some(panel) = &s.preview.panel else {
+        return rune::el();
+    };
     let dpi = rune_theme_codenomad::preview::dpi(cx);
     rune_theme_codenomad::preview::panel()
         .child(layout::action_row().full_width().pad(Space::Sm).separate(Space::Sm)
@@ -37,7 +42,7 @@ pub fn viewport(s: &State, cx: &mut Cx<State>) -> El {
                 .full_width().field_surface()
                 .on_edit(|s: &mut State| &mut s.preview.panel.as_mut().expect("address mounted").address)
                 .on_submit(submit))
-            .child(layout::button(strings::t("window.menu.native.reload"), !panel.loaded)
+            .child(layout::button(strings::t("window.menu.native.reload"), !panel.loaded).key("servo-reload")
                 .on_press(|s: &mut State| {
                     if let Some(page) = &mut s.preview.panel { page.navigate(true); }
                 }))
@@ -93,11 +98,22 @@ fn focus(p: &mut Panel, focused: bool) {
 }
 
 pub fn window_focus(s: &mut State, focused: bool, tx: &mut Tx) {
-    if let Some(p) = &mut s.preview.panel { focus(p, focused && tx.focused() == Some(PAGE)); }
+    if let Some(p) = &mut s.preview.panel {
+        focus(p, focused && tx.focused() == Some(PAGE));
+    }
+}
+
+pub fn visibility(s: &mut State, visible: bool, _: &mut Tx) {
+    s.preview.hidden = !visible;
+    if !visible {
+        s.preview.close();
+    }
 }
 
 fn key(s: &mut State, e: &KeyEvent, tx: &mut Tx, down: bool) -> bool {
-    let Some(p) = &mut s.preview.panel else { return false };
+    let Some(p) = &mut s.preview.panel else {
+        return false;
+    };
     let key = match &e.key {
         Key::Text(s) => s.clone(),
         Key::Command(c) => c.to_string(),
@@ -106,23 +122,41 @@ fn key(s: &mut State, e: &KeyEvent, tx: &mut Tx, down: bool) -> bool {
         Key::Up => "ArrowUp".into(),
         Key::Down => "ArrowDown".into(),
         Key::Function(n) => format!("F{n}"),
-        Key::Enter | Key::Backspace | Key::Delete | Key::Home | Key::End |
-        Key::PageDown | Key::PageUp | Key::Escape | Key::Tab => format!("{:?}", e.key),
+        Key::Enter
+        | Key::Backspace
+        | Key::Delete
+        | Key::Home
+        | Key::End
+        | Key::PageDown
+        | Key::PageUp
+        | Key::Escape
+        | Key::Tab => format!("{:?}", e.key),
         _ => return false,
     };
     focus(p, true);
     tx.live_only();
-    p.send(json!({"op":"key","key":key,"down":down,"repeat":tx.key_repeat(),
+    p.send(
+        json!({"op":"key","key":key,"down":down,"repeat":tx.key_repeat(),
         "code":tx.physical_key().map(|c|format!("{c:?}")),
-        "shift":e.mods.shift,"ctrl":e.mods.ctrl,"alt":e.mods.alt,"meta":e.mods.logo}))
+        "shift":e.mods.shift,"ctrl":e.mods.ctrl,"alt":e.mods.alt,"meta":e.mods.logo}),
+    )
 }
 
 pub fn ime(s: &mut State, event: &Ime, tx: &mut Tx) -> bool {
-    let Some(p) = &mut s.preview.panel else { return false };
-    if tx.focused() != Some(PAGE) && !p.composing { return false; }
+    let Some(p) = &mut s.preview.panel else {
+        return false;
+    };
+    if tx.focused() != Some(PAGE) && !p.composing {
+        return false;
+    }
     if let Ime::Preedit(text, ..) | Ime::Commit(text) = event {
         let preedit = matches!(event, Ime::Preedit(..)) && !text.is_empty();
-        if !p.composing { p.send(json!({"op":"ime","phase":"start"})); }
+        if !p.composing {
+            p.send(json!({"op":"ime","phase":"start"}));
+        }
+        if matches!(event, Ime::Commit(_)) && !text.is_empty() {
+            p.send(json!({"op":"ime","phase":"update","text":text}));
+        }
         p.composing = preedit;
         return p.send(json!({"op":"ime","phase":if preedit {"update"} else {"end"},"text":text}));
     }
@@ -135,9 +169,13 @@ pub fn ime(s: &mut State, event: &Ime, tx: &mut Tx) -> bool {
 
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let native = super::automation::poll(s);
-    let Some(p) = &mut s.preview.panel else { return native };
+    let Some(p) = &mut s.preview.panel else {
+        return native;
+    };
     let mut changed = false;
-    if p.focused && tx.focused() != Some(PAGE) { focus(p, false); }
+    if p.focused && tx.focused() != Some(PAGE) {
+        focus(p, false);
+    }
     if p.guest.offline.load(Ordering::Acquire) && !p.error {
         p.error = true;
         changed = true;
@@ -159,11 +197,19 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         && let Some(id) = frame.header["frame"].as_u64()
         && id > p.last_frame
         && frame.header["generation"].as_u64() == Some(p.generation)
+        && frame.header["epoch"].as_u64() == Some(p.epoch)
         && frame.header["w"].as_u64() == Some(p.viewport_px.0.into())
         && frame.header["h"].as_u64() == Some(p.viewport_px.1.into())
     {
         p.last_frame = id;
-        if rune_theme_codenomad::preview::push(&p.surface, p.viewport_px.0, p.viewport_px.1, frame.bytes).is_err() {
+        if rune_theme_codenomad::preview::push(
+            &p.surface,
+            p.viewport_px.0,
+            p.viewport_px.1,
+            frame.bytes,
+        )
+        .is_err()
+        {
             p.error = true;
             changed = true;
         }

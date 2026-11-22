@@ -2,11 +2,11 @@
 mod connection;
 pub(crate) use connection::configured_backend;
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod browser;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod host;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod servo;
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) mod browser;
 use std::{future::Future, time::Duration};
 #[cfg(not(target_arch = "wasm32"))]
 mod boot;

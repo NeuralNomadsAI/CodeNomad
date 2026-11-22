@@ -1,0 +1,32 @@
+diff --git a/Cargo.lock b/Cargo.lock
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -10401,3 +10401,17 @@
++[[package]]
++name = "study-probe"
++version = "0.1.0"
++dependencies = [
++ "base64 0.23.1",
++ "dpi",
++ "euclid",
++ "image",
++ "rustls",
++ "serde_json",
++ "servo",
++ "url",
++]
++
+ [[package]]
+ name = "style_tests"
+ version = "0.8.0"
+diff --git a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,6 +1,7 @@
+ [workspace]
+ resolver = "2"
+ members = [
++    "study-probe",
+     "components/media/examples",
+     "components/svg",
+     "components/xpath",

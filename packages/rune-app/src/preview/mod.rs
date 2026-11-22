@@ -1,15 +1,15 @@
-mod view;
 mod automation;
 #[cfg(feature = "test-support")]
 pub(crate) mod test_metrics;
+mod view;
 #[cfg(not(target_arch = "wasm32"))]
-pub use view::{ime, poll, toolbar, viewport, window_focus};
+pub use view::{ime, poll, toolbar, viewport, visibility, window_focus};
 #[cfg(not(target_arch = "wasm32"))]
 use {
     crate::platform::servo::Guest,
     rune::edit::TextEdit,
-    serde_json::{Value, json},
     rune_theme_codenomad::preview::PreviewSurface,
+    serde_json::{Value, json},
 };
 
 #[derive(Default)]
@@ -20,17 +20,19 @@ pub struct Preview {
     requests: Option<std::sync::mpsc::Receiver<crate::platform::browser::Request>>,
     pending: Option<automation::Pending>,
     serial: u64,
+    hidden: bool,
 }
 
 #[cfg(feature = "test-support")]
 impl Preview {
     pub fn owner_for_trial(&self) -> Option<(&str, &str)> {
-        self.owner.as_ref().map(|(w,s)| (w.as_str(), s.as_str()))
+        self.owner.as_ref().map(|(w, s)| (w.as_str(), s.as_str()))
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 struct Panel {
+    registration: u64,
     guest: Guest,
     surface: PreviewSurface,
     address: TextEdit,
@@ -48,7 +50,9 @@ struct Panel {
 #[cfg(not(target_arch = "wasm32"))]
 impl Panel {
     fn new(guest: Guest) -> Self {
+        static REGISTRATIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Self {
+            registration: REGISTRATIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             guest,
             surface: PreviewSurface::new(),
             address: TextEdit::new(""),
@@ -89,8 +93,10 @@ fn permitted(raw: &str) -> bool {
     reqwest::Url::parse(raw).is_ok_and(|url| {
         (url.scheme() == "http"
             && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))
-            && url.username().is_empty() && url.password().is_none())
+            && url.username().is_empty()
+            && url.password().is_none())
             || (url.scheme() == "file"
-                && crate::platform::setting("RUNE_SERVO_TEST_FILE").as_deref() == Some(url.as_str()))
+                && crate::platform::setting("RUNE_SERVO_TEST_FILE").as_deref()
+                    == Some(url.as_str()))
     })
 }

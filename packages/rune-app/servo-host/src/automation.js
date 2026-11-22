@@ -13,7 +13,8 @@
   const e = nodes.find(e => id(e) === arg.ref);
   const error = error => JSON.stringify({error});
   const view = {w:innerWidth,h:innerHeight};
-  const value = e => e.type === 'password' ? '•'.repeat(Math.min(16, e.value.length)) : String(e.value ?? '').slice(0, 400);
+  const value = e => e.type === 'password' ? '•'.repeat(Math.min(16, e.value.length)) :
+    (typeof e.value === 'string' ? e.value.slice(0,400) : '');
   let result;
   switch (arg.action) {
     case 'snapshot':
@@ -46,8 +47,16 @@
       }
       break;
     case 'prepare':
-      if (!e || document.activeElement !== e || e.disabled || e.readOnly) return error('Input focus changed');
+      if (!e || !visible(e) || e.disabled || e.readOnly) return error('Input is unavailable');
+      if (document.activeElement !== e) e.focus({preventScroll:true});
+      if (document.activeElement !== e) return error('Input focus changed');
       if (arg.clear) e.select(); else e.setSelectionRange(e.value.length,e.value.length);
+      result={};
+      break;
+    case 'focus':
+      if (!e || !visible(e) || e.disabled) return error('Target is unavailable');
+      e.focus({preventScroll:true});
+      if (document.activeElement !== e) return error('Target refused focus');
       result={};
       break;
     case 'value': result=e ? {value:value(e)} : {error:'Element is stale'}; break;

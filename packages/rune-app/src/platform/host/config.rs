@@ -175,7 +175,10 @@ impl LaunchConfig {
             .env("CODENOMAD_UPDATE_CHANNEL", &self.profile)
             .env("CODENOMAD_PROFILE_CONFIG_IDENTITY", &self.config_identity)
             .env("CODENOMAD_NATIVE_PARENT", "1")
-            .env("CODENOMAD_NATIVE_BROWSER_AUTOMATION", if self.preview { "1" } else { "0" })
+            .env(
+                "CODENOMAD_NATIVE_BROWSER_AUTOMATION",
+                if self.preview { "1" } else { "0" },
+            )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

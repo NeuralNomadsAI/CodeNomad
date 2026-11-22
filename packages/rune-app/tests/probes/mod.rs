@@ -7,8 +7,8 @@ mod native_transport;
 mod owned_startup;
 mod real_history;
 mod recovery;
-mod session_transport;
 mod servo;
+mod session_transport;
 
 /// Dispatch qualification CLI without entering the native window event loop.
 pub fn dispatch() -> bool {

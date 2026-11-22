@@ -100,8 +100,11 @@ pub(super) fn fenced_response(response: String, expires: Instant, deadline: u64)
         .unwrap();
     let mut value: Value = serde_json::from_str(raw).unwrap();
     value["ok"] = false.into();
-    if let Some(obj) = value.as_object_mut() { obj.remove("result"); }
-    value["error"] = json!({"code":"native_error","message":"Native request expired before execution"});
+    if let Some(obj) = value.as_object_mut() {
+        obj.remove("result");
+    }
+    value["error"] =
+        json!({"code":"native_error","message":"Native request expired before execution"});
     format!("CODENOMAD_NATIVE_RESPONSE:{value}\n")
 }
 pub(super) fn loopback_url(raw: &str) -> bool {
