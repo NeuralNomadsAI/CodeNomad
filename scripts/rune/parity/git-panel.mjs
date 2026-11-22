@@ -32,10 +32,10 @@ function elements(tree) {
   return nodes
 }
 
-function native(scene, theme, stem, script, mark = "end", width) {
+function native(scene, theme, stem, script, mark = "end", width, locale = "fr") {
   const tree = path.join(out, `${stem}.json`)
   const png = path.join(out, `${stem}.png`)
-  const env = { ...process.env, RUNE_LOCALE: "fr", CODENOMAD_PROFILE: "trial-git-parity" }
+  const env = { ...process.env, RUNE_LOCALE: locale, CODENOMAD_PROFILE: "trial-git-parity" }
   for (const key of Object.keys(env)) if (key.startsWith("RUNE_") && key !== "RUNE_LOCALE") delete env[key]
   if (width) env.RUNE_GIT_PANEL_WIDTH = String(width)
   const args = ["--scene", scene, "--theme", theme, "--tree", tree, "--snap", png,
@@ -65,7 +65,7 @@ try {
   browser = await chromium.launch({ headless: true, executablePath: process.env.CODENOMAD_BROWSER_PATH })
   const settle = path.join(out, "settle.json")
   await writeFile(settle, JSON.stringify({ events: [{ t: 0.6, type: "mark", name: "end" }] }))
-  for (const theme of ["light", "dark"]) {
+  for (const [theme, locale] of [["light", "fr"], ["dark", "fr"], ["dark", "tr"]]) {
     const page = await browser.newPage({ viewport })
     page.on("pageerror", error => console.error(error))
     page.on("requestfailed", request => console.error(request.url(), request.failure()))
@@ -73,26 +73,29 @@ try {
     await page.getByRole("button", { name: "Changements", exact: true }).click()
     await page.getByRole("button", { name: "Aperçu du fichier · src/components/git-panel.tsx", exact: true }).click()
     await page.locator(".git-diff-view .line-insert").first().waitFor()
-    await page.evaluate(async theme => {
-      const { setThemePreference } = await import("/src/stores/preferences.tsx")
+    await page.evaluate(async ({ theme, locale }) => {
+      const { setThemePreference, updatePreferences } = await import("/src/stores/preferences.tsx")
       await setThemePreference(theme)
-    }, theme)
-    await page.waitForFunction(theme => document.documentElement.dataset.theme === theme, theme)
+      await updatePreferences({ locale })
+    }, { theme, locale })
+    await page.waitForFunction(({ theme, locale }) =>
+      document.documentElement.dataset.theme === theme && document.documentElement.lang === locale, { theme, locale })
     await page.evaluate(() => {
       // Rune consumes the base CSS tokens, not the fixture's user palette overrides.
       const { style } = document.documentElement
       for (const name of [...style]) if (name.startsWith("--")) style.removeProperty(name)
     })
-    for (const mode of ["changes", "commits"]) {
+    const solidModes = page.locator(".git-panel-switch button")
+    for (const mode of locale === "fr" ? ["changes", "commits"] : ["changes"]) {
       if (mode === "commits") {
-        await page.getByRole("button", { name: "Commits", exact: true }).click()
+        await solidModes.nth(2).click()
         await page.getByText("Make Git history the starting point").waitFor()
       }
       await page.evaluate(() => document.fonts.ready)
-      const name = `${mode}-${theme}`
+      const name = `${mode}-${theme}${locale === "fr" ? "" : `-${locale}`}`
       await page.screenshot({ path: path.join(out, `solid-${name}.png`) })
       await writeFile(path.join(out, `solid-${name}.yaml`), await page.locator("body").ariaSnapshot())
-      const tree = JSON.parse(await readFile(native(`git-${mode}`, theme, `rune-${name}`, settle), "utf8"))
+      const tree = JSON.parse(await readFile(native(`git-${mode}`, theme, `rune-${name}`, settle, "end", undefined, locale), "utf8"))
       const nodes = elements(tree)
       assert.equal(tree.dark_system, theme === "dark")
       assert(nodes.some(node => node.name?.includes("src/components/git-panel.tsx")))
@@ -122,7 +125,23 @@ try {
       }
       const row = geometry[mode === "changes" ? "stagedHeader" : "firstCommit"]
       assert(Math.abs(row.solid[3] - row.rune[3]) <= 2, `${mode}/${theme}: row height differs by more than 2 px`)
-      report.push({ theme, mode, nativeNodes: nodes.length, geometry })
+      const [solidWidth, runeWidth] = [geometry.modes.solid[2], geometry.modes.rune[2]]
+      // Allow font raster/measurement differences, not a full-width or equal-column selector.
+      assert(Math.abs(solidWidth - runeWidth) <= 8, `${name}: selector width ${runeWidth} vs ${solidWidth} px`)
+      const segments = await solidModes.evaluateAll(buttons => buttons.map(button => ({
+        label: button.textContent.trim(), width: button.getBoundingClientRect().width,
+      })))
+      assert.equal(segments.length, 3)
+      for (const [i, segment] of segments.entries()) {
+        const rune = tree.elements.find(node => node.key === `segment${i}` && node.role === "radio")
+        assert.equal(rune?.label, segment.label)
+        assert(Math.abs(segment.width - rune.rect[2]) <= 4, `${name}: ${segment.label} segment width ${rune.rect[2]} vs ${segment.width} px`)
+      }
+      if (locale === "tr") {
+        const title = tree.elements.find(node => node.key === "git-section-title" && node.path.includes("/git-section-unstaged/"))
+        assert.equal(title?.text, "Değişiklikler")
+      }
+      report.push({ theme, locale, mode, nativeNodes: nodes.length, geometry })
     }
     await page.close()
   }
@@ -132,21 +151,28 @@ try {
     { t: 0.4, type: "tap", key: "git-diff-mode" },
     { t: 0.6, type: "mark", name: "selected" },
     { t: 0.8, type: "tap", key: "git-section-staged" },
-    { t: 1.0, type: "mark", name: "end" },
+    { t: 1.0, type: "mark", name: "collapsed" },
+    { t: 1.2, type: "tap", key: "segment2" },
+    { t: 1.4, type: "mark", name: "end" },
   ] }))
   const selected = elements(JSON.parse(await readFile(native("git-changes", "dark", "selection", script, "selected"), "utf8")))
   assert(selected.some(node => node.key === "git-row-staged:file:src/components/git-panel.tsx" && node.states.includes("checked")))
-  const tree = JSON.parse(await readFile(native("git-changes", "dark", "interaction", script), "utf8"))
+  const tree = JSON.parse(await readFile(native("git-changes", "dark", "interaction", script, "collapsed"), "utf8"))
   const nodes = elements(tree)
   assert(nodes.some(node => node.key === "git-section-staged" && !node.states.includes("expanded")))
   assert(nodes.some(node => node.key === "git-diff-mode" && node.states.includes("checked")))
+  const switched = elements(JSON.parse(await readFile(native("git-changes", "dark", "mode-switch", script), "utf8")))
+  assert(switched.some(node => node.role === "button" && node.name?.startsWith("Make Git history")))
   const compact = path.join(out, "compact-interaction.json")
   await writeFile(compact, JSON.stringify({ events: [
     { t: 0.2, type: "tap", key: "git-row-staged:menu:src/components/git-panel.tsx:trigger" },
     { t: 0.6, type: "mark", name: "end" },
   ] }))
-  const menu = elements(JSON.parse(await readFile(native("git-changes", "dark", "compact", compact, "end", 180), "utf8")))
+  const narrow = JSON.parse(await readFile(native("git-changes", "dark", "compact", compact, "end", 180), "utf8"))
+  const menu = elements(narrow)
   assert(menu.some(node => node.role === "menu-item" && node.key?.endsWith(":item:stage") && node.states.includes("focused")))
+  const narrowModes = narrow.elements.find(node => node.key === "git-mode")?.rect
+  assert(narrowModes && narrowModes[2] < 180, "The mode selector must fit a compact panel")
   await writeFile(path.join(out, "report.json"), JSON.stringify(report, null, 2) + "\n")
   console.log(`Git captures and accessibility trees: ${out}`)
 } finally {

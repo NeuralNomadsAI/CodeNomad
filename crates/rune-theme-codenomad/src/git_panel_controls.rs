@@ -4,10 +4,7 @@ use crate::{
 };
 pub use rune::Icon as Glyph;
 use rune::{El, Phase, Tx, edit::TextEdit, row, text};
-use rune_kit::{
-    Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, SegmentedControl, Select,
-    State,
-};
+use rune_kit::{Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, Select, State};
 
 pub enum ButtonLook {
     Neutral,
@@ -80,13 +77,57 @@ pub fn modes<S: 'static>(
     labels: &[&str],
     title: &str,
     selected: Option<usize>,
+    panel_width: f32,
     select: impl Fn(&mut S, usize, &mut Tx) + Clone + 'static,
 ) -> El {
-    SegmentedControl::new(labels, selected)
+    let dark = dark();
+    let t = crate::tokens(dark);
+    let kit = kit(dark);
+    // The Kit's fit mode makes equal columns; Solid sizes each segment to its own label.
+    let metric = |name| t.metric("gitModeButton", name).px();
+    let border = t.metric("gitModes", "borderTopWidth").px();
+    let divider = t.metric("gitModeDivider", "borderInlineStartWidth").px();
+    let edge = t.color("border-base");
+    let font =
+        rune::TextStyle::new(metric("fontSize"), metric("fontWeight")).lh(metric("lineHeight"));
+    row()
+        .role("radiogroup")
+        .focus_group()
         .label(title)
-        .width(None)
-        .on_pick(select)
-        .build(kit(dark()))
+        .max_w(super::selector_width(panel_width).max(0.0))
+        .border(border, edge)
+        .border_layout()
+        .children(labels.iter().enumerate().map(|(i, &label)| {
+            let pick = select.clone();
+            let active = selected == Some(i);
+            let segment = row()
+                .key(format!("segment{i}"))
+                .role("radio")
+                .label(label)
+                .position_in_set(i + 1, labels.len())
+                .focusable(true)
+                .focus_selected(active)
+                .shrink()
+                .px(metric("paddingLeft"))
+                .py(metric("paddingTop"))
+                .border_sides([0.0, 0.0, 0.0, if i == 0 { 0.0 } else { divider }], edge)
+                .border_layout()
+                .child(
+                    text(label)
+                        .font(font)
+                        .color(t.color(if active { "text-primary" } else { "text-muted" }))
+                        .truncate()
+                        .shrink()
+                        .a11y_hidden(),
+                )
+                .on_press_tx(move |s, tx| pick(s, i, tx));
+            let segment = segment.focus_ring(border, -border, t.color("focus-ring-color"));
+            if active {
+                segment.fill(t.color("selection-neutral-strong-bg"))
+            } else {
+                kit.interactive(segment)
+            }
+        }))
 }
 
 pub fn section_button<S: 'static>(
@@ -101,7 +142,7 @@ pub fn section_button<S: 'static>(
     let title_font =
         rune::TextStyle::new(title("fontSize"), title("fontWeight")).lh(title("lineHeight"));
     let label = format!("{name} · {count}");
-    let name = name.to_uppercase();
+    let name = name.to_owned();
     let counter = text(count.to_string())
         .font(
             rune::TextStyle::new(chip("fontSize"), t.number("font-weight-regular").px())
@@ -137,6 +178,7 @@ pub fn section_button<S: 'static>(
                 )
                 .child(
                     text(name)
+                        .key("git-section-title")
                         .font(title_font)
                         .color(ink)
                         .truncate()
