@@ -1,4 +1,5 @@
 pub(crate) mod actions;
+pub(crate) mod attachments;
 #[cfg(test)]
 mod content_tests;
 #[cfg(test)]

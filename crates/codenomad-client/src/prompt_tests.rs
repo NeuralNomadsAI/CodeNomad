@@ -23,6 +23,14 @@ struct Server {
 }
 impl Server {
     fn new(responses: Vec<Value>) -> Self {
+        Self::bodies(
+            responses
+                .into_iter()
+                .map(|value| serde_json::to_vec(&value).unwrap())
+                .collect(),
+        )
+    }
+    fn bodies(responses: Vec<Vec<u8>>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let base = format!("http://{}/", listener.local_addr().unwrap());
@@ -76,13 +84,18 @@ impl Server {
                 } else {
                     serde_json::from_slice(&bytes).unwrap()
                 };
+                let content_type =
+                    if header.starts_with("GET /api/workspaces/workspace/session-attachment/") {
+                        "application/octet-stream"
+                    } else {
+                        "application/json"
+                    };
                 received
                     .lock()
                     .unwrap()
                     .push((header.lines().next().unwrap().into(), body));
-                let response = serde_json::to_vec(&response).unwrap();
                 let header = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     response.len()
                 );
                 if socket.write_all(header.as_bytes()).is_ok() {
@@ -132,37 +145,56 @@ fn inline(bytes: &[u8], name: &str) -> Value {
 const MIB: usize = 1024 * 1024;
 
 #[test]
-fn inline_file_at_input_limit_reloads_from_native_window() {
+fn history_keeps_references_and_loads_only_the_requested_attachment() {
     run(async {
         let first: Vec<_> = (0..5 * MIB).map(|i| (i % 251) as u8).collect();
-        let second: Vec<_> = first.iter().rev().copied().collect();
-        let a = inline(&first, "first.bin");
-        let b = inline(&second, "second.bin");
-        let server = Server::new(vec![window(vec![a.clone()]), window(vec![a, b])]);
-        for fixtures in [
-            vec![("first.bin", &first)],
-            vec![("first.bin", &first), ("second.bin", &second)],
-        ] {
-            let page = server.backend.page(json!({"kind":"latest"})).await.unwrap();
-            assert_eq!(page.rows.len(), 1);
-            let row = &page.rows[0];
-            assert_eq!(row.body, "attached");
-            assert_eq!(row.parts.len(), fixtures.len());
-            for (i, (name, sent)) in fixtures.into_iter().enumerate() {
-                let Part::File(file) = &row.parts[i] else {
-                    panic!("missing native file")
-                };
-                assert_eq!(file.id, format!("user-file-file-{i}"));
-                assert_eq!(file.name.as_deref(), Some(name));
-                assert_eq!(file.mime, "application/octet-stream");
-                let data = file
-                    .uri
-                    .strip_prefix("data:application/octet-stream;base64,")
-                    .unwrap();
-                assert!(STANDARD.decode(data).unwrap() == *sent, "corrupted {name}");
-            }
+        let hash = "a".repeat(64);
+        let files = (0..3)
+            .map(|i| {
+                json!({"name":format!("part-{i}.bin"),"mime":"application/octet-stream",
+            "source":{"type":"deferred","sha256":hash}})
+            })
+            .collect();
+        let page = serde_json::to_vec(&window(files)).unwrap();
+        assert!(page.len() < 1024);
+        let server = Server::bodies(vec![page, first.clone(), vec![0; 8 * MIB + 1]]);
+        let page = server.backend.page(json!({"kind":"latest"})).await.unwrap();
+        assert_eq!(
+            server.requests.lock().unwrap().len(),
+            1,
+            "window never fetches a file"
+        );
+        let row = &page.rows[0];
+        assert_eq!(row.body, "attached");
+        assert_eq!(row.parts.len(), 3);
+        for (index, part) in row.parts.iter().enumerate() {
+            let Part::File(file) = part else {
+                panic!("missing native file")
+            };
+            assert_eq!(
+                file.name.as_deref(),
+                Some(format!("part-{index}.bin").as_str())
+            );
+            let reference = file.reference.as_ref().unwrap();
+            assert_eq!(reference.ordinal, index);
+            assert_eq!(reference.sha256, hash);
         }
-        assert_eq!(server.requests.lock().unwrap().len(), 2);
+        let Part::File(file) = &row.parts[1] else {
+            panic!("missing native file")
+        };
+        let reference = file.reference.as_ref().unwrap();
+        let bytes = server.backend.attachment_bytes(reference).await.unwrap();
+        assert_eq!(bytes.as_slice(), first.as_slice());
+        assert!(Arc::ptr_eq(&bytes, &bytes.clone()));
+        assert!(server.backend.attachment_bytes(reference).await.is_err());
+        let requests = server.requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(
+            requests[1].0,
+            format!(
+                "GET /api/workspaces/workspace/session-attachment/session/user-file/1/{hash} HTTP/1.1"
+            )
+        );
     });
 }
 
@@ -289,12 +321,12 @@ fn user_parts_keep_only_display_data_and_native_order() {
         matches!(&row.parts[..], [Part::Skill(skill), Part::File(file)]
         if skill.id == "m-skill-0" && skill.skill_id == "opaque/skill"
             && skill.name == "Review" && file.id == "m-file-0" && file.mime == "text/plain"
-            && file.name.is_none() && file.uri == "file:///project/%23.txt")
+            && file.name.as_deref() == Some("%23.txt") && file.reference.is_none())
     );
 }
 
 #[test]
-fn projected_file_blobs_keep_bytes_and_hide_the_old_device_path() {
+fn legacy_file_blobs_keep_labels_without_retaining_inline_bytes_or_device_paths() {
     run(async {
         let server = Server::new(vec![window(vec![json!({
             "mime":"image/png", "name":"shot.png", "data":"AAEC/w==",
@@ -305,13 +337,9 @@ fn projected_file_blobs_keep_bytes_and_hide_the_old_device_path() {
             panic!("missing historical file")
         };
         assert_eq!(file.name.as_deref(), Some("shot.png"));
-        assert_eq!(file.uri, "data:image/png;base64,AAEC/w==");
-        assert_eq!(
-            STANDARD
-                .decode(file.uri.split_once(',').unwrap().1)
-                .unwrap(),
-            [0, 1, 2, 255]
-        );
+        assert!(file.reference.is_none());
+        assert!(!format!("{file:?}").contains("AAEC/w=="));
+        assert!(!format!("{file:?}").contains("D:/device"));
     });
 }
 
@@ -367,7 +395,7 @@ fn dense_user_attachments_keep_the_message_and_native_tail() {
     let row = &page.rows[0];
     assert_eq!(row.body, "attached");
     assert_eq!(row.parts.len(), 1001);
-    assert!(matches!(row.parts[500], Part::HiddenUserAttachments(1)));
+    assert!(matches!(&row.parts[500], Part::Skill(skill) if skill.name == "Skill 500"));
     assert!(matches!(&row.parts[501], Part::Skill(skill) if skill.name == "Skill 501"));
     assert!(matches!(row.parts.last(), Some(Part::Skill(skill)) if skill.name == "Skill 1000"));
 }
@@ -467,11 +495,7 @@ fn prompt_and_history_limits_do_not_expand_catalogues() {
             .insert(0, json!({"id":"overlap","type":"user","text":""}));
         let left = history::decode(before).unwrap();
         let right = history::decode(after).unwrap();
-        assert!(
-            history::join(&left.rows, &right.rows)
-                .unwrap_err()
-                .to_string()
-                .contains("resident attachments")
-        );
+        assert!(history::previous_page(&left, &right.rows).is_ok());
+        assert!(history::previous_page(&left, &right.rows[1..]).is_err());
     });
 }

@@ -10,6 +10,7 @@ pub(super) struct Cache {
     agent: Option<agent::Ui>,
     files: Option<crate::files::Ui>,
     tools: HashSet<String>,
+    attachments: crate::chat::attachments::Reader,
     title: String,
     messages: Vec<Message>,
     draft: TextEdit,
@@ -20,6 +21,7 @@ pub(super) struct Cache {
     can_older: bool,
     paging: bool,
     error: bool,
+    history_detached: bool,
     launcher_visible: bool,
     input_scope: std::rc::Rc<()>,
 }
@@ -37,6 +39,7 @@ impl Cache {
             agent: s.agent.take(),
             files: s.files.take(),
             tools: std::mem::take(&mut s.expanded_tools),
+            attachments: std::mem::take(&mut s.attachments),
             title: std::mem::take(&mut s.chat_title),
             messages: std::mem::take(&mut s.messages),
             draft: std::mem::replace(&mut s.draft, TextEdit::new("")),
@@ -47,6 +50,7 @@ impl Cache {
             can_older: std::mem::take(&mut s.can_older),
             paging: std::mem::take(&mut s.paging),
             error: std::mem::take(&mut s.history_error),
+            history_detached: std::mem::take(&mut s.history_detached),
             launcher_visible: s.screen.is_launcher(),
             input_scope: s.input_scope.clone(),
         }
@@ -55,6 +59,7 @@ impl Cache {
         s.agent = self.agent;
         s.files = self.files;
         s.expanded_tools = self.tools;
+        s.attachments = self.attachments;
         s.chat_title = self.title;
         s.messages = self.messages;
         s.draft = self.draft;
@@ -65,6 +70,7 @@ impl Cache {
         s.can_older = self.can_older;
         s.paging = self.paging;
         s.history_error = self.error;
+        s.history_detached = self.history_detached;
         if self.launcher_visible {
             s.screen.show_launcher();
         } else {

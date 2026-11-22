@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod agent_api;
+pub mod attachments;
 pub mod backend;
 pub mod catalog;
 pub mod content;

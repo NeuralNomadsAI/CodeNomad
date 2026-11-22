@@ -2,14 +2,14 @@
 use crate::history::Result;
 use serde_json::Value;
 mod user;
-pub use user::{File, Skill};
+pub(crate) use user::digest as attachment_digest;
+pub use user::{File, Reference, Skill};
 #[derive(Clone, Debug, PartialEq)]
 pub enum Part {
     Text(Text),
     Tool(Tool),
     Skill(Skill),
     File(File),
-    HiddenUserAttachments(usize),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextProvenance {
@@ -224,7 +224,6 @@ fn part_keys(parts: &[Part]) -> Vec<String> {
             Part::Tool(t) => format!("tool:{}", t.id),
             Part::Skill(s) => format!("skill:{}", s.id),
             Part::File(f) => format!("file:{}", f.id),
-            Part::HiddenUserAttachments(count) => format!("hidden-attachments:{count}"),
         })
         .collect()
 }
@@ -340,10 +339,7 @@ pub fn bytes(parts: &[Part]) -> usize {
             Part::Text(t) => t.text.len(),
             Part::Tool(t) => t.id.len() + t.name.len() + t.input.len() + t.output.len(),
             Part::Skill(s) => s.id.len() + s.skill_id.len() + s.name.len(),
-            Part::File(f) => {
-                f.id.len() + f.uri.len() + f.mime.len() + f.name.as_ref().map_or(0, String::len)
-            }
-            Part::HiddenUserAttachments(_) => 0,
+            Part::File(f) => file_bytes(f),
         })
         .sum()
 }
@@ -351,11 +347,18 @@ pub fn attachment_bytes(parts: &[Part]) -> usize {
     parts
         .iter()
         .map(|part| match part {
-            Part::File(f) => {
-                f.id.len() + f.uri.len() + f.mime.len() + f.name.as_ref().map_or(0, String::len)
-            }
+            Part::File(f) => file_bytes(f),
             Part::Skill(s) => s.id.len() + s.skill_id.len() + s.name.len(),
             _ => 0,
         })
         .sum()
+}
+fn file_bytes(file: &File) -> usize {
+    file.id.len()
+        + file.mime.len()
+        + file.name.as_ref().map_or(0, String::len)
+        + file
+            .reference
+            .as_ref()
+            .map_or(0, |r| r.message.len() + r.sha256.len())
 }

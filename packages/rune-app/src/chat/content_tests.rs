@@ -2,6 +2,43 @@ use crate::{Phase, content::Part, history, init, view};
 use rune::{Env, Runtime};
 use serde_json::json;
 #[test]
+fn attachment_reveal_keeps_the_gap_between_head_and_tail() {
+    let files = (0..1001)
+        .map(|index| {
+            json!({
+                "name":format!("Part {index}"), "mime":"text/plain","source":{"type":"unavailable"}
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut s = init();
+    s.messages = vec![
+        history::decode_message(&json!({"id":"dense","type":"user","text":"Files","files":files}))
+            .unwrap(),
+    ];
+    s.phase = Phase::Ready;
+    let mut rt = Runtime::new(s, view, (900.0, 700.0), Env::new(false, 1.0));
+    rt.frame(0.0);
+    let elements = rt.elements();
+    let head = elements
+        .iter()
+        .position(|el| el.key.as_deref() == Some("dense-file-499"))
+        .unwrap();
+    let marker = elements
+        .iter()
+        .position(|el| el.key.as_deref() == Some("attachments-dense-0"))
+        .unwrap();
+    let tail = elements
+        .iter()
+        .position(|el| el.key.as_deref() == Some("dense-file-501"))
+        .unwrap();
+    assert!(head < marker && marker < tail);
+    assert!(rt.find("dense-file-500").is_none());
+    rt.update(|s, _| crate::transcript_state::reveal_tool_output(s, "attachments-dense-0"));
+    rt.frame(0.0);
+    assert!(rt.find("dense-file-500").is_some());
+    assert!(rt.find("attachments-dense-0").is_none());
+}
+#[test]
 fn user_attachments_render_as_chips_without_instructions_or_uris() {
     crate::strings::with_locale("en", || {
         for dark in [false, true] {

@@ -62,6 +62,7 @@ impl Backend {
                         "{}api/workspaces/{}/session-history/window",
                         self.base, self.workspace
                     ))
+                    .header("x-codenomad-user-files", "reference-v1")
                     .json(&json!({"sessionID":self.session,"target":target}))
                     .send()
                     .await?

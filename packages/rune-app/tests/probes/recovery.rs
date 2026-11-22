@@ -64,17 +64,22 @@ pub(crate) fn check_anchor(rt: &Runtime<State>, anchor: &(String, f32)) -> f32 {
     assert!(delta < 0.5, "reading anchor jumped by {delta} points");
     delta
 }
-fn canonical(rt: &Runtime<State>, count: usize) {
+fn canonical(rt: &Runtime<State>, first: usize, count: usize) {
     assert_eq!(rt.state.messages.len(), count);
     for (i, row) in rt.state.messages.iter().enumerate() {
         assert_eq!(
             row.id,
-            format!("message-{i:05}"),
+            format!("message-{:05}", first + i),
             "ordered, unique native rows"
         );
     }
     let expected = control("expected");
-    for (row, expected) in rt.state.messages.iter().zip(expected.as_array().unwrap()) {
+    for (row, expected) in rt
+        .state
+        .messages
+        .iter()
+        .zip(expected.as_array().unwrap().iter().skip(first))
+    {
         assert_eq!(row.id, expected["id"]);
         assert_eq!(row.body, expected["body"]);
     }
@@ -91,12 +96,14 @@ pub fn run() {
     for _ in 0..12 {
         rt.frame(1.0 / 60.0);
     }
-    let reading = anchor(&rt);
     rt.update(request_older);
     wait(&mut rt, "first old page", |s| {
-        s.messages.len() == 384 && !s.paging
+        s.messages
+            .first()
+            .is_some_and(|row| row.id == "message-00216")
+            && !s.paging
     });
-    let mut max_jump = check_anchor(&rt, &reading);
+    canonical(&rt, 216, 200);
     let before = rt.state.messages.clone();
     control("block-older");
     rt.update(request_older);
@@ -105,34 +112,42 @@ pub fn run() {
         rt.state.messages, before,
         "failed page keeps the current snapshot"
     );
-    max_jump = max_jump.max(check_anchor(&rt, &reading));
     rt.update(request_older);
     wait(&mut rt, "explicit page retry", |s| {
-        s.messages.len() == 568 && !s.paging
+        s.messages
+            .first()
+            .is_some_and(|row| row.id == "message-00032")
+            && !s.paging
     });
-    max_jump = max_jump.max(check_anchor(&rt, &reading));
+    canonical(&rt, 32, 200);
+    let connections = control("stats")["transportConnections"].as_u64().unwrap();
     control("stale-older");
     rt.update(request_older);
     wait(&mut rt, "late page fenced after disconnect", |s| {
-        s.phase == Phase::Ready
+        s.history_error
             && !s.paging
-            && s.messages
-                .iter()
-                .any(|r| r.id == "message-00250" && r.body.contains("edited during stale page"))
+            && s.agent.as_ref().is_some_and(|agent| agent.online)
+            && control("stats")["transportConnections"].as_u64().unwrap() > connections
     });
     assert_eq!(
         rt.state.messages.len(),
-        568,
+        200,
         "stale older response is rejected"
     );
     assert_eq!(rt.state.messages[0].id, "message-00032");
-    max_jump = max_jump.max(check_anchor(&rt, &reading));
     rt.update(request_older);
     wait(&mut rt, "oldest page", |s| {
-        s.messages.len() == 600 && !s.paging
+        s.messages.len() == 48 && !s.paging
     });
-    canonical(&rt, 600);
-    max_jump = max_jump.max(check_anchor(&rt, &reading));
+    canonical(&rt, 0, 48);
+    rt.update(crate::latest);
+    wait(&mut rt, "explicit latest page", |s| {
+        s.phase == Phase::Ready && !s.history_detached && s.messages.len() == 200
+    });
+    canonical(&rt, 400, 200);
+    rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, 0.0));
+    rt.frame(0.0);
+    let reading = anchor(&rt);
     rt.update(|s, tx| {
         s.draft = rune::TextEdit::new("Recovery synthetic prompt");
         send(s, tx);
@@ -144,25 +159,25 @@ pub fn run() {
     });
     control("transport-cut");
     wait(&mut rt, "transport recovery", |s| {
-        s.phase == Phase::Ready && s.messages.len() == 604
+        s.phase == Phase::Ready && s.messages.len() == 204
     });
-    canonical(&rt, 604);
-    max_jump = max_jump.max(check_anchor(&rt, &reading));
+    canonical(&rt, 400, 204);
+    let mut max_jump = check_anchor(&rt, &reading);
     let pages = control("stats")["pages"].as_u64().unwrap();
     control("replay");
     wait(&mut rt, "post-reconnect authoritative read", |s| {
         s.phase == Phase::Ready
-            && s.messages.len() == 604
+            && s.messages.len() == 204
             && control("stats")["pages"].as_u64().unwrap() > pages
     });
-    canonical(&rt, 604);
+    canonical(&rt, 400, 204);
     control("upstream-cut");
     wait(&mut rt, "Rust upstream generation recovery", |s| {
         s.phase == Phase::Ready
-            && s.messages.len() == 606
+            && s.messages.len() == 206
             && s.messages[10].body.contains("upstream")
     });
-    canonical(&rt, 606);
+    canonical(&rt, 400, 206);
     max_jump = max_jump.max(check_anchor(&rt, &reading));
     let final_snapshot = rt.state.messages.clone();
     control("remove-anchor");
@@ -176,12 +191,12 @@ pub fn run() {
     let stats = control("stats");
     assert_eq!(stats["prompts"], 1, "reconnect never resends a prompt");
     assert_eq!(
-        stats["latestReads"], 1,
+        stats["latestReads"], 2,
         "recovery never falls back to a mass latest read"
     );
     println!(
         "{}",
-        json!({"result":"recovery-probe-ok","canonicalRows":606,"maxAnchorJumpPoints":max_jump,
-        "checks":["overlap-pagination","page-error-retention","stale-page-fence","transport-resume","seeded-delta-replay","upstream-generation","missing-anchor"],"stats":stats})
+        json!({"result":"recovery-probe-ok","canonicalRows":206,"maxAnchorJumpPoints":max_jump,
+        "checks":["window-replacement","page-error-retention","stale-page-fence","transport-resume","seeded-delta-replay","upstream-generation","missing-anchor"],"stats":stats})
     );
 }

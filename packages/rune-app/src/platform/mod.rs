@@ -17,6 +17,57 @@ pub struct LocalHost;
 pub fn local_server_available() -> bool {
     cfg!(not(target_arch = "wasm32"))
 }
+pub fn attachment_export_available() -> bool {
+    cfg!(not(target_arch = "wasm32"))
+}
+
+pub fn export_attachment(
+    s: &crate::State,
+    tx: &mut rune::Tx,
+    name: &str,
+    bytes: std::sync::Arc<Vec<u8>>,
+) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let scope = s.input_scope.clone();
+        let name = name
+            .rsplit(['/', '\\'])
+            .next()
+            .filter(|name| !matches!(*name, "" | "." | ".."))
+            .unwrap_or_else(|| crate::strings::t("messageItem.attachment.defaultName"));
+        tx.save_file(
+            rune::file_dialog::FileDialogOptions {
+                file_name: Some(name.into()),
+                ..Default::default()
+            },
+            move |s: &mut crate::State, result, _| {
+                if !s.current_scope(&scope) {
+                    return;
+                }
+                if let Ok(Some(path)) = result {
+                    let (out, input) = codenomad_client::bounded(1);
+                    s.attachments.write = Some(input);
+                    let wake = s.wake.clone();
+                    spawn(async move {
+                        let ok = tokio::task::spawn_blocking(move || {
+                            std::fs::write(path, bytes.as_slice())
+                        })
+                        .await
+                        .is_ok_and(|result| result.is_ok());
+                        if out.send(ok).await.is_ok() {
+                            wake();
+                        }
+                    });
+                } else {
+                    s.attachments.saving = false;
+                    s.attachments.error = result.is_err();
+                }
+            },
+        );
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = (s, tx, name, bytes);
+}
 /// Called after Rune releases the event loop; process waits remain outside active UI work.
 pub fn finish() {
     #[cfg(not(target_arch = "wasm32"))]

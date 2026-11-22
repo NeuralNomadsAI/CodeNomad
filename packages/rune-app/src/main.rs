@@ -40,6 +40,7 @@ struct State {
     documents: files::document::store::Store,
     reads: platform::reads::Reads,
     expanded_tools: std::collections::HashSet<String>,
+    attachments: chat::attachments::Reader,
     screen: Screen,
     input_scope: std::rc::Rc<()>,
     rejected_edit: TextEdit,
@@ -54,6 +55,7 @@ struct State {
     can_older: bool,
     paging: bool,
     history_error: bool,
+    history_detached: bool,
 }
 #[derive(PartialEq)]
 enum Phase {
@@ -71,6 +73,7 @@ fn init() -> State {
         documents: Default::default(),
         reads: Default::default(),
         expanded_tools: Default::default(),
+        attachments: Default::default(),
         screen: Screen::Chat { launcher: None },
         input_scope: std::rc::Rc::new(()),
         rejected_edit: TextEdit::new(""),
@@ -85,6 +88,7 @@ fn init() -> State {
         can_older: false,
         paging: false,
         history_error: false,
+        history_detached: false,
     }
 }
 fn setup(s: &mut State, wake: rune::Waker) {
@@ -118,6 +122,7 @@ fn local_stress() -> bool {
 
 fn send(s: &mut State, tx: &mut Tx) {
     if s.phase != Phase::Ready
+        || s.history_detached
         || s.draft.text.trim().is_empty()
         || s.agent.as_ref().is_some_and(|a| a.blocked())
     {
@@ -170,12 +175,23 @@ fn retry(s: &mut State) {
         s.history_error = false;
     }
 }
-fn latest(_: &mut State, tx: &mut Tx) {
+fn latest(s: &mut State, tx: &mut Tx) {
+    if s.history_detached {
+        if s.commands
+            .as_ref()
+            .is_some_and(|c| c.try_send(Command::Latest).is_ok())
+        {
+            s.phase = Phase::Reconnecting;
+            s.can_older = false;
+        }
+        return;
+    }
     tx.scroll_to_bottom_instant("history");
 }
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = launcher::poll(s, tx);
     changed |= poll_chat(s, 64);
+    changed |= chat::attachments::poll(s, tx);
     changed |= workspace::poll(s, now, tx);
     changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
     if changed {
@@ -192,6 +208,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
         match event {
             Event::Connected(backend) => {
                 s.renew_scope();
+                s.attachments.bind(backend.clone());
                 s.agent = Some(agent::Ui::new(agent::start(backend, s.wake.clone())));
             }
             Event::AgentHint(catalog) => {
@@ -218,6 +235,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     }
                 }
                 s.messages = page.rows;
+                s.history_detached = false;
                 s.can_older = page.older.is_some();
                 s.paging = false;
                 s.history_error = false;
@@ -228,21 +246,23 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 };
             }
             Event::Older(page) => {
-                match history::join(&page.rows, &s.messages) {
-                    Ok(rows) => {
-                        s.messages = rows;
-                        s.can_older = page.older.is_some();
-                        s.history_error = false;
-                    }
-                    Err(_) => s.history_error = true,
+                if !page.rows.is_empty() {
+                    s.attachments.cancel();
+                    s.history_detached = page.newer.is_some();
+                    s.messages = page.rows;
                 }
+                s.can_older = page.older.is_some();
+                s.history_error = false;
                 s.paging = false;
             }
             Event::Reconnecting => {
                 if let Some(files) = &mut s.files {
                     files.online(false);
                 }
-                s.phase = Phase::Reconnecting;
+                if !s.history_detached {
+                    s.phase = Phase::Reconnecting;
+                }
+                s.attachments.cancel();
                 if let Some(a) = s.agent.as_mut() {
                     a.online = false;
                 }
@@ -402,6 +422,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         })
         .child(rune_theme_codenomad::interruption::history(expanded).child(rows))
         .child(agent_view::view(s, cx))
+        .children(chat::attachments::error(s))
         .child(
             col()
                 .key("session-composer")
@@ -432,7 +453,9 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                 .child(components::button_tx(
                     "send",
                     strings::t("promptInput.overlay.send"),
-                    s.phase != Phase::Ready || s.agent.as_ref().is_some_and(|a| a.blocked()),
+                    s.phase != Phase::Ready
+                        || s.history_detached
+                        || s.agent.as_ref().is_some_and(|a| a.blocked()),
                     crate::screen::action_tx(&scope, send),
                 )),
         )

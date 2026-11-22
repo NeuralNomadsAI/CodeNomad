@@ -41,7 +41,41 @@ pub fn message(s: &State, i: usize) -> El {
     }
     let mut files = layout::action_row().key("message-attachments");
     let mut has_files = false;
+    let steps = |step| format!("attachments-{}-{step}", m.id);
+    let shown = 500
+        + (0..m.parts.len().div_ceil(1000))
+            .take_while(|&step| s.expanded_tools.contains(&steps(step)))
+            .count()
+            * 1000;
+    let hidden = m.parts.len().saturating_sub(shown + 500);
     for (index, part) in m.parts.iter().enumerate() {
+        if m.role == "user" && (shown..shown + hidden).contains(&index) {
+            if index == shown {
+                let count = hidden.min(1000).to_string();
+                let label = rune_theme_codenomad::catalogue::format(
+                    crate::strings::locale(),
+                    "messageBlock.hiddenParts.show",
+                    &[("count", &count)],
+                );
+                let key = steps((shown - 500) / 1000);
+                let button = crate::components::button(
+                    &key,
+                    &label,
+                    false,
+                    crate::screen::action(&scope, {
+                        let key = key.clone();
+                        move |s| crate::transcript_state::reveal_tool_output(s, &key)
+                    }),
+                );
+                if matches!(part, Part::File(_)) {
+                    has_files = true;
+                    files = files.child(button);
+                } else {
+                    view = view.child(button);
+                }
+            }
+            continue;
+        }
         match part {
             Part::Text(body) => {
                 if !body.text.is_empty() {
@@ -59,30 +93,33 @@ pub fn message(s: &State, i: usize) -> El {
             }
             Part::File(file) => {
                 has_files = true;
-                let name = file.display_name();
                 let icon = if file.mime.starts_with("image/") {
                     &icons::IMAGE
                 } else {
                     &icons::FILE
                 };
-                files = files.child(
-                    attachment::chip(
-                        name.as_deref()
-                            .unwrap_or_else(|| t("messageItem.attachment.defaultName")),
-                        Some(icon),
-                        None,
-                    )
-                    .key(file.id.clone()),
-                );
-            }
-            Part::HiddenUserAttachments(count) => {
-                let key = if *count == 1 {
-                    "messageBlock.hiddenParts.one"
-                } else {
-                    "messageBlock.hiddenParts.other"
-                };
-                let label = t(key).replace("{count}", &count.to_string());
-                view = view.child(text(label).text_role(TextRole::Small));
+                let name = file
+                    .name
+                    .as_deref()
+                    .unwrap_or_else(|| t("messageItem.attachment.defaultName"));
+                let button = file
+                    .reference
+                    .clone()
+                    .filter(|_| crate::platform::attachment_export_available())
+                    .map(|reference| {
+                        let label = super::attachments::download_label(name);
+                        let name = name.to_owned();
+                        crate::components::button(
+                            &format!("download-{}", file.id),
+                            &label,
+                            !s.attachments.available(),
+                            crate::screen::action(&scope, move |s| {
+                                super::attachments::Reader::request(s, &reference, &name)
+                            }),
+                        )
+                    });
+                files =
+                    files.child(attachment::chip(name, Some(icon), button).key(file.id.clone()));
             }
             Part::Tool(tool) => {
                 let key = format!("tool-{}-{}", m.id, tool.id);

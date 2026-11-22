@@ -72,6 +72,7 @@ pub async fn run(
     let mut repairs = 0u8;
     let mut settlement_reads = 0u8;
     let mut resident = Vec::<crate::Message>::new();
+    let mut historical = false;
     let mut parked = false;
     let mut seen = Seen {
         entries: VecDeque::new(),
@@ -124,12 +125,16 @@ pub async fn run(
             }
             Some(Input::Unavailable(e)) if e == epoch => {
                 dirty = true;
-                publish(&out, &wake, Event::Reconnecting).await;
+                if !historical {
+                    publish(&out, &wake, Event::Reconnecting).await;
+                }
             }
             Some(Input::Hint(e, v)) if e == epoch && v > fence => {
                 dirty = true;
                 quiet = Instant::now() + Duration::from_millis(100);
-                publish(&out, &wake, Event::Reconnecting).await;
+                if !historical {
+                    publish(&out, &wake, Event::Reconnecting).await;
+                }
             }
             Some(Input::Command(Command::Retry)) => {
                 attempts = 0;
@@ -144,16 +149,20 @@ pub async fn run(
             Some(Input::Command(Command::Older)) => {
                 if let Some(target) = older
                     .clone()
-                    .filter(|_| opened && !dirty && wire.upstream.load(SeqCst))
+                    .filter(|_| opened && (!dirty || historical) && wire.upstream.load(SeqCst))
                 {
                     let stamp = wire.version.load(SeqCst);
                     match backend.page(target).await {
                         Ok(page) if wire.valid(stamp) && rx.is_empty() => {
-                            if let Ok(joined) = history::join(&page.rows, &resident) {
-                                resident = joined;
+                            if history::previous_page(&page, &resident).is_ok() {
+                                if !page.rows.is_empty() {
+                                    historical = page.newer.is_some();
+                                    resident = page.rows.clone();
+                                    first = resident.first().map(|r| r.id.clone());
+                                    known = resident.iter().map(|r| r.id.clone()).collect();
+                                    owed.retain(|(id, _)| known.contains(id));
+                                }
                                 older = page.older.clone();
-                                first = resident.first().map(|r| r.id.clone());
-                                known.extend(page.rows.iter().map(|r| r.id.clone()));
                                 publish(&out, &wake, Event::Older(page)).await;
                             } else {
                                 publish(&out, &wake, Event::PagingFailed).await;
@@ -172,8 +181,22 @@ pub async fn run(
                     publish(&out, &wake, Event::PagingFailed).await;
                 }
             }
+            Some(Input::Command(Command::Latest)) => {
+                historical = false;
+                first = None;
+                resident.clear();
+                known.clear();
+                owed.clear();
+                dirty = true;
+                parked = false;
+                quiet = Instant::now();
+                if !wire.alive.load(SeqCst) {
+                    retry = Some(Instant::now());
+                }
+                publish(&out, &wake, Event::Reconnecting).await;
+            }
             Some(Input::Command(Command::Send(body))) => {
-                if opened && !dirty && !parked && wire.upstream.load(SeqCst) {
+                if opened && !dirty && !parked && !historical && wire.upstream.load(SeqCst) {
                     busy = true;
                     repairs = 0;
                     settlement_reads = 0;
@@ -193,7 +216,7 @@ pub async fn run(
                 {
                     publish(&out, &wake, Event::AgentHint(false)).await;
                 }
-                if v <= fence || !seen.insert(&native) {
+                if historical || v <= fence || !seen.insert(&native) {
                     continue;
                 }
                 let id = native["data"]["assistantMessageID"]
@@ -296,6 +319,7 @@ pub async fn run(
             && !parked
             && opened
             && wire.upstream.load(SeqCst)
+            && !historical
             && Instant::now() >= quiet
             && rx.is_empty()
         {

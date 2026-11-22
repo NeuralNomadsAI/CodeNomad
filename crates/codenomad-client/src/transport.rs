@@ -20,6 +20,7 @@ pub enum WorkspaceEvent {
 pub enum Command {
     Send(String),
     Older,
+    Latest,
     Retry,
     Close,
 }

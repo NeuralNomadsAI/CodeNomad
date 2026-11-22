@@ -166,3 +166,17 @@ pub fn join(left: &[Message], right: &[Message]) -> Result<Vec<Message>> {
     check(&rows)?;
     Ok(rows)
 }
+
+pub(crate) fn previous_page(page: &Page, shown: &[Message]) -> Result<()> {
+    check(&page.rows)?;
+    if !shown.is_empty()
+        && !page.rows.is_empty()
+        && !page
+            .rows
+            .iter()
+            .any(|row| shown.first().is_some_and(|first| first.id == row.id))
+    {
+        return Err("history windows lost their overlap".into());
+    }
+    Ok(())
+}

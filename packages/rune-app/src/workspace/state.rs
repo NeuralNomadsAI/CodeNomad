@@ -244,6 +244,7 @@ pub fn draft_changed(s: &mut State, _: &mut Tx) {
 }
 fn stash(s: &mut State) {
     capture(s);
+    s.attachments.cancel();
     if let Some(files) = &mut s.files {
         files.activate(false);
     }
