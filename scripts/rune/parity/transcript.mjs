@@ -10,11 +10,14 @@ import {createServer} from 'vite'
 import solid from 'vite-plugin-solid'
 import {createFixtureCache} from '../../../packages/ui/tests/browser/fixture-cache.ts'
 import {createFixtureShutdown} from '../../../packages/ui/tests/browser/fixture-shutdown.ts'
+import {installPngReader} from '../png-pixels.mjs'
 
 const root = fileURLToPath(new URL('../../../', import.meta.url))
 const [binary, out] = process.argv.slice(2)
 assert(binary && path.isAbsolute(binary) && out && path.isAbsolute(out), 'Pass an absolute binary and output directory')
 await mkdir(out, {recursive: true})
+const script = path.join(out, 'rune-interaction.json')
+await writeFile(script, JSON.stringify({events:[{t: 0.1, type: 'tap', key: 'toggle-tool-transcript-read'}]}))
 const cache = await createFixtureCache()
 const shutdown = createFixtureShutdown(cache)
 const entry = '/tests/browser/fixtures/reveal-truncated-text.tsx'
@@ -61,19 +64,40 @@ try {
     await tool('read').locator('.tool-call-header-toggle').click()
     await tool('read').getByText('return 7;', {exact: true}).waitFor()
     assert.deepEqual(errors, [])
-    await page.close()
 
     const tree = path.join(out, `rune-${theme}.json`)
-    await promisify(execFile)(binary, ['--scene', 'transcript', '--at', '1', '--theme', theme, '--size', '1000x1200',
-      '--scale', '1', '--tree', tree, '--snap', path.join(out, `rune-${theme}.png`)], {cwd: root, env, windowsHide: true, timeout: 90_000})
+    const rune = await capture(theme, ['--tree', tree, '--snap', path.join(out, `rune-${theme}.png`)])
     const data = JSON.parse(await readFile(tree, 'utf8'))
     assert.equal(data.dark_system, theme === 'dark')
     const accessibility = JSON.stringify(data.accessibility)
     for (const label of ['Results', 'Grep return', 'demo.rs']) assert(accessibility.includes(label))
+    const after = path.join(out, `rune-${theme}-read.json`)
+    await capture(theme, ['--script', script, '--tree', after])
+    assert(JSON.stringify(JSON.parse(await readFile(after, 'utf8')).accessibility).includes('return 7;'))
+    await installPngReader(page)
+    const images = await Promise.all(['solid', 'rune'].map(async type =>
+      `data:image/png;base64,${(await readFile(path.join(out, `${type}-${theme}.png`))).toString('base64')}`))
+    const metrics = await page.evaluate(async input => {
+      const [solid, rune] = await globalThis.__codenomadReadPngs(input)
+      if (solid.width !== rune.width || solid.height !== rune.height) throw Error('Capture geometry differs')
+      let rgbError = 0
+      for (let i = 0; i < solid.pixels.length; i++) {
+        if (i % 4 !== 3) rgbError += Math.abs(solid.pixels[i] - rune.pixels[i])
+      }
+      return {width: solid.width, height: solid.height, meanRgbError: rgbError / (solid.width * solid.height * 3)}
+    }, images)
+    await writeFile(path.join(out, `comparison-${theme}.json`),
+      JSON.stringify({theme, ...metrics, status: 'unqualified', runeOutput: rune.stdout}, null, 2))
+    await page.close()
   }
 } finally {
   try { await browser?.close() } finally {
     if (server) await server.close()
     else await cache.dispose()
   }
+}
+
+function capture(theme, args) {
+  return promisify(execFile)(binary, ['--scene', 'transcript', '--at', '1', '--theme', theme, '--size', '1000x1200',
+    '--scale', '1', ...args], {cwd: root, env, windowsHide: true, timeout: 90_000})
 }

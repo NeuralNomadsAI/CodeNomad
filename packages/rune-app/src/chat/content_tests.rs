@@ -227,3 +227,29 @@ fn long_streaming_markdown_coalesces_deltas_and_closes_immediately() {
     rt.frame(0.01);
     assert!(rt.accessibility_json().to_string().contains("FINAL-TAIL"));
 }
+
+#[test]
+fn tool_failure_can_copy_its_full_error_before_reveal() {
+    let error = format!("{} END-ERROR", "A clipped diagnostic. ".repeat(550));
+    let row = history::decode_message(&json!({"id":"error","type":"assistant","content":[
+        {"type":"tool","id":"read","name":"read","state":{"status":"error","error":{"message":error}}}
+    ]})).unwrap();
+    let mut state = init();
+    state.messages = vec![row];
+    state.phase = Phase::Ready;
+    let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    rt.frame(0.0);
+    for key in ["toggle-tool-error-read", "copy-tool-error-read-error"] {
+        let (x, y) = rt.find(key).unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(!rt.accessibility_json().to_string().contains("END-ERROR"));
+    assert_eq!(
+        clipboard.text().as_deref().map(String::as_str),
+        Some(error.as_str())
+    );
+}
