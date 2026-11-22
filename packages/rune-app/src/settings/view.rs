@@ -217,6 +217,28 @@ mod tests {
         assert_eq!(prefs.mode_display(), "light");
         assert!(!prefs.palette_ready());
     }
+
+    #[test]
+    fn settings_language_picker_opens_with_enter() {
+        let state = Window::default();
+        state.shared.borrow_mut().fixture();
+        let mut runtime = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+        runtime.frame(0.0);
+        runtime.update(|_, tx| tx.focus("locale-trigger", true));
+        runtime.frame(0.02);
+        runtime.key(rune::KeyEvent {
+            key: rune::Key::Enter,
+            mods: rune::Mods::default(),
+        });
+        runtime.frame(0.02);
+        let tree = runtime.accessibility_json();
+        assert!(
+            node(&tree, "listbox")
+                .unwrap()
+                .to_string()
+                .contains("Français")
+        );
+    }
 }
 
 const MODES: [(&str, &str); 3] = [
@@ -294,10 +316,23 @@ fn general(s: &Window, prefs: &Preferences, layers: &mut Vec<El>) -> El {
     col()
         .full_width()
         .on_key(move |s: &mut Window, event, tx| {
-            if event.mods != rune::Mods::default()
-                || s.picker.is_some()
-                || tx.focused() != Some("palette-trigger")
-            {
+            if event.mods != rune::Mods::default() || s.picker.is_some() {
+                return false;
+            }
+            if event.key == rune::Key::Enter && !tx.key_repeat() {
+                match tx.focused() {
+                    Some("locale-trigger") if s.shared.borrow().locale_ready() => {
+                        s.picker = Some("locale");
+                        return true;
+                    }
+                    Some("palette-trigger") if s.shared.borrow().palette_ready() => {
+                        s.picker = Some("palette");
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+            if tx.focused() != Some("palette-trigger") {
                 return false;
             }
             let step = match event.key {

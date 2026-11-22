@@ -33,6 +33,48 @@ pub(super) struct Preferences {
 }
 
 impl Preferences {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn flush(&mut self) -> bool {
+        use std::time::Duration;
+        if self.backend.is_none() || !self.has_writes() {
+            return true;
+        }
+        self.unwatch();
+        // The host still owns its server here. A deliberate close drains the
+        // last admitted choice, within the same budget for both documents.
+        platform::block_on(async {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                if self.config.read_failed {
+                    self.config.read = true;
+                }
+                if self.state.read_failed {
+                    self.state.read = true;
+                }
+                while self.has_writes() {
+                    self.poll();
+                    if [&self.config, &self.state]
+                        .into_iter()
+                        .any(|doc| doc.pending.is_some() && doc.read_failed && doc.flight.is_none())
+                    {
+                        return false;
+                    }
+                    if self.has_writes() {
+                        platform::sleep(Duration::from_millis(10)).await;
+                    }
+                }
+                self.error().is_none()
+            })
+            .await
+            .unwrap_or(false)
+        })
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn has_writes(&self) -> bool {
+        [&self.config, &self.state]
+            .into_iter()
+            .any(|doc| doc.writing.is_some() || doc.pending.is_some())
+    }
     pub fn bind(&mut self, owner: Option<Backend>) -> bool {
         if self.backend.as_ref().map(|b| &b.client_id) == owner.as_ref().map(|b| &b.client_id) {
             return false;
@@ -367,10 +409,13 @@ impl Document {
                     // An unconfirmed PATCH is never sent twice.
                     Err(_) => {
                         let snapshot = owner.read(&backend).await.ok();
+                        let saved = snapshot
+                            .as_ref()
+                            .is_some_and(|value| contains_patch(value, &patch));
                         Reply {
                             uncertain: snapshot.is_none(),
                             snapshot,
-                            error: Some("settings.preferenceSaveFailed"),
+                            error: (!saved).then_some("settings.preferenceSaveFailed"),
                         }
                     }
                 }
@@ -391,6 +436,24 @@ impl Document {
             }
         });
         true
+    }
+}
+
+fn contains_patch(value: &Value, patch: &Value) -> bool {
+    match patch {
+        Value::Object(entries) => {
+            value.is_object()
+                && entries.iter().all(|(key, expected)| {
+                    if expected.is_null() {
+                        value.get(key).is_none()
+                    } else {
+                        value
+                            .get(key)
+                            .is_some_and(|actual| contains_patch(actual, expected))
+                    }
+                })
+        }
+        other => value == other,
     }
 }
 

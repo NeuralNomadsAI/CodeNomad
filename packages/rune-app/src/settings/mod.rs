@@ -97,8 +97,13 @@ fn open(host: &mut Host) {
 
 pub(crate) fn close(s: &mut State) {
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some((window, _)) = s.settings.window.take() {
-        window.close();
+    {
+        if !s.settings.shared.borrow_mut().flush() {
+            eprintln!("Rune preferences were not fully saved before shutdown");
+        }
+        if let Some((window, _)) = s.settings.window.take() {
+            window.close();
+        }
     }
     #[cfg(target_arch = "wasm32")]
     let _ = s;

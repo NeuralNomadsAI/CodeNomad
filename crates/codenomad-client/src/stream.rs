@@ -13,6 +13,21 @@ use std::{
 #[path = "stream_browser.rs"]
 mod browser;
 
+const NATIVE_EVENT_LIMIT: usize = 256 * 1024;
+// A storage event includes the UI state owner, which can hold 1 MiB of Stats.
+const OWNER_EVENT_LIMIT: usize = 2 * 1024 * 1024;
+
+fn storage_owner(value: &Value) -> Option<crate::settings::Owner> {
+    if value["owner"] != "ui" {
+        return None;
+    }
+    match value["type"].as_str()? {
+        "storage.configChanged" => Some(crate::settings::Owner::Config),
+        "storage.stateChanged" => Some(crate::settings::Owner::State),
+        _ => None,
+    }
+}
+
 #[derive(Default)]
 pub struct State {
     pub cancelled: AtomicBool,
@@ -140,7 +155,7 @@ pub(super) async fn dispatch(
     kind: &str,
     data: &str,
 ) -> Result<()> {
-    if data.len() > 262144 {
+    if data.len() > OWNER_EVENT_LIMIT {
         return Err("oversized SSE event".into());
     }
     if kind == "codenomad.client.ping" {
@@ -156,21 +171,12 @@ pub(super) async fn dispatch(
         return Ok(());
     }
     let value: Value = serde_json::from_str(data.trim())?;
-    if value["owner"] == "ui" {
-        match value["type"].as_str() {
-            Some("storage.configChanged") => {
-                state
-                    .notify_preferences(crate::settings::Owner::Config, out)
-                    .await?
-            }
-            Some("storage.stateChanged") => {
-                state
-                    .notify_preferences(crate::settings::Owner::State, out)
-                    .await?
-            }
-            _ => {}
-        }
+    if let Some(owner) = storage_owner(&value) {
+        state.notify_preferences(owner, out).await?;
         return Ok(());
+    }
+    if data.len() > NATIVE_EVENT_LIMIT {
+        return Err("oversized SSE event".into());
     }
     if let Some(event) = workspace_event(b, &value) {
         out.send(Input::Workspace(epoch, event)).await?;
@@ -284,7 +290,7 @@ struct Parser {
 impl Parser {
     fn byte(&mut self, byte: u8) -> Result<Option<(String, String)>> {
         if byte != b'\n' {
-            if self.line.len() >= 262144 {
+            if self.line.len() >= OWNER_EVENT_LIMIT + b"data: ".len() {
                 return Err("oversized SSE line".into());
             }
             self.line.push(byte);
@@ -301,10 +307,11 @@ impl Parser {
         if let Some(kind) = line.strip_prefix("event:") {
             self.kind = kind.trim().into();
         } else if let Some(data) = line.strip_prefix("data:") {
-            if self.data.len() + data.len() + 1 > 262144 {
+            let data = data.strip_prefix(' ').unwrap_or(data);
+            if self.data.len() + data.len() + 1 > OWNER_EVENT_LIMIT {
                 return Err("oversized SSE event".into());
             }
-            self.data.push_str(data.strip_prefix(' ').unwrap_or(data));
+            self.data.push_str(data);
             self.data.push('\n');
         }
         Ok(None)
@@ -330,18 +337,38 @@ mod tests {
     #[test]
     fn oversized_line_and_event_fail_before_unbounded_growth() {
         let mut parser = Parser::default();
-        for _ in 0..262144 {
+        for _ in 0..OWNER_EVENT_LIMIT + b"data: ".len() {
             parser.byte(b'x').unwrap();
         }
         assert!(parser.byte(b'x').is_err());
         let mut parser = Parser {
-            data: "x".repeat(262144),
+            data: "x".repeat(OWNER_EVENT_LIMIT),
             ..Default::default()
         };
         for b in b"data: x" {
             parser.byte(*b).unwrap();
         }
         assert!(parser.byte(b'\n').is_err());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn large_owner_invalidation_does_not_close_the_conversation_stream() {
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            let backend = Backend::connect("http://127.0.0.1:9/", "").await.unwrap();
+            let (out, recovery) = crate::bounded(4);
+            let state = State::default();
+            let body = json!({"owner":"ui","type":"storage.stateChanged","value":{"serviceUsage":"x".repeat(1024*1024)}}).to_string();
+            let mut parser = Parser::default();
+            let wire = format!("data: {body}\n\ndata: {{\"type\":\"ignored\"}}\n\n");
+            for (kind, data) in wire.bytes().filter_map(|byte| parser.byte(byte).unwrap()) {
+                dispatch(&backend, 1, &out, &state, "test", &kind, &data).await.unwrap();
+            }
+            assert!(matches!(recovery.try_recv(), Ok(Input::Preferences(crate::settings::Owner::State))));
+            assert!(recovery.is_empty());
+            let foreign = json!({"type":"instance.event","value":"x".repeat(NATIVE_EVENT_LIMIT)}).to_string();
+            assert!(dispatch(&backend, 1, &out, &state, "test", "", &foreign).await.is_err());
+        });
     }
 }
 

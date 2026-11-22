@@ -235,6 +235,63 @@ struct Request {
     body: Value,
 }
 
+#[test]
+fn settings_shutdown_flushes_the_last_queued_palette_and_observes_a_lost_receipt() {
+    let (listener, backend) = platform::block_on(async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend = Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
+            .await
+            .unwrap();
+        (listener, backend)
+    });
+    let mut prefs = Preferences {
+        backend: Some(backend),
+        ..Preferences::default()
+    };
+    prefs.fixture();
+    let palette = |id| built_in().iter().find(|p| p.id == id).unwrap();
+    prefs.set_palette(palette("slate"));
+    assert!(prefs.poll());
+    prefs.set_palette(palette("basalt"));
+    let (done, receipt) = bounded(1);
+    platform::spawn(async move {
+        let first = request(&listener).await;
+        assert_eq!(
+            first.body["appearancePreferences"]["dark"]["scheme"]["id"],
+            "slate"
+        );
+        first
+            .reply(
+                200,
+                json!({"appearancePreferences":{"dark":{"scheme":{"id":"slate"}}}}),
+            )
+            .await;
+        let second = request(&listener).await;
+        assert_eq!(
+            second.body["appearancePreferences"]["dark"]["scheme"]["id"],
+            "basalt"
+        );
+        drop(second);
+        let reconciliation = request(&listener).await;
+        assert_eq!(
+            reconciliation.first,
+            "GET /api/storage/state/ui?authoritative=1 HTTP/1.1"
+        );
+        reconciliation
+            .reply(
+                200,
+                json!({"appearancePreferences":{"dark":{
+            "scheme":{"id":"basalt","appearance":"dark"}}},"unrelated":true}),
+            )
+            .await;
+        done.send(()).await.unwrap();
+    });
+    assert!(prefs.flush());
+    assert!(receipt.try_recv().is_ok());
+    assert_eq!(prefs.palette(true).map(|p| p.id), Some("basalt"));
+    assert!(prefs.error().is_none());
+}
+
 async fn request(listener: &TcpListener) -> Request {
     timeout(Duration::from_secs(3), async {
         let (mut socket, _) = listener.accept().await.unwrap();
