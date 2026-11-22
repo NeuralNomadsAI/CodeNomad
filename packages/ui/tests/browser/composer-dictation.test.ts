@@ -882,7 +882,7 @@ for (const choice of ["hex", null] as const) {
       await page.waitForFunction(() => document.querySelector("textarea")?.value === "Local draft")
     } else {
       await page.getByRole("button", { name: "More actions", exact: true }).click()
-      await page.getByRole("menuitem").filter({ hasText: chooseLocalEngine }).click()
+      await page.getByRole("menuitemcheckbox", { name: /^Dictation mode/ }).filter({ hasText: chooseLocalEngine }).click()
       await page.waitForFunction(() => document.activeElement?.id === "voice-dictation")
       assert.equal(await page.evaluate(() => (window as any).native.requests.some(({ action }: any) => action === "begin")), false)
     }
