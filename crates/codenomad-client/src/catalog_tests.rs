@@ -530,3 +530,39 @@ fn malformed_catalogue_data_is_not_a_terminal_session_page() {
         );
     });
 }
+
+#[test]
+fn catalogue_omissions_require_targeted_absence() {
+    run(async {
+        let server = Server::start(vec![
+            reply(
+                "GET /workspaces/workspace/instance/api/session/reordered",
+                None,
+                200,
+                json!({"data":{"id":"reordered","location":{"directory":"/trial"}}}),
+            ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/unavailable",
+                None,
+                503,
+                json!({}),
+            ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/deleted",
+                None,
+                404,
+                json!({"_tag":"SessionNotFoundError","sessionID":"deleted"}),
+            ),
+        ]);
+        let backend = Backend::connect(&server.address, "").await.unwrap();
+        let project = crate::catalog::Project {
+            id: "workspace".into(),
+            path: "/trial".into(),
+        };
+        let ids = ["reordered", "unavailable", "deleted"].map(str::to_owned);
+        assert_eq!(
+            backend.confirm_missing_sessions(&project, ids.into()).await,
+            ["deleted"]
+        );
+    });
+}

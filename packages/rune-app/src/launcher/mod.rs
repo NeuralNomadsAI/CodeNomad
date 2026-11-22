@@ -42,7 +42,7 @@ pub struct Launcher {
 enum Reply {
     Connected(Backend, Vec<Project>, String),
     Opened(crate::workspace::opening::Opening, Sessions, Restored),
-    Listed(Sessions, bool),
+    Listed(Sessions, bool, Vec<String>),
     Created(Backend, String, String, Option<u64>),
     Selected(Vec<String>, Option<Selection>, Option<u64>),
 }
@@ -167,9 +167,16 @@ impl Launcher {
             self.sessions = page.rows;
             self.listed_sessions = listed;
         }
-        self.visits
-            .observe_listing(&self.listed_sessions, page.next.is_none());
+        self.visits.observe_listing(&self.listed_sessions);
         self.next = page.next;
+    }
+
+    fn listed_visits_not_seen(&self, more: bool) -> Vec<String> {
+        self.visits
+            .listed_ids()
+            .filter(|id| !more || !self.listed_sessions.contains(*id))
+            .map(str::to_owned)
+            .collect()
     }
 }
 
@@ -198,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn a_full_refresh_retires_absent_listed_rows_but_not_targeted_children() {
+    fn partial_refresh_keeps_history_and_omission_probes_only_previously_listed_visits() {
         let mut launcher = Launcher::fixture();
         launcher.apply_listing(
             Sessions {
@@ -226,62 +233,45 @@ mod tests {
                 .map(|(_, id)| id),
             Some("a")
         );
-        launcher.apply_listing(
-            Sessions {
-                rows: vec![row("b")],
-                next: None,
-            },
-            false,
-            Some("b"),
-        );
-        assert!(launcher.visits.steps(true, Some("b")).next().is_none());
-
+        launcher.visits.record("a", None, false);
+        assert!(!launcher.listed_sessions.contains("a"));
+        assert_eq!(launcher.visits.listed_ids().next(), Some("a"));
         launcher.visits.record("child", None, false);
-        launcher.visits.record("b", None, true);
-        launcher.apply_listing(
-            Sessions {
-                rows: vec![row("b")],
-                next: None,
-            },
-            false,
-            Some("b"),
-        );
-        assert_eq!(
-            launcher
-                .visits
-                .steps(true, Some("b"))
-                .next()
-                .map(|(_, id)| id),
-            Some("child")
-        );
+        assert_eq!(launcher.listed_visits_not_seen(true), ["a"]);
     }
 
     #[test]
-    fn the_last_page_retires_a_visit_only_if_the_whole_traversal_omitted_it() {
-        for present in [true, false] {
-            let mut launcher = Launcher::fixture();
-            launcher.visits.record("a", None, true);
-            launcher.visits.record("b", None, true);
-            launcher.apply_listing(
-                Sessions {
-                    rows: vec![row("b")],
-                    next: Some("next".into()),
-                },
-                false,
-                Some("b"),
-            );
-            assert!(launcher.visits.steps(true, Some("b")).next().is_some());
-            let rows = if present {
-                vec![row("a")]
-            } else {
-                vec![row("c")]
-            };
-            launcher.apply_listing(Sessions { rows, next: None }, true, Some("b"));
-            assert_eq!(
-                launcher.visits.steps(true, Some("b")).next().is_some(),
-                present
-            );
-        }
+    fn terminal_omission_is_not_enough_to_retire_a_visit() {
+        let mut state = crate::init();
+        crate::gallery::shell::fixture(&mut state);
+        let mut rt = rune::Runtime::new(
+            state,
+            crate::view,
+            (1000.0, 800.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.update(|s, tx| {
+            let l = s.screen.launcher_mut().unwrap();
+            l.visits.record("a", None, true);
+            for missing in [vec![], vec![String::from("a")]] {
+                let confirmed = !missing.is_empty();
+                let (out, input) = bounded(1);
+                s.screen.launcher_mut().unwrap().result = Some(input);
+                assert!(
+                    out.try_send(Ok(Reply::Listed(
+                        Sessions {
+                            rows: vec![row("b")],
+                            next: None,
+                        },
+                        true,
+                        missing
+                    )))
+                    .is_ok()
+                );
+                assert!(poll(s, tx));
+                assert_eq!(can_visit(s, true), !confirmed);
+            }
+        });
     }
 
     #[test]
@@ -608,11 +598,16 @@ pub fn list(s: &mut State, more: bool) {
     }
     l.listing = true;
     let cursor = if more { l.next.clone() } else { None };
+    let mut candidates = l.listed_visits_not_seen(more);
     l.job("rune.list_error", async move {
-        Ok(Reply::Listed(
-            b.sessions(&p, cursor.as_deref()).await?,
-            more,
-        ))
+        let page = b.sessions(&p, cursor.as_deref()).await?;
+        let missing = if page.next.is_none() {
+            candidates.retain(|id| !page.rows.iter().any(|row| &row.id == id));
+            b.confirm_missing_sessions(&p, candidates).await
+        } else {
+            vec![]
+        };
+        Ok(Reply::Listed(page, more, missing))
     });
 }
 pub fn create(s: &mut State, _: &mut Tx) {
@@ -786,7 +781,10 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 Restored::Empty => {}
             }
         }
-        Ok(Reply::Listed(rows, more)) => l.apply_listing(rows, more, selected.as_deref()),
+        Ok(Reply::Listed(rows, more, missing)) => {
+            l.apply_listing(rows, more, selected.as_deref());
+            l.visits.forget(&missing);
+        }
         Ok(Reply::Created(b, title, submitted, dismiss)) => {
             if l.title.text == submitted {
                 l.title = TextEdit::new("");

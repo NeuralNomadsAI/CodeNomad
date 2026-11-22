@@ -13,6 +13,7 @@ pub struct Visits {
 
 impl Visits {
     pub fn record(&mut self, id: &str, step: Option<usize>, listed: bool) {
+        let listed = listed || self.ids.iter().flatten().any(|v| v.id == id && v.listed);
         if let Some(step) = step.filter(|&step| self.at(step) == Some(id)) {
             self.cursor = step;
         } else if self.at(self.cursor) != Some(id) {
@@ -51,15 +52,19 @@ impl Visits {
             }
         }
     }
-    pub fn observe_listing(&mut self, listed: &HashSet<String>, complete: bool) {
-        for entry in &mut self.ids {
-            let Some(visit) = entry else { continue };
+    pub fn observe_listing(&mut self, listed: &HashSet<String>) {
+        for visit in self.ids.iter_mut().flatten() {
             if listed.contains(&visit.id) {
                 visit.listed = true;
-            } else if complete && visit.listed {
-                *entry = None;
             }
         }
+    }
+    pub fn listed_ids(&self) -> impl Iterator<Item = &str> {
+        let mut seen = HashSet::new();
+        self.ids.iter().rev().flatten().filter_map(move |visit| {
+            let id = visit.id.as_str();
+            (visit.listed && seen.insert(id)).then_some(id)
+        })
     }
 }
 
