@@ -14,8 +14,18 @@ mod pending_open;
 mod real_history;
 mod recovery;
 mod session_transport;
+pub mod transcript_scene;
 mod window_restore;
 mod workspaces;
+
+fn fragment_path(message: &str, ordinal: usize) -> String {
+    format!("/history/rows/{message}/fragment-{message}:{ordinal}/")
+}
+
+fn rendered_text(text: &str) -> String {
+    // Markdown puts directional isolates around recognized inline code in a live tail.
+    text.replace(['\u{2066}', '\u{2069}'], "")
+}
 
 /// Dispatch qualification CLI without entering the native window event loop.
 pub fn dispatch() -> bool {

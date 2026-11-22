@@ -5,6 +5,7 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
 pub const MAX_ROWS: usize = 2048;
 pub const MAX_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const MAX_TOOL_TEXT_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct Page {
@@ -92,6 +93,14 @@ pub fn check(rows: &[Message]) -> Result<()> {
             > MAX_BYTES
     {
         return Err("resident history limit reached".into());
+    }
+    if rows
+        .iter()
+        .map(|row| crate::content::tool_text_bytes(&row.parts))
+        .sum::<usize>()
+        > MAX_TOOL_TEXT_BYTES
+    {
+        return Err("resident tool text limit reached".into());
     }
     if rows.iter().any(|row| !ids.insert(&row.id)) {
         return Err("duplicate native row".into());

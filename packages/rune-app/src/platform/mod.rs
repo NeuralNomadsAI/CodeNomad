@@ -146,12 +146,17 @@ pub fn has_flag(flag: &str) -> bool {
 }
 #[cfg(feature = "test-support")]
 pub fn synthetic_scene() -> bool {
+    scene_is("synthetic")
+}
+#[cfg(feature = "test-support")]
+pub fn scene_is(name: &str) -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     {
         std::env::args()
-            .collect::<Vec<_>>()
-            .windows(2)
-            .any(|args| args[0] == "--scene" && args[1] == "synthetic")
+            .skip_while(|arg| arg != "--scene")
+            .nth(1)
+            .as_deref()
+            == Some(name)
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -160,7 +165,7 @@ pub fn synthetic_scene() -> bool {
             .and_then(|query| web_sys::UrlSearchParams::new_with_str(&query).ok())
             .and_then(|query| query.get("scene"))
             .as_deref()
-            == Some("synthetic")
+            == Some(name)
     }
 }
 pub fn folder_picker_available() -> bool {

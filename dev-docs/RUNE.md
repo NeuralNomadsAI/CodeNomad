@@ -80,6 +80,8 @@ Document drafts are keyed by server, project occurrence, directory and path and 
 
 Text fragments retain native ordinals and live/partial/closed provenance. One shared helper updates both ordered parts and the display body. Open page prefixes preserve longer live text; full native endings and committed pages settle ambiguous fragments through bounded recovery reads.
 
+The Rune transcript renders native prose with kit Markdown and uses kit syntax for read, edit, shell and search output. Display windows count UTF-16 units and preserve line cuts; tool copy reads the retained native result. Tool disclosures and reveal steps belong to each project tab's live transcript state.
+
 Persistent isolated hosts require an explicit root and `trial-*` profile. A versioned marker binds the root, profile and configuration; an OS lock covers child containment and reader drain. Window-state writes use the alpha-owned store, preserving the last complete file through atomic replacement. Browser state belongs to the current tab's sessionStorage. The snapshot uses the existing v1 field names and UTF-16 budgets; unsupported payloads require explicit recovery before any replacement.
 
 Each project tab owns its server record and live conversation state. Drafts remain scoped to the validated server, folder occurrence and native session. Restoration performs a targeted session read, with identity and location validation. Browser departure writes the snapshot and release marker before issuing keepalive deletion of its owned records; storage failure preserves those records. The last browser store also performs this bounded synchronous handoff when Rune unload drops its listener. A preserved BFCache document retains its state and records.
