@@ -2273,8 +2273,9 @@ function setupStaticUi(
     }
     if (!("previewCapability" in request.routeOptions.config)
       && (request.routeOptions.url === "/" || request.routeOptions.url === "/*") && negotiate(request)) {
-      const target = routedPath(request.raw.url ?? request.url)
-      return identityRefused.run(path.posix.basename(target ?? "/") || "index.html", done)
+      // fastify-static also decodes the escaped # and ? in an asset name.
+      const target = (routedPath(request.raw.url ?? request.url) ?? "/").replace(/%(?:23|3f)/gi, decodeURIComponent)
+      return identityRefused.run(path.posix.basename(target) || "index.html", done)
     }
     done()
   })
@@ -2282,7 +2283,7 @@ function setupStaticUi(
   app.addHook("onSend", (request, reply, payload, done) => {
     if (identityRefused.getStore() !== undefined && reply.statusCode === 406) {
       reply.header("vary", "Origin, Accept-Encoding").removeHeader("content-length").removeHeader("content-type")
-      return done(null, null)
+      return done(null, "")
     }
     done(null, payload)
   })
@@ -2320,7 +2321,7 @@ function setupStaticUi(
 
     if (!session) {
       if (wantsHtml(request)) reply.redirect("/login")
-      else reply.code(404).send({ message: "Not Found" })
+      else reply.header("cache-control", "no-store").code(404).send({ message: "Not Found" })
       return
     }
 

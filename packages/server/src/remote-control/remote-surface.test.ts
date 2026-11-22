@@ -219,6 +219,7 @@ test("negotiates precompressed static assets without loosening HTML entry admiss
   fs.writeFileSync(path.join(ui, "app.wasm.gz"), gzip)
   fs.writeFileSync(path.join(ui, "only-gzip.wasm"), wasm)
   fs.writeFileSync(path.join(ui, "only-gzip.wasm.gz"), gzip)
+  fs.writeFileSync(path.join(ui, "archive#1.gz"), gzip)
   const index = fs.readFileSync(path.join(ui, "index.html"))
   fs.writeFileSync(path.join(ui, "index.html.br"), brotliCompressSync(index))
   fs.mkdirSync(path.join(ui, "nested.assets"))
@@ -254,12 +255,19 @@ test("negotiates precompressed static assets without loosening HTML entry admiss
     assert.equal(rejected.bytes.length, 0)
     assert.match(String(rejected.headers.vary), /(?:^|,\s*)accept-encoding(?:,|$)/i)
   }
+  assert.equal((await send(target(), "/archive%231.gz", { headers: { "accept-encoding": "br, identity;q=0" } })).status, 406)
   for (const url of ["/index.html", "/index.html.br"]) {
     assert.equal((await send(target(), url, { headers })).status, 401)
   }
   assert.equal((await send(target(), "/absent.wasm", { headers })).status, 404)
-  assert.equal((await send(target(), "/nested.assets", { headers })).status, 404)
+  const hidden = await send(target(), "/nested.assets", { headers })
+  assert.equal(hidden.status, 404)
+  assert.equal(hidden.headers["cache-control"], "no-store")
   const cookie = await pair(target(), code)
+  const rejectedHead = await send(target(), "/", { method: "HEAD", headers: { cookie, "accept-encoding": "identity;q=0" } })
+  assert.equal(rejectedHead.status, 406)
+  assert.equal(Number(rejectedHead.headers["content-length"] ?? 0), 0)
+  assert.equal(rejectedHead.headers["content-type"], undefined)
   for (const route of ["/", "/settings"]) {
     const page = await send(target(), route, { headers: { "accept-encoding": "br, identity;q=0", cookie, accept: "text/html" } })
     assert.equal(page.status, 200)
