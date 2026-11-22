@@ -44,7 +44,7 @@ enum Reply {
         Option<(Backend, String)>,
     ),
     Listed(Sessions, bool),
-    Created(Backend, String),
+    Created(Backend, String, String),
     Selected(Vec<String>, Option<Selection>, Option<u64>),
 }
 type Selection = (Backend, String, Option<usize>);
@@ -364,6 +364,7 @@ pub fn create(s: &mut State, _: &mut Tx) {
         Ok(Reply::Created(
             b.bind(&p, &session.id, true).await?,
             session.title,
+            title,
         ))
     });
 }
@@ -530,9 +531,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             l.next = rows.next;
         }
-        Ok(Reply::Created(b, title)) => {
-            l.title = TextEdit::new("");
-            l.show_title = false;
+        Ok(Reply::Created(b, title, submitted)) => {
+            if l.title.text == submitted {
+                l.title = TextEdit::new("");
+                l.show_title = false;
+            }
             if blocked {
                 l.sessions.insert(
                     0,

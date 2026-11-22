@@ -203,3 +203,25 @@ fn resizing_out_of_room_returns_focus_from_the_search_editor() {
                 && element.key.as_deref() == Some("sessions-panel-toggle"))
     );
 }
+
+#[test]
+fn escape_from_the_search_editor_closes_its_floating_panel() {
+    let mut state = init();
+    fixture(&mut state);
+    let mut rt = Runtime::new(state, english, (600.0, 900.0), Env::new(false, 1.0));
+    settle(&mut rt);
+    click(&mut rt, "sessions-panel-toggle");
+    click(&mut rt, "session-search-toggle");
+    rt.key(KeyEvent {
+        key: Key::Escape,
+        mods: Mods::default(),
+    });
+    settle(&mut rt);
+    assert!(rt.find("session-search").is_none());
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|element| element.focused
+                && element.key.as_deref() == Some("sessions-panel-toggle"))
+    );
+}

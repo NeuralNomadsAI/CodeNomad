@@ -16,7 +16,8 @@ pub fn run(spec: AppSpec<State>, closing: fn(&mut State, &mut Tx)) {
 }
 
 pub fn view(cx: &mut Cx<State>) -> El {
-    shell::titlebar(cx, t("window.title.main"), menus())
+    let rtl = rune_theme_codenomad::catalogue::direction(locale()) == "rtl";
+    shell::titlebar(cx, t("window.title.main"), rtl, menus())
 }
 
 #[cfg(target_os = "windows")]

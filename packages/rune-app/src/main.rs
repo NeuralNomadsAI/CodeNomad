@@ -295,22 +295,6 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         .is_some_and(|a| a.picker || !a.ids().is_empty());
     rune_theme_codenomad::interruption::session_surface(expanded)
         .child(rune_theme_codenomad::interruption::history(expanded).child(rows))
-        .children(
-            (s.can_older && matches!(s.phase, Phase::Ready | Phase::Streaming)).then(|| {
-                rune_theme_codenomad::shell::floating_notice(components::button_tx(
-                    "older",
-                    strings::t(if s.history_error {
-                        "sessionList.loadError.retry"
-                    } else if s.paging {
-                        "rune.loading"
-                    } else {
-                        "rune.older"
-                    }),
-                    s.paging,
-                    crate::screen::action_tx(&scope, request_older),
-                ))
-            }),
-        )
         .child(agent_view::view(s, cx))
         .child(
             col()
@@ -341,6 +325,19 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                 )
                 .child(
                     layout::action_row()
+                        .children(s.can_older.then(|| {
+                            rune_theme_codenomad::shell::older_button(
+                                strings::t(if s.paging {
+                                    "rune.loading"
+                                } else if s.history_error {
+                                    "sessionList.loadError.retry"
+                                } else {
+                                    "rune.older"
+                                }),
+                                s.paging || matches!(s.phase, Phase::Reconnecting | Phase::Failed),
+                                crate::screen::action_tx(&scope, request_older),
+                            )
+                        }))
                         .child(components::button_tx(
                             "latest",
                             strings::t("rune.latest"),

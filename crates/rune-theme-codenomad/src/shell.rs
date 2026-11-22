@@ -125,10 +125,15 @@ pub fn run<S: 'static>(
     app.run();
 }
 
-pub fn titlebar<S>(cx: &mut Cx<S>, title: &str, menus: El) -> El {
+pub fn titlebar<S>(cx: &mut Cx<S>, title: &str, rtl: bool, menus: El) -> El {
     let t = tokens(layout::dark());
     let gutter = t.space(Space::Md).px();
-    let insets = cx.chrome_insets();
+    let mut insets = cx.chrome_insets();
+    if cfg!(target_os = "windows") && rtl {
+        // Headless reports the caption width as trailing even when it mirrors the controls.
+        insets.leading += insets.trailing;
+        insets.trailing = 0.0;
+    }
     cx.caption_color(t.color("text-primary"));
     WindowTitlebar::from_insets(insets)
         .key("native-titlebar")
@@ -136,6 +141,11 @@ pub fn titlebar<S>(cx: &mut Cx<S>, title: &str, menus: El) -> El {
         .leading_padding(gutter)
         .trailing_padding(gutter)
         .gap(t.space(Space::Sm).px())
+        .direction(if rtl {
+            rune::Direction::Rtl
+        } else {
+            rune::Direction::Ltr
+        })
         .fill(t.color("surface-shade-strong"))
         .leading(
             text(title)
@@ -248,6 +258,19 @@ pub fn control(icon: &'static Icon, label: &'static str, touch: bool) -> IconBut
         } else {
             ControlSize::Regular
         })
+}
+
+pub fn older_button<S: 'static>(
+    label: &'static str,
+    busy: bool,
+    activate: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    control(&icons::UP, label, false)
+        .help(label)
+        .disabled(busy)
+        .on_press_tx(activate)
+        .build(kit(layout::dark()))
+        .key("older")
 }
 
 pub fn session_row<S: 'static>(

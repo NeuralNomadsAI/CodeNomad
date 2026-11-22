@@ -21,6 +21,15 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
         return col();
     };
     let scope = &s.input_scope;
+    let editor_keys = {
+        let scope = scope.clone();
+        move |s: &mut State, key: &rune::KeyEvent, tx: &mut rune::Tx| {
+            key.mods == rune::Mods::default()
+                && key.key == rune::Key::Escape
+                && s.current_scope(&scope)
+                && s.shell.close_floating(tx)
+        }
+    };
     let disabled = l.pending || !workspace::input_ready(s) || crate::agent::navigation_blocked(s);
     let title = t("sessionList.header.title");
     let visit = |back| {
@@ -80,6 +89,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
             hinted_field(&l.search, t("sessionList.filter.placeholder"))
                 .label(t("sessionList.filter.ariaLabel"))
                 .on_edit(screen::edit(scope, Editor::Search))
+                .on_key(editor_keys.clone())
                 .build(field_kit(layout::dark()))
                 .key("session-search"),
         );
@@ -146,6 +156,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
                     hinted_field(&l.title, t("rune.session_title"))
                         .label(t("rune.session_title"))
                         .on_edit(screen::edit(scope, Editor::Title))
+                        .on_key(editor_keys)
                         .on_submit(screen::action_tx(scope, launcher::create))
                         .build(field_kit(layout::dark()))
                         .key("session-title"),
