@@ -24,6 +24,8 @@ pub(crate) struct Preferences {
     mode: DiffMode,
     compact: bool,
     layout_epoch: u64,
+    history_size: [f32; 2],
+    history_epoch: u64,
     pub(crate) history_bounds: DrawnRect,
 }
 
@@ -33,19 +35,19 @@ impl Default for Preferences {
             mode: DiffMode::Split,
             compact: false,
             layout_epoch: 0,
+            history_size: [0.0; 2],
+            history_epoch: 0,
             history_bounds: DrawnRect::new([0.0; 4]),
         }
     }
 }
 
 impl Preferences {
-    fn effective_mode(&self, compact_mode: Option<(u64, DiffMode)>) -> DiffMode {
-        if self.compact {
-            compact_mode
-                .filter(|(epoch, _)| *epoch == self.layout_epoch)
-                .map_or(DiffMode::Unified, |(_, mode)| mode)
-        } else {
-            self.mode
+    fn effective_mode(&self, compact_split: bool) -> DiffMode {
+        match (self.compact, compact_split) {
+            (true, true) => DiffMode::Split,
+            (true, false) => DiffMode::Unified,
+            (false, _) => self.mode,
         }
     }
 
@@ -62,10 +64,19 @@ impl Preferences {
     }
 
     pub(crate) fn sync(s: &mut State) {
-        for entry in &mut s.transcript_display.diffs.entries {
-            entry
-                .state
-                .set_mode(s.tool_diff_preferences.effective_mode(entry.compact_mode));
+        let p = &s.tool_diff_preferences;
+        s.transcript_display
+            .sync_diff_modes(p.layout_epoch, |split| p.effective_mode(split));
+    }
+
+    pub(crate) fn history_layout(s: &mut State, [_, _, w, h]: [f32; 4], tx: &mut Tx) {
+        let p = &mut s.tool_diff_preferences;
+        if p.history_size == [w, h] {
+            tx.live_only();
+        } else {
+            p.history_size = [w, h];
+            p.history_epoch += 1;
+            s.revision += 1;
         }
     }
 }
@@ -84,7 +95,6 @@ fn intersects([x, y, w, h]: [f32; 4], [left, top, width, height]: [f32; 4]) -> b
 struct Entry {
     key: String,
     bounds: Weak<DrawnRect>,
-    compact_mode: Option<(u64, DiffMode)>,
     patch: String,
     file: String,
     state: DiffState,
@@ -98,6 +108,12 @@ pub(super) struct Cache {
 }
 
 impl Cache {
+    pub(super) fn sync(&mut self, mode: impl Fn(&str) -> DiffMode) {
+        for entry in &mut self.entries {
+            entry.state.set_mode(mode(&entry.key));
+        }
+    }
+
     fn read(&self, key: &str) -> &DiffState {
         self.entries
             .iter()
@@ -119,7 +135,7 @@ impl Cache {
         path: &str,
         bounds: &Rc<DrawnRect>,
         preferences: &Preferences,
-        wrap: bool,
+        (mode, wrap): (DiffMode, bool),
     ) -> bool {
         let former = self
             .entries
@@ -171,13 +187,11 @@ impl Cache {
             })
             .sum();
         let mut state = DiffState::new(files);
-        let compact_mode = former.and_then(|entry| entry.compact_mode);
-        state.set_mode(preferences.effective_mode(compact_mode));
+        state.set_mode(mode);
         state.set_wrap(wrap);
         self.entries.push_back(Entry {
             key: key.into(),
             bounds: Rc::downgrade(bounds),
-            compact_mode,
             patch: patch.into(),
             file: path.into(),
             state,
@@ -199,6 +213,7 @@ fn parse_patch(patch: &str, path: &str) -> Vec<diff::FileDiff> {
     let mut lines = patch.lines().peekable();
     if lines.peek() == Some(&"*** Begin Patch") {
         lines.next();
+        while lines.next_if(|line| line.trim().is_empty()).is_some() {}
     }
     if lines
         .peek()
@@ -236,11 +251,21 @@ fn parse_patch(patch: &str, path: &str) -> Vec<diff::FileDiff> {
                 unified.push('\n');
             }
         }
-        diff::parse(&unified)
+        parse_complete(&unified)
     } else if patch.starts_with("@@ ") && !path.contains(['\r', '\n']) && !path.is_empty() {
-        diff::parse(&format!("--- a/{path}\n+++ b/{path}\n{patch}"))
+        parse_complete(&format!("--- a/{path}\n+++ b/{path}\n{patch}"))
     } else {
-        diff::parse(patch)
+        parse_complete(patch)
+    }
+}
+
+fn parse_complete(patch: &str) -> Vec<diff::FileDiff> {
+    let files = diff::parse(patch);
+    let expected = patch.lines().filter(|line| is_hunk(line)).count();
+    if files.iter().map(|file| file.hunks.len()).sum::<usize>() == expected {
+        files
+    } else {
+        vec![]
     }
 }
 
@@ -294,21 +319,27 @@ pub(super) fn body(
     let patch = patch.to_owned();
     let path = path.to_owned();
     let tool = tool.clone();
+    // Retry uncached cards when the viewport changes but their drawn rect does not.
+    let retry = entry
+        .is_none()
+        .then_some(s.tool_diff_preferences.history_epoch);
     let card_key = format!(
-        "{key}-card-{:p}-{:p}",
+        "{key}-card-{:p}-{:p}-{retry:?}",
         Rc::as_ptr(&scope),
         Arc::as_ptr(&tool)
     );
     let drawn = bounds.clone();
     let admit = Rc::new(move |s: &mut State, tx: &mut Tx| {
         let wrap = !s.transcript_display.toggled(&wrap_key);
+        let p = &s.tool_diff_preferences;
+        let mode = p.effective_mode(s.transcript_display.compact_split(p.layout_epoch, &key));
         if intersects(bounds.get(), s.tool_diff_preferences.history_bounds.get())
             && s.current_scope(&scope)
             && s.messages.iter().find(|row| row.id == message).into_iter().flat_map(|row| &row.parts).any(|part|
                 matches!(part, crate::content::Part::Tool(current) if Arc::ptr_eq(current, &tool)))
             && s.transcript_display
                 .diffs
-                .load(&key, &patch, &path, &bounds, &s.tool_diff_preferences, wrap)
+                .load(&key, &patch, &path, &bounds, p, (mode, wrap))
         {
             s.revision += 1;
         } else {
@@ -381,16 +412,11 @@ fn view(s: &State, key: &str, entry: &Entry, path: &str) -> El {
                             };
                             s.tool_diff_preferences.mode = mode;
                             if s.tool_diff_preferences.compact {
-                                let epoch = s.tool_diff_preferences.layout_epoch;
-                                if let Some(entry) = s
-                                    .transcript_display
-                                    .diffs
-                                    .entries
-                                    .iter_mut()
-                                    .find(|entry| entry.key == mode_key)
-                                {
-                                    entry.compact_mode = Some((epoch, mode));
-                                }
+                                s.transcript_display.set_compact_split(
+                                    s.tool_diff_preferences.layout_epoch,
+                                    &mode_key,
+                                    !split,
+                                );
                             }
                             Preferences::sync(s);
                             s.revision += 1;
@@ -448,16 +474,37 @@ fn admission_never_evicts_a_still_visible_diff() {
             "file.rs",
             visible,
             &preferences,
-            true
+            (DiffMode::Split, true)
         ));
     }
     let next = Rc::new(DrawnRect::new([5.0, 5.0, 10.0, 10.0]));
     for _ in 0..3 {
-        assert!(!cache.load("next", patch, "file.rs", &next, &preferences, true));
+        assert!(!cache.load(
+            "next",
+            patch,
+            "file.rs",
+            &next,
+            &preferences,
+            (DiffMode::Split, true)
+        ));
         assert!(cache.entries.iter().any(|entry| entry.key == "0"));
     }
     cards[0].set([5.0, 150.0, 10.0, 10.0]);
-    assert!(cache.load("next", patch, "file.rs", &next, &preferences, true));
+    assert!(cache.load(
+        "next",
+        patch,
+        "file.rs",
+        &next,
+        &preferences,
+        (DiffMode::Split, true)
+    ));
     assert!(!cache.entries.iter().any(|entry| entry.key == "0"));
     assert_eq!(cache.entries.len(), RETAINED);
+}
+
+#[cfg(test)]
+#[test]
+fn a_partial_parse_never_replaces_the_raw_patch() {
+    let patch = "@@ -1 +1 @@\n-A\n+B\n@@ -4294967296 +4294967296 @@\n-C\n+D";
+    assert!(parse_patch(patch, "file.rs").is_empty());
 }

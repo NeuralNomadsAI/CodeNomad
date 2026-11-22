@@ -26,14 +26,30 @@ fn string<'a>(value: &'a Value, keys: &[&str]) -> &'a str {
 }
 
 fn path(tool: &Tool) -> &str {
-    string(
+    let input = string(
         &tool.input,
         if tool.name == "read" {
             &["filePath", "path", "name", "file"]
         } else {
             &["filePath", "path"]
         },
-    )
+    );
+    if tool.name != "edit" || !input.is_empty() {
+        return input;
+    }
+    let metadata = string(&tool.metadata, &["filePath"]);
+    if !metadata.is_empty() {
+        metadata
+    } else {
+        single_diff(tool).map_or("", |file| string(file, &["file"]))
+    }
+}
+
+fn single_diff(tool: &Tool) -> Option<&Value> {
+    let [file] = tool.metadata["files"].as_array()?.as_slice() else {
+        return None;
+    };
+    Some(file)
 }
 
 fn input_json(value: &Value) -> Option<String> {
@@ -150,12 +166,7 @@ fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'static str {
         "bash"
     } else if tool.name == "edit" {
         let diff = string(&tool.metadata, &["diff"]);
-        let patch = tool.metadata["files"]
-            .as_array()
-            .filter(|files| files.len() == 1)
-            .and_then(|files| files.first())
-            .map(|file| string(file, &["patch"]))
-            .unwrap_or_default();
+        let patch = single_diff(tool).map_or("", |file| string(file, &["patch"]));
         parts[0] = [diff, patch, &tool.output, live]
             .into_iter()
             .find(|text| {
