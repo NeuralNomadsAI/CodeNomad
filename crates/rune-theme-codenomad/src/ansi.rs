@@ -4,9 +4,8 @@ use std::ops::Range;
 use vte::{Params, Perform};
 
 const ESCAPED: [&str; 5] = ["\\u001b", "\\u001B", "\\x1b", "\\x1B", "\\033"];
-// Rune reserves the high ink-index bit for synthetic bold.
-const SHAPED_RUN_LIMIT: usize = i16::MAX as usize;
-const INK_RUN_LIMIT: usize = u16::MAX as usize;
+// Rune's selection-to-HTML path scans every range at each style boundary.
+const COPY_RUN_LIMIT: usize = 1024;
 const LINE_WORK_LIMIT: usize = 2_000_000;
 const WINDOW_WORK_LIMIT: usize = 16_000_000;
 
@@ -108,7 +107,12 @@ impl Log {
     fn literal(&mut self, text: &str) {
         for c in text.chars() {
             match c {
-                '\r' => self.pending_cr = true,
+                '\r' => {
+                    if self.pending_cr {
+                        self.newline();
+                    }
+                    self.pending_cr = true;
+                }
                 '\n' | '\t' => self.push(c),
                 c if !c.is_control() => self.push(c),
                 _ => {}
@@ -266,16 +270,16 @@ pub fn code(source: &str, wrap: bool) -> El {
 type Strike = (usize, usize, Option<Color>);
 
 fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
-    let mut spans = Vec::with_capacity(log.runs.len().min(INK_RUN_LIMIT));
+    let mut spans = Vec::with_capacity(log.runs.len().min(COPY_RUN_LIMIT));
     let mut strikes = vec![];
     let metrics = tokens(dark());
     let default = metrics.color("text-primary");
     let mut window_budget = WINDOW_WORK_LIMIT;
     let mut line_budget = LINE_WORK_LIMIT;
     let mut line = 0..0;
-    let mut shaped_left = SHAPED_RUN_LIMIT;
+    let mut ascii_runs = None;
     let mut text = log.text.into_bytes();
-    for (range, mut style) in log.runs {
+    for (index, (range, mut style)) in log.runs.iter().cloned().enumerate() {
         while range.start >= line.end {
             let start = line.end;
             let end = text[start..]
@@ -284,6 +288,11 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
                 .map_or(text.len(), |newline| start + newline + 1);
             line = start..end;
             line_budget = LINE_WORK_LIMIT;
+            // Printable ASCII in the monospace face does not itemize by script or emoji.
+            ascii_runs = text[line.clone()].is_ascii().then(|| {
+                let styled = log.runs[index..].partition_point(|(range, _)| range.start < line.end);
+                styled.saturating_mul(2).saturating_add(1)
+            });
         }
         // Rune can revisit the shaped line for every span, even for foreground-only ink.
         let mut charge = |cost| {
@@ -294,7 +303,7 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
             window_budget -= cost;
             true
         };
-        if spans.len() == INK_RUN_LIMIT || !charge(line.len()) {
+        if spans.len() + strikes.len() == COPY_RUN_LIMIT || !charge(line.len()) {
             // The native source stays available to Copy; keep conceal even without ink.
             if style.hidden {
                 text[range].fill(b' ');
@@ -312,15 +321,18 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
             if style.fg.is_some() || style.dim {
                 span = span.color(dim(style.fg.unwrap_or(default)));
             }
-            if let Some(bg) = style.bg.filter(|_| shaped_left > 0) {
+            if let Some(bg) = style.bg {
                 span = span.bg(dim(bg), 0.0);
             }
             // Underline bounds are queried for each glyph run in the decorated range.
-            if style.underline && shaped_left > 0 && charge(range.len().saturating_mul(line.len()))
-            {
+            let underline_runs = ascii_runs.unwrap_or_else(|| range.len()).min(range.len());
+            if style.underline && charge(underline_runs.saturating_mul(line.len())) {
                 span = span.underline(dim(style.fg.unwrap_or(default)));
             }
-            if style.strike && charge(line.len()) {
+            if style.strike
+                && spans.len() + strikes.len() + 1 < COPY_RUN_LIMIT
+                && charge(line.len())
+            {
                 strikes.push((
                     range.start,
                     range.end,
@@ -328,14 +340,11 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
                 ));
             }
         }
-        if style.bold && shaped_left > 0 {
+        if style.bold {
             span = span.weight(metrics.number("font-weight-semibold").px());
         }
-        if style.italic && shaped_left > 0 {
+        if style.italic {
             span = span.italic();
-        }
-        if span.weight.is_some() || span.italic || span.bg.is_some() || span.underline.is_some() {
-            shaped_left -= 1;
         }
         spans.push(span);
     }
@@ -396,7 +405,7 @@ mod tests {
             "\u{1b}[31mA\u{1b}[32mB\n".repeat(16_384)
         );
         let log = parse(&source);
-        assert!(log.runs.len() > SHAPED_RUN_LIMIT);
+        assert!(log.runs.len() > COPY_RUN_LIMIT);
         assert!(log.text.ends_with("\nhiddenEND"));
         assert!(log.runs[log.runs.len() - 2].1.hidden);
         assert_eq!(log.runs.last().unwrap().1.fg, Some(rgb(187, 0, 0)));
@@ -498,5 +507,25 @@ mod tests {
         assert_eq!(text, "A🦀".repeat(16_000));
         assert!(!spans.is_empty());
         assert!(spans.len() * text.len() <= LINE_WORK_LIMIT);
+    }
+
+    #[test]
+    fn selection_html_receives_bounded_styles_without_exposing_conceal() {
+        let source = format!(
+            "{}\u{1b}[8mhidden\u{1b}[0mEND",
+            "\u{1b}[31mA\u{1b}[32mB\n".repeat(16_384)
+        );
+        let (text, spans, strikes) = styled(parse(&source));
+        assert_eq!(spans.len() + strikes.len(), COPY_RUN_LIMIT);
+        assert!(text.ends_with("\n      END"));
+    }
+
+    #[test]
+    fn a_uniform_ascii_line_stays_underlined_and_consecutive_crs_stay_distinct() {
+        let source = format!("\u{1b}[4m{}\r\r\nB", "A".repeat(1500));
+        let (text, spans, _) = styled(parse(&source));
+        assert!(text.ends_with("\n\nB"));
+        assert_eq!(spans[0].end, 1500);
+        assert!(spans[0].underline.is_some());
     }
 }
