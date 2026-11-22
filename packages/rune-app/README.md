@@ -32,10 +32,14 @@ Le navigateur utilise son origine et les cookies de cette origine. Le dossier d�
 Le mode natif explicite lance un serveur possédé par Rune si ces trois paramètres sont fournis :
 
 - `RUNE_SERVER_BIN` : chemin absolu du binaire `codenomad-rs`.
-- `RUNE_HOST_ROOT` : chemin absolu d'un dossier neuf pour le profil isolé.
+- `RUNE_HOST_ROOT` : chemin absolu du dossier du profil isolé.
 - `CODENOMAD_PROFILE` : nom `trial-*`.
 
 `RUNE_BACKEND` sélectionne un serveur externe et prend priorité sur ce mode. Le propriétaire du processus réalise l'authentification bootstrap et l'arrêt sur son worker. La fermeture de la boucle Rune attend sa terminaison. Le navigateur publie le lancement local comme indisponible.
+
+Le mode par défaut crée un dossier neuf. `RUNE_HOST_PERSISTENT=true` permet de rouvrir le même profil `trial-*` : un marqueur valide son identité et un verrou système protège toute la durée de vie du serveur enfant. La configuration du dossier est conservée.
+
+Les primitives de restauration portent un snapshot borné des onglets et brouillons texte, un fichier atomique sous le profil natif isolé et un stockage de session propre à l'onglet du navigateur. Leur raccord aux onglets et à la restauration de l'interface fait partie de la tranche en cours.
 
 ## Vérifications sans fenêtre
 

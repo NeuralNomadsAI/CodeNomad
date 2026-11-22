@@ -29,7 +29,7 @@ Les essais automatiques utilisent des profils `trial-*`, des projets synthétiqu
 | Organisation par domaine et exclusion des sondes du produit | Builds natif et WASM sans feature, puis inspection réelle du lanceur | Réussi ; `.tmp-rune-product-native.log`, `.tmp-rune-product-wasm.log` et `target/rune-production/production-report.json` |
 | Retrait d'une permission ou question pendant la saisie | Runtime Rune, snapshot autoritaire, édition en attente et réconciliation du focus | 2 tests réussis ; `.tmp-rune-pending-edit.log` |
 | Coquille web connectée, cookies, refus 401, deux pages de sessions, historique exact, session vide puis retour et EventSource | Bundle produit WASM, serveur Rust réel et OpenCode simulé, six contextes clairs/sombres bureau/tablette/téléphone | Réussi, 24 listes, aucune création ni envoi, arrêt serveur zéro ; `target/rune-web-tests/launcher-54c0e861-176c-4317-96bb-098afd95965f/proof.json` et `browser/smoke-report.json` |
-| CI Windows/macOS/Linux : générations, tests natifs, builds produit/qualification natif et WASM, isolation et captures offscreen ; parité Solid du contrôle de fermeture sous Windows | Runners GitHub sur `094409452` | Trois jobs réussis ; [campagne 44972911822](https://github.com/NeuralNomadsAI/CodeNomad/actions/runs/44972911822) |
+| CI Windows/macOS/Linux : générations, tests natifs, builds produit/qualification natif et WASM, isolation et captures offscreen ; parité Solid du contrôle de fermeture sous Windows | Runners GitHub sur `407165952` | Trois jobs réussis ; [campagne 44977149825](https://github.com/NeuralNomadsAI/CodeNomad/actions/runs/44977149825) |
 | Banc Rune/TUI optimisé, historique de 300 tours et concurrence 8/32 | Builds release du client et du serveur Rust, daemon OpenCode 2.3.2 privé et fournisseur local | Campagne interrompue au tour 1/L8 : marqueur final absent ; six échantillons conservés, admission des budgets ouverte. Preuves : `.tmp-rune-latency-release-bench.log`, `scripts/perf/run/perf-DMRV5I/` |
 | Banc Rune/TUI optimisé après correction des fragments, trois tours L8/L32 | Même charge de 300 tours, builds release, OpenCode réel privé et fournisseur local | 12 échantillons réussis, 25/25 marqueurs par échantillon ; quatre seuils admis, ratio avec plancher 50 ms = 1,00 ≤ 1,15. `scripts/perf/run/perf-gZnlJ0/`, `.tmp-rune-fragments-budget-check.log`, `target/rune-latency-final-e3f137bf4.md` |
 | Sonde de latence : clipping vertical/horizontal, marqueur complet, encre effectivement peinte puis effacée | Runtime Rune et peinture CPU réelle, option `test-support` | 1 test réussi ; `.tmp-rune-latency-paint-test.log` |
@@ -37,6 +37,9 @@ Les essais automatiques utilisent des profils `trial-*`, des projets synthétiqu
 | Deux envois avec outils et texte visible avant chaque fin de réponse | Serveur Rust réel, OpenCode simulé, fragments à 15 ms, flux libéré par ACK du rendu de l'assistant exact | Deux ACK distincts en phase `Streaming`, après outil, arrêt serveur 0 ; `.tmp-rune-fragments-tools-shutdown.log` |
 | Relecture d'un début déjà fermé, deux deltas répétés, coupures, pages périmées et ancre absente | Même serveur partagé et fixture native alignée sur les événements de fragments | 606 lignes exactes, saut d'ancre 0, 23 pages et un seul prompt ; `.tmp-rune-fragments-recovery.log` |
 | Préflight du banc TUI existant, Rune et TUI, fournisseur local avec vrai OpenCode 2.3.2 privé | Un tour, une conversation, un tour d'historique ; build Rune de développement | Dix marqueurs sur dix et cinq touches par client ; `scripts/perf/run/perf-ItYdAZ/results/` ; présence plugin fermée et serveur Rust arrêté proprement |
+| Primitives de reprise : snapshot texte, limites UTF-16, occurrences distinctes, conservation du fichier et verrou exclusif du profil | Tests Rust, répertoires propres au worktree | 81 tests et exemples réussis, deux essais réels ignorés par défaut ; `.tmp-rune-restore-base-clean.log` |
+| Même codec et adaptateur de stockage navigateur ; frontière des styles et dépendance épinglée propre | Compilation WASM du produit, analyse AST et contrôle de préparation | Réussi ; `.tmp-rune-restore-base-wasm.log`, `.tmp-rune-restore-base-policy.log` |
+| Réouverture du profil, bootstrap renouvelé, refus du second propriétaire sans invalider le premier, libération après arrêt et configuration conservée entre deux lancements | Véritable `codenomad-rs serve`, profil `trial-*` possédé, OpenCode privé absent | Un test explicite réussi, deux démarrages et deux arrêts confirmés sans terminaison forcée, sorties 0 ; `.tmp-rune-restore-base-owned-server.log` |
 
 Le préflight qualifie le parcours du banc ; les trois tours optimisés aux niveaux 8 et 32 admettent ses budgets. L'endpoint Rune couvre le tampon CPU et sa validation d'encre ; la présentation physique/GPU a sa qualification distincte.
 
@@ -113,10 +116,23 @@ La qualification actuelle du portage s'appuie sur les exécutions du tableau et 
 
 ## Points à vérifier
 
-- CI des derniers changements de la sonde CPU, avec ses résultats et artefacts ; la base des trois plateformes est qualifiée ci-dessus.
+- Raccord des primitives de snapshot et stockage à la restauration des projets, onglets et brouillons ; reprise du navigateur, refus de quota et fermeture d'onglet.
 - Présentation physique/GPU et mesures sur les autres matériels, au-delà de l'endpoint CPU qualifié.
 - Parité visuelle, accessibilité et interactions des écrans et composants du tableau Solid/Rune.
 - Accès web HTTPS appairé, puis écriture et commandes d'agent par les véritables contrats serveur.
 - Fenêtre d'historique au-delà des 2 048 messages ou 8 Mio résidents : pagination avec éviction et restauration de l'ancre à qualifier pour les très longues sessions. La scène de charge locale utilise son propre jeu de 10 000 messages.
 - Clavier virtuel, IME, correction, dictée, lecteur d'écran, défilement tactile et consommation sur téléphone physique.
 - Installation, mises à jour signées, retour arrière et migration depuis Tauri sur les trois systèmes avant la bascule.
+
+## Reproduire les primitives de restauration
+
+Depuis le worktree, avec le cache `CARGO_TARGET_DIR` existant :
+
+```powershell
+cargo +1.99.1 test --offline --locked --workspace
+$env:CODENOMAD_HOST_TEST_SERVER = 'D:/chemin/worktree-serveur/target/release/codenomad-rs.exe'
+cargo +1.99.1 test --offline --locked -p codenomad-rune-app owned_process_releases_lock_only_after_closure -- --ignored
+cargo +1.99.1 build --offline --locked --target wasm32-unknown-unknown -p codenomad-rune-app --bin codenomad-rune
+```
+
+Le test réel crée son profil sous `target/rune-host-tests`, puis le retire après fermeture. Le serveur peut enregistrer son identifiant au premier démarrage ; les réouvertures conservent cette configuration. Le codec porte le sous-ensemble texte de l'enveloppe v1, dans un stockage alpha distinct du profil Tauri. Le raccord de l'interface, les erreurs de quota du navigateur et la restauration après fermeture de l'application demandent leurs essais de bout en bout.

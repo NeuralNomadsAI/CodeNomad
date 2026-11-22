@@ -28,7 +28,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "coo
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Window", "Location", "UrlSearchParams"] }
+web-sys = { version = "0.3", features = ["Window", "Location", "UrlSearchParams", "Storage"] }
 
 [package.metadata.rune]
 repository = "https://github.com/anomalyco/rune"

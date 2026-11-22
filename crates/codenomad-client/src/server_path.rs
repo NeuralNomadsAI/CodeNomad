@@ -36,7 +36,7 @@ fn style(path: &str) -> Option<Style> {
     path.starts_with('/').then_some(Style::Posix)
 }
 
-pub(crate) fn absolute(path: &str) -> bool {
+pub fn absolute(path: &str) -> bool {
     style(path).is_some()
 }
 

@@ -17,6 +17,7 @@ mod platform;
 #[path = "../tests/probes/mod.rs"]
 mod probes;
 mod strings;
+mod workspace;
 use codenomad_client::{Receiver, Sender, bounded};
 use rune::edit::TextEdit;
 use rune::{AppSpec, Cx, El, Tx, col, text};

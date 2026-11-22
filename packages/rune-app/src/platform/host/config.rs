@@ -6,6 +6,18 @@ use std::{
     process::{Command, Stdio},
     time::Duration,
 };
+pub(super) const TRIAL_DIRS: &[&str] = &[
+    "home",
+    "config",
+    "temp",
+    "working",
+    "home/AppData/Roaming",
+    "home/AppData/Local",
+    "home/.config",
+    "home/.local/share",
+    "home/.local/state",
+    "home/.cache",
+];
 
 /// Explicit launch inputs; the host never discovers or edits a user's profile.
 #[derive(Clone)]
@@ -18,6 +30,7 @@ pub struct LaunchConfig {
     pub environment: BTreeMap<OsString, OsString>,
     pub startup_timeout: Duration,
     pub ephemeral_ports: bool,
+    pub(super) persistent_root: Option<PathBuf>,
 }
 impl LaunchConfig {
     pub fn explicit(
@@ -46,10 +59,23 @@ impl LaunchConfig {
             environment,
             startup_timeout: Duration::from_secs(60),
             ephemeral_ports: false,
+            persistent_root: None,
         })
     }
     /// Allocate one fresh test profile. Its root must not already exist.
     pub fn trial(executable: PathBuf, root: &Path, profile: &str) -> io::Result<Self> {
+        let profile = Self::trial_profile(root, profile)?;
+        fs::create_dir(root)?;
+        Self::initialize(root)?;
+        Self::isolated(executable, root, &profile)
+    }
+    pub fn persistent(executable: PathBuf, root: &Path, profile: &str) -> io::Result<Self> {
+        super::persistent::prepare(executable, root, profile)
+    }
+    pub(crate) fn state_directory(&self) -> Option<PathBuf> {
+        self.persistent_root.as_ref().map(|root| root.join("rune"))
+    }
+    pub(super) fn trial_profile(root: &Path, profile: &str) -> io::Result<String> {
         let profile = profile_name(profile)?;
         let lexical = root
             .to_string_lossy()
@@ -72,19 +98,10 @@ impl LaunchConfig {
                 "Trial root conflicts with service binary discovery",
             ));
         }
-        fs::create_dir(root)?;
-        for dir in [
-            "home",
-            "config",
-            "temp",
-            "working",
-            "home/AppData/Roaming",
-            "home/AppData/Local",
-            "home/.config",
-            "home/.local/share",
-            "home/.local/state",
-            "home/.cache",
-        ] {
+        Ok(profile)
+    }
+    pub(super) fn initialize(root: &Path) -> io::Result<()> {
+        for dir in TRIAL_DIRS {
             fs::create_dir_all(root.join(dir))?;
         }
         let config = root.join("config/config.yaml");
@@ -96,6 +113,10 @@ impl LaunchConfig {
             &config,
             serde_json::to_vec_pretty(&settings).map_err(io::Error::other)?,
         )?;
+        Ok(())
+    }
+    pub(super) fn isolated(executable: PathBuf, root: &Path, profile: &str) -> io::Result<Self> {
+        let config = root.join("config/config.yaml");
         let mut environment: BTreeMap<OsString, OsString> = std::env::vars_os()
             .filter(|(key, _)| {
                 matches!(
@@ -202,7 +223,7 @@ pub(crate) fn profile_name(raw: &str) -> io::Result<String> {
         name
     })
 }
-fn identity(path: &Path) -> io::Result<String> {
+pub(super) fn identity(path: &Path) -> io::Result<String> {
     if !path.is_absolute() {
         return Err(io::Error::other(
             "An absolute configuration source is required",

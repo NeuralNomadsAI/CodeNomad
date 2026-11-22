@@ -1,5 +1,6 @@
 //! Owned desktop server lifetime. Call blocking methods from a worker thread.
 mod config;
+mod persistent;
 mod protocol;
 use codenomad_client::backend::Backend;
 use codenomad_host_process::OwnedProcess;
@@ -43,6 +44,7 @@ pub struct ChildHost {
     threads: Vec<JoinHandle<()>>,
     url: String,
     stopped: bool,
+    lease: Option<persistent::Lease>,
 }
 #[derive(Debug)]
 pub struct StopReport {
@@ -52,12 +54,18 @@ pub struct StopReport {
 }
 impl Controller {
     pub fn launch(&self, config: LaunchConfig) -> io::Result<ChildHost> {
+        let lease = persistent::acquire(&config)?;
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        ChildHost::start(config, self.generation.clone(), generation)
+        ChildHost::start(config, self.generation.clone(), generation, lease)
     }
 }
 impl ChildHost {
-    fn start(config: LaunchConfig, authority: Arc<AtomicU64>, generation: u64) -> io::Result<Self> {
+    fn start(
+        config: LaunchConfig,
+        authority: Arc<AtomicU64>,
+        generation: u64,
+        lease: Option<persistent::Lease>,
+    ) -> io::Result<Self> {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(io::Error::other)?
@@ -166,6 +174,7 @@ impl ChildHost {
             threads: vec![writer_thread, stdout_thread, stderr_thread],
             url: String::new(),
             stopped: false,
+            lease,
         };
         let deadline = Instant::now() + config.startup_timeout;
         loop {
@@ -282,6 +291,7 @@ impl ChildHost {
             Ordering::SeqCst,
         );
         self.stopped = true;
+        self.lease.take();
         Ok(StopReport {
             forced,
             native_cleanup_confirmed: self.output.lock().unwrap().cleanup == Some(true),
