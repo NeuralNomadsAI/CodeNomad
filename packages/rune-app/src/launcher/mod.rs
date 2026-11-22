@@ -7,9 +7,9 @@ use crate::{
     catalog::{Project, Session, SessionMissing, Sessions},
     history::Result,
 };
-use codenomad_client::{Receiver, bounded};
+use codenomad_client::{Receiver, bounded, runtime::Instant};
 use rune::{Tx, edit::TextEdit};
-use std::future::Future;
+use std::{collections::HashSet, future::Future};
 pub const MAX_BROWSED_SESSIONS: usize = 2_000;
 pub(crate) use visits::Visits;
 
@@ -27,6 +27,7 @@ pub struct Launcher {
     pub projects: Vec<Project>,
     pub project: Option<Project>,
     pub sessions: Vec<Session>,
+    pub listed_sessions: HashSet<String>,
     pub next: Option<String>,
     pub pending: bool,
     listing: bool,
@@ -45,7 +46,7 @@ enum Reply {
     Created(Backend, String, String, Option<u64>),
     Selected(Vec<String>, Option<Selection>, Option<u64>),
 }
-type Selection = (Backend, String, Option<usize>);
+type Selection = (Backend, String, Option<usize>, Instant);
 enum Restored {
     Empty,
     Bound(Backend, String),
@@ -110,6 +111,7 @@ impl Launcher {
             projects: vec![],
             project: None,
             sessions: vec![],
+            listed_sessions: HashSet::new(),
             next: None,
             pending: starting,
             listing: false,
@@ -142,11 +144,158 @@ impl Launcher {
             wake();
         });
     }
+
+    fn apply_listing(&mut self, mut page: Sessions, more: bool, selected: Option<&str>) {
+        let listed: HashSet<_> = page.rows.iter().map(|row| row.id.clone()).collect();
+        if more {
+            self.listed_sessions.extend(listed);
+            let mut known: HashSet<_> = self.sessions.iter().map(|row| row.id.clone()).collect();
+            self.sessions.extend(
+                page.rows
+                    .into_iter()
+                    .filter(|row| known.insert(row.id.clone())),
+            );
+        } else {
+            self.creation_uncertain = false;
+            if let Some(old) = self
+                .sessions
+                .iter()
+                .find(|row| Some(row.id.as_str()) == selected && !listed.contains(&row.id))
+            {
+                page.rows.push(old.clone());
+            }
+            self.sessions = page.rows;
+            self.listed_sessions = listed;
+        }
+        self.visits.observe_listing(&self.listed_sessions);
+        self.next = page.next;
+    }
+
+    fn listed_visits_not_seen(&self) -> Vec<String> {
+        self.visits
+            .listed_ids()
+            .filter(|id| !self.listed_sessions.contains(*id))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    fn check_omitted_visits(&mut self) {
+        let (Some(backend), Some(project)) = (self.connection.clone(), self.project.clone()) else {
+            return;
+        };
+        let ids = self.listed_visits_not_seen();
+        if ids.is_empty() {
+            return;
+        }
+        let (out, checks) = bounded(ids.len());
+        self.visits.start_checks(&ids, checks);
+        let wake = self.wake.clone();
+        // Results belong to the listing; dropping its receiver cancels the worker.
+        crate::platform::spawn(async move {
+            backend
+                .confirm_missing_sessions(&project, ids, out, || wake())
+                .await;
+            wake();
+        });
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn row(id: &str) -> Session {
+        Session {
+            id: id.into(),
+            title: id.into(),
+        }
+    }
+
+    #[test]
+    fn an_admitted_page_is_not_truncated_at_the_browse_budget() {
+        let mut launcher = Launcher::fixture();
+        launcher.sessions = (0..MAX_BROWSED_SESSIONS - 1)
+            .map(|index| row(&format!("old-{index}")))
+            .collect();
+        let rows = (0..101).map(|i| row(&format!("more-{i}"))).collect();
+        launcher.apply_listing(Sessions { rows, next: None }, true, None);
+        assert_eq!(launcher.sessions.len(), MAX_BROWSED_SESSIONS + 100);
+        assert_eq!(launcher.sessions.last().unwrap().id, "more-100");
+        assert!(launcher.next.is_none());
+    }
+
+    #[test]
+    fn partial_refresh_keeps_history_and_omission_probes_only_previously_listed_visits() {
+        let mut launcher = Launcher::fixture();
+        launcher.apply_listing(
+            Sessions {
+                rows: vec![row("a"), row("b")],
+                next: None,
+            },
+            false,
+            None,
+        );
+        launcher.visits.record("a", None, true);
+        launcher.visits.record("b", None, true);
+        launcher.apply_listing(
+            Sessions {
+                rows: vec![row("b")],
+                next: Some("continuation".into()),
+            },
+            false,
+            Some("b"),
+        );
+        assert_eq!(
+            launcher
+                .visits
+                .steps(true, Some("b"))
+                .next()
+                .map(|(_, id)| id),
+            Some("a")
+        );
+        launcher.visits.record("a", None, false);
+        assert!(!launcher.listed_sessions.contains("a"));
+        assert_eq!(launcher.visits.listed_ids().next(), Some("a"));
+        launcher.visits.record("child", None, false);
+        assert_eq!(launcher.listed_visits_not_seen(), ["a"]);
+    }
+
+    #[test]
+    fn terminal_omission_is_not_enough_to_retire_a_visit() {
+        let mut state = crate::init();
+        crate::gallery::shell::fixture(&mut state);
+        let mut rt = rune::Runtime::new(
+            state,
+            crate::view,
+            (1000.0, 800.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.update(|s, tx| {
+            let l = s.screen.launcher_mut().unwrap();
+            l.visits.record("a", None, true);
+            l.apply_listing(
+                Sessions {
+                    rows: vec![row("b")],
+                    next: None,
+                },
+                true,
+                None,
+            );
+            assert!(can_visit(s, true));
+            let (out, input) = bounded(1);
+            s.screen
+                .launcher_mut()
+                .unwrap()
+                .visits
+                .start_checks(&["a".into()], input);
+            assert!(
+                out.try_send(("a".into(), codenomad_client::runtime::Instant::now()))
+                    .is_ok()
+            );
+            assert!(poll(s, tx));
+            assert!(!can_visit(s, true));
+        });
+    }
 
     #[test]
     fn pending_selection_cannot_consume_the_departing_draft() {
@@ -207,7 +356,7 @@ mod tests {
         assert!(
             out.try_send(Ok(Reply::Selected(
                 vec![],
-                Some((backend, "Another".into(), None)),
+                Some((backend, "Another".into(), None, Instant::now())),
                 None
             )))
             .is_ok()
@@ -470,6 +619,7 @@ pub fn list(s: &mut State, more: bool) {
     if l.pending || more && (l.next.is_none() || l.sessions.len() >= MAX_BROWSED_SESSIONS) {
         return;
     }
+    l.visits.cancel_checks();
     l.listing = true;
     let cursor = if more { l.next.clone() } else { None };
     l.job("rune.list_error", async move {
@@ -543,7 +693,7 @@ fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>, dismiss:
                 Ok((bound, session)) => {
                     return Ok(Reply::Selected(
                         missing,
-                        Some((bound, session.title, step)),
+                        Some((bound, session.title, step, Instant::now())),
                         dismiss,
                     ));
                 }
@@ -590,7 +740,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let Some(l) = s.screen.launcher_mut() else {
         return false;
     };
-    let mut boot_changed = false;
+    let mut changed = !l.pending && l.visits.poll_checks();
     if let Some(result) = l
         .boot
         .as_ref()
@@ -598,7 +748,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     {
         l.boot = None;
         l.pending = false;
-        boot_changed = true;
+        changed = true;
         match result {
             Ok((backend, host)) => {
                 l.address = TextEdit::new(&backend.base);
@@ -615,10 +765,10 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
     }
     let Some(result) = l.result.as_ref().and_then(|rx| rx.try_recv().ok()) else {
-        if boot_changed {
+        if changed {
             tx.instant();
         }
-        return boot_changed;
+        return changed;
     };
     l.result = None;
     l.pending = false;
@@ -641,10 +791,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             l.folder = TextEdit::new(&project.path);
             l.project = Some(project.clone());
-            l.sessions = rows.rows;
-            l.next = rows.next;
+            l.apply_listing(rows, false, None);
             l.search = TextEdit::new("");
-            l.creation_uncertain = false;
             crate::workspace::opened(s, &project);
             match restored {
                 Restored::Bound(backend, title) => bind(s, backend, title, None, tx),
@@ -655,39 +803,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 Restored::Empty => crate::git::project_opened(s),
             }
         }
-        Ok(Reply::Listed(mut rows, more)) => {
-            if !more {
-                l.creation_uncertain = false;
+        Ok(Reply::Listed(rows, more)) => {
+            l.apply_listing(rows, more, selected.as_deref());
+            if l.next.is_none() {
+                l.check_omitted_visits();
             }
-            if more {
-                let remaining = MAX_BROWSED_SESSIONS.saturating_sub(l.sessions.len());
-                let mut ids = l
-                    .sessions
-                    .iter()
-                    .map(|row| row.id.clone())
-                    .collect::<std::collections::HashSet<_>>();
-                l.sessions.extend(
-                    rows.rows
-                        .into_iter()
-                        .filter(|row| ids.insert(row.id.clone()))
-                        .take(remaining),
-                );
-            } else {
-                let ids = rows
-                    .rows
-                    .iter()
-                    .map(|row| row.id.clone())
-                    .collect::<std::collections::HashSet<_>>();
-                if let Some(old) = l
-                    .sessions
-                    .iter()
-                    .find(|row| Some(&row.id) == selected.as_ref() && !ids.contains(&row.id))
-                {
-                    rows.rows.push(old.clone());
-                }
-                l.sessions = rows.rows;
-            }
-            l.next = rows.next;
         }
         Ok(Reply::Created(b, title, submitted, dismiss)) => {
             if l.title.text == submitted {
@@ -709,7 +829,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         Ok(Reply::Selected(missing, selection, dismiss)) => {
             l.sessions.retain(|row| !missing.contains(&row.id));
+            l.listed_sessions.retain(|id| !missing.contains(id));
             l.visits.forget(&missing);
+            if let Some((backend, _, _, verified)) = &selection {
+                l.visits.verified(&backend.session, *verified);
+            }
             if let Some(id) = selected
                 .as_deref()
                 .filter(|id| s.phase == Phase::Failed && missing.iter().any(|m| m == id))
@@ -718,7 +842,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 tx.instant();
                 return true;
             }
-            if let Some((b, title, visit)) = selection.filter(|(b, _, _)| {
+            if let Some((b, title, visit, _)) = selection.filter(|(b, _, _, _)| {
                 !blocked
                     || s.phase == Phase::Failed && selected.as_deref() == Some(b.session.as_str())
             }) {
@@ -742,6 +866,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             l.error = Some(key);
         }
+    }
+    if let Some(l) = s.screen.launcher_mut()
+        && !l.pending
+    {
+        l.visits.poll_checks();
     }
     tx.instant();
     true
@@ -827,7 +956,8 @@ fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize>, tx: &mut
     let same_session =
         !s.screen.is_launcher() && crate::workspace::active_session(s) == Some(b.session.as_str());
     if let Some(l) = s.screen.launcher_mut() {
-        l.visits.record(&b.session, visit);
+        l.visits
+            .record(&b.session, visit, l.listed_sessions.contains(&b.session));
         if let Some(row) = l.sessions.iter_mut().find(|row| row.id == b.session) {
             row.title.clone_from(&title);
         } else {

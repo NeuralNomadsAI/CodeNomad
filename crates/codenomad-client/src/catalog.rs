@@ -205,13 +205,23 @@ impl Backend {
             if !ids.insert(item.id.clone()) {
                 return Err("duplicate session".into());
             }
-            if row["parentID"].is_null() && !item.id.starts_with("ses_cn_schedule_") {
+            let root = match row.get("parentID") {
+                None | Some(Value::Null) => true,
+                Some(Value::String(id)) if valid_id(id) => false,
+                _ => return Err("invalid session parent".into()),
+            };
+            if root && !item.id.starts_with("ses_cn_schedule_") {
                 sessions.push(item);
             }
         }
-        let next = match &data["cursor"]["next"] {
-            Value::Null => None,
-            Value::String(v) if !v.is_empty() && v.len() <= 65536 => Some(v.clone()),
+        let cursor = match data.get("cursor") {
+            None | Some(Value::Null) => None,
+            Some(Value::Object(cursor)) => cursor.get("next"),
+            _ => return Err("invalid session cursor".into()),
+        };
+        let next = match cursor {
+            None | Some(Value::Null) => None,
+            Some(Value::String(v)) if !v.is_empty() && v.len() <= 65536 => Some(v.clone()),
             _ => return Err("invalid session cursor".into()),
         };
         Ok(Sessions {
@@ -239,6 +249,42 @@ impl Backend {
     }
     pub async fn bind(&self, project: &Project, id: &str, fresh: bool) -> Result<Self> {
         Ok(self.bind_session(project, id, fresh).await?.0)
+    }
+    // A session can move across a live cursor without leaving the workspace.
+    pub async fn confirm_missing_sessions(
+        &self,
+        project: &Project,
+        ids: Vec<String>,
+        missing: async_channel::Sender<(String, crate::runtime::Instant)>,
+        notify: impl Fn(),
+    ) {
+        futures_lite::future::race(
+            async {
+                for id in ids {
+                    let started = crate::runtime::Instant::now();
+                    let confirmed = futures_lite::future::race(
+                        async {
+                            self.bind_session(project, &id, false)
+                                .await
+                                .is_err_and(|error| error.is::<SessionMissing>())
+                        },
+                        async {
+                            crate::runtime::sleep(std::time::Duration::from_secs(1)).await;
+                            false
+                        },
+                    )
+                    .await;
+                    if confirmed {
+                        if missing.send((id, started)).await.is_err() {
+                            return;
+                        }
+                        notify();
+                    }
+                }
+            },
+            missing.closed(),
+        )
+        .await;
     }
     pub async fn bind_session(
         &self,

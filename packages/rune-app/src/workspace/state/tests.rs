@@ -54,6 +54,7 @@ fn sidebar_search_and_title_edits_are_kept_only_by_their_origin_tab() {
     crate::gallery::shell::fixture(&mut s);
     let mut ui = Ui::new();
     ui.ready = true;
+    ui.entries[0].project = s.screen.launcher().unwrap().project.clone();
     ui.entries.push(entry("tab-1".into(), Tab::Blank));
     s.workspace = Some(ui);
     let mut rt = runtime(s);
@@ -63,13 +64,25 @@ fn sidebar_search_and_title_edits_are_kept_only_by_their_origin_tab() {
         launcher.title = TextEdit::new("unsent title");
         launcher.show_title = true;
         launcher.show_search = true;
+        launcher.creation_uncertain = true;
         select(s, "tab-1", tx);
         assert!(s.screen.launcher().unwrap().search.text.is_empty());
+        assert!(!s.screen.launcher().unwrap().creation_uncertain);
         select(s, "tab-0", tx);
-        let launcher = s.screen.launcher().unwrap();
+        let launcher = s.screen.launcher_mut().unwrap();
         assert_eq!(launcher.search.text, "alpha");
         assert_eq!(launcher.title.text, "unsent title");
         assert!(launcher.show_title && launcher.show_search);
+        assert!(launcher.creation_uncertain);
+        assert_eq!(launcher.error, Some("rune.create_error"));
+        launcher.creation_uncertain = false;
+        launcher.error = None;
+        assert!(!s.workspace.as_ref().unwrap().entries[0].creation_uncertain);
+        resume(s, tx);
+        let launcher = s.screen.launcher().unwrap();
+        assert!(!launcher.creation_uncertain);
+        assert_eq!(launcher.error, None);
+        assert_eq!(launcher.title.text, "unsent title");
     });
 }
 
