@@ -57,6 +57,52 @@ fn reveal(rt: &mut Runtime<State>, key: &str) {
     visible(rt, key);
 }
 #[test]
+fn workspace_chat_keeps_history_agent_and_composer_inside_the_viewport() {
+    for size in [(390.0, 844.0), (1100.0, 900.0)] {
+        let mut state = state();
+        state.workspace = Some(crate::workspace::Ui::new());
+        state.chat_title = "Existing history".into();
+        state.messages.push(crate::Message {
+            id: "visible-history".into(),
+            role: "assistant".into(),
+            completed: true,
+            body: "Existing answer".into(),
+            parts: vec![],
+        });
+        let rt = runtime(state, size);
+        for key in [
+            "tab-body-tab-0",
+            "history",
+            "agent-panel",
+            "model-picker",
+            "session-composer",
+            "composer",
+            "send",
+        ] {
+            let node = rt
+                .elements()
+                .into_iter()
+                .find(|e| e.key.as_deref() == Some(key))
+                .unwrap_or_else(|| panic!("missing integrated chat node {key}"));
+            println!(
+                "{}",
+                json!({"viewport":[size.0,size.1],"key":key,"rect":node.rect,"visible":node.visible})
+            );
+            assert!(
+                node.rect[2] > 0.0
+                    && node.rect[3] > 0.0
+                    && node.rect[1] >= 0.0
+                    && node.rect[1] + node.rect[3] <= size.1 + 1.0
+                    && node.visible[2] >= node.rect[2] - 1.0
+                    && node.visible[3] >= node.rect[3] - 1.0,
+                "{key} must be painted inside {size:?}: rect={:?}, visible={:?}",
+                node.rect,
+                node.visible
+            );
+        }
+    }
+}
+#[test]
 fn permissions_keep_actions_visible_and_reason_reachable_across_viewports() {
     for size in [(1400.0, 900.0), (390.0, 740.0), (390.0, 320.0)] {
         let mut state = state();

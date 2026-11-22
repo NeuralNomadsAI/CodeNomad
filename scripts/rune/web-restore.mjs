@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
 import {chromium} from 'playwright'
 import {pendingBrowser} from './web-pending-open.mjs'
+import {assertRenderedTextContrast} from './text-contrast.mjs'
 
 const root=fileURLToPath(new URL('../../',import.meta.url))
 const {values}=parseArgs({options:{url:{type:'string'},project:{type:'string'},'storage-state':{type:'string'},out:{type:'string'},executable:{type:'string'},workspace:{type:'string'},'pending-open':{type:'boolean'}}})
@@ -31,6 +32,8 @@ const draftA='Brouillon Alpha\nété · 日本語 · 🦀',draftB='Brouillon Bet
 const retryDraft='Brouillon Beta enregistré après retry 🦀',unsaved='Dernière saisie volontairement non enregistrée 🧪'
 const browser=await chromium.launch({headless:true,...(values.executable?{executablePath:values.executable}:{}),args:['--enable-unsafe-webgpu','--use-angle=swiftshader']})
 const results=[]
+const palette=JSON.parse(await readFile(path.join(root,'crates/rune-theme-codenomad/assets/theme.json'),'utf8'))
+const imagePage=await browser.newPage()
 try {
   for(const spec of [{name:'desktop-light',width:1100,height:900,colorScheme:'light',touch:false},{name:'phone-dark',width:390,height:844,colorScheme:'dark',touch:true}]) {
     const context=await browser.newContext({viewport:{width:spec.width,height:spec.height},deviceScaleFactor:1,colorScheme:spec.colorScheme,isMobile:spec.touch,hasTouch:spec.touch,storageState:storage})
@@ -209,7 +212,48 @@ try {
     }
     const capture=async stage=>{
       record.stages.push(stage);await writeFile(path.join(out,`${spec.name}-${stage}.aria.yml`),await page.locator('body').ariaSnapshot())
-      await page.screenshot({path:path.join(out,`${spec.name}-${stage}.png`)})
+      if(stage==='failure'){await page.screenshot({path:path.join(out,`${spec.name}-${stage}.png`)});return}
+      const attempts=[]
+      for(const deadline=Date.now()+5000;;){
+      const boxes={}
+      try {
+      for(const [key,locator] of [['canvas',page.locator('canvas').first()],['model',button(m['rune.model'])],
+        ['composer',mirror().getByRole('group',{name:m['rune.prompt'],exact:true})],['send',button(m['promptInput.overlay.send'])]]) {
+        boxes[key]=await locator.evaluate(el=>{
+          const r=el.getBoundingClientRect(),rect=[r.x,r.y,r.width,r.height]
+          let left=Math.max(0,r.left),top=Math.max(0,r.top),right=Math.min(innerWidth,r.right),bottom=Math.min(innerHeight,r.bottom)
+          for(let p=el.parentElement;p;p=p.parentElement){
+            const s=getComputedStyle(p),b=p.getBoundingClientRect()
+            if(/hidden|clip|auto|scroll/.test(s.overflowX)){left=Math.max(left,b.left);right=Math.min(right,b.right)}
+            if(/hidden|clip|auto|scroll/.test(s.overflowY)){top=Math.max(top,b.top);bottom=Math.min(bottom,b.bottom)}
+          }
+          return {rect,clip:[left,top,Math.max(0,right-left),Math.max(0,bottom-top)]}
+        })
+        const {rect,clip}=boxes[key]
+        assert(rect[2]>0&&rect[3]>0&&clip[2]>0&&clip[3]>=rect[3]-1&&(key==='composer'||clip[2]>=rect[2]-1),`${key} must fit the actual viewport and ancestor clips: ${JSON.stringify(boxes[key])}`)
+      }
+      const {['space-md']:md,['space-sm']:sm}=palette.numbers[spec.colorScheme]
+      const regions=['model','send'].map(name=>({name,rect:boxes[name].rect,surface:'surface-control',inset:sm}))
+      const [x,y,w]=boxes.composer.rect
+      const editor=[x+md,y+md,w-md*2,boxes.send.rect[1]-sm-y-md],clip=boxes.composer.clip
+      assert(editor[0]>=clip[0]&&editor[1]>=clip[1]&&editor[0]+editor[2]<=clip[0]+clip[2]+1&&editor[1]+editor[3]<=clip[1]+clip[3]+1,'Actual editor surface must fit its viewport and ancestor clips')
+      regions.push({name:'composer',rect:editor,surface:'surface-field',inset:sm})
+      let png,paint;const paintSamples=[]
+      for(let sample=0;sample<2;sample++){
+        png=await page.screenshot()
+        paint=await assertRenderedTextContrast(imagePage,png,regions,palette[spec.colorScheme])
+        paintSamples.push(paint.map(region=>({name:region.name,drawnInkPixels:region.drawnInkPixels})))
+      }
+      await writeFile(path.join(out,`${spec.name}-${stage}.png`),png)
+      ;(record.viewportProof??=[]).push({stage,viewport:[spec.width,spec.height],boxes,paint,paintSamples,settlementAttempts:attempts})
+      break
+      }catch(error){
+        if(attempts.length<16)attempts.push({failure:error.message,boxes})
+        if(Date.now()>=deadline){(record.viewportProof??=[]).push({stage,settlementAttempts:attempts});throw error}
+        // Observed mirror commits can precede final geometry and GPU presentation.
+        await page.screenshot()
+      }
+      }
     }
     const localProof=async documentId=>{
       const raw=await page.evaluate(key=>sessionStorage.getItem(key),PROOF)

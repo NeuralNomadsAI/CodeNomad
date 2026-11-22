@@ -71,6 +71,8 @@ Le port de la géométrie utilise les métriques CSS générées et partage le S
 
 Un défaut de taille de la bande dans la colonne de l'application est reproduit par un vrai Runtime 390×844 : 422 px au lieu de 39. Le correctif partagé donne 39 px de bande et 805 px de conversation. Douze tests thème réussissent, avec preuves `.tmp-rune-strip-column-red.log` et `.tmp-rune-strip-column-green.log` ; les captures de l'application WASM avec cette correction demandent leur revalidation.
 
+La composition complète `crate::view`, avec workspace et chat, conserve historique, agent et composeur dans le viewport natif 390×844 et 1100×900 (`.tmp-rune-workspace-viewport-native.log`). La vérification WASM après restauration passe aussi : profil `launcher-b6160b8a-9788-4f70-b012-3a732194edfa`, bureau et téléphone, quatre étapes contrôlées par deux captures consécutives. Sur téléphone restauré, Modèle/Envoyer/champ sont entièrement visibles ; 112/99/380 pixels de glyphes sont détectés et les contrôles négatifs effacés sont rejetés. Le conteneur décoratif déborde de 5 px de padding, tandis que champ et actions restent dans le viewport. Le signalement de débordement vertical du chat est non reproduit ; aucune correction produit supplémentaire. Preuves et logs : `.tmp-rune-workspace-viewport-browser-final.log` et `target/rune-web-tests/launcher-b6160b8a-9788-4f70-b012-3a732194edfa/browser/`.
+
 ## Parité du contrôle de fermeture
 
 La fixture charge le véritable composant Solid, ses fournisseurs et ses styles. Le composant Rune possède une scène de galerie et utilise les métriques générées de ces styles.
