@@ -315,6 +315,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permission": "Ses girişini kaydetmek için mikrofon erişimi gereklidir.",
   "voice.command.unavailable": "{action} — {reason}",
   "voice.command.conversation": "Konuşma modu",
+  "voice.command.dictation": "Dikte modu",
   "voice.command.off": "Ses girişi kapalı",
   "voice.command.composerUnavailable": "Bu ileti düzenleyicisinde kullanılamıyor",
   "voice.command.setupDictation": "Dikteyi ayarla",

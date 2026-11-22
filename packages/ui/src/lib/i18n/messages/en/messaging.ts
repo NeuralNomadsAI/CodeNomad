@@ -342,6 +342,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permission": "Microphone access is required to record voice input.",
   "voice.command.unavailable": "{action} — {reason}",
   "voice.command.conversation": "Conversation mode",
+  "voice.command.dictation": "Dictation mode",
   "voice.command.off": "Voice input is off",
   "voice.command.composerUnavailable": "Unavailable in this composer",
   "voice.command.setupDictation": "Set up dictation",

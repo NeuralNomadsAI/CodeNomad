@@ -342,6 +342,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permission": "ध्वनि इनपुट रेकर्ड गर्न माइक्रोफोन पहुँच आवश्यक छ।",
   "voice.command.unavailable": "{action} — {reason}",
   "voice.command.conversation": "कुराकानी मोड",
+  "voice.command.dictation": "श्रुतलेखन मोड",
   "voice.command.off": "ध्वनि इनपुट बन्द छ",
   "voice.command.composerUnavailable": "यो कम्पोजरमा उपलब्ध छैन",
   "voice.command.setupDictation": "श्रुतलेखन सेटअप गर्नुहोस्",

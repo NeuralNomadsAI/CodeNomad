@@ -342,6 +342,7 @@ export const messagingMessages = {
   "promptInput.voiceInput.error.permission": "נדרשת גישה למיקרופון כדי להקליט קלט קולי.",
   "voice.command.unavailable": "{action} — {reason}",
   "voice.command.conversation": "מצב שיחה",
+  "voice.command.dictation": "מצב הכתבה",
   "voice.command.off": "הקלט הקולי כבוי",
   "voice.command.composerUnavailable": "לא זמין בשדה קלט זה",
   "voice.command.setupDictation": "הגדרת הכתבה",
