@@ -32,13 +32,14 @@ try{
     const record={id:`${mode}-${theme}${activation==='pointer'?'-pointer':''}`,theme,mode,activation,errors:[],states:[]};records.push(record)
     const page=await browser.newPage({viewport:{width:480,height:360},deviceScaleFactor:1})
     page.setDefaultTimeout(10000)
+    page.setDefaultNavigationTimeout(60000)
     page.on('pageerror',error=>record.errors.push(error.message))
     record.requests=[]
     await page.route('**/*',route=>{const url=new URL(route.request().url());assert.equal(url.origin,origin,'External request prohibited');if(!url.pathname.startsWith('/api/'))return route.continue();const method=route.request().method();record.requests.push({method,path:url.pathname});assert.equal(method,'GET','API mutation prohibited');return url.pathname==='/api/events'?route.fulfill({contentType:'text/event-stream',body:': isolated fixture\n\n'}):route.fulfill({json:{}})})
     await page.emulateMedia({colorScheme:theme,reducedMotion:'reduce'})
-    await page.goto(`${origin}/rune-action-menu?${new URLSearchParams({theme,case:mode})}`)
+    await page.goto(`${origin}/rune-action-menu?${new URLSearchParams({theme,case:mode})}`,{waitUntil:'domcontentloaded'})
     record.startupReloads=0
-    for(let attempt=0;attempt<3;attempt++){try{await page.waitForFunction(()=>globalThis.runeActionMenu?.ready,undefined,{timeout:30000});break}catch(error){if(attempt===2)throw error;record.startupReloads++;await page.reload()}}
+    for(let attempt=0;attempt<3;attempt++){try{await page.waitForFunction(()=>globalThis.runeActionMenu?.ready,undefined,{timeout:30000});break}catch(error){if(attempt===2)throw error;record.startupReloads++;await page.reload({waitUntil:'domcontentloaded'})}}
     await page.evaluate(()=>document.fonts.ready)
     const trigger=page.locator('button.action-overflow-trigger')
     await trigger.waitFor({state:'visible'})
