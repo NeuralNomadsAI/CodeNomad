@@ -335,6 +335,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const [searchRetryGeneration, setSearchRetryGeneration] = createSignal(0)
   const [searchMatches, setSearchMatches] = createSignal<Array<SessionSearchMatch & { sessionId: string }>>([])
   const [searchWorkspace, setSearchWorkspace] = createSignal(false)
+  const includeSystemResults = createMemo(() => preferences().systemMessagesVisibility !== "hidden")
   const [rankedSearchResult, setRankedSearchResult] = createSignal<RankedHistoryResult>()
   const [searchRestartRequired, setSearchRestartRequired] = createSignal(false)
   const [includeTechnical, setIncludeTechnical] = createSignal(false)
@@ -1275,7 +1276,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const query = debouncedSearchQuery()
     const workspace = searchWorkspace()
     const technical = includeTechnical()
-    const systemVisibility = preferences().systemMessagesVisibility
+    const showSystem = includeSystemResults()
     const cursor = searchPageCursor()
     const mutationRevision = getOpenCodeMutationRevision(props.instanceId, props.sessionId)
     const instanceGeneration = getOpenCodeInstanceGeneration(props.instanceId)
@@ -1319,6 +1320,7 @@ export default function MessageSection(props: MessageSectionProps) {
       && debouncedSearchQuery() === query
       && searchWorkspace() === workspace
       && includeTechnical() === technical
+      && includeSystemResults() === showSystem
     const publish = (page: Pick<Awaited<ReturnType<typeof findHistoryMatches>>, "hits" | "cursor" | "scanned" | "skipped">, settled: boolean) => {
       if (!isCurrentSearch()) return
       if (frame !== undefined) cancelAnimationFrame(frame)
@@ -1327,7 +1329,7 @@ export default function MessageSection(props: MessageSectionProps) {
         batch(() => {
           // Progress only appends hits within this page. Preserve row identities
           // so Solid keeps existing result buttons and their keyboard focus.
-          setSearchMatches(previous => page.hits.filter(hit => hit.role !== "system" || systemVisibility !== "hidden").map((hit, index) => previous[index] ?? ({
+          setSearchMatches(previous => page.hits.filter(hit => hit.role !== "system" || showSystem).map((hit, index) => previous[index] ?? ({
             id: `${hit.sessionID}:${hit.messageID}:${hit.partIndex}`,
             sessionId: hit.sessionID, messageId: hit.messageID, partType: hit.kind,
             role: hit.role === "user" ? "user" : "assistant", start: 0, end: query.length,

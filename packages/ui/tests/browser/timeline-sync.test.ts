@@ -216,6 +216,49 @@ test("scrolling activates the marker of the block at the reading line", { timeou
 // The product treats blocks reaching past the 4 px reading line as visible.
 const READING_LINE_TOLERANCE = 4
 
+for (const label of ["Expand Tool groups", "Disable tool grouping"]) {
+  test(`open history search keeps its results and reading position on ${label}`, { timeout: 90_000 }, () => withSession("minimal", async page => {
+    let searches = 0
+    await page.route("**/session-history/query", route => {
+      searches++
+      return route.fulfill({ json: {
+        status: "page", scanned: 24, tools: 0, reasoning: 0, skipped: 0, candidates: [], cursor: null,
+        hits: [{ sessionID: "s", messageID: id(1), partIndex: 2, role: "assistant", kind: "text", excerpt: "Checking the source." }],
+      } })
+    })
+    await page.keyboard.press("Control+f")
+    const search = page.getByRole("searchbox")
+    await search.fill("Checking the source")
+    const result = page.locator(".history-search-result")
+    await result.waitFor()
+    await settleTranscript(page, 450)
+    assert.equal(searches, 1)
+
+    const box = (await page.locator(".message-stream").boundingBox())!
+    await page.mouse.move(box.x + 60, box.y + box.height / 2)
+    await page.mouse.wheel(0, 1000)
+    await settleTranscript(page, 450)
+    const readerId = await active(page)
+    const reader = (await markers(page)).find(marker => marker.id === readerId)!
+    assert.equal(reader.type, "assistant")
+    assert.notEqual(reader.messageId, id(1), "the reader left the search hit")
+    const before = await blockOffset(page, reader)
+
+    await page.evaluate(() => (window as any).fixture.showFilters(true))
+    await page.getByRole("button", { name: "Message content", exact: true }).click()
+    await page.getByRole("button", { name: label, exact: true }).click()
+    await page.locator('.transcript-filters[aria-busy="false"]').waitFor()
+    await settleTranscript(page, 450)
+    const after = await blockOffset(page, reader)
+    assert.equal(searches, 1, `display change sent another search; reading offset ${before}px → ${after}px`)
+    assert.equal(await search.inputValue(), "Checking the source")
+    assert.equal(await result.count(), 1)
+    assert.equal(await active(page), readerId)
+    assert.ok(before !== null && after !== null && Math.abs(before - after) <= READING_LINE_TOLERANCE,
+      `the reader stays on the newer reply (${before}px → ${after}px)`)
+  }, groupedStore))
+}
+
 test("ungrouping mounts and aligns the 61st call of a collapsed 120-call group", { timeout: 90_000 }, () => withSession("minimal", async (page) => {
   const marker = (await markers(page)).filter(candidate => candidate.toolPartIds?.[0]?.startsWith("long-group-"))[60]
   assert.deepEqual(marker.toolPartIds, ["long-group-60-read"])
