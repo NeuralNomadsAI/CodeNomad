@@ -4,7 +4,7 @@ import { trackHeightDelta } from "../lib/height-delta"
 import { flushFrameBatchedMounts } from "../lib/frame-batch-schedule"
 import { attachScrollGestureRouting, findNestedScroller, getElementZoom, POINTER_CONTROL_SELECTOR, wheelDeltaUnit } from "../lib/scroll-gesture-routing"
 import { remapVirtualMeasurements } from "./virtual-follow-measurements"
-import { createVirtualReaderSettlement, settledReaderOffset, type VirtualItemAnchor } from "./virtual-reader-settlement"
+import { createVirtualReaderSettlement, settledReaderOffset, type VirtualBlockTarget, type VirtualItemAnchor } from "./virtual-reader-settlement"
 import { advanceBottomPinSettlement, AnchorRestoreStabilizer, canScrollInDirection, classifyVirtualItemKeyChange, describeKeyTarget, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottomForMode, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, SCROLL_INTENT_KEYS, ScrollObservationGate, USER_SCROLL_INTENT_WINDOW_MS, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldNavigateAtBoundary, VirtualScrollController, type BottomPinSettlementState, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 import { isScrollTraceEnabled, traceScroll, type ScrollReason, type ScrollTraceEntry, type ScrollTraceKind } from "./virtual-scroll-trace"
 
@@ -46,7 +46,7 @@ export interface VirtualFollowListApi {
    * Places the keyed row at the top, holding it there for the alignment window;
    * `select` holds a block of that row instead once it renders.
    */
-  scrollToKey: (key: string, select?: () => HTMLElement | null) => void
+  scrollToKey: (key: string, select?: () => VirtualBlockTarget) => void
   notifyContentRendered: () => void
   /** Leaves follow mode and holds `target` at `viewportOffset` px below the viewport top, clamped into view. */
   alignElement: (target: HTMLElement, viewportOffset: number) => void
@@ -121,6 +121,7 @@ export interface VirtualFollowListProps<T> {
   initialAutoScroll?: Accessor<boolean>
   resetKey?: Accessor<string | number>
   followToken?: Accessor<string | number>
+  layoutChange?: Accessor<{ preserve: boolean } | undefined>
   captureLayoutAnchor?: () => VirtualItemAnchor | undefined
   explicitBottomPinIntent?: Accessor<VirtualExplicitBottomPinIntent | null>
   autoPinHoldTargetKey?: Accessor<string | null>
@@ -227,7 +228,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let pendingHeaderFocus: HTMLElement | undefined
   let nativeScrollbarDragging = false
   // The block `scrollToKey` holds instead of its row, during that dispatch only.
-  let keyJumpSelect: (() => HTMLElement | null) | undefined
+  let keyJumpSelect: (() => VirtualBlockTarget) | undefined
   // Until when an unowned scroll still belongs to a lifted flick's fling.
   let touchFlingClaimUntil = 0
   // The extent of the last observation: displacement that shrinks it is
@@ -315,15 +316,18 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     enabled: () => isActive() && !autoScroll() && !scrollController.snapshot().restoring,
     align: (anchor) => {
       const element = scrollElement(), row = itemElements.get(anchor.key)
+      const selected = anchor.select?.()
+      if (selected === null || findLiveIndex(anchor.key) === -1) return false
+      const pending = selected === "pending"
+      if (anchor.reflow && pending) return "pending"
       // A jump lands on Virtua's estimate, and measuring the rows around it can
       // move its row out of the rendered range: follow the estimate until the
       // row renders (or remounts) to be measured.
-      if (!anchor.element && !row?.isConnected) {
+      if (!anchor.element && (!selected || pending) && !row?.isConnected) {
         const index = findLiveIndex(anchor.key)
         return index !== -1 && writeIndex("reader-settle", index) ? "pending" : false
       }
-      const selected = anchor.select?.()
-      const target = anchor.element ?? selected ?? row
+      const target = anchor.element ?? (pending ? row : selected ?? row)
       // A detached revealed part is gone.
       if (!element || !target?.isConnected) return false
       // A held block too short for the old clipping starts at the viewport top.
@@ -331,7 +335,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         : anchor.offset < 0 ? settledReaderOffset(anchor.offset, target.getBoundingClientRect().height) : anchor.offset
       const delta = measureAnchorDelta(element, target, offset)
       if (Math.abs(delta) >= 1) writeScroll(anchor.element ? "align-element" : "reader-settle", { type: "dom", top: element.scrollTop + delta, record: true })
-      if (anchor.select && !selected) return "pending"
+      if (pending) return "pending"
     },
   })
 
@@ -1187,7 +1191,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     props.onJumpBottom?.()
   }
 
-  function scrollToKey(key: string, select?: () => HTMLElement | null) {
+  function scrollToKey(key: string, select?: () => VirtualBlockTarget) {
     supersedePositioning()
     keyJumpSelect = select
     try { dispatchFollowEvent({ type: "jump-key", key }) }
@@ -1256,14 +1260,20 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     startExplicitBottomPin(intent)
   }))
 
-  createComputed(on(() => props.followToken?.(), () => {
-    if (!isActive()) return
+  createEffect(on(() => props.followToken?.(), () => {
+    if (autoScroll()) api.notifyContentRendered()
+  }, { defer: true }))
+
+  createComputed(on(() => props.layoutChange?.(), change => {
+    const held = readerSettlement.held()
+    if (held?.reflow || held?.select?.() === null) readerSettlement.cancel()
+    if (!change?.preserve || !isActive()) return
     if (autoScroll()) api.notifyContentRendered()
     else if (!scrollController.snapshot().restoring) {
       // Capture before render effects replace the old blocks; resolve the held
       // block after layout changes, using the ordinary cancellable settlement.
       const anchor = props.captureLayoutAnchor?.()
-      if (anchor) readerSettlement.hold(anchor, true)
+      if (anchor) readerSettlement.hold({ ...anchor, reflow: true }, true)
     }
   }, { defer: true }))
 

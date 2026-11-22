@@ -1,6 +1,6 @@
 import type { TranscriptTechnicalGroup } from "../lib/message-part-grouping"
 import type { TimelineSegment } from "./message-timeline-projection"
-import { READING_LINE_OFFSET_PX } from "./virtual-reader-settlement"
+import { READING_LINE_OFFSET_PX, type VirtualBlockTarget } from "./virtual-reader-settlement"
 
 const GROUP_HEADER_SELECTOR = ".message-technical-group-toggle"
 // Transcript blocks with a timeline marker, in document order.
@@ -20,7 +20,7 @@ export interface TranscriptBlockIdentity {
 /** The rendered transcript block a marker stands for; a collapsed group's tools share its header. */
 export function findTimelineSegmentBlock(scroller: HTMLElement, segment: TimelineSegment,
   technicalGroupForPart: (messageId: string, partId: string) => TranscriptTechnicalGroup | undefined,
-  identity?: TranscriptBlockIdentity): HTMLElement | null {
+  identity?: TranscriptBlockIdentity): VirtualBlockTarget {
   const row = transcriptRow(scroller, segment.messageId)
   const ids = identity?.partId ? [identity.partId] : segment.toolPartIds ?? segment.partIds ?? []
   const byPart = (selector: (id: string) => string) =>
@@ -30,7 +30,9 @@ export function findTimelineSegmentBlock(scroller: HTMLElement, segment: Timelin
     if (!partId) return null
     const start = technicalGroupForPart(segment.messageId, partId)?.parts[0]
     const scope = start ? transcriptRow(scroller, start.messageId) : row
-    const header = scope?.querySelector(`[data-group-part-ids~="${CSS.escape(start?.partId ?? partId)}"] ${GROUP_HEADER_SELECTOR}`)
+    if (!scope) return "pending" as const
+    const header = scope.querySelector(`[data-group-part-ids~="${CSS.escape(start?.partId ?? partId)}"] ${GROUP_HEADER_SELECTOR}`)
+    if (!row && !identity?.preferGroupHeader && header?.getAttribute("aria-expanded") === "true") return "pending" as const
     return shown(header) ? header : null
   }
   if (identity?.preferGroupHeader) {
@@ -40,19 +42,21 @@ export function findTimelineSegmentBlock(scroller: HTMLElement, segment: Timelin
   switch (segment.type) {
     case "user":
     case "assistant":
-      return byPart(id => `.message-item-base[data-message-content-start-part-id="${id}"]`)
+      return row ? byPart(id => `.message-item-base[data-message-content-start-part-id="${id}"]`) : "pending"
     case "reasoning":
       return byPart(id => `.message-reasoning-card[data-part-id="${id}"]`) ?? groupHeader(ids[0])
     case "tool": {
       const card = ids[0] ? row?.querySelector(`.tool-call-message[data-part-id="${CSS.escape(ids[0])}"]`) : null
-      if (card?.querySelector(":scope > .delete-hover-scope > .tool-call-loading")) return null
+      if (card?.querySelector(":scope > .delete-hover-scope > .tool-call-loading")) return "pending"
       return shown(card) ? card : groupHeader(ids[0])
     }
     case "compaction": {
+      if (!row) return "pending"
       const card = row?.querySelector(".message-compaction-card")
       return shown(card) ? card : null
     }
     case "system": {
+      if (!row) return "pending"
       const block = row?.querySelector('[data-message-kind="system"]')
       return shown(block) ? block : null
     }

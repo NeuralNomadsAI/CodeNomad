@@ -37,6 +37,7 @@ import { MissingHistoryAnchorError } from "../stores/history-window"
 import { sessions } from "../stores/session-state"
 import { createSessionOutlineProjection } from "./session-outline-projection"
 import { findTimelineSegmentBlock, readingLineBlock, type TranscriptBlockIdentity } from "./timeline-transcript-blocks"
+import { transcriptContentSignature } from "./transcript-visibility"
 import { JUMP_USER_MESSAGE_EVENT, findUserMessageJumpTarget, keyAllowsUserMessageJump, type JumpUserMessageDetail, type UserMessageJumpDirection } from "./user-message-navigation"
 import SessionCleanupProgress from "./session-cleanup-progress"
 import type { SessionSearchMatch } from "../lib/session-search"
@@ -120,7 +121,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const { t } = useI18n()
   const usageMetricsVisibility = () =>
     preferences().showUsageMetrics ? preferences().usageMetricsExpansion : "hidden"
-  const toolGroupVisibility = () => preferences().toolGroupVisibility
+  const toolGroupVisibility = createMemo(() => preferences().toolGroupVisibility)
   const showMessageTimelinePreference = () => preferences().showMessageTimeline ?? true
   const holdLongAssistantRepliesEnabled = () => preferences().holdLongAssistantReplies ?? true
   const emptyStateVariant = () => props.emptyStateVariant ?? "messages"
@@ -305,8 +306,11 @@ export default function MessageSection(props: MessageSectionProps) {
     const showThinking = pref.showThinkingBlocks ? 1 : 0
     const thinkingExpansion = resolveThinkingExpansionDefault(pref) ? "expanded" : "collapsed"
     const usageVisibility = pref.showUsageMetrics ? pref.usageMetricsExpansion : "hidden"
-    return `${showThinking}|${thinkingExpansion}|${usageVisibility}|${pref.systemMessagesVisibility}|${pref.toolGroupVisibility}`
+    return `${showThinking}|${thinkingExpansion}|${usageVisibility}|${pref.systemMessagesVisibility}`
   })
+  const ordinaryContent = createMemo(() => transcriptContentSignature(preferences()))
+  const layoutChange = createMemo(on([toolGroupVisibility, ordinaryContent, followToken], ([groups, content, follow], previous) =>
+    previous && { preserve: groups !== previous[0] && content === previous[1] && follow === previous[2] }))
 
   // The active marker follows the block at the reading line. A selected marker
   // stays active instead until the reader scrolls: its placement, the row's late
@@ -415,6 +419,8 @@ export default function MessageSection(props: MessageSectionProps) {
     ? resolveToolVisibility(preferences(), segment.toolName ?? "") === "hidden" && !isPendingFormSegment(segment)
     : segment.type === "reasoning" ? !preferences().showThinkingBlocks
       : segment.type === "system" && preferences().systemMessagesVisibility === "hidden"
+  const isTranscriptSegmentShown = (segment: TimelineSegment) => !isTimelineSegmentHidden(segment)
+    || segment.toolPartIds?.some(partId => store().getPermissionState(segment.messageId, partId)?.active)
   const hasTimelineSegments = () => timelineSegments().length > 0
 
   function segmentMatchesSearch(segment: TimelineSegment, match: { messageId: string; partId?: string; partType?: string }): boolean {
@@ -917,9 +923,11 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   function timelineBlockAnchor(messageId: string, segmentId: string, offset: number, reading?: TranscriptBlockIdentity & { segment: TimelineSegment }) {
-    const getSegment = () => reading?.segment ?? timelineSegmentsByMessage().get(messageId)?.find(segment => segment.id === segmentId)
+    const getSegment = () => timelineSegmentsByMessage().get(messageId)?.find(segment => segment.id === segmentId)
     const segment = getSegment()
     const partId = reading?.partId ?? segment?.toolPartIds?.[0] ?? (segment?.type === "reasoning" ? segment.partIds?.[0] : undefined)
+    const identity = reading ?? (segment?.type === "tool" ? { partId } : undefined)
+    const ownPart = segment?.partId
     const group = partId ? technicalGroupForPart(messageId, partId) : undefined
     const groupStart = group && group.parts.length > 1 && (reading?.preferGroupHeader || !isTechnicalGroupExpanded(group)) ? group.parts[0] : undefined
     return {
@@ -927,7 +935,10 @@ export default function MessageSection(props: MessageSectionProps) {
       offset,
       select: () => {
         const scroller = streamElement(), current = getSegment()
-        return scroller && current ? findTimelineSegmentBlock(scroller, current, technicalGroupForPart, reading) : null
+        if (!scroller || !current || !visibleMessageIds().includes(messageId) || !isTranscriptSegmentShown(current)) return null
+        if (ownPart && current.partId !== ownPart) return null
+        if (identity?.partId && !(current.toolPartIds ?? current.partIds)?.includes(identity.partId)) return null
+        return findTimelineSegmentBlock(scroller, current, technicalGroupForPart, identity)
       },
     }
   }
@@ -936,19 +947,17 @@ export default function MessageSection(props: MessageSectionProps) {
     const scroller = streamElement()
     if (!scroller || navigation().kind !== "idle") return
     const segments = timelineSegmentsByMessage()
-    const staysVisible = (segment: TimelineSegment) => !isTimelineSegmentHidden(segment)
-      || segment.toolPartIds?.some(partId => store().getPermissionState(segment.messageId, partId)?.active)
     const position = readingLineBlock(scroller, segments)
     if (!position) return
     const { block, ...reading } = position
     const selected = readerOwnsActiveSegment ? null : activeSegmentId()
     const target = selected ? parseTimelineSegmentId(selected) : undefined
     const marker = target && segments.get(target.messageId)?.find(segment => segment.id === selected)
-    if (marker && staysVisible(marker) && block === findTimelineSegmentBlock(scroller, marker,
+    if (marker && isTranscriptSegmentShown(marker) && block === findTimelineSegmentBlock(scroller, marker,
       (messageId, partId) => renderedGroups.get(technicalPartKey(messageId, partId)))) {
       return timelineBlockAnchor(marker.messageId, marker.id, reading.offset)
     }
-    if (staysVisible(reading.segment)) {
+    if (isTranscriptSegmentShown(reading.segment)) {
       return timelineBlockAnchor(reading.segment.messageId, reading.segment.id, reading.offset, reading)
     }
   }
@@ -1532,6 +1541,7 @@ export default function MessageSection(props: MessageSectionProps) {
           initialAutoScroll={() => isSnapshotAutoFollowing(store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE))}
           resetKey={() => props.sessionId}
           followToken={followToken}
+          layoutChange={layoutChange}
           captureLayoutAnchor={captureLayoutAnchor}
           explicitBottomPinIntent={() => props.explicitBottomPinIntent ?? null}
           onExplicitBottomPinCancelled={props.onExplicitBottomPinCancelled}

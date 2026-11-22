@@ -176,10 +176,12 @@ jumps and an activation restore also hand the active marker back to the reading
 line. Otherwise the active
 marker is the first marked block reaching more than 4 px below the transcript top,
 re-read once per frame on scroll and content rendering from the mounted rows only.
-Message content layout preferences preserve the exact block and measured offset
-at the reading line. If the selected marker points to that block, its identity
+Grouping-only changes preserve the exact block and measured offset at the
+reading line; other visibility or preset changes use ordinary scroll behavior.
+If the selected marker points to that block, its identity
 qualifies the replacement, such as an individual tool represented by a collapsed
-group header. The bounded reader-settlement hold resolves the replacement. A shorter
+group header. The bounded reader-settlement hold resolves the replacement and
+leaves scroll untouched if the block is gone. A shorter
 block starts at the viewport top if the saved clipping would put its end at or
 above the reading line. At a scrollbar limit, the rail follows the block the
 reader actually reaches. A shared marker can stand for several distinct reasoning
@@ -388,8 +390,9 @@ a jump's row is not rendered, the hold rewrites Virtua's current estimate of its
 offset instead, since measuring the rows around a distant estimate can carry the
 row out of the rendered range; once rendered it is aligned. The 30-frame
 settlement window starts when the requested block is measurable. While a key
-lookup finds only an estimated row or waits for a lazy card, it holds the fallback
-until the block loads; the entire hold has a five-second deadline. Within it,
+lookup finds only an estimated row or waits for a lazy card, it can wait for
+the block to load; reflow writes only once it finds the block. A filtered or
+removed target releases the hold. The entire hold has a five-second deadline. Within it,
 viewport and header resizes re-align the
 element instead of dropping it, and its requested offset is kept and clamped into
 the current viewport only when applied. Gestures, navigation and focus moving to

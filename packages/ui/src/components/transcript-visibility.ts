@@ -148,6 +148,12 @@ export function transcriptVisibility(current: Preferences, row: TranscriptVisibi
   }
 }
 
+const ordinaryRows = transcriptVisibilityRows(key => key).filter(row => row.kind !== "toolGroups")
+
+export function transcriptContentSignature(current: Preferences): string {
+  return ordinaryRows.map(row => transcriptVisibility(current, row)).join("|")
+}
+
 export function transcriptVisibilityPatch(current: Preferences, row: TranscriptVisibilityRow, mode: VisibilityPreference): Partial<Preferences> {
   if (row.kind === "system") return { systemMessagesVisibility: mode }
   if (row.kind === "toolGroups") return { toolGroupVisibility: mode }

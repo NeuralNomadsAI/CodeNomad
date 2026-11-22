@@ -80,7 +80,7 @@ const longMessages = Array.from({ length: 260 }, (_, index) => index === LONG.in
   : index % 2 ? assistant(index, [{ type: "text", text: prose(`Note ${index}`, 2) }]) : { id: id(index), type: "user", time: { created: index + 1 }, text: prose(`Ask ${index}`, 1) })
 
 let server: Awaited<ReturnType<typeof startTimelineSyncServer>>, directory: string, store: string, visibilityStore: string, wideStore: string, longStore: string
-let groupedStore: string, coldGroupStore: string, proseStore: string
+let groupedStore: string, coldGroupStore: string, proseStore: string, splitTextStore: string
 let tailGroupStore: string, tailToolStore: string
 before(async () => {
   directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-timeline-sync-"))
@@ -113,6 +113,12 @@ before(async () => {
   proseStore = path.join(directory, "prose.sqlite")
   createSessionStore(proseStore, [message(0), ...Array.from({ length: 20 }, (_, n) =>
     assistant(n + 1, [{ type: "text", text: `Paragraph ${n}.\n\n`.repeat(25) }]))])
+  splitTextStore = path.join(directory, "split-text.sqlite")
+  createSessionStore(splitTextStore, [{ ...message(0), text: "Earlier question.\n\n".repeat(35) }, assistant(1, [
+    { type: "text", text: "First passage.\n\n".repeat(35) },
+    tool(id(1), "edit", 1),
+    { type: "text", text: "Second passage.\n\n".repeat(35) },
+  ]), ...Array.from({ length: 20 }, (_, n) => assistant(n + 2, [{ type: "text", text: prose(`Reply ${n}`, 4) }]))])
   const tail = [{ ...message(0), text: "Earlier passage.\n\n".repeat(55) },
     ...Array.from({ length: 4 }, (_, n) => assistant(n + 1, [{ type: "text", text: "An earlier reply." }]))]
   const tailReads = Array.from({ length: 5 }, (_, n) => tool(`tail-${n}`, "read", n === 1 ? 48 : 6))
@@ -201,6 +207,57 @@ test("scrolling activates the marker of the block at the reading line", { timeou
 
 // The product treats blocks reaching past the 4 px reading line as visible.
 const READING_LINE_TOLERANCE = 4
+
+test("a preset that merges text blocks retains the ordinary scroll position", { timeout: 90_000 }, () => withSession("everything", async (page) => {
+  const reply = (await markers(page)).find(candidate => candidate.id === `${id(1)}:assistant:1`)!
+  await clickMarker(page, reply)
+  const stream = page.locator(".message-stream")
+  const scrollTop = () => stream.evaluate(element => element.scrollTop)
+  const before = await scrollTop()
+  const passage = page.getByText("Second passage.", { exact: true })
+  assert.ok(Math.abs((await blockOffset(page, reply))!) <= READING_LINE_TOLERANCE)
+  await page.evaluate(() => (window as any).fixture.showFilters(true))
+  await page.getByRole("button", { name: "Message content", exact: true }).click()
+  await page.locator(".transcript-filters select").selectOption("nothing")
+  await page.locator('.transcript-filters[aria-busy="false"]').waitFor()
+  await settleTranscript(page, 450)
+  const after = await scrollTop()
+  assert.ok(Math.abs(before - after) <= READING_LINE_TOLERANCE, `the preset preserves scrollTop (${before}px → ${after}px)`)
+  assert.equal(await passage.evaluateAll(paragraphs => paragraphs.some(paragraph => {
+    const box = paragraph.closest(".message-stream")!.getBoundingClientRect()
+    const text = paragraph.getBoundingClientRect()
+    return text.bottom > box.top && text.top < box.bottom
+  })), true, "the second passage is still visible inside the merged block")
+}, splitTextStore))
+
+test("hiding the selected tool releases its anchor before a viewport resize", { timeout: 90_000 }, () => withSession("everything", async (page) => {
+  const marker = (await markers(page)).find(candidate => candidate.id === `${id(1)}:tool:0`)!
+  const target = page.locator(`.tool-call-message[data-part-id="${marker.toolPartIds![0]}"]`)
+  await target.locator(".tool-call-header-toggle").waitFor()
+  await page.evaluate(() => (window as any).fixture.showFilters(true))
+  await page.getByRole("button", { name: "Message content", exact: true }).click()
+  const hide = page.getByRole("button", { name: "Hide edit", exact: true })
+  const railMarker = page.locator(`.message-timeline-segment[data-segment-id="${marker.id}"]`)
+  // Both actions occur in one browser task, without a new scroll/focus gesture.
+  await hide.evaluate((button, markerId) => {
+    document.querySelector<HTMLElement>(`.message-timeline-segment[data-segment-id="${markerId}"]`)!.click()
+    button.click()
+  }, marker.id)
+  await railMarker.waitFor({ state: "detached" })
+  await target.waitFor({ state: "detached" })
+  await page.keyboard.press("Escape")
+  await settleTranscript(page, 800)
+  const stream = page.locator(".message-stream")
+  const position = () => stream.evaluate(element => ({ top: element.scrollTop, height: element.clientHeight }))
+  const before = await position()
+  await page.setViewportSize({ width: 1280, height: 1000 })
+  await settleTranscript(page, 450)
+  const after = await position()
+  const growth = after.height - before.height
+  assert.ok(growth > 150 && before.top > growth, `fixture has room for resize compensation (${before.top}px, ${growth}px)`)
+  assert.ok(Math.abs(before.top - after.top - growth) <= READING_LINE_TOLERANCE,
+    `resize compensates ${growth}px (${before.top}px → ${after.top}px) without a hidden anchor`)
+}, splitTextStore))
 
 for (const cancel of [false, true]) test(`a cold tool anchor ${cancel ? "yields to a wheel gesture" : "settles after the renderer loads"}`, { timeout: 90_000 }, () => withSession("minimal", async (page) => {
   const { promise: requested, resolve: markRequested } = Promise.withResolvers<void>()

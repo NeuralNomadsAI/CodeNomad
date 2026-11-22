@@ -1,9 +1,17 @@
 /**
  * `element` holds a descendant of the keyed row (an in-place reveal) instead of
  * the row itself. `select` finds a block standing for the row on every frame,
- * so it survives a remount of that row; until it finds one, the row is held.
+ * so it survives a remount of that row. Pending means the block can still mount;
+ * null means it is gone. Reflows hold only a block, never its row.
  */
-export interface VirtualItemAnchor { key: string; offset: number; element?: HTMLElement; select?: () => HTMLElement | null }
+export type VirtualBlockTarget = HTMLElement | "pending" | null
+export interface VirtualItemAnchor {
+  key: string
+  offset: number
+  element?: HTMLElement
+  select?: () => VirtualBlockTarget
+  reflow?: true
+}
 
 // A block ending at or above this line already counts as read.
 export const READING_LINE_OFFSET_PX = 4
