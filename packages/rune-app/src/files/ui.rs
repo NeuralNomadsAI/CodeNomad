@@ -100,7 +100,7 @@ impl Ui {
             && tx.focused().is_some_and(|key| {
                 key.starts_with("file-row-")
                     || key.starts_with("file-eye-")
-                    || key == "file-tree-retry"
+                    || key.starts_with("file-retry-")
             })
         {
             tx.focus("files-toggle", true);

@@ -1,6 +1,59 @@
 use super::*;
 
 #[test]
+fn hidden_drawer_returns_focused_listing_retry_to_its_toggle() {
+    crate::platform::block_on(async {
+        for path in [".", "nested"] {
+            let http = http::Http::new().await;
+            let mut ui = http.ui(Store::default(), "retry-resize");
+            ui.online(false);
+            ui.tree.activate(true);
+            let mut read = ui.tree.take_refresh().pop().unwrap();
+            if path != "." {
+                ui.tree.complete(
+                    read,
+                    Ok(vec![Entry {
+                        name: path.into(),
+                        path: path.into(),
+                        kind: EntryKind::Directory,
+                        absolute_path: None,
+                        directory_identity: None,
+                        size: None,
+                        modified_at: None,
+                    }]),
+                    Ok,
+                );
+                read = ui.tree.toggle(path).pop().unwrap();
+            }
+            ui.tree.complete(
+                read,
+                Err(std::io::Error::other("synthetic listing failure").into()),
+                Ok,
+            );
+            ui.panel = true;
+            let mut rt = runtime(ui);
+            let retry = format!("file-retry-{path}");
+            rt.update(|_, tx| tx.focus(&retry, true));
+            rt.frame(0.02);
+            let focused = |rt: &Runtime<State>| {
+                rt.elements()
+                    .into_iter()
+                    .find(|node| node.focused)
+                    .and_then(|node| node.key)
+            };
+            assert_eq!(focused(&rt).as_deref(), Some(retry.as_str()));
+            rt.set_viewport((589.0, 700.0), 1.0);
+            for _ in 0..90 {
+                rt.frame(1.0 / 60.0);
+            }
+            assert!(accessible(&rt.accessibility_json(), "files-panel").is_none());
+            assert_eq!(focused(&rt).as_deref(), Some("files-toggle"));
+            http.quiet().await;
+        }
+    });
+}
+
+#[test]
 fn drawer_compresses_redocks_and_keeps_hidden_intent_cancellable() {
     crate::platform::block_on(async {
         let http = http::Http::new().await;
