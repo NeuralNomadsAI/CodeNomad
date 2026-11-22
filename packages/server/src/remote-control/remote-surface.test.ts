@@ -220,6 +220,7 @@ test("negotiates precompressed static assets without loosening HTML entry admiss
   fs.writeFileSync(path.join(ui, "only-gzip.wasm"), wasm)
   fs.writeFileSync(path.join(ui, "only-gzip.wasm.gz"), gzip)
   fs.writeFileSync(path.join(ui, "archive#1.gz"), gzip)
+  fs.writeFileSync(path.join(ui, "archive%.gz"), gzip)
   const index = fs.readFileSync(path.join(ui, "index.html"))
   fs.writeFileSync(path.join(ui, "index.html.br"), brotliCompressSync(index))
   fs.mkdirSync(path.join(ui, "nested.assets"))
@@ -228,6 +229,7 @@ test("negotiates precompressed static assets without loosening HTML entry admiss
 
   const variants = [
     ["/app.wasm", "br, gzip", "br", br],
+    ["/app.wasm", "gzip, br", "br", br],
     ["/app.wasm", "br;q=0, gzip", "gzip", gzip],
     ["/app.wasm", "br;q=0.2, gzip;q=0.8", "gzip", gzip],
     ["/app.wasm", "gzip;q=0, *;q=1, identity;q=0", "br", br],
@@ -256,6 +258,7 @@ test("negotiates precompressed static assets without loosening HTML entry admiss
     assert.match(String(rejected.headers.vary), /(?:^|,\s*)accept-encoding(?:,|$)/i)
   }
   assert.equal((await send(target(), "/archive%231.gz", { headers: { "accept-encoding": "br, identity;q=0" } })).status, 406)
+  assert.equal((await send(target(), "/archive%25.gz", { headers: { "accept-encoding": "br, identity;q=0" } })).status, 406)
   for (const url of ["/index.html", "/index.html.br"]) {
     assert.equal((await send(target(), url, { headers })).status, 401)
   }

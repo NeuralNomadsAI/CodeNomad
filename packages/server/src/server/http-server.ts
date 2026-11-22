@@ -2251,7 +2251,7 @@ function setupStaticUi(
     return
   }
 
-  const identityRefused = new AsyncLocalStorage<string>()
+  const identityRefused = new AsyncLocalStorage<{ original?: string }>()
   const negotiate = (request: FastifyRequest) => {
     // Expand the wildcard for fastify-static, which maps it to gzip alone.
     const encodings = request.headers["accept-encoding"]?.toLowerCase().split(",") ?? []
@@ -2273,9 +2273,7 @@ function setupStaticUi(
     }
     if (!("previewCapability" in request.routeOptions.config)
       && (request.routeOptions.url === "/" || request.routeOptions.url === "/*") && negotiate(request)) {
-      // fastify-static also decodes the escaped # and ? in an asset name.
-      const target = (routedPath(request.raw.url ?? request.url) ?? "/").replace(/%(?:23|3f)/gi, decodeURIComponent)
-      return identityRefused.run(path.posix.basename(target) || "index.html", done)
+      return identityRefused.run({}, done)
     }
     done()
   })
@@ -2292,12 +2290,17 @@ function setupStaticUi(
     root: uiDir,
     prefix: "/",
     preCompressed: true,
-    allowedPath: (file, _root, request) => !isHtmlBundlePath(file) || Boolean(authManager.getSessionFromRequest(request)),
+    allowedPath: (file, _root, request) => {
+      // Both authorization checks use logical paths, including a selected index.
+      const refused = identityRefused.getStore()
+      if (refused) refused.original = path.basename(file)
+      return !isHtmlBundlePath(file) || Boolean(authManager.getSessionFromRequest(request))
+    },
     onFile: (file) => {
-      const original = identityRefused.getStore()
-      if (original === undefined) return
+      const refused = identityRefused.getStore()
+      if (!refused) return
       const selected = path.basename(file)
-      if (/\.(?:br|gz|deflate)$/.test(selected) && selected !== original) return
+      if (/\.(?:br|gz|deflate)$/.test(selected) && selected !== refused.original) return
       throw Object.assign(new Error("No acceptable static representation"), { statusCode: 406 })
     },
     setHeaders: (reply, file) => {
@@ -2327,7 +2330,7 @@ function setupStaticUi(
 
     if (fs.existsSync(indexPath)) {
       const rejectIdentity = identityRefused.getStore() !== undefined || negotiate(request)
-      return rejectIdentity ? identityRefused.run("index.html", () => reply.sendFile("index.html")) : reply.sendFile("index.html")
+      return rejectIdentity ? identityRefused.run({}, () => reply.sendFile("index.html")) : reply.sendFile("index.html")
     } else {
       reply.code(404).send({ message: "UI bundle missing" })
     }
