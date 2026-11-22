@@ -18,6 +18,8 @@ Only the `solid` mode uses that UI. It hides the features of route families a ba
 
 Rust binary: `CODENOMAD_RS_BINARY` or `CNRS_RUST_BINARY`, else `$CARGO_TARGET_DIR/release/codenomad-rs.exe`, else `packages/server-rs/target/release/`. OpenCode: absolute path of a native OpenCode 2 executable (not an npm shim), passed as an argument.
 
+For `static-assets`, build the TypeScript checkout with precompression support instead of building the local TypeScript checkout in step 2. In the Rust checkout, where `packages/server/dist` is absent, run `New-Item -ItemType Junction -Path packages/server/dist -Target <absolute-reference-dist>` and then `node compare.mjs static-assets $OpenCode` from `bench/`.
+
 ```powershell
 $OpenCode = "<absolute path>\opencode.exe"
 cd packages/server-rs/bench
@@ -42,6 +44,7 @@ node roundtrip.mjs $OpenCode
 | `workspace-claims` | Cancellation before creation, JavaScript-trimmed request IDs capped at 128 Unicode scalars across create/cancel/release, independent occurrences, released ownership and exact record cleanup; no model request. |
 | `agent-controls` | Native permission decisions and durable reasons, typed stale and cross-session refusals, Form reply/cancellation, and interrupt query options against a held synthetic response and an idle session. |
 | `remote-session-controls` | Local and directly paired permission/Form reads and session interruption, including native settlement and the cookie and Origin requirements. Rust terminates TLS with its fixture CA; TypeScript's direct listener verifies the configured origin behind TLS termination. |
+| `static-assets` | HTML, JavaScript, style sheets, manifest and WASM served from an isolated static bundle. Negotiation, lengths, decoded bytes, HEAD and cache revalidation on the original URLs. Run explicitly with a TypeScript reference that supports static precompression. |
 | `depth` | `subagent-depth` on subfolders, linked worktree, junctions, written documents, worktree deletion fence. |
 | `mission-permissions` | Supervised creation and exact receipt recovery; direct child and fork provenance, additive background refresh, owned fork removal and unowned fork refusal. |
 | `worktree-gone` | Registered worktree whose `.git` or administrative folder is gone. |
