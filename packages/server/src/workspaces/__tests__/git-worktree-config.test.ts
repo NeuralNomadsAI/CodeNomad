@@ -66,6 +66,13 @@ describe("configured Git checkout roots", () => {
     await assert.rejects(fixtureCatalogue(repo), /must be run in a work tree/)
   })
 
+  it("does not accept an invalid linked checkout without per-worktree config", async () => {
+    git(repo, "config", "extensions.worktreeConfig", "true")
+    const admin = git(linked, "rev-parse", "--absolute-git-dir")
+    writeFileSync(path.join(admin, "HEAD"), "invalid")
+    await assert.rejects(fixtureCatalogue(repo, [repo, linked]), /not a git repository|not a checkout root/i)
+  })
+
   it("checks a redirected main checkout when opened from an ordinary linked checkout", async () => {
     git(repo, "config", "core.worktree", redirected)
     assert.equal(realpathSync(git(repo, "rev-parse", "--show-toplevel")), realpathSync(redirected))
@@ -110,10 +117,11 @@ describe("configured Git checkout roots", () => {
     await assert.rejects(fixtureCatalogue(repo), /not a checkout root/)
   })
 
-  it("keeps the ordinary scan process count constant with benign includes and more checkouts", async () => {
+  it("checks only the checkout with worktree config when the extension is enabled", async () => {
     const included = path.join(temp, "benign-config")
     writeFileSync(included, "[core]\n\tbare = false\n[user]\n\tname = Test\n")
     git(repo, "config", "include.path", gitPath(included))
+    git(repo, "config", "extensions.worktreeConfig", "true")
     const other = path.join(temp, "detached checkout")
     git(repo, "worktree", "add", "--detach", other)
     const trace = path.join(temp, "git-trace.json")
@@ -132,5 +140,9 @@ describe("configured Git checkout roots", () => {
     assert.equal(many.result.worktrees.length, 3)
     assert.deepEqual(many.commands.sort(), one.commands.sort())
     assert.equal(many.result.worktrees.find(entry => entry.branch === "feature")?.removable, true)
+    git(linked, "config", "--worktree", "core.worktree", linked)
+    const configured = await scan([repo, linked, other])
+    assert.equal(configured.result.worktrees.length, 3)
+    assert.deepEqual(configured.commands.sort(), [...one.commands, ["rev-parse", "--show-toplevel"]].sort())
   })
 })

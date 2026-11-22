@@ -153,7 +153,7 @@ export async function listNativeWorktrees(context: NativeWorktreeContext, option
     const sameRoot = await sameDirectory(checkout.root ?? mainHost, registeredDirectory)
     check()
     if (!sameRoot) throw new Error("Native worktree entry is not a checkout root")
-    await verifyCheckoutRoot(host)
+    await verifyCheckoutRoot(host, checkout)
     check()
     if (seen.has(registeredDirectory)) return
     seen.add(registeredDirectory)
