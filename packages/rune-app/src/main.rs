@@ -48,6 +48,7 @@ struct State {
     #[cfg(target_arch = "wasm32")]
     pairing: platform::pairing::Recovery,
     transcript_display: transcript_state::Display,
+    tool_diff_preferences: chat::ToolDiffPreferences,
     screen: Screen,
     settings: settings::Host,
     input_scope: std::rc::Rc<()>,
@@ -88,6 +89,7 @@ fn init() -> State {
         #[cfg(target_arch = "wasm32")]
         pairing: Default::default(),
         transcript_display: Default::default(),
+        tool_diff_preferences: Default::default(),
         screen: Screen::Chat { launcher: None },
         settings: Default::default(),
         input_scope: std::rc::Rc::new(()),
@@ -371,19 +373,16 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
         }
         body
     })
+    .on_layout_tx(chat::ToolDiffPreferences::layout)
 }
 fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
-    let locale = strings::locale();
-    let rows = layout::transcript_rows(
-        s.messages.len(),
-        |s: &State, i| s.messages[i].id.clone().into(),
-        move |s: &State, i| strings::with_locale(locale, || transcript::message(s, i)),
-    )
-    .key("rows")
-    .virtual_rows_version(s.revision);
     let expanded = interruption_expanded(s);
     rune_theme_codenomad::interruption::session_surface(expanded)
-        .child(rune_theme_codenomad::interruption::history(expanded).child(rows))
+        .child(
+            rune_theme_codenomad::interruption::history(expanded)
+                .drawn_rect_into(&s.tool_diff_preferences.history_bounds)
+                .child(transcript::rows(s)),
+        )
         .child(agent_view::view(s, cx))
         .child(composer(s))
 }

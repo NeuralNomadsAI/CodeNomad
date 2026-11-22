@@ -5,6 +5,8 @@ use rune::{El, GrowthSpec, edit::TextEdit};
 use std::{borrow::Cow, cell::Cell};
 
 thread_local! { static APPEARANCE: Cell<bool> = const { Cell::new(false) }; }
+pub type DrawnRect = rune::Live<[f32; 4]>;
+
 pub fn dark() -> bool {
     APPEARANCE.get()
 }

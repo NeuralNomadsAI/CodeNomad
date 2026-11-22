@@ -98,13 +98,15 @@ fn markdown_and_specialized_tools_use_native_content_in_the_runtime() {
             (1000.0, 1200.0),
             Env::new(dark, 1.0),
         );
-        rt.frame(0.0);
+        for _ in 0..12 {
+            rt.frame(1.0 / 60.0);
+        }
         let tree = rt.accessibility_json().to_string();
         for label in [
             "Results",
             "First",
             "let count = 12;",
-            "+return 8;",
+            "return 8;",
             "Print result",
             "printf",
             "Grep return",
@@ -128,6 +130,246 @@ fn markdown_and_specialized_tools_use_native_content_in_the_runtime() {
             Some("$ printf '%s' result\n\u{1b}[31mresult\u{1b}[0m")
         );
     }
+}
+
+#[test]
+fn transcript_edit_switches_the_shared_diff_without_changing_the_copied_patch() {
+    let mut state = init();
+    let native = serde_json::from_str(include_str!("../../fixtures/transcript.json")).unwrap();
+    state.messages = vec![history::decode_message(&native).unwrap()];
+    state.phase = Phase::Ready;
+    let mut rt = Runtime::new(
+        state,
+        |s, cx| crate::strings::with_locale("en", || view(s, cx)),
+        (1000.0, 1200.0),
+        Env::new(false, 1.0),
+    );
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(rt.find("tool-transcript:4:edit-diff").is_some());
+    assert!(
+        rt.accessibility_json()
+            .to_string()
+            .contains("Switch to unified view")
+    );
+    for key in [
+        "tool-transcript:4:edit-mode",
+        "tool-transcript:4:edit-copy-patch",
+    ] {
+        let (x, y) = rt.find(key).unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(
+        rt.accessibility_json()
+            .to_string()
+            .contains("Switch to split view")
+    );
+    assert_eq!(
+        clipboard.text().as_deref().map(String::as_str),
+        Some("--- a/src/demo.rs\n+++ b/src/demo.rs\n@@ -1 +1 @@\n-return 7;\n+return 8;")
+    );
+}
+
+#[test]
+fn transcript_patch_with_out_of_range_lines_uses_the_raw_fallback() {
+    let patch = "--- a/app.rs\n+++ b/app.rs\n@@ -4294967295 +4294967295 @@\n-return 1;\n+return 2;";
+    let mut state = init();
+    state.messages = vec![history::decode_message(&json!({"id":"range","type":"assistant","time":{"completed":1},"content":[
+        {"type":"tool","name":"edit","id":"edit","state":{"status":"completed","input":{"filePath":"app.rs"},
+            "metadata":{"diff":patch}}}
+    ]})).unwrap()];
+    state.phase = Phase::Ready;
+    let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(rt.find("tool-range:4:edit-diff").is_none());
+    assert!(rt.accessibility_json().to_string().contains("+return 2;"));
+}
+
+#[test]
+fn transcript_keeps_and_copies_a_patch_with_long_unicode_headers() {
+    let path = format!("{}.rs", "é".repeat(1711));
+    let patch = format!("Index: {path}\n--- a/{path}\n+++ b/{path}\n@@ -1 +1 @@\n-A\n+B");
+    assert!(patch.find("@@ ").unwrap() > 10_000);
+    assert!(patch.encode_utf16().count() < 10_000);
+    let mut state = init();
+    state.messages = vec![history::decode_message(&json!({"id":"unicode","type":"assistant","time":{"completed":1},"content":[
+        {"type":"tool","name":"edit","id":"edit","state":{"status":"completed","input":{"filePath":path},
+            "metadata":{"files":[{"file":path,"patch":patch}]},"content":[{"type":"text","text":"Edited …"}]}}
+    ]})).unwrap()];
+    state.phase = Phase::Ready;
+    let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    let (x, y) = rt.find("tool-unicode:4:edit-copy-patch").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.0);
+    assert_eq!(
+        clipboard.text().as_deref().map(String::as_str),
+        Some(patch.as_str())
+    );
+}
+
+#[test]
+fn wrapped_update_patch_uses_the_shared_diff_and_copies_the_original() {
+    let patch = "```diff\n*** Begin Patch\n*** Update File: src/demo.rs\n@@\n-return 7;\n+return 8;\n*** End Patch\n```";
+    let mut state = init();
+    state.messages = vec![history::decode_message(&json!({"id":"wrapped","type":"assistant","time":{"completed":1},"content":[
+        {"type":"tool","name":"edit","id":"edit","state":{"status":"completed","metadata":{"diff":patch}}}
+    ]})).unwrap()];
+    state.phase = Phase::Ready;
+    let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    for _ in 0..24 {
+        rt.frame(1.0 / 60.0);
+    }
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("return 7;") && tree.contains("return 8;"));
+    let (x, y) = rt.find("tool-wrapped:4:edit-copy-patch").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.0);
+    assert_eq!(clipboard.text().as_deref().map(String::as_str), Some(patch));
+}
+
+fn edit_cards(count: usize) -> State {
+    let cards: Vec<_> = (0..count)
+        .map(|i| {
+            json!({"type":"tool","name":"edit","id":format!("edit{i}"),
+                "state":{"status":"completed","input":{"filePath":"demo.rs"},
+                "metadata":{"diff":"@@ -1 +1 @@\n-before\n+after"}}})
+        })
+        .collect();
+    let mut state = init();
+    state.messages = vec![
+        history::decode_message(
+            &json!({"id":"cards","type":"assistant","time":{"completed":1},"content":cards}),
+        )
+        .unwrap(),
+    ];
+    state.phase = Phase::Ready;
+    state
+}
+
+#[test]
+fn transcript_edit_modes_follow_the_window_and_are_shared_between_cards() {
+    let mut rt = Runtime::new(
+        edit_cards(2),
+        |s, cx| crate::strings::with_locale("en", || view(s, cx)),
+        (1000.0, 1200.0),
+        Env::new(false, 1.0),
+    );
+    let label_count = |rt: &Runtime<State>, label: &str| {
+        rt.elements()
+            .into_iter()
+            .filter(|e| {
+                !e.exiting
+                    && e.key.as_deref().is_some_and(|key| key.ends_with("-mode"))
+                    && e.label.as_deref() == Some(label)
+            })
+            .count()
+    };
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(label_count(&rt, "Switch to unified view"), 2);
+    rt.set_viewport((500.0, 1200.0), 1.0);
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(label_count(&rt, "Switch to split view"), 2);
+    rt.set_viewport((1000.0, 1200.0), 1.0);
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    let (x, y) = rt.find("tool-cards:5:edit0-mode").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.0);
+    assert_eq!(label_count(&rt, "Switch to split view"), 2);
+    rt.update(|s, _| {
+        s.transcript_display.bind("fixture", "project", "other");
+        s.messages.clear();
+        s.renew_scope();
+        s.revision += 1;
+    });
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    rt.update(|s, _| {
+        s.transcript_display.bind("fixture", "project", "original");
+        s.messages = edit_cards(2).messages;
+        s.renew_scope();
+        s.revision += 1;
+    });
+    for _ in 0..48 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert_eq!(label_count(&rt, "Switch to split view"), 2);
+}
+
+#[test]
+fn compact_view_mode_and_unified_wrap_are_local_to_the_card() {
+    let mut rt = Runtime::new(edit_cards(2), view, (500.0, 1000.0), Env::new(false, 1.0));
+    let button = |rt: &Runtime<State>, key: &str| {
+        rt.elements()
+            .into_iter()
+            .find(|e| !e.exiting && e.key.as_deref() == Some(key))
+            .unwrap()
+    };
+    for _ in 0..24 {
+        rt.frame(1.0 / 60.0);
+    }
+    for (change, other) in [
+        ("tool-cards:5:edit0-wrap", "tool-cards:5:edit1-wrap"),
+        ("tool-cards:5:edit0-mode", "tool-cards:5:edit1-mode"),
+    ] {
+        let label = button(&rt, other).label;
+        assert_eq!(label, button(&rt, change).label);
+        let (x, y) = rt.find(change).unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+        assert_ne!(label, button(&rt, change).label);
+        assert_eq!(label, button(&rt, other).label);
+    }
+}
+
+#[test]
+fn scrolling_one_message_can_show_more_diffs_than_the_cache_retains() {
+    let mut rt = Runtime::new(edit_cards(33), view, (960.0, 720.0), Env::new(false, 1.0));
+    let mut seen = std::collections::HashSet::new();
+    rt.frame(0.0);
+    for y in (0..10_000).step_by(280) {
+        rt.update(|_, tx| tx.scroll_to_instant("history", 0.0, y as f32));
+        for _ in 0..4 {
+            rt.frame(1.0 / 60.0);
+        }
+        seen.extend(
+            rt.elements()
+                .into_iter()
+                .filter(|element| {
+                    !element.exiting && element.visible[2] > 0.0 && element.visible[3] > 0.0
+                })
+                .filter_map(|e| e.key)
+                .filter(|key| key.starts_with("tool-cards:") && key.ends_with("-copy-patch")),
+        );
+        if seen.len() == 33 {
+            break;
+        }
+    }
+    assert_eq!(seen.len(), 33);
 }
 
 #[test]

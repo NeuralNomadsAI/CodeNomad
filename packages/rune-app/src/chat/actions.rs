@@ -11,6 +11,7 @@ pub struct Display {
     active: SessionDisplay,
     saved: HashMap<String, SessionDisplay>,
     stream: StreamRender,
+    pub(super) diffs: super::tool_diff::Cache,
 }
 
 #[derive(Default)]
@@ -45,6 +46,7 @@ impl Display {
                 std::mem::replace(&mut self.active, next),
             );
             self.stream = StreamRender::default();
+            self.diffs = Default::default();
         }
     }
 

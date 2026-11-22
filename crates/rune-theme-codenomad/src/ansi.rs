@@ -4,9 +4,9 @@ use std::ops::Range;
 use vte::{Params, Perform};
 
 const ESCAPED: [&str; 5] = ["\\u001b", "\\u001B", "\\x1b", "\\x1B", "\\033"];
-// Rune reserves the high ink-index bit for synthetic bold.
-const SHAPED_RUN_LIMIT: usize = i16::MAX as usize;
-const INK_RUN_LIMIT: usize = u16::MAX as usize;
+// Rune's selection-to-HTML path scans every range at each style boundary.
+// Keep both color and decoration ranges for the initial 10,000-unit window.
+const COPY_RUN_LIMIT: usize = 4096;
 const LINE_WORK_LIMIT: usize = 2_000_000;
 const WINDOW_WORK_LIMIT: usize = 16_000_000;
 
@@ -73,8 +73,13 @@ struct Log {
 
 impl Log {
     fn finish_run(&mut self) {
-        if self.start < self.text.len() && self.style != Style::default() {
-            self.runs.push((self.start..self.text.len(), self.style));
+        let mut style = self.style;
+        if style.inverse {
+            std::mem::swap(&mut style.fg, &mut style.bg);
+            style.inverse = false;
+        }
+        if self.start < self.text.len() && style != Style::default() {
+            self.runs.push((self.start..self.text.len(), style));
         }
         self.start = self.text.len();
     }
@@ -108,7 +113,12 @@ impl Log {
     fn literal(&mut self, text: &str) {
         for c in text.chars() {
             match c {
-                '\r' => self.pending_cr = true,
+                '\r' => {
+                    if self.pending_cr {
+                        self.newline();
+                    }
+                    self.pending_cr = true;
+                }
                 '\n' | '\t' => self.push(c),
                 c if !c.is_control() => self.push(c),
                 _ => {}
@@ -266,25 +276,56 @@ pub fn code(source: &str, wrap: bool) -> El {
 type Strike = (usize, usize, Option<Color>);
 
 fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
-    let mut spans = Vec::with_capacity(log.runs.len().min(INK_RUN_LIMIT));
-    let mut strikes = vec![];
+    let mut spans: Vec<Span> = Vec::with_capacity(log.runs.len().min(COPY_RUN_LIMIT));
+    let mut strikes: Vec<Strike> = vec![];
     let metrics = tokens(dark());
     let default = metrics.color("text-primary");
     let mut window_budget = WINDOW_WORK_LIMIT;
     let mut line_budget = LINE_WORK_LIMIT;
     let mut line = 0..0;
-    let mut shaped_left = SHAPED_RUN_LIMIT;
+    let mut previous_content_end = 0;
+    let mut ascii = false;
+    let mut line_runs = 0;
     let mut text = log.text.into_bytes();
-    for (range, mut style) in log.runs {
-        while range.start >= line.end {
-            let start = line.end;
-            let end = text[start..]
-                .iter()
-                .position(|&byte| byte == b'\n')
-                .map_or(text.len(), |newline| start + newline + 1);
-            line = start..end;
+    let mut runs = log.runs.as_slice();
+    while let Some(((range, style), tail)) = runs.split_first() {
+        let mut range = range.clone();
+        if range.start >= line.end {
+            while range.start >= line.end {
+                // Remember the last nonempty line's end, excluding its newline.
+                if line.len() > 1 {
+                    previous_content_end = line.end - 1;
+                }
+                let start = line.end;
+                let end = text[start..]
+                    .iter()
+                    .position(|&byte| byte == b'\n')
+                    .map_or(text.len(), |newline| start + newline + 1);
+                line = start..end;
+            }
             line_budget = LINE_WORK_LIMIT;
+            ascii = text[line.clone()].is_ascii();
+            line_runs = runs.partition_point(|(range, _)| range.start < line.end);
         }
+        runs = tail;
+        line_runs -= 1;
+        // Keep Unicode underline requests separate until charging them. A long run
+        // that exceeds the budget should not displace a short SGR run after it.
+        if ascii || !style.underline {
+            while let Some(((next, next_style), tail)) = runs.split_first() {
+                if range.end != next.start || style != next_style {
+                    break;
+                }
+                range.end = next.end;
+                runs = tail;
+                line_runs -= 1;
+            }
+        }
+        // Reserve the base paint passes before spending the remainder on decorations.
+        let ink_reserve = line.len().saturating_mul(line_runs);
+        let mut decoration_budget = line_budget
+            .min(window_budget)
+            .saturating_sub(line.len().saturating_add(ink_reserve));
         // Rune can revisit the shaped line for every span, even for foreground-only ink.
         let mut charge = |cost| {
             if cost > line_budget || cost > window_budget {
@@ -294,15 +335,12 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
             window_budget -= cost;
             true
         };
-        if spans.len() == INK_RUN_LIMIT || !charge(line.len()) {
+        if !charge(line.len()) {
             // The native source stays available to Copy; keep conceal even without ink.
             if style.hidden {
                 text[range].fill(b' ');
             }
             continue;
-        }
-        if style.inverse {
-            std::mem::swap(&mut style.fg, &mut style.bg);
         }
         let dim = |color: Color| if style.dim { color.alpha(0.7) } else { color };
         let mut span = Span::new(range.start, range.end);
@@ -312,32 +350,63 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
             if style.fg.is_some() || style.dim {
                 span = span.color(dim(style.fg.unwrap_or(default)));
             }
-            if let Some(bg) = style.bg.filter(|_| shaped_left > 0) {
+            if let Some(bg) = style.bg {
                 span = span.bg(dim(bg), 0.0);
             }
-            // Underline bounds are queried for each glyph run in the decorated range.
-            if style.underline && shaped_left > 0 && charge(range.len().saturating_mul(line.len()))
-            {
-                span = span.underline(dim(style.fg.unwrap_or(default)));
+            if style.underline {
+                // Each decorated glyph run scans its visual line. A printable ASCII
+                // monospace span has one run per visual line; mixed scripts may split
+                // at every scalar (Parley's glyph runs consume whole atoms).
+                let runs = if ascii {
+                    1
+                } else {
+                    text[range.clone()]
+                        .iter()
+                        .filter(|&&byte| byte & 0xc0 != 0x80)
+                        .count()
+                };
+                let cost = runs.saturating_mul(line.len());
+                if cost <= decoration_budget && charge(cost) {
+                    decoration_budget -= cost;
+                    span = span.underline(dim(style.fg.unwrap_or(default)));
+                }
             }
-            if style.strike && charge(line.len()) {
-                strikes.push((
-                    range.start,
-                    range.end,
-                    Some(dim(style.fg.unwrap_or(default))),
-                ));
+            if style.strike && line.len() <= decoration_budget && charge(line.len()) {
+                let ink = Some(dim(style.fg.unwrap_or(default)));
+                if let Some(last) = strikes.last_mut().filter(|last| {
+                    last.2 == ink && matches!(text.get(last.1..range.start), Some(b"" | b"\n"))
+                }) {
+                    last.1 = range.end;
+                } else if spans.len() + strikes.len() + 1 < COPY_RUN_LIMIT {
+                    strikes.push((range.start, range.end, ink));
+                }
             }
         }
-        if style.bold && shaped_left > 0 {
+        if style.bold {
             span = span.weight(metrics.number("font-weight-semibold").px());
         }
-        if style.italic && shaped_left > 0 {
+        if style.italic {
             span = span.italic();
         }
-        if span.weight.is_some() || span.italic || span.bg.is_some() || span.underline.is_some() {
-            shaped_left -= 1;
+        if span == Span::new(range.start, range.end) {
+            continue;
         }
-        spans.push(span);
+        if let Some(last) = spans.last_mut()
+            && (last.end == span.start
+                || (range.start == line.start && last.end as usize == previous_content_end))
+            && span
+                == (Span {
+                    start: span.start,
+                    end: span.end,
+                    ..last.clone()
+                })
+        {
+            last.end = span.end;
+        } else if spans.len() + strikes.len() < COPY_RUN_LIMIT {
+            spans.push(span);
+        } else if style.hidden {
+            text[range].fill(b' ');
+        }
     }
     (String::from_utf8(text).unwrap_or_default(), spans, strikes)
 }
@@ -396,7 +465,7 @@ mod tests {
             "\u{1b}[31mA\u{1b}[32mB\n".repeat(16_384)
         );
         let log = parse(&source);
-        assert!(log.runs.len() > SHAPED_RUN_LIMIT);
+        assert!(log.runs.len() > COPY_RUN_LIMIT);
         assert!(log.text.ends_with("\nhiddenEND"));
         assert!(log.runs[log.runs.len() - 2].1.hidden);
         assert_eq!(log.runs.last().unwrap().1.fg, Some(rgb(187, 0, 0)));
@@ -498,5 +567,204 @@ mod tests {
         assert_eq!(text, "A🦀".repeat(16_000));
         assert!(!spans.is_empty());
         assert!(spans.len() * text.len() <= LINE_WORK_LIMIT);
+    }
+
+    #[test]
+    fn bounded_styles_do_not_expose_conceal_after_the_limit() {
+        let source = format!(
+            "{}\u{1b}[8mhidden\u{1b}[0mEND",
+            "\u{1b}[31mA\u{1b}[32mB\n".repeat(16_384)
+        );
+        let (text, spans, strikes) = styled(parse(&source));
+        assert_eq!(spans.len() + strikes.len(), COPY_RUN_LIMIT);
+        assert!(text.ends_with("\n      END"));
+    }
+
+    #[test]
+    fn dense_log_can_copy_a_real_runtime_selection() {
+        let (text, spans, strikes) = styled(parse(&"\u{1b}[31mA\u{1b}[32mB\n".repeat(4096)));
+        let mut rt = rune::Runtime::new(
+            (text, spans, strikes),
+            |(text, spans, strikes), _| {
+                rune::rich(text.as_str(), spans.clone())
+                    .strikes(strikes.iter().copied())
+                    .selectable(true)
+                    .key("log")
+            },
+            (640.0, 360.0),
+            rune::Env::new(false, 1.0),
+        );
+        let clipboard = rune::clipboard::memory();
+        rt.use_clipboard(&clipboard);
+        rt.frame(0.0);
+        rt.update(|_, tx| tx.select_all_text("log"));
+        rt.frame(0.0);
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Command('c'),
+            mods: rune::Mods {
+                cmd: true,
+                ctrl: true,
+                ..Default::default()
+            },
+        });
+        rt.frame(0.0);
+        assert_eq!(
+            clipboard.text().as_deref().map(String::as_str),
+            Some(rt.state.0.as_str())
+        );
+    }
+
+    #[test]
+    fn a_uniform_ascii_line_stays_underlined_and_consecutive_crs_stay_distinct() {
+        let source = format!("\u{1b}[4m{}\u{1b}[24m\r\r\nB", "A".repeat(1500));
+        let (text, spans, _) = styled(parse(&source));
+        assert!(text.ends_with("\n\nB"));
+        assert_eq!(spans[0].end, 1500);
+        assert!(spans[0].underline.is_some());
+    }
+
+    #[test]
+    fn a_uniform_multiline_color_preserves_the_following_warning() {
+        for (prefix, line) in [
+            ("32", "OK\n"),
+            ("32", "OK\n\n"),
+            ("9", "OK\n"),
+            ("32;9", "OK\n"),
+        ] {
+            let source = format!(
+                "\u{1b}[{prefix}m{}\u{1b}[0m\u{1b}[31;4mFAILED\u{1b}[0m",
+                line.repeat(1024)
+            );
+            let (text, spans, strikes) = styled(parse(&source));
+            let warning = spans.last().unwrap();
+            assert_eq!(
+                &text[warning.start as usize..warning.end as usize],
+                "FAILED"
+            );
+            assert_eq!(warning.color, Some(rgb(187, 0, 0)));
+            assert!(warning.underline.is_some());
+            let end = line.len() * 1023 + 2;
+            if prefix.starts_with("32") {
+                assert_eq!(spans.len(), 2);
+                assert_eq!(spans[0].end as usize, end);
+            }
+            if prefix.ends_with('9') {
+                assert_eq!(strikes.len(), 1);
+                assert_eq!(strikes[0].1, end);
+            }
+        }
+    }
+
+    #[test]
+    fn an_unpainted_control_cannot_displace_a_visible_style() {
+        let line = "\u{1b}[7mA\u{1b}[mB".repeat(512);
+        let (text, spans, _) = styled(parse(&format!("{line}\n{line}\n\u{1b}[31;4mFAILED")));
+        assert_eq!(spans.len(), 1);
+        let warning = &spans[0];
+        assert_eq!(
+            &text[warning.start as usize..warning.end as usize],
+            "FAILED"
+        );
+        assert_eq!(warning.color, Some(rgb(187, 0, 0)));
+        assert!(warning.underline.is_some());
+    }
+
+    #[test]
+    fn empty_lines_are_not_merged_into_strikethrough() {
+        let (_, _, strikes) = styled(parse("\u{1b}[9mA\n\nB"));
+        assert_eq!(
+            strikes.iter().map(|&(a, b, _)| a..b).collect::<Vec<_>>(),
+            [0..1, 3..4]
+        );
+    }
+
+    #[test]
+    fn initial_dense_colors_preserve_the_following_warning() {
+        for prefix in ["", "\u{1b}[9m"] {
+            let source = format!(
+                "{prefix}{}\u{1b}[0m\u{1b}[31;4mFAILED",
+                "\u{1b}[31mA\u{1b}[32mB\n".repeat(512)
+            );
+            let (text, spans, _) = styled(parse(&source));
+            let warning = spans.last().unwrap();
+            assert_eq!(
+                &text[warning.start as usize..warning.end as usize],
+                "FAILED"
+            );
+            assert_eq!(warning.color, Some(rgb(187, 0, 0)));
+            assert!(warning.underline.is_some());
+        }
+    }
+
+    #[test]
+    fn equivalent_reverse_colors_do_not_fragment_a_uniform_underline() {
+        let ascii = format!(
+            "\u{1b}[4;31;44m{}{}",
+            "A".repeat(3000),
+            "\u{1b}[34;41;7mA\u{1b}[31;44;27mA".repeat(180)
+        );
+        let unicode = format!(
+            "\u{1b}[4;31;44m{}\u{1b}[34;41;7m{}",
+            "é".repeat(700),
+            "é".repeat(10)
+        );
+        for (source, bytes) in [(ascii, 3360), (unicode, 1420)] {
+            let (text, spans, _) = styled(parse(&source));
+            assert_eq!(text.len(), bytes);
+            assert_eq!(spans.len(), 1);
+            assert_eq!(spans[0].end as usize, bytes);
+            assert!(spans[0].underline.is_some());
+        }
+    }
+
+    #[test]
+    fn underline_on_a_long_ascii_line_leaves_work_for_later_styles() {
+        let source = format!(
+            "\u{1b}[4m{}\u{1b}[0m{}\u{1b}[31;4mFAILED\u{1b}[0m{}",
+            "A".repeat(1500),
+            "\u{1b}[31mA\u{1b}[32mB".repeat(100),
+            "x".repeat(3094)
+        );
+        let (text, spans, _) = styled(parse(&source));
+        assert!(spans[0].underline.is_some());
+        let warning = spans.last().unwrap();
+        assert_eq!(
+            &text[warning.start as usize..warning.end as usize],
+            "FAILED"
+        );
+        assert_eq!(warning.color, Some(rgb(187, 0, 0)));
+        assert!(warning.underline.is_some());
+    }
+
+    #[test]
+    fn unicode_underline_does_not_displace_a_later_short_run() {
+        for (count, warning, trailing) in [(1100, "\u{1b}[4m", 0), (990, "\u{1b}[31;4m", 32)] {
+            let source = format!(
+                "\u{1b}[4m{}\u{1b}[0m{warning}FAILED\u{1b}[0m{}",
+                "é".repeat(count),
+                "x".repeat(trailing)
+            );
+            let (text, spans, _) = styled(parse(&source));
+            let last = spans.last().unwrap();
+            assert_eq!(&text[last.start as usize..last.end as usize], "FAILED");
+            assert!(last.underline.is_some());
+            if count == 990 {
+                assert_eq!(last.color, Some(rgb(187, 0, 0)));
+            }
+        }
+    }
+
+    #[test]
+    fn a_full_quota_can_merge_over_blank_lines_but_not_visible_text() {
+        let dense = "\u{1b}[31mA\u{1b}[32mB\n".repeat(COPY_RUN_LIMIT / 2);
+        let blank = "\n".repeat(220_000);
+        let tail = "\u{1b}[31mA\u{1b}[32mB\n".repeat(1000);
+        let source = format!("{dense}{blank}B{tail}");
+        let (_, spans, _) = styled(parse(&source));
+        assert_eq!(spans.len(), COPY_RUN_LIMIT);
+        assert_eq!(
+            spans.last().unwrap().end as usize,
+            COPY_RUN_LIMIT / 2 * 3 + blank.len() + 1
+        );
     }
 }

@@ -1,6 +1,7 @@
 use super::{
     actions::Display,
     document::{HIGHLIGHT_LIMIT, TOOL_LIMIT, window},
+    tool_diff,
 };
 use crate::{
     State,
@@ -158,11 +159,17 @@ fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'static str {
         parts[0] = [diff, patch, &tool.output, live]
             .into_iter()
             .find(|text| {
-                text.get(..text.floor_char_boundary(text.len().min(TOOL_LIMIT)))
-                    .is_some_and(|prefix| prefix.lines().any(|line| line.starts_with("@@ ")))
+                let bytes = text
+                    .chars()
+                    .scan(TOOL_LIMIT, |left, c| {
+                        *left = left.checked_sub(c.len_utf16())?;
+                        Some(c.len_utf8())
+                    })
+                    .sum::<usize>();
+                text[..bytes].lines().any(tool_diff::is_hunk)
             })
             .unwrap_or_else(|| {
-                [diff, &tool.output]
+                [diff, patch, &tool.output]
                     .into_iter()
                     .find(|text| !text.trim().is_empty())
                     .unwrap_or_default()
@@ -180,6 +187,14 @@ fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'static str {
 
 pub(super) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
     let key = tool_key(message, &tool.id);
+    if tool.name == "edit" {
+        let mut parts = [""; 4];
+        output(tool, &mut parts);
+        if tool_diff::candidate(tool, parts[0]) {
+            // DiffView has live selection, modes and a virtual list of its own.
+            return render(s, message, tool, &key).key(key);
+        }
+    }
     let display = &s.transcript_display;
     let stamp = (
         Arc::as_ptr(tool) as usize,
@@ -291,33 +306,44 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
         let output_key = format!("{key}-tool_output");
         let wrap_key = format!("{key}-wrap");
         let wrap = !s.transcript_display.toggled(&wrap_key);
-        block = block
-            .child(
-                layout::action_row()
-                    .child(
-                        layout::button(
-                            t(if wrap {
-                                "toolCall.diff.disableWordWrap"
-                            } else {
-                                "toolCall.diff.enableWordWrap"
-                            }),
-                            false,
-                            screen::action(&s.input_scope, move |s| Display::toggle(s, &wrap_key)),
+        let fallback = || {
+            col()
+                .full_width()
+                .separate(Space::Sm)
+                .child(
+                    layout::action_row()
+                        .child(
+                            layout::button(
+                                t(if wrap {
+                                    "toolCall.diff.disableWordWrap"
+                                } else {
+                                    "toolCall.diff.enableWordWrap"
+                                }),
+                                false,
+                                screen::action(&s.input_scope, move |s| {
+                                    Display::toggle(s, &wrap_key)
+                                }),
+                            )
+                            .checked(wrap),
                         )
-                        .checked(wrap),
-                    )
-                    .child(text(lang).text_role(TextRole::Label)),
-            )
-            .child(markdown::tool_pane(
-                window(s, output_key, &parts, TOOL_LIMIT, |shown, units| {
-                    if terminal {
-                        ansi::code(shown, wrap)
-                    } else {
-                        markdown::code(shown, lang, highlight && units <= HIGHLIGHT_LIMIT, wrap)
-                    }
-                }),
-                tool.name == "edit",
-            ));
+                        .child(text(lang).text_role(TextRole::Label)),
+                )
+                .child(markdown::tool_pane(
+                    window(s, output_key, &parts, TOOL_LIMIT, |shown, units| {
+                        if terminal {
+                            ansi::code(shown, wrap)
+                        } else {
+                            markdown::code(shown, lang, highlight && units <= HIGHLIGHT_LIMIT, wrap)
+                        }
+                    }),
+                    tool.name == "edit",
+                ))
+        };
+        block = block.child(if tool_diff::candidate(tool, parts[0]) {
+            tool_diff::body(s, message, key, tool, parts[0], path(tool), fallback)
+        } else {
+            fallback()
+        });
     }
     let error = error(tool);
     if !error.is_empty() {
