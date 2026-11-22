@@ -177,7 +177,9 @@ export async function run({ call, fixture, root, pid, native, folder, data }) {
   sessions.foreign = (await fixture.client.session.create({ location: { directory: outside }, title: "automation foreign" })).id
   sessions.missing = "ses_missing_automation"
   const names = new Map(Object.entries(sessions).map(([name, id]) => [id, name]))
-  const scrub = value => JSON.parse(JSON.stringify(value ?? null).replace(/ses_[A-Za-z0-9]+/g, id => `<session:${names.get(id) ?? "?"}>`))
+  const scrub = value => JSON.parse(JSON.stringify(value ?? null)
+    .replace(/ses_[A-Za-z0-9]+/g, id => `<session:${names.get(id) ?? "?"}>`)
+    .replaceAll(workspace.id, "<workspace>"))
 
   const steps = []
   // Page engine requests differ where the reference runs it server-side and Rust runs it in the host.
@@ -243,8 +245,9 @@ export async function run({ call, fixture, root, pid, native, folder, data }) {
       "browser.probe": ({ sessionID }) => ({
         ok: true, result: sessionID === sessions.root ? { available: true, target: preview } : { available: false },
       }),
-      "browser.execute": ({ command, target }) => {
+      "browser.execute": ({ command, target, workspaceIDs }) => {
         assert.equal(target, command.action === "open" ? undefined : preview)
+        assert.deepEqual(workspaceIDs, command.action === "open" ? [workspace.id] : undefined)
         return ["open", "navigate"].includes(command.action)
           ? { ok: true, result: { url: command.url } }
           : { ok: false, error: { message: "No visible browser target" } }
@@ -276,8 +279,9 @@ export async function run({ call, fixture, root, pid, native, folder, data }) {
 
     // The TS plugin's browser client discovers this server's registration and forwards through it.
     answer({ "browser.probe": ok({ available: true, target: preview }),
-      "browser.execute": ({ command, target }) => {
+      "browser.execute": ({ command, target, workspaceIDs }) => {
         assert.equal(target, command.action === "open" ? undefined : preview)
+        assert.deepEqual(workspaceIDs, command.action === "open" ? [workspace.id] : undefined)
         return { ok: true, result: { url: command.url, opened: command.action } }
       } })
     const { executeBrowserTool } = await fromDist("opencode/automation-plugin.js")

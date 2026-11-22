@@ -13,6 +13,17 @@ pub(super) fn install(
     use webkit2gtk::WebViewExt;
     let (sender, receiver) = mpsc::sync_channel(1);
     view.with_webview(move |native| {
+        let location = controller.clone();
+        let location_registration = registration.clone();
+        native.inner().connect_uri_notify(move |view| {
+            if let Some(url) = view.uri() {
+                location.retire_queued_open(
+                    &location_registration.registration_id,
+                    location_registration.generation,
+                    &url,
+                );
+            }
+        });
         let token = Rc::new(Cell::new(0u64));
         let started_token = token.clone();
         let started = controller.clone();
@@ -22,8 +33,17 @@ pub(super) fn install(
             .connect_load_changed(move |view, event| match event {
                 webkit2gtk::LoadEvent::Started => {
                     started_token.set(started_token.get().wrapping_add(1));
-                    if let Some(url) = view.uri().filter(|url| url.as_str() != "about:blank") {
-                        started.mark_page_started(
+                    started.mark_page_started(
+                        &expected.registration_id,
+                        expected.generation,
+                        started_token.get(),
+                        view.uri()
+                            .map_or_else(|| "about:blank".into(), |url| url.to_string()),
+                    );
+                }
+                webkit2gtk::LoadEvent::Committed => {
+                    if let Some(url) = view.uri() {
+                        started.mark_page_committed(
                             &expected.registration_id,
                             expected.generation,
                             started_token.get(),
@@ -72,6 +92,7 @@ mod macos {
             context: *mut c_void,
         ) -> i32;
         pub(super) fn cn_navigate(view: *mut c_void, url: *const c_char) -> u64;
+        pub(super) fn cn_stop_navigation(view: *mut c_void);
     }
     unsafe extern "C" fn released(context: *mut c_void) {
         drop(unsafe { Box::from_raw(context.cast::<Observer>()) });
@@ -85,17 +106,30 @@ mod macos {
     ) {
         let observer = unsafe { &*context.cast::<Observer>() };
         let registration = &observer.registration;
-        if event == 0 {
+        if event == 0 || event == 3 || event == 4 {
             if !url.is_null() {
                 let url = unsafe { CStr::from_ptr(url) }
                     .to_string_lossy()
                     .into_owned();
-                if url != "about:blank" {
+                if event == 0 {
                     observer.controller.mark_page_started(
                         &registration.registration_id,
                         registration.generation,
                         token,
                         url,
+                    );
+                } else if event == 3 {
+                    observer.controller.mark_page_committed(
+                        &registration.registration_id,
+                        registration.generation,
+                        token,
+                        url,
+                    );
+                } else {
+                    observer.controller.retire_queued_open(
+                        &registration.registration_id,
+                        registration.generation,
+                        &url,
                     );
                 }
             }
@@ -149,107 +183,18 @@ mod macos {
 #[cfg(target_os = "macos")]
 pub(super) use macos::install;
 
-impl BrowserController {
-    pub(super) fn navigate_and_wait(
-        &self,
-        app: &AppHandle,
-        registration: &Registration,
-        view: &tauri::Webview,
-        url: &tauri::Url,
-        deadline: Instant,
-        fence: &crate::native_request::RequestFence,
-        document: Option<u64>,
-        token: Option<&str>,
-    ) -> Result<(), String> {
-        self.check_target_identity(app, registration, deadline, fence)?;
-        let previous = view.url().map_err(|error| error.to_string())?;
-        let mut previous_base = previous.clone();
-        previous_base.set_fragment(None);
-        let mut target_base = url.clone();
-        target_base.set_fragment(None);
-        let fragment_only = previous != *url && previous_base == target_base;
-        let expected = registration.clone();
-        let controller = self.clone();
-        let app = app.clone();
-        let queued_fence = fence.clone();
-        let target = url.clone();
-        use crate::embedded_view::input::{self, DocumentDispatch, Read};
-        let sequence = input::read(
-            view,
-            Read::Guarded {
-                document: token.map(str::to_owned),
-                dispatch: DocumentDispatch::Navigate(Box::new(move |native| {
-                    controller.check_navigation_dispatch(
-                        &app,
-                        &expected,
-                        document,
-                        deadline,
-                        &queued_fence,
-                    )?;
-                    let (sequence, _) =
-                        controller.prepare_navigation(&expected, target.as_str(), document)?;
-                    #[cfg(target_os = "linux")]
-                    {
-                        use gtk::glib::translate::from_glib_borrow;
-                        use webkit2gtk::WebViewExt;
-                        let view: gtk::glib::translate::Borrowed<webkit2gtk::WebView> =
-                            unsafe { from_glib_borrow(native.cast()) };
-                        view.load_uri(target.as_str());
-                    }
-                    #[cfg(target_os = "macos")]
-                    {
-                        let target = std::ffi::CString::new(target.as_str())
-                            .map_err(|error| error.to_string())?;
-                        let token = unsafe { macos::cn_navigate(native, target.as_ptr()) };
-                        if token == 0 {
-                            return Err("Native browser navigation was refused".into());
-                        }
-                        let mut inner = controller
-                            .inner
-                            .0
-                            .lock()
-                            .map_err(|error| error.to_string())?;
-                        let expectation = inner
-                            .page_load_expectations
-                            .get_mut(&expected.registration_id)
-                            .filter(|entry| entry.sequence == sequence)
-                            .ok_or("Browser preview navigation is no longer current")?;
-                        // WKWebView can return a navigation object for a fragment
-                        // change without issuing document completion callbacks.
-                        if !fragment_only {
-                            expectation.navigation_id = Some(token);
-                        }
-                    }
-                    Ok(sequence.to_ne_bytes().to_vec())
-                })),
-            },
-            deadline,
-            {
-                let fence = fence.clone();
-                move || fence.check()
-            },
-        )?;
-        let sequence = u64::from_ne_bytes(
-            sequence
-                .try_into()
-                .map_err(|_| "Missing native browser navigation sequence")?,
-        );
-        if fragment_only {
-            loop {
-                self.check_target(view.app_handle(), registration, deadline, fence)?;
-                let current = view.url().map_err(|error| error.to_string())?;
-                if current == *url {
-                    self.complete_same_document_navigation(
-                        registration,
-                        sequence,
-                        current.as_str(),
-                    )?;
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        }
-        self.wait_for_page_load(&registration.registration_id, sequence, deadline)?;
-        self.check_target(view.app_handle(), registration, deadline, fence)
+#[cfg(target_os = "macos")]
+pub(super) fn navigate_native(view: *mut std::ffi::c_void, url: &str) -> Result<u64, String> {
+    let url = std::ffi::CString::new(url).map_err(|error| error.to_string())?;
+    let token = unsafe { macos::cn_navigate(view, url.as_ptr()) };
+    if token == 0 {
+        Err("Native browser navigation was refused".into())
+    } else {
+        Ok(token)
     }
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn stop_native(view: *mut std::ffi::c_void) {
+    unsafe { macos::cn_stop_navigation(view) }
 }

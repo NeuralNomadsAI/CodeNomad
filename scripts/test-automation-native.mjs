@@ -45,7 +45,7 @@ process.env.XDG_DATA_HOME = path.join(root, "next-start-data")
 const configFile = path.join(env.OPENCODE_CONFIG_DIR, "opencode.json")
 await writeFile(configFile, "{}\n")
 
-let client, developer = false, callBrowser = false, providerError
+let client, developer = false, callBrowser = false, inventoryUnavailable = false, providerError
 let observedTools = []
 const nativeCalls = []
 const bridge = Fastify()
@@ -57,7 +57,10 @@ registerAutomationPluginRoute(bridge, {
     getSharedServiceClient: async () => client,
     list: () => [{ id: "unrelated" }, { id: "fixture" }],
     ownsLocation: async (id, location) => {
-      if (id === "unrelated") throw new Error("Synthetic unavailable unrelated native inventory")
+      if (id === "unrelated") {
+        if (inventoryUnavailable) throw new Error("Synthetic unavailable unrelated native inventory")
+        return false
+      }
       return path.resolve(location.directory).toLowerCase() === project.toLowerCase()
     },
   },
@@ -68,7 +71,7 @@ registerAutomationPluginRoute(bridge, {
         ? { state: "ready", cdpUrl: "http://127.0.0.1:1", runId: "fixture", nativeIdentity: "fixture", windowId: "fixture" }
         : { state: "stopped" } }
       nativeCalls.push({ method, params })
-      return method === "browser.probe" ? { available: true } : { text: "NATIVE_BROWSER_FIXTURE" }
+      return { url: params.command.url }
     },
   },
 })
@@ -198,11 +201,18 @@ try {
   assert.equal(await readFile(setupLog, "utf8"), setupBeforeHeartbeat, "Backend heartbeats must not reload native configuration/plugins")
   const skills = await client.skill.list({ location })
   assert(JSON.stringify(skills).includes("codenomad-browser"), "Bundled skill is visible in an arbitrary project")
+  inventoryUnavailable = true
+  callBrowser = true
+  await sample()
+  assert.equal(callBrowser, false, "The model requested an open against incomplete inventory")
+  assert.equal(nativeCalls.length, 0, "Opening with uncertain tab ownership must not reach the native host")
+  inventoryUnavailable = false
   callBrowser = true
   await sample()
   assert.equal(nativeCalls.length, 1)
   assert.equal(nativeCalls[0].method, "browser.execute")
   assert.equal(nativeCalls[0].params.sessionID, session.id)
+  assert.deepEqual(nativeCalls[0].params.workspaceIDs, ["fixture"])
   const denied = await bridge.inject({ method: "POST", url: "/api/opencode-plugin/automation",
     headers: { "x-codenomad-automation-token": registration.token },
     payload: { mode: "developer-execute", sessionID: session.id, command: { action: "inspect" } },

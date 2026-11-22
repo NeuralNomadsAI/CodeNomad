@@ -47,7 +47,7 @@ export async function setBrowserEmulation(guest: WebContents, preset: unknown, t
     await apply(next)
     currentProfiles.set(guest, next)
     // Applications often cache UA detection at startup; apply before reloading.
-    guest.reload()
+    if (guest.getURL() !== "about:blank") guest.reload()
   } catch (error) {
     await apply(previous)
     throw error

@@ -27,3 +27,18 @@ test("saved history is bounded and rejects credentials, unsafe schemes, invalid 
   }
   assert.deepEqual(parseBrowserHistory(fallback, url), fallback)
 })
+
+test("retiring one native visit preserves real intermediates and distinct entries at the same URL", () => {
+  const a = { id: 10, url: "https://example.com/a" }
+  const cancelled = { id: 11, url: "https://example.com/b" }
+  const intermediate = { id: 12, url: cancelled.url }
+  const current = { id: 13, url: intermediate.url }
+  const journal = new BrowserHistoryJournal({ urls: [a.url], index: 0 })
+  journal.observe({ entries: [a], index: 0 })
+  journal.retireEntry(a.id)
+  journal.retireEntry(cancelled.id)
+  const entries = [a, cancelled, intermediate, current]
+  assert.deepEqual(journal.observe({ entries, index: 1 }), { urls: [a.url], index: 0 })
+  assert.deepEqual(journal.observe({ entries, index: 3 }), { urls: [a.url, intermediate.url, current.url], index: 2 })
+  assert.deepEqual(journal.request(1, { entries, index: 3 }), { id: intermediate.id, url: intermediate.url })
+})

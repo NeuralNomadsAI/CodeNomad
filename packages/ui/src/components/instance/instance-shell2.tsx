@@ -496,7 +496,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       return
     }
 
-    if (preview) {
+    if (preview && !preview.nativeOpen?.created) {
       showSessionPreview(sessionId, props.instance.id)
       return
     }

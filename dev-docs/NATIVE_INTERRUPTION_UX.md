@@ -12,7 +12,14 @@ whole instead of clipping controls, and field scrolling can chain into it.
 
 ## Ownership and navigation
 
-Both workspace relays validate permission decisions (`once`, `always`, `reject`) and their optional reason (4096 UTF-16 units), and accept only the native interruption's optional boolean `resume`. Permission replies and session Form replies/cancellations read the exact native pending request and check its session identity before forwarding. Missing or settled requests return 409. After pending and receipt preparation, session identity and workspace attachment are revalidated before the native write. Successful explicit permission replies persist their reason with CodeNomad provenance; only a matching native receipt can be upgraded. Persistence failure after native success keeps that native success authoritative and is recorded in server diagnostics.
+The TypeScript workspace relay validates permission decisions (`once`, `always`,
+`reject`) and their optional reason (4096 UTF-16 units), and validates the
+interruption query's optional boolean `resume`. Permission and session Form
+actions check the exact pending request and retain native not-found and
+already-settled responses. An owned refusal permits targeted reconciliation
+during compaction. Permission receipt preparation reuses the admitted
+snapshot; session identity and workspace attachment are revalidated before
+forwarding.
 
 - Native pending queues are authoritative; never decide from a transcript scan
   whether a request can be answered. Requests without a tool source use the same panel.
