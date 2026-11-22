@@ -12,6 +12,15 @@ whole instead of clipping controls, and field scrolling can chain into it.
 
 ## Ownership and navigation
 
+The TypeScript workspace relay validates permission decisions (`once`, `always`,
+`reject`) and their optional reason (4096 UTF-16 units), and validates the
+interruption query's optional boolean `resume`. Permission and session Form
+actions check the exact pending request and retain native not-found and
+already-settled responses. An owned refusal permits targeted reconciliation
+during compaction. Permission receipt preparation reuses the admitted
+snapshot; session identity and workspace attachment are revalidated before
+forwarding.
+
 - Native pending queues are authoritative; never decide from a transcript scan
   whether a request can be answered. Requests without a tool source use the same panel.
 - External previews are labelled “Other conversation”; the label and strong title
