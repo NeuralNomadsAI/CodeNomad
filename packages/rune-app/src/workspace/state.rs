@@ -196,6 +196,22 @@ pub fn active_session(s: &State) -> Option<&str> {
         Tab::Blank => None,
     }
 }
+pub fn unselect_missing(s: &mut State, id: &str) -> bool {
+    if active_session(s) != Some(id) {
+        return false;
+    }
+    capture(s);
+    let Some(ui) = &mut s.workspace else {
+        return false;
+    };
+    if let Tab::Workspace(saved) = &mut ui.entries[ui.active].saved {
+        saved.active_session_id = None;
+        ui.changed();
+        ui.stage();
+        return true;
+    }
+    false
+}
 pub fn prepare_open(s: &mut State, tx: &mut Tx) -> bool {
     if busy(s) {
         return false;

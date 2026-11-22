@@ -140,6 +140,26 @@ fn retry_rebinds_when_the_event_lane_is_gone_even_if_the_command_relay_is_open()
 }
 
 #[test]
+fn confirmed_missing_selection_does_not_block_future_project_restoration() {
+    let mut s = init();
+    let mut ui = Ui::new();
+    ui.ready = true;
+    ui.entries[0].saved = Tab::Workspace(workspace("missing", "saved draft"));
+    ui.entries[0].binding = Some(backend("missing"));
+    s.workspace = Some(ui);
+    s.draft = TextEdit::new("unsent latest");
+    assert!(!unselect_missing(&mut s, "another"));
+    assert!(unselect_missing(&mut s, "missing"));
+    let snapshot = s.workspace.as_ref().unwrap().snapshot();
+    let saved = super::super::decode(&super::super::encode(&snapshot).unwrap()).unwrap();
+    let Tab::Workspace(project) = &saved.tabs[0] else {
+        panic!("workspace must remain")
+    };
+    assert_eq!(project.active_session_id, None);
+    assert_eq!(project.drafts["missing"], "unsent latest");
+}
+
+#[test]
 fn waiting_saved_session_keeps_its_draft_until_native_binding() {
     let mut s = init();
     let mut ui = Ui::new();

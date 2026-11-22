@@ -39,16 +39,17 @@ pub struct Launcher {
 }
 enum Reply {
     Connected(Backend, Vec<Project>, String),
-    Opened(
-        crate::workspace::opening::Opening,
-        Sessions,
-        Option<(Backend, String)>,
-    ),
+    Opened(crate::workspace::opening::Opening, Sessions, Restored),
     Listed(Sessions, bool),
     Created(Backend, String, String),
     Selected(Vec<String>, Option<Selection>, Option<u64>),
 }
 type Selection = (Backend, String, Option<usize>);
+enum Restored {
+    Empty,
+    Bound(Backend, String),
+    Missing(String),
+}
 impl Launcher {
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn fixture() -> Self {
@@ -161,6 +162,45 @@ mod tests {
         assert_eq!(rt.state.draft.text, "keep this draft");
         rt.update(|s, _| s.phase = Phase::Streaming);
         assert!(!can_change_session(&rt.state));
+    }
+
+    #[test]
+    fn a_selection_reply_cannot_replace_a_session_that_resumed_streaming() {
+        let mut state = crate::init();
+        crate::gallery::shell::fixture(&mut state);
+        let (out, input) = bounded(1);
+        let launcher = state.screen.launcher_mut().unwrap();
+        launcher.result = Some(input);
+        launcher.pending = true;
+        state.phase = Phase::Streaming;
+        let backend = Backend {
+            client: codenomad_client::http::Http::new().unwrap(),
+            base: "http://127.0.0.1:9/".into(),
+            workspace: "header-windows".into(),
+            session: "another".into(),
+            client_id: "fixture".into(),
+            fresh_mode: false,
+        };
+        assert!(
+            out.try_send(Ok(Reply::Selected(
+                vec![],
+                Some((backend, "Another".into(), None)),
+                None
+            )))
+            .is_ok()
+        );
+        let mut rt = rune::Runtime::new(
+            state,
+            crate::view,
+            (1000.0, 800.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.update(|s, tx| {
+            poll(s, tx);
+        });
+        assert!(rt.state.phase == Phase::Streaming);
+        assert_eq!(rt.state.chat_title, "Fixture conversation");
+        assert!(!rt.state.screen.launcher().unwrap().pending);
     }
 
     #[test]
@@ -394,7 +434,7 @@ pub fn open(s: &mut State, tx: &mut Tx) {
     l.job("rune.open_error", async move {
         let opening = pending.create(&folder).await?;
         let rows = b.sessions(&opening.project, None).await?;
-        Ok(Reply::Opened(opening, rows, None))
+        Ok(Reply::Opened(opening, rows, Restored::Empty))
     });
 }
 pub fn list(s: &mut State, more: bool) {
@@ -519,7 +559,7 @@ fn shown(s: &State) -> Option<&str> {
         .flatten()
 }
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
-    let blocked = crate::agent::navigation_blocked(s);
+    let blocked = !can_change_session(s);
     let selected = crate::workspace::active_session(s).map(str::to_owned);
     let Some(l) = s.screen.launcher_mut() else {
         return false;
@@ -579,8 +619,10 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.search = TextEdit::new("");
             l.creation_uncertain = false;
             crate::workspace::opened(s, &project);
-            if let Some((backend, title)) = restored {
-                bind(s, backend, title, None, tx);
+            match restored {
+                Restored::Bound(backend, title) => bind(s, backend, title, None, tx),
+                Restored::Missing(id) => retire_session(s, &id),
+                Restored::Empty => {}
             }
         }
         Ok(Reply::Listed(mut rows, more)) => {
@@ -637,6 +679,14 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         Ok(Reply::Selected(missing, selection, dismiss)) => {
             l.sessions.retain(|row| !missing.contains(&row.id));
             l.visits.forget(&missing);
+            if let Some(id) = selected
+                .as_deref()
+                .filter(|id| s.phase == Phase::Failed && missing.iter().any(|m| m == id))
+            {
+                retire_session(s, id);
+                tx.instant();
+                return true;
+            }
             if let Some((b, title, visit)) = selection.filter(|(b, _, _)| {
                 !blocked
                     || s.phase == Phase::Failed && selected.as_deref() == Some(b.session.as_str())
@@ -710,20 +760,43 @@ pub fn restore(s: &mut State, saved: crate::workspace::Workspace) {
         let opening = pending.create(&saved.folder).await?;
         let rows = backend.sessions(&opening.project, None).await?;
         let bound = if let Some(id) = &saved.active_session_id {
-            let (bound, session) = backend.bind_session(&opening.project, id, false).await?;
-            Some((bound, session.title))
+            match backend.bind_session(&opening.project, id, false).await {
+                Ok((bound, session)) => Restored::Bound(bound, session.title),
+                Err(err) if err.is::<SessionMissing>() => Restored::Missing(id.clone()),
+                Err(err) => return Err(err),
+            }
         } else {
-            None
+            Restored::Empty
         };
         Ok(Reply::Opened(opening, rows, bound))
     });
+}
+fn retire_session(s: &mut State, id: &str) {
+    if !crate::workspace::unselect_missing(s, id) {
+        return;
+    }
+    s.commands = None;
+    s.incoming = None;
+    s.agent = None;
+    s.files = None;
+    s.messages.clear();
+    s.chat_title.clear();
+    s.draft = TextEdit::new("");
+    s.phase = Phase::Ready;
+    s.show_launcher();
+    if let Some(l) = s.screen.launcher_mut() {
+        l.sessions.retain(|row| row.id != id);
+        l.error = Some("rune.open_error");
+    }
 }
 fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize>, tx: &mut Tx) {
     let same_session =
         !s.screen.is_launcher() && crate::workspace::active_session(s) == Some(b.session.as_str());
     if let Some(l) = s.screen.launcher_mut() {
         l.visits.record(&b.session, visit);
-        if !l.sessions.iter().any(|row| row.id == b.session) {
+        if let Some(row) = l.sessions.iter_mut().find(|row| row.id == b.session) {
+            row.title.clone_from(&title);
+        } else {
             l.sessions.insert(
                 0,
                 Session {

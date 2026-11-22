@@ -7,7 +7,7 @@ pub(crate) use persistence::finish;
 pub(crate) use state::panel_width;
 pub(crate) use state::{
     Ui, active_session, bound, can_new, capture, close, connected, draft_changed, input_ready,
-    new_tab, opened, poll, prepare_open, resume, retry, select, status, strip,
+    new_tab, opened, poll, prepare_open, resume, retry, select, status, strip, unselect_missing,
 };
 
 use serde_json::{Map, Value, json};
@@ -79,9 +79,12 @@ pub fn decode(bytes: &[u8]) -> Result<Snapshot, Error> {
         if let Some(raw) = layout.get(*key) {
             let width = raw
                 .as_str()
-                .and_then(|s| s.parse::<u16>().ok())
+                .and_then(|s| s.parse::<f64>().ok())
+                .filter(|width| {
+                    width.is_finite() && (0.0..=f64::from(MAX_PANEL_WIDTH)).contains(width)
+                })
                 .ok_or(Error::Malformed)?;
-            panel_widths[side] = Some(width);
+            panel_widths[side] = Some(width.floor() as u16);
         }
     }
     let revision = integer(root.get("revision"))?;

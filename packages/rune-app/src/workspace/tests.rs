@@ -216,9 +216,11 @@ fn accepts_v1_null_session_and_safe_integer_json_numbers() {
 fn native_store_preserves_panel_widths_under_the_solid_layout_keys() {
     let mut input = snapshot(workspace());
     input.panel_widths = [Some(440), Some(295)];
-    let raw = value(&input);
+    let mut raw = value(&input);
     assert_eq!(raw["layout"][PANEL_WIDTH_KEYS[0]], "440");
     assert_eq!(raw["layout"][PANEL_WIDTH_KEYS[1]], "295");
+    assert_eq!(from_value(&raw), Ok(input.clone()));
+    raw["layout"][PANEL_WIDTH_KEYS[1]] = json!("295.35");
     assert_eq!(from_value(&raw), Ok(input.clone()));
     input.panel_widths[0] = Some(0);
     assert_eq!(encode(&input), Err(Error::Limit));

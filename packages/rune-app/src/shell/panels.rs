@@ -136,6 +136,10 @@ impl Panels {
         let Some(index) = self.floating else {
             return false;
         };
+        if tx.focused().is_none() {
+            tx.focus(KEYS[index], true);
+            return true;
+        }
         let last = if index == 0 {
             "refresh-sessions"
         } else {

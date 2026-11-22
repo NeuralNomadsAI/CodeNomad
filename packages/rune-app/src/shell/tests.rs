@@ -311,3 +311,39 @@ fn keyboard_focus_wraps_at_the_visible_floating_drawer_edges() {
         });
     }
 }
+
+#[test]
+fn tab_after_a_background_click_returns_to_the_floating_drawer() {
+    fn render(s: &State, cx: &mut Cx<State>) -> El {
+        use rune_theme_codenomad::layout::Layout;
+        rune::col()
+            .full_width()
+            .full_height()
+            .child(crate::components::button(
+                "outside",
+                "Outside",
+                false,
+                |_| {},
+            ))
+            .child(english(s, cx).remaining())
+    }
+    let mut state = init();
+    fixture(&mut state);
+    let mut rt = Runtime::new(state, render, (600.0, 900.0), Env::new(false, 1.0));
+    rt.on_key = Some(crate::shell::keys);
+    settle(&mut rt);
+    click(&mut rt, "right-panel-toggle");
+    rt.pointer_down(300.0, 500.0);
+    rt.pointer_up(300.0, 500.0);
+    settle(&mut rt);
+    rt.key(KeyEvent {
+        key: Key::Tab,
+        mods: Mods::default(),
+    });
+    settle(&mut rt);
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|e| e.key.as_deref() == Some("right-panel-toggle") && e.focused)
+    );
+}
