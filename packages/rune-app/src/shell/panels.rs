@@ -268,21 +268,10 @@ pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
         Some(id) => format!("conversation-session-{id}"),
         None => "conversation-draft".into(),
     });
-    let dock_open = s
-        .agent
-        .as_ref()
-        .is_some_and(|ui| ui.picker || !ui.ids().is_empty());
-    if project || !s.chat_title.is_empty() || s.files.is_some() && !dock_open {
+    if project || !s.chat_title.is_empty() || s.files.is_some() {
         center = center.child(header(s, project, docked, touch));
-    } else {
-        let warning = connection_warning(s);
-        if s.files.is_some() || warning.is_some() {
-            center = center.child(shell::floating_notice(
-                rune::row()
-                    .children(warning)
-                    .children(s.files.is_some().then(|| crate::files::view::toggle(s))),
-            ));
-        }
+    } else if let Some(warning) = connection_warning(s) {
+        center = center.child(shell::floating_notice(warning));
     }
     let center = center.child(body.remaining());
     let mut columns = shell::columns();

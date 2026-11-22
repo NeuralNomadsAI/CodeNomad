@@ -343,10 +343,10 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
             expanded,
         ))
         .child(agent_view::view(s, cx))
-        .child(composer(s))
+        .child(composer(s, expanded))
 }
 
-fn composer(s: &State) -> El {
+fn composer(s: &State, expanded: bool) -> El {
     let scope = s.input_scope.clone();
     col()
         .key("session-composer")
@@ -368,6 +368,7 @@ fn composer(s: &State) -> El {
                     .on_edit(screen::edit(&scope, screen::Editor::Composer))
                     .on_input_change(crate::screen::action_tx(&scope, workspace::draft_changed))
                     .on_submit(crate::screen::action_tx(&scope, send)),
+                expanded,
             )
             .field_surface(),
         )

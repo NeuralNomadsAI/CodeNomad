@@ -123,11 +123,21 @@ pub fn transcript_rows<S: 'static>(
             move |state, index| with_appearance(appearance, || build(state, index)),
         )
 }
-pub fn composer(editor: El) -> El {
+pub fn composer(editor: El, in_scroll_stack: bool) -> El {
     // Current prompt-input.css editor bounds. A dedicated shared variant preserves them.
-    rune::auto_grow(editor, 1, usize::MAX)
-        .min_h(104.0)
-        .max_h(320.0)
+    if in_scroll_stack {
+        // Rune reveals focused controls in their nearest scroller. Let the session stack
+        // reveal the whole field when the interruption dock can push it out of view.
+        rune::col()
+            .key("scroll")
+            .w_full()
+            .min_h(104.0)
+            .child(editor)
+    } else {
+        rune::auto_grow(editor, 1, usize::MAX)
+            .min_h(104.0)
+            .max_h(320.0)
+    }
 }
 pub trait Layout {
     fn locale_direction(self, locale: &str) -> Self;
