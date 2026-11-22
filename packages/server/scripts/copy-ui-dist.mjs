@@ -2,6 +2,7 @@
 import { cpSync, existsSync, mkdirSync, rmSync } from "fs"
 import path from "path"
 import { fileURLToPath } from "url"
+import { precompressUi } from "../../../scripts/precompress-ui.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -17,5 +18,7 @@ if (!existsSync(uiDistDir)) {
 rmSync(targetDir, { recursive: true, force: true })
 mkdirSync(targetDir, { recursive: true })
 cpSync(uiDistDir, targetDir, { recursive: true })
+
+await precompressUi(targetDir)
 
 console.log(`[copy-ui-dist] Copied UI bundle from ${uiDistDir} -> ${targetDir}`)

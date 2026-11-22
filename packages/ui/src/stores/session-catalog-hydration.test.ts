@@ -78,14 +78,15 @@ test("restores hierarchy, selection and draft before any native read and revalid
   } finally { f.cleanup() }
 })
 
-test("the tab indicator follows publications when the list shares its held map", () => {
+test("the tab indicator follows per-tab snapshots when the list has no worktree scope", () => {
   const id = "catalog-unresolved-scope-indicator", f = fixture(id)
   try {
     setSessions(previous => new Map(previous).set(id, new Map([["root", { ...row("root"), status: "idle" }]])))
     const held = sessions().get(id)
     assert.equal(getInstanceSessionIndicatorStatusCached(id), "idle")
     setSessionStatus(id, "root", "working")
-    assert.equal(sessions().get(id), held)
+    assert.notEqual(sessions().get(id), held)
+    assert.equal(held?.get("root")?.status, "idle")
     assert.equal(getInstanceSessionIndicatorStatusCached(id), "working")
     setSessionPendingPermission(id, "root", true)
     assert.equal(getInstanceSessionIndicatorStatusCached(id), "permission")
