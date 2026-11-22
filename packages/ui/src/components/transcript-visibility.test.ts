@@ -3,7 +3,6 @@ import { describe, it } from "node:test"
 import { normalizeToolCallExpansionDefaults, type Preferences } from "../stores/preferences"
 import {
   TRANSCRIPT_PRESETS,
-  transcriptContentSignature,
   transcriptPreset,
   transcriptPresetPatch,
   transcriptVisibility,
@@ -51,23 +50,6 @@ describe("shared transcript visibility controls", () => {
     for (const item of rows.filter((item) => item.key !== "read")) {
       assert.equal(transcriptVisibility(after, item), transcriptVisibility(before, item), item.key)
     }
-  })
-  it("identifies content changes independently of tool grouping", () => {
-    const before = { ...current(), ...transcriptPresetPatch("everything") }
-    const signature = transcriptContentSignature(before)
-    assert.equal(transcriptContentSignature({ ...before, toolGroupVisibility: "hidden" }), signature)
-    for (const item of rows.filter(item => item.kind !== "toolGroups")) {
-      const patch = transcriptVisibilityPatch(before, item, "hidden")
-      assert.notEqual(transcriptContentSignature({ ...before, ...patch }), signature, item.key)
-    }
-    assert.notEqual(transcriptContentSignature({ ...before, ...transcriptPresetPatch("nothing") }), signature)
-  })
-  it("saves inherited non-tool defaults along with the Custom tool column", () => {
-    const before = { ...current(), ...transcriptPresetPatch("everything") }
-    const patch = transcriptVisibilityPatch(before, row("bash"), "collapsed")
-    assert.equal(patch.toolCallExpansionDefaults?.preset, "custom")
-    assert.equal(patch.toolGroupVisibility, "expanded")
-    assert.equal(patch.usageMetricsExpansion, "expanded")
   })
   it("routes retired tools through Other even with conflicting saved overrides", () => {
     const before = current()

@@ -6,9 +6,6 @@ import { backendEvents } from "../lib/backend-events"
 import { tGlobal } from "../lib/i18n"
 import { parseInstanceKey } from "../lib/backend-identity"
 import { generateUUID } from "../lib/client-identity"
-import { transcriptCustomExpansionPatch } from "../components/transcript-visibility"
-import { LazyToolCall } from "../components/lazy-tool-call"
-import { OTHER_TOOL_NAME, resolveToolVisibility } from "../components/tool-call/tool-presentation"
 import { sameServerSelection } from "../lib/native/server-selection-intent"
 import { readRemoteProjectHistory, RECENT_PROJECT_LIMIT, type RemoteProjectRecentEdit } from "../lib/remote-project-recent-data"
 import type { ConversationPermissionMode, RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
@@ -860,19 +857,18 @@ async function writeStateOwner(owner: string, patch: unknown, admitted?: () => b
 
 function updateUiSettings(updates: Partial<UiSettings>): Promise<boolean> {
   const current = uiConfigBucket()
+  if (updates.toolCallExpansionDefaults?.preset === "custom" && preferences().toolCallExpansionDefaults.preset !== "custom") {
+    // Save the defaults inherited from the preset before switching away from it.
+    const { toolGroupVisibility, usageMetricsExpansion } = preferences()
+    updates = { toolGroupVisibility, usageMetricsExpansion, ...updates }
+  }
   const nextSettings = normalizeUiSettings({ ...(current.settings ?? {}), ...updates })
   const patch = {
     settings: Object.fromEntries(
       Object.keys(updates).map((key) => [key, nextSettings[key as keyof UiSettings]]),
     ),
   }
-  const save = () => patchConfigOwner("ui", patch)
-  const groups = updates.toolGroupVisibility
-  // Revealing cards above the reading line must be part of the same reflow.
-  const write = groups && groups !== "collapsed" && groups !== preferences().toolGroupVisibility
-    ? LazyToolCall.preload().then(save)
-    : save()
-  return write.then(
+  return patchConfigOwner("ui", patch).then(
     () => true,
     (error) => {
       log.error("Failed to patch ui settings", error)
@@ -1507,8 +1503,18 @@ function setDiffViewMode(mode: DiffViewMode): void {
 
 function setToolOutputExpansion(mode: VisibilityPreference): void {
   const current = preferences()
-  if (resolveToolVisibility(current, OTHER_TOOL_NAME) === mode) return
-  updateUiSettings(transcriptCustomExpansionPatch(current, { tool: { key: OTHER_TOOL_NAME, mode } }))
+  if (current.toolCallExpansionDefaults.tools.other === mode) return
+  updateUiSettings({
+    toolOutputExpansion: mode === "hidden" ? current.toolOutputExpansion : mode,
+    toolCallExpansionDefaults: {
+      ...current.toolCallExpansionDefaults,
+      preset: "custom",
+      tools: {
+        ...current.toolCallExpansionDefaults.tools,
+        other: mode,
+      },
+    },
+  })
 }
 
 function setDiagnosticsExpansion(mode: VisibilityPreference): void {
@@ -1524,7 +1530,14 @@ function setToolInputsVisibility(mode: ToolInputsVisibilityPreference): void {
 function setThinkingBlocksExpansion(mode: ExpansionPreference): void {
   const current = preferences()
   if (current.thinkingBlocksExpansion === mode && current.toolCallExpansionDefaults.thinking === mode) return
-  updateUiSettings(transcriptCustomExpansionPatch(current, { thinking: mode }))
+  updateUiSettings({
+    thinkingBlocksExpansion: mode,
+    toolCallExpansionDefaults: {
+      ...current.toolCallExpansionDefaults,
+      preset: "custom",
+      thinking: mode,
+    },
+  })
 }
 
 function toggleShowThinkingBlocks(): void {

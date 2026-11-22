@@ -1,14 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { createVirtualReaderSettlement, settledReaderOffset } from "./virtual-reader-settlement.ts"
-
-test("a shorter replacement starts at the top if its old clipping would put it above the reading line", () => {
-  assert.equal(settledReaderOffset(-90, 30), 0)
-  assert.equal(settledReaderOffset(-26, 30), 0)
-  assert.equal(settledReaderOffset(-25.5, 30), -25.5)
-  assert.equal(settledReaderOffset(-90, 150), -90)
-  assert.equal(settledReaderOffset(12, 30), 12)
-})
+import { createVirtualReaderSettlement } from "./virtual-reader-settlement.ts"
 
 test("a hold aligns at once, then on every frame of a window that nothing extends, then releases", () => {
   const previousFrame = globalThis.requestAnimationFrame, previousCancel = globalThis.cancelAnimationFrame
@@ -29,7 +21,7 @@ test("a hold aligns at once, then on every frame of a window that nothing extend
   try {
     const reader = createVirtualReaderSettlement({
       enabled: () => enabled,
-      align: () => { aligned++; return held ? undefined : false },
+      align: () => { aligned++; return held },
     })
     const element = {} as HTMLElement
     reader.hold({ key: "revealed", offset: 8, element })
@@ -55,14 +47,6 @@ test("a hold aligns at once, then on every frame of a window that nothing extend
     reader.hold({ key: "jumped", offset: 0 })
     enabled = false; step(1)
     assert.equal(reader.held(), undefined, "A disabled list releases the hold")
-    enabled = true
-    const beforeLayout = aligned
-    reader.hold({ key: "reflowed", offset: -8, select: () => element }, true)
-    assert.equal(aligned, beforeLayout, "A layout hold waits for the replacement block")
-    assert.equal(step(1), 1)
-    assert.equal(aligned, beforeLayout + 1)
-    reader.cancel()
-    assert.equal(step(1), 0)
   } finally {
     globalThis.requestAnimationFrame = previousFrame
     globalThis.cancelAnimationFrame = previousCancel

@@ -7,7 +7,6 @@ import type {
   VisibilityPreference,
 } from "../../stores/preferences"
 import { OTHER_TOOL_NAME, resolveToolVisibility } from "../../components/tool-call/tool-presentation"
-import { transcriptCustomExpansionPatch } from "../../components/transcript-visibility"
 import type { Command } from "../commands"
 import { tGlobal } from "../i18n"
 import { isLocalTauriHost } from "../runtime-env"
@@ -106,7 +105,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       get: (p) => (p.thinkingBlocksExpansion ?? "expanded") as ExpansionPreference,
       set: (next) => {
         if (updatePreferences) {
-          updatePreferences(transcriptCustomExpansionPatch(prefs(), { thinking: next as ExpansionPreference }))
+          updatePreferences({ thinkingBlocksExpansion: next as ExpansionPreference })
           return
         }
         actions.setThinkingBlocksExpansion(next as ExpansionPreference)
@@ -162,7 +161,16 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       get: getToolOutputVisibility,
       set: (next) => {
         if (updatePreferences) {
-          updatePreferences(transcriptCustomExpansionPatch(prefs(), { tool: { key: OTHER_TOOL_NAME, mode: next as VisibilityPreference } }))
+          const mode = next as VisibilityPreference
+          const current = prefs()
+          updatePreferences({
+            toolOutputExpansion: mode === "hidden" ? current.toolOutputExpansion : mode,
+            toolCallExpansionDefaults: {
+              ...current.toolCallExpansionDefaults,
+              preset: "custom",
+              tools: { ...current.toolCallExpansionDefaults.tools, other: mode },
+            },
+          })
           return
         }
         actions.setToolOutputExpansion(next as VisibilityPreference)

@@ -176,24 +176,11 @@ jumps and an activation restore also hand the active marker back to the reading
 line. Otherwise the active
 marker is the first marked block reaching more than 4 px below the transcript top,
 re-read once per frame on scroll and content rendering from the mounted rows only.
-Grouping-only changes preserve the exact block and measured offset at the
-reading line; other visibility or preset changes use ordinary scroll behavior.
-If the selected marker points to that block, its identity
-qualifies the replacement, such as an individual tool represented by a collapsed
-group header. The bounded reader-settlement hold resolves the replacement and
-leaves scroll untouched if the block is gone. Further grouping changes during
-the hold keep the same block identity and offset, resolving its row in the
-current layout. A shorter
-block starts at the viewport top if the saved clipping would put its end at or
-above the reading line. At a scrollbar limit, the rail follows the block the
-reader actually reaches. A shared marker can stand for several distinct reasoning
-cards. Following the latest reply keeps the bottom; paging and restoration retain
-their own placement.
 Previous/next user-message jumps advance from that highlighted marker's message,
 including a selected marker, while it has a timeline marker or remains in the
 visible resident order. A vanished reference, or the first jump before a
 highlight, uses the same
-reading-line probe (`readingLinePosition` / `readingLineBlock`), which returns
+reading-line probe (`readingLinePosition` / `readingLineSegment`), which returns
 both marker and message identity. A pending jump's target stays the reference
 while paging or shown, so repeated jumps advance even near a clamped bottom;
 deferred jumps retain their requested direction until the index arrives.
@@ -390,11 +377,9 @@ previous offset after the jump's write, which would otherwise carry the reader b
 down (a First jump from the bottom of a long transcript). While
 a jump's row is not rendered, the hold rewrites Virtua's current estimate of its
 offset instead, since measuring the rows around a distant estimate can carry the
-row out of the rendered range; once rendered it is aligned. A reflow uses the
-same estimate to bring an unmounted row into range and aligns the actual block.
-Grouping settings that reveal cards preload their renderer before applying the
-change. A filtered or removed target releases the hold. The 30-frame settlement
-window starts with the request. Within it,
+row out of the rendered range; once rendered it is aligned. Both last a fixed
+30-frame window counted from the request, which layout never extends, re-measuring
+and re-aligning the element on every frame, and are released afterwards. Within it,
 viewport and header resizes re-align the
 element instead of dropping it, and its requested offset is kept and clamped into
 the current viewport only when applied. Gestures, navigation and focus moving to

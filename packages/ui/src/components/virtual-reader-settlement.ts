@@ -1,30 +1,20 @@
 /**
  * `element` holds a descendant of the keyed row (an in-place reveal) instead of
  * the row itself. `select` finds a block standing for the row on every frame,
- * so it survives a remount of that row. Pending means the block can still mount;
- * null means it is gone. Reflows hold only a block, never its row.
+ * so it survives a remount of that row; until it finds one, the row is held.
  */
-export type VirtualBlockTarget = HTMLElement | "pending" | null
-export interface VirtualItemAnchor {
-  key: string
-  offset: number
-  element?: HTMLElement
-  select?: () => VirtualBlockTarget
-  reflow?: true
-}
+interface VirtualItemAnchor { key: string; offset: number; element?: HTMLElement; select?: () => HTMLElement | null }
 
-// A block ending at or above this line already counts as read.
-export const READING_LINE_OFFSET_PX = 4
-
-export function settledReaderOffset(offset: number, height: number) {
-  return offset < 0 && offset + height <= READING_LINE_OFFSET_PX ? 0 : offset
-}
-
-// Later layout never extends the alignment window.
+// A hold lasts the former element-alignment window, counted from its request:
+// later layout never extends it.
 const HOLD_FRAMES = 30
 
-/** Re-aligns a jump, reveal or reflow target on each frame of a fixed window.
- * Gestures cancel the hold, and `align` returns false for a lost target.
+/** A held anchor (a jump's row or a revealed element) is measured and
+ * re-aligned on every frame of its fixed window, like the former element
+ * alignment: layout lands after animation
+ * frames, so waiting for a layout notification would paint the displaced frame
+ * first. It is then released, so a later focus or reveal is never pulled back.
+ * `align` returns false when an anchor can no longer be held.
  */
 export function createVirtualReaderSettlement(options: {
   align: (anchor: VirtualItemAnchor) => boolean | void
@@ -48,13 +38,12 @@ export function createVirtualReaderSettlement(options: {
     cancel,
     /** The held anchor, if any. */
     held: () => anchor,
-    /** Aligns now, or after a pending render, then on each frame of the window. */
-    hold: (next: VirtualItemAnchor, defer = false) => {
+    /** Takes ownership of `next` at once: aligns it now, then on every frame of its window. */
+    hold: (next: VirtualItemAnchor) => {
       cancel()
       anchor = next
       remaining = HOLD_FRAMES
-      if (defer) frame = requestAnimationFrame(tick)
-      else tick()
+      tick()
     },
   }
 }

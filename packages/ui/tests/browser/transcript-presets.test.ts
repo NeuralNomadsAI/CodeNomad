@@ -22,7 +22,7 @@ const center = async (locator: ReturnType<Page["locator"]>) => {
 }
 const pressed = (column: ReturnType<Page["locator"]>) => column.evaluateAll(buttons => buttons.map(button => button.getAttribute("aria-pressed")))
 
-test("customizing Shell from a saved Everything preset keeps the other rows unchanged", async () => {
+test("customizing a legacy Everything preset keeps inherited rows and saves grouping across reload", async () => {
   const page = await fixture.browser.newPage({ viewport: { width: 1200, height: 900 }, locale: "en-US" })
   try {
     await page.addInitScript(() => { (window as any).EventSource = class { addEventListener() {} removeEventListener() {} close() {} } })
@@ -43,6 +43,20 @@ test("customizing Shell from a saved Everything preset keeps the other rows unch
     assert.equal(await preset(page).inputValue(), "custom")
     before[index] = "false"
     assert.deepEqual(await states(), before)
+
+    await page.reload()
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.getByRole("button", { name: "Message content", exact: true }).click()
+    assert.equal(await preset(page).inputValue(), "custom")
+    assert.deepEqual(await states(), before)
+    await groups.getByRole("button", { name: "Disable tool grouping", exact: true }).click()
+    await page.locator('.transcript-filters[aria-busy="false"]').waitFor()
+
+    await page.reload()
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.getByRole("button", { name: "Message content", exact: true }).click()
+    assert.ok(await groups.getByRole("button", { name: "Enable tool grouping", exact: true }).isVisible())
+    assert.ok(await shell.getByRole("button", { name: "Expand shell", exact: true }).isVisible())
   } finally { await page.close() }
 })
 

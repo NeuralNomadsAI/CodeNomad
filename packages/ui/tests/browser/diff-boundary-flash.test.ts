@@ -74,30 +74,6 @@ test("a grouped settled message reprojection keeps every tool body and report mo
   } finally { await page.close() }
 })
 
-test("appending to an open Shell group keeps the existing cards mounted", async () => {
-  const { page, errors } = await openFixture()
-  try {
-    await page.waitForFunction(() => Boolean((window as any).fixture))
-    await page.evaluate(() => (window as any).fixture.startShellGroup())
-    const group = (count: number) => page.getByRole("button", { name: `Shell: ${count}`, exact: true })
-    await group(2).waitFor()
-    if (await group(2).getAttribute("aria-expanded") === "false") await group(2).click()
-    const card = (id: string) => page.locator(`.tool-call-message[data-part-id="${id}"] .tool-call`)
-    const mounted = await Promise.all(["shell-1", "shell-2"].map(async id => {
-      const tool = card(id)
-      await tool.getByText(`Output from ${id}`, { exact: true }).waitFor()
-      return tool.elementHandle()
-    }))
-    await page.evaluate(() => (window as any).fixture.appendShell("shell-3"))
-    await group(3).waitFor()
-    await card("shell-3").getByText("Output from shell-3", { exact: true }).waitFor()
-    for (const [index, original] of mounted.entries()) {
-      assert.equal(await card(`shell-${index + 1}`).evaluate((node, prior) => node === prior, original), true)
-    }
-    assert.deepEqual(errors, [])
-  } finally { await page.close() }
-})
-
 test("a reasoning part streaming into the message keeps every grouped tool body mounted", async () => {
   const { page, errors } = await openFixture()
   try {

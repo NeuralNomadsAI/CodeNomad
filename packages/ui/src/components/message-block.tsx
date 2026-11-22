@@ -1,4 +1,4 @@
-import { For, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, onCleanup, untrack, type Accessor } from "solid-js"
+import { For, Index, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack, type Accessor } from "solid-js"
 import { ChevronRight, Copy, ExternalLink, FoldVertical, Layers3, Loader2, Trash2, XCircle } from "lucide-solid"
 import MessageItem from "./message-item"
 import SystemMessage from "./system-message"
@@ -45,7 +45,6 @@ import {
   extractReasoningTextForRender,
   extractWholeReasoningText,
   REASONING_RENDER_CHARACTER_LIMIT,
-  type MessageRenderCache,
 } from "../lib/message-render-cache"
 import { STREAMING_INSTANT_RENDER_CHARACTER_LIMIT, STREAMING_RENDER_INTERVAL_MS } from "../lib/render-text-window"
 import { createTextWindow, HiddenTextNotice } from "./hidden-text"
@@ -61,10 +60,11 @@ import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
 import { groupTranscriptRows, isTechnicalGroupingVisiblePart, segmentExplorationItems, transcriptPartKind, sumMessageUsage, technicalPartKey, type TechnicalCleanupPart, type TranscriptTechnicalGroup } from "../lib/message-part-grouping"
 import { MessageUsage } from "./message-usage"
-import { LazyToolCall } from "./lazy-tool-call"
 
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
 const BACKGROUNDABLE_TOOLS = new Set(["bash", "shell", "task", "subagent"])
+
+const LazyToolCall = lazy(() => import("./tool-call"))
 
 function ToolCallFallback() {
   return <div class="tool-call tool-call-loading" />
@@ -530,7 +530,7 @@ interface MessageBlockProps {
   thinkingDefaultExpanded: () => boolean
   usageMetricsVisibility: () => VisibilityPreference
   systemMessagesVisibility?: () => VisibilityPreference
-  groupToolCalls?: () => boolean
+  toolGroupVisibility?: () => VisibilityPreference
   toolVisibility: (toolName: string) => VisibilityPreference
   onRevert?: (messageId: string) => void
   onFork?: (messageId?: string) => void
@@ -551,7 +551,7 @@ interface MessageBlockProps {
   technicalCleanupParts?: (messageId: string, partId: string) => TechnicalCleanupPart[]
   technicalCleanupPartKeys?: Accessor<ReadonlySet<string>>
   onTechnicalCleanupHoverChange?: (messageId: string, partId: string, hovered: boolean) => void
-  isTechnicalGroupExpanded?: (group: TranscriptTechnicalGroup) => boolean
+  isTechnicalGroupExpanded?: (groupId: string, defaultExpanded: boolean) => boolean
   setTechnicalGroupExpanded?: (groupId: string, expanded: boolean) => void
   /**
    * Leaves bottom-following and holds `target` `viewportOffset` px below the
@@ -568,7 +568,8 @@ export default function MessageBlock(props: MessageBlockProps) {
     messageItems: Map<string, ContentDisplayItem>
     toolItems: Map<string, ToolDisplayItem>
     messageBlocks: Map<string, CachedBlockEntry>
-  } & MessageRenderCache
+    releasedToolBodies: Set<string>
+  }
   const [blockRef, setBlockRef] = createSignal<HTMLDivElement>()
   const [systemDisclosureRevision, setSystemDisclosureRevision] = createSignal(0)
   const isSearchResult = () => Boolean(props.searchResultMessageIds?.().has(props.messageId))
@@ -608,7 +609,7 @@ export default function MessageBlock(props: MessageBlockProps) {
     if (!current) return null
 
     const messageInfoVersion = props.store().state.messageInfoVersion[current.id] ?? 0
-    const groupTools = props.groupToolCalls?.() ?? true
+    const groupTools = props.toolGroupVisibility?.() !== "hidden"
 
     const cacheSignature = [
       current.id,
@@ -651,7 +652,7 @@ export default function MessageBlock(props: MessageBlockProps) {
       const segmentKey = `${current.id}:content:${startPartId}`
       let cached = sessionCache.messageItems.get(segmentKey)
       const partIds = parts.flatMap((part) => typeof part.id === "string" ? [part.id] : [])
-      // Row accessors observe item identity, not mutations to this plain cached
+      // Index rows observe item identity, not mutations to this plain cached
       // object. Publish changed selections so appended/tail parts reach the row.
       if (!cached || cached.partIds.length !== partIds.length || cached.partIds.some((id, index) => id !== partIds[index])) {
         cached = {
@@ -902,11 +903,6 @@ export default function MessageBlock(props: MessageBlockProps) {
     })
   }
 
-  const itemsByKey = createMemo(() => {
-    const items = new Map<string, MessageBlockItem>()
-    for (const item of block()?.items ?? []) items.set(item.key, item)
-    return items
-  })
   const visibleItemKeys = createMemo(() => new Set((block()?.items ?? [])
     .filter(isDisplayItemVisible)
     .map((item) => item.key)))
@@ -926,11 +922,9 @@ export default function MessageBlock(props: MessageBlockProps) {
             data-search-result={isSearchResult() ? "true" : undefined}
             data-search-active={isActiveSearchResult() ? "true" : undefined}
           >
-            <For each={[...itemsByKey().keys()]}>
-              {(key) => {
-                let last = itemsByKey().get(key)!
-                const item = createMemo(() => (last = itemsByKey().get(key) ?? last))
-                return <Switch>
+            <Index each={resolvedBlock().items}>
+              {(item) => (
+              <Switch>
                 <Match when={item().type === "content"}>
                   <MessageContentItem
                     instanceId={props.instanceId}
@@ -961,23 +955,25 @@ export default function MessageBlock(props: MessageBlockProps) {
                   />
                 </Match>
                 <Match when={item().type === "tool"}>
-                  <Show when={visibleItemKeys().has((item() as ToolDisplayItem).key)}>
-                    <div
-                      class="tool-call-message"
-                      data-key={(item() as ToolDisplayItem).key}
-                      data-part-id={(item() as ToolDisplayItem).partId}
-                      data-delete-technical-selected={technicalCleanupPartKeys().has((item() as ToolDisplayItem).key) ? "true" : undefined}
-                    >
-                      <ToolCallItem
-                        instanceId={props.instanceId}
-                        sessionId={props.sessionId}
-                        isActive={props.isActive}
-                        store={props.store}
-                        messageId={(item() as ToolDisplayItem).messageId}
-                        partId={(item() as ToolDisplayItem).partId}
-                        onContentRendered={props.onContentRendered}
-                      />
-                    </div>
+                  <Show keyed when={visibleItemKeys().has((item() as ToolDisplayItem).key) && item() as ToolDisplayItem}>
+                    {tool => (
+                      <div
+                        class="tool-call-message"
+                        data-key={tool.key}
+                        data-part-id={tool.partId}
+                        data-delete-technical-selected={technicalCleanupPartKeys().has(tool.key) ? "true" : undefined}
+                      >
+                        <ToolCallItem
+                          instanceId={props.instanceId}
+                          sessionId={props.sessionId}
+                          isActive={props.isActive}
+                          store={props.store}
+                          messageId={tool.messageId}
+                          partId={tool.partId}
+                          onContentRendered={props.onContentRendered}
+                        />
+                      </div>
+                    )}
                   </Show>
                 </Match>
                 <Match when={item().type === "exploration"}>
@@ -997,7 +993,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                       activePartId={activeSearchMatch()?.partId}
                       showHeader={technicalGroupStartsHere((item() as ExplorationDisplayItem).technicalGroup)}
                       expanded={(item() as ExplorationDisplayItem).technicalGroup
-                        ? () => props.isTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!) ?? false
+                        ? () => props.isTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!.id, props.toolGroupVisibility?.() === "expanded") ?? false
                         : undefined}
                       onExpandedChange={(item() as ExplorationDisplayItem).technicalGroup
                         ? (expanded) => props.setTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!.id, expanded)
@@ -1039,7 +1035,10 @@ export default function MessageBlock(props: MessageBlockProps) {
                     activePartId={activeSearchMatch()?.partId}
                     showHeader={technicalGroupStartsHere((item() as ReasoningDisplayItem).technicalGroup)}
                     expanded={(item() as ReasoningDisplayItem).technicalGroup
-                      ? () => props.isTechnicalGroupExpanded?.((item() as ReasoningDisplayItem).technicalGroup!) ?? false
+                      ? () => props.isTechnicalGroupExpanded?.(
+                          (item() as ReasoningDisplayItem).technicalGroup!.id,
+                          (item() as ReasoningDisplayItem).defaultExpanded,
+                        ) ?? false
                       : undefined}
                     onExpandedChange={(item() as ReasoningDisplayItem).technicalGroup
                       ? (expanded) => props.setTechnicalGroupExpanded?.((item() as ReasoningDisplayItem).technicalGroup!.id, expanded)
@@ -1065,9 +1064,9 @@ export default function MessageBlock(props: MessageBlockProps) {
                     </button>
                   </div>
                 </Match>
-                </Switch>
-              }}
-            </For>
+              </Switch>
+              )}
+            </Index>
           </div>
         </Show>
       )}
@@ -1108,10 +1107,7 @@ function ExplorationGroup(props: ExplorationGroupProps) {
       props.pendingFormToolTargets.has(`${item.messageId}:${item.partId}`),
     )
   }
-  const segments = createMemo(() => new Map(segmentExplorationItems(props.tools, isPending).map(segment => [
-    segment.kind === "pending" ? `pending:${segment.item.key}` : segment.items[0].key,
-    segment,
-  ])))
+  const segments = createMemo(() => segmentExplorationItems(props.tools, isPending))
   const completed = (items: ToolDisplayItem[]) => props.completed || items.every((item) => {
     const part = props.store().getMessage(item.messageId)?.parts[item.partId]?.data
     const status = part?.type === "tool" ? part.state?.status : undefined
@@ -1176,13 +1172,9 @@ function ExplorationGroup(props: ExplorationGroupProps) {
   }
 
   createEffect(() => {
-    const active = props.activePartId
-    if (!active) return
-    for (const [key, segment] of segments()) {
-      if (segment.kind !== "group" || !segment.items.some(tool => tool.partId === active)) continue
-      if (!expanded(key)) setExpanded(key, true)
-      return
-    }
+    const segment = segments().find((item) => item.kind === "group" && item.items.some((tool) => tool.partId === props.activePartId))
+    const key = segment?.kind === "group" ? segment.items[0]?.key : undefined
+    if (key && !expanded(key)) setExpanded(key, true)
   })
 
   const renderTool = (item: ToolDisplayItem) => (
@@ -1254,14 +1246,10 @@ function ExplorationGroup(props: ExplorationGroupProps) {
           </Show>
         </div>
       </Show>
-      <For each={[...segments().keys()]}>{(key) => {
-          const segment = segments().get(key)!
-          if (segment.kind === "pending") return renderTool(segment.item)
-          let last = segment.items
-          const items = createMemo(() => {
-            const current = segments().get(key)
-            return current?.kind === "group" ? (last = current.items) : last
-          })
+      <For each={segments()}>{(segment) => segment.kind === "pending"
+        ? renderTool(segment.item)
+        : (() => {
+          const key = segment.items[0].key
           return <>
             <Show when={props.showHeader !== false && !props.summaryTools}>
               <button
@@ -1271,17 +1259,18 @@ function ExplorationGroup(props: ExplorationGroupProps) {
                 onClick={() => toggle(key)}
               >
                 <ChevronRight class="message-technical-group-disclosure disclosure-chevron" aria-hidden="true" />
-                <Show when={!completed(props.summaryTools ?? items())}><span class="inline-flex animate-spin"><Loader2 class="message-technical-group-spinner w-3.5 h-3.5" aria-hidden="true" /></span></Show>
-                <span class="message-technical-group-title">{label(props.summaryTools ?? items())}</span>
+                <Show when={!completed(props.summaryTools ?? segment.items)}><span class="inline-flex animate-spin"><Loader2 class="message-technical-group-spinner w-3.5 h-3.5" aria-hidden="true" /></span></Show>
+                <span class="message-technical-group-title">{label(props.summaryTools ?? segment.items)}</span>
               </button>
             </Show>
             <Show when={expanded(key)}>
               <div class="message-technical-group-parts">
-                <For each={items()}>{renderTool}</For>
+                <For each={segment.items}>{renderTool}</For>
               </div>
             </Show>
           </>
-      }}</For>
+        })()
+      }</For>
     </div>
     </Show>
   )

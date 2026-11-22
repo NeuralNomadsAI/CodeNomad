@@ -1,10 +1,10 @@
-import { Show, batch, createComputed, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup, untrack } from "solid-js"
+import { Show, batch, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup, untrack } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import { trackHeightDelta } from "../lib/height-delta"
 import { flushFrameBatchedMounts } from "../lib/frame-batch-schedule"
 import { attachScrollGestureRouting, findNestedScroller, getElementZoom, POINTER_CONTROL_SELECTOR, wheelDeltaUnit } from "../lib/scroll-gesture-routing"
 import { remapVirtualMeasurements } from "./virtual-follow-measurements"
-import { createVirtualReaderSettlement, settledReaderOffset, type VirtualBlockTarget, type VirtualItemAnchor } from "./virtual-reader-settlement"
+import { createVirtualReaderSettlement } from "./virtual-reader-settlement"
 import { advanceBottomPinSettlement, AnchorRestoreStabilizer, canScrollInDirection, classifyVirtualItemKeyChange, describeKeyTarget, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottomForMode, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, SCROLL_INTENT_KEYS, ScrollObservationGate, USER_SCROLL_INTENT_WINDOW_MS, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldNavigateAtBoundary, VirtualScrollController, type BottomPinSettlementState, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 import { isScrollTraceEnabled, traceScroll, type ScrollReason, type ScrollTraceEntry, type ScrollTraceKind } from "./virtual-scroll-trace"
 
@@ -46,7 +46,7 @@ export interface VirtualFollowListApi {
    * Places the keyed row at the top, holding it there for the alignment window;
    * `select` holds a block of that row instead once it renders.
    */
-  scrollToKey: (key: string, select?: () => VirtualBlockTarget) => void
+  scrollToKey: (key: string, select?: () => HTMLElement | null) => void
   notifyContentRendered: () => void
   /** Leaves follow mode and holds `target` at `viewportOffset` px below the viewport top, clamped into view. */
   alignElement: (target: HTMLElement, viewportOffset: number) => void
@@ -121,8 +121,6 @@ export interface VirtualFollowListProps<T> {
   initialAutoScroll?: Accessor<boolean>
   resetKey?: Accessor<string | number>
   followToken?: Accessor<string | number>
-  layoutChange?: Accessor<{ preserve: boolean } | undefined>
-  captureLayoutAnchor?: () => VirtualItemAnchor | undefined
   explicitBottomPinIntent?: Accessor<VirtualExplicitBottomPinIntent | null>
   autoPinHoldTargetKey?: Accessor<string | null>
   resolveAutoPinHoldElement?: HoldTargetElementResolver
@@ -228,7 +226,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let pendingHeaderFocus: HTMLElement | undefined
   let nativeScrollbarDragging = false
   // The block `scrollToKey` holds instead of its row, during that dispatch only.
-  let keyJumpSelect: (() => VirtualBlockTarget) | undefined
+  let keyJumpSelect: (() => HTMLElement | null) | undefined
   // Until when an unowned scroll still belongs to a lifted flick's fling.
   let touchFlingClaimUntil = 0
   // The extent of the last observation: displacement that shrinks it is
@@ -315,24 +313,19 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const readerSettlement = createVirtualReaderSettlement({
     enabled: () => isActive() && !autoScroll() && !scrollController.snapshot().restoring,
     align: (anchor) => {
-      const key = anchor.key
-      const element = scrollElement(), row = itemElements.get(key)
-      const selected = anchor.select?.()
-      const index = findLiveIndex(key)
-      if (selected === null || index === -1) return false
-      const pending = selected === "pending"
-      // Seek an unmounted row by its estimate, just as for a timeline jump.
-      if (!anchor.element && (!selected || pending) && !row?.isConnected) {
-        return writeIndex("reader-settle", index)
+      const element = scrollElement(), row = itemElements.get(anchor.key)
+      // A jump lands on Virtua's estimate, and measuring the rows around it can
+      // move its row out of the rendered range: follow the estimate until the
+      // row renders (or remounts) to be measured.
+      if (!anchor.element && !row?.isConnected) {
+        const index = findLiveIndex(anchor.key)
+        return index !== -1 && writeIndex("reader-settle", index)
       }
-      if (anchor.reflow && pending) return
-      const target = anchor.element ?? (pending ? row : selected ?? row)
+      const target = anchor.element ?? (anchor.select?.() || row)
       // A detached revealed part is gone.
-      if (!element || !target?.isConnected) return false
-      // A held block too short for the old clipping starts at the viewport top.
-      const offset = anchor.element ? clampAlignmentOffset(element, anchor.offset)
-        : anchor.offset < 0 ? settledReaderOffset(anchor.offset, target.getBoundingClientRect().height) : anchor.offset
-      const delta = measureAnchorDelta(element, target, offset)
+      if (!element || !target?.isConnected) return !anchor.element
+      // A held element keeps its requested offset; only its application follows the viewport.
+      const delta = measureAnchorDelta(element, target, anchor.element ? clampAlignmentOffset(element, anchor.offset) : anchor.offset)
       if (Math.abs(delta) >= 1) writeScroll(anchor.element ? "align-element" : "reader-settle", { type: "dom", top: element.scrollTop + delta, record: true })
     },
   })
@@ -1189,7 +1182,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     props.onJumpBottom?.()
   }
 
-  function scrollToKey(key: string, select?: () => VirtualBlockTarget) {
+  function scrollToKey(key: string, select?: () => HTMLElement | null) {
     supersedePositioning()
     keyJumpSelect = select
     try { dispatchFollowEvent({ type: "jump-key", key }) }
@@ -1260,22 +1253,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
 
   createEffect(on(() => props.followToken?.(), () => {
     if (autoScroll()) api.notifyContentRendered()
-  }, { defer: true }))
-
-  createComputed(on(() => props.layoutChange?.(), change => {
-    const held = readerSettlement.held()
-    // Resolve the same reading target in the new layout rather than capturing
-    // a placeholder or another block while the original placement settles.
-    if (change?.preserve && held?.reflow) return
-    if (held?.reflow || held?.select?.() === null) readerSettlement.cancel()
-    if (!change?.preserve || !isActive()) return
-    if (autoScroll()) api.notifyContentRendered()
-    else if (!scrollController.snapshot().restoring) {
-      // Capture before render effects replace the old blocks; resolve the held
-      // block after layout changes, using the ordinary cancellable settlement.
-      const anchor = props.captureLayoutAnchor?.()
-      if (anchor) readerSettlement.hold({ ...anchor, get key() { return anchor.key }, reflow: true }, true)
-    }
   }, { defer: true }))
 
   createEffect(on(

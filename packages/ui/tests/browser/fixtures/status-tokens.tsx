@@ -33,6 +33,9 @@ let config: any = { settings: { locale: "en", ...(saved === null ? {} : { showUs
 if (query.has("legacyEverything")) {
   Object.assign(config.settings, transcriptPresetPatch("everything"))
   delete config.settings.toolGroupVisibility
+  delete config.settings.usageMetricsExpansion
+  const stored = sessionStorage.getItem("fixture:legacy-transcript-settings")
+  if (stored) config = JSON.parse(stored)
 }
 serverApi.fetchConfigOwner = async () => config
 let saves = 0, inFlight = 0, maxInFlight = 0, systemChecks = 0
@@ -42,6 +45,7 @@ serverApi.patchConfigOwner = async (_owner, patch: any) => {
   // ?saveDelay=<ms> keeps each save pending like a slow server.
   try { if (saveDelay) await new Promise(resolve => setTimeout(resolve, saveDelay)) } finally { inFlight -= 1 }
   config = { ...config, ...patch, settings: { ...config.settings, ...patch.settings } }
+  if (query.has("legacyEverything")) sessionStorage.setItem("fixture:legacy-transcript-settings", JSON.stringify(config))
   return config
 }
 serverApi.fetchStateOwner = async () => ({} as any)

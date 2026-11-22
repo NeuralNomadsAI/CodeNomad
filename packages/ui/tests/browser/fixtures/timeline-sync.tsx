@@ -1,7 +1,5 @@
 import { render } from "solid-js/web"
-import { createSignal, Show } from "solid-js"
 import SessionView from "../../../src/components/session/session-view"
-import TranscriptFilters from "../../../src/components/transcript-filters"
 import { ConfigProvider, preferences, updatePreferences, type ToolCallExpansionPreset, type VisibilityPreference } from "../../../src/stores/preferences"
 import { transcriptPresetPatch, transcriptVisibilityPatch, type TranscriptVisibilityRow } from "../../../src/components/transcript-visibility"
 import { resolveToolVisibility } from "../../../src/components/tool-call/tool-presentation"
@@ -45,10 +43,8 @@ setProviders(previous => new Map(previous).set(instanceId, [{ id: "fixture", nam
 setActiveSession(instanceId, sessionId)
 await updatePreferences(transcriptPresetPatch(preset))
 const store = messageStoreBus.getOrCreate(instanceId)
-const [showFilters, setShowFilters] = createSignal(false)
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <SessionView sessionId={sessionId} activeSessions={sessions().get(instanceId)!} instanceId={instanceId} instanceFolder="/fixture" escapeInDebounce={false} isActive={true} />
-  <Show when={showFilters()}><header style={{ position: "fixed", top: "0", right: "48px", "z-index": "10" }}><TranscriptFilters /></header></Show>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = {
   ids: () => store.getSessionMessageIds(sessionId),
@@ -57,7 +53,6 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   showThinking: () => preferences().showThinkingBlocks,
   systemVisibility: () => preferences().systemMessagesVisibility,
   prompts: () => prompts,
-  showFilters: setShowFilters,
   setPreset: (value: ToolCallExpansionPreset) => updatePreferences(transcriptPresetPatch(value)),
   /** Sets Message content rows (`thinking`, `system` or a tool) as its popup does. */
   setVisibility: async (rows: Record<string, VisibilityPreference>) => {

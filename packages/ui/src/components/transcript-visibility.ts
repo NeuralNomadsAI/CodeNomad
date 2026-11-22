@@ -1,4 +1,4 @@
-import type { ExpansionPreference, Preferences, ToolCallExpansionPreset, ToolCallExpansionPresetSelection, VisibilityPreference } from "../stores/preferences"
+import type { Preferences, ToolCallExpansionPreset, ToolCallExpansionPresetSelection, VisibilityPreference } from "../stores/preferences"
 import {
   buildToolExpansionPresetDefaults,
   getConfigurableToolEntries,
@@ -118,24 +118,6 @@ function thinkingExpansion(current: Preferences) {
     ?? current.thinkingBlocksExpansion ?? "expanded"
 }
 
-export function transcriptCustomExpansionPatch(current: Preferences, changes: {
-  thinking?: ExpansionPreference
-  tool?: { key: string; mode: VisibilityPreference }
-}): Partial<Preferences> {
-  // Materialize inherited defaults before changing the preset that supplied them.
-  const tools = Object.fromEntries(getConfigurableToolEntries().map((entry) => [entry.tool, resolveToolVisibility(current, entry.tool)]))
-  if (changes.tool) tools[changes.tool.key] = changes.tool.mode
-  return {
-    ...(current.toolCallExpansionDefaults.preset !== "custom" && {
-      toolGroupVisibility: current.toolGroupVisibility,
-      usageMetricsExpansion: current.usageMetricsExpansion,
-    }),
-    toolCallExpansionDefaults: { preset: "custom", thinking: changes.thinking ?? thinkingExpansion(current), tools },
-    ...(changes.thinking && { thinkingBlocksExpansion: changes.thinking }),
-    ...(changes.tool?.key === OTHER_TOOL_NAME && changes.tool.mode !== "hidden" && { toolOutputExpansion: changes.tool.mode }),
-  }
-}
-
 export function transcriptVisibility(current: Preferences, row: TranscriptVisibilityRow): VisibilityPreference {
   switch (row.kind) {
     case "thinking": return current.showThinkingBlocks ? thinkingExpansion(current) : "hidden"
@@ -148,12 +130,6 @@ export function transcriptVisibility(current: Preferences, row: TranscriptVisibi
   }
 }
 
-const ordinaryRows = transcriptVisibilityRows(key => key).filter(row => row.kind !== "toolGroups")
-
-export function transcriptContentSignature(current: Preferences): string {
-  return ordinaryRows.map(row => transcriptVisibility(current, row)).join("|")
-}
-
 export function transcriptVisibilityPatch(current: Preferences, row: TranscriptVisibilityRow, mode: VisibilityPreference): Partial<Preferences> {
   if (row.kind === "system") return { systemMessagesVisibility: mode }
   if (row.kind === "toolGroups") return { toolGroupVisibility: mode }
@@ -163,9 +139,15 @@ export function transcriptVisibilityPatch(current: Preferences, row: TranscriptV
     showUsageMetrics: mode !== "hidden",
     usageMetricsExpansion: mode === "hidden" ? current.usageMetricsExpansion : mode,
   }
-  if (row.kind === "tool") return transcriptCustomExpansionPatch(current, { tool: { key: row.key, mode } })
+  // Preserve every configurable category before switching to per-type overrides.
+  // Retired tools follow "Other tools" and no longer need separate overrides.
+  const tools = Object.fromEntries(getConfigurableToolEntries().map((entry) => [entry.tool, resolveToolVisibility(current, entry.tool)]))
+  if (row.kind === "tool") tools[row.key] = mode
+  const thinking = row.kind === "thinking" && mode !== "hidden" ? mode : thinkingExpansion(current)
   return {
-    ...transcriptCustomExpansionPatch(current, { thinking: mode === "hidden" ? undefined : mode }),
-    showThinkingBlocks: mode !== "hidden",
+    showThinkingBlocks: row.kind === "thinking" ? mode !== "hidden" : current.showThinkingBlocks,
+    toolCallExpansionDefaults: { preset: "custom", thinking, tools },
+    thinkingBlocksExpansion: row.kind === "thinking" && mode !== "hidden" ? mode : current.thinkingBlocksExpansion,
+    toolOutputExpansion: row.kind === "tool" && row.key === OTHER_TOOL_NAME && mode !== "hidden" ? mode : current.toolOutputExpansion,
   }
 }

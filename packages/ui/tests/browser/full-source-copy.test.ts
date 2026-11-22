@@ -1,8 +1,6 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { mkdir } from "node:fs/promises"
-import { join } from "node:path"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Locator, type Page } from "playwright"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
@@ -50,12 +48,10 @@ test("ungrouping does not transfer an open tool's disclosure to another call", (
   const standalone = toggle("full-source-tool")
   await standalone.click()
   assert.equal(await standalone.getAttribute("aria-expanded"), "true")
-  const original = await standalone.elementHandle()
   await page.getByRole("button", { name: "Message content", exact: true }).click()
   await page.getByRole("button", { name: "Disable tool grouping" }).click()
   await page.getByRole("button", { name: "Shell: 2", exact: true }).waitFor({ state: "detached" })
   for (const id of ["group-shell-0", "group-shell-1"]) assert.equal(await toggle(id).getAttribute("aria-expanded"), "false")
-  assert.equal(await standalone.evaluate((button, original) => button === original, original), true)
 }))
 
 test("tool groups can be opened by default or replaced by ordinary cards without changing tool visibility", async () => {
@@ -66,12 +62,6 @@ test("tool groups can be opened by default or replaced by ordinary cards without
     const header = (name: string) => page.getByRole("button", { name, exact: true })
     const reads = page.locator('.tool-call-message[data-part-id^="group-read-"]')
     const shells = page.locator('.tool-call-message[data-part-id^="group-shell-"]')
-    const capture = async (name: string, target: Locator) => {
-      const folder = process.env.CODENOMAD_GROUP_FILTER_SCREENSHOTS
-      if (!folder) return
-      await mkdir(folder, { recursive: true })
-      await target.screenshot({ path: join(folder, `${name}.png`), animations: "disabled" })
-    }
 
     await header("Explored: 3 reads").waitFor()
     assert.equal(await header("Shell: 3").getAttribute("aria-expanded"), "false")
@@ -81,24 +71,11 @@ test("tool groups can be opened by default or replaced by ordinary cards without
     assert.equal(await header("Shell: 3").getAttribute("aria-expanded"), "true")
     assert.equal(await reads.count(), 3)
     assert.equal(await shells.count(), 3)
-    await capture("popover", popup)
-    await page.keyboard.press("Escape")
-    await popup.waitFor({ state: "detached" })
-    await page.mouse.move(1090, 890)
-    await capture("transcript-expanded", page.locator("main"))
-
-    await trigger.click()
     await groups.getByRole("button", { name: "Disable tool grouping" }).click()
     await page.locator(".message-exploration-group").first().waitFor({ state: "detached" })
     assert.equal(await reads.count(), 3)
     assert.equal(await shells.count(), 3)
     assert.equal(await groups.getByRole("button", { name: "Expand Tool groups" }).isDisabled(), true)
-    await page.keyboard.press("Escape")
-    await popup.waitFor({ state: "detached" })
-    await page.mouse.move(1090, 890)
-    await capture("transcript-ungrouped", page.locator("main"))
-
-    await trigger.click()
     await popup.getByRole("button", { name: "Hide read", exact: true }).click()
     await reads.first().waitFor({ state: "detached" })
     assert.equal(await shells.count(), 3)
@@ -108,25 +85,6 @@ test("tool groups can be opened by default or replaced by ordinary cards without
     assert.equal(await reads.count(), 0)
   })
 })
-
-test("showing a hidden tool type mounts the card with its default disclosure", () => withFixture("tool-group-disclosure", async page => {
-  const filters = page.getByRole("button", { name: "Message content", exact: true })
-  const popup = page.locator(".transcript-filters")
-  const shell = page.locator('.tool-call-message[data-part-id="group-shell-0"] .tool-call-header-toggle')
-  await filters.click()
-  await popup.getByRole("button", { name: "Disable tool grouping", exact: true }).click()
-  await shell.waitFor()
-  await page.keyboard.press("Escape")
-  assert.equal(await shell.getAttribute("aria-expanded"), "false")
-  await shell.click()
-  assert.equal(await shell.getAttribute("aria-expanded"), "true")
-  await filters.click()
-  await popup.getByRole("button", { name: "Hide shell", exact: true }).click()
-  await shell.waitFor({ state: "detached" })
-  await popup.getByRole("button", { name: "Show shell", exact: true }).click()
-  await shell.waitFor()
-  assert.equal(await shell.getAttribute("aria-expanded"), "false")
-}))
 
 async function copyWithPointer(page: Page, button: Locator): Promise<string> {
   await button.scrollIntoViewIfNeeded()

@@ -36,8 +36,7 @@ import { createSessionOutline } from "../stores/session-outline"
 import { MissingHistoryAnchorError } from "../stores/history-window"
 import { sessions } from "../stores/session-state"
 import { createSessionOutlineProjection } from "./session-outline-projection"
-import { findTimelineSegmentBlock, readingLineBlock, type TranscriptBlockIdentity } from "./timeline-transcript-blocks"
-import { transcriptContentSignature } from "./transcript-visibility"
+import { findTimelineSegmentBlock, readingLineSegment } from "./timeline-transcript-blocks"
 import { JUMP_USER_MESSAGE_EVENT, findUserMessageJumpTarget, keyAllowsUserMessageJump, type JumpUserMessageDetail, type UserMessageJumpDirection } from "./user-message-navigation"
 import SessionCleanupProgress from "./session-cleanup-progress"
 import type { SessionSearchMatch } from "../lib/session-search"
@@ -51,7 +50,7 @@ import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "../s
 import type { SessionInboxUser } from "@opencode/client"
 import { getFormQueue } from "../stores/forms"
 import { resolveFormToolTarget } from "./form-request-tool-target"
-import { getTechnicalCleanupParts, getTechnicalGroupKind, isResponseTextPart, isTechnicalGroupingVisiblePart, projectTranscriptTechnicalGroups, reasoningHasRenderableContent, technicalPartKey, type TechnicalCleanupTranscriptItem, type TranscriptTechnicalGroup } from "../lib/message-part-grouping"
+import { getTechnicalCleanupParts, getTechnicalGroupKind, isResponseTextPart, isTechnicalGroupingVisiblePart, projectTranscriptTechnicalGroups, reasoningHasRenderableContent, technicalPartKey, type TechnicalCleanupTranscriptItem } from "../lib/message-part-grouping"
 
 const QUOTE_SELECTION_MAX_LENGTH = 2000
 const STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX = 8
@@ -265,10 +264,6 @@ export default function MessageSection(props: MessageSectionProps) {
     return projectTranscriptTechnicalGroups(items)
   })
   const technicalGroupForPart = (messageId: string, partId: string) => technicalGroupProjection().byPartKey.get(technicalPartKey(messageId, partId))
-  // Layout capture runs before the DOM updates, so resolve a selected marker
-  // against the same cross-message groups as the blocks still on screen.
-  let renderedGroups = technicalGroupProjection().byPartKey
-  createEffect(() => { renderedGroups = technicalGroupProjection().byPartKey })
   const technicalGroupingSignature = (messageId: string) => {
     const resolvedStore = store()
     const record = resolvedStore.getMessage(messageId)
@@ -292,25 +287,20 @@ export default function MessageSection(props: MessageSectionProps) {
     return `${groups}|${tools}`
   }
   const [technicalGroupExpansion, setTechnicalGroupExpansion] = createSignal(new Map<string, boolean>())
-  const isTechnicalGroupExpanded = (group: TranscriptTechnicalGroup) => technicalGroupExpansion().get(group.id)
-    ?? (group.kind === "reasoning" ? resolveThinkingExpansionDefault(preferences()) : toolGroupVisibility() === "expanded")
+  const isTechnicalGroupExpanded = (groupId: string, defaultExpanded: boolean) => technicalGroupExpansion().get(groupId) ?? defaultExpanded
   const setTechnicalGroupExpanded = (groupId: string, expanded: boolean) => setTechnicalGroupExpansion((current) => {
     const next = new Map(current)
     next.set(groupId, expanded)
     return next
   })
 
-  // Message/session revision churn should not force re-anchoring.
-  const followToken = createMemo(() => {
+  const preferenceSignature = createMemo(() => {
     const pref = preferences()
     const showThinking = pref.showThinkingBlocks ? 1 : 0
     const thinkingExpansion = resolveThinkingExpansionDefault(pref) ? "expanded" : "collapsed"
     const usageVisibility = pref.showUsageMetrics ? pref.usageMetricsExpansion : "hidden"
     return `${showThinking}|${thinkingExpansion}|${usageVisibility}|${pref.systemMessagesVisibility}`
   })
-  const ordinaryContent = createMemo(() => transcriptContentSignature(preferences()))
-  const layoutChange = createMemo(on([toolGroupVisibility, ordinaryContent, followToken], ([groups, content, follow], previous) =>
-    previous && { preserve: groups !== previous[0] && content === previous[1] && follow === previous[2] }))
 
   // The active marker follows the block at the reading line. A selected marker
   // stays active instead until the reader scrolls: its placement, the row's late
@@ -335,7 +325,6 @@ export default function MessageSection(props: MessageSectionProps) {
   const [searchRetryGeneration, setSearchRetryGeneration] = createSignal(0)
   const [searchMatches, setSearchMatches] = createSignal<Array<SessionSearchMatch & { sessionId: string }>>([])
   const [searchWorkspace, setSearchWorkspace] = createSignal(false)
-  const includeSystemResults = createMemo(() => preferences().systemMessagesVisibility !== "hidden")
   const [rankedSearchResult, setRankedSearchResult] = createSignal<RankedHistoryResult>()
   const [searchRestartRequired, setSearchRestartRequired] = createSignal(false)
   const [includeTechnical, setIncludeTechnical] = createSignal(false)
@@ -420,8 +409,6 @@ export default function MessageSection(props: MessageSectionProps) {
     ? resolveToolVisibility(preferences(), segment.toolName ?? "") === "hidden" && !isPendingFormSegment(segment)
     : segment.type === "reasoning" ? !preferences().showThinkingBlocks
       : segment.type === "system" && preferences().systemMessagesVisibility === "hidden"
-  const isTranscriptSegmentShown = (segment: TimelineSegment) => !isTimelineSegmentHidden(segment)
-    || segment.toolPartIds?.some(partId => store().getPermissionState(segment.messageId, partId)?.active)
   const hasTimelineSegments = () => timelineSegments().length > 0
 
   function segmentMatchesSearch(segment: TimelineSegment, match: { messageId: string; partId?: string; partType?: string }): boolean {
@@ -463,6 +450,11 @@ export default function MessageSection(props: MessageSectionProps) {
 
   const [streamElement, setStreamElement] = createSignal<HTMLDivElement | undefined>()
   const [streamShellElement, setStreamShellElement] = createSignal<HTMLDivElement | undefined>()
+  // Only preferences should force a follow-token re-anchor. Message/session
+  // revision churn at the end of a turn (terminal updates, session idle, etc.)
+  // should not trigger an immediate scroll-to-bottom.
+  const followToken = createMemo(() => preferenceSignature())
+
   const lastGoodScrollSnapshots = new Map<string, VirtualFollowScrollSnapshot>()
   // Restoring or paging owns the transcript position; only an idle (restored)
   // transcript persists it. An operation is current while it is the state.
@@ -896,8 +888,10 @@ export default function MessageSection(props: MessageSectionProps) {
     if (segmentId) revealTimelineSegment(messageId, segmentId)
     // A selected marker's own block (a later tool, a reply after its thinking)
     // is held at the top once its row renders, even when the row remounts.
-    const anchor = segmentId ? timelineBlockAnchor(messageId, segmentId, 0) : undefined
-    api.scrollToKey(anchor?.key ?? messageId, anchor?.select)
+    api.scrollToKey(messageId, segmentId ? () => {
+      const scroller = streamElement(), segment = timelineSegmentsByMessage().get(messageId)?.find(candidate => candidate.id === segmentId)
+      return scroller && segment ? findTimelineSegmentBlock(scroller, segment, technicalGroupForPart) : null
+    } : undefined)
     if (searchMatchId) setSearchReveal({ matchId: searchMatchId, claimed: false })
     else claimSearchReveal()
   }
@@ -920,49 +914,7 @@ export default function MessageSection(props: MessageSectionProps) {
 
   function readingLinePosition() {
     const scroller = streamElement()
-    return scroller ? readingLineBlock(scroller, timelineSegmentsByMessage())?.segment ?? null : null
-  }
-
-  function timelineBlockAnchor(messageId: string, segmentId: string, offset: number, reading?: TranscriptBlockIdentity & { segment: TimelineSegment }) {
-    const getSegment = () => timelineSegmentsByMessage().get(messageId)?.find(segment => segment.id === segmentId)
-    const segment = getSegment()
-    const partId = reading?.partId ?? segment?.toolPartIds?.[0] ?? (segment?.type === "reasoning" ? segment.partIds?.[0] : undefined)
-    const identity = reading ?? (segment?.type === "tool" ? { partId } : undefined)
-    const ownPart = segment?.partId
-    return {
-      get key() {
-        const group = partId ? technicalGroupForPart(messageId, partId) : undefined
-        return group && group.parts.length > 1 && (reading?.preferGroupHeader || !isTechnicalGroupExpanded(group))
-          ? group.parts[0].messageId : messageId
-      },
-      offset,
-      select: () => {
-        const scroller = streamElement(), current = getSegment()
-        if (!scroller || !current || !visibleMessageIds().includes(messageId) || !isTranscriptSegmentShown(current)) return null
-        if (ownPart && current.partId !== ownPart) return null
-        if (identity?.partId && !(current.toolPartIds ?? current.partIds)?.includes(identity.partId)) return null
-        return findTimelineSegmentBlock(scroller, current, technicalGroupForPart, identity)
-      },
-    }
-  }
-
-  function captureLayoutAnchor() {
-    const scroller = streamElement()
-    if (!scroller || navigation().kind !== "idle") return
-    const segments = timelineSegmentsByMessage()
-    const position = readingLineBlock(scroller, segments)
-    if (!position) return
-    const { block, ...reading } = position
-    const selected = readerOwnsActiveSegment ? null : activeSegmentId()
-    const target = selected ? parseTimelineSegmentId(selected) : undefined
-    const marker = target && segments.get(target.messageId)?.find(segment => segment.id === selected)
-    if (marker && isTranscriptSegmentShown(marker) && block === findTimelineSegmentBlock(scroller, marker,
-      (messageId, partId) => renderedGroups.get(technicalPartKey(messageId, partId)))) {
-      return timelineBlockAnchor(marker.messageId, marker.id, reading.offset)
-    }
-    if (isTranscriptSegmentShown(reading.segment)) {
-      return timelineBlockAnchor(reading.segment.messageId, reading.segment.id, reading.offset, reading)
-    }
+    return scroller ? readingLineSegment(scroller, timelineSegmentsByMessage()) : null
   }
 
   function scheduleReadingLineSegment() {
@@ -1276,7 +1228,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const query = debouncedSearchQuery()
     const workspace = searchWorkspace()
     const technical = includeTechnical()
-    const showSystem = includeSystemResults()
+    const systemVisibility = preferences().systemMessagesVisibility
     const cursor = searchPageCursor()
     const mutationRevision = getOpenCodeMutationRevision(props.instanceId, props.sessionId)
     const instanceGeneration = getOpenCodeInstanceGeneration(props.instanceId)
@@ -1320,7 +1272,6 @@ export default function MessageSection(props: MessageSectionProps) {
       && debouncedSearchQuery() === query
       && searchWorkspace() === workspace
       && includeTechnical() === technical
-      && includeSystemResults() === showSystem
     const publish = (page: Pick<Awaited<ReturnType<typeof findHistoryMatches>>, "hits" | "cursor" | "scanned" | "skipped">, settled: boolean) => {
       if (!isCurrentSearch()) return
       if (frame !== undefined) cancelAnimationFrame(frame)
@@ -1329,7 +1280,7 @@ export default function MessageSection(props: MessageSectionProps) {
         batch(() => {
           // Progress only appends hits within this page. Preserve row identities
           // so Solid keeps existing result buttons and their keyboard focus.
-          setSearchMatches(previous => page.hits.filter(hit => hit.role !== "system" || showSystem).map((hit, index) => previous[index] ?? ({
+          setSearchMatches(previous => page.hits.filter(hit => hit.role !== "system" || systemVisibility !== "hidden").map((hit, index) => previous[index] ?? ({
             id: `${hit.sessionID}:${hit.messageID}:${hit.partIndex}`,
             sessionId: hit.sessionID, messageId: hit.messageID, partType: hit.kind,
             role: hit.role === "user" ? "user" : "assistant", start: 0, end: query.length,
@@ -1545,8 +1496,6 @@ export default function MessageSection(props: MessageSectionProps) {
           initialAutoScroll={() => isSnapshotAutoFollowing(store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE))}
           resetKey={() => props.sessionId}
           followToken={followToken}
-          layoutChange={layoutChange}
-          captureLayoutAnchor={captureLayoutAnchor}
           explicitBottomPinIntent={() => props.explicitBottomPinIntent ?? null}
           onExplicitBottomPinCancelled={props.onExplicitBottomPinCancelled}
           autoPinHoldEnabled={holdLongAssistantRepliesEnabled}
@@ -1705,7 +1654,7 @@ export default function MessageSection(props: MessageSectionProps) {
               systemMessagesVisibility={() => preferences().systemMessagesVisibility}
               thinkingDefaultExpanded={() => resolveThinkingExpansionDefault(preferences())}
               usageMetricsVisibility={usageMetricsVisibility}
-              groupToolCalls={() => toolGroupVisibility() !== "hidden"}
+              toolGroupVisibility={toolGroupVisibility}
               toolVisibility={(toolName) => resolveToolVisibility(preferences(), toolName)}
               onRevert={props.onRevert}
               onFork={props.onFork}
