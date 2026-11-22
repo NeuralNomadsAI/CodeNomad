@@ -6,10 +6,10 @@ use rune_theme_codenomad::{Space, layout::Layout, shell};
 pub fn view(s: &State, width: f32, touch: bool, floating: bool) -> El {
     let label = t("instanceShell.rightPanel.tabs.status");
     let names = [label, t("instanceShell.rightPanel.tabs.files")];
-    let picker = rune_theme_codenomad::git_panel::modes(
-        &names,
+    let picker = shell::panel_tabs(
         t("window.menu.rightPanel"),
-        Some(usize::from(crate::workspace::files_tab(s))),
+        names,
+        usize::from(crate::workspace::files_tab(s)),
         {
             let owner = s.input_scope.clone();
             move |s: &mut State, index, tx: &mut rune::Tx| {

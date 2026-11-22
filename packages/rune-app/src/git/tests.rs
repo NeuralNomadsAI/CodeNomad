@@ -107,6 +107,37 @@ fn ui() -> Ui {
 }
 
 #[test]
+fn the_linked_conversation_owns_the_git_target_without_a_root_fallback() {
+    let mut ui = ui();
+    let mut backend = ui.backend.clone();
+    backend.session = "linked-session".into();
+    assert!(ui.bind_placed(&backend, Some("other")));
+    assert_eq!(ui.tree().unwrap().slug, "other");
+    assert!(ui.bind(&backend));
+    assert_eq!(ui.tree().unwrap().slug, "other");
+    let mut inventory = ui.inventory.clone().unwrap();
+    inventory.trees.retain(|tree| tree.slug == "root");
+    ui.accept(Lane::Worktrees, Value::Worktrees(inventory));
+    assert!(ui.tree().is_none());
+    assert!(!ui.can_mutate());
+}
+
+#[test]
+fn the_index_is_read_only_until_a_conversation_can_observe_it() {
+    let mut ui = ui();
+    ui.online = true;
+    ui.shown = true;
+    ui.mode = Mode::Changes;
+    ui.requests.slot_mut(Lane::Worktrees).dirty = false;
+    ui.requests.slot_mut(Lane::Preferences).dirty = false;
+    statuses(&mut ui, vec![change("a.txt", true, false, 1)]);
+    ui.changes.draft = TextEdit::new("commit");
+    assert!(ui.can_commit());
+    ui.backend.session.clear();
+    assert!(!ui.can_change_index() && !ui.can_commit());
+}
+
+#[test]
 fn status_moves_an_open_file_without_opening_sidebar_selection() {
     let mut ui = ui();
     let unstaged = change("file.rs", false, false, 2);

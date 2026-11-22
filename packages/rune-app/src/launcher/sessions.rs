@@ -192,11 +192,11 @@ fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>, dismiss:
         let mut missing = Vec::new();
         for (id, step) in candidates {
             let started = Instant::now();
-            match b.bind_session(&p, &id, false).await {
-                Ok((bound, session)) => {
+            match b.bind_session_placed(&p, &id, false).await {
+                Ok((bound, session, slug)) => {
                     return Ok(Reply::Selected(
                         missing,
-                        Some((bound, session.title, step, started)),
+                        Some((bound, session.title, step, started, slug)),
                         dismiss,
                     ));
                 }
@@ -262,7 +262,14 @@ pub(super) fn retire_session(s: &mut State, id: &str) {
         l.error = Some("rune.open_error");
     }
 }
-pub(super) fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize>, tx: &mut Tx) {
+pub(super) fn bind(
+    s: &mut State,
+    b: Backend,
+    title: String,
+    visit: Option<usize>,
+    slug: &str,
+    tx: &mut Tx,
+) {
     let same_session =
         !s.screen.is_launcher() && crate::workspace::active_session(s) == Some(b.session.as_str());
     if let Some(l) = s.screen.launcher_mut() {
@@ -295,6 +302,9 @@ pub(super) fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize
     }
     s.draft = TextEdit::new(draft);
     s.phase = Phase::Loading;
+    crate::git::online(s, false);
+    crate::git::connected_placed(s, &b, slug);
+    crate::workspace::restore_files_mode(s);
     s.paging = false;
     s.history_error = false;
     s.revision += 1;

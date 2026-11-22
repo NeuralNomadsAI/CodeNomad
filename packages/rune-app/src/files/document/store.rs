@@ -87,13 +87,11 @@ impl Store {
         store.sequence
     }
     pub(super) fn sync(&self, key: &Key, shared: &Shared) {
-        let retained = {
-            let draft = lock(shared);
-            draft.dirty() || draft.pending.is_some() || draft.uncertain.is_some()
-        };
+        // Document operations take the draft lock before the store lock.
+        let draft = lock(shared);
         let mut store = lock(&self.0);
         let drafts = &mut store.drafts;
-        if retained {
+        if draft.dirty() || draft.pending.is_some() || draft.uncertain.is_some() {
             drafts.insert(key.clone(), shared.clone());
         } else if drafts.get(key).is_some_and(|old| Arc::ptr_eq(old, shared)) {
             drafts.remove(key);

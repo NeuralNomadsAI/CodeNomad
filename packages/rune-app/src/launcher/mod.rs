@@ -59,10 +59,10 @@ enum Reply {
     Created(Backend, String, String, Option<u64>),
     Selected(Vec<String>, Option<Selection>, Option<u64>),
 }
-type Selection = (Backend, String, Option<usize>, Instant);
+type Selection = (Backend, String, Option<usize>, Instant, String);
 enum Restored {
     Empty,
-    Bound(Backend, String),
+    Bound(Backend, String, String),
     Missing(String),
 }
 impl Launcher {
@@ -199,7 +199,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             l.folder = TextEdit::new(&project.path);
             l.project = Some(project.clone());
-            if l.catalogue_watch.is_none()
+            if cfg!(target_os = "windows")
+                && l.catalogue_watch.is_none()
                 && let Some(backend) = &l.connection
             {
                 let (watch, task) =
@@ -211,7 +212,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.search = TextEdit::new("");
             crate::workspace::opened(s, &project);
             match restored {
-                Restored::Bound(backend, title) => bind(s, backend, title, None, tx),
+                Restored::Bound(backend, title, slug) => {
+                    bind(s, backend, title, None, &slug, tx);
+                }
                 Restored::Missing(id) => {
                     retire_session(s, &id);
                     crate::git::project_opened(s);
@@ -248,14 +251,14 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 );
             } else {
                 dismiss_origin_panel(s, dismiss, tx);
-                bind(s, b, title, None, tx);
+                bind(s, b, title, None, "root", tx);
             }
         }
         Ok(Reply::Selected(missing, selection, dismiss)) => {
             l.sessions.retain(|row| !missing.contains(&row.id));
             l.listed_sessions.retain(|id| !missing.contains(id));
             l.visits.forget(&missing);
-            if let Some((backend, _, _, verified)) = &selection {
+            if let Some((backend, _, _, verified, _)) = &selection {
                 l.visits.verified(&backend.session, *verified);
             }
             if let Some(id) = selected
@@ -266,13 +269,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 tx.instant();
                 return true;
             }
-            if let Some((b, title, visit, _)) = selection.filter(|(b, _, _, _)| {
+            if let Some((b, title, visit, _, slug)) = selection.filter(|(b, _, _, _, _)| {
                 !blocked
                     || s.phase == Phase::Failed && selected.as_deref() == Some(b.session.as_str())
             }) {
                 l.show_title = false;
                 dismiss_origin_panel(s, dismiss, tx);
-                bind(s, b, title, visit, tx);
+                bind(s, b, title, visit, &slug, tx);
             } else if !blocked {
                 l.error = Some("rune.open_error");
             }

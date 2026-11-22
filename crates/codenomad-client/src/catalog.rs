@@ -275,6 +275,16 @@ impl Backend {
         id: &str,
         fresh: bool,
     ) -> Result<(Self, Session)> {
+        let (backend, session, _) = self.bind_session_placed(project, id, fresh).await?;
+        Ok((backend, session))
+    }
+
+    pub async fn bind_session_placed(
+        &self,
+        project: &Project,
+        id: &str,
+        fresh: bool,
+    ) -> Result<(Self, Session, String)> {
         if !valid_id(id) || id.starts_with("ses_cn_schedule_") {
             return Err("invalid session".into());
         }
@@ -332,7 +342,7 @@ impl Backend {
         backend.session = id.into();
         backend.fresh_mode = fresh;
         backend.client_id = crate::http::client_id()?;
-        Ok((backend, info))
+        Ok((backend, info, placement.unwrap_or("root").into()))
     }
 }
 fn server_id(data: &Value) -> Result<String> {

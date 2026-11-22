@@ -90,8 +90,11 @@ pub fn restore(s: &mut State, saved: crate::workspace::Workspace) {
         let opening = pending.create(&saved.folder).await?;
         let rows = backend.sessions(&opening.project, None).await?;
         let bound = if let Some(id) = &saved.active_session_id {
-            match backend.bind_session(&opening.project, id, false).await {
-                Ok((bound, session)) => Restored::Bound(bound, session.title),
+            match backend
+                .bind_session_placed(&opening.project, id, false)
+                .await
+            {
+                Ok((bound, session, slug)) => Restored::Bound(bound, session.title, slug),
                 Err(err) if err.is::<SessionMissing>() => Restored::Missing(id.clone()),
                 Err(err) => return Err(err),
             }

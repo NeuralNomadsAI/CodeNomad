@@ -229,6 +229,7 @@ fn save_requires_a_post_gesture_read_and_retains_edits_after_departure() {
             assert!(Instant::now() < deadline);
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
+        assert!(store.has_tab_edits("tab-a"));
         assert_eq!(ui.document.edit().text, "x");
         ui.close_reader();
         let mut another_session = http.backend.clone();
@@ -239,7 +240,7 @@ fn save_requires_a_post_gesture_read_and_retains_edits_after_departure() {
             Reads::default(),
             Arc::new(|| {}),
         )
-        .with_documents(store, "tab-a".into());
+        .with_documents(store.clone(), "tab-a".into());
         resumed.online(true);
         resumed.open("first.txt".into());
         assert_eq!(resumed.document.edit().text, "c");
@@ -265,6 +266,9 @@ fn save_requires_a_post_gesture_read_and_retains_edits_after_departure() {
         put.reply(204, serde_json::Value::Null).await;
         poll(&mut resumed, |ui| !ui.document.pending()).await;
         assert!(!resumed.document.dirty());
+        // Closing the reader synchronizes the latest clean baseline in the registry.
+        resumed.close_reader();
+        assert!(!store.has_tab_edits("tab-a"));
         http.quiet().await;
     });
 }

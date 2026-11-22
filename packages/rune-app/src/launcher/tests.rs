@@ -157,7 +157,13 @@ fn a_selection_reply_cannot_replace_a_session_that_resumed_streaming() {
     assert!(
         out.try_send(Ok(Reply::Selected(
             vec![],
-            Some((backend, "Another".into(), None, Instant::now())),
+            Some((
+                backend,
+                "Another".into(),
+                None,
+                Instant::now(),
+                "root".into()
+            )),
             None
         )))
         .is_ok()
@@ -209,7 +215,7 @@ fn a_rebind_of_the_current_session_keeps_the_last_history_until_sync() {
         (1100.0, 800.0),
         rune::Env::new(false, 1.0),
     );
-    rt.update(move |s, tx| bind(s, backend, "Fixture conversation".into(), None, tx));
+    rt.update(move |s, tx| bind(s, backend, "Fixture conversation".into(), None, "root", tx));
     assert_eq!(rt.state.draft.text, "held draft");
     assert_eq!(rt.state.messages.len(), 1);
     assert_eq!(rt.state.messages[0].body, "Fixture message");
