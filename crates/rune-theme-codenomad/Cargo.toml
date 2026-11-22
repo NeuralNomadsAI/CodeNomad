@@ -9,5 +9,5 @@ test-support = []
 
 [dependencies]
 rune = { workspace = true }
-rune-kit = { workspace = true }
+rune-kit = { workspace = true, features = ["markdown"] }
 serde_json = { workspace = true }

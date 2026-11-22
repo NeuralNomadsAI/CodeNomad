@@ -14,6 +14,7 @@ mod pending_open;
 mod real_history;
 mod recovery;
 mod session_transport;
+pub mod transcript_scene;
 mod window_restore;
 mod workspaces;
 

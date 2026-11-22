@@ -2604,6 +2604,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pulldown-cmark"
+version = "0.13.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3db2be46835f013dd3f4fa7f5f7402c537787b54ebb6fe2b94bbdd7e2669bb7b"
+dependencies = [
+ "bitflags 2.13.2",
+ "memchr",
+ "unicase",
+]
+
+[[package]]
 name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2903,6 +2914,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rune-highlights"
+version = "0.0.1"
+source = "git+https://github.com/anomalyco/rune?rev=21e5342b9a4cc33eeee88071b4b1f0eafb1247d4#21e5342b9a4cc33eeee88071b4b1f0eafb1247d4"
+dependencies = [
+ "unicode-ident",
+ "wasmparser",
+]
+
+[[package]]
 name = "rune-image"
 version = "0.0.1"
 source = "git+https://github.com/anomalyco/rune?rev=21e5342b9a4cc33eeee88071b4b1f0eafb1247d4#21e5342b9a4cc33eeee88071b4b1f0eafb1247d4"
@@ -2924,7 +2944,9 @@ version = "0.0.1"
 source = "git+https://github.com/anomalyco/rune?rev=21e5342b9a4cc33eeee88071b4b1f0eafb1247d4#21e5342b9a4cc33eeee88071b4b1f0eafb1247d4"
 dependencies = [
  "icu_normalizer",
+ "pulldown-cmark",
  "rune",
+ "rune-highlights",
  "rune-motion",
  "unicode-segmentation",
 ]
@@ -3768,6 +3790,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "unicase"
+version = "2.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "357cc3acc6a036009fd6c973ed009037c732d60d0b4f6c673e9041497482a28f"
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3938,6 +3966,16 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "wasmparser"
+version = "0.245.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f08c9adee0428b7bddf3890fc27e015ac4b761cc608c822667102b8bfd6995e"
+dependencies = [
+ "bitflags 2.13.2",
+ "indexmap",
 ]
 
 [[package]]

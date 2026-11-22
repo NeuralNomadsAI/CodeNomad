@@ -516,7 +516,7 @@ fn bind(s: &mut State, b: Backend, title: String, tx: &mut Tx) {
     let draft = crate::workspace::bound(s, &b);
     crate::files::bind(s, &b);
     s.agent = None;
-    s.expanded_tools.clear();
+    s.transcript_display.bind(&b.base, &b.workspace, &b.session);
     s.chat_title = title;
     s.messages.clear();
     s.draft = TextEdit::new(draft);

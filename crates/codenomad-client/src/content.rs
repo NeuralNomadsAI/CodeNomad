@@ -225,16 +225,18 @@ pub struct Tool {
     pub id: String,
     pub name: String,
     pub status: String,
-    pub input: String,
+    pub input: Value,
+    pub metadata: Value,
     pub output: String,
-    pub limited: bool,
+    pub error: String,
+    bytes: usize,
 }
 pub fn decode(v: &Value) -> Result<Vec<Part>> {
     let Some(parts) = v["content"].as_array() else {
         return Ok(vec![]);
     };
-    if parts.len() > 1000 {
-        return Err("message part bound reached".into());
+    if parts.len() > crate::history::MAX_BYTES / std::mem::size_of::<Part>() {
+        return Err("resident history limit reached".into());
     }
     let mut result = vec![];
     let mut ids = std::collections::HashSet::new();
@@ -269,65 +271,56 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                 .ok_or("invalid tool name")?;
             let state = &part["state"];
             let status = state["status"].as_str().unwrap_or("streaming").to_string();
-            let mut limited = false;
-            let input = bounded(&state["input"], &mut limited);
-            let output = if status == "error" {
-                bounded(&state["error"]["message"], &mut limited)
-            } else {
-                let mut output = String::new();
-                if let Some(parts) = state["content"].as_array() {
-                    for item in parts {
-                        if item["type"] == "text" {
-                            output.push_str(item["text"].as_str().unwrap_or_default());
-                            output.push('\n');
-                        }
-                        if output.len() > 256 * 1024 {
-                            limited = true;
-                            break;
-                        }
-                    }
-                }
-                truncate(&output, &mut limited)
-            };
+            let output = state["content"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|item| item["type"] == "text")
+                .filter_map(|item| item["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let error = state["error"]["message"].as_str().unwrap_or_default();
+            let bytes = id.len()
+                + name.len()
+                + status.len()
+                + error.len()
+                + output.len()
+                + json_bytes(&state["input"])
+                + json_bytes(&state["metadata"]);
             result.push(Part::Tool(Tool {
                 id: id.into(),
                 name: name.into(),
                 status,
-                input,
+                input: state["input"].clone(),
+                metadata: state["metadata"].clone(),
                 output,
-                limited,
+                error: error.into(),
+                bytes,
             }));
         }
     }
     Ok(result)
 }
-fn truncate(v: &str, limited: &mut bool) -> String {
-    if v.len() <= 256 * 1024 {
-        return v.into();
-    }
-    *limited = true;
-    let mut end = 256 * 1024;
-    while !v.is_char_boundary(end) {
-        end -= 1;
-    }
-    v[..end].into()
-}
-fn bounded(v: &Value, limited: &mut bool) -> String {
+pub fn json_bytes(v: &Value) -> usize {
     match v {
-        Value::Null => String::new(),
-        Value::String(s) => truncate(s, limited),
-        _ => truncate(
-            &serde_json::to_string_pretty(v).unwrap_or_default(),
-            limited,
-        ),
+        Value::String(s) => s.len() + 2,
+        Value::Array(items) => 2 + items.iter().map(|item| 1 + json_bytes(item)).sum::<usize>(),
+        Value::Object(items) => {
+            2 + items
+                .iter()
+                .map(|(key, item)| key.len() + 4 + json_bytes(item))
+                .sum::<usize>()
+        }
+        _ => 24,
     }
 }
 pub fn bytes(parts: &[Part]) -> usize {
-    parts
-        .iter()
-        .map(|p| match p {
-            Part::Text(t) => t.text.len(),
-            Part::Tool(t) => t.id.len() + t.name.len() + t.input.len() + t.output.len(),
-        })
-        .sum()
+    std::mem::size_of_val(parts)
+        + parts
+            .iter()
+            .map(|p| match p {
+                Part::Text(t) => t.text.len(),
+                Part::Tool(t) => t.bytes,
+            })
+            .sum::<usize>()
 }

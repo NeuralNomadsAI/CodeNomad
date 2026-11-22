@@ -24,11 +24,17 @@ fn tap(rt: &mut Runtime<State>, key: &str) {
 fn opens_ten_thousand_rows_with_bounded_mounts_and_scrolls() {
     let mut rt = runtime();
     assert_eq!(rt.state.messages.len(), 10_000);
-    assert!(
-        rt.elements().len() < 250,
-        "only visible rows mount: {}",
-        rt.elements().len()
-    );
+    let mounted = rt.elements();
+    let rows = mounted
+        .iter()
+        .filter(|e| {
+            e.key
+                .as_deref()
+                .is_some_and(|key| key.starts_with("synthetic-"))
+        })
+        .count();
+    assert!(rows < 64, "only visible rows mount: {rows}");
+    assert!(mounted.len() < 350, "bounded markup: {}", mounted.len());
     assert_eq!(rt.scroll_at_bottom("history"), Some(true));
     rt.wheel(400.0, 300.0, 1200.0);
     for _ in 0..90 {
@@ -208,7 +214,7 @@ fn selects_code_and_routes_copy_to_memory_clipboard() {
     let body = rt
         .elements()
         .into_iter()
-        .find(|e| e.path.ends_with("/body-synthetic-9999"))
+        .find(|e| e.path.contains("/body-synthetic-9999/") && e.text.as_deref() == Some(CODE))
         .expect("last code visible");
     let [x, y, _, h] = body.rect;
     rt.pointer_down(x + 1.0, y + 3.0);

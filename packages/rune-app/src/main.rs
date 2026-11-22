@@ -39,7 +39,7 @@ struct State {
     files: Option<files::Ui>,
     documents: files::document::store::Store,
     reads: platform::reads::Reads,
-    expanded_tools: std::collections::HashSet<String>,
+    transcript_display: transcript_state::Display,
     screen: Screen,
     input_scope: std::rc::Rc<()>,
     rejected_edit: TextEdit,
@@ -70,7 +70,7 @@ fn init() -> State {
         files: None,
         documents: Default::default(),
         reads: Default::default(),
-        expanded_tools: Default::default(),
+        transcript_display: Default::default(),
         screen: Screen::Chat { launcher: None },
         input_scope: std::rc::Rc::new(()),
         rejected_edit: TextEdit::new(""),
@@ -89,6 +89,10 @@ fn init() -> State {
 }
 fn setup(s: &mut State, wake: rune::Waker) {
     s.wake = wake.clone();
+    #[cfg(feature = "test-support")]
+    if platform::scene_is("transcript") {
+        return;
+    }
     let scoped = ["RUNE_BACKEND", "RUNE_WORKSPACE", "RUNE_SESSION"]
         .iter()
         .all(|key| platform::setting(key).is_some());
@@ -175,7 +179,8 @@ fn latest(_: &mut State, tx: &mut Tx) {
 }
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = launcher::poll(s, tx);
-    changed |= poll_chat(s, 64);
+    let chat = poll_chat(s, 64);
+    changed |= chat | transcript_state::Display::poll(s, chat, now, tx);
     changed |= workspace::poll(s, now, tx);
     changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
     if changed {
@@ -477,10 +482,14 @@ fn run_app() {
             setup: Some(setup),
             poll: Some(poll),
             #[cfg(feature = "test-support")]
-            scenes: &[("synthetic", |s| {
-                s.messages = transport::synthetic();
-                s.phase = Phase::Ready;
-            })],
+            scenes: &[
+                ("synthetic", |s| {
+                    s.messages = transport::synthetic();
+                    s.phase = Phase::Ready;
+                }),
+                #[cfg(not(target_arch = "wasm32"))]
+                ("transcript", probes::transcript_scene::load),
+            ],
             ..layout::app_spec(strings::t("window.title.main"), init, view)
         },
         workspace::finish,
