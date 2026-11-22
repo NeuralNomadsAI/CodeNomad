@@ -209,9 +209,14 @@ impl Backend {
                 sessions.push(item);
             }
         }
-        let next = match &data["cursor"]["next"] {
-            Value::Null => None,
-            Value::String(v) if !v.is_empty() && v.len() <= 65536 => Some(v.clone()),
+        let cursor = match data.get("cursor") {
+            None | Some(Value::Null) => None,
+            Some(Value::Object(cursor)) => cursor.get("next"),
+            _ => return Err("invalid session cursor".into()),
+        };
+        let next = match cursor {
+            None | Some(Value::Null) => None,
+            Some(Value::String(v)) if !v.is_empty() && v.len() <= 65536 => Some(v.clone()),
             _ => return Err("invalid session cursor".into()),
         };
         Ok(Sessions {
