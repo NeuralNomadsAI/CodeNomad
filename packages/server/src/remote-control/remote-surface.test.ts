@@ -271,10 +271,13 @@ test("negotiates precompressed static assets without loosening HTML entry admiss
   assert.equal(rangedHead.status, 200)
   assert.equal(Number(rangedHead.headers["content-length"]), brotliCompressSync(index).length)
   const rangedFallback = await send(target(), "/settings", {
-    method: "POST", headers: { cookie, origin: ORIGIN, "accept-encoding": "br", range: "bytes=0-0" },
+    method: "POST", headers: {
+      cookie, origin: ORIGIN, "accept-encoding": "br", range: "bytes=0-0",
+      "if-modified-since": String(rangedHead.headers["last-modified"]),
+    },
   })
   assert.equal(rangedFallback.status, 200)
-  assert.deepEqual(rangedFallback.bytes, brotliCompressSync(index))
+  assert.deepEqual(rangedFallback.bytes, index)
   const rejectedHead = await send(target(), "/", { method: "HEAD", headers: { cookie, "accept-encoding": "identity;q=0" } })
   assert.equal(rejectedHead.status, 406)
   assert.equal(Number(rejectedHead.headers["content-length"] ?? 0), 0)
