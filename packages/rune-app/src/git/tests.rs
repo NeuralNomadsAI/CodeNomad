@@ -178,6 +178,51 @@ fn history_refresh_retains_pinned_pages_until_head_changes() {
 }
 
 #[test]
+fn only_live_history_with_a_different_head_revokes_index_authority() {
+    let mut ui = ui();
+    ui.mode = Mode::Changes;
+    ui.shown = true;
+    ui.online = true;
+    let rows = vec![change("a", true, false, 1)];
+    statuses(&mut ui, rows.clone());
+    ui.changes.draft = TextEdit::new("draft");
+    assert!(ui.can_commit());
+    let checked = ui.index_revision;
+    let page = |head| Page {
+        head,
+        commits: vec![],
+        has_more: true,
+    };
+
+    ui.mode = Mode::History;
+    let current = ui.tree().unwrap().head.clone();
+    ui.accept(Lane::History, Value::History(page(current), false));
+    assert_eq!(ui.index_revision, checked);
+    assert!(!ui.requests.slot(Lane::Worktrees).dirty);
+
+    let previous = Some("b".repeat(40));
+    ui.history.page = Some(page(previous.clone()));
+    ui.accept(Lane::History, Value::History(page(previous.clone()), true));
+    assert_eq!(ui.index_revision, checked);
+    assert!(!ui.requests.slot(Lane::Worktrees).dirty);
+
+    ui.accept(Lane::History, Value::History(page(previous.clone()), false));
+    assert_eq!(ui.history.page.as_ref().unwrap().head, previous);
+    assert!(ui.requests.slot(Lane::Worktrees).dirty);
+    assert!(ui.requests.slot(Lane::Changes).dirty);
+
+    ui.mode = Mode::Changes;
+    let mut inventory = ui.inventory.clone().unwrap();
+    inventory.trees[0].head = previous;
+    ui.requests.slot_mut(Lane::Worktrees).dirty = false;
+    ui.accept(Lane::Worktrees, Value::Worktrees(inventory));
+    ui.accept(Lane::Changes, Value::Changes(rows.clone(), None, checked));
+    assert!(!ui.can_commit());
+    statuses(&mut ui, rows);
+    assert!(ui.can_commit());
+}
+
+#[test]
 fn mutation_settlement_preserves_edits_and_cannot_clear_another_checkout() {
     let mut ui = ui();
     let epoch = ui.tree_epoch;
