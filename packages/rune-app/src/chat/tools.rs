@@ -10,7 +10,7 @@ use crate::{
 };
 use rune::{El, col, text};
 use rune_theme_codenomad::{
-    Space, TextRole, catalogue,
+    Space, TextRole, ansi, catalogue,
     layout::{self, Layout},
     markdown,
 };
@@ -280,6 +280,7 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
         lang
     };
     if has_output {
+        let terminal = shell(tool) && parts.iter().any(|text| ansi::present(text));
         let highlight = tool.status != "running"
             && (lang != "diff"
                 || parts
@@ -309,7 +310,11 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
             )
             .child(markdown::tool_pane(
                 window(s, output_key, &parts, TOOL_LIMIT, |shown, units| {
-                    markdown::code(shown, lang, highlight && units <= HIGHLIGHT_LIMIT, wrap)
+                    if terminal {
+                        ansi::code(shown, wrap)
+                    } else {
+                        markdown::code(shown, lang, highlight && units <= HIGHLIGHT_LIMIT, wrap)
+                    }
                 }),
                 tool.name == "edit",
             ));
