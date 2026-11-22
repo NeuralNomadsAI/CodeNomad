@@ -394,6 +394,60 @@ async fn fixture() -> (TcpListener, Preferences) {
 }
 
 #[test]
+fn settings_a_read_started_before_a_gesture_cannot_consume_its_queued_write() {
+    let (listener, mut prefs) = platform::block_on(fixture());
+    prefs.invalidate(Owner::Config);
+    assert!(prefs.poll());
+    platform::block_on(async {
+        let stale = request(&listener).await;
+        assert!(stale.first.starts_with("GET "));
+        prefs.invalidate(Owner::Config);
+        prefs.set_locale("fr");
+        stale.reply(200, json!({"settings":{"locale":"fr"}})).await;
+
+        wait_until(|| prefs.poll()).await;
+        let write = request(&listener).await;
+        assert!(
+            write.first.starts_with("PATCH "),
+            "unexpected request: {}",
+            write.first
+        );
+        assert_eq!(write.body, json!({"settings":{"locale":"fr"}}));
+        write.reply(200, json!({"settings":{"locale":"fr"}})).await;
+
+        wait_until(|| prefs.poll()).await;
+        let fresh = request(&listener).await;
+        assert!(fresh.first.starts_with("GET "));
+        fresh.reply(200, json!({"settings":{"locale":"fr"}})).await;
+        wait_until(|| prefs.poll()).await;
+    });
+    assert!(prefs.flush());
+    assert_eq!(prefs.locale(), Some("fr"));
+}
+
+#[test]
+fn settings_a_write_started_before_reselecting_its_value_cannot_consume_the_new_choice() {
+    let (listener, mut prefs) = platform::block_on(fixture());
+    prefs.set_locale("fr");
+    assert!(prefs.poll());
+    platform::block_on(async {
+        let older = request(&listener).await;
+        assert!(older.first.starts_with("PATCH "));
+        assert_eq!(older.body, json!({"settings":{"locale":"fr"}}));
+        prefs.set_locale("de");
+        prefs.set_locale("fr");
+        older.reply(200, json!({"settings":{"locale":"fr"}})).await;
+
+        wait_until(|| prefs.poll()).await;
+        let newer = request(&listener).await;
+        assert!(newer.first.starts_with("PATCH "));
+        assert_eq!(newer.body, json!({"settings":{"locale":"fr"}}));
+        newer.reply(200, json!({"settings":{"locale":"fr"}})).await;
+    });
+    assert!(prefs.flush());
+}
+
+#[test]
 fn settings_first_palette_slot_accepts_the_servers_explicit_nulls() {
     for lost_receipt in [false, true] {
         let (listener, mut prefs) = platform::block_on(fixture());

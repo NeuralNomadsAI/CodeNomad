@@ -158,16 +158,19 @@ impl Document {
                     .is_some_and(|data| choice.confirmed(value, data))
                 {
                     self.write.failed.insert(choice);
-                    if self.requested(choice) == Some(value) {
-                        self.write.pending.remove(&choice);
-                    }
                 }
             }
         }
         self.read.failed = snapshot.is_none();
         if let Some(snapshot) = snapshot {
             self.write.requested.retain(|&choice, value| {
-                if choice.confirmed(value, &snapshot) {
+                // A response already in flight can predate a queued gesture, even for the same value.
+                let eligible = !self.write.pending.contains(&choice)
+                    && match &operation {
+                        Operation::Write(sent) => sent.get(&choice) == Some(value),
+                        Operation::Read { .. } => self.write.failed.contains(&choice),
+                    };
+                if eligible && choice.confirmed(value, &snapshot) {
                     self.write.pending.remove(&choice);
                     self.write.failed.remove(&choice);
                     false
