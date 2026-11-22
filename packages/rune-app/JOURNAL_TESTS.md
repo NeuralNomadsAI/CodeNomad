@@ -344,6 +344,53 @@ La [CI45005432895](https://github.com/NeuralNomadsAI/CodeNomad/actions/runs/4500
 
 Après fetch de origin/feat/rust-server à e63f3d2ff, le commit de fusion réel conserve les deux parents e63f3d2ff et 6ad4f345a. La reprise locale réussit 162 tests/documentations, quatre ignorés, fmt explicite des cinq packages, check WASM des trois crates partagées et garde de styles. Logs `target/rune-files-integration-{tests,wasm,style}.log`. Les seuls ajouts après cette validation sont ce compte rendu et la portée trois OS dans RUNE.md. La tranche livre le modèle et la primitive partagée ; panneau, actions de ligne, lecteur et qualification de reconnexion du modèle réel continuent séparément. Aucun module Solid retiré.
 
+
+## FileRowActions : premier checkpoint du composant partagé
+
+La branche courte codex/rune-file-actions-20261122 part de l'intégration e63f3d2ff dans le worktree isolé rune-file-actions-20261122. La fiche Source générée précède le portage. Le composant réutilise les boutons rune-kit et le menu partagé ; checked=false reste épinglé, les secondaires compactes restent mesurables et inertes, les gaps consomment le clic et le menu reste ouvert pendant les redimensionnements. Le propriétaire fournit le budget de la ligne, le focus-within complet et le pointeur grossier. La tolérance 0,5 est extraite de l'AST Source ; le tri des boutons suit les groupes Source.
+
+`cargo +1.99.1 test --locked --offline -p rune-theme-codenomad --lib` réussit 29 tests, dont huit nouveaux ; fmt du package et check WASM du thème réussissent. Les touches Enter/Espace exécutent chaque action une seule fois sans activer la ligne. Les trois tests Node et generate-theme.mjs --check passent. Les couleurs actives sont lues après vrai survol Chromium : un contre-exemple CSS avec deux règles !important de spécificités différentes révélait une couleur erronée dans une tentative de cascade simulée ; le test impose désormais le rendu réel. Source-over réutilise l'API Rune existante.
+
+Logs `target/root-file-actions-checkpoint-{tests,wasm,codegen,generated}.log` et preuve initiale `target/root-file-actions-style-proof.json`. Cache Cargo D existant et incremental0 conservés. Les fixtures Source, l'isolation du clic sous mouvement réduit et la comparaison raster sont encore en préparation ; aucune parité complète ni vue applicative qualifiée à ce checkpoint. La copie C du journal attend la fusion de la foundation Files pour conserver toutes ses sections.
+
+## Lecteur Workspace : propriétaire asynchrone
+
+Worktree de cette qualification : `D:/CodeNomad/.codenomad/worktrees/rune-workspace-reader-20261122`, branche `codex/rune-workspace-reader-20261122`. Les preuves FileRowActions ci-dessus appartiennent au worktree frère `rune-file-actions-20261122`.
+
+Le lecteur retient sa cible session/dossier/chemin et le dernier aperçu complet. Remplacement, fermeture, suspension et destruction annulent la lecture et écartent les réponses périmées. Une reconnexion revalide le contenu ; masquer le panneau conserve le lecteur. Les invalidations passent par le regroupement Files existant. Les sept tests HTTP loopback retiennent des corps réels pour vérifier remplacement, admission indépendante, annulation, conservation après erreur, trente refresh réduits à un passage suivant, suspension et changement de dossier.
+
+Commandes, avec CARGO_TARGET_DIR pointant sur le cache existant rune-native-chat/packages/rune-chat/target et CARGO_INCREMENTAL=0 :
+
+```powershell
+cargo +1.99.1 fmt -p codenomad-rune-app --check
+cargo +1.99.1 test --locked --offline --workspace
+cargo +1.99.1 check --locked --offline -p codenomad-rune-app --target wasm32-unknown-unknown
+cargo +1.99.1 run --locked --offline -p rune-style-policy -- packages/rune-app/src
+```
+
+Résultats : 169 tests et documentations réussis, quatre ignorés ; compilation WASM, formatage et garde de styles réussis. Preuves `target/rune-reader-owner/{workspace-tests.log,wasm-check.log,style-scan.log,rapport.md}`. Deux relecteurs neufs à l'aveugle ne retiennent aucun défaut moyen ou bloquant : `target/review-workspace-reader-contracts/REPORT.md` (sept tests réexécutés indépendamment) et `target/review-workspace-reader-standards/review.md` (revue statique).
+
+Portée : propriétaire de données et cycle de vie, sans vue de lecture, codecs, sélection, édition ni sauvegarde. HTTP simulé ; le parcours lecteur avec serveur partagé et reconnexion SSE réelle reste à qualifier. Aucune fenêtre ouverte ni donnée utilisateur utilisée.
+## Lecteur : API et watches du serveur Rust partagé
+
+La commande `node packages/rune-app/launcher-fixture.mjs --files-state` étendue réussit sous Windows, avec l'exécutable test-support compilé depuis ce worktree et le serveur Rust partagé préexistant du worktree rs-agent-controls-20261122. OpenCode simulé ; profil privé launcher-9cfcb786-1162-4f68-8cfb-f7868e317c60. Commandes complètes et empreintes dans `target/rune-reader-server/{rapport.md,execution.json}`.
+
+Quatre contenus exacts, dont été/日本語/🦀 et plusieurs lignes, passent par Ui.open et la vraie API de prévisualisation. Le runner compare indépendamment leurs versions avec le SHA-256 des textes écrits. Les modifications privées sont reçues par les vrais watches/SSE, sans Refresh ni événement fabriqué. Le lecteur continue panneau masqué ; au retour d'un nouvel onglet vide il conserve d'abord son ancien contenu puis reçoit la version modifiée pendant suspension. Un créneau preview retenu côté client vérifie fermeture/remplacement en attente d'admission ; après libération seule la cible courante est publiée.
+
+Build test-support, syntaxe JS, fmt du package et diff passent ; 27 tests Files réussissent. Zéro prompt/session OpenCode créée, records vides relus indépendamment, serveur sorti à zéro. Preuves `target/rune-reader-server/{proof.json,execution.log,build.log,files-tests.log,client.log,rust.log}`. La CI reprend automatiquement ce scénario dans son mode --files-state sur les trois OS ; son résultat distant reste à conclure. Vue, codecs, gestes, navigateur et interruption réseau réelle restent à qualifier. La rétention déterministe de corps HTTP relève des sept tests isolés ; ce scénario retient la file d'admission cliente.
+
+## Positionneurs Source : ouverture au pointeur et mouvement réduit
+
+La fixture `packages/ui/tests/browser/fixtures/file-row-actions.tsx` monte les vrais composants Solid `ActionOverflowMenu` et `FileRowActions`. Les callbacks produisent uniquement des traces synthétiques ; le navigateur headless accepte seulement les lectures API de sa fixture loopback. La régression `node --import tsx --test tests/browser/positioner-motion.test.ts tests/browser/fixture-wiring.test.ts`, depuis `packages/ui`, vérifie quatre cas : menu seul ou dans la ligne, mouvement réduit ou normal. Le trigger se trouve dans l'origine potentielle du popup. Le vrai clic doit maintenir le menu ouvert, appliquer la translation Floating UI pendant pointerdown et laisser le relâchement au trigger, sans exécuter d'action.
+
+Sans la règle de `styles/components/positioner.css`, le test exact échoue sur les deux cas à mouvement réduit : le menu se ferme avant l'assertion de visibilité. Les deux cas normaux passent. Après restauration de la règle, les quatre cas et la garde des fixtures passent, soit cinq tests. Logs `target/positioner-motion-exact-{red,green}.log`. Le diagnostic des événements identifie une transition de transform créée par la durée globale de mouvement réduit ; le popup passe momentanément à l'origine et intercepte pointerup. La règle partagée applique immédiatement la géométrie du wrapper ; les transitions du contenu conservent leur propriétaire.
+
+Le thème et l'inventaire des composants sont régénérés. `node scripts/rune/component-inventory.mjs --check` et les trois tests de `component-inventory.test.mjs` passent (`target/positioner-inventory-tests.log`). La suite navigateur complète est lancée par `npm run test:browser --workspace @codenomad/ui` ; son résultat est suivi dans `target/positioner-browser-suite.log`. Le retour de focus après fermeture et redimensionnement, la galerie Rune et sa comparaison raster gardent leurs qualifications distinctes. Les essais restent intégralement en arrière-plan, sans presse-papiers ni fenêtre native.
+
+Deux revues neuves à l'aveugle du correctif positionneur sont favorables, sans constat moyen ou bloquant. Chacune réexécute les quatre vrais cas et un contrôle négatif privé : les deux cas mouvement réduit échouent avec les propriétés CSS antérieures, les deux cas normaux passent. Rapports `target/review-positioner-{contracts,standards}/REPORT.md`. La série navigateur complète demeure active à ce point de contrôle ; aucun résultat global encore revendiqué.
+Preuves de cette section dans D:/CodeNomad/.codenomad/worktrees/rune-file-actions-20261122 ; checkpoint pousse 4e41ef191.
+
+
 ## Client Files : écriture conditionnelle
 
 Worktree `D:/CodeNomad/.codenomad/worktrees/rune-file-save-20261122`, branche courte codex/rune-file-save-20261122 issue de l'intégration 8ba205654. Le client ajoute PUT files/content et exige la version opaque observée. WriteResult distingue Saved et Conflict ; les autres erreurs, dont les redirections, restent des échecs. Une seule requête est envoyée, sans retry. Les contrôles de scope/path existants et limites du serveur Rust (5 MiB UTF-8, 8 MiB JSON sérialisé) sont appliqués avant dispatch.
@@ -353,3 +400,13 @@ Vérifications : `cargo +1.99.1 test --locked --offline -p codenomad-client` ré
 Cette qualification utilise HTTP loopback simulé. Sauvegarde par le vrai serveur, brouillons et relecture de conflit, édition et vue restent à raccorder et qualifier. Aucun serveur modifié, aucune fenêtre ouverte ni donnée utilisateur utilisée.
 
 Deux revues neuves a l'aveugle sont favorables, sans constat moyen ou bloquant : target/review-files-write-{contracts,standards}/REPORT.md. Contrats reexecute deux tests via Cargo et check WASM ; standards reexecute les deux tests precompiles et compare les contrats. La qualification contre le serveur partage continue separement.
+
+## Sauvegarde Files : qualification par serveur partagé
+
+Worktree `D:/CodeNomad/.codenomad/worktrees/rune-file-save-20261122`. Le mode explicite `node packages/rune-app/files-fixture.mjs --write` et le mode par défaut réussissent contre le serveur Rust debug partagé préexistant, lancé en copie privée ; OpenCode est simulé. Commandes et variables : `target/rune-file-save-server/rapport.md`. CARGO_TARGET_DIR réutilise le cache D, toolchain +1.99.1, offline/locked, incremental0.
+
+Le test intégré ignoré `crates/codenomad-client/tests/files_write_server.rs` consomme seulement un manifeste trial sous target/rune-files-tests du checkout, valide le projet privé et le loopback. Le proxy garde son mode lecture seule par défaut ; --write admet seulement trois couples dossier/chemin synthétiques sur la route du workspace créé. Six PUT réels : 204,409,204,409,400,400. Les octets Unicode/CRLF et quatre versions sont comparés aux fichiers et SHA-256 ; une version périmée conserve la modification externe, une version fraîche sauvegarde, un fichier supprimé reste absent, les témoins foreign et .git restent intacts.
+
+Deux relecteurs indépendants concluent sans constat moyen ou bloquant ; addenda `target/review-files-write-{contracts,standards}/ADDENDUM-SERVER.md`. Contrats relance les deux modes (sorties 0), standards recalcule les versions et vérifie les témoins sur disque. Après une retouche descriptive du runner, le coordinateur relance les deux modes exacts : `target/rune-file-save-server/root-{write,read}-{proof.json,client.log,rust.log}` et root-execution.json. Profils trial-50b29c56-0210-496f-b1a2-2c8158c239bf et trial-0f58eec0-e01a-4963-999a-18b79353dd5a. Les deux terminent avec zéro record et serveur arrêté proprement, code0.
+
+La CI ajoute les deux commandes au step qui fournit déjà le serveur partagé sur Windows/macOS/Linux et joint les proof.json. Résultats distants de cet ajout à conclure. Qualification locale Windows de l'API ; propriétaire de brouillon, édition, rendu, gestes, navigateur et courses interprocessus conservent leurs essais dédiés. Aucune fenêtre ni donnée utilisateur utilisée, aucun serveur modifié.
