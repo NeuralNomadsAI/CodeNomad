@@ -16,7 +16,6 @@ pub(crate) fn run_worker(
     input: Option<&[u8]>,
     control: Option<&Control>,
     timeout: Duration,
-    mut send_finish: bool,
 ) -> Result<Value, SpeechError> {
     if control.is_some_and(Control::cancelled) {
         return Err(SpeechError::Failed);
@@ -90,12 +89,6 @@ pub(crate) fn run_worker(
                 return Err(SpeechError::Failed);
             }
             drop(stdin.take());
-        } else if send_finish && control.is_some_and(Control::finish_requested) {
-            send_finish = false;
-            // One small command on an otherwise empty pipe. EOF still revokes the operation.
-            if let Some(pipe) = stdin.as_mut() {
-                let _ = pipe.write_all(b"finish\n");
-            }
         }
         match receive.recv_timeout(TICK) {
             Ok(Some(Reply::Progress { progress })) if result.is_none() => {

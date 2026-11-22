@@ -5,9 +5,8 @@ import type {
 } from "../../../../desktop-speech/contract"
 
 export type {
-  DeviceSpeechError, DeviceSpeechOperation, DeviceSpeechSnapshot, HexPlan, LocalSpeechEngine, SpeechEngine,
+  DeviceSpeechError, DeviceSpeechOperation, DeviceSpeechSnapshot, HexPlan, SpeechEngine,
 } from "../../../../desktop-speech/contract"
-export { resolveSystemSpeechLocale } from "../../../../desktop-speech/contract"
 
 export function canConfigureDeviceSpeech() {
   return isNativeApplicationWindow() && (isTauriHost() || (isElectronHost() && typeof window.electronAPI?.deviceSpeech === "function"))

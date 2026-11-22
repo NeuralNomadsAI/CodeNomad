@@ -77,6 +77,27 @@ test("login fences probes begun before and during authentication", async () => {
   }
 })
 
+test("auth status transport stops at caller cancellation and at its own deadline", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  for (const cancelled of [true, false]) {
+    const caller = new AbortController()
+    const response = deferred<Response>()
+    let network: AbortSignal | null | undefined
+    const recovery = createAuthRecovery(undefined, async (_input, init) => {
+      network = init?.signal
+      return response.promise
+    })
+    const pending = recovery.check(caller.signal)
+    assert.equal(network?.aborted, false)
+    if (cancelled) caller.abort()
+    else t.mock.timers.tick(8000)
+    assert.equal(network?.aborted, true)
+    response.resolve(Response.json({ authenticated: false }))
+    await pending
+    assert.equal(recovery.required(), false)
+  }
+})
+
 test("wrong credentials, offline login and malformed success preserve recovery without replay", async () => {
   for (const [status, body, expected] of [[401, {}, "credentials"], [503, {}, "unavailable"], [200, {}, "unavailable"]] as const) {
     const requests: string[] = []

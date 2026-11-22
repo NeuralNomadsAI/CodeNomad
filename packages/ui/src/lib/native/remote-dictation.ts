@@ -21,8 +21,8 @@ export async function requestRemoteMicrophone<A extends MicrophoneRequest>(input
 
 export async function readRemoteDictationChoice() {
   const choice = await request({ action: "read" })
-  if (!isSpeechEngine(choice)) throw new Error("Invalid remote dictation choice")
-  return choice
+  if (choice !== null && typeof choice !== "string") throw new Error("Invalid remote dictation choice")
+  return isSpeechEngine(choice) ? choice : null
 }
 
 export async function beginRemoteDictation(id: string, locale: string): Promise<string | null> {

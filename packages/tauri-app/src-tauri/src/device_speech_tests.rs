@@ -15,39 +15,34 @@ struct Fake {
 }
 
 impl Driver for Fake {
-    fn capabilities(&self) -> Capabilities {
-        Capabilities {
-            system: System::Ready,
-            system_locales: Some(vec!["en-US".into()]),
-            system_reason: None,
-            hex: if *self.ready.lock() {
-                Hex::Ready {
-                    plan: Plan {
-                        id: "ready".into(),
-                        missing: vec![],
-                    },
-                }
-            } else {
-                Hex::NeedsPreparation {
-                    plan: Plan {
-                        id: "missing".into(),
-                        missing: vec![
-                            Missing {
-                                component: HexComponent::Engine,
-                                download_bytes: 12,
-                            },
-                            Missing {
-                                component: HexComponent::Model,
-                                download_bytes: 20,
-                            },
-                            Missing {
-                                component: HexComponent::Vad,
-                                download_bytes: 2,
-                            },
-                        ],
-                    },
-                }
-            },
+    fn capabilities(&self) -> Hex {
+        if *self.ready.lock() {
+            Hex::Ready {
+                plan: Plan {
+                    id: "ready".into(),
+                    missing: vec![],
+                },
+            }
+        } else {
+            Hex::NeedsPreparation {
+                plan: Plan {
+                    id: "missing".into(),
+                    missing: vec![
+                        Missing {
+                            component: HexComponent::Engine,
+                            download_bytes: 12,
+                        },
+                        Missing {
+                            component: HexComponent::Model,
+                            download_bytes: 20,
+                        },
+                        Missing {
+                            component: HexComponent::Vad,
+                            download_bytes: 2,
+                        },
+                    ],
+                },
+            }
         }
     }
 
@@ -70,13 +65,8 @@ impl Driver for Fake {
         Err(SpeechError::Failed)
     }
 
-    fn dictate(
-        &self,
-        _engine: Engine,
-        _locale: String,
-        control: Control,
-    ) -> Result<String, SpeechError> {
-        control.progress(Operation::Recording { text: None });
+    fn dictate(&self, control: Control) -> Result<String, SpeechError> {
+        control.progress(Operation::Recording);
         self.started.send(control).unwrap();
         if let Resolution::Text(value) = self
             .release
@@ -117,6 +107,43 @@ fn fixture_with_hex_ready(
     });
     let device = DeviceSpeech::new(directory.path().join("choice.json"), Some(driver));
     (directory, device, listen, release)
+}
+
+#[test]
+fn unsupported_saved_engine_requires_explicit_reselection() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("choice.json");
+    let device = DeviceSpeech::new(path.clone(), None);
+    let saved = json!({"version": 1, "engine": "unsupported", "revision": Uuid::new_v4().to_string()})
+        .to_string();
+    fs::write(&path, &saved).unwrap();
+    let read = device.request("local", Request::Read {}).unwrap();
+    assert_eq!(
+        read,
+        json!({"engine": null, "hex": {"state": "unavailable"}})
+    );
+    assert_eq!(device.preferred_engine().unwrap(), None);
+    assert_eq!(
+        device.request(
+            "local",
+            Request::Start {
+                locale: "en".into(),
+                engine: None,
+                microphone_lease_id: None,
+            },
+        ),
+        Err(SpeechError::Unavailable)
+    );
+    assert_eq!(fs::read_to_string(path).unwrap(), saved);
+    device
+        .request(
+            "local",
+            Request::Select {
+                engine: Engine::Api,
+            },
+        )
+        .unwrap();
+    assert_eq!(device.preferred_engine().unwrap(), Some(Engine::Api));
 }
 
 fn operation(device: &DeviceSpeech, owner: &str, input: Request) -> String {
@@ -163,18 +190,12 @@ fn settle(control: &Control) -> Operation {
 #[test]
 fn hex_microphone_claim_is_single_use_and_ends_with_its_operation() {
     let (_folder, device, _, _) = fixture();
-    let start = |owner: &str, renderer_audio| {
+    let start = |owner: &str| {
         let mut slots = device.slots.lock();
-        let value = DeviceSpeech::begin(
-            &mut slots.operations,
-            owner,
-            Kind::Dictation,
-            renderer_audio,
-            |control| {
-                control.wait_for_audio();
-                Ok(Operation::Cancelled)
-            },
-        )
+        let value = DeviceSpeech::begin(&mut slots.operations, owner, Kind::Dictation, |control| {
+            control.wait_for_audio();
+            Ok(Operation::Cancelled)
+        })
         .unwrap();
         (
             value["id"].as_str().unwrap().to_owned(),
@@ -185,18 +206,14 @@ fn hex_microphone_claim_is_single_use_and_ends_with_its_operation() {
         )
     };
     assert!(!device.claim_hex_microphone("owner"));
-    let (id, control) = start("owner", false);
-    assert!(!device.claim_hex_microphone("owner")); // System engine owns its own capture.
-    device.request("owner", Request::Cancel { id }).unwrap();
-    assert_eq!(settle(&control), Operation::Cancelled);
-    let (_, control) = start("owner", true);
+    let (_, control) = start("owner");
     assert!(!device.claim_hex_microphone("another-window"));
     assert!(device.claim_hex_microphone("owner"));
     assert!(!device.claim_hex_microphone("owner"));
     device.revoke(Some("owner"));
     assert!(!device.claim_hex_microphone("owner"));
     assert_eq!(settle(&control), Operation::Cancelled);
-    let (id, control) = start("owner", true);
+    let (id, control) = start("owner");
     device.request("owner", Request::Cancel { id }).unwrap();
     assert!(!device.claim_hex_microphone("owner"));
     assert_eq!(settle(&control), Operation::Cancelled);
@@ -221,16 +238,14 @@ fn leased_start_binds_the_engine_and_claims_use_canonical_generated_ids() {
     let id = Uuid::new_v4().to_string();
     let valid =
         |value| serde_json::from_value::<Request>(value).is_ok_and(|request| request.valid());
-    for engine in ["hex", "system"] {
-        assert!(valid(
-            json!({"action": "start", "locale": "en-US", "engine": engine, "microphoneLeaseId": id})
-        ));
-    }
+    assert!(valid(
+        json!({"action": "start", "locale": "en-US", "engine": "hex", "microphoneLeaseId": id})
+    ));
     assert!(!valid(
         json!({"action": "start", "locale": "en-US", "microphoneLeaseId": id})
     ));
     assert!(!valid(
-        json!({"action": "start", "locale": "en-US", "engine": "system", "microphoneLeaseId": null})
+        json!({"action": "start", "locale": "en-US", "engine": "hex", "microphoneLeaseId": null})
     ));
     assert!(!valid(
         json!({"action": "claimMicrophone", "id": id.to_uppercase(), "purpose": "test"})
@@ -249,28 +264,28 @@ fn persists_the_shared_preference_and_rejects_stale_replacement() {
     assert_eq!(
         device.request("a", Request::Read {}),
         Ok(json!({
-            "engine": "api", "system": "unavailable", "hex": { "state": "unavailable" },
+            "engine": "api", "hex": { "state": "unavailable" },
         }))
     );
     assert_eq!(
         device.request(
             "a",
             Request::Select {
-                engine: Engine::System
+                engine: Engine::Hex
             }
         ),
         Err(SpeechError::Unavailable)
     );
-    device.store.select(Engine::System, None).unwrap();
+    device.store.select(Engine::Api, None).unwrap();
     let revision = device.store.read().unwrap().revision;
     let other = DeviceSpeech::new(path.clone(), None);
-    assert_eq!(other.store.read().unwrap().engine, Engine::System);
+    assert_eq!(other.store.read().unwrap().revision, revision);
     other.store.select(Engine::Api, None).unwrap();
     assert_eq!(
         device.store.select(Engine::Hex, Some(&revision)),
         Err(SpeechError::PlanChanged)
     );
-    assert_eq!(device.store.read().unwrap().engine, Engine::Api);
+    assert_eq!(device.preferred_engine().unwrap(), Some(Engine::Api));
     fs::write(path, vec![b' '; 257]).unwrap();
     assert_eq!(
         device.request("a", Request::Read {}),
@@ -284,14 +299,6 @@ fn cancellation_retains_previous_choice_until_verified_retry() {
     let prepare = |plan: &str| Request::Prepare {
         plan_id: plan.into(),
     };
-    device
-        .request(
-            "prefs",
-            Request::Select {
-                engine: Engine::System,
-            },
-        )
-        .unwrap();
     assert_eq!(
         device.request("prefs", prepare("older")),
         Err(SpeechError::PlanChanged)
@@ -326,7 +333,7 @@ fn cancellation_retains_previous_choice_until_verified_retry() {
     );
     release.send(Resolution::Prepare(false)).unwrap();
     assert_eq!(settle(&control), Operation::Cancelled);
-    assert_eq!(device.store.read().unwrap().engine, Engine::System);
+    assert_eq!(device.preferred_engine().unwrap(), Some(Engine::Api));
 
     let next = operation(&device, "prefs", prepare("missing"));
     let control = started.recv_timeout(Duration::from_secs(3)).unwrap();
@@ -340,7 +347,7 @@ fn cancellation_retains_previous_choice_until_verified_retry() {
         device.request("prefs", status(&next)),
         Err(SpeechError::NotOwned)
     );
-    assert_eq!(device.store.read().unwrap().engine, Engine::Hex);
+    assert_eq!(device.preferred_engine().unwrap(), Some(Engine::Hex));
     let next = operation(&device, "prefs", prepare("ready"));
     let control = device.slots.lock().operations[Kind::Prepare as usize]
         .as_ref()
@@ -358,56 +365,8 @@ fn cancellation_retains_previous_choice_until_verified_retry() {
 }
 
 #[test]
-fn recording_text_is_bounded_and_exposed_only_while_recording() {
-    let (_directory, device, started, release) = fixture();
-    device.store.select(Engine::System, None).unwrap();
-    let id = operation(
-        &device,
-        "owner",
-        Request::Start {
-            engine: Some(Engine::System),
-            locale: "en-US".into(),
-            microphone_lease_id: None,
-        },
-    );
-    let control = started.recv_timeout(Duration::from_secs(3)).unwrap();
-    let progress = |text: Value| json!({ "state": "recording", "text": text });
-    let partial = progress(json!("café"));
-    let recording = Ok(json!({ "state": "recording" }));
-    assert_eq!(device.request("owner", status(&id)), recording);
-    assert!(serde_json::from_value::<Operation>(progress(json!("é".repeat(MAX_TEXT / 2)))).is_ok());
-    for invalid in [json!(null), json!("é".repeat(MAX_TEXT / 2 + 1))] {
-        assert!(serde_json::from_value::<Operation>(progress(invalid)).is_err());
-    }
-    control.progress(serde_json::from_value(partial.clone()).unwrap());
-    assert_eq!(device.request("owner", status(&id)), Ok(partial.clone()));
-    assert_eq!(
-        device.request("other", status(&id)),
-        Err(SpeechError::NotOwned)
-    );
-    device
-        .request(
-            "owner",
-            Request::Finish {
-                id: id.clone(),
-                wav: None,
-            },
-        )
-        .unwrap();
-    control.progress(serde_json::from_value(partial).unwrap());
-    assert_eq!(device.request("owner", status(&id)), recording);
-    release.send(Resolution::Text("café final")).unwrap();
-    assert_eq!(
-        settle(&control),
-        Operation::Transcribed {
-            text: "café final".into()
-        }
-    );
-}
-
-#[test]
-fn dictation_and_permission_revocation_are_owner_fenced() {
-    let (_directory, device, started, release) = fixture();
+fn dictation_finish_and_cancellation_are_owner_fenced() {
+    let (_directory, device, started, release) = fixture_with_hex_ready(true);
     let start = || Request::Start {
         engine: None,
         locale: "en-US".into(),
@@ -417,46 +376,28 @@ fn dictation_and_permission_revocation_are_owner_fenced() {
         .request(
             "prefs",
             Request::Select {
-                engine: Engine::System,
+                engine: Engine::Hex,
             },
         )
         .unwrap();
-    assert_eq!(
-        device.request(
-            "owner",
-            Request::Start {
-                engine: Some(Engine::System),
-                locale: "en-GB".into(),
-                microphone_lease_id: None,
-            }
-        ),
-        Err(SpeechError::LocaleUnavailable),
-    );
-    assert!(started.try_recv().is_err());
     let id = operation(&device, "owner", start());
     let control = started.recv_timeout(Duration::from_secs(3)).unwrap();
     assert_eq!(device.request("other", start()), Err(SpeechError::Busy));
     let finish = || Request::Finish {
         id: id.clone(),
-        wav: None,
+        wav: "UklGRiYAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQIAAAAAAA==".into(),
     };
     assert_eq!(
         device.request("other", finish()),
         Err(SpeechError::NotOwned)
     );
-    assert!(!control.finish_requested());
     device.request("owner", finish()).unwrap();
-    assert!(control.finish_requested());
-    control.progress(Operation::Transcribing);
-    control.revoke_permission();
+    assert!(control.wait_for_audio().is_some());
+    assert_eq!(device.request("owner", finish()), Err(SpeechError::Busy));
+    device.request("owner", Request::Cancel { id }).unwrap();
     assert!(control.cancelled());
     release.send(Resolution::Text("late result")).unwrap();
-    assert_eq!(
-        settle(&control),
-        Operation::Error {
-            error: SpeechError::PermissionDenied
-        }
-    );
+    assert_eq!(settle(&control), Operation::Cancelled);
 
     let new_id = operation(&device, "owner", start());
     let control = started.recv_timeout(Duration::from_secs(3)).unwrap();
@@ -552,81 +493,79 @@ fn renderer_releases_and_revocations_are_owner_fenced() {
 }
 
 #[test]
-fn system_and_hex_require_the_exact_dictation_lease_when_supplied_or_held() {
+fn hex_requires_the_exact_dictation_lease_when_supplied_or_held() {
     use MicrophonePurpose::*;
-    for engine in [Engine::System, Engine::Hex] {
-        let (_directory, device, started, release) = fixture_with_hex_ready(true);
-        device.store.select(engine, None).unwrap();
-        let id = Uuid::new_v4().to_string();
-        let wrong = Uuid::new_v4().to_string();
-        let start = |token: Option<&str>| Request::Start {
-            engine: Some(engine),
-            locale: "en-US".into(),
-            microphone_lease_id: token.map(str::to_owned),
-        };
-        assert_eq!(
-            device.request("owner", start(Some(&id))),
-            Err(SpeechError::NotOwned)
-        );
+    let (_directory, device, started, release) = fixture_with_hex_ready(true);
+    device.store.select(Engine::Hex, None).unwrap();
+    let id = Uuid::new_v4().to_string();
+    let wrong = Uuid::new_v4().to_string();
+    let start = |token: Option<&str>| Request::Start {
+        engine: Some(Engine::Hex),
+        locale: "en-US".into(),
+        microphone_lease_id: token.map(str::to_owned),
+    };
+    assert_eq!(
+        device.request("owner", start(Some(&id))),
+        Err(SpeechError::NotOwned)
+    );
 
-        assert_eq!(claim(&device, "owner", &id, Test), json!({ "busy": null }));
-        assert_eq!(
-            device.request("owner", start(Some(&id))),
-            Err(SpeechError::Busy)
-        );
-        release_microphone(&device, "owner", &id);
-        assert_eq!(
-            claim(&device, "owner", &id, Dictation),
-            json!({ "busy": null })
-        );
-        assert_eq!(
-            device.request("owner", start(Some(&wrong))),
-            Err(SpeechError::Busy)
-        );
-        assert_eq!(
-            device.request("other", start(Some(&id))),
-            Err(SpeechError::Busy)
-        );
-        assert_eq!(device.request("owner", start(None)), Err(SpeechError::Busy));
-        assert!(started.try_recv().is_err());
+    assert_eq!(claim(&device, "owner", &id, Test), json!({ "busy": null }));
+    assert_eq!(
+        device.request("owner", start(Some(&id))),
+        Err(SpeechError::Busy)
+    );
+    release_microphone(&device, "owner", &id);
+    assert_eq!(
+        claim(&device, "owner", &id, Dictation),
+        json!({ "busy": null })
+    );
+    assert_eq!(
+        device.request("owner", start(Some(&wrong))),
+        Err(SpeechError::Busy)
+    );
+    assert_eq!(
+        device.request("other", start(Some(&id))),
+        Err(SpeechError::Busy)
+    );
+    assert_eq!(device.request("owner", start(None)), Err(SpeechError::Busy));
+    assert!(started.try_recv().is_err());
 
-        let op = operation(&device, "owner", start(Some(&id)));
-        let control = started.recv_timeout(Duration::from_secs(3)).unwrap();
-        release_microphone(&device, "owner", &id);
-        assert_eq!(
-            claim(&device, "other", &wrong, Conversation),
-            json!({ "busy": "dictation" })
-        );
-        device.request("owner", Request::Cancel { id: op }).unwrap();
-        assert!(control.cancelled());
-        assert_eq!(
-            claim(&device, "other", &wrong, Conversation),
-            json!({ "busy": "dictation" })
-        );
-        release.send(Resolution::Text("discarded")).unwrap();
-        assert_eq!(settle(&control), Operation::Cancelled);
-        assert_eq!(
-            claim(&device, "other", &wrong, Conversation),
-            json!({ "busy": null })
-        );
-        release_microphone(&device, "other", &wrong);
+    let op = operation(&device, "owner", start(Some(&id)));
+    let control = started.recv_timeout(Duration::from_secs(3)).unwrap();
+    release_microphone(&device, "owner", &id);
+    assert_eq!(
+        claim(&device, "other", &wrong, Conversation),
+        json!({ "busy": "dictation" })
+    );
+    device.request("owner", Request::Cancel { id: op }).unwrap();
+    assert!(control.cancelled());
+    assert_eq!(
+        claim(&device, "other", &wrong, Conversation),
+        json!({ "busy": "dictation" })
+    );
+    release.send(Resolution::Text("discarded")).unwrap();
+    assert_eq!(settle(&control), Operation::Cancelled);
+    assert_eq!(
+        claim(&device, "other", &wrong, Conversation),
+        json!({ "busy": null })
+    );
+    release_microphone(&device, "other", &wrong);
 
-        operation(&device, "owner", start(None));
-        let control = started.recv_timeout(Duration::from_secs(3)).unwrap();
-        release.send(Resolution::Text("legacy")).unwrap();
-        assert_eq!(
-            settle(&control),
-            Operation::Transcribed {
-                text: "legacy".into()
-            }
-        );
-    }
+    operation(&device, "owner", start(None));
+    let control = started.recv_timeout(Duration::from_secs(3)).unwrap();
+    release.send(Resolution::Text("legacy")).unwrap();
+    assert_eq!(
+        settle(&control),
+        Operation::Transcribed {
+            text: "legacy".into()
+        }
+    );
 }
 
 #[test]
 fn native_start_and_renderer_claim_are_mutually_exclusive() {
-    let (_directory, device, started, release) = fixture();
-    device.store.select(Engine::System, None).unwrap();
+    let (_directory, device, started, release) = fixture_with_hex_ready(true);
+    device.store.select(Engine::Hex, None).unwrap();
     let id = Uuid::new_v4().to_string();
     let barrier = std::sync::Barrier::new(2);
     let (native, renderer) = thread::scope(|scope| {

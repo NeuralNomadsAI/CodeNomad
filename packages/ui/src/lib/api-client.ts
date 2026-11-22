@@ -32,7 +32,6 @@ import type {
   OpenCodeUpdateResponse,
   OpenCodeUpdateStatus,
   SpeechCapabilitiesResponse,
-  SpeechSynthesisResponse,
   SpeechTranscriptionResponse,
   VoiceConversationEngine,
   SideCar,
@@ -219,6 +218,7 @@ async function sendRequest<T>(ctx: BackendHttp, path: string, init?: RequestInit
 
 async function sendRawRequest(ctx: BackendHttp, path: string, init?: RequestInit): Promise<Response> {
   const url = ctx.url(path)
+  const signal = init?.signal
   const headers = normalizeHeaders(init?.headers)
   if (init?.body !== undefined && !headers["Content-Type"]) {
     headers["Content-Type"] = "application/json"
@@ -228,12 +228,15 @@ async function sendRawRequest(ctx: BackendHttp, path: string, init?: RequestInit
   const startedAt = Date.now()
   logHttp(`${method} ${path}`)
 
-  init?.signal?.throwIfAborted()
+  if (signal?.aborted) throw signal.reason
   const response = await ctx.fetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
-  init?.signal?.throwIfAborted()
+  if (signal?.aborted) {
+    void response.body?.cancel().catch(() => {})
+    throw signal.reason
+  }
   if (!response.ok) {
     const message = await readErrorMessage(response)
-    init?.signal?.throwIfAborted()
+    if (signal?.aborted) throw signal.reason
     logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
     throw new Error(message || `Request failed with ${response.status}`)
   }
@@ -805,16 +808,9 @@ export function createServerApi(ctx: BackendHttp) {
         signal,
       })
     },
-    synthesizeSpeech(payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" }, signal?: AbortSignal): Promise<SpeechSynthesisResponse> {
-      return request<SpeechSynthesisResponse>("/api/speech/synthesize", {
-        method: "POST",
-        body: JSON.stringify(payload),
-        signal,
-      })
-    },
     synthesizeSpeechStream(
       payload: { text: string; format?: "mp3" | "wav" | "opus" | "aac" },
-      signal?: AbortSignal,
+      signal: AbortSignal,
     ): Promise<Response> {
       return requestRaw("/api/speech/synthesize/stream", {
         method: "POST",

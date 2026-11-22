@@ -11,7 +11,7 @@ export function useRemoteDictation(locale: () => string, active: Accessor<boolea
   const { snapshot: choice } = remote
   remote.use(active)
   const relay: VoiceInputEngine = {
-    canStart: () => choice() === "hex" || choice() === "system",
+    canStart: () => choice() === "hex",
     createController(callbacks) {
       let pending = false
       const id = generateUUID()

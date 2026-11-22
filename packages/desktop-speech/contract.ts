@@ -1,5 +1,4 @@
-export type SpeechEngine = "api" | "system" | "hex"
-export type LocalSpeechEngine = Exclude<SpeechEngine, "api">
+export type SpeechEngine = "api" | "hex"
 export type MicrophonePurpose = "dictation" | "test" | "conversation"
 export type MicrophoneRequest =
   | { action: "claimMicrophone"; id: string; purpose: MicrophonePurpose }
@@ -17,22 +16,19 @@ export interface HexPlan {
   missing: { component: HexComponent; downloadBytes: number }[]
 }
 export interface DeviceSpeechCapabilities {
-  system: "ready" | "unavailable"
-  systemLocales?: readonly string[]
-  systemReason?: "platformUnsupported" | "runtimeUnavailable" | "noRecognizer"
   hex: { state: "unavailable" } | { state: "ready" | "needsPreparation"; plan: HexPlan }
 }
 export interface DeviceSpeechSnapshot extends DeviceSpeechCapabilities {
-  engine: SpeechEngine
+  engine: SpeechEngine | null
 }
 export type DeviceSpeechError =
-  | "unavailable" | "localeUnavailable" | "busy" | "notOwned" | "planChanged" | "permissionDenied" | "failed"
+  | "unavailable" | "busy" | "notOwned" | "planChanged" | "failed"
 
 export const maxDeviceSpeechTextBytes = 64 * 1024
 
 export type DeviceSpeechOperation =
   | { state: "starting" | "transcribing" | "verifying" | "stopping" }
-  | { state: "recording"; text?: string }
+  | { state: "recording" }
   | { state: "downloading"; downloadedBytes: number }
   | { state: "prepared" | "cancelled" }
   | { state: "transcribed"; text: string }
@@ -42,11 +38,11 @@ export type DeviceSpeechRequests = {
   read: Record<never, never>
   select: { engine: SpeechEngine }
   prepare: { planId: string }
-  start: { locale: string; engine?: LocalSpeechEngine; microphoneLeaseId?: string }
+  start: { locale: string; engine?: "hex"; microphoneLeaseId?: string }
   claimMicrophone: { id: string; purpose: MicrophonePurpose }
   releaseMicrophone: { id: string }
   status: { id: string }
-  finish: { id: string; wav?: string }
+  finish: { id: string; wav: string }
   cancel: { id: string }
 }
 export type DeviceSpeechResponses = {
@@ -67,24 +63,13 @@ export type DeviceSpeechRequest = {
 export type DeviceSpeechResult<T> = { ok: true; value: T } | { ok: false; error: DeviceSpeechError }
 
 export function isSpeechEngine(value: unknown): value is SpeechEngine {
-  return value === "api" || value === "system" || value === "hex"
+  return value === "api" || value === "hex"
 }
 
 const localePattern = /^[a-zA-Z]{2,8}(-[a-zA-Z0-9]{1,8}){0,5}$/
 
 export function isSpeechLocale(value: unknown): value is string {
   return typeof value === "string" && localePattern.test(value)
-}
-
-export function resolveSystemSpeechLocale(locales: readonly string[], requested: string): string | undefined {
-  const tag = requested.toLowerCase()
-  const exact = locales.find(locale => locale.toLowerCase() === tag)
-  if (exact) return exact
-  const scriptRegion = tag === "zh-hans" ? "zh-cn" : tag === "zh-hant" ? "zh-tw" : undefined
-  if (tag.includes("-")) return locales.find(locale => locale.toLowerCase() === scriptRegion)
-  const candidates = locales.filter(locale => locale.toLowerCase().split("-")[0] === tag)
-  return candidates.length === 1 ? candidates[0] :
-    candidates.find(locale => locale.toLowerCase() === (tag === "en" ? "en-us" : tag === "fr" ? "fr-fr" : tag))
 }
 
 export function isDeviceSpeechRequest(value: unknown): value is DeviceSpeechRequest {
@@ -96,12 +81,10 @@ export function isDeviceSpeechRequest(value: unknown): value is DeviceSpeechRequ
     case "select": return count === 2 && isSpeechEngine(input.engine)
     case "prepare": return count === 2 && typeof input.planId === "string" && /^[a-zA-Z0-9._-]{1,128}$/.test(input.planId)
     case "start": return isSpeechLocale(input.locale) && (count === 2 ||
-      (count === 3 && (input.engine === "hex" || input.engine === "system")) ||
-      (count === 4 && (input.engine === "hex" || input.engine === "system") && validMicrophoneId(input.microphoneLeaseId)))
+      (input.engine === "hex" && (count === 3 || (count === 4 && validMicrophoneId(input.microphoneLeaseId)))))
     case "claimMicrophone": return count === 3 && validMicrophoneId(input.id) && isMicrophonePurpose(input.purpose)
     case "releaseMicrophone": return count === 2 && validMicrophoneId(input.id)
-    case "finish": return validId(input.id) &&
-      (count === 2 || (count === 3 && typeof input.wav === "string" && validHexWavBase64(input.wav)))
+    case "finish": return count === 3 && validId(input.id) && typeof input.wav === "string" && validHexWavBase64(input.wav)
     case "status":
     case "cancel": return count === 2 && validId(input.id)
     default: return false

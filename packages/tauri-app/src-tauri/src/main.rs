@@ -17,7 +17,6 @@ mod developer_relaunch;
 mod device_speech;
 mod device_speech_hex;
 mod device_speech_ipc;
-mod device_speech_system;
 mod device_speech_worker;
 mod embedded_view;
 mod external_open;
@@ -2018,9 +2017,7 @@ fn main() {
                 identity::electron_user_data_base(&home)
                     .join("device-speech")
                     .join("choice.json"),
-                Some(std::sync::Arc::new(
-                    device_speech_system::SystemDriver::default(),
-                )),
+                None,
             )
             .with_hex(
                 if cfg!(windows) {
