@@ -425,6 +425,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             crate::workspace::opened(s, &project);
             if let Some((backend, title)) = restored {
                 bind(s, backend, title, tx);
+            } else {
+                crate::git::project_opened(s);
             }
         }
         Ok(Reply::Listed(rows, more)) => {
@@ -555,6 +557,10 @@ pub fn back(s: &mut State) {
     s.commands = None;
     s.incoming = None;
     s.files = None;
+    if let Some(git) = &mut s.git.owner {
+        git.online(false);
+        git.close_preview();
+    }
     s.show_launcher();
     list(s, false);
 }

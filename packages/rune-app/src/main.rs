@@ -6,6 +6,7 @@ mod chat;
 pub(crate) use chat::{actions as transcript_state, transcript, transport};
 mod components;
 mod files;
+mod git;
 pub(crate) use components::window_close_button as window_control;
 #[cfg(any(test, feature = "test-support"))]
 mod gallery;
@@ -37,6 +38,7 @@ struct State {
     wake: codenomad_client::Wake,
     agent: Option<agent::Ui>,
     files: Option<files::Ui>,
+    git: git::Binding,
     documents: files::document::store::Store,
     reads: platform::reads::Reads,
     expanded_tools: std::collections::HashSet<String>,
@@ -68,6 +70,7 @@ fn init() -> State {
         wake: std::sync::Arc::new(|| {}),
         agent: None,
         files: None,
+        git: Default::default(),
         documents: Default::default(),
         reads: Default::default(),
         expanded_tools: Default::default(),
@@ -89,6 +92,10 @@ fn init() -> State {
 }
 fn setup(s: &mut State, wake: rune::Waker) {
     s.wake = wake.clone();
+    #[cfg(feature = "test-support")]
+    if s.git.owner.is_some() {
+        return;
+    }
     let scoped = ["RUNE_BACKEND", "RUNE_WORKSPACE", "RUNE_SESSION"]
         .iter()
         .all(|key| platform::setting(key).is_some());
@@ -178,6 +185,7 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     changed |= poll_chat(s, 64);
     changed |= workspace::poll(s, now, tx);
     changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
+    changed |= git::poll(s, now, tx);
     if changed {
         tx.instant();
     }
@@ -192,6 +200,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
         match event {
             Event::Connected(backend) => {
                 s.renew_scope();
+                git::connected(s, &backend);
                 s.agent = Some(agent::Ui::new(agent::start(backend, s.wake.clone())));
             }
             Event::AgentHint(catalog) => {
@@ -203,11 +212,13 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
             }
             Event::Workspace(event) => {
+                git::event(s, &event);
                 if let Some(files) = &mut s.files {
                     files.event(event);
                 }
             }
             Event::Sync(page) => {
+                git::online(s, true);
                 if let Some(files) = &mut s.files {
                     files.online(true);
                 }
@@ -239,6 +250,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.paging = false;
             }
             Event::Reconnecting => {
+                git::online(s, false);
                 if let Some(files) = &mut s.files {
                     files.online(false);
                 }
@@ -270,6 +282,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::Done => s.phase = Phase::Ready,
             Event::Failed => {
+                git::online(s, false);
                 if let Some(files) = &mut s.files {
                     files.online(false);
                 }
@@ -366,6 +379,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                     rune::el()
                 })
                 .child(text(strings::t(status)))
+                .child(git::toggle(s))
                 .child(
                     text(strings::t(if s.paging {
                         "rune.loading"
@@ -400,42 +414,47 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         } else {
             text(&s.chat_title).key("chat-title").pad(Space::Md)
         })
-        .child(rune_theme_codenomad::interruption::history(expanded).child(rows))
-        .child(agent_view::view(s, cx))
-        .child(
+        .child(git::surface(
+            s,
+            rune_theme_codenomad::interruption::history(expanded).child(rows),
             col()
-                .key("session-composer")
-                .role("group")
-                .label(strings::t("rune.prompt"))
                 .full_width()
-                .pad(Space::Md)
-                .separate(Space::Sm)
-                .child(
-                    layout::composer(
-                        input(&s.draft)
-                            .key("composer")
-                            .label(strings::t("rune.prompt"))
-                            .full_width()
-                            .pad(Space::Sm)
-                            .field_surface()
-                            .hint(strings::t("rune.prompt"))
-                            .content_direction()
-                            .on_edit(screen::edit(&scope, screen::Editor::Composer))
-                            .on_input_change(crate::screen::action_tx(
-                                &scope,
-                                workspace::draft_changed,
-                            ))
-                            .on_submit(crate::screen::action_tx(&scope, send)),
-                    )
-                    .field_surface(),
-                )
-                .child(launcher_view::button_tx(
-                    "send",
-                    strings::t("promptInput.overlay.send"),
-                    s.phase != Phase::Ready || s.agent.as_ref().is_some_and(|a| a.blocked()),
-                    crate::screen::action_tx(&scope, send),
-                )),
+                .child(agent_view::view(s, cx))
+                .child(composer(s)),
+        ))
+}
+
+fn composer(s: &State) -> El {
+    let scope = s.input_scope.clone();
+    col()
+        .key("session-composer")
+        .role("group")
+        .label(strings::t("rune.prompt"))
+        .full_width()
+        .pad(Space::Md)
+        .separate(Space::Sm)
+        .child(
+            layout::composer(
+                input(&s.draft)
+                    .key("composer")
+                    .label(strings::t("rune.prompt"))
+                    .full_width()
+                    .pad(Space::Sm)
+                    .field_surface()
+                    .hint(strings::t("rune.prompt"))
+                    .content_direction()
+                    .on_edit(screen::edit(&scope, screen::Editor::Composer))
+                    .on_input_change(crate::screen::action_tx(&scope, workspace::draft_changed))
+                    .on_submit(crate::screen::action_tx(&scope, send)),
+            )
+            .field_surface(),
         )
+        .child(launcher_view::button_tx(
+            "send",
+            strings::t("promptInput.overlay.send"),
+            s.phase != Phase::Ready || s.agent.as_ref().is_some_and(|a| a.blocked()),
+            crate::screen::action_tx(&scope, send),
+        ))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -476,11 +495,15 @@ fn run_app() {
         AppSpec {
             setup: Some(setup),
             poll: Some(poll),
-            #[cfg(feature = "test-support")]
-            scenes: &[("synthetic", |s| {
-                s.messages = transport::synthetic();
-                s.phase = Phase::Ready;
-            })],
+            #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+            scenes: &[
+                ("synthetic", |s| {
+                    s.messages = transport::synthetic();
+                    s.phase = Phase::Ready;
+                }),
+                ("git-changes", probes::git_scene::changes),
+                ("git-commits", probes::git_scene::commits),
+            ],
             ..layout::app_spec(strings::t("window.title.main"), init, view)
         },
         workspace::finish,

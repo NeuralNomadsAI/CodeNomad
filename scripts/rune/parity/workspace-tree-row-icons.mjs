@@ -5,6 +5,7 @@ import {ts,walk} from '../component-inventory-ast.mjs'
 import {generated} from '../generate-common.mjs'
 const require=createRequire(import.meta.url)
 const glyphs=['chevron-right','chevron-down','refresh-cw','folder','folder-open','file','file-code','file-text','image','copy','eye']
+const gitGlyphs=['plus','minus','git-branch','git-commit-horizontal','columns','rows','fold-vertical','unfold-vertical','wrap-text','arrow-left']
 function literal(node){
   if(ts.isStringLiteral(node)||ts.isNumericLiteral(node))return node.text
   if(ts.isArrayLiteralExpression(node))return node.elements.map(literal)
@@ -15,6 +16,10 @@ function literal(node){
   throw Error('Nonliteral Lucide icon contract')
 }
 export async function generateWorkspaceIcons(){
+  await writeIcons('src/workspace_tree_icons.rs',glyphs)
+  await writeIcons('src/git_panel_icons.rs',gitGlyphs)
+}
+async function writeIcons(output,glyphs){
   const folder=path.join(path.dirname(require.resolve('lucide-solid')),'../source/icons')
   const lines=['//! Generated from the installed Source Lucide dependency by generate-theme.mjs.','use rune::Icon;']
   for(const name of glyphs){
@@ -28,5 +33,5 @@ export async function generateWorkspaceIcons(){
     }).join('')+'</g>'
     lines.push(`#[rustfmt::skip]\npub static ${name.toUpperCase().replaceAll('-','_')}: Icon = Icon { name: "lucide-${name}", view: 24.0, body: r#"${body}"# };`)
   }
-  await generated('src/workspace_tree_icons.rs',lines.join('\n')+'\n')
+  await generated(output,lines.join('\n')+'\n')
 }
