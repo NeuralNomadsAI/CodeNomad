@@ -124,6 +124,10 @@
     "tab-inactive-hover-bg": "#212529ff",
     "tab-inactive-text": "#999999ff",
     "tab-rail-bg": "#2a2a2aff",
+    "tabCloseFocus-offset": "#ffffffff",
+    "tabCloseFocus-ring": "#3b82f680",
+    "tabFocus-offset": "#ffffffff",
+    "tabFocus-ring": "#3b82f680",
     "text-inverted": "#1a1a1aff",
     "text-muted": "#999999ff",
     "text-on-accent": "#f5f6f8ff",
@@ -259,6 +263,10 @@
     "tab-inactive-hover-bg": "#f8fafcff",
     "tab-inactive-text": "#475569ff",
     "tab-rail-bg": "#f5f5f5ff",
+    "tabCloseFocus-offset": "#ffffffff",
+    "tabCloseFocus-ring": "#3b82f680",
+    "tabFocus-offset": "#ffffffff",
+    "tabFocus-ring": "#3b82f680",
     "text-inverted": "#ffffffff",
     "text-muted": "#475569ff",
     "text-on-accent": "#ffffffff",
@@ -318,9 +326,19 @@
         "paddingRight": 2,
         "paddingTop": 2
       },
+      "tabCloseFocus": {
+        "extent": 3,
+        "ringOffset": 1,
+        "ringWidth": 2
+      },
       "tabCloseGlyph": {
         "height": 12,
         "width": 12
+      },
+      "tabFocus": {
+        "extent": 3,
+        "ringOffset": 1,
+        "ringWidth": 2
       },
       "tabGlyph": {
         "height": 16,
@@ -401,9 +419,19 @@
         "paddingRight": 2,
         "paddingTop": 2
       },
+      "tabCloseFocus": {
+        "extent": 3,
+        "ringOffset": 1,
+        "ringWidth": 2
+      },
       "tabCloseGlyph": {
         "height": 12,
         "width": 12
+      },
+      "tabFocus": {
+        "extent": 3,
+        "ringOffset": 1,
+        "ringWidth": 2
       },
       "tabGlyph": {
         "height": 16,

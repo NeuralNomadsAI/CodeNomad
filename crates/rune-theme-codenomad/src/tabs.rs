@@ -56,6 +56,22 @@ pub struct ProjectTab<'a> {
     pub status: Option<Status>,
     pub closable: bool,
 }
+fn focus_layers(element: El, key: &str, metric: &str) -> El {
+    let t = tokens(layout::dark());
+    rune::row()
+        .focus_ring_for(
+            key,
+            t.metric(metric, "ringOffset").px(),
+            0.0,
+            t.color(&format!("{metric}-offset")),
+        )
+        .child(element.focus_ring_for(
+            key,
+            t.metric(metric, "ringWidth").px(),
+            t.metric(metric, "ringOffset").px(),
+            t.color(&format!("{metric}-ring")),
+        ))
+}
 pub fn tab<S: 'static>(
     locale: &str,
     tab: &ProjectTab<'_>,
@@ -87,10 +103,24 @@ pub fn tab<S: 'static>(
     let id = tab.id.to_owned();
     let action = select.clone();
     let title = tab.title.to_owned();
+    let rtl = catalogue::direction(locale) == "rtl";
     let mut select_button = Button::new(tab.title)
         .variant(ButtonVariant::Ghost)
         .label_with(move |_, _| {
+            let title = rune::text(title)
+                .font(font)
+                .color(ink)
+                .shrink()
+                .min_w(0.0)
+                .dir(rune::Direction::Auto);
+            let title = if rtl {
+                title.truncate_head()
+            } else {
+                title.truncate()
+            };
             rune::row()
+                .w_full()
+                .min_w(0.0)
                 .items_center()
                 .gap(metric("columnGap"))
                 .child(
@@ -98,13 +128,7 @@ pub fn tab<S: 'static>(
                         .color(ink)
                         .a11y_hidden(),
                 )
-                .child(
-                    rune::text(title)
-                        .font(font)
-                        .color(ink)
-                        .truncate()
-                        .dir(rune::Direction::Auto),
-                )
+                .child(title)
         })
         .on_press_tx(move |s, tx| {
             action(s, &id, tx);
@@ -184,12 +208,6 @@ pub fn tab<S: 'static>(
             t.color("tab-border"),
         )
         .border_layout()
-        .focus_ring_for(
-            key,
-            t.metric("windowIconFocus", "outlineWidth").px(),
-            border,
-            t.color("accent-primary"),
-        )
         .on_press_tx(move |s, tx| action(s, &id, tx))
         .role("group")
         .label(tab.title)
@@ -209,7 +227,8 @@ pub fn tab<S: 'static>(
         let padding = t.metric("tabClose", "paddingLeft").px();
         let label = catalogue::message(locale, "instanceTab.actions.close.ariaLabel").unwrap();
         let id = tab.id.to_owned();
-        slot = slot.child(
+        let close_key = format!("c-{}", tab.id);
+        slot = slot.child(focus_layers(
             Button::new(label)
                 .variant(ButtonVariant::Ghost)
                 .label_with(move |_, _| {
@@ -220,21 +239,19 @@ pub fn tab<S: 'static>(
                 })
                 .on_press_tx(move |s, tx| close(s, &id, tx))
                 .build(&theme)
-                .key(format!("c-{}", tab.id))
+                .key(close_key.clone())
                 .label(label)
                 .size(glyph + padding * 2.0, glyph + padding * 2.0)
                 .padding(padding)
                 .radius(metric("borderRadius"))
                 .hover_group()
                 .hover(t.color("tab-close-hover-bg"))
-                .focus_ring(
-                    t.metric("windowIconFocus", "outlineWidth").px(),
-                    border,
-                    t.color("accent-primary"),
-                ),
-        );
+                .no_focus_ring(),
+            &close_key,
+            "tabCloseFocus",
+        ));
     }
-    slot.locale_direction(locale)
+    focus_layers(slot.locale_direction(locale), &key, "tabFocus").locale_direction(locale)
 }
 pub fn strip<S: 'static>(
     _cx: &mut Cx<S>,
@@ -483,6 +500,80 @@ mod tests {
         let point = rt.find("project-tabs-new").unwrap();
         tap(&mut rt, point);
         assert_eq!(rt.state.new, 1);
+    }
+    #[test]
+    fn long_titles_keep_folder_text_and_close_inside_the_tab() {
+        const TITLE: &str = "Alpha synthetic project with a deliberately long folder label exceeding both tab maxima";
+        fn long_view(s: &App, cx: &mut Cx<App>) -> El {
+            layout::render(cx, |_| {
+                tab::<App>(
+                    s.locale,
+                    &ProjectTab {
+                        id: "a",
+                        title: TITLE,
+                        status: None,
+                        closable: true,
+                    },
+                    s.active == "a",
+                    true,
+                    |_, _, _| {},
+                    |_, _, _| {},
+                )
+            })
+        }
+        for locale in ["en", "he"] {
+            for selected in [false, true] {
+                let mut rt = rune::Runtime::new(
+                    App {
+                        active: if selected { "a" } else { "b" }.into(),
+                        closed: vec![],
+                        new: 0,
+                        locale,
+                    },
+                    long_view,
+                    (400.0, 80.0),
+                    rune::Env::new(false, 1.0),
+                );
+                rt.frame(0.0);
+                let elements = rt.elements();
+                let control = elements
+                    .iter()
+                    .find(|e| e.key.as_deref() == Some("t-a"))
+                    .unwrap()
+                    .rect;
+                let content: Vec<_> = elements
+                    .iter()
+                    .filter(|e| {
+                        e.role == "icon"
+                            && e.rect[2] == tokens(false).metric("tabGlyph", "width").px()
+                            || e.text.as_deref() == Some(TITLE)
+                    })
+                    .collect();
+                assert_eq!(content.len(), 2, "real folder and title elements");
+                for element in content {
+                    assert!(
+                        element.rect[0] >= control[0]
+                            && element.rect[0] + element.rect[2] <= control[0] + control[2],
+                        "{locale} selected={selected}: {:?} escapes {control:?}",
+                        element.rect
+                    );
+                }
+                let occurrence = elements
+                    .iter()
+                    .find(|e| e.key.as_deref() == Some("occurrence-a"))
+                    .unwrap()
+                    .rect;
+                let close = elements
+                    .iter()
+                    .find(|e| e.key.as_deref() == Some("c-a"))
+                    .unwrap()
+                    .rect;
+                assert!(
+                    close[0] >= occurrence[0]
+                        && close[0] + close[2] <= occurrence[0] + occurrence[2]
+                );
+            }
+        }
     }
     #[test]
     fn strip_keeps_css_height_in_a_phone_column() {

@@ -62,6 +62,14 @@ test('generated semantic metrics survive actual font changes and viewport change
       assert.equal(baseline.metrics.windowIcon.height,24)
       assert.equal(baseline.metrics.windowIconGlyph.width,14)
       assert.equal(baseline.metrics.windowIconGlyph.height,14)
+      assert.deepEqual(baseline.metrics.tabFocus,{ringWidth:2,ringOffset:1,extent:3})
+      for(const kind of ['tabFocus','tabCloseFocus']){
+        assert.equal(baseline.colors[`${kind}-ring`],'#3b82f680','Normalized CSS RGB channels survive translucent color extraction')
+        assert.equal(baseline.colors[`${kind}-offset`],'#ffffffff')
+      }
+      await page.locator('.tab-base').first().evaluate(element=>element.style.boxShadow='none')
+      await assert.rejects(page.evaluate(collectTheme,names),/Unsupported .tab-base focus shadow/)
+      await page.locator('.tab-base').first().evaluate(element=>element.style.removeProperty('box-shadow'))
       await page.locator('.window-title').evaluate(element=>element.style.lineHeight='normal')
       await assert.rejects(page.evaluate(collectTheme,names),/lineHeight requires an explicit numeric CSS value/)
       await page.setViewportSize({width:1024,height:768})

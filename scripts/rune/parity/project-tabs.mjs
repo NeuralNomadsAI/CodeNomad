@@ -24,6 +24,9 @@ if(values.binary)assert(path.isAbsolute(values.binary),'Standalone gallery binar
 if(values['max-alpha-diff-ratio'])assert((values.binary||values['rune-dir'])&&Number(values['max-alpha-diff-ratio'])>=0&&Number(values['max-alpha-diff-ratio'])<1,'Alpha pixel comparison requires actual captures and a reviewed threshold')
 if(values['rune-dir'])assert(path.isAbsolute(values['rune-dir'])&&Number(values['max-diff-ratio'])>=0&&Number(values['max-diff-ratio'])<1)
 const out=path.join(root,'target/rune-parity/project-tabs');await mkdir(out,{recursive:true})
+const themeContract=JSON.parse(await readFile(path.join(root,'crates/rune-theme-codenomad/assets/theme.json'),'utf8'))
+const focusEvents=[{t:0.1,type:'key',name:'Tab'},{t:0.15,type:'key',name:'Home'},{t:0.2,type:'type',text:' '}]
+function assertKeyboardFocus(tree){assert(tree.elements.some(e=>e.key==='t-tab-0'&&e.focused&&e.focusVisible),'Real keyboard focus and focus-visible are required')}
 async function execute(program,args,env=process.env){
   return new Promise((resolve,reject)=>{
     const child=spawn(program,args,{cwd:root,env,windowsHide:true,stdio:['ignore','pipe','pipe']});let log=''
@@ -62,7 +65,7 @@ try{
     assert.equal(prior.records.length,10)
     for(const record of prior.records){
       assert.equal(record.states.length,4);assert.deepEqual(record.errors,[])
-      for(const state of record.states){await readFile(path.join(out,state.solid));if(record.scene!=='overflow'){assert(state.alpha);await readFile(path.join(out,state.alpha.file))}}
+      for(const state of record.states){await readFile(path.join(out,state.solid));if(record.scene!=='overflow'){assert(state.alpha?.halo&&state.alpha.glyphs);await readFile(path.join(out,state.alpha.file));await readFile(path.join(out,state.alpha.halo.file))}}
       records.push({...record,priorAttemptFailure:record.failure,failure:undefined})
     }
     reusedSolid={sha256:createHash('sha256').update(raw).digest('hex'),sheets}
@@ -93,6 +96,9 @@ try{
         catch(error){if(attempt===2)throw error;record.startupReloads++;await page.reload()}
       }
       await page.evaluate(theme=>document.documentElement.setAttribute('data-theme',theme),theme)
+      await page.evaluate(()=>document.fonts.ready)
+      assert.equal(await page.evaluate(()=>document.fonts.status),'loaded')
+      record.fontsReady=true
       const strip=page.locator('.tab-bar-instance');await strip.waitFor()
       const tabs=page.getByRole('tab'),first=tabs.first()
       assert.equal(await tabs.count(),config.scene==='overflow'?8:2)
@@ -101,7 +107,7 @@ try{
         await page.mouse.move(config.width-1,190)
         if(state==='hover')await tabs.nth(1).hover()
         if(state==='close-hover')await first.locator('.tab-close').hover()
-        if(state==='focus'){await first.focus();await page.keyboard.press('Space');assert(await first.evaluate(e=>e.matches(':focus-visible')),'Focus capture requires real keyboard focus-visible')}
+        if(state==='focus'){await first.focus();await page.keyboard.press('Space');assert(await first.evaluate(e=>document.activeElement===e&&e.matches(':focus-visible')),'Focus capture requires real keyboard focus-visible')}
         const filename=`solid-${id}-${state}.png`;await strip.screenshot({path:path.join(out,filename),animations:'disabled'})
         const a11y=await strip.ariaSnapshot();await writeFile(path.join(out,`solid-${id}-${state}.aria.yml`),a11y)
         const geometry=await strip.evaluate(el=>({bounds:el.getBoundingClientRect().toJSON(),tabs:[...el.querySelectorAll('[role=tab]')].map(tab=>{const s=getComputedStyle(tab);return {label:tab.textContent,selected:tab.getAttribute('aria-selected'),bounds:tab.getBoundingClientRect().toJSON(),font:s.font,fontSize:s.fontSize,lineHeight:s.lineHeight,background:s.backgroundColor,color:s.color,borderRadius:s.borderRadius}})}))
@@ -115,6 +121,13 @@ try{
           }
           const bounds=await first.boundingBox()
           item.alpha={file,bounds,retries,width:png.readUInt32BE(16),height:png.readUInt32BE(20),selected:await first.getAttribute('aria-selected')==='true',a11y:await first.ariaSnapshot()}
+          item.alpha.glyphs=await first.evaluate(el=>Object.fromEntries(['folder','close'].map((name,i)=>{const r=el.querySelectorAll('svg')[i].getBoundingClientRect(),b=el.getBoundingClientRect();return[name,{x:r.x-b.x,y:r.y-b.y,width:r.width,height:r.height}]})))
+          const extent=themeContract.metrics[theme].tabFocus.extent
+          const clip={x:Math.floor(bounds.x-extent),y:Math.floor(bounds.y-extent),width:Math.ceil(bounds.width+2*extent),height:Math.ceil(bounds.height+2*extent)}
+          assert(clip.x>=0&&clip.y>=0,'The real component focus neighborhood must fit in the page')
+          const haloFile=`solid-alpha-halo-${id}-${state}.png`
+          await page.screenshot({path:path.join(out,haloFile),clip,animations:'disabled'})
+          item.alpha.halo={file:haloFile,clip,extent,component:{x:bounds.x-clip.x,y:bounds.y-clip.y,width:bounds.width,height:bounds.height},provenance:'Unmodified page pixels around actual InstanceTab, including neighboring components and parent clipping'}
           await writeFile(path.join(out,`solid-alpha-${id}-${state}.aria.yml`),item.alpha.a11y)
         }
       }
@@ -139,7 +152,7 @@ try{
   if(values.binary)for(const record of records)for(const state of record.states){
     const prefix=`rune-${record.id}-${state.state}`,tree=path.join(out,`${prefix}.json`),snap=path.join(out,`${prefix}.png`),script=path.join(out,`${prefix}.script.json`)
     const bounds=state.geometry.bounds;assert(Number.isInteger(bounds.width)&&Number.isInteger(bounds.height),'Use the actual integer Solid crop dimensions')
-    const events=state.state==='hover'?[{t:0.1,type:'move',key:'t-tab-1'}]:state.state==='close-hover'?[{t:0.1,type:'move',key:'c-tab-0'}]:state.state==='focus'?[{t:0.1,type:'tap',key:'t-tab-0'},{t:0.2,type:'type',text:' '}]:[]
+    const events=state.state==='hover'?[{t:0.1,type:'move',key:'t-tab-1'}]:state.state==='close-hover'?[{t:0.1,type:'move',key:'c-tab-0'}]:state.state==='focus'?focusEvents:[]
     await writeFile(script,JSON.stringify({events}))
     const env={...await privateEnvironment(path.join(out,'native-profiles',prefix)),RUNE_PARITY_LOCALE:record.locale,RUNE_PARITY_CASE:record.scene}
     const log=await execute(values.binary,['--script',script,'--tree',tree,'--snap',snap,'--size',`${bounds.width}x${bounds.height}`,'--theme',record.theme,'--scale','1','--at','0.5'],env)
@@ -150,23 +163,29 @@ try{
     assert.equal(tabs.filter(n=>n.states?.includes('selected')).length,1)
     assert(tabs.every(n=>n.actions?.includes('click')&&n.actions?.includes('focus')))
     assert.equal(nodes.filter(n=>n.key?.startsWith('c-')&&n.role==='button').length,tabs.length)
-    if(state.state==='focus')assert(nodes.some(n=>n.key==='t-tab-0'&&n.states?.includes('focused')))
+    if(state.state==='focus')assertKeyboardFocus(actual)
     assert(nodes.some(n=>n.key==='project-tabs-new'&&n.role==='button'))
     state.rune=snap;state.nativeTabs=tabs.map(n=>({key:n.key,name:n.name,states:n.states,bounds:n.bounds}))
   }
   if(values.binary)for(const record of records)for(const state of record.states.filter(s=>s.alpha)){
     const prefix=`rune-alpha-${record.id}-${state.state}`,tree=path.join(out,`${prefix}.json`),snap=path.join(out,`${prefix}.png`),script=path.join(out,`${prefix}.script.json`)
-    const events=state.state==='hover'?[{t:0.1,type:'move',key:'t-tab-0'}]:state.state==='close-hover'?[{t:0.1,type:'move',key:'c-tab-0'}]:state.state==='focus'?[{t:0.1,type:'tap',key:'t-tab-0'},{t:0.2,type:'type',text:' '}]:[]
+    const events=state.state==='hover'?[{t:0.1,type:'move',key:'t-tab-0'}]:state.state==='close-hover'?[{t:0.1,type:'move',key:'c-tab-0'}]:state.state==='focus'?focusEvents:[]
     await writeFile(script,JSON.stringify({events}))
     const env={...await privateEnvironment(path.join(out,'native-profiles',prefix)),RUNE_PARITY_LOCALE:record.locale,RUNE_PARITY_CASE:record.scene,RUNE_PARITY_PRIMITIVE:'true'}
     const log=await execute(values.binary,['--script',script,'--tree',tree,'--snap',snap,'--size',`${state.alpha.width}x${state.alpha.height}`,'--theme',record.theme,'--scale','1','--at','0.5'],env)
     await writeFile(path.join(out,`${prefix}.log`),log)
     const actual=JSON.parse(await readFile(tree,'utf8')),nodes=[]
+    if(state.state==='focus')assertKeyboardFocus(actual)
     function walk(n){if(!n)return;nodes.push(n);for(const c of n.children??[])walk(c)}walk(actual.accessibility)
     const tabs=nodes.filter(n=>n.role==='tab');assert.equal(tabs.length,1)
     assert.equal(Boolean(tabs[0].states?.includes('selected')),state.alpha.selected)
     assert(nodes.some(n=>n.key==='c-tab-0'&&n.role==='button'))
     state.alpha.rune=snap;state.alpha.tree=tree;state.alpha.nativeTabs=tabs
+    assert(state.alpha.halo,'Regenerate real Solid focus-neighborhood references')
+    const halo=state.alpha.halo,haloSnap=path.join(out,`${prefix}-halo.png`),haloTree=path.join(out,`${prefix}-halo.json`)
+    await execute(values.binary,['--script',script,'--tree',haloTree,'--snap',haloSnap,'--size',`${halo.clip.width}x${halo.clip.height}`,'--theme',record.theme,'--scale','1','--at','0.5'],{...env,RUNE_PARITY_HALO:'true'})
+    if(state.state==='focus')assertKeyboardFocus(JSON.parse(await readFile(haloTree,'utf8')))
+    halo.rune=haloSnap;halo.tree=haloTree
   }
   if(values.binary)for(const record of records.filter(r=>r.scene==='basic')){
     const prefix=`rune-${record.id}-interaction`,tree=path.join(out,`${prefix}.json`),snap=path.join(out,`${prefix}.png`),script=path.join(out,`${prefix}.script.json`),bounds=record.states[0].geometry.bounds

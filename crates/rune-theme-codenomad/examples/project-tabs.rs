@@ -12,18 +12,26 @@ struct Gallery {
     active: String,
     next: usize,
     primitive: bool,
+    halo: bool,
 }
 fn init() -> Gallery {
     let locale = std::env::var("RUNE_PARITY_LOCALE").unwrap_or_else(|_| "en".into());
     assert!(catalogue::SUPPORTED_LOCALES.contains(&locale.as_str()));
     let overflow = std::env::var("RUNE_PARITY_CASE").as_deref() == Ok("overflow");
-    let names = if overflow {
+    let mut names: Vec<String> = if overflow {
         (0..8)
             .map(|i| format!("Project {} · long synthetic folder name", i + 1))
             .collect()
     } else {
         vec!["Alpha".into(), "Beta".into()]
     };
+    if let Ok(title) = std::env::var("RUNE_PARITY_TITLE") {
+        assert!(
+            !title.is_empty() && title.len() <= 512,
+            "Synthetic title bound"
+        );
+        names[0] = title;
+    }
     let rows: Vec<_> = names
         .into_iter()
         .enumerate()
@@ -39,6 +47,7 @@ fn init() -> Gallery {
         next: rows.len(),
         rows,
         primitive: std::env::var("RUNE_PARITY_PRIMITIVE").as_deref() == Ok("true"),
+        halo: std::env::var("RUNE_PARITY_HALO").as_deref() == Ok("true"),
     }
 }
 fn view(s: &Gallery, cx: &mut Cx<Gallery>) -> El {
@@ -95,6 +104,11 @@ fn view(s: &Gallery, cx: &mut Cx<Gallery>) -> El {
         rune::row()
             .w_full()
             .h_full()
+            .padding(if s.halo {
+                tokens(cx.system_dark()).metric("tabFocus", "extent").px()
+            } else {
+                0.0
+            })
             .fill(tokens(cx.system_dark()).color("surface-secondary"))
             .child(strip)
     })
