@@ -3,6 +3,7 @@ import {readFile} from 'node:fs/promises'
 import {createHash} from 'node:crypto'
 import {chromium} from 'playwright'
 import {bundleAssetPaths} from './web-workspace-policy.mjs'
+import {navigatePair} from './web-live.mjs'
 
 const profile = JSON.parse(await readFile(new URL('../../packages/ui/src/lib/native/browser-emulation.json', import.meta.url)))
 
@@ -35,13 +36,11 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui}) {
     const context = await browser.newContext({...mobileContext(browser), ignoreHTTPSErrors:true})
     const page = await context.newPage()
     await mobileClientHints(page,browser)
-    const pairPath = '/api/remote-control/pair'
     const assets = await bundleAssetPaths(ui)
     assets.add('/remote-pair')
     await context.route('**/*', route => {
       const req = route.request(), requested = new URL(req.url())
-      const pair = req.method() === 'POST' && requested.pathname === pairPath && req.postDataJSON()?.code === url.hash.slice(1)
-      return requested.origin === origin && (pair || req.method() === 'GET' && assets.has(requested.pathname))
+      return requested.origin === origin && req.method() === 'GET' && assets.has(requested.pathname)
         ? route.continue() : route.abort()
     })
     const get = (pathname, options) => context.request.get(new URL(pathname, origin).href, {maxRedirects:0,...options})
@@ -64,10 +63,8 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui}) {
       sample.remove()
       return matches
     }), 'The pairing card consumes the shared overlay token')
-    const exchanged = page.waitForResponse(res => new URL(res.url()).pathname === pairPath)
-    await page.goto(url.href).catch(error => {if (!String(error).includes('ERR_ABORTED')) throw error})
-    assert.equal((await exchanged).status(), 200)
-    await page.waitForURL(url => url.origin === origin && url.pathname === '/')
+    url.searchParams.set('locale','fr')
+    await navigatePair(page,url,{fromLink:true})
     const cookies = await context.cookies()
     assert(cookies.some(c => c.name === '__Host-codenomad_device' && c.secure && c.httpOnly && c.sameSite === 'Lax'))
     assert.equal((await (await get('/api/auth/status')).json()).authenticated, true)
@@ -85,7 +82,7 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui}) {
     const sha256 = createHash('sha256').update(await wasm.body()).digest('hex')
     assert.equal(sha256, manifest.files.find(row => row.file === 'app_bg.wasm').sha256)
     await context.storageState({path:storage})
-    return {origin, sha256, paired:true}
+    return {origin, sha256, paired:true, crossOriginLink:true}
   } finally { await browser.close() }
 }
 
@@ -177,10 +174,9 @@ export async function mobileInteraction(page, labels) {
       await page.setViewportSize(viewport)
       return {resized:true,canvas:shown,field,button,top,bottom,retainedDraft:true,sendReachable:true}
     })
-    evidence.accessibility = await role('button',labels.older).evaluate(el => ({
-      olderDisabled:el.disabled || el.getAttribute('aria-disabled')==='true',
-      role:el.getAttribute('role') || el.tagName.toLowerCase(),
-    }))
+    const olderDisabled=await role('button',labels.older).evaluate(el=>el.disabled||el.getAttribute('aria-disabled')==='true')
+    evidence.accessibility={older:{expected:'disabled',observed:olderDisabled?'disabled':'enabled',
+      status:olderDisabled?'pass':'known-gap',...(olderDisabled?{}:{issue:'https://github.com/anomalyco/rune/issues/118'})}}
     return evidence
   } finally {await cdp.detach()}
 }

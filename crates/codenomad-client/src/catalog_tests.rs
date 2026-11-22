@@ -503,3 +503,33 @@ fn server_search_follows_scoped_worktree_cursors_and_binds_the_exact_match() {
         assert_eq!(bound.session, info.id);
     });
 }
+
+#[test]
+fn workspace_absence_requires_a_successful_inventory_and_uses_occurrence_identity() {
+    run(async {
+        let server = Server::start(vec![
+            reply(
+                "GET /api/workspaces",
+                None,
+                401,
+                json!({"pairingRequired":true}),
+            ),
+            reply(
+                "GET /api/workspaces",
+                None,
+                200,
+                json!([project("old", "fixture")]),
+            ),
+            reply(
+                "GET /api/workspaces",
+                None,
+                200,
+                json!([project("another", "fixture")]),
+            ),
+        ]);
+        let backend = Backend::connect(&server.address, "").await.unwrap();
+        assert!(backend.workspace_missing("old").await.is_err());
+        assert!(!backend.workspace_missing("old").await.unwrap());
+        assert!(backend.workspace_missing("old").await.unwrap());
+    });
+}

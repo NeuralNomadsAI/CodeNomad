@@ -114,11 +114,17 @@ pub fn view(s: &State) -> El {
                         ),
                 );
             let searching = !l.search.text.trim().is_empty();
+            let mut seen = std::collections::HashSet::new();
             let sessions = if searching {
-                &l.search_results.rows
+                l.search_results.rows.iter().collect::<Vec<_>>()
             } else {
-                &l.sessions
+                l.sessions
+                    .iter()
+                    .chain(l.linked.pages.iter().flat_map(|page| &page.rows))
+                    .filter(|row| seen.insert(row.id.as_str()))
+                    .collect()
             };
+            let count = sessions.len();
             let mut items = col().full_width().separate(Space::Xs);
             for session in sessions {
                 let id = session.id.clone();
@@ -145,9 +151,7 @@ pub fn view(s: &State) -> El {
                     .full_width(),
                 );
             }
-            if sessions.is_empty()
-                && (!searching || l.search_results.pending() || l.search_results.failed)
-            {
+            if count == 0 && (!searching || l.search_results.pending() || l.search_results.failed) {
                 items = items.child(text(t(if searching && l.search_results.pending() {
                     "rune.loading"
                 } else if searching && l.search_results.failed {
@@ -156,11 +160,20 @@ pub fn view(s: &State) -> El {
                     "rune.empty_sessions"
                 })));
             }
-            if !searching && l.next.is_some() {
+            if !searching && l.linked.failed {
+                items = items.child(text(t("rune.list_error")).role("alert"));
+            }
+            if !searching
+                && (l.next.is_some()
+                    || l.linked
+                        .pages
+                        .as_ref()
+                        .is_some_and(launcher::linked::Pages::more))
+            {
                 items = items.child(button(
                     "more-sessions",
                     t("rune.more"),
-                    l.pending || waiting || l.sessions.len() >= 2000,
+                    l.pending || l.linked.pending() || waiting || count >= 2000,
                     crate::screen::action(&scope, |s: &mut State| launcher::list(s, true)),
                 ));
             }

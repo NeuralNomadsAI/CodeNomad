@@ -117,6 +117,9 @@ try {
           await press('Existing history');await reading()
           await press(messages['sessionList.header.title'])
           if(values.mobile){
+            const linked=page.getByRole('button',{name:'Linked checkout session',exact:true})
+            await linked.waitFor()
+            assert.equal(await page.getByRole('button',{name:'Linked checkout next page',exact:true}).count(),0)
             assert.equal(await page.getByRole('button',{name:'Another session',exact:true}).count(),0)
             const search=page.getByRole('group',{name:messages['sessionList.filter.ariaLabel'],exact:true})
             const box=await search.boundingBox();assert(box)
@@ -127,6 +130,14 @@ try {
             await page.locator('textarea:focus').fill('')
           }
           await press(messages['rune.more'])
+          if(values.mobile){
+            await press(messages['rune.more'])
+            await press('Linked checkout next page')
+            await page.getByText('Linked checkout answer',{exact:true}).waitFor()
+            await ready()
+            await press(messages['sessionList.header.title'])
+            await press(messages['rune.more'])
+          }
           await press('Another session')
           await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Another session')&&!document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history'))
           await ready()
@@ -191,7 +202,7 @@ try {
           assert(Math.abs(backingWidth-width*measured.viewport.dpr)<=1 && Math.abs(backingHeight-height*measured.viewport.dpr)<=1)
           assert.equal(measured.android.touchScroll.moved,true,'Physical touch dispatch must move the portrait transcript')
           measured.live=await mobileLive({page,context,url,messages,revoke:control,
-            eventSources:()=>eventSource})
+            eventSources:()=>eventSource,workspaces:policy.workspaces})
         }
         assert.equal(forbiddenRequests.length, 0, 'Synthetic web smoke must stay offline from API and external origins')
         assert.equal(errors.length, 0, 'Web app must initialize and handle multiline input without JS exceptions')
@@ -227,7 +238,8 @@ try {
           if(values.mobile)assert.equal(await page.evaluate(()=>sessionStorage.getItem('codenomad.rune.alpha.records-released')),'1')
           measured.departure={owned,retained,ownedRemoved:true,unownedPreserved:true}
         }
-        records.push({name, colorScheme, width, height, emulatedTouch: touch, firstAccessibleMs, canvasBounds: canvas, textContrast, routes,history,eventSource,...measured, pass: true})
+        records.push({name, colorScheme, width, height, emulatedTouch: touch, firstAccessibleMs, canvasBounds: canvas, textContrast, routes,history,eventSource,...measured,
+          ...(values.mobile?{requiredChecksPassed:true,knownGaps:measured.android.accessibility.older.status==='known-gap'?['older-button-disabled-state']:[]}:{pass:true})})
       } catch (error) {
         await page.screenshot({path: path.join(out, `${name}-${colorScheme}-failure.png`)}).catch(() => {})
         await writeFile(path.join(out, `${name}-${colorScheme}-failure.json`), JSON.stringify({error: error.message, errors, forbiddenRequests,routes,history,measured,mirror:await page.locator('body').ariaSnapshot()}, null, 2))

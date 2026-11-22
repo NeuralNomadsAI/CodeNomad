@@ -2184,6 +2184,7 @@
   "rune.older": "הודעות קודמות",
   "rune.open_error": "הפתיחה נכשלה · בדוק תיקייה או הפעלה",
   "rune.other_values": "ערכים אחרים",
+  "rune.pairing_guide": "במארח CodeNomad, השתמשו ב־admin.sh או ב־admin.ps1 ליצירת קישור צימוד. פתחו את הקישור בכרטיסייה אחרת במכשיר זה.",
   "rune.prompt": "הודעה",
   "rune.ready": "מוכן",
   "rune.reason": "סיבה",

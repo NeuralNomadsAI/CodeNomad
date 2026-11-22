@@ -16,6 +16,7 @@ pub(super) struct Entry {
     project: Option<Project>,
     sessions: Vec<Session>,
     next: Option<String>,
+    linked: Option<crate::launcher::linked::Pages>,
     binding: Option<Backend>,
     cleared: HashSet<String>,
     pending_drafts: HashSet<String>,
@@ -143,6 +144,15 @@ impl Ui {
         self.staged_revision = Some(self.revision);
     }
 }
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn active_workspace(s: &State) -> Option<(&str, &Workspace)> {
+    let ui = s.workspace.as_ref()?;
+    let entry = &ui.entries[ui.active];
+    let Tab::Workspace(saved) = &entry.saved else {
+        return None;
+    };
+    Some((&entry.key, saved))
+}
 fn same_project(a: &Workspace, b: &Workspace) -> bool {
     same_folder(&a.folder, &b.folder)
         && a.backend_id == b.backend_id
@@ -167,6 +177,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         project: None,
         sessions: Vec::new(),
         next: None,
+        linked: None,
         binding: None,
         cleared,
         pending_drafts: HashSet::new(),
@@ -255,6 +266,7 @@ fn stash(s: &mut State) {
             entry.project = l.project.clone();
             entry.sessions = l.sessions.clone();
             entry.next = l.next.clone();
+            entry.linked = l.linked.pages.clone();
         }
     }
 }
@@ -267,6 +279,7 @@ fn activate(s: &mut State, tx: &mut Tx) {
         crate::launcher::set_project(l, item.project.clone());
         l.sessions = item.sessions.clone();
         l.next = item.next.clone();
+        l.linked.pages = item.linked.clone();
         l.folder = TextEdit::new(match &item.saved {
             Tab::Workspace(w) => w.folder.as_str(),
             _ => "",

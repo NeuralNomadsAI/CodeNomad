@@ -1,4 +1,5 @@
 export const runeMessages = {
+  "rune.pairing_guide": "Erstellen Sie auf dem CodeNomad-Host mit admin.sh oder admin.ps1 einen Kopplungslink. Öffnen Sie den Link in einem anderen Tab auf diesem Gerät.",
   "rune.loading": "Laden",
   "rune.ready": "Bereit",
   "rune.streaming": "Antwort läuft",

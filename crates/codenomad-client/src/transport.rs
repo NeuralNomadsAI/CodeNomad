@@ -36,6 +36,7 @@ pub enum Event {
     Done,
     Failed,
     ConnectionLost,
+    WorkspaceMissing,
     Reconnecting,
     PagingFailed,
 }

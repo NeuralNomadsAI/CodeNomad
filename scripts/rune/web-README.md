@@ -16,10 +16,14 @@ Le scénario synthétique et son bundle demandent explicitement `test-support`. 
 Le parcours connecté utilise le bundle produit sous `target/rune-web-connected`, servi par le mode de qualification du vrai serveur Rust avec l'amont OpenCode simulé existant :
 
 ```powershell
-cargo build --locked --target wasm32-unknown-unknown -p codenomad-rune-app
-node scripts/rune/bundle-web.mjs --wasm "$env:CARGO_TARGET_DIR/wasm32-unknown-unknown/debug/codenomad-rune.wasm" --out target/rune-web-connected
+$env:CARGO_PROFILE_RELEASE_OPT_LEVEL = 'z'
+$env:CARGO_PROFILE_RELEASE_LTO = 'thin'
+cargo +1.99.1 build --locked --release --target wasm32-unknown-unknown -p codenomad-rune-app
+node scripts/rune/bundle-web.mjs --wasm "$env:CARGO_TARGET_DIR/wasm32-unknown-unknown/release/codenomad-rune.wasm" --out target/rune-web-connected
 node packages/rune-app/fixtures/launcher-fixture.mjs --web
 ```
+
+Ces réglages s'appliquent à cette commande Cargo et à son environnement ; pour compiler ensuite un binaire natif avec les réglages par défaut, retirer les deux variables `CARGO_PROFILE_RELEASE_*` ou ouvrir un autre terminal.
 
 Cette fixture vérifie cookies, refus sans authentification, deux pages de sessions, conversation exacte, session vide et retour, EventSource et arrêt du serveur, sans création ni envoi. Les six contextes et preuves restent sous `target/rune-web-tests/launcher-*/`.
 
@@ -29,11 +33,23 @@ Avec le même bundle produit et `RUNE_SERVER_EXE` pointant vers le serveur Rust 
 node packages/rune-app/fixtures/launcher-fixture.mjs --web-mobile
 ```
 
-Il vérifie l'appairage HTTPS, la recherche d'une session hors page, l'arrivée d'un message uniquement en SSE, la récupération après coupure de l'amont, le toucher au centre, l'IME injectée, le redimensionnement et le brouillon après révocation et réappairage. Le profil Chromium Android portrait couvre clair, sombre et DPR 1 ; le miroir accessible expose l'état observé d'« Anciens » pour le suivi Rune #118.
+Il vérifie l'appairage HTTPS depuis une autre origine, les sessions du dossier et des worktrees liés sans recherche, la recherche hors page, le SSE et sa reprise après la coupure de l'amont puis après un vrai redémarrage du serveur Rust sur le même port. Le toucher au centre, l'IME injectée, le redimensionnement et la conservation du brouillon lors du redémarrage et du réappairage sont vérifiés. Le profil Chromium Android portrait couvre clair, sombre et DPR 1 ; « Anciens » est signalé comme écart connu si le miroir accessible le présente comme actif ([Rune #118](https://github.com/anomalyco/rune/issues/118)).
 
 `node packages/rune-app/fixtures/launcher-fixture.mjs --web-android` utilise Chrome et le clavier logiciel d'un émulateur Android jetable déjà démarré, avec `RUNE_ANDROID_ADB` (chemin absolu), `RUNE_ANDROID_ADB_PORT` (serveur ADB privé) et `RUNE_ANDROID_SERIAL` (unique `emulator-*`). Il vérifie l'ouverture réelle du clavier, le viewport, le texte injecté par CDP et la reprise SSE. Le certificat de fixture est épinglé au lancement de Chrome. La dictée, la composition propre à Gboard et TalkBack gardent leurs essais distincts.
 
 Les libellés de démarrage et d'erreur proviennent des dix catalogues générés. `?locale=he` sélectionne par exemple l'hébreu et la direction RTL ; la valeur par défaut est `fr`. Les couleurs, dimensions et polices du démarrage consomment le thème généré et `crates/rune-theme-codenomad/assets/web-shell.css`. Le zoom du navigateur reste disponible.
+
+### Créer un lien sur l'hôte Rust
+
+Depuis `packages/server-rs` sur l'hôte, remplacez l'origine par l'adresse HTTPS annoncée par le serveur. Les scripts utilisent les paramètres de l'installation locale ([installation Rust](../../packages/server-rs/install/README.md)). Ouvrez l'URL `url` de la réponse dans un autre onglet sur l'appareil.
+
+```sh
+bash install/linux/admin.sh POST /api/remote-control/pairings '{"origin":"https://code.example:47943"}'
+```
+
+```powershell
+pwsh -File install/windows/admin.ps1 -Root $Root -Method POST -Path /api/remote-control/pairings -Body '{"origin":"https://code.example:47943"}'
+```
 
 Le runner complet crée un profil privé et un espace de travail vide, configure un exécutable OpenCode privé absent, démarre le vrai serveur Rust sur un port loopback éphémère, authentifie les seuls cookies de cette fixture et vérifie le HTML et le MIME/empreinte du module WASM. Il exécute ensuite le smoke et exige le marqueur de fermeture complète et le code de sortie zéro. Les données et preuves restent sous `target/rune-web-tests/trial-*`.
 

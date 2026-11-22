@@ -12,6 +12,10 @@ export function webLiveFixture({stores, project, streams}) {
   }
   return {
     get held() { return held },
+    restartHistory() {
+      assert.equal(phase,'reset')
+      store.append('assistant','Mobile Rust restart history')
+    },
     async command(action, http) {
       if (action === 'pair') {
         const response = await http.post('/api/remote-control/pairings')

@@ -180,6 +180,29 @@ impl Backend {
         self.session_page(project, &project.path, None, cursor)
             .await
     }
+    pub async fn linked_session_directories(&self, project: &Project) -> Result<Vec<String>> {
+        Ok(self
+            .session_directories(project)
+            .await?
+            .into_iter()
+            .skip(1)
+            .collect())
+    }
+    pub async fn linked_session_page(
+        &self,
+        project: &Project,
+        directory: &str,
+        cursor: Option<&str>,
+    ) -> Result<Sessions> {
+        self.session_page(project, directory, None, cursor).await
+    }
+    pub async fn workspace_missing(&self, id: &str) -> Result<bool> {
+        Ok(self
+            .projects()
+            .await?
+            .into_iter()
+            .all(|workspace| workspace.id != id))
+    }
     async fn session_page(
         &self,
         project: &Project,

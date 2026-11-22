@@ -1,4 +1,5 @@
 export const runeMessages = {
+  "rune.pairing_guide": "En el equipo que ejecuta CodeNomad, usa admin.sh o admin.ps1 para crear un enlace de emparejamiento. Ábrelo en otra pestaña de este dispositivo.",
   "rune.loading": "Cargando",
   "rune.ready": "Listo",
   "rune.streaming": "Respondiendo",

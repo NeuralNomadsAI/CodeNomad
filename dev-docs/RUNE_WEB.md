@@ -10,7 +10,9 @@ Les capacités du bureau sont isolées par la plateforme. La sélection d'un dos
 
 La page d'appairage embarque le thème et les dix catalogues ; le code à usage unique disparaît du fragment avant l'échange HTTPS. En cas de rupture du flux, le client sonde le statut d'authentification. Une réponse `pairingRequired` présente les étapes d'appairage sans remplacer le document ni le brouillon. Le bouton de vérification ou le retour au premier plan relit le statut ; la reprise relit l'historique sur la même conversation.
 
-La recherche de sessions interroge le serveur sur le dossier du projet et ses worktrees déclarés. La pagination reste attachée au dossier demandé ; changer de projet ou de requête annule la recherche précédente. Effacer le texte retrouve la liste paginée du projet.
+La liste de sessions publie la première page du dossier puis enrichit la liste avec les worktrees déclarés. Chaque curseur appartient à son dossier. La recherche interroge les mêmes dossiers indépendamment des pages affichées ; changer de projet ou de requête annule la recherche précédente.
+
+Après une rupture SSE et un historique indisponible, l'inventaire authentifié confirme l'absence de l'occurrence. Le navigateur revalide l'identité du serveur, ouvre le même dossier dans une nouvelle occurrence et relie la session native exacte. Il garde le document et le brouillon et relit l'historique sans réémettre d'action.
 
 ## Risques à qualifier
 
@@ -41,7 +43,7 @@ Depuis le worktree isolé, avec le `CARGO_TARGET_DIR` existant :
 ```powershell
 rustup target add --toolchain 1.99.1 wasm32-unknown-unknown
 cargo +1.99.1 build --locked --target wasm32-unknown-unknown -p codenomad-client -p rune-theme-codenomad
-cargo +1.99.1 build --locked --target wasm32-unknown-unknown -p codenomad-rune-app --bin codenomad-rune
+cargo +1.99.1 check --locked --target wasm32-unknown-unknown -p codenomad-rune-app
 ```
 
 La compilation des cibles précède la qualification de la coquille servie par le serveur. Celle-ci couvre connexion, liste des sessions et lecture avec le même code d'état et de vues. Le parcours complet sur téléphone ajoute écriture, permissions, questions et arrêt via l'accès distant, puis les notifications push.

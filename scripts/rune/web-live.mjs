@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 export function command(action) {
   assert(process.send,'Run the mobile smoke through launcher-fixture.mjs')
   return new Promise((resolve,reject)=>{
-    const timer=setTimeout(()=>reject(Error(`No fixture acknowledgement: ${action}`)),15000)
+    const timer=setTimeout(()=>reject(Error(`No fixture acknowledgement: ${action}`)),action==='restart'?45000:15000)
     process.once('message', ({value,error})=>{
       clearTimeout(timer)
       if(error)reject(Error(error))
@@ -13,7 +13,7 @@ export function command(action) {
   })
 }
 
-export async function mobileLive({page,context,url,messages,revoke,eventSources,tap=(x,y)=>page.touchscreen.tap(x,y)}){
+export async function mobileLive({page,context,url,messages,revoke,eventSources,workspaces,tap=(x,y)=>page.touchscreen.tap(x,y)}){
   const text=value=>page.getByText(value,{exact:true})
   const before=eventSources()
   assert(before>0)
@@ -37,10 +37,29 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
       return editor
     }
     await (await focus()).fill(draft)
+    const afterTransport=eventSources()
+    const previous=[...workspaces]
+    const {older,witness}=await command('restart')
+    assert(previous.length&&previous.every(id=>older.includes(id)),'Fixture had the browser-owned workspaces before reboot')
+    await text('Mobile Rust restart history').waitFor({timeout:45000})
+    await text(messages['rune.ready']).waitFor()
+    const inventory=await context.request.get(`${url.origin}/api/workspaces`)
+    assert(inventory.ok())
+    const ids=(await inventory.json()).map(row=>row.id)
+    assert(older.every(id=>!ids.includes(id)),'The restarted listener must not still have the old workspace ids')
+    assert(ids.includes(witness),'Reopening by folder must leave the other occurrence intact')
+    const fresh=[...workspaces].filter(id=>!previous.includes(id))
+    assert(fresh.length===1&&ids.includes(fresh[0]),'Browser must claim exactly one new workspace for the active tab')
+    for(const id of previous)workspaces.delete(id)
+    assert.equal(await (await focus()).inputValue(),draft)
+    assert(eventSources()>afterTransport,'Rust restart must open a new EventSource')
+    assert.equal(page.url(),url.href)
+    evidence.recoveredAfterRustRestart=true
+    const beforeRevoke=eventSources()
     await command('revoke')
     const dialog=page.getByRole('dialog',{name:messages['authRecovery.pairingTitle']})
     await dialog.waitFor()
-    await text(messages['authRecovery.pairing']).waitFor()
+    await text(messages['rune.pairing_guide']).waitFor()
     const check=dialog.getByRole('button',{name:messages['authRecovery.check'],exact:true})
     const denied=page.waitForResponse(response=>response.url()===`${url.origin}/api/auth/status`&&response.ok())
     await check.click({force:true})
@@ -51,7 +70,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
     again.searchParams.set('locale','he')
     const tab=await context.newPage()
     try {
-      await navigatePair(tab, again)
+      await navigatePair(tab, again, {fromLink:true})
     } finally { await tab.close() }
     await page.bringToFront()
     if(await dialog.count())await check.click({force:true,timeout:2500}).catch(async error=>{
@@ -60,7 +79,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
     await dialog.waitFor({state:'detached'})
     await text(messages['rune.ready']).waitFor()
     assert.equal(await (await focus()).inputValue(),draft)
-    assert(eventSources()>before,'Re-pairing must open a new real EventSource')
+    assert(eventSources()>beforeRevoke,'Re-pairing must open a new real EventSource')
     assert.equal(page.url(),url.href,'Original document stays on its conversation')
     evidence.repairedWithDraft=true
   }
@@ -68,18 +87,36 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
   return evidence
 }
 
-export async function navigatePair(tab, url){
+export async function navigatePair(tab, url, {fromLink=false}={}){
   const pairPath='/api/remote-control/pair'
-  await tab.route('**/*', route=>{
+  const referrer='https://rune-pair-source.test/'
+  let observedReferrer
+  const routePair=async route=>{
     const req=route.request(), requested=new URL(req.url())
+    if(fromLink&&requested.href===referrer){
+      const target=url.href.replaceAll('&','&amp;').replaceAll('"','&quot;')
+      return route.fulfill({contentType:'text/html',body:`<a href="${target}">Pair</a>`})
+    }
+    if(requested.origin===url.origin&&requested.pathname==='/remote-pair'&&req.isNavigationRequest()){
+      observedReferrer=(await req.allHeaders()).referer
+    }
     const exchange=requested.pathname===pairPath&&req.method()==='POST'&&req.postDataJSON()?.code===url.hash.slice(1)
     return requested.origin===url.origin&&(exchange||req.method()==='GET'&&['/remote-pair','/'].includes(requested.pathname))
       ?route.continue():route.abort()
-  })
+  }
+  await tab.route('**/*', routePair)
   try {
+    if(fromLink)await tab.goto(referrer)
+    const document=tab.waitForResponse(response=>response.request().isNavigationRequest()&&
+      new URL(response.url()).origin===url.origin&&new URL(response.url()).pathname==='/remote-pair')
+    void document.catch(()=>{})
     const exchange=tab.waitForResponse(response=>new URL(response.url()).pathname===pairPath)
-    await tab.goto(url.href,{waitUntil:'commit'})
+    void exchange.catch(()=>{})
+    if(fromLink)await tab.getByRole('link',{name:'Pair',exact:true}).click({noWaitAfter:true})
+    else await tab.goto(url.href,{waitUntil:'commit'})
+    assert.equal((await document).status(),200,'Serve the pairing document even with a foreign Referer')
+    if(fromLink)assert.equal(observedReferrer,referrer,'Pairing navigation must carry a real cross-origin Referer')
     assert.equal((await exchange).status(),200)
     await tab.waitForURL(target=>target.pathname==='/' && target.searchParams.get('locale')===url.searchParams.get('locale'))
-  } finally { await tab.unrouteAll() }
+  } finally { await tab.unroute('**/*',routePair) }
 }

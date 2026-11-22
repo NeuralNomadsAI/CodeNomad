@@ -4,6 +4,8 @@ pub(crate) mod opening;
 mod persistence;
 mod state;
 pub(crate) use persistence::finish;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use state::active_workspace;
 pub(crate) use state::{
     Ui, bound, capture, close, connected, draft_changed, input_ready, new_tab, opened, poll,
     prepare_open, resume, retry, select, status, strip,

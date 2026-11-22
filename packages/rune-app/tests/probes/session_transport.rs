@@ -130,6 +130,7 @@ pub fn contract() {
             | Event::Older(_)
             | Event::Reconnecting
             | Event::ConnectionLost
+            | Event::WorkspaceMissing
             | Event::Connected(_)
             | Event::AgentHint(_)
             | Event::Workspace(_)

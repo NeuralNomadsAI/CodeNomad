@@ -26,6 +26,17 @@ const manifest=web?JSON.parse(await readFile(path.join(ui,'bundle-manifest.json'
 if(web){assert.equal(manifest.generator,'scripts/rune/bundle-web.mjs');assert.equal(manifest.testSupport,false,'Connected qualification requires the default product bundle')}
 const gitCount=Number(process.env.RUNE_TEST_GIT_COUNT??0)
 if(gitCount)await promisify(execFile)('git',['init','--quiet',project],{windowsHide:true,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'NUL'}})
+const linked=webMobile&&!webAndroid?path.join(path.dirname(project),'linked'):null
+if(linked){
+  const hooks=path.join(profile,'empty-hooks')
+  await mkdir(hooks)
+  const git=(...args)=>promisify(execFile)('git',['-c',`core.hooksPath=${hooks}`,'-C',project,...args],{
+    windowsHide:true,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:path.join(profile,'empty.gitconfig')},
+  })
+  await git('init','--quiet')
+  await git('-c','user.name=Fixture','-c','user.email=fixture@invalid','commit','--quiet','--allow-empty','-m','synthetic')
+  await git('worktree','add','--quiet','--detach',linked,'HEAD')
+}
 const records=new Map(),stores=new Map(),streams=new Set(),requests=[]
 const stats={created:0,prompts:0,lists:0}
 const uncertain=process.argv.includes('--uncertain-create')
@@ -88,14 +99,19 @@ function clientOutput(chunk) {
     visibleProof.push(ack);gate.resolve()
   }
 }
-function add(id,title) {
-  const row={id,title,projectID:'global',location:{directory:project},permissions:[{action:'*',resource:'*',effect:'deny'}],time:{created:1,busy:0,idle:1}}
+function add(id,title,directory=project) {
+  const row={id,title,projectID:linked?'fixture_project':'global',location:{directory},permissions:[{action:'*',resource:'*',effect:'deny'}],time:{created:1,busy:0,idle:1}}
   records.set(id,row);stores.set(id,new FixtureStore(0));return row
 }
 add('ses_existing','Existing history')
 if(webMobile)for(let i=0;i<70;i++)stores.get('ses_existing').append('assistant',`Mobile history row ${i}`)
 stores.get('ses_existing').append('user','Existing project history');stores.get('ses_existing').append('assistant','Existing answer')
 add('ses_another','Another session')
+if(linked){
+  add('ses_linked','Linked checkout session',linked)
+  add('ses_linked_next','Linked checkout next page',linked)
+  stores.get('ses_linked_next').append('assistant','Linked checkout answer')
+}
 const mobile=webMobile?webLiveFixture({stores,project,streams}):null
 if(withTools)stores.get('ses_existing').rows[1].content.push({type:'tool',id:'historical-read',name:'read',state:{status:'completed',input:{file:'synthetic.rs'},content:[{type:'text',text:'fn historical() {}'}]}})
 const control=controls?controlsFixture({records,stores,streams,project,stats}):null
@@ -109,7 +125,7 @@ const upstream=createServer(async(req,res)=>{
     if(web){
       assert(!['prompt','interrupt'].some(action=>url.pathname.endsWith(`/${action}`))&&!(url.pathname==='/api/session'&&req.method==='POST'),'Read-only web fixture')
       if(url.pathname==='/api/config')return json([{type:'directory',path:project}])
-      if(url.pathname==='/api/model')return json({location:{directory:project},data:[]})
+      if(url.pathname==='/api/model')return json({location:{directory:url.searchParams.get('location[directory]')??project},data:[]})
       if(/^\/api\/session\/[^/]+\/(permission|form)$/.test(url.pathname))return json({data:[]})
     }
     if(control&&await control.route(req,url,raw,json,res))return
@@ -118,19 +134,26 @@ const upstream=createServer(async(req,res)=>{
       res.writeHead(200,{'content-type':'text/event-stream'});res.write(`data: ${JSON.stringify({id:randomUUID(),type:'server.connected',created:Date.now(),data:{}})}\n\n`)
       streams.add(res);req.on('close',()=>streams.delete(res));return
     }
-    if(url.pathname==='/api/location')return json(gitCount?{directory:project,project:{id:'fixture_project',canonical:project,directory:project}}:{data:{directory:project}})
+    if(url.pathname==='/api/location'){
+      const directory=url.searchParams.get('location[directory]')??project
+      return json(gitCount||linked?{directory,project:{id:'fixture_project',canonical:project,directory}}:{data:{directory:project}})
+    }
+    if(linked&&url.pathname==='/api/worktree')return json([{directory:project},{directory:linked}])
     if(gitCount&&url.pathname==='/api/worktree')return json(Array.from({length:gitCount},(_,i)=>({directory:i?path.join(profile,`absent-checkout-${i}`):project})))
     if(url.pathname==='/api/session'&&req.method==='GET') {
       stats.lists++
-      let rows=[...records.values()]
+      const cursor=url.searchParams.get('cursor')
+      const directory=cursor?JSON.parse(Buffer.from(cursor,'base64url')).directory:url.searchParams.get('directory')
+      assert(directory===project||linked&&directory===linked,'An ordinary page uses its own checkout')
+      let rows=[...records.values()].filter(row=>row.location.directory===directory)
       let next
-      if(!url.searchParams.has('cursor')){
-        assert.equal(url.searchParams.get('directory'),project);assert.equal(url.searchParams.get('limit'),'200')
+      if(!cursor){
+        assert.equal(url.searchParams.get('limit'),'200')
         const search=url.searchParams.get('search')
         if(webMobile&&search!==null)return json({data:rows.filter(row=>row.title.toLowerCase().includes(search.toLowerCase())),cursor:{}})
-        next=Buffer.from(JSON.stringify({directory:project,anchor:{id:rows[0].id,time:1,direction:'next'}})).toString('base64url')
+        if(rows.length>1)next=Buffer.from(JSON.stringify({directory,anchor:{id:rows[0].id,time:1,direction:'next'}})).toString('base64url')
         rows=rows.slice(0,1)
-      }else{assert.equal(JSON.parse(Buffer.from(url.searchParams.get('cursor'),'base64url')).directory,project);rows=rows.slice(1)}
+      }else rows=rows.slice(1)
       return json({data:rows,cursor:next?{next}:{}})
     }
     if(url.pathname==='/api/session'&&req.method==='POST') {
@@ -189,19 +212,41 @@ const env=await privateEnvironment(profile)
 Object.assign(env,{CNRS_SERVER_PASSWORD:'fixture-backend',CNRS_FIXTURE_URL:`http://127.0.0.1:${upstream.address().port}/`,CNRS_FIXTURE_PASSWORD:'fixture-native',CNRS_FIXTURE_STDIN_STOP:'1',GIT_CEILING_DIRECTORIES:profile,CODENOMAD_REMOTE_CONTROL:'disabled'})
 if(web)env.CNRS_FIXTURE_UI_DIR=ui
 if(webMobile)Object.assign(env,{CODENOMAD_REMOTE_CONTROL:'',CNRS_HTTPS_BIND:'127.0.0.1:0',CNRS_HTTPS_NAME:'127.0.0.1',CNRS_FIXTURE_INGRESS:'1'})
-const server=spawn(serverBinary,[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
-let log='',client,result=1,http,staticProof,diagnostic='';server.stdout.on('data',d=>{if(log.length<1048576)log+=d});server.stderr.on('data',d=>{if(log.length<1048576)log+=d})
-const exited=new Promise(resolve=>{server.once('close',resolve);server.once('error',resolve)})
+let server,exited,log='',client,result=1,http,staticProof,diagnostic='',runLog=''
+async function startServer(){
+  runLog=''
+  server=spawn(serverBinary,[path.dirname(project),path.join(profile,'identity.json'),'0','synthetic-only'],{cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})
+  server.stdout.on('data',d=>{if(log.length<1048576)log+=d;if(runLog.length<1048576)runLog+=d})
+  server.stderr.on('data',d=>{if(log.length<1048576)log+=d})
+  server.stdin.on('error',()=>{})
+  exited=new Promise(resolve=>{server.once('close',resolve);server.once('error',resolve)})
+  for(const until=Date.now()+20000;;){
+    assert(Date.now()<until&&server.exitCode===null,'Rust startup')
+    const origin=runLog.match(/^http:\/\/127\.0\.0\.1:\d+(?=\r?$)/m)?.[0]
+    if(origin)return origin
+    await new Promise(r=>setTimeout(r,50))
+  }
+}
+async function stopServer(){
+  if(!server || server.exitCode!==null)return
+  server.stdin.end('shutdown\n')
+  await Promise.race([exited,new Promise(r=>setTimeout(r,3000))])
+  if(server.exitCode===null){server.kill();await Promise.race([exited,new Promise(r=>setTimeout(r,5000))])}
+}
+async function signIn(origin){
+  await http?.dispose()
+  http=await request.newContext({baseURL:origin,timeout:15000})
+  assert.equal((await http.get('/api/workspaces')).status(),401,'Workspace inventory requires authentication')
+  assert.equal((await http.post('/api/auth/login',{data:{username:'codenomad',password:'fixture-backend'}})).status(),200)
+}
 try{
-  let origin;for(const until=Date.now()+20000;!origin;){assert(Date.now()<until&&server.exitCode===null,'Rust startup');origin=log.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];if(!origin)await new Promise(r=>setTimeout(r,50))}
+  const origin=await startServer()
   if(web){
-    http=await request.newContext({baseURL:origin,timeout:15000})
-    assert.equal((await http.get('/api/workspaces')).status(),401,'Workspace inventory requires authentication')
-    assert.equal((await http.post('/api/auth/login',{data:{username:'codenomad',password:'fixture-backend'}})).status(),200)
+    await signIn(origin)
     const storage=path.join(profile,'browser-storage.json')
     let uiOrigin=origin, paired
     if(webMobile){
-      uiOrigin=log.match(/^HTTPS (https:\/\/127\.0\.0\.1:\d+)\r?$/m)?.[1];assert(uiOrigin,'Rust HTTPS fixture missing')
+      uiOrigin=runLog.match(/^HTTPS (https:\/\/127\.0\.0\.1:\d+)\r?$/m)?.[1];assert(uiOrigin,'Rust HTTPS fixture missing')
       if(!webAndroid){
         const issue=await http.post('/api/remote-control/pairings')
         assert.equal(issue.status(),200)
@@ -220,7 +265,24 @@ try{
     if(webAndroid)androidEnv.NODE_EXTRA_CA_CERTS=path.join(profile,'identity.data/tls/ca-cert.pem')
     client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
     if(mobile)client.on('message',async action=>{
-      try{client.send({value:await mobile.command(action,http)})}
+      try{
+        if(action==='restart'){
+          assert(!webAndroid)
+          const {serverId}=await (await http.get('/api/meta')).json()
+          const older=(await (await http.get('/api/workspaces')).json()).map(row=>row.id)
+          assert(older.length>=2)
+          mobile.restartHistory()
+          await stopServer()
+          assert.equal(server.exitCode,0,'The original Rust listener must actually exit')
+          env.CNRS_HTTPS_BIND=new URL(uiOrigin).host
+          await signIn(await startServer())
+          assert(runLog.includes(`HTTPS ${uiOrigin}`))
+          assert.equal((await (await http.get('/api/meta')).json()).serverId,serverId)
+          const opened=await http.post('/api/workspaces',{data:{path:project}})
+          assert(opened.ok())
+          client.send({value:{older,witness:(await opened.json()).id}})
+        }else client.send({value:await mobile.command(action,http)})
+      }
       catch(error){client.send({error:String(error.message)})}
     })
     for(const stream of [client.stdout,client.stderr])stream.on('data',d=>{if(diagnostic.length<262144)diagnostic+=d})
@@ -265,16 +327,15 @@ try{
   }
   if(!web&&!controls&&!workspaceClaims&&!pendingOpen&&!filesState)assert.deepEqual(visibleProof.map(p=>p.turn),[1,2],'Both distinct assistant turns must be visible before their endings')
   if(restoreState){assert.deepEqual(restoreStages.map(s=>s.stage),['prepare','resume','verify']);assert.deepEqual(restorePrompts.map(p=>p.sessionID),['ses_created_2','ses_created_1']);for(const id of ['ses_created_1','ses_created_2']){const rows=stores.get(id).rows;assert.deepEqual(rows.map(r=>r.type),['user','assistant']);assert(rows[1].time.completed)}}
-  if(gitCount)assert.equal(requests.filter(r=>r==='GET /api/worktree').length,0,'root mutations must not enumerate sibling worktrees')
   console.log(JSON.stringify({fixture:'launcher',uncertain,withTools,workspaceClaims,restoreState,webRestore,filesState,documentState,...stats,profile}))
 }catch(error){result=1;throw error}finally{
   control?.close()
   for(const gate of gates.values())gate.reject()
   await http?.dispose()
-  if(client?.exitCode===null)client.kill();server.stdin.on('error',()=>{});server.stdin.end('shutdown\n')
-  await Promise.race([exited,new Promise(r=>setTimeout(r,3000))]);if(server.exitCode===null){server.kill();await Promise.race([exited,new Promise(r=>setTimeout(r,5000))])}
+  if(client?.exitCode===null)client.kill()
+  await stopServer()
   for(const stream of streams)stream.destroy();upstream.closeAllConnections();upstream.close()
-  await writeFile(path.join(profile,'proof.json'),JSON.stringify({result,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:staticProof,profile,project,forbidden,serverExitCode:server.exitCode},null,2));await writeFile(path.join(profile,'rust.log'),log)
+  await writeFile(path.join(profile,'proof.json'),JSON.stringify({result,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:staticProof,profile,project,forbidden,serverExitCode:server?.exitCode},null,2));await writeFile(path.join(profile,'rust.log'),log)
   if(!web)await writeFile(path.join(profile,'client.log'),clientLog)
   if(web)await writeFile(path.join(profile,'browser-run.log'),diagnostic)
   if(result===0)assert.equal(server.exitCode,0,'Owned Rust server must exit cleanly')

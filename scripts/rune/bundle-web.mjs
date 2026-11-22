@@ -75,8 +75,8 @@ try {
     messages[locale] = {direction: index.directions[locale]}
     pairing[locale] = {direction: index.directions[locale]}
     for (const [target, keys] of [[messages, {title: 'window.title.main', loading: 'rune.loading', failed: 'rune.failed', retry: 'sessionList.loadError.retry'}],
-      [pairing, {title: 'window.title.main', heading: 'authRecovery.pairingTitle', guidance: 'authRecovery.pairing',
-        loading: 'rune.loading', failed: 'rune.connect_error', expired: 'remoteBrowse.pairingExpired', limited: 'remoteBrowse.pairingRateLimited'}]]) {
+      [pairing, {title: 'window.title.main', heading: 'authRecovery.pairingTitle', guidance: 'rune.pairing_guide',
+        loading: 'rune.loading', failed: 'rune.failed', expired: 'remoteBrowse.pairingExpired', limited: 'remoteBrowse.pairingRateLimited'}]]) {
       for (const [name, key] of Object.entries(keys)) {
         assert.equal(typeof catalogue[key], 'string', `Missing ${locale} web message ${key}`)
         target[locale][name] = catalogue[key]

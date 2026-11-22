@@ -73,6 +73,7 @@ pub async fn run(
     let mut settlement_reads = 0u8;
     let mut resident = Vec::<crate::Message>::new();
     let mut parked = false;
+    let mut connection_lost = false;
     let mut seen = Seen {
         entries: VecDeque::new(),
         bytes: 0,
@@ -111,6 +112,7 @@ pub async fn run(
             }
             Some(Input::Closed(e)) if e == epoch => {
                 opened = false;
+                connection_lost = true;
                 dirty = true;
                 publish(&out, &wake, Event::ConnectionLost).await;
                 attempts += 1;
@@ -328,6 +330,7 @@ pub async fn run(
                     });
                     fence = stamp;
                     attempts = 0;
+                    connection_lost = false;
                     dirty = false;
                     initial = false;
                     first = page.rows.first().map(|r| r.id.clone());
@@ -357,6 +360,17 @@ pub async fn run(
                     quiet = Instant::now() + Duration::from_millis(200);
                 }
                 Err(error) => {
+                    if cfg!(target_arch = "wasm32")
+                        && connection_lost
+                        && matches!(
+                            backend.workspace_missing(&backend.workspace).await,
+                            Ok(true)
+                        )
+                    {
+                        wire.cancelled.store(true, SeqCst);
+                        publish(&out, &wake, Event::WorkspaceMissing).await;
+                        return Ok(());
+                    }
                     eprintln!("Rune history refresh failed: {}", read_diagnostic(&error));
                     dirty = false;
                     parked = true;

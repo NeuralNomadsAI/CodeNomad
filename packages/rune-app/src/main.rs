@@ -64,6 +64,10 @@ enum Phase {
     Streaming,
     Failed,
     Reconnecting,
+    #[cfg(target_arch = "wasm32")]
+    WorkspaceMissing,
+    #[cfg(target_arch = "wasm32")]
+    RestoreFailed,
 }
 fn init() -> State {
     State {
@@ -156,6 +160,11 @@ fn request_older(s: &mut State, _: &mut Tx) {
     }
 }
 fn retry(s: &mut State) {
+    #[cfg(target_arch = "wasm32")]
+    if s.phase == Phase::RestoreFailed {
+        launcher::reopen(s);
+        return;
+    }
     let older = s.history_error && s.phase != Phase::Failed;
     let command = if older {
         Command::Older
@@ -185,6 +194,10 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         changed |= platform::pairing::poll(s, tx);
     }
     changed |= workspace::poll(s, now, tx);
+    #[cfg(target_arch = "wasm32")]
+    if s.phase == Phase::WorkspaceMissing && !platform::pairing::required(s) {
+        changed |= launcher::reopen(s);
+    }
     changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
     if changed {
         tx.instant();
@@ -200,7 +213,12 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
         match event {
             Event::Connected(backend) => {
                 s.renew_scope();
-                s.agent = Some(agent::Ui::new(agent::start(backend, s.wake.clone())));
+                let handle = agent::start(backend, s.wake.clone());
+                if let Some(agent) = s.agent.as_mut() {
+                    agent.rebind(handle);
+                } else {
+                    s.agent = Some(agent::Ui::new(handle));
+                }
             }
             Event::AgentHint(catalog) => {
                 if let Some(a) = s.agent.as_mut() {
@@ -262,6 +280,16 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             Event::PagingFailed => {
                 s.paging = false;
                 s.history_error = true;
+            }
+            Event::WorkspaceMissing => {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    s.phase = Phase::WorkspaceMissing;
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    s.phase = Phase::Failed;
+                }
             }
             Event::History(messages) => {
                 s.messages = messages;
@@ -360,7 +388,14 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         Phase::Streaming => "rune.streaming",
         Phase::Failed => "rune.failed",
         Phase::Reconnecting => "rune.reconnecting",
+        #[cfg(target_arch = "wasm32")]
+        Phase::WorkspaceMissing => "rune.reconnecting",
+        #[cfg(target_arch = "wasm32")]
+        Phase::RestoreFailed => "rune.restore_error",
     };
+    let retry_visible = s.phase == Phase::Failed || s.history_error;
+    #[cfg(target_arch = "wasm32")]
+    let retry_visible = retry_visible || s.phase == Phase::RestoreFailed;
     let expanded = s
         .agent
         .as_ref()
@@ -404,10 +439,14 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                     .key("older")
                     .role("button")
                     .focusable(true)
-                    .disabled(!s.can_older || s.paging || s.phase == Phase::Reconnecting)
+                    .disabled(
+                        !s.can_older
+                            || s.paging
+                            || !matches!(s.phase, Phase::Ready | Phase::Streaming),
+                    )
                     .on_press_tx(crate::screen::action_tx(&scope, request_older)),
                 )
-                .child(if s.phase == Phase::Failed || s.history_error {
+                .child(if retry_visible {
                     text(strings::t("sessionList.loadError.retry"))
                         .key("retry")
                         .role("button")

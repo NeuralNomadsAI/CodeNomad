@@ -1,4 +1,7 @@
 //! One serialized opening action at a time; HTTP never runs on the UI thread.
+pub(crate) mod linked;
+#[cfg(target_arch = "wasm32")]
+mod reopen;
 mod search;
 pub(crate) mod view;
 use crate::{
@@ -8,6 +11,8 @@ use crate::{
     history::Result,
 };
 use codenomad_client::{Receiver, bounded};
+#[cfg(target_arch = "wasm32")]
+pub(crate) use reopen::reopen;
 use rune::{Tx, edit::TextEdit};
 use std::future::Future;
 
@@ -24,6 +29,7 @@ pub struct Launcher {
     pub project: Option<Project>,
     pub sessions: Vec<Session>,
     pub next: Option<String>,
+    pub(crate) linked: linked::Linked,
     pub pending: bool,
     pub error: Option<&'static str>,
     pub creation_uncertain: bool,
@@ -42,6 +48,8 @@ enum Reply {
     ),
     Listed(Sessions, bool),
     Bound(Backend, String),
+    #[cfg(target_arch = "wasm32")]
+    Reopened(crate::workspace::opening::Opening, Backend, String),
 }
 impl Launcher {
     #[cfg(test)]
@@ -98,6 +106,7 @@ impl Launcher {
             project: None,
             sessions: vec![],
             next: None,
+            linked: Default::default(),
             pending: starting,
             error: None,
             creation_uncertain: false,
@@ -327,13 +336,23 @@ pub fn list(s: &mut State, more: bool) {
         l.search_results = Default::default();
         return;
     }
+    if l.pending {
+        return;
+    }
     let cursor = if more { l.next.clone() } else { None };
+    if more && cursor.is_none() {
+        linked::load(s, true);
+        return;
+    }
     l.job("rune.list_error", async move {
         Ok(Reply::Listed(
             b.sessions(&p, cursor.as_deref()).await?,
             more,
         ))
     });
+    if !more {
+        linked::load(s, false);
+    }
 }
 pub fn create(s: &mut State, _: &mut Tx) {
     if !crate::workspace::input_ready(s) {
@@ -383,11 +402,13 @@ pub(crate) fn set_project(l: &mut Launcher, project: Option<Project>) {
     if l.project.as_ref().map(|p| &p.id) != project.as_ref().map(|p| &p.id) {
         l.search = TextEdit::new("");
         l.search_results = Default::default();
+        l.linked = Default::default();
     }
     l.project = project;
 }
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let mut boot_changed = search::poll(s);
+    boot_changed |= linked::poll(s);
     let Some(l) = s.screen.launcher_mut() else {
         return false;
     };
@@ -446,6 +467,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             crate::workspace::opened(s, &project);
             if let Some((backend, title)) = restored {
                 bind(s, backend, title, tx);
+            } else {
+                linked::load(s, false);
             }
         }
         Ok(Reply::Listed(rows, more)) => {
@@ -465,6 +488,10 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         Ok(Reply::Bound(b, title)) => {
             bind(s, b, title, tx);
         }
+        #[cfg(target_arch = "wasm32")]
+        Ok(Reply::Reopened(opening, backend, title)) => {
+            reopen::apply(s, opening, backend, title);
+        }
         Err(error) => {
             let key = match error.to_string().as_str() {
                 "rune.connect_error" => "rune.connect_error",
@@ -478,7 +505,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             l.error = Some(key);
             #[cfg(target_arch = "wasm32")]
-            crate::platform::pairing::observe(s);
+            {
+                if key == "rune.restore_error" && !s.screen.is_launcher() {
+                    s.phase = Phase::RestoreFailed;
+                }
+                crate::platform::pairing::observe(s);
+            }
         }
     }
     tx.instant();
@@ -548,6 +580,12 @@ fn bind(s: &mut State, b: Backend, title: String, tx: &mut Tx) {
     s.paging = false;
     s.history_error = false;
     s.revision += 1;
+    attach(s, b);
+    s.show_chat();
+    crate::workspace::capture(s);
+    tx.scroll_to_bottom_instant("history");
+}
+fn attach(s: &mut State, b: Backend) {
     let (out, incoming) = bounded(64);
     let (commands, input) = bounded(1);
     s.incoming = Some(incoming);
@@ -561,9 +599,6 @@ fn bind(s: &mut State, b: Backend, title: String, tx: &mut Tx) {
             crate::transport::publish(&out, &wake, crate::transport::Event::Failed).await;
         }
     });
-    s.show_chat();
-    crate::workspace::capture(s);
-    tx.scroll_to_bottom_instant("history");
 }
 pub fn back(s: &mut State) {
     if !matches!(s.phase, Phase::Ready | Phase::Failed)
