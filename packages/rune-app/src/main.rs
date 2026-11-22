@@ -178,9 +178,23 @@ fn request_older(s: &mut State, _: &mut Tx) {
 }
 fn retry_connection(s: &mut State, tx: &mut Tx) {
     #[cfg(target_arch = "wasm32")]
-    if s.phase == Phase::RestoreFailed {
-        launcher::reopen(s);
-        return;
+    {
+        if platform::pairing::required(s) {
+            platform::pairing::observe(s);
+            return;
+        }
+        if matches!(s.phase, Phase::WorkspaceMissing | Phase::RestoreFailed) {
+            launcher::reopen(s);
+            return;
+        }
+        if s.screen.is_launcher() && s.commands.is_none() {
+            if s.screen.launcher().is_some_and(|l| l.connection.is_some()) {
+                launcher::list(s, false);
+            } else {
+                launcher::connect(s, tx);
+            }
+            return;
+        }
     }
     if s.incoming.as_ref().is_none_or(Receiver::is_closed)
         || s.commands.as_ref().is_none_or(Sender::is_closed)

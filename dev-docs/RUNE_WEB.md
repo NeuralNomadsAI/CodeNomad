@@ -8,7 +8,7 @@ Le client, l'état et les écrans de `packages/rune-app` ciblent le bureau et `w
 
 Les capacités du bureau sont isolées par la plateforme. La sélection d'un dossier serveur conserve un chemin explicite sur le web. Le lancement d'un processus local appartient à l'hôte bureau. Les fonctions de fenêtres multiples, de fichiers, de notifications et de presse-papiers publient leurs capacités disponibles avant d'être proposées.
 
-La page d'appairage embarque le thème et les dix catalogues ; le code à usage unique disparaît du fragment avant l'échange HTTPS. En cas de rupture du flux, le client sonde le statut d'authentification. Une réponse `pairingRequired` présente les étapes d'appairage sans remplacer le document ni le brouillon. Le bouton de vérification ou le retour au premier plan relit le statut ; la reprise relit l'historique sur la même conversation.
+La page d'appairage embarque le thème et les dix catalogues ; le code à usage unique disparaît du fragment avant l'échange HTTPS. En cas de rupture du flux, le client sonde le statut d'authentification. Une réponse `pairingRequired` présente les étapes d'appairage sans remplacer le document ni le brouillon. Le bouton de vérification ou le retour au premier plan relit le statut ; la confirmation HTTP réutilise `retry_connection` pour relire l'historique sur la même conversation.
 
 La liste de sessions publie la première page du dossier puis enrichit automatiquement la liste en suivant les curseurs des worktrees déclarés. Chaque curseur appartient à son dossier. La recherche interroge les mêmes dossiers indépendamment des pages affichées ; changer de projet ou de requête annule la recherche précédente.
 

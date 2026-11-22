@@ -91,6 +91,7 @@ export async function mobileLive({page,context,url,messages,revoke,eventSources,
     const dialog=page.getByRole('dialog',{name:messages['authRecovery.pairingTitle']})
     await dialog.waitFor()
     await text(messages['rune.pairing_guide']).waitFor()
+    assert.equal(await dialog.getByRole('textbox').count(),0,'Browser pairing never shows a password form')
     const check=dialog.getByRole('button',{name:messages['authRecovery.check'],exact:true})
     const denied=page.waitForResponse(response=>response.url()===`${url.origin}/api/auth/status`&&response.ok())
     await check.click({force:true})
