@@ -151,9 +151,12 @@ impl Persistence {
 pub(crate) fn finish(s: &mut crate::State, _: &mut rune::Tx) {
     super::capture(s);
     if let Some(mut ui) = s.workspace.take() {
+        ui.openings.close();
         let snapshot = ui.snapshot();
         if ui.persistence.flush(&snapshot) {
             ui.release_all();
+        } else {
+            crate::platform::release_records_on_exit(Vec::new(), ui.openings.clone());
         }
         s.workspace = Some(ui);
     }

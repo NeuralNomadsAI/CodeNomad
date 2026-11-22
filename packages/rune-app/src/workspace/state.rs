@@ -17,6 +17,7 @@ pub(super) struct Entry {
     binding: Option<Backend>,
 }
 pub struct Ui {
+    pub(super) openings: super::opening::Openings,
     entries: Vec<Entry>,
     active: usize,
     next_key: u64,
@@ -35,6 +36,7 @@ impl Ui {
     }
     pub fn new() -> Self {
         Self {
+            openings: Default::default(),
             entries: vec![entry("tab-0".into(), Tab::Blank)],
             active: 0,
             next_key: 1,
@@ -87,7 +89,7 @@ impl Ui {
             .iter()
             .filter_map(|item| Some((item.binding.clone()?, item.project.as_ref()?.id.clone())))
             .collect();
-        platform::release_records_on_exit(records);
+        platform::release_records_on_exit(records, self.openings.clone());
     }
     fn stage(&mut self) {
         if self.persistence.read_error || !self.ready || self.staged_revision == Some(self.revision)
@@ -313,6 +315,9 @@ pub fn connected(s: &mut State) {
     let Some(ui) = &mut s.workspace else {
         return;
     };
+    if let Some(l) = &mut s.launcher {
+        l.openings = ui.openings.clone();
+    }
     #[cfg(not(target_arch = "wasm32"))]
     let directory = s
         .launcher
@@ -331,6 +336,11 @@ pub fn connected(s: &mut State) {
     #[cfg(not(target_arch = "wasm32"))]
     if !ui.persistence.loading && ui.persistence.store.is_none() && !ui.persistence.read_error {
         ui.ready = true;
+    }
+}
+impl Drop for Ui {
+    fn drop(&mut self) {
+        self.openings.close();
     }
 }
 pub fn resume(s: &mut State, tx: &mut Tx) {

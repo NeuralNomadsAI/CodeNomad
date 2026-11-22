@@ -11,6 +11,7 @@ import {FixtureStore} from './fixture-store.mjs'
 import {responseFor,textStream} from './fixture-response.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {controlsFixture} from './controls-fixture.mjs'
+import {pendingOpenFixture} from './pending-open-fixture.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 const webRestore=process.argv.includes('--web-restore'),web=process.argv.includes('--web')||webRestore,root=path.resolve(import.meta.dirname,'../..')
 if(!web)requireTestSupport()
@@ -29,6 +30,7 @@ const withTools=process.argv.includes('--with-tools')
 const controls=process.argv.includes('--controls')
 const workspaceClaims=process.argv.includes('--workspace-claims')
 const restoreState=process.argv.includes('--restore-state')
+const pendingOpen=process.argv.includes('--pending-open')
 assert(!workspaceClaims||(!web&&!controls&&!withTools&&!uncertain),'Workspace claims use their own qualification mode')
 assert(!restoreState||(!web&&!controls&&!withTools&&!uncertain&&!workspaceClaims),'Restore uses its own qualification mode')
 const gates=new Map(),visibleProof=[],restoreStages=[],restorePrompts=[]
@@ -166,6 +168,8 @@ try{
     const runner=webRestore?'web-restore.mjs':'web-smoke.mjs'
     client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),'--url',`${origin}/`,...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',chromium.executablePath()],{cwd:root,env,windowsHide:true,stdio:['ignore','pipe','pipe']})
     for(const stream of [client.stdout,client.stderr])stream.on('data',d=>{if(diagnostic.length<262144)diagnostic+=d})
+  }else if(pendingOpen){
+    await pendingOpenFixture({origin,profile,project,env,clientBinary});result=0
   }else if(restoreState){
     for(const stage of ['prepare','resume','verify']){
       clientLines=''
@@ -182,9 +186,9 @@ try{
     client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
     client.on('close',()=>{for(const gate of gates.values())gate.reject()})
   }
-  if(!restoreState){const timer=setTimeout(()=>client.kill(),web?300000:120000);try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}}
-  assert.equal(result,0);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,0);if(!webRestore)assert(stats.lists>=12)}else if(workspaceClaims){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
-  if(!web&&!controls&&!workspaceClaims)assert.deepEqual(visibleProof.map(p=>p.turn),[1,2],'Both distinct assistant turns must be visible before their endings')
+  if(!restoreState&&!pendingOpen){const timer=setTimeout(()=>client.kill(),web?300000:120000);try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}}
+  assert.equal(result,0);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,0);if(!webRestore)assert(stats.lists>=12)}else if(workspaceClaims||pendingOpen){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
+  if(!web&&!controls&&!workspaceClaims&&!pendingOpen)assert.deepEqual(visibleProof.map(p=>p.turn),[1,2],'Both distinct assistant turns must be visible before their endings')
   if(restoreState){assert.deepEqual(restoreStages.map(s=>s.stage),['prepare','resume','verify']);assert.deepEqual(restorePrompts.map(p=>p.sessionID),['ses_created_2','ses_created_1']);for(const id of ['ses_created_1','ses_created_2']){const rows=stores.get(id).rows;assert.deepEqual(rows.map(r=>r.type),['user','assistant']);assert(rows[1].time.completed)}}
   if(gitCount)assert.equal(requests.filter(r=>r==='GET /api/worktree').length,0,'root mutations must not enumerate sibling worktrees')
   console.log(JSON.stringify({fixture:'launcher',uncertain,withTools,workspaceClaims,restoreState,webRestore,...stats,profile}))

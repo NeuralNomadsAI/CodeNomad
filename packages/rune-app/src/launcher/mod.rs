@@ -25,6 +25,7 @@ pub struct Launcher {
     pub pending: bool,
     pub error: Option<&'static str>,
     pub creation_uncertain: bool,
+    pub openings: crate::workspace::opening::Openings,
     result: Option<Receiver<Result<Reply>>>,
     boot: Option<Receiver<Result<(Backend, crate::platform::LocalHost)>>>,
     host: Option<crate::platform::LocalHost>,
@@ -93,6 +94,7 @@ impl Launcher {
             pending: starting,
             error: None,
             creation_uncertain: false,
+            openings: Default::default(),
             result: None,
             boot,
             host: None,
@@ -223,15 +225,30 @@ pub fn open(s: &mut State, tx: &mut Tx) {
         return;
     }
     crate::workspace::prepare_open(s, tx);
+    let intent = s
+        .workspace
+        .as_ref()
+        .map(|ui| ui.active_key().to_string())
+        .unwrap_or_else(|| "launcher".into());
     let Some(l) = &mut s.launcher else {
         return;
     };
     let Some(b) = l.connection.clone() else {
         return;
     };
+    if l.pending {
+        return;
+    }
+    let pending = match l.openings.begin(b.clone(), &intent) {
+        Ok(pending) => pending,
+        Err(_) => {
+            l.error = Some("open_error");
+            return;
+        }
+    };
     let folder = l.folder.text.trim().to_string();
     l.job("open_error", async move {
-        let opening = crate::workspace::opening::Opening::create(b.clone(), &folder).await?;
+        let opening = pending.create(&folder).await?;
         let rows = b.sessions(&opening.project, None).await?;
         Ok(Reply::Opened(opening, rows, None))
     });
@@ -335,6 +352,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         Ok(Reply::Opened(opening, rows, restored)) => {
             let project = opening.project.clone();
+            if opening.adopt().is_err() {
+                l.error = Some("open_error");
+                tx.instant();
+                return true;
+            }
             l.folder = TextEdit::new(&project.path);
             l.project = Some(project.clone());
             l.sessions = rows.rows;
@@ -342,7 +364,6 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.search = TextEdit::new("");
             l.creation_uncertain = false;
             crate::workspace::opened(s, &project);
-            opening.adopt();
             if let Some((backend, title)) = restored {
                 bind(s, backend, title, tx);
             }
@@ -382,6 +403,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     true
 }
 pub fn restore(s: &mut State, saved: crate::workspace::Workspace) {
+    let intent = s
+        .workspace
+        .as_ref()
+        .map(|ui| ui.active_key().to_string())
+        .unwrap_or_else(|| "launcher".into());
     let Some(l) = &mut s.launcher else {
         return;
     };
@@ -408,9 +434,15 @@ pub fn restore(s: &mut State, saved: crate::workspace::Workspace) {
         l.error = Some("rune.restore_error");
         return;
     }
+    let pending = match l.openings.begin(backend.clone(), &intent) {
+        Ok(pending) => pending,
+        Err(_) => {
+            l.error = Some("rune.restore_error");
+            return;
+        }
+    };
     l.job("rune.restore_error", async move {
-        let opening =
-            crate::workspace::opening::Opening::create(backend.clone(), &saved.folder).await?;
+        let opening = pending.create(&saved.folder).await?;
         let rows = backend.sessions(&opening.project, None).await?;
         let bound = if let Some(id) = &saved.active_session_id {
             let (bound, session) = backend.bind_session(&opening.project, id, false).await?;
