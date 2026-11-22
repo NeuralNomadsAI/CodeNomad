@@ -4,8 +4,18 @@ use rune_theme_codenomad::{
     Space, TextRole, field_kit,
     layout::{self, Layout, hinted_field, literal_field},
 };
-pub fn button(key: &str, label: &str, disabled: bool) -> El {
-    rune_theme_codenomad::layout::button(label, disabled).key(key.to_string())
+#[cfg(test)]
+mod tests;
+pub fn button(key: &str, label: &str, disabled: bool, press: impl Fn(&mut State) + 'static) -> El {
+    layout::button(label, disabled, press).key(key.to_string())
+}
+pub fn button_tx(
+    key: &str,
+    label: &str,
+    disabled: bool,
+    press: impl Fn(&mut State, &mut rune::Tx) + 'static,
+) -> El {
+    layout::button_tx(label, disabled, press).key(key.to_string())
 }
 pub fn view(s: &State) -> El {
     let crate::Screen::Launcher(l) = &s.screen else {
@@ -34,14 +44,12 @@ pub fn view(s: &State) -> El {
                     .build(field_kit(layout::dark()))
                     .key("server-password"),
             )
-            .child(
-                button(
-                    "connect",
-                    t("folderSelection.servers.dialog.connect"),
-                    l.pending,
-                )
-                .on_press_tx(crate::screen::action_tx(&scope, launcher::connect)),
-            );
+            .child(button_tx(
+                "connect",
+                t("folderSelection.servers.dialog.connect"),
+                l.pending,
+                crate::screen::action_tx(&scope, launcher::connect),
+            ));
     } else {
         body = body
             .child(text(t("instanceInfo.labels.folder")).text_role(TextRole::Title))
@@ -57,35 +65,32 @@ pub fn view(s: &State) -> El {
             .child(
                 rune_theme_codenomad::layout::action_row()
                     .separate(Space::Sm)
-                    .child(
-                        button(
-                            "browse",
-                            t("folderSelection.browseMenu.title"),
-                            l.pending || waiting || !crate::platform::folder_picker_available(),
-                        )
-                        .on_press_tx(crate::screen::action_tx(&scope, crate::platform::browse)),
-                    )
-                    .child(
-                        button(
-                            "open-folder",
-                            t("directoryBrowser.openCurrent"),
-                            l.pending || waiting || l.folder.text.trim().is_empty(),
-                        )
-                        .on_press_tx(crate::screen::action_tx(&scope, launcher::open)),
-                    ),
+                    .child(button_tx(
+                        "browse",
+                        t("folderSelection.browseMenu.title"),
+                        l.pending || waiting || !crate::platform::folder_picker_available(),
+                        crate::screen::action_tx(&scope, crate::platform::browse),
+                    ))
+                    .child(button_tx(
+                        "open-folder",
+                        t("directoryBrowser.openCurrent"),
+                        l.pending || waiting || l.folder.text.trim().is_empty(),
+                        crate::screen::action_tx(&scope, launcher::open),
+                    )),
             );
         if l.project.is_none() {
             for p in &l.projects {
                 let path = p.path.clone();
                 body = body.child(
-                    button(&format!("project-{}", p.id), &p.path, l.pending || waiting)
-                        .literal_direction()
-                        .on_press_tx(crate::screen::action_tx(
-                            &scope,
-                            move |s: &mut State, tx| {
-                                launcher::choose_project(s, &path, tx);
-                            },
-                        )),
+                    button_tx(
+                        &format!("project-{}", p.id),
+                        &p.path,
+                        l.pending || waiting,
+                        crate::screen::action_tx(&scope, move |s: &mut State, tx| {
+                            launcher::choose_project(s, &path, tx);
+                        }),
+                    )
+                    .literal_direction(),
                 );
             }
         } else {
@@ -94,12 +99,12 @@ pub fn view(s: &State) -> El {
                     rune_theme_codenomad::layout::action_row()
                         .separate(Space::Sm)
                         .child(text(t("sessionList.header.title")).text_role(TextRole::Title))
-                        .child(
-                            button("refresh-sessions", t("rune.refresh"), l.pending || waiting)
-                                .on_press(crate::screen::action(&scope, |s: &mut State| {
-                                    launcher::list(s, false)
-                                })),
-                        ),
+                        .child(button(
+                            "refresh-sessions",
+                            t("rune.refresh"),
+                            l.pending || waiting,
+                            crate::screen::action(&scope, |s: &mut State| launcher::list(s, false)),
+                        )),
                 )
                 .child(
                     hinted_field(&l.search, t("rune.search"))
@@ -120,33 +125,29 @@ pub fn view(s: &State) -> El {
                 items = items.child(
                     button(
                         &format!("session-{id}"),
-                        if title.is_empty() {
+                        if session.title.is_empty() {
                             t("sessionList.session.untitled")
                         } else {
-                            &title
+                            &session.title
                         },
                         l.pending || waiting,
+                        crate::screen::action(&scope, move |s: &mut State| {
+                            launcher::choose(s, id.clone(), title.clone())
+                        }),
                     )
-                    .full_width()
-                    .on_press(crate::screen::action(&scope, move |s: &mut State| {
-                        launcher::choose(s, id.clone(), title.clone())
-                    })),
+                    .full_width(),
                 );
             }
             if l.sessions.is_empty() {
                 items = items.child(text(t("rune.empty_sessions")));
             }
             if l.next.is_some() {
-                items = items.child(
-                    button(
-                        "more-sessions",
-                        t("rune.more"),
-                        l.pending || waiting || l.sessions.len() >= 2000,
-                    )
-                    .on_press(crate::screen::action(&scope, |s: &mut State| {
-                        launcher::list(s, true)
-                    })),
-                );
+                items = items.child(button(
+                    "more-sessions",
+                    t("rune.more"),
+                    l.pending || waiting || l.sessions.len() >= 2000,
+                    crate::screen::action(&scope, |s: &mut State| launcher::list(s, true)),
+                ));
             }
             body = body
                 .child(col().key("session-list").full_width().child(items))
@@ -159,17 +160,12 @@ pub fn view(s: &State) -> El {
                         .build(field_kit(layout::dark()))
                         .key("session-title"),
                 )
-                .child(
-                    button(
-                        "create-session",
-                        t("rune.create"),
-                        l.pending
-                            || waiting
-                            || l.creation_uncertain
-                            || l.title.text.trim().is_empty(),
-                    )
-                    .on_press_tx(crate::screen::action_tx(&scope, launcher::create)),
-                );
+                .child(button_tx(
+                    "create-session",
+                    t("rune.create"),
+                    l.pending || waiting || l.creation_uncertain || l.title.text.trim().is_empty(),
+                    crate::screen::action_tx(&scope, launcher::create),
+                ));
         }
     }
     if l.pending {

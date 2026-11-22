@@ -98,15 +98,21 @@ fn view(s: &Gallery, cx: &mut Cx<Gallery>) -> El {
             let (trigger, surface) = menu::view(&s.menu, at, descriptor(s), trigger, width);
             let mut layers: Vec<_> = surface.into_iter().collect();
             if s.dialog {
-                let cancel = layout::button(t("alertDialog.actions.cancel"), false)
-                    .key("dialog-cancel")
-                    .on_press_tx(|s: &mut Gallery, tx| {
+                let cancel = layout::button_tx(
+                    t("alertDialog.actions.cancel"),
+                    false,
+                    |s: &mut Gallery, tx| {
                         event("dialog-close", tx);
                         s.dialog = false;
-                    });
-                let second = layout::button(t("directoryBrowser.openCurrent"), false)
-                    .key("dialog-second")
-                    .on_press_tx(|_: &mut Gallery, tx| event("dialog-second", tx));
+                    },
+                )
+                .key("dialog-cancel");
+                let second = layout::button_tx(
+                    t("directoryBrowser.openCurrent"),
+                    false,
+                    |_: &mut Gallery, tx| event("dialog-second", tx),
+                )
+                .key("dialog-second");
                 layers.push(
                     scene::dialog(rune::col().child(cancel).child(second))
                         .key("dialog")

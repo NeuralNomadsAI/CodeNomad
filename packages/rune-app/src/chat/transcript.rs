@@ -68,11 +68,11 @@ pub fn message(s: &State, i: usize) -> El {
                                         "rune.details"
                                     }),
                                     false,
+                                    crate::screen::action(&scope, move |s: &mut State| {
+                                        crate::transcript_state::toggle_tool(s, &toggle);
+                                    }),
                                 )
-                                .key(format!("toggle-{key}"))
-                                .on_press(crate::screen::action(&scope, move |s: &mut State| {
-                                    crate::transcript_state::toggle_tool(s, &toggle);
-                                })),
+                                .key(format!("toggle-{key}")),
                             ),
                     );
                 if expanded {
@@ -93,17 +93,16 @@ pub fn message(s: &State, i: usize) -> El {
                                 .child(text(t(label)).text_role(TextRole::Label))
                                 .child(prose(format!("{key}-{key_part}"), &shown));
                             if clipped {
+                                let button_key = format!("reveal-{reveal}");
                                 block = block.child(
                                     rune_theme_codenomad::layout::button(
                                         t("messageBlock.hiddenText.showAll"),
                                         false,
-                                    )
-                                    .key(format!("reveal-{reveal}"))
-                                    .on_press(
                                         crate::screen::action(&scope, move |s: &mut State| {
                                             crate::transcript_state::reveal_tool_output(s, &reveal);
                                         }),
-                                    ),
+                                    )
+                                    .key(button_key),
                                 );
                             }
                         }

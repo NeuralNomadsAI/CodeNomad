@@ -40,17 +40,16 @@ pub fn fields(s: &State, form: &Form) -> El {
                         if d.edit.text == value { "●" } else { "○" },
                         t(label)
                     );
-                    buttons = buttons.child(
-                        button(&format!("field-{key}-{value}"), &label, a.busy).on_press(
-                            crate::screen::action(&scope, move |s: &mut State| {
-                                if let Some(d) =
-                                    s.agent.as_mut().and_then(|a| a.drafts.get_mut(&id))
-                                {
-                                    d.choose(value)
-                                }
-                            }),
-                        ),
-                    );
+                    buttons = buttons.child(button(
+                        &format!("field-{key}-{value}"),
+                        &label,
+                        a.busy,
+                        crate::screen::action(&scope, move |s: &mut State| {
+                            if let Some(d) = s.agent.as_mut().and_then(|a| a.drafts.get_mut(&id)) {
+                                d.choose(value)
+                            }
+                        }),
+                    ));
                 }
                 body = body.child(buttons);
             }
@@ -61,25 +60,21 @@ pub fn fields(s: &State, form: &Form) -> El {
                             let Some(value) = option["value"].as_str() else {
                                 continue;
                             };
+                            let label = option["label"].as_str().unwrap_or(value);
                             let value = value.to_string();
                             let id = identity.clone();
-                            body = body.child(
-                                button(
-                                    &format!("option-{key}-{value}"),
-                                    option["label"].as_str().unwrap_or(&value),
-                                    a.busy,
-                                )
-                                .on_press(crate::screen::action(
-                                    &scope,
-                                    move |s: &mut State| {
-                                        if let Some(d) =
-                                            s.agent.as_mut().and_then(|a| a.drafts.get_mut(&id))
-                                        {
-                                            d.choose(&value)
-                                        }
-                                    },
-                                )),
-                            );
+                            body = body.child(button(
+                                &format!("option-{key}-{value}"),
+                                label,
+                                a.busy,
+                                crate::screen::action(&scope, move |s: &mut State| {
+                                    if let Some(d) =
+                                        s.agent.as_mut().and_then(|a| a.drafts.get_mut(&id))
+                                    {
+                                        d.choose(&value)
+                                    }
+                                }),
+                            ));
                         }
                     }
                 }
@@ -110,17 +105,18 @@ pub fn fields(s: &State, form: &Form) -> El {
                             },
                             option["label"].as_str().unwrap_or(&value)
                         );
-                        body = body.child(
-                            button(&format!("multi-{key}-{value}"), &label, a.busy).on_press(
-                                crate::screen::action(&scope, move |s: &mut State| {
-                                    if let Some(d) =
-                                        s.agent.as_mut().and_then(|a| a.drafts.get_mut(&id))
-                                    {
-                                        d.toggle(&value)
-                                    }
-                                }),
-                            ),
-                        );
+                        body = body.child(button(
+                            &format!("multi-{key}-{value}"),
+                            &label,
+                            a.busy,
+                            crate::screen::action(&scope, move |s: &mut State| {
+                                if let Some(d) =
+                                    s.agent.as_mut().and_then(|a| a.drafts.get_mut(&id))
+                                {
+                                    d.toggle(&value)
+                                }
+                            }),
+                        ));
                     }
                 }
                 if field["custom"] == true {
@@ -152,25 +148,24 @@ pub fn actions(s: &State, form: &Form) -> El {
     let cancel = id.clone();
     rune_theme_codenomad::layout::action_row()
         .separate(Space::Sm)
-        .child(
-            button(
-                "answer-question",
-                t("rune.answer"),
-                a.locked() || agent_forms::answer(form, &a.drafts).is_err(),
-            )
-            .on_press(crate::screen::action(&scope, move |s: &mut State| {
+        .child(button(
+            "answer-question",
+            t("rune.answer"),
+            a.locked() || agent_forms::answer(form, &a.drafts).is_err(),
+            crate::screen::action(&scope, move |s: &mut State| {
                 if let Some(a) = s.agent.as_mut() {
                     a.answer_form(&id)
                 }
-            })),
-        )
-        .child(
-            button("cancel-question", t("rune.cancel_question"), a.locked()).on_press(
-                crate::screen::action(&scope, move |s: &mut State| {
-                    if let Some(a) = s.agent.as_mut() {
-                        a.cancel_form(cancel.clone())
-                    }
-                }),
-            ),
-        )
+            }),
+        ))
+        .child(button(
+            "cancel-question",
+            t("rune.cancel_question"),
+            a.locked(),
+            crate::screen::action(&scope, move |s: &mut State| {
+                if let Some(a) = s.agent.as_mut() {
+                    a.cancel_form(cancel.clone())
+                }
+            }),
+        ))
 }
