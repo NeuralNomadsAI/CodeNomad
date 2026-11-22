@@ -214,6 +214,9 @@ fn main() {
                 let controller = open_controller.clone();
                 let live = open_live.clone();
                 std::thread::spawn(move || {
+                    assert!(controller.change_ownership(&app, OWNER, browser_controller::OwnershipAction::Ready {
+                        session_id: SESSION.into(), instance_id: instance_id.clone(), request_id: request.clone(),
+                    }).unwrap().is_some());
                     let existing = live.lock().unwrap().clone();
                     if !existing.is_empty() && update(&app, &controller, OWNER, &existing, true).is_ok() {
                         assert!(controller.claim_open(OWNER, &request, OpenResponse::Target {

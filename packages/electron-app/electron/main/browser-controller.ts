@@ -103,7 +103,7 @@ export class BrowserController {
   }
 
   changeOwnership(window: WebContents, input: unknown) {
-    const { action, sessionId, instanceId, revision } = (input ?? {}) as Record<string, unknown>
+    const { action, sessionId, instanceId, revision, requestID } = (input ?? {}) as Record<string, unknown>
     if (!validId(instanceId, 256)) throw new Error("Invalid browser occurrence")
     if (action === "release") {
       for (const entry of this.previewOwners.release(window, instanceId)) {
@@ -118,6 +118,15 @@ export class BrowserController {
       return
     }
     if (!validId(sessionId, 256)) throw new Error("Invalid browser session")
+    if (action === "ready") {
+      if (typeof requestID !== "string") return
+      const claim = this.openClaims.get(requestID)
+      if (!claim || claim.owner !== window || claim.sessionID !== sessionId || claim.instanceId !== instanceId
+        || !this.openClaimCurrent(requestID, claim)) return
+      const snapshot = this.grantOwnership(sessionId, window, instanceId)
+      if (snapshot.owner?.sameWindow && snapshot.owner.instanceId === instanceId) claim.ownership = this.previewOwners.get(sessionId)
+      return snapshot
+    }
     if (action === "used") { this.previewOwners.used(sessionId, window, instanceId); return }
     if (action === "focus") {
       const owner = this.previewOwners.get(sessionId)
@@ -335,7 +344,7 @@ export class BrowserController {
     claim.discovery?.reject(new Error("Browser open target changed"))
     this.openClaims.delete(requestID)
     claim.retirement.abort(new Error("Browser open target changed"))
-    if (claim.ownership && !owner.isDestroyed() && owner.mainFrame === claim.frame) {
+    if (claim.instanceId && !owner.isDestroyed() && owner.mainFrame === claim.frame) {
       owner.send("browser-target:open-settled", { requestID, sessionID: claim.sessionID, instanceId: claim.instanceId, committedUrl,
         ...(preserveGuest && { keepGuest: true, ...(successorUrl && { successorUrl }) }) })
     }
@@ -482,10 +491,8 @@ export class BrowserController {
         if (actual && (actual.window !== owner || actual.instanceId !== occurrence)) {
           return this.open(sessionID, url, deadline, workspaceIDs, checkAdmission)
         }
-        const ownership = this.grantOwnership(sessionID, owner, occurrence)
-        claim.ownership = this.previewOwners.get(sessionID)
         claim.instanceId = occurrence
-        owner.send("browser-target:open", { sessionID, requestID, instanceId: occurrence, url, ownership })
+        owner.send("browser-target:open", { sessionID, requestID, instanceId: occurrence, url })
         for (;;) {
           check()
           if (claim.target) {

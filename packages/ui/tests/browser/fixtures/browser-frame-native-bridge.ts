@@ -28,6 +28,7 @@ export const nativeFixture = {
   deferEmulation: false,
   deferOpenTarget: false,
   deferOwnership: false,
+  ownerOf: (sessionId: string) => owners.get(sessionId)?.instanceId,
   beforeNavigate: undefined as (() => void) | undefined,
   settleOpenTarget() { pendingOpenTarget?.(); pendingOpenTarget = undefined },
   settleOwnership() { pendingOwnership?.(); pendingOwnership = undefined },

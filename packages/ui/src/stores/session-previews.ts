@@ -239,9 +239,10 @@ async function createPreview(sessionId: string, url: string, version: PreviewOpe
 }
 
 async function openSessionPreview(sessionId: string, url: string, instanceId: string, intent?: SurfaceGesture,
-  nativeOpen?: NonNullable<SessionPreviewRecord["nativeOpen"]>, delivery?: AbortSignal): Promise<SessionPreviewRecord> {
+  nativeOpen?: NonNullable<SessionPreviewRecord["nativeOpen"]>, delivery?: AbortSignal,
+  admit?: () => Promise<BrowserPreviewOwnership | undefined> | undefined): Promise<SessionPreviewRecord> {
   if (!isInstanceOccurrenceOpen(instanceId)) throw new DOMException("Preview occurrence is closed", "AbortError")
-  if (managed(instanceId) && !isPreviewOwner(sessionId, instanceId)) throw new DOMException("Preview belongs to another tab", "AbortError")
+  if (!admit && managed(instanceId) && !isPreviewOwner(sessionId, instanceId)) throw new DOMException("Preview belongs to another tab", "AbortError")
   if (!(local(instanceId) ? browserAddress(url) : historyUrl(url))) throw new TypeError(tGlobal("sessionPreview.open.invalidUrl"))
   const canShow = () => {
     if (!nativeOpen) return true
@@ -253,21 +254,43 @@ async function openSessionPreview(sessionId: string, url: string, instanceId: st
   const operation = beginOperation(storageKey, sessionId, instanceId, intent)
   const existing = sessionPreviews().get(storageKey)
   const saved = savedPreview(sessionId, instanceId)
+  const current = () => !delivery?.aborted && canShow() && operation.current()
+  const interrupted = () => new DOMException("Preview navigation was superseded", "AbortError")
   try {
-    if (!operation.current()) throw new DOMException("Preview navigation was superseded", "AbortError")
+    if (!current()) throw interrupted()
     const preview = existing && (nativeOpen || existing.targetUrl === url) && existing.owner.signal === operation.signal
       ? existing : await createPreview(sessionId, url, operation)
-    if (delivery?.aborted || !canShow() || !operation.current() || (managed(instanceId) && !isPreviewOwner(sessionId, instanceId))) {
+    let admitted = false
+    try {
+      if (!current()) throw interrupted()
+      if (admit) {
+        const snapshot = await admit()
+        if (!snapshot) throw interrupted()
+        acceptPreviewOwnership(snapshot)
+        admitted = snapshot.owner?.sameWindow === true && snapshot.owner.instanceId === instanceId
+        if (!admitted) throw interrupted()
+      }
+      if ((!admitted && !current()) || operation.signal.aborted || !isInstanceOccurrenceOpen(instanceId)
+        || (managed(instanceId) && !isPreviewOwner(sessionId, instanceId))) throw interrupted()
+    } catch (error) {
       if (preview !== existing) void releasePreview(operation.client, preview)
-      throw new DOMException("Preview navigation was superseded", "AbortError")
+      throw error
+    }
+    // A later surface gesture cannot undo ownership already granted by the host.
+    if (!current() && admitted) {
+      const live = getSessionPreview(sessionId, instanceId)
+      if (live) {
+        if (preview !== live && preview !== existing) void releasePreview(operation.client, preview)
+        return live
+      }
     }
     const baseHistory = existing?.history ?? (saved?.targetUrl ? parseBrowserHistory(saved.history, saved.targetUrl) : { urls: [], index: 0 })
     let record: SessionPreviewRecord = preview === existing ? existing : { ...preview, sessionId, mode: "preview", storageKey, instanceId,
       owner: { client: operation.client, signal: operation.signal }, viewport: existing?.viewport ?? saved?.viewport,
       history: nativeOpen ? baseHistory : new BrowserHistoryJournal(baseHistory).visitUrl(preview.targetUrl) }
-    if (nativeOpen) record = { ...record, nativeOpen }
+    if (nativeOpen && current()) record = { ...record, nativeOpen }
     if (record !== existing) publishPreview(record)
-    if (nativeOpen) showSessionPreview(sessionId, instanceId, operation)
+    if (nativeOpen) { if (current()) showSessionPreview(sessionId, instanceId, operation) }
     else {
       storePreview(sessionId, instanceId, { ...record, mode: "preview" })
       applySurface({ sessionId, instanceId }, { kind: "web", sessionId }, operation)

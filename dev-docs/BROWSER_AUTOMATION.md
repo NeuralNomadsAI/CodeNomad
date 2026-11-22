@@ -328,9 +328,10 @@ window or renderer releases ownership. Returning to chat keeps ownership.
 
 An autonomous open targets the current owner or the most recently used eligible
 tab for that session. When there is no recent eligible entry, discovery asks local
-windows in native focus/MRU order using backend-verified workspace IDs. The host
-commits ownership before sending the URL to the selected occurrence. Only the
-exact visible registration can acknowledge delivery. Its window, occurrence,
+windows in native focus/MRU order using backend-verified workspace IDs. The
+selected tab asks for ownership once it can display the preview; the host grants
+it synchronously before the tab can create or show a guest. Only the exact
+visible registration can acknowledge delivery. Its window, occurrence,
 registration and deadline remain fenced through navigation and receipt.
 Page actions require exactly one visible native target for the invoking session.
 Hiding, minimizing, closing or moving the preview invalidates its old witness.

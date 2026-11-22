@@ -112,6 +112,7 @@ export async function emulateBrowserTarget(registrationId: string, preset: Brows
 export type BrowserPreviewOwnership = { sessionId: string; revision: number; owner: { instanceId: string; sameWindow: boolean } | null }
 export type BrowserPreviewOwnershipAction =
   | { action: "request" | "focus" | "used"; sessionId: string; instanceId: string; revision?: number }
+  | { action: "ready"; sessionId: string; instanceId: string; requestID: string }
   | { action: "release"; instanceId: string }
 
 export function hasNativePreviewOwnership() {
@@ -145,8 +146,8 @@ export async function onBrowserPreviewOwnership(
 }
 
 export type BrowserOpenDiscovery = { requestID: string; workspaceIDs: string[]; sessionID: string }
-export type BrowserOpenRequest = { sessionID: string; requestID: string; url: string; instanceId: string; ownership: BrowserPreviewOwnership }
-export type BrowserOpenSettled = Omit<BrowserOpenRequest, "url" | "ownership"> & { committedUrl?: string | null; keepGuest?: boolean; successorUrl?: string | null }
+export type BrowserOpenRequest = { sessionID: string; requestID: string; url: string; instanceId: string }
+export type BrowserOpenSettled = Omit<BrowserOpenRequest, "url"> & { committedUrl?: string | null; keepGuest?: boolean; successorUrl?: string | null }
 export type BrowserOpenResponse =
   | { kind: "discover"; instanceId: string | null }
   | { kind: "target"; instanceId: string; registrationId: string }

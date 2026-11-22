@@ -94,16 +94,17 @@ app.whenReady().then(async () => {
     const { requestID, instanceId } = payload
     if (channel === "browser-target:discover") return controller.claimOpen(window.webContents, requestID, { kind: "discover", instanceId: "fixture-tab" })
     if (channel === "browser-target:open") {
+      const ownership = controller.changeOwnership(window.webContents, { action: "ready", sessionId: payload.sessionID, instanceId, requestID })
       const existing = openGuests.get(payload.sessionID)
       if (existing && !existing.isDestroyed()) {
         return controller.claimOpen(window.webContents, requestID, {
           kind: "target", instanceId, registrationId: existing.fixtureRegistration,
         })
       }
-      pendingOpen = payload
+      pendingOpen = { ...payload, ownership }
       void window.webContents.executeJavaScript(`(() => {
         const preview = document.createElement("webview")
-         preview.setAttribute("webpreferences", "codenomadPreview=${payload.ownership.revision}")
+         preview.setAttribute("webpreferences", "codenomadPreview=${ownership.revision}")
         preview.setAttribute("partition", "persist:codenomad-browser-open-fixture")
         preview.src = "about:blank"
         document.body.append(preview)

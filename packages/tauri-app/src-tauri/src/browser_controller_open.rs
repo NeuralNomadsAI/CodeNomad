@@ -7,6 +7,12 @@ use super::{preview_owners::PreviewOwner, *};
     rename_all_fields = "camelCase"
 )]
 pub(crate) enum OwnershipAction {
+    Ready {
+        session_id: String,
+        instance_id: String,
+        #[serde(rename = "requestID")]
+        request_id: String,
+    },
     Used {
         session_id: String,
         instance_id: String,
@@ -50,6 +56,7 @@ pub(super) struct OpenClaim {
     attach_deadline: Instant,
     fence: crate::native_request::RequestFence,
     discovery: Option<Option<String>>,
+    instance_id: Option<String>,
     ownership: Option<PreviewOwner>,
     revoked: bool,
     successor_url: Option<String>,
@@ -151,6 +158,40 @@ impl BrowserController {
     ) -> Result<Option<Value>, String> {
         let mut inner = self.inner.0.lock().map_err(|error| error.to_string())?;
         match input {
+            OwnershipAction::Ready {
+                session_id,
+                instance_id,
+                request_id,
+            } => {
+                let Ok(claim) = current_claim(&inner, &request_id) else {
+                    return Ok(None);
+                };
+                if !claim.belongs_to(window)
+                    || claim.session_id != session_id
+                    || claim.instance_id.as_ref() != Some(&instance_id)
+                {
+                    return Ok(None);
+                }
+                let changed = inner.preview_owners.get(&session_id).is_none();
+                let (owner, _) =
+                    inner
+                        .preview_owners
+                        .request(&session_id, window, &instance_id, None);
+                if owner.window == window && owner.instance_id == instance_id {
+                    inner.open_claims.get_mut(&request_id).unwrap().ownership = Some(owner.clone());
+                }
+                drop(inner);
+                if changed {
+                    self.inner.1.notify_all();
+                    self.publish_preview_ownership(app, &session_id, owner.revision, Some(&owner));
+                }
+                Ok(Some(ownership(
+                    &session_id,
+                    owner.revision,
+                    window,
+                    Some(&owner),
+                )))
+            }
             OwnershipAction::Used {
                 session_id,
                 instance_id,
@@ -432,6 +473,7 @@ impl BrowserController {
                     attach_deadline,
                     fence: fence.clone(),
                     discovery: preferred.as_ref().map(|(_, tab)| Some(tab.clone())),
+                    instance_id: None,
                     ownership: None,
                     revoked: false,
                     successor_url: None,
@@ -448,7 +490,7 @@ impl BrowserController {
                             json!({ "requestID": request_id, "sessionID": session_id, "workspaceIDs": &*workspaces }))
                             .map_err(|error| error.to_string())?;
                     }
-                    let owner = loop {
+                    let instance_id = loop {
                         check_window()?;
                         let mut inner = lock.lock().map_err(|error| error.to_string())?;
                         let claim = current_claim(&inner, &request_id)?;
@@ -460,15 +502,9 @@ impl BrowserController {
                             let Some(instance_id) = discovery.clone() else {
                                 return Ok(OpenResult::Absent);
                             };
-                            let (owner, _) = inner.preview_owners.request(
-                                session_id,
-                                window,
-                                &instance_id,
-                                None,
-                            );
-                            inner.open_claims.get_mut(&request_id).unwrap().ownership =
-                                Some(owner.clone());
-                            break owner;
+                            inner.open_claims.get_mut(&request_id).unwrap().instance_id =
+                                Some(instance_id.clone());
+                            break instance_id;
                         }
                         drop(
                             ready
@@ -476,17 +512,8 @@ impl BrowserController {
                                 .map_err(|error| error.to_string())?,
                         );
                     };
-                    if existing.is_none() {
-                        self.publish_preview_ownership(
-                            app,
-                            session_id,
-                            owner.revision,
-                            Some(&owner),
-                        );
-                    }
                     app.emit_to(event_target.clone(), "browser-target:open", json!({
-                        "sessionID": session_id, "url": raw_url, "requestID": request_id, "instanceId": owner.instance_id,
-                        "ownership": ownership(session_id, owner.revision, window, Some(&owner)),
+                        "sessionID": session_id, "url": raw_url, "requestID": request_id, "instanceId": instance_id,
                     })).map_err(|error| error.to_string())?;
                     let registration = loop {
                         check_window()?;
@@ -542,16 +569,16 @@ impl BrowserController {
                 };
                 let retired = inner.open_claims.remove(&request_id);
                 drop(inner);
-                if let Some((claim, owner)) = retired
+                if let Some((claim, instance_id)) = retired
                     .as_ref()
-                    .and_then(|claim| Some((claim, claim.ownership.as_ref()?)))
+                    .and_then(|claim| Some((claim, claim.instance_id.as_ref()?)))
                 {
                     let committed = match &result {
                         Ok(OpenResult::Committed(url)) => Some(url),
                         _ => None,
                     };
                     let _ = app.emit_to(event_target, "browser-target:open-settled", json!({
-                        "requestID": request_id, "sessionID": session_id, "instanceId": owner.instance_id,
+                        "requestID": request_id, "sessionID": session_id, "instanceId": instance_id,
                         "committedUrl": committed, "keepGuest": true, "successorUrl": claim.successor_url,
                     }));
                 }

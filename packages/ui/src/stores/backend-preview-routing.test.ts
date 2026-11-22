@@ -12,7 +12,7 @@ import { getPreviewFrameSource } from "../components/browser-frame-security"
 import { closeSessionPreview, dismissSessionPreview, getSessionPreview, openSessionPreview, restoreSessionPreview, sessionPreviews, settleSessionPreviewOpen, showSessionChatFor, showSessionPreview, updateSessionPreviewHistory, updateSessionPreviewViewport } from "./session-previews"
 import { detachInstanceTabMembership } from "./app-tab-membership"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
-import { applySurface, beginGesture, getSessionSurface, type CentralSurface } from "./session-surface"
+import { applySurface, beginGesture, getSessionSurface, observeSurfaceGesture, type CentralSurface } from "./session-surface"
 import { savedSessionBrowser } from "./session-browser-persistence"
 import { initializeClientState } from "./client-state"
 import { getTabViewState, seedTabViewState } from "./tab-view-state"
@@ -323,7 +323,7 @@ test("autonomous opens respect newer tab selection and save only the exact nativ
     disposed: false,
     localInstances: () => [{ id: instanceId }, { id: duplicate }],
     appTabSelectionRevision: () => selectionRevision,
-    captureBackendOperation, beginGesture, acceptPreviewOwnership: () => {},
+    captureBackendOperation, observeSurfaceGesture,
     getSessions: () => [{ id: sessionId }],
     openSessionPreview: async (session: string, url: string, tab: string, intent: ReturnType<typeof beginGesture>, nativeOpen: { requestID: string; instanceId: string }) => {
       if (nativeOpen.requestID === "second") { adopting(); await adoptionGate }
@@ -440,13 +440,35 @@ test("a native open does not deliver to a tab closed during session hydration", 
   const released: string[] = []
   const consume = appCallback("openRequestedPreview", {
     browserDeliveries: new Map(), disposed: false, localInstances: () => [{ id: "tab" }],
-    appTabSelectionRevision: () => 0, acceptPreviewOwnership: () => {},
+    appTabSelectionRevision: () => 0, observeSurfaceGesture: () => ({ current: () => true }),
     captureBackendOperation, getSessions: () => [],
     hydrateRestoredSessionChain: async () => { controller.abort() },
     openSessionPreview: () => assert.fail("closed tab received an open"),
     releaseNativeBrowserOpen: async (id: string) => { released.push(id) },
   })
   await consume({ sessionID: "session", instanceId: "tab", requestID: "delivery", url: "http://localhost/" })
+  assert.deepEqual(released, ["delivery"])
+})
+
+test("session hydration cannot steal a later selection in the same tab", async () => {
+  const instanceId = "hydrating-tab", sessionId = "agent-session"
+  let loaded = false, selected = "first"
+  const released: string[] = []
+  publishInstanceLifecycleAuthority({ instanceId, type: "opened", folder: "/repo", occurrence: 0 })
+  const consume = appCallback("openRequestedPreview", {
+    browserDeliveries: new Map(), disposed: false, localInstances: () => [{ id: instanceId }],
+    appTabSelectionRevision: () => 0, observeSurfaceGesture, captureBackendOperation,
+    getSessions: () => loaded ? [{ id: sessionId }] : [],
+    hydrateRestoredSessionChain: async () => {
+      beginGesture({ instanceId, sessionId: "newer" })
+      selected = "newer"
+      loaded = true
+    },
+    openSessionPreview: () => assert.fail("the later selection was ignored"),
+    releaseNativeBrowserOpen: async (id: string) => { released.push(id) },
+  })
+  await consume({ sessionID: sessionId, instanceId, requestID: "delivery", url: "http://localhost/" })
+  assert.equal(selected, "newer")
   assert.deepEqual(released, ["delivery"])
 })
 
@@ -459,9 +481,10 @@ test("an agent open leaves the owning tab's file and Mission reader in place", a
     { kind: "mission", target: { missionId: "mission", kind: "overview" } },
   ]
   const create = t.mock.method(localBackend.api, "createPreview", async () => assert.fail("reader was replaced"))
+  const admit = () => assert.fail("preview ownership was requested while a reader is open")
   for (const surface of surfaces) {
     applySurface(context, surface)
-    await assert.rejects(openSessionPreview(sessionId, "https://example.com/", instanceId, undefined, { requestID: "agent", instanceId }), { name: "AbortError" })
+    await assert.rejects(openSessionPreview(sessionId, "https://example.com/", instanceId, undefined, { requestID: "agent", instanceId }, undefined, admit), { name: "AbortError" })
     assert.deepEqual(getSessionSurface(context), surface)
   }
   assert.equal(create.mock.callCount(), 0)

@@ -1,7 +1,7 @@
 import { nativeFixture } from "./browser-frame-native-bridge"
 import { serverApi } from "../../../src/lib/api-client"
 import { acceptPreviewOwnership, getSessionPreview, openSessionPreview, requestSessionPreview, sessionPreviews, settleSessionPreviewOpen, showSessionPreview } from "../../../src/stores/session-previews"
-import { hasNativePreviewOwnership, onBrowserPreviewOwnership, onNativeBrowserOpen } from "../../../src/lib/native/browser"
+import { changeBrowserPreviewOwnership, hasNativePreviewOwnership, onBrowserPreviewOwnership, onNativeBrowserOpen } from "../../../src/lib/native/browser"
 import { initializeClientState, writeClientLayoutValue } from "../../../src/stores/client-state"
 import { getTabViewState, seedTabViewState } from "../../../src/stores/tab-view-state"
 import { migrateLegacyTabPreviews } from "../../../src/stores/tab-view-state-migration"
@@ -69,9 +69,9 @@ if (hasNativePreviewOwnership()) {
     shell.selectOccurrence(instanceId)
     showSessionPreview(sessionId, instanceId)
   })
-  await onNativeBrowserOpen(() => {}, ({ sessionID, instanceId, url, requestID, ownership }) => {
-    acceptPreviewOwnership(ownership)
-    void openSessionPreview(sessionID, url, instanceId, undefined, { requestID, instanceId })
+  await onNativeBrowserOpen(() => {}, ({ sessionID, instanceId, url, requestID }) => {
+    void openSessionPreview(sessionID, url, instanceId, undefined, { requestID, instanceId }, undefined, () =>
+      changeBrowserPreviewOwnership({ action: "ready", sessionId: sessionID, instanceId, requestID }))
       .then(() => shell.selectOccurrence(instanceId))
   }, ({ sessionID, instanceId, requestID, committedUrl }) => {
     settleSessionPreviewOpen(sessionID, instanceId, requestID, committedUrl)
@@ -107,8 +107,7 @@ Object.assign(shell, {
     ? requestSessionPreview(sessionId, instanceId, url) : openSessionPreview(sessionId, url, instanceId),
   deliverAgentOpen: async (url: string, instanceId: string) => {
     const sessionID = "session", requestID = "agent"
-    const ownership = await nativeFixture.ownership({ action: "request", sessionId: sessionID, instanceId })
-    nativeFixture.emit("browser-target:open", { sessionID, requestID, url, instanceId: ownership!.owner.instanceId, ownership })
+    nativeFixture.emit("browser-target:open", { sessionID, requestID, url, instanceId: nativeFixture.ownerOf(sessionID) ?? instanceId })
   },
   openNativePreview: (requestID: string, url: string) => {
     const sessionId = "session", instanceId = ids[0]

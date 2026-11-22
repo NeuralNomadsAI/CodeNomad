@@ -86,7 +86,7 @@ import {
 import { acceptPreviewOwnership, openSessionPreview, settleSessionPreviewOpen, showSessionPreview } from "./stores/session-previews"
 import { isInstanceOccurrenceOpen } from "./stores/instance-lifecycle-authority"
 import { SessionPreviewHost } from "./components/session-preview-view"
-import { beginGesture } from "./stores/session-surface"
+import { observeSurfaceGesture } from "./stores/session-surface"
 import { useForegroundRefresh } from "./lib/hooks/use-foreground-refresh"
 import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-state"
 
@@ -327,22 +327,22 @@ const App: Component = () => {
       const owner = selectBrowserOpenOwner(owners, recent ?? (activeTab?.kind === "instance" ? activeTab.instance.id : undefined))
       return claimNativeBrowserOpen(requestID, { kind: "discover", instanceId: owner?.id ?? owners[0]?.id ?? null })
     }
-    const openRequestedPreview = async ({ sessionID, url, requestID, instanceId, ownership }: BrowserOpenRequest) => {
+    const openRequestedPreview = async ({ sessionID, url, requestID, instanceId }: BrowserOpenRequest) => {
       const eligible = () => !disposed && localInstances().some(instance => instance.id === instanceId)
       const delivery = new AbortController()
       let published = false
       try {
         if (!eligible()) return
         browserDeliveries.set(requestID, delivery)
-        acceptPreviewOwnership(ownership)
         const operation = captureBackendOperation(instanceId, undefined, eligible)
+        const intent = observeSurfaceGesture({ instanceId, sessionId: sessionID })
         const selectionRevision = appTabSelectionRevision()
         const loaded = () => getSessions(instanceId).some(session => session.id === sessionID)
-        const current = () => operation.current() && !delivery.signal.aborted
+        const current = () => operation.current() && intent.current() && !delivery.signal.aborted
         if (!loaded()) await hydrateRestoredSessionChain(instanceId, [sessionID], operation.signal, current)
         if (!current() || !loaded()) return
-        const intent = beginGesture({ instanceId, sessionId: sessionID })
-        await openSessionPreview(sessionID, url, instanceId, intent, { requestID, instanceId }, delivery.signal)
+        await openSessionPreview(sessionID, url, instanceId, intent, { requestID, instanceId }, delivery.signal, () =>
+          changeBrowserPreviewOwnership({ action: "ready", sessionId: sessionID, instanceId, requestID }))
         if (!current()) return
         if (appTabSelectionRevision() === selectionRevision) {
           selectInstanceTab(instanceId)

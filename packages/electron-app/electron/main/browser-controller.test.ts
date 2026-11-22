@@ -53,12 +53,18 @@ function createGuest(options: GuestOptions) {
   return { guest, events, setUrl: (value: string) => { url = value }, counts: () => ({ attachCount, detachCount }) }
 }
 
-function createHarness(send: (owner: WebContents, channel: string, payload: any) => void = () => {}) {
+function createHarness(send: (owner: WebContents, channel: string, payload: any) => void = () => {}, autoReady = true) {
   const receipts: unknown[] = []
   const makeOwner = (id: number): WebContents => {
     const owner = { id, isDestroyed: () => false, send: (channel: string, payload: unknown) => {
       if (channel === "browser-target:open-settled") receipts.push(payload)
-      else if (channel === "browser-target:open" || channel === "browser-target:discover") send(owner, channel, payload)
+      else if (channel === "browser-target:open" || channel === "browser-target:discover") {
+        if (autoReady && channel === "browser-target:open") {
+          const { sessionID, instanceId, requestID } = payload as Record<string, unknown>
+          controller.changeOwnership(owner, { action: "ready", sessionId: sessionID, instanceId, requestID })
+        }
+        send(owner, channel, payload)
+      }
     } } as WebContents
     return owner
   }
@@ -674,6 +680,19 @@ describe("BrowserController preview lifecycle", () => {
     const url = "https://example.com/new"
     assert.deepEqual(await h.controller.open("session", url, Infinity, ["tab"]), { url })
     assert.equal(load.mock.callCount(), 1)
+  })
+
+  it("a renderer which cannot show the preview leaves the duplicate free to open it", async () => {
+    const h = createHarness((owner, channel, { requestID }) => {
+      if (channel === "browser-target:discover") {
+        h.controller.claimOpen(owner, requestID, { kind: "discover", instanceId: "tab" })
+      } else {
+        h.controller.releaseOpen(owner, requestID)
+      }
+    }, false)
+    await assert.rejects(h.controller.open("session", "https://example.com/", Infinity, ["tab", "duplicate"]), /changed/)
+    const snapshot = h.controller.changeOwnership(h.owner, { action: "request", sessionId: "session", instanceId: "duplicate" })
+    assert.equal(snapshot?.owner?.instanceId, "duplicate")
   })
 
   it("uses the most recently used session tab across windows when there is no owner", async () => {
