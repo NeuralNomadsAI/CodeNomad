@@ -27,12 +27,6 @@ fn runtime(render: fn(&State, &mut Cx<State>) -> El) -> Runtime<State> {
     runtime
 }
 
-fn composer_editor(rt: &Runtime<State>) -> rune::ElementInfo {
-    rt.elements()
-        .into_iter()
-        .find(|element| element.path.contains("/composer/") && element.edit_range.is_some())
-        .expect("the text editor inside the composer")
-}
 #[test]
 fn real_chat_controls_follow_the_explicit_catalogue_direction() {
     for (render, locale) in [
@@ -74,6 +68,12 @@ fn rtl_chat_keeps_code_selectable_and_editor_paragraphs_in_their_own_direction()
     rt.pointer_up(x + width - 1.0, y + height - 2.0);
     rt.frame(0.0);
     assert_eq!(rt.selected_text().as_deref(), Some(CODE));
+    let editor = |rt: &Runtime<State>| {
+        rt.elements()
+            .into_iter()
+            .find(|element| element.path.contains("/composer/") && element.edit_range.is_some())
+            .expect("the text editor inside the composer")
+    };
     for (text, rtl) in [("C:/example/project", false), ("שלום", true)] {
         let mut rt = runtime(hebrew);
         let (x, y) = rt.find("composer").unwrap();
@@ -91,7 +91,7 @@ fn rtl_chat_keeps_code_selectable_and_editor_paragraphs_in_their_own_direction()
         rt.key(start.clone());
         rt.key_up(start);
         rt.frame(0.0);
-        let first_element = composer_editor(&rt);
+        let first_element = editor(&rt);
         assert_eq!(first_element.text.as_deref(), Some(text));
         assert_eq!(first_element.edit_range, Some([0, 0]));
         let first = first_element.caret.unwrap()[0];
@@ -105,7 +105,7 @@ fn rtl_chat_keeps_code_selectable_and_editor_paragraphs_in_their_own_direction()
         rt.key(end.clone());
         rt.key_up(end);
         rt.frame(0.0);
-        let last_element = composer_editor(&rt);
+        let last_element = editor(&rt);
         assert_eq!(last_element.edit_range, Some([text.len(), text.len()]));
         let last = last_element.caret.unwrap()[0];
         assert_ne!(first, last, "both editor caret endpoints must be measured");
