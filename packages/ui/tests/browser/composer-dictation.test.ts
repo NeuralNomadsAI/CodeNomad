@@ -8,7 +8,7 @@ let fixture: Awaited<ReturnType<typeof startProductFixture>>
 before(async () => { fixture = await startProductFixture("composer-dictation") })
 after(async () => { await fixture?.close() })
 
-async function withComposer(run: (page: Page) => Promise<void>, mobile = false, native?: "remote" | "remote-api" | "remote-api-legacy" | "remote-tauri" | "wsl" | "hex-setup" | "tauri-api" | "tauri-preferences" | "tauri-remote-api", pcm = false, locale: "en" | "he" | "zh-Hans" = "en", ttsOnly = false, unconfigured: boolean | Promise<number> = false, options: { history?: boolean; engineStatus?: Promise<number>; expectedSends?: string[]; unsupportedChoice?: boolean } = {}) {
+async function withComposer(run: (page: Page) => Promise<void>, mobile = false, native?: "remote" | "remote-api" | "remote-api-legacy" | "remote-tauri" | "wsl" | "hex-setup" | "tauri-api" | "tauri-preferences" | "tauri-remote-api", pcm = false, locale: "en" | "he" | "zh-Hans" = "en", ttsOnly = false, unconfigured: boolean | Promise<number> = false, options: { alerts?: boolean; history?: boolean; engineStatus?: Promise<number>; expectedSends?: string[]; unsupportedChoice?: boolean } = {}) {
   const context = await fixture.browser.newContext({
     viewport: mobile ? { width: 390, height: 844 } : { width: 900, height: 600 },
     isMobile: mobile, hasTouch: mobile,
@@ -154,6 +154,7 @@ async function withComposer(run: (page: Page) => Promise<void>, mobile = false, 
     if (pcm) target.searchParams.set("pcm", "1")
     if (locale !== "en") target.searchParams.set("locale", locale)
     if (options.history) target.searchParams.set("history", "")
+    if (options.alerts) target.searchParams.set("alerts", "")
     await page.goto(target.toString(), { waitUntil: "domcontentloaded" })
     await page.waitForFunction(() => Boolean((window as any).fixture)).catch(error => {
       if (errors.length) throw new AggregateError(errors, errors.map(value => value.message).join("; "))
@@ -177,11 +178,32 @@ const action = async (page: Page, name: string) => {
   await page.getByRole("button", { name: "More actions", exact: true }).click()
   await page.getByRole("menuitem", { name, exact: true }).click()
 }
-const start = (page: Page) => action(page, "Dictate")
+const dictationMode = (page: Page) => page.getByRole("menuitemcheckbox", { name: "Dictation mode", exact: true })
+const mic = (page: Page) => page.locator(".voice-button")
+const nativeReads = (page: Page) => page.evaluate(() =>
+  (window as any).native.requests.filter(({ action }: any) => action === "read").length)
+const waitForNativeRead = (page: Page, previous: number) => page.waitForFunction(count =>
+  (window as any).native.requests.filter(({ action }: any) => action === "read").length > count, previous)
+const holdMic = async (page: Page) => {
+  await page.mouse.up()
+  await mic(page).hover()
+  await page.mouse.down()
+}
+const start = async (page: Page) => {
+  if (!(await mic(page).count())) {
+    await page.getByRole("button", { name: "More actions", exact: true }).click()
+    await dictationMode(page).click()
+  }
+  if (await page.evaluate(() => {
+    const { native, __CODENOMAD_WINDOW_CONTEXT__: context } = window as any
+    return context === "remote" && native?.choice === "hex"
+  })) await mic(page).click()
+  else await holdMic(page)
+}
 const chooseLocalEngine = "Choose an engine in local Preferences → Voice → Dictation."
 const stop = async (page: Page) => {
   await page.waitForFunction(() => (window as any).capture.starts === 1)
-  await action(page, "Stop recording and transcribe")
+  await page.mouse.up()
   await page.waitForFunction(() => (window as any).capture.requests.length === 1)
 }
 const finish = async (page: Page, text: string) => {
@@ -189,21 +211,51 @@ const finish = async (page: Page, text: string) => {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => resolve(null))))
 }
 
+test("dictation mode adds the microphone before More actions without starting capture", () => withComposer(async page => {
+  const more = page.getByRole("button", { name: "More actions", exact: true })
+  assert.equal(await mic(page).count(), 0)
+  await more.click()
+  assert.equal(await dictationMode(page).getAttribute("aria-checked"), "false")
+  await dictationMode(page).click()
+  await mic(page).waitFor()
+  assert.equal(await page.locator(".voice-button + .prompt-actions-menu").count(), 1)
+  assert.equal(await page.evaluate(() => (window as any).capture.starts), 0)
+  await more.click()
+  assert.equal(await dictationMode(page).getAttribute("aria-checked"), "true")
+  assert.equal(await page.getByRole("menuitemcheckbox", { name: "Conversation mode", exact: true }).isDisabled(), true)
+  await dictationMode(page).click()
+  await mic(page).waitFor({ state: "detached" })
+}))
+
+test("releasing the microphone before permission resolves does not start a recording later", () => withComposer(async page => {
+  await page.evaluate(() => { (window as any).capture.deferPermission = true })
+  await start(page)
+  await page.waitForFunction(() => (window as any).capture.permit)
+  await page.mouse.up()
+  await page.evaluate(() => (window as any).capture.permit())
+  await page.waitForFunction(() => (window as any).capture.tracksStopped === 1)
+  assert.equal(await page.evaluate(() => (window as any).capture.starts), 0)
+  assert.equal(await page.evaluate(() => (window as any).capture.requests.length), 0)
+}))
+
 test("Dictate retains keyboard focus and its node when capabilities finish loading", async () => {
   let resolve!: (status: number) => void
   const response = new Promise<number>(done => { resolve = done })
   await withComposer(async page => {
     const more = page.getByRole("button", { name: "More actions", exact: true })
     await more.press("Enter")
-    const loading = page.getByRole("menuitem", { name: /Dictate.*Checking voice settings/ })
+    const loading = page.getByRole("menuitemcheckbox", { name: /Dictation mode.*Checking voice settings/ })
     await loading.focus()
     const node = (await loading.elementHandle())!
     assert.equal(await node.evaluate(el => document.activeElement === el), true)
     resolve(200)
-    await page.getByRole("menuitem", { name: "Dictate", exact: true }).waitFor()
+    await dictationMode(page).waitFor()
     assert.equal(await node.evaluate(el => el.isConnected && document.activeElement === el), true)
     await page.keyboard.press("Enter")
+    await mic(page).focus()
+    await page.keyboard.down("Space")
     await page.waitForFunction(() => (window as any).capture.starts === 1)
+    await page.keyboard.up("Space")
   }, false, undefined, false, "en", false, response)
 })
 
@@ -213,11 +265,11 @@ test("a speech capabilities 503 shows read failure and opens each command's own 
   await withComposer(async page => {
     const more = page.getByRole("button", { name: "More actions", exact: true })
     await more.press("Enter")
-    await page.getByRole("menuitem", { name: /Conversation mode.*Checking voice settings/ }).waitFor()
+    await page.getByRole("menuitemcheckbox", { name: /Conversation mode.*Checking voice settings/ }).waitFor()
     resolve(503)
     const failure = /Couldn’t check voice settings/
-    const conversation = page.getByRole("menuitem", { name: /^Conversation mode/ }).filter({ hasText: failure })
-    const dictate = page.getByRole("menuitem", { name: /^Dictate/ }).filter({ hasText: failure })
+    const conversation = page.getByRole("menuitemcheckbox", { name: /^Conversation mode/ }).filter({ hasText: failure })
+    const dictate = page.getByRole("menuitemcheckbox", { name: /^Dictation mode/ }).filter({ hasText: failure })
     await dictate.waitFor()
     await conversation.click()
     await page.waitForFunction(() => document.activeElement?.id === "voice-conversation")
@@ -234,12 +286,12 @@ test("a desktop conversation engine read failure opens Conversation and leaves A
   const engineStatus = new Promise<number>(done => { resolve = done })
   await withComposer(async page => {
     await page.getByRole("button", { name: "More actions", exact: true }).press("Enter")
-    await page.getByRole("menuitem", { name: /Conversation mode.*Checking voice settings/ }).waitFor()
+    await page.getByRole("menuitemcheckbox", { name: /Conversation mode.*Checking voice settings/ }).waitFor()
     // The device uses the API path; only the desktop engine preference is unavailable.
     await page.evaluate(() => { (window as any).speechSettings.engine = "api"; window.dispatchEvent(new Event("focus")) })
     resolve(503)
-    await page.getByRole("menuitem", { name: "Dictate", exact: true }).waitFor()
-    await page.getByRole("menuitem", { name: /Conversation mode.*Couldn’t check voice settings/ }).click()
+    await dictationMode(page).waitFor()
+    await page.getByRole("menuitemcheckbox", { name: /Conversation mode.*Couldn’t check voice settings/ }).click()
     await page.waitForFunction(() => document.activeElement?.id === "voice-conversation")
     await page.getByText("Could not load conversation settings", { exact: true }).waitFor()
   }, false, "hex-setup", false, "en", false, false, { engineStatus })
@@ -289,17 +341,31 @@ test("clear then retype the identical draft: only explicit recovery inserts, pre
   assert.equal(await field(page).inputValue(), "first transcript ")
 }))
 
-test("the existing API path starts and stops with touch without focusing the textarea", () => withComposer(async page => {
+test("holding the dictation button by touch transcribes on release without focusing the textarea", () => withComposer(async page => {
   const menu = page.getByRole("button", { name: "More actions", exact: true })
   await menu.tap()
-  await page.getByRole("menuitem", { name: "Dictate", exact: true }).tap()
+  await dictationMode(page).tap()
+  const { x, y, width, height } = (await mic(page).boundingBox())!
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: x + width / 2, y: y + height / 2 }] })
   await page.waitForFunction(() => (window as any).capture.starts === 1)
-  await menu.tap()
-  await page.getByRole("menuitem", { name: "Stop recording and transcribe", exact: true }).tap()
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
   await page.waitForFunction(() => (window as any).capture.requests.length === 1)
   await finish(page, "texte")
   assert.equal(await field(page).inputValue(), "texte ")
   assert.notEqual(await page.evaluate(() => document.activeElement?.tagName), "TEXTAREA")
+}, true))
+
+test("a cancelled touch releases the microphone without transcribing", () => withComposer(async page => {
+  await page.getByRole("button", { name: "More actions", exact: true }).tap()
+  await dictationMode(page).tap()
+  const { x, y, width, height } = (await mic(page).boundingBox())!
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: x + width / 2, y: y + height / 2 }] })
+  await page.waitForFunction(() => (window as any).capture.starts === 1)
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] })
+  await page.waitForFunction(() => (window as any).capture.tracksStopped === 1)
+  assert.equal(await page.evaluate(() => (window as any).capture.requests.length), 0)
 }, true))
 
 test("Dictate waits for the previous transcription to be inserted or discarded", () => withComposer(async page => {
@@ -310,11 +376,7 @@ test("Dictate waits for the previous transcription to be inserted or discarded",
   await finish(page, "saved")
   const insert = page.getByRole("button", { name: "Insert transcript", exact: true })
   await insert.waitFor()
-  await page.getByRole("button", { name: "More actions", exact: true }).click()
-  const unavailable = page.getByRole("menuitem", { name: /Dictate.*Insert or discard the pending transcription/ })
-  await unavailable.waitFor()
-  assert.equal(await unavailable.isDisabled(), true)
-  await page.keyboard.press("Escape")
+  assert.equal(await mic(page).isDisabled(), true)
   assert.equal(await page.evaluate(() => (window as any).capture.starts), 1)
   await insert.click()
   assert.equal(await field(page).inputValue(), "updated saved ")
@@ -334,10 +396,10 @@ test("an older remote Electron renderer uses the browser lease only when the nat
     await page.evaluate(() => { (window as any).native.denyLease = true })
     await start(page)
     await page.waitForFunction(() => (window as any).native.requests.some((request: any) => request.action === "claimMicrophone"))
-    await page.getByRole("button", { name: "More actions", exact: true }).click()
-    await page.getByRole("menuitem", { name: "Dictate", exact: true }).waitFor()
+    await page.getByRole("dialog").filter({ hasText: "The input test is using the microphone." }).waitFor()
+    await page.mouse.up()
     assert.equal(await page.evaluate(() => (window as any).capture.starts), 0)
-  }, false, "remote-api")
+  }, false, "remote-api", false, "en", false, false, { alerts: true })
 })
 
 test("MediaRecorder releases its lease before an oversize upload and retains a confirmable excerpt", () => withComposer(async page => {
@@ -403,7 +465,7 @@ test("discarding a pending transcript returns focus to the draft only from the f
     await field(page).fill("original")
     await start(page)
     await page.waitForFunction(expected => (window as any).capture.starts === expected, focused ? 1 : 2)
-    await action(page, "Stop recording and transcribe")
+    await page.mouse.up()
     await page.waitForFunction(expected => (window as any).capture.requests.length === expected, focused ? 1 : 2)
     await field(page).fill("left right")
     await select(page, 5)
@@ -489,13 +551,17 @@ test("a pending transcript cannot be inserted in shell mode and remains availabl
 test("an Electron engine read failure replaces cached API dictation with the Dictation settings action", () => withComposer(async page => {
   await page.evaluate(() => { (window as any).speechSettings.engine = "api"; window.dispatchEvent(new Event("focus")) })
   await page.getByRole("button", { name: "More actions", exact: true }).click()
-  await page.getByRole("menuitem", { name: "Dictate", exact: true }).waitFor()
+  await dictationMode(page).click()
   // The fresh read fails at admission while the menu still shows the remembered choice.
+  const reads = await nativeReads(page)
   await page.evaluate(() => { (window as any).speechSettings.readFails = true })
-  await page.getByRole("menuitem", { name: "Dictate", exact: true }).click()
-  await page.getByRole("menu").waitFor({ state: "hidden" })
+  await holdMic(page)
+  await waitForNativeRead(page, reads)
+  await page.mouse.up()
   await page.getByRole("button", { name: "More actions", exact: true }).click()
-  await page.getByRole("menuitem", { name: /Dictate.*Could not check the dictation engine/ }).click()
+  await page.getByRole("menuitemcheckbox", { name: /Dictation mode.*Could not check the dictation engine/ }).click()
+  await page.getByRole("button", { name: "More actions", exact: true }).click()
+  await page.getByRole("menuitemcheckbox", { name: /Dictation mode.*Could not check the dictation engine/ }).click()
   await page.waitForFunction(() => document.activeElement?.id === "voice-dictation")
   await page.getByText("Could not check the dictation engine. Check again.", { exact: true }).waitFor()
   assert.equal(await page.evaluate(() => (window as any).capture.starts), 0)
@@ -504,12 +570,16 @@ test("an Electron engine read failure replaces cached API dictation with the Dic
 test("a remote engine read failure blocks the cached API choice and opens the Dictation card", () => withComposer(async page => {
   const more = page.getByRole("button", { name: "More actions", exact: true })
   await more.click()
-  await page.getByRole("menuitem", { name: "Dictate", exact: true }).waitFor()
+  await dictationMode(page).click()
+  const reads = await nativeReads(page)
   await page.evaluate(() => { (window as any).native.readFails = true })
-  await page.getByRole("menuitem", { name: "Dictate", exact: true }).click()
-  await page.getByRole("menu").waitFor({ state: "hidden" })
+  await holdMic(page)
+  await waitForNativeRead(page, reads)
+  await page.mouse.up()
   await more.click()
-  await page.getByRole("menuitem", { name: /Dictate.*Could not check the dictation engine/ }).click()
+  await page.getByRole("menuitemcheckbox", { name: /Dictation mode.*Could not check the dictation engine/ }).click()
+  await more.click()
+  await page.getByRole("menuitemcheckbox", { name: /Dictation mode.*Could not check the dictation engine/ }).click()
   await page.waitForFunction(() => document.activeElement?.id === "voice-dictation")
   await page.getByText("Could not check the dictation engine. Check again.", { exact: true }).waitFor()
   assert.equal(await page.evaluate(() => (window as any).capture.starts), 0)
@@ -589,7 +659,8 @@ test("Hex captures on the local host and inserts its transcript into a WSL draft
   await start(page)
   await page.waitForFunction(() => (window as any).capture.samples > 0)
   assert.equal(await field(page).inputValue(), "before replace after")
-  await action(page, "Stop recording and transcribe")
+  await page.getByRole("button", { name: "Stop recording and transcribe", exact: true }).waitFor()
+  await page.mouse.up()
   await page.waitForFunction(() => document.querySelector("textarea")?.value === "before WSL text after")
   const { native, capture } = await page.evaluate(() => ({ native: (window as any).native.requests, capture: (window as any).capture }))
   const lease = native.find((event: any) => event.action === "claimMicrophone")
@@ -619,7 +690,7 @@ test("an unsupported saved engine requires explicit reselection before recording
 
 test("an older host's unsupported choice opens Dictation settings without capture", () => withComposer(async page => {
   await page.getByRole("button", { name: "More actions", exact: true }).click()
-  const dictate = page.getByRole("menuitem").filter({ hasText: chooseLocalEngine })
+  const dictate = page.getByRole("menuitemcheckbox", { name: /^Dictation mode/ }).filter({ hasText: chooseLocalEngine })
   await dictate.click()
   await page.waitForFunction(() => document.activeElement?.id === "voice-dictation")
   await page.getByText(chooseLocalEngine, { exact: true }).waitFor()
@@ -630,23 +701,25 @@ test("an older host's unsupported choice opens Dictation settings without captur
 test("Classic conversation is available with playback but without API dictation", () => withComposer(async page => {
   const more = page.getByRole("button", { name: "More actions", exact: true })
   await more.click()
-  await page.getByRole("menuitemcheckbox", { name: "Enable conversation mode" }).click()
+  await page.getByRole("menuitemcheckbox", { name: "Conversation mode", checked: false }).click()
   await more.click()
-  await page.getByRole("menuitemcheckbox", { name: "Disable conversation mode" }).waitFor()
+  await page.getByRole("menuitemcheckbox", { name: "Conversation mode", checked: true }).waitFor()
+  assert.equal(await dictationMode(page).isDisabled(), true)
+  assert.equal(await mic(page).count(), 0)
   assert.equal(await page.evaluate(() => (window as any).capture.starts), 0)
 }, false, undefined, false, "en", true))
 
 test("a stored live engine retires Classic without falling back on reload", () => withComposer(async page => {
   const more = page.getByRole("button", { name: "More actions", exact: true })
-  const enable = page.getByRole("menuitemcheckbox", { name: "Enable conversation mode" })
-  const disable = page.getByRole("menuitemcheckbox", { name: "Disable conversation mode" })
+  const enable = page.getByRole("menuitemcheckbox", { name: "Conversation mode", exact: true, checked: false })
+  const disable = page.getByRole("menuitemcheckbox", { name: "Conversation mode", exact: true, checked: true })
   await more.click()
   await enable.click()
   await more.click()
   await disable.waitFor()
   await page.evaluate(() => (window as any).fixture.setVoiceConversationEngine("gemini-live"))
   await disable.waitFor({ state: "detached" })
-  await page.getByRole("menuitem", { name: "Conversation mode — Set up Gemini Live" }).waitFor()
+  await page.getByRole("menuitemcheckbox", { name: "Conversation mode — Set up Gemini Live" }).waitFor()
 
   await page.reload({ waitUntil: "domcontentloaded" })
   await page.waitForFunction(() => (window as any).fixture?.voiceConversationEngineLoaded())
@@ -660,7 +733,7 @@ test("both unavailable voice commands are reachable by keyboard and focus their 
   const more = page.getByRole("button", { name: "More actions", exact: true })
   await more.focus()
   await more.press("Enter")
-  const dictate = page.getByRole("menuitem", { name: "Dictate — Set up dictation" })
+  const dictate = page.getByRole("menuitemcheckbox", { name: "Dictation mode — Set up dictation" })
   await dictate.waitFor()
   await page.keyboard.press("Home")
   await page.waitForFunction(() => document.activeElement?.getAttribute("data-action-key") === "voice")
@@ -674,7 +747,7 @@ test("both unavailable voice commands are reachable by keyboard and focus their 
   await page.waitForFunction(() => document.activeElement?.getAttribute("data-action-key") === "voice")
   await page.keyboard.press("ArrowDown")
   await page.waitForFunction(() => document.activeElement?.getAttribute("data-action-key") === "conversation")
-  await page.getByRole("menuitem", { name: "Conversation mode — Set up playback" }).press("Enter")
+  await page.getByRole("menuitemcheckbox", { name: "Conversation mode — Set up playback" }).press("Enter")
   await page.waitForFunction(() => document.activeElement?.id === "voice-playback")
   assert.equal(await page.evaluate(() => (window as any).capture.starts), 0)
 }, false, undefined, false, "en", false, true))
@@ -737,7 +810,8 @@ test("remote Linux Tauri API prompts again after stop; denial sends no audio", (
   const attempts = () => page.evaluate(() => (window as any).native.requests.filter((event: any) =>
     ["startApiMicrophone", "finishApiMicrophone", "revokeApiMicrophone"].includes(event.action)))
   await start(page)
-  await action(page, "Stop recording and transcribe")
+  await page.getByRole("button", { name: "Stop recording and transcribe", exact: true }).waitFor()
+  await page.mouse.up()
   await page.waitForFunction(() => (window as any).capture.requests.length === 1)
   const { mimeType, audioBase64 } = await page.evaluate(() => (window as any).capture.requests[0].input)
   assert.equal(mimeType, "audio/wav")
@@ -808,7 +882,7 @@ for (const choice of ["hex", null] as const) {
       await page.waitForFunction(() => document.querySelector("textarea")?.value === "Local draft")
     } else {
       await page.getByRole("button", { name: "More actions", exact: true }).click()
-      await page.getByRole("menuitem").filter({ hasText: chooseLocalEngine }).click()
+      await page.getByRole("menuitemcheckbox", { name: /^Dictation mode/ }).filter({ hasText: chooseLocalEngine }).click()
       await page.waitForFunction(() => document.activeElement?.id === "voice-dictation")
       assert.equal(await page.evaluate(() => (window as any).native.requests.some(({ action }: any) => action === "begin")), false)
     }
@@ -890,6 +964,7 @@ test("sending a draft preserves the stopped Linux Tauri excerpt until explicit t
   await page.evaluate(() => { (window as any).native.microphoneState = "limitReached" })
   const confirm = page.getByRole("button", { name: "Transcribe", exact: true })
   await confirm.waitFor()
+  await page.mouse.up()
   const actions = () => page.evaluate(() => (window as any).native.requests.map(({ action }: any) => action) as string[])
   await page.waitForFunction(() => (window as any).native.requests.some(({ action }: any) => action === "releaseMicrophone"))
   await page.evaluate(() => (window as any).fixture.holdSend())
@@ -910,7 +985,7 @@ test("Linux Tauri revokes a late API microphone authorization without starting c
   await page.evaluate(() => { (window as any).native.holdMicrophone = true })
   await start(page)
   await page.waitForFunction(() => (window as any).native.requests.some(({ action }: any) => action === "authorizeApiMicrophone"))
-  await action(page, "Cancel dictation")
+  await page.mouse.up()
   await page.evaluate(() => (window as any).native.admitMicrophone())
   await page.waitForFunction(() => (window as any).native.requests.some(({ action }: any) => action === "revokeApiMicrophone"))
   assert.deepEqual(await page.evaluate(() => {
@@ -1025,10 +1100,9 @@ for (const surface of ["composer", "Voice settings"] as const) {
 
 test("a stale API display cannot record after the device choice changes to Hex", () => withComposer(async page => {
   await page.getByRole("button", { name: "More actions", exact: true }).click()
-  const record = page.getByRole("menuitem", { name: "Dictate", exact: true })
-  await record.waitFor()
+  await dictationMode(page).click()
   await page.evaluate(() => { (window as any).native.choice = "hex" })
-  await record.click()
+  await holdMic(page)
   await page.waitForFunction(() => (window as any).native.requests.length >= 2)
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)))
   const capture = await page.evaluate(() => (window as any).capture)
@@ -1040,7 +1114,7 @@ test("keyboard activation shows the approved plan, cancels and resumes, and neve
   const menu = page.getByRole("button", { name: "More actions", exact: true })
   await menu.focus()
   await menu.press("Enter")
-  const setup = page.getByRole("menuitem", { name: /^Dictate/ }).filter({ hasText: chooseLocalEngine })
+  const setup = page.getByRole("menuitemcheckbox", { name: /^Dictation mode/ }).filter({ hasText: chooseLocalEngine })
   await setup.focus()
   await setup.press("Enter")
   const activate = page.getByRole("button", { name: "Activate Hex" })
@@ -1094,7 +1168,8 @@ test("keyboard activation shows the approved plan, cancels and resumes, and neve
   await engine.waitFor()
   assert.equal(await engine.inputValue(), "hex")
   await menu.click()
-  await page.getByRole("menuitem", { name: "Dictate", exact: true }).click()
+  await dictationMode(page).click()
+  await holdMic(page)
   await page.waitForFunction(() => (window as any).native.requests.some((event: any) => event.action === "start"))
   const events = await mutations()
   assert.deepEqual(events.find((event: any) => event.action === "start"),

@@ -172,6 +172,9 @@ intervals.
 
 ## Initial session hydration
 
+Publish a fresh session map only for the affected tab. Sidebar scope, tree and
+activity reuse unchanged tab snapshots when another tab publishes a session update.
+
 App-tab records retain identity across metadata refreshes, reordering and restoration
 of sibling projects. Their payload getters stay reactive; Solid's identity-keyed
 rendering must not remount existing shells or restart their Git readers on each update.

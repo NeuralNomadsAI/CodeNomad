@@ -31,6 +31,13 @@ After trimming ASCII whitespace and lowercasing ASCII letters: 1–64 characters
 
 ### Storage
 
+Partition commits carry the complete root and any partition bodies not confirmed
+by the renderer's last load or commit. Both hosts verify supplied bodies and
+verify omitted files on disk under the publication transaction; the 256 MiB
+limit applies to the complete graph. Publication and partition collection are
+serialized across windows, retaining the union of their roots. A failed delta
+retries once with all partition bodies.
+
 The default profile with the default config uses the unscoped locations (`~/.codenomad/client-state/v2`, Electron's `userData`, Tauri's stable identifier and WebView directory). Every other profile/config pair uses `<scope> = <key>-sha256(key + "\0" + configIdentity)[0..16]`, i.e. `%APPDATA%/CodeNomad/scopes/<scope>` (Electron `userData` and both hosts' client state) and `…-v2/scopes/<scope>` (Tauri WebView), plus a scoped Tauri identifier. The default profile's key is `stable`, so existing folders such as `dev-<hash>` and `dev-v2-<hash>` are reached with `CODENOMAD_PROFILE=dev` / `dev-v2`.
 
 On Windows, Tauri runs each profile under its identifier as AppUserModelID, and its system notifications carry that ID. Windows shows a desktop app's notifications only under an ID it knows, and the installer's Start menu shortcut carries the stable one, so every launch registers the running ID under `HKCU\Software\Classes\AppUserModelId\<identifier>` (`DisplayName` CodeNomad, `IconUri` the bundled web app icon `resources\server\public\pwa-192x192.png`; `windows_notification_identity.rs`). Electron always uses the stable ID.

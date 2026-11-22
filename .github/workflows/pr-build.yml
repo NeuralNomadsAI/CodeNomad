@@ -451,7 +451,7 @@ jobs:
         run: npm run build:memory --workspace @neuralnomads/codenomad
 
       - name: Test desktop packaging invariants
-        run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs packages/tauri-app/scripts/patch-bundle-type.test.mjs packages/tauri-app/scripts/vendored-patches.test.mjs
+        run: node --test scripts/desktop-server-resources.test.cjs scripts/precompress-ui.test.mjs scripts/prepare-node-runtime.test.cjs packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs packages/tauri-app/scripts/patch-bundle-type.test.mjs packages/tauri-app/scripts/vendored-patches.test.mjs
 
       - name: Test CI fixture diagnostics and artifact announcements
         run: node --test scripts/native-fixture-diagnostics.test.mjs scripts/native-pruning-ready.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs .github/scripts/dependabot-policy.test.cjs .github/scripts/binary-build-order.test.cjs .github/scripts/windows-signing.test.cjs .github/scripts/zip-entry.test.cjs .github/scripts/release-pr-notes.test.cjs .github/scripts/download-cache.test.cjs
@@ -548,7 +548,9 @@ jobs:
           packages/ui/src/stores/restore-workspace-commit-gates.test.ts
           packages/ui/src/stores/client-state-codec.test.ts
           packages/ui/src/stores/client-state-partitions.test.ts
+          packages/ui/src/stores/client-state-delta.test.ts
           packages/ui/src/stores/client-state.test.ts
+          packages/ui/src/stores/session-catalog-persistence.test.ts
           packages/ui/src/stores/compaction-notice.test.ts
           packages/ui/src/stores/form-settlements.test.ts
           packages/ui/src/stores/instance-invalidation.test.ts
@@ -751,6 +753,7 @@ jobs:
           packages/ui/src/stores/session-native-events.test.ts
           packages/ui/src/stores/interruption-scope.test.ts
           packages/ui/src/stores/session-workspace-scope.test.ts
+          packages/ui/src/stores/session-projection-cost.test.ts
           packages/ui/src/stores/session-outline.test.ts
           packages/ui/src/stores/runtime-contract.test.ts
           packages/ui/src/stores/session-lifecycle-signals.test.ts

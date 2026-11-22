@@ -115,7 +115,7 @@ export function projectSessionSearchResults(
   return projectSessionFamilies([...rows.values()], options)
 }
 
-export function getSessionRootFromMap(instanceSessions: Map<string, Session>, sessionId: string, directoryOnly?: string): Session | null {
+export function getSessionRootFromMap(instanceSessions: ReadonlyMap<string, Session>, sessionId: string, directoryOnly?: string): Session | null {
   let current = instanceSessions.get(sessionId)
   if (!current) return null
   const inScope = (session: Session) => !directoryOnly || normalizeSessionDirectory(session.location.directory) === normalizeSessionDirectory(directoryOnly)
@@ -132,7 +132,7 @@ export function getSessionRootFromMap(instanceSessions: Map<string, Session>, se
   return current
 }
 
-export function getSessionAncestorIdsFromMap(instanceSessions: Map<string, Session>, sessionId: string): string[] {
+export function getSessionAncestorIdsFromMap(instanceSessions: ReadonlyMap<string, Session>, sessionId: string): string[] {
   const ancestors: string[] = []
   const seen = new Set<string>([sessionId])
   let current = instanceSessions.get(sessionId)
@@ -226,7 +226,7 @@ function buildThread(
 }
 
 export function buildSessionThreadsFromMap(
-  instanceSessions: Map<string, Session>,
+  instanceSessions: ReadonlyMap<string, Session>,
   rootIds: string[],
   includedDescendantIds?: Set<string>,
   directoryOnly?: string,

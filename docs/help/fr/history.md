@@ -42,6 +42,8 @@ La chronologie est masquée si la conversation est trop étroite (moins de 420 p
 
 **Contenu des messages** s’applique à toutes les conversations. Choisissez un préréglage (**Rien**, **Minimal**, **Équilibré** ou **Tout**) en haut de cette fenêtre ou dans **Paramètres → Chat**, puis ajustez les lignes individuelles ; le menu de préréglage de **Contenu des messages** affiche alors **Personnalisé**. Masquer les outils ne désactive pas les outils, ne change pas les autorisations et ne retire pas les sorties enregistrées. Pour préserver la fluidité de l’affichage, les messages très volumineux affichent **Afficher … de plus** dans un intervalle omis, et les textes ou sorties d’outils très longs s’arrêtent à une ligne **… caractères de plus masqués** avec **Tout afficher**, ou **Afficher … de plus** lorsqu’il en reste beaucoup, ce qui peut demander plusieurs étapes. Révéler l’un ou l’autre ne concerne que l’affichage et ne récupère pas du contenu supprimé. Faites glisser le pointeur sur ses boutons œil ou chevron pour régler plusieurs lignes d'un coup : le premier bouton que vous quittez bascule, et chaque bouton survolé dans la même colonne prend son nouvel état. La conversation se met à jour quand vous relâchez le bouton.
 
+Dans **Groupes d’outils**, désactivez l’œil pour afficher chaque appel séparément, ou utilisez le chevron pour ouvrir les groupes par défaut. Chaque type d’outil garde son propre réglage de visibilité. **Tout** ouvre les groupes par défaut ; les autres préréglages les laissent réduits.
+
 ## Compacter une session {#compact-session}
 
 1. Sélectionnez la conversation voulue.

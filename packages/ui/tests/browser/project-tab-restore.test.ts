@@ -217,10 +217,17 @@ test(`${host} restores the active project and saved session identity before hydr
       }))
      } }
      const catalogMode = ${JSON.stringify(mode)}.endsWith('catalog') || ${JSON.stringify(mode)} === 'foreground-history'
-     const persisted = catalogMode ? JSON.parse(sessionStorage.getItem('catalog-state') || 'null') : null
+      let persisted = catalogMode ? JSON.parse(sessionStorage.getItem('catalog-state') || 'null') : null
      const load = () => ({ isPrimary: true, restoreEnabled: true, snapshot: persisted?.snapshot || snapshot,
        ...(catalogMode ? { partitionProtocolVersion: 1 } : {}) })
-     const commit = value => { window.committedState = value; sessionStorage.setItem('catalog-state', JSON.stringify(value)); return true }
+      const commit = value => {
+        const partitions = { ...persisted?.partitions, ...value.partitions }
+        if (value.partitionKeys.some(key => !(key in partitions))) throw Error('Missing client state partition')
+        persisted = { ...value, partitions: Object.fromEntries(value.partitionKeys.map(key => [key, partitions[key]])) }
+        window.committedState = persisted
+        sessionStorage.setItem('catalog-state', JSON.stringify(persisted))
+        return true
+      }
      window.electronAPI = {
       claimClientStateAccess: async () => true,
        loadClientState: async () => load(),

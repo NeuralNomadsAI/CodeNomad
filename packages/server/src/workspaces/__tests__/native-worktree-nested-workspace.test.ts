@@ -157,3 +157,50 @@ test("creation for an expected tip accepts the branch when a tag has the same na
     await rm(root, { recursive: true, force: true })
   }
 })
+
+test("creation retries an invalidated result inventory without repeating the creation", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "worktree-create-config-race-"))
+  const repo = path.join(root, "main"), child = path.join(repo, ".codenomad", "worktrees", "new-branch")
+  const git = (directory: string, ...args: string[]) => execFileSync("git", ["-C", directory, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim()
+  try {
+    git(root, "init", "--initial-branch=main", repo)
+    await mkdir(path.dirname(child), { recursive: true })
+    git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "one")
+    git(repo, "config", "extensions.worktreeConfig", "true")
+    let creations = 0, resultReads = 0, changed = false
+    const client = {
+      location: { get: async () => ({ directory: repo, project: { id: "fixture", directory: repo, canonical: repo } }) },
+      worktree: {
+        refresh: async () => {},
+        list: async () => {
+          if (!creations) return [{ directory: repo }]
+          resultReads++
+          return [{ directory: repo }, { directory: child }]
+        },
+        create: async () => {
+          assert.equal(++creations, 1)
+          git(repo, "worktree", "add", "--detach", "-q", child, "HEAD")
+          return { directory: child }
+        },
+      },
+    } as unknown as OpenCodeClient
+    const result = await createNativeWorktree({
+      client, workspacePath: repo, location: { directory: repo },
+      toHost: async directory => {
+        if (directory === child && resultReads === 1 && !changed) {
+          assert.equal(git(child, "symbolic-ref", "HEAD"), "refs/heads/new-branch")
+          git(repo, "config", "user.name", "Changed during result scan")
+          changed = true
+        }
+        return directory
+      },
+    }, "new-branch")
+    assert.equal(changed, true)
+    assert.equal(creations, 1)
+    assert.equal(resultReads, 2)
+    assert.equal(result.registeredDirectory, await realpath(child))
+    assert.equal(result.branch, "new-branch")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

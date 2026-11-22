@@ -69,8 +69,12 @@ export function clearSessionIdleFade(instanceId: string, sessionId: string, idle
 
 export function getSessionIdleFadeClass(instanceId: string, sessionId: string): string {
   const session = getSession(instanceId, sessionId)
+  return idleFadeClassForSession(instanceId, session)
+}
+
+function idleFadeClassForSession(instanceId: string, session: Session | null): string {
   if (!session || session.status !== "idle") return ""
-  const fadingIdleSince = idleFades().get(idleFadeKey(instanceId, sessionId))
+  const fadingIdleSince = idleFades().get(idleFadeKey(instanceId, session.id))
   if (fadingIdleSince === undefined) return ""
   if (typeof session.idleSince === "number" && session.idleSince !== fadingIdleSince) return ""
   return "session-status-fading"
@@ -118,7 +122,15 @@ export function shouldShowSessionStatus(
   now = Date.now(),
   keepUnseenSubagentIdleStatus = false,
 ): boolean {
-  const session = getSession(instanceId, sessionId)
+  return shouldShowSessionStatusForRow(instanceId, getSession(instanceId, sessionId), now, keepUnseenSubagentIdleStatus)
+}
+
+export function shouldShowSessionStatusForRow(
+  instanceId: string,
+  session: Session | null,
+  now: number,
+  keepUnseenSubagentIdleStatus: boolean,
+): boolean {
   if (!session) {
     return false
   }
@@ -127,7 +139,7 @@ export function shouldShowSessionStatus(
     return true
   }
 
-  if (session.status === "idle" && getSessionIdleFadeClass(instanceId, sessionId)) {
+  if (idleFadeClassForSession(instanceId, session)) {
     return true
   }
 
