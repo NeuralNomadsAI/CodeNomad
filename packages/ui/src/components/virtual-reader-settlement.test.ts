@@ -29,7 +29,7 @@ test("a hold aligns at once, then on every frame of a window that nothing extend
   try {
     const reader = createVirtualReaderSettlement({
       enabled: () => enabled,
-      align: () => { aligned++; return held },
+      align: () => { aligned++; return held ? undefined : false },
     })
     const element = {} as HTMLElement
     reader.hold({ key: "revealed", offset: 8, element })
@@ -67,4 +67,49 @@ test("a hold aligns at once, then on every frame of a window that nothing extend
     globalThis.requestAnimationFrame = previousFrame
     globalThis.cancelAnimationFrame = previousCancel
   }
+})
+
+test("an unresolved block gets its settlement window after loading, within a fixed deadline", t => {
+  let now = 0, pending = true, aligned = 0
+  let callback: FrameRequestCallback | undefined
+  t.mock.method(performance, "now", () => now)
+  const previousFrame = globalThis.requestAnimationFrame, previousCancel = globalThis.cancelAnimationFrame
+  globalThis.requestAnimationFrame = run => { callback = run; return 1 }
+  globalThis.cancelAnimationFrame = () => { callback = undefined }
+  t.after(() => {
+    globalThis.requestAnimationFrame = previousFrame
+    globalThis.cancelAnimationFrame = previousCancel
+  })
+  const step = (frames: number) => {
+    for (let n = 0; n < frames && callback; n++) {
+      const next = callback
+      callback = undefined
+      next(now += 16)
+    }
+  }
+  const reader = createVirtualReaderSettlement({
+    enabled: () => true,
+    align: () => { aligned++; return pending ? "pending" : undefined },
+  })
+  const anchor = { key: "lazy", offset: 0 }
+  reader.hold(anchor, true)
+  step(94)
+  assert.equal(reader.held(), anchor)
+  pending = false
+  step(29)
+  assert.equal(reader.held(), anchor)
+  step(1)
+  assert.equal(reader.held(), undefined)
+  assert.equal(aligned, 124)
+
+  pending = true
+  reader.hold(anchor)
+  step(310)
+  assert.equal(reader.held(), anchor)
+  step(3)
+  assert.equal(reader.held(), undefined, "a never-loaded target is released at the deadline")
+  reader.hold(anchor)
+  step(40)
+  reader.cancel()
+  assert.equal(callback, undefined, "a gesture cancels an unresolved hold")
 })

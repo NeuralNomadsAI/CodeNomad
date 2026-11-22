@@ -80,7 +80,7 @@ const longMessages = Array.from({ length: 260 }, (_, index) => index === LONG.in
   : index % 2 ? assistant(index, [{ type: "text", text: prose(`Note ${index}`, 2) }]) : { id: id(index), type: "user", time: { created: index + 1 }, text: prose(`Ask ${index}`, 1) })
 
 let server: Awaited<ReturnType<typeof startTimelineSyncServer>>, directory: string, store: string, visibilityStore: string, wideStore: string, longStore: string
-let groupedStore: string, proseStore: string
+let groupedStore: string, coldGroupStore: string, proseStore: string
 let tailGroupStore: string, tailToolStore: string
 before(async () => {
   directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-timeline-sync-"))
@@ -94,7 +94,7 @@ before(async () => {
   createSessionStore(longStore, longMessages)
   groupedStore = path.join(directory, "grouped.sqlite")
   const reads = Array.from({ length: 30 }, (_, n) => tool(`${id(1)}-${n}`, "read", n === 2 ? 48 : 6))
-  createSessionStore(groupedStore, [message(0),
+  const grouped = [message(0),
     assistant(1, [
       { type: "reasoning", text: "First check\n".repeat(32) },
       { type: "reasoning", text: "Second check\n".repeat(12) },
@@ -104,7 +104,12 @@ before(async () => {
     ]),
     assistant(2, reads.slice(12)),
     ...Array.from({ length: 20 }, (_, n) => assistant(n + 3, [{ type: "text", text: prose(`Reply ${n}`, 4) }])),
-  ])
+  ]
+  createSessionStore(groupedStore, grouped)
+  coldGroupStore = path.join(directory, "cold-group.sqlite")
+  createSessionStore(coldGroupStore, grouped.map(row => row.id === id(1) ? {
+    ...row, content: row.content.filter((part: { name?: string }) => part.name !== "edit"),
+  } : row))
   proseStore = path.join(directory, "prose.sqlite")
   createSessionStore(proseStore, [message(0), ...Array.from({ length: 20 }, (_, n) =>
     assistant(n + 1, [{ type: "text", text: `Paragraph ${n}.\n\n`.repeat(25) }]))])
@@ -196,6 +201,51 @@ test("scrolling activates the marker of the block at the reading line", { timeou
 
 // The product treats blocks reaching past the 4 px reading line as visible.
 const READING_LINE_TOLERANCE = 4
+
+for (const cancel of [false, true]) test(`a cold tool anchor ${cancel ? "yields to a wheel gesture" : "settles after the renderer loads"}`, { timeout: 90_000 }, () => withSession("minimal", async (page) => {
+  const { promise: requested, resolve: markRequested } = Promise.withResolvers<void>()
+  const { promise: held, resolve: release } = Promise.withResolvers<void>()
+  await page.route(/\/src\/components\/tool-call\.tsx(?:\?|$)/, async route => {
+    markRequested()
+    await held
+    await route.continue()
+  })
+  try {
+    const marker = (await markers(page)).find(candidate => candidate.id === `${id(2)}:tool:8`)!
+    const card = page.locator(`.tool-call-message[data-part-id="${marker.toolPartIds![0]}"]`)
+    const header = page.getByRole("button", { name: "Explored: 30 reads", exact: true })
+    await header.and(page.locator('[aria-expanded="false"]')).waitFor()
+    await clickMarker(page, marker)
+    assert.equal(await active(page), marker.id)
+    assert.equal(await page.locator(".tool-call-message").count(), 0)
+    await page.evaluate(() => (window as any).fixture.showFilters(true))
+    await page.getByRole("button", { name: "Message content", exact: true }).click()
+    await page.getByRole("button", { name: "Disable tool grouping", exact: true }).click()
+    await card.locator(".tool-call-loading").waitFor({ state: "attached" })
+    await requested
+    if (cancel) {
+      await page.keyboard.press("Escape")
+      const stream = page.locator(".message-stream")
+      const box = (await stream.boundingBox())!
+      await page.mouse.move(box.x + 6, box.y + 6)
+      await page.mouse.wheel(0, -180)
+      await page.waitForFunction(id => (globalThis as any).__timeline.active() !== id, marker.id)
+    }
+    // Keep the first module request pending beyond the usual 30-frame alignment window.
+    await page.waitForTimeout(1500)
+    release()
+    await card.locator(".tool-call-header-toggle").waitFor()
+    await settleTranscript(page, 450)
+    const offset = await blockOffset(page, marker)
+    if (cancel) {
+      assert.ok(offset === null || offset > 100, `the loaded card does not undo the reader's scroll (${offset}px)`)
+      await assertReadingLineActive(page, "wheel before the tool renderer loads")
+    } else {
+      assert.ok(offset !== null && Math.abs(offset) <= READING_LINE_TOLERANCE, `the loaded card lands at the reading line (${offset}px)`)
+      assert.equal(await active(page), marker.id)
+    }
+  } finally { release() }
+}, coldGroupStore))
 
 test("changing grouping does not move an unchanged passage below a selected marker", { timeout: 90_000 }, () => withSession("minimal", async (page) => {
   const marker = (await markers(page)).find(candidate => candidate.id === `${id(15)}:assistant:0`)!

@@ -386,9 +386,10 @@ previous offset after the jump's write, which would otherwise carry the reader b
 down (a First jump from the bottom of a long transcript). While
 a jump's row is not rendered, the hold rewrites Virtua's current estimate of its
 offset instead, since measuring the rows around a distant estimate can carry the
-row out of the rendered range; once rendered it is aligned. Both last a fixed
-30-frame window counted from the request, which layout never extends, re-measuring
-and re-aligning the element on every frame, and are released afterwards. Within it,
+row out of the rendered range; once rendered it is aligned. The 30-frame
+settlement window starts when the requested block is measurable. While a key
+lookup finds only an estimated row or waits for a lazy card, it holds the fallback
+until the block loads; the entire hold has a five-second deadline. Within it,
 viewport and header resizes re-align the
 element instead of dropping it, and its requested offset is kept and clamped into
 the current viewport only when applied. Gestures, navigation and focus moving to

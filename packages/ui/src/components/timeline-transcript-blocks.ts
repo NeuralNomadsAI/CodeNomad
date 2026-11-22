@@ -43,8 +43,11 @@ export function findTimelineSegmentBlock(scroller: HTMLElement, segment: Timelin
       return byPart(id => `.message-item-base[data-message-content-start-part-id="${id}"]`)
     case "reasoning":
       return byPart(id => `.message-reasoning-card[data-part-id="${id}"]`) ?? groupHeader(ids[0])
-    case "tool":
-      return byPart(id => `.tool-call-message[data-part-id="${id}"]`) ?? groupHeader(ids[0])
+    case "tool": {
+      const card = ids[0] ? row?.querySelector(`.tool-call-message[data-part-id="${CSS.escape(ids[0])}"]`) : null
+      if (card?.querySelector(":scope > .delete-hover-scope > .tool-call-loading")) return null
+      return shown(card) ? card : groupHeader(ids[0])
+    }
     case "compaction": {
       const card = row?.querySelector(".message-compaction-card")
       return shown(card) ? card : null
