@@ -366,6 +366,8 @@ pub fn back(s: &mut State) {
         return;
     }
     s.agent = None;
+    #[cfg(not(target_arch = "wasm32"))]
+    s.preview.close();
     s.commands = None;
     s.incoming = None;
     s.launcher_visible = true;

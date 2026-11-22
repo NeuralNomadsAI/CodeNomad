@@ -8,6 +8,7 @@ mod owned_startup;
 mod real_history;
 mod recovery;
 mod session_transport;
+mod servo;
 
 /// Dispatch qualification CLI without entering the native window event loop.
 pub fn dispatch() -> bool {
@@ -25,6 +26,7 @@ pub fn dispatch() -> bool {
         ("--probe-fresh", session_transport::fresh),
         ("--probe-recovery", recovery::run),
         ("--probe-contract", session_transport::contract),
+        ("--probe-servo", servo::run),
     ] {
         if crate::platform::has_flag(flag) {
             run();

@@ -11,6 +11,7 @@ pub(super) enum Line {
     Ready(String),
     Native {
         response: String,
+        request: Value,
         expires: Instant,
         deadline: u64,
     },
@@ -62,6 +63,7 @@ pub(super) fn classify(line: &str) -> Line {
         );
         return Line::Native {
             response,
+            request,
             expires,
             deadline,
         };
@@ -97,7 +99,9 @@ pub(super) fn fenced_response(response: String, expires: Instant, deadline: u64)
         .strip_prefix("CODENOMAD_NATIVE_RESPONSE:")
         .unwrap();
     let mut value: Value = serde_json::from_str(raw).unwrap();
-    value["error"]["message"] = "Native request expired before execution".into();
+    value["ok"] = false.into();
+    if let Some(obj) = value.as_object_mut() { obj.remove("result"); }
+    value["error"] = json!({"code":"native_error","message":"Native request expired before execution"});
     format!("CODENOMAD_NATIVE_RESPONSE:{value}\n")
 }
 pub(super) fn loopback_url(raw: &str) -> bool {

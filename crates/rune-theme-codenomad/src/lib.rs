@@ -5,6 +5,7 @@ mod generated_catalogues;
 pub mod interruption;
 mod kit;
 pub mod layout;
+pub mod preview;
 mod tokens;
 pub mod window_control;
 pub use kit::kit;

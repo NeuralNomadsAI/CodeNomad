@@ -1,0 +1,15 @@
+[package]
+name = "study-probe"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+servo = { workspace = true, features = ["baked-in-resources", "js_jit", "subtlecrypto"] }
+dpi.workspace = true
+euclid.workspace = true
+rustls = { workspace = true, features = ["aws-lc-rs"] }
+url.workspace = true
+serde_json.workspace = true
+image.workspace = true
+base64.workspace = true

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["packages/rune-app", "crates/codenomad-client", "crates/rune-theme-codenomad", "crates/codenomad-host-process", "crates/rune-style-policy"]
-exclude = ["packages/server-rs", ".prototype-deps/rune"]
+exclude = ["packages/server-rs", "packages/rune-app/servo-host", ".prototype-deps/rune", ".prototype-deps/servo"]
 
 [workspace.package]
 edition = "2024"

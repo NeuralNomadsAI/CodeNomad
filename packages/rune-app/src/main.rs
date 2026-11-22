@@ -13,6 +13,8 @@ pub(crate) use platform::host;
 mod launcher;
 pub(crate) use launcher::view as launcher_view;
 mod platform;
+#[cfg(not(target_arch = "wasm32"))]
+mod preview;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 #[path = "../tests/probes/mod.rs"]
 mod probes;
@@ -30,6 +32,8 @@ use transport::{Command, Event};
 pub const CODE: &str = "fn main() {\n    println!(\"Rune · Code Nomad\");\n}";
 pub use codenomad_client::Message;
 struct State {
+    #[cfg(not(target_arch = "wasm32"))]
+    preview: preview::Preview,
     wake: codenomad_client::Wake,
     agent: Option<agent::Ui>,
     expanded_tools: std::collections::HashSet<String>,
@@ -56,6 +60,8 @@ enum Phase {
 }
 fn init() -> State {
     State {
+        #[cfg(not(target_arch = "wasm32"))]
+        preview: preview::Preview::default(),
         wake: std::sync::Arc::new(|| {}),
         agent: None,
         expanded_tools: Default::default(),
@@ -75,6 +81,8 @@ fn init() -> State {
 }
 fn setup(s: &mut State, wake: rune::Waker) {
     s.wake = wake.clone();
+    #[cfg(not(target_arch = "wasm32"))]
+    { s.preview.listen(wake.clone()); }
     let scoped = ["RUNE_BACKEND", "RUNE_WORKSPACE", "RUNE_SESSION"]
         .iter()
         .all(|key| platform::setting(key).is_some());
@@ -157,6 +165,8 @@ fn latest(_: &mut State, tx: &mut Tx) {
 }
 fn poll(s: &mut State, _: f64, tx: &mut Tx) -> bool {
     let mut changed = launcher::poll(s, tx);
+    #[cfg(not(target_arch = "wasm32"))]
+    { changed |= preview::poll(s, tx); }
     changed |= s.agent.as_mut().is_some_and(|a| a.poll());
     for _ in 0..64 {
         let Some(event) = s.incoming.as_ref().and_then(|r| r.try_recv().ok()) else {
@@ -164,6 +174,8 @@ fn poll(s: &mut State, _: f64, tx: &mut Tx) -> bool {
         };
         match event {
             Event::Connected(backend) => {
+                #[cfg(not(target_arch = "wasm32"))]
+                { s.preview.bind(&backend); }
                 s.agent = Some(agent::Ui::new(agent::start(backend, s.wake.clone())));
             }
             Event::AgentHint(catalog) => {
@@ -293,6 +305,12 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
                         rune::el()
                     })
                     .child(text(strings::t(status)))
+                    .child({
+                        #[cfg(not(target_arch = "wasm32"))]
+                        { preview::toolbar(s) }
+                        #[cfg(target_arch = "wasm32")]
+                        { rune::el() }
+                    })
                     .child(
                         text(strings::t(if s.paging { "loading" } else { "older" }))
                             .key("older")
@@ -324,6 +342,12 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
                 text(&s.chat_title).key("chat-title").pad(Space::Md)
             })
             .child(rune_theme_codenomad::interruption::history(expanded).child(rows))
+            .child({
+                #[cfg(not(target_arch = "wasm32"))]
+                { preview::viewport(s, cx) }
+                #[cfg(target_arch = "wasm32")]
+                { rune::el() }
+            })
             .child(agent_view::view(s, cx))
             .child(
                 col()
@@ -391,7 +415,7 @@ fn main() {
     run_app();
 }
 fn run_app() {
-    rune::run(AppSpec {
+    let app = AppSpec {
         setup: Some(setup),
         poll: Some(poll),
         #[cfg(feature = "test-support")]
@@ -400,6 +424,11 @@ fn run_app() {
             s.phase = Phase::Ready;
         })],
         ..layout::app_spec(strings::t("title"), init, view)
-    });
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    rune_theme_codenomad::preview::run(app, preview::ime, preview::window_focus,
+        cfg!(feature = "test-support") && platform::has_flag("--preview-hidden"));
+    #[cfg(target_arch = "wasm32")]
+    rune::run(app);
     platform::finish();
 }
