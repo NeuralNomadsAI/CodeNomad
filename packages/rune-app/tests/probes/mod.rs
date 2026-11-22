@@ -5,6 +5,7 @@ mod launcher;
 mod live_controls;
 mod native_transport;
 mod owned_startup;
+mod pending_live;
 mod real_history;
 mod recovery;
 mod session_transport;
@@ -21,6 +22,7 @@ pub fn dispatch() -> bool {
         ("--probe-latency", latency::run as fn()),
         ("--probe-owned-startup", owned_startup::run as fn()),
         ("--probe-real-controls", live_controls::run),
+        ("--probe-real-pending", pending_live::run),
         ("--probe-controls", controls::run),
         ("--probe-launcher", launcher::run),
         ("--probe-workspace-claims", workspaces::run),

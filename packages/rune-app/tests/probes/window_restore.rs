@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 const ALPHA: &str = "Alpha · été 🦀\npremier brouillon";
 const BETA: &str = "Bêta · 日本語 🦀\nsecond brouillon";
 
-fn wait(rt: &mut Runtime<State>, label: &str, condition: impl Fn(&State) -> bool) {
+pub(super) fn wait(rt: &mut Runtime<State>, label: &str, condition: impl Fn(&State) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(20);
     while !condition(&rt.state) {
         assert!(Instant::now() < deadline, "restore timeout: {label}");
@@ -20,7 +20,7 @@ fn wait(rt: &mut Runtime<State>, label: &str, condition: impl Fn(&State) -> bool
         rt.frame(1.0 / 60.0);
     }
 }
-fn tap(rt: &mut Runtime<State>, key: &str) {
+pub(super) fn tap(rt: &mut Runtime<State>, key: &str) {
     rt.update(|_, tx| {
         tx.scroll_into_view(key);
         tx.instant();
@@ -35,7 +35,7 @@ fn tap(rt: &mut Runtime<State>, key: &str) {
     rt.pointer_up(x, y);
     rt.frame(1.0 / 60.0);
 }
-fn type_text(rt: &mut Runtime<State>, field: &str, text: &str) {
+pub(super) fn type_text(rt: &mut Runtime<State>, field: &str, text: &str) {
     tap(rt, field);
     rt.key(KeyEvent {
         key: Key::Command('a'),
