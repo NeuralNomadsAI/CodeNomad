@@ -3,14 +3,7 @@
  * the row itself. `select` finds a block standing for the row on every frame,
  * so it survives a remount of that row; until it finds one, the row is held.
  */
-export interface VirtualItemAnchor {
-  key: string
-  offset: number
-  element?: HTMLElement
-  select?: () => HTMLElement | null
-  /** The selected block is visible, but the scroll range cannot align it. */
-  onClamped?: (target: HTMLElement) => void
-}
+export interface VirtualItemAnchor { key: string; offset: number; element?: HTMLElement; select?: () => HTMLElement | null }
 
 // A block ending at or above this line already counts as read.
 export const READING_LINE_OFFSET_PX = 4

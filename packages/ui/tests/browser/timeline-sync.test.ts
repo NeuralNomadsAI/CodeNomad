@@ -306,7 +306,7 @@ test("a collapsed group header replaces a deeply clipped tool at the reading lin
   assert.equal(await active(page), markersInGroup[0].id, "the group header owns the line rather than the next message")
 }, groupedStore))
 
-test("a clamped group reflow keeps the visible replacement header as the active marker", { timeout: 90_000 }, () => withSession("everything", async (page) => {
+test("a group reflow clamped at the end follows the actual reading line", { timeout: 90_000 }, () => withSession("everything", async (page) => {
   const first = (await markers(page)).find(marker => marker.id === `${id(5)}:tool:0`)!
   const second = (await markers(page)).find(marker => marker.id === `${id(5)}:tool:1`)!
   await clickMarker(page, second)
@@ -329,12 +329,12 @@ test("a clamped group reflow keeps the visible replacement header as the active 
   assert.ok(Math.abs(gap) <= 1, `the browser is clamped to the end (${gap}px)`)
   const offset = await header.evaluate(element => element.getBoundingClientRect().top - element.closest(".message-stream")!.getBoundingClientRect().top)
   assert.ok(offset > READING_LINE_TOLERANCE, `the visible header cannot be raised to the line (${offset}px)`)
-  assert.equal(await active(page), first.id)
+  assert.notEqual(await active(page), first.id, "a layout change does not select the group's marker")
+  await assertReadingLineActive(page, "clamped group reflow")
   await page.keyboard.press("Escape")
-  await page.mouse.move(box.x + 6, box.y + 6)
-  await page.mouse.wheel(0, -80)
+  await page.setViewportSize({ width: 1280, height: 600 })
   await settleTranscript(page, 450)
-  await assertReadingLineActive(page, "reader scroll releases the clamped marker")
+  await assertReadingLineActive(page, "viewport resized without a scroll gesture")
 }, tailGroupStore))
 
 test("a standalone card collapsed near the end clamps at the natural scrollbar limit", { timeout: 90_000 }, () => withSession("everything", async (page) => {

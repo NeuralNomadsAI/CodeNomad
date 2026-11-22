@@ -322,21 +322,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         const index = findLiveIndex(anchor.key)
         return index !== -1 && writeIndex("reader-settle", index)
       }
-      const selected = anchor.select?.()
-      const target = anchor.element ?? selected ?? row
+      const target = anchor.element ?? (anchor.select?.() || row)
       // A detached revealed part is gone.
       if (!element || !target?.isConnected) return !anchor.element
       // A held block too short for the old clipping starts at the viewport top.
       const offset = anchor.element ? clampAlignmentOffset(element, anchor.offset)
         : anchor.offset < 0 ? settledReaderOffset(anchor.offset, target.getBoundingClientRect().height) : anchor.offset
       const delta = measureAnchorDelta(element, target, offset)
-      if (Math.abs(delta) < 1) return
-      const top = element.scrollTop + delta
-      writeScroll(anchor.element ? "align-element" : "reader-settle", { type: "dom", top, record: true })
-      if (selected && anchor.onClamped && (top > getMaxOffset(element) + 1 || top < -1)) {
-        const block = selected.getBoundingClientRect(), viewport = element.getBoundingClientRect()
-        if (block.bottom > viewport.top && block.top < viewport.bottom) anchor.onClamped(selected)
-      }
+      if (Math.abs(delta) >= 1) writeScroll(anchor.element ? "align-element" : "reader-settle", { type: "dom", top: element.scrollTop + delta, record: true })
     },
   })
 
