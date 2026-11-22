@@ -5,6 +5,21 @@ use rune::{App, AppSpec, Cx, El, Icon, Tx, col, el, row, text};
 use rune_kit::{
     Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, SidebarRow, WindowTitlebar,
 };
+use std::rc::Rc;
+
+fn enter_action<S: 'static>(
+    action: Rc<impl Fn(&mut S, &mut Tx) + 'static>,
+) -> impl Fn(&mut S, &rune::KeyEvent, &mut Tx) -> bool + 'static {
+    move |state, event, tx| {
+        if event.key != rune::Key::Enter || event.mods != rune::Mods::default() {
+            return false;
+        }
+        if !tx.key_repeat() {
+            action(state, tx);
+        }
+        true
+    }
+}
 
 // Solid's shell/storage.ts and instance-shell2.tsx own these layout breakpoints.
 pub const CENTER_MIN: f32 = 390.0;
@@ -159,11 +174,14 @@ pub fn titlebar<S>(cx: &mut Cx<S>, title: &str, rtl: bool, menus: El) -> El {
 }
 
 pub fn titlebar_menu<S: 'static>(label: &str, activate: impl Fn(&mut S, &mut Tx) + 'static) -> El {
+    let activate = Rc::new(activate);
+    let press = activate.clone();
     Button::new(label)
         .variant(ButtonVariant::GhostMuted)
         .control_size(ControlSize::Small)
-        .on_press_tx(activate)
+        .on_press_tx(move |s, tx| press(s, tx))
         .build(kit(layout::dark()))
+        .on_key(enter_action(activate))
 }
 
 pub fn open_titlebar_menu<S: 'static>(
@@ -317,10 +335,13 @@ pub fn toggle<S: 'static>(
         kit.c.pressed = tint.alpha(0.44);
         kit.c.hover = tint.alpha(0.56);
     }
+    let activate = Rc::new(activate);
+    let press = activate.clone();
     let button = control(icon, label, touch)
         .expanded(open)
-        .on_press_tx(activate)
+        .on_press_tx(move |s, tx| press(s, tx))
         .build(&kit)
+        .on_key(enter_action(activate))
         .key(key);
     let size = control_size(touch);
     row()
@@ -369,6 +390,25 @@ mod tests {
         );
         rt.frame(0.0);
         rt.update(|_, tx| tx.focus("session-a", true));
+        rt.frame(0.0);
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Enter,
+            mods: rune::Mods::default(),
+        });
+        rt.frame(0.01);
+        assert_eq!(rt.state, 1);
+    }
+
+    #[test]
+    fn enter_activates_a_caption_menu() {
+        let mut rt = rune::Runtime::new(
+            0_usize,
+            |_, _| titlebar_menu("View", |count: &mut usize, _| *count += 1).key("view-menu"),
+            (180.0, 100.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        rt.update(|_, tx| tx.focus("view-menu", true));
         rt.frame(0.0);
         rt.key(rune::KeyEvent {
             key: rune::Key::Enter,

@@ -19,7 +19,7 @@ impl std::error::Error for CreationRefused {}
 pub struct SessionMissing;
 impl std::fmt::Display for SessionMissing {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("native session no longer exists")
+        f.write_str("native session is no longer available in the workspace")
     }
 }
 impl std::error::Error for SessionMissing {}
@@ -257,15 +257,22 @@ impl Backend {
             ))
             .send()
             .await?;
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
+        let status = response.status();
+        if matches!(
+            status,
+            reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::FORBIDDEN
+        ) {
             let data = crate::backend::read_json_limited(response, 4096).await?;
-            return Err(
-                if data["_tag"] == "SessionNotFoundError" && data["sessionID"] == id {
-                    SessionMissing.into()
-                } else {
-                    "session request unavailable".into()
-                },
-            );
+            let absent = status == reqwest::StatusCode::NOT_FOUND
+                && data["_tag"] == "SessionNotFoundError"
+                && data["sessionID"] == id;
+            let moved = status == reqwest::StatusCode::FORBIDDEN
+                && data["reason"] == "session_located_elsewhere";
+            return Err(if absent || moved {
+                SessionMissing.into()
+            } else {
+                "session request unavailable".into()
+            });
         }
         let data = read_json(response.error_for_status()?).await?;
         let info = session(&data["data"], project)?;

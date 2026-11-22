@@ -441,7 +441,7 @@ fn binding_returns_the_validated_native_session_without_a_list_or_second_read() 
 }
 
 #[test]
-fn only_a_matching_native_not_found_retires_a_session_visit() {
+fn only_confirmed_absence_or_departure_retires_a_session_visit() {
     run(async {
         let server = Server::start(vec![
             reply(
@@ -462,13 +462,31 @@ fn only_a_matching_native_not_found_retires_a_session_visit() {
                 503,
                 json!({"_tag":"SessionNotFoundError","sessionID":"unready"}),
             ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/moved",
+                None,
+                403,
+                json!({"reason":"session_located_elsewhere"}),
+            ),
+            reply(
+                "GET /workspaces/workspace/instance/api/session/forbidden",
+                None,
+                403,
+                json!({"error":"Session does not belong to workspace"}),
+            ),
         ]);
         let backend = Backend::connect(&server.address, "").await.unwrap();
         let project = crate::catalog::Project {
             id: "workspace".into(),
             path: "/trial".into(),
         };
-        for (id, missing) in [("missing", true), ("other", false), ("unready", false)] {
+        for (id, missing) in [
+            ("missing", true),
+            ("other", false),
+            ("unready", false),
+            ("moved", true),
+            ("forbidden", false),
+        ] {
             assert_eq!(
                 backend
                     .bind_session(&project, id, false)

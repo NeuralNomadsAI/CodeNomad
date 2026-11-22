@@ -81,6 +81,7 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     if event.mods == Mods::default() {
         return match event.key {
             Key::Escape => s.shell.close_floating(tx),
+            Key::Function(6) => s.shell.has_floating(),
             Key::Function(11) if crate::platform::titlebar::available() => {
                 tx.toggle_full_screen();
                 true

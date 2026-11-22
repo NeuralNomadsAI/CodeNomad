@@ -127,6 +127,9 @@ impl Panels {
     pub fn floating_sessions(&self) -> Option<u64> {
         (self.floating == Some(0)).then_some(self.floating_epoch)
     }
+    pub fn has_floating(&self) -> bool {
+        self.floating.is_some()
+    }
 
     pub fn wrap_floating_focus(&self, backward: bool, tx: &mut Tx) -> bool {
         let Some(index) = self.floating else {
@@ -144,6 +147,9 @@ impl Panels {
         };
         if tx.focused() == Some(from) {
             tx.focus(to, true);
+            if index == 0 && backward {
+                tx.scroll_into_view_in("session-list", last);
+            }
             true
         } else {
             false

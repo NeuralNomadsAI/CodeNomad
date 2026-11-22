@@ -25,9 +25,12 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
         let scope = scope.clone();
         move |s: &mut State, key: &rune::KeyEvent, tx: &mut rune::Tx| {
             key.mods == rune::Mods::default()
-                && key.key == rune::Key::Escape
                 && s.current_scope(&scope)
-                && s.shell.close_floating(tx)
+                && match key.key {
+                    rune::Key::Escape => s.shell.close_floating(tx),
+                    rune::Key::Function(6) => s.shell.has_floating(),
+                    _ => false,
+                }
         }
     };
     let navigation_blocked = !workspace::input_ready(s) || crate::agent::navigation_blocked(s);

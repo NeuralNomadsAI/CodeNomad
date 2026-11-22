@@ -213,6 +213,16 @@ fn escape_from_the_search_editor_closes_its_floating_panel() {
     click(&mut rt, "sessions-panel-toggle");
     click(&mut rt, "session-search-toggle");
     rt.key(KeyEvent {
+        key: Key::Function(6),
+        mods: Mods::default(),
+    });
+    settle(&mut rt);
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|element| element.focused && element.path.contains("/session-search/"))
+    );
+    rt.key(KeyEvent {
         key: Key::Escape,
         mods: Mods::default(),
     });
@@ -224,6 +234,22 @@ fn escape_from_the_search_editor_closes_its_floating_panel() {
             .any(|element| element.focused
                 && element.key.as_deref() == Some("sessions-panel-toggle"))
     );
+}
+
+#[test]
+fn enter_activates_a_panel_toggle() {
+    let mut state = init();
+    fixture(&mut state);
+    let mut rt = Runtime::new(state, english, (600.0, 900.0), Env::new(false, 1.0));
+    settle(&mut rt);
+    rt.update(|_, tx| tx.focus("sessions-panel-toggle", true));
+    settle(&mut rt);
+    rt.key(KeyEvent {
+        key: Key::Enter,
+        mods: Mods::default(),
+    });
+    settle(&mut rt);
+    assert!(rt.find("session-session").is_some());
 }
 
 #[test]

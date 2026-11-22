@@ -141,6 +141,39 @@ impl Launcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rebind_of_the_current_session_keeps_the_last_history_until_sync() {
+        let mut state = crate::init();
+        crate::gallery::shell::fixture(&mut state);
+        let backend = Backend {
+            client: codenomad_client::http::Http::new().unwrap(),
+            base: "http://127.0.0.1:9/".into(),
+            workspace: "header-windows".into(),
+            session: "session".into(),
+            client_id: "fixture".into(),
+            fresh_mode: false,
+        };
+        let launcher = state.screen.launcher_mut().unwrap();
+        let project = launcher.project.clone().unwrap();
+        launcher.connection = Some(backend.clone());
+        state.workspace = Some(crate::workspace::Ui::new());
+        crate::workspace::opened(&mut state, &project);
+        crate::workspace::bound(&mut state, &backend);
+        state.draft = TextEdit::new("held draft");
+        state.phase = Phase::Failed;
+        let mut rt = rune::Runtime::new(
+            state,
+            crate::view,
+            (1100.0, 800.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.update(move |s, tx| bind(s, backend, "Fixture conversation".into(), None, tx));
+        assert_eq!(rt.state.draft.text, "held draft");
+        assert_eq!(rt.state.messages.len(), 1);
+        assert_eq!(rt.state.messages[0].body, "Fixture message");
+        assert!(rt.state.phase == Phase::Loading);
+    }
     #[test]
     fn session_choices_remain_visible_in_the_scrolling_launcher() {
         for viewport in [(320.0, 640.0), (1400.0, 1600.0)] {
@@ -639,6 +672,8 @@ pub fn restore(s: &mut State, saved: crate::workspace::Workspace) {
     });
 }
 fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize>, tx: &mut Tx) {
+    let same_session =
+        !s.screen.is_launcher() && crate::workspace::active_session(s) == Some(b.session.as_str());
     if let Some(l) = s.screen.launcher_mut() {
         l.visits.record(&b.session, visit);
         if !l.sessions.iter().any(|row| row.id == b.session) {
@@ -654,12 +689,14 @@ fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize>, tx: &mut
     let draft = crate::workspace::bound(s, &b);
     crate::files::bind(s, &b);
     s.agent = None;
-    s.expanded_tools.clear();
     s.chat_title = title;
-    s.messages.clear();
+    if !same_session {
+        s.expanded_tools.clear();
+        s.messages.clear();
+        s.can_older = false;
+    }
     s.draft = TextEdit::new(draft);
     s.phase = Phase::Loading;
-    s.can_older = false;
     s.paging = false;
     s.history_error = false;
     s.revision += 1;
@@ -678,7 +715,9 @@ fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize>, tx: &mut
     });
     s.show_chat();
     crate::workspace::capture(s);
-    tx.scroll_to_bottom_instant("history");
+    if !same_session {
+        tx.scroll_to_bottom_instant("history");
+    }
 }
 #[cfg(feature = "test-support")]
 pub fn back(s: &mut State) {
