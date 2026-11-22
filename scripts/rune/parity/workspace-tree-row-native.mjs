@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import {spawn} from 'node:child_process'
-import {readFile,mkdir,writeFile} from 'node:fs/promises'
+import {readFile,mkdir,writeFile,copyFile} from 'node:fs/promises'
 import {createHash} from 'node:crypto'
 import {fileURLToPath} from 'node:url'
 import path from 'node:path'
@@ -10,8 +10,8 @@ const root=fileURLToPath(new URL('../../../',import.meta.url))
 const {values}=parseArgs({options:{binary:{type:'string'}}})
 assert(values.binary&&path.isAbsolute(values.binary),'--binary requires absolute offscreen example path')
 const out=path.join(root,'target/rune-parity/workspace-tree-row');await mkdir(out,{recursive:true})
-const binary=path.join(out,'workspace-tree-row-gallery.exe'),bytes=await readFile(values.binary)
-await writeFile(binary,bytes)
+const binary=path.join(out,`workspace-tree-row-gallery${process.platform==='win32'?'.exe':''}`),bytes=await readFile(values.binary)
+await copyFile(values.binary,binary)
 const digest=bytes=>createHash('sha256').update(bytes).digest('hex')
 const inputs=['crates/rune-theme-codenomad/assets/theme.json','crates/rune-theme-codenomad/src/workspace_tree.rs','crates/rune-theme-codenomad/src/workspace_tree_icons.rs','crates/rune-theme-codenomad/examples/workspace-tree-row.rs','scripts/rune/parity/workspace-tree-row-native.mjs']
 const provenance={binary:{path:binary,source:values.binary,sha256:digest(bytes)},inputs:Object.fromEntries(await Promise.all(inputs.map(async file=>[file,digest(await readFile(path.join(root,file)))])))}

@@ -33,6 +33,8 @@ node scripts/rune/qualify-pixels.mjs --component <identité> --theme light --sol
 
 La matrice CI doit être exécutée sur ses trois runners pour qualifier les dépendances natives, le GPU offscreen et les différences de rendu propres aux plateformes. Les arbres et images produits servent de preuves à cette qualification.
 
+La galerie `workspace-tree-row` produit vingt scènes natives clair/sombre, LTR/RTL sur chaque OS. Windows monte aussi le vrai WorkspaceTree Solid et applique `workspace-tree-row-thresholds.json` : budgets régionaux revus pour échelle 1 et largeur 360, avec 208 mutations négatives exigées. `compare-workspace-tree-row.mjs` vérifie la géométrie, l'exhaustivité des cas, chaque pixel et les empreintes avant de comparer. Les actions fournies par la galerie et l'image figée d'activité gardent ce périmètre ; l'arbre complet, les autres dimensions, les animations et le miroir DOM demandent leurs qualifications.
+
 ## Latence face à la TUI
 
 Le banc `scripts/perf/bench.mjs` définit le protocole : marqueurs `MARKER` de `scripts/perf/lib.mjs`, dates de réception et d'affichage, touches pendant les flux concurrents, contrôle des marqueurs attendus et mesures de p95. `perf-check.mjs` exige trois tours distincts aux niveaux 8 et 32 ; `budget-report.mjs` rapporte les ratios CodeNomad/TUI avec le plancher commun de 50 ms et les budgets existants.

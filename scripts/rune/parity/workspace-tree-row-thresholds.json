@@ -2,7 +2,8 @@
   "component": "workspace-tree-row",
   "platform": "win32",
   "scale": 1,
-  "reviewState": "proposed",
+  "width": 360,
+  "reviewState": "reviewed",
   "scope": "Twenty scale-one synthetic pairs. Every pixel belongs to a region. Actions are supplied by the gallery caller and evaluated separately. Busy thresholds evaluate the recorded frame; rotation phase and motion remain unqualified.",
   "rationale": {
     "surface": "Exact except selected dark compositing, bounded to one channel unit.",

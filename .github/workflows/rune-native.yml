@@ -103,6 +103,8 @@ jobs:
           if [[ "$RUNNER_OS" == Windows ]]; then suffix='.exe'; fi
           node scripts/rune/headless.mjs --binary "$CARGO_TARGET_DIR/debug/codenomad-rune$suffix" --out "target/rune-evidence/$RUNNER_OS"
           node scripts/rune/parity/action-menu-native.mjs --binary "$CARGO_TARGET_DIR/debug/codenomad-rune$suffix"
+          cargo build --locked -p rune-theme-codenomad --example workspace-tree-row
+          node scripts/rune/parity/workspace-tree-row-native.mjs --binary "$CARGO_TARGET_DIR/debug/examples/workspace-tree-row$suffix"
       - name: Qualify restoration through the shared Rust server
         run: |
           cargo build --locked --manifest-path packages/server-rs/Cargo.toml
@@ -123,12 +125,15 @@ jobs:
           node scripts/rune/parity/action-menu.mjs
           cp target/rune-inventory/components__action-overflow-menu.json target/rune-parity/action-menu/source-sheet.json
           node scripts/rune/parity/compare-action-menu.mjs --thresholds scripts/rune/parity/action-menu-thresholds.json
+          node scripts/rune/parity/workspace-tree-row.mjs
+          cp target/rune-inventory/components__instance__shell__right-panel__components__WorkspaceTree.json target/rune-parity/workspace-tree-row/source-sheet.json
+          node scripts/rune/parity/compare-workspace-tree-row.mjs --thresholds scripts/rune/parity/workspace-tree-row-thresholds.json
       - name: Record qualification scope
         if: always()
         run: |
           echo '### Rune qualification' >> "$GITHUB_STEP_SUMMARY"
           echo 'Runtime tests, generated-source checks and offscreen accessibility/interaction/capture checks run on this OS. Read individual step outcomes and uploaded evidence.' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Windows additionally compares the shared window-close control and short action-menu popup states with actual Solid captures using committed regional thresholds. Complete menu callers, other component/platform pairs and Rune/TUI latency collection remain to qualify. Headless virtual-clock frame timing is separate from measured interactive latency.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Windows additionally compares the shared window-close control, short action-menu popup states and twenty workspace-row cases with actual Solid captures using committed regional thresholds. Complete menu/tree callers, other component/platform pairs and Rune/TUI latency collection remain to qualify. Headless virtual-clock frame timing is separate from measured interactive latency.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload native evidence
         if: always()
         uses: actions/upload-artifact@v7.0.2
@@ -138,6 +143,7 @@ jobs:
             target/rune-evidence/${{ runner.os }}/
             target/rune-parity/window-close/
             target/rune-parity/action-menu/
+            target/rune-parity/workspace-tree-row/
             target/rune-action-menu/
             packages/rune-app/fixture-profile/**/proof.json
           if-no-files-found: warn

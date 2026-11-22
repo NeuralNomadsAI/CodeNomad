@@ -12,7 +12,9 @@ const {values}=parseArgs({options:{thresholds:{type:'string'}}})
 const thresholdPath=values.thresholds||fileURLToPath(new URL('./workspace-tree-row-thresholds.json',import.meta.url))
 const thresholds=JSON.parse(await readFile(thresholdPath,'utf8'))
 assert.equal(thresholds.component,'workspace-tree-row');assert.equal(thresholds.platform,process.platform)
-assert.equal(thresholds.scale,1);assert.equal(thresholds.reviewState,'proposed','This runner reports a proposal, never adoption')
+assert.equal(thresholds.scale,1);assert.equal(thresholds.width,360)
+assert(['proposed','reviewed'].includes(thresholds.reviewState),'Thresholds require an explicit review state')
+const adopted=thresholds.reviewState==='reviewed'
 const fields=['different','errorSum','maxError']
 const budget=(key,source)=>{
   const found=thresholds.regions[key]?.find(rule=>Object.entries(rule.when||{}).every(([k,v])=>Array.isArray(v)?v.includes(source[k]):v===source[k]))
@@ -48,7 +50,7 @@ try{
     const measured=await page.evaluate(measureWorkspaceRow,{images,boxes,mode:source.mode})
     assert.equal(measured.regionPixels,measured.totalPixels,'Every pixel must be assigned, with no omitted area')
     const regions=Object.fromEntries(Object.entries(measured.regions).map(([key,value])=>{
-      const proposed=budget(key,source);return [key,{...value,proposed,failures:failures(value,proposed)}]
+      const limit=budget(key,source);return [key,{...value,limit,failures:failures(value,limit)}]
     }))
     const controls=measured.controls.map(control=>({...control,failures:failures(control.measured,budget(control.region,source))}))
     records.push({id:source.id,geometry:'matched',regions,controls,exclusions:measured.exclusions})
@@ -56,9 +58,9 @@ try{
 }finally{await browser.close()}
 const baselineFailures=records.flatMap(r=>Object.entries(r.regions).filter(([,v])=>v.failures.length).map(([region,v])=>({id:r.id,region,failures:v.failures})))
 const undetectedControls=records.flatMap(r=>r.controls.filter(c=>!c.failures.length||!c.changedPixels).map(c=>({id:r.id,name:c.name,region:c.region,changed:c.changedPixels,measured:c.measured})))
-const report={status:'proposed-thresholds-evaluated',adopted:false,provenance,baselineFailures,undetectedControls,records,
-  limits:['Independent review must adopt or reject these proposed regional thresholds.','Caller-supplied actions are evaluated as this gallery assembly; animation thresholds concern recorded frames only.','Native AccessKit is verified; DOM treeitem nesting/level, pointer-focus-within and motion remain unqualified.']}
+const report={status:baselineFailures.length||undetectedControls.length?'failed':adopted?'reviewed-thresholds-passed':'proposed-thresholds-evaluated',adopted,provenance,baselineFailures,undetectedControls,records,
+  limits:['Thresholds cover the twenty recorded Windows scale-one 360px cases.','Caller-supplied actions are evaluated as this gallery assembly; animation thresholds concern recorded frames only.','Native AccessKit is verified; DOM treeitem nesting/level, pointer-focus-within and motion remain unqualified.']}
 await writeFile(path.join(out,'comparison.json'),JSON.stringify(report,null,2)+'\n')
 console.log(JSON.stringify({pairs:records.length,controls:records.reduce((n,r)=>n+r.controls.length,0),baselineFailures,undetectedControls},null,2))
-assert.deepEqual(baselineFailures,[],'Candidate exceeds proposed regional thresholds')
+assert.deepEqual(baselineFailures,[],'Candidate exceeds regional thresholds')
 assert.deepEqual(undetectedControls,[],'Each applicable negative mutation must fail its own regional threshold')
