@@ -122,6 +122,7 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
       sessionId: string
       registrationId: string
       guestWebContentsId: number
+      instanceId?: string
     })
     return { ok: true }
   })
@@ -133,16 +134,12 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     const { window } = local(event)
     return dependencies.browserController.history(window.webContents, guestId, entryId)
   })
-  ipcMain.handle("browser-target:claimOpen", async (event, requestID: unknown) => {
+  ipcMain.handle("browser-target:claimOpen", async (event, requestID: unknown, response: unknown) => {
     const window = local(event).window
-    const claimed = dependencies.browserController.claimOpen(window.webContents, requestID)
-    if (claimed) {
-      if (window.isMinimized()) window.restore()
-      window.show()
-      window.focus()
-    }
-    return claimed
+    return dependencies.browserController.claimOpen(window.webContents, requestID, response)
   })
+  ipcMain.handle("browser-target:ownership", (event, input: unknown) =>
+    dependencies.browserController.changeOwnership(local(event).window.webContents, input))
   ipcMain.handle("browser-target:releaseOpen", async (event, requestID: unknown) => {
     const { window } = local(event)
     return dependencies.browserController.releaseOpen(window.webContents, requestID)

@@ -496,6 +496,7 @@ function cloneArray<T>(value: unknown, mapper: (item: any) => T | null): T[] {
 
 function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
   const source = input ?? {}
+  const receivedAt = new Date().toISOString()
   return {
     recentFolders: cloneArray<RecentFolder>(source.recentFolders, (f) => {
       if (!f || typeof f !== "object") return null
@@ -529,7 +530,7 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
       if (!id || !name || !baseUrl) return null
       const ssh = (server as RemoteServerProfile).ssh
       if (ssh !== undefined && (!ssh || typeof ssh.host !== "string" || !ssh.host.trim())) return null
-      const createdAt = typeof (server as any).createdAt === "string" ? (server as any).createdAt : new Date().toISOString()
+      const createdAt = typeof (server as any).createdAt === "string" ? (server as any).createdAt : receivedAt
       const updatedAt = typeof (server as any).updatedAt === "string" ? (server as any).updatedAt : createdAt
       const lastConnectedAt = typeof (server as any).lastConnectedAt === "string" ? (server as any).lastConnectedAt : undefined
       return {

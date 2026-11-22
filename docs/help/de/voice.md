@@ -30,7 +30,7 @@ Dies sind Anfragen an den konfigurierten Dienst, keine Garantie, dass jeder komp
 2. Wählen Sie **API-Eingabe testen**, erlauben Sie Mikrofonzugriff, sprechen Sie und wählen Sie **Aufnahme stoppen**. Prüfen Sie die zurückgegebene Transkription.
 3. Wählen Sie **Wiedergabe testen**, um das Beispiel zu hören; **Beispiel stoppen** beendet es.
 
-Der Wiedergabetest verwendet den gewählten Modus und das Format sofort, aber Endpunkt, Schlüssel, Modell und Stimme aus den gespeicherten Einstellungen. **API-Eingabe testen** sendet Audio an den konfigurierten API-Anbieter, auch wenn Hex oder die Systemerkennung ausgewählt ist. Dabei wird kein Unterhaltungsprompt gesendet. Der Anbieter kann die Tests berechnen.
+Der Wiedergabetest verwendet den gewählten Modus und das Format sofort, aber Endpunkt, Schlüssel, Modell und Stimme aus den gespeicherten Einstellungen. **API-Eingabe testen** sendet Audio unabhängig von der Diktier-Engine an den konfigurierten API-Anbieter. Dabei wird kein Unterhaltungsprompt gesendet. Der Anbieter kann die Tests berechnen.
 
 ## Prompt diktieren {#dictate}
 
@@ -43,17 +43,17 @@ Wenn die API unter Linux mit Tauri auf WAV ausweicht, endet die Aufnahme beim Di
 
 Komprimierte API-Aufnahmen stoppen am Größenlimit und bieten ebenfalls **Transkribieren** oder **Abbrechen** an.
 
-Bei der System-Spracherkennung erscheint beim Sprechen eine Vorschau. Sie können den Entwurf weiter bearbeiten; nur das fertige Transkript lässt sich einfügen.
-
 ### Desktop-Engine auswählen {#desktop-dictation}
 
 Wählen Sie in der lokalen Desktop-App unter **Einstellungen → Sprache → Diktat** die **Diktier-Engine auf diesem Gerät**. Die Wahl gilt für alle Projekte auf diesem Gerät. **API-Anbieter** nutzt die Einstellungen des verbundenen Servers und benötigt einen sicheren Kontext für das Mikrofon.
 
-- Die **Lokale System-Spracherkennung** läuft in CodeNomad, ohne das Diktierfenster des Betriebssystems zu öffnen. Unter Windows oder macOS muss ein lokaler Erkenner für die App-Sprache installiert sein. Unter Linux oder wenn Erkenner oder Sprache fehlen, versuchen Sie Hex, sofern es angeboten wird.
+- Ist die gespeicherte Engine nicht verfügbar, wählen Sie hier **Hex (lokal)**, sofern angeboten, oder **API-Anbieter**. Auf Intel-Macs und Macs mit macOS vor Version 15 verwenden Sie **API-Anbieter**.
 - Unter Sprache sehen Sie vorab, was Hex noch benötigt und wie groß der Download je Komponente und insgesamt ist. Ein Klick auf **Hex aktivieren** prüft kompatible Dateien, verwendet sie wieder, lädt Fehlendes und wählt das fertige Hex aus. Verfolgen Sie den Fortschritt dort; nutzen Sie **Hex-Aktivierung abbrechen** oder, wenn angeboten, **Hex-Aktivierung fortsetzen**. Bei Fehler oder Abbruch bleibt die bisherige Engine ausgewählt. Das Öffnen der Einstellungen, die Auswahl von bereits einsatzbereitem **Hex (lokal)** und das Diktieren lösen keinen Download aus.
 - Hex wird für kompatible Geräte angeboten: Windows x64/arm64, Apple Silicon ab macOS 15 und Linux x64/arm64 mit glibc ab 2.36 und den von Hex benötigten Bibliotheken. Intel-Macs und Linux mit älterer glibc oder musl sind inkompatibel. Engine und Modelle sind nicht Teil des CodeNomad-Installers; ein Terminal oder API-Schlüssel ist nicht nötig.
 
 Ubuntu 24.04 erfüllt die glibc-Anforderung, Ubuntu 22.04 hingegen nicht. Hex erkennt die gesprochene Sprache aus den [von Parakeet unterstützten Sprachen](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), darunter Englisch und Französisch. Diese Liste ist unabhängig von der App-Sprache.
+
+Hex lädt sein Modell beim Start der Aufnahme im Hintergrund und hält es nach dem letzten Diktat drei Minuten bereit.
 
 Die lokale Erkennung nutzt das Mikrofon dieses Geräts und funktioniert offline, auch für WSL-Projekte in der lokalen App. In einem kompatiblen Remote-Fenster öffnet **Diktieren** das lokale Fenster **Auf diesem Gerät diktieren**. Prüfen Sie das angezeigte Ziel und wählen Sie **Spracheingabe starten**, **Aufnahme stoppen und transkribieren** und **Transkription einfügen**. Nur der Text kehrt in den Entwurf zurück. Das Remote-Projekt braucht weiterhin seine Serververbindung.
 

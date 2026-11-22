@@ -12,7 +12,7 @@ Service Worker bleiben in entfernten Vorschauen deaktiviert.
 
 Ein Klick auf einen `localhost`- oder `127.0.0.1`-Link in einer Unterhaltung öffnet ihn in der Web-Vorschau dieser Sitzung, auf jedem Client mit verfügbarer Vorschau. Über Remote Control, wenn der Host Web-Vorschauen deaktiviert hält, oder auf einem Client ohne verfügbare Vorschau behalten solche Links ihr normales Browser-Verhalten. Strg+Klick (⌘-Klick auf macOS) oder Mittelklick öffnet den Link stattdessen im Browser.
 
-Das Schließen der lokalen Vorschau führt zum Chat zurück. Doppelte Tabs teilen die Live-Seite, bis der letzte Tab geschlossen oder das Fenster neu geladen wird.
+Die Seite der nativen Vorschau bleibt erhalten, wenn Sie zum Chat zurückkehren oder sie im selben Fenster verschieben.
 
 Jede Registerkarte speichert ihre Chat-/Vorschauwahl; die Sitzung speichert gemeinsame URL, Viewport-Vorlage und Verlauf. Gespeicherte Seiten laden erst beim ausdrücklichen erneuten Öffnen des Sitzungsbrowsers. Gespeichert werden URLs und ein Zeiger; aktive Formulare, DOM, POST-Inhalte und JavaScript-Speicher enden mit dem Dokument. Der Verlauf ist auf 32 URLs je Sitzung und ein gemeinsames Fensterbudget begrenzt; ältere Einträge können gekürzt werden. Eine wiederhergestellte URL kann neu geladen werden.
 
@@ -26,9 +26,17 @@ Für die Fernsteuerung sind **Web-Vorschauen** unter **Einstellungen → Remote-
 
 ## Geteilte Anmeldungen und Automatisierungsgrenzen {#signins-automation}
 
+Unter Electron und Tauri für Windows startet der automatisierte Neustart (`codenomad.act`, `restart`) das geprüfte Profil mit derselben Konfiguration und demselben Build neu. Wird das ursprüngliche Fenster wiederhergestellt, wird es erneut geprüft; andernfalls meldet die Automatisierung das fehlende Fenster und prüft kein anderes. Eine erfolgreiche Prüfung während der Wiederverbindung hat Vorrang.
+
+Wird der Neustart abgebrochen, listen Sie die offenen Fenster mit `codenomad.inspect` und `targets: true` auf und prüfen Sie das gewünschte Fenster anhand seines `target`.
+
 Native Vorschauen teilen Cookies, Anmeldungen und Websitespeicher über Projekte/Sitzungen innerhalb derselben Desktop-Engine und desselben Profil-/Konfigurationsbereichs, getrennt vom vertrauenswürdigen CodeNomad-Renderer. Abmelden von einer Website in einer Vorschau betrifft andere Vorschauen desselben Speichers. Dokumente, Formulare, Sitzungsspeicher, Navigationsverläufe und Automatisierungszuordnungen gehören jeweils zur Sitzung.
 
-Ein Agent öffnet den gemeinsamen Sitzungsbrowser in einer zugehörigen Registerkarte, möglichst der aktiven. Die gewählte Registerkarte bleibt während des Öffnens fest; ihr Schließen bricht das Öffnen ab. Seitenaktionen zielen auf die sichtbare native Vorschau der Sitzung; ausgeblendete Vorschauen bleiben ausgeschlossen.
+Jede Sitzung hat eine native Vorschau. Zeigt eine doppelte Registerkarte **Vorschau in einer anderen Registerkarte geöffnet**, wählen Sie **Zur Registerkarte**, um dorthin zu wechseln, oder **Hier öffnen**, um die Vorschau im selben Fenster zu verschieben. Die bisherige Registerkarte zeigt dann dieselbe Meldung. Nach dem Schließen der Registerkarte mit der Vorschau lässt sie sich in einer anderen öffnen.
+
+Der Agent öffnet die Vorschau in der Registerkarte, der sie gehört, oder sonst in der zuletzt für die Sitzung verwendeten Registerkarte. Seitenaktionen gelten für die sichtbare native Vorschau.
+
+Vor einer Aktion oder Aufnahme erstellt der Agent einen Snapshot der Vorschau. Ändert sich die Vorschau, bricht der Befehl ab, statt eine andere Vorschau zu verwenden.
 
 | Client | Vorschauimplementierung | Agenten-Browser-Automatisierung | Mobilvorlagen |
 | --- | --- | --- | --- |

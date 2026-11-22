@@ -19,6 +19,10 @@ typedef void (*CNRelease)(void *);
     if ([self.original respondsToSelector:_cmd]) [self.original webView:view didStartProvisionalNavigation:navigation];
     self.callback(self.context, (uint64_t)(uintptr_t)(__bridge void *)navigation, 0, view.URL.absoluteString.UTF8String, NULL);
 }
+- (void)webView:(WKWebView *)view didCommitNavigation:(WKNavigation *)navigation {
+    if ([self.original respondsToSelector:_cmd]) [self.original webView:view didCommitNavigation:navigation];
+    self.callback(self.context, (uint64_t)(uintptr_t)(__bridge void *)navigation, 3, view.URL.absoluteString.UTF8String, NULL);
+}
 - (void)webView:(WKWebView *)view didFinishNavigation:(WKNavigation *)navigation {
     if ([self.original respondsToSelector:_cmd]) [self.original webView:view didFinishNavigation:navigation];
     self.callback(self.context, (uint64_t)(uintptr_t)(__bridge void *)navigation, 1, view.URL.absoluteString.UTF8String, NULL);
@@ -30,6 +34,10 @@ typedef void (*CNRelease)(void *);
 - (void)webView:(WKWebView *)view didFailNavigation:(WKNavigation *)navigation withError:(NSError *)error {
     if ([self.original respondsToSelector:_cmd]) [self.original webView:view didFailNavigation:navigation withError:error];
     self.callback(self.context, (uint64_t)(uintptr_t)(__bridge void *)navigation, 2, view.URL.absoluteString.UTF8String, error.localizedDescription.UTF8String);
+}
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
+    WKWebView *view = object;
+    self.callback(self.context, 0, 4, view.URL.absoluteString.UTF8String, NULL);
 }
 - (void)dealloc { if (self.releaseContext) self.releaseContext(self.context); }
 @end
@@ -45,6 +53,8 @@ int cn_observe_load(void *opaque, CNLoad callback, CNRelease releaseContext, voi
     static char key;
     objc_setAssociatedObject(view, &key, observer, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     view.navigationDelegate = observer;
+    // WKWebView automatically removes KVO registrations at deallocation on macOS 14+.
+    [view addObserver:observer forKeyPath:@"URL" options:0 context:NULL];
     return 1;
 }
 
@@ -53,4 +63,8 @@ uint64_t cn_navigate(void *opaque, const char *url) {
     NSURL *target = [NSURL URLWithString:[NSString stringWithUTF8String:url]];
     WKNavigation *navigation = [view loadRequest:[NSURLRequest requestWithURL:target]];
     return (uint64_t)(uintptr_t)(__bridge void *)navigation;
+}
+
+void cn_stop_navigation(void *opaque) {
+    [(__bridge WKWebView *)opaque stopLoading];
 }

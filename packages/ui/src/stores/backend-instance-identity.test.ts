@@ -46,8 +46,10 @@ describe("project identity is (backend, folder)", () => {
     assert.equal(workspaceIdentity("C:\\Code\\", undefined), workspaceIdentity("c:/code", "local"))
     assert.notEqual(workspaceIdentity("/repo", "lab"), workspaceIdentity("/repo"))
     const matches = reconcileWorkspaceTabs(
-      [{ kind: "workspace", folderPath: "/repo", occurrence: 0, backendId: "lab" }, { kind: "workspace", folderPath: "/repo" }],
-      [{ id: "local-1", folderPath: "/repo", status: "ready" }, { id: "lab~w1", folderPath: "/repo", status: "ready", backendId: "lab" }],
+      [{ kind: "workspace", folderPath: "/repo", occurrence: 0, backendId: "lab", serverId: "installation", workspaceId: "lab~w1" },
+        { kind: "workspace", folderPath: "/repo", workspaceId: "local-1" }],
+      [{ id: "local-1", folderPath: "/repo", status: "ready" },
+        { id: "lab~w1", folderPath: "/repo", status: "ready", backendId: "lab", serverId: "installation" }],
     )
     assert.deepEqual(matches.map(({ existingWorkspaceId, descriptor }) => [existingWorkspaceId, descriptor.occurrence, descriptor.backendId]),
       [["lab~w1", 0, "lab"], ["local-1", 0, undefined]])

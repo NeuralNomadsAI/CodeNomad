@@ -4,7 +4,7 @@ Preferences uses the selected project's server for project settings, providers, 
 
 ## Open settings and identify the scope {#open-settings}
 
-1. Open **Settings** with the **Open settings** gear in the tab bar (the title bar in the macOS desktop app) or on the home page. Shortcuts such as **Manage Providers** in the model selector, the Missions panel gear or the **Settings** gear in the notification history open the matching section directly.
+1. Open **Settings** with the **Open settings** gear in the tab bar. Shortcuts such as **Manage Providers** in the model selector, the Missions panel gear or the **Settings** gear in the notification history open the matching section directly.
 2. Select a section. Local Electron and Tauri windows open or focus one native Preferences window; browser and remote views use the embedded settings screen.
 3. Check the setting's scope and any **Save** action before leaving.
 
@@ -99,7 +99,7 @@ For a project tab on another CodeNomad server, notifications include the server 
 
 Compaction of technical Mission sessions is silent.
 
-1. Open **Notifications**. For each kind of notification, check where it appears: **On screen** (a temporary bubble), **History** (kept in the notification history of the bell in the tab bar, or the title bar in the macOS desktop app) and **System** (an operating-system notification). Drag across a row or column of boxes to set several at once.
+1. Open **Notifications**. For each kind of notification, check where it appears: **On screen** (a temporary bubble), **History** (kept in the notification history of the bell in the tab bar) and **System** (an operating-system notification). Drag across a row or column of boxes to set several at once.
 2. Checking a **System** box asks for permission if needed. Under **System notifications**, **Request permission** asks again while permission is missing.
 3. Enable **Notify when the app is focused** to keep system notifications while this window is focused. Otherwise they appear whenever it is not, even if it stays open on screen.
 

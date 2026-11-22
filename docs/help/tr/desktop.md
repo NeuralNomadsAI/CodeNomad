@@ -2,13 +2,16 @@
 
 ## Pencereler, sekmeler ve paylaşılan hizmet {#windows-tabs}
 
-1. Geçerli pencerede boş bir sekme açmak için **Yeni instance** öğesini kullanıp proje seçin. CodeNomad logosu ana sayfayı açar.
+1. Geçerli pencerede boş bir sekme açmak için **Yeni instance** öğesini kullanıp proje seçin.
 2. Ayrı bir uygulama penceresi için yerel **Pencere → Yeni pencere** (`Ctrl+Shift+N` veya `Cmd+Shift+N`) kullanın.
 3. **Ayarlar → Gelişmiş** bölümünde, başka bir başlatmanın yeni bir pencere açmak yerine en son kullanılan pencereye odaklanması gerekiyorsa **İkinci başlatmada mevcut pencereye odaklan** öğesini etkinleştirin.
 
 Proje sekmeleri, seçilen konuşmalar ve düzen bir pencereye aittir. OpenCode oturumları/mesajları paylaşılan yerel OpenCode hizmetine aittir: aynı konuşmayı başka bir pencere görebilir. Proje sekmesini kapatmak projeyi CodeNomad'de kapatır, OpenCode oturumlarını kapatmaz; onları yeniden bulmak için projeyi tekrar açın. Aynı proje bağlantısını gösteren başka bir pencere de sekmesini kapatır ve bir bildirim gösterir; aynı klasörün ayrı açılmış sekmeleri etkilenmez. Bir pencerenin tamamını kapatmak, uygulamadan çıkmak veya yeniden yüklemek proje bağlantılarını geri yükleme için korur; bkz. [Projeler](projects.md). Kapanan pencereleri bir temsilcinin veya planlanmış Görevin durduğunun kanıtı olarak kullanmayın.
 
 Yerel uygulama menüleri, bir pencere yüklendikten sonra CodeNomad'ın arayüz dilini kullanır; o zamana kadar İngilizce görünür. **Yardım → CodeNomad hakkında** (macOS uygulama menüsünde de bulunur), sürüm, güncellemeler ve tanılamayla birlikte **Ayarlar → Bilgi** bölümünü açar. **Yardım → CodeNomad'i destekleyin**, [CodeNomad'i destekleyin](sponsor.md) sayfasını tarayıcınızda açar.
+
+Pencere değiştirseniz bile masaüstü otomasyonu aracının incelediği pencerede kalır. Aracı, `codenomad.inspect({targets:true})` ile kullanılabilir yerel pencereleri listeleyebilir ve döndürülen kimlikle başka bir pencereyi inceleyebilir.
+Uygulama penceresindeki yerel işaretçi ve klavye girdileri ana sayfayla sınırlıdır. Bir konuşmanın web önizlemesi için ayrı önizleme araçlarını kullanın.
 
 ## Masaüstü başlatma argümanları {#desktop-cli}
 

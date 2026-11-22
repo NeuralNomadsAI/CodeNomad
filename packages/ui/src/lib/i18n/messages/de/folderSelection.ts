@@ -36,9 +36,11 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "Arbeitsbereich umbenennen",
   "folderSelection.recent.remove": "Aus Liste entfernen",
   "folderSelection.recent.openBadge": "Offen",
+  "folderSelection.recent.openElsewhere": "Anderswo geöffnet",
   "newInstanceLauncher.searchLabel": "Zuletzt verwendete Projekte durchsuchen",
   "newInstanceLauncher.searchPlaceholder": "Zuletzt verwendete Tabs durchsuchen…",
   "newInstanceLauncher.recentTitle": "Zuletzt verwendete Tabs",
+  "newInstanceLauncher.description": "Ein zuletzt verwendetes Projekt auswählen.",
   "newInstanceLauncher.empty": "Noch keine zuletzt verwendeten Projekte.",
   "newInstanceLauncher.noMatch": "Kein Projekt passt.",
   "folderSelection.recent.switchToOpenProject": "Zum offenen Projekt wechseln",
@@ -61,7 +63,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.errorRequired": "Repository-URL und Zielordner sind erforderlich.",
   "folderSelection.actions.connectButton": "CodeNomad-Server verbinden",
 
-  "folderSelection.opencode": "OpenCode",
 
 
   "folderSelection.loading.title": "Instanz wird gestartet...",
@@ -111,7 +112,7 @@ export const folderSelectionMessages = {
   "projectRenameDialog.actions.cancel": "Abbrechen",
   "projectRenameDialog.actions.rename": "Umbenennen",
   "projectRenameDialog.actions.renaming": "Umbenennung läuft...",
-  "newTab.temporary": "Temporär",
+  "newTab.temporary": "Temporärer Tab",
   "newTab.title": "Neuer Tab",
   "newTab.items.one": "{count} Eintrag",
   "newTab.items.other": "{count} Einträge",

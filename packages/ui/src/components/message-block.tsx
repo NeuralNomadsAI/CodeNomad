@@ -16,6 +16,8 @@ import type { MessageRecord } from "../stores/message-v2/types"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { ensureSessionAncestorsExpanded, sessions, selectSessionFromList } from "../stores/sessions"
 import { selectInstanceTab } from "../stores/app-tabs"
+import { openInstanceTabIds } from "../stores/app-tab-membership"
+import { parseInstanceKey } from "../lib/backend-identity"
 import { useI18n, type I18nContextValue } from "../lib/i18n"
 import { captureBackendOperation } from "../lib/backend-operation"
 import { withHotkey } from "../lib/hotkeys"
@@ -114,7 +116,7 @@ interface TaskSessionLocation {
 function findTaskSessionLocation(sessionId: string, preferredInstanceId?: string): TaskSessionLocation | null {
   if (!sessionId) return null
 
-  if (preferredInstanceId) {
+  if (preferredInstanceId && openInstanceTabIds().has(preferredInstanceId)) {
     const session = sessions().get(preferredInstanceId)?.get(sessionId)
     if (session) {
       return {
@@ -127,6 +129,8 @@ function findTaskSessionLocation(sessionId: string, preferredInstanceId?: string
 
   const allSessions = sessions()
   for (const [instanceId, sessionMap] of allSessions) {
+    if (!openInstanceTabIds().has(instanceId)
+      || preferredInstanceId && parseInstanceKey(instanceId).backendId !== parseInstanceKey(preferredInstanceId).backendId) continue
     const session = sessionMap?.get(sessionId)
     if (session) {
       return {
@@ -140,6 +144,7 @@ function findTaskSessionLocation(sessionId: string, preferredInstanceId?: string
 }
 
 function navigateToTaskSession(location: TaskSessionLocation) {
+  if (!openInstanceTabIds().has(location.instanceId)) return
   selectInstanceTab(location.instanceId)
   ensureSessionAncestorsExpanded(location.instanceId, location.sessionId)
   selectSessionFromList(location.instanceId, location.sessionId)

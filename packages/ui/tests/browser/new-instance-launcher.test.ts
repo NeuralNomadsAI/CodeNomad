@@ -18,7 +18,7 @@ before(async () => {
 })
 after(async () => { await browser?.close() })
 
-async function prepare(width = 1100, home: boolean | 'blank' = false) {
+async function prepare(width = 1100, blank = false) {
   const page = await browser.newPage({ viewport: { width, height: 760 }, locale: "en-US" })
   const errors: string[] = []
   const remoteRequests: string[] = []
@@ -34,12 +34,11 @@ async function prepare(width = 1100, home: boolean | 'blank' = false) {
   await page.route("**/api/**", route => route.fulfill({ json: new URL(route.request().url()).pathname === "/api/meta"
     ? { localRequest: true, serversUsable: true, serversManageable: true }
     : {} }))
-  await page.goto(home ? `${url}?${home === 'blank' ? 'blank' : 'home'}` : url)
+  await page.goto(blank ? `${url}?blank` : url)
   await page.waitForFunction(() => Boolean((window as any).launcherFixture))
   return { page, errors, remoteRequests, calls: () => page.evaluate(() => [...(window as any).launcherFixture.calls]) }
 }
 // Creation belongs to the canonical selector.
-const CREATE = ["Clone Git Repo", "New temporary tab", "New SideCar"]
 const plus = (page: Page) => page.locator(".new-instance-button")
 const launcher = (page: Page) => page.locator(".new-instance-launcher")
 const options = (page: Page) => launcher(page).locator(".new-instance-launcher-recent-primary")
@@ -56,46 +55,36 @@ const openedWithFocus = async (page: Page) => {
   }
 }
 
-test('blank creation stays above the columns, keeps its actions, and shares compact new-session branding', async () => {
-  const { page, errors, calls } = await prepare(1100, 'blank')
+test('empty-tab creation stays at opposite top corners', async () => {
+  const { page, errors, calls } = await prepare(1100, true)
   try {
-    const root = page.locator('.folder-home-root--blank')
-    const actions = root.locator('.folder-home-blank-actions')
-    await actions.getByRole('button', { name: 'Temporary', exact: true }).waitFor()
-    assert.deepEqual(await actions.getByRole('button').allTextContents(), ['Temporary', 'Clone'])
-    const brand = (await root.locator('.folder-home-hero').boundingBox())!
-    const controls = (await actions.boundingBox())!
-    const columns = (await root.locator('.folder-home-main').boundingBox())!
-    assert.ok(brand.y + brand.height <= controls.y && controls.y + controls.height < columns.y)
-    assert.ok(controls.y - (brand.y + brand.height) < columns.y - (controls.y + controls.height), 'creation actions stay closer to the brand than the columns')
+    const root = page.locator('.folder-home-root')
+    const actions = root.locator('.folder-home-actions')
+    await actions.getByRole('button', { name: 'Temporary tab', exact: true }).waitFor()
+    assert.deepEqual(await actions.getByRole('button').allTextContents(), ['Temporary tab', 'Clone repository'])
+    const [temporary, clone] = await Promise.all((await actions.getByRole('button').all()).map(button => button.boundingBox()))
+    assert.ok(temporary && clone && temporary.y === clone.y && temporary.x + temporary.width < clone.x)
     for (const button of await actions.getByRole('button').all()) {
       const padding = await button.evaluate(node => ({ left: parseFloat(getComputedStyle(node).paddingLeft), right: parseFloat(getComputedStyle(node).paddingRight) }))
       assert.ok(padding.left > 0 && padding.right > 0, 'shared small-button padding surrounds the icons')
     }
-    const source = root.locator('.folder-home-list-column .panel-header .folder-home-recent-source')
+    const source = root.locator('.panel-header .folder-home-recent-source')
     assert.equal(await source.innerText(), '')
     assert.equal(await source.getByRole('img', { name: 'This computer', exact: true }).count(), 1)
     assert.equal(await source.locator('svg.lucide-laptop').count(), 1)
     assert.equal(await source.getByRole('img').getAttribute('title'), 'This computer')
-    const styles = await page.evaluate(() => ['.folder-home-root--blank', '.session-center-column'].map(selector => {
-        const logo = getComputedStyle(document.querySelector(`${selector} .empty-state-logo`)!)
-        const title = getComputedStyle(document.querySelector(`${selector} .empty-state-brand-title`)!)
-        return { height: logo.height, fontSize: title.fontSize, lineHeight: title.lineHeight, weight: title.fontWeight }
-    }))
-    assert.deepEqual(styles[0], styles[1], 'same real new-session component classes and shared sizing rules')
-    assert.equal(await actions.getByRole('button', { name: 'Clone', exact: true }).getAttribute('title'), 'Clone Git Repo')
     assert.equal(await actions.locator('svg').count(), 2)
     assert.equal(await actions.locator('button').first().evaluate(node => getComputedStyle(node).borderRadius), '0px')
-    await actions.getByRole('button', { name: 'Temporary', exact: true }).click()
+    await actions.getByRole('button', { name: 'Temporary tab', exact: true }).click()
     assert.deepEqual(await calls(), ['temporary'])
-    await actions.getByRole('button', { name: 'Clone', exact: true }).click()
+    await actions.getByRole('button', { name: 'Clone repository', exact: true }).click()
     await page.getByRole('dialog').waitFor()
     await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click()
     await page.evaluate(() => (window as any).launcherFixture.setLoading(true))
     assert.equal(await actions.locator('button:disabled').count(), 2)
     await page.evaluate(async () => { (window as any).launcherFixture.setLoading(false); await (window as any).launcherFixture.setLocale('fr') })
-    await actions.getByRole('button', { name: 'Temporaire', exact: true }).waitFor()
-    assert.deepEqual(await actions.getByRole('button').allTextContents(), ['Temporaire', 'Cloner'])
+    await actions.getByRole('button', { name: 'Onglet temporaire', exact: true }).waitFor()
+    assert.deepEqual(await actions.getByRole('button').allTextContents(), ['Onglet temporaire', 'Cloner un dépôt'])
     assert.equal(await source.getByRole('img', { name: 'Cet ordinateur', exact: true }).count(), 1)
     assert.equal(await source.getByRole('img').getAttribute('title'), 'Cet ordinateur')
     if (process.env.CODENOMAD_BLANK_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_BLANK_CAPTURE })
@@ -118,11 +107,11 @@ test('opening the context menu focuses its container, not search, and arrows and
   } finally { await page.close() }
 })
 
-test("a click keeps the full home page while a long press opens the launcher", async () => {
+test("a click requests a new empty tab while a long press opens the launcher", async () => {
   const { page, errors, remoteRequests, calls } = await prepare()
   try {
     await plus(page).click()
-    assert.deepEqual(await calls(), ["home"])
+    assert.deepEqual(await calls(), ["blank"])
     assert.equal(await launcher(page).count(), 0)
     assert.match((await plus(page).getAttribute("title")) ?? "", /long press or right-click/)
 
@@ -131,15 +120,15 @@ test("a click keeps the full home page while a long press opens the launcher", a
     await page.mouse.down()
     await launcher(page).waitFor()
     await page.mouse.up()
-    // The release that ends a long press is not a second, home-page click.
-    assert.deepEqual(await calls(), ["home"])
+    // The release that ends a long press is not a second, empty-tab click.
+    assert.deepEqual(await calls(), ["blank"])
     assert.equal(await plus(page).getAttribute("aria-expanded"), "true")
     await openedWithFocus(page)
     await page.waitForFunction(() => document.querySelectorAll(".new-instance-launcher-recent-primary").length === 15)
     assert.match(await options(page).first().innerText(), /CodeNomad/)
     assert.match(await options(page).nth(2).innerText(), /Blender tools/)
     assert.equal(await launcher(page).locator(".browse-menu, .new-tab-actions, .new-instance-launcher-servers").count(), 0)
-    assert.equal(await launcher(page).getByRole("button", { name: /Remote servers|Open SideCar|Full home page|Add a server/ }).count(), 0)
+    assert.equal(await launcher(page).getByRole("button", { name: /Remote servers|Open SideCar|Add a server/ }).count(), 0)
     assert.equal(await launcher(page).getByRole("heading").innerText(), "Recent tabs")
     assert.equal(await launcher(page).getByRole("button", { name: "Open another project…", exact: true }).count(), 0)
     assert.equal(await launcher(page).getByRole("button", { name: /^(Recent|Browse|Clone Git Repo)$/ }).count(), 0)
@@ -156,6 +145,34 @@ test("a click keeps the full home page while a long press opens the launcher", a
     assert.deepEqual(remoteRequests, [], "saved profiles do not trigger launcher remote reads or probes")
     if (process.env.CODENOMAD_LAUNCHER_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_LAUNCHER_CAPTURE })
     assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+for (const home of [false, true]) test(`Open elsewhere is informational and backend-scoped (${home ? "home" : "launcher"})`, async () => {
+  const { page, calls } = await prepare(1280, home)
+  try {
+    if (!home) {
+      await plus(page).click({ button: "right" })
+      await openedWithFocus(page)
+    }
+    const surface = home ? page : launcher(page)
+    const dot = surface.getByRole("listitem").locator(".status-dot.ready")
+    await dot.waitFor()
+    assert.equal(await dot.count(), 1, "the local tab, another backend and an unready record add no dots")
+    assert.equal(await dot.getAttribute("tabindex"), null)
+    const row = surface.getByRole("listitem").filter({ has: page.locator(".status-dot.ready") })
+    const button = row.getByRole("button", { name: /^Blender tools/ })
+    assert.equal(await button.getAttribute("aria-description"), "Open elsewhere")
+    await button.hover()
+    await page.getByRole("tooltip", { name: "Open elsewhere" }).waitFor()
+    await page.keyboard.press("Escape")
+    await button.focus()
+    await page.getByRole("tooltip", { name: "Open elsewhere" }).waitFor()
+    if (home) {
+      const point = (await dot.boundingBox())!
+      await page.mouse.click(point.x + point.width / 2, point.y + point.height / 2)
+    } else await button.click()
+    assert.deepEqual(await calls(), ["folder:D:/blender"])
   } finally { await page.close() }
 })
 
@@ -242,7 +259,7 @@ test("a clone is suggested as the repository's folder beside the last clone, a b
     const url = dialog.getByRole("textbox").nth(0)
     const destination = dialog.getByRole("textbox").nth(1)
     const openClone = async () => {
-      await page.getByRole("button", { name: "Clone Git Repo", exact: true }).click()
+      await page.getByRole("button", { name: "Clone repository", exact: true }).click()
       await dialog.getByRole("heading", { name: "Clone Git Repository", exact: true }).waitFor()
     }
 
@@ -300,7 +317,7 @@ test("dismissal returns focus, aborted long presses keep keyboard activation, an
     await launcher(page).waitFor({ state: "detached" })
     await plus(page).focus()
     await page.keyboard.press("Enter")
-    assert.deepEqual(await calls(), ["home"])
+    assert.deepEqual(await calls(), ["blank"])
 
     await page.keyboard.press("Alt+ArrowDown")
     await openedWithFocus(page)
@@ -350,7 +367,7 @@ test("closing returns focus only after Escape and never steals it from another s
     assert.equal(await page.locator("#other-surface").inputValue(), "kept")
     assert.equal(await focused(), "other-surface")
 
-    // The app closes it (the home page opened): focus does not land on the covered button.
+    // The app closes it (the settings overlay opened): focus does not land on the covered button.
     await plus(page).focus()
     await page.keyboard.press("Alt+ArrowDown")
     await openedWithFocus(page)
@@ -378,55 +395,21 @@ test("the new-instance button follows the last tab like a browser", async () => 
   } finally { await page.close() }
 })
 
-test("Home owns browsing and creation", async () => {
-  const home = await prepare(1100, true)
+test("empty-tab lists scroll and Browse keeps its keyboard navigation", async () => {
+  const { page, errors } = await prepare(1100, true)
   try {
-    const { page, errors } = home
-    // The old framed Browse button, Servers tab, Connect and Open SideCar buttons are gone.
-    assert.equal(await page.getByRole("button", { name: /^(Browse Folders|Servers|Remotes|Connect CodeNomad Server|Open SideCar)/ }).count(), 0)
-    const actions = page.locator(".folder-home-creation-actions")
-    await actions.getByRole("button", { name: "Clone Git Repo", exact: true }).waitFor()
-    assert.deepEqual(await actions.getByRole("button").allTextContents(), CREATE)
-
-    // Right: two tabs, Recent tabs first; search stays in the quick launcher.
-    const tabList = page.getByRole("tablist")
-    assert.deepEqual(await tabList.getByRole("tab").allTextContents(), ["Recent tabs15 items", "Browse2 items"])
-    const recentTab = tabList.getByRole("tab", { name: "Recent tabs" })
-    assert.equal(await recentTab.getAttribute("aria-selected"), "true")
-    assert.equal(await recentTab.evaluate(node => (node as HTMLElement).style.backgroundColor), 'var(--surface-secondary)')
-    assert.equal(await tabList.getByRole('tab', { name: 'Browse', exact: true }).evaluate(node => (node as HTMLElement).style.backgroundColor), 'var(--surface-control)')
-    const selectedBackground = await recentTab.evaluate(node => getComputedStyle(node).backgroundColor)
-    const unselectedBackground = await tabList.getByRole('tab', { name: 'Browse', exact: true }).evaluate(node => getComputedStyle(node).backgroundColor)
-    assert.notEqual(selectedBackground, unselectedBackground)
-    await recentTab.hover()
-    assert.notEqual(await recentTab.evaluate(node => getComputedStyle(node).backgroundImage), 'none')
-    await page.mouse.move(5, 700)
-    assert.equal(await recentTab.evaluate(node => getComputedStyle(node).backgroundImage), 'none')
-    assert.equal(await page.getByRole('searchbox').count(), 0)
-    assert.equal(await page.locator('.folder-home-recent-item').count(), 15)
-    // Arrow keys move between the tabs; Browse is a list without a disclosure.
-    await recentTab.focus()
-    await page.keyboard.press("ArrowRight")
-    const browseTab = tabList.getByRole("tab", { name: "Browse" })
-    assert.equal(await browseTab.getAttribute("aria-selected"), "true")
-    await page.waitForFunction(({ selected, unselected }) =>
-      getComputedStyle(document.querySelector('[data-home-tab="browse"]')!).backgroundColor === selected &&
-      getComputedStyle(document.querySelector('[data-home-tab="recent"]')!).backgroundColor === unselected,
-      { selected: selectedBackground, unselected: unselectedBackground })
-    assert.equal(await browseTab.evaluate(node => getComputedStyle(node).backgroundColor), selectedBackground)
-    assert.equal(await recentTab.evaluate(node => getComputedStyle(node).backgroundColor), unselectedBackground)
-    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Browse")
-    const panel = page.getByRole("tabpanel", { name: "Browse" })
-    assert.equal(await panel.locator(".browse-menu-toggle").count(), 0)
-    const homeRows = await panel.locator(".browse-menu-row").allTextContents()
-    assert.deepEqual(homeRows, ["This computer", "Saved remote"])
-    await panel.getByRole("textbox", { name: "Server address or link" }).waitFor()
-    await panel.getByRole("button", { name: "This computer" }).focus()
+    const browse = page.getByRole("region", { name: "Browse" })
+    const recent = page.getByRole("region", { name: "Recent tabs" })
+    await browse.getByRole("textbox", { name: "Server address or link" }).waitFor()
+    assert.deepEqual(await browse.locator(".browse-menu-row").allTextContents(), ["This computer", "Saved remote", "New SideCar"])
+    assert.equal(await page.getByRole("searchbox").count(), 0)
+    assert.equal(await recent.locator('.folder-home-recent-item').count(), 15)
+    assert.ok(await recent.getByRole("list").evaluate(list => list.scrollHeight > list.clientHeight))
+    await browse.getByRole("button", { name: "This computer" }).focus()
     await page.keyboard.press("ArrowDown")
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Open a project on Saved remote")
-
     assert.deepEqual(errors, [])
-  } finally { await home.page.close() }
+  } finally { await page.close() }
 })
 
 test("recent hover clears on pointer exit and keyboard highlighting is limited to keyboard navigation", async () => {

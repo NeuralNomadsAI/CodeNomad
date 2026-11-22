@@ -30,7 +30,7 @@ Son solicitudes al servicio configurado, no una garantía de que todos los endpo
 2. Elige **Probar entrada por API**, concede permiso de micrófono, habla y después **Detener grabación**. Comprueba la transcripción devuelta.
 3. Elige **Probar reproducción** para escuchar la muestra; **Detener muestra** la finaliza.
 
-La prueba de reproducción usa inmediatamente el modo y el formato seleccionados, pero el endpoint, la clave, el modelo y la voz proceden de los ajustes guardados. **Probar entrada por API** envía el audio al proveedor de API configurado aunque hayas seleccionado Hex o el reconocimiento del sistema. No envía un mensaje de conversación. El proveedor puede cobrar por estas pruebas.
+La prueba de reproducción usa inmediatamente el modo y el formato seleccionados, pero el endpoint, la clave, el modelo y la voz proceden de los ajustes guardados. **Probar entrada por API** envía audio al proveedor de API configurado, sea cual sea el motor de dictado. No envía un mensaje de conversación. El proveedor puede cobrar por estas pruebas.
 
 ## Dictar un mensaje {#dictate}
 
@@ -43,17 +43,17 @@ Si la API recurre a WAV en Tauri para Linux, el dictado y la prueba de entrada d
 
 Las grabaciones comprimidas para la API también se detienen al alcanzar el límite de tamaño y ofrecen **Transcribir** o **Cancelar**.
 
-Con el reconocimiento del sistema, aparece una vista previa mientras hablas. Puedes seguir editando el borrador: solo se puede insertar la transcripción final.
-
 ### Elegir un motor en el escritorio {#desktop-dictation}
 
 En **Preferencias → Voz → Dictado** de la aplicación de escritorio local, elige el **Motor de dictado en este dispositivo**. La elección se aplica a todos los proyectos del dispositivo. **Proveedor de API** usa los ajustes del servidor conectado y necesita un contexto seguro para el micrófono.
 
-- El **Reconocimiento local del sistema** funciona dentro de CodeNomad sin abrir el panel de dictado del sistema. Requiere un motor local instalado para el idioma de la aplicación en Windows o macOS. En Linux, o si falta el motor o el idioma, prueba Hex si está disponible.
+- Si el motor guardado no está disponible, elige aquí **Hex (local)**, si se ofrece, o **Proveedor de API**. En los Mac Intel o con una versión anterior a macOS 15, usa **Proveedor de API**.
 - Voz muestra qué componentes faltan y el tamaño de descarga de cada uno y del total. Un clic en **Activar Hex** verifica y reutiliza los archivos compatibles, descarga lo que falta y selecciona Hex cuando está listo. Sigue el progreso en Voz. Puedes usar **Cancelar la activación de Hex** y, cuando aparezca, **Reanudar la activación de Hex**. Si falla o se cancela, se mantiene el motor anterior. Abrir Preferencias, seleccionar **Hex (local)** cuando ya está listo o dictar con él no inicia otra descarga.
 - Hex se ofrece en equipos compatibles: Windows x64/arm64, Apple Silicon con macOS 15 o posterior y Linux x64/arm64 con glibc 2.36 o posterior y las bibliotecas que requiere Hex. Los Mac Intel y los sistemas Linux con una glibc anterior o con musl no son compatibles. El motor y los modelos se obtienen aparte del instalador de CodeNomad; no hace falta usar la terminal ni una clave de API.
 
 Ubuntu 24.04 cumple el requisito de glibc, mientras que Ubuntu 22.04 no. Hex detecta el idioma hablado entre los [idiomas admitidos por Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), entre ellos el inglés y el francés. Esta lista es independiente del idioma de la aplicación.
+
+Hex carga su modelo en segundo plano al iniciar la grabación y lo mantiene listo durante tres minutos tras el último dictado.
 
 El reconocimiento local usa el micrófono de este dispositivo y funciona sin conexión, también en proyectos WSL abiertos en la aplicación local. Desde una ventana remota compatible, **Dictar** abre la ventana local **Dictar en este dispositivo**. Comprueba el destino y elige **Iniciar entrada de voz**, **Detener grabación y transcribir** e **Insertar la transcripción** para devolver solo el texto al borrador. El proyecto remoto sigue necesitando conexión con su servidor.
 

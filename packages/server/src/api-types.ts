@@ -797,11 +797,6 @@ export interface SpeechTranscriptionResponse {
   segments?: SpeechSegment[]
 }
 
-export interface SpeechSynthesisResponse {
-  audioBase64: string
-  mimeType: string
-}
-
 export type ConversationPermissionMode = "autonomous" | "supervised"
 export interface ConversationPermissionModeResponse {
   mode: ConversationPermissionMode
@@ -937,7 +932,7 @@ export type WorkspaceEventPayload =
   | { type: "workspace.created"; workspace: WorkspaceDescriptor }
   | { type: "workspace.started"; workspace: WorkspaceDescriptor }
   | { type: "workspace.error"; workspace: WorkspaceDescriptor }
-  | { type: "workspace.stopped"; workspaceId: string; reason?: "deleted" | "stopped" }
+  | { type: "workspace.stopped"; workspaceId: string; reason?: "deleted" | "stopped"; temporaryRetained?: true }
   | { type: "workspace.log"; entry: WorkspaceLogEntry }
   | { type: "workspace.worktreesChanged"; workspaceId: string }
   | { type: "workspace.filesChanged"; workspaceId: string; changes: WorkspaceDirectoryChange[] }

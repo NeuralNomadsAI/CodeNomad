@@ -38,7 +38,7 @@ export default function RemoteRestoreView(props: { tab: RemoteRestoreTab }) {
     setConnecting(show)
     if (show) queueMicrotask(() => view.querySelector<HTMLElement>("[data-remote-password], [data-server-add-field]")?.focus())
   }
-  const run = async (connect?: { username: string; password: string } | "paired", open = false) => {
+  const run = async (connect?: { username: string; password: string } | "paired") => {
     if (busy()) return
     const focus = captureRequestFocus()
     setBusy(true)
@@ -50,8 +50,7 @@ export default function RemoteRestoreView(props: { tab: RemoteRestoreTab }) {
         backendRegistry.detach(id())
         setConnecting(false)
       }
-      if (open) await props.tab.open?.()
-      else await props.tab.retry()
+      await props.tab.retry()
     } catch (failure) {
       if (!controller.signal.aborted) {
         setError(connect && connect !== "paired" ? remoteServerErrorKey(failure) : "folderSelection.servers.dialog.errorConnect")
@@ -69,9 +68,6 @@ export default function RemoteRestoreView(props: { tab: RemoteRestoreTab }) {
       <Show when={pairing()}><ServerAddField pairingProfile={server} disabled={busy()} onAdded={() => void run("paired")} /></Show>
     </>}</Show>
     <div class="flex gap-3">
-      <Show when={props.tab.open && status() === "compatible"}>
-        <button class="selector-button" disabled={busy() || !available()} onClick={() => void run(undefined, true)}>{t("directoryBrowser.openCurrent")}</button>
-      </Show>
       <button class="selector-button" disabled={busy() || !available()} onClick={() => void run()}>{t("filesystemBrowser.actions.retry")}</button>
       <Show when={!local()}><button class="selector-button" disabled={busy() || !profile()} aria-expanded={connecting()} onClick={showConnect}>{t("folderSelection.servers.dialog.connect")}</button></Show>
     </div>

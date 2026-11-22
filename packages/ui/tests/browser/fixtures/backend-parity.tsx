@@ -15,9 +15,8 @@ import { activeSessionId, setProviders, setSessions } from "../../../src/stores/
 import { resolveImagesConversation } from "../../../src/stores/images-conversation"
 import { SettingsScreen } from "../../../src/components/settings-screen"
 import { openSettings } from "../../../src/stores/settings-screen"
-import { selectInstanceTab } from "../../../src/stores/app-tabs"
+import { activeAppTab, attachInstanceTab, selectInstanceTab } from "../../../src/stores/app-tabs"
 import { setActiveSessionId } from "../../../src/stores/session-selection-state"
-import { activeAppTab } from "../../../src/stores/app-tabs"
 import { updateMissionProjectView } from "../../../src/stores/mission-view-state"
 import { getSessionSurface } from "../../../src/stores/session-surface"
 import "../../../src/stores/sessions"
@@ -94,6 +93,7 @@ for (const owner of ["local", "A", "B"]) {
   }
   ;(backend.sdk as any).clients.set(`${id}:/workspaces/same/instance`, client)
   addInstance({ id, ...(owner !== "local" ? { backendId: owner } : {}), folder: `/${owner}`, port: 0, pid: 0, proxyPath: "", status: "ready", client })
+  attachInstanceTab(id)
   setSessions(previous => new Map(previous).set(id, new Map([["ses_homonym", {
     id: "ses_homonym", instanceId: id, title: "Same session", parentId: null, status: "working", agent: "design",
     location: { directory: `/${owner}` }, model: { providerId: "test", modelId: "model" }, time: { created: 1, updated: 1 },

@@ -705,13 +705,16 @@ function showInstanceToast(instanceId: string, sessionId: string | undefined | n
     if (!authority.current()) return
     // An explicit open: show the conversation over any Mission reader, file or preview.
     const gesture = sessionId ? beginGesture({ instanceId, sessionId }) : undefined
-    const { appTabs, selectAppTab, selectInstanceTab } = await import("./app-tabs")
+    const { appTabs, selectAppTab } = await import("./app-tabs")
     if (!authority.current()) return
     const waiting = appTabs().find(tab => tab.kind === "remote-restore" && tab.instanceId === instanceId)
     if (waiting) { selectAppTab(waiting.id); return }
-    if (!instances().has(instanceId)) return
+    // Only this window's tabs: another window's project is not ours to open.
+    const tab = appTabs().find(tab => tab.kind === "instance" && tab.instance.id === instanceId)
+    if (!tab) return
     if (sessionId && !sessions().get(instanceId)?.has(sessionId)) return
-    if (selectInstanceTab(instanceId) && sessionId && gesture) batch(() => {
+    selectAppTab(tab.id)
+    if (sessionId && gesture) batch(() => {
       setActiveSessionFromList(instanceId, sessionId, gesture)
       applySurface({ instanceId, sessionId }, { kind: "conversation" }, gesture)
     })

@@ -128,7 +128,7 @@ function Fixture() {
     setEscapeInDebounce: value => { escapeStates.push(value); setEscapeInDebounce(value) },
     handleNewInstanceRequest: () => {}, handleCloseActiveTab: async () => {},
     handleNewSession: async () => {}, handleCloseSession: async () => {},
-    showFolderSelection: () => false, setShowFolderSelection: () => {},
+
     getActiveInstance: () => instances().get(id) ?? null,
     getActiveSessionIdForInstance: () => activeSessionId().get(id) ?? null,
   })

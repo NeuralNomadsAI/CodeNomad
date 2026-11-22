@@ -397,6 +397,5 @@ export const messagingMessages = {
   "voice.microphone.conversation": "Микрофон используется для разговора в реальном времени.",
   "voice.microphone.unavailable": "Микрофон недоступен в этом окне.",
   "promptInput.voiceInput.error.permissionDenied": "macOS запретила доступ к микрофону.",
-  "promptInput.voiceInput.error.unsupported": "Голосовой ввод не поддерживается в этом браузере.",
   "promptInput.voiceInput.error.transcribe": "Не удалось расшифровать записанное аудио.",
 } as const

@@ -6,13 +6,15 @@
   min-width: 0;
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .browse-menu-body {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   min-height: 0;
+  overflow: auto;
   color: var(--text-secondary);
   text-align: start;
 }
@@ -66,6 +68,4 @@
   color: var(--session-status-idle-fg, var(--text-secondary));
 }
 
-.browse-menu--footer { overflow: hidden; }
-.browse-menu--footer > .browse-menu-body { flex: 1; overflow: auto; }
 .browse-menu-footer { flex: 0 0 auto; }

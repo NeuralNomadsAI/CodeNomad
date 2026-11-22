@@ -2,13 +2,16 @@
 
 ## Ventanas, pestañas y servicio compartido {#windows-tabs}
 
-1. Usa **Nueva instancia** para abrir una pestaña vacía en la ventana actual y elige un proyecto. El logotipo CodeNomad abre Inicio.
+1. Usa **Nueva instancia** para abrir una pestaña vacía en la ventana actual y elige un proyecto.
 2. Usa **Ventana → Nueva ventana** nativo (`Ctrl+Shift+N` o `Cmd+Shift+N`) para una ventana de aplicación separada.
 3. En **Configuración → Avanzado**, activa **Enfocar la ventana existente en el segundo inicio** si otro inicio debe enfocar la ventana usada más recientemente en lugar de abrir una nueva.
 
 Las pestañas de proyectos, conversaciones seleccionadas y disposición pertenecen a una ventana. Las sesiones/mensajes OpenCode pertenecen al servicio nativo compartido de OpenCode: otra ventana puede ver la misma conversación. Cerrar una pestaña de proyecto cierra ese proyecto en CodeNomad, no sus sesiones OpenCode; vuelve a abrirlo para encontrarlas. Otra ventana que muestre la misma conexión de proyecto también cierra su pestaña y muestra una notificación; las pestañas de la misma carpeta abiertas por separado no se ven afectadas. Cerrar una ventana entera, salir o recargar conserva las conexiones de proyecto para restaurarlas; consulta [Proyectos](projects.md). No uses el cierre de ventanas como prueba de que se ha detenido un agente o una Misión programada.
 
 Los menús nativos de la aplicación usan el idioma de la interfaz de CodeNomad en cuanto se ha cargado una ventana; hasta entonces se muestran en inglés. **Ayuda → Acerca de CodeNomad** (también en el menú de la aplicación en macOS) abre **Configuración → Info** con la versión, las actualizaciones y los diagnósticos. **Ayuda → Apoyar a CodeNomad** abre la página [Apoyar a CodeNomad](sponsor.md) en el navegador.
+
+La automatización de escritorio permanece en la ventana inspeccionada por el agente, aunque cambies de ventana. Con `codenomad.inspect({targets:true})`, el agente puede enumerar las ventanas locales disponibles e inspeccionar otra por su identificador.
+La entrada nativa con puntero y teclado en la ventana de la aplicación se limita a su página principal. Usa las herramientas de vista previa web para la vista previa de una conversación.
 
 ## Argumentos de inicio de escritorio {#desktop-cli}
 

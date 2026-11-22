@@ -49,6 +49,7 @@ async function installHost(page: Page, host: "electron" | "tauri", request: Nati
     if (host === "tauri") {
       const callbacks = new Map()
       w.__TAURI_INTERNALS__ = {
+        metadata: { currentWindow: { label: "preferences" }, currentWebview: { label: "preferences" } },
         transformCallback: (callback) => { const id = callbacks.size + 1; callbacks.set(id, callback); return id },
         invoke: async (command, args) => {
           if (command === "plugin:event|listen" && args.event === "preferences:section") {

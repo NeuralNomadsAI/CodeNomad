@@ -29,7 +29,7 @@ import { useCommands } from "./lib/hooks/use-commands"
 import { useAppLifecycle } from "./lib/hooks/use-app-lifecycle"
 import { useAppSessionRestore } from "./lib/hooks/use-app-session-restore"
 import { loadedRestorableSession } from "./stores/client-state"
-import { shouldShowAppHomeOverlay, shouldShowAppRestoreLoading } from "./stores/app-session-restore-gate"
+import { appSessionRestoreGateActive } from "./stores/app-session-restore-gate"
 import { getLogger } from "./lib/logger"
 import { launchError, showLaunchError, clearLaunchError } from "./stores/launch-errors"
 import OpenCodeSetup from "./components/opencode-setup"
@@ -45,20 +45,23 @@ import { startNotificationIconBadge } from "./lib/notification-icon-badge"
 import RemoteRestoreView from "./components/remote-restore-view"
 import {
   claimNativeBrowserOpen,
+  changeBrowserPreviewOwnership,
+  onBrowserPreviewOwnership,
   onNativeBrowserOpen,
   releaseNativeBrowserOpen,
   selectBrowserOpenOwner,
+  type BrowserOpenDiscovery,
+  type BrowserOpenRequest,
 } from "./lib/native/browser"
 import { useViewMenu } from "./lib/native/view-menu"
 import {
   isSelectingFolder,
   setIsSelectingFolder,
-  showFolderSelection,
-  setShowFolderSelection,
 } from "./stores/ui"
 import { preferencesForBackend, recentFolders, useConfig } from "./stores/preferences"
 import {
   createInstance,
+  WorkspaceCreationDeparture,
   instances,
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
@@ -74,15 +77,17 @@ import {
   activeSessionId,
   clearSelectedSession,
   fetchSessions,
+  hydrateRestoredSessionChain,
   loadMessages,
   setActiveSessionFromList,
   startNewSession,
   updateSessionAgent,
   updateSessionModel,
 } from "./stores/sessions"
-import { openSessionPreview } from "./stores/session-previews"
+import { acceptPreviewOwnership, openSessionPreview, settleSessionPreviewOpen, showSessionPreview } from "./stores/session-previews"
+import { isInstanceOccurrenceOpen } from "./stores/instance-lifecycle-authority"
 import { SessionPreviewHost } from "./components/session-preview-view"
-import { beginGesture } from "./stores/session-surface"
+import { observeSurfaceGesture } from "./stores/session-surface"
 import { useForegroundRefresh } from "./lib/hooks/use-foreground-refresh"
 import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-state"
 
@@ -98,6 +103,7 @@ import {
   activeAppTab,
   activeAppTabId,
   allowsAutomaticLocalSetup,
+  appTabSelectionRevision,
   appTabs,
   activeBlankTabId,
   closeBlankTab,
@@ -273,6 +279,8 @@ const App: Component = () => {
   onMount(() => {
     let disposed = false
     let browserOpenUnsubscribe = () => {}
+    let browserOwnershipUnsubscribe = () => {}
+    const browserDeliveries = new Map<string, AbortController>()
     void initGithubStars()
     updateInstanceTabBarHeight()
     const handleResize = () => updateInstanceTabBarHeight()
@@ -284,69 +292,105 @@ const App: Component = () => {
         })
       }
     }, 30_000)
-    const openRequestedPreview = async (sessionID: string, url: string, requestID: string) => {
-      // Host-native requests carry a session id from the local backend only.
-      const localInstances = () => appTabs().flatMap(tab => tab.kind === "instance"
-        && parseInstanceKey(tab.instance.id).backendId === "local" ? [tab.instance] : [])
-      const findOwners = () => localInstances().filter((instance) => getSessions(instance.id).some((session) => session.id === sessionID))
-      let owners = findOwners()
-      if (owners.length === 0) {
-        await Promise.all(localInstances().filter((instance) => instance.client).map((instance) => fetchSessions(instance.id, { reset: true }).catch(() => undefined)))
-        owners = findOwners()
-      }
-      const activeTab = activeAppTab()
-      const owner = selectBrowserOpenOwner(owners, activeTab?.kind === "instance" ? activeTab.instance.id : undefined)
-      if (disposed || !owner) {
-        if (!disposed) log.warn("Failed to route agent-requested web preview", {
-          sessionID,
-          owners: owners.map((instance) => instance.id),
-          activeInstanceID: activeTab?.kind === "instance" ? activeTab.instance.id : undefined,
-        })
-        return
-      }
-      const operation = captureBackendOperation(owner.id, undefined, () => !disposed && instances().has(owner.id)
-        && findOwners().some(candidate => candidate.id === owner.id))
-      const intent = beginGesture({ instanceId: owner.id, sessionId: sessionID })
-      try {
-        if (!operation.current() || !intent.current() || !await claimNativeBrowserOpen(requestID)) return
-        if (!operation.current() || !intent.current()) {
-          await releaseNativeBrowserOpen(requestID)
-          return
-        }
-        const instance = owner
-        const stillOwned = () => operation.current() && intent.current()
-        await openSessionPreview(sessionID, url, instance.id, async () => stillOwned() && await claimNativeBrowserOpen(requestID) && stillOwned(), intent)
-        if (!stillOwned()) {
-          await releaseNativeBrowserOpen(requestID)
-          return
-        }
-        setShowFolderSelection(false)
-        selectInstanceTab(instance.id)
-        setActiveSessionFromList(instance.id, sessionID, intent)
-      } catch (error) {
-        await releaseNativeBrowserOpen(requestID).catch((releaseError) => {
-          log.warn("Failed to release agent-requested web preview", { sessionID, releaseError })
-        })
-        throw error
+    const localInstances = () => appTabs().flatMap(tab => tab.kind === "instance"
+      && parseInstanceKey(tab.instance.id).backendId === "local" && isInstanceOccurrenceOpen(tab.instance.id)
+      && tab.instance.status === "ready" && tab.instance.client ? [tab.instance] : [])
+    const recentTabs = new Map<string, string[]>()
+    let lastUsedTab: string | undefined, lastUsedSession: string | undefined
+    const reportTabUse = () => {
+      if (lastUsedTab && lastUsedSession) {
+        void changeBrowserPreviewOwnership({ action: "used", instanceId: lastUsedTab, sessionId: lastUsedSession })?.catch(() => {})
       }
     }
-    void onNativeBrowserOpen(({ sessionID, url, requestID }) => {
-      void openRequestedPreview(sessionID, url, requestID).catch((error) => log.warn("Failed to open agent-requested web preview", { sessionID, error }))
+    window.addEventListener("focus", reportTabUse)
+    createEffect(() => {
+      const tab = activeAppTab()
+      const id = tab?.kind === "instance" && parseInstanceKey(tab.instance.id).backendId === "local" ? tab.instance.id : undefined
+      const session = id ? activeSessionId().get(id) : undefined
+      if (id && session && session !== "info") {
+        const previous = recentTabs.get(session) ?? []
+        recentTabs.delete(session)
+        recentTabs.set(session, [id, ...previous.filter(other => other !== id)].slice(0, 32))
+        if (recentTabs.size > 512) recentTabs.delete(recentTabs.keys().next().value!)
+        if (lastUsedTab !== id || lastUsedSession !== session) {
+          lastUsedTab = id
+          lastUsedSession = session
+          if (document.hasFocus()) reportTabUse()
+        }
+      } else { lastUsedTab = lastUsedSession = undefined }
+    })
+    const discoverPreviewOwner = ({ workspaceIDs, requestID, sessionID }: BrowserOpenDiscovery) => {
+      if (disposed) return
+      const eligible = new Set(workspaceIDs)
+      const owners = localInstances().filter(instance => eligible.has(parseInstanceKey(instance.id).workspaceId))
+      const activeTab = activeAppTab()
+      const recent = recentTabs.get(sessionID)?.find(id => owners.some(owner => owner.id === id))
+      const owner = selectBrowserOpenOwner(owners, recent ?? (activeTab?.kind === "instance" ? activeTab.instance.id : undefined))
+      return claimNativeBrowserOpen(requestID, { kind: "discover", instanceId: owner?.id ?? owners[0]?.id ?? null })
+    }
+    const openRequestedPreview = async ({ sessionID, url, requestID, instanceId }: BrowserOpenRequest) => {
+      const eligible = () => !disposed && localInstances().some(instance => instance.id === instanceId)
+      const delivery = new AbortController()
+      let published = false
+      try {
+        if (!eligible()) return
+        browserDeliveries.set(requestID, delivery)
+        const operation = captureBackendOperation(instanceId, undefined, eligible)
+        const intent = observeSurfaceGesture({ instanceId, sessionId: sessionID })
+        const selectionRevision = appTabSelectionRevision()
+        const loaded = () => getSessions(instanceId).some(session => session.id === sessionID)
+        const current = () => operation.current() && intent.current() && !delivery.signal.aborted
+        if (!loaded()) await hydrateRestoredSessionChain(instanceId, [sessionID], operation.signal, current)
+        if (!current() || !loaded()) return
+        await openSessionPreview(sessionID, url, instanceId, intent, { requestID, instanceId }, delivery.signal, () =>
+          changeBrowserPreviewOwnership({ action: "ready", sessionId: sessionID, instanceId, requestID }))
+        if (!current()) return
+        if (appTabSelectionRevision() === selectionRevision) {
+          selectInstanceTab(instanceId)
+          setActiveSessionFromList(instanceId, sessionID, intent)
+        }
+        published = true
+      } finally {
+        browserDeliveries.delete(requestID)
+        if (!published) await releaseNativeBrowserOpen(requestID).catch((releaseError) => {
+          log.warn("Failed to release agent-requested web preview", { sessionID, releaseError })
+        })
+      }
+    }
+    void onNativeBrowserOpen((request) => {
+      void discoverPreviewOwner(request)?.catch(error => log.warn("Failed to discover the owning preview tab", { error }))
+    }, (request) => {
+      void openRequestedPreview(request).catch(error => log.warn("Failed to open agent-requested web preview", { sessionID: request.sessionID, error }))
+    }, ({ requestID, sessionID, instanceId, committedUrl, keepGuest, successorUrl }) => {
+      browserDeliveries.get(requestID)?.abort()
+      settleSessionPreviewOpen(sessionID, instanceId, requestID, committedUrl, keepGuest, successorUrl)
     }).then((cleanup) => {
       if (disposed) cleanup()
       else browserOpenUnsubscribe = cleanup
     }).catch((error) => log.warn("Failed to listen for native browser open requests", { error }))
+    void onBrowserPreviewOwnership(acceptPreviewOwnership, ({ sessionId, instanceId }) => {
+      if (!localInstances().some(instance => instance.id === instanceId)) return
+      selectInstanceTab(instanceId)
+      setActiveSessionFromList(instanceId, sessionId)
+      showSessionPreview(sessionId, instanceId)
+    }).then(cleanup => {
+      if (disposed) cleanup()
+      else browserOwnershipUnsubscribe = cleanup
+    }).catch(error => log.warn("Failed to listen for browser ownership changes", { error }))
     onCleanup(() => {
       disposed = true
       browserOpenUnsubscribe()
+      browserOwnershipUnsubscribe()
+      window.removeEventListener("focus", reportTabUse)
       window.removeEventListener("resize", handleResize)
       window.clearInterval(livenessTimer)
     })
   })
 
   createEffect(() => {
-    appTabs()
-    ensureActiveAppTab()
+    if (appSessionRestoreGateActive()) return
+    if (appTabs().length === 0) openBlankTab()
+    else ensureActiveAppTab()
   })
 
   const activeInstance = createMemo(() => {
@@ -526,14 +570,12 @@ const App: Component = () => {
       if (result.reused) {
         selectInstanceTab(result.instanceId)
         replaceBlankTab(blankId ?? undefined, getInstanceAppTabId(result.instanceId))
-        setShowFolderSelection(false)
         log.info("Selected reused instance", { instanceId: result.instanceId, folderPath })
         return true
       }
 
       selectInstanceTab(result.instanceId)
       replaceBlankTab(blankId ?? undefined, getInstanceAppTabId(result.instanceId))
-      setShowFolderSelection(false)
 
       log.info("Created instance", {
         instanceId: result.instanceId,
@@ -541,6 +583,7 @@ const App: Component = () => {
       })
       return true
     } catch (error) {
+      if (error instanceof WorkspaceCreationDeparture) return false
       const message = formatLaunchErrorMessage(
         error,
         t("app.launchError.fallbackMessage"),
@@ -570,8 +613,8 @@ const App: Component = () => {
       const id = await openTemporaryInstance()
       selectInstanceTab(id)
       replaceBlankTab(blankId ?? undefined, getInstanceAppTabId(id))
-      setShowFolderSelection(false)
     } catch (error) {
+      if (error instanceof WorkspaceCreationDeparture) return
       const message = formatLaunchErrorMessage(
         error,
         t("app.launchError.fallbackMessage"),
@@ -591,12 +634,12 @@ const App: Component = () => {
   }
 
   function handleSelectExistingInstance(instanceId: string, recentPath: string, blankId: string | null | undefined = activeBlankTabId()) {
-    const instance = instances().get(instanceId)
-    if (!instance) return
+    const tab = appTabs().find(tab => tab.kind === "instance" && tab.instance.id === instanceId)
+    if (tab?.kind !== "instance") return
+    const { instance } = tab
     recordWorkspaceLaunch(instance.folder, recentPath)
     selectInstanceTab(instanceId)
     if (blankId) closeBlankTab(blankId)
-    setShowFolderSelection(false)
     log.info("Selected existing instance", { instanceId, folderPath: instance.folder })
   }
 
@@ -611,14 +654,12 @@ const App: Component = () => {
 
   function handleNewInstanceRequest() {
     openBlankTab()
-    setShowFolderSelection(false)
   }
 
   const [launcherOpen, setLauncherOpen] = createSignal(false)
   const [launcherAnchor, setLauncherAnchor] = createSignal<HTMLElement>()
-  // The launcher is anchored to the tab bar: the home page or a closed tab bar retires it.
   createEffect(() => {
-    if (showFolderSelection() || appTabs().length === 0) setLauncherOpen(false)
+    if (mobileFullscreenMode()) setLauncherOpen(false)
   })
 
   async function handleOpenSidecar(sidecarId: string, blankId: string | null | undefined = activeBlankTabId()) {
@@ -626,7 +667,6 @@ const App: Component = () => {
       const tab = await openSidecarTab(sidecarId)
       selectSidecarTab(tab.token)
       replaceBlankTab(blankId ?? undefined, getSidecarAppTabId(tab.token))
-      setShowFolderSelection(false)
       preferencesForBackend("local").recordSidecarRecent(sidecarId)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -715,8 +755,6 @@ const App: Component = () => {
     handleCloseActiveTab: () => closeAppTab(activeAppTabId() ?? ""),
     handleNewSession,
     handleCloseSession,
-    showFolderSelection,
-    setShowFolderSelection,
     getActiveInstance: activeInstance,
     getActiveSessionIdForInstance: activeSessionIdForInstance,
   })
@@ -726,7 +764,7 @@ const App: Component = () => {
   onMount(() => {
     onCleanup(observeDesktopUpdates())
     const executeMenuAction = (action: unknown) => {
-      if (typeof action !== "string") return
+      if (typeof action !== "string" || document.documentElement.inert) return
       if (action === "get-updates") { void requestDesktopUpdate(); return }
       if (executeViewMenuAction(action)) return
       if (action === "open-command-palette") {
@@ -794,7 +832,7 @@ const App: Component = () => {
       </Dialog>
       <AppViewport>
         <Show when={hasNativeTitlebar}>
-          <NativeTitlebar title={t("window.title.main")} logo menus actions />
+          <NativeTitlebar title={t("window.title.main")} logo menus />
         </Show>
         <Show when={mobileFullscreenMode()}>
           <div class="mobile-fullscreen-exit-wrapper">
@@ -810,110 +848,81 @@ const App: Component = () => {
           </div>
         </Show>
         <Show
-          when={appTabs().length === 0}
+          when={appTabs().length > 0}
           fallback={
-            <>
-              <Show when={!mobileFullscreenMode()}>
-                <InstanceTabs
-                  tabs={appTabs()}
-                  activeTabId={activeAppTabId()}
-                  onSelect={selectAppTab}
-                  onClose={(tabId) => void closeAppTab(tabId)}
-                  onNew={handleNewInstanceRequest}
-                  onOpenLauncher={(anchor) => {
-                    // The home page already offers everything; a hidden tab bar must not reopen it.
-                    if (showFolderSelection()) return
-                    setLauncherAnchor(anchor)
-                    setLauncherOpen(true)
-                  }}
-                  launcherOpen={launcherOpen()}
-                  onMoveTab={moveAppTab}
-                />
-              </Show>
-
-              <For each={appTabs()}>
-                {(tab) => {
-                  const isVisible = () => activeAppTabId() === tab.id && !showFolderSelection()
-                  return tab.kind === "instance" ? (
-                    <div
-                      class="flex-1 min-h-0 overflow-hidden"
-                      style={{ display: isVisible() ? "flex" : "none" }}
-                      data-instance-id={tab.instance.id}
-                      data-tab-id={tab.id}
-                      data-tab-kind={tab.kind}
-                      data-tab-visible={isVisible() ? "true" : "false"}
-                    >
-                      <InstanceMetadataProvider instance={tab.instance}>
-                        <InstanceShell
-                          instance={tab.instance}
-                          isActiveInstance={isVisible()}
-                          escapeInDebounce={escapeInDebounce()}
-                          paletteCommands={paletteCommands}
-                          onCloseSession={(sessionId) => handleCloseSession(tab.instance.id, sessionId)}
-                          onNewSession={() => handleNewSession(tab.instance.id)}
-                          handleSidebarAgentChange={(sessionId, agent) => handleSidebarAgentChange(tab.instance.id, sessionId, agent)}
-                          handleSidebarModelChange={(sessionId, model) => handleSidebarModelChange(tab.instance.id, sessionId, model)}
-                          onExecuteCommand={executeCommand}
-                          tabBarOffset={mobileFullscreenMode() ? 0 : instanceTabBarHeight()}
-                          mobileFullscreenMode={mobileFullscreenMode()}
-                          onEnterMobileFullscreen={() => void enterMobileFullscreen()}
-                          onExitMobileFullscreen={() => void exitMobileFullscreen()}
-                        />
-                      </InstanceMetadataProvider>
-                    </div>
-                  ) : (
-                    <div
-                      class="flex-1 min-h-0 overflow-hidden"
-                      style={{ display: isVisible() ? "flex" : "none" }}
-                      data-tab-id={tab.id}
-                      data-tab-kind={tab.kind}
-                      data-tab-visible={isVisible() ? "true" : "false"}
-                    >
-                      {tab.kind === "sidecar" ? <SideCarView tab={tab.sidecarTab} /> : tab.kind === "remote-restore" ? <RemoteRestoreView tab={tab} /> :
-                        <FolderSelectionView blank initialServer={tab.server} active={isVisible()} isLoading={isSelectingFolder()}
-                          onSelectFolder={path => void handleSelectFolder(path, tab.id)}
-                          onSelectExistingInstance={handleSelectExistingInstance}
-                          onNewTemporaryInstance={() => void handleNewTemporaryInstance(tab.id)}
-                          onOpenSidecar={id => void handleOpenSidecar(id, tab.id)}
-                          onJoined={() => closeBlankTab(tab.id)}
-                          onRemoteOpened={id => replaceBlankTab(tab.id, getInstanceAppTabId(id))} />}
-                    </div>
-                  )
-                }}
-              </For>
-
-            </>
+            <div class="loading-state" role="status">
+              <div class="spinner" aria-hidden="true" />
+              <span>{t("loadingScreen.status.loading")}</span>
+            </div>
           }
         >
-          <FolderSelectionView
-            onSelectFolder={handleSelectFolder}
-            onSelectExistingInstance={handleSelectExistingInstance}
-            onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
-            isLoading={isSelectingFolder() || shouldShowAppRestoreLoading(loadedRestorableSession())}
-            onOpenSidecar={handleOpenSidecar}
-            onJoined={() => setShowFolderSelection(false)}
-            onRemoteOpened={() => setShowFolderSelection(false)}
-          />
-        </Show>
+          <Show when={!mobileFullscreenMode()}>
+            <InstanceTabs
+              tabs={appTabs()}
+              activeTabId={activeAppTabId()}
+              onSelect={selectAppTab}
+              onClose={(tabId) => void closeAppTab(tabId)}
+              onNew={handleNewInstanceRequest}
+              onOpenLauncher={(anchor) => {
+                setLauncherAnchor(anchor)
+                setLauncherOpen(true)
+              }}
+              launcherOpen={launcherOpen()}
+              onMoveTab={moveAppTab}
+            />
+          </Show>
 
-        <Show when={shouldShowAppHomeOverlay(showFolderSelection(), appTabs().length)}>
-          <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
-            <div class="w-full h-full relative">
-              <FolderSelectionView
-                onSelectFolder={path => void handleSelectFolder(path, null)}
-                onSelectExistingInstance={(id, path) => handleSelectExistingInstance(id, path, null)}
-                onNewTemporaryInstance={() => void handleNewTemporaryInstance(null)}
-                isLoading={isSelectingFolder()}
-                onOpenSidecar={id => void handleOpenSidecar(id, null)}
-                onJoined={() => setShowFolderSelection(false)}
-                onRemoteOpened={() => setShowFolderSelection(false)}
-                onClose={() => {
-                  setShowFolderSelection(false)
-                  clearLaunchError()
-                }}
-              />
-            </div>
-          </div>
+          <For each={appTabs()}>
+            {(tab) => {
+              const isVisible = () => activeAppTabId() === tab.id
+              return tab.kind === "instance" ? (
+                <div
+                  class="flex-1 min-h-0 overflow-hidden"
+                  style={{ display: isVisible() ? "flex" : "none" }}
+                  data-instance-id={tab.instance.id}
+                  data-tab-id={tab.id}
+                  data-tab-session-id={activeSessionId().get(tab.instance.id) ?? undefined}
+                  data-tab-kind={tab.kind}
+                  data-tab-visible={isVisible() ? "true" : "false"}
+                >
+                  <InstanceMetadataProvider instance={tab.instance}>
+                    <InstanceShell
+                      instance={tab.instance}
+                      isActiveInstance={isVisible()}
+                      escapeInDebounce={escapeInDebounce()}
+                      paletteCommands={paletteCommands}
+                      onCloseSession={(sessionId) => handleCloseSession(tab.instance.id, sessionId)}
+                      onNewSession={() => handleNewSession(tab.instance.id)}
+                      handleSidebarAgentChange={(sessionId, agent) => handleSidebarAgentChange(tab.instance.id, sessionId, agent)}
+                      handleSidebarModelChange={(sessionId, model) => handleSidebarModelChange(tab.instance.id, sessionId, model)}
+                      onExecuteCommand={executeCommand}
+                      tabBarOffset={mobileFullscreenMode() ? 0 : instanceTabBarHeight()}
+                      mobileFullscreenMode={mobileFullscreenMode()}
+                      onEnterMobileFullscreen={() => void enterMobileFullscreen()}
+                      onExitMobileFullscreen={() => void exitMobileFullscreen()}
+                    />
+                  </InstanceMetadataProvider>
+                </div>
+              ) : (
+                <div
+                  class="flex-1 min-h-0 overflow-hidden"
+                  style={{ display: isVisible() ? "flex" : "none" }}
+                  data-tab-id={tab.id}
+                  data-tab-kind={tab.kind}
+                  data-tab-visible={isVisible() ? "true" : "false"}
+                >
+                  {tab.kind === "sidecar" ? <SideCarView tab={tab.sidecarTab} /> : tab.kind === "remote-restore" ? <RemoteRestoreView tab={tab} /> :
+                     <FolderSelectionView initialServer={tab.server} active={isVisible()} isLoading={isSelectingFolder()}
+                      onSelectFolder={path => void handleSelectFolder(path, tab.id)}
+                       onSelectExistingInstance={(id, path) => handleSelectExistingInstance(id, path, tab.id)}
+                      onNewTemporaryInstance={() => void handleNewTemporaryInstance(tab.id)}
+                      onOpenSidecar={id => void handleOpenSidecar(id, tab.id)}
+                      onJoined={() => closeBlankTab(tab.id)}
+                      onRemoteOpened={id => replaceBlankTab(tab.id, getInstanceAppTabId(id))} />}
+                </div>
+              )
+            }}
+          </For>
         </Show>
 
         <NewInstanceLauncher

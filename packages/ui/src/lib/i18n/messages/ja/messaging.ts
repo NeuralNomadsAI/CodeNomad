@@ -397,6 +397,5 @@ export const messagingMessages = {
   "voice.microphone.conversation": "ライブ会話でマイクを使用中です。",
   "voice.microphone.unavailable": "このウィンドウではマイクを利用できません。",
   "promptInput.voiceInput.error.permissionDenied": "macOS によりマイクへのアクセスが拒否されました。",
-  "promptInput.voiceInput.error.unsupported": "このブラウザーでは音声入力はサポートされていません。",
   "promptInput.voiceInput.error.transcribe": "録音した音声を文字起こしできませんでした。",
 } as const

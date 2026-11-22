@@ -36,14 +36,16 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "Rename workspace",
   "folderSelection.recent.remove": "Remove from recent",
   "folderSelection.recent.openBadge": "Open",
+  "folderSelection.recent.openElsewhere": "Open elsewhere",
   "newInstanceLauncher.searchLabel": "Search recent projects",
   "newInstanceLauncher.searchPlaceholder": "Search recent tabs…",
   "newInstanceLauncher.recentTitle": "Recent tabs",
+  "newInstanceLauncher.description": "Choose a recent project.",
   "newInstanceLauncher.empty": "No recent projects yet.",
   "newInstanceLauncher.noMatch": "No project matches.",
   "folderSelection.recent.switchToOpenProject": "Switch to open project",
 
-  "folderSelection.clone.button": "Clone Git Repo",
+  "folderSelection.clone.button": "Clone repository",
   "folderSelection.temporary.button": "New temporary tab",
   "folderSelection.temporary.description": "Start in an empty folder managed by CodeNomad; keep or discard it when you close the tab",
   "folderSelection.clone.destination.title": "Select Clone Destination",
@@ -61,7 +63,6 @@ export const folderSelectionMessages = {
   "folderSelection.clone.dialog.errorRequired": "Repository URL and destination folder are required.",
   "folderSelection.actions.connectButton": "Connect CodeNomad Server",
 
-  "folderSelection.opencode": "OpenCode",
 
 
   "folderSelection.loading.title": "Starting instance...",
@@ -111,7 +112,7 @@ export const folderSelectionMessages = {
   "projectRenameDialog.actions.cancel": "Cancel",
   "projectRenameDialog.actions.rename": "Rename",
   "projectRenameDialog.actions.renaming": "Renaming...",
-  "newTab.temporary": "Temporary",
+  "newTab.temporary": "Temporary tab",
   "newTab.title": "New tab",
   "newTab.items.one": "{count} item",
   "newTab.items.other": "{count} items",

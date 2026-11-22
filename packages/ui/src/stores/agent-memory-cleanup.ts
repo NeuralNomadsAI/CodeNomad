@@ -8,6 +8,7 @@ import { createSession } from "./session-api"
 import { sendMessage } from "./session-actions"
 import { setActiveParentSession } from "./session-state"
 import { selectInstanceTab } from "./app-tabs"
+import { openInstanceTabIds } from "./app-tab-membership"
 import { beginGesture } from "./session-surface"
 
 // Retain admitted IDs for this renderer lifetime, including uncertain failures.
@@ -30,7 +31,8 @@ async function launchMemoryCleanup(request: MemoryCleanupRequest): Promise<void>
   const client = instance?.client, folder = instance?.folder
   const assertCurrent = () => {
     const current = instances().get(request.workspaceId)
-    if (!operation.current() || backendId !== "local" && (!request.serverId || backendRegistry.serverId(backendId) !== request.serverId)
+    if (!openInstanceTabIds().has(request.workspaceId) || !operation.current()
+      || backendId !== "local" && (!request.serverId || backendRegistry.serverId(backendId) !== request.serverId)
       || !client || current?.status !== "ready" || current.client !== client || current.folder !== folder) throw new Error("Cleanup project unavailable")
   }
   assertCurrent()

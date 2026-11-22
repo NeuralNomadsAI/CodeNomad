@@ -28,13 +28,12 @@ impl DeviceSpeech {
         let mut slot = control.0 .0.lock();
         let now = Instant::now();
         if slot.owner.as_deref() != Some(owner)
-            || !slot.expects_audio
             || slot.cancelled
             || slot.finish
             || slot.microphone_claimed
             || now >= slot.expires
             || now >= slot.deadline
-            || !matches!(slot.state, Operation::Starting | Operation::Recording { .. })
+            || !matches!(slot.state, Operation::Starting | Operation::Recording)
         {
             return false;
         }
@@ -59,7 +58,7 @@ impl DeviceSpeech {
         }
         if !preferences
             && !lease.is_some_and(|lease| lease.purpose != MicrophonePurpose::Dictation)
-            && self.preferred_engine() != Ok(Engine::Api)
+            && self.preferred_engine() != Ok(Some(Engine::Api))
         {
             return Err(SpeechError::Unavailable);
         }

@@ -4,7 +4,7 @@ Use the browser UI on a phone or tablet to continue work on the backend host. In
 
 ## Connect from a phone or tablet {#connect}
 
-Saved servers are available from Home and Settings → Servers. [Restore remote tabs](projects.md#restore-remote-tabs).
+Saved servers are available from **Browse** in an empty tab and Settings → Servers. [Restore remote tabs](projects.md#restore-remote-tabs).
 
 1. On the host, open **Settings → Remote Access → Remote Control**, then choose **Start Remote Control**.
 2. Scan the pairing QR code with your mobile device and open the link in the browser you intend to keep using.
@@ -45,4 +45,4 @@ The composer keeps Agent, Model and Thinking in its footer. The field is sized r
 
 Keep the backend reachable. Check whether an action completed before retrying it. Closing the PWA does not stop a standalone backend; quitting the host desktop app and its backend makes Remote Control unavailable until the next launch.
 
-Each browser tab, including the installed PWA, keeps its open projects, selected conversations, unsent drafts and scroll positions for that tab: when the page reloads, or the mobile OS reloads it after an app switch or screen lock, they come back. A new tab, or a PWA the OS fully closed, opens on the home page. Turn this off for the tab with **Settings → General → Restore previous state**.
+Each browser tab, including the installed PWA, keeps its open projects, selected conversations, unsent drafts and scroll positions for that tab: when the page reloads, or the mobile OS reloads it after an app switch or screen lock, they come back. A new tab, or a PWA the OS fully closed, opens with an empty tab. Turn this off for the tab with **Settings → General → Restore previous state**.

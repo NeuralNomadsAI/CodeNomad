@@ -58,6 +58,8 @@ Un administrateur peut fixer l’adresse d’écoute : définissez `CODENOMAD_LO
 
 Pour un alias de nom d’hôte, un proxy inverse ou une interface hébergée séparément, définissez `CODENOMAD_ALLOWED_ORIGINS` sur le backend avec les origines de confiance de l’interface (protocole, nom d’hôte et port). Les clients natifs du LAN doivent fournir un en-tête `Origin` autorisé pour les requêtes de modification. Ses origines HTTPS permettent aussi à l’hôte d’appairer des appareils sans le tunnel ; voir [Appairer en HTTPS direct](remote-control.md#direct-https).
 
+Si l’interface est hébergée séparément, déployez-la et rechargez les onglets et fenêtres ouverts avant de mettre à jour le serveur. Si le serveur fournit l’interface, rechargez-les après la mise à jour.
+
 Utilisez une connexion en boucle locale pour les opérations réservées à l’hôte : contenu SideCar (`/sidecars/`) et WebSockets, gestion du Contrôle à distance (`/api/remote-control/`), pont des plugins (`/api/opencode-plugin/`), proxys distants (`/api/remote-proxy/`), changement de mot de passe et initialisation par jeton. Ces opérations exigent la boucle locale, même avec une connexion authentifiée directe depuis le LAN. Seuls les SideCars font exception : le réglage **Ouvrir les SideCars en HTTPS** de l’hôte ouvre leur contenu et leurs WebSockets aux navigateurs connectés via une origine HTTPS de confiance ([SideCars](browser-sidecars.md#register-sidecar)). Le contenu des aperçus actifs (`/previews/`) est accessible directement depuis le LAN avec un jeton de capacité valide.
 
 Les API d’enregistrement `/api/sidecars` restent accessibles aux clients LAN directs authentifiés et aux appareils appairés. Les aperçus web du Contrôle à distance restent accessibles avec leur jeton de capacité lorsqu’ils sont activés sur l’hôte. Pour gérer les serveurs et saisir des identifiants en toute sécurité, voir [Enregistrer un serveur distant](remote-access.md#saved-servers).
@@ -113,11 +115,11 @@ Pour le Contrôle à distance, collez plutôt un lien d’appairage récent dans
 
 ## Ouvrir un projet distant dans un onglet {#remote-project-tabs}
 
-À l’accueil ou dans un nouvel onglet, choisissez **Parcourir**, puis un serveur. Collez une adresse ou un lien d’appairage dans **Adresse ou lien du serveur** pour l’enregistrer. Connectez-vous si nécessaire. Cliquez sur un dossier pour y entrer ; utilisez Entrée dans le champ de chemin ou **Ouvrir** (la flèche) pour l’ouvrir. **Retour à Parcourir** revient à la liste des serveurs.
+Dans un onglet vide, choisissez **Parcourir**, puis un serveur. Collez une adresse ou un lien d’appairage dans **Adresse ou lien du serveur** pour l’enregistrer. Connectez-vous si nécessaire. Cliquez sur un dossier pour y entrer ; utilisez Entrée dans le champ de chemin ou **Ouvrir** (la flèche) pour l’ouvrir. **Retour à Parcourir** revient à la liste des serveurs.
 
 Les projets locaux et distants partagent la même fenêtre. **Onglets récents** affiche les raccourcis du serveur parcouru ; les récents mixtes indiquent l’icône et le nom du serveur pour les projets ouverts ici. [Restaurer les onglets distants](projects.md#restore-remote-tabs).
 
-Dans **Paramètres → Serveurs**, **Ouvrir** sélectionne le serveur dans **Parcourir** et réutilise l’onglet vide s’il existe.
+Dans **Paramètres → Serveurs**, **Ouvrir** sélectionne le serveur dans **Parcourir** et réutilise un onglet vide s’il y en a un.
 
 ### `--connect-server` {#connect-server}
 

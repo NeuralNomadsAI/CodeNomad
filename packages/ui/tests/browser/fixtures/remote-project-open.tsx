@@ -7,21 +7,22 @@ import { SettingsScreen } from "../../../src/components/settings-screen"
 import { ConfigProvider, preferencesForBackend, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider, preloadLocaleMessages } from "../../../src/lib/i18n"
 import { instances, refreshWorkspaceList } from "../../../src/stores/instances"
-import { appTabs, activeAppTabId, closeBlankTab, ensureActiveAppTab, replaceBlankTab, selectInstanceTab } from "../../../src/stores/app-tabs"
+import { appTabs, activeAppTabId, closeBlankTab, ensureActiveAppTab, openBlankTab, replaceBlankTab, selectInstanceTab } from "../../../src/stores/app-tabs"
 import { releaseAppSessionRestoreGate } from "../../../src/stores/app-session-restore-gate"
 import { selectRemoteServer } from "../../../src/stores/remote-project-open"
 import { backendRegistry } from "../../../src/stores/remote-backends"
 import { setActiveSettingsSection } from "../../../src/stores/settings-screen"
 import { addRemoteRestoreTab, remoteRestoreTabs, removeRemoteRestoreTab } from "../../../src/stores/remote-restore-tabs"
+import { getServerMeta } from "../../../src/lib/server-meta"
 import "../../../src/index.css"
 
 await preferencesForBackend("local").ensureLoaded()
 await preloadLocaleMessages("en")
 await refreshWorkspaceList()
+void getServerMeta().catch(() => {})
 const startsWithoutTabs = !instances().has("w")
-if (startsWithoutTabs) releaseAppSessionRestoreGate()
+if (startsWithoutTabs) { releaseAppSessionRestoreGate(); openBlankTab() }
 else selectInstanceTab("w")
-const [home, setHome] = createSignal(true)
 const [launcherOpen, setLauncherOpen] = createSignal(false)
 let launcherAnchor!: HTMLButtonElement
 const native = new URL(location.href).searchParams.has("preferences")
@@ -42,15 +43,13 @@ render(() => {
     <NewInstanceLauncher open={launcherOpen()} anchor={launcherAnchor} isLoading={false} onOpenChange={setLauncherOpen}
       onSelectFolder={() => { throw new Error("Unexpected local opening") }}
       onSelectExistingInstance={id => selectInstanceTab(id)} onNewTemporary={() => {}} />
-    <Show when={startsWithoutTabs ? appTabs().length === 0 : home() && !appTabs().some(tab => tab.kind === "blank" && tab.id === activeAppTabId())}><FolderSelectionView onSelectFolder={() => { throw new Error("Unexpected local opening") }}
-      onSelectExistingInstance={() => {}} onRemoteOpened={() => setHome(false)} onClose={() => setHome(false)} /></Show>
     <For each={appTabs()}>{tab => tab.kind === "blank" &&
-      <div data-fixture-blank hidden={tab.id !== activeAppTabId()}>
+      <div data-fixture-blank hidden={tab.id !== activeAppTabId()} style="height:100dvh">
         <button onClick={() => closeBlankTab(tab.id)}>Close new tab</button>
-        <FolderSelectionView blank initialServer={tab.server} active={tab.id === activeAppTabId()}
+        <FolderSelectionView initialServer={tab.server} active={tab.id === activeAppTabId()}
           onSelectFolder={() => { throw new Error("Unexpected local opening") }} onSelectExistingInstance={() => {}}
           onJoined={() => closeBlankTab(tab.id)}
-          onRemoteOpened={id => { replaceBlankTab(tab.id, `instance:${id}`); setHome(false) }} />
+          onRemoteOpened={id => replaceBlankTab(tab.id, `instance:${id}`)} />
       </div>
     }</For>
   </>}><SettingsScreen standalone /></Show>
@@ -68,7 +67,7 @@ render(() => {
       drafts: { __no_session_draft__: "preserved draft" }, attachments: {}, scrollSnapshots: {}, unseenIdleSince: {}, generationRecovery: {} },
   }),
   state: (id: string) => backendRegistry.state(id),
-  home: () => setHome(true),
+  openBlankTab: () => openBlankTab(),
   select: (id: string) => {
     const p = preferencesForBackend("local").remoteServers().find(p => p.id === id)!
     selectRemoteServer({ id: p.id, baseUrl: p.baseUrl, skipTlsVerify: p.skipTlsVerify })

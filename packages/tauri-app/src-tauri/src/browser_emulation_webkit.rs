@@ -155,7 +155,12 @@ impl BrowserController {
         let view = app
             .get_webview(&registration.webview_label)
             .ok_or("Browser preview is unavailable")?;
-        if let Err(error) = view.reload() {
+        let reload = if view.url().is_ok_and(|url| url.as_str() == "about:blank") {
+            Ok(())
+        } else {
+            view.reload()
+        };
+        if let Err(error) = reload {
             let _ = self.configure_webkit(app, &registration, canvas, &previous);
             return Err(error.to_string());
         }

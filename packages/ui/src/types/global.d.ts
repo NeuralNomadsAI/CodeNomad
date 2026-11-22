@@ -82,13 +82,18 @@ declare global {
     deleteOtherDataProfiles?: (ids: string[]) => Promise<unknown>
     setNextLaunchDataProfile?: (name: string) => Promise<unknown>
     relaunchIntoNextDataProfile?: () => Promise<unknown>
-    registerBrowserTarget?: (payload: { sessionId: string; registrationId: string; guestWebContentsId: number; logicalAddress?: string }) => Promise<{ ok: true }>
+    registerBrowserTarget?: (payload: { sessionId: string; registrationId: string; guestWebContentsId: number; logicalAddress?: string; instanceId?: string }) => Promise<{ ok: true }>
     unregisterBrowserTarget?: (registrationId: string) => Promise<{ ok: true }>
     emulateBrowserTarget?: (registrationId: string, preset: import("../lib/native/browser-emulation").BrowserEmulationPreset) => Promise<void>
     browserTargetHistory?: (guestWebContentsId: number, entryId?: number) => Promise<import("../lib/browser-history").NativeBrowserHistory | undefined>
-    claimBrowserOpen?: (requestID: string) => Promise<boolean>
+    claimBrowserOpen?: (requestID: string, response: import("../lib/native/browser").BrowserOpenResponse) => Promise<boolean>
+    browserPreviewOwnership?: (input: import("../lib/native/browser").BrowserPreviewOwnershipAction) => Promise<import("../lib/native/browser").BrowserPreviewOwnership | undefined>
+    onBrowserPreviewOwnership?: (callback: (payload: import("../lib/native/browser").BrowserPreviewOwnership) => void) => () => void
+    onBrowserPreviewFocus?: (callback: (payload: { sessionId: string; instanceId: string }) => void) => () => void
+    onBrowserOpenSettled?: (callback: (payload: import("../lib/native/browser").BrowserOpenSettled) => void) => () => void
     releaseBrowserOpen?: (requestID: string) => Promise<boolean>
-    onBrowserOpenRequest?: (callback: (payload: { sessionID: string; url: string; requestID: string }) => void) => () => void
+    onBrowserOpenDiscovery?: (callback: (payload: import("../lib/native/browser").BrowserOpenDiscovery) => void) => () => void
+    onBrowserOpenRequest?: (callback: (payload: import("../lib/native/browser").BrowserOpenRequest) => void) => () => void
 
     showNotification?: (payload: { title: string; body: string; actionId?: string }) => Promise<{ ok: boolean; reason?: string }>
     onNotificationClick?: (callback: (actionId: unknown) => void) => () => void
@@ -149,7 +154,7 @@ declare global {
        __CODENOMAD_BROWSER_CAPABILITIES__?: import("../lib/native/browser").BrowserHostCapabilities
        __CODENOMAD_WINDOW_CONTEXT__?: "local" | "remote" | "preferences"
        readonly __CODENOMAD_WINDOW_ID__?: string | null
-       __CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?: () => Promise<void>
+       __CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?: (closing?: false | "cancel" | "prepare" | "release") => Promise<void>
        __CODENOMAD_STARTUP_STATE_COMMAND__?: (command: unknown) => Promise<unknown>
        __CODENOMAD_MEMORY_CLEANUP__?: (request: unknown) => Promise<void>
        __CODENOMAD_SELECT_SERVER__?: (intent: unknown, action?: "remove") => void

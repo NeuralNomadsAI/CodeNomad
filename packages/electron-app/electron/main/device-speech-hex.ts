@@ -1,20 +1,26 @@
 import { createHexCache } from "../../../desktop-speech/hex-cache.mjs"
 import { HexFailure } from "../../../desktop-speech/hex-files.mjs"
 import { validWav } from "../../../desktop-speech/hex-process.mjs"
+import { stopWindowsProcessTree } from "../../../server/src/process-tree"
 import type { DeviceSpeechDriver } from "./device-speech"
 
-export function createHexSpeechDriver(root: string): DeviceSpeechDriver {
-  const cache = createHexCache(root)
+export function createHexSpeechDriver(root: string, isSelected: () => boolean): DeviceSpeechDriver {
+  const cache = createHexCache(root, {
+    isSelected,
+    stopTree: process.platform === "win32" ? (pid, startedBy) => stopWindowsProcessTree(pid, startedBy, 1_500) : undefined,
+  })
   return {
-    capabilities: () => ({ system: "unavailable", hex: cache.capabilities() }),
+    capabilities: () => ({ hex: cache.capabilities() }),
     prepare: (plan, control) => cache.prepare(plan.id, control.signal, control.progress),
-    async dictate(engine, _locale, control) {
-      if (engine !== "hex") throw new HexFailure("unavailable")
-      control.progress({ state: "recording" })
-      const wav = await control.waitForAudio()
-      if (!wav) throw new HexFailure()
-      control.progress({ state: "transcribing" })
-      return cache.transcribe(wav, control.signal)
+    stop: cache.stop,
+    dictate(control) {
+      return cache.use(control.signal, async transcribe => {
+        control.progress({ state: "recording" })
+        const wav = await control.waitForAudio()
+        if (!wav) throw new HexFailure()
+        control.progress({ state: "transcribing" })
+        return transcribe(wav)
+      })
     },
   }
 }

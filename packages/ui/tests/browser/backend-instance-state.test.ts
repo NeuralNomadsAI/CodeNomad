@@ -39,6 +39,7 @@ for (const host of ["electron", "tauri"] as const) for (const savedRemote of [fa
       }
       if (host === "tauri") {
         w.__TAURI_INTERNALS__ = {
+          metadata: { currentWindow: { label: "local-fixture" }, currentWebview: { label: "local-fixture" } },
           transformCallback: () => 1,
           invoke: async (command, args) => {
             if (command === "client_state_load") return load()

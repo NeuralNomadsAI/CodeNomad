@@ -43,7 +43,7 @@ export function closeBusyVoiceUpgrade(server: WebSocketServer, request: Incoming
   })
 }
 
-export interface LiveVoicePrincipal {
+interface LiveVoicePrincipal {
   identity: string
   watchRevocation?(close: () => void): () => void
 }
