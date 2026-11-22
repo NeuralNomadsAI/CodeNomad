@@ -317,6 +317,16 @@
         "transitionDuration": "0.15s",
         "transitionTimingFunction": "ease"
       },
+      "fileRowAction": {
+        "minHeight": 24,
+        "minWidth": 24,
+        "opacity": 0.7,
+        "paddingLeft": 0
+      },
+      "fileRowActionGlyph": {
+        "height": 14,
+        "width": 14
+      },
       "input": {
         "fontSize": 12,
         "fontWeight": 400,
@@ -435,6 +445,16 @@
       "disclosure": {
         "transitionDuration": "0.15s",
         "transitionTimingFunction": "ease"
+      },
+      "fileRowAction": {
+        "minHeight": 24,
+        "minWidth": 24,
+        "opacity": 0.7,
+        "paddingLeft": 0
+      },
+      "fileRowActionGlyph": {
+        "height": 14,
+        "width": 14
       },
       "input": {
         "fontSize": 12,

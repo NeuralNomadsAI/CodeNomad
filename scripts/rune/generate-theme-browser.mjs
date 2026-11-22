@@ -45,6 +45,8 @@ export async function collectTheme(names){
     actionMenuItem:['.action-overflow-item',['minHeight','paddingLeft','paddingTop','fontSize','fontWeight','lineHeight','columnGap','borderRadius']],
     actionMenuIcon:['.action-overflow-item-icon',['width','height']],
     actionMenuDisabled:['.action-overflow-item[data-disabled]',['opacity']],
+    fileRowAction:['.file-row-icon-button',['minWidth','minHeight','paddingLeft','opacity']],
+    fileRowActionGlyph:['.file-row-icon-button svg',['width','height']],
   }
   const metrics={}
   for(const [name,[selector,properties]] of Object.entries(contracts)){

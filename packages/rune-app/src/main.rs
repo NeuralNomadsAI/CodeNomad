@@ -425,6 +425,11 @@ fn main() {
         std::process::exit(2);
     }
     #[cfg(feature = "test-support")]
+    if platform::has_flag("--gallery-action-menu") {
+        gallery::action_menu::run();
+        return;
+    }
+    #[cfg(feature = "test-support")]
     if platform::has_flag("--gallery-window-close") {
         gallery::run();
         return;
