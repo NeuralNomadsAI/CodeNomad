@@ -28,16 +28,10 @@ async function installHost(page: Page, host: "electron" | "tauri", request: Nati
     w.__CODENOMAD_RUNTIME_HOST__ = host
     w.__CODENOMAD_WINDOW_CONTEXT__ = "preferences"
     w.fixtureRequest = request
-    w.fixtureSaved = []
     w.fixtureAccept = async (request) => {
       w.fixtureSaving = request
       if (w.fixtureHoldPersistence) await new Promise(resolve => { w.fixtureReleasePersistence = resolve })
-      if (w.fixtureRejectSection === request.section) {
-        w.fixtureRejected = request
-        throw new Error("Fixture persistence rejected")
-      }
       w.fixtureRequest = request
-      w.fixtureSaved.push(request)
     }
     w.fixtureEvents = []
     w.EventSource = class extends EventTarget {
@@ -80,124 +74,29 @@ const emit = (page: Page, event: unknown) => page.evaluate(event => {
   for (const source of (window as any).fixtureEvents) source.onmessage?.(new MessageEvent("message", { data: JSON.stringify(event) }))
 }, event)
 const nativeRequest = (page: Page, request: NativePreferencesRequest) => page.evaluate(request => (window as any).fixtureOpen(request), request)
-const pluginControls = (directory: string) => ({
-  location: { directory }, controls: [], runtime: [], configured: { rules: [], sources: [] }, targets: [],
-})
-const requestDirectory = (request: string) => {
-  const { searchParams } = new URL(request)
-  return searchParams.get("location[directory]") ?? searchParams.get("directory")
-}
 
 for (const host of ["electron", "tauri"] as const) {
-  test(`${host}: re-enable keeps General and its draft while saving the selection`, async () => {
-    const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
-    const project = workspace("a")
-    const fixture = await restoredFixture(page, host, { section: "missions", instanceId: project.id,
-      workspacePath: project.path, location: { directory: project.path } })
-    fixture.inventory([project])
-    const setDisabled = await simulateActivationChanges(page, project)
-    try {
-      await Promise.all([page.waitForResponse("**/api/workspaces/a/plugin-controls**", { timeout: 60_000 }), page.goto(url)])
-      await page.locator(".mission-preferences").waitFor()
-      await page.evaluate(() => { (window as any).fixtureHoldPersistence = true })
-      await setDisabled(true)
-      await page.waitForFunction(() => (window as any).fixtureSaving?.section === "general")
-      await page.locator(".theme-scheme-actions").getByRole("button", { name: "New" }).click()
-      const draft = page.locator(".theme-scheme-name-editor input")
-      await draft.fill("Unsaved palette")
-      await setDisabled(false)
-      await page.locator(".settings-screen-nav-list").getByRole("button", { name: "Missions", exact: true }).waitFor()
-      await page.evaluate(() => {
-        const w = window as any
-        w.fixtureHoldPersistence = false
-        w.fixtureReleasePersistence()
-      })
-      await page.waitForFunction(() => (window as any).fixtureRequest.section === "general")
-      assert.equal(await page.locator(".settings-screen-content-title").innerText(), "General")
-      assert.equal(await draft.inputValue(), "Unsaved palette")
-      assert.deepEqual(fixture.errors, [])
-    } finally { await page.close() }
-  })
-
-  test(`${host}: confirmed empty local inventory leaves global Missions defaults editable`, async () => {
-    const page = await browser.newPage()
-    const project = workspace("a")
-    const fixture = await restoredFixture(page, host, { section: "missions", instanceId: project.id, workspacePath: project.path })
-    try {
-      await Promise.all([page.waitForResponse(response => new URL(response.url()).pathname === "/api/workspaces", { timeout: 60_000 }), page.goto(url)])
-      const deletion = page.getByRole("checkbox", { name: "Deleting a mission also deletes its task conversations" })
-      await deletion.waitFor({ timeout: 4500 })
-      assert.equal(await deletion.isEnabled(), true)
-      assert.deepEqual(fixture.requests, [])
-      assert.deepEqual(fixture.errors, [])
-    } finally { await page.close() }
-  })
-
-  test(`${host}: confirmed disable hides Missions settings even when saving General fails`, async () => {
-    const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
-    const project = workspace("a")
-    const fixture = await restoredFixture(page, host, { section: "missions", instanceId: project.id,
-      workspacePath: project.path, location: { directory: project.path } })
-    fixture.inventory([project])
-    const setDisabled = await simulateActivationChanges(page, project)
-    try {
-      await Promise.all([page.waitForResponse("**/api/workspaces/a/plugin-controls**", { timeout: 60_000 }), page.goto(url)])
-      const deletion = page.getByRole("checkbox", { name: "Deleting a mission also deletes its task conversations" })
-      await deletion.waitFor()
-      assert.equal(await deletion.isEnabled(), true)
-      await page.evaluate(() => {
-        Object.assign(window, { fixtureHoldPersistence: true, fixtureRejectSection: "general" })
-      })
-      await setDisabled(true)
-      await page.waitForFunction(() => (window as any).fixtureSaving?.section === "general")
-      await page.locator(".settings-screen-content-title").getByText("General", { exact: true }).waitFor()
-      assert.equal(await deletion.count(), 0, "the confirmed disable removes the editable body before the save settles")
-      const general = page.locator(".settings-screen-nav-list").getByRole("button", { name: "General", exact: true })
-      assert.equal(await general.getAttribute("aria-current"), "page")
-      await page.locator(".theme-scheme-actions").waitFor()
-      await page.evaluate(() => {
-        const w = window as any
-        w.fixtureHoldPersistence = false
-        w.fixtureReleasePersistence()
-      })
-      await page.waitForFunction(() => (window as any).fixtureRejected?.section === "general")
-      assert.equal(await page.evaluate(() => (window as any).fixtureRequest.section), "missions", "the host rejected the new selection")
-      assert.equal(await deletion.count(), 0)
-      assert.equal(await general.getAttribute("aria-current"), "page")
-      await setDisabled(false)
-      await page.locator(".settings-screen-nav-list").getByRole("button", { name: "Missions", exact: true }).waitFor()
-      assert.equal(await general.getAttribute("aria-current"), "page")
-      assert.deepEqual(fixture.errors, [])
-    } finally { await page.close() }
-  })
-
-  test(`${host} Preferences reads activation and providers only for its explicit project`, async () => {
+  test(`${host} Preferences starts without hydrating workspaces and loads only its explicit provider context`, async () => {
     const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
     const workspaceRequests: string[] = []
     const errors: string[] = []
     page.on("pageerror", error => errors.push(error.message))
     await installHost(page, host, { section: "chat", scrollTop: 300, instanceId: "current-project", location: { directory: "D:/current-project" } })
     await page.route(/\/(?:api|workspaces)\//, async route => {
-      const target = new URL(route.request().url()), path = target.pathname
+      const path = new URL(route.request().url()).pathname
       if (!path.startsWith("/api/") && !path.startsWith("/workspaces/")) return route.continue()
       if (path.includes("/workspaces")) workspaceRequests.push(route.request().url())
       const body = path === "/api/workspaces" ? [workspace("current-project"), ...Array.from({ length: 20 }, (_, i) => workspace(`project-${i}`, `D:/project-${i}`))]
         : path === "/api/storage/config/ui" ? { settings: { locale: "en" } }
         : path.includes("/instance/api/") ? { location: { directory: "D:/current-project" }, data: [] }
-        : path.endsWith("/websearch-settings") ? { location: { directory: "D:/current-project" }, scopes: [], effective: null }
-        : path.endsWith("/plugin-controls") ? pluginControls(target.searchParams.get("directory")!) : {}
+        : path.endsWith("/websearch-settings") ? { location: { directory: "D:/current-project" }, scopes: [], effective: null } : {}
       await route.fulfill({ json: body })
     })
     try {
-      await Promise.all([
-        page.waitForResponse(response => new URL(response.url()).pathname === "/api/workspaces/current-project/plugin-controls"),
-        page.goto(url),
-      ])
+      await page.goto(url)
       await page.waitForFunction(() => (window as any).fixtureReady)
       await page.waitForFunction(() => document.querySelector(".settings-screen-scroll")?.scrollTop === 300)
-      const startupPaths = ["/api/workspaces", "/api/workspaces/current-project/plugin-controls"]
-      assert.deepEqual([...new Set(workspaceRequests.map(request => new URL(request).pathname))], startupPaths,
-        "startup only resolves project ownership and reads activation for Settings navigation")
+      assert.deepEqual(workspaceRequests, [], "startup must not load the project inventory")
 
       // Both reconnect reconciliation and live workspace events used to start
       // full session/catalog hydration in this secondary renderer.
@@ -213,8 +112,7 @@ for (const host of ["electron", "tauri"] as const) {
         }
       })
       await page.getByRole("button", { name: "Fournisseurs", exact: true }).waitFor()
-      assert.deepEqual([...new Set(workspaceRequests.map(request => new URL(request).pathname))], startupPaths,
-        "reconnect/events must not hydrate unrelated projects")
+      assert.deepEqual(workspaceRequests, [], "reconnect/events must not hydrate unrelated projects")
       await Promise.all([
         page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/integration")),
         page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/model")),
@@ -226,7 +124,7 @@ for (const host of ["electron", "tauri"] as const) {
         page.getByRole("heading", { name: "Recherche web", exact: true }).click(),
       ])
       assert.deepEqual(new Set(workspaceRequests.map(request => new URL(request).pathname)), new Set([
-        ...startupPaths,
+        "/api/workspaces",
         "/workspaces/current-project/instance/api/provider", "/workspaces/current-project/instance/api/model",
         "/workspaces/current-project/instance/api/integration", "/workspaces/current-project/instance/api/websearch/provider",
         "/api/workspaces/current-project/websearch-settings",
@@ -265,25 +163,12 @@ async function restoredFixture(page: Page, host: "electron" | "tauri", request: 
       : path.includes("/instance/api/") ? { data }
         : path.endsWith("/websearch-settings") ? { location: { directory }, effective: null,
           scopes: [{ scope: "global", path: "/fixture/global.jsonc", selection: null }, { scope: "project", path: `${directory}/opencode.jsonc`, selection: null }] }
-          : path.endsWith("/plugin-controls") ? pluginControls(directory)
           : path.endsWith("/subagent-depth") ? { location: { directory }, capability: { minimum: 0 }, effectiveDepth: 2,
             project: { path: `${directory}/opencode.jsonc`, depth: null, expectation: "fixture" } }
             : {}
     return route.fulfill({ json: body })
   })
   return { requests, errors, writes, reads: () => reads, inventory: (value: typeof inventory) => { inventory = value } }
-}
-
-async function simulateActivationChanges(page: Page, project: ReturnType<typeof workspace>) {
-  let rule = "default"
-  await page.route(`**/api/workspaces/${project.id}/plugin-controls**`, route => route.fulfill({ json: {
-    ...pluginControls(project.path), controls: [{ id: "codenomad.missions", managedBy: "codenomad", builtin: false,
-      global: rule, project: "default", effective: rule }],
-  } }))
-  return async (disabled: boolean) => {
-    rule = disabled ? "disabled" : "default"
-    await emit(page, { type: "instance.event", instanceId: project.id, event: { type: "config.updated", data: {} } })
-  }
 }
 
 for (const host of ["electron", "tauri"] as const) {
@@ -326,10 +211,6 @@ for (const host of ["electron", "tauri"] as const) {
       await waitForDepthInfo(page, "OpenCode effective depth: 2")
       assert.deepEqual(fixture.writes, [], "resolution is read-only")
       assert.deepEqual(fixture.errors, [])
-    } catch (error) {
-      console.error({ requests: fixture.requests, errors: fixture.errors, content: (await page.locator("body").innerText()).slice(0, 2500),
-        request: await page.evaluate(() => (window as any).fixtureRequest) })
-      throw error
     } finally { await page.close() }
   })
 
@@ -358,40 +239,6 @@ for (const host of ["electron", "tauri"] as const) {
     } finally { hold.resolve(); await page.unrouteAll({ behavior: "wait" }); await page.close() }
   })
 
-  for (const switchProject of [true, false]) test(`${host}: a late Missions disable cannot save General over ${switchProject ? "a newer project" : "a newer section"}`, async () => {
-    const page = await browser.newPage()
-    const first = workspace("a"), second = switchProject ? workspace("b", "D:/other-project") : first
-    const fixture = await restoredFixture(page, host, { section: "missions", instanceId: first.id, workspacePath: first.path })
-    fixture.inventory(switchProject ? [first, second] : [first])
-    const hold = Promise.withResolvers<void>()
-    await page.route("**/api/workspaces/a/plugin-controls**", async route => {
-      await hold.promise
-      await route.fulfill({ json: { ...pluginControls(first.path), controls: [
-        { id: "codenomad.missions", managedBy: "codenomad", builtin: false, global: "disabled", project: "default", effective: "disabled" },
-      ] } })
-    })
-    try {
-      await Promise.all([page.waitForRequest("**/api/workspaces/a/plugin-controls**", { timeout: 60_000 }), page.goto(url)])
-      await page.waitForFunction(() => (window as any).fixtureReady)
-      const writesBefore = await page.evaluate(() => (window as any).fixtureSaved.length)
-      await page.evaluate(() => { (window as any).fixtureHoldPersistence = true })
-      await nativeRequest(page, { section: "chat", instanceId: second.id, workspacePath: second.path, scrollTop: 120 })
-      await page.waitForFunction(() => (window as any).fixtureSaving?.section === "chat")
-      const response = page.waitForResponse("**/api/workspaces/a/plugin-controls**")
-      hold.resolve()
-      await response
-      await page.locator(".settings-screen-nav-list").getByRole("button", { name: "Missions", exact: true }).waitFor({ state: "detached" })
-      await page.evaluate(() => { (window as any).fixtureHoldPersistence = false; (window as any).fixtureReleasePersistence() })
-      await page.locator(".settings-screen-content-title").getByText("Chat", { exact: true }).waitFor()
-      await page.evaluate(() => (window as any).__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?.())
-      const saved = await page.evaluate(({ id, writesBefore }) => (window as any).fixtureSaved.slice(writesBefore)
-        .filter((value: NativePreferencesRequest) => value.instanceId === id), { id: second.id, writesBefore })
-      assert.ok(saved.length)
-      assert.ok(saved.every((value: NativePreferencesRequest) => value.section === "chat" && value.scrollTop === 120), JSON.stringify(saved))
-      assert.deepEqual(fixture.errors, [])
-    } finally { hold.resolve(); await page.close() }
-  })
-
   test(`${host}: ambiguous restored folders stay unbound; an explicit occurrence keeps its worktree and is revoked on deletion`, async () => {
     const page = await browser.newPage()
     const fixture = await restoredFixture(page, host, { section: "providers", instanceId: "old", location: { directory: "D:/current-project" } })
@@ -406,8 +253,7 @@ for (const host of ["electron", "tauri"] as const) {
       await nativeRequest(page, { section: "providers", instanceId: "second", location: { directory } })
       await page.locator(".providers-card-title").filter({ hasText: "Fixture AI" }).waitFor()
       assert.ok(fixture.requests.length > 0 && fixture.requests.every(request => new URL(request).pathname.includes("/second/")
-        && requestDirectory(request) === (request.includes("/plugin-controls?") ? second.path : directory)),
-      "activation uses the opened workspace and provider reads preserve the selected worktree")
+        && new URL(request).searchParams.get("location[directory]") === directory), "a valid explicit record preserves the selected worktree")
       // Deletion still revokes the bound occurrence when its Settings section is hidden.
       await page.getByRole("button", { name: "Chat", exact: true }).click()
       fixture.inventory([first])
@@ -516,8 +362,8 @@ for (const host of ["electron", "tauri"] as const) {
       assert.deepEqual(await page.evaluate(() => (window as any).fixtureRequest.location), { directory })
       assert.ok(fixture.requests.length > 0 && fixture.requests.every(request => {
         const target = new URL(request)
-        return target.pathname.includes("/wsl/") && requestDirectory(request) === (target.pathname.endsWith("/plugin-controls") ? ready.path : directory)
-      }), "activation uses the opened workspace and provider reads keep the native worktree")
+        return target.pathname.includes("/wsl/") && target.searchParams.get(target.pathname.startsWith("/api/") ? "directory" : "location[directory]") === directory
+      }), "Windows root is only the lookup hint; reads keep their exact execution-host directory")
       assert.deepEqual(fixture.errors, [])
     } finally { await page.close() }
   })

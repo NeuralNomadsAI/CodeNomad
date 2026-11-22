@@ -4,13 +4,9 @@ Una Misión reúne un objetivo, una conversación del coordinador, tareas y resu
 
 Si Misiones no está disponible, **Ajustes de OpenCode** abre la recuperación del servicio para un plugin ausente o con errores. **Diagnóstico del servidor** abre el informe de diagnóstico en Configuración → Info cuando el puente local de Misiones del servidor no está disponible.
 
-## Activar o desactivar Misiones {#activation}
+## Mostrar u ocultar Misiones {#activation}
 
-En **Personalizar panel derecho**, usa **Misiones** para activar o desactivar el plugin en la configuración global del servidor OpenCode conectado. La casilla muestra el estado efectivo del espacio de trabajo abierto. Si una regla del proyecto determina ese estado, la casilla es de solo lectura e **i** muestra el ajuste global. OpenCode se recarga automáticamente; después, las conversaciones existentes usan la nueva lista de herramientas en su siguiente turno.
-
-Pausa primero las Misiones activas y programadas. La desactivación conserva las Misiones, sus calendarios y las conversaciones. El trabajo que ya se envió a OpenCode puede continuar, pero las herramientas de Misiones no están disponibles y pueden omitirse ejecuciones programadas. Al volver a activarlas, revisa tus Misiones y reanuda las que pausaste cuando quieras.
-
-La casilla sigue el espacio de trabajo abierto, incluso al seleccionar una conversación de un worktree. Si no se puede leer el estado, la visibilidad de la pestaña no cambia; vuelve a abrir la personalización o selecciona **Intentar de nuevo**. Una desactivación confirmada cierra los visores de Misiones y selecciona **Estado** o **General** si Misiones estaba seleccionado. Al reactivarla, se conserva la selección actual. Sin un proyecto abierto, **Configuración → Misiones** permite editar los valores globales predeterminados.
+En **Personalizar panel derecho**, marca **Misiones** para mostrar la pestaña o desmárcala y confirma para ocultarla. El gesto también escribe `codenomad.missions` o `-codenomad.missions` en la configuración global del servidor OpenCode conectado. Las reglas del proyecto pueden prevalecer. Desactivar no elimina ni pausa nada, pero pueden omitirse ejecuciones programadas. Si falla la escritura, la pestaña conserva la visibilidad elegida. **Restablecer** solo cambia la disposición. **Estado → Plugins** omite el aviso para esa regla global exacta; las demás desactivaciones siguen ofreciendo **Reactivar**.
 
 ## Crear una Misión {#create}
 

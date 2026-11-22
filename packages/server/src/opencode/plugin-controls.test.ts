@@ -1065,6 +1065,36 @@ describe("CodeNomad-managed plugin provenance and recovery", () => {
 })
 
 describe("CodeNomad-managed plugin re-enable with an exact disabling rule", () => {
+  it("writes both exact Global Missions rules, even when the inherited Global state agrees", async () => {
+    const pluginId = "codenomad.missions"
+    const fixture = createFixture({ globalPlugins: ["-codenomad.*"], projectPlugins: [pluginId] })
+    await installManaged(fixture, "missions", pluginId)
+    const change = (enabled: boolean) => fixture.controls.mutate("workspace", {
+      location: fixture.location, pluginId, scope: "global", enabled, managedBy: "codenomad",
+    })
+    const project = fs.readFileSync(fixture.projectFile, "utf8")
+    const off = await change(false)
+    assert.equal(off.rule, `-${pluginId}`)
+    assert.deepEqual(parse(fs.readFileSync(fixture.globalFile, "utf8")).plugins, ["-codenomad.*", `-${pluginId}`])
+    assert.equal(off.snapshot.controls.find(control => control.id === pluginId)?.effective, "enabled")
+    fixture.setGlobalPlugins(["-codenomad.*", `-${pluginId}`])
+    const on = await change(true)
+    assert.equal(on.rule, pluginId)
+    assert.deepEqual(parse(fs.readFileSync(fixture.globalFile, "utf8")).plugins, ["-codenomad.*", pluginId])
+    assert.equal(fs.readFileSync(fixture.projectFile, "utf8"), project)
+    fixture.setGlobalPlugins([pluginId])
+    assert.equal((await change(false)).rule, `-${pluginId}`)
+    assert.deepEqual(parse(fs.readFileSync(fixture.globalFile, "utf8")).plugins, [`-${pluginId}`])
+  })
+
+  it("refuses a managed-only Global write for a non-managed Missions ID", async () => {
+    const pluginId = "codenomad.missions"
+    const fixture = createFixture({ globalPlugins: [`-${pluginId}`] })
+    await assert.rejects(fixture.controls.mutate("workspace", {
+      location: fixture.location, pluginId, scope: "global", enabled: false, managedBy: "codenomad",
+    }), { kind: "forbidden" })
+  })
+
   it("removes the exact disabling rule instead of appending a positive ID", async () => {
     for (const scope of ["global", "project"] as const) {
       const fixture = createFixture({
@@ -1079,63 +1109,6 @@ describe("CodeNomad-managed plugin re-enable with an exact disabling rule", () =
       assert.notEqual(control.effective, "disabled")
       assert.deepEqual((parse(fs.readFileSync(scope === "global" ? fixture.globalFile : fixture.projectFile, "utf8")) as any).plugins, [])
     }
-  })
-
-  it("toggles Missions globally with an exact rule and preserves unrelated configuration", async () => {
-    const pluginId = "codenomad.missions"
-    const fixture = createFixture({ globalPlugins: ["-opencode.fork-notice"] })
-    await installManaged(fixture, "missions", pluginId)
-    const change = (enabled: boolean) => fixture.controls.mutate("workspace", { location: fixture.location, pluginId, scope: "global", enabled })
-    const off = await change(false)
-    assert.equal(off.snapshot.controls.find(control => control.id === pluginId)?.effective, "disabled")
-    assert.equal(off.reloadPending, true)
-    assert.deepEqual(parse(fs.readFileSync(fixture.globalFile, "utf8")).plugins, ["-opencode.fork-notice", `-${pluginId}`])
-    fixture.setGlobalPlugins(["-opencode.fork-notice", `-${pluginId}`])
-    const on = await change(true)
-    assert.equal(on.snapshot.controls.find(control => control.id === pluginId)?.effective, "default")
-    assert.deepEqual(parse(fs.readFileSync(fixture.globalFile, "utf8")).plugins, ["-opencode.fork-notice"])
-  })
-
-  it("writes Global Missions activation without changing a deciding Project rule or its substituted options", async () => {
-    const pluginId = "codenomad.missions"
-    for (const enabled of [true, false]) {
-      const project = [enabled ? `-${pluginId}` : pluginId]
-      const fixture = createFixture({ globalPlugins: enabled ? [`-${pluginId}`] : [],
-        projectPlugins: [...project, { package: "unrelated", options: { url: "{env:OTHER_PLUGIN_URL}" } }],
-        reportedProjectPlugins: [...project, { package: "unrelated", options: { url: "https://fixture.invalid" } }],
-      })
-      await installManaged(fixture, "missions", pluginId)
-      const before = fs.readFileSync(fixture.projectFile, "utf8")
-      const result = await fixture.controls.mutate("workspace", { location: fixture.location, pluginId, scope: "global", enabled })
-      assert.equal(result.changed, true)
-      assert.equal(result.snapshot.controls.find(control => control.id === pluginId)?.effective, enabled ? "disabled" : "enabled")
-      assert.deepEqual(parse(fs.readFileSync(fixture.globalFile, "utf8")).plugins, enabled ? [] : [`-${pluginId}`])
-      assert.equal(fs.readFileSync(fixture.projectFile, "utf8"), before)
-    }
-  })
-
-  it("writes Global Missions activation with an unrelated substituted Project option", async () => {
-    const pluginId = "codenomad.missions"
-    const fixture = createFixture({
-      projectPlugins: [{ package: "unrelated", options: { url: "{env:OTHER_PLUGIN_URL}" } }],
-      reportedProjectPlugins: [{ package: "unrelated", options: { url: "https://fixture.invalid" } }],
-    })
-    await installManaged(fixture, "missions", pluginId)
-    const before = fs.readFileSync(fixture.projectFile, "utf8")
-    await fixture.controls.mutate("workspace", { location: fixture.location, pluginId, scope: "global", enabled: false })
-    assert.deepEqual(parse(fs.readFileSync(fixture.globalFile, "utf8")).plugins, [`-${pluginId}`])
-    assert.equal(fs.readFileSync(fixture.projectFile, "utf8"), before)
-  })
-
-  it("writes Global Missions activation despite a Project rule awaiting native discovery", async () => {
-    const pluginId = "codenomad.missions"
-    const fixture = createFixture({ omitProjectDocument: true })
-    await installManaged(fixture, "missions", pluginId)
-    const project = JSON.stringify({ plugins: [pluginId] })
-    fs.writeFileSync(fixture.projectFile, project)
-    await fixture.controls.mutate("workspace", { location: fixture.location, pluginId, scope: "global", enabled: false })
-    assert.deepEqual(parse(fs.readFileSync(fixture.globalFile, "utf8")).plugins, [`-${pluginId}`])
-    assert.equal(fs.readFileSync(fixture.projectFile, "utf8"), project)
   })
 })
 

@@ -27,7 +27,7 @@ If connection fails, check the server's configuration, required environment and 
 
 CodeNomad-managed plugins stay outside the ordinary plugin list and its activation, update and removal controls.
 
-For **CodeNomad plugins need attention**, open **i** for details. A disabled plugin offers **Re-enable**; check the displayed configuration scope before using it. [Missions](missions.md#activation) has its own checkbox in **Customize right panel**.
+For **CodeNomad plugins need attention**, open **i** for details. A disabled plugin offers **Re-enable**; check the displayed configuration scope before using it.
 
 1. [Add the plugin](#plugin-sources) or declare it in OpenCode's configuration; then open **Status → Plugins**.
 2. Hover or focus its name to inspect source, runtime failure and configuration-target details.

@@ -4,13 +4,9 @@ Eine Mission verbindet ein Ziel, eine Koordinator-Unterhaltung, Aufgaben und Erg
 
 Ist Missions nicht verfügbar, öffnet **OpenCode-Einstellungen** die Dienstwiederherstellung für ein fehlendes oder fehlerhaftes Plugin. **Serverdiagnose** öffnet den Diagnosebericht unter Einstellungen → Info, wenn die lokale Missions-Verbindung des Servers nicht verfügbar ist.
 
-## Missionen ein- oder ausschalten {#activation}
+## Missionen ein- oder ausblenden {#activation}
 
-Schalten Sie unter **Rechtes Panel anpassen** mit **Missionen** das Plugin in der globalen Konfiguration des verbundenen OpenCode-Servers ein oder aus. Das Kontrollkästchen zeigt den wirksamen Zustand des geöffneten Arbeitsbereichs. Bestimmt eine Projektregel diesen Zustand, ist das Kästchen schreibgeschützt und **i** zeigt die globale Einstellung. OpenCode lädt automatisch neu; danach verwenden auch bestehende Unterhaltungen beim nächsten Zug die neue Werkzeugliste.
-
-Pausieren Sie zuerst laufende und geplante Missionen. Beim Ausschalten bleiben Missionen, Zeitpläne und Unterhaltungen erhalten. Bereits an OpenCode gesendete Arbeit kann weiterlaufen, aber Missionswerkzeuge sind nicht verfügbar und geplante Läufe können ausfallen. Prüfen Sie nach dem Einschalten Ihre Missionen und setzen Sie pausierte Einträge fort, wenn Sie bereit sind.
-
-Das Kontrollkästchen folgt dem geöffneten Arbeitsbereich, auch bei Auswahl einer Unterhaltung in einem Worktree. Lässt sich der Zustand nicht lesen, bleibt die Sichtbarkeit des Tabs unverändert. Öffnen Sie die Anpassung erneut oder wählen Sie **Erneut versuchen**. Eine bestätigte Deaktivierung schließt offene Missionsansichten und wählt **Status** oder **Allgemein**, wenn Missionen ausgewählt war. Beim erneuten Aktivieren bleibt die Auswahl erhalten. Unter **Einstellungen → Missionen** können Sie globale Vorgaben auch ohne geöffnetes Projekt bearbeiten.
+Aktivieren Sie unter **Rechtes Panel anpassen** das Kästchen **Missionen**, um den Tab einzublenden. Deaktivieren Sie es und bestätigen Sie, um ihn auszublenden. Das schreibt auch `codenomad.missions` oder `-codenomad.missions` in die globale Konfiguration des verbundenen OpenCode-Servers. Projektregeln können Vorrang haben. Beim Ausschalten wird nichts gelöscht oder pausiert, aber geplante Läufe können ausfallen. Schlägt das Schreiben fehl, bleibt die gewählte Sichtbarkeit erhalten. **Zurücksetzen** ändert nur das Layout. **Status → Plugins** lässt die Warnung bei genau dieser globalen Deaktivierung weg; bei anderen bleibt **Erneut aktivieren** verfügbar.
 
 ## Eine Mission erstellen {#create}
 

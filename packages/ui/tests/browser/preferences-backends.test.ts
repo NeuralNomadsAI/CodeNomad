@@ -99,71 +99,18 @@ async function api(page: Page, selected: () => string) {
         scopeKey: "same", observedAt: "2026-11-01T00:00:00Z", cleanupWritable: true, cleanupDirectory: "/homonym",
       } : { revision: "b".repeat(64), flagged: false }
       : path.includes("/instance/api/") ? { data }
-      : path.endsWith("/plugin-controls") ? { location: { directory: "/homonym" }, controls: [], targets: [], runtime: [],
-        configured: { rules: [], sources: [] } }
       : path.endsWith("/image-settings") ? { location: { directory: "/homonym" }, generation: { global: true, effective: true, models: [] } }
       : path.endsWith("/websearch-settings") ? { location: { directory: "/homonym" }, effective: null,
         scopes: [{ scope: "global", path: "/global.jsonc", selection: null }, { scope: "project", path: "/homonym/opencode.jsonc", selection: null }] } : {}
     return route.fulfill({ json: value, headers: owner !== "local" && path === "/api/meta" ? { "X-CodeNomad-Backend-Authority": owner.repeat(43) } : {} })
   })
-  return { requests, errors, restore: () => { restored = true }, unavailable: () => { unavailable = true }, available: () => { unavailable = false },
+  return { requests, errors, restore: () => { restored = true }, unavailable: () => { unavailable = true },
     missing: () => { missing = true }, failWrites: () => { failWrites = true },
     failVerification: (status: "network" | 401 | 503, path = "/api/meta") => { verificationFailure = { path, status } },
     replace: () => { identity = "replacement" } }
 }
 
 for (const kind of ["electron", "tauri"] as const) {
-  test(`${kind}: a local Missions restore waits for its project without falling back to host defaults`, async () => {
-    const page = await browser.newPage(), f = await api(page, () => "local")
-    let release!: () => void
-    const held = new Promise<void>(resolve => { release = resolve })
-    await page.route("**/api/workspaces", async route => { await held; await route.fallback() })
-    await page.route("**/api/workspaces/same/plugin-controls**", route => route.fulfill({ json: {
-      location: { directory: "/homonym" }, runtime: [], configured: { rules: [], sources: [] }, targets: [],
-      controls: [{ id: "codenomad.missions", managedBy: "codenomad", builtin: false, global: "disabled", effective: "disabled", project: "default" }],
-    } }))
-    await host(page, kind, project("local", "missions"))
-    try {
-      const inventory = page.waitForRequest(request => new URL(request.url()).pathname === "/api/workspaces", { timeout: 60_000 })
-      await Promise.all([inventory, page.goto(url)])
-      await page.getByRole("heading", { name: "Missions", exact: true }).waitFor()
-      assert.equal(await page.locator(".mission-preferences").count(), 0, "an explicit project is not a host-only Preferences visit")
-      assert.equal(await page.evaluate(() => (window as any).request.section), "missions")
-      release()
-      await page.getByRole("heading", { name: "General", exact: true }).waitFor()
-      await page.waitForFunction(() => (window as any).request.section === "general")
-      assert.deepEqual(f.errors, [])
-    } finally { release(); await page.close() }
-  })
-
-  test(`${kind}: offline Missions keeps its section and restores only that project's preferences`, async () => {
-    const page = await browser.newPage({ viewport: { width: 430, height: 800 } }), f = await api(page, () => "a")
-    f.unavailable()
-    await host(page, kind, project("a", "missions"))
-    try {
-      await Promise.all([
-        page.waitForResponse(response => response.status() === 503 && new URL(response.url()).pathname === "/api/backends/a/api/meta", { timeout: 60_000 }),
-        page.goto(url),
-      ])
-      const selected = async () => page.evaluate(async () => {
-        const path = "/src/stores/settings-screen.ts"
-        return (await import(path)).activeSettingsSection()
-      })
-      await page.locator(".settings-section-selector-value").getByText("Missions", { exact: true }).waitFor()
-      await page.getByRole("status").filter({ hasText: "Open a project first." }).waitFor()
-      assert.equal(await selected(), "missions")
-      f.available()
-      await page.evaluate(async () => {
-        const path = "/src/stores/remote-backends.ts"
-        await (await import(path)).backendRegistry.ensure("a")
-      })
-      await page.locator(".mission-preferences").waitFor()
-      assert.equal(await selected(), "missions")
-      assert.equal(await page.evaluate(() => (window as any).request.section), "missions")
-      assert.deepEqual(f.errors, [])
-    } finally { await page.close() }
-  })
-
   for (const reason of ["usage", "transport", "network", "401", "503", "inventory"] as const) test(`${kind}: Servers retarget ${reason === "transport" ? "masks the failed save" : `can be confirmed without the old backend (${reason})`}`, async () => {
     const page = await browser.newPage(), f = await api(page, () => "a")
     f.missing()
@@ -194,7 +141,6 @@ for (const kind of ["electron", "tauri"] as const) {
       const patch = (value: typeof f.requests[number]) => value.owner === "local" && value.method === "PATCH" && value.path === "/api/storage/state/ui"
       const edits = f.requests.slice(before)
       assert.equal(edits.some(value => value.owner !== "local" || forget(value)), false)
-      assert.equal(f.requests.some(value => value.owner !== "local"), false, "Servers never resolves the previously selected remote project")
       assert.equal(edits.filter(patch).length, reason === "transport" ? 1 : 0)
       assert.equal(await page.locator('[data-remote-server="a"]').count(), 1)
       assert.deepEqual(f.errors, [])

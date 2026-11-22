@@ -40,7 +40,7 @@ function mission(id: string): MissionMap {
     createdAt: 1, updatedAt: 1, history: [], historyTruncated: false }
 }
 function gate() { let release!: () => void; const promise = new Promise<void>(resolve => { release = resolve }); return { promise, release } }
-async function setup(missing = false, holdEvents = false, web = false, requestedPluginDirectories?: string[]) {
+async function setup(missing = false, holdEvents = false, web = false) {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1600, height: 950 } })
   const errors: string[] = [], networkErrors: string[] = [], requests: string[] = [], hold = gate(), reached = gate(), complete = gate()
   const panelReads = collectPanelReadFailures(page, url)
@@ -65,15 +65,6 @@ async function setup(missing = false, holdEvents = false, web = false, requested
       return route.continue({ url: nativeStream.url })
     }
     if (pathname === "/api/panel-extensions") return route.fulfill({ json: [] })
-    if (pathname.endsWith("/plugin-controls")) {
-      const directory = new URL(route.request().url()).searchParams.get("directory")!
-      requestedPluginDirectories?.push(directory)
-      return route.fulfill({ json: { location: { directory }, runtime: [], configured: { rules: [], sources: [] },
-        targets: [{ scope: "global", path: "/daemon/opencode.jsonc", exists: true }], controls: [{
-          id: "codenomad.missions", managedBy: "codenomad", builtin: false, global: "default",
-          project: directory === "/fixture" ? "default" : "disabled", effective: directory === "/fixture" ? "default" : "disabled",
-        }] } })
-    }
     if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([mission("A"), mission("B")]), generatedAt: 1, discardedEvents: 0 } })
     if (pathname.endsWith("/instance/api/session/ses_A")) {
       if (defer) { reached.release(); await hold.promise }
@@ -116,75 +107,6 @@ async function setup(missing = false, holdEvents = false, web = false, requested
     events.release(); hold.release(); await page.close(); throw error
   }
 }
-test("Missions stays tied to the opened project when a selected worktree has a different activation rule", async () => {
-  const directories: string[] = []
-  const { page, hold } = await setup(false, false, false, directories)
-  try {
-    await page.evaluate(() => window.missionCrossNavigation.selectWorktree())
-    assert.equal(await page.evaluate(() => window.missionCrossNavigation.snapshot().session), "ses_B")
-    await page.getByRole("button", { name: "Customize right panel" }).click()
-    const checkbox = page.getByRole("checkbox", { name: "Missions", exact: true })
-    assert.equal(await checkbox.isChecked(), true)
-    await page.getByRole("tab", { name: "Missions", exact: true }).waitFor({ timeout: 3000 })
-    assert.deepEqual([...new Set(directories)], ["/fixture"])
-  } finally { hold.release(); await page.close() }
-})
-for (const failed of [true, false]) test(failed ? "a failed re-read leaves the selected Missions tab and its reader closable"
-  : "a confirmed Missions disable releases its reader for an agent preview", async () => {
-  const { page, hold } = await setup()
-  try {
-    await toggleMissionOverview(page, "Objective A")
-    const reader = page.locator(".mission-reader")
-    await reader.waitFor()
-    await assert.rejects(page.evaluate(() => window.missionCrossNavigation.openAgentPreview()), /Close the file or Mission reader/)
-    await page.route("**/api/workspaces/cross-navigation/plugin-controls**", route => failed
-      ? route.fulfill({ status: 503, json: {} })
-      : route.fulfill({ json: { location: { directory: "/fixture" }, runtime: [], configured: { rules: [], sources: [] }, targets: [],
-        controls: [{ id: "codenomad.missions", managedBy: "codenomad", builtin: false, global: "disabled", effective: "disabled", project: "default" }] } }))
-    const refreshed = page.waitForResponse(response => response.url().includes("/plugin-controls?") && response.status() === (failed ? 503 : 200))
-    await page.evaluate(() => window.missionCrossNavigation.refreshActivation())
-    await refreshed
-    if (failed) {
-      await page.getByRole("button", { name: "Customize right panel" }).click()
-      const popup = page.getByRole("group", { name: "Customize right panel" })
-      await popup.getByRole("button", { name: "Try again", exact: true }).waitFor()
-      assert.equal(await page.getByRole("tab", { name: "Missions", exact: true, selected: true }).count(), 1)
-      assert.equal(await reader.isVisible(), true)
-      await page.getByRole("button", { name: "Customize right panel" }).click()
-      await reader.getByRole("button", { name: "Back to chat", exact: true }).click()
-    }
-    await reader.waitFor({ state: "detached", timeout: 4500 })
-    await page.evaluate(() => window.missionCrossNavigation.openAgentPreview())
-    assert.equal((await page.evaluate(() => window.missionCrossNavigation.snapshot())).reader, null)
-  } finally { hold.release(); await page.close() }
-})
-test("a confirmed disable closes the reader without cancelling a pending web preview", async () => {
-  const { page } = await setup(false, false, true)
-  const preview = gate()
-  try {
-    await toggleMissionOverview(page, "Objective A")
-    const reader = page.locator(".mission-reader")
-    await reader.waitFor()
-    await page.route("**/api/previews", async route => {
-      await preview.promise
-      await route.fallback()
-    })
-    const started = page.waitForRequest(request => request.url().endsWith("/api/previews") && request.method() === "POST")
-    const result = page.evaluate(() => window.missionCrossNavigation.requestPreview())
-    void result.catch(() => {})
-    await started
-    await page.route("**/api/workspaces/cross-navigation/plugin-controls**", route => route.fulfill({ json: {
-      location: { directory: "/fixture" }, runtime: [], configured: { rules: [], sources: [] }, targets: [],
-      controls: [{ id: "codenomad.missions", managedBy: "codenomad", builtin: false, global: "disabled", project: "default", effective: "disabled" }],
-    } }))
-    await page.evaluate(() => window.missionCrossNavigation.refreshActivation())
-    await reader.waitFor({ state: "detached" })
-    preview.release()
-    await result
-    assert.equal((await page.evaluate(() => window.missionCrossNavigation.snapshot())).mode, "preview")
-  } finally { preview.release(); await page.close() }
-})
-
 test("first native stream open reconciles the completed HTTP catalogue without a synthetic disconnect", { timeout: 60000 }, async () => {
   let fixture: Awaited<ReturnType<typeof setup>> | undefined
   try {

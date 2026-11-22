@@ -4,13 +4,9 @@ A Mission keeps an objective, a coordinator conversation, tasks and their result
 
 If Missions is unavailable, **OpenCode settings** opens runtime recovery for a missing or failed plugin. **Server diagnostics** opens the diagnostic report in Settings → Info when the server's local Missions bridge is unavailable.
 
-## Turn Missions on or off {#activation}
+## Show or hide Missions {#activation}
 
-In **Customize right panel**, use **Missions** to turn the plugin on or off in the connected OpenCode server’s Global configuration. The checkbox shows the opened workspace’s effective state. When a Project rule decides that state, the checkbox is read-only and **i** shows the Global setting. OpenCode reloads automatically; existing conversations use the new tool list on their next turn after reload.
-
-Pause active and scheduled Missions before turning this off. Disabling keeps Mission records, schedules and conversations. Work already sent to OpenCode can continue, but Mission tools are unavailable and scheduled runs can be missed. After enabling, check your Missions and resume paused items when ready.
-
-The checkbox follows the opened workspace, even when you select a worktree conversation. If the state cannot be read, the tab keeps its previous visibility; reopen customization or select **Try again**. Confirmed disable closes open Mission readers and replaces a selected Missions tab or settings section with **Status** or **General**. Re-enabling leaves your selection in place. Without an open project, **Settings → Missions** still lets you edit global defaults.
+In **Customize right panel**, check **Missions** to show the tab or uncheck it and confirm to hide it. This also writes `codenomad.missions` or `-codenomad.missions` in the connected OpenCode server’s Global configuration. Project rules can override Global. Turning it off deletes and pauses nothing, but scheduled runs can be missed. If the write fails, the tab keeps your visibility choice. **Reset** only resets the layout. **Status → Plugins** skips the warning for the exact Global disable; other disables still offer **Re-enable**.
 
 ## Create a Mission {#create}
 

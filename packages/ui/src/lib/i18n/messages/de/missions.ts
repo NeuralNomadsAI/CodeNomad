@@ -1,8 +1,5 @@
 export const missionMessages = {
-  "missions.activation.projectOverride": "Hier gilt die Projektregel für Missionen.",
-  "missions.activation.globalOn": "Global: ein.",
-  "missions.activation.globalOff": "Global: aus.",
-  "missions.activation.disableConfirm": "Missionen auf diesem OpenCode-Server deaktivieren? Nichts wird automatisch pausiert. Pausiere zuerst laufende und geplante Missionen, um Unterbrechungen und verpasste Läufe zu vermeiden. Gespeicherte Daten bleiben erhalten.",
+  "missions.activation.disableConfirm": "Missionen in der globalen OpenCode-Konfiguration deaktivieren? Nichts wird gelöscht oder pausiert.",
   "missions.followed.title": "Verfolgte Gespräche",
   "missions.followed.add": "Gespräch hinzufügen",
   "missions.followed.source": "Verfolgtes Gespräch {number}",

@@ -26,9 +26,8 @@ import { missionDocumentSummaryWire, missionScheduleActivationWire } from "./mis
 import { missionScheduleRpcMethods } from "./mission-schedule-contract"
 import { schedulePrincipalWire } from "./recurrence-control-proof"
 import { recurrenceListWire } from "./recurrence-discovery"
-import { MISSIONS_PLUGIN_ID } from "./plugin-id"
 
-export const CODENOMAD_MISSIONS_RPC_ID = MISSIONS_PLUGIN_ID
+export const CODENOMAD_MISSIONS_RPC_ID = "codenomad.missions"
 export const CODENOMAD_MISSIONS_CHANGED_EVENT = `rpc.${CODENOMAD_MISSIONS_RPC_ID}.changed`
 
 const stringArray = {

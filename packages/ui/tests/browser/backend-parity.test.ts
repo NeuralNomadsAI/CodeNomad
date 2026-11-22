@@ -206,18 +206,17 @@ for (const host of ["electron", "tauri"] as const) {
   }))
 }
 
-test("embedded Missions settings switch owners, using the root for activation and the worktree for depth", async () => fixturePage(async page => {
+test("embedded Settings Missions reads the selected qualified project's worktree Location", async () => fixturePage(async page => {
   for (const owner of ["A", "B"]) {
     const before = await page.evaluate(() => (window as any).parity.calls.length)
     await page.evaluate(owner => (window as any).parity.openMissions(owner), owner)
     await page.waitForFunction(({ owner, before }) => (window as any).parity.calls.slice(before)
       .some((call: any) => call.owner === owner && call.path === "/api/workspaces/same/subagent-depth"), { owner, before })
     const reads = await page.evaluate(before => (window as any).parity.calls.slice(before)
-      .filter((call: any) => /\/(?:subagent-depth|plugin-controls)$/.test(call.path)), before)
-    assert.ok(reads.some((call: any) => call.path.endsWith("/plugin-controls")))
-    assert.ok(reads.every((call: any) => call.owner === owner
-      && call.directory === (call.path.endsWith("/plugin-controls") ? `/${owner}` : `/${owner}/worktree`)),
-    `Each read must use ${owner}'s matching Location: ${JSON.stringify(reads)}`)
+      .filter((call: any) => call.path.endsWith("/subagent-depth")), before)
+    assert.ok(reads.length > 0)
+    assert.ok(reads.every((call: any) => call.owner === owner && call.directory === `/${owner}/worktree`),
+      `Missions must use ${owner}'s selected Location, never its root folder or another backend: ${JSON.stringify(reads)}`)
   }
 }))
 

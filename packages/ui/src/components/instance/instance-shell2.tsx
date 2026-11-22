@@ -26,8 +26,7 @@ import { InterruptionDock } from "../interruption-dock"
 import { focusInterruption } from "../../stores/interruption-navigation"
 import SessionView from "../session/session-view"
 import { MissionReader } from "../mission-reader"
-import { missionProjectView, updateMissionProjectView } from "../../stores/mission-view-state"
-import { useMissionActivation } from "../../stores/mission-activation"
+import { missionProjectView } from "../../stores/mission-view-state"
 import MessageSection from "../message-section"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
 import RecoveredDrafts from "../prompt-input/recovered-drafts"
@@ -173,16 +172,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     instanceId: () => props.instance.id,
   })
   useFilePreviewLifetime(props.instance.id, activeSessionIdForInstance)
-  const missionActivation = useMissionActivation(
-    () => props.instance.status === "ready" ? props.instance.id : undefined,
-    () => props.instance.folder,
-    () => props.isActiveInstance !== false,
-  )
-  createEffect(() => {
-    if (missionActivation.disabled()) {
-      updateMissionProjectView(props.instance.id, { reader: undefined })
-    }
-  })
 
   // Shell ownership keeps partially answered requests alive as session panes change.
   const [interruptionExpanded, setInterruptionExpanded] = createSignal(false)
@@ -842,7 +831,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
             instance={props.instance}
             activeSessionId={activeSessionIdForInstance}
             activeSession={activeSessionForInstance}
-            missionActivation={missionActivation}
             onRestoreConversation={() => { if (showingInfoView()) handleBackToConversation() }}
             isPhoneLayout={isPhoneLayout}
             rightDrawerWidth={rightPanelWidth}
@@ -870,7 +858,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           instance={props.instance}
           activeSessionId={activeSessionIdForInstance}
           activeSession={activeSessionForInstance}
-          missionActivation={missionActivation}
           onRestoreConversation={() => { if (showingInfoView()) handleBackToConversation() }}
           isPhoneLayout={isPhoneLayout}
           rightDrawerWidth={drawerHostWidth}

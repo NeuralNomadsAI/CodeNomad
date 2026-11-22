@@ -86,45 +86,68 @@ test("a saved right-panel tab order takes precedence over the Status-first defau
   } finally { await page.close() }
 })
 
-test("confirmed Missions disable selects Status even when Files comes first", async () => {
+test("Missions keeps layout visibility independent of the exact Global activation write", async () => {
   const page = await browser.newPage({ viewport: { width: 700, height: 900 }, locale: "en-US" })
-  const errors: string[] = []
-  page.on("pageerror", error => errors.push(error.message))
+  const pluginId = "codenomad.missions", controls = "**/api/workspaces/status-fixture/plugin-controls**"
+  const writes: unknown[] = []
+  let fail = false
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
-  await page.route("**/plugin-controls?*", route => route.fulfill({ json: {
-    location: { directory: "/fixture" }, runtime: [], configured: { rules: [], sources: [] }, targets: [],
-    controls: [{ id: "codenomad.missions", managedBy: "codenomad", builtin: false, global: "disabled", effective: "disabled", project: "default" }],
-  } }))
-  await page.addInitScript(() => {
-    localStorage.setItem("opencode-session-right-panel-tab-v2", "missions")
-    localStorage.setItem("opencode-session-right-panel-customization-v1", JSON.stringify({ tabOrder: ["files", "status"] }))
+  await page.route(controls, route => {
+    if (route.request().method() !== "PATCH") {
+      return route.fulfill({ status: 503, json: {} })
+    }
+    const body = route.request().postDataJSON()
+    writes.push(body)
+    const target = { scope: "global", path: "/daemon/opencode.jsonc", exists: true }
+    return fail ? route.fulfill({ status: 503, json: {} }) : route.fulfill({ json: {
+      snapshot: { location: { directory: "/fixture" }, targets: [target], controls: [], runtime: [], configured: { rules: [], sources: [] } },
+      rule: body.enabled ? pluginId : `-${pluginId}`, target, changed: true, reloadPending: true,
+    } })
   })
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem("status-missions-layout-seeded")) return
+    sessionStorage.setItem("status-missions-layout-seeded", "true")
+    localStorage.setItem("opencode-session-right-panel-tab-v2", "missions")
+    localStorage.setItem("opencode-session-right-panel-customization-v1", JSON.stringify({ tabOrder: ["files", "status", "missions"] }))
+  })
+  const customize = page.getByRole("button", { name: "Customize right panel" })
+  const tab = page.getByRole("tab", { name: "Missions", exact: true })
+  const checkbox = page.getByRole("checkbox", { name: "Missions", exact: true, includeHidden: true })
+  const dialog = page.getByRole("dialog")
+  const hidden = () => page.evaluate(() => (window as any).statusFixture.customization().hiddenTabIds)
+  const payload = (enabled: boolean) => ({ location: { directory: "/fixture" }, pluginId, scope: "global", enabled, managedBy: "codenomad" })
   try {
     await page.goto(url)
-    await page.getByRole("tab", { name: "Status", exact: true, selected: true }).waitFor({ timeout: 6000 })
-    await page.getByRole("tabpanel", { name: "Status", exact: true }).waitFor()
-    assert.deepEqual(errors, [])
-  } finally { await page.close() }
-})
-
-test("a panel remembers its inherited tab across a remount without changing the shared default", async () => {
-  const page = await browser.newPage({ viewport: { width: 700, height: 900 }, locale: "en-US" })
-  await page.route("**/api/**", route => route.fulfill({ json: {} }))
-  await page.addInitScript(() => localStorage.setItem("opencode-session-right-panel-tab-v2", "files"))
-  const show = (id?: string) => page.evaluate(id => (window as any).statusFixture.showPanel(id), id)
-  const files = page.getByRole("tab", { name: "Files", exact: true, selected: true })
-  try {
-    await page.goto(url)
-    await files.waitFor()
-    await show()
-    await files.waitFor({ state: "detached" })
-    await show("other-project")
-    await page.getByRole("tab", { name: "Status", exact: true }).click()
-    await show()
-    await show("status-fixture")
-    await files.waitFor({ timeout: 4500 })
-    await show("new-project")
-    await page.getByRole("tab", { name: "Status", exact: true, selected: true }).waitFor()
+    await page.getByRole("tab", { name: "Missions", exact: true, selected: true }).waitFor()
+    await customize.click()
+    await checkbox.click()
+    await dialog.getByText("Disable Missions in OpenCode’s Global configuration? Nothing is deleted or paused.").waitFor({ timeout: 4500 })
+    assert.equal(await checkbox.isChecked(), true)
+    assert.deepEqual(writes, [])
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
+    await tab.waitFor()
+    assert.deepEqual(writes, [])
+    if (!await checkbox.count()) await customize.click()
+    await checkbox.click()
+    const write = () => page.waitForResponse(response => response.url().endsWith("/plugin-controls") && response.request().method() === "PATCH")
+    await Promise.all([write(), dialog.getByRole("button", { name: "Confirm", exact: true }).click()])
+    await tab.waitFor({ state: "detached" })
+    await page.getByRole("tab", { name: "Files", exact: true, selected: true }).waitFor()
+    assert.deepEqual(await hidden(), ["missions"])
+    assert.deepEqual(writes, [payload(false)])
+    await page.reload()
+    await customize.click()
+    assert.equal(await checkbox.isChecked(), false)
+    assert.equal(await tab.count(), 0)
+    assert.deepEqual(writes, [payload(false)], "mount and restore only read layout")
+    fail = true
+    await Promise.all([write(), checkbox.click()])
+    await dialog.getByText("Could not save Missions in Global.").waitFor({ timeout: 4500 })
+    await dialog.getByRole("button", { name: "OK", exact: true }).click()
+    await tab.waitFor()
+    assert.deepEqual(await hidden(), [])
+    await page.getByRole("tab", { name: "Files", exact: true, selected: true }).waitFor()
+    assert.deepEqual(writes, [payload(false), payload(true)])
   } finally { await page.close() }
 })
 

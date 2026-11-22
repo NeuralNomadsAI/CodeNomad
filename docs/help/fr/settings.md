@@ -80,9 +80,7 @@ Réordonnez toute section Statut par glisser-déposer ou avec les touches Haut/B
 
 Statut inclut les informations de tokens, Permissions, l’utilisation fournisseur, les shells en arrière-plan, MCP et Plugins. Tant que la conversation a un [objectif](conversations.md#goal), une ligne d’objectif au-dessus de ces sections l’affiche ; cette ligne n’est pas une section et ne peut être ni masquée ni déplacée. Masquer une section ne désactive pas son service et ne révoque pas de permissions. Les dispositions étroites ferment les panneaux qui ne tiennent plus au lieu de comprimer la conversation ; un panneau ouvert alors flotte au-dessus d’elle, et ouvrir un panneau flottant ferme l’autre.
 
-La disposition intégrée est propre à la fenêtre, pas une modification du projet. Les cases d’extension sont différentes : elles activent du code dans tous les projets utilisant la configuration. **Réinitialiser** ne change pas le consentement aux extensions. Voir [Extensions de panneau](extensions.md).
-
-La case **Missions** [active ou désactive les Missions](missions.md#activation) sur le serveur OpenCode connecté. **Réinitialiser** ne change pas son état.
+La disposition intégrée est propre à la fenêtre. La [case Missions](missions.md#activation) change aussi l’activation globale du plugin. Les cases d’extension activent du code dans tous les projets utilisant la configuration. **Réinitialiser** ne change pas le consentement aux extensions. Voir [Extensions de panneau](extensions.md).
 
 ## Détail de transcription et taille de saisie {#transcript-composer}
 

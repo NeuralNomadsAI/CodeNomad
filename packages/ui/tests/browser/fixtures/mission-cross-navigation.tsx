@@ -10,7 +10,7 @@ import type { Session } from "../../../src/types/session"
 import { addInstance, instances } from "../../../src/stores/instances"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import { clearSessionCatalogState, refreshSessionCatalog } from "../../../src/stores/session-api"
-import { openSessionPreview, requestSessionPreview, showSessionChatFor, getSessionPreview } from "../../../src/stores/session-previews"
+import { openSessionPreview, showSessionChatFor, getSessionPreview } from "../../../src/stores/session-previews"
 import { getTabViewState } from "../../../src/stores/tab-view-state"
 import { SessionPreviewHost } from "../../../src/components/session-preview-view"
 import { sdkManager } from "../../../src/lib/sdk-manager"
@@ -69,17 +69,6 @@ function Fixture() {
       clearSessionCatalogState(id)
     },
     clearActive: () => clearActiveSession(id),
-    openAgentPreview: () => openSessionPreview("ses_initial", "https://example.invalid/", id, undefined,
-      { requestID: "fixture-agent-preview", instanceId: id }),
-    requestPreview: () => requestSessionPreview("ses_initial", id, "https://example.invalid/delayed"),
-    refreshActivation: () => (serverEvents as any).dispatchBatch([
-      { type: "instance.event", instanceId: id, event: { type: "config.updated", location: { directory: scope }, data: {} } },
-    ]),
-    selectWorktree: () => {
-      const session = { ...initial[1]!, location: { directory: "/fixture-worktree" } }
-      setSessions(previous => new Map(previous).set(id, new Map([[initial[0]!.id, initial[0]!], [session.id, session]])))
-      seedRestoredSessionSelection(id, session.id, session.id)
-    },
     created: () => (sseManager as unknown as { handleEvent(instanceId: string, event: V2Event): void }).handleEvent(id, {
       type: "session.created", id: "private-created-A", created: 1, location: { directory: scope },
       durable: { aggregateID: "ses_A", seq: 1, version: 1 },
@@ -98,9 +87,7 @@ declare global {
   interface Window {
     missionCrossNavigation: {
       snapshot(): ReturnType<typeof snapshot>; history(): ReturnType<typeof snapshot>[]
-      coldCatalogue(): Promise<void>; clearActive(): void; created(): void; selectWorktree(): void
-      openAgentPreview(): Promise<unknown>; refreshActivation(): void
-      requestPreview(): Promise<unknown>
+      coldCatalogue(): Promise<void>; clearActive(): void; created(): void
       transport(status: "connected" | "disconnected"): void
     }
   }

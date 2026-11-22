@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { fileURLToPath } from "node:url"
+import { parse } from "jsonc-parser"
 import { PluginControls } from "../packages/server/src/opencode/plugin-controls.ts"
 import { installDesktopPluginPresence } from "../packages/server/src/opencode/desktop-plugin-installation.ts"
 import { withProductRuntime } from "./native-product-fixture.mjs"
@@ -58,7 +59,7 @@ try {
         && (enabled ? control.runtime?.state.status === "active" && otherPlugin?.state.status === "active"
           : !control.runtime && !otherPlugin)
     }, `Native Missions activation did not settle to ${enabled}`)
-    const activate = enabled => controls.mutate("fixture", { location, pluginId, scope: "global", enabled })
+    const activate = enabled => controls.mutate("fixture", { location, pluginId, scope: "global", enabled, managedBy: "codenomad" })
     await settle(true)
     await checkTools("Missions enabled, before disable", true)
     assert.equal((await activate(false)).reloadPending, true)
@@ -69,7 +70,7 @@ try {
     await settle(true)
     await checkTools("Missions enabled again in the same session", true)
     const updated = await readFile(config, "utf8")
-    assert.doesNotMatch(updated, /codenomad\.missions/)
+    assert.deepEqual(parse(updated).plugins, [pluginId])
     assert.match(updated, /\/\/ unrelated user settings/)
     assert.match(updated, /"username": "fixture"/)
     console.log("PASS: native hot disable/re-enable removes/restores Mission tools in an existing session")

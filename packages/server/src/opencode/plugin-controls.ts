@@ -390,8 +390,12 @@ export class PluginControls {
   }
 
   mutate(workspaceId: string, request: PluginActivationMutationRequest): Promise<PluginActivationMutationResponse> {
-    // Global writes share a queue within the workspace, while Project writes
-    // queue per location. The document lock fences competing replacements.
+    // Ordering is only required per write target. The global document is
+    // daemon-wide for one workspace, so all of its global writes share one
+    // queue regardless of which worktree directory requested them; project
+    // writes queue per normalized directory. A fully file-identity-based key
+    // would need async resolution, so a residual cross-workspace global race
+    // stays possible and remains fail-closed with a retryable conflict.
     const normalizedDirectory = request.location.directory.trim().replace(/[\\/]+$/, "").toLowerCase()
     const tailKey = request.scope === "global"
       ? `${workspaceId}\nglobal`
@@ -435,23 +439,28 @@ export class PluginControls {
           scope: request.scope,
         })
         const control = before.controls.find((candidate) => candidate.id === request.pluginId)
-        if (!control) throw new PluginControlsError("Plugin ID is not present in the authorized inventory", "forbidden")
+        if (!control || request.managedBy && control.managedBy !== request.managedBy) {
+          throw new PluginControlsError("Plugin ID is not present in the authorized inventory", "forbidden")
+        }
 
         const desired: PluginScopeRuleState = request.enabled ? "enabled" : "disabled"
-        const exactDisable = !request.enabled && request.scope === "global"
-          && request.pluginId === MISSIONS_PLUGIN_ID && control.managedBy === "codenomad"
+        const rule = request.enabled ? request.pluginId : `-${request.pluginId}`
+        const exact = request.scope === "global" && request.pluginId === MISSIONS_PLUGIN_ID && request.managedBy === "codenomad"
+        const exactGlobal = (snapshot: PluginControlsSnapshot, plugins: readonly PluginConfigEntry[]) => {
+          const deciding = snapshot.configured.rules.filter(rule => rule.scope === "global" && matchesSelector(rule.selector, request.pluginId)).at(-1)
+          return deciding?.path && samePath(context.paths, deciding.path, target.path) && plugins[deciding.entryIndex] === rule
+        }
         assertCurrentConnection(context.connection)
-        if (projection.noOpSafe && control[request.scope] === desired) {
+        if (projection.noOpSafe && control[request.scope] === desired && (!exact || exactGlobal(before, document.plugins))) {
           return {
             snapshot: before,
-            rule: request.enabled ? request.pluginId : `-${request.pluginId}`,
+            rule,
             target: publicTarget(target),
             changed: false,
             reloadPending: false,
           }
         }
 
-        const rule = request.enabled ? request.pluginId : `-${request.pluginId}`
         const removable = projection.noOpSafe
           ? replaceableRuleIndexes(document.plugins, projection.plugins, before, target.path, request.scope, request.pluginId, context.paths) : []
         const kept = projection.plugins.filter((_, index) => !removable.includes(index))
@@ -461,7 +470,7 @@ export class PluginControls {
         // package of that name. Nothing qualifying is refused before any write.
         let edit: { remove: number[]; rule?: string; snapshot: PluginControlsSnapshot } | undefined
         for (const candidate of [...removable.length > 0 ? [{ remove: removable }, { remove: removable, rule }] : [], { remove: [] as number[], rule }]) {
-          if (exactDisable && candidate.rule === undefined) continue
+          if (exact && candidate.rule === undefined) continue
           const plugins = candidate.rule === undefined ? kept : [...(candidate.remove.length > 0 ? kept : projection.plugins), candidate.rule]
           const evaluated = evaluateDocuments(base, context, { servicePath: target.path, plugins, scope: request.scope })
           const position = evaluated.documents.find(entry => entry.path && samePath(context.paths, entry.path, target.path))!.order
@@ -469,6 +478,7 @@ export class PluginControls {
           if (candidate.rule !== undefined && request.enabled
             && !definedBefore(evaluated.sequence, request.pluginId, position, plugins.length - 1)) continue
           if (enabledThrough(evaluated.sequence, request.pluginId, through) !== request.enabled) continue
+          if (exact && !exactGlobal(evaluated.snapshot, plugins)) continue
           edit = { ...candidate, snapshot: evaluated.snapshot }
           break
         }

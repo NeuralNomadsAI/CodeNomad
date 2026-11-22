@@ -18,29 +18,12 @@ the execution journal retains its task, report and lifecycle contracts.
 
 ## Activation
 
-**Customize right panel → Missions** writes the connected OpenCode server's
-Global `plugins` through native plugin controls. A fresh read of the opened
-workspace's native Location drives the checkbox, tab, readers and project-bound
-Settings, matching the project-wide Missions routes. Gestures on the checkbox
-set its requested Global state. When a Project rule decides the effective state, the
-checkbox shows the effective state read-only and its info button shows the
-Global setting. Config and plugin events and reconnects
-reconcile manual edits through the shared plugin controls cache. Activation is
-enabled, disabled or unknown. A pending or failed read makes the checkbox
-indeterminate and keeps the last confirmed visibility, or the saved layout before
-the first successful read; opening customization retries a
-failed read and **Try again** is available there. A confirmed disable hides
-Missions, closes its readers and changes a selected Missions tab or settings
-section to Status or General. Re-enabling leaves those selections in place.
-A window layout reset retains activation and restores tab order.
-
-When the effective state is off, OpenCode's config watcher unloads the plugin, removing
-`mission_*` from subsequent model turns in existing sessions after reload.
-The sole write is the activation rule: journals, calendars, native queues and
-conversations are retained. Native work already admitted can continue; plugin
-hooks, outbox recovery and business wake admission require the loaded plugin.
-Scheduled runs can be missed. The disable confirmation states that nothing pauses automatically and recommends pausing
-active and scheduled Missions before unloading.
+The **Missions** checkbox in **Customize right panel** uses the regular tab
+visibility preference. The gesture also writes `codenomad.missions` when shown
+or `-codenomad.missions` after confirming hide, in the connected OpenCode
+server's Global configuration. A failed write reports an error and retains the
+layout choice. Reset only changes the layout. Project rules still take precedence.
+Other Missions surfaces use their ordinary availability handling.
 
 ## Backend routing
 

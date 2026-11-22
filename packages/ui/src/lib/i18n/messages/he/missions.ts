@@ -1,8 +1,5 @@
 export const missionMessages = {
-  "missions.activation.projectOverride": "כלל הפרויקט קובע כאן.",
-  "missions.activation.globalOn": "גלובלי: פעיל.",
-  "missions.activation.globalOff": "גלובלי: מושבת.",
-  "missions.activation.disableConfirm": "להשבית משימות בשרת OpenCode הזה? דבר לא יושהה אוטומטית. יש להשהות תחילה משימות פעילות ומתוזמנות כדי למנוע קטיעת עבודה או החמצת הרצות. הנתונים השמורים נשמרים.",
+  "missions.activation.disableConfirm": "להשבית משימות בתצורה הגלובלית של OpenCode? דבר לא יימחק ולא יושהה.",
   "missions.followed.title": "שיחות במעקב",
   "missions.followed.add": "הוספת שיחה",
   "missions.followed.source": "שיחה במעקב {number}",

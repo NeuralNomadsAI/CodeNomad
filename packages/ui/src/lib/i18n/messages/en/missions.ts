@@ -1,8 +1,5 @@
 export const missionMessages = {
-  "missions.activation.projectOverride": "Project rule decides Missions here.",
-  "missions.activation.globalOn": "Global: on.",
-  "missions.activation.globalOff": "Global: off.",
-  "missions.activation.disableConfirm": "Disable Missions for this OpenCode server? Nothing is paused automatically. Pause active and scheduled Missions first to avoid interrupted work or missed runs. Saved data is kept.",
+  "missions.activation.disableConfirm": "Disable Missions in OpenCode’s Global configuration? Nothing is deleted or paused.",
   "missions.cleanup.retrying": "Retrying cleanup…",
   "missions.control.reader.loading": "Reading content…",
   "missions.control.form.loading": "Loading form…",

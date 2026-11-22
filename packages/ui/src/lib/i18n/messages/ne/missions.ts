@@ -1,8 +1,5 @@
 export const missionMessages = {
-  "missions.activation.projectOverride": "यहाँ परियोजनाको नियम लागू हुन्छ।",
-  "missions.activation.globalOn": "ग्लोबल: सक्रिय।",
-  "missions.activation.globalOff": "ग्लोबल: निष्क्रिय।",
-  "missions.activation.disableConfirm": "यो OpenCode सर्भरमा मिसनहरू निष्क्रिय गर्ने हो? केही पनि स्वतः पज हुँदैन। काम बीचमै रोकिन वा तय गरिएको सञ्चालन छुट्न नदिन सक्रिय र तालिकाबद्ध मिसनहरू पहिले पज गर्नुहोस्। बचत गरिएका डाटा सुरक्षित रहन्छन्।",
+  "missions.activation.disableConfirm": "OpenCode को ग्लोबल कन्फिगरेसनमा मिसनहरू निष्क्रिय गर्ने हो? केही पनि मेटिँदैन वा पज हुँदैन।",
   "missions.followed.title": "पछ्याइएका कुराकानीहरू",
   "missions.followed.add": "कुराकानी थप्नुहोस्",
   "missions.followed.source": "पछ्याइएको कुराकानी {number}",

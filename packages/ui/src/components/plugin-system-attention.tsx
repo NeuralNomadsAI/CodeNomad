@@ -1,8 +1,8 @@
 import { For, Show, createMemo, createSignal, createUniqueId, onCleanup } from "solid-js"
+import { MISSIONS_PLUGIN_ID } from "../../../server/src/missions/plugin-id"
 import type { PluginActivationControl, PluginConfigScope, PluginControlLocation, PluginControlScope, PluginControlsSnapshot, PluginRuntimeInventoryEntry } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { pluginControlsCache } from "../stores/plugin-controls"
-import { missionsPluginControl } from "../stores/mission-activation"
 import { InfoPopoverButton } from "./info-popover-button"
 
 const VALUE_PLACEHOLDER = "\ufffc"
@@ -51,9 +51,9 @@ export function PluginSystemAttention(props: {
       const key = `target:${source.target}`
       result.set(key, { key, name: source.pluginId ?? source.target })
     }
-    const missions = missionsPluginControl(props.snapshot)
+    const missions = result.get(`id:${MISSIONS_PLUGIN_ID}`)?.control
     if (missions?.effective === "disabled" && missions.controllingRule?.scope === "global"
-      && missions.controllingRule.selector === missions.id) result.delete(`id:${missions.id}`)
+      && missions.controllingRule.selector === MISSIONS_PLUGIN_ID && !missions.controllingRule.enabled) result.delete(`id:${MISSIONS_PLUGIN_ID}`)
     return new Map([...result].filter(([, entry]) => entry.control?.effective === "disabled" || entry.runtime?.state.status !== "active" || props.runtimeUnconfirmed?.has(entry.name)))
   })
   const keys = createMemo(() => [...entries().keys()])

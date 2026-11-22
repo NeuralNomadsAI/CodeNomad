@@ -4,13 +4,9 @@ Bir Görev; hedefi, koordinatör konuşmasını, işleri ve sonuçlarını birli
 
 Görevler kullanılamıyorsa **OpenCode ayarları**, eksik veya başarısız bir eklenti için hizmet kurtarmayı açar. Sunucunun yerel Görevler köprüsü kullanılamıyorsa **Sunucu tanılaması**, Ayarlar → Bilgi bölümündeki tanılama raporunu açar.
 
-## Görevleri etkinleştirme ve devre dışı bırakma {#activation}
+## Görevleri gösterme veya gizleme {#activation}
 
-**Sağ paneli özelleştir** bölümündeki **Görevler** ile eklentiyi bağlı OpenCode sunucusunun genel yapılandırmasında açıp kapatın. Onay kutusu açık çalışma alanındaki geçerli durumu gösterir. Bu durumu bir proje kuralı belirliyorsa kutu değiştirilemez ve **i** genel ayarı gösterir. OpenCode otomatik olarak yeniden yükler; ardından mevcut konuşmalar da bir sonraki turda yeni araç listesini kullanır.
-
-Önce etkin ve zamanlanmış görevleri duraklatın. Devre dışı bırakmak görev kayıtlarını, zamanlamaları ve konuşmaları korur. OpenCode’a gönderilmiş işler sürebilir, ancak görev araçları kullanılamaz ve zamanlanan çalıştırmalar atlanabilir. Yeniden etkinleştirdikten sonra görevlerinizi kontrol edin ve hazır olduğunuzda duraklatılanları sürdürün.
-
-Bir çalışma ağacındaki konuşmayı seçseniz de onay kutusu açık çalışma alanının durumunu gösterir. Durum okunamazsa sekmenin görünürlüğü değişmez; özelleştirmeyi yeniden açın veya **Tekrar dene** seçeneğini seçin. Devre dışı bırakma doğrulandığında açık Görevler okuyucuları kapanır; seçili Görevler sekmesinin veya ayar bölümünün yerini **Durum** ya da **Genel** alır. Yeniden etkinleştirme seçiminizi değiştirmez. Proje açık değilken de **Ayarlar → Görevler** bölümünden genel varsayılanları düzenleyebilirsiniz.
+**Sağ paneli özelleştir** menüsünde **Görevler** kutusunu işaretleyerek sekmeyi gösterin veya işareti kaldırıp onaylayarak gizleyin. Bu işlem, bağlı OpenCode sunucusunun genel yapılandırmasına `codenomad.missions` ya da `-codenomad.missions` kuralını da yazar. Proje kuralları genel kuralın önüne geçebilir. Kapatma hiçbir şeyi silmez veya duraklatmaz, ancak zamanlanan çalıştırmalar atlanabilir. Yazma başarısız olursa sekme için seçtiğiniz görünürlük korunur. **Sıfırla** yalnızca düzeni değiştirir. **Durum → Eklentiler** bu tam eşleşen genel devre dışı bırakma kuralı için uyarı göstermez; diğer durumlarda **Yeniden etkinleştir** kullanılabilir.
 
 ## Görev oluşturma {#create}
 

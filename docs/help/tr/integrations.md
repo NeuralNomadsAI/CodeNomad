@@ -27,7 +27,7 @@ Bağlantı başarısız olursa sunucunun yapılandırmasını, gerekli ortamı v
 
 CodeNomad tarafından yönetilen eklentiler, normal eklenti listesinin ve bu listedeki etkinleştirme, güncelleme ve kaldırma denetimlerinin dışında tutulur.
 
-**CodeNomad eklentileri ilgilenmenizi gerektiriyor** için ayrıntıları **i** ile açın. Devre dışı bir eklenti **Yeniden etkinleştir** sunar; kullanmadan önce gösterilen yapılandırma kapsamını kontrol edin. [Görevler](missions.md#activation) için **Sağ paneli özelleştir** bölümünde ayrı bir onay kutusu vardır.
+**CodeNomad eklentileri ilgilenmenizi gerektiriyor** için ayrıntıları **i** ile açın. Devre dışı bir eklenti **Yeniden etkinleştir** sunar; kullanmadan önce gösterilen yapılandırma kapsamını kontrol edin.
 
 1. [Eklentiyi ekleyin](#plugin-sources) veya OpenCode yapılandırmasında bildirin; daha sonra **Durum → Eklentiler** öğesini açın.
 2. Kaynağı, çalışma zamanı hatasını ve yapılandırma hedefi ayrıntılarını incelemek için adının üzerine gelin veya odaklanın.

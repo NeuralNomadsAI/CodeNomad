@@ -27,7 +27,7 @@ Prüfen Sie bei Verbindungsfehlern Serverkonfiguration, erforderliche Umgebung u
 
 Von CodeNomad verwaltete Plugins erscheinen außerhalb der gewöhnlichen Plugin-Liste und ihrer Aktivierungs-, Aktualisierungs- und Entfernungsaktionen.
 
-Bei **CodeNomad-Plugins erfordern Aufmerksamkeit** öffnen Sie **i** für Details. Ein deaktiviertes Plugin bietet **Erneut aktivieren**; prüfen Sie vorher den angezeigten Konfigurationsbereich. [Missionen](missions.md#activation) haben ein eigenes Kontrollkästchen unter **Rechtes Panel anpassen**.
+Bei **CodeNomad-Plugins erfordern Aufmerksamkeit** öffnen Sie **i** für Details. Ein deaktiviertes Plugin bietet **Erneut aktivieren**; prüfen Sie vorher den angezeigten Konfigurationsbereich.
 
 1. [Fügen Sie das Plugin hinzu](#plugin-sources) oder deklarieren Sie es in der OpenCode-Konfiguration; öffnen Sie dann **Status → Plugins**.
 2. Zeigen Sie auf den Namen oder fokussieren Sie ihn, um Quelle, Laufzeitfehler und Konfigurationszieldetails zu prüfen.

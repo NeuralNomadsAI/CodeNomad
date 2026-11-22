@@ -15,10 +15,13 @@ import type { Instance } from "../../../../types/instance"
 import type { Session } from "../../../../types/session"
 import type { PromptInputApi } from "../../../prompt-input/types"
 import type { RightPanelTab } from "./types"
+import { MISSIONS_PLUGIN_ID } from "../../../../../../server/src/missions/plugin-id"
 
+import { captureBackendOperation } from "../../../../lib/backend-operation"
+import { showAlertDialog, showConfirmDialog } from "../../../../stores/alerts"
+import { pluginControlsCache } from "../../../../stores/plugin-controls"
 import { readClientLayoutValue, writeClientLayoutValue } from "../../../../stores/client-state"
 import { getTabViewState, updateTabViewState } from "../../../../stores/tab-view-state"
-import { useMissionActivation } from "../../../../stores/mission-activation"
 import { RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY, RIGHT_PANEL_TAB_STORAGE_KEY, readStoredRightPanelTab } from "../storage"
 import {
   applyRightPanelItemCustomization,
@@ -95,7 +98,6 @@ interface RightPanelProps {
   rightDrawerWidthInitialized: Accessor<boolean>
   onCloseRightDrawer: () => void
   promptInputApi: Accessor<PromptInputApi | null>
-  missionActivation?: ReturnType<typeof useMissionActivation>
 
   /** Target of the shell's fixed panel toggle. */
   panelId?: string
@@ -106,12 +108,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const { locale } = useI18n()
   const theme = useTheme()
   const extensions = usePanelExtensions(() => props.instanceId, props.isActive)
-  const ownMissionActivation = useMissionActivation(
-    () => props.missionActivation ? undefined : props.instanceId,
-    () => props.instance.folder,
-    props.isActive,
-  )
-  const missionActivation = props.missionActivation ?? ownMissionActivation
   const savedTab = getTabViewState(props.instanceId).rightPanelTab ?? readStoredRightPanelTab("files")
   const [rightPanelTab, selectRightPanelTab] = createSignal<RightPanelTab>(savedTab === "git-changes" ? "files" : savedTab)
   const setRightPanelTab = (tab: RightPanelTab) => {
@@ -147,6 +143,21 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     const next = updater(rightPanelCustomization())
     setRightPanelCustomization(next)
     writeClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY, JSON.stringify(next))
+  }
+
+  const toggleMissions = async (enabled: boolean, setVisible: () => void) => {
+    const instanceId = props.instanceId, location = { directory: props.instance.folder }
+    const operation = captureBackendOperation(instanceId, undefined, () => props.instanceId === instanceId && props.isActive())
+    if (!enabled && !await showConfirmDialog(props.t("missions.activation.disableConfirm"), { variant: "warning" }, operation.signal)) return
+    if (!operation.current()) return
+    setVisible()
+    try {
+      await pluginControlsCache.mutate(instanceId, location, MISSIONS_PLUGIN_ID, "global", enabled, "codenomad")
+    } catch {
+      if (operation.current()) showAlertDialog(props.t("instanceServiceStatus.plugins.errors.save", {
+        name: props.t("instanceShell.rightPanel.tabs.missions"), scope: props.t("instanceServiceStatus.plugins.scope.global"),
+      }), { variant: "error" })
+    }
   }
 
   const moveTab = (sourceId: string, targetId: string) => {
@@ -236,10 +247,10 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const allRightPanelTabs = createMemo(() => collectRightPanelItems<RightPanelTabModule>(rightPanelModules(), "tabs"))
   const visibleRightPanelTabs = createMemo(() =>
     applyRightPanelItemCustomization(
-      allRightPanelTabs().filter(tab => tab.id === "missions" ? !missionActivation.disabled() : extensionForTab(tab.id)?.enabled ?? true),
+      allRightPanelTabs().filter(tab => extensionForTab(tab.id)?.enabled ?? true),
       rightPanelCustomization().tabOrder,
-      // Until the first activation read succeeds, honor the saved Missions visibility.
-      rightPanelCustomization().hiddenTabIds.filter(id => !id.startsWith("extension:") && (id !== "missions" || !missionActivation.hasSnapshot())),
+      // Addons have one profile-wide activation, not a second per-window visibility gate.
+      rightPanelCustomization().hiddenTabIds.filter(id => !id.startsWith("extension:")),
     ),
   )
   const orderedRightPanelTabs = createMemo(() => applyRightPanelItemCustomization(allRightPanelTabs(), rightPanelCustomization().tabOrder, []))
@@ -255,16 +266,12 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       rightPanelCustomization().hiddenStatusSectionIds,
     ),
   )
+  const activeRightPanelTab = createMemo(() => visibleRightPanelTabs().find((tab) => tab.id === rightPanelTab()) ?? visibleRightPanelTabs()[0])
+
   createEffect(() => {
-    const current = rightPanelTab()
-    if (current === "missions" && missionActivation.disabled()) {
-      const disable = missionActivation.captureDisable(props.instanceId, props.instance.folder)
-      if (disable?.current() && untrack(() => getTabViewState(props.instanceId).rightPanelTab) === "missions") selectRightPanelTab("status")
-      return
-    }
-    const tabs = visibleRightPanelTabs()
-    if (tabs[0] && !tabs.some(tab => tab.id === current)) {
-      selectRightPanelTab(tabs[0].id)
+    const active = activeRightPanelTab()
+    if (active && active.id !== rightPanelTab()) {
+      selectRightPanelTab(active.id)
     }
   })
 
@@ -317,9 +324,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       <Show when={rightPanelCustomizationOpen()}>
         <RightPanelCustomizationPopover t={props.t} isActive={props.isActive} trigger={() => customizationTriggerRef}
           onClose={() => setRightPanelCustomizationOpen(false)} extensions={extensions} tabs={orderedRightPanelTabs}
-          missionActivation={missionActivation}
           statusSections={orderedStatusSections} visibleStatusSectionCount={() => visibleStatusSections().length}
-          customization={rightPanelCustomization} onCustomizationChange={updateRightPanelCustomization} />
+            customization={rightPanelCustomization} onCustomizationChange={updateRightPanelCustomization} onMissionsToggle={toggleMissions} />
       </Show>
 
       {/* The tab's scroller contains its absolutely positioned descendants, so no tab

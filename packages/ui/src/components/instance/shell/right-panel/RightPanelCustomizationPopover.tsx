@@ -1,10 +1,8 @@
-import { For, Show, createEffect, createSignal, onCleanup, onMount, type Accessor } from "solid-js"
+import { For, Show, createEffect, createSignal, onCleanup, type Accessor } from "solid-js"
 import { ChevronRight } from "lucide-solid"
 import { toggleSweepGroup } from "../../../../lib/toggle-sweep"
 import { ExtensionManager } from "../../../panel-extensions/extension-manager"
-import { InfoPopoverButton } from "../../../info-popover-button"
 import type { usePanelExtensions } from "../../../panel-extensions/use-panel-extensions"
-import type { useMissionActivation } from "../../../../stores/mission-activation"
 import {
   moveRightPanelItem,
   parseRightPanelCustomization,
@@ -22,12 +20,12 @@ interface RightPanelCustomizationPopoverProps {
   trigger: () => HTMLButtonElement | undefined
   onClose: () => void
   extensions: PanelExtensions
-  missionActivation: ReturnType<typeof useMissionActivation>
   tabs: Accessor<readonly RightPanelTabModule[]>
   statusSections: Accessor<readonly RightPanelItem[]>
   visibleStatusSectionCount: Accessor<number>
   customization: Accessor<RightPanelCustomization>
   onCustomizationChange: (updater: (current: RightPanelCustomization) => RightPanelCustomization) => void
+  onMissionsToggle: (enabled: boolean, setVisible: () => void) => void
 }
 
 /** Visibility and order of the right panel's tabs and Status sections. Up/Down reorders the focused Status section. */
@@ -36,7 +34,6 @@ export function RightPanelCustomizationPopover(props: RightPanelCustomizationPop
   const [extensionsExpanded, setExtensionsExpanded] = createSignal(false)
   const [statusExpanded, setStatusExpanded] = createSignal(true)
   const extensionForTab = (id: string) => props.extensions.entries().find(entry => id === `extension:${entry.manifest.id}`)
-  onMount(() => props.missionActivation.retry())
 
   createEffect(() => {
     const fitPopover = () => {
@@ -82,9 +79,7 @@ export function RightPanelCustomizationPopover(props: RightPanelCustomizationPop
           {(tab) => {
             const label = () => tab.label ?? props.t(tab.labelKey)
             const extension = () => extensionForTab(tab.id)
-            const missions = tab.id === "missions"
-            const visible = () => missions ? props.missionActivation.status() === "enabled" :
-              extension()?.enabled ?? (tab.alwaysVisible || !props.customization().hiddenTabIds.includes(tab.id))
+            const visible = () => extension()?.enabled ?? (tab.alwaysVisible || !props.customization().hiddenTabIds.includes(tab.id))
             return (
               <>
                 <div class="right-panel-customization-row">
@@ -99,46 +94,31 @@ export function RightPanelCustomizationPopover(props: RightPanelCustomizationPop
                     <input
                       type="checkbox"
                       checked={visible()}
-                      ref={input => {
-                        if (missions) createEffect(() => { input.indeterminate = props.missionActivation.status() === "unknown" })
-                      }}
-                      aria-busy={missions && props.missionActivation.checking() ? true : undefined}
-                      disabled={tab.alwaysVisible || (missions && !props.missionActivation.canToggle())
-                        || (Boolean(extension()) && (!props.extensions.verified() || props.extensions.activating() || !props.isActive()))}
-                      // Activation changes have side effects beyond panel visibility.
-                      data-toggle-sweep={missions || extension() ? undefined : toggleSweepGroup("right-panel-customization")}
+                      disabled={tab.alwaysVisible || (Boolean(extension()) && (!props.extensions.verified() || props.extensions.activating() || !props.isActive()))}
+                      // Activating an extension is a trust decision, never swept along.
+                      data-toggle-sweep={extension() ? undefined : toggleSweepGroup("right-panel-customization")}
                       onChange={(event) => {
-                        if (missions) {
-                          const enabled = event.currentTarget.checked
-                          event.currentTarget.checked = visible()
-                          void props.missionActivation.toggle(enabled)
-                          return
-                        }
+                        const enabled = event.currentTarget.checked
                         const entry = extension()
                         if (entry) {
-                          const enabled = event.currentTarget.checked
                           event.currentTarget.checked = entry.enabled
                           void props.extensions.activate(entry, enabled)
                           return
                         }
-                        props.onCustomizationChange((current) => ({
+                        const setVisible = () => props.onCustomizationChange((current) => ({
                           ...current,
-                          hiddenTabIds: setRightPanelItemHidden(current.hiddenTabIds, tab.id, !event.currentTarget.checked),
+                          hiddenTabIds: setRightPanelItemHidden(current.hiddenTabIds, tab.id, !enabled),
                         }))
+                        if (tab.id === "missions") {
+                          event.currentTarget.checked = visible()
+                          props.onMissionsToggle(enabled, setVisible)
+                          return
+                        }
+                        setVisible()
                       }}
                     />
                     <span>{label()}</span>
                   </label>
-                  </Show>
-                  <Show when={missions && props.missionActivation.projectOverride()}>
-                    <InfoPopoverButton label={props.t("missions.activation.projectOverride")}>
-                      {props.t("missions.activation.projectOverride")}{" "}
-                      {props.t(props.missionActivation.globalEnabled() ? "missions.activation.globalOn" : "missions.activation.globalOff")}
-                    </InfoPopoverButton>
-                  </Show>
-                  <Show when={missions && props.missionActivation.readFailed()}>
-                    <button type="button" class="right-panel-customization-button"
-                      onClick={() => props.missionActivation.retry()}>{props.t("missions.control.retry")}</button>
                   </Show>
                 </div>
                 <Show when={tab.id === "status" && statusExpanded()}>

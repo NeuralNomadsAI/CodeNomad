@@ -30,7 +30,6 @@ import { RemoteControlSettingsSection } from "./settings/remote-control-settings
 import { SavedRemoteServersCard } from "./settings/saved-remote-servers-card"
 import { SideCarsSettingsSection } from "./settings/sidecars-settings-section"
 import { MissionsSettingsSection } from "./settings/missions-settings-section"
-import { useMissionActivation } from "../stores/mission-activation"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { confirmSettingsDiscard } from "../stores/settings-dirty-guard"
 import { NativeTitlebar } from "./native-titlebar"
@@ -54,12 +53,10 @@ type SettingsSectionOption = {
 
 interface SettingsScreenProps {
   standalone?: boolean
-  providerContext?: { instanceId?: string; location?: LocationRef; serverId?: string; workspacePath?: string }
+  providerContext?: { instanceId?: string; location?: LocationRef; serverId?: string }
   projectUnavailable?: boolean
-  projectUnbound?: boolean
   onClose?: () => void | Promise<void>
   onSectionChange?: (section: SettingsSectionId) => void | Promise<void>
-  onMissionsDisabled?: (current: () => boolean) => void
   scrollPosition?: { scrollTop?: number }
   onScrollPositionChange?: (top: number) => void
 }
@@ -71,7 +68,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const serversEnabled = () => config.preferences().multiBackend === true && serversUsable()
   const [serverCapabilitiesResolved, setServerCapabilitiesResolved] = createSignal(false)
   onMount(() => { void getServerMeta().catch(() => {}).finally(() => setServerCapabilitiesResolved(true)) })
-  const { context: embeddedProject } = createPreferencesProjectContext(() => {
+  const embeddedProject = createPreferencesProjectContext(() => {
     const instanceId = !props.standalone && !props.providerContext ? activeInstanceId() ?? undefined : undefined
     return { section: "general", instanceId, serverId: instanceId ? backendRegistry.serverId(parseInstanceKey(instanceId).backendId) : undefined,
       workspacePath: instanceId ? instances().get(instanceId)?.folder : undefined,
@@ -80,21 +77,6 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const memoryContext = () => props.providerContext ?? embeddedProject()
   const projectUnavailable = () => props.projectUnavailable || !props.standalone && !props.providerContext &&
     parseInstanceKey(activeInstanceId() ?? "").backendId !== "local" && !embeddedProject()
-  const missionInstanceId = () => props.providerContext?.instanceId ?? activeInstanceId() ?? undefined
-  const missionDirectory = () => {
-    const id = missionInstanceId()
-    return props.providerContext?.workspacePath ?? (id ? instances().get(id)?.folder : undefined) ?? props.providerContext?.location?.directory
-  }
-  const missionActivation = useMissionActivation(missionInstanceId, missionDirectory,
-    () => Boolean(props.standalone || settingsOpen()) && activeSettingsSection() !== "servers" && !props.projectUnavailable)
-  const missionsDisabled = missionActivation.disabled
-  createEffect(() => {
-    if (activeSettingsSection() !== "missions") return
-    const disable = missionActivation.captureDisable(missionInstanceId(), missionDirectory())
-    if (!disable?.current()) return
-    if (props.onMissionsDisabled) props.onMissionsDisabled(disable.current)
-    else setActiveSettingsSection("general")
-  })
 
   const sections = createMemo(() => {
     const items: SettingsSectionOption[] = [
@@ -114,16 +96,13 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
     ]
     items.splice(5, 0, { id: "remote", icon: MonitorUp, label: t("settings.nav.remote") })
     if (serversEnabled()) items.splice(6, 0, { id: "servers", icon: Server, label: t("settings.nav.servers") })
-    return missionsDisabled() ? items.filter(item => item.id !== "missions") : items
+    return items
   })
 
-  const activeSection = createMemo(() => sections().find((section) => section.id === activeSettingsSection()) ?? sections()[0]!)
-  // Persisted selection can lag the available page. Keep the body keyed by ID
-  // so changes to the navigation options alone do not discard its drafts.
-  const visibleSectionId = createMemo(() => activeSection().id)
+  const activeSection = createMemo(() => sections().find((section) => section.id === activeSettingsSection()) ?? sections()[0])
 
   const renderSection = () => {
-    switch (visibleSectionId()) {
+    switch (activeSettingsSection()) {
       case "chat":
         return <ChatSettingsSection />
       case "hotkeys":
@@ -152,7 +131,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
       case "providers":
         return <Show when={!props.projectUnavailable} fallback={<p role="status">{t("commands.openWorkspace.projectRequired.message")}</p>}><ProvidersSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} /></Show>
       case "missions":
-        return <Show when={!props.projectUnavailable && !props.projectUnbound} fallback={<p role="status">{t("commands.openWorkspace.projectRequired.message")}</p>}><MissionsSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} /></Show>
+        return <Show when={!props.projectUnavailable} fallback={<p role="status">{t("commands.openWorkspace.projectRequired.message")}</p>}><MissionsSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} /></Show>
       case "usage":
         return <Show when={!props.projectUnavailable} fallback={<p role="status">{t("settings.usage.noProject")}</p>}><UsageSettingsSection instanceId={props.providerContext?.instanceId} /></Show>
       case "sidecars":
@@ -241,10 +220,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
                 <div class="settings-section-selector-wrap">
                   <Select<SettingsSectionOption>
                     value={activeSection()}
-                    onChange={(section) => {
-                      // Option reconciliation can echo the displayed fallback.
-                      if (section && section.id !== activeSection()?.id) void handleSectionChange(section.id)
-                    }}
+                    onChange={(section) => section && void handleSectionChange(section.id)}
                     options={sections()}
                     optionValue="id"
                     optionTextValue="label"
@@ -321,8 +297,8 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
                       <button
                         type="button"
                         class="settings-nav-button"
-                        data-selected={visibleSectionId() === section.id ? "true" : "false"}
-                        aria-current={visibleSectionId() === section.id ? "page" : undefined}
+                        data-selected={activeSettingsSection() === section.id ? "true" : "false"}
+                        aria-current={activeSettingsSection() === section.id ? "page" : undefined}
                         onClick={() => void handleSectionChange(section.id)}
                       >
                         <Icon class="settings-nav-button-icon" />

@@ -83,7 +83,7 @@ export class PluginControlsCache {
 
   load(instanceId: string, location: PluginControlLocation, options?: { force?: boolean }): Promise<void> {
     const record = this.record(instanceId, location)
-    if (record.snapshot && !record.stale && !options?.force) return record.inFlight ?? Promise.resolve()
+    if (record.snapshot && !record.stale && !options?.force) return Promise.resolve()
     return this.loadRecord(record, Boolean(options?.force || record.stale))
   }
 
@@ -93,7 +93,7 @@ export class PluginControlsCache {
     pluginId: string,
     scope: PluginControlScope,
     enabled: boolean,
-    options?: { reconcile?: boolean },
+    managedBy?: "codenomad",
   ): Promise<PluginActivationMutationResponse> {
     const record = this.record(instanceId, location)
     const signal = this.signalForInstance?.(instanceId)
@@ -108,6 +108,7 @@ export class PluginControlsCache {
         pluginId,
         scope,
         enabled,
+        ...(managedBy ? { managedBy } : {}),
       })
       if (signal?.aborted || !this.isActive(record) || !this.adoptCanonicalLocation(record, response.snapshot.location, true)) return response
       // Fence any passive read that started before the mutation became durable.
@@ -118,15 +119,10 @@ export class PluginControlsCache {
       const newerSnapshot = record.snapshot && record.snapshotRevision > requestRevision
         ? record.snapshot
         : undefined
-      // The feature switch waits for native effective state; its write
-      // receipt may predate a deciding Project rule.
-      if (!options?.reconcile) {
-        record.snapshot = newerSnapshot ? retainRuntime(response.snapshot, newerSnapshot) : response.snapshot
-      }
+      record.snapshot = newerSnapshot ? retainRuntime(response.snapshot, newerSnapshot) : response.snapshot
       // The write response carries pre-write inventory. Only a later read can
       // confirm a managed plugin's runtime state, even if that inventory is active.
-      const controls = (options?.reconcile ? response.snapshot : record.snapshot)?.controls
-      if (enabled && response.reloadPending && controls?.some(control => control.id === pluginId && control.managedBy === "codenomad")) {
+      if (enabled && response.reloadPending && record.snapshot.controls.some(control => control.id === pluginId && control.managedBy === "codenomad")) {
         record.runtimeUnconfirmed.add(pluginId)
       } else if (!enabled) record.runtimeUnconfirmed.delete(pluginId)
       // Alias reads dispatched during the write must also see this publication
@@ -135,7 +131,7 @@ export class PluginControlsCache {
       record.error = undefined
       record.loading = false
       record.refreshing = false
-      record.stale = Boolean(options?.reconcile) || record.stale || record.invalidationRevision > requestRevision || Boolean(newerSnapshot)
+      record.stale = record.stale || record.invalidationRevision > requestRevision || Boolean(newerSnapshot)
       if (record.inFlight) record.trailing = true
       this.publish(record)
       if (scope === "global") this.invalidateSiblingLocations(record)

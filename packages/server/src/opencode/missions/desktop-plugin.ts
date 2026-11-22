@@ -13,7 +13,6 @@ import type { MissionDocumentAccess } from "../../missions/mission-document-one-
 import { boundedMissionList } from "../../missions/inspect-view"
 import type { MissionControl } from "../../missions/control"
 import type { NativeJournalRange } from "./native-journal-range"
-import { MISSIONS_PLUGIN_ID } from "../../missions/plugin-id"
 
 export interface NativeDocumentBusiness {
   select(sessionID: string): Promise<MissionBusinessRoute | undefined>
@@ -25,7 +24,7 @@ export interface NativeDocumentBusiness {
 export function desktopPlugin(presenceDirectory: string | readonly string[], humanGate?: NativeHumanAnswerGate, documents?: MissionDocumentAccess,
   documentBusiness?: NativeDocumentBusiness, range?: NativeJournalRange | (() => NativeJournalRange | undefined)): Plugin.Plugin {
   return {
-    id: MISSIONS_PLUGIN_ID,
+    id: "codenomad.missions",
     setup: async ctx => {
       // One per activation, never module-global: a reloaded revision may reuse this module.
       const index = new MissionJournalIndex()

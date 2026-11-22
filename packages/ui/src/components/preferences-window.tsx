@@ -32,11 +32,8 @@ export const PreferencesWindow: Component = () => {
   let scrollTop = 0
   let scrollTimer: ReturnType<typeof setTimeout> | undefined
   let persistenceQueue = Promise.resolve()
-  const persist = (next: () => NativePreferencesRequest | undefined, generation?: number) => {
-    persistenceQueue = persistenceQueue.catch(() => undefined).then(() => {
-      const value = next()
-      if (value) return acceptNativePreferencesRequest(value, generation)
-    })
+  const persist = (next: () => NativePreferencesRequest, generation?: number) => {
+    persistenceQueue = persistenceQueue.catch(() => undefined).then(() => acceptNativePreferencesRequest(next(), generation))
     return persistenceQueue
   }
   const flushScroll = (generation?: number) => {
@@ -49,7 +46,8 @@ export const PreferencesWindow: Component = () => {
     await flushScroll(generation)
   }
 
-  const { context: project, emptyInventory } = createPreferencesProjectContext(request, () => initialized() && activeSettingsSection() !== "servers", (context, current) => {
+  const projectDemand = createMemo(() => ["general", "providers", "missions", "usage"].includes(activeSettingsSection()))
+  const project = createPreferencesProjectContext(request, projectDemand, (context, current) => {
     // Share the native request queue: an explicit newer opener always wins over a late restore read.
     requestQueue = requestQueue.catch(() => undefined).then(async () => {
       if (!current()) return
@@ -60,18 +58,6 @@ export const PreferencesWindow: Component = () => {
       setRequest({ ...next, scrollTop })
     }).catch(() => undefined)
   })
-  // Retaining an equivalent binding keeps provider and activation reads attached
-  // while the restored request is persisted or the scroll position changes.
-  const providerContext = createMemo(() => {
-    const bound = project(), current = request()
-    return {
-      instanceId: bound?.instanceId ?? (parseInstanceKey(current.instanceId ?? "").backendId !== "local" ? current.instanceId : "") ?? "",
-      location: bound?.location ?? current.location,
-      workspacePath: bound?.workspacePath ?? current.workspacePath,
-      serverId: current.serverId,
-    }
-  }, undefined, { equals: (left, right) => left.instanceId === right.instanceId && left.serverId === right.serverId && left.workspacePath === right.workspacePath
-    && left.location?.directory === right.location?.directory && left.location?.workspaceID === right.location?.workspaceID })
   createEffect(() => {
     const instanceId = project()?.instanceId
     if (instanceId) onCleanup(() => destroyClients(instanceId))
@@ -182,12 +168,10 @@ export const PreferencesWindow: Component = () => {
     <>
       <Show when={initialized()}><SettingsScreen
         standalone
-        providerContext={providerContext()}
+        providerContext={{ instanceId: project()?.instanceId ?? (parseInstanceKey(request().instanceId ?? "").backendId !== "local" ? request().instanceId : "") ?? "", location: project()?.location ?? request().location, serverId: request().serverId }}
         projectUnavailable={parseInstanceKey(request().instanceId ?? "").backendId !== "local" && !project()}
-        projectUnbound={Boolean(request().instanceId && !project() && !emptyInventory())}
         scrollPosition={request()}
         onScrollPositionChange={(top) => {
-          if (activeSettingsSection() !== request().section) return
           scrollTop = top
           clearTimeout(scrollTimer)
           scrollTimer = setTimeout(() => { void flushScroll().catch(() => undefined) }, 150)
@@ -201,22 +185,6 @@ export const PreferencesWindow: Component = () => {
             setRequest(next)
           })
           return requestQueue
-        }}
-        onMissionsDisabled={(current) => {
-          const context = providerContext()
-          setActiveSettingsSection("general")
-          requestQueue = requestQueue.catch(() => undefined).then(() =>
-            persist(() => {
-              // A newer native opener or section change takes precedence.
-              if (!current() || providerContext() !== context || request().section !== "missions"
-                || activeSettingsSection() !== "general") return
-              clearTimeout(scrollTimer)
-              scrollTop = 0
-              const next = { ...request(), section: "general" as const, scrollTop }
-              setRequest(next)
-              return next
-            }),
-          ).catch(() => undefined)
         }}
         onClose={() => close(false)}
       /></Show>
