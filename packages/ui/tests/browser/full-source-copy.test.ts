@@ -25,8 +25,10 @@ async function withFixture(scenario: string, run: (page: Page) => Promise<void>)
   const page = await context.newPage()
   page.setDefaultTimeout(10_000)
   const errors: string[] = []
-  page.on("pageerror", error => errors.push(error.message))
-  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  page.on("pageerror", error => errors.push(error.stack ?? error.message))
+  await page.route("**/api/**", route => route.fulfill({
+    json: new URL(route.request().url()).pathname.endsWith("/permission-receipts") ? { receipts: [] } : {},
+  }))
   try {
     await page.goto(`${url}?scenario=${scenario}`, { waitUntil: "domcontentloaded", timeout: 30_000 })
     await page.waitForFunction(() => Boolean((window as any).fixture))
@@ -36,10 +38,53 @@ async function withFixture(scenario: string, run: (page: Page) => Promise<void>)
     assert.deepEqual(errors, [])
     assert.ok(await page.evaluate(() => (window as any).fixture.requests.length > 0))
   } catch (error) {
-    console.error("Full-source fixture failure", scenario, errors, (await page.locator("main").textContent())?.slice(0, 2000))
+    console.error("Full-source fixture failure", scenario, errors, (await page.locator("main").allTextContents()).join("").slice(0, 2000))
     throw error
   } finally { await context.close() }
 }
+
+test("ungrouping does not transfer an open tool's disclosure to another call", () => withFixture("tool-group-disclosure", async page => {
+  const toggle = (id: string) => page.locator(`.tool-call-message[data-part-id="${id}"] .tool-call-header-toggle`)
+  const standalone = toggle("full-source-tool")
+  await standalone.click()
+  assert.equal(await standalone.getAttribute("aria-expanded"), "true")
+  await page.getByRole("button", { name: "Message content", exact: true }).click()
+  await page.getByRole("button", { name: "Disable tool grouping" }).click()
+  await page.getByRole("button", { name: "Shell: 2", exact: true }).waitFor({ state: "detached" })
+  for (const id of ["group-shell-0", "group-shell-1"]) assert.equal(await toggle(id).getAttribute("aria-expanded"), "false")
+}))
+
+test("tool groups can be opened by default or replaced by ordinary cards without changing tool visibility", async () => {
+  await withFixture("tool-groups", async page => {
+    const trigger = page.getByRole("button", { name: "Message content", exact: true })
+    const popup = page.locator(".transcript-filters")
+    const groups = popup.getByRole("group", { name: "Tool groups", exact: true })
+    const header = (name: string) => page.getByRole("button", { name, exact: true })
+    const reads = page.locator('.tool-call-message[data-part-id^="group-read-"]')
+    const shells = page.locator('.tool-call-message[data-part-id^="group-shell-"]')
+
+    await header("Explored: 3 reads").waitFor()
+    assert.equal(await header("Shell: 3").getAttribute("aria-expanded"), "false")
+    await trigger.click()
+    await groups.getByRole("button", { name: "Expand Tool groups" }).click()
+    await header("Explored: 3 reads").and(page.locator('[aria-expanded="true"]')).waitFor()
+    assert.equal(await header("Shell: 3").getAttribute("aria-expanded"), "true")
+    assert.equal(await reads.count(), 3)
+    assert.equal(await shells.count(), 3)
+    await groups.getByRole("button", { name: "Disable tool grouping" }).click()
+    await page.locator(".message-exploration-group").first().waitFor({ state: "detached" })
+    assert.equal(await reads.count(), 3)
+    assert.equal(await shells.count(), 3)
+    assert.equal(await groups.getByRole("button", { name: "Expand Tool groups" }).isDisabled(), true)
+    await popup.getByRole("button", { name: "Hide read", exact: true }).click()
+    await reads.first().waitFor({ state: "detached" })
+    assert.equal(await shells.count(), 3)
+
+    await groups.getByRole("button", { name: "Enable tool grouping" }).click()
+    await header("Shell: 3").waitFor()
+    assert.equal(await reads.count(), 0)
+  })
+})
 
 async function copyWithPointer(page: Page, button: Locator): Promise<string> {
   await button.scrollIntoViewIfNeeded()

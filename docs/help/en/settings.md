@@ -85,7 +85,7 @@ Built-in layout is window layout, not a project mutation. Extension checkboxes a
 ## Transcript detail and composer size {#transcript-composer}
 
 1. Open **Chat** to choose transcript detail defaults. Presets are **Nothing**, **Minimal**, **Balanced** and **Everything**; individual changes produce **Custom**.
-2. Set each row's **Default state** (**Hidden**, **Collapsed** or **Expanded**) for thinking, diagnostics, tool inputs, tokens, system messages and each tool type, or use the conversation's **Message content** popup, which shares these choices.
+2. Set each row's **Default state** (**Hidden**, **Collapsed** or **Expanded**), or use the conversation's **Message content** popup, which shares these choices. For **Tool groups**, **Disabled** gives each call its own card; **Collapsed** and **Expanded** set how groups open.
 3. In **General**, check **Show the message timeline**, **Put the first/latest message arrows under the timeline**, **Split tool-call diffs** and **Queue sent prompts** (queue prompts sent while a session works instead of steering it) as needed.
 4. Resize the composer using its resize control; long drafts scroll inside the field.
 
