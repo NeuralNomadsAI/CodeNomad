@@ -196,10 +196,10 @@ mod tests {
         runtime.frame(0.0);
         assert_eq!(
             runtime.state.launcher.as_ref().unwrap().error,
-            Some("connect_error")
+            Some("rune.connect_error")
         );
         let tree = runtime.accessibility_json().to_string();
-        assert!(tree.contains(crate::strings::t("connect_error")));
+        assert!(tree.contains(crate::strings::t("rune.connect_error")));
         assert!(!tree.contains("private backend startup detail"));
     }
 }
@@ -213,7 +213,7 @@ pub fn connect(s: &mut State, _: &mut Tx) {
     l.host = None;
     let address = l.address.text.clone();
     let password = l.password.text.clone();
-    l.job("connect_error", async move {
+    l.job("rune.connect_error", async move {
         let b = Backend::connect(&address, &password).await?;
         let server_id = b.server_id().await?;
         let projects = b.projects().await?;
@@ -230,7 +230,7 @@ pub fn open(s: &mut State, tx: &mut Tx) {
     }
     if !crate::workspace::prepare_open(s, tx) {
         if let Some(l) = &mut s.launcher {
-            l.error = Some("open_error");
+            l.error = Some("rune.open_error");
         }
         return;
     }
@@ -251,12 +251,12 @@ pub fn open(s: &mut State, tx: &mut Tx) {
     let pending = match l.openings.begin(b.clone(), &intent) {
         Ok(pending) => pending,
         Err(_) => {
-            l.error = Some("open_error");
+            l.error = Some("rune.open_error");
             return;
         }
     };
     let folder = l.folder.text.trim().to_string();
-    l.job("open_error", async move {
+    l.job("rune.open_error", async move {
         let opening = pending.create(&folder).await?;
         let rows = b.sessions(&opening.project, None).await?;
         Ok(Reply::Opened(opening, rows, None))
@@ -270,7 +270,7 @@ pub fn list(s: &mut State, more: bool) {
         return;
     };
     let cursor = if more { l.next.clone() } else { None };
-    l.job("list_error", async move {
+    l.job("rune.list_error", async move {
         Ok(Reply::Listed(
             b.sessions(&p, cursor.as_deref()).await?,
             more,
@@ -292,7 +292,7 @@ pub fn create(s: &mut State, _: &mut Tx) {
     };
     let title = l.title.text.clone();
     // A create request is never automatically retried. Refresh reconciles a lost response.
-    l.job("create_error", async move {
+    l.job("rune.create_error", async move {
         let session = b.create_session(&p, &title).await?;
         Ok(Reply::Bound(
             b.bind(&p, &session.id, true).await?,
@@ -310,7 +310,7 @@ pub fn choose(s: &mut State, id: String, title: String) {
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
-    l.job("open_error", async move {
+    l.job("rune.open_error", async move {
         Ok(Reply::Bound(b.bind(&p, &id, false).await?, title))
     });
 }
@@ -333,13 +333,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 l.host = Some(host);
                 // Bootstrap owns the authenticated cookie jar even if project listing fails.
                 l.connection = Some(backend.clone());
-                l.job("list_error", async move {
+                l.job("rune.list_error", async move {
                     let server_id = backend.server_id().await?;
                     let projects = backend.projects().await?;
                     Ok(Reply::Connected(backend, projects, server_id))
                 });
             }
-            Err(_) => l.error = Some("connect_error"),
+            Err(_) => l.error = Some("rune.connect_error"),
         }
     }
     let Some(result) = l.result.as_ref().and_then(|rx| rx.try_recv().ok()) else {
@@ -362,7 +362,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         Ok(Reply::Opened(opening, rows, restored)) => {
             let project = opening.project.clone();
             if opening.adopt().is_err() {
-                l.error = Some("open_error");
+                l.error = Some("rune.open_error");
                 tx.instant();
                 return true;
             }
@@ -396,13 +396,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         Err(error) => {
             let key = match error.to_string().as_str() {
-                "connect_error" => "connect_error",
-                "list_error" => "list_error",
-                "create_error" => "create_error",
+                "rune.connect_error" => "rune.connect_error",
+                "rune.list_error" => "rune.list_error",
+                "rune.create_error" => "rune.create_error",
                 "rune.restore_error" => "rune.restore_error",
-                _ => "open_error",
+                _ => "rune.open_error",
             };
-            if key == "create_error" {
+            if key == "rune.create_error" {
                 l.creation_uncertain = true;
             }
             l.error = Some(key);

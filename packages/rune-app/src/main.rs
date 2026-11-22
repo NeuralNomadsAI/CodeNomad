@@ -305,7 +305,7 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
                     .pad(Space::Sm)
                     .child(text(strings::t(error)).role("alert"))
                     .child(
-                        launcher_view::button("workspace-retry", strings::t("retry"), false)
+                        launcher_view::button("workspace-retry", strings::t("sessionList.loadError.retry"), false)
                             .on_press_tx(workspace::retry),
                     )
             } else {
@@ -325,11 +325,11 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     .key("rows")
     .virtual_rows_version(s.revision);
     let status = match s.phase {
-        Phase::Loading => "loading",
-        Phase::Ready => "ready",
-        Phase::Streaming => "streaming",
-        Phase::Failed => "failed",
-        Phase::Reconnecting => "reconnecting",
+        Phase::Loading => "rune.loading",
+        Phase::Ready => "rune.ready",
+        Phase::Streaming => "rune.streaming",
+        Phase::Failed => "rune.failed",
+        Phase::Reconnecting => "rune.reconnecting",
     };
     let expanded = s
         .agent
@@ -343,14 +343,14 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                 .pad(Space::Md)
                 .separate(Space::Lg)
                 .child(
-                    text(strings::t("title"))
+                    text(strings::t("window.title.main"))
                         .key("app-title")
                         .text_role(TextRole::Title),
                 )
                 .child(if s.launcher.is_some() {
                     launcher_view::button(
                         "sessions-back",
-                        strings::t("sessions"),
+                        strings::t("sessionList.header.title"),
                         !matches!(s.phase, Phase::Ready | Phase::Failed)
                             || (!s.draft.text.is_empty() && s.workspace.is_none())
                             || agent::navigation_blocked(s),
@@ -361,7 +361,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                 })
                 .child(text(strings::t(status)))
                 .child(
-                    text(strings::t(if s.paging { "loading" } else { "older" }))
+                    text(strings::t(if s.paging { "rune.loading" } else { "rune.older" }))
                         .key("older")
                         .role("button")
                         .focusable(true)
@@ -369,7 +369,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                         .on_press_tx(request_older),
                 )
                 .child(if s.phase == Phase::Failed || s.history_error {
-                    text(strings::t("retry"))
+                    text(strings::t("sessionList.loadError.retry"))
                         .key("retry")
                         .role("button")
                         .focusable(true)
@@ -378,7 +378,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                     rune::el()
                 })
                 .child(
-                    text(strings::t("latest"))
+                    text(strings::t("rune.latest"))
                         .key("latest")
                         .role("button")
                         .focusable(true)
@@ -396,7 +396,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
             col()
                 .key("session-composer")
                 .role("group")
-                .label(strings::t("prompt"))
+                .label(strings::t("rune.prompt"))
                 .full_width()
                 .pad(Space::Md)
                 .separate(Space::Sm)
@@ -404,11 +404,11 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                     layout::composer(
                         input(&s.draft)
                             .key("composer")
-                            .label(strings::t("prompt"))
+                            .label(strings::t("rune.prompt"))
                             .full_width()
                             .pad(Space::Sm)
                             .field_surface()
-                            .hint(strings::t("prompt"))
+                            .hint(strings::t("rune.prompt"))
                             .content_direction()
                             .on_edit(|s: &mut State| &mut s.draft)
                             .on_input_change(workspace::draft_changed)
@@ -419,7 +419,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                 .child(
                     launcher_view::button(
                         "send",
-                        strings::t("send"),
+                        strings::t("promptInput.overlay.send"),
                         s.phase != Phase::Ready || s.agent.as_ref().is_some_and(|a| a.blocked()),
                     )
                     .on_press_tx(send),
@@ -470,7 +470,7 @@ fn run_app() {
                 s.messages = transport::synthetic();
                 s.phase = Phase::Ready;
             })],
-            ..layout::app_spec(strings::t("title"), init, view)
+            ..layout::app_spec(strings::t("window.title.main"), init, view)
         },
         workspace::finish,
     );

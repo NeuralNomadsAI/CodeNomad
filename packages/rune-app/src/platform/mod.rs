@@ -170,7 +170,7 @@ pub fn browse(s: &mut crate::State, tx: &mut rune::Tx) {
     #[cfg(not(target_arch = "wasm32"))]
     tx.open_folder(
         rune::file_dialog::FileDialogOptions {
-            title: crate::strings::t("folder").into(),
+            title: crate::strings::t("instanceInfo.labels.folder").into(),
             ..Default::default()
         },
         |s: &mut crate::State, result, tx| match result {
@@ -180,14 +180,14 @@ pub fn browse(s: &mut crate::State, tx: &mut rune::Tx) {
                 crate::launcher::open(s, tx);
             }
             Ok(None) => {}
-            Err(_) => s.launcher.as_mut().unwrap().error = Some("open_error"),
+            Err(_) => s.launcher.as_mut().unwrap().error = Some("rune.open_error"),
         },
     );
     #[cfg(target_arch = "wasm32")]
     {
         let _ = tx;
         if let Some(launcher) = s.launcher.as_mut() {
-            launcher.error = Some("open_error");
+            launcher.error = Some("rune.open_error");
         }
     }
     #[cfg(not(target_arch = "wasm32"))]

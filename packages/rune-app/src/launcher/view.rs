@@ -13,24 +13,24 @@ pub fn view(s: &State) -> El {
     let mut body = col().full_width().separate(Space::Md);
     if l.connection.is_none() {
         body = body
-            .child(text(t("server")).text_role(TextRole::Title))
+            .child(text(t("rune.server")).text_role(TextRole::Title))
             .child(
                 input(&l.address)
                     .literal_direction()
                     .key("server-address")
-                    .label(t("server"))
+                    .label(t("rune.server"))
                     .single_line()
                     .full_width()
                     .pad(Space::Sm)
                     .field_surface()
                     .on_edit(|s: &mut State| &mut s.launcher.as_mut().unwrap().address),
             )
-            .child(text(t("password")))
+            .child(text(t("authRecovery.password")))
             .child(
                 input(&l.password)
                     .literal_direction()
                     .key("server-password")
-                    .label(t("password"))
+                    .label(t("authRecovery.password"))
                     .single_line()
                     .secure()
                     .full_width()
@@ -39,16 +39,16 @@ pub fn view(s: &State) -> El {
                     .on_edit(|s: &mut State| &mut s.launcher.as_mut().unwrap().password)
                     .on_submit(launcher::connect),
             )
-            .child(button("connect", t("connect"), l.pending).on_press_tx(launcher::connect));
+            .child(button("connect", t("folderSelection.servers.dialog.connect"), l.pending).on_press_tx(launcher::connect));
     } else {
         body = body
-            .child(text(t("folder")).text_role(TextRole::Title))
+            .child(text(t("instanceInfo.labels.folder")).text_role(TextRole::Title))
             .child(
                 input(&l.folder)
                     .literal_direction()
                     .key("folder-path")
                     .disabled(waiting)
-                    .label(t("folder"))
+                    .label(t("instanceInfo.labels.folder"))
                     .single_line()
                     .full_width()
                     .pad(Space::Sm)
@@ -62,7 +62,7 @@ pub fn view(s: &State) -> El {
                     .child(
                         button(
                             "browse",
-                            t("browse"),
+                            t("folderSelection.browseMenu.title"),
                             l.pending || waiting || !crate::platform::folder_picker_available(),
                         )
                         .on_press_tx(crate::platform::browse),
@@ -70,7 +70,7 @@ pub fn view(s: &State) -> El {
                     .child(
                         button(
                             "open-folder",
-                            t("open"),
+                            t("directoryBrowser.openCurrent"),
                             l.pending || waiting || l.folder.text.trim().is_empty(),
                         )
                         .on_press_tx(launcher::open),
@@ -92,21 +92,21 @@ pub fn view(s: &State) -> El {
                 .child(
                     rune_theme_codenomad::layout::action_row()
                         .separate(Space::Sm)
-                        .child(text(t("sessions")).text_role(TextRole::Title))
+                        .child(text(t("sessionList.header.title")).text_role(TextRole::Title))
                         .child(
-                            button("refresh-sessions", t("refresh"), l.pending || waiting)
+                            button("refresh-sessions", t("rune.refresh"), l.pending || waiting)
                                 .on_press(|s: &mut State| launcher::list(s, false)),
                         ),
                 )
                 .child(
                     input(&l.search)
                         .key("session-search")
-                        .label(t("search"))
+                        .label(t("rune.search"))
                         .single_line()
                         .full_width()
                         .pad(Space::Sm)
                         .field_surface()
-                        .hint(t("search"))
+                        .hint(t("rune.search"))
                         .on_edit(|s: &mut State| &mut s.launcher.as_mut().unwrap().search),
                 );
             let filter = l.search.text.to_lowercase();
@@ -122,7 +122,7 @@ pub fn view(s: &State) -> El {
                     button(
                         &format!("session-{id}"),
                         if title.is_empty() {
-                            t("untitled")
+                            t("sessionList.session.untitled")
                         } else {
                             &title
                         },
@@ -133,13 +133,13 @@ pub fn view(s: &State) -> El {
                 );
             }
             if l.sessions.is_empty() {
-                items = items.child(text(t("empty_sessions")));
+                items = items.child(text(t("rune.empty_sessions")));
             }
             if l.next.is_some() {
                 items = items.child(
                     button(
                         "more-sessions",
-                        t("more"),
+                        t("rune.more"),
                         l.pending || waiting || l.sessions.len() >= 2000,
                     )
                     .on_press(|s: &mut State| launcher::list(s, true)),
@@ -147,23 +147,23 @@ pub fn view(s: &State) -> El {
             }
             body = body
                 .child(col().key("session-list").full_width().child(items))
-                .child(text(t("new_session")))
+                .child(text(t("sessionList.actions.newSession.title")))
                 .child(
                     input(&l.title)
                         .key("session-title")
-                        .label(t("session_title"))
+                        .label(t("rune.session_title"))
                         .single_line()
                         .full_width()
                         .pad(Space::Sm)
                         .field_surface()
-                        .hint(t("session_title"))
+                        .hint(t("rune.session_title"))
                         .on_edit(|s: &mut State| &mut s.launcher.as_mut().unwrap().title)
                         .on_submit(launcher::create),
                 )
                 .child(
                     button(
                         "create-session",
-                        t("create"),
+                        t("rune.create"),
                         l.pending
                             || waiting
                             || l.creation_uncertain
@@ -174,7 +174,7 @@ pub fn view(s: &State) -> El {
         }
     }
     if l.pending {
-        body = body.child(text(t("loading")));
+        body = body.child(text(t("rune.loading")));
     }
     if let Some(error) = l.error {
         body = body.child(text(t(error)));
@@ -185,7 +185,7 @@ pub fn view(s: &State) -> El {
         .reading_surface()
         .pad(Space::Xl)
         .separate(Space::Xl)
-        .child(text(t("title")).text_role(TextRole::Title))
+        .child(text(t("window.title.main")).text_role(TextRole::Title))
         .child(
             col()
                 .full_width()

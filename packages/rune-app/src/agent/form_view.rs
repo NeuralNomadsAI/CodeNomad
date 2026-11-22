@@ -10,10 +10,10 @@ pub fn fields(s: &State, form: &Form) -> El {
     let mut body = col()
         .full_width()
         .separate(Space::Sm)
-        .child(text(t("question")))
+        .child(text(t("permissionApproval.kind.question")))
         .child(text(&form.title).wrap());
     if !supported {
-        body = body.child(text(t("unsupported_question")))
+        body = body.child(text(t("rune.unsupported_question")))
     }
     let values = agent_forms::values(form, &a.drafts);
     for field in form
@@ -30,7 +30,7 @@ pub fn fields(s: &State, form: &Form) -> El {
         match field["type"].as_str() {
             Some("boolean") => {
                 let mut buttons = rune_theme_codenomad::layout::action_row().separate(Space::Sm);
-                for (label, value) in [("yes", "true"), ("no", "false")] {
+                for (label, value) in [("rune.yes", "true"), ("rune.no", "false")] {
                     let id = identity.clone();
                     let label = format!(
                         "{} {}",
@@ -125,7 +125,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                     body = body.child(
                         input(&d.custom)
                             .key(format!("custom-{key}"))
-                            .label(t("other_values"))
+                            .label(t("rune.other_values"))
                             .full_width()
                             .disabled(a.busy)
                             .on_edit(move |s: &mut State| {
@@ -149,7 +149,7 @@ pub fn actions(s: &State, form: &Form) -> El {
         .child(
             button(
                 "answer-question",
-                t("answer"),
+                t("rune.answer"),
                 a.locked() || agent_forms::answer(form, &a.drafts).is_err(),
             )
             .on_press(move |s: &mut State| {
@@ -159,7 +159,7 @@ pub fn actions(s: &State, form: &Form) -> El {
             }),
         )
         .child(
-            button("cancel-question", t("cancel_question"), a.locked()).on_press(
+            button("cancel-question", t("rune.cancel_question"), a.locked()).on_press(
                 move |s: &mut State| {
                     if let Some(a) = s.agent.as_mut() {
                         a.cancel_form(cancel.clone())

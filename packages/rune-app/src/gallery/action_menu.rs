@@ -35,7 +35,7 @@ fn init() -> Gallery {
     }
 }
 fn descriptor(s: &Gallery) -> Rc<menu::Menu<Gallery>> {
-    let mut open = menu::Item::new("open", t("open"), |s: &mut Gallery, tx| {
+    let mut open = menu::Item::new("open", t("directoryBrowser.openCurrent"), |s: &mut Gallery, tx| {
         event("select", tx);
         s.dialog = true;
     });
@@ -67,7 +67,7 @@ fn descriptor(s: &Gallery) -> Rc<menu::Menu<Gallery>> {
     if s.case == "duplicate" {
         items.push(Rc::new(menu::Item::new(
             "open",
-            t("open"),
+            t("directoryBrowser.openCurrent"),
             |s: &mut Gallery, tx| {
                 event("replacement-select", tx);
                 s.dialog = true;
@@ -100,14 +100,14 @@ fn view(s: &Gallery, cx: &mut Cx<Gallery>) -> El {
                         event("dialog-close", tx);
                         s.dialog = false;
                     });
-                let second = layout::button(t("open"), false)
+                let second = layout::button(t("directoryBrowser.openCurrent"), false)
                     .key("dialog-second")
                     .on_press_tx(|_: &mut Gallery, tx| event("dialog-second", tx));
                 layers.push(
                     scene::dialog(rune::col().child(cancel).child(second))
                         .key("dialog")
                         .role("dialog")
-                        .label(t("open"))
+                        .label(t("directoryBrowser.openCurrent"))
                         .modal_tx(true, |s: &mut Gallery, tx| {
                             event("dialog-dismiss", tx);
                             s.dialog = false;
@@ -126,6 +126,6 @@ pub fn run() {
     }
     rune::run(AppSpec {
         poll: Some(|s, _, tx| menu::poll(s, at, tx)),
-        ..layout::app_spec(t("title"), init, view)
+        ..layout::app_spec(t("window.title.main"), init, view)
     });
 }

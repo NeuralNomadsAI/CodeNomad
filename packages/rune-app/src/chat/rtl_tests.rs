@@ -32,12 +32,12 @@ fn real_chat_controls_follow_the_explicit_catalogue_direction() {
     assert!(
         en.accessibility_json()
             .to_string()
-            .contains(strings::with_locale("en", || strings::t("latest")))
+            .contains(strings::with_locale("en", || strings::t("rune.latest")))
     );
     assert!(
         he.accessibility_json()
             .to_string()
-            .contains(strings::with_locale("he", || strings::t("latest")))
+            .contains(strings::with_locale("he", || strings::t("rune.latest")))
     );
 }
 #[test]
