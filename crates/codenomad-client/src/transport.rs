@@ -21,6 +21,7 @@ pub enum Command {
     Send(String),
     Prompt(crate::prompt::Prompt),
     Older,
+    Latest,
     Retry,
     Close,
 }
@@ -38,6 +39,7 @@ pub enum Event {
     History(Vec<Message>),
     Sync(Page),
     Older(Page),
+    HistoryWindow(Page),
     Message(Message),
     PromptAcknowledged {
         attempted: String,

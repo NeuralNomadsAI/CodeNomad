@@ -152,7 +152,15 @@ pub fn join(left: &[Message], right: &[Message]) -> Result<Vec<Message>> {
         check(left)?;
         return Ok(left.to_vec());
     }
-    let overlap = (1..=left.len().min(right.len()))
+    let overlap = overlap(left, right)?;
+    let mut rows = left[..left.len() - overlap].to_vec();
+    rows.extend_from_slice(right);
+    check(&rows)?;
+    Ok(rows)
+}
+
+fn overlap(left: &[Message], right: &[Message]) -> Result<usize> {
+    (1..=left.len().min(right.len()))
         .rev()
         .find(|&n| {
             left[left.len() - n..]
@@ -160,9 +168,22 @@ pub fn join(left: &[Message], right: &[Message]) -> Result<Vec<Message>> {
                 .zip(&right[..n])
                 .all(|(a, b)| a.id == b.id)
         })
-        .ok_or("history windows lost their overlap")?;
-    let mut rows = left[..left.len() - overlap].to_vec();
-    rows.extend_from_slice(right);
-    check(&rows)?;
-    Ok(rows)
+        .ok_or_else(|| "history windows lost their overlap".into())
+}
+
+pub(crate) fn prepend(older: &Page, resident: &[Message]) -> Result<Option<Vec<Message>>> {
+    if resident.is_empty() || older.rows.is_empty() {
+        return join(&older.rows, resident).map(Some);
+    }
+    let common = overlap(&older.rows, resident)?;
+    let bytes = older.rows[..older.rows.len() - common]
+        .iter()
+        .chain(resident)
+        .map(|r| crate::content::attachment_bytes(&r.parts))
+        .sum::<usize>();
+    if bytes > WINDOW_BYTES {
+        check(&older.rows)?;
+        return Ok(None);
+    }
+    join(&older.rows, resident).map(Some)
 }

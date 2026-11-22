@@ -373,21 +373,17 @@ fn dense_user_attachments_keep_the_message_and_native_tail() {
 }
 
 #[test]
-fn accepted_response_over_budget_is_unconfirmed_not_rejected() {
+fn native_large_payload_does_not_obscure_the_receipt() {
     run(async {
         let server = Server::new(vec![json!({
-            "data":{"id":"queued","sessionID":"session","payload":{"files":[{"data":"x".repeat(crate::prompt::MAX_BODY_BYTES)}]}}
+            "data":{"id":"queued","sessionID":"session","payload":{"files":[{"data":"x".repeat(34_952_540)}]}}
         })]);
         let prompt = Prompt {
             id: Some("queued".into()),
             delivery: Some(Delivery::Queue),
             ..Prompt::default()
         };
-        let error = server.backend.prompt(&prompt).await.unwrap_err();
-        assert_eq!(
-            error.downcast_ref(),
-            Some(&crate::prompt::PromptError::Unconfirmed)
-        );
+        assert_eq!(server.backend.prompt(&prompt).await.unwrap().id, "queued");
         assert_eq!(server.requests.lock().unwrap().len(), 1);
     });
 }
@@ -473,5 +469,7 @@ fn prompt_and_history_limits_do_not_expand_catalogues() {
                 .to_string()
                 .contains("resident attachments")
         );
+        assert!(history::prepend(&left, &right.rows).unwrap().is_none());
+        assert!(history::prepend(&left, &right.rows[1..]).is_err());
     });
 }

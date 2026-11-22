@@ -12,6 +12,7 @@ pub mod files;
 pub mod history;
 pub mod http;
 pub mod prompt;
+mod prompt_receipt;
 pub mod recovery;
 pub mod runtime;
 mod server_path;

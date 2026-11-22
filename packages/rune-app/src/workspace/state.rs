@@ -212,6 +212,13 @@ pub fn capture(s: &mut State) {
     let Some(item) = ui.entries.get_mut(ui.active) else {
         return;
     };
+    if capture_draft(item, &s.draft.text) {
+        ui.changed();
+    }
+    ui.stage();
+}
+
+fn capture_draft(item: &mut Entry, text: &str) -> bool {
     let mut changed = false;
     if let Tab::Workspace(saved) = &mut item.saved {
         let key = saved
@@ -222,22 +229,19 @@ pub fn capture(s: &mut State) {
             b.session == key || b.session.is_empty() && key == "__no_session_draft__"
         });
         if owns_draft {
-            if s.draft.text.is_empty() {
+            if text.is_empty() {
                 if saved.drafts.remove(key).is_some() {
                     item.cleared.insert(key.into());
                     changed = true;
                 }
-            } else if saved.drafts.get(key) != Some(&s.draft.text) {
-                saved.drafts.insert(key.into(), s.draft.text.clone());
+            } else if saved.drafts.get(key).map(String::as_str) != Some(text) {
+                saved.drafts.insert(key.into(), text.into());
                 item.cleared.remove(key);
                 changed = true;
             }
         }
     }
-    if changed {
-        ui.changed();
-    }
-    ui.stage();
+    changed
 }
 pub fn draft_changed(s: &mut State, _: &mut Tx) {
     capture(s);
@@ -607,15 +611,22 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     let active = Cache::take(s);
     let mut changed = false;
+    let mut draft_changed = false;
     for item in &mut ui.entries {
         if let Some(cache) = item.cache.take() {
             cache.apply(s);
             changed |= crate::poll_chat(s, 8);
+            if std::mem::take(&mut s.composer.restored) {
+                draft_changed |= capture_draft(item, &s.draft.text);
+            }
             changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
             item.cache = Some(Cache::take(s));
         }
     }
     active.apply(s);
+    if draft_changed {
+        ui.changed();
+    }
     ui.stage();
     let previous_error = ui.persistence.read_error || ui.persistence.write_error;
     let snapshot = ui.snapshot();

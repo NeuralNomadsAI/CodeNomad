@@ -72,6 +72,7 @@ pub async fn run(
     let mut repairs = 0u8;
     let mut settlement_reads = 0u8;
     let mut resident = Vec::<crate::Message>::new();
+    let mut historical = false;
     let mut parked = false;
     let mut seen = Seen {
         entries: VecDeque::new(),
@@ -144,19 +145,28 @@ pub async fn run(
             Some(Input::Command(Command::Older)) => {
                 if let Some(target) = older
                     .clone()
-                    .filter(|_| opened && !dirty && wire.upstream.load(SeqCst))
+                    .filter(|_| opened && (!dirty || historical) && wire.upstream.load(SeqCst))
                 {
                     let stamp = wire.version.load(SeqCst);
                     match backend.page(target).await {
                         Ok(page) if wire.valid(stamp) && rx.is_empty() => {
-                            if let Ok(joined) = history::join(&page.rows, &resident) {
-                                resident = joined;
-                                older = page.older.clone();
-                                first = resident.first().map(|r| r.id.clone());
-                                known.extend(page.rows.iter().map(|r| r.id.clone()));
-                                publish(&out, &wake, Event::Older(page)).await;
-                            } else {
-                                publish(&out, &wake, Event::PagingFailed).await;
+                            match history::prepend(&page, &resident) {
+                                Ok(Some(joined)) if !historical => {
+                                    resident = joined;
+                                    older = page.older.clone();
+                                    first = resident.first().map(|r| r.id.clone());
+                                    known.extend(page.rows.iter().map(|r| r.id.clone()));
+                                    publish(&out, &wake, Event::Older(page)).await;
+                                }
+                                Ok(_) => {
+                                    historical = true;
+                                    older = page.older.clone();
+                                    resident = page.rows.clone();
+                                    publish(&out, &wake, Event::HistoryWindow(page)).await;
+                                }
+                                Err(_) => {
+                                    publish(&out, &wake, Event::PagingFailed).await;
+                                }
                             }
                         }
                         Ok(_) => {
@@ -172,8 +182,19 @@ pub async fn run(
                     publish(&out, &wake, Event::PagingFailed).await;
                 }
             }
+            Some(Input::Command(Command::Latest)) => {
+                historical = false;
+                first = None;
+                resident.clear();
+                known.clear();
+                owed.clear();
+                dirty = true;
+                parked = false;
+                quiet = Instant::now();
+                publish(&out, &wake, Event::Reconnecting).await;
+            }
             Some(Input::Command(Command::Send(body))) => {
-                if opened && !dirty && !parked && wire.upstream.load(SeqCst) {
+                if opened && !dirty && !parked && !historical && wire.upstream.load(SeqCst) {
                     busy = true;
                     repairs = 0;
                     settlement_reads = 0;
@@ -187,7 +208,7 @@ pub async fn run(
             }
             Some(Input::Command(Command::Prompt(prompt))) => {
                 let Some(id) = &prompt.id else { continue };
-                let admitted = opened && !parked && wire.upstream.load(SeqCst);
+                let admitted = opened && !parked && !historical && wire.upstream.load(SeqCst);
                 let outcome = if admitted {
                     match backend.prompt(&prompt).await {
                         Ok(ack) => PromptOutcome::Confirmed(ack.id),
@@ -232,7 +253,7 @@ pub async fn run(
                 {
                     publish(&out, &wake, Event::AgentHint(false)).await;
                 }
-                if v <= fence || !seen.insert(&native) {
+                if historical || v <= fence || !seen.insert(&native) {
                     continue;
                 }
                 let id = native["data"]["assistantMessageID"]
@@ -335,6 +356,7 @@ pub async fn run(
             && !parked
             && opened
             && wire.upstream.load(SeqCst)
+            && !historical
             && Instant::now() >= quiet
             && rx.is_empty()
         {

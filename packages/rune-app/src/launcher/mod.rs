@@ -525,6 +525,7 @@ fn bind(s: &mut State, b: Backend, title: String, tx: &mut Tx) {
     s.can_older = false;
     s.paging = false;
     s.history_error = false;
+    s.history_detached = false;
     s.revision += 1;
     let (out, incoming) = bounded(64);
     let (commands, input) = bounded(1);

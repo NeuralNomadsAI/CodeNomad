@@ -21,6 +21,7 @@ pub(super) struct Cache {
     can_older: bool,
     paging: bool,
     error: bool,
+    history_detached: bool,
     launcher_visible: bool,
     input_scope: std::rc::Rc<()>,
 }
@@ -49,6 +50,7 @@ impl Cache {
             can_older: std::mem::take(&mut s.can_older),
             paging: std::mem::take(&mut s.paging),
             error: std::mem::take(&mut s.history_error),
+            history_detached: std::mem::take(&mut s.history_detached),
             launcher_visible: s.screen.is_launcher(),
             input_scope: s.input_scope.clone(),
         }
@@ -68,6 +70,7 @@ impl Cache {
         s.can_older = self.can_older;
         s.paging = self.paging;
         s.history_error = self.error;
+        s.history_detached = self.history_detached;
         if self.launcher_visible {
             s.screen.show_launcher();
         } else {

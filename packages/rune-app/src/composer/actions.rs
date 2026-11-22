@@ -13,6 +13,7 @@ pub struct Owner {
     sending: Option<Send>,
     pub send_error: bool,
     pub unconfirmed: Option<String>,
+    pub restored: bool,
 }
 struct Send {
     id: String,
@@ -23,6 +24,7 @@ struct Send {
 
 pub fn can_send(s: &State) -> bool {
     matches!(s.phase, Phase::Ready | Phase::Streaming)
+        && !s.history_detached
         && s.composer.sending.is_none()
         && s.composer.unconfirmed.is_none()
         && s.composer.draft.can_send(&s.draft)
@@ -122,6 +124,7 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
     if s.draft.text.is_empty() && s.composer.draft.attachments.is_empty() {
         s.draft = send.edit;
         s.composer.draft = send.draft;
+        s.composer.restored = true;
     }
     if s.phase == Phase::Streaming && !send.was_running {
         s.phase = Phase::Ready;

@@ -132,7 +132,7 @@ impl Backend {
             };
             return Err(error.into());
         }
-        let response = read_json_limited(response, crate::prompt::MAX_BODY_BYTES)
+        let response = crate::prompt_receipt::read(response)
             .await
             .map_err(|_| crate::prompt::PromptError::Unconfirmed)?;
         let native = response.get("data").unwrap_or(&response);

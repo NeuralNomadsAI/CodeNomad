@@ -128,6 +128,7 @@ pub fn contract() {
             Event::Sync(_)
             | Event::History(_)
             | Event::Older(_)
+            | Event::HistoryWindow(_)
             | Event::Reconnecting
             | Event::Connected(_)
             | Event::AgentHint(_)

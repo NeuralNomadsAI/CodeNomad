@@ -56,6 +56,7 @@ struct State {
     can_older: bool,
     paging: bool,
     history_error: bool,
+    history_detached: bool,
 }
 #[derive(PartialEq)]
 enum Phase {
@@ -88,6 +89,7 @@ fn init() -> State {
         can_older: false,
         paging: false,
         history_error: false,
+        history_detached: false,
     }
 }
 fn setup(s: &mut State, wake: rune::Waker) {
@@ -148,7 +150,17 @@ fn retry(s: &mut State) {
         s.history_error = false;
     }
 }
-fn latest(_: &mut State, tx: &mut Tx) {
+fn latest(s: &mut State, tx: &mut Tx) {
+    if s.history_detached {
+        if s.commands
+            .as_ref()
+            .is_some_and(|c| c.try_send(Command::Latest).is_ok())
+        {
+            s.phase = Phase::Reconnecting;
+            s.can_older = false;
+        }
+        return;
+    }
     tx.scroll_to_bottom_instant("history");
 }
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
@@ -196,6 +208,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     }
                 }
                 s.messages = page.rows;
+                s.history_detached = false;
                 composer::reconcile(s);
                 s.can_older = page.older.is_some();
                 s.paging = false;
@@ -216,6 +229,13 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     Err(_) => s.history_error = true,
                 }
                 s.paging = false;
+            }
+            Event::HistoryWindow(page) => {
+                s.messages = page.rows;
+                s.can_older = page.older.is_some();
+                s.paging = false;
+                s.history_error = false;
+                s.history_detached = true;
             }
             Event::Reconnecting => {
                 if let Some(files) = &mut s.files {
@@ -241,7 +261,9 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::PromptAcknowledged { attempted, outcome } => {
                 composer::acknowledge(s, &attempted, outcome);
-                workspace::capture(s);
+                if s.workspace.is_some() && std::mem::take(&mut s.composer.restored) {
+                    workspace::capture(s);
+                }
             }
             Event::Text(id, event) => {
                 if let Some(m) = s.messages.iter_mut().find(|m| m.id == id) {
