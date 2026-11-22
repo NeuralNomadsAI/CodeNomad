@@ -576,7 +576,6 @@
 .tool-call-diff-toolbar-label {
   font-size: 11px;
   color: var(--text-secondary);
-  text-transform: uppercase;
   letter-spacing: 0.08em;
 }
 

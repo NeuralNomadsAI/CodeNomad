@@ -102,11 +102,18 @@ describe("edit tool diff payload", () => {
     })
 
     it("keeps a sibling edit modified when the native paths use different spellings", () => {
-      const patch = "--- D:\\repo\\sibling\\shared.txt\n+++ D:\\repo\\sibling\\shared.txt\n@@ -1,1 +1,1 @@\n-before\n+after\n"
+      const patch = "--- D:\\Repo\\sibling\\shared.txt\n+++ D:\\Repo\\sibling\\shared.txt\n@@ -1,1 +1,1 @@\n-before\n+after\n"
       const file = { file: "../sibling/shared.txt", patch, status: "modified" }
-      assert.deepEqual(getApplyPatchFileChange(file, "D:\\repo\\pkg"), { status: "modified", path: "../sibling/shared.txt" })
+      assert.deepEqual(getApplyPatchFileChange(file, "d:\\repo\\pkg"), { status: "modified", path: "../sibling/shared.txt" })
       assert.equal(getApplyPatchFileCopyText(file, "d:\\repo\\pkg\\."), `M ../sibling/shared.txt\n${patch}`)
       assert.deepEqual(getApplyPatchFileChange({ ...file, status: undefined }, "D:\\repo\\pkg"), { status: undefined, path: "../sibling/shared.txt" })
+    })
+
+    it("ignores case differences in UNC paths but preserves explicit case-only renames", () => {
+      const file = { file: "src/Foo.ts", patch: "--- \\\\Host\\Share\\Repo\\src\\foo.ts\n", status: "modified" }
+      const directory = "//host/share/repo"
+      assert.deepEqual(getApplyPatchFileChange(file, directory), { status: "modified", path: "src/Foo.ts" })
+      assert.deepEqual(getApplyPatchFileChange({ ...file, status: "renamed" }, directory), { status: "renamed", path: "src/foo.ts → src/Foo.ts" })
     })
   })
 })

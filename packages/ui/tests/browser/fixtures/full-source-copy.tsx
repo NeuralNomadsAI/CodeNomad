@@ -34,6 +34,7 @@ const patchFiles = [
   { file: "old.txt", source: "old.txt", status: "deleted" },
   { file: "right/shared.ts", source: "old/previous.ts", status: "modified", addition: "renamedAfter" },
   { file: "left/shared.ts", source: "left/shared.ts", status: "modified", addition: "modifiedAfter" },
+  { file: "src/Foo.ts", source: "src/foo.ts", status: "modified" },
 ].map(({ file, source, status, addition }) => ({
   file, status, additions: Number(Boolean(addition)), deletions: Number(Boolean(addition)),
   patch: `Index: /fixture/${source}\n===================================================================\n--- /fixture/${source}\n+++ /fixture/${source}\n`
@@ -46,7 +47,7 @@ const tool = {
     ? { status: "error", input: { filePath }, error: { type: "unknown", message: error } }
     : { status: "completed", input: scenario === "patch" ? {} : scenario === "input" ? input : { filePath },
         metadata: scenario === "patch" ? { files: patchFiles } : scenario === "todo" ? { todos } : scenario === "input" ? {} : { diagnostics },
-        content: [{ type: "text", text: scenario === "patch" ? "Success. Updated the following files:\nA new.txt\nD old.txt\nM right/shared.ts\nM left/shared.ts" : scenario === "input" ? output : "Tool completed" }] },
+        content: [{ type: "text", text: scenario === "patch" ? "Success. Updated the following files:\nA new.txt\nD old.txt\nM right/shared.ts\nM left/shared.ts\nM src/Foo.ts" : scenario === "input" ? output : "Tool completed" }] },
 }
 // A tool inside the omitted range proves derived projections follow the reveal.
 const hiddenTool = { id: "hidden-range-tool", type: "tool", name: "read", time: { created: 1, completed: 2 },

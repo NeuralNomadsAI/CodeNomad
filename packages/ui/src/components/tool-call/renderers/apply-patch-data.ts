@@ -20,6 +20,7 @@ export const APPLY_PATCH_FILE_RENDER_LIMIT = 20
 const APPLY_PATCH_SCAN_LIMIT = 10_000
 
 const operationCodes = { added: "A", deleted: "D", modified: "M", renamed: "R" } as const
+const isWindowsPath = (path: string) => /^(?:[a-z]:[\\/]|\/\/)/i.test(path) || path.includes("\\")
 
 function patchPathKey(path: string, directory?: string): string {
   const rooted = /^([a-z]:\/|\/\/[^/]+\/[^/]+\/?|\/)/i
@@ -31,18 +32,19 @@ function patchPathKey(path: string, directory?: string): string {
     if (segment === ".." && segments.length && segments.at(-1) !== "..") segments.pop()
     else if (segment !== ".." || !root) segments.push(segment)
   }
-  return root.replace(/^[a-z]:/i, (drive) => drive.toLowerCase()) + segments.join("/")
+  return root + segments.join("/")
 }
 
 export function getApplyPatchFileChange(file: ApplyPatchFile, directory?: string): { status?: keyof typeof operationCodes; path: string } {
   const root = directory?.replace(/\\/g, "/").replace(/\/?$/, "/")
-  const windows = root && /^(?:[a-z]:\/|\/\/)/i.test(root)
-  const comparable = (path: string) => windows ? path.toLowerCase() : path
+  const windows = isWindowsPath(directory ?? "")
+  const comparable = (path: string, foldCase = windows) => foldCase ? path.toLowerCase() : path
   const relative = (path: string) => {
     const normalized = path.replace(/\\/g, "/")
     return root && comparable(normalized).startsWith(comparable(root)) ? normalized.slice(root.length) : normalized
   }
-  const target = relative(file?.relativePath || getApplyPatchFilePath(file) || "")
+  const targetPath = file?.relativePath || getApplyPatchFilePath(file) || ""
+  const target = relative(targetPath)
   const nativeStatus = file?.status
   const status = nativeStatus === "added" || nativeStatus === "deleted" || nativeStatus === "modified" || nativeStatus === "renamed"
     ? nativeStatus
@@ -53,8 +55,9 @@ export function getApplyPatchFileChange(file: ApplyPatchFile, directory?: string
     const sourcePath = /^Index: (.+)\r?$/m.exec(header)?.[1] ?? /^--- ([^\t\r\n]+)\r?$/m.exec(header)?.[1]
     if (sourcePath) {
       const source = relative(sourcePath)
-      const sourceKey = patchPathKey(source, root)
-      const targetKey = patchPathKey(target, root)
+      const foldCase = windows || isWindowsPath(sourcePath) || isWindowsPath(targetPath)
+      const sourceKey = comparable(patchPathKey(source, root), foldCase)
+      const targetKey = comparable(patchPathKey(target, root), foldCase)
       if (status === "renamed" || (sourceKey !== targetKey && (root || !sourceKey.endsWith(`/${targetKey}`)))) {
         return { status: "renamed", path: `${source} → ${target}` }
       }
