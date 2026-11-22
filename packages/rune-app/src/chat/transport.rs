@@ -24,9 +24,22 @@ pub fn synthetic() -> Vec<Message> {
         .collect()
 }
 pub fn start(s: &mut crate::State, bootstrap: bool) {
+    s.agent = None;
+    launch(s, Startup::Configured { bootstrap });
+}
+
+pub(crate) fn start_bound(s: &mut crate::State, backend: crate::backend::Backend) {
+    launch(s, Startup::Bound(backend));
+}
+
+enum Startup {
+    Configured { bootstrap: bool },
+    Bound(crate::backend::Backend),
+}
+
+fn launch(s: &mut crate::State, startup: Startup) {
     let (out, incoming) = bounded(64);
     let (commands, input) = bounded(1);
-    s.agent = None;
     s.incoming = Some(incoming);
     s.commands = Some(commands);
     let wake = s.wake.clone();
@@ -35,7 +48,13 @@ pub fn start(s: &mut crate::State, bootstrap: bool) {
         if let Some(previous) = previous {
             let _ = previous.recv().await;
         }
-        run_configured(out, input, wake, bootstrap).await;
+        if input.is_closed() {
+            return;
+        }
+        match startup {
+            Startup::Configured { bootstrap } => run_configured(out, input, wake, bootstrap).await,
+            Startup::Bound(backend) => run_bound(Ok(backend), out, input, wake).await,
+        }
     });
 }
 
@@ -51,22 +70,37 @@ async fn run_configured(
     bootstrap: bool,
 ) {
     if crate::platform::setting("RUNE_BACKEND").is_some() && !crate::local_stress() {
-        let result = match crate::platform::configured_backend(bootstrap).await {
-            Ok(backend) => run_backend(backend, out.clone(), input, wake.clone()).await,
-            Err(error) => Err(error),
-        };
-        if result.is_err() {
-            eprintln!("Rune backend unavailable");
-            publish(&out, &wake, Event::Failed).await;
-        }
-        drop(out);
-        wake();
+        run_bound(
+            crate::platform::configured_backend(bootstrap).await,
+            out,
+            input,
+            wake,
+        )
+        .await;
         return;
     }
     #[cfg(feature = "test-support")]
     run_synthetic(out, input, wake).await;
     #[cfg(not(feature = "test-support"))]
     publish(&out, &wake, Event::Failed).await;
+}
+
+async fn run_bound(
+    backend: crate::history::Result<crate::backend::Backend>,
+    out: Sender<Event>,
+    input: Receiver<Command>,
+    wake: rune::Waker,
+) {
+    let result = match backend {
+        Ok(backend) => run_backend(backend, out.clone(), input, wake.clone()).await,
+        Err(error) => Err(error),
+    };
+    if result.is_err() {
+        eprintln!("Rune backend unavailable");
+        publish(&out, &wake, Event::Failed).await;
+    }
+    drop(out);
+    wake();
 }
 #[cfg(feature = "test-support")]
 async fn run_synthetic(out: Sender<Event>, input: Receiver<Command>, wake: rune::Waker) {

@@ -100,6 +100,11 @@ fn settings_reattaching_the_same_address_keeps_newer_choices_and_does_not_replay
         let state = request(&listener).await;
         assert!(state.first.starts_with("GET /api/storage/state/ui?"));
         state.reply(200, json!({})).await;
+        wait_until(|| {
+            prefs.poll();
+            prefs.saved(Owner::State) == Some(&json!({}))
+        })
+        .await;
         write.reply(200, json!({"settings":{"locale":"fr"}})).await;
         wait_until(|| prefs.poll()).await;
         let read = request(&listener).await;

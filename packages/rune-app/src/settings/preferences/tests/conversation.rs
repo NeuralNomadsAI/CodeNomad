@@ -346,13 +346,9 @@ fn settings_conversation_waits_until_the_fallback_sse_reader_is_closed() {
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
             .await
             .unwrap();
-        let closed = prefs.stop_before_conversation().unwrap();
-        let (out, events) = bounded(8);
-        let (_commands, input) = bounded(1);
-        platform::spawn(async move {
-            let _ = closed.recv().await;
-            let _ = run_backend(backend, out, input, Arc::new(|| {})).await;
-        });
+        let mut root = crate::init();
+        *root.settings.shared.borrow_mut() = prefs;
+        crate::transport::start_bound(&mut root, backend);
         let closure = timeout(Duration::from_secs(2), fallback.socket.read(&mut [0]))
             .await
             .unwrap();
@@ -363,6 +359,30 @@ fn settings_conversation_waits_until_the_fallback_sse_reader_is_closed() {
         let conversation = request(&listener).await;
         assert!(conversation.first.starts_with("GET /api/events?"));
         assert!(!conversation.first.contains("-preferences"));
-        drop(events);
+    });
+}
+
+#[test]
+fn settings_bound_start_cannot_open_sse_while_the_close_receipt_is_held() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.clone().unwrap();
+        let (receipt, closed) = bounded(1);
+        prefs.closing_stream = Some(closed);
+        let mut root = crate::init();
+        *root.settings.shared.borrow_mut() = prefs;
+        crate::transport::start_bound(&mut root, backend);
+        assert!(
+            timeout(Duration::from_millis(100), listener.accept())
+                .await
+                .is_err()
+        );
+        drop(receipt);
+        assert!(
+            request(&listener)
+                .await
+                .first
+                .starts_with("GET /api/events?")
+        );
     });
 }

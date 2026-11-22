@@ -897,25 +897,7 @@ fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize>, tx: &mut
     s.paging = false;
     s.history_error = false;
     s.revision += 1;
-    let (out, incoming) = bounded(64);
-    let (commands, input) = bounded(1);
-    s.incoming = Some(incoming);
-    s.commands = Some(commands);
-    let wake = s.wake.clone();
-    let previous = crate::settings::stop_before_conversation(s);
-    crate::platform::spawn(async move {
-        if let Some(previous) = previous {
-            let _ = previous.recv().await;
-        }
-        if crate::transport::run_backend(b, out.clone(), input, wake.clone())
-            .await
-            .is_err()
-        {
-            crate::transport::publish(&out, &wake, crate::transport::Event::Failed).await;
-        }
-        drop(out);
-        wake();
-    });
+    crate::transport::start_bound(s, b);
     s.show_chat();
     crate::workspace::capture(s);
     if !same_session {
