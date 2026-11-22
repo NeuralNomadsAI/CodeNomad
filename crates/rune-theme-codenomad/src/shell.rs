@@ -144,6 +144,10 @@ pub fn native_locale(locale: &'static str) {
     });
 }
 
+pub fn live_caption() -> bool {
+    cfg!(target_os = "windows") && !rune::is_headless()
+}
+
 pub fn titlebar<S>(cx: &mut Cx<S>, title: &str, rtl: bool, menus: El) -> El {
     let t = tokens(layout::dark());
     let gutter = t.space(Space::Md).px();
