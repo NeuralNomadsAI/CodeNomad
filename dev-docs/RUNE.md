@@ -49,8 +49,8 @@ When a whole module reaches parity, its Solid and Tauri version is deleted on `f
 | Server startup | Tauri `cli_manager.rs` | `platform/host/`: isolated Windows bootstrap, shutdown and generation qualified |
 | Chat, composer and session launcher | Solid transcript, composer and project fixtures | `chat/`, `agent/`, `launcher/`: native flows with shared Rust and simulated OpenCode qualified; Solid parity pending |
 | Browser client | Remote access contracts and Rune web target | Shared WASM state/views: six local and six authenticated session-reading contexts qualified with shared Rust and simulated OpenCode; physical mobile pending |
-| Window state | Host client-state and browser sessionStorage contracts | `workspace/` restores projects, tabs, selected sessions and drafts; native restart and browser reload/quota flows qualified with shared Rust and simulated OpenCode; in-flight creation and real OpenCode restoration pending |
-| Project tabs | `components/instance-tabs.tsx`, `instance-tab.tsx`, `tab-scroll.tsx` | Shared rune-kit Button composite with CSS-generated tab geometry: select/close/New, keyboard navigation, web tab roles, catalogue direction and column sizing qualified; raster/focus, complete bar parity and web tablist grouping pending |
+| Window state | Host client-state and browser sessionStorage contracts | `workspace/` restores projects, tabs, selected sessions and drafts; native restart, browser reload/quota and in-flight creation qualified with shared Rust and simulated OpenCode; real OpenCode restoration pending |
+| Project tabs | `components/instance-tabs.tsx`, `instance-tab.tsx`, `tab-scroll.tsx` | Shared rune-kit Button composite with CSS-generated geometry: select/close/New, keyboard navigation, web tab roles, direction, column sizing and focus halo qualified; SVG/text raster, complete bar parity and web tablist grouping pending |
 
 ## Workspace and qualification
 
@@ -61,6 +61,10 @@ Text fragments retain native ordinals and live/partial/closed provenance. One sh
 Persistent isolated hosts require an explicit root and `trial-*` profile. A versioned marker binds the root, profile and configuration; an OS lock covers child containment and reader drain. Window-state writes use the alpha-owned store, preserving the last complete file through atomic replacement. Browser state belongs to the current tab's sessionStorage. The snapshot uses the existing v1 field names and UTF-16 budgets; unsupported payloads require explicit recovery before any replacement.
 
 Each project tab owns its server record and live conversation state. Drafts remain scoped to the validated server, folder occurrence and native session. Restoration performs a targeted session read, with identity and location validation. Browser departure writes the snapshot and release marker before issuing keepalive deletion of its owned records; storage failure preserves those records. The last browser store also performs this bounded synchronous handoff when Rune unload drops its listener. A preserved BFCache document retains its state and records.
+
+Active and cached tabs share the same guard for pending replies and edited permission/question forms. Closing an inactive tab preserves the active reader and composer. Closed drafts transfer after validated session binding; independent edits and undelivered sessions retain their ownership. Tab capacity is checked before project creation.
+
+The isolated 12px SVG stroke raster discrepancy is tracked in [Rune issue 1346](https://github.com/anomalyco/rune/issues/1346), with a public API reproduction and Chromium cross-prediction controls. Component pixel budgets require separate qualification.
 
 The component index is `rune-components.generated.json`; full sheets and captures are generated under ignored `target/`. Install locked npm dependencies before generating checker-derived sheets. Each qualified component requires a gallery, explicit light/dark pixel thresholds, accessibility and simulated interactions, then two independent blind reviews. Solid/Tauri modules are removed only at complete qualified parity. Integration uses short branches and merge commits into `feat/rust-server`; its synchronization owns merges from `dev`.
 
