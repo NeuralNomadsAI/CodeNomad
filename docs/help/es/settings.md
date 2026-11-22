@@ -85,7 +85,7 @@ La disposición integrada es disposición de ventana, no una modificación del p
 ## Detalle de la transcripción y tamaño del editor {#transcript-composer}
 
 1. Abre **Chat** para elegir los valores de detalle de la transcripción. Los preajustes son **Nada**, **Mínimo**, **Equilibrado** y **Todo**; los cambios individuales producen **Personalizado**.
-2. Establece el **Estado predeterminado** de cada fila (**Oculto**, **Colapsado** o **Expandido**) para el razonamiento, los diagnósticos, las entradas de herramientas, los tokens, los mensajes del sistema y cada tipo de herramienta, o usa el popup **Contenido de los mensajes** de la conversación, que comparte estas elecciones.
+2. Establece el **Estado predeterminado** de cada fila (**Oculto**, **Colapsado** o **Expandido**) o usa el popup **Contenido de los mensajes** de la conversación, que comparte estas opciones. En **Grupos de herramientas**, **Desactivado** muestra una tarjeta por llamada; **Colapsado** y **Expandido** determinan el estado inicial de los grupos.
 3. En **General**, marca **Mostrar la cronología de mensajes**, **Colocar las flechas de primer/último mensaje bajo la cronología**, **Dividir los diffs de las llamadas a herramientas** y **Poner en cola los prompts enviados** (pone en cola los prompts enviados mientras una sesión trabaja en lugar de dirigirla) según necesites.
 4. Cambia el tamaño del editor con su control; los borradores largos se desplazan dentro del campo.
 

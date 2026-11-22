@@ -140,6 +140,7 @@ export interface UiSettings {
   toolOutputExpansion: ExpansionPreference
   diagnosticsExpansion: VisibilityPreference
   systemMessagesVisibility: VisibilityPreference
+  toolGroupVisibility: VisibilityPreference
   toolInputsVisibility: ToolInputsVisibilityPreference
   showUsageMetrics: boolean
   usageMetricsExpansion: ExpansionPreference
@@ -268,6 +269,7 @@ const defaultUiSettings: UiSettings = {
   toolOutputExpansion: "expanded",
   diagnosticsExpansion: "expanded",
   systemMessagesVisibility: "hidden",
+  toolGroupVisibility: "collapsed",
   toolInputsVisibility: "collapsed",
   showUsageMetrics: false,
   usageMetricsExpansion: "collapsed",
@@ -393,6 +395,10 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       defaultUiSettings.diagnosticsExpansion,
     ),
     systemMessagesVisibility: normalizeVisibilityPreference(sanitized.systemMessagesVisibility, "hidden"),
+    toolGroupVisibility: normalizeVisibilityPreference(
+      sanitized.toolGroupVisibility,
+      toolCallExpansionDefaults.preset === "everything" ? "expanded" : defaultUiSettings.toolGroupVisibility,
+    ),
     toolInputsVisibility:
       sanitized.toolInputsVisibility === "hidden" || sanitized.toolInputsVisibility === "collapsed" || sanitized.toolInputsVisibility === "expanded"
         ? sanitized.toolInputsVisibility

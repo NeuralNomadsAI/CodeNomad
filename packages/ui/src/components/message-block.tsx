@@ -530,6 +530,7 @@ interface MessageBlockProps {
   thinkingDefaultExpanded: () => boolean
   usageMetricsVisibility: () => VisibilityPreference
   systemMessagesVisibility?: () => VisibilityPreference
+  toolGroupVisibility?: () => VisibilityPreference
   toolVisibility: (toolName: string) => VisibilityPreference
   onRevert?: (messageId: string) => void
   onFork?: (messageId?: string) => void
@@ -608,6 +609,7 @@ export default function MessageBlock(props: MessageBlockProps) {
     if (!current) return null
 
     const messageInfoVersion = props.store().state.messageInfoVersion[current.id] ?? 0
+    const groupTools = props.toolGroupVisibility?.() !== "hidden"
 
     const cacheSignature = [
       current.id,
@@ -617,6 +619,7 @@ export default function MessageBlock(props: MessageBlockProps) {
       props.thinkingDefaultExpanded() ? 1 : 0,
       props.usageMetricsVisibility(),
       props.systemMessagesVisibility?.() ?? "hidden",
+      groupTools,
       props.technicalGroupingSignature?.() ?? "",
     ].join("|")
 
@@ -693,7 +696,7 @@ export default function MessageBlock(props: MessageBlockProps) {
     const rows = groupTranscriptRows(displayData.hiddenCount > 0
       ? [...shown(orderedParts.slice(0, displayData.gapIndex)), null, ...shown(orderedParts.slice(displayData.gapIndex))]
       : shown(orderedParts), (part) => {
-      const kind = transcriptPartKind(part)
+      const kind = transcriptPartKind(part, groupTools)
       if (kind === "content" || kind === "part") return { kind }
       const partId = typeof part.id === "string" ? part.id : ""
       return { kind, groupId: partId ? props.technicalGroupForPart?.(current.id, partId)?.id : undefined }
@@ -988,7 +991,10 @@ export default function MessageBlock(props: MessageBlockProps) {
                       activePartId={activeSearchMatch()?.partId}
                       showHeader={technicalGroupStartsHere((item() as ExplorationDisplayItem).technicalGroup)}
                       expanded={(item() as ExplorationDisplayItem).technicalGroup
-                        ? () => props.isTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!.id, false) ?? false
+                        ? () => {
+                            const defaultExpanded = props.toolGroupVisibility?.() === "expanded"
+                            return props.isTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!.id, defaultExpanded) ?? defaultExpanded
+                          }
                         : undefined}
                       onExpandedChange={(item() as ExplorationDisplayItem).technicalGroup
                         ? (expanded) => props.setTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!.id, expanded)

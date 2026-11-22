@@ -155,9 +155,12 @@ test("Message content chooses presets, names manual changes Custom and follows t
     await page.waitForFunction(() => (window as any).fixture.preferences().toolCallExpansionDefaults.preset === "nothing")
     assert.equal(await settingsPreset(page).textContent(), "Nothing")
     const rows = page.locator(".transcript-filter-row")
-    for (const label of await rows.evaluateAll(items => items.map(item => item.getAttribute("aria-label")!))) {
+    for (const label of (await rows.evaluateAll(items => items.map(item => item.getAttribute("aria-label")!))).filter(label => label !== "Tool groups")) {
       assert.equal(await page.getByRole("group", { name: label, exact: true }).getByRole("button", { name: `Show ${label}`, exact: true }).count(), 1, label)
     }
+    const groups = page.getByRole("group", { name: "Tool groups", exact: true })
+    assert.equal(await groups.getByRole("button", { name: "Disable tool grouping" }).getAttribute("aria-pressed"), "true")
+    assert.equal(await groups.getByRole("button", { name: "Expand Tool groups" }).getAttribute("aria-pressed"), "false")
     await page.locator(".transcript-filters").screenshot({ path: `${captures}/nothing.png` })
 
     await page.getByRole("group", { name: "read", exact: true }).getByRole("button", { name: "Show read", exact: true }).click()

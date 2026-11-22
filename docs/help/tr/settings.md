@@ -85,7 +85,7 @@ Yerleşik düzen proje değişikliği değil, pencere yerleşimidir. Uzantı ona
 ## Konuşma dökümü ayrıntıları ve ileti düzenleyicisi boyutu {#transcript-composer}
 
 1. Konuşma dökümü ayrıntısı varsayılanlarını seçmek için **Sohbet** öğesini açın. Ön ayarlar **Hiçbir şey**, **Minimal**, **Dengeli** ve **Her şey**'dir; bireysel değişiklikler **Özel** öğesini üretir.
-2. Düşünme, tanılama, araç girdileri, tokenlar, sistem mesajları ve her araç türü için her satırın **Varsayılan durum** ayarını (**Gizli**, **Daraltılmış** veya **Genişletilmiş**) belirleyin ya da bu seçimleri paylaşan, konuşmanın **Mesaj içeriği** açılır penceresini kullanın.
+2. Her satırın **Varsayılan durum** ayarını (**Gizli**, **Daraltılmış** veya **Genişletilmiş**) belirleyin ya da aynı ayarları kullanan **Mesaj içeriği** açılır penceresini kullanın. **Araç grupları** için **Devre dışı** her çağrıyı ayrı kartta gösterir; **Daraltılmış** ve **Genişletilmiş** grupların başlangıç durumunu belirler.
 3. **Genel** bölümünde gerektiği gibi **Mesaj zaman çizelgesini göster**, **İlk/en son mesaj oklarını zaman çizelgesinin altına yerleştir**, **Araç çağrısı diff'lerini böl** ve **Gönderilen istemleri kuyruğa al** (oturum çalışırken gönderilen istemleri yönlendirmek yerine kuyruğa alır) seçeneklerini işaretleyin.
 4. Yeniden boyutlandırma kontrolünü kullanarak ileti düzenleyicisini yeniden boyutlandırın; uzun taslaklar alanın içinde kayar.
 

@@ -42,6 +42,8 @@ The timeline is hidden when the conversation is too narrow (below 420 CSS pixels
 
 **Message content** applies across conversations. Choose a preset (**Nothing**, **Minimal**, **Balanced** or **Everything**) at its top or in **Settings → Chat**, then adjust individual rows; the **Message content** preset menu then shows **Custom**. Hiding tools does not disable tools, change permissions or remove stored output. To keep rendering responsive, very large messages show **Show … more** at an omitted gap, and very long text or tool output stops at a **… more characters hidden** line with **Show all**, or **Show … more** when much remains, which may take several steps. Revealing either is display-only and does not recover deleted content. Drag across its eye or chevron buttons to set several rows at once: the first button you drag out of toggles, and every button you cross in the same column takes its new state. The conversation updates when you release the button.
 
+In **Tool groups**, turn off the eye to show each call on its own, or use the chevron to open groups by default. Each tool type still has its own visibility setting. **Everything** opens groups by default; the other presets keep them collapsed.
+
 ## Compact a session {#compact-session}
 
 1. Select the intended conversation.

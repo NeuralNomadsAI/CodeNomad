@@ -114,7 +114,9 @@ export default function TranscriptFilters(props: TranscriptFiltersProps = {}) {
               const mode = () => requested().get(row.key)?.mode ?? transcriptVisibility(preferences(), row)
               let previousVisible: VisibilityPreference = "collapsed"
               const setMode = (value: VisibilityPreference) => requestMode(row, value)
-              const visibilityLabel = () => t(mode() === "hidden" ? "transcriptFilters.show" : "transcriptFilters.hide", { name: row.label })
+              const visibilityLabel = () => row.kind === "toolGroups"
+                ? t(mode() === "hidden" ? "transcriptFilters.toolGroups.enable" : "transcriptFilters.toolGroups.disable")
+                : t(mode() === "hidden" ? "transcriptFilters.show" : "transcriptFilters.hide", { name: row.label })
               const expansionLabel = () => t(mode() === "expanded" ? "transcriptFilters.collapse" : "transcriptFilters.expand", { name: row.label })
               return (
                 <div class="transcript-filter-row" role="group" aria-label={row.label}>
