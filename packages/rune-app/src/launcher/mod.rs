@@ -464,6 +464,7 @@ pub fn restore(s: &mut State, saved: crate::workspace::Workspace) {
 }
 fn bind(s: &mut State, b: Backend, title: String, tx: &mut Tx) {
     let draft = crate::workspace::bound(s, &b);
+    crate::files::bind(s, &b);
     s.agent = None;
     s.expanded_tools.clear();
     s.chat_title = title;
@@ -503,6 +504,7 @@ pub fn back(s: &mut State) {
     s.agent = None;
     s.commands = None;
     s.incoming = None;
+    s.files = None;
     s.launcher_visible = true;
     list(s, false);
 }

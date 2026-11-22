@@ -1,4 +1,5 @@
 //! SSE adapters share scoped decoding, epoch fencing and bounded dispatch.
+use crate::transport::{DirectoryChange, WorkspaceEvent};
 use crate::{Sender, backend::Backend, history::Result, recovery::Input, runtime};
 use serde_json::{Value, json};
 use std::{
@@ -80,6 +81,10 @@ pub(super) async fn dispatch(
         return Ok(());
     }
     let value: Value = serde_json::from_str(data.trim())?;
+    if let Some(event) = workspace_event(b, &value) {
+        out.send(Input::Workspace(epoch, event)).await?;
+        return Ok(());
+    }
     let own = value["instanceId"] == b.workspace;
     let native = &value["event"];
     if own && value["type"] == "instance.eventStatus" {
@@ -106,6 +111,42 @@ pub(super) async fn dispatch(
             .await?;
     }
     Ok(())
+}
+
+fn workspace_event(b: &Backend, value: &Value) -> Option<WorkspaceEvent> {
+    let id = value["workspaceId"].as_str()?;
+    if id != b.workspace || !crate::history::valid_id(id) {
+        return None;
+    }
+    match value["type"].as_str()? {
+        "workspace.stopped" => Some(WorkspaceEvent::Stopped {
+            workspace_id: id.into(),
+        }),
+        "workspace.filesChanged" => {
+            let changes = value["changes"]
+                .as_array()?
+                .iter()
+                .map(|change| {
+                    let directory = change["directory"].as_str()?;
+                    let path = change["path"].as_str()?;
+                    if !crate::absolute_server_path(directory)
+                        || crate::files::relative(path, true, directory).is_err()
+                    {
+                        return None;
+                    }
+                    Some(DirectoryChange {
+                        directory: directory.into(),
+                        path: path.into(),
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(WorkspaceEvent::FilesChanged {
+                workspace_id: id.into(),
+                changes,
+            })
+        }
+        _ => None,
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -212,3 +253,7 @@ mod tests {
         assert!(parser.byte(b'\n').is_err());
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "stream_workspace_tests.rs"]
+mod workspace_tests;

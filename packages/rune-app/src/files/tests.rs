@@ -50,6 +50,34 @@ fn paths(tree: &Tree) -> Vec<&str> {
 }
 
 #[test]
+fn filesystem_events_match_windows_spelling_and_preserve_posix_case_and_aliases() {
+    for (owned, observed, matches) in [
+        ("D:/Fixture", "d:\\fixture", true),
+        ("/Fixture", "/fixture", false),
+        ("/fixture", "/fixture-alias", false),
+    ] {
+        let mut tree = Tree::new(owned.into());
+        tree.activate(true);
+        root(&mut tree, vec![]);
+        tree.invalidate(observed, Some("."));
+        let requests = tree.take_refresh();
+        assert_eq!(!requests.is_empty(), matches, "{owned} / {observed}");
+        for read in requests {
+            finish(&mut tree, read, vec![]);
+        }
+        tree.switch("/other".into());
+        root(&mut tree, vec![]);
+        tree.invalidate(observed, Some("."));
+        tree.switch(owned.into());
+        assert_eq!(
+            !tree.take_refresh().is_empty(),
+            matches,
+            "cached {owned} / {observed}"
+        );
+    }
+}
+
+#[test]
 fn lazy_empty_directories_keep_explicit_branch_state_and_selection() {
     let mut tree = tree();
     root(

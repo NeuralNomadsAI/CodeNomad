@@ -154,12 +154,13 @@ impl Tree {
     }
     /// None invalidates every listing; a path invalidates only that listing.
     pub fn invalidate(&mut self, directory: &str, path: Option<&str>) {
-        let state = if directory == self.directory {
+        let current = codenomad_client::same_server_path(directory, &self.directory);
+        let state = if current {
             Some(&mut self.state)
         } else {
             self.cache
                 .iter_mut()
-                .find(|(key, _)| key == directory)
+                .find(|(key, _)| codenomad_client::same_server_path(key, directory))
                 .map(|(_, state)| state)
         };
         if let Some(state) = state {
@@ -173,7 +174,7 @@ impl Tree {
                 state.version = version;
                 state.versions.clear();
             }
-            if directory == self.directory {
+            if current {
                 self.dirty = true;
             }
         }
@@ -181,6 +182,14 @@ impl Tree {
     pub fn refresh(&mut self, force: bool) {
         self.dirty = true;
         self.force |= force;
+    }
+    pub fn invalidate_all(&mut self) {
+        let directories = std::iter::once(self.directory.clone())
+            .chain(self.cache.iter().map(|(directory, _)| directory.clone()))
+            .collect::<Vec<_>>();
+        for directory in directories {
+            self.invalidate(&directory, None);
+        }
     }
     /// The owner calls after its shared debounce, and again after the last completion.
     pub fn take_refresh(&mut self) -> Vec<Read> {

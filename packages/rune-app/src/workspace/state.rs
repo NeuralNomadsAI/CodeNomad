@@ -244,6 +244,9 @@ pub fn draft_changed(s: &mut State, _: &mut Tx) {
 }
 fn stash(s: &mut State) {
     capture(s);
+    if let Some(files) = &mut s.files {
+        files.activate(false);
+    }
     let cache = Cache::take(s);
     if let Some(ui) = &mut s.workspace {
         let entry = &mut ui.entries[ui.active];
@@ -273,6 +276,9 @@ fn activate(s: &mut State, tx: &mut Tx) {
     }
     if let Some(cache) = item.cache.take() {
         cache.apply(s);
+        if let Some(files) = &mut s.files {
+            files.activate(true);
+        }
     } else {
         s.launcher_visible = true;
         let restore = match &item.saved {
@@ -604,6 +610,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
         if let Some(cache) = item.cache.take() {
             cache.apply(s);
             changed |= crate::poll_chat(s, 8);
+            changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
             item.cache = Some(Cache::take(s));
         }
     }

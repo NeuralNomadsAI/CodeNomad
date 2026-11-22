@@ -131,6 +131,7 @@ pub fn contract() {
             | Event::Reconnecting
             | Event::Connected(_)
             | Event::AgentHint(_)
+            | Event::Workspace(_)
             | Event::PagingFailed => {}
             Event::Message(message) => {
                 assert!(
