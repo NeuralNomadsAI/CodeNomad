@@ -4,7 +4,7 @@ import replyFrom from "@fastify/reply-from"
 import fs from "fs"
 import { isIP, type Socket } from "net"
 import path from "path"
-import { Readable } from "node:stream"
+import { AsyncLocalStorage } from "node:async_hooks"
 import { finished } from "node:stream/promises"
 import { fetch } from "undici"
 import type { Logger } from "../logger"
@@ -2251,8 +2251,7 @@ function setupStaticUi(
     return
   }
 
-  const identityRefused = new WeakSet<FastifyRequest>()
-  const selectedStatic = new WeakSet<FastifyRequest>()
+  const identityRefused = new AsyncLocalStorage<string>()
   const negotiate = (request: FastifyRequest) => {
     // Expand the wildcard for fastify-static, which maps it to gzip alone.
     const encodings = request.headers["accept-encoding"]?.toLowerCase().split(",") ?? []
@@ -2260,12 +2259,12 @@ function setupStaticUi(
     const quality = (entry: string) => Number(/;\s*q\s*=\s*([01](?:\.\d{0,3})?)\s*$/.exec(entry)?.[1] ?? 1)
     const identity = explicit.get("identity"), wildcard = explicit.get("*")
     const identityQuality = identity === undefined ? undefined : quality(identity)
-    if ((identityQuality ?? (wildcard && quality(wildcard))) === 0) identityRefused.add(request)
     if (wildcard || identityQuality !== undefined) {
       request.headers["accept-encoding"] = ["br", "gzip", "deflate"]
         .map(coding => explicit.get(coding) ?? wildcard?.replace("*", coding))
         .filter(entry => entry !== undefined && quality(entry) >= (identityQuality ?? 0)).join(",")
     }
+    return (identityQuality ?? (wildcard && quality(wildcard))) === 0
   }
   app.addHook("preHandler", (request, reply, done) => {
     const session = authManager.getSessionFromRequest(request)
@@ -2273,15 +2272,16 @@ function setupStaticUi(
       return
     }
     if (!("previewCapability" in request.routeOptions.config)
-      && (request.routeOptions.url === "/" || request.routeOptions.url === "/*")) negotiate(request)
+      && (request.routeOptions.url === "/" || request.routeOptions.url === "/*") && negotiate(request)) {
+      const target = routedPath(request.raw.url ?? request.url)
+      return identityRefused.run(path.posix.basename(target ?? "/") || "index.html", done)
+    }
     done()
   })
 
   app.addHook("onSend", (request, reply, payload, done) => {
-    if (selectedStatic.has(request) && identityRefused.has(request) && !reply.hasHeader("content-encoding")) {
-      if (payload instanceof Readable) payload.destroy()
-      for (const name of ["accept-ranges", "content-length", "content-range", "content-type", "etag", "last-modified"]) reply.removeHeader(name)
-      reply.code(406)
+    if (identityRefused.getStore() !== undefined && reply.statusCode === 406) {
+      reply.header("vary", "Origin, Accept-Encoding").removeHeader("content-length").removeHeader("content-type")
       return done(null, null)
     }
     done(null, payload)
@@ -2292,8 +2292,14 @@ function setupStaticUi(
     prefix: "/",
     preCompressed: true,
     allowedPath: (file, _root, request) => !isHtmlBundlePath(file) || Boolean(authManager.getSessionFromRequest(request)),
+    onFile: (file) => {
+      const original = identityRefused.getStore()
+      if (original === undefined) return
+      const selected = path.basename(file)
+      if (/\.(?:br|gz|deflate)$/.test(selected) && selected !== original) return
+      throw Object.assign(new Error("No acceptable static representation"), { statusCode: 406 })
+    },
     setHeaders: (reply, file) => {
-      selectedStatic.add(reply.request)
       if (isHtmlBundlePath(file)) reply.header("cache-control", "no-store")
     },
   })
@@ -2319,8 +2325,8 @@ function setupStaticUi(
     }
 
     if (fs.existsSync(indexPath)) {
-      negotiate(request)
-      return reply.sendFile("index.html")
+      const rejectIdentity = identityRefused.getStore() !== undefined || negotiate(request)
+      return rejectIdentity ? identityRefused.run("index.html", () => reply.sendFile("index.html")) : reply.sendFile("index.html")
     } else {
       reply.code(404).send({ message: "UI bundle missing" })
     }
