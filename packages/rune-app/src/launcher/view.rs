@@ -1,4 +1,9 @@
-use crate::{State, launcher, strings::t};
+use crate::{
+    State,
+    components::{button, button_tx},
+    launcher,
+    strings::t,
+};
 use rune::{El, ScrollSpec, col, text};
 use rune_theme_codenomad::{
     Space, TextRole, field_kit,
@@ -6,17 +11,6 @@ use rune_theme_codenomad::{
 };
 #[cfg(test)]
 mod tests;
-pub fn button(key: &str, label: &str, disabled: bool, press: impl Fn(&mut State) + 'static) -> El {
-    layout::button(label, disabled, press).key(key.to_string())
-}
-pub fn button_tx(
-    key: &str,
-    label: &str,
-    disabled: bool,
-    press: impl Fn(&mut State, &mut rune::Tx) + 'static,
-) -> El {
-    layout::button_tx(label, disabled, press).key(key.to_string())
-}
 pub fn view(s: &State) -> El {
     let crate::Screen::Launcher(l) = &s.screen else {
         return rune::el();

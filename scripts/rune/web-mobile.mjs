@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {readFile} from 'node:fs/promises'
 import {createHash} from 'node:crypto'
 import {chromium} from 'playwright'
+import {bundleAssetPaths} from './web-workspace-policy.mjs'
 
 const profile = JSON.parse(await readFile(new URL('../../packages/ui/src/lib/native/browser-emulation.json', import.meta.url)))
 
@@ -23,7 +24,7 @@ export async function mobileClientHints(page, browser) {
   return cdp
 }
 
-export async function pairFixture({origin, pairingUrl, storage, manifest}) {
+export async function pairFixture({origin, pairingUrl, storage, manifest, ui}) {
   const url = new URL(pairingUrl)
   assert.match(origin, /^https:\/\/127\.0\.0\.1:\d+$/)
   assert.equal(url.origin, origin)
@@ -35,7 +36,8 @@ export async function pairFixture({origin, pairingUrl, storage, manifest}) {
     const page = await context.newPage()
     await mobileClientHints(page,browser)
     const pairPath = '/api/remote-control/pair'
-    const assets = new Set(['/', '/remote-pair', ...manifest.files.map(row => `/${row.file}`)])
+    const assets = await bundleAssetPaths(ui)
+    assets.add('/remote-pair')
     await context.route('**/*', route => {
       const req = route.request(), requested = new URL(req.url())
       const pair = req.method() === 'POST' && requested.pathname === pairPath && req.postDataJSON()?.code === url.hash.slice(1)

@@ -199,7 +199,7 @@ try{
       uiOrigin=log.match(/^HTTPS (https:\/\/127\.0\.0\.1:\d+)\r?$/m)?.[1];assert(uiOrigin,'Rust HTTPS fixture missing')
       const issue=await http.post('/api/remote-control/pairings')
       assert.equal(issue.status(),200)
-      paired=await pairFixture({origin:uiOrigin,pairingUrl:(await issue.json()).url,storage,manifest})
+      paired=await pairFixture({origin:uiOrigin,pairingUrl:(await issue.json()).url,storage,manifest,ui})
     }else await http.storageState({path:storage})
     let workspace
     if(!webRestore){const opened=await http.post('/api/workspaces',{data:{path:project}});assert(opened.ok(),`Open isolated workspace: ${await opened.text()}`);workspace=(await opened.json()).id;assert(workspace)}
