@@ -82,6 +82,10 @@ try{
       const action=req.url.slice('/__test__/'.length)
       if(action==='block-older')blockOlder=true
       if(action==='stale-older')staleOlder=true
+      if(action==='revert-in-history'){
+        store.rows[598].content[0].text='authoritative after revert'
+        emit('session.revert.committed',{to:'message-00599'})
+      }
       if(action==='transport-cut'){
         cutTransport()
         liveText.append(' · milieu 🦀 · fin');liveText.close();liveRow.time.completed=Date.now();idle=Date.now()

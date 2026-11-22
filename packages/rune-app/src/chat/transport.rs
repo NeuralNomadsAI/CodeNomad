@@ -1,14 +1,14 @@
 //! Commands and display events for the native prototype.
 #[cfg(any(test, feature = "test-support"))]
 use crate::{CODE, Message};
-pub use codenomad_client::transport::{Command, Event, publish, run_backend};
+pub use codenomad_client::transport::{Command, Event, PromptOutcome, publish, run_backend};
 #[cfg(test)]
 pub use codenomad_client::wire::decode_event;
 use codenomad_client::{Receiver, Sender};
 #[cfg(feature = "test-support")]
 use std::time::Duration;
 #[cfg(any(test, feature = "test-support"))]
-pub fn synthetic() -> Vec<Message> {
+pub fn synthetic() -> Vec<crate::history::Row> {
     (0..10_000)
         .map(|i| Message {
             completed: true,
@@ -21,6 +21,7 @@ pub fn synthetic() -> Vec<Message> {
                 format!("Synthetic message {i}\nUnicode: été · 日本語 · 🦀")
             },
         })
+        .map(Into::into)
         .collect()
 }
 pub async fn run_async(out: Sender<Event>, input: Receiver<Command>, wake: rune::Waker) {
@@ -48,10 +49,25 @@ async fn run_synthetic(out: Sender<Event>, input: Receiver<Command>, wake: rune:
         if matches!(command, Command::Close) {
             return;
         }
-        let Command::Send(_) = command else {
-            publish(&out, &wake, Event::PagingFailed).await;
-            continue;
-        };
+        match command {
+            Command::Prompt(prompt) => {
+                if let Some(attempted) = prompt.id {
+                    publish(
+                        &out,
+                        &wake,
+                        Event::PromptAcknowledged {
+                            outcome: PromptOutcome::Confirmed(attempted.clone()),
+                            attempted,
+                        },
+                    )
+                    .await;
+                }
+            }
+            _ => {
+                publish(&out, &wake, Event::PagingFailed).await;
+                continue;
+            }
+        }
         turn += 1;
         let id = format!("assistant-{turn}");
         publish(

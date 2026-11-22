@@ -500,9 +500,9 @@ fn clearing_or_sending_an_inherited_draft_retires_older_closed_text() {
             s.commands = Some(commands);
             s.phase = Phase::Ready;
             let mut rt = runtime(s);
-            rt.update(crate::send);
+            rt.update(|s, tx| crate::composer::send(s, tx, false));
             assert!(
-                matches!(input.try_recv(), Ok(crate::transport::Command::Send(text)) if text == "Old Alpha")
+                matches!(input.try_recv(), Ok(crate::transport::Command::Prompt(body)) if body.text == "Old Alpha")
             );
             s = rt.state;
         }
@@ -569,9 +569,9 @@ fn snapshot_preserves_needed_clear_authority_and_untouched_sibling_absence() {
             s.commands = Some(commands);
             s.phase = Phase::Ready;
             let mut rt = runtime(s);
-            rt.update(crate::send);
+            rt.update(|s, tx| crate::composer::send(s, tx, false));
             assert!(
-                matches!(input.try_recv(), Ok(crate::transport::Command::Send(text)) if text == "Old Alpha")
+                matches!(input.try_recv(), Ok(crate::transport::Command::Prompt(body)) if body.text == "Old Alpha")
             );
             s = rt.state;
         } else {
@@ -620,9 +620,9 @@ fn delivered_bundles_follow_live_edits_and_sends_without_retiring_other_sessions
                 let (commands, input) = bounded(1);
                 rt.state.commands = Some(commands);
                 rt.state.phase = Phase::Ready;
-                rt.update(crate::send);
+                rt.update(|s, tx| crate::composer::send(s, tx, false));
                 assert!(
-                    matches!(input.try_recv(), Ok(crate::transport::Command::Send(text)) if text == "Old Alpha")
+                    matches!(input.try_recv(), Ok(crate::transport::Command::Prompt(body)) if body.text == "Old Alpha")
                 );
             } else {
                 rt.state.draft = TextEdit::new(if mode == "edited" { "New Alpha" } else { "" });
@@ -886,10 +886,11 @@ fn delivery_inactive_close_preserves_the_active_reader_and_focus() {
             .elements()
             .into_iter()
             .find(|e| e.focused)
-            .map(|e| (e.key, e.edit_range));
-        assert_eq!(
-            focus.as_ref().and_then(|(key, _)| key.as_deref()),
-            Some("composer")
+            .map(|e| (e.path, e.edit_range));
+        assert!(
+            focus
+                .as_ref()
+                .is_some_and(|(path, range)| path.contains("/composer/") && range.is_some())
         );
         let anchor = rt
             .elements()
@@ -917,7 +918,7 @@ fn delivery_inactive_close_preserves_the_active_reader_and_focus() {
             rt.elements()
                 .into_iter()
                 .find(|e| e.focused)
-                .map(|e| (e.key, e.edit_range)),
+                .map(|e| (e.path, e.edit_range)),
             focus
         );
         assert_eq!(

@@ -3,6 +3,8 @@ pub(crate) mod collation;
 mod connection;
 pub(crate) mod reads;
 pub(crate) mod storage;
+#[cfg(target_arch = "wasm32")]
+mod web_attachment;
 pub(crate) use connection::configured_backend;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod host;
@@ -18,23 +20,30 @@ pub fn local_server_available() -> bool {
     cfg!(not(target_arch = "wasm32"))
 }
 pub fn attachment_export_available() -> bool {
-    cfg!(not(target_arch = "wasm32"))
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        true
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window().and_then(|w| w.document()).is_some()
+    }
 }
 
 pub fn export_attachment(
-    s: &crate::State,
+    s: &mut crate::State,
     tx: &mut rune::Tx,
     name: &str,
     bytes: std::sync::Arc<Vec<u8>>,
 ) {
+    let name = name
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|name| !matches!(*name, "" | "." | ".."))
+        .unwrap_or_else(|| crate::strings::t("messageItem.attachment.defaultName"));
     #[cfg(not(target_arch = "wasm32"))]
     {
         let scope = s.input_scope.clone();
-        let name = name
-            .rsplit(['/', '\\'])
-            .next()
-            .filter(|name| !matches!(*name, "" | "." | ".."))
-            .unwrap_or_else(|| crate::strings::t("messageItem.attachment.defaultName"));
         tx.save_file(
             rune::file_dialog::FileDialogOptions {
                 file_name: Some(name.into()),
@@ -66,7 +75,11 @@ pub fn export_attachment(
         );
     }
     #[cfg(target_arch = "wasm32")]
-    let _ = (s, tx, name, bytes);
+    {
+        let _ = tx;
+        s.attachments.error = web_attachment::download(name, bytes.as_slice()).is_err();
+        s.attachments.saving = false;
+    }
 }
 /// Called after Rune releases the event loop; process waits remain outside active UI work.
 pub fn finish() {

@@ -3,7 +3,7 @@ use crate::{
     history::{self, Page},
 };
 use serde_json::json;
-fn rows(ids: &[&str]) -> Vec<Message> {
+fn rows(ids: &[&str]) -> Vec<history::Row> {
     ids.iter()
         .map(|id| Message {
             parts: vec![],
@@ -12,19 +12,22 @@ fn rows(ids: &[&str]) -> Vec<Message> {
             completed: true,
             body: format!("body {id}"),
         })
+        .map(std::sync::Arc::new)
         .collect()
 }
 #[test]
 fn overlap_preserves_native_order_and_replaces_overlap_authoritatively() {
     let a = rows(&["z", "y", "x"]);
     let mut b = rows(&["y", "x", "w"]);
-    b[0].body = "changed".into();
+    std::sync::Arc::make_mut(&mut b[0]).body = "changed".into();
     let merged = history::join(&a, &b).unwrap();
     assert_eq!(
         merged.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
         vec!["z", "y", "x", "w"]
     );
     assert_eq!(merged[1].body, "changed");
+    assert!(std::sync::Arc::ptr_eq(&a[0], &merged[0]));
+    assert!(std::sync::Arc::ptr_eq(&b[0], &merged[1]));
 }
 #[test]
 fn broken_overlap_duplicate_ids_and_resident_overflow_fail_closed() {
@@ -38,10 +41,11 @@ fn broken_overlap_duplicate_ids_and_resident_overflow_fail_closed() {
             completed: true,
             body: "x".into(),
         })
+        .map(std::sync::Arc::new)
         .collect::<Vec<_>>();
     assert!(history::check(&many).is_err());
     let mut huge = rows(&["a"]);
-    huge[0].body = "x".repeat(history::MAX_BYTES + 1);
+    std::sync::Arc::make_mut(&mut huge[0]).body = "x".repeat(history::MAX_BYTES + 1);
     assert!(history::check(&huge).is_err());
 }
 #[test]

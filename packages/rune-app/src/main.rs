@@ -5,6 +5,7 @@ pub(crate) use codenomad_client::{agent_api, backend, catalog, content, history}
 mod chat;
 pub(crate) use chat::{actions as transcript_state, transcript, transport};
 mod components;
+mod composer;
 mod files;
 pub(crate) use components::window_close_button as window_control;
 #[cfg(any(test, feature = "test-support"))]
@@ -26,7 +27,7 @@ use rune::edit::TextEdit;
 use rune::{AppSpec, Cx, El, Tx, col, text};
 use rune_theme_codenomad::{
     Space, TextRole,
-    layout::{self, Layout, input},
+    layout::{self, Layout},
 };
 use transport::{Command, Event};
 
@@ -39,15 +40,16 @@ struct State {
     files: Option<files::Ui>,
     documents: files::document::store::Store,
     reads: platform::reads::Reads,
-    expanded_tools: std::collections::HashSet<String>,
+    expanded_tools: std::collections::HashMap<String, std::collections::HashSet<String>>,
     attachments: chat::attachments::Reader,
     screen: Screen,
     input_scope: std::rc::Rc<()>,
     rejected_edit: TextEdit,
     workspace: Option<workspace::Ui>,
     chat_title: String,
-    messages: Vec<Message>,
+    messages: Vec<history::Row>,
     draft: TextEdit,
+    composer: composer::Owner,
     incoming: Option<Receiver<Event>>,
     commands: Option<Sender<Command>>,
     phase: Phase,
@@ -81,6 +83,7 @@ fn init() -> State {
         chat_title: String::new(),
         messages: vec![],
         draft: TextEdit::new(""),
+        composer: Default::default(),
         incoming: None,
         commands: None,
         phase: Phase::Loading,
@@ -120,32 +123,6 @@ fn local_stress() -> bool {
     }
 }
 
-fn send(s: &mut State, tx: &mut Tx) {
-    if s.phase != Phase::Ready
-        || s.history_detached
-        || s.draft.text.trim().is_empty()
-        || s.agent.as_ref().is_some_and(|a| a.blocked())
-    {
-        return;
-    }
-    let body = s.draft.text.clone();
-    if s.commands
-        .as_ref()
-        .is_some_and(|c| c.try_send(Command::Send(body.clone())).is_ok())
-    {
-        s.messages.push(Message {
-            completed: true,
-            id: format!("rune-user-{}", s.revision),
-            role: "user".into(),
-            body,
-            parts: vec![],
-        });
-        s.revision += 1;
-        s.draft = TextEdit::new("");
-        s.phase = Phase::Streaming;
-        workspace::draft_changed(s, tx);
-    }
-}
 fn request_older(s: &mut State, _: &mut Tx) {
     if s.can_older
         && !s.paging
@@ -191,6 +168,7 @@ fn latest(s: &mut State, tx: &mut Tx) {
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = launcher::poll(s, tx);
     changed |= poll_chat(s, 64);
+    changed |= s.composer.picker.poll();
     changed |= chat::attachments::poll(s, tx);
     changed |= workspace::poll(s, now, tx);
     changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
@@ -209,9 +187,13 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             Event::Connected(backend) => {
                 s.renew_scope();
                 s.attachments.bind(backend.clone());
+                s.composer.picker.bind(backend.clone());
                 s.agent = Some(agent::Ui::new(agent::start(backend, s.wake.clone())));
             }
             Event::AgentHint(catalog) => {
+                if catalog && let Some(files) = &mut s.files {
+                    files.online(true);
+                }
                 if let Some(a) = s.agent.as_mut() {
                     if catalog {
                         a.online = true;
@@ -235,7 +217,9 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     }
                 }
                 s.messages = page.rows;
+                transcript_state::retain_visible(s);
                 s.history_detached = false;
+                composer::reconcile(s);
                 s.can_older = page.older.is_some();
                 s.paging = false;
                 s.history_error = false;
@@ -250,6 +234,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     s.attachments.cancel();
                     s.history_detached = page.newer.is_some();
                     s.messages = page.rows;
+                    transcript_state::retain_visible(s);
                 }
                 s.can_older = page.older.is_some();
                 s.history_error = false;
@@ -271,18 +256,33 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.paging = false;
                 s.history_error = true;
             }
+            Event::HistoryInvalidated => {
+                s.attachments.cancel();
+                s.messages.clear();
+                s.expanded_tools.clear();
+                s.history_detached = false;
+                s.can_older = false;
+                s.paging = false;
+                s.phase = Phase::Reconnecting;
+            }
             Event::History(messages) => {
                 s.messages = messages;
                 s.phase = Phase::Ready;
             }
             Event::Message(m) => {
                 if !s.messages.iter().any(|existing| existing.id == m.id) {
-                    s.messages.push(m);
+                    s.messages.push(m.into());
+                }
+            }
+            Event::PromptAcknowledged { attempted, outcome } => {
+                composer::acknowledge(s, &attempted, outcome);
+                if s.workspace.is_some() && std::mem::take(&mut s.composer.restored) {
+                    workspace::capture(s);
                 }
             }
             Event::Text(id, event) => {
                 if let Some(m) = s.messages.iter_mut().find(|m| m.id == id) {
-                    match content::apply_text(m, &event) {
+                    match content::apply_text(std::sync::Arc::make_mut(m), &event) {
                         Ok(content::TextFit::Repair) | Err(_) => s.history_error = true,
                         _ => {}
                     }
@@ -361,7 +361,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         .agent
         .as_ref()
         .is_some_and(|a| a.picker || !a.ids().is_empty());
-    rune_theme_codenomad::interruption::session_surface(expanded)
+    let body = rune_theme_codenomad::interruption::session_surface(expanded)
         .child(
             rune_theme_codenomad::layout::action_row()
                 .full_width()
@@ -423,42 +423,10 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         .child(rune_theme_codenomad::interruption::history(expanded).child(rows))
         .child(agent_view::view(s, cx))
         .children(chat::attachments::error(s))
-        .child(
-            col()
-                .key("session-composer")
-                .role("group")
-                .label(strings::t("rune.prompt"))
-                .full_width()
-                .pad(Space::Md)
-                .separate(Space::Sm)
-                .child(
-                    layout::composer(
-                        input(&s.draft)
-                            .key("composer")
-                            .label(strings::t("rune.prompt"))
-                            .full_width()
-                            .pad(Space::Sm)
-                            .field_surface()
-                            .hint(strings::t("rune.prompt"))
-                            .content_direction()
-                            .on_edit(screen::edit(&scope, screen::Editor::Composer))
-                            .on_input_change(crate::screen::action_tx(
-                                &scope,
-                                workspace::draft_changed,
-                            ))
-                            .on_submit(crate::screen::action_tx(&scope, send)),
-                    )
-                    .field_surface(),
-                )
-                .child(components::button_tx(
-                    "send",
-                    strings::t("promptInput.overlay.send"),
-                    s.phase != Phase::Ready
-                        || s.history_detached
-                        || s.agent.as_ref().is_some_and(|a| a.blocked()),
-                    crate::screen::action_tx(&scope, send),
-                )),
-        )
+        .child(composer::view::view(s));
+    let mut layer = Vec::new();
+    composer::view::overlays(s, &mut layer);
+    layout::with_overlays(body, layer)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

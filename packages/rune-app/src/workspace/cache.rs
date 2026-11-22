@@ -1,19 +1,20 @@
 use crate::{
-    Message, Phase, State, agent,
+    Phase, State, agent,
     transport::{Command, Event},
 };
 use codenomad_client::{Receiver, Sender};
 use rune::edit::TextEdit;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub(super) struct Cache {
     agent: Option<agent::Ui>,
     files: Option<crate::files::Ui>,
-    tools: HashSet<String>,
+    tools: HashMap<String, HashSet<String>>,
     attachments: crate::chat::attachments::Reader,
     title: String,
-    messages: Vec<Message>,
+    messages: Vec<crate::history::Row>,
     draft: TextEdit,
+    composer: crate::composer::Owner,
     incoming: Option<Receiver<Event>>,
     commands: Option<Sender<Command>>,
     phase: Phase,
@@ -43,6 +44,7 @@ impl Cache {
             title: std::mem::take(&mut s.chat_title),
             messages: std::mem::take(&mut s.messages),
             draft: std::mem::replace(&mut s.draft, TextEdit::new("")),
+            composer: std::mem::take(&mut s.composer),
             incoming: s.incoming.take(),
             commands: s.commands.take(),
             phase: std::mem::replace(&mut s.phase, Phase::Ready),
@@ -63,6 +65,7 @@ impl Cache {
         s.chat_title = self.title;
         s.messages = self.messages;
         s.draft = self.draft;
+        s.composer = self.composer;
         s.incoming = self.incoming;
         s.commands = self.commands;
         s.phase = self.phase;

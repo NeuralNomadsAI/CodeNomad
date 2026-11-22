@@ -18,25 +18,36 @@ pub enum WorkspaceEvent {
 }
 #[derive(Debug)]
 pub enum Command {
-    Send(String),
+    Prompt(crate::prompt::Prompt),
     Older,
     Latest,
     Retry,
     Close,
 }
 #[derive(Debug)]
+pub enum PromptOutcome {
+    Confirmed(String),
+    Rejected,
+    Unconfirmed,
+}
+#[derive(Debug)]
 pub enum Event {
     Connected(crate::backend::Backend),
     Workspace(WorkspaceEvent),
     AgentHint(bool),
-    History(Vec<Message>),
+    History(Vec<crate::history::Row>),
     Sync(Page),
     Older(Page),
     Message(Message),
+    PromptAcknowledged {
+        attempted: String,
+        outcome: PromptOutcome,
+    },
     Text(String, crate::content::TextEvent),
     Done,
     Failed,
     Reconnecting,
+    HistoryInvalidated,
     PagingFailed,
 }
 

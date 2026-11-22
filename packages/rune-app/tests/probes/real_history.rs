@@ -1,6 +1,6 @@
 //! Real OpenCode qualification, using Rune's CPU-only runtime and an owned fault proxy.
 use super::recovery::{anchor, check_anchor, control};
-use crate::{Phase, State, init, poll, request_older, send, setup, view};
+use crate::{Phase, State, composer::send, init, poll, request_older, setup, view};
 use rune::{Env, Runtime};
 use serde_json::json;
 use std::time::{Duration, Instant};
@@ -55,7 +55,7 @@ pub fn run() {
     }
     canonical(&rt);
     println!("real history: 600 native stored rows, pagination and reading anchor verified");
-    rt.update(|s,tx|{s.draft=rune::TextEdit::new("Sans aucun outil ni fichier à créer, réponds uniquement par un bloc de code Rust. Dans main, écris soixante déclarations explicites et distinctes, de let value_01 = 1; à let value_60 = 60;, chacune sur sa ligne, puis println!(\"RUNE-REAL-REPRISE\");. Ne remplace pas les déclarations par une boucle.");send(s,tx);});
+    rt.update(|s,tx|{s.draft=rune::TextEdit::new("Sans aucun outil ni fichier à créer, réponds uniquement par un bloc de code Rust. Dans main, écris soixante déclarations explicites et distinctes, de let value_01 = 1; à let value_60 = 60;, chacune sur sa ligne, puis println!(\"RUNE-REAL-REPRISE\");. Ne remplace pas les déclarations par une boucle.");send(s,tx,false);});
     wait(&mut rt, "real streamed response and recovery", |s| {
         if s.phase != Phase::Ready
             || !s

@@ -2,6 +2,40 @@ use crate::{Phase, content::Part, history, init, view};
 use rune::{Env, Runtime};
 use serde_json::json;
 #[test]
+fn replacing_a_window_shares_rows_and_retires_only_departed_disclosures() {
+    let mut state = init();
+    let first: history::Row =
+        history::decode_message(&json!({"id":"first","type":"user","text":"First"}))
+            .unwrap()
+            .into();
+    let shared: history::Row =
+        history::decode_message(&json!({"id":"shared","type":"user","text":"Overlap"}))
+            .unwrap()
+            .into();
+    let departed: history::Row =
+        history::decode_message(&json!({"id":"departed","type":"user","text":"Departed"}))
+            .unwrap()
+            .into();
+    state.messages = vec![shared.clone(), departed];
+    crate::transcript_state::reveal_tool_output(&mut state, "shared", "shared-reveal");
+    crate::transcript_state::reveal_tool_output(&mut state, "departed", "departed-reveal");
+    let (events, incoming) = crate::bounded(1);
+    state.incoming = Some(incoming);
+    events
+        .try_send(crate::transport::Event::Older(history::Page {
+            rows: vec![first, shared.clone()],
+            older: None,
+            newer: Some(json!({"kind":"after","messageID":"shared"})),
+            running: false,
+        }))
+        .unwrap();
+    assert!(crate::poll_chat(&mut state, 1));
+    assert!(state.history_detached);
+    assert!(std::sync::Arc::ptr_eq(&shared, &state.messages[1]));
+    assert!(state.expanded_tools.contains_key("shared"));
+    assert!(!state.expanded_tools.contains_key("departed"));
+}
+#[test]
 fn attachment_reveal_keeps_the_gap_between_head_and_tail() {
     let files = (0..1001)
         .map(|index| {
@@ -13,7 +47,8 @@ fn attachment_reveal_keeps_the_gap_between_head_and_tail() {
     let mut s = init();
     s.messages = vec![
         history::decode_message(&json!({"id":"dense","type":"user","text":"Files","files":files}))
-            .unwrap(),
+            .unwrap()
+            .into(),
     ];
     s.phase = Phase::Ready;
     let mut rt = Runtime::new(s, view, (900.0, 700.0), Env::new(false, 1.0));
@@ -33,7 +68,9 @@ fn attachment_reveal_keeps_the_gap_between_head_and_tail() {
         .unwrap();
     assert!(head < marker && marker < tail);
     assert!(rt.find("dense-file-500").is_none());
-    rt.update(|s, _| crate::transcript_state::reveal_tool_output(s, "attachments-dense-0"));
+    rt.update(|s, _| {
+        crate::transcript_state::reveal_tool_output(s, "dense", "attachments-dense-0")
+    });
     rt.frame(0.0);
     assert!(rt.find("dense-file-500").is_some());
     assert!(rt.find("attachments-dense-0").is_none());
@@ -53,7 +90,7 @@ fn user_attachments_render_as_chips_without_instructions_or_uris() {
                 ]
             })).unwrap();
             let mut s = init();
-            s.messages = vec![row];
+            s.messages = vec![row.into()];
             s.phase = Phase::Ready;
             let mut rt = Runtime::new(s, view, (390.0, 700.0), Env::new(dark, 1.0));
             for _ in 0..12 {
@@ -96,7 +133,7 @@ fn streamed_text_after_a_tool_reaches_the_rendered_transcript() {
     .unwrap();
     let (out, input) = crate::bounded(4);
     let mut state = init();
-    state.messages = vec![row];
+    state.messages = vec![row.into()];
     state.phase = Phase::Streaming;
     state.incoming = Some(input);
     let mut rt = Runtime::new(state, view, (960.0, 760.0), Env::new(false, 1.0));
@@ -132,7 +169,7 @@ fn native_tools_preserve_order_and_reveal_real_input_output_on_demand() {
         matches!(&row.parts[..],[Part::Text(a),Part::Tool(_),Part::Text(b),Part::Tool(_)] if a.text=="Before"&&b.text=="After")
     );
     let mut s = init();
-    s.messages = vec![row];
+    s.messages = vec![row.into()];
     s.phase = Phase::Ready;
     let mut rt = Runtime::new(s, view, (960.0, 1000.0), Env::new(true, 1.0));
     for _ in 0..12 {

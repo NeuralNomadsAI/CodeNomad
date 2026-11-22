@@ -7,7 +7,7 @@ use crate::{
     backend::Backend,
     content::{self, Part, TextFit, TextProvenance},
     history, stream,
-    transport::{Command, Event, publish},
+    transport::{Command, Event, PromptOutcome, publish},
 };
 use serde_json::Value;
 use std::{
@@ -71,7 +71,7 @@ pub async fn run(
     let mut owed = HashSet::<(String, usize)>::new();
     let mut repairs = 0u8;
     let mut settlement_reads = 0u8;
-    let mut resident = Vec::<crate::Message>::new();
+    let mut resident = Vec::<history::Row>::new();
     let mut historical = false;
     let mut parked = false;
     let mut seen = Seen {
@@ -195,18 +195,44 @@ pub async fn run(
                 }
                 publish(&out, &wake, Event::Reconnecting).await;
             }
-            Some(Input::Command(Command::Send(body))) => {
-                if opened && !dirty && !parked && !historical && wire.upstream.load(SeqCst) {
+            Some(Input::Command(Command::Prompt(prompt))) => {
+                let Some(id) = &prompt.id else { continue };
+                let admitted = opened && !parked && !historical && wire.upstream.load(SeqCst);
+                let outcome = if admitted {
+                    match backend.prompt(&prompt).await {
+                        Ok(ack) => PromptOutcome::Confirmed(ack.id),
+                        Err(error)
+                            if error.downcast_ref()
+                                == Some(&crate::prompt::PromptError::Rejected) =>
+                        {
+                            PromptOutcome::Rejected
+                        }
+                        Err(_) => PromptOutcome::Unconfirmed,
+                    }
+                } else {
+                    PromptOutcome::Rejected
+                };
+                if !matches!(outcome, PromptOutcome::Rejected)
+                    && !busy
+                    && prompt.delivery != Some(crate::prompt::Delivery::Queue)
+                {
                     busy = true;
                     repairs = 0;
                     settlement_reads = 0;
-                    if backend.send(body).await.is_err() {
-                        eprintln!("Rune prompt delivery failed");
-                        publish(&out, &wake, Event::Failed).await;
-                    }
-                } else {
-                    publish(&out, &wake, Event::Failed).await;
                 }
+                if matches!(outcome, PromptOutcome::Unconfirmed) {
+                    dirty = true;
+                    quiet = Instant::now();
+                }
+                publish(
+                    &out,
+                    &wake,
+                    Event::PromptAcknowledged {
+                        attempted: id.clone(),
+                        outcome,
+                    },
+                )
+                .await;
             }
             Some(Input::Native(e, v, native)) if e == epoch => {
                 let kind = native["type"].as_str().unwrap_or_default();
@@ -216,8 +242,29 @@ pub async fn run(
                 {
                     publish(&out, &wake, Event::AgentHint(false)).await;
                 }
-                if historical || v <= fence || !seen.insert(&native) {
+                if v <= fence || !seen.insert(&native) {
                     continue;
+                }
+                match kind {
+                    "session.deleted" | "session.moved" => {
+                        publish(&out, &wake, Event::HistoryInvalidated).await;
+                        wire.cancelled.store(true, SeqCst);
+                        return Err("session scope changed".into());
+                    }
+                    "session.revert.committed" => {
+                        publish(&out, &wake, Event::HistoryInvalidated).await;
+                        historical = false;
+                        resident.clear();
+                        first = None;
+                        known.clear();
+                        owed.clear();
+                        parked = false;
+                        dirty = true;
+                        quiet = Instant::now();
+                        continue;
+                    }
+                    _ if historical => continue,
+                    _ => {}
                 }
                 let id = native["data"]["assistantMessageID"]
                     .as_str()
@@ -244,7 +291,7 @@ pub async fn run(
                                 if resident.len() >= history::MAX_ROWS {
                                     return Err("resident row budget reached".into());
                                 }
-                                resident.push(row.clone());
+                                resident.push(row.clone().into());
                                 publish(&out, &wake, Event::Message(row)).await;
                             }
                         }
@@ -265,7 +312,7 @@ pub async fn run(
                             })
                         });
                         let fit = match row {
-                            Some(row) => content::apply_text(row, &event)?,
+                            Some(row) => content::apply_text(Arc::make_mut(row), &event)?,
                             None => TextFit::Repair,
                         };
                         if event.is_end() && fit == TextFit::Applied {
@@ -302,10 +349,6 @@ pub async fn run(
                         dirty = true;
                         quiet = Instant::now() + Duration::from_millis(100);
                     }
-                    "session.deleted" | "session.moved" | "session.revert.committed" => {
-                        publish(&out, &wake, Event::Failed).await;
-                        return Err("session scope or history changed".into());
-                    }
                     "server.connected" | "session.inbox.enqueued" | "session.inbox.delivered" => {
                         dirty = true;
                         quiet = Instant::now() + Duration::from_millis(100);
@@ -326,8 +369,6 @@ pub async fn run(
             let stamp = wire.version.load(SeqCst);
             let snapshot = if initial && backend.fresh_mode {
                 backend.empty().await
-            } else if backend.fresh_mode {
-                backend.fresh(first.as_deref()).await
             } else {
                 backend.restore(first.as_deref()).await
             };

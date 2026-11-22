@@ -42,9 +42,14 @@ pub fn message(s: &State, i: usize) -> El {
     let mut files = layout::action_row().key("message-attachments");
     let mut has_files = false;
     let steps = |step| format!("attachments-{}-{step}", m.id);
+    let is_expanded = |key: &str| {
+        s.expanded_tools
+            .get(&m.id)
+            .is_some_and(|keys| keys.contains(key))
+    };
     let shown = 500
         + (0..m.parts.len().div_ceil(1000))
-            .take_while(|&step| s.expanded_tools.contains(&steps(step)))
+            .take_while(|&step| is_expanded(&steps(step)))
             .count()
             * 1000;
     let hidden = m.parts.len().saturating_sub(shown + 500);
@@ -64,7 +69,8 @@ pub fn message(s: &State, i: usize) -> El {
                     false,
                     crate::screen::action(&scope, {
                         let key = key.clone();
-                        move |s| crate::transcript_state::reveal_tool_output(s, &key)
+                        let message = m.id.clone();
+                        move |s| crate::transcript_state::reveal_tool_output(s, &message, &key)
                     }),
                 );
                 if matches!(part, Part::File(_)) {
@@ -123,7 +129,7 @@ pub fn message(s: &State, i: usize) -> El {
             }
             Part::Tool(tool) => {
                 let key = format!("tool-{}-{}", m.id, tool.id);
-                let expanded = s.expanded_tools.contains(&key);
+                let expanded = is_expanded(&key);
                 let status = match tool.status.as_str() {
                     "completed" => "toolCall.status.completed",
                     "error" => "rune.tool_error",
@@ -131,6 +137,7 @@ pub fn message(s: &State, i: usize) -> El {
                     _ => "rune.tool_pending",
                 };
                 let toggle = key.clone();
+                let message = m.id.clone();
                 let mut block = col()
                     .key(key.clone())
                     .full_width()
@@ -151,7 +158,7 @@ pub fn message(s: &State, i: usize) -> El {
                                     }),
                                     false,
                                     crate::screen::action(&scope, move |s: &mut State| {
-                                        crate::transcript_state::toggle_tool(s, &toggle);
+                                        crate::transcript_state::toggle_tool(s, &message, &toggle);
                                     }),
                                 )
                                 .key(format!("toggle-{key}")),
@@ -164,8 +171,7 @@ pub fn message(s: &State, i: usize) -> El {
                     ] {
                         if !value.is_empty() {
                             let reveal = format!("{key}-full-{key_part}");
-                            let clipped = value.chars().count() > 10_000
-                                && !s.expanded_tools.contains(&reveal);
+                            let clipped = value.chars().count() > 10_000 && !is_expanded(&reveal);
                             let shown = if clipped {
                                 value.chars().take(10_000).collect::<String>()
                             } else {
@@ -176,12 +182,15 @@ pub fn message(s: &State, i: usize) -> El {
                                 .child(prose(format!("{key}-{key_part}"), &shown));
                             if clipped {
                                 let button_key = format!("reveal-{reveal}");
+                                let message = m.id.clone();
                                 block = block.child(
                                     rune_theme_codenomad::layout::button(
                                         t("messageBlock.hiddenText.showAll"),
                                         false,
                                         crate::screen::action(&scope, move |s: &mut State| {
-                                            crate::transcript_state::reveal_tool_output(s, &reveal);
+                                            crate::transcript_state::reveal_tool_output(
+                                                s, &message, &reveal,
+                                            );
                                         }),
                                     )
                                     .key(button_key),

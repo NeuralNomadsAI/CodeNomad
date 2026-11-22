@@ -73,41 +73,11 @@ impl Backend {
         )
     }
     pub async fn empty(&self) -> Result<Page> {
-        let initial = read_json(
-            self.client
-                .get(format!(
-                    "{}workspaces/{}/instance/api/session/{}/message?limit=1",
-                    self.base, self.workspace, self.session
-                ))
-                .send()
-                .await?
-                .error_for_status()?,
-        )
-        .await?;
-        if !initial["data"]
-            .as_array()
-            .is_some_and(|rows| rows.is_empty())
-        {
+        let page = self.page(json!({"kind":"latest"})).await?;
+        if !page.rows.is_empty() {
             return Err("fresh-session mode requires an empty session".into());
         }
-        Ok(Page {
-            rows: vec![],
-            older: None,
-            newer: None,
-            running: false,
-        })
-    }
-    pub async fn send(&self, text: String) -> Result<()> {
-        self.client
-            .post(format!(
-                "{}workspaces/{}/instance/api/session/{}/prompt",
-                self.base, self.workspace, self.session
-            ))
-            .json(&json!({"text":text}))
-            .send()
-            .await?
-            .error_for_status()?;
-        Ok(())
+        Ok(page)
     }
     pub async fn prompt(
         &self,
@@ -133,7 +103,7 @@ impl Backend {
             };
             return Err(error.into());
         }
-        let response = read_json_limited(response, crate::prompt::MAX_BODY_BYTES)
+        let response = crate::prompt_receipt::read(response)
             .await
             .map_err(|_| crate::prompt::PromptError::Unconfirmed)?;
         let native = response.get("data").unwrap_or(&response);
@@ -154,53 +124,6 @@ impl Backend {
         .filter(|id| history::valid_id(id))
         .ok_or("prompt acknowledgement has no valid identity")?;
         Ok(crate::prompt::Acknowledgement { id: id.into() })
-    }
-    /// The explicit fresh-session flow retains at most its first 200 native rows.
-    pub async fn fresh(&self, first: Option<&str>) -> Result<Page> {
-        let data = read_json_limited(
-            self.client
-                .get(format!(
-                    "{}workspaces/{}/instance/api/session/{}/message?limit=200&order=asc",
-                    self.base, self.workspace, self.session
-                ))
-                .send()
-                .await?
-                .error_for_status()?,
-            history::RESPONSE_BYTES,
-        )
-        .await?;
-        let native = data["data"]
-            .as_array()
-            .filter(|rows| rows.len() <= 200)
-            .ok_or("fresh session response exceeds its bound")?;
-        // Native cursors also anchor future reads; their presence alone is not evidence of another page.
-        let latest = read_json_limited(
-            self.client
-                .get(format!(
-                    "{}workspaces/{}/instance/api/session/{}/message?limit=1",
-                    self.base, self.workspace, self.session
-                ))
-                .send()
-                .await?
-                .error_for_status()?,
-            history::RESPONSE_BYTES,
-        )
-        .await?;
-        let tail = latest["data"]
-            .as_array()
-            .filter(|rows| rows.len() <= 1)
-            .ok_or("invalid latest message")?;
-        if native.last().map(|r| &r["id"]) != tail.first().map(|r| &r["id"]) {
-            return Err("fresh session retained history exceeds its bound or changed".into());
-        }
-        if first.is_some_and(|first| !native.iter().any(|row| row["id"] == first)) {
-            return Err("fresh session retained anchor is outside the native page".into());
-        }
-        let mut page = history::decode(
-            json!({"status":"window","messages":native,"older":null,"newer":null,"latest":true}),
-        )?;
-        self.read_running(&mut page).await?;
-        Ok(page)
     }
     async fn read_running(&self, page: &mut Page) -> Result<()> {
         let state = read_json(

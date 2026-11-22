@@ -199,6 +199,31 @@ fn history_keeps_references_and_loads_only_the_requested_attachment() {
 }
 
 #[test]
+fn fresh_session_uses_the_same_projected_history_after_admission() {
+    run(async {
+        let hash = "d".repeat(64);
+        let file = json!({"mime":"text/plain","name":"new.txt","source":{"type":"deferred","sha256":hash}});
+        let empty =
+            json!({"status":"window","messages":[],"older":null,"newer":null,"latest":true});
+        let server = Server::new(vec![empty, window(vec![file]), json!({"data":{"time":{}}})]);
+        let mut backend = server.backend.clone();
+        backend.fresh_mode = true;
+        assert!(backend.empty().await.unwrap().rows.is_empty());
+        let page = backend.restore(None).await.unwrap();
+        assert!(matches!(&page.rows[0].parts[..], [Part::File(file)]
+            if file.reference.as_ref().is_some_and(|file| file.sha256 == hash)));
+        let requests = server.requests.lock().unwrap();
+        assert_eq!(requests[0], requests[1]);
+        assert!(
+            requests[0]
+                .0
+                .starts_with("POST /api/workspaces/workspace/session-history/window ")
+        );
+        assert!(!requests.iter().any(|(line, _)| line.contains("/message?")));
+    });
+}
+
+#[test]
 fn prompt_keeps_native_fields_and_acknowledges_identical_text_by_identity() {
     run(async {
         let server = Server::new(vec![
@@ -401,21 +426,17 @@ fn dense_user_attachments_keep_the_message_and_native_tail() {
 }
 
 #[test]
-fn accepted_response_over_budget_is_unconfirmed_not_rejected() {
+fn native_large_payload_does_not_obscure_the_receipt() {
     run(async {
         let server = Server::new(vec![json!({
-            "data":{"id":"queued","sessionID":"session","payload":{"files":[{"data":"x".repeat(crate::prompt::MAX_BODY_BYTES)}]}}
+            "data":{"id":"queued","sessionID":"session","payload":{"files":[{"data":"x".repeat(34_952_540)}]}}
         })]);
         let prompt = Prompt {
             id: Some("queued".into()),
             delivery: Some(Delivery::Queue),
             ..Prompt::default()
         };
-        let error = server.backend.prompt(&prompt).await.unwrap_err();
-        assert_eq!(
-            error.downcast_ref(),
-            Some(&crate::prompt::PromptError::Unconfirmed)
-        );
+        assert_eq!(server.backend.prompt(&prompt).await.unwrap().id, "queued");
         assert_eq!(server.requests.lock().unwrap().len(), 1);
     });
 }

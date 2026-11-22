@@ -13,6 +13,8 @@ pub mod files;
 pub mod history;
 pub mod http;
 pub mod prompt;
+pub mod prompt_catalogue;
+mod prompt_receipt;
 pub mod recovery;
 pub mod runtime;
 mod server_path;

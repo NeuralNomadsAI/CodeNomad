@@ -1,5 +1,5 @@
 //! CPU-only Rune runtime: no window, GPU presentation, global input or clipboard access.
-use crate::{Phase, State, init, poll, request_older, send, setup, view};
+use crate::{Phase, State, composer::send, init, poll, request_older, setup, view};
 use rune::{Env, Runtime};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
@@ -47,11 +47,11 @@ pub(crate) fn anchor(rt: &Runtime<State>) -> (String, f32) {
         .find(|e| {
             e.visible[3] > 2.0
                 && e.path
-                    .strip_prefix(prefix)
-                    .is_some_and(|tail| !tail.contains('/'))
+                    .split_once(prefix)
+                    .is_some_and(|(_, tail)| !tail.contains('/'))
         })
         .expect("visible native row");
-    (row.path.strip_prefix(prefix).unwrap().into(), row.rect[1])
+    (row.path.split_once(prefix).unwrap().1.into(), row.rect[1])
 }
 pub(crate) fn check_anchor(rt: &Runtime<State>, anchor: &(String, f32)) -> f32 {
     let y = rt
@@ -104,6 +104,25 @@ pub fn run() {
             && !s.paging
     });
     canonical(&rt, 216, 200);
+    control("revert-in-history");
+    wait(
+        &mut rt,
+        "detached revert returns to an authoritative window",
+        |s| {
+            !s.history_detached
+                && s.messages
+                    .iter()
+                    .any(|row| row.body == "authoritative after revert")
+        },
+    );
+    canonical(&rt, 400, 200);
+    rt.update(request_older);
+    wait(&mut rt, "old window after revert", |s| {
+        s.history_detached
+            && s.messages
+                .first()
+                .is_some_and(|row| row.id == "message-00216")
+    });
     let before = rt.state.messages.clone();
     control("block-older");
     rt.update(request_older);
@@ -150,7 +169,7 @@ pub fn run() {
     let reading = anchor(&rt);
     rt.update(|s, tx| {
         s.draft = rune::TextEdit::new("Recovery synthetic prompt");
-        send(s, tx);
+        send(s, tx, false);
     });
     wait(&mut rt, "initial live delta", |s| {
         s.messages
@@ -191,7 +210,7 @@ pub fn run() {
     let stats = control("stats");
     assert_eq!(stats["prompts"], 1, "reconnect never resends a prompt");
     assert_eq!(
-        stats["latestReads"], 2,
+        stats["latestReads"], 3,
         "recovery never falls back to a mass latest read"
     );
     println!(

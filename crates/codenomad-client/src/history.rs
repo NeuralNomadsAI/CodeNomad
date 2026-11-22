@@ -1,6 +1,7 @@
 use crate::Message;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
+pub type Row = Arc<Message>;
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
 pub const MAX_ROWS: usize = 2048;
@@ -11,7 +12,7 @@ pub(crate) const RESPONSE_BYTES: usize = WINDOW_BYTES + 64 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct Page {
-    pub rows: Vec<Message>,
+    pub rows: Vec<Row>,
     pub older: Option<Value>,
     pub newer: Option<Value>,
     pub running: bool,
@@ -71,7 +72,7 @@ pub fn decode(v: Value) -> Result<Page> {
     }
     let rows = native
         .iter()
-        .map(decode_message)
+        .map(|value| decode_message(value).map(Arc::new))
         .collect::<Result<Vec<_>>>()?;
     check(&rows)?;
     let mut running = false;
@@ -115,7 +116,7 @@ fn stored_size(row: &mut Value) -> Result<usize> {
     fields.extend(kind.map(|kind| ("type".into(), kind)));
     Ok(count.0)
 }
-pub fn check(rows: &[Message]) -> Result<()> {
+pub fn check(rows: &[Row]) -> Result<()> {
     let mut ids = HashSet::new();
     if rows.len() > MAX_ROWS
         || rows
@@ -143,7 +144,7 @@ pub fn check(rows: &[Message]) -> Result<()> {
     Ok(())
 }
 /// The server's ordered overlap is the continuity proof; IDs never determine ordering.
-pub fn join(left: &[Message], right: &[Message]) -> Result<Vec<Message>> {
+pub fn join(left: &[Row], right: &[Row]) -> Result<Vec<Row>> {
     if left.is_empty() {
         check(right)?;
         return Ok(right.to_vec());
@@ -152,7 +153,15 @@ pub fn join(left: &[Message], right: &[Message]) -> Result<Vec<Message>> {
         check(left)?;
         return Ok(left.to_vec());
     }
-    let overlap = (1..=left.len().min(right.len()))
+    let overlap = overlap(left, right)?;
+    let mut rows = left[..left.len() - overlap].to_vec();
+    rows.extend_from_slice(right);
+    check(&rows)?;
+    Ok(rows)
+}
+
+fn overlap(left: &[Row], right: &[Row]) -> Result<usize> {
+    (1..=left.len().min(right.len()))
         .rev()
         .find(|&n| {
             left[left.len() - n..]
@@ -160,14 +169,10 @@ pub fn join(left: &[Message], right: &[Message]) -> Result<Vec<Message>> {
                 .zip(&right[..n])
                 .all(|(a, b)| a.id == b.id)
         })
-        .ok_or("history windows lost their overlap")?;
-    let mut rows = left[..left.len() - overlap].to_vec();
-    rows.extend_from_slice(right);
-    check(&rows)?;
-    Ok(rows)
+        .ok_or_else(|| "history windows lost their overlap".into())
 }
 
-pub(crate) fn previous_page(page: &Page, shown: &[Message]) -> Result<()> {
+pub(crate) fn previous_page(page: &Page, shown: &[Row]) -> Result<()> {
     check(&page.rows)?;
     if !shown.is_empty()
         && !page.rows.is_empty()

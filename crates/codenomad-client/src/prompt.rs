@@ -1,8 +1,34 @@
 //! Native prompt fields; mentions use UTF-16 offsets, independently of the editor.
+use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Serialize;
 use serde_json::{Map, Value};
 
 pub const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
+
+pub fn inline_uri(mime: &str, bytes: &[u8]) -> String {
+    let mut uri = format!("data:{mime};base64,");
+    STANDARD.encode_string(bytes, &mut uri);
+    uri
+}
+
+pub fn message_id() -> crate::history::Result<String> {
+    let mut bytes = [0; 16];
+    #[cfg(not(target_arch = "wasm32"))]
+    getrandom::fill(&mut bytes).map_err(|_| "message entropy unavailable")?;
+    #[cfg(target_arch = "wasm32")]
+    web_sys::window()
+        .ok_or("browser window required")?
+        .crypto()
+        .map_err(|_| "browser crypto unavailable")?
+        .get_random_values_with_u8_array(&mut bytes)
+        .map_err(|_| "message entropy unavailable")?;
+    use std::fmt::Write;
+    let mut id = String::from("msg_");
+    for byte in bytes {
+        write!(id, "{byte:02x}")?;
+    }
+    Ok(id)
+}
 
 pub(crate) fn encode(input: &Prompt) -> crate::history::Result<Vec<u8>> {
     encode_limited(input, MAX_BODY_BYTES)

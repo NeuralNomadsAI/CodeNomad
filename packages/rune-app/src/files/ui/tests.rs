@@ -49,6 +49,24 @@ fn stale(ui: &mut Ui) -> bool {
 }
 
 #[test]
+fn stream_reconnect_restores_files_while_detached_from_live_transcript() {
+    use crate::transport::Event;
+    let mut s = crate::init();
+    let (out, incoming) = crate::bounded(2);
+    s.incoming = Some(incoming);
+    s.files = Some(owner());
+    s.files.as_mut().unwrap().online(true);
+    s.history_detached = true;
+    out.try_send(Event::Reconnecting).unwrap();
+    out.try_send(Event::AgentHint(true)).unwrap();
+    assert!(crate::poll_chat(&mut s, 1));
+    assert!(!s.files.as_ref().unwrap().online);
+    assert!(crate::poll_chat(&mut s, 1));
+    assert!(s.files.as_ref().unwrap().online);
+    assert!(s.history_detached);
+}
+
+#[test]
 fn suspension_preserves_selection_and_expansion_while_revoking_pending_reads() {
     let mut ui = owner();
     ui.panel = true;

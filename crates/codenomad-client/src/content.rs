@@ -158,7 +158,7 @@ pub fn apply_text(row: &mut crate::Message, event: &TextEvent) -> Result<TextFit
 }
 
 /// Merge open fragments without making an older persisted prefix replace live text.
-pub fn merge_page(live: &[crate::Message], page: &mut [crate::Message]) -> Result<()> {
+pub fn merge_page(live: &[crate::history::Row], page: &mut [crate::history::Row]) -> Result<()> {
     for row in page.iter_mut().filter(|r| r.role == "assistant") {
         if row.completed {
             continue;
@@ -166,6 +166,7 @@ pub fn merge_page(live: &[crate::Message], page: &mut [crate::Message]) -> Resul
         let Some(prior) = live.iter().find(|r| r.id == row.id) else {
             continue;
         };
+        let row = std::sync::Arc::make_mut(row);
         let texts: Vec<_> = prior
             .parts
             .iter()
