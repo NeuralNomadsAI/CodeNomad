@@ -2,7 +2,7 @@ use crate::{Phase, State, launcher_view::button, strings::t};
 use rune::{Cx, El, col, text};
 use rune_theme_codenomad::interruption;
 use rune_theme_codenomad::{
-    Space, kit,
+    Space, field_kit,
     layout::{self, Layout, field, textarea},
 };
 pub fn view(s: &State, cx: &Cx<State>) -> El {
@@ -80,7 +80,7 @@ pub fn view(s: &State, cx: &Cx<State>) -> El {
             field(&a.search)
                 .label(t("rune.find_model"))
                 .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Model))
-                .build(kit(layout::dark()))
+                .build(field_kit(layout::dark()))
                 .key("model-search"),
         );
         body = body.child(interruption::scroll_region().key("model-list").child(list));
@@ -134,7 +134,7 @@ pub fn view(s: &State, cx: &Cx<State>) -> El {
                         &scope,
                         crate::screen::Editor::Reason(id),
                     ))
-                    .build(kit(layout::dark()))
+                    .build(field_kit(layout::dark()))
                     .key(format!("reason-{}", p.id)),
             );
             let mut actions = rune_theme_codenomad::layout::action_row().separate(Space::Sm);

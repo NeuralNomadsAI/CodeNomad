@@ -1,7 +1,7 @@
 use crate::{State, launcher, strings::t};
 use rune::{El, ScrollSpec, col, text};
 use rune_theme_codenomad::{
-    Space, TextRole, kit,
+    Space, TextRole, field_kit,
     layout::{self, Layout, hinted_field, literal_field},
 };
 pub fn button(key: &str, label: &str, disabled: bool) -> El {
@@ -21,7 +21,7 @@ pub fn view(s: &State) -> El {
                 literal_field(&l.address)
                     .label(t("rune.server"))
                     .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Address))
-                    .build(kit(layout::dark()))
+                    .build(field_kit(layout::dark()))
                     .key("server-address"),
             )
             .child(text(t("authRecovery.password")))
@@ -31,7 +31,7 @@ pub fn view(s: &State) -> El {
                     .secure()
                     .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Password))
                     .on_submit(crate::screen::action_tx(&scope, launcher::connect))
-                    .build(kit(layout::dark()))
+                    .build(field_kit(layout::dark()))
                     .key("server-password"),
             )
             .child(
@@ -51,7 +51,7 @@ pub fn view(s: &State) -> El {
                     .label(t("instanceInfo.labels.folder"))
                     .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Folder))
                     .on_submit(crate::screen::action_tx(&scope, launcher::open))
-                    .build(kit(layout::dark()))
+                    .build(field_kit(layout::dark()))
                     .key("folder-path"),
             )
             .child(
@@ -105,7 +105,7 @@ pub fn view(s: &State) -> El {
                     hinted_field(&l.search, t("rune.search"))
                         .label(t("rune.search"))
                         .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Search))
-                        .build(kit(layout::dark()))
+                        .build(field_kit(layout::dark()))
                         .key("session-search"),
                 );
             let filter = l.search.text.to_lowercase();
@@ -156,7 +156,7 @@ pub fn view(s: &State) -> El {
                         .label(t("rune.session_title"))
                         .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Title))
                         .on_submit(crate::screen::action_tx(&scope, launcher::create))
-                        .build(kit(layout::dark()))
+                        .build(field_kit(layout::dark()))
                         .key("session-title"),
                 )
                 .child(

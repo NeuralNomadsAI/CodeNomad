@@ -21,6 +21,8 @@ Native Rune client for CodeNomad, replacing the Solid UI and the Tauri host modu
 
 Kit builders consume the mapped `Kit` directly. Keep visual configuration before `build(kit)` through public builder options and reviewed shared-theme variants; never restyle the resulting control. `Kit` exposes palette, typography, radii, elevation and motion. Component spacing and several dimensions are fixed inside the pinned kit; [Rune issue 573](https://github.com/anomalyco/rune/issues/573) tracks theme-owned component metrics. Source geometry qualification remains required for those controls. Use the public kit components for fields, selectors, menus, dialogs, tabs, shell regions and document renderers as their owning modules are assembled.
 
+`TextInput` and `TextArea` use the cached `field_kit` variant, whose base surface resolves to `surface-field` before building. The general Kit retains the canvas role for reading components.
+
 ## Platform
 
 - Shared code builds for native and `wasm32-unknown-unknown`; CI builds both.

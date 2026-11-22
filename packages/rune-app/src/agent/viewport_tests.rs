@@ -41,6 +41,9 @@ fn visible(rt: &Runtime<State>, key: &str) {
         .into_iter()
         .find(|e| e.key.as_deref() == Some(key))
         .unwrap_or_else(|| panic!("missing {key}"));
+    if node.role == "textbox" {
+        assert_eq!(node.fill, rune_theme_codenomad::field_kit(false).c.bg_base);
+    }
     assert!(
         node.rect[3] > 0.0 && node.visible[2] > 0.0 && node.visible[3] >= node.rect[3] - 1.0,
         "{key} must be a usable visible control: rect={:?} visible={:?}",

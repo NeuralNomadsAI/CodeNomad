@@ -203,6 +203,8 @@ mod tests {
                     .child(rune::text("Bare text").key("bare"))
                     .child(rune::text("Title").key("title").text_role(TextRole::Title))
                     .child(input(edit).key("editor"))
+                    .child(field(edit).build(crate::field_kit(dark())).key("field"))
+                    .child(textarea(edit).build(crate::field_kit(dark())).key("area"))
             })
         }
         let mut runtime = rune::Runtime::new(
@@ -229,6 +231,14 @@ mod tests {
                     Some(tokens(dark).color("text-primary")),
                     "inherited ink for {key}"
                 );
+            }
+            for key in ["field", "area"] {
+                let node = runtime
+                    .elements()
+                    .into_iter()
+                    .find(|node| node.key.as_deref() == Some(key))
+                    .unwrap();
+                assert_eq!(node.fill, tokens(dark).color("surface-field"));
             }
         }
     }

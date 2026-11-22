@@ -9,6 +9,14 @@ pub fn kit(dark: bool) -> &'static Kit {
     static KITS: [OnceLock<Kit>; 2] = [const { OnceLock::new() }; 2];
     KITS[dark as usize].get_or_init(|| build(dark))
 }
+pub fn field_kit(dark: bool) -> &'static Kit {
+    static FIELDS: [OnceLock<Kit>; 2] = [const { OnceLock::new() }; 2];
+    FIELDS[dark as usize].get_or_init(|| {
+        let mut kit = kit(dark).clone();
+        kit.c.bg_base = kit.c.surface_base;
+        kit
+    })
+}
 fn build(dark: bool) -> Kit {
     let t = tokens(dark);
     let c = |name| t.color(name);

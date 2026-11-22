@@ -1,7 +1,7 @@
 use crate::{State, agent_api::Form, agent_forms, launcher_view::button, strings::t};
 use rune::{El, col, text};
 use rune_theme_codenomad::{
-    Space, kit,
+    Space, field_kit,
     layout::{self, Layout, textarea},
 };
 pub fn fields(s: &State, form: &Form) -> El {
@@ -89,7 +89,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                         .label(key)
                         .disabled(a.busy)
                         .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Form(id)))
-                        .build(kit(layout::dark()))
+                        .build(field_kit(layout::dark()))
                         .key(format!("field-{key}")),
                 );
             }
@@ -133,7 +133,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                                 &scope,
                                 crate::screen::Editor::Custom(id),
                             ))
-                            .build(kit(layout::dark()))
+                            .build(field_kit(layout::dark()))
                             .key(format!("custom-{key}")),
                     );
                 }

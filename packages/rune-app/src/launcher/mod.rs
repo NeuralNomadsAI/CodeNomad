@@ -219,6 +219,12 @@ mod tests {
             ("server-address", "synthetic-server"),
             ("server-password", "synthetic-password"),
         ] {
+            let node = rt
+                .elements()
+                .into_iter()
+                .find(|node| node.key.as_deref() == Some(key))
+                .unwrap();
+            assert_eq!(node.fill, rune_theme_codenomad::field_kit(false).c.bg_base);
             let (x, y) = rt.find(key).unwrap();
             rt.pointer_down(x, y);
             rt.pointer_up(x, y);
