@@ -269,9 +269,14 @@ pub fn code(source: &str, wrap: bool) -> El {
 
 type Strike = (usize, usize, Option<Color>);
 
+fn separated_only_by_newlines(text: &[u8], end: usize, start: usize) -> bool {
+    text.get(end..start)
+        .is_some_and(|gap| gap.iter().all(|&byte| byte == b'\n'))
+}
+
 fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
     let mut spans: Vec<Span> = Vec::with_capacity(log.runs.len().min(COPY_RUN_LIMIT));
-    let mut strikes = vec![];
+    let mut strikes: Vec<Strike> = vec![];
     let metrics = tokens(dark());
     let default = metrics.color("text-primary");
     let mut window_budget = WINDOW_WORK_LIMIT;
@@ -295,6 +300,13 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
             });
         }
         // Rune can revisit the shaped line for every span, even for foreground-only ink.
+        if style.inverse {
+            std::mem::swap(&mut style.fg, &mut style.bg);
+            style.inverse = false;
+        }
+        if style == Style::default() {
+            continue;
+        }
         let mut charge = |cost| {
             if cost > line_budget || cost > window_budget {
                 return false;
@@ -309,9 +321,6 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
                 text[range].fill(b' ');
             }
             continue;
-        }
-        if style.inverse {
-            std::mem::swap(&mut style.fg, &mut style.bg);
         }
         let dim = |color: Color| if style.dim { color.alpha(0.7) } else { color };
         let mut span = Span::new(range.start, range.end);
@@ -329,15 +338,15 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
             if style.underline && charge(underline_runs.saturating_mul(line.len())) {
                 span = span.underline(dim(style.fg.unwrap_or(default)));
             }
-            if style.strike
-                && spans.len() + strikes.len() + 1 < COPY_RUN_LIMIT
-                && charge(line.len())
-            {
-                strikes.push((
-                    range.start,
-                    range.end,
-                    Some(dim(style.fg.unwrap_or(default))),
-                ));
+            if style.strike && charge(line.len()) {
+                let ink = Some(dim(style.fg.unwrap_or(default)));
+                if let Some(last) = strikes.last_mut().filter(|last| {
+                    last.2 == ink && separated_only_by_newlines(&text, last.1, range.start)
+                }) {
+                    last.1 = range.end;
+                } else if spans.len() + strikes.len() + 1 < COPY_RUN_LIMIT {
+                    strikes.push((range.start, range.end, ink));
+                }
             }
         }
         if style.bold {
@@ -346,9 +355,11 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
         if style.italic {
             span = span.italic();
         }
+        if span == Span::new(range.start, range.end) {
+            continue;
+        }
         if let Some(last) = spans.last_mut()
-            && (last.end == span.start
-                || text.get(last.end as usize..span.start as usize) == Some(b"\n"))
+            && separated_only_by_newlines(&text, last.end as usize, span.start as usize)
             && span
                 == (Span {
                     start: span.start,
@@ -537,7 +548,7 @@ mod tests {
 
     #[test]
     fn a_uniform_ascii_line_stays_underlined_and_consecutive_crs_stay_distinct() {
-        let source = format!("\u{1b}[4m{}\r\r\nB", "A".repeat(1500));
+        let source = format!("\u{1b}[4m{}\u{1b}[24m\r\r\nB", "A".repeat(1500));
         let (text, spans, _) = styled(parse(&source));
         assert!(text.ends_with("\n\nB"));
         assert_eq!(spans[0].end, 1500);
@@ -546,13 +557,42 @@ mod tests {
 
     #[test]
     fn a_uniform_multiline_color_preserves_the_following_warning() {
-        let source = format!(
-            "\u{1b}[32m{}\u{1b}[0m\u{1b}[31;4mFAILED\u{1b}[0m",
-            "OK\n".repeat(1024)
-        );
-        let (text, spans, _) = styled(parse(&source));
-        assert_eq!(spans.len(), 2);
-        let warning = &spans[1];
+        for (prefix, line) in [
+            ("32", "OK\n"),
+            ("32", "OK\n\n"),
+            ("9", "OK\n"),
+            ("32;9", "OK\n"),
+        ] {
+            let source = format!(
+                "\u{1b}[{prefix}m{}\u{1b}[0m\u{1b}[31;4mFAILED\u{1b}[0m",
+                line.repeat(1024)
+            );
+            let (text, spans, strikes) = styled(parse(&source));
+            let warning = spans.last().unwrap();
+            assert_eq!(
+                &text[warning.start as usize..warning.end as usize],
+                "FAILED"
+            );
+            assert_eq!(warning.color, Some(rgb(187, 0, 0)));
+            assert!(warning.underline.is_some());
+            let end = line.len() * 1023 + 2;
+            if prefix.starts_with("32") {
+                assert_eq!(spans.len(), 2);
+                assert_eq!(spans[0].end as usize, end);
+            }
+            if prefix.ends_with('9') {
+                assert_eq!(strikes.len(), 1);
+                assert_eq!(strikes[0].1, end);
+            }
+        }
+    }
+
+    #[test]
+    fn an_unpainted_control_cannot_displace_a_visible_style() {
+        let line = "\u{1b}[7mA\u{1b}[mB".repeat(512);
+        let (text, spans, _) = styled(parse(&format!("{line}\n{line}\n\u{1b}[31;4mFAILED")));
+        assert_eq!(spans.len(), 1);
+        let warning = &spans[0];
         assert_eq!(
             &text[warning.start as usize..warning.end as usize],
             "FAILED"
