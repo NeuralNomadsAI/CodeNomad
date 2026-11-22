@@ -34,6 +34,8 @@ pub struct Launcher {
     pub show_search: bool,
     pub visits: Visits,
     pub connection: Option<Backend>,
+    pub(crate) catalogue_watch: Option<codenomad_client::stream::CatalogueWatch>,
+    pub(crate) catalogue_generation: u64,
     pub server_id: Option<String>,
     pub projects: Vec<Project>,
     pub project: Option<Project>,
@@ -118,6 +120,8 @@ impl Launcher {
             show_search: false,
             visits: Visits::default(),
             connection: None,
+            catalogue_watch: None,
+            catalogue_generation: 0,
             server_id: None,
             projects: vec![],
             project: None,
@@ -144,6 +148,7 @@ impl Launcher {
             return;
         }
         self.pending = true;
+        self.catalogue_generation = self.catalogue_generation.wrapping_add(1);
         self.error = None;
         let (out, input) = bounded(1);
         self.result = Some(input);
@@ -176,6 +181,10 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     l.listing = false;
     match result {
         Ok(Reply::Connected(b, projects, server_id)) => {
+            l.catalogue_watch = Some(codenomad_client::stream::CatalogueWatch::new(
+                b.clone(),
+                l.wake.clone(),
+            ));
             l.connection = Some(b);
             l.server_id = Some(server_id);
             l.projects = projects;

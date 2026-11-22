@@ -19,6 +19,7 @@ pub(super) struct Entry {
     creation_uncertain: bool,
     next: Option<String>,
     visits: crate::launcher::Visits,
+    catalogue: catalogue::Refresh,
     wanted_panels: [Option<[bool; 2]>; 2],
     sidebar_edits: Option<(TextEdit, bool, TextEdit, bool)>,
     binding: Option<Backend>,
@@ -179,6 +180,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         creation_uncertain: false,
         next: None,
         visits: Default::default(),
+        catalogue: Default::default(),
         wanted_panels: [None; 2],
         sidebar_edits: None,
         binding: None,
@@ -295,6 +297,7 @@ fn stash(s: &mut State) {
     let cache = Cache::take(s);
     if let Some(ui) = &mut s.workspace {
         let entry = &mut ui.entries[ui.active];
+        entry.catalogue.pause(ui.clock);
         entry.cache = Some(cache);
         entry.wanted_panels = s.shell.wanted;
         if let Some(l) = s.screen.launcher_mut() {
@@ -693,6 +696,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     if became_ready {
         resume(s, tx);
     }
+    changed |= catalogue::poll(s, now, tx);
     changed || became_ready || error != previous_error
 }
 pub fn status(s: &State) -> Option<&'static str> {
@@ -750,5 +754,6 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
     )
 }
 
+mod catalogue;
 #[cfg(test)]
 mod tests;

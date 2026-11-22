@@ -6,8 +6,31 @@ use crate::{Phase, catalog::SessionMissing};
 use std::collections::HashSet;
 
 impl Launcher {
+    pub(crate) fn apply_passive_listing(&mut self, mut page: Sessions, selected: Option<&str>) {
+        let complete = page.next.is_none();
+        let listed: HashSet<_> = page.rows.iter().map(|row| row.id.clone()).collect();
+        let published = Instant::now();
+        for id in &listed {
+            self.visits.verified(id, published);
+        }
+        page.rows.extend(self.sessions.drain(..).filter(|row| {
+            (!complete || selected == Some(row.id.as_str())) && !listed.contains(&row.id)
+        }));
+        self.sessions = page.rows;
+        self.visits.observe_listing(&listed);
+        self.listed_sessions = listed;
+        self.next = page.next;
+        if complete {
+            self.check_omitted_visits();
+        }
+    }
+
     pub(super) fn apply_listing(&mut self, mut page: Sessions, more: bool, selected: Option<&str>) {
         let listed: HashSet<_> = page.rows.iter().map(|row| row.id.clone()).collect();
+        let published = Instant::now();
+        for id in &listed {
+            self.visits.verified(id, published);
+        }
         if more {
             self.listed_sessions.extend(listed);
             let mut known: HashSet<_> = self.sessions.iter().map(|row| row.id.clone()).collect();
@@ -41,6 +64,7 @@ impl Launcher {
     }
 
     pub(super) fn check_omitted_visits(&mut self) {
+        self.visits.cancel_checks();
         let (Some(backend), Some(project)) = (self.connection.clone(), self.project.clone()) else {
             return;
         };
@@ -71,7 +95,6 @@ pub fn list(s: &mut State, more: bool) {
     if l.pending || more && (l.next.is_none() || l.sessions.len() >= MAX_BROWSED_SESSIONS) {
         return;
     }
-    l.visits.cancel_checks();
     l.listing = true;
     let cursor = if more { l.next.clone() } else { None };
     l.job("rune.list_error", async move {
