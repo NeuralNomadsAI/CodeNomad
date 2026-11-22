@@ -16,6 +16,7 @@ fn prose(key: String, body: &str) -> El {
     }
 }
 pub fn message(s: &State, i: usize) -> El {
+    let scope = s.input_scope.clone();
     let m = &s.messages[i];
     let mut view = col()
         .key(m.id.clone())
@@ -61,19 +62,24 @@ pub fn message(s: &State, i: usize) -> El {
                             .child(text(t(status)))
                             .child(
                                 rune_theme_codenomad::layout::button(
-                                    t(if expanded { "rune.hide_details" } else { "rune.details" }),
+                                    t(if expanded {
+                                        "rune.hide_details"
+                                    } else {
+                                        "rune.details"
+                                    }),
                                     false,
                                 )
                                 .key(format!("toggle-{key}"))
-                                .on_press(move |s: &mut State| {
+                                .on_press(crate::screen::action(&scope, move |s: &mut State| {
                                     crate::transcript_state::toggle_tool(s, &toggle);
-                                }),
+                                })),
                             ),
                     );
                 if expanded {
-                    for (key_part, label, value) in
-                        [("tool_input", "rune.tool_input", &tool.input), ("tool_output", "toolCall.task.sections.output", &tool.output)]
-                    {
+                    for (key_part, label, value) in [
+                        ("tool_input", "rune.tool_input", &tool.input),
+                        ("tool_output", "toolCall.task.sections.output", &tool.output),
+                    ] {
                         if !value.is_empty() {
                             let reveal = format!("{key}-full-{key_part}");
                             let clipped = value.chars().count() > 10_000
@@ -88,11 +94,16 @@ pub fn message(s: &State, i: usize) -> El {
                                 .child(prose(format!("{key}-{key_part}"), &shown));
                             if clipped {
                                 block = block.child(
-                                    rune_theme_codenomad::layout::button(t("messageBlock.hiddenText.showAll"), false)
-                                        .key(format!("reveal-{reveal}"))
-                                        .on_press(move |s: &mut State| {
+                                    rune_theme_codenomad::layout::button(
+                                        t("messageBlock.hiddenText.showAll"),
+                                        false,
+                                    )
+                                    .key(format!("reveal-{reveal}"))
+                                    .on_press(
+                                        crate::screen::action(&scope, move |s: &mut State| {
                                             crate::transcript_state::reveal_tool_output(s, &reveal);
                                         }),
+                                    ),
                                 );
                             }
                         }

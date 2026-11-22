@@ -15,8 +15,8 @@ fn window() -> Runtime<State> {
     tap(&mut rt, "connect");
     wait(&mut rt, "connected", |s| {
         workspace::input_ready(s)
-            && s.launcher
-                .as_ref()
+            && s.screen
+                .launcher()
                 .is_some_and(|l| l.connection.is_some() && !l.pending)
     });
     type_text(
@@ -41,7 +41,7 @@ pub fn run() {
     }
     let mut old = window();
     wait(&mut old, "held creation", |_| gate.exists());
-    let openings = old.state.launcher.as_ref().unwrap().openings.clone();
+    let openings = old.state.screen.launcher().unwrap().openings.clone();
     assert_eq!(openings.pending().len(), 1);
     let state_file = PathBuf::from(std::env::var("RUNE_STATE_DIR").unwrap()).join("state.json");
     let backup = std::fs::read(&state_file).ok();
@@ -62,14 +62,14 @@ pub fn run() {
     }
     let mut next = window();
     wait(&mut next, "successor adoption", |s| {
-        s.launcher
-            .as_ref()
+        s.screen
+            .launcher()
             .is_some_and(|l| !l.pending && l.project.is_some())
     });
     let successor = next
         .state
-        .launcher
-        .as_ref()
+        .screen
+        .launcher()
         .unwrap()
         .project
         .as_ref()

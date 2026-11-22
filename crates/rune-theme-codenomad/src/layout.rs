@@ -38,6 +38,18 @@ pub fn input(edit: &TextEdit) -> El {
         .fill(tokens(dark()).color("surface-field"))
         .dir(rune::Direction::Auto)
 }
+pub fn field(edit: &TextEdit) -> rune_kit::TextInput {
+    rune_kit::TextInput::new(edit).width(None)
+}
+pub fn literal_field(edit: &TextEdit) -> rune_kit::TextInput {
+    field(edit).dir(rune::Direction::Ltr)
+}
+pub fn hinted_field(edit: &TextEdit, hint: &str) -> rune_kit::TextInput {
+    field(edit).placeholder(hint)
+}
+pub fn textarea(edit: &TextEdit) -> rune_kit::TextArea {
+    rune_kit::TextArea::new(edit).width(None).auto_grow(1, 1)
+}
 /// Shared wrapping action groups follow the available native/browser width.
 pub fn action_row() -> El {
     rune::row()

@@ -1,0 +1,127 @@
+use crate::{State, launcher::Launcher};
+use rune::edit::TextEdit;
+use std::rc::Rc;
+
+pub enum Screen {
+    Launcher(Launcher),
+    Chat { launcher: Option<Launcher> },
+}
+impl Screen {
+    pub fn launcher(&self) -> Option<&Launcher> {
+        match self {
+            Self::Launcher(l) => Some(l),
+            Self::Chat { launcher } => launcher.as_ref(),
+        }
+    }
+    pub fn launcher_mut(&mut self) -> Option<&mut Launcher> {
+        match self {
+            Self::Launcher(l) => Some(l),
+            Self::Chat { launcher } => launcher.as_mut(),
+        }
+    }
+    pub fn is_launcher(&self) -> bool {
+        matches!(self, Self::Launcher(_))
+    }
+    pub fn show_launcher(&mut self) {
+        let previous = std::mem::replace(self, Screen::Chat { launcher: None });
+        *self = match previous {
+            Screen::Launcher(l) | Screen::Chat { launcher: Some(l) } => Screen::Launcher(l),
+            other => other,
+        };
+    }
+    pub fn show_chat(&mut self) {
+        let previous = std::mem::replace(self, Screen::Chat { launcher: None });
+        *self = Screen::Chat {
+            launcher: match previous {
+                Screen::Launcher(l) => Some(l),
+                Screen::Chat { launcher } => launcher,
+            },
+        };
+    }
+}
+pub enum Editor {
+    Address,
+    Password,
+    Folder,
+    Title,
+    Search,
+    Model,
+    Composer,
+    Reason(String),
+    Form((String, String)),
+    Custom((String, String)),
+}
+pub fn action(scope: &Rc<()>, run: impl Fn(&mut State) + 'static) -> impl Fn(&mut State) + 'static {
+    let scope = scope.clone();
+    move |s| {
+        if s.current_scope(&scope) {
+            run(s);
+        }
+    }
+}
+pub fn action_tx(
+    scope: &Rc<()>,
+    run: impl Fn(&mut State, &mut rune::Tx) + 'static,
+) -> impl Fn(&mut State, &mut rune::Tx) + 'static {
+    let scope = scope.clone();
+    move |s, tx| {
+        if s.current_scope(&scope) {
+            run(s, tx);
+        }
+    }
+}
+impl State {
+    pub fn renew_scope(&mut self) {
+        self.input_scope = Rc::new(());
+    }
+    pub fn current_scope(&self, scope: &Rc<()>) -> bool {
+        Rc::ptr_eq(&self.input_scope, scope)
+    }
+    pub fn show_launcher(&mut self) {
+        self.screen.show_launcher();
+        self.renew_scope();
+    }
+    pub fn show_chat(&mut self) {
+        self.screen.show_chat();
+        self.renew_scope();
+    }
+    pub fn editor(&mut self, scope: &Rc<()>, target: Editor) -> &mut TextEdit {
+        self.rejected_edit = TextEdit::new("");
+        if !self.current_scope(scope) {
+            return &mut self.rejected_edit;
+        }
+        let edit = match target {
+            Editor::Address
+            | Editor::Password
+            | Editor::Folder
+            | Editor::Title
+            | Editor::Search => {
+                if let Screen::Launcher(l) = &mut self.screen {
+                    Some(match target {
+                        Editor::Address => &mut l.address,
+                        Editor::Password => &mut l.password,
+                        Editor::Folder => &mut l.folder,
+                        Editor::Title => &mut l.title,
+                        _ => &mut l.search,
+                    })
+                } else {
+                    None
+                }
+            }
+            Editor::Model => self.agent.as_mut().map(|a| &mut a.search),
+            Editor::Composer => (!self.screen.is_launcher()).then_some(&mut self.draft),
+            Editor::Reason(id) => self.agent.as_mut().and_then(|a| a.reasons.get_mut(&id)),
+            Editor::Form(id) => self
+                .agent
+                .as_mut()
+                .and_then(|a| a.drafts.get_mut(&id))
+                .map(|d| d.editor()),
+            Editor::Custom(id) => self
+                .agent
+                .as_mut()
+                .and_then(|a| a.drafts.get_mut(&id))
+                .map(|d| d.custom_editor()),
+        };
+        edit.unwrap_or(&mut self.rejected_edit)
+    }
+}

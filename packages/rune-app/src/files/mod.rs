@@ -4,7 +4,7 @@ mod ui;
 pub use ui::Ui;
 
 pub fn bind(s: &mut crate::State, backend: &crate::backend::Backend) {
-    s.files = s.launcher.as_ref().and_then(|launcher| {
+    s.files = s.screen.launcher().and_then(|launcher| {
         let project = launcher
             .project
             .as_ref()

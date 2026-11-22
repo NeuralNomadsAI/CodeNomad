@@ -26,28 +26,28 @@ fn tap(rt: &mut Runtime<State>, key: &str) {
 pub fn run() {
     let mut state = init();
     crate::setup(&mut state, std::sync::Arc::new(|| {}));
-    assert!(state.launcher_visible && state.launcher.is_some());
+    assert!(state.screen.is_launcher() && state.screen.launcher().is_some());
     let mut rt = Runtime::new(state, view, (1100.0, 1000.0), Env::new(true, 1.0));
     rt.poll = Some(poll);
     rt.frame(0.0);
-    rt.state.launcher.as_mut().unwrap().password = TextEdit::new("wrong-test-password");
+    rt.state.screen.launcher_mut().unwrap().password = TextEdit::new("wrong-test-password");
     tap(&mut rt, "connect");
     wait(&mut rt, "bad login", |s| {
-        s.launcher.as_ref().unwrap().error.is_some()
+        s.screen.launcher().unwrap().error.is_some()
     });
-    assert!(rt.state.launcher.as_ref().unwrap().connection.is_none());
-    rt.state.launcher.as_mut().unwrap().password = TextEdit::new("fixture-backend");
+    assert!(rt.state.screen.launcher().unwrap().connection.is_none());
+    rt.state.screen.launcher_mut().unwrap().password = TextEdit::new("fixture-backend");
     tap(&mut rt, "connect");
     wait(&mut rt, "connect", |s| {
-        s.launcher.as_ref().unwrap().connection.is_some()
+        s.screen.launcher().unwrap().connection.is_some()
     });
-    assert!(rt.state.launcher.as_ref().unwrap().password.text.is_empty());
+    assert!(rt.state.screen.launcher().unwrap().password.text.is_empty());
     let folder = std::env::var("RUNE_TEST_FOLDER").unwrap();
-    rt.state.launcher.as_mut().unwrap().folder = TextEdit::new("relative-invalid");
+    rt.state.screen.launcher_mut().unwrap().folder = TextEdit::new("relative-invalid");
     rt.frame(1.0 / 60.0);
     tap(&mut rt, "open-folder");
     wait(&mut rt, "bad folder", |s| {
-        s.launcher.as_ref().unwrap().error.is_some()
+        s.screen.launcher().unwrap().error.is_some()
     });
     tap(&mut rt, "browse");
     assert_eq!(
@@ -56,21 +56,21 @@ pub fn run() {
     );
     rt.resolve_file_dialog(None).unwrap();
     rt.frame(1.0 / 60.0);
-    assert!(rt.state.launcher.as_ref().unwrap().project.is_none());
+    assert!(rt.state.screen.launcher().unwrap().project.is_none());
     tap(&mut rt, "browse");
     rt.resolve_file_dialog(Some(folder.into())).unwrap();
     rt.frame(1.0 / 60.0);
     wait(&mut rt, "folder sessions", |s| {
-        s.launcher.as_ref().unwrap().project.is_some()
+        s.screen.launcher().unwrap().project.is_some()
     });
-    assert_eq!(rt.state.launcher.as_ref().unwrap().sessions.len(), 1);
+    assert_eq!(rt.state.screen.launcher().unwrap().sessions.len(), 1);
     tap(&mut rt, "more-sessions");
     wait(&mut rt, "catalog next page", |s| {
-        s.launcher.as_ref().unwrap().sessions.len() == 2
+        s.screen.launcher().unwrap().sessions.len() == 2
     });
     tap(&mut rt, "session-ses_existing");
     wait(&mut rt, "existing history", |s| {
-        !s.launcher_visible && s.phase == Phase::Ready
+        !s.screen.is_launcher() && s.phase == Phase::Ready
     });
     assert_eq!(rt.state.messages.len(), 2);
     assert_eq!(rt.state.messages[0].body, "Existing project history");
@@ -78,42 +78,42 @@ pub fn run() {
     rt.frame(1.0 / 60.0);
     tap(&mut rt, "sessions-back");
     wait(&mut rt, "return with retained draft", |s| {
-        s.launcher_visible && !s.launcher.as_ref().unwrap().pending
+        s.screen.is_launcher() && !s.screen.launcher().unwrap().pending
     });
     tap(&mut rt, "session-ses_existing");
     wait(&mut rt, "restore existing draft", |s| {
-        !s.launcher_visible && s.phase == Phase::Ready
+        !s.screen.is_launcher() && s.phase == Phase::Ready
     });
     assert_eq!(rt.state.draft.text, "unsent draft");
     rt.state.draft = TextEdit::new("");
     launcher::back(&mut rt.state);
     wait(&mut rt, "return session list", |s| {
-        !s.launcher.as_ref().unwrap().pending
+        !s.screen.launcher().unwrap().pending
     });
-    rt.state.launcher.as_mut().unwrap().title = TextEdit::new("Rune functional test");
+    rt.state.screen.launcher_mut().unwrap().title = TextEdit::new("Rune functional test");
     rt.frame(1.0 / 60.0);
     tap(&mut rt, "create-session");
     if std::env::var_os("RUNE_TEST_CREATE_UNCERTAIN").is_some() {
         wait(&mut rt, "uncertain create", |s| {
-            s.launcher.as_ref().unwrap().creation_uncertain
+            s.screen.launcher().unwrap().creation_uncertain
         });
         rt.update(|s, tx| launcher::create(s, tx));
         assert!(
-            !rt.state.launcher.as_ref().unwrap().pending,
+            !rt.state.screen.launcher().unwrap().pending,
             "no repeated creation"
         );
         tap(&mut rt, "refresh-sessions");
         wait(&mut rt, "reconcile create", |s| {
-            !s.launcher.as_ref().unwrap().pending
+            !s.screen.launcher().unwrap().pending
         });
         tap(&mut rt, "more-sessions");
         wait(&mut rt, "find created session", |s| {
-            s.launcher.as_ref().unwrap().sessions.len() == 3
+            s.screen.launcher().unwrap().sessions.len() == 3
         });
         tap(&mut rt, "session-ses_created_1");
     }
     wait(&mut rt, "fresh session", |s| {
-        !s.launcher_visible && s.phase == Phase::Ready
+        !s.screen.is_launcher() && s.phase == Phase::Ready
     });
     assert!(rt.state.messages.is_empty());
     let mut fragments = 0;
@@ -219,11 +219,11 @@ pub fn run() {
     }
     launcher::back(&mut rt.state);
     wait(&mut rt, "relist created session", |s| {
-        !s.launcher.as_ref().unwrap().pending
+        !s.screen.launcher().unwrap().pending
     });
     tap(&mut rt, "session-ses_existing");
     wait(&mut rt, "reopen existing", |s| {
-        !s.launcher_visible && s.phase == Phase::Ready
+        !s.screen.is_launcher() && s.phase == Phase::Ready
     });
     assert_eq!(rt.state.messages.len(), 2);
     assert_eq!(rt.state.messages[0].body, "Existing project history");

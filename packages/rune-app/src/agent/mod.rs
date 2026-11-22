@@ -117,9 +117,14 @@ impl Ui {
         self.picker = false;
     }
     pub fn select_request(&mut self, id: String) {
-        self.selected = id;
+        if self.permissions.iter().any(|p| p.id == id) || self.forms.iter().any(|f| f.id == id) {
+            self.selected = id;
+        }
     }
     pub fn reply_permission(&mut self, id: String, decision: &str) {
+        if !self.permissions.iter().any(|p| p.id == id && p.supported) {
+            return;
+        }
         let message = self
             .reasons
             .get(&id)
@@ -135,7 +140,9 @@ impl Ui {
         }
     }
     pub fn cancel_form(&mut self, id: String) {
-        self.act(Action::Cancel(id))
+        if self.forms.iter().any(|f| f.id == id) {
+            self.act(Action::Cancel(id));
+        }
     }
     pub fn idle(&self) -> bool {
         !self.reading && !self.busy && !self.stopping && self.trailing.is_none()

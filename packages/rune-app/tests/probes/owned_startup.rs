@@ -15,8 +15,8 @@ pub fn run() {
     let _finish = Finish;
     let mut state = crate::init();
     crate::setup(&mut state, std::sync::Arc::new(|| {}));
-    assert!(state.launcher_visible);
-    assert!(state.launcher.as_ref().unwrap().pending);
+    assert!(state.screen.is_launcher());
+    assert!(state.screen.launcher().unwrap().pending);
     let mut runtime = rune::Runtime::new(
         state,
         crate::view,
@@ -27,7 +27,7 @@ pub fn run() {
     let until = std::time::Instant::now() + std::time::Duration::from_secs(90);
     loop {
         runtime.frame(0.02);
-        let launcher = runtime.state.launcher.as_ref().unwrap();
+        let launcher = runtime.state.screen.launcher().unwrap();
         assert!(launcher.error.is_none(), "owned startup failed");
         if launcher.connection.is_some() && !launcher.pending {
             assert!(launcher.has_owned_server());

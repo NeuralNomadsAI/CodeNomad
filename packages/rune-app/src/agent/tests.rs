@@ -4,6 +4,28 @@ use crate::{
 };
 use serde_json::json;
 #[test]
+fn settled_requests_reject_late_actions_before_dispatch() {
+    let (jobs, incoming) = super::bounded(4);
+    let (stop, _) = super::bounded(1);
+    let (_, results) = super::bounded(1);
+    let mut ui = super::Ui::new(super::Handle {
+        jobs,
+        stop,
+        results,
+    });
+    let _ = incoming.try_recv();
+    ui.reading = false;
+    ui.pending_known = true;
+    ui.online = true;
+    ui.selected = "current".into();
+    ui.select_request("settled".into());
+    ui.reply_permission("settled".into(), "once");
+    ui.cancel_form("settled".into());
+    assert_eq!(ui.selected, "current");
+    assert!(incoming.try_recv().is_err());
+    assert!(!ui.busy);
+}
+#[test]
 fn native_questions_keep_typed_defaults_conditions_and_validation() {
     let form = Form {
         id: "form_one".into(),

@@ -58,17 +58,17 @@ pub fn run() {
     rt.frame(0.0);
     rt.update(launcher::connect);
     wait(&mut rt, "connection", |s| {
-        s.launcher
-            .as_ref()
+        s.screen
+            .launcher()
             .is_some_and(|l| l.connection.is_some() && !l.pending)
             && workspace::input_ready(s)
     });
-    rt.state.launcher.as_mut().unwrap().folder =
+    rt.state.screen.launcher_mut().unwrap().folder =
         TextEdit::new(std::env::var("RUNE_TEST_FOLDER").unwrap());
     rt.update(launcher::open);
     wait(&mut rt, "project", |s| {
-        s.launcher
-            .as_ref()
+        s.screen
+            .launcher()
             .is_some_and(|l| l.project.is_some() && !l.pending)
     });
     launcher::choose(
@@ -77,7 +77,7 @@ pub fn run() {
         "Existing history".into(),
     );
     wait(&mut rt, "existing session", |s| {
-        !s.launcher_visible && s.phase == Phase::Ready && s.files.is_some()
+        !s.screen.is_launcher() && s.phase == Phase::Ready && s.files.is_some()
     });
     assert_eq!(rt.state.messages.len(), 2);
     assert_eq!(rt.state.messages[0].body, "Existing project history");
@@ -143,7 +143,7 @@ pub fn run() {
         .active_key()
         .to_string();
     rt.update(workspace::new_tab);
-    assert!(rt.state.files.is_none() && rt.state.launcher_visible);
+    assert!(rt.state.files.is_none() && rt.state.screen.is_launcher());
     stage(&rt, "tabbed");
     settle(&mut rt);
     rt.update(|s, tx| workspace::select(s, &tab, tx));

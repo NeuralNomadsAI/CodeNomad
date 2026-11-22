@@ -42,22 +42,22 @@ pub fn run() {
     rt.frame(0.0);
     tap(&mut rt, "connect");
     wait(&mut rt, "login", |s| {
-        s.launcher.as_ref().unwrap().connection.is_some()
+        s.screen.launcher().unwrap().connection.is_some()
     });
-    rt.state.launcher.as_mut().unwrap().folder =
+    rt.state.screen.launcher_mut().unwrap().folder =
         TextEdit::new(std::env::var("RUNE_TEST_FOLDER").unwrap());
     rt.frame(0.0);
     tap(&mut rt, "open-folder");
     wait(&mut rt, "folder", |s| {
-        s.launcher.as_ref().unwrap().project.is_some()
+        s.screen.launcher().unwrap().project.is_some()
     });
     tap(&mut rt, "session-ses_existing");
     wait(&mut rt, "controls", |s| s.phase == Phase::Ready && idle(s));
     assert_eq!(rt.state.agent.as_ref().unwrap().models.len(), 2);
     let mut backend = rt
         .state
-        .launcher
-        .as_ref()
+        .screen
+        .launcher()
         .unwrap()
         .connection
         .as_ref()
@@ -65,8 +65,8 @@ pub fn run() {
         .clone();
     backend.workspace = rt
         .state
-        .launcher
-        .as_ref()
+        .screen
+        .launcher()
         .unwrap()
         .project
         .as_ref()
@@ -161,7 +161,7 @@ pub fn run() {
     }
     crate::launcher::back(&mut rt.state);
     assert!(
-        !rt.state.launcher_visible,
+        !rt.state.screen.is_launcher(),
         "question draft guards navigation"
     );
     {

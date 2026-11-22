@@ -14,7 +14,7 @@ fn ready(s: &State, id: &str) -> bool {
     let Some(ui) = &s.workspace else { return false };
     let saved = ui.snapshot();
     workspace::input_ready(s)
-        && !s.launcher_visible
+        && !s.screen.is_launcher()
         && s.phase == Phase::Ready
         && matches!(saved.active.and_then(|i| saved.tabs.get(i)), Some(Tab::Workspace(w)) if w.active_session_id.as_deref() == Some(id))
 }
@@ -30,27 +30,27 @@ fn open(rt: &mut Runtime<State>, id: &str, title: &str) {
     );
     tap(rt, "open-folder");
     wait(rt, "native project catalogue", |s| {
-        s.launcher
-            .as_ref()
+        s.screen
+            .launcher()
             .is_some_and(|l| l.project.is_some() && !l.pending)
     });
     type_text(rt, "session-search", title);
     while !rt
         .state
-        .launcher
-        .as_ref()
+        .screen
+        .launcher()
         .unwrap()
         .sessions
         .iter()
         .any(|s| s.id == id)
     {
-        let before = rt.state.launcher.as_ref().unwrap().sessions.len();
+        let before = rt.state.screen.launcher().unwrap().sessions.len();
         assert!(before < 600, "bounded native catalogue traversal");
-        assert!(rt.state.launcher.as_ref().unwrap().next.is_some());
+        assert!(rt.state.screen.launcher().unwrap().next.is_some());
         tap(rt, "more-sessions");
         wait(rt, "next native catalogue page", |s| {
-            s.launcher
-                .as_ref()
+            s.screen
+                .launcher()
                 .is_some_and(|l| !l.pending && l.sessions.len() > before)
         });
     }
@@ -154,8 +154,8 @@ pub fn run() {
     tap(&mut rt, "connect");
     wait(&mut rt, "native authenticated store", |s| {
         workspace::input_ready(s)
-            && s.launcher
-                .as_ref()
+            && s.screen
+                .launcher()
                 .is_some_and(|l| l.connection.is_some() && !l.pending)
     });
     let mut jump = 0.0;

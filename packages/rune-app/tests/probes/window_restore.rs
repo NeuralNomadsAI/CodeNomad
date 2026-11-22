@@ -60,7 +60,7 @@ fn active_session(s: &State) -> Option<String> {
 }
 fn ready(s: &State, id: &str) -> bool {
     workspace::input_ready(s)
-        && !s.launcher_visible
+        && !s.screen.is_launcher()
         && s.phase == Phase::Ready
         && active_session(s).as_deref() == Some(id)
 }
@@ -76,8 +76,8 @@ fn open(rt: &mut Runtime<State>, title: &str, id: &str) {
     );
     tap(rt, "open-folder");
     wait(rt, "new occurrence", |s| {
-        s.launcher
-            .as_ref()
+        s.screen
+            .launcher()
             .is_some_and(|l| l.project.is_some() && !l.pending)
     });
     type_text(rt, "session-title", title);
@@ -202,8 +202,8 @@ pub fn run() {
     tap(&mut rt, "connect");
     wait(&mut rt, "authenticated workspace store", |s| {
         workspace::input_ready(s)
-            && s.launcher
-                .as_ref()
+            && s.screen
+                .launcher()
                 .is_some_and(|l| l.connection.is_some() && !l.pending)
     });
     match stage.as_str() {
