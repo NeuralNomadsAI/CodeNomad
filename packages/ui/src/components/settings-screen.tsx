@@ -86,7 +86,8 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const showMissions = () => !props.projectUnavailable && (!missionInstanceId() || missionActivation.enabled())
   const shownSection = () => activeSettingsSection() === "missions" && !showMissions() ? "general" : activeSettingsSection()
   createEffect(() => {
-    if (activeSettingsSection() !== "missions" || showMissions() || missionActivation.checking()) return
+    if (activeSettingsSection() !== "missions" || showMissions()) return
+    if (missionActivation.unknown() && !missionActivation.readFailed()) return
     setActiveSettingsSection("general")
     void props.onSectionChange?.("general")
   })
@@ -115,7 +116,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const activeSection = createMemo(() => sections().find((section) => section.id === shownSection()) ?? sections()[0])
 
   const renderSection = () => {
-    if (activeSettingsSection() === "missions" && missionActivation.checking()) return
+    if (activeSettingsSection() === "missions" && !showMissions()) return
     switch (shownSection()) {
       case "chat":
         return <ChatSettingsSection />
