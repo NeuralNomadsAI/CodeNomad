@@ -1,7 +1,7 @@
 // The real TS server of this checkout. With `CNRS_FIXTURE_URL`, on the fixture daemon only: discovery
 // returns its endpoint, ensure/restart are refused. Without it, its own CLI lifecycle (`service.mjs`).
 import assert from "node:assert/strict"
-import { readFile } from "node:fs/promises"
+import { readFile, realpath } from "node:fs/promises"
 import tls from "node:tls"
 import { fileURLToPath } from "node:url"
 import { dist, fromDist } from "./fixtures.mjs"
@@ -59,5 +59,6 @@ if (process.env.CNRS_PREVIEW_TEST_TUNNEL === "1") {
     return start.call(this)
   }
 }
-process.argv[1] = fileURLToPath(entry)
+// Match index.js's import.meta.url even when dist is a junction to a separate reference build.
+process.argv[1] = await realpath(fileURLToPath(entry))
 await import(entry)
