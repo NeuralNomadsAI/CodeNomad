@@ -1,5 +1,6 @@
 //! Native qualification entry points, enabled exclusively by `test-support`.
 mod controls;
+mod files_state;
 mod latency;
 mod launcher;
 mod live_controls;
@@ -28,6 +29,7 @@ pub fn dispatch() -> bool {
         ("--probe-native-store", native_store::run),
         ("--probe-pending-open", pending_open::run),
         ("--probe-controls", controls::run),
+        ("--probe-files-state", files_state::run),
         ("--probe-launcher", launcher::run),
         ("--probe-workspace-claims", workspaces::run),
         ("--probe-window-restore", window_restore::run),

@@ -44,6 +44,80 @@ fn waiting_saved_session_keeps_its_draft_until_native_binding() {
 }
 
 #[test]
+fn files_follow_their_occurrence_through_tab_switches_and_hidden_stream_events() {
+    use codenomad_client::{
+        files::{Entry as File, EntryKind},
+        transport::WorkspaceEvent,
+    };
+    fn files(s: &State, name: &str) -> crate::files::Ui {
+        let mut b = backend("same-session");
+        b.workspace = name.into();
+        let mut ui = crate::files::Ui::new(b, "/fixture".into(), s.reads.clone(), s.wake.clone());
+        ui.tree.activate(true);
+        let read = ui.tree.take_refresh().pop().unwrap();
+        assert!(ui.tree.complete(
+            read,
+            Ok(vec![File {
+                path: name.into(),
+                name: name.into(),
+                kind: EntryKind::File,
+                absolute_path: None,
+                directory_identity: None,
+                size: None,
+                modified_at: None,
+            }]),
+            Ok
+        ));
+        ui.tree.select(name.into());
+        ui.activate(false);
+        ui
+    }
+    let mut s = init();
+    s.phase = Phase::Ready;
+    s.files = Some(files(&s, "alpha"));
+    let (out, incoming) = bounded(64);
+    s.incoming = Some(incoming);
+    let mut ui = Ui::new();
+    ui.ready = true;
+    let mut other = init();
+    other.phase = Phase::Ready;
+    other.files = Some(files(&other, "beta"));
+    let mut second = entry("tab-1".into(), Tab::Blank);
+    second.cache = Some(Cache::take(&mut other));
+    ui.entries.push(second);
+    s.workspace = Some(ui);
+    let mut rt = runtime(s);
+    rt.poll = Some(crate::poll);
+    rt.frame(0.0);
+    rt.update(|s, tx| select(s, "tab-1", tx));
+    assert_eq!(
+        rt.state.files.as_ref().unwrap().tree.selected(),
+        Some("beta")
+    );
+    out.try_send(crate::transport::Event::Workspace(
+        WorkspaceEvent::Stopped {
+            workspace_id: "alpha".into(),
+        },
+    ))
+    .unwrap();
+    rt.frame(0.1);
+    let active = rt.state.files.as_ref().unwrap();
+    assert!(!active.stopped);
+    assert_eq!(active.tree.selected(), Some("beta"));
+    rt.update(|s, tx| select(s, "tab-0", tx));
+    let restored = rt.state.files.as_ref().unwrap();
+    assert!(restored.stopped);
+    assert_eq!(restored.tree.selected(), Some("alpha"));
+    assert_eq!(restored.tree.rows()[0].entry.name, "alpha");
+    rt.update(|s, tx| select(s, "tab-1", tx));
+    rt.update(|s, tx| close(s, "tab-0", tx));
+    assert_eq!(
+        rt.state.files.as_ref().unwrap().tree.selected(),
+        Some("beta")
+    );
+}
+
+#[test]
 fn two_occurrences_keep_their_drafts_when_the_user_selects_another_tab() {
     let mut s = init();
     s.phase = Phase::Ready;

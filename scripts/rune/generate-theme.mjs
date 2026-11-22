@@ -7,6 +7,8 @@ import {root,generated,sources} from './generate-common.mjs'
 import {collectTheme,collectFileActionColors} from './generate-theme-browser.mjs'
 import {themeFixtureHtml} from './generate-theme-fixture.mjs'
 import {overflowSource} from './file-actions-source.mjs'
+import {generateWorkspaceIcons} from './parity/workspace-tree-row-icons.mjs'
+import {sourcePath} from './parity/workspace-tree-row-source.mjs'
 
 const ui=path.join(root,'packages/ui'),tokens=path.join(ui,'src/styles/tokens.css')
 const css=await readFile(tokens,'utf8'),names=[...new Set([...css.matchAll(/--([a-zA-Z0-9_-]+)\s*:/g)].map(m=>m[1]))].sort()
@@ -40,13 +42,14 @@ try{
     out[appearance]=value.colors
     for(const field of ['numbers','strings','shadows','metrics'])out[field][appearance]=value[field]
   }
-  const files=[tokens,path.join(root,overflowSource),path.join(ui,'src/index.css'),path.join(ui,'tailwind.config.js'),path.join(ui,'postcss.config.js')]
+  const files=[tokens,path.join(root,overflowSource),path.join(root,sourcePath),path.join(ui,'src/index.css'),path.join(ui,'tailwind.config.js'),path.join(ui,'postcss.config.js')]
   async function walk(folder){for(const entry of await readdir(folder,{withFileTypes:true})){
     const file=path.join(folder,entry.name);if(entry.isDirectory())await walk(file);else if(file.endsWith('.css'))files.push(file)
   }}
   await walk(path.join(ui,'src/styles'))
   out.sources=await sources(files)
   await generated('assets/theme.json',out)
+  await generateWorkspaceIcons()
 }finally{
   await browser?.close()
   await server.close()

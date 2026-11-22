@@ -1,0 +1,55 @@
+{
+  "component": "workspace-tree-row",
+  "platform": "win32",
+  "scale": 1,
+  "width": 360,
+  "reviewState": "reviewed",
+  "scope": "Twenty scale-one synthetic pairs. Every pixel belongs to a region. Actions are supplied by the gallery caller and evaluated separately. Busy thresholds evaluate the recorded frame; rotation phase and motion remain unqualified.",
+  "rationale": {
+    "surface": "Exact except selected dark compositing, bounded to one channel unit.",
+    "edge": "Exact, including focus outline; dark selected unfocused row allows one channel unit.",
+    "icon": "Exact Source Lucide paths at 14px; only low-amplitude raster/color differences up to two channel units.",
+    "chevron": "Separate 12px raster envelope, with tighter open/focused limits. Missing, displaced and wrongly mirrored closed glyphs must fail.",
+    "text": "Separate short-label envelopes by appearance and selection. Missing and displaced text must fail independently of backgrounds.",
+    "actions": "The actual caller's Source Lucide copy action at rest/focus. This proposal qualifies this fixture assembly only.",
+    "busy": "Recorded 12px animated frame only. No motion or phase-parity claim. Missing and displaced indicator controls are measured."
+  },
+  "regions": {
+    "surface": [
+      {"when":{"theme":"dark","mode":["open","focus"]},"different":5000,"errorSum":15000,"maxError":1},
+      {"different":0,"errorSum":0,"maxError":0}
+    ],
+    "edge": [
+      {"when":{"theme":"dark","mode":["open"]},"different":776,"errorSum":2328,"maxError":1},
+      {"different":0,"errorSum":0,"maxError":0}
+    ],
+    "icon": [{"different":196,"errorSum":650,"maxError":2}],
+    "chevron": [
+      {"when":{"mode":["file"]},"different":0,"errorSum":0,"maxError":0},
+      {"when":{"theme":"light","mode":["open"]},"different":18,"errorSum":1300,"maxError":45},
+      {"when":{"theme":"light","mode":["focus"]},"different":18,"errorSum":1200,"maxError":75},
+      {"when":{"theme":"light"},"different":18,"errorSum":1350,"maxError":85},
+      {"when":{"theme":"dark","mode":["open"]},"different":144,"errorSum":1400,"maxError":35},
+      {"when":{"theme":"dark","mode":["focus"]},"different":144,"errorSum":1350,"maxError":50},
+      {"different":18,"errorSum":1050,"maxError":60}
+    ],
+    "text": [
+      {"when":{"theme":"light","mode":["file"]},"different":280,"errorSum":25000,"maxError":120},
+      {"when":{"theme":"light"},"different":80,"errorSum":6600,"maxError":115},
+      {"when":{"theme":"dark","mode":["file"]},"different":280,"errorSum":18000,"maxError":90},
+      {"when":{"theme":"dark","mode":["open","focus"]},"different":4500,"errorSum":20500,"maxError":110},
+      {"different":80,"errorSum":4200,"maxError":65}
+    ],
+    "actions": [
+      {"when":{"theme":"light","mode":["focus"]},"different":120,"errorSum":900,"maxError":20},
+      {"when":{"theme":"dark","mode":["focus"]},"different":624,"errorSum":2500,"maxError":12},
+      {"when":{"theme":"dark","mode":["open"]},"different":624,"errorSum":1872,"maxError":1},
+      {"different":0,"errorSum":0,"maxError":0}
+    ],
+    "busy": [
+      {"when":{"theme":"light","mode":["busy"]},"different":80,"errorSum":6000,"maxError":130},
+      {"when":{"theme":"dark","mode":["busy"]},"different":75,"errorSum":4500,"maxError":90},
+      {"different":0,"errorSum":0,"maxError":0}
+    ]
+  }
+}

@@ -1,6 +1,21 @@
 //! Typed commands and authoritative display events, independent of a UI runtime.
 use crate::{Message, Wake, history::Page};
 use crate::{Receiver, Sender};
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DirectoryChange {
+    pub directory: String,
+    pub path: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WorkspaceEvent {
+    FilesChanged {
+        workspace_id: String,
+        changes: Vec<DirectoryChange>,
+    },
+    Stopped {
+        workspace_id: String,
+    },
+}
 #[derive(Debug)]
 pub enum Command {
     Send(String),
@@ -11,6 +26,7 @@ pub enum Command {
 #[derive(Debug)]
 pub enum Event {
     Connected(crate::backend::Backend),
+    Workspace(WorkspaceEvent),
     AgentHint(bool),
     History(Vec<Message>),
     Sync(Page),

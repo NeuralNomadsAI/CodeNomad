@@ -19,6 +19,7 @@ pub enum Input {
     Command(Command),
     Opened(u64),
     Native(u64, u64, Value),
+    Workspace(u64, crate::transport::WorkspaceEvent),
     Hint(u64, u64),
     Unavailable(u64),
     Closed(u64),
@@ -91,6 +92,12 @@ pub async fn run(
             stream::start(backend.clone(), epoch, tx.clone(), wire.clone());
         }
         match runtime::recv_timeout(&rx, Duration::from_millis(25)).await {
+            Some(Input::Workspace(e, event)) if e == epoch => {
+                if !publish(&out, &wake, Event::Workspace(event)).await {
+                    wire.cancelled.store(true, SeqCst);
+                    return Ok(());
+                }
+            }
             Some(Input::Command(Command::Close)) => {
                 wire.cancelled.store(true, SeqCst);
                 return Ok(());

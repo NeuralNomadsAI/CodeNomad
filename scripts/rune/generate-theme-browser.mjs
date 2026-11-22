@@ -47,6 +47,7 @@ export async function collectTheme(names){
     actionMenuDisabled:['.action-overflow-item[data-disabled]',['opacity']],
     fileRowAction:['.file-row-icon-button',['minWidth','minHeight','paddingLeft','opacity']],
     fileRowActionGlyph:['.file-row-icon-button svg',['width','height']],
+    workspaceRow:['.workspace-tree-row',['minHeight','paddingTop','paddingBottom','paddingInlineEnd','columnGap','fontSize','fontWeight','lineHeight']],
   }
   const metrics={}
   for(const [name,[selector,properties]] of Object.entries(contracts)){
@@ -61,6 +62,21 @@ export async function collectTheme(names){
   const sourceGutter=document.querySelector('.action-overflow-content').dataset.sourceGutter
   if(!/^\d+(?:\.\d+)?$/.test(sourceGutter))throw Error('Missing numeric ActionOverflowMenu source gutter')
   metrics.actionMenu.gutter=Number(sourceGutter)
+  const workspace=document.querySelector('.workspace-tree-row')
+  const source=JSON.parse(workspace.dataset.source)
+  metrics.workspaceRow={...metrics.workspaceRow,...source}
+  const beforeWorkspaceFocus=document.activeElement
+  workspace.focus()
+  if(!workspace.matches(':focus-visible'))throw Error('Workspace row requires actual keyboard focus')
+  const rowFocus=getComputedStyle(workspace)
+  metrics.workspaceRow.outlineWidth=parseFloat(rowFocus.outlineWidth)
+  metrics.workspaceRow.outlineOffset=parseFloat(rowFocus.outlineOffset)
+  const spin=getComputedStyle(workspace.querySelector('.animate-spin')).animationDuration
+  if(!/^\d+(?:\.\d+)?s$/.test(spin))throw Error('Workspace spinner requires seconds')
+  metrics.workspaceRow.spinSeconds=parseFloat(spin)
+  metrics.workspaceRow.actionGap=parseFloat(getComputedStyle(document.querySelector('.file-row-actions')).columnGap)
+  for(const [key,value] of Object.entries(metrics.workspaceRow))if(!Number.isFinite(value))throw Error(`Non-numeric Workspace metric ${key}`)
+  beforeWorkspaceFocus?.focus()
   const menuStyle=getComputedStyle(document.querySelector('.action-overflow-content'))
   const maximum=/^calc\(100% - ([\d.]+)px\)$/.exec(menuStyle.maxInlineSize)
   // Chromium resolves the viewport unit to px inside calc(). Retain only its inset.

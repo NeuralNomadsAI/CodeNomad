@@ -12,6 +12,7 @@ pub mod layout;
 pub mod tabs;
 mod tokens;
 pub mod window_control;
+pub mod workspace_tree;
 pub use kit::kit;
 use rune::Theme;
 use serde_json::Value;

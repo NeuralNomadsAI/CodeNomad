@@ -309,7 +309,14 @@ impl<'ast> Visit<'ast> for Policy {
             "stringify",
             "cfg",
         ];
-        if !allowed.contains(&name.as_str()) {
+        let path: Vec<_> = node
+            .path
+            .segments
+            .iter()
+            .map(|s| s.ident.to_string())
+            .collect();
+        let pin = path == ["std", "pin", "pin"] || path == ["core", "pin", "pin"];
+        if !allowed.contains(&name.as_str()) && !pin {
             self.reject(
                 node.path.segments[0].ident.span(),
                 &format!("unreviewed macro {name}"),
@@ -403,6 +410,23 @@ mod tests {
     #[test]
     fn allows_composition_and_nonvisual_numbers() {
         assert!(check("use rune_theme_codenomad::{Space, Layout}; fn v(){ let n = 600; column().pad(Space::Md).child(button(\"send\", false)); assert_eq!(n, 600); }").unwrap().is_empty());
+    }
+    #[test]
+    fn standard_pinning_keeps_nested_arguments_inside_the_style_boundary() {
+        for source in [
+            "fn f(){ std::pin::pin!(future); }",
+            "fn f(){ core::pin::pin!(future); }",
+        ] {
+            assert!(check(source).unwrap().is_empty(), "{source}");
+        }
+        for source in [
+            "fn f(){ pin!(future); }",
+            "fn f(){ other::pin::pin!(future); }",
+            "fn f(){ std::pin::pin!(element.padding(8.)); }",
+            "fn f(){ core::pin::pin!(rune::El::fill(element, colour)); }",
+        ] {
+            assert!(!check(source).unwrap().is_empty(), "accepted {source}");
+        }
     }
     #[test]
     fn qualification_path_requires_exact_native_feature_gate() {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {createServer} from 'node:http'
 import {spawn,execFile} from 'node:child_process'
 import {promisify} from 'node:util'
-import {mkdir,readFile,writeFile} from 'node:fs/promises'
+import {mkdir,readFile,writeFile,rename,unlink} from 'node:fs/promises'
 import {createHash,randomUUID} from 'node:crypto'
 import {chromium,request} from 'playwright'
 import path from 'node:path'
@@ -31,9 +31,26 @@ const controls=process.argv.includes('--controls')
 const workspaceClaims=process.argv.includes('--workspace-claims')
 const restoreState=process.argv.includes('--restore-state')
 const pendingOpen=process.argv.includes('--pending-open')
+const filesState=process.argv.includes('--files-state')
+assert(!filesState||(!web&&!controls&&!withTools&&!uncertain&&!workspaceClaims&&!restoreState&&!pendingOpen),'Files state uses its own qualification mode')
+if(filesState){await mkdir(path.join(project,'src'));await writeFile(path.join(project,'initial.txt'),'initial');await writeFile(path.join(project,'src/initial.ts'),'initial')}
 assert(!workspaceClaims||(!web&&!controls&&!withTools&&!uncertain),'Workspace claims use their own qualification mode')
 assert(!restoreState||(!web&&!controls&&!withTools&&!uncertain&&!workspaceClaims),'Restore uses its own qualification mode')
 const gates=new Map(),visibleProof=[],restoreStages=[],restorePrompts=[]
+const filesStages=[],filesExpected=['create','rename','delete','collapsed','hidden','tabbed']
+let filesChain=Promise.resolve(),filesProof
+async function filesStage(ack) {
+  assert.equal(ack.stage,filesExpected[filesStages.length]);filesStages.push(ack)
+  switch(ack.stage){
+    case 'create': await writeFile(path.join(project,'new.txt'),'created');await writeFile(path.join(project,'src/nested.ts'),'nested');break
+    case 'rename': await rename(path.join(project,'new.txt'),path.join(project,'renamed.txt'));break
+    case 'delete': await unlink(path.join(project,'renamed.txt'));await unlink(path.join(project,'src/nested.ts'));break
+    case 'collapsed': await writeFile(path.join(project,'src/collapsed.ts'),'collapsed');break
+    case 'hidden': await writeFile(path.join(project,'hidden.txt'),'hidden');break
+    case 'tabbed': await writeFile(path.join(project,'tabbed.txt'),'tabbed');break
+  }
+  client.stdin.write(`${JSON.stringify({stage:ack.stage})}\n`)
+}
 let clientLog='',clientLines=''
 function visibleGate(turn,replyID) {
   return new Promise((resolve,reject)=>{
@@ -48,6 +65,8 @@ function clientOutput(chunk) {
   for(let at;(at=clientLines.indexOf('\n'))>=0;){
     const line=clientLines.slice(0,at);clientLines=clientLines.slice(at+1)
     let ack;try{ack=JSON.parse(line)}catch{continue}
+    if(filesState&&ack.type==='files-state-stage'){filesChain=filesChain.then(()=>filesStage(ack));filesChain.catch(error=>{console.error(error);client.kill()});continue}
+    if(filesState&&ack.type==='files-state-proof'){filesProof=ack;continue}
     if(restoreState&&ack.type==='window-restore-stage'){restoreStages.push(ack);continue}
     if(restoreState&&ack.type==='window-restore-stream-visible'){visibleProof.push(ack);continue}
     if(ack.type!=='launcher-stream-visible')continue
@@ -67,6 +86,7 @@ const control=controls?controlsFixture({records,stores,streams,project,stats}):n
 const upstream=createServer(async(req,res)=>{
   try {
     const url=new URL(req.url,'http://127.0.0.1');requests.push(`${req.method} ${url.pathname}`)
+    if(filesState)assert(!(url.pathname==='/api/session'&&req.method==='POST')&&!url.pathname.endsWith('/prompt'),'Files state forbids native session creation and prompts')
     assert.equal(req.headers.authorization,`Basic ${Buffer.from('opencode:fixture-native').toString('base64')}`)
     let raw='';for await(const chunk of req){raw+=chunk;assert(raw.length<262144)}
     const json=data=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(data))}
@@ -182,16 +202,17 @@ try{
       assert.equal(stats.created,2,'Restore must not create native sessions');assert.equal(stats.prompts,stage==='prepare'?0:2,'Only explicit resumed sends submit prompts')
     }
   }else {
-    client=spawn(clientBinary,[workspaceClaims?'--probe-workspace-claims':controls?'--probe-controls':'--probe-launcher'],{cwd:profile,windowsHide:true,stdio:['ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{})}})
+    client=spawn(clientBinary,[filesState?'--probe-files-state':workspaceClaims?'--probe-workspace-claims':controls?'--probe-controls':'--probe-launcher'],{cwd:profile,windowsHide:true,stdio:[filesState?'pipe':'ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState?{RUNE_STATE_DIR:path.join(profile,'rune-state')}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{})}})
     client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
     client.on('close',()=>{for(const gate of gates.values())gate.reject()})
   }
   if(!restoreState&&!pendingOpen){const timer=setTimeout(()=>client.kill(),web?300000:120000);try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}}
-  assert.equal(result,0);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,0);if(!webRestore)assert(stats.lists>=12)}else if(workspaceClaims||pendingOpen){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
-  if(!web&&!controls&&!workspaceClaims&&!pendingOpen)assert.deepEqual(visibleProof.map(p=>p.turn),[1,2],'Both distinct assistant turns must be visible before their endings')
+  assert.equal(result,0);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,0);if(!webRestore)assert(stats.lists>=12)}else if(workspaceClaims||pendingOpen||filesState){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
+  if(filesState){await filesChain;assert(filesProof);assert.deepEqual(filesStages.map(s=>s.stage),filesExpected);assert(!requests.includes('POST /api/session'));assert(!requests.some(r=>r.endsWith('/prompt')));http=await request.newContext({baseURL:origin});assert.equal((await http.post('/api/auth/login',{data:{username:'codenomad',password:'fixture-backend'}})).status(),200);assert.deepEqual(await (await http.get('/api/workspaces')).json(),[])}
+  if(!web&&!controls&&!workspaceClaims&&!pendingOpen&&!filesState)assert.deepEqual(visibleProof.map(p=>p.turn),[1,2],'Both distinct assistant turns must be visible before their endings')
   if(restoreState){assert.deepEqual(restoreStages.map(s=>s.stage),['prepare','resume','verify']);assert.deepEqual(restorePrompts.map(p=>p.sessionID),['ses_created_2','ses_created_1']);for(const id of ['ses_created_1','ses_created_2']){const rows=stores.get(id).rows;assert.deepEqual(rows.map(r=>r.type),['user','assistant']);assert(rows[1].time.completed)}}
   if(gitCount)assert.equal(requests.filter(r=>r==='GET /api/worktree').length,0,'root mutations must not enumerate sibling worktrees')
-  console.log(JSON.stringify({fixture:'launcher',uncertain,withTools,workspaceClaims,restoreState,webRestore,...stats,profile}))
+  console.log(JSON.stringify({fixture:'launcher',uncertain,withTools,workspaceClaims,restoreState,webRestore,filesState,...stats,profile}))
 }catch(error){result=1;throw error}finally{
   control?.close()
   for(const gate of gates.values())gate.reject()
@@ -199,7 +220,7 @@ try{
   if(client?.exitCode===null)client.kill();server.stdin.on('error',()=>{});server.stdin.end('shutdown\n')
   await Promise.race([exited,new Promise(r=>setTimeout(r,3000))]);if(server.exitCode===null){server.kill();await Promise.race([exited,new Promise(r=>setTimeout(r,5000))])}
   for(const stream of streams)stream.destroy();upstream.closeAllConnections();upstream.close()
-  await writeFile(path.join(profile,'proof.json'),JSON.stringify({result,stats,visibleProof,restoreStages,restorePrompts,requests,static:staticProof,profile,project,forbidden,serverExitCode:server.exitCode},null,2));await writeFile(path.join(profile,'rust.log'),log)
+  await writeFile(path.join(profile,'proof.json'),JSON.stringify({result,stats,visibleProof,restoreStages,restorePrompts,filesStages,filesProof,requests,static:staticProof,profile,project,forbidden,serverExitCode:server.exitCode},null,2));await writeFile(path.join(profile,'rust.log'),log)
   if(!web)await writeFile(path.join(profile,'client.log'),clientLog)
   if(web)await writeFile(path.join(profile,'browser-run.log'),diagnostic)
   if(result===0)assert.equal(server.exitCode,0,'Owned Rust server must exit cleanly')
