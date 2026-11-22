@@ -1,6 +1,6 @@
 # Conversations
 
-Messages render Markdown, code, diffs and supported tool-result images. **Message content** changes visibility without deleting stored parts; [History](history.md#operation-reference) distinguishes display controls from cleanup.
+Messages render Markdown, code, diffs and supported tool-result images. Multi-file patches show per-file changes up to the display limit; copying the tool output includes all files. **Message content** changes visibility without deleting stored parts; [History](history.md#operation-reference) distinguishes display controls from cleanup.
 
 Reasoning and tool headers show how long each step took, counting live while it runs; durations under one second are not shown. When **Tokens** is shown in **Message content** (the **Everything** preset shows it), each agent message ends with one token and cost line after its final text. That line adds up the message and the messages holding the tools and reasoning that its **Remove tools and reasoning from this response** action covers, within the loaded transcript; expand it for reasoning and cache counts.
 

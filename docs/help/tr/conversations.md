@@ -1,6 +1,6 @@
 # Konuşmalar
 
-Mesajlar Markdown, kod, farklar ve desteklenen araç sonucu görüntülerini işler. **Mesaj içeriği** saklanan parçaları silmeden görünürlüğü değiştirir; [Geçmiş](history.md#operation-reference) görünüm kontrolleriyle temizliği ayırır.
+Mesajlar Markdown, kod, farklar ve desteklenen araç sonucu görüntülerini işler. Çok dosyalı yamalar değişiklikleri görüntüleme sınırına kadar dosya dosya gösterir; araç çıktısı kopyalandığında tüm dosyalar dahil edilir. **Mesaj içeriği** saklanan parçaları silmeden görünürlüğü değiştirir; [Geçmiş](history.md#operation-reference) görünüm kontrolleriyle temizliği ayırır.
 
 Akıl yürütme ve araç başlıkları her adımın ne kadar sürdüğünü gösterir; süre, adım çalışırken canlı olarak sayılır ve bir saniyenin altındaki süreler gösterilmez. **Mesaj içeriği** içinde **Tokenlar** gösterildiğinde (**Her şey** hazır ayarı bunu gösterir), her ajan mesajı son metninden sonra tek bir token ve maliyet satırıyla biter. Bu satır, yüklenmiş konuşma dökümü içinde mesajı ve **Bu yanıttan araçları ve akıl yürütmeyi kaldır** eyleminin kapsadığı araçları ve akıl yürütmeyi içeren mesajları toplar; akıl yürütme ve önbellek sayıları için satırı genişletin.
 
