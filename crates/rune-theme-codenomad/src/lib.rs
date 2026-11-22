@@ -3,6 +3,7 @@
 pub mod action_menu;
 #[cfg(feature = "test-support")]
 pub mod action_menu_scene;
+pub mod ansi;
 pub mod catalogue;
 mod generated_catalogues;
 pub mod interruption;

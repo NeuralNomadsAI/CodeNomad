@@ -100,7 +100,6 @@ pub fn tool_pane(content: El, large: bool) -> El {
 }
 
 pub fn code(source: &str, language: &str, highlight: bool, wrap: bool) -> El {
-    use crate::layout::Layout;
     let dark = dark();
     let spans = if highlight {
         syntax::SyntaxTheme::from_kit(kit(dark))
@@ -108,8 +107,13 @@ pub fn code(source: &str, language: &str, highlight: bool, wrap: bool) -> El {
     } else {
         Vec::new()
     };
-    let body = rich(source, spans)
-        .font(tokens(dark).text(TextRole::Mono))
+    code_body(rich(source, spans), wrap)
+}
+
+pub(crate) fn code_body(body: El, wrap: bool) -> El {
+    use crate::layout::Layout;
+    let body = body
+        .font(tokens(dark()).text(TextRole::Mono))
         .by_line()
         .selectable(true)
         .literal_direction();
