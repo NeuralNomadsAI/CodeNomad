@@ -432,6 +432,7 @@ fn shown(s: &State) -> Option<&str> {
 }
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let blocked = crate::agent::navigation_blocked(s);
+    let selected = crate::workspace::active_session(s).map(str::to_owned);
     let Some(l) = s.screen.launcher_mut() else {
         return false;
     };
@@ -494,17 +495,38 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 bind(s, backend, title, None, tx);
             }
         }
-        Ok(Reply::Listed(rows, more)) => {
+        Ok(Reply::Listed(mut rows, more)) => {
             if !more {
                 l.creation_uncertain = false;
             }
-            if !more {
-                l.sessions.clear();
-            }
-            for row in rows.rows {
-                if !l.sessions.iter().any(|s| s.id == row.id) {
-                    l.sessions.push(row);
+            if more {
+                let mut ids = l
+                    .sessions
+                    .iter()
+                    .map(|row| row.id.clone())
+                    .collect::<std::collections::HashSet<_>>();
+                l.sessions.extend(
+                    rows.rows
+                        .into_iter()
+                        .filter(|row| ids.insert(row.id.clone())),
+                );
+            } else {
+                let ids = rows
+                    .rows
+                    .iter()
+                    .map(|row| row.id.clone())
+                    .collect::<std::collections::HashSet<_>>();
+                let complete = rows.next.is_none();
+                let mut missing = Vec::new();
+                for old in l.sessions.drain(..).filter(|row| !ids.contains(&row.id)) {
+                    if !complete || Some(&old.id) == selected.as_ref() {
+                        rows.rows.push(old);
+                    } else {
+                        missing.push(old.id);
+                    }
                 }
+                l.visits.forget(&missing);
+                l.sessions = rows.rows;
             }
             l.next = rows.next;
         }

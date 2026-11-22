@@ -18,6 +18,7 @@ pub(super) struct Entry {
     next: Option<String>,
     visits: crate::launcher::Visits,
     wanted_panels: [Option<[bool; 2]>; 2],
+    sidebar_edits: Option<(TextEdit, bool, TextEdit, bool)>,
     binding: Option<Backend>,
     cleared: HashSet<String>,
     pending_drafts: HashSet<String>,
@@ -175,6 +176,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         next: None,
         visits: Default::default(),
         wanted_panels: [None; 2],
+        sidebar_edits: None,
         binding: None,
         cleared,
         pending_drafts: HashSet::new(),
@@ -263,7 +265,6 @@ pub fn panel_width(s: &mut State, index: usize, width: u16) {
     {
         ui.panel_widths[index] = Some(width);
         ui.changed();
-        ui.stage();
     }
 }
 fn stash(s: &mut State) {
@@ -281,6 +282,12 @@ fn stash(s: &mut State) {
             entry.sessions = l.sessions.clone();
             entry.next = l.next.clone();
             entry.visits = std::mem::take(&mut l.visits);
+            entry.sidebar_edits = Some((
+                std::mem::replace(&mut l.title, TextEdit::new("")),
+                l.show_title,
+                std::mem::replace(&mut l.search, TextEdit::new("")),
+                l.show_search,
+            ));
         }
     }
 }
@@ -302,10 +309,10 @@ fn activate(s: &mut State, tx: &mut Tx) {
         });
         l.error = None;
         l.creation_uncertain = false;
-        l.title = TextEdit::new("");
-        l.search = TextEdit::new("");
-        l.show_title = false;
-        l.show_search = false;
+        (l.title, l.show_title, l.search, l.show_search) = item
+            .sidebar_edits
+            .take()
+            .unwrap_or_else(|| (TextEdit::new(""), false, TextEdit::new(""), false));
     }
     if let Some(cache) = item.cache.take() {
         cache.apply(s);
@@ -371,6 +378,7 @@ pub fn new_tab(s: &mut State, tx: &mut Tx) {
     capture(s);
 }
 pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
+    crate::shell::Panels::dismiss_outside(s, tx);
     if busy(s) {
         return;
     }

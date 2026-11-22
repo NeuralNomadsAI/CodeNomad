@@ -196,7 +196,7 @@ pub fn run() {
     assert!(matches!(stage.as_str(), "prepare" | "resume" | "verify"));
     let mut state = init();
     crate::setup(&mut state, std::sync::Arc::new(|| {}));
-    let mut rt = Runtime::new(state, view, (1100.0, 1200.0), Env::new(true, 1.0));
+    let mut rt = Runtime::new(state, view, (1400.0, 1200.0), Env::new(true, 1.0));
     rt.poll = Some(poll);
     rt.frame(0.0);
     tap(&mut rt, "connect");

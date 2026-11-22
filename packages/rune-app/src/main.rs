@@ -294,25 +294,22 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         .as_ref()
         .is_some_and(|a| a.picker || !a.ids().is_empty());
     rune_theme_codenomad::interruption::session_surface(expanded)
-        .child(
-            rune_theme_codenomad::interruption::history(expanded)
-                .child(if s.can_older {
-                    components::button_tx(
-                        "older",
-                        strings::t(if s.history_error {
-                            "sessionList.loadError.retry"
-                        } else if s.paging {
-                            "rune.loading"
-                        } else {
-                            "rune.older"
-                        }),
-                        s.paging || matches!(s.phase, Phase::Reconnecting | Phase::Failed),
-                        crate::screen::action_tx(&scope, request_older),
-                    )
-                } else {
-                    rune::el()
-                })
-                .child(rows),
+        .child(rune_theme_codenomad::interruption::history(expanded).child(rows))
+        .children(
+            (s.can_older && matches!(s.phase, Phase::Ready | Phase::Streaming)).then(|| {
+                rune_theme_codenomad::shell::floating_notice(components::button_tx(
+                    "older",
+                    strings::t(if s.history_error {
+                        "sessionList.loadError.retry"
+                    } else if s.paging {
+                        "rune.loading"
+                    } else {
+                        "rune.older"
+                    }),
+                    s.paging,
+                    crate::screen::action_tx(&scope, request_older),
+                ))
+            }),
         )
         .child(agent_view::view(s, cx))
         .child(

@@ -15,6 +15,7 @@ const REGIONS: [&str; 2] = ["sessions-panel", "right-panel"];
 pub struct Panels {
     width: f32,
     preferred: [f32; 2],
+    right_width_initialized: bool,
     pub wanted: [Option<[bool; 2]>; 2],
     portrait: bool,
     floating: Option<usize>,
@@ -26,6 +27,7 @@ impl Default for Panels {
         Self {
             width: 0.0,
             preferred: PANEL_DEFAULT,
+            right_width_initialized: false,
             wanted: [None; 2],
             portrait: false,
             floating: None,
@@ -36,7 +38,12 @@ impl Default for Panels {
 }
 impl Panels {
     pub fn restore_widths(&mut self, widths: [Option<u16>; 2]) {
-        self.preferred = std::array::from_fn(|i| widths[i].map_or(PANEL_DEFAULT[i], f32::from));
+        for (i, width) in widths.into_iter().enumerate() {
+            if let Some(width) = width {
+                self.preferred[i] = f32::from(width);
+                self.right_width_initialized |= i == 1;
+            }
+        }
     }
     fn wanted(&self) -> [bool; 2] {
         self.wanted[usize::from(self.portrait)].unwrap_or([!self.portrait; 2])
@@ -63,7 +70,10 @@ impl Panels {
     }
 
     fn measure(&mut self, width: f32, height: f32, touch: bool, tx: &mut Tx) {
-        let before = std::array::from_fn::<_, 2, _>(|i| self.visible(i));
+        if width > 0.0 && !self.right_width_initialized {
+            self.preferred[1] = shell::default_right_panel(width);
+            self.right_width_initialized = true;
+        }
         self.width = width;
         let portrait = touch && width < height;
         if portrait != self.portrait {
@@ -73,16 +83,6 @@ impl Panels {
         self.dock_floating();
         if self.resizing.is_some_and(|i| !self.visible(i)) {
             self.resizing = None;
-        }
-        for i in 0..2 {
-            if before[i]
-                && !self.visible(i)
-                && let Some(key) = tx.focused()
-                && (sidebar::focus_key(key) && i == 0 || key.starts_with("right-panel-") && i == 1)
-                && !KEYS.contains(&key)
-            {
-                tx.focus_when_shown(KEYS[i], tx.focus_visible());
-            }
         }
         tx.instant();
     }
@@ -167,11 +167,10 @@ impl Panels {
 }
 
 pub fn toggle(s: &mut State, index: usize, tx: &mut Tx) {
-    let refresh = index == 0 && !s.shell.visible(0);
-    s.shell.toggle(index, tx);
-    if refresh && s.shell.visible(0) {
-        crate::launcher::list(s, false);
+    if s.shell.resizing == Some(index) {
+        s.shell.resizing = None;
     }
+    s.shell.toggle(index, tx);
 }
 
 pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
@@ -200,6 +199,7 @@ pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
             .key(REGIONS[i])
             .role("region")
             .label(t(LABELS[i]))
+            .focus_return(KEYS[i])
             .child(content);
         if floating {
             pane
@@ -220,10 +220,9 @@ pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
                 s.shell.max_width(i),
                 move |s: &mut State, resize, tx| {
                     if s.current_scope(&scope) {
-                        let finished = matches!(resize, shell::Resize::Nudge(_))
-                            || matches!(resize, shell::Resize::End) && s.shell.resizing == Some(i);
+                        let before = s.shell.preferred[i];
                         s.shell.resize(i, resize, tx);
-                        if finished {
+                        if s.shell.preferred[i] != before {
                             let width = s.shell.preferred[i].round() as u16;
                             crate::workspace::panel_width(s, i, width);
                         }
@@ -233,11 +232,10 @@ pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
         }
     };
     let mut center = shell::conversation_column().key("conversation");
-    if project
-        || !s.chat_title.is_empty()
-        || matches!(s.phase, crate::Phase::Failed | crate::Phase::Reconnecting)
-    {
+    if project || !s.chat_title.is_empty() {
         center = center.child(header(s, project, docked, touch));
+    } else if let Some(warning) = connection_warning(s) {
+        center = center.child(shell::floating_notice(warning));
     }
     let center = center.child(body.remaining());
     let mut columns = shell::columns();
@@ -275,7 +273,6 @@ pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
 }
 
 fn header(s: &State, project: bool, docked: [Option<f32>; 2], touch: bool) -> El {
-    let t = strings::t;
     let title = if s.chat_title.is_empty() && project {
         s.screen
             .launcher()
@@ -285,16 +282,6 @@ fn header(s: &State, project: bool, docked: [Option<f32>; 2], touch: bool) -> El
         &s.chat_title
     };
     let reserve = |i: usize| project && docked[i].is_none();
-    let warning = match s.phase {
-        crate::Phase::Reconnecting => Some(text(connection(s)).role("status")),
-        crate::Phase::Failed => Some(crate::components::button(
-            "connection-retry",
-            t("sessionList.loadError.retry"),
-            false,
-            crate::screen::action(&s.input_scope, crate::retry_connection),
-        )),
-        _ => None,
-    };
     shell::header(
         reserve(0),
         reserve(1),
@@ -303,8 +290,21 @@ fn header(s: &State, project: bool, docked: [Option<f32>; 2], touch: bool) -> El
             shell::spacer(),
             shell::panel_title(title).key("chat-title").role("heading"),
             shell::spacer(),
-            warning.unwrap_or_else(col),
+            connection_warning(s).unwrap_or_else(col),
         ],
     )
     .key("session-header")
+}
+
+fn connection_warning(s: &State) -> Option<El> {
+    match s.phase {
+        crate::Phase::Reconnecting => Some(text(connection(s)).role("status")),
+        crate::Phase::Failed => Some(crate::components::button(
+            "connection-retry",
+            strings::t("sessionList.loadError.retry"),
+            false,
+            crate::screen::action(&s.input_scope, crate::retry_connection),
+        )),
+        _ => None,
+    }
 }

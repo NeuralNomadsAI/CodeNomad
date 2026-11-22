@@ -114,7 +114,7 @@ fn both_grips_resize_in_the_correct_direction_in_both_locales() {
     ] {
         let mut state = init();
         fixture(&mut state);
-        let mut rt = Runtime::new(state, render, (1400.0, 900.0), Env::new(false, 1.0));
+        let mut rt = Runtime::new(state, render, (1600.0, 900.0), Env::new(false, 1.0));
         settle(&mut rt);
         let x = |rt: &Runtime<State>, key| rt.find(key).unwrap().0;
         assert_eq!(
@@ -180,4 +180,26 @@ fn compressed_grip_starts_at_its_presented_width_and_accepts_keyboard() {
     });
     settle(&mut rt);
     assert!(width(&rt) < 290.0);
+}
+
+#[test]
+fn resizing_out_of_room_returns_focus_from_the_search_editor() {
+    let mut state = init();
+    fixture(&mut state);
+    let mut rt = Runtime::new(state, english, (1000.0, 900.0), Env::new(false, 1.0));
+    settle(&mut rt);
+    click(&mut rt, "session-search-toggle");
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|element| element.focused && element.path.contains("/session-search/"))
+    );
+    rt.set_viewport((600.0, 900.0), 1.0);
+    settle(&mut rt);
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|element| element.focused
+                && element.key.as_deref() == Some("sessions-panel-toggle"))
+    );
 }

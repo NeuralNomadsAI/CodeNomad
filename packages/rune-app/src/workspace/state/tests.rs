@@ -49,6 +49,31 @@ fn panel_visibility_returns_only_with_its_own_project_tab() {
 }
 
 #[test]
+fn sidebar_search_and_title_edits_are_kept_only_by_their_origin_tab() {
+    let mut s = init();
+    crate::gallery::shell::fixture(&mut s);
+    let mut ui = Ui::new();
+    ui.ready = true;
+    ui.entries.push(entry("tab-1".into(), Tab::Blank));
+    s.workspace = Some(ui);
+    let mut rt = runtime(s);
+    rt.update(|s, tx| {
+        let launcher = s.screen.launcher_mut().unwrap();
+        launcher.search = TextEdit::new("alpha");
+        launcher.title = TextEdit::new("unsent title");
+        launcher.show_title = true;
+        launcher.show_search = true;
+        select(s, "tab-1", tx);
+        assert!(s.screen.launcher().unwrap().search.text.is_empty());
+        select(s, "tab-0", tx);
+        let launcher = s.screen.launcher().unwrap();
+        assert_eq!(launcher.search.text, "alpha");
+        assert_eq!(launcher.title.text, "unsent title");
+        assert!(launcher.show_title && launcher.show_search);
+    });
+}
+
+#[test]
 fn waiting_saved_session_keeps_its_draft_until_native_binding() {
     let mut s = init();
     let mut ui = Ui::new();

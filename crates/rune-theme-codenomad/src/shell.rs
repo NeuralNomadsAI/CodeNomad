@@ -10,6 +10,9 @@ use rune_kit::{
 pub const CENTER_MIN: f32 = 390.0;
 pub const PANEL_MIN: [f32; 2] = [220.0, 200.0];
 pub const PANEL_DEFAULT: [f32; 2] = [340.0, 260.0];
+pub fn default_right_panel(window_width: f32) -> f32 {
+    (window_width * 0.35).max(PANEL_MIN[1])
+}
 
 pub enum Resize {
     Start,
@@ -201,6 +204,14 @@ pub fn cover(element: El) -> El {
     element.pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
 }
 
+pub fn floating_notice(notice: El) -> El {
+    let inset = tokens(layout::dark()).space(Space::Sm).px();
+    row()
+        .pin(None, Some(inset), Some(inset), None)
+        .raise()
+        .child(notice)
+}
+
 pub fn header(left: bool, right: bool, touch: bool, actions: impl IntoIterator<Item = El>) -> El {
     let t = tokens(layout::dark());
     let inset = |reserve| {
@@ -319,6 +330,30 @@ pub fn spacer() -> El {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn focus_group_exposes_sidebar_rows_and_activates_them_with_enter() {
+        let mut rt = rune::Runtime::new(
+            0_usize,
+            |_, _| {
+                col().role("list").focus_group().child(
+                    session_row("A", false, false, |count: &mut usize, _| *count += 1)
+                        .key("session-a"),
+                )
+            },
+            (180.0, 100.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        rt.update(|_, tx| tx.focus("session-a", true));
+        rt.frame(0.0);
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Enter,
+            mods: rune::Mods::default(),
+        });
+        rt.frame(0.01);
+        assert_eq!(rt.state, 1);
+    }
 
     #[test]
     fn panel_breakpoints_follow_solid() {

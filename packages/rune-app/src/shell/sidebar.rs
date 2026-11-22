@@ -16,12 +16,6 @@ use rune_theme_codenomad::{
     },
 };
 
-pub fn focus_key(key: &str) -> bool {
-    key.starts_with("session-")
-        || key.starts_with("sessionList.history.")
-        || matches!(key, "more-sessions" | "refresh-sessions" | "create-session")
-}
-
 pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
     let Some(l) = s.screen.launcher() else {
         return col();
@@ -92,7 +86,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
     }
     let filter = l.search.text.to_lowercase();
     let selected = workspace::active_session(s);
-    let mut items = col().full_width();
+    let mut items = col().full_width().role("list").label(title).focus_group();
     for session in l
         .sessions
         .iter()
@@ -117,6 +111,7 @@ pub fn view(s: &State, touch: bool, rtl: bool, floating: bool) -> El {
             .key(key),
         );
     }
+    let mut items = col().full_width().child(items);
     if l.sessions.is_empty() && !l.pending {
         items = items.child(text(t("rune.empty_sessions")).pad(Space::Sm));
     }
