@@ -254,6 +254,7 @@ pub fn view<S: 'static>(
     let menu_first = first.clone();
     let menu_last = last.clone();
     let action = menu.clone();
+    let pressed_first = first.clone();
     let control = trigger
         .key(trigger_key.clone())
         .label(&menu.label)
@@ -269,6 +270,11 @@ pub fn view<S: 'static>(
                 close(s, at, &action, None, None, tx);
             } else {
                 open(s, at, &action, tx);
+                if tx.by_keys() {
+                    if let Some(first) = &pressed_first {
+                        tx.focus(format!("{}:item:{first}", action.key), true);
+                    }
+                }
             }
         })
         .on_key(move |s, event, tx| {

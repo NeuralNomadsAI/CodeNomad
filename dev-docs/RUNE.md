@@ -27,6 +27,8 @@ Shared button factories accept their action before building the Kit control. Dis
 
 Shared renders enable `Cx::web_focus`: Tab follows pressable controls, pointer presses take focus, and Return on a focused button precedes an explicit default action. Close preserves the source's Shift+Return and held-Return activation through its shared handler, with Ctrl/Alt/Meta left to shortcut routing. The pinned runtime's Space press phase, modified Space and held Return on Kit buttons have separate source qualification gaps.
 
+Shared menus focus their container when opened by pointer and the first enabled item when activated by keyboard; Up opens at the last enabled item. Confirmation scenes declare their Cancel autofocus explicitly.
+
 ## Platform
 
 - Shared code builds for native and `wasm32-unknown-unknown`; CI builds both.

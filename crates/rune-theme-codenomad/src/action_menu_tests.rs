@@ -269,6 +269,7 @@ fn trigger_arrows_open_at_enabled_edges_and_keep_menu_navigation() {
     deliver(&mut rt);
     key(&mut rt, Key::Text(" ".into()));
     assert!(rt.state.menu.is_open("actions"));
+    assert_eq!(focused(&rt).as_deref(), Some("actions:item:open"));
     assert_eq!(
         rt.state.events.iter().filter(|e| *e == "open:true").count(),
         4
