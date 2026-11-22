@@ -31,7 +31,7 @@ pub fn decode_message(v: &Value) -> Result<Message> {
     let role = v["type"].as_str().ok_or("missing message type")?;
     let parts = crate::content::decode(v)?;
     let body = if role == "user" {
-        v["text"].as_str().unwrap_or_default().into()
+        v["text"].as_str().ok_or("invalid native user text")?.into()
     } else {
         crate::content::text_body(&parts)
     };
@@ -56,13 +56,14 @@ pub fn decode(v: Value) -> Result<Page> {
     if v["status"] != "window" {
         return Err("history unavailable or anchor changed".into());
     }
+    let mut v = v;
     let native = v["messages"]
-        .as_array()
+        .as_array_mut()
         .filter(|rows| rows.len() <= 200)
         .ok_or("invalid history window")?;
     let mut window_bytes = 0;
-    for row in native {
-        let bytes = serde_json::to_vec(row)?.len();
+    for row in native.iter_mut() {
+        let bytes = stored_size(row)?;
         window_bytes += bytes;
         if bytes > MESSAGE_BYTES || window_bytes > WINDOW_BYTES {
             return Err("native history window exceeds its bound".into());
@@ -92,6 +93,27 @@ pub fn decode(v: Value) -> Result<Page> {
         newer,
         running,
     })
+}
+fn stored_size(row: &mut Value) -> Result<usize> {
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len();
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let fields = row.as_object_mut().ok_or("invalid native history row")?;
+    // Source counts the stored projection before adding the database row's identity.
+    let id = fields.remove("id");
+    let kind = fields.remove("type");
+    let mut count = Count(0);
+    serde_json::to_writer(&mut count, fields)?;
+    fields.extend(id.map(|id| ("id".into(), id)));
+    fields.extend(kind.map(|kind| ("type".into(), kind)));
+    Ok(count.0)
 }
 pub fn check(rows: &[Message]) -> Result<()> {
     let mut ids = HashSet::new();

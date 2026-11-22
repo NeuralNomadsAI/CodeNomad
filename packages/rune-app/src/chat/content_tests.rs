@@ -7,7 +7,7 @@ fn user_attachments_render_as_chips_without_instructions_or_uris() {
         for dark in [false, true] {
             let row = history::decode_message(&json!({
                 "id":"user-files","type":"user","text":"",
-                "skills":[{"id":"skill","name":"Review","instructions":"PRIVATE-SKILL-INSTRUCTIONS"}],
+                "skills":[{"id":"skill","name":"Review","text":"PRIVATE-SKILL-INSTRUCTIONS"}],
                 "agents":[{"name":"PRIVATE-AGENT"}],
                 "files":[
                     {"name":"Picture","mime":"image/png","source":{"type":"inline"},"data":"PRIVATE-BYTES"},

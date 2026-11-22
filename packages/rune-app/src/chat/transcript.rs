@@ -36,6 +36,9 @@ pub fn message(s: &State, i: usize) -> El {
     if m.parts.iter().all(|p| matches!(p, Part::Text(_))) {
         return view.child(prose(format!("body-{}", m.id), &m.body));
     }
+    if m.role == "user" && !m.body.is_empty() {
+        view = view.child(prose(format!("body-{}", m.id), &m.body));
+    }
     let mut files = layout::action_row().key("message-attachments");
     let mut has_files = false;
     for (index, part) in m.parts.iter().enumerate() {
