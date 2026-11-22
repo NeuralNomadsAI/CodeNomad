@@ -1,11 +1,12 @@
 // Attach only to an explicitly supplied isolated loopback server. Never starts a server.
 import assert from 'node:assert/strict'
-import {mkdir, readFile, writeFile} from 'node:fs/promises'
+import {mkdir, readFile, realpath, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
 import {chromium} from 'playwright'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
+import {privateWebFixture,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
@@ -22,7 +23,12 @@ const messages = JSON.parse(await readFile(path.join(root, `crates/rune-theme-co
 const out = path.resolve(root, values.out)
 const relativeOut = path.relative(path.join(root, 'target'), out)
 assert(relativeOut && relativeOut !== '..' && !relativeOut.startsWith(`..${path.sep}`) && !path.isAbsolute(relativeOut), 'Smoke output must stay inside this checkout target directory')
+let privateScope
+if(values.connected){
+  privateScope=await privateWebFixture({root,project:values.project,storageState:values['storage-state'],out,origin:url.origin})
+}
 await mkdir(out, {recursive: true})
+if(privateScope)assert(privateScope.inside(privateScope.profile,await realpath(out)),'Output link escapes fixture')
 const browser = await chromium.launch({headless: true, ...(values.executable ? {executablePath: values.executable} : {}),
   args: ['--enable-unsafe-webgpu', '--use-angle=swiftshader']})
 const records = []
@@ -36,6 +42,7 @@ try {
       const page = await context.newPage()
       page.setDefaultTimeout(15000)
       const errors = [], forbiddenRequests = [], routes=[], history=[]
+      const policy=workspacePolicy({origin:url.origin,project:values.project})
       let eventSource=false
       page.on('response',async response=>{
         if(!values.connected)return
@@ -44,19 +51,26 @@ try {
         if(pathname.endsWith('/session-history/window')&&response.ok())history.push({input:request.postDataJSON(),body:await response.json().catch(()=>null)})
       })
       page.on('pageerror', error => errors.push({name: error.name, message: error.message}))
-      // This scene has no backend. Refuse accidental API access or external resources.
+      // Connected scenes admit only their private creations; synthetic scenes refuse all API access.
       await context.route('**/*', async route => {
         const requested = new URL(route.request().url())
         if (!['http:', 'https:'].includes(requested.protocol)) return route.continue()
-        const req=route.request(),p=requested.pathname,w=values.workspace
-        const protectedRoute=/^\/(api|workspaces)\//.test(p)
-        const allowed=values.connected&&((req.method()==='GET'&&(p==='/api/workspaces'||p==='/api/events'||p===`/workspaces/${w}/instance/api/model`||new RegExp(`^/workspaces/${w}/instance/api/session(?:/(ses_existing|ses_another)(?:/(permission|form))?)?$`).test(p)))||
-          (req.method()==='POST'&&(p==='/api/client-connections/pong'||(p===`/api/workspaces/${w}/session-history/window`&&['ses_existing','ses_another'].includes(req.postDataJSON()?.sessionID)))))
+        const req=route.request(),p=requested.pathname
+        const protectedRoute=/^\/(api|workspaces)(?:\/|$)/.test(p)
+        let body;try{body=req.postDataJSON()}catch{}
+        const allowed=requested.origin===url.origin&&values.connected&&Boolean((await req.allHeaders()).cookie)&&policy.allows(req.method(),p,body)
         if (requested.origin !== url.origin || (protectedRoute&&!allowed)) {
           forbiddenRequests.push({origin: requested.origin, path: requested.pathname})
           return route.abort('blockedbyclient')
         }
-        if(protectedRoute){assert((await req.allHeaders()).cookie,'Protected browser requests require the fixture cookie');routes.push({method:req.method(),path:p,query:requested.search,cookie:true})}
+        if(protectedRoute){
+          assert(routes.length<4000,'Protected browser request bound')
+          const entry={method:req.method(),path:p,query:requested.search,cookie:true};routes.push(entry)
+          if(req.method()==='POST'&&p==='/api/workspaces'){
+            try{Object.assign(entry,await fulfillWorkspaceCreation(route,policy));return}
+            catch{errors.push({name:'WorkspaceAdmission',message:'Private workspace response was refused before delivery'});return route.abort('blockedbyclient')}
+          }
+        }
         await route.continue()
       })
       const started = performance.now()
@@ -144,6 +158,20 @@ try {
           for(const row of existing)assert.deepEqual(row.body.messages.map(message=>message.text??message.content?.[0]?.text),['Existing project history','Existing answer'])
           assert(history.some(row=>row.input.sessionID==='ses_another'&&row.body.messages.length===0))
           assert(routes.some(row=>row.query.includes('cursor=')))
+          const inventory=async()=>{const response=await context.request.get(new URL('/api/workspaces',url).href);assert(response.ok());const rows=await response.json();assert(Array.isArray(rows)&&rows.length<=128);return rows.map(row=>row.id)}
+          const before=await inventory(),owned=[...policy.workspaces],retained=before.filter(id=>!policy.workspaces.has(id))
+          assert(owned.length>0&&owned.every(id=>before.includes(id)),'Browser must own its admitted occurrences')
+          // Closing a browser context skips pagehide; use the product's ordinary departure first.
+          await page.goto('about:blank')
+          let after
+          for(const until=Date.now()+10000;;){
+            after=await inventory()
+            if(owned.every(id=>!after.includes(id)))break
+            assert(Date.now()<until,'Normal browser departure must release its owned occurrences')
+            await page.waitForTimeout(25)
+          }
+          assert(retained.every(id=>after.includes(id)),'Departure must preserve every unowned fixture record')
+          measured.departure={owned,retained,ownedRemoved:true,unownedPreserved:true}
         }
         records.push({name, colorScheme, width, height, emulatedTouch: touch, firstAccessibleMs, canvasBounds: canvas, textContrast, routes,history,eventSource,...measured, pass: true})
       } catch (error) {

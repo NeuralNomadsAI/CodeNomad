@@ -9,7 +9,7 @@ cargo build --locked --target wasm32-unknown-unknown -p codenomad-rune-app --bin
 node scripts/rune/bundle-web.mjs --wasm "$env:CARGO_TARGET_DIR/wasm32-unknown-unknown/debug/codenomad-rune.wasm" --test-support
 ```
 
-Le CLI doit correspondre exactement à la version de `wasm-bindgen` dans `Cargo.lock`. Son installation appartient à la préparation de l'environnement. La commande contrôle aussi le checkout Rune épinglé. La sortie par défaut est `target/rune-web`, remplaçable seulement lorsqu'elle porte le manifeste de cet outil. Les fichiers statiques servent via l'option existante `codenomad-rs serve --ui-dir` du serveur isolé.
+Le CLI doit correspondre exactement à la version de `wasm-bindgen` dans `Cargo.lock`. Son installation appartient à la préparation de l'environnement. Les polices sont résolues par les métadonnées Cargo de la dépendance Git Rune. La sortie par défaut est `target/rune-web`, remplaçable seulement lorsqu'elle porte le manifeste de cet outil. Les fichiers statiques servent via l'option existante `codenomad-rs serve --ui-dir` du serveur isolé.
 
 Le scénario synthétique et son bundle demandent explicitement `test-support`. Pour empaqueter le produit, compiler sans cette feature puis appeler le bundler sans `--test-support`. Le manifeste conserve ce statut et la fixture synthétique exige le bundle de qualification.
 

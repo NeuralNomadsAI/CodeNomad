@@ -7,6 +7,7 @@ import {parseArgs} from 'node:util'
 import {chromium} from 'playwright'
 import {pendingBrowser} from './web-pending-open.mjs'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
+import {privateWebFixture,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 
 const root=fileURLToPath(new URL('../../',import.meta.url))
 const {values}=parseArgs({options:{url:{type:'string'},project:{type:'string'},'storage-state':{type:'string'},out:{type:'string'},executable:{type:'string'},workspace:{type:'string'},'pending-open':{type:'boolean'}}})
@@ -14,15 +15,8 @@ assert(values.url&&values.project&&values['storage-state']&&values.out,'Pass --u
 const url=new URL(values.url)
 assert(['127.0.0.1','localhost','[::1]'].includes(url.hostname)&&['http:','https:'].includes(url.protocol)&&!url.username&&!url.password&&url.pathname==='/'&&!url.hash,'Explicit isolated loopback root required')
 url.search='?locale=fr'
-const target=await realpath(path.join(root,'target/rune-web-tests'))
-const inside=(parent,value)=>{const relative=path.relative(parent,value);return relative&&!path.isAbsolute(relative)&&relative!=='..'&&!relative.startsWith(`..${path.sep}`)}
-const project=await realpath(values.project),profile=path.dirname(path.dirname(project))
-assert(inside(target,profile)&&path.basename(profile).startsWith('launcher-')&&path.basename(project)==='synthetic','Use the isolated launcher fixture project')
-const storage=await realpath(values['storage-state'])
-assert(inside(profile,storage),'Cookies must come from this private fixture profile')
-const auth=JSON.parse(await readFile(storage,'utf8'))
-assert(auth.cookies.length>0&&auth.cookies.every(c=>['127.0.0.1','localhost','::1'].includes(c.domain))&&(auth.origins??[]).every(o=>o.origin===url.origin),'Private loopback cookie state only')
-const out=path.resolve(values.out);assert(inside(profile,out),'Output must stay in the private fixture profile')
+const out=path.resolve(values.out)
+const {profile,storage,inside}=await privateWebFixture({root,project:values.project,storageState:values['storage-state'],out,origin:url.origin})
 await mkdir(out,{recursive:true});assert(inside(profile,await realpath(out)),'Output link escapes fixture')
 const m=JSON.parse(await readFile(path.join(root,'crates/rune-theme-codenomad/assets/catalogues/fr.json'),'utf8'))
 if(values['pending-open']){await pendingBrowser({values,m,out,storage});process.exit(0)}
@@ -41,7 +35,7 @@ try {
     const record={context:spec.name,phoneEmulated:spec.touch,requests:[],eventSource:[],storage:[],storageLocal:[],history:[],errors:[],forbidden:[],stages:[]}
     results.push(record)
     let forbidRelease=false,sequence=0
-    const workspaces=new Set(),claims=new Set()
+    const policy=workspacePolicy({origin:url.origin,project:values.project}),workspaces=policy.workspaces
     const stamp=()=>++sequence
     await page.addInitScript(({key,released,proof})=>{
       globalThis.__runeRestoreQuota=false
@@ -126,40 +120,19 @@ try {
     await context.route('**/*',async route=>{
       const req=route.request(),requested=new URL(req.url()),p=requested.pathname,method=req.method()
       let allowed=requested.origin===url.origin
-      const protectedRoute=/^\/(api|workspaces)\//.test(p)
+      const protectedRoute=/^\/(api|workspaces)(?:\/|$)/.test(p)
       if(allowed&&protectedRoute){
         let body;try{body=req.postDataJSON()}catch{}
-        const scoped=p.match(/^\/workspaces\/([^/]+)\/instance\/api\/(.*)$/)
-        const owned=p.match(/^\/api\/workspaces\/([^/]+)(?:\/(.*))?$/)
-        allowed=method==='GET'&&['/api/workspaces','/api/meta','/api/events'].includes(p)
-        if(method==='POST'&&p==='/api/client-connections/pong')allowed=true
-        if(method==='POST'&&p==='/api/workspaces/creation/cancel'&&claims.has(body?.requestId))allowed=true
-        if(method==='POST'&&p==='/api/workspaces'&&body?.path===values.project&&typeof body.requestId==='string'){allowed=true;claims.add(body.requestId)}
-        if(scoped&&workspaces.has(scoped[1])&&method==='GET'&&(/^(model|session)$/.test(scoped[2])||/^session\/(ses_existing|ses_another)(?:\/(permission|form))?$/.test(scoped[2])))allowed=true
-        if(owned&&workspaces.has(owned[1])){
-          if(method==='POST'&&owned[2]==='session-history/window'&&['ses_existing','ses_another'].includes(body?.sessionID))allowed=true
-          if(method==='POST'&&owned[2]==='creation/release'&&claims.has(body?.requestId))allowed=true
-          if(method==='DELETE'&&!owned[2]&&!forbidRelease)allowed=true
-        }
-        if(allowed){const headers=await req.allHeaders();allowed=Boolean(headers.cookie)}
+        const headers=await req.allHeaders()
+        allowed=Boolean(headers.cookie)&&policy.allows(method,p,body,{forbidRelease})
       }
       const entry={sequence:stamp(),method,path:p,status:allowed?'allowed':'refused',...(requested.searchParams.has('cursor')?{pagination:true}:{})}
       if(record.requests.length<4000)record.requests.push(entry);else allowed=false
       if(!allowed){record.forbidden.push(entry);return route.abort('blockedbyclient')}
       if(method==='POST'&&p==='/api/workspaces'){
         try {
-          const response=await route.fetch({maxRedirects:0,timeout:30000})
-          if(response.ok()){
-            const body=await response.json(),input=req.postDataJSON()
-            assert.equal(new URL(response.url()).origin,url.origin)
-            assert(typeof body.id==='string'&&/^[A-Za-z0-9_-]{1,256}$/.test(body.id),'Invalid private workspace identity')
-            assert.equal(body.requestId,input.requestId,'Workspace creation claim mismatch')
-            assert.equal(body.location?.directory,values.project,'Workspace belongs to another project')
-            assert(!Object.hasOwn(body.location,'workspaceID'),'Foreign native workspace location')
-            workspaces.add(body.id)
-            entry.workspaceId=body.id;entry.admittedBeforeFulfill=true
-          }
-          return await route.fulfill({response})
+          Object.assign(entry,await fulfillWorkspaceCreation(route,policy))
+          return
         }catch{
           record.errors.push({name:'WorkspaceAdmission',message:'Private workspace response was refused before delivery'})
           return route.abort('blockedbyclient')
