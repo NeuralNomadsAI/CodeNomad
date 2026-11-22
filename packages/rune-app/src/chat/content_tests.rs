@@ -113,6 +113,10 @@ fn markdown_and_specialized_tools_use_native_content_in_the_runtime() {
             assert!(tree.contains(label), "label missing: {label}: {tree}");
         }
         assert!(!tree.contains("Edit applied."));
+        assert!(
+            !tree.contains("\\u001b[31m"),
+            "ANSI escapes must stay out of rendered text"
+        );
         let clipboard = rune::clipboard::memory();
         rt.use_clipboard(&clipboard);
         let (x, y) = rt.find("copy-tool-transcript:5:shell-output").unwrap();
@@ -121,7 +125,7 @@ fn markdown_and_specialized_tools_use_native_content_in_the_runtime() {
         rt.frame(0.0);
         assert_eq!(
             clipboard.text().as_deref().map(String::as_str),
-            Some("$ printf '%s' result\nresult")
+            Some("$ printf '%s' result\n\u{1b}[31mresult\u{1b}[0m")
         );
     }
 }
