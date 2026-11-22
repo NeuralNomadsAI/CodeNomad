@@ -22,7 +22,8 @@ pub struct Picker {
     pub entries: Vec<Item>,
     pub selected: usize,
     pub generation: u64,
-    command: Option<String>,
+    commands: Vec<Item>,
+    command_read: Option<Read>,
     read: Option<Read>,
     search: Option<Read>,
     pub error: bool,
@@ -135,8 +136,16 @@ fn launch(
 }
 
 impl Picker {
-    pub fn bind(&mut self, backend: Backend) {
+    pub fn bind(&mut self, backend: Backend, reads: &platform::reads::Reads, wake: &rune::Waker) {
         *self = Self {
+            command_read: Some(launch(
+                backend.clone(),
+                None,
+                None,
+                true,
+                reads.clone(),
+                wake.clone(),
+            )),
             backend: Some(backend),
             ..Self::default()
         };
@@ -144,18 +153,25 @@ impl Picker {
     pub fn open(&self) -> bool {
         self.current.is_some()
     }
-    pub fn selected_command(&self, text: &str) -> bool {
-        self.command.as_ref().is_some_and(|name| {
-            text.strip_prefix('/')
-                .and_then(|text| text.split(whitespace).next())
-                == Some(name.as_str())
-        })
+    pub fn selected_command<'a>(&self, text: &'a str) -> Option<(&'a str, &'a str)> {
+        let text = text.trim_matches(whitespace).strip_prefix('/')?;
+        let end = text.find(whitespace).unwrap_or(text.len());
+        let (name, args) = text.split_at(end);
+        self.commands
+            .iter()
+            .any(|command| command.label() == name)
+            .then_some((name, args.trim_matches(whitespace)))
+    }
+    pub fn command_pending(&self, text: &str) -> bool {
+        text.trim_start_matches(whitespace).starts_with('/') && self.command_read.is_some()
     }
     pub fn slash(&self) -> bool {
         matches!(self.current, Some((Query::Command(_), _)))
     }
     pub fn loading(&self) -> bool {
-        self.read.is_some() || self.search.is_some()
+        self.read.is_some()
+            || self.search.is_some()
+            || (self.slash() && self.command_read.is_some())
     }
     pub fn close(&mut self) {
         if let Some((token, _)) = &self.current {
@@ -177,9 +193,7 @@ impl Picker {
     }
     pub fn changed(&mut self, edit: &TextEdit, reads: &platform::reads::Reads, wake: &rune::Waker) {
         let caret = edit.range().0;
-        let Some(token) =
-            query(&edit.text, caret).filter(|token| matches!(token, Query::Mention(_)))
-        else {
+        let Some(token) = query(&edit.text, caret) else {
             self.dismissed = None;
             self.reset();
             return;
@@ -209,7 +223,18 @@ impl Picker {
         self.search = None;
         if let Some(backend) = &self.backend {
             let slash = self.slash();
-            if !same_mode {
+            if slash && !same_mode {
+                if self.command_read.is_none() {
+                    self.command_read = Some(launch(
+                        backend.clone(),
+                        self.directory.clone(),
+                        None,
+                        true,
+                        reads.clone(),
+                        wake.clone(),
+                    ));
+                }
+            } else if !same_mode {
                 self.read = Some(launch(
                     backend.clone(),
                     self.directory.clone(),
@@ -238,8 +263,23 @@ impl Picker {
             *read = None;
             Some(reply)
         }
-        let (catalogue, files) = (take(&mut self.read), take(&mut self.search));
-        let changed = catalogue.is_some() || files.is_some();
+        let (catalogue, files, commands) = (
+            take(&mut self.read),
+            take(&mut self.search),
+            take(&mut self.command_read),
+        );
+        let changed = catalogue.is_some() || files.is_some() || commands.is_some();
+        if let Some(reply) = commands {
+            if self.slash() {
+                self.error |= reply.error;
+            }
+            if !reply.directory.is_empty() {
+                self.directory = Some(reply.directory);
+            }
+            if !reply.error {
+                self.commands = reply.items;
+            }
+        }
         if let Some(reply) = catalogue {
             self.error |= reply.error;
             if !reply.directory.is_empty() {
@@ -277,13 +317,17 @@ impl Picker {
         if !root {
             let query = query.trim().to_lowercase();
             self.entries.extend(
-                self.catalog
-                    .iter()
-                    .filter(|item| {
-                        item.label().to_lowercase().contains(&query)
-                            || item.description().to_lowercase().contains(&query)
-                    })
-                    .cloned(),
+                (if self.slash() {
+                    &self.commands
+                } else {
+                    &self.catalog
+                })
+                .iter()
+                .filter(|item| {
+                    item.label().to_lowercase().contains(&query)
+                        || item.description().to_lowercase().contains(&query)
+                })
+                .cloned(),
             );
         }
     }
@@ -394,7 +438,6 @@ impl Picker {
             }
             Item::Command(cmd) => {
                 let end = edit.text.find(whitespace).unwrap_or(edit.text.len());
-                self.command = Some(cmd.name.clone());
                 (0..end, format!("/{} ", cmd.name))
             }
         };
@@ -541,5 +584,82 @@ mod tests {
         );
         assert_eq!(prompt.text, "./a #%.txt");
         assert!(prompt.files.is_empty());
+    }
+
+    #[test]
+    fn selected_slash_uses_command_lane_without_draining_attachments() {
+        let mut rt = runtime();
+        let (sender, receiver) = bounded(1);
+        rt.state.commands = Some(sender);
+        rt.paste("/rev");
+        rt.frame(0.0);
+        rt.update(|s, _| {
+            s.composer.draft.attach(Attachment::Skill {
+                id: "review".into(),
+                name: "Review".into(),
+            });
+            s.composer
+                .picker
+                .commands
+                .push(Item::Command(named("review")));
+            s.composer.picker.refresh_entries();
+        });
+        press(&mut rt, Key::Enter, Mods::default());
+        assert_eq!(rt.state.draft.text, "/review ");
+        rt.paste("🦀 arguments");
+        rt.frame(0.0);
+        press(&mut rt, Key::Enter, Mods::default());
+        let crate::transport::Command::Slash {
+            attempt,
+            name,
+            text,
+        } = receiver.try_recv().unwrap()
+        else {
+            panic!("expected native command")
+        };
+        assert_eq!((name.as_str(), text.as_str()), ("review", "🦀 arguments"));
+        assert!(rt.state.messages.is_empty());
+        assert_eq!(rt.state.composer.draft.attachments.len(), 1);
+        crate::composer::acknowledge(
+            &mut rt.state,
+            &attempt,
+            crate::transport::PromptOutcome::Rejected,
+        );
+        assert_eq!(rt.state.draft.text, "/review 🦀 arguments");
+        assert_eq!(rt.state.composer.draft.attachments.len(), 1);
+    }
+
+    #[test]
+    fn pasted_known_command_uses_current_catalogue_without_requiring_picker_selection() {
+        let mut rt = runtime();
+        let (sender, receiver) = bounded(1);
+        rt.state.commands = Some(sender);
+        rt.state
+            .composer
+            .picker
+            .commands
+            .push(Item::Command(named("review")));
+        rt.paste("/review 🦀");
+        rt.frame(0.0);
+        assert!(!rt.state.composer.picker.open());
+        press(&mut rt, Key::Enter, Mods::default());
+        let crate::transport::Command::Slash {
+            attempt,
+            name,
+            text,
+        } = receiver.try_recv().unwrap()
+        else {
+            panic!("expected native command")
+        };
+        assert_eq!((name.as_str(), text.as_str()), ("review", "🦀"));
+        crate::composer::acknowledge(
+            &mut rt.state,
+            &attempt,
+            crate::transport::PromptOutcome::Unconfirmed,
+        );
+        assert!(rt.state.composer.command_unconfirmed);
+        assert!(rt.state.draft.text.is_empty());
+        rt.state.draft = TextEdit::new("a different prompt");
+        assert!(crate::composer::can_send(&rt.state));
     }
 }

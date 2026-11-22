@@ -145,6 +145,26 @@ fn inline(bytes: &[u8], name: &str) -> Value {
 const MIB: usize = 1024 * 1024;
 
 #[test]
+fn commands_use_the_native_route_not_the_prompt_route() {
+    run(async {
+        let server = Server::new(vec![Value::Null]);
+        server
+            .backend
+            .prompt_command("review", "Hello 🦀")
+            .await
+            .unwrap();
+        let requests = server.requests.lock().unwrap();
+        assert_eq!(
+            requests.as_slice(),
+            &[(
+                "POST /workspaces/workspace/instance/api/session/session/command HTTP/1.1".into(),
+                json!({"name":"review","text":"Hello 🦀","delivery":"steer"}),
+            )]
+        );
+    });
+}
+
+#[test]
 fn history_keeps_references_and_loads_only_the_requested_attachment() {
     run(async {
         let first: Vec<_> = (0..5 * MIB).map(|i| (i % 251) as u8).collect();

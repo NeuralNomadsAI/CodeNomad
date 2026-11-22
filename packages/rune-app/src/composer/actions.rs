@@ -14,6 +14,7 @@ pub struct Owner {
     sending: Option<Send>,
     pub send_error: bool,
     pub unconfirmed: Option<String>,
+    pub command_unconfirmed: bool,
     pub restored: bool,
 }
 struct Send {
@@ -21,6 +22,7 @@ struct Send {
     edit: TextEdit,
     draft: Draft,
     was_running: bool,
+    slash: bool,
 }
 
 pub fn can_send(s: &State) -> bool {
@@ -28,6 +30,7 @@ pub fn can_send(s: &State) -> bool {
         && !s.history_detached
         && s.composer.sending.is_none()
         && !s.composer.picker.open()
+        && !s.composer.picker.command_pending(&s.draft.text)
         && s.composer.unconfirmed.is_none()
         && s.composer.draft.can_send(&s.draft)
         && s.commands.as_ref().is_some_and(|tx| !tx.is_closed())
@@ -38,14 +41,37 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
     if !can_send(s) {
         return;
     }
-    if s.composer.picker.selected_command(&s.draft.text) {
-        s.composer.send_error = true;
-        return;
-    }
     let Ok(id) = message_id() else {
         s.composer.send_error = true;
         return;
     };
+    if let Some((name, text)) = s.composer.picker.selected_command(&s.draft.text) {
+        let command = Command::Slash {
+            attempt: id.clone(),
+            name: name.into(),
+            text: text.into(),
+        };
+        if s.commands
+            .as_ref()
+            .is_some_and(|pipe| pipe.try_send(command).is_ok())
+        {
+            s.composer.sending = Some(Send {
+                id,
+                edit: s.draft.clone(),
+                draft: Draft::default(),
+                was_running: true,
+                slash: true,
+            });
+            s.composer.send_error = false;
+            s.composer.command_unconfirmed = false;
+            s.draft.clear();
+            s.composer.picker.reset();
+            workspace::draft_changed(s, tx);
+        } else {
+            s.composer.send_error = true;
+        }
+        return;
+    }
     let was_running = s.phase == Phase::Streaming;
     let delivery = if was_running && alternate {
         Delivery::Queue
@@ -69,6 +95,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         edit: s.draft.clone(),
         draft: std::mem::take(&mut s.composer.draft),
         was_running,
+        slash: false,
     });
     s.draft.clear();
     s.composer.picker.reset();
@@ -102,7 +129,11 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         return;
     };
     if matches!(outcome, PromptOutcome::Unconfirmed) {
-        s.composer.unconfirmed = Some(send.id);
+        if send.slash {
+            s.composer.command_unconfirmed = true;
+        } else {
+            s.composer.unconfirmed = Some(send.id);
+        }
         return;
     }
     let row = s.messages.iter().position(|row| row.id == attempted);
@@ -131,9 +162,11 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
         s.messages.remove(index);
     }
     s.composer.send_error = true;
-    if s.draft.text.is_empty() && s.composer.draft.attachments.is_empty() {
+    if s.draft.text.is_empty() && (send.slash || s.composer.draft.attachments.is_empty()) {
         s.draft = send.edit;
-        s.composer.draft = send.draft;
+        if !send.slash {
+            s.composer.draft = send.draft;
+        }
         s.composer.restored = true;
     }
     if s.phase == Phase::Streaming && !send.was_running {

@@ -187,7 +187,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             Event::Connected(backend) => {
                 s.renew_scope();
                 s.attachments.bind(backend.clone());
-                s.composer.picker.bind(backend.clone());
+                s.composer.picker.bind(backend.clone(), &s.reads, &s.wake);
                 s.agent = Some(agent::Ui::new(agent::start(backend, s.wake.clone())));
             }
             Event::AgentHint(catalog) => {

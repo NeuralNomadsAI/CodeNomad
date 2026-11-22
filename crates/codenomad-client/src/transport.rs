@@ -19,6 +19,11 @@ pub enum WorkspaceEvent {
 #[derive(Debug)]
 pub enum Command {
     Prompt(crate::prompt::Prompt),
+    Slash {
+        attempt: String,
+        name: String,
+        text: String,
+    },
     Older,
     Latest,
     Retry,

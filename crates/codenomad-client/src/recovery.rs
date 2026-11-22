@@ -195,6 +195,31 @@ pub async fn run(
                 }
                 publish(&out, &wake, Event::Reconnecting).await;
             }
+            Some(Input::Command(Command::Slash {
+                attempt,
+                name,
+                text,
+            })) => {
+                use crate::prompt::PromptError;
+                let outcome = if opened && !parked && !historical && wire.upstream.load(SeqCst) {
+                    match backend.prompt_command(&name, &text).await {
+                        Ok(()) => PromptOutcome::Confirmed(attempt.clone()),
+                        Err(PromptError::Rejected) => PromptOutcome::Rejected,
+                        Err(PromptError::Unconfirmed) => PromptOutcome::Unconfirmed,
+                    }
+                } else {
+                    PromptOutcome::Rejected
+                };
+                publish(
+                    &out,
+                    &wake,
+                    Event::PromptAcknowledged {
+                        attempted: attempt,
+                        outcome,
+                    },
+                )
+                .await;
+            }
             Some(Input::Command(Command::Prompt(prompt))) => {
                 let Some(id) = &prompt.id else { continue };
                 let admitted = opened && !parked && !historical && wire.upstream.load(SeqCst);
