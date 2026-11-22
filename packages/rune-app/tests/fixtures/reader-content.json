@@ -54,5 +54,127 @@
       "name": "broken.png",
       "base64": "bWFsZm9ybWVkIGltYWdl"
     }
+  ],
+  "layouts": [
+    {
+      "hostWidth": 0,
+      "wanted": false,
+      "pinned": false,
+      "width": 260
+    },
+    {
+      "hostWidth": 390,
+      "wanted": false,
+      "pinned": false,
+      "width": 260
+    },
+    {
+      "hostWidth": 589,
+      "wanted": false,
+      "pinned": false,
+      "width": 260
+    },
+    {
+      "hostWidth": 590,
+      "wanted": false,
+      "pinned": false,
+      "width": 260
+    },
+    {
+      "hostWidth": 591,
+      "wanted": false,
+      "pinned": false,
+      "width": 260
+    },
+    {
+      "hostWidth": 620,
+      "wanted": false,
+      "pinned": false,
+      "width": 260
+    },
+    {
+      "hostWidth": 650,
+      "wanted": false,
+      "pinned": false,
+      "width": 260
+    },
+    {
+      "hostWidth": 1000,
+      "wanted": false,
+      "pinned": false,
+      "width": 260
+    },
+    {
+      "hostWidth": 400,
+      "wanted": false,
+      "pinned": false,
+      "width": 260
+    },
+    {
+      "hostWidth": 1000,
+      "wanted": false,
+      "pinned": false,
+      "width": 260
+    },
+    {
+      "hostWidth": 0,
+      "wanted": true,
+      "pinned": false,
+      "width": 260
+    },
+    {
+      "hostWidth": 390,
+      "wanted": true,
+      "pinned": false,
+      "width": 260
+    },
+    {
+      "hostWidth": 589,
+      "wanted": true,
+      "pinned": false,
+      "width": 260
+    },
+    {
+      "hostWidth": 590,
+      "wanted": true,
+      "pinned": true,
+      "width": 200
+    },
+    {
+      "hostWidth": 591,
+      "wanted": true,
+      "pinned": true,
+      "width": 201
+    },
+    {
+      "hostWidth": 620,
+      "wanted": true,
+      "pinned": true,
+      "width": 230
+    },
+    {
+      "hostWidth": 650,
+      "wanted": true,
+      "pinned": true,
+      "width": 260
+    },
+    {
+      "hostWidth": 1000,
+      "wanted": true,
+      "pinned": true,
+      "width": 260
+    },
+    {
+      "hostWidth": 400,
+      "wanted": true,
+      "pinned": false,
+      "width": 260
+    },
+    {
+      "hostWidth": 1000,
+      "wanted": true,
+      "pinned": true,
+      "width": 260
+    }
   ]
 }

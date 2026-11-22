@@ -143,6 +143,8 @@
     "System font stacks are preserved as source strings; glyph metrics require per-platform image qualification."
   ],
   "layout": {
+    "minimumRightDrawerWidth": 200,
+    "minimumSessionCenterWidth": 390,
     "rightDrawerWidth": 260
   },
   "light": {
@@ -702,6 +704,7 @@
   },
   "sources": {
     "packages/ui/postcss.config.js": "aca4c5d8a44abcaa54e72615c5d31f28b24d2e1f5651e22be318eadaf1d57144",
+    "packages/ui/src/components/instance/instance-shell2.tsx": "9ed475d0a59935991feda3f0e47c87117649a9d0a5c30d9f506348073b138a62",
     "packages/ui/src/components/instance/shell/right-panel/components/WorkspaceTree.tsx": "d7a5fece63b366f70f2cd8b6826700c1a052812eda50dd518dcae07721d2d568",
     "packages/ui/src/components/instance/shell/storage.ts": "b16b0b05343896ec3b7f069431942064aa8912bd85e528ce534d5649e6c55740",
     "packages/ui/src/index.css": "c1f241cec89239ab2bb645d8c4bcb8981f5a630dd8e3492fe03a8854a47e725d",

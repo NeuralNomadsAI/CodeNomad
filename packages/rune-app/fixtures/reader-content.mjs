@@ -1,6 +1,7 @@
-import {mkdir,writeFile} from 'node:fs/promises'
+import {mkdir,readFile,writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
+import {resolveEmbeddedDrawers} from '../../ui/src/components/instance/shell/drawer-layout.ts'
 
 const root=path.resolve(import.meta.dirname,'../../..')
 const cases=[]
@@ -20,6 +21,14 @@ const documents=[
   ['nul.bin',Buffer.from([0,1,255])],['broken.png',Buffer.from('malformed image')],
 ].map(([name,text])=>({name,base64:Buffer.from(text).toString('base64')}))
 const target=path.join(root,'packages/rune-app/tests/fixtures/reader-content.json')
+const geometry=JSON.parse(await readFile(path.join(root,'crates/rune-theme-codenomad/assets/theme.json'),'utf8')).layout
+const layouts=[]
+for(const wanted of [false,true])for(const hostWidth of [0,390,589,590,591,620,650,1000,400,1000]){
+  const input={hostWidth,minimumCenterWidth:geometry.minimumSessionCenterWidth,leftWidth:0,
+    rightWidth:geometry.rightDrawerWidth,minimumLeftWidth:0,minimumRightWidth:geometry.minimumRightDrawerWidth,leftOpen:false,rightOpen:wanted}
+  const expected=resolveEmbeddedDrawers(input)
+  layouts.push({hostWidth,wanted,pinned:expected.right,width:expected.rightWidth})
+}
 await mkdir(path.dirname(target),{recursive:true})
-await writeFile(target,JSON.stringify({encoder:{sharp:sharp.versions.sharp,vips:sharp.versions.vips},images:cases,documents},null,2)+'\n')
+await writeFile(target,JSON.stringify({encoder:{sharp:sharp.versions.sharp,vips:sharp.versions.vips},images:cases,documents,layouts},null,2)+'\n')
 console.log(target)
