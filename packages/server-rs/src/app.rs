@@ -75,6 +75,7 @@ pub struct Inventory {
     pub status: &'static str,
     pub pending: HashMap<String, CancellationToken>,
     pub released: HashMap<Uuid, String>,
+    pub early_cancellations: crate::workspaces::EarlyCancellations,
 }
 
 #[derive(Serialize, Clone)]
