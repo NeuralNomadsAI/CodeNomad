@@ -490,7 +490,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                   <div class="panel-empty-state flex-1">
                     <Show when={loading()} fallback={<span class="text-red-500">{error()}</span>}>
                       <div class="directory-browser-loading">
-                        <span class="inline-flex animate-spin"><Loader2 class="w-5 h-5" /></span>
+                        <Loader2 class="w-5 h-5" />
                         <span>{t("directoryBrowser.loadingFolders")}</span>
                       </div>
                     </Show>
@@ -543,7 +543,7 @@ const DirectoryBrowserDialog: Component<DirectoryBrowserDialogProps> = (props) =
                                   <span class="directory-browser-row-name">{entry.name || entry.path}</span>
                                 </div>
                                 <Show when={isFolder && isPathLoading(entry.path)}>
-                                  <span class="inline-flex animate-spin"><Loader2 class="directory-browser-row-spinner" /></span>
+                                  <Loader2 class="directory-browser-row-spinner" />
                                 </Show>
                               </button>
                               {isSelectable ? (

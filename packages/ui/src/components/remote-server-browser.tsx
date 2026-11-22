@@ -149,7 +149,7 @@ export function RemoteServerBrowser(props: {
         <button type="button" class="browse-menu-row" data-browse-nav disabled={busy()} onClick={() => void retry()}>{t("filesystemBrowser.actions.retry")}</button>
           <Show when={error() === "path_unavailable"}><button type="button" class="browse-menu-row" data-browse-nav disabled={busy()} onClick={() => void browse()}>{t("remoteBrowse.serverRoot")}</button></Show>
       </Show>
-      <Show when={busy()}><Loader2 class="w-4 h-4 animate-spin" aria-label={t("authRecovery.pending")} /></Show>
+      <Show when={busy()}><Loader2 class="w-4 h-4" aria-label={t("authRecovery.pending")} /></Show>
       <Show when={result() && !error()}>
         <div class="remote-server-path directory-browser-address-field">
           <input type="text" class="selector-input directory-browser-current-path" data-can-go data-browse-nav dir="ltr" spellcheck={false} disabled={busy()}

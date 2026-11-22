@@ -86,7 +86,7 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => {
                 }
               }}
             >
-              <Show when={!creatingSession()} fallback={<span class="inline-flex animate-spin"><Loader2 class="w-4 h-4" aria-hidden="true" /></span>}>
+              <Show when={!creatingSession()} fallback={<Loader2 class="w-4 h-4" aria-hidden="true" />}>
                 <PlusSquare class="w-4 h-4" />
               </Show>
             </IconButton>

@@ -207,7 +207,7 @@ export const RemoteServerDialog: Component<DialogProps & {
               <button type="button" class="selector-button selector-button-secondary w-auto px-4" disabled={busy()} onClick={() => void submit(false)}>{t("folderSelection.servers.dialog.save")}</button>
               <button type="button" class="selector-button selector-button-secondary w-auto px-4" disabled={busy()} onClick={() => void submit(true)}>
                 <Show when={busy()} fallback={<span>{t("folderSelection.servers.dialog.connect")}</span>}>
-                  <span class="inline-flex items-center gap-2"><span class="inline-flex animate-spin"><Loader2 class="w-4 h-4" /></span>{t("folderSelection.servers.dialog.connecting")}</span>
+                  <span class="inline-flex items-center gap-2"><Loader2 class="w-4 h-4" />{t("folderSelection.servers.dialog.connecting")}</span>
                 </Show>
               </button>
             </div>

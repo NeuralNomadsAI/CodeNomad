@@ -535,7 +535,6 @@
 
 .status-indicator.connecting .status-dot {
   background-color: var(--status-warning);
-  animation: pulse 1.5s ease-in-out infinite;
 }
 
 .status-indicator.disconnected .status-dot {
@@ -590,11 +589,6 @@
 
 .status-indicator.session-status .status-dot {
   background-color: var(--session-status-dot);
-}
-
-.status-indicator.session-status.session-working .status-dot,
-.status-indicator.session-status.session-compacting .status-dot {
-  animation: pulse 1.5s ease-in-out infinite;
 }
 
 .status-indicator.session-status.session-working.session-status-list {

@@ -54,7 +54,7 @@ const scheduling = (page: Page) => page.locator("form.mission-editor .mission-sc
 const add = (page: Page) => scheduling(page).getByRole("button", { name: "Add a criterion", exact: true })
 const kind = (page: Page) => scheduling(page).getByLabel("Criterion 1 type", { exact: true })
 const addDisabled = (page: Page) => add(page).isDisabled()
-const updateIcon = (page: Page) => page.locator(".mission-control-header button[aria-label='Refresh mission map'] .animate-spin")
+const updateIcon = (page: Page) => page.locator(".mission-control-header button[aria-label='Refresh mission map'] .lucide-loader2")
 async function until(condition: () => boolean, timeout = 5_000) {
   for (const start = Date.now(); !condition();) {
     if (Date.now() - start > timeout) throw new Error("Condition not reached")

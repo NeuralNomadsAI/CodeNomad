@@ -224,7 +224,7 @@ const OpenCodeBinarySelector: Component<OpenCodeBinarySelectorProps> = (props) =
           </div>
           <Show when={validating()}>
             <div class="selector-loading text-xs">
-              <span class="inline-flex animate-spin"><Loader2 class="selector-loading-spinner" /></span>
+              <Loader2 class="selector-loading-spinner" />
               <span>{t("opencodeBinarySelector.status.checkingVersions")}</span>
             </div>
           </Show>

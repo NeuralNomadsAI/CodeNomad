@@ -147,6 +147,31 @@ test("a collapsed parent's chevron carries visible subsession statuses without r
   } finally { await page.close() }
 })
 
+test("working and compacting session indicators stay static", async t => {
+  const page = await browser.newPage({ reducedMotion: "no-preference" })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await events.route(page)
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => {
+      const fixture = (window as any).fixture
+      fixture.status("work", "working")
+      fixture.status("other", "compacting")
+    })
+    await page.locator(".session-working .status-dot").waitFor()
+    await page.locator(".session-compacting .status-dot").waitFor()
+    const { total, perpetual } = await page.evaluate(() => {
+      const animations = document.getAnimations()
+      return { total: animations.length, perpetual: animations.filter(animation =>
+        animation.effect?.getComputedTiming().iterations === Infinity,
+      ).length }
+    })
+    t.diagnostic(`document.getAnimations(): ${total} total, ${perpetual} perpetual`)
+    assert.equal(perpetual, 0, "persistent status indicators must not schedule perpetual frames")
+  } finally { await page.close() }
+})
+
 test("the chevron's context menu marks the whole hierarchy as read and leaves work alone", async () => {
   const page = await browser.newPage()
   const errors: string[] = []

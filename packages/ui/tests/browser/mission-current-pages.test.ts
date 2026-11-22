@@ -131,7 +131,7 @@ for (const owner of ["daily", "scheduled"] as const) test(`${owner} real current
     await screenshot("before")
     await activityMore.click()
     await activityStarted
-    await page.locator('.mission-control-header button[aria-label="Refresh mission map"] .animate-spin').waitFor()
+    await page.locator('.mission-control-header button[aria-label="Refresh mission map"] .lucide-loader2').waitFor()
     assert.deepEqual(await geometry(), beforeActivity, "passage-owned background reads preserve task-tree geometry")
     assert.equal(await page.locator(".mission-control").getByText(/^Activity and requests cover|^Read in this traversal/).count(), 0)
     await screenshot("during")

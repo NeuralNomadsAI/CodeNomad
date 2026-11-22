@@ -23,7 +23,7 @@ const busy = (page: Page) => page.evaluate(() => {
   const button = document.querySelector('[aria-label="New session"]') as HTMLButtonElement | null
   return {
     disabled: button?.disabled === true || button?.classList.contains("Mui-disabled") === true,
-    spinning: Boolean(button?.querySelector(".animate-spin svg")),
+    showingLoadingIcon: Boolean(button?.querySelector(".lucide-loader2")),
   }
 })
 async function until(page: Page, expectation: () => Promise<boolean>, description: string) {
@@ -48,10 +48,10 @@ test("creating a session on a stalled network shows busy feedback, one request a
     }
     await newSessionButton(page).click()
 
-    // The trigger is disabled and spinning while the create request hangs.
+    // The trigger is disabled and shows a loading icon while the create request hangs.
     await until(page, async () => {
       const state = await busy(page)
-      return state.disabled && state.spinning
+      return state.disabled && state.showingLoadingIcon
     }, "busy new-session button")
 
     // Concurrent entries share the hanging request: the real new-session
@@ -66,18 +66,18 @@ test("creating a session on a stalled network shows busy feedback, one request a
     assert.match(await page.locator('[role="dialog"]').innerText(), /failed/i)
     await until(page, async () => {
       const state = await busy(page)
-      return !state.disabled && !state.spinning
+      return !state.disabled && !state.showingLoadingIcon
     }, "idle new-session button after failure")
     await page.locator('[role="dialog"] button').last().click()
     await page.waitForSelector('[role="dialog"]', { state: "detached", timeout: 5000 })
 
     // A retry over a recovered network completes and activates the session.
     await newSessionButton(page).click()
-    await until(page, async () => (await busy(page)).spinning, "busy new-session button on retry")
+    await until(page, async () => (await busy(page)).showingLoadingIcon, "busy new-session button on retry")
     await page.evaluate(() => (window as any).fixture.settle("ok"))
     await until(page, async () => {
       const state = await busy(page)
-      return !state.disabled && !state.spinning
+      return !state.disabled && !state.showingLoadingIcon
     }, "idle new-session button after success")
     assert.equal(await page.evaluate(() => (window as any).fixture.activeParentId()), "created")
     assert.equal(await page.evaluate(() => (window as any).fixture.createCalls()), 2)

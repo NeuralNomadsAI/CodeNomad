@@ -151,7 +151,7 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
         </select></label>
         <button class="window-icon-button disabled:cursor-not-allowed" type="button" disabled={busy()} onClick={() => refresh()}
           aria-label={t("settings.providers.refresh")} title={t("settings.providers.refresh")}>
-          <span class="inline-flex" classList={{ "animate-spin": busy() }}><RefreshCw class="w-4 h-4" aria-hidden="true" /></span>
+          <span class="inline-flex" classList={{ "opacity-50": busy() }}><RefreshCw class="w-4 h-4" aria-hidden="true" /></span>
         </button>
       </div>
       <Show when={busy() && !snapshot()}><p role="status">{t("settings.usage.loading")}</p></Show>

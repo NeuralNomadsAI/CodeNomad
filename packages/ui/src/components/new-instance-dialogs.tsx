@@ -253,7 +253,7 @@ export function createNewInstanceDialogs(options: NewInstanceDialogsOptions) {
                   >
                     <Show when={isCloningRepository()} fallback={<span>{t("folderSelection.clone.dialog.clone")}</span>}>
                       <span class="inline-flex items-center gap-2">
-                        <span class="inline-flex animate-spin"><Loader2 class="w-4 h-4" /></span>
+                        <Loader2 class="w-4 h-4" />
                         {t("folderSelection.clone.dialog.cloning")}
                       </span>
                     </Show>

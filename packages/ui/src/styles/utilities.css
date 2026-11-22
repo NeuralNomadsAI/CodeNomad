@@ -249,21 +249,6 @@ details[open] > summary .disclosure-chevron {
   box-shadow: 0 0 0 1px var(--accent-primary);
 }
 
-/* Shared animations */
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
-@keyframes shimmer {
-  0%, 100% { opacity: 0.6; }
-  50% { opacity: 1; }
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
 /* SVG animations run on the main thread and restyle the page every frame: icons stay still. */
 svg,
 svg * {

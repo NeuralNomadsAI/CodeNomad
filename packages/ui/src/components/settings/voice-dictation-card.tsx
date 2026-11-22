@@ -99,7 +99,7 @@ export function VoiceDictationCard(props: {
                 <Square class="size-3.5" aria-hidden="true" />
               </Show>
             }>
-              <span class="inline-flex animate-spin"><Loader2 class="size-3.5" aria-hidden="true" /></span>
+              <Loader2 class="size-3.5" aria-hidden="true" />
             </Show>
             {test.buttonTitle()}
           </button>

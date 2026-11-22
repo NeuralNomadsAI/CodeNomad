@@ -1306,7 +1306,7 @@ const SessionList: Component<SessionListProps> = (props) => {
 
           <Show when={!sessionListError() && (hasMore() || isFetchingSessions()) && visibleProjection().ids.length === 0}>
             <div class="flex items-center justify-center p-4 text-xs text-muted" role="status">
-              <span class="animate-pulse">{t("sessionList.loading.initial")}</span>
+              <span>{t("sessionList.loading.initial")}</span>
             </div>
           </Show>
 

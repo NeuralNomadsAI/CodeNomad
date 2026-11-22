@@ -65,7 +65,7 @@
 }
 
 .plugin-control-switch:has(input[aria-busy="true"]) {
-  @apply animate-pulse;
+  @apply opacity-60;
 }
 
 @container (max-width: 300px) {

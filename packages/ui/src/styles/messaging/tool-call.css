@@ -347,16 +347,8 @@
   border-inline-start: none;
 }
 
-.tool-call-status-running .tool-call-status {
-  animation: pulse 1.5s ease-in-out infinite;
-}
-
 .tool-call-status-pending {
   border-inline-start: none;
-}
-
-.tool-call-status-pending .tool-call-summary {
-  animation: shimmer 2s ease-in-out infinite;
 }
 
 .tool-call-preview {

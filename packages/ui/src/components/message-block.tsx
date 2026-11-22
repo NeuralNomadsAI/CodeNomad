@@ -1208,7 +1208,7 @@ function ExplorationGroup(props: ExplorationGroupProps) {
             onClick={() => toggle(props.summaryTools![0].key)}
           >
             <ChevronRight class="message-technical-group-disclosure disclosure-chevron" aria-hidden="true" />
-            <Show when={!completed(props.summaryTools!)}><span class="inline-flex animate-spin"><Loader2 class="message-technical-group-spinner w-3.5 h-3.5" aria-hidden="true" /></span></Show>
+            <Show when={!completed(props.summaryTools!)}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5" aria-hidden="true" /></Show>
             <span class="message-technical-group-title">{label(props.summaryTools!)}</span>
           </button>
           <Show when={canBackgroundGroup()}>
@@ -1254,7 +1254,7 @@ function ExplorationGroup(props: ExplorationGroupProps) {
                 onClick={() => toggle(key)}
               >
                 <ChevronRight class="message-technical-group-disclosure disclosure-chevron" aria-hidden="true" />
-                <Show when={!completed(props.summaryTools ?? segment.items)}><span class="inline-flex animate-spin"><Loader2 class="message-technical-group-spinner w-3.5 h-3.5" aria-hidden="true" /></span></Show>
+                <Show when={!completed(props.summaryTools ?? segment.items)}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5" aria-hidden="true" /></Show>
                 <span class="message-technical-group-title">{label(props.summaryTools ?? segment.items)}</span>
               </button>
             </Show>
@@ -1314,7 +1314,7 @@ function CompactionCard(props: CompactionCardProps) {
       aria-label={t("messageBlock.compaction.ariaLabel")}
     >
       <div class="message-compaction-row">
-        <Show when={!isRunning()} fallback={<span class="inline-flex animate-spin"><Loader2 class="message-compaction-icon w-4 h-4" aria-hidden="true" /></span>}>
+        <Show when={!isRunning()} fallback={<Loader2 class="message-compaction-icon w-4 h-4" aria-hidden="true" />}>
           <Show when={!isFailed()} fallback={<XCircle class="message-compaction-icon w-4 h-4" aria-hidden="true" />}>
             <FoldVertical class="message-compaction-icon w-4 h-4" aria-hidden="true" />
           </Show>
@@ -1464,7 +1464,7 @@ function ReasoningGroupCard(props: {
             onClick={() => setExpanded(!expanded())}
           >
             <ChevronRight class="message-technical-group-disclosure disclosure-chevron" aria-hidden="true" />
-            <Show when={!props.completed}><span class="inline-flex animate-spin"><Loader2 class="message-technical-group-spinner w-3.5 h-3.5" aria-hidden="true" /></span></Show>
+            <Show when={!props.completed}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5" aria-hidden="true" /></Show>
             <Show when={headerShowsMeta() && agentMeta()}>
               <span class="message-technical-group-meta message-technical-group-meta-agent" title={agentMetaTooltip()}>
                 · {agentMeta()}

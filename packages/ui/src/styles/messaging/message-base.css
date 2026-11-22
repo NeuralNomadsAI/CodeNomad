@@ -279,7 +279,6 @@
 
 .generating-spinner {
   @apply inline-block;
-  animation: pulse 1.5s ease-in-out infinite;
 }
 
 .message-text {

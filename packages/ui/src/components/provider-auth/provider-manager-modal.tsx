@@ -833,7 +833,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                   </Show>
 
                   <Show when={stage() === "code"}><div class="providers-form-stack"><div class="providers-oauth-instructions"><ExternalLink class="providers-instructions-icon" /><span>{authorization()?.instructions || t("settings.providers.oauth.enterCode")}</span></div><label class="providers-field"><span class="settings-form-label">{t("settings.providers.oauth.codeLabel")}</span><input ref={(element) => { oauthCodeInput = element }} type="text" class="providers-input" value={code()} onInput={(event) => setCode(event.currentTarget.value)} placeholder={t("settings.providers.oauth.codePlaceholder")} autocomplete="one-time-code" /></label></div></Show>
-                  <Show when={stage() === "waiting"}><div class="providers-waiting-card" role="status"><span class="inline-flex animate-spin"><Loader2 class="providers-spin-icon" /></span><div><div class="settings-toggle-title">{selectedMethod().type === "command" ? t("settings.providers.command.waitingTitle") : t("settings.providers.oauth.waitingTitle")}</div><div class="settings-toggle-caption">{selectedMethod().type === "command" ? commandStatusMessage() ?? t("settings.providers.command.waitingMessage") : authorization()?.instructions}</div></div><button type="button" class="selector-button selector-button-secondary providers-wait-cancel" onClick={cancelOAuthWait}>{t("settings.providers.oauth.cancelWait")}</button></div></Show>
+                  <Show when={stage() === "waiting"}><div class="providers-waiting-card" role="status"><Loader2 class="providers-spin-icon" /><div><div class="settings-toggle-title">{selectedMethod().type === "command" ? t("settings.providers.command.waitingTitle") : t("settings.providers.oauth.waitingTitle")}</div><div class="settings-toggle-caption">{selectedMethod().type === "command" ? commandStatusMessage() ?? t("settings.providers.command.waitingMessage") : authorization()?.instructions}</div></div><button type="button" class="selector-button selector-button-secondary providers-wait-cancel" onClick={cancelOAuthWait}>{t("settings.providers.oauth.cancelWait")}</button></div></Show>
                   <Show when={authorization() && isHttpFormUrl(authorization()!.url) && (stage() === "code" || stage() === "waiting")}>
                     <div class="providers-oauth-actions">
                       <a href={authorization()?.url} target="_blank" rel="noopener noreferrer" class="selector-button selector-button-secondary providers-oauth-link">
@@ -853,7 +853,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
                   </Show>
 
                   <div class="providers-actions-row">
-                    <Show when={stage() === "code"} fallback={<button type="button" class="selector-button selector-button-primary" disabled={!canSubmit()} onClick={() => void submitAuth()}><Show when={stage() === "authorizing"} fallback={t("settings.providers.actions.continue")}><span class="inline-flex animate-spin"><Loader2 class="providers-spin-icon" /></span>{t("settings.providers.actions.working")}</Show></button>}>
+                    <Show when={stage() === "code"} fallback={<button type="button" class="selector-button selector-button-primary" disabled={!canSubmit()} onClick={() => void submitAuth()}><Show when={stage() === "authorizing"} fallback={t("settings.providers.actions.continue")}><Loader2 class="providers-spin-icon" />{t("settings.providers.actions.working")}</Show></button>}>
                       <button type="button" class="selector-button selector-button-primary" disabled={!code().trim()} onClick={() => void submitOAuthCode()}>{t("settings.providers.oauth.submitCode")}</button>
                     </Show>
                   </div>
@@ -863,7 +863,7 @@ export const ProviderManagerModal: Component<ProviderManagerModalProps> = (props
               <section class="providers-list-section providers-accounts-list">
                 <Show when={managedProvider()} fallback={
                   <>
-                    <Show when={loading() && configuredProviders().length === 0}><div class="providers-loading-row" role="status"><span class="inline-flex animate-spin"><Loader2 class="providers-spin-icon" /></span><span>{t("settings.providers.loading")}</span></div></Show>
+                    <Show when={loading() && configuredProviders().length === 0}><div class="providers-loading-row" role="status"><Loader2 class="providers-spin-icon" /><span>{t("settings.providers.loading")}</span></div></Show>
                     <Show when={!loading() && configuredProviders().length === 0}><div class="settings-card-message" role="status">{t("settings.providers.empty.noConfiguredProviders")}</div></Show>
                     <div class="providers-grid">
                       <For each={configuredProviders().map(provider => provider.id)}>{(providerId) => {

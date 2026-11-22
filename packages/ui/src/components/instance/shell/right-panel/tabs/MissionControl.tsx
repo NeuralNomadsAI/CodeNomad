@@ -678,7 +678,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           <button type="button" class="mission-control-icon-button" aria-label={refreshLabel()}
             title={refreshLabel()} disabled={state().status === "loading" || refreshing()} onClick={() => void refresh()}>
             <Show when={reading()} fallback={<RefreshCw class="h-4 w-4" />}>
-              <span class="inline-flex animate-spin"><Loader2 class="h-4 w-4" /></span>
+              <Loader2 class="h-4 w-4" />
             </Show>
           </button>
         </>} />
@@ -828,7 +828,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
 
       <Show when={!selectedSchedule() && !selectedScheduled() && scheduled.entries().length === 0 && recurrence.entries().length === 0}><Switch>
         <Match when={state().status === "loading" && rows().length === 0}>
-          <StateMessage icon={<span class="inline-flex animate-spin"><Loader2 class="h-5 w-5" /></span>} title={props.t("missions.control.loading")} />
+          <StateMessage icon={<Loader2 class="h-5 w-5" />} title={props.t("missions.control.loading")} />
         </Match>
         <Match when={state().status === "unavailable"}>
           <StateMessage

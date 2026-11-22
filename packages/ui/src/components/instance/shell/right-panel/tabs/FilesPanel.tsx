@@ -8,7 +8,7 @@ import {
   transformStyle,
   type DragEvent as SolidDndDragEvent,
 } from "@thisbeyond/solid-dnd"
-import { ArrowLeft, ChevronRight, Eye, GitBranch, GitCommitHorizontal, Minus, Plus, RefreshCw } from "lucide-solid"
+import { ArrowLeft, ChevronRight, Eye, GitBranch, GitCommitHorizontal, Loader2, Minus, Plus, RefreshCw } from "lucide-solid"
 import type { useGitChanges } from "../useGitChanges"
 import type { useGitHistory } from "../useGitHistory"
 import type { useGitInit } from "../useGitInit"
@@ -83,12 +83,12 @@ const FilesPanel: Component<FilesPanelProps> = props => {
   return <section class="git-panel" aria-label={props.t("instanceShell.rightPanel.tabs.files")}>
     <header class="git-panel-context">
       <div class="git-panel-branch"><GitBranch size={16} /><strong>{props.gitAvailable ? props.branch || props.t("gitPanel.detached") : basename(props.directory)}</strong>
-        <button class="files-header-icon-button" aria-label={props.t("instanceShell.rightPanel.actions.refresh")} disabled={loading()} onClick={() => {
+        <button class="files-header-icon-button" aria-label={props.t("instanceShell.rightPanel.actions.refresh")} aria-busy={loading()} disabled={loading()} onClick={() => {
           if (props.mode === "workspace") props.tree.refresh()
           else if (!props.gitAvailable) void props.gitInit.recheck()
           else if (props.mode === "history") void props.history.refresh()
           else void props.git.refreshGitStatus()
-        }}><span class="inline-flex" classList={{ "animate-spin": loading() }}><RefreshCw size={14} /></span></button>
+        }}><Show when={loading()} fallback={<RefreshCw size={14} />}><Loader2 size={14} aria-hidden="true" /></Show></button>
       </div>
       <select class="git-panel-worktree" value={props.slug} aria-label={props.t("gitPanel.worktree")} title={props.directory}
         onChange={event => props.onWorktreeChange(event.currentTarget.value)}>

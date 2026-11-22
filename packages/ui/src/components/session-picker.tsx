@@ -143,7 +143,7 @@ const SessionPicker: Component<SessionPickerProps> = (props) => {
                       <Show
                         when={!isCreating()}
                         fallback={
-                          <span class="inline-flex animate-spin"><svg class="h-4 w-4" fill="none" viewBox="0 0 24 24">
+                          <span class="inline-flex"><svg class="h-4 w-4" fill="none" viewBox="0 0 24 24">
                             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
                             <path
                               class="opacity-75"

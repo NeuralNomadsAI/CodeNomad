@@ -63,5 +63,4 @@
   @apply w-8 h-8 border-2 border-t-transparent rounded-full;
   border-color: var(--border-base);
   border-top-color: var(--accent-primary);
-  animation: spin 1s linear infinite;
 }

@@ -120,7 +120,7 @@ export default function ServerAddField(props: ServerAddFieldProps) {
         <button type="submit" class="window-icon-button" disabled={fieldDisabled() || !keepBusyFocus() && (busy() || !address().trim())}
           aria-disabled={keepBusyFocus() || undefined}
           aria-label={t("folderSelection.browseMenu.add")} title={t("folderSelection.browseMenu.add")}>
-          <Show when={busy()} fallback={<Plus class="w-4 h-4" aria-hidden="true" />}><Loader2 class="w-4 h-4 animate-spin" aria-hidden="true" /></Show>
+          <Show when={busy()} fallback={<Plus class="w-4 h-4" aria-hidden="true" />}><Loader2 class="w-4 h-4" aria-hidden="true" /></Show>
         </button>
       </form>
       <Show when={props.pairingProfile && !secretEntryAllowed()}><p class="server-add-field-error" role="alert">{t("remoteBrowse.secretEntryForbidden")}</p></Show>

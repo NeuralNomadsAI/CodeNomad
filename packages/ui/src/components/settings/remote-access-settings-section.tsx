@@ -179,7 +179,7 @@ export const RemoteAccessSettingsSection: Component = () => {
                 onClick={() => void refreshMeta()}
                 disabled={loading()}
               >
-                <span class="inline-flex" classList={{ "animate-spin": loading() }}><RefreshCw class="w-4 h-4" /></span>
+                <span class="inline-flex" classList={{ "opacity-50": loading() }}><RefreshCw class="w-4 h-4" /></span>
                 <span>{t("remoteAccess.refresh")}</span>
               </button>
             </div>
@@ -331,7 +331,7 @@ export const RemoteAccessSettingsSection: Component = () => {
                           </div>
                           <Show when={expandedState()}>
                             <div class="remote-qr">
-                              <Show when={qr()} fallback={<span class="inline-flex animate-spin"><Loader2 class="remote-icon" aria-hidden="true" /></span>}>
+                              <Show when={qr()} fallback={<Loader2 class="remote-icon" aria-hidden="true" />}>
                                 {(dataUrl) => (
                                   <img
                                     src={dataUrl()}
@@ -387,7 +387,7 @@ export const RemoteAccessSettingsSection: Component = () => {
                           </div>
                           <Show when={expandedState()}>
                             <div class="remote-qr">
-                              <Show when={qr()} fallback={<span class="inline-flex animate-spin"><Loader2 class="remote-icon" aria-hidden="true" /></span>}>
+                              <Show when={qr()} fallback={<Loader2 class="remote-icon" aria-hidden="true" />}>
                                 {(dataUrl) => (
                                   <img
                                     src={dataUrl()}
@@ -460,7 +460,7 @@ export const RemoteAccessSettingsSection: Component = () => {
                                 </div>
                                 <Show when={expandedState()}>
                                   <div class="remote-qr">
-                                    <Show when={qr()} fallback={<span class="inline-flex animate-spin"><Loader2 class="remote-icon" aria-hidden="true" /></span>}>
+                                    <Show when={qr()} fallback={<Loader2 class="remote-icon" aria-hidden="true" />}>
                                       {(dataUrl) => (
                                         <img src={dataUrl()} alt={t("remoteAccess.address.qrAlt", { url })} class="remote-qr-img" />
                                       )}

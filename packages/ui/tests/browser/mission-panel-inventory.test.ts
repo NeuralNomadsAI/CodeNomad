@@ -455,9 +455,9 @@ for (const index of [0, 119]) test(`passive refresh keeps mission ${index}'s geo
     await screenshot("missions-before-refresh")
     await f.page.route("**/missions/panel-page", async route => { await gate; return route.fallback() })
     // Exercise the same event dispatcher as live plugin invalidations, not a
-    // manually animated spinner or a substitute test component.
+    // manually shown loading icon or a substitute test component.
     await f.page.evaluate(() => (window as any).missionFixture.refresh())
-    await f.page.locator('.mission-control-header button[aria-label="Refresh mission map"] .animate-spin').waitFor()
+    await f.page.locator('.mission-control-header button[aria-label="Refresh mission map"] .lucide-loader2').waitFor()
     assert.deepEqual(await geometry(), before)
     assert.deepEqual(await buttons(), labels)
     assert.equal(await stableNode.evaluate((current, old) => current === old, node), true)
@@ -487,7 +487,7 @@ test("a schedule-only background read uses the same top-right indicator after pa
     await f.page.waitForFunction(() => !(window as any).inventoryStore.reading("fixture"))
     await f.page.route("**/missions/scheduled?**", async route => { await gate; return route.fallback() })
     await f.page.evaluate(() => (window as any).missionFixture.refresh())
-    const spinner = f.page.locator('.mission-control-header button[aria-label="Refresh mission map"] .animate-spin')
+    const spinner = f.page.locator('.mission-control-header button[aria-label="Refresh mission map"] .lucide-loader2')
     await spinner.waitFor()
     await f.page.waitForFunction(() => !(window as any).inventoryStore.reading("fixture"))
     assert.equal(await spinner.isVisible(), true)

@@ -146,7 +146,7 @@ export function WorkspaceTree(props: {
             <Show when={expanded()} fallback={<ChevronRight size={12} />}><ChevronDown size={12} /></Show>
           </Show>
           <Show when={isFolder} fallback={<Icon size={14} />}><Show when={expanded()} fallback={<Folder size={14} />}><FolderOpen size={14} /></Show></Show>
-          <span class="workspace-tree-label">{row.name}</span><Show when={props.tree.busy().has(row.path)}><span class="inline-flex animate-spin"><RefreshCw size={12} /></span></Show>
+          <span class="workspace-tree-label">{row.name}</span><Show when={props.tree.busy().has(row.path)}><RefreshCw size={12} /></Show>
           <FileRowActions items={actions()} label={props.t("instanceShell.filesShell.actions.more", { name: row.name })} />
         </div>
       }}</For>

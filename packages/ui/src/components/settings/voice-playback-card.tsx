@@ -122,7 +122,7 @@ export function VoicePlaybackCard(props: {
                 <Square class="size-3.5" aria-hidden="true" />
               </Show>
             }>
-              <span class="inline-flex animate-spin"><Loader2 class="size-3.5" aria-hidden="true" /></span>
+              <Loader2 class="size-3.5" aria-hidden="true" />
             </Show>
             {t(test.isPlaying() ? "settings.speech.testPlayback.stop"
               : test.isLoading() ? "settings.speech.testPlayback.generating" : "settings.speech.testPlayback.action")}

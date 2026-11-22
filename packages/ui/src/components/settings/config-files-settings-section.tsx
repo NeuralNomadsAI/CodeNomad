@@ -204,7 +204,7 @@ export const ConfigFilesSettingsSection: Component = () => {
               onClick={() => void handleSave()}
             >
               <Show when={saving()} fallback={<Save class="h-4 w-4" />}>
-                <span class="inline-flex animate-spin"><RefreshCw class="h-4 w-4" /></span>
+                <RefreshCw class="h-4 w-4" />
               </Show>
             </button>
             <button
@@ -215,7 +215,7 @@ export const ConfigFilesSettingsSection: Component = () => {
               disabled={!selectedFile() || loadingContent() || saving()}
               onClick={() => void handleReload()}
             >
-              <span class="inline-flex" classList={{ "animate-spin": loadingContent() }}><RefreshCw class="h-4 w-4" /></span>
+              <span class="inline-flex" classList={{ "opacity-50": loadingContent() }}><RefreshCw class="h-4 w-4" /></span>
             </button>
           </div>
         </div>

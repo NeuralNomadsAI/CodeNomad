@@ -316,7 +316,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
         <PluginName id={nameId} name={integration()?.displayName ?? target} details={details()} />
         <Show when={state() === "pending"} fallback={<span class="plugin-source-state" role="status">{t("instanceServiceStatus.plugins.sources.unconfirmedLabel")}</span>}>
           <span class="plugin-source-state" role="status">
-            <span class="inline-flex animate-spin"><Loader2 class="h-3 w-3" aria-hidden="true" /></span>{t("instanceServiceStatus.plugins.sources.pendingLabel")}
+            <Loader2 class="h-3 w-3" aria-hidden="true" />{t("instanceServiceStatus.plugins.sources.pendingLabel")}
           </span>
         </Show>
         {nonConformingLabel(declarationsFor(source => source.target === target))}
@@ -350,7 +350,9 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
             disabled={state().loading || state().refreshing}
             onClick={refresh}
           >
-            <span class="inline-flex" classList={{ "animate-spin": state().loading || state().refreshing }}><RefreshCw class="h-3.5 w-3.5" aria-hidden="true" /></span>
+            <Show when={state().loading || state().refreshing} fallback={<RefreshCw class="h-3.5 w-3.5" aria-hidden="true" />}>
+              <Loader2 class="h-3.5 w-3.5" aria-hidden="true" />
+            </Show>
           </button>
           <Show when={snapshot()}>
             <PluginAddMenu instanceId={props.instanceId} location={requestLocation()} sessionId={props.session?.id} projectAvailable={projectAvailable()} active={props.active} />
