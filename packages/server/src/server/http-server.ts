@@ -2264,6 +2264,8 @@ function setupStaticUi(
 
   const identityRefused = new AsyncLocalStorage<{ original?: string }>()
   const negotiate = (request: FastifyRequest) => {
+    // Only GET applies Range; Fastify's sender also sees the raw HEAD headers.
+    if (request.method === "HEAD") delete request.raw.headers.range
     // Expand the wildcard for fastify-static, which maps it to gzip alone.
     const encodings = request.headers["accept-encoding"]?.toLowerCase().split(",") ?? []
     const explicit = new Map(encodings.map(entry => [entry.split(";", 1)[0]!.trim(), entry]))

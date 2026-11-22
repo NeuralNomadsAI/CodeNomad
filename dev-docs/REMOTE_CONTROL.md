@@ -109,9 +109,9 @@ override them. An unknown value refuses startup.
   host-only, and turning it off also closes live preview WebSockets. Remote
   `/api/meta` reports `previewsUnavailable` while it is off, so the UI hides
   its preview entry. Static UI bundle files stay public, as on local listeners,
-  because browsers fetch the PWA manifest without cookies. The packaged UI
-  writes smaller `.br` and `.gz` variants beside source assets of at least 1 KiB.
-  Custom bundles can supply the same files. The server negotiates on the
+  because browsers fetch the PWA manifest without cookies. Packaged and
+  downloadable bundles include smaller `.br` and `.gz` variants beside
+  originals of at least 1 KiB. Custom bundles can supply the same files. The server negotiates on the
   original URL with `Accept-Encoding` and preserves its media type.
   HTML entry points and their compressed variants require a paired device.
   Refusals close the connection,
