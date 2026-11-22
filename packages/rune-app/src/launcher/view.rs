@@ -20,10 +20,7 @@ pub fn view(s: &State) -> El {
             .child(
                 literal_field(&l.address)
                     .label(t("rune.server"))
-                    .on_edit({
-                        let scope = scope.clone();
-                        move |s: &mut State| s.editor(&scope, crate::screen::Editor::Address)
-                    })
+                    .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Address))
                     .build(kit(layout::dark()))
                     .key("server-address"),
             )
@@ -32,10 +29,7 @@ pub fn view(s: &State) -> El {
                 literal_field(&l.password)
                     .label(t("authRecovery.password"))
                     .secure()
-                    .on_edit({
-                        let scope = scope.clone();
-                        move |s: &mut State| s.editor(&scope, crate::screen::Editor::Password)
-                    })
+                    .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Password))
                     .on_submit(crate::screen::action_tx(&scope, launcher::connect))
                     .build(kit(layout::dark()))
                     .key("server-password"),
@@ -55,10 +49,7 @@ pub fn view(s: &State) -> El {
                 literal_field(&l.folder)
                     .disabled(waiting)
                     .label(t("instanceInfo.labels.folder"))
-                    .on_edit({
-                        let scope = scope.clone();
-                        move |s: &mut State| s.editor(&scope, crate::screen::Editor::Folder)
-                    })
+                    .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Folder))
                     .on_submit(crate::screen::action_tx(&scope, launcher::open))
                     .build(kit(layout::dark()))
                     .key("folder-path"),
@@ -113,10 +104,7 @@ pub fn view(s: &State) -> El {
                 .child(
                     hinted_field(&l.search, t("rune.search"))
                         .label(t("rune.search"))
-                        .on_edit({
-                            let scope = scope.clone();
-                            move |s: &mut State| s.editor(&scope, crate::screen::Editor::Search)
-                        })
+                        .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Search))
                         .build(kit(layout::dark()))
                         .key("session-search"),
                 );
@@ -166,10 +154,7 @@ pub fn view(s: &State) -> El {
                 .child(
                     hinted_field(&l.title, t("rune.session_title"))
                         .label(t("rune.session_title"))
-                        .on_edit({
-                            let scope = scope.clone();
-                            move |s: &mut State| s.editor(&scope, crate::screen::Editor::Title)
-                        })
+                        .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Title))
                         .on_submit(crate::screen::action_tx(&scope, launcher::create))
                         .build(kit(layout::dark()))
                         .key("session-title"),

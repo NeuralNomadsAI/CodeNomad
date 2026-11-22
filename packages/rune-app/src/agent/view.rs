@@ -79,10 +79,7 @@ pub fn view(s: &State, cx: &Cx<State>) -> El {
         body = body.child(
             field(&a.search)
                 .label(t("rune.find_model"))
-                .on_edit({
-                    let scope = scope.clone();
-                    move |s: &mut State| s.editor(&scope, crate::screen::Editor::Model)
-                })
+                .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Model))
                 .build(kit(layout::dark()))
                 .key("model-search"),
         );
@@ -133,12 +130,10 @@ pub fn view(s: &State, cx: &Cx<State>) -> El {
             panel = panel.child(
                 textarea(&a.reasons[&p.id])
                     .label(t("rune.reason"))
-                    .on_edit({
-                        let scope = scope.clone();
-                        move |s: &mut State| {
-                            s.editor(&scope, crate::screen::Editor::Reason(id.clone()))
-                        }
-                    })
+                    .on_edit(crate::screen::edit(
+                        &scope,
+                        crate::screen::Editor::Reason(id),
+                    ))
                     .build(kit(layout::dark()))
                     .key(format!("reason-{}", p.id)),
             );

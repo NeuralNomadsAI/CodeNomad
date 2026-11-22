@@ -39,6 +39,7 @@ impl Screen {
         };
     }
 }
+#[derive(Clone)]
 pub enum Editor {
     Address,
     Password,
@@ -50,6 +51,10 @@ pub enum Editor {
     Reason(String),
     Form((String, String)),
     Custom((String, String)),
+}
+pub fn edit(scope: &Rc<()>, target: Editor) -> impl Fn(&mut State) -> &mut TextEdit + 'static {
+    let scope = scope.clone();
+    move |s| s.editor(&scope, target.clone())
 }
 pub fn action(scope: &Rc<()>, run: impl Fn(&mut State) + 'static) -> impl Fn(&mut State) + 'static {
     let scope = scope.clone();

@@ -88,12 +88,7 @@ pub fn fields(s: &State, form: &Form) -> El {
                     textarea(&d.edit)
                         .label(key)
                         .disabled(a.busy)
-                        .on_edit({
-                            let scope = scope.clone();
-                            move |s: &mut State| {
-                                s.editor(&scope, crate::screen::Editor::Form(id.clone()))
-                            }
-                        })
+                        .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Form(id)))
                         .build(kit(layout::dark()))
                         .key(format!("field-{key}")),
                 );
@@ -134,12 +129,10 @@ pub fn fields(s: &State, form: &Form) -> El {
                         textarea(&d.custom)
                             .label(t("rune.other_values"))
                             .disabled(a.busy)
-                            .on_edit({
-                                let scope = scope.clone();
-                                move |s: &mut State| {
-                                    s.editor(&scope, crate::screen::Editor::Custom(id.clone()))
-                                }
-                            })
+                            .on_edit(crate::screen::edit(
+                                &scope,
+                                crate::screen::Editor::Custom(id),
+                            ))
                             .build(kit(layout::dark()))
                             .key(format!("custom-{key}")),
                     );

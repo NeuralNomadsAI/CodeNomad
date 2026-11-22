@@ -420,10 +420,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                             .field_surface()
                             .hint(strings::t("rune.prompt"))
                             .content_direction()
-                            .on_edit({
-                                let scope = scope.clone();
-                                move |s: &mut State| s.editor(&scope, screen::Editor::Composer)
-                            })
+                            .on_edit(screen::edit(&scope, screen::Editor::Composer))
                             .on_input_change(crate::screen::action_tx(
                                 &scope,
                                 workspace::draft_changed,
