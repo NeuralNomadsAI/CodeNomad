@@ -26,7 +26,7 @@ import { InterruptionDock } from "../interruption-dock"
 import { focusInterruption } from "../../stores/interruption-navigation"
 import SessionView from "../session/session-view"
 import { MissionReader } from "../mission-reader"
-import { missionProjectView } from "../../stores/mission-view-state"
+import { missionProjectView, updateMissionProjectView } from "../../stores/mission-view-state"
 import { useMissionActivation } from "../../stores/mission-activation"
 import MessageSection from "../message-section"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
@@ -66,7 +66,7 @@ import {
   setPreviewSessionOwners,
 } from "../../stores/session-previews"
 import { clearSelectedSession, createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
-import { beginGesture, closeMissionReader, getSessionSurface } from "../../stores/session-surface"
+import { beginGesture, getSessionSurface } from "../../stores/session-surface"
 import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../../stores/attachments"
 
 import type { LayoutMode } from "./shell/types"
@@ -180,7 +180,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   )
   createEffect(() => {
     if (missionActivation.disabled()) {
-      closeMissionReader({ instanceId: props.instance.id, sessionId: activeSessionIdForInstance() })
+      updateMissionProjectView(props.instance.id, { reader: undefined })
     }
   })
 

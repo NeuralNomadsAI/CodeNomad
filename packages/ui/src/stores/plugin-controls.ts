@@ -83,7 +83,7 @@ export class PluginControlsCache {
 
   load(instanceId: string, location: PluginControlLocation, options?: { force?: boolean }): Promise<void> {
     const record = this.record(instanceId, location)
-    if (record.snapshot && !record.stale && !options?.force) return Promise.resolve()
+    if (record.snapshot && !record.stale && !options?.force) return record.inFlight ?? Promise.resolve()
     return this.loadRecord(record, Boolean(options?.force || record.stale))
   }
 

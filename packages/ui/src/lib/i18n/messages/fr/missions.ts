@@ -2,7 +2,7 @@ export const missionMessages = {
   "missions.activation.projectOverride": "Une règle du projet décide ici.",
   "missions.activation.globalOn": "Global : activé.",
   "missions.activation.globalOff": "Global : désactivé.",
-  "missions.activation.disableConfirm": "Désactiver les Missions sur ce serveur OpenCode ? Mettez d’abord en pause les Missions en cours et planifiées pour éviter d’interrompre un travail ou de manquer une exécution. Les données sont conservées.",
+  "missions.activation.disableConfirm": "Désactiver les Missions sur ce serveur OpenCode ? Rien n’est mis en pause automatiquement. Mettez d’abord en pause les Missions en cours et planifiées pour éviter d’interrompre un travail ou de manquer une exécution. Les données sont conservées.",
   "missions.followed.title": "Conversations suivies",
   "missions.followed.add": "Ajouter une conversation",
   "missions.followed.source": "Conversation suivie {number}",

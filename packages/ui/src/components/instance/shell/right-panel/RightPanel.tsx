@@ -238,8 +238,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     applyRightPanelItemCustomization(
       allRightPanelTabs().filter(tab => tab.id === "missions" ? !missionActivation.disabled() : extensionForTab(tab.id)?.enabled ?? true),
       rightPanelCustomization().tabOrder,
-      // Addons have one profile-wide activation; Missions follows OpenCode's effective activation.
-      rightPanelCustomization().hiddenTabIds.filter(id => !id.startsWith("extension:")),
+      // Until the first activation read succeeds, honor the saved Missions visibility.
+      rightPanelCustomization().hiddenTabIds.filter(id => !id.startsWith("extension:") && (id !== "missions" || !missionActivation.hasSnapshot())),
     ),
   )
   const orderedRightPanelTabs = createMemo(() => applyRightPanelItemCustomization(allRightPanelTabs(), rightPanelCustomization().tabOrder, []))

@@ -158,6 +158,33 @@ for (const failed of [true, false]) test(failed ? "a failed re-read leaves the s
     assert.equal((await page.evaluate(() => window.missionCrossNavigation.snapshot())).reader, null)
   } finally { hold.release(); await page.close() }
 })
+test("a confirmed disable closes the reader without cancelling a pending web preview", async () => {
+  const { page } = await setup(false, false, true)
+  const preview = gate()
+  try {
+    await toggleMissionOverview(page, "Objective A")
+    const reader = page.locator(".mission-reader")
+    await reader.waitFor()
+    await page.route("**/api/previews", async route => {
+      await preview.promise
+      await route.fallback()
+    })
+    const started = page.waitForRequest(request => request.url().endsWith("/api/previews") && request.method() === "POST")
+    const result = page.evaluate(() => window.missionCrossNavigation.requestPreview())
+    void result.catch(() => {})
+    await started
+    await page.route("**/api/workspaces/cross-navigation/plugin-controls**", route => route.fulfill({ json: {
+      location: { directory: "/fixture" }, runtime: [], configured: { rules: [], sources: [] }, targets: [],
+      controls: [{ id: "codenomad.missions", managedBy: "codenomad", builtin: false, global: "disabled", project: "default", effective: "disabled" }],
+    } }))
+    await page.evaluate(() => window.missionCrossNavigation.refreshActivation())
+    await reader.waitFor({ state: "detached" })
+    preview.release()
+    await result
+    assert.equal((await page.evaluate(() => window.missionCrossNavigation.snapshot())).mode, "preview")
+  } finally { preview.release(); await page.close() }
+})
+
 test("first native stream open reconciles the completed HTTP catalogue without a synthetic disconnect", { timeout: 60000 }, async () => {
   let fixture: Awaited<ReturnType<typeof setup>> | undefined
   try {

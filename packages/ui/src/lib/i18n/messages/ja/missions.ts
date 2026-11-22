@@ -2,7 +2,7 @@ export const missionMessages = {
   "missions.activation.projectOverride": "このプロジェクトのルールが優先されます。",
   "missions.activation.globalOn": "グローバル：有効。",
   "missions.activation.globalOff": "グローバル：無効。",
-  "missions.activation.disableConfirm": "この OpenCode サーバーのミッションを無効にしますか？作業の中断や実行漏れを避けるため、進行中のミッションとスケジュールを先に一時停止してください。保存済みのデータは保持されます。",
+  "missions.activation.disableConfirm": "この OpenCode サーバーのミッションを無効にしますか？自動で一時停止されるものはありません。作業の中断や実行漏れを避けるため、進行中のミッションとスケジュールを先に一時停止してください。保存済みのデータは保持されます。",
   "missions.followed.title": "フォロー中の会話",
   "missions.followed.add": "会話を追加",
   "missions.followed.source": "フォロー中の会話 {number}",

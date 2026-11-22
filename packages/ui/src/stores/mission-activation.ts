@@ -18,8 +18,9 @@ export function missionActivationStatus(state?: PluginControlsState): "enabled" 
 export function useMissionActivation(
   instanceId: Accessor<string | undefined>,
   directory: Accessor<string | undefined>,
-  active: Accessor<boolean>,
+  isActive: Accessor<boolean>,
 ) {
+  const active = createMemo(isActive)
   const id = createMemo(instanceId)
   const dir = createMemo(directory)
   const target = createMemo(() => {
@@ -34,15 +35,15 @@ export function useMissionActivation(
   const status = createMemo(() => missionActivationStatus(state()))
   // The checkbox reports a failed or pending read as unknown. Visibility
   // changes only with the last confirmed rule, not while refreshing it.
+  const hasSnapshot = createMemo(() => Boolean(state()?.snapshot))
   const disabled = () => control()?.effective === "disabled"
   const captureDisable = (instanceId: string | undefined, directory: string | undefined) => {
     const owner = target()
     if (!active() || !disabled() || !owner || owner.id !== instanceId || owner.location.directory !== directory) return
-    return captureBackendOperation(owner.id, lifetime, () => active() && target() === owner && disabled())
+    return captureBackendOperation(owner.id, lifetime, () => active() && target() === owner)
   }
   const globalEnabled = () => control()?.global !== "disabled"
   const projectOverride = () => status() !== "unknown" && control()?.controllingRule?.scope === "project"
-    && (status() === "enabled") !== globalEnabled()
   const checking = () => Boolean(active() && target() && status() === "unknown" && !state()?.error)
   const readFailed = () => Boolean(state()?.error)
   const retry = () => {
@@ -70,18 +71,18 @@ export function useMissionActivation(
     setPending(owner)
     try {
       if (!value && !await showConfirmDialog(tGlobal("missions.activation.disableConfirm"), { variant: "warning" }, operation.signal)) return
-      if (!operation.current() || !writable() || value === (status() === "enabled")) return
+      if (operation.current() && status() === "unknown") await pluginControlsCache.load(owner.id, owner.location)
+      if (!operation.current() || !writable()) throw new Error("Missions activation is no longer writable")
+      if (value === (status() === "enabled")) return
       await pluginControlsCache.mutate(owner.id, owner.location, MISSIONS_PLUGIN_ID, "global", value, { reconcile: true })
     } catch {
-      if (operation.current()) {
-        void pluginControlsCache.load(owner.id, owner.location, { force: true })
-        showAlertDialog(tGlobal("instanceServiceStatus.plugins.errors.save", {
-          name: tGlobal("instanceShell.rightPanel.tabs.missions"), scope: tGlobal("instanceServiceStatus.plugins.scope.global"),
-        }), { variant: "error" })
-      }
+      if (operation.current()) void pluginControlsCache.load(owner.id, owner.location, { force: true })
+      showAlertDialog(tGlobal("instanceServiceStatus.plugins.errors.save", {
+        name: tGlobal("instanceShell.rightPanel.tabs.missions"), scope: tGlobal("instanceServiceStatus.plugins.scope.global"),
+      }), { variant: "error" })
     } finally {
       setPending(current => current === owner ? undefined : current)
     }
   }
-  return { status, disabled, captureDisable, checking, readFailed, retry, canToggle, toggle, projectOverride, globalEnabled }
+  return { status, hasSnapshot, disabled, captureDisable, checking, readFailed, retry, canToggle, toggle, projectOverride, globalEnabled }
 }

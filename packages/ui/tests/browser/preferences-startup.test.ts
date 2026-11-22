@@ -89,17 +89,57 @@ const requestDirectory = (request: string) => {
 }
 
 for (const host of ["electron", "tauri"] as const) {
+  test(`${host}: re-enable keeps General and its draft while saving the selection`, async () => {
+    const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
+    const project = workspace("a")
+    const fixture = await restoredFixture(page, host, { section: "missions", instanceId: project.id,
+      workspacePath: project.path, location: { directory: project.path } })
+    fixture.inventory([project])
+    const setDisabled = await simulateActivationChanges(page, project)
+    try {
+      await Promise.all([page.waitForResponse("**/api/workspaces/a/plugin-controls**", { timeout: 60_000 }), page.goto(url)])
+      await page.locator(".mission-preferences").waitFor()
+      await page.evaluate(() => { (window as any).fixtureHoldPersistence = true })
+      await setDisabled(true)
+      await page.waitForFunction(() => (window as any).fixtureSaving?.section === "general")
+      await page.locator(".theme-scheme-actions").getByRole("button", { name: "New" }).click()
+      const draft = page.locator(".theme-scheme-name-editor input")
+      await draft.fill("Unsaved palette")
+      await setDisabled(false)
+      await page.locator(".settings-screen-nav-list").getByRole("button", { name: "Missions", exact: true }).waitFor()
+      await page.evaluate(() => {
+        const w = window as any
+        w.fixtureHoldPersistence = false
+        w.fixtureReleasePersistence()
+      })
+      await page.waitForFunction(() => (window as any).fixtureRequest.section === "general")
+      assert.equal(await page.locator(".settings-screen-content-title").innerText(), "General")
+      assert.equal(await draft.inputValue(), "Unsaved palette")
+      assert.deepEqual(fixture.errors, [])
+    } finally { await page.close() }
+  })
+
+  test(`${host}: confirmed empty local inventory leaves global Missions defaults editable`, async () => {
+    const page = await browser.newPage()
+    const project = workspace("a")
+    const fixture = await restoredFixture(page, host, { section: "missions", instanceId: project.id, workspacePath: project.path })
+    try {
+      await Promise.all([page.waitForResponse(response => new URL(response.url()).pathname === "/api/workspaces", { timeout: 60_000 }), page.goto(url)])
+      const deletion = page.getByRole("checkbox", { name: "Deleting a mission also deletes its task conversations" })
+      await deletion.waitFor({ timeout: 4500 })
+      assert.equal(await deletion.isEnabled(), true)
+      assert.deepEqual(fixture.requests, [])
+      assert.deepEqual(fixture.errors, [])
+    } finally { await page.close() }
+  })
+
   test(`${host}: confirmed disable hides Missions settings even when saving General fails`, async () => {
     const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
     const project = workspace("a")
     const fixture = await restoredFixture(page, host, { section: "missions", instanceId: project.id,
       workspacePath: project.path, location: { directory: project.path } })
     fixture.inventory([project])
-    let disabled = false
-    await page.route("**/api/workspaces/a/plugin-controls**", route => route.fulfill({ json: {
-      ...pluginControls(project.path), controls: [{ id: "codenomad.missions", managedBy: "codenomad", builtin: false,
-        global: disabled ? "disabled" : "default", project: "default", effective: disabled ? "disabled" : "default" }],
-    } }))
+    const setDisabled = await simulateActivationChanges(page, project)
     try {
       await Promise.all([page.waitForResponse("**/api/workspaces/a/plugin-controls**", { timeout: 60_000 }), page.goto(url)])
       const deletion = page.getByRole("checkbox", { name: "Deleting a mission also deletes its task conversations" })
@@ -108,8 +148,7 @@ for (const host of ["electron", "tauri"] as const) {
       await page.evaluate(() => {
         Object.assign(window, { fixtureHoldPersistence: true, fixtureRejectSection: "general" })
       })
-      disabled = true
-      await emit(page, { type: "instance.event", instanceId: project.id, event: { type: "config.updated", data: {} } })
+      await setDisabled(true)
       await page.waitForFunction(() => (window as any).fixtureSaving?.section === "general")
       await page.locator(".settings-screen-content-title").getByText("General", { exact: true }).waitFor()
       assert.equal(await deletion.count(), 0, "the confirmed disable removes the editable body before the save settles")
@@ -124,6 +163,9 @@ for (const host of ["electron", "tauri"] as const) {
       await page.waitForFunction(() => (window as any).fixtureRejected?.section === "general")
       assert.equal(await page.evaluate(() => (window as any).fixtureRequest.section), "missions", "the host rejected the new selection")
       assert.equal(await deletion.count(), 0)
+      assert.equal(await general.getAttribute("aria-current"), "page")
+      await setDisabled(false)
+      await page.locator(".settings-screen-nav-list").getByRole("button", { name: "Missions", exact: true }).waitFor()
       assert.equal(await general.getAttribute("aria-current"), "page")
       assert.deepEqual(fixture.errors, [])
     } finally { await page.close() }
@@ -230,6 +272,18 @@ async function restoredFixture(page: Page, host: "electron" | "tauri", request: 
     return route.fulfill({ json: body })
   })
   return { requests, errors, writes, reads: () => reads, inventory: (value: typeof inventory) => { inventory = value } }
+}
+
+async function simulateActivationChanges(page: Page, project: ReturnType<typeof workspace>) {
+  let rule = "default"
+  await page.route(`**/api/workspaces/${project.id}/plugin-controls**`, route => route.fulfill({ json: {
+    ...pluginControls(project.path), controls: [{ id: "codenomad.missions", managedBy: "codenomad", builtin: false,
+      global: rule, project: "default", effective: rule }],
+  } }))
+  return async (disabled: boolean) => {
+    rule = disabled ? "disabled" : "default"
+    await emit(page, { type: "instance.event", instanceId: project.id, event: { type: "config.updated", data: {} } })
+  }
 }
 
 for (const host of ["electron", "tauri"] as const) {

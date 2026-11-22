@@ -6,11 +6,11 @@ If Missions is unavailable, **OpenCode settings** opens runtime recovery for a m
 
 ## Turn Missions on or off {#activation}
 
-In **Customize right panel**, use **Missions** to turn the plugin on or off in the connected OpenCode server’s Global configuration. The checkbox shows the opened workspace’s effective state. If a Project rule overrides Global, the checkbox is read-only and **i** shows the Global setting. OpenCode reloads automatically; existing conversations use the new tool list on their next turn after reload.
+In **Customize right panel**, use **Missions** to turn the plugin on or off in the connected OpenCode server’s Global configuration. The checkbox shows the opened workspace’s effective state. When a Project rule decides that state, the checkbox is read-only and **i** shows the Global setting. OpenCode reloads automatically; existing conversations use the new tool list on their next turn after reload.
 
 Pause active and scheduled Missions before turning this off. Disabling keeps Mission records, schedules and conversations. Work already sent to OpenCode can continue, but Mission tools are unavailable and scheduled runs can be missed. After enabling, check your Missions and resume paused items when ready.
 
-The checkbox follows the opened workspace, even when you select a worktree conversation. If the state cannot be read, the Missions tab stays available; reopen customization or select **Try again**. Confirmed disable closes open Mission readers and replaces a selected Missions tab or settings section with **Status** or **General**. Re-enabling leaves your selection in place. Without an open project, **Settings → Missions** still lets you edit global defaults.
+The checkbox follows the opened workspace, even when you select a worktree conversation. If the state cannot be read, the tab keeps its previous visibility; reopen customization or select **Try again**. Confirmed disable closes open Mission readers and replaces a selected Missions tab or settings section with **Status** or **General**. Re-enabling leaves your selection in place. Without an open project, **Settings → Missions** still lets you edit global defaults.
 
 ## Create a Mission {#create}
 

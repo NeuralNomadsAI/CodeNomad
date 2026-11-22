@@ -10,7 +10,7 @@ import type { Session } from "../../../src/types/session"
 import { addInstance, instances } from "../../../src/stores/instances"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import { clearSessionCatalogState, refreshSessionCatalog } from "../../../src/stores/session-api"
-import { openSessionPreview, showSessionChatFor, getSessionPreview } from "../../../src/stores/session-previews"
+import { openSessionPreview, requestSessionPreview, showSessionChatFor, getSessionPreview } from "../../../src/stores/session-previews"
 import { getTabViewState } from "../../../src/stores/tab-view-state"
 import { SessionPreviewHost } from "../../../src/components/session-preview-view"
 import { sdkManager } from "../../../src/lib/sdk-manager"
@@ -71,6 +71,7 @@ function Fixture() {
     clearActive: () => clearActiveSession(id),
     openAgentPreview: () => openSessionPreview("ses_initial", "https://example.invalid/", id, undefined,
       { requestID: "fixture-agent-preview", instanceId: id }),
+    requestPreview: () => requestSessionPreview("ses_initial", id, "https://example.invalid/delayed"),
     refreshActivation: () => (serverEvents as any).dispatchBatch([
       { type: "instance.event", instanceId: id, event: { type: "config.updated", location: { directory: scope }, data: {} } },
     ]),
@@ -99,6 +100,7 @@ declare global {
       snapshot(): ReturnType<typeof snapshot>; history(): ReturnType<typeof snapshot>[]
       coldCatalogue(): Promise<void>; clearActive(): void; created(): void; selectWorktree(): void
       openAgentPreview(): Promise<unknown>; refreshActivation(): void
+      requestPreview(): Promise<unknown>
       transport(status: "connected" | "disconnected"): void
     }
   }

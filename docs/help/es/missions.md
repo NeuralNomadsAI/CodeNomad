@@ -6,11 +6,11 @@ Si Misiones no está disponible, **Ajustes de OpenCode** abre la recuperación d
 
 ## Activar o desactivar Misiones {#activation}
 
-En **Personalizar panel derecho**, usa **Misiones** para activar o desactivar el plugin en la configuración global del servidor OpenCode conectado. La casilla muestra el estado efectivo del espacio de trabajo abierto. Si prevalece una regla del proyecto, la casilla es de solo lectura e **i** muestra el ajuste global. OpenCode se recarga automáticamente; después, las conversaciones existentes usan la nueva lista de herramientas en su siguiente turno.
+En **Personalizar panel derecho**, usa **Misiones** para activar o desactivar el plugin en la configuración global del servidor OpenCode conectado. La casilla muestra el estado efectivo del espacio de trabajo abierto. Si una regla del proyecto determina ese estado, la casilla es de solo lectura e **i** muestra el ajuste global. OpenCode se recarga automáticamente; después, las conversaciones existentes usan la nueva lista de herramientas en su siguiente turno.
 
 Pausa primero las Misiones activas y programadas. La desactivación conserva las Misiones, sus calendarios y las conversaciones. El trabajo que ya se envió a OpenCode puede continuar, pero las herramientas de Misiones no están disponibles y pueden omitirse ejecuciones programadas. Al volver a activarlas, revisa tus Misiones y reanuda las que pausaste cuando quieras.
 
-La casilla sigue el espacio de trabajo abierto, incluso al seleccionar una conversación de un worktree. Si no se puede leer el estado, la pestaña sigue disponible; vuelve a abrir la personalización o selecciona **Intentar de nuevo**. Una desactivación confirmada cierra los visores de Misiones y selecciona **Estado** o **General** si Misiones estaba seleccionado. Al reactivarla, se conserva la selección actual. Sin un proyecto abierto, **Configuración → Misiones** permite editar los valores globales predeterminados.
+La casilla sigue el espacio de trabajo abierto, incluso al seleccionar una conversación de un worktree. Si no se puede leer el estado, la visibilidad de la pestaña no cambia; vuelve a abrir la personalización o selecciona **Intentar de nuevo**. Una desactivación confirmada cierra los visores de Misiones y selecciona **Estado** o **General** si Misiones estaba seleccionado. Al reactivarla, se conserva la selección actual. Sin un proyecto abierto, **Configuración → Misiones** permite editar los valores globales predeterminados.
 
 ## Crear una Misión {#create}
 

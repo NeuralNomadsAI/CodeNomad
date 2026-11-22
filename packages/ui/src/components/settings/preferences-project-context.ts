@@ -23,6 +23,7 @@ export function createPreferencesProjectContext(
   const target = createMemo(() => ({ instanceId: request().instanceId, serverId: request().serverId, workspacePath: request().workspacePath, location: request().location }), undefined,
     { equals: (a, b) => key(a) === key(b) })
   const [resolved, setResolved] = createSignal<{ source: string; context: ProjectContext }>()
+  const [emptyInventory, setEmptyInventory] = createSignal(false)
   // An explicitly closed occurrence must not silently turn into another tab of the same folder.
   const deleted = new Set<string>()
   const context = createMemo(() => {
@@ -32,6 +33,7 @@ export function createPreferencesProjectContext(
 
   createEffect(() => {
     const source = target(), sourceKey = key(source)
+    setEmptyInventory(false)
     const previous = untrack(context)
     const reusable = previous && key(previous) === sourceKey
     if (!reusable) setResolved(undefined)
@@ -66,6 +68,7 @@ export function createPreferencesProjectContext(
         const workspaces = await api.fetchWorkspaces(AbortSignal.any([controller.signal, operation.signal, AbortSignal.timeout(10_000)]))
         if (!current(epoch)) return
         if (!Array.isArray(workspaces)) throw new Error("Invalid workspace inventory")
+        setEmptyInventory(workspaces.length === 0)
         const exact = workspaces.find(workspace => workspace.id === workspaceId && (!source.workspacePath || sameFolder(workspace.path)))
         const matches = workspaces.filter(workspace => sameFolder(workspace.path) && !deleted.has(scoped(workspace.id)))
         candidateIds = new Set(matches.map(workspace => scoped(workspace.id)))
@@ -98,7 +101,7 @@ export function createPreferencesProjectContext(
     }
     const events = serverEvents.forInstance(() => source.instanceId).on("*", event => {
       if (event.type === "workspace.created" || event.type === "workspace.started" || event.type === "workspace.error") {
-        if (event.workspace.id === source.instanceId || event.workspace.id === boundId || !boundId && sameFolder(event.workspace.path)) {
+        if (emptyInventory() || event.workspace.id === source.instanceId || event.workspace.id === boundId || !boundId && sameFolder(event.workspace.path)) {
           invalidate(event.workspace.status !== "ready")
         }
       } else if (event.type === "workspace.stopped") {
@@ -129,5 +132,5 @@ export function createPreferencesProjectContext(
       events(); reconnect(); transport()
     })
   })
-  return context
+  return { context, emptyInventory }
 }

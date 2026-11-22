@@ -3,7 +3,7 @@ import { render } from "solid-js/web"
 import AlertDialog from "../../../src/components/alert-dialog"
 import RightPanel from "../../../src/components/instance/shell/right-panel/RightPanel"
 import { SettingsScreen } from "../../../src/components/settings-screen"
-import { RIGHT_PANEL_TAB_STORAGE_KEY } from "../../../src/components/instance/shell/storage"
+import { RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY, RIGHT_PANEL_TAB_STORAGE_KEY } from "../../../src/components/instance/shell/storage"
 import { initializeClientState, writeClientLayoutValue } from "../../../src/stores/client-state"
 import { ConfigProvider, ensureLoaded } from "../../../src/stores/preferences"
 import { activeSettingsSection, setActiveSettingsSection } from "../../../src/stores/settings-screen"
@@ -20,6 +20,9 @@ import { setSessionListFetching } from "./session-list-restored"
 await initializeClientState()
 await ensureLoaded()
 writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, "missions")
+if (new URLSearchParams(location.search).has("hidden")) {
+  writeClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY, JSON.stringify({ hiddenTabIds: ["missions"] }))
+}
 const instance: Instance = { id: "mission-visibility", folder: "/fixture", port: 0, pid: 0,
   proxyPath: "/fixture", status: "ready", client: null }
 updateTabViewState(instance.id, { rightPanelTab: "missions" })

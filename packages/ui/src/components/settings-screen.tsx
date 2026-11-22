@@ -71,7 +71,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const serversEnabled = () => config.preferences().multiBackend === true && serversUsable()
   const [serverCapabilitiesResolved, setServerCapabilitiesResolved] = createSignal(false)
   onMount(() => { void getServerMeta().catch(() => {}).finally(() => setServerCapabilitiesResolved(true)) })
-  const embeddedProject = createPreferencesProjectContext(() => {
+  const { context: embeddedProject } = createPreferencesProjectContext(() => {
     const instanceId = !props.standalone && !props.providerContext ? activeInstanceId() ?? undefined : undefined
     return { section: "general", instanceId, serverId: instanceId ? backendRegistry.serverId(parseInstanceKey(instanceId).backendId) : undefined,
       workspacePath: instanceId ? instances().get(instanceId)?.folder : undefined,

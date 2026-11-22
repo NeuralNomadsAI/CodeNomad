@@ -6,11 +6,11 @@ Görevler kullanılamıyorsa **OpenCode ayarları**, eksik veya başarısız bir
 
 ## Görevleri etkinleştirme ve devre dışı bırakma {#activation}
 
-**Sağ paneli özelleştir** bölümündeki **Görevler** ile eklentiyi bağlı OpenCode sunucusunun genel yapılandırmasında açıp kapatın. Onay kutusu açık çalışma alanındaki geçerli durumu gösterir. Proje kuralı öncelikliyse kutu değiştirilemez ve **i** genel ayarı gösterir. OpenCode otomatik olarak yeniden yükler; ardından mevcut konuşmalar da bir sonraki turda yeni araç listesini kullanır.
+**Sağ paneli özelleştir** bölümündeki **Görevler** ile eklentiyi bağlı OpenCode sunucusunun genel yapılandırmasında açıp kapatın. Onay kutusu açık çalışma alanındaki geçerli durumu gösterir. Bu durumu bir proje kuralı belirliyorsa kutu değiştirilemez ve **i** genel ayarı gösterir. OpenCode otomatik olarak yeniden yükler; ardından mevcut konuşmalar da bir sonraki turda yeni araç listesini kullanır.
 
 Önce etkin ve zamanlanmış görevleri duraklatın. Devre dışı bırakmak görev kayıtlarını, zamanlamaları ve konuşmaları korur. OpenCode’a gönderilmiş işler sürebilir, ancak görev araçları kullanılamaz ve zamanlanan çalıştırmalar atlanabilir. Yeniden etkinleştirdikten sonra görevlerinizi kontrol edin ve hazır olduğunuzda duraklatılanları sürdürün.
 
-Bir çalışma ağacındaki konuşmayı seçseniz de onay kutusu açık çalışma alanının durumunu gösterir. Durum okunamazsa sekme kullanılabilir kalır; özelleştirmeyi yeniden açın veya **Tekrar dene** seçeneğini seçin. Devre dışı bırakma doğrulandığında açık Görevler okuyucuları kapanır; seçili Görevler sekmesinin veya ayar bölümünün yerini **Durum** ya da **Genel** alır. Yeniden etkinleştirme seçiminizi değiştirmez. Proje açık değilken de **Ayarlar → Görevler** bölümünden genel varsayılanları düzenleyebilirsiniz.
+Bir çalışma ağacındaki konuşmayı seçseniz de onay kutusu açık çalışma alanının durumunu gösterir. Durum okunamazsa sekmenin görünürlüğü değişmez; özelleştirmeyi yeniden açın veya **Tekrar dene** seçeneğini seçin. Devre dışı bırakma doğrulandığında açık Görevler okuyucuları kapanır; seçili Görevler sekmesinin veya ayar bölümünün yerini **Durum** ya da **Genel** alır. Yeniden etkinleştirme seçiminizi değiştirmez. Proje açık değilken de **Ayarlar → Görevler** bölümünden genel varsayılanları düzenleyebilirsiniz.
 
 ## Görev oluşturma {#create}
 

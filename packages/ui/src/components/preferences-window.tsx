@@ -49,7 +49,7 @@ export const PreferencesWindow: Component = () => {
     await flushScroll(generation)
   }
 
-  const project = createPreferencesProjectContext(request, () => initialized() && activeSettingsSection() !== "servers", (context, current) => {
+  const { context: project, emptyInventory } = createPreferencesProjectContext(request, () => initialized() && activeSettingsSection() !== "servers", (context, current) => {
     // Share the native request queue: an explicit newer opener always wins over a late restore read.
     requestQueue = requestQueue.catch(() => undefined).then(async () => {
       if (!current()) return
@@ -184,7 +184,7 @@ export const PreferencesWindow: Component = () => {
         standalone
         providerContext={providerContext()}
         projectUnavailable={parseInstanceKey(request().instanceId ?? "").backendId !== "local" && !project()}
-        projectUnbound={Boolean(request().instanceId && !project())}
+        projectUnbound={Boolean(request().instanceId && !project() && !emptyInventory())}
         scrollPosition={request()}
         onScrollPositionChange={(top) => {
           if (activeSettingsSection() !== request().section) return
@@ -204,24 +204,19 @@ export const PreferencesWindow: Component = () => {
         }}
         onMissionsDisabled={(current) => {
           const context = providerContext()
-          const canReset = () => current() && providerContext() === context
-            && request().section === "missions" && activeSettingsSection() === "missions"
-          requestQueue = requestQueue.catch(() => undefined).then(async () => {
-            let saved: NativePreferencesRequest | undefined
-            await persist(() => {
-              // A native opener or section change may have saved while we waited.
-              if (!canReset()) return
+          setActiveSettingsSection("general")
+          requestQueue = requestQueue.catch(() => undefined).then(() =>
+            persist(() => {
+              // A newer native opener or section change takes precedence.
+              if (!current() || providerContext() !== context || request().section !== "missions"
+                || activeSettingsSection() !== "general") return
               clearTimeout(scrollTimer)
-              return saved = { ...request(), section: "general", scrollTop: 0 }
-            })
-            const next = saved
-            if (!next || !canReset()) return
-            scrollTop = 0
-            batch(() => {
+              scrollTop = 0
+              const next = { ...request(), section: "general" as const, scrollTop }
               setRequest(next)
-              setActiveSettingsSection("general")
-            })
-          }).catch(() => undefined)
+              return next
+            }),
+          ).catch(() => undefined)
         }}
         onClose={() => close(false)}
       /></Show>
