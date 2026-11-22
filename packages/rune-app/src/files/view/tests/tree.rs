@@ -7,8 +7,11 @@ fn tab_selects_the_row_and_reaches_refresh_after_a_failed_listing() {
         let mut ui = http.ui(Store::default(), "files-tab");
         seed(&mut ui, 2);
         let failed = ui.tree.load(".", true).unwrap();
-        ui.tree
-            .complete(failed, Err("synthetic listing failure".into()), Ok);
+        ui.tree.complete(
+            failed,
+            Err(codenomad_client::files::ListingTooLarge.into()),
+            Ok,
+        );
         ui.panel = true;
         let mut rt = runtime(ui);
         rt.poll = Some(crate::files::poll);
@@ -54,6 +57,10 @@ fn tab_selects_the_row_and_reaches_refresh_after_a_failed_listing() {
         assert!(focused(&rt, "file-eye-file01.txt"));
 
         let a11y = rt.accessibility_json();
+        assert!(
+            a11y.to_string()
+                .contains("private: more than 4,096 entries.")
+        );
         let tree = accessible(&a11y, "workspace-tree").unwrap();
         assert_eq!(tree["role"], "tree");
         let row = accessible(tree, "file-row-file00.txt").unwrap();

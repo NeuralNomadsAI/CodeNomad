@@ -143,6 +143,7 @@ export const instanceMessages = {
   "gitPanel.history": "历史",
   "filesPanel.widenWindow": "文件 — 请加宽窗口",
   "filesPanel.workspace": "工作区",
+  "filesPanel.listingTooLarge": "{path}：超过 4,096 个条目。",
   "filesPanel.commits": "提交",
   "filesPanel.gitInit.notRepository": "此文件夹不是 Git 仓库。",
   "filesPanel.gitInit.action": "初始化 Git",

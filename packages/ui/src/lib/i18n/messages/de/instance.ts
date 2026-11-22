@@ -143,6 +143,7 @@ export const instanceMessages = {
   "gitPanel.history": "Verlauf",
   "filesPanel.widenWindow": "Dateien — Fenster verbreitern",
   "filesPanel.workspace": "Arbeitsbereich",
+  "filesPanel.listingTooLarge": "{path}: mehr als 4.096 Einträge.",
   "filesPanel.commits": "Commits",
   "filesPanel.gitInit.notRepository": "Dieser Ordner ist kein Git-Repository.",
   "filesPanel.gitInit.action": "Git initialisieren",

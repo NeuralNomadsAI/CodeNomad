@@ -108,7 +108,14 @@ fn tree_content(s: &State) -> El {
         );
     }
     let mut status = Vec::new();
+    let directory = ui.tree.directory();
+    let name = codenomad_client::server_path_basename(directory);
     for (path, error) in ui.tree.errors() {
+        let message = if error.is::<codenomad_client::files::ListingTooLarge>() {
+            t("filesPanel.listingTooLarge").replace("{path}", if path == "." { name } else { path })
+        } else {
+            error.to_string()
+        };
         let path = path.clone();
         let retry = std::rc::Rc::new(screen::action_tx(&scope, {
             let path = path.clone();
@@ -119,7 +126,7 @@ fn tree_content(s: &State) -> El {
             }
         }));
         let press = retry.clone();
-        status.push(text(error).role("alert"));
+        status.push(text(message).role("alert"));
         let control = button_tx(
             &format!("file-retry-{path}"),
             t("instanceShell.rightPanel.actions.refresh"),
@@ -139,8 +146,6 @@ fn tree_content(s: &State) -> El {
                 .pad(Space::Md),
         );
     }
-    let directory = ui.tree.directory();
-    let name = codenomad_client::server_path_basename(directory);
     let contents = workspace_tree::workspace_body(
         workspace_tree::root(dark, name, directory).key("file-tree-root"),
         tree,

@@ -143,6 +143,7 @@ export const instanceMessages = {
   "gitPanel.history": "История",
   "filesPanel.widenWindow": "Файлы — расширьте окно",
   "filesPanel.workspace": "Рабочая область",
+  "filesPanel.listingTooLarge": "{path}: больше 4 096 элементов.",
   "filesPanel.commits": "Коммиты",
   "filesPanel.gitInit.notRepository": "Эта папка не является Git-репозиторием.",
   "filesPanel.gitInit.action": "Инициализировать Git",
