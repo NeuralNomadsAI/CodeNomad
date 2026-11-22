@@ -389,10 +389,10 @@ down (a First jump from the bottom of a long transcript). While
 a jump's row is not rendered, the hold rewrites Virtua's current estimate of its
 offset instead, since measuring the rows around a distant estimate can carry the
 row out of the rendered range; once rendered it is aligned. The 30-frame
-settlement window starts when the requested block is measurable. While a key
-lookup finds only an estimated row or waits for a lazy card, it can wait for
-the block to load; reflow writes only once it finds the block. A filtered or
-removed target releases the hold. The entire hold has a five-second deadline. Within it,
+settlement window starts when the requested block is measurable. A reflow uses
+the same estimate to bring an unmounted row into range. Once the row mounts,
+reflow alignment waits for the actual block. A filtered or removed target
+releases the hold. The entire hold has a five-second deadline. Within it,
 viewport and header resizes re-align the
 element instead of dropping it, and its requested offset is kept and clamped into
 the current viewport only when applied. Gestures, navigation and focus moving to

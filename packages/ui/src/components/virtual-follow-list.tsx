@@ -317,16 +317,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     align: (anchor) => {
       const element = scrollElement(), row = itemElements.get(anchor.key)
       const selected = anchor.select?.()
-      if (selected === null || findLiveIndex(anchor.key) === -1) return false
+      const index = findLiveIndex(anchor.key)
+      if (selected === null || index === -1) return false
       const pending = selected === "pending"
-      if (anchor.reflow && pending) return "pending"
-      // A jump lands on Virtua's estimate, and measuring the rows around it can
-      // move its row out of the rendered range: follow the estimate until the
-      // row renders (or remounts) to be measured.
+      // Seek an unmounted row by its estimate, just as for a timeline jump.
       if (!anchor.element && (!selected || pending) && !row?.isConnected) {
-        const index = findLiveIndex(anchor.key)
-        return index !== -1 && writeIndex("reader-settle", index) ? "pending" : false
+        return writeIndex("reader-settle", index) ? "pending" : false
       }
+      if (anchor.reflow && pending) return "pending"
       const target = anchor.element ?? (pending ? row : selected ?? row)
       // A detached revealed part is gone.
       if (!element || !target?.isConnected) return false

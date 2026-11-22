@@ -80,7 +80,7 @@ const longMessages = Array.from({ length: 260 }, (_, index) => index === LONG.in
   : index % 2 ? assistant(index, [{ type: "text", text: prose(`Note ${index}`, 2) }]) : { id: id(index), type: "user", time: { created: index + 1 }, text: prose(`Ask ${index}`, 1) })
 
 let server: Awaited<ReturnType<typeof startTimelineSyncServer>>, directory: string, store: string, visibilityStore: string, wideStore: string, longStore: string
-let groupedStore: string, coldGroupStore: string, proseStore: string, splitTextStore: string
+let groupedStore: string, coldGroupStore: string, longGroupStore: string, proseStore: string, splitTextStore: string
 let tailGroupStore: string, tailToolStore: string
 before(async () => {
   directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-timeline-sync-"))
@@ -110,6 +110,14 @@ before(async () => {
   createSessionStore(coldGroupStore, grouped.map(row => row.id === id(1) ? {
     ...row, content: row.content.filter((part: { name?: string }) => part.name !== "edit"),
   } : row))
+  longGroupStore = path.join(directory, "long-group.sqlite")
+  createSessionStore(longGroupStore, [
+    message(0),
+    ...Array.from({ length: 30 }, (_, n) => assistant(n + 1, [{ type: "text", text: prose(`Earlier ${n}`, 12) }])),
+    ...Array.from({ length: 12 }, (_, n) => assistant(n + 31,
+      Array.from({ length: 10 }, (_, part) => tool(`long-group-${n * 10 + part}`, "read", 1)))),
+    ...Array.from({ length: 20 }, (_, n) => assistant(n + 43, [{ type: "text", text: prose(`Later ${n}`, 4) }])),
+  ])
   proseStore = path.join(directory, "prose.sqlite")
   createSessionStore(proseStore, [message(0), ...Array.from({ length: 20 }, (_, n) =>
     assistant(n + 1, [{ type: "text", text: `Paragraph ${n}.\n\n`.repeat(25) }]))])
@@ -207,6 +215,29 @@ test("scrolling activates the marker of the block at the reading line", { timeou
 
 // The product treats blocks reaching past the 4 px reading line as visible.
 const READING_LINE_TOLERANCE = 4
+
+test("ungrouping mounts and aligns the 61st call of a collapsed 120-call group", { timeout: 90_000 }, () => withSession("minimal", async (page) => {
+  const marker = (await markers(page)).filter(candidate => candidate.toolPartIds?.[0]?.startsWith("long-group-"))[60]
+  assert.deepEqual(marker.toolPartIds, ["long-group-60-read"])
+  const header = page.getByRole("button", { name: "Explored: 120 reads", exact: true })
+  await clickMarker(page, marker)
+  await header.and(page.locator('[aria-expanded="false"]')).waitFor()
+  assert.equal(await active(page), marker.id)
+  const offset = await header.evaluate(block =>
+    block.getBoundingClientRect().top - block.closest(".message-stream")!.getBoundingClientRect().top)
+  assert.ok(Math.abs(offset) <= READING_LINE_TOLERANCE, `the collapsed header is at the reading line (${offset}px)`)
+
+  await page.evaluate(() => (window as any).fixture.showFilters(true))
+  await page.getByRole("button", { name: "Message content", exact: true }).click()
+  await page.getByRole("button", { name: "Disable tool grouping", exact: true }).click()
+  await header.waitFor({ state: "detached" })
+  await page.locator('.tool-call-message[data-part-id="long-group-60-read"] .tool-call-header-toggle')
+    .waitFor({ timeout: 7000 })
+  await settleTranscript(page, 450)
+  const after = await blockOffset(page, marker)
+  assert.ok(after !== null && Math.abs(after - offset) <= READING_LINE_TOLERANCE, `the selected call takes the header's place (${after}px)`)
+  assert.equal(await active(page), marker.id)
+}, longGroupStore))
 
 test("a preset that merges text blocks retains the ordinary scroll position", { timeout: 90_000 }, () => withSession("everything", async (page) => {
   const reply = (await markers(page)).find(candidate => candidate.id === `${id(1)}:assistant:1`)!
