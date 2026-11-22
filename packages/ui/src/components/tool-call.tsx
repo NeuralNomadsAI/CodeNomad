@@ -5,11 +5,11 @@ import { stringify as stringifyYaml } from "yaml"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { useTheme } from "../lib/theme"
 import { useGlobalCache } from "../lib/hooks/use-global-cache"
-import { useConfig } from "../stores/preferences"
+import { toolInputDefaults, useConfig } from "../stores/preferences"
 import { activeInterruption } from "../stores/instances"
 import { getFormQueue } from "../stores/forms"
 import { copyToClipboard } from "../lib/clipboard"
-import { getSessionMessageRenderCache, type ToolCallViewState } from "../lib/message-render-cache"
+import { getSessionMessageRenderCache, getToolCallView, type ToolCallViewState } from "../lib/message-render-cache"
 import type { PermissionRequest } from "../types/permission"
 import { useI18n } from "../lib/i18n"
 import { resolveToolRenderer } from "./tool-call/renderers"
@@ -604,26 +604,21 @@ export default function ToolCall(props: ToolCallProps) {
     return resolveToolExpansionDefault(preferences(), toolCallMemo()?.tool || "")
   })
 
-  const [localView, setLocalView] = createStore<ToolCallViewState>({})
+  const localView = createStore<ToolCallViewState>({})
   const toolDisplayKey = () => `${props.messageId ?? "unknown-message"}\u0000${props.toolCall.id ?? props.toolCallId ?? ""}`
-  const toolViews = () => props.rememberView && props.messageId
-    ? getSessionMessageRenderCache(props.instanceId, props.sessionId).toolViews : undefined
-  const view = () => toolViews()?.[0][toolDisplayKey()] ?? localView
-  const updateView = (patch: ToolCallViewState) => {
-    const views = toolViews()
-    if (views) views[1](toolDisplayKey(), current => ({ ...current, ...patch }))
-    else setLocalView(patch)
-  }
+  const toolView = createMemo(() => props.rememberView && props.messageId
+    ? getToolCallView(getSessionMessageRenderCache(props.instanceId, props.sessionId), toolDisplayKey()) : localView)
+  const view = () => toolView()[0]
+  const updateView = (patch: ToolCallViewState) => toolView()[1](patch)
   const userExpanded = () => view().expanded
   const outputWrapEnabled = () => view().wrap ?? true
-  const toolInputsVisibility = createMemo(() => preferences().toolInputsVisibility || "collapsed")
   const ioView = () => {
     const io = view().io
-    return io?.defaultVisibility === toolInputsVisibility() ? io : undefined
+    return io?.defaultRevision === toolInputDefaults().revision ? io : undefined
   }
   const updateIoView = (patch: Partial<NonNullable<ToolCallViewState["io"]>>) =>
-    updateView({ io: { ...ioView(), defaultVisibility: toolInputsVisibility(), ...patch } })
-  const effectiveToolInputsVisibility = createMemo(() => ioView()?.inputVisibility ?? toolInputsVisibility())
+    updateView({ io: { ...ioView(), defaultRevision: toolInputDefaults().revision, ...patch } })
+  const effectiveToolInputsVisibility = createMemo(() => ioView()?.inputVisibility ?? toolInputDefaults().visibility)
   const isToolInputVisible = createMemo(() => effectiveToolInputsVisibility() !== "hidden")
   const inputSectionExpanded = () => ioView()?.inputExpanded ?? (effectiveToolInputsVisibility() === "expanded")
   const outputSectionExpanded = () => ioView()?.outputExpanded ?? true
@@ -759,9 +754,10 @@ export default function ToolCall(props: ToolCallProps) {
     updateView({ expanded: !expanded() })
   }
 
-  createEffect(on(toolInputsVisibility, () => {
-    if (view().io) updateView({ io: undefined })
-  }, { defer: true }))
+  createEffect(() => {
+    const io = view().io
+    if (io && io.defaultRevision !== toolInputDefaults().revision) updateView({ io: undefined })
+  })
 
   const getRendererAction = () => renderer().getAction?.(headerRendererContext) ?? getDefaultToolAction(toolName())
   const headerOutputChrome = createMemo(() => renderer().getOutputChrome?.(headerRendererContext) ?? {})

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { describe, it } from "node:test"
+import { createMemo, createRoot } from "solid-js"
 
 import { createInstanceMessageStore } from "./instance-store.ts"
 import {
@@ -14,7 +15,7 @@ import {
   revealHiddenRecordParts,
   revealHiddenRecordText,
 } from "./record-display-cache.ts"
-import { getSessionMessageRenderCache, purgeMessageRenderCache, REASONING_RENDER_CHARACTER_LIMIT } from "../../lib/message-render-cache.ts"
+import { clearSessionMessageRenderCache, getSessionMessageRenderCache, getToolCallView, purgeMessageRenderCache, REASONING_RENDER_CHARACTER_LIMIT } from "../../lib/message-render-cache.ts"
 import type { MessageInfo, ClientPart } from "../../types/message"
 import { emptyLatestWindow, toWindowSnapshot, windowFromSnapshot } from "./message-window"
 
@@ -282,6 +283,31 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     })
   }
 
+  it("releases reactive tool-view keys on eviction, including calls that were only read", () => {
+    const instanceId = "tool-view-eviction", sessionId = "s"
+    const cache = getSessionMessageRenderCache(instanceId, sessionId)
+    const ids = Array.from({ length: 50 }, (_, n) => `message-${n}`)
+    try {
+      createRoot(dispose => {
+        try {
+          for (const id of ids) for (let part = 0; part < 1000; part++) {
+            const [view] = getToolCallView(cache, `${id}\u0000call-${part}`)
+            createMemo(() => view.expanded)
+          }
+        } finally { dispose() }
+      })
+      assert.equal(cache.toolViews.size, 50_000)
+      const key = "message-0\u0000call-0"
+      const prior = cache.toolViews.get(key)!
+      prior[1]({ expanded: true })
+      purgeMessageRenderCache(cache, ids)
+      assert.equal(cache.toolViews.size, 0)
+      const remounted = getToolCallView(cache, key)
+      assert.notEqual(remounted, prior)
+      assert.equal(remounted[0].expanded, undefined)
+    } finally { clearSessionMessageRenderCache(instanceId, sessionId) }
+  })
+
   it("trims to 200 messages and purges removed render-cache entries", () => {
     const instanceId = "window-trim", sessionId = "session"
     const cache = getSessionMessageRenderCache(instanceId, sessionId)
@@ -293,16 +319,16 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     })))
     cache.messageBlocks.set("message-0", {})
     cache.messageBlocks.set("message-200", {})
-    cache.toolViews[1]("message-0\u0000call", { expanded: true, wrap: false, scrollTop: 90 })
-    cache.toolViews[1]("message-200\u0000call", { expanded: false, wrap: false })
+    getToolCallView(cache, "message-0\u0000call")[1]({ expanded: true, wrap: false, scrollTop: 90 })
+    getToolCallView(cache, "message-200\u0000call")[1]({ expanded: false, wrap: false })
 
     store.trimSessionMessages(sessionId, 200)
 
     assert.equal(store.getSessionMessageIds(sessionId).length, 200)
     assert.equal(store.getSessionMessageIds(sessionId).includes("message-0"), false)
     assert.deepEqual([...cache.messageBlocks.keys()], ["message-200"])
-    assert.equal(cache.toolViews[0]["message-0\u0000call"], undefined)
-    assert.deepEqual(cache.toolViews[0]["message-200\u0000call"], { expanded: false, wrap: false })
+    assert.equal(cache.toolViews.get("message-0\u0000call"), undefined)
+    assert.deepEqual(cache.toolViews.get("message-200\u0000call")?.[0], { expanded: false, wrap: false })
     store.clearInstance()
   })
 

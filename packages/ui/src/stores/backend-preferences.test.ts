@@ -100,6 +100,18 @@ test("real preference consumers isolate host, server, fallback, instance data an
     assert.deepEqual(disk.get().server, { opencodeBinary: "/tools/opencode2", logLevel: "WARN" })
   })
 
+  await t.test("the host invalidates Input overrides even without mounted cards", async () => {
+    const before = module.toolInputDefaults()
+    assert.equal(before.visibility, "collapsed")
+    assert.equal(await prefsA.updatePreferences({ toolInputsVisibility: "hidden" }), true)
+    assert.equal(await prefsA.updatePreferences({ toolInputsVisibility: before.visibility }), true)
+    const restored = module.toolInputDefaults()
+    assert.equal(restored.visibility, before.visibility)
+    assert.equal(restored.revision, before.revision + 2)
+    assert.equal(await hostPrefs.updatePreferences({ toolInputsVisibility: before.visibility }), true)
+    assert.equal(module.toolInputDefaults(), restored, "an unchanged default keeps the same revision")
+  })
+
   await t.test("server state and server configuration stay with their owner", async () => {
     assert.equal(prefsA.serverSettings().logLevel, "INFO")
     assert.equal(prefsB.serverSettings().logLevel, "ERROR")

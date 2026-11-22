@@ -1761,6 +1761,11 @@ return { ...configContextValue, lastCloneParent, rememberCloneParent, addNamedRe
 const serverModelPreferenceKeys = ["modelVisibility", "missionProfileDefaults", "missionModels"] as const
 type ServerModelPreferenceKey = typeof serverModelPreferenceKeys[number]
 const hostPreferences = createPreferencesStore(localBackend)
+export const toolInputDefaults = createMemo<{ visibility: ToolInputsVisibilityPreference; revision: number }>((previous) => {
+  const visibility = hostPreferences.preferences().toolInputsVisibility
+  return previous.visibility === visibility ? previous : { visibility, revision: previous.revision + 1 }
+}, { visibility: defaultUiSettings.toolInputsVisibility, revision: 0 })
+
 type ConfigContextValue = ReturnType<typeof createPreferencesStore>
 const deferredServerEdits = new Set([
   "addRecentFolder", "removeRecentFolder", "recordWorkspaceLaunch", "addRecentModelPreference", "toggleFavoriteModelPreference",

@@ -11,14 +11,12 @@ export interface ToolCallViewState {
   scrollTop?: number
   following?: boolean
   io?: {
-    defaultVisibility: "hidden" | "collapsed" | "expanded"
+    defaultRevision: number
     inputVisibility?: "hidden" | "expanded"
     inputExpanded?: boolean
     outputExpanded?: boolean
   }
 }
-
-type ToolCallViews = Record<string, ToolCallViewState | undefined>
 
 export interface MessageRenderCache {
   messageItems: Map<string, MessageCacheItem>
@@ -28,7 +26,7 @@ export interface MessageRenderCache {
    * released once: a remount renders them at once instead of re-deferring. */
   releasedToolBodies: Set<string>
   /** Card view state, by the same message/part identity as body release. */
-  toolViews: [ToolCallViews, SetStoreFunction<ToolCallViews>]
+  toolViews: Map<string, [ToolCallViewState, SetStoreFunction<ToolCallViewState>]>
 }
 
 const renderCaches = new Map<string, MessageRenderCache>()
@@ -70,11 +68,17 @@ export function getSessionMessageRenderCache(instanceId: string, sessionId: stri
   if (!cache) {
     cache = {
       messageItems: new Map(), toolItems: new Map(), messageBlocks: new Map(),
-      releasedToolBodies: new Set(), toolViews: createStore<ToolCallViews>({}),
+      releasedToolBodies: new Set(), toolViews: new Map(),
     }
     renderCaches.set(key, cache)
   }
   return cache
+}
+
+export function getToolCallView(cache: MessageRenderCache, key: string) {
+  let view = cache.toolViews.get(key)
+  if (!view) cache.toolViews.set(key, view = createStore<ToolCallViewState>({}))
+  return view
 }
 
 export function peekSessionMessageRenderCache(instanceId: string, sessionId: string): MessageRenderCache | undefined {
@@ -106,8 +110,7 @@ export function purgeMessageRenderCache(cache: MessageRenderCache, messageIds: r
   for (const key of cache.releasedToolBodies) {
     if (wasRemoved(key)) cache.releasedToolBodies.delete(key)
   }
-  const [views, setView] = cache.toolViews
-  for (const key of Object.keys(views)) {
-    if (wasRemoved(key)) setView(key, undefined)
+  for (const key of cache.toolViews.keys()) {
+    if (wasRemoved(key)) cache.toolViews.delete(key)
   }
 }
