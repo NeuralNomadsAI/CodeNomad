@@ -44,6 +44,7 @@ struct Pending<S> {
 }
 struct Open<S> {
     hovered: Option<(String, Option<Action<S>>)>,
+    restored: Option<Action<S>>,
 }
 pub struct State<S> {
     menus: HashMap<String, Open<S>>,
@@ -96,7 +97,13 @@ fn open<S>(s: &mut S, at: StateAt<S>, menu: &Menu<S>, tx: &mut Tx) {
     if state.is_open(&menu.key) {
         return;
     }
-    state.menus.insert(menu.key.clone(), Open { hovered: None });
+    state.menus.insert(
+        menu.key.clone(),
+        Open {
+            hovered: None,
+            restored: menu.on_focus_restored.clone(),
+        },
+    );
     if let Some(change) = &menu.on_open_change {
         change(s, true, tx);
     }
@@ -167,7 +174,30 @@ pub fn poll<S>(s: &mut S, at: StateAt<S>, tx: &mut Tx) -> bool {
 pub fn clear<S>(s: &mut S, at: StateAt<S>, key: &str, tx: &mut Tx) {
     clear_hover(s, at, key, tx);
     if let Some(state) = at(s) {
-        state.menus.remove(key);
+        if let Some(open) = state.menus.remove(key) {
+            state.pending.push(Pending {
+                action: None,
+                restored: open.restored,
+                menu_prefix: format!("{key}:item:"),
+            });
+            tx.wake_after(Duration::ZERO);
+        }
+    }
+}
+/// Synchronize changed items/min_items before publishing the new model.
+pub fn sync<S>(s: &mut S, at: StateAt<S>, menu: &Menu<S>, tx: &mut Tx) {
+    let Some(open) = at(s).and_then(|state| state.menus.get_mut(&menu.key)) else {
+        return;
+    };
+    open.restored = menu.on_focus_restored.clone();
+    let removed = open
+        .hovered
+        .as_ref()
+        .is_some_and(|(key, _)| !menu.items.iter().any(|item| &item.key == key));
+    if menu.items.len() < menu.min_items {
+        clear(s, at, &menu.key, tx);
+    } else if removed {
+        clear_hover(s, at, &menu.key, tx);
     }
 }
 /// Place the optional surface in rune-kit::root's layer. Trigger geometry belongs to its

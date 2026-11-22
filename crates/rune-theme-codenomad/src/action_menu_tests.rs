@@ -11,6 +11,7 @@ struct App {
     gesture: bool,
     focus_target: bool,
     many: bool,
+    hidden: bool,
     dialog: bool,
 }
 fn at(s: &mut App) -> Option<&mut State<App>> {
@@ -39,6 +40,9 @@ fn descriptor(s: &App) -> Rc<Menu<App>> {
     let mut items = vec![Rc::new(item), Rc::new(disabled)];
     if s.many {
         items.push(Rc::new(Item::new("last", "Last", |_, _| {})));
+    }
+    if s.hidden {
+        items.clear();
     }
     let mut menu = Menu::new("actions", "Actions", items);
     menu.on_open_change = Some(Rc::new(|s, open, _| s.events.push(format!("open:{open}"))));
@@ -222,6 +226,31 @@ fn trigger_arrows_open_at_enabled_edges_and_keep_menu_navigation() {
         rt.state.events.iter().filter(|e| *e == "open:true").count(),
         4
     );
+}
+#[test]
+fn dropping_below_minimum_releases_hover_and_restores_closed() {
+    let mut rt = runtime();
+    tap(&mut rt, "actions:trigger");
+    let (x, y) = rt.find("actions:item:open").unwrap();
+    rt.pointer_move(x, y);
+    rt.frame(0.0);
+    rt.update(|s, tx| {
+        s.hidden = true;
+        sync(s, at, &descriptor(s), tx);
+    });
+    rt.frame(0.0);
+    deliver(&mut rt);
+    assert!(!rt.state.menu.is_open("actions"));
+    assert!(rt.state.events.contains(&"leave".into()));
+    assert!(rt.state.events.contains(&"restored:None".into()));
+    assert!(!rt.state.events.contains(&"open:false".into()));
+    rt.update(|s, tx| {
+        s.hidden = false;
+        sync(s, at, &descriptor(s), tx);
+    });
+    rt.frame(0.0);
+    assert!(rt.find("actions:trigger").is_some());
+    assert!(rt.find("actions:item:open").is_none());
 }
 #[test]
 fn escape_and_outside_dismiss_with_hover_cleanup() {
