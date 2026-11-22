@@ -110,6 +110,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const activeSection = createMemo(() => sections().find((section) => section.id === shownSection()) ?? sections()[0])
 
   const renderSection = () => {
+    if (activeSettingsSection() === "missions" && missionActivation.checking()) return
     switch (shownSection()) {
       case "chat":
         return <ChatSettingsSection />
