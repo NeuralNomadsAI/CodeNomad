@@ -9,6 +9,7 @@ import { generateUUID } from "../lib/client-identity"
 import { sameServerSelection } from "../lib/native/server-selection-intent"
 import { readRemoteProjectHistory, RECENT_PROJECT_LIMIT, type RemoteProjectRecentEdit } from "../lib/remote-project-recent-data"
 import type { ConversationPermissionMode, RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
+import { transcriptPresetFallbacks } from "../../../server/src/settings/transcript-preset-defaults"
 import {
   ensureInstanceConfigLoaded,
   getInstanceConfig,
@@ -365,10 +366,7 @@ const defaultSpeechSettings: SpeechSettings = {
 function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
   const sanitized = input ?? {}
   const toolCallExpansionDefaults = normalizeToolCallExpansionDefaults(sanitized.toolCallExpansionDefaults, sanitized)
-  const usageMetricsFallback =
-    toolCallExpansionDefaults.preset === "nothing" || toolCallExpansionDefaults.preset === "minimal" || toolCallExpansionDefaults.preset === "balanced"
-      ? "collapsed"
-      : "expanded"
+  const fallback = transcriptPresetFallbacks(toolCallExpansionDefaults.preset)
   return {
     multiBackend: sanitized.multiBackend === undefined ? defaultUiSettings.multiBackend : sanitized.multiBackend === true,
     highContrast: normalizeHighContrastPreference(sanitized.highContrast),
@@ -397,7 +395,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     systemMessagesVisibility: normalizeVisibilityPreference(sanitized.systemMessagesVisibility, "hidden"),
     toolGroupVisibility: normalizeVisibilityPreference(
       sanitized.toolGroupVisibility,
-      toolCallExpansionDefaults.preset === "everything" ? "expanded" : defaultUiSettings.toolGroupVisibility,
+      fallback.toolGroupVisibility,
     ),
     toolInputsVisibility:
       sanitized.toolInputsVisibility === "hidden" || sanitized.toolInputsVisibility === "collapsed" || sanitized.toolInputsVisibility === "expanded"
@@ -406,7 +404,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     showUsageMetrics: sanitized.showUsageMetrics ?? defaultUiSettings.showUsageMetrics,
     usageMetricsExpansion: normalizeExpansionPreference(
       sanitized.usageMetricsExpansion,
-      usageMetricsFallback,
+      fallback.usageMetricsExpansion,
     ),
     showProviderUsageCreditBalance:
       sanitized.showProviderUsageCreditBalance ?? defaultUiSettings.showProviderUsageCreditBalance,
@@ -857,11 +855,6 @@ async function writeStateOwner(owner: string, patch: unknown, admitted?: () => b
 
 function updateUiSettings(updates: Partial<UiSettings>): Promise<boolean> {
   const current = uiConfigBucket()
-  if (updates.toolCallExpansionDefaults?.preset === "custom" && preferences().toolCallExpansionDefaults.preset !== "custom") {
-    // Save the defaults inherited from the preset before switching away from it.
-    const { toolGroupVisibility, usageMetricsExpansion } = preferences()
-    updates = { toolGroupVisibility, usageMetricsExpansion, ...updates }
-  }
   const nextSettings = normalizeUiSettings({ ...(current.settings ?? {}), ...updates })
   const patch = {
     settings: Object.fromEntries(

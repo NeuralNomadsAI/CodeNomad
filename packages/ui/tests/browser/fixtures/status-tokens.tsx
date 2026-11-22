@@ -4,7 +4,7 @@ import StatusTab from "../../../src/components/instance/shell/right-panel/tabs/S
 import { ChatSettingsSection } from "../../../src/components/settings/chat-settings-section"
 import { NotificationRoutingTable } from "../../../src/components/settings/notification-routing-table"
 import TranscriptFilters from "../../../src/components/transcript-filters"
-import { transcriptPresetPatch, transcriptVisibility, transcriptVisibilityRows } from "../../../src/components/transcript-visibility"
+import { transcriptVisibility, transcriptVisibilityRows } from "../../../src/components/transcript-visibility"
 import { ConfigProvider, preferences, toggleUsageMetrics, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
@@ -30,23 +30,17 @@ const client: any = {
 const query = new URLSearchParams(location.search)
 const saved = query.get("saved"), saveDelay = Number(query.get("saveDelay") ?? 0)
 let config: any = { settings: { locale: "en", ...(saved === null ? {} : { showUsageMetrics: saved === "true", usageMetricsExpansion: "expanded" }) } }
-if (query.has("legacyEverything")) {
-  Object.assign(config.settings, transcriptPresetPatch("everything"))
-  delete config.settings.toolGroupVisibility
-  delete config.settings.usageMetricsExpansion
-  const stored = sessionStorage.getItem("fixture:legacy-transcript-settings")
-  if (stored) config = JSON.parse(stored)
-}
-serverApi.fetchConfigOwner = async () => config
 let saves = 0, inFlight = 0, maxInFlight = 0, systemChecks = 0
-serverApi.patchConfigOwner = async (_owner, patch: any) => {
-  saves += 1
-  maxInFlight = Math.max(maxInFlight, ++inFlight)
-  // ?saveDelay=<ms> keeps each save pending like a slow server.
-  try { if (saveDelay) await new Promise(resolve => setTimeout(resolve, saveDelay)) } finally { inFlight -= 1 }
-  config = { ...config, ...patch, settings: { ...config.settings, ...patch.settings } }
-  if (query.has("legacyEverything")) sessionStorage.setItem("fixture:legacy-transcript-settings", JSON.stringify(config))
-  return config
+if (!query.has("legacyEverything")) {
+  serverApi.fetchConfigOwner = async () => config
+  serverApi.patchConfigOwner = async (_owner, patch: any) => {
+    saves += 1
+    maxInFlight = Math.max(maxInFlight, ++inFlight)
+    // ?saveDelay=<ms> keeps each save pending like a slow server.
+    try { if (saveDelay) await new Promise(resolve => setTimeout(resolve, saveDelay)) } finally { inFlight -= 1 }
+    config = { ...config, ...patch, settings: { ...config.settings, ...patch.settings } }
+    return config
+  }
 }
 serverApi.fetchStateOwner = async () => ({} as any)
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)

@@ -1,9 +1,15 @@
 import assert from "node:assert/strict"
-import { after, before, test } from "node:test"
-import { mkdir } from "node:fs/promises"
+import { after, before, test, type TestContext } from "node:test"
+import { mkdir, mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { Page } from "playwright"
 import { startProductFixture } from "./fixtures/product-fixture-server"
+import { transcriptPresetPatch } from "../../src/components/transcript-visibility"
+import { resolveConfigLocation } from "../../../server/src/config/location"
+import { createLogger } from "../../../server/src/logger"
+import { SettingsService } from "../../../server/src/settings/service"
 
 // The status-tokens fixture renders the real Message content popup beside Settings → Chat.
 let fixture: Awaited<ReturnType<typeof startProductFixture>>
@@ -22,42 +28,79 @@ const center = async (locator: ReturnType<Page["locator"]>) => {
 }
 const pressed = (column: ReturnType<Page["locator"]>) => column.evaluateAll(buttons => buttons.map(button => button.getAttribute("aria-pressed")))
 
-test("customizing a legacy Everything preset keeps inherited rows and saves grouping across reload", async () => {
+async function openLegacyEverything(t: TestContext, holdHide?: () => Promise<void>) {
+  const root = await mkdtemp(join(tmpdir(), "codenomad-transcript-settings-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const store = new SettingsService(resolveConfigLocation(root), undefined, createLogger({ level: "silent", destination: "stdout" }))
+  const { toolGroupVisibility, usageMetricsExpansion, ...legacy } = transcriptPresetPatch("everything")
+  store.mergePatchOwner("config", "ui", { settings: { locale: "en", ...legacy } })
   const page = await fixture.browser.newPage({ viewport: { width: 1200, height: 900 }, locale: "en-US" })
+  t.after(() => page.close())
+  await page.addInitScript(() => { (window as any).EventSource = class { addEventListener() {} removeEventListener() {} close() {} } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/storage/config/ui", async route => {
+    if (route.request().method() === "GET") return route.fulfill({ json: store.getRawConfigOwner("ui") })
+    const patch = route.request().postDataJSON()
+    const updated = store.mergePatchOwner("config", "ui", patch)
+    if (patch.settings?.toolGroupVisibility === "hidden") await holdHide?.()
+    await route.fulfill({ json: updated })
+  })
+  await page.goto(`${fixture.url}?legacyEverything`)
+  await page.waitForFunction(() => Boolean((window as any).fixture))
+  await page.getByRole("button", { name: "Message content", exact: true }).click()
+  return { page, store }
+}
+
+test("customizing a legacy Everything preset keeps inherited rows and saves grouping across reload", async t => {
+  const { page } = await openLegacyEverything(t)
+  assert.equal(await preset(page).inputValue(), "everything")
+  const groups = page.getByRole("group", { name: "Tool groups", exact: true })
+  const shell = page.getByRole("group", { name: "shell", exact: true })
+  const states = () => pressed(page.locator(".transcript-filter-row button"))
+  const before = await states()
+  const shellChevron = shell.getByRole("button", { name: "Collapse shell", exact: true })
+  const index = await shellChevron.evaluate(button => [...document.querySelectorAll(".transcript-filter-row button")].indexOf(button))
+  assert.equal(await groups.getByRole("button", { name: "Collapse Tool groups" }).getAttribute("aria-pressed"), "true")
+  await shellChevron.click()
+  await page.locator('.transcript-filters[aria-busy="false"]').waitFor()
+  assert.equal(await preset(page).inputValue(), "custom")
+  before[index] = "false"
+  assert.deepEqual(await states(), before)
+
+  await page.reload()
+  await page.waitForFunction(() => Boolean((window as any).fixture))
+  await page.getByRole("button", { name: "Message content", exact: true }).click()
+  assert.equal(await preset(page).inputValue(), "custom")
+  assert.deepEqual(await states(), before)
+  await groups.getByRole("button", { name: "Disable tool grouping", exact: true }).click()
+  await page.locator('.transcript-filters[aria-busy="false"]').waitFor()
+
+  await page.reload()
+  await page.waitForFunction(() => Boolean((window as any).fixture))
+  await page.getByRole("button", { name: "Message content", exact: true }).click()
+  assert.ok(await groups.getByRole("button", { name: "Enable tool grouping", exact: true }).isVisible())
+  assert.ok(await shell.getByRole("button", { name: "Expand shell", exact: true }).isVisible())
+})
+
+test("customizing Shell while the grouping save is pending keeps groups disabled", { timeout: 90_000 }, async t => {
+  const { promise: committed, resolve: markCommitted } = Promise.withResolvers<void>()
+  const { promise: held, resolve: release } = Promise.withResolvers<void>()
+  const { page, store } = await openLegacyEverything(t, () => { markCommitted(); return held })
   try {
-    await page.addInitScript(() => { (window as any).EventSource = class { addEventListener() {} removeEventListener() {} close() {} } })
-    await page.route("**/api/**", route => route.fulfill({ json: {} }))
-    await page.goto(`${fixture.url}?legacyEverything`)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.getByRole("button", { name: "Disable tool grouping", exact: true }).click()
+    await committed
+    const shell = page.locator('.settings-expansion-select[aria-label="Default state for shell"]')
+    await page.keyboard.press("Escape")
+    await shell.click()
+    assert.equal(await page.evaluate(() => (window as any).fixture.preferences().toolGroupVisibility), "expanded")
+    await page.getByRole("option", { name: "Collapsed", exact: true }).click()
+    await shell.getByText("Collapsed", { exact: true }).waitFor()
+    release()
     await page.getByRole("button", { name: "Message content", exact: true }).click()
-    assert.equal(await preset(page).inputValue(), "everything")
-    const groups = page.getByRole("group", { name: "Tool groups", exact: true })
-    const shell = page.getByRole("group", { name: "shell", exact: true })
-    const states = () => pressed(page.locator(".transcript-filter-row button"))
-    const before = await states()
-    const shellChevron = shell.getByRole("button", { name: "Collapse shell", exact: true })
-    const index = await shellChevron.evaluate(button => [...document.querySelectorAll(".transcript-filter-row button")].indexOf(button))
-    assert.equal(await groups.getByRole("button", { name: "Collapse Tool groups" }).getAttribute("aria-pressed"), "true")
-    await shellChevron.click()
     await page.locator('.transcript-filters[aria-busy="false"]').waitFor()
-    assert.equal(await preset(page).inputValue(), "custom")
-    before[index] = "false"
-    assert.deepEqual(await states(), before)
-
-    await page.reload()
-    await page.waitForFunction(() => Boolean((window as any).fixture))
-    await page.getByRole("button", { name: "Message content", exact: true }).click()
-    assert.equal(await preset(page).inputValue(), "custom")
-    assert.deepEqual(await states(), before)
-    await groups.getByRole("button", { name: "Disable tool grouping", exact: true }).click()
-    await page.locator('.transcript-filters[aria-busy="false"]').waitFor()
-
-    await page.reload()
-    await page.waitForFunction(() => Boolean((window as any).fixture))
-    await page.getByRole("button", { name: "Message content", exact: true }).click()
-    assert.ok(await groups.getByRole("button", { name: "Enable tool grouping", exact: true }).isVisible())
-    assert.ok(await shell.getByRole("button", { name: "Expand shell", exact: true }).isVisible())
-  } finally { await page.close() }
+    assert.equal((store.getRawConfigOwner("ui").settings as Record<string, unknown>).toolGroupVisibility, "hidden")
+    assert.ok(await page.getByRole("button", { name: "Enable tool grouping", exact: true }).isVisible())
+  } finally { release() }
 })
 
 test("dragging across Message content toggles gives every crossed row of that column the first one's new state", async () => {
