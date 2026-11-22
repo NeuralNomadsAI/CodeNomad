@@ -1308,6 +1308,64 @@ fn partition_protocol_and_hashes_are_validated() {
 }
 
 #[test]
+fn partition_subset_verifies_omitted_data_and_retains_shared_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let manager = ClientState::initialize_at(directory.path()).unwrap();
+    enable_restore(&manager);
+    let a = manager.active_window_id().unwrap();
+    let b = "11111111-1111-4111-8111-111111111111";
+    assert!(manager.add_window(b.to_string()).unwrap());
+    let shared = "shared";
+    let key = partition_key(shared);
+    let added = "added";
+    let added_key = partition_key(added);
+    let mut keys = vec![key.clone(), added_key.clone()];
+    keys.sort();
+    let root = partition_root(&keys, json!({}));
+    assert!(manager
+        .commit_partitions_guarded_for(
+            &a,
+            partition_commit(json!({
+                "protocolVersion": 1, "snapshot": partition_root(std::slice::from_ref(&key), json!({})),
+                "partitionKeys": [key.clone()], "partitions": { key.clone(): shared }
+            })),
+            || true,
+        )
+        .unwrap());
+    let delta = |content: &str| {
+        partition_commit(json!({
+            "protocolVersion": 1, "snapshot": root, "partitionKeys": keys,
+            "partitions": { added_key.clone(): content }
+        }))
+    };
+    assert!(manager
+        .commit_partitions_guarded_for(b, delta("wrong"), || true)
+        .unwrap_err()
+        .contains("digest mismatch"));
+    let path = directory.path().join("partitions").join(&key);
+    fs::write(&path, "corrupt").unwrap();
+    assert!(manager
+        .commit_partitions_guarded_for(b, delta(added), || true)
+        .unwrap_err()
+        .contains("Missing or invalid"));
+    fs::write(&path, shared).unwrap();
+    assert!(manager
+        .commit_partitions_guarded_for(b, delta(added), || true)
+        .unwrap());
+    assert!(manager.remove_window(&a).unwrap());
+    assert_eq!(
+        manager
+            .load_partition_guarded_for(b, &key, || true)
+            .unwrap()
+            .as_deref(),
+        Some(shared)
+    );
+    assert!(manager.remove_window(b).unwrap());
+    assert!(!path.exists());
+    assert!(!directory.path().join("partitions").join(added_key).exists());
+}
+
+#[test]
 fn partition_commit_read_and_failure_safety() {
     let (directory, state, fail) = failing_state(false);
     enable_restore(&state);

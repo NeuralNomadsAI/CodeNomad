@@ -11,6 +11,8 @@ import {stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
 
 const repository=path.resolve(import.meta.dirname,'../../..')
 const write=process.argv.includes('--write')
+const reader=process.argv.includes('--reader')
+assert(!(write&&reader),'Reader qualification stays read-only')
 const source=process.env.RUNE_SERVER_EXE,target=process.env.CARGO_TARGET_DIR
 for(const [name,value]of Object.entries({RUNE_SERVER_EXE:source,CARGO_TARGET_DIR:target}))assert(value&&path.isAbsolute(value),`${name} must be explicit and absolute`)
 assert((await stat(source)).isFile(),'Explicit Rust server is missing')
@@ -22,7 +24,7 @@ await mkdir(path.join(directory,'empty'),{recursive:true});await mkdir(path.join
 for(const [file,bytes]of [['été 日本語.txt','été\n日本語🦀\r\n'],['empty.txt',''],['binary.bin',Buffer.from([0,1,255,128,0,42])],
   ['nested/日本語.txt','nested bytes'],['full.bin',Buffer.alloc(5*1024*1024,0x93)],['oversized.bin',Buffer.alloc(5*1024*1024+1,0x93)],['.git/private.txt','protected']])await writeFile(path.join(directory,file),bytes)
 await writeFile(path.join(foreign,'foreign.txt'),'private sibling bytes')
-const proof={root,directory,foreign,write,result:'failed',requests:[],nativeRequests:[],links:{},client:null,shutdown:null}
+const proof={root,directory,foreign,write,reader,result:'failed',requests:[],nativeRequests:[],links:{},client:null,shutdown:null}
 for(const [name,destination]of [['outward',foreign],['protected',path.join(directory,'.git')]]){
   try{await symlink(destination,path.join(directory,name),process.platform==='win32'?'junction':'dir');proof.links[name]={created:true}}
   catch(error){proof.links[name]={created:false,reason:error.code??'unavailable'}}
@@ -82,8 +84,10 @@ try{
   await new Promise((resolve,reject)=>{proxy.once('error',reject);proxy.listen(0,'127.0.0.1',resolve)})
   const manifest=path.join(root,'manifest.json')
   await writeFile(manifest,JSON.stringify({directory,foreign,workspaceId:workspace,origin:`http://127.0.0.1:${proxy.address().port}/`,
-    write,outwardLink:proof.links.outward.created,protectedLink:proof.links.protected.created})+'\n')
-  const args=['+1.99.1','test','--offline','--locked','-p','codenomad-client',...(write?['--test','files_write_server','real_rust_files_write_contract']:['--lib','files_tests::real_rust_files_read_contract']),'--','--exact','--ignored','--nocapture']
+    write,reader,outwardLink:proof.links.outward.created,protectedLink:proof.links.protected.created})+'\n')
+  const test=reader?['-p','codenomad-rune-app','--features','test-support','files::view::tests::server::real_rust_reader_ui_contract']
+    :['-p','codenomad-client',...(write?['--test','files_write_server','real_rust_files_write_contract']:['--lib','files_tests::real_rust_files_read_contract'])]
+  const args=['+1.99.1','test','--offline','--locked',...test,'--','--exact','--ignored','--nocapture']
   proof.command=['cargo',...args];proof.cargoTarget=target
   const cargoEnv={...env,CARGO_TARGET_DIR:target,CARGO_INCREMENTAL:'0',RUNE_FILES_TEST_MANIFEST:manifest,RUNE_FILES_TEST_PASSWORD:password,
     CARGO_HOME:process.env.CARGO_HOME??path.join(os.homedir(),'.cargo'),RUSTUP_HOME:process.env.RUSTUP_HOME??path.join(os.homedir(),'.rustup')}
@@ -100,6 +104,7 @@ try{
   assert.equal(receipts.length,1);assert.equal(receipts[0].result,'ok');proof.client=receipts[0]
   assert(!proof.requests.some(row=>row.blocked),'Typed client stays inside the explicit fixture request policy')
   assert(!proof.nativeRequests.some(row=>row.method!=='GET'||row.path.includes('/session')||row.path.endsWith('/prompt')),'No native session or prompt mutations')
+  if(reader)assert.equal(await readFile(path.join(directory,'été 日本語.txt'),'utf8'),'été\n日本語🦀\r\n','Reader preserves fixture bytes')
   if(write){
     const versions=proof.client.versions,contents=proof.client.contents
     assert.equal(versions.length,4);assert.equal(new Set(versions).size,4)

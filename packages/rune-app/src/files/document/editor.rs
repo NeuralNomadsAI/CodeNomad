@@ -117,6 +117,9 @@ impl Editor {
     pub fn scope(&self) -> u64 {
         self.scope
     }
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
     pub fn edit(&self) -> &TextEdit {
         &self.edit
     }

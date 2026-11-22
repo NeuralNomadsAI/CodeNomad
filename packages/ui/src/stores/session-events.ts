@@ -28,7 +28,7 @@ import type { PermissionRequest } from "../types/permission"
 import { showToastNotification, type ToastHandle, ToastVariant, type ToastPayload } from "../lib/notifications"
 import { uiState } from "./preferences"
 import { getInstanceLabel } from "../lib/instance-label"
-import { batch } from "solid-js"
+import { batch, createSignal } from "solid-js"
 import { setActiveSessionFromList } from "./session-state"
 import { applySurface, beginGesture } from "./session-surface"
 import {
@@ -113,13 +113,17 @@ const latestSessionMoves = new Map<string, Map<string, SessionMove>>()
 type SessionPlacement = Pick<Session, "location" | "projectID" | "subpath"> & { listWorktreeSlug?: string }
 type SessionPlacementRead = SessionInfo & { listWorktreeSlug?: string }
 type PlacementEvidence = { placement: SessionPlacement; generation: number; client: ReturnType<typeof getRootClient>; returnFrom?: string | null }
-const confirmedPlacements = new Map<string, Map<string, PlacementEvidence>>()
+const [placementEvidence, setPlacementEvidence] = createSignal(new Map<string, Map<string, PlacementEvidence>>())
 const LOCATED_ELSEWHERE = Symbol("session located elsewhere")
 const SESSION_MISSING = Symbol("session not found")
 
 export function captureSessionPlacementEvidence(instanceId: string, sessionId: string): () => boolean {
-  const evidence = confirmedPlacements.get(instanceId)?.get(sessionId)
-  return () => confirmedPlacements.get(instanceId)?.get(sessionId) === evidence
+  const evidence = placementEvidence().get(instanceId)?.get(sessionId)
+  return () => placementEvidence().get(instanceId)?.get(sessionId) === evidence
+}
+
+export function getSessionPlacementEvidence(instanceId: string): ReadonlyMap<string, unknown> | undefined {
+  return placementEvidence().get(instanceId)
 }
 
 export function matchesSessionPlacement(placement: SessionPlacement | undefined, expected: SessionPlacement): boolean {
@@ -130,14 +134,28 @@ export function matchesSessionPlacement(placement: SessionPlacement | undefined,
 export function confirmSessionPlacement(instanceId: string, sessionId: string, { location, projectID, subpath, listWorktreeSlug }: SessionPlacement, returnFrom?: string | null): void {
   const client = instances().get(instanceId)?.client
   if (!client) return
-  const placements = confirmedPlacements.get(instanceId) ?? new Map<string, PlacementEvidence>()
-  placements.set(sessionId, { placement: { location, projectID, subpath, listWorktreeSlug }, client, generation: getOpenCodeInstanceGeneration(instanceId), returnFrom })
-  confirmedPlacements.set(instanceId, placements)
+  const evidence = { placement: { location, projectID, subpath, listWorktreeSlug }, client, generation: getOpenCodeInstanceGeneration(instanceId), returnFrom }
+  setPlacementEvidence(previous => new Map(previous).set(instanceId, new Map(previous.get(instanceId)).set(sessionId, evidence)))
+}
+
+function clearPlacementEvidence(instanceId: string, sessionId?: string): void {
+  setPlacementEvidence(previous => {
+    const held = previous.get(instanceId)
+    if (!held || (sessionId !== undefined && !held.has(sessionId))) return previous
+    const next = new Map(previous)
+    if (sessionId === undefined || held.size === 1) next.delete(instanceId)
+    else {
+      const placements = new Map(held)
+      placements.delete(sessionId)
+      next.set(instanceId, placements)
+    }
+    return next
+  })
 }
 
 /** Registered checkout identity; execution keeps the native directory. */
 export function confirmedSessionWorktree(instanceId: string, sessionId: string, placement: SessionPlacement) {
-  const confirmed = confirmedPlacements.get(instanceId)?.get(sessionId)
+  const confirmed = placementEvidence().get(instanceId)?.get(sessionId)
   const slug = confirmed?.placement.listWorktreeSlug
   if (slug && confirmed.returnFrom === undefined && confirmed.client === instances().get(instanceId)?.client
     && matchesSessionPlacement(placement, confirmed.placement)) {
@@ -150,7 +168,7 @@ export function confirmedSessionListDirectory(instanceId: string, sessionId: str
 }
 
 export function hasPendingSessionReturn(instanceId: string, sessionId: string): boolean {
-  return confirmedPlacements.get(instanceId)?.get(sessionId)?.returnFrom !== undefined
+  return placementEvidence().get(instanceId)?.get(sessionId)?.returnFrom !== undefined
 }
 
 /** Expired proof or a changed pending return needs a current probe. */
@@ -158,7 +176,7 @@ export function retainConfirmedSessionPlacement(
   instanceId: string, sessionId: string, placement: SessionPlacement | undefined,
   revalidations: Map<string, () => Promise<void>>, isCurrent: () => boolean, signal?: AbortSignal,
 ): boolean {
-  const confirmed = confirmedPlacements.get(instanceId)?.get(sessionId)
+  const confirmed = placementEvidence().get(instanceId)?.get(sessionId)
   if (!confirmed || !placement) return false
   const matching = matchesSessionPlacement(placement, confirmed.placement)
   const pendingReturn = confirmed.returnFrom !== undefined
@@ -172,7 +190,7 @@ export function retainConfirmedSessionPlacement(
   const authority = captureEventAuthority(instanceId)
   revalidations.set(sessionId, async () => {
     const current = () => authority.current() && isCurrent() && !signal?.aborted && !isSessionMovePending(instanceId, sessionId)
-      && confirmedPlacements.get(instanceId)?.get(sessionId) === confirmed
+      && placementEvidence().get(instanceId)?.get(sessionId) === confirmed
       && (confirmed.returnFrom === undefined || getMovedAwaySessions(instanceId).get(sessionId) === confirmed.returnFrom)
       && matchesSessionPlacement(sessions().get(instanceId)?.get(sessionId), capturedPlacement)
     const readSignal = signal ? AbortSignal.any([signal, authority.signal]) : authority.signal
@@ -470,7 +488,7 @@ function handleSessionMoved(instanceId: string, data: SessionMoved["data"]): voi
   }
 
   const move: SessionMove = { data, authority }
-  confirmedPlacements.get(instanceId)?.delete(sessionId)
+  clearPlacementEvidence(instanceId, sessionId)
   const latest = latestSessionMoves.get(instanceId) ?? new Map()
   latest.set(sessionId, move)
   latestSessionMoves.set(instanceId, latest)
@@ -614,9 +632,7 @@ export function getPendingSessionMove(instanceId: string, sessionId: string): Se
 }
 
 export function clearPendingSessionMove(instanceId: string, sessionId?: string): void {
-  const confirmed = confirmedPlacements.get(instanceId)
-  if (sessionId !== undefined) confirmed?.delete(sessionId)
-  if (sessionId === undefined || !confirmed?.size) confirmedPlacements.delete(instanceId)
+  clearPlacementEvidence(instanceId, sessionId)
   const moves = latestSessionMoves.get(instanceId)
   if (sessionId !== undefined) moves?.delete(sessionId)
   if (sessionId !== undefined) pendingSessionMoves.get(instanceId)?.delete(sessionId)
@@ -632,7 +648,7 @@ export function isSessionMovePending(instanceId: string, sessionId: string): boo
 }
 
 export function settleListedReturn(instanceId: string, id: string): boolean {
-  const evidence = confirmedPlacements.get(instanceId)?.get(id)
+  const evidence = placementEvidence().get(instanceId)?.get(id)
   if (evidence?.returnFrom === undefined || evidence.returnFrom !== getMovedAwaySessions(instanceId).get(id)
     || evidence.client !== instances().get(instanceId)?.client || evidence.generation !== getOpenCodeInstanceGeneration(instanceId)
     || isSessionMovePending(instanceId, id) || !matchesSessionPlacement(sessions().get(instanceId)?.get(id), evidence.placement)) return false
@@ -938,7 +954,7 @@ function handleSessionUpdate(
 
     setSessions((prev) => {
       const next = new Map(prev)
-      const instanceSessions = next.get(instanceId) ?? new Map<string, Session>()
+      const instanceSessions = new Map(prev.get(instanceId))
       instanceSessions.set(newSession.id, newSession)
       next.set(instanceId, instanceSessions)
       updatedInstanceSessions = instanceSessions
@@ -969,7 +985,7 @@ function handleSessionUpdate(
 
     setSessions((prev) => {
       const next = new Map(prev)
-      const instanceSessions = next.get(instanceId) ?? new Map<string, Session>()
+      const instanceSessions = new Map(prev.get(instanceId))
       instanceSessions.set(existingSession.id, updatedSession)
       next.set(instanceId, instanceSessions)
       updatedInstanceSessions = instanceSessions

@@ -3,8 +3,8 @@ import { clearNativeClientState, commitNativeClientStatePartitions, loadNativeCl
   saveNativeClientState, setNativeRestoreEnabled } from "../lib/native/client-state"
 import { decodeClientSnapshot, normalizeRestorableSession } from "./client-state-codec"
 import type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState } from "./client-state-codec"
-import { canCommitClientSnapshotV2, decodeClientSnapshotV2, encodeClientSnapshotV2, isClientSnapshotV2 } from "./client-state-partitions"
-import type { ClientSnapshotV2 } from "./client-state-partitions"
+import { canCommitClientSnapshotV2, createClientSnapshotV2Encoder, decodeClientSnapshotV2, isClientSnapshotV2 } from "./client-state-partitions"
+import type { ClientSnapshotV2, EncodedClientSnapshotV2 } from "./client-state-partitions"
 import { LEGACY_SESSION_PREVIEWS_KEY, SESSION_BROWSER_STATE_KEY, mergeSessionBrowsers, tabPreviewModes } from "./tab-view-state-codec"
 import { migrateLegacyTabPreviews } from "./tab-view-state-migration"
 export type { ClientSnapshotV1, RestorableSessionState, RestorableSidecarTabState, RestorableTabState, RestorableWorkspaceTabState }
@@ -32,6 +32,32 @@ let writeQueue: Promise<void> = Promise.resolve()
 let destructiveQueue: Promise<void> = Promise.resolve()
 let lastSaveError: unknown
 let partitionProtocolVersion: 1 | undefined
+let encodeSnapshot = createClientSnapshotV2Encoder()
+// Only the last root's keys stay confirmed: publication may sweep older keys.
+let confirmedPartitionKeys: ReadonlySet<string> | undefined
+async function commitSnapshot(snapshot: EncodedClientSnapshotV2): Promise<boolean> {
+  const known = confirmedPartitionKeys
+  confirmedPartitionKeys = undefined
+  const send = (partitions: Record<string, string>) => commitNativeClientStatePartitions({
+    protocolVersion: 1, snapshot: snapshot.root, partitions, partitionKeys: snapshot.partitionKeys,
+  })
+  if (known) {
+    const missing = snapshot.partitionKeys.filter(key => !known.has(key))
+    if (missing.length < snapshot.partitionKeys.length) {
+      try {
+        if (await send(Object.fromEntries(missing.map(key => [key, snapshot.partitions[key]!])))) {
+          confirmedPartitionKeys = new Set(snapshot.partitionKeys)
+          return true
+        }
+      } catch {
+        // The host may have lost or swept a key, or may require full commits.
+      }
+    }
+  }
+  const accepted = await send(snapshot.partitions)
+  if (accepted) confirmedPartitionKeys = new Set(snapshot.partitionKeys)
+  return accepted
+}
 // Content of the last accepted partitioned commit (root without revision/savedAt):
 // status-only captures re-encode to the same graph and need no native write.
 let committedContent: string | null = null
@@ -95,8 +121,8 @@ const cancelSaveTimer = () => {
   saveTimer = null
 }
 
-// Explicit flushes (navigation, close, host requests) always republish, so a graph
-// lost on the host side is rewritten; debounced saves skip an unchanged graph.
+// Explicit flushes (navigation, close, host requests) verify even unchanged
+// graphs on the host; debounced saves can skip them.
 function enqueuePendingSave(republish = false): Promise<void> {
   cancelSaveTimer()
   if (!dirty || !canWriteSnapshot()) return writeQueue
@@ -113,7 +139,7 @@ function enqueuePendingSave(republish = false): Promise<void> {
   dirty = false
   const save = async () => {
     try {
-      const partitioned = partitionProtocolVersion === 1 ? await encodeClientSnapshotV2(normalizedSnapshot) : null
+      const partitioned = partitionProtocolVersion === 1 ? await encodeSnapshot(normalizedSnapshot) : null
       const content = partitioned && JSON.stringify({ ...partitioned.root, revision: 0, savedAt: 0 })
       if (!republish && content && content === committedContent) {
         lastSaveError = undefined
@@ -128,12 +154,7 @@ function enqueuePendingSave(republish = false): Promise<void> {
       }
       committedContent = null
       const accepted = partitioned
-        ? await commitNativeClientStatePartitions({
-          protocolVersion: 1,
-          snapshot: partitioned.root,
-          partitions: partitioned.partitions,
-          partitionKeys: partitioned.partitionKeys,
-        })
+        ? await commitSnapshot(partitioned)
         : await saveNativeClientState(normalizedSnapshot)
       if (!accepted) {
         setClientStateIsPrimary(false)
@@ -182,6 +203,8 @@ function scheduleSave() {
     .catch((error) => console.warn("[client-state] failed to save client snapshot", error)), SAVE_DEBOUNCE_MS)
 }
 function resetLoadedState(snapshot: ClientSnapshotV1 | null = null, resetRevision = false) {
+  confirmedPartitionKeys = undefined
+  encodeSnapshot = createClientSnapshotV2Encoder()
   committedContent = null
   republishOnFlush = false
   layout = snapshot ? { ...snapshot.layout } : Object.create(null)
@@ -224,6 +247,7 @@ async function executeDestructiveTransaction(operation: () => Promise<boolean>, 
     // The host copy is unknown after a failed operation, even if a save that was in
     // flight recorded a commit meanwhile: the next save or flush rewrites it.
     committedContent = null
+    confirmedPartitionKeys = undefined
     republishOnFlush = true
     if (dirty) scheduleSave()
     throw error
@@ -371,6 +395,7 @@ export function initializeClientState(): Promise<void> {
       initialized = true
       if (!loaded.isPrimary || !loaded.restoreEnabled) return
       let snapshot: ClientSnapshotV1 | null
+      const verified = new Set<string>()
       if (isClientSnapshotV2(loaded.snapshot)) {
         writeBlock = "snapshot"
         try {
@@ -378,6 +403,7 @@ export function initializeClientState(): Promise<void> {
             loaded.snapshot,
             loaded.partitionProtocolVersion,
             loadNativeClientStatePartition,
+            key => verified.add(key),
           )
         } catch (error) {
           snapshot = null
@@ -392,6 +418,7 @@ export function initializeClientState(): Promise<void> {
         for (const tab of snapshot?.session?.tabs ?? []) if (tab.kind === "workspace") delete tab.workspaceId
       }
       resetLoadedState(snapshot && !snapshotOwnsLayout ? { ...snapshot, layout: {} } : snapshot, true)
+      if (snapshot && verified.size) confirmedPartitionKeys = verified
       if (!writeBlock) {
         const migratedLayout = snapshotOwnsLayout && migrateLegacyLayoutValues()
         const source = readClientLayoutValue(LEGACY_SESSION_PREVIEWS_KEY)

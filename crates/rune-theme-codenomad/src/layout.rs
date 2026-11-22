@@ -5,6 +5,21 @@ use rune::{El, GrowthSpec, edit::TextEdit};
 use std::{borrow::Cow, cell::Cell};
 
 thread_local! { static APPEARANCE: Cell<bool> = const { Cell::new(false) }; }
+thread_local! { static SOURCE_PALETTE: Cell<bool> = const { Cell::new(false) }; }
+pub(crate) fn source_palette() -> bool {
+    SOURCE_PALETTE.get()
+}
+/// Render a qualified subtree in Solid's product-default palette.
+pub fn with_source_palette<T>(render: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SOURCE_PALETTE.set(self.0);
+        }
+    }
+    let _restore = Restore(SOURCE_PALETTE.replace(true));
+    render()
+}
 pub fn dark() -> bool {
     APPEARANCE.get()
 }
@@ -108,11 +123,21 @@ pub fn transcript_rows<S: 'static>(
             move |state, index| with_appearance(appearance, || build(state, index)),
         )
 }
-pub fn composer(editor: El) -> El {
+pub fn composer(editor: El, in_scroll_stack: bool) -> El {
     // Current prompt-input.css editor bounds. A dedicated shared variant preserves them.
-    rune::auto_grow(editor, 1, usize::MAX)
-        .min_h(104.0)
-        .max_h(320.0)
+    if in_scroll_stack {
+        // Rune reveals focused controls in their nearest scroller. Let the session stack
+        // reveal the whole field when the interruption dock can push it out of view.
+        rune::col()
+            .key("scroll")
+            .w_full()
+            .min_h(104.0)
+            .child(editor)
+    } else {
+        rune::auto_grow(editor, 1, usize::MAX)
+            .min_h(104.0)
+            .max_h(320.0)
+    }
 }
 pub trait Layout {
     fn locale_direction(self, locale: &str) -> Self;
