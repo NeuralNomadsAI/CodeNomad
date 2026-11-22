@@ -134,7 +134,6 @@ impl Launcher {
         }
         self.pending = true;
         self.error = None;
-        self.visits.set_checks(None);
         let (out, input) = bounded(1);
         self.result = Some(input);
         let wake = self.wake.clone();
@@ -617,6 +616,7 @@ pub fn list(s: &mut State, more: bool) {
     if l.pending || more && (l.next.is_none() || l.sessions.len() >= MAX_BROWSED_SESSIONS) {
         return;
     }
+    l.visits.set_checks(None);
     l.listing = true;
     let cursor = if more { l.next.clone() } else { None };
     l.job("rune.list_error", async move {
@@ -737,7 +737,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let Some(l) = s.screen.launcher_mut() else {
         return false;
     };
-    let mut changed = l.visits.poll_checks();
+    let mut changed = !l.pending && l.visits.poll_checks();
     if let Some(result) = l
         .boot
         .as_ref()
@@ -804,6 +804,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
         }
         Ok(Reply::Created(b, title, submitted, dismiss)) => {
+            l.visits.verified(&b.session);
             if l.title.text == submitted {
                 l.title = TextEdit::new("");
                 l.show_title = false;
@@ -825,6 +826,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.sessions.retain(|row| !missing.contains(&row.id));
             l.listed_sessions.retain(|id| !missing.contains(id));
             l.visits.forget(&missing);
+            if let Some((backend, _, _)) = &selection {
+                l.visits.verified(&backend.session);
+            }
             if let Some(id) = selected
                 .as_deref()
                 .filter(|id| s.phase == Phase::Failed && missing.iter().any(|m| m == id))
@@ -857,6 +861,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             l.error = Some(key);
         }
+    }
+    if let Some(l) = s.screen.launcher_mut()
+        && !l.pending
+    {
+        l.visits.poll_checks();
     }
     tx.instant();
     true

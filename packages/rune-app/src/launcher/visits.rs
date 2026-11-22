@@ -10,11 +10,12 @@ struct Visit {
 pub struct Visits {
     ids: Vec<Option<Visit>>,
     cursor: usize,
-    checks: Option<Receiver<String>>,
+    checks: Option<(Receiver<String>, HashSet<String>)>,
 }
 
 impl Visits {
     pub fn record(&mut self, id: &str, step: Option<usize>, listed: bool) {
+        self.verified(id);
         let listed = listed || self.ids.iter().flatten().any(|v| v.id == id && v.listed);
         if let Some(step) = step.filter(|&step| self.at(step) == Some(id)) {
             self.cursor = step;
@@ -69,13 +70,20 @@ impl Visits {
         })
     }
     pub fn set_checks(&mut self, checks: Option<Receiver<String>>) {
-        self.checks = checks;
+        self.checks = checks.map(|rx| (rx, HashSet::new()));
+    }
+    pub fn verified(&mut self, id: &str) {
+        if let Some((_, verified)) = &mut self.checks {
+            verified.insert(id.to_owned());
+        }
     }
     pub fn poll_checks(&mut self) -> bool {
-        let Some(checks) = &self.checks else {
+        let Some((checks, verified)) = &self.checks else {
             return false;
         };
-        let missing: Vec<_> = std::iter::from_fn(|| checks.try_recv().ok()).collect();
+        let missing: Vec<_> = std::iter::from_fn(|| checks.try_recv().ok())
+            .filter(|id| !verified.contains(id))
+            .collect();
         if checks.is_closed() && checks.is_empty() {
             self.checks = None;
         }
@@ -102,5 +110,21 @@ mod tests {
         visits.record("d", None, false);
         assert_eq!(visits.steps(false, Some("d")).next(), None);
         assert_eq!(visits.steps(true, Some("d")).next(), Some((0, "a")));
+    }
+
+    #[test]
+    fn selecting_while_checks_are_pending_supersedes_only_that_sessions_check() {
+        let mut visits = Visits::default();
+        for key in ["a", "b", "c"] {
+            visits.record(key, None, true);
+        }
+        let (out, input) = codenomad_client::bounded(2);
+        visits.set_checks(Some(input));
+        visits.record("b", Some(1), true);
+        out.try_send("a".into()).unwrap();
+        out.try_send("b".into()).unwrap();
+        assert!(visits.poll_checks());
+        assert_eq!(visits.steps(true, None).next(), Some((1, "b")));
+        assert!(visits.steps(true, Some("b")).next().is_none());
     }
 }
