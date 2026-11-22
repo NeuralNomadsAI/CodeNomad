@@ -21,6 +21,7 @@ pub struct Row {
     pub busy: bool,
 }
 pub struct Ui {
+    pub presentation: super::presentation::Presentation,
     pub document: Editor,
     pub reader: Reader,
     pub tree: Tree,
@@ -44,6 +45,7 @@ impl Ui {
     pub fn new(backend: Backend, directory: String, reads: Reads, wake: Wake) -> Self {
         let (out, incoming) = bounded(16);
         Self {
+            presentation: super::presentation::Presentation::new(wake.clone()),
             document: Editor::new(
                 backend.clone(),
                 Store::default(),
@@ -146,14 +148,63 @@ impl Ui {
             self.launch(requests);
         }
     }
+    pub fn navigate(&mut self, path: &str, key: &rune::Key, rtl: bool, tx: &mut rune::Tx) -> bool {
+        use rune::Key;
+        let Some(index) = self.rows.iter().position(|row| row.entry.path == path) else {
+            return false;
+        };
+        let row = &self.rows[index];
+        let next = match key {
+            Key::Down => Some(
+                self.rows[(index + 1).min(self.rows.len() - 1)]
+                    .entry
+                    .path
+                    .clone(),
+            ),
+            Key::Up => Some(self.rows[index.saturating_sub(1)].entry.path.clone()),
+            Key::Home => self.rows.first().map(|row| row.entry.path.clone()),
+            Key::End => self.rows.last().map(|row| row.entry.path.clone()),
+            key if *key == if rtl { Key::Left } else { Key::Right } => {
+                match row.expanded {
+                    Some(false) => self.select(path.into(), true),
+                    Some(true) => {
+                        if let Some(child) = self
+                            .rows
+                            .get(index + 1)
+                            .filter(|child| child.parent == path)
+                        {
+                            tx.focus(format!("file-row-{}", child.entry.path), true);
+                        }
+                    }
+                    None => return false,
+                }
+                return true;
+            }
+            key if *key == if rtl { Key::Right } else { Key::Left } => {
+                if row.expanded == Some(true) {
+                    self.select(path.into(), true);
+                } else if row.parent != "." {
+                    tx.focus(format!("file-row-{}", row.parent), true);
+                }
+                return true;
+            }
+            _ => return false,
+        };
+        if let Some(path) = next {
+            tx.focus(format!("file-row-{path}"), true);
+        }
+        true
+    }
     pub fn open(&mut self, path: String) {
         if !self.stopped {
+            self.presentation.reset();
             self.document
                 .open(self.tree.directory().into(), path.clone());
             self.reader.open(self.tree.directory().into(), path);
         }
     }
     pub fn close_reader(&mut self) {
+        self.presentation.reset();
         self.document.close();
         self.reader.close();
     }
@@ -234,7 +285,9 @@ impl Ui {
         self.reader
             .activate(self.active && !self.document.writing());
         changed |= self.reader.poll(now);
-        changed | self.document.poll(&mut self.reader)
+        changed |= self.document.poll(&mut self.reader);
+        changed |= self.presentation.sync(&self.reader);
+        changed
     }
     fn launch(&mut self, requests: Vec<Read>) {
         for read in requests {

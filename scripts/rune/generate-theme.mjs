@@ -8,8 +8,20 @@ import {collectTheme} from './generate-theme-browser.mjs'
 import {themeFixtureHtml} from './generate-theme-fixture.mjs'
 import {generateWorkspaceIcons} from './parity/workspace-tree-row-icons.mjs'
 import {sourcePath} from './parity/workspace-tree-row-source.mjs'
+import ts from 'typescript'
 
 const ui=path.join(root,'packages/ui'),tokens=path.join(ui,'src/styles/tokens.css')
+const shellFile=path.join(ui,'src/components/instance/shell/storage.ts')
+const shell=ts.createSourceFile(shellFile,await readFile(shellFile,'utf8'),ts.ScriptTarget.Latest,true)
+let drawerWidth
+function visit(node){
+  if(ts.isVariableDeclaration(node)&&node.name.getText(shell)==='RIGHT_DRAWER_WIDTH'){
+    assert(node.initializer&&ts.isNumericLiteral(node.initializer),'Right drawer width must be explicit')
+    drawerWidth=Number(node.initializer.text)
+  }
+  ts.forEachChild(node,visit)
+}
+visit(shell);assert(drawerWidth>0&&Number.isFinite(drawerWidth),'Missing right drawer width')
 const css=await readFile(tokens,'utf8'),names=[...new Set([...css.matchAll(/--([a-zA-Z0-9_-]+)\s*:/g)].map(m=>m[1]))].sort()
 assert(names.length>100,'Expected the shared CodeNomad theme, not a theme subset')
 const temporary=path.join(root,'target/rune-codegen');await mkdir(temporary,{recursive:true})
@@ -24,6 +36,7 @@ const out={name:'CodeNomad',blend:{mode:'srgb',over:'surface-canvas'},light:{},d
   'CSS timing functions and Rune perceptual-duration springs have different curves; motion parity requires interaction captures.',
   'System font stacks are preserved as source strings; glyph metrics require per-platform image qualification.',
 ]}
+out.layout={rightDrawerWidth:drawerWidth}
 try{
   await server.listen()
   browser=await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1024,height:768},deviceScaleFactor:1})
@@ -40,7 +53,7 @@ try{
     out[appearance]=value.colors
     for(const field of ['numbers','strings','shadows','metrics'])out[field][appearance]=value[field]
   }
-  const files=[tokens,path.join(root,sourcePath),path.join(ui,'src/index.css'),path.join(ui,'tailwind.config.js'),path.join(ui,'postcss.config.js')]
+  const files=[tokens,shellFile,path.join(root,sourcePath),path.join(ui,'src/index.css'),path.join(ui,'tailwind.config.js'),path.join(ui,'postcss.config.js')]
   async function walk(folder){for(const entry of await readdir(folder,{withFileTypes:true})){
     const file=path.join(folder,entry.name);if(entry.isDirectory())await walk(file);else if(file.endsWith('.css'))files.push(file)
   }}

@@ -1,11 +1,11 @@
 use super::*;
+use crate::files::test_http as http;
 use crate::{files::Ui, platform::reads::Reads};
+use http::{Http, Request};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-mod http;
-use http::{Http, Request};
 
 async fn poll(ui: &mut Ui, done: impl Fn(&Ui) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(3);

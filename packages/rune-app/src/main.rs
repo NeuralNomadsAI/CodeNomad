@@ -368,6 +368,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                     rune::el()
                 })
                 .child(text(strings::t(status)))
+                .child(files::view::toggle(s))
                 .child(
                     text(strings::t(if s.paging {
                         "rune.loading"
@@ -402,7 +403,13 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         } else {
             text(&s.chat_title).key("chat-title").pad(Space::Md)
         })
-        .child(rune_theme_codenomad::interruption::history(expanded).child(rows))
+        .child(
+            files::view::body(
+                s,
+                rune_theme_codenomad::interruption::history(expanded).child(rows),
+            )
+            .remaining(),
+        )
         .child(agent_view::view(s, cx))
         .child(
             col()

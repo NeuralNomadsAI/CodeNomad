@@ -1,8 +1,10 @@
 pub mod document;
+mod presentation;
 pub mod reader;
 pub mod request;
 pub mod state;
 mod ui;
+pub(crate) mod view;
 pub use ui::Ui;
 
 pub fn bind(s: &mut crate::State, backend: &crate::backend::Backend) {
@@ -28,5 +30,7 @@ pub fn bind(s: &mut crate::State, backend: &crate::backend::Backend) {
     });
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod test_http;
 #[cfg(test)]
 mod tests;

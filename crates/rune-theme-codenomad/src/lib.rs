@@ -4,6 +4,7 @@ pub mod action_menu;
 #[cfg(feature = "test-support")]
 pub mod action_menu_scene;
 pub mod catalogue;
+pub mod document_reader;
 mod generated_catalogues;
 pub mod interruption;
 mod kit;
