@@ -3,6 +3,28 @@ use crate::{
     history::{self, Page},
 };
 use serde_json::json;
+
+#[test]
+fn older_pages_preserve_complete_tool_text_above_the_metadata_budget() {
+    let rows: Vec<_> = (0..20).map(|i| history::decode_message(&json!({
+        "id": format!("part_{i}"),
+        "type": "assistant",
+        "content": [{
+            "type": "tool", "id": "call", "name": "read",
+            "state": {"status": "completed", "content": [{"type": "text", "text": "x".repeat(450 * 1024)}]}
+        }]
+    })).unwrap()).collect();
+    let mut resident = rows[17..].to_vec();
+    for index in (0usize..17).rev().step_by(2) {
+        resident = history::join(&rows[index.saturating_sub(1)..=index + 1], &resident).unwrap();
+    }
+    assert_eq!(resident, rows);
+    assert_eq!(
+        crate::content::tool_text_bytes(&resident[0].parts),
+        450 * 1024
+    );
+}
+
 fn rows(ids: &[&str]) -> Vec<Message> {
     ids.iter()
         .map(|id| Message {

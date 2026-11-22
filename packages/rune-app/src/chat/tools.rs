@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     State,
-    content::{Part, Tool, json_bytes},
+    content::{Part, Tool},
     screen,
     strings::{locale, t},
 };
@@ -15,6 +15,7 @@ use rune_theme_codenomad::{
     markdown,
 };
 use serde_json::Value;
+use std::sync::Arc;
 
 fn string<'a>(value: &'a Value, keys: &[&str]) -> &'a str {
     keys.iter()
@@ -42,11 +43,14 @@ fn language(path: &str) -> &str {
     let Some((_, ext)) = file.rsplit_once('.') else {
         return "text";
     };
-    match ext {
-        "py" => "python",
-        "md" => "markdown",
-        _ if markdown::knows_language(ext) => ext,
-        _ => "text",
+    if ext.eq_ignore_ascii_case("py") {
+        "python"
+    } else if ext.eq_ignore_ascii_case("md") {
+        "markdown"
+    } else if markdown::knows_language(ext) {
+        ext
+    } else {
+        "text"
     }
 }
 
@@ -173,8 +177,22 @@ fn output<'a>(tool: &'a Tool, parts: &mut [&'a str; 4]) -> &'static str {
     }
 }
 
-pub(super) fn view(s: &State, message: &str, tool: &Tool) -> El {
-    let key = format!("tool-{message}-{}", tool.id);
+pub(super) fn view(s: &State, message: &str, tool: &Arc<Tool>) -> El {
+    let key = tool_key(message, &tool.id);
+    let display = &s.transcript_display;
+    let stamp = (
+        Arc::as_ptr(tool) as usize,
+        std::rc::Rc::as_ptr(&s.input_scope) as usize,
+        locale(),
+        ["", "-tool_input", "-tool_output", "-wrap", "-error"].map(|suffix| {
+            let section = format!("{key}{suffix}");
+            (display.toggled(&section), display.steps(&section))
+        }),
+    );
+    markdown::hold_frame(key.clone(), stamp, || render(s, message, tool, &key)).key(key)
+}
+
+fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
     let expanded = s.transcript_display.toggled(&key)
         ^ matches!(tool.name.as_str(), "bash" | "shell" | "edit");
     let status = match tool.status.as_str() {
@@ -185,9 +203,9 @@ pub(super) fn view(s: &State, message: &str, tool: &Tool) -> El {
         _ => "toolCall.status.unknown",
     };
     let title = title(tool);
-    let toggle = key.clone();
+    let toggle = message.to_owned();
+    let owner = tool.clone();
     let mut block = col()
-        .key(key.clone())
         .full_width()
         .pad(Space::Sm)
         .separate(Space::Sm)
@@ -198,7 +216,9 @@ pub(super) fn view(s: &State, message: &str, tool: &Tool) -> El {
                     layout::button(
                         &title,
                         false,
-                        screen::action(&s.input_scope, move |s| Display::toggle(s, &toggle)),
+                        screen::action(&s.input_scope, move |s| {
+                            Display::toggle(s, &tool_key(&toggle, &owner.id))
+                        }),
                     )
                     .key(format!("toggle-{key}"))
                     .expanded(expanded),
@@ -230,7 +250,7 @@ pub(super) fn view(s: &State, message: &str, tool: &Tool) -> El {
         );
         if show {
             block = block.child(copy(s, message, &tool.id, Section::Input));
-            if !tool.input.is_string() && json_bytes(&tool.input) > TOOL_LIMIT {
+            if !tool.input.is_string() && tool.input_display_bytes > TOOL_LIMIT {
                 block = block.child(text(t("toolCall.output.tooLarge")).key(input_key));
             } else if let Ok(input) = serde_json::to_string_pretty(&tool.input) {
                 block = block.child(markdown::tool_pane(
@@ -250,6 +270,13 @@ pub(super) fn view(s: &State, message: &str, tool: &Tool) -> El {
         lang
     };
     if parts.iter().any(|part| !part.trim().is_empty()) {
+        let highlight = tool.status != "running"
+            && (lang != "diff"
+                || parts
+                    .iter()
+                    .flat_map(|text| text.encode_utf16())
+                    .nth(TOOL_LIMIT)
+                    .is_none());
         let output_key = format!("{key}-tool_output");
         let wrap_key = format!("{key}-wrap");
         let wrap = !s.transcript_display.toggled(&wrap_key);
@@ -270,12 +297,7 @@ pub(super) fn view(s: &State, message: &str, tool: &Tool) -> El {
             )
             .child(markdown::tool_pane(
                 window(s, output_key, &parts, TOOL_LIMIT, |shown, units| {
-                    markdown::code(
-                        shown,
-                        lang,
-                        tool.status != "running" && units <= TOOL_LIMIT,
-                        wrap,
-                    )
+                    markdown::code(shown, lang, highlight && units <= TOOL_LIMIT, wrap)
                 }),
                 tool.name == "edit",
             ));
@@ -315,10 +337,16 @@ enum Section {
     Error,
 }
 
+fn tool_key(message: &str, call: &str) -> String {
+    let escaped = call.replace('%', "%25").replace('/', "%2F");
+    format!("tool-{message}:{}:{escaped}", escaped.len())
+}
+
 fn copy(s: &State, message: &str, call: &str, section: Section) -> El {
+    let base = tool_key(message, call);
     let (message, call) = (message.to_owned(), call.to_owned());
     let key = format!(
-        "copy-tool-{message}-{call}-{}",
+        "copy-{base}-{}",
         match section {
             Section::Input => "input",
             Section::Output => "output",

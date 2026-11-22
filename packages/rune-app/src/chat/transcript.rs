@@ -44,6 +44,7 @@ pub fn message(s: &State, i: usize) -> El {
             .steps(&gap_key)
             .saturating_mul(PART_LIMIT),
     );
+    let mut reveal_start = (head > initial).then(|| head.saturating_sub(PART_LIMIT));
     for (index, part) in m.parts.iter().enumerate() {
         if index == head && head < tail {
             let hidden = tail - head;
@@ -72,6 +73,9 @@ pub fn message(s: &State, i: usize) -> El {
                             false,
                             screen::action_tx(&s.input_scope, move |s, tx| {
                                 tx.scroll_key_to(format!("{key}-start"), 0.0);
+                                if tx.by_keys() && hidden <= PART_LIMIT {
+                                    tx.focus(format!("{key}-start"), true);
+                                }
                                 Display::reveal_next(s, &key);
                             }),
                         )
@@ -80,24 +84,38 @@ pub fn message(s: &State, i: usize) -> El {
             );
         }
         let visible = index < head || index >= tail;
-        if index == head.saturating_sub(PART_LIMIT) && head > initial {
-            view = view.child(rune::el().key(format!("{gap_key}-start")));
-        }
-        match part {
+        let body = match part {
             Part::Text(body) => {
                 let key = format!("body-{}-{ordinal}", m.id);
                 ordinal += 1;
                 if visible && !body.text.trim().is_empty() {
-                    view = view.child(document::prose(
+                    Some(document::prose(
                         s,
                         key,
                         &body.text,
                         !m.completed && body.provenance != TextProvenance::Closed,
-                    ));
+                    ))
+                } else {
+                    None
                 }
             }
-            Part::Tool(tool) if visible => view = view.child(tools::view(s, &m.id, tool)),
-            Part::Tool(_) => {}
+            Part::Tool(tool) if visible => Some(tools::view(s, &m.id, tool)),
+            Part::Tool(_) => None,
+        };
+        if let Some(body) = body {
+            if reveal_start.is_some_and(|first| index >= first) {
+                view = view.child(
+                    col()
+                        .key(format!("{gap_key}-start"))
+                        .focusable(true)
+                        .tab_index(-1)
+                        .full_width()
+                        .child(body),
+                );
+                reveal_start = None;
+            } else {
+                view = view.child(body);
+            }
         }
     }
     view

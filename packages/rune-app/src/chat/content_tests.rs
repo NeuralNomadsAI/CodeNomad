@@ -1,4 +1,4 @@
-use crate::{Phase, content::Part, history, init, view};
+use crate::{Phase, State, content::Part, history, init, view};
 use rune::{Env, Runtime};
 use serde_json::json;
 #[test]
@@ -53,20 +53,22 @@ fn native_tools_preserve_order_and_reveal_real_input_output_on_demand() {
     for _ in 0..12 {
         rt.frame(1.0 / 60.0);
     }
-    assert!(rt.find("tool-native_msg-call_1-tool_output").is_none());
-    let (x, y) = rt.find("toggle-tool-native_msg-call_1").unwrap();
+    assert!(rt.find("tool-native_msg:6:call_1-tool_output").is_none());
+    let (x, y) = rt.find("toggle-tool-native_msg:6:call_1").unwrap();
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
     for _ in 0..12 {
         rt.frame(1.0 / 60.0);
     }
-    assert!(rt.find("tool-native_msg-call_1-tool_input").is_none());
-    assert!(rt.find("tool-native_msg-call_1-tool_output").is_some());
-    let (x, y) = rt.find("toggle-tool-native_msg-call_1-tool_input").unwrap();
+    assert!(rt.find("tool-native_msg:6:call_1-tool_input").is_none());
+    assert!(rt.find("tool-native_msg:6:call_1-tool_output").is_some());
+    let (x, y) = rt
+        .find("toggle-tool-native_msg:6:call_1-tool_input")
+        .unwrap();
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);
     rt.frame(1.0 / 60.0);
-    assert!(rt.find("tool-native_msg-call_1-tool_input").is_some());
+    assert!(rt.find("tool-native_msg:6:call_1-tool_input").is_some());
     assert_eq!(rt.state.messages[0].body, "Before\nAfter");
 }
 #[test]
@@ -113,7 +115,7 @@ fn markdown_and_specialized_tools_use_native_content_in_the_runtime() {
         assert!(!tree.contains("Edit applied."));
         let clipboard = rune::clipboard::memory();
         rt.use_clipboard(&clipboard);
-        let (x, y) = rt.find("copy-tool-transcript-shell-output").unwrap();
+        let (x, y) = rt.find("copy-tool-transcript:5:shell-output").unwrap();
         rt.pointer_down(x, y);
         rt.pointer_up(x, y);
         rt.frame(0.0);
@@ -142,12 +144,31 @@ fn historical_part_gap_reveals_the_middle_without_rejecting_the_message() {
     rt.frame(0.0);
     assert!(rt.find("parts-gap-parts").is_some());
     assert!(!rt.accessibility_json().to_string().contains("Middle part"));
-    let (x, y) = rt.find("reveal-parts-gap-parts").unwrap();
-    rt.pointer_down(x, y);
-    rt.pointer_up(x, y);
-    rt.frame(1.0 / 60.0);
+    let focused = |rt: &Runtime<State>, key: &str| {
+        rt.elements()
+            .iter()
+            .any(|element| element.focused && element.key.as_deref() == Some(key))
+    };
+    fn key(rt: &mut Runtime<State>, key: rune::Key) {
+        let event = rune::KeyEvent {
+            key,
+            mods: Default::default(),
+        };
+        rt.key(event.clone());
+        rt.key_up(event);
+        rt.frame(1.0 / 60.0);
+    }
+    for _ in 0..6 {
+        if focused(&rt, "reveal-parts-gap-parts") {
+            break;
+        }
+        key(&mut rt, rune::Key::Tab);
+    }
+    assert!(focused(&rt, "reveal-parts-gap-parts"));
+    key(&mut rt, rune::Key::Text(" ".into()));
     assert!(rt.find("parts-gap-parts").is_none());
     assert!(rt.accessibility_json().to_string().contains("Middle part"));
+    assert!(focused(&rt, "parts-gap-parts-start"));
 }
 
 #[test]
@@ -241,7 +262,7 @@ fn tool_failure_can_copy_its_full_error_before_reveal() {
     let clipboard = rune::clipboard::memory();
     rt.use_clipboard(&clipboard);
     rt.frame(0.0);
-    for key in ["toggle-tool-error-read", "copy-tool-error-read-error"] {
+    for key in ["toggle-tool-error:4:read", "copy-tool-error:4:read-error"] {
         let (x, y) = rt.find(key).unwrap();
         rt.pointer_down(x, y);
         rt.pointer_up(x, y);
@@ -251,5 +272,44 @@ fn tool_failure_can_copy_its_full_error_before_reveal() {
     assert_eq!(
         clipboard.text().as_deref().map(String::as_str),
         Some(error.as_str())
+    );
+}
+
+#[test]
+fn native_tool_ids_cannot_alias_another_calls_disclosure() {
+    let row = history::decode_message(&json!({"id":"collision","type":"assistant","content":[
+        {"type":"tool","id":"a","name":"read","state":{"status":"completed","input":{"filePath":"first.txt"}}},
+        {"type":"tool","id":"a-tool_input","name":"read","state":{"status":"completed","content":[{"type":"text","text":"OTHER OUTPUT"}]}}
+    ]})).unwrap();
+    let mut state = init();
+    state.messages = vec![row];
+    state.phase = Phase::Ready;
+    let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
+    rt.frame(0.0);
+    for key in [
+        "toggle-tool-collision:1:a",
+        "toggle-tool-collision:1:a-tool_input",
+    ] {
+        let (x, y) = rt.find(key).unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(1.0 / 60.0);
+    }
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("first.txt"));
+    assert!(!tree.contains("OTHER OUTPUT"));
+}
+
+#[test]
+fn tool_json_is_charged_before_a_large_resident_clone() {
+    use std::mem::size_of;
+    let size = history::MAX_BYTES / size_of::<serde_json::Value>() + 1;
+    let rows = vec![json!(""); size];
+    let raw = json!({"id":"large","type":"assistant","content":[
+        {"type":"tool","id":"one","name":"read","state":{"status":"completed","input":{"rows":rows}}}
+    ]});
+    assert!(raw.to_string().len() < 2 * 1024 * 1024);
+    assert!(
+        matches!(history::decode_message(&raw), Err(error) if error.to_string() == "resident history limit reached")
     );
 }

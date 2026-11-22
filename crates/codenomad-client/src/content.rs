@@ -1,10 +1,11 @@
 //! Ordered native message blocks. Tool data is passive; this module never executes calls.
 use crate::history::Result;
 use serde_json::Value;
+use std::{mem::size_of, sync::Arc};
 #[derive(Clone, Debug, PartialEq)]
 pub enum Part {
     Text(Text),
-    Tool(Tool),
+    Tool(Arc<Tool>),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextProvenance {
@@ -229,20 +230,24 @@ pub struct Tool {
     pub metadata: Value,
     pub output: String,
     pub error: String,
+    pub input_display_bytes: usize,
     bytes: usize,
 }
 pub fn decode(v: &Value) -> Result<Vec<Part>> {
     let Some(parts) = v["content"].as_array() else {
         return Ok(vec![]);
     };
-    if parts.len() > crate::history::MAX_BYTES / std::mem::size_of::<Part>() {
+    if parts.len() > crate::history::MAX_BYTES / size_of::<Part>() {
         return Err("resident history limit reached".into());
     }
     let mut result = vec![];
+    let mut resident = parts.len() * size_of::<Part>();
+    let mut tool_text = 0usize;
     let mut ids = std::collections::HashSet::new();
     for part in parts {
         if part["type"] == "text" {
             if let Some(text) = part["text"].as_str() {
+                charge(&mut resident, text.len())?;
                 let closed = !v["time"]["completed"].is_null()
                     || !part["native"].is_null()
                     || !part["state"].is_null();
@@ -270,38 +275,63 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                 .filter(|s| s.len() <= 256)
                 .ok_or("invalid tool name")?;
             let state = &part["state"];
-            let status = state["status"].as_str().unwrap_or("streaming").to_string();
-            let output = state["content"]
+            let status = state["status"].as_str().unwrap_or("streaming");
+            let text_parts = state["content"]
                 .as_array()
                 .into_iter()
                 .flatten()
                 .filter(|item| item["type"] == "text")
-                .filter_map(|item| item["text"].as_str())
-                .collect::<Vec<_>>()
-                .join("\n");
+                .filter_map(|item| item["text"].as_str());
             let error = state["error"]["message"].as_str().unwrap_or_default();
             let bytes = id.len()
                 + name.len()
                 + status.len()
                 + error.len()
-                + output.len()
-                + json_bytes(&state["input"])
-                + json_bytes(&state["metadata"]);
-            result.push(Part::Tool(Tool {
+                + size_of::<Tool>()
+                + resident_json(&state["input"])
+                + resident_json(&state["metadata"]);
+            charge(&mut resident, bytes)?;
+            tool_text = tool_text
+                .saturating_add(text_parts.clone().map(|text| text.len() + 1).sum::<usize>());
+            if tool_text > crate::history::MAX_TOOL_TEXT_BYTES {
+                return Err("resident tool text limit reached".into());
+            }
+            result.push(Part::Tool(Arc::new(Tool {
                 id: id.into(),
                 name: name.into(),
-                status,
+                status: status.into(),
                 input: state["input"].clone(),
                 metadata: state["metadata"].clone(),
-                output,
+                output: text_parts.collect::<Vec<_>>().join("\n"),
                 error: error.into(),
+                input_display_bytes: json_bytes(&state["input"]),
                 bytes,
-            }));
+            })));
         }
     }
     Ok(result)
 }
-pub fn json_bytes(v: &Value) -> usize {
+fn charge(resident: &mut usize, added: usize) -> Result<()> {
+    *resident = resident.saturating_add(added);
+    if *resident > crate::history::MAX_BYTES {
+        return Err("resident history limit reached".into());
+    }
+    Ok(())
+}
+
+fn resident_json(v: &Value) -> usize {
+    (match v {
+        Value::Array(items) => items.iter().map(resident_json).sum(),
+        Value::Object(items) => items
+            .iter()
+            .map(|(key, item)| key.len() + size_of::<String>() * 2 + resident_json(item))
+            .sum(),
+        Value::String(s) => s.len(),
+        _ => 0,
+    }) + size_of::<Value>()
+}
+
+fn json_bytes(v: &Value) -> usize {
     match v {
         Value::String(s) => s.len() + 2,
         Value::Array(items) => 2 + items.iter().map(|item| 1 + json_bytes(item)).sum::<usize>(),
@@ -323,4 +353,14 @@ pub fn bytes(parts: &[Part]) -> usize {
                 Part::Tool(t) => t.bytes,
             })
             .sum::<usize>()
+}
+
+pub(crate) fn tool_text_bytes(parts: &[Part]) -> usize {
+    parts
+        .iter()
+        .filter_map(|part| match part {
+            Part::Tool(tool) => Some(tool.output.len()),
+            _ => None,
+        })
+        .sum()
 }

@@ -17,7 +17,7 @@ const [binary, out] = process.argv.slice(2)
 assert(binary && path.isAbsolute(binary) && out && path.isAbsolute(out), 'Pass an absolute binary and output directory')
 await mkdir(out, {recursive: true})
 const script = path.join(out, 'rune-interaction.json')
-await writeFile(script, JSON.stringify({events:[{t: 0.1, type: 'tap', key: 'toggle-tool-transcript-read'}]}))
+await writeFile(script, JSON.stringify({events:[{t: 0.1, type: 'tap', key: 'toggle-tool-transcript:4:read'}]}))
 const cache = await createFixtureCache()
 const shutdown = createFixtureShutdown(cache)
 const entry = '/tests/browser/fixtures/reveal-truncated-text.tsx'
