@@ -1,23 +1,45 @@
 import { normalizeSessionCatalog, type PersistedSessionCatalogEntry } from "./session-catalog-persistence"
+import { encodePartition, type EncodedPartition } from "./client-state-partition-json"
 
 const encoder = new TextEncoder()
 const CHUNK_BYTES = 768 * 1024
 
-export async function encodeCatalogPartitions(rows: PersistedSessionCatalogEntry[], add: (value: unknown) => Promise<string>): Promise<string[]> {
-  const keys: string[] = []
-  let entries: PersistedSessionCatalogEntry[] = [], bytes = 0
-  for (const row of rows) {
-    // Canonical and plain JSON differ only in key order, so they have the same size.
-    const size = encoder.encode(JSON.stringify(row)).byteLength + 1
-    if (size > CHUNK_BYTES) throw new Error("Session catalog entry exceeds the native partition size")
-    if (bytes + size > CHUNK_BYTES) {
-      keys.push(await add({ format: 1, index: keys.length, entries }))
-      entries = []; bytes = 0
+interface CatalogChunk { start: number; end: number; partition: EncodedPartition }
+export interface EncodedCatalog {
+  rows: readonly PersistedSessionCatalogEntry[]
+  chunks: CatalogChunk[]
+}
+const sizes = new WeakMap<PersistedSessionCatalogEntry, number>()
+
+export async function encodeCatalogPartitions(input: PersistedSessionCatalogEntry[], previous?: EncodedCatalog): Promise<EncodedCatalog> {
+  const rows = normalizeSessionCatalog(input)
+  if (!rows) throw new Error("Invalid session catalog")
+  if (rows === previous?.rows) return previous
+  const chunks: CatalogChunk[] = []
+  let start = 0, bytes = 0
+  const flush = async (end: number) => {
+    const index = chunks.length, old = previous?.chunks[index]
+    if (old && old.end - old.start === end - start
+      && rows.slice(start, end).every((row, offset) => row === previous!.rows[old.start + offset])) {
+      chunks.push({ start, end, partition: old.partition })
+    } else {
+      chunks.push({ start, end, partition: await encodePartition({ format: 1, index, entries: rows.slice(start, end) }) })
     }
-    entries.push(row); bytes += size
+    start = end; bytes = 0
   }
-  if (entries.length) keys.push(await add({ format: 1, index: keys.length, entries }))
-  return keys
+  for (const [index, row] of rows.entries()) {
+    let size = sizes.get(row)
+    if (size === undefined) {
+      // Canonical and plain JSON differ only in key order, so they have the same size.
+      size = encoder.encode(JSON.stringify(row)).byteLength + 1
+      sizes.set(row, size)
+    }
+    if (size > CHUNK_BYTES) throw new Error("Session catalog entry exceeds the native partition size")
+    if (bytes + size > CHUNK_BYTES) await flush(index)
+    bytes += size
+  }
+  if (start < rows.length) await flush(rows.length)
+  return { rows, chunks }
 }
 
 export async function decodeCatalogPartitions(value: unknown, allowed: ReadonlySet<string>, referenced: Set<string>,
