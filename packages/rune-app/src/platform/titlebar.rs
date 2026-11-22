@@ -33,6 +33,7 @@ fn menus() -> El {
             ]
             .map(|(key, menu)| {
                 shell::titlebar_menu(t(key), move |s: &mut State, tx| {
+                    crate::shell::Panels::dismiss_outside(s, tx);
                     let items = match menu {
                         Menu::File => vec![
                             (

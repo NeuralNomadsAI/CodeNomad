@@ -121,7 +121,9 @@ fn local_stress() -> bool {
 
 fn send(s: &mut State, tx: &mut Tx) {
     if s.phase != Phase::Ready
-        || s.screen.launcher().is_some_and(|l| l.pending)
+        || s.screen
+            .launcher()
+            .is_some_and(launcher::Launcher::blocks_prompt)
         || s.draft.text.trim().is_empty()
         || s.agent.as_ref().is_some_and(|a| a.blocked())
     {
@@ -174,8 +176,8 @@ fn latest(_: &mut State, tx: &mut Tx) {
     tx.scroll_to_bottom_instant("history");
 }
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
-    let mut changed = launcher::poll(s, tx);
-    changed |= poll_chat(s, 64);
+    let mut changed = poll_chat(s, 64);
+    changed |= launcher::poll(s, tx);
     changed |= workspace::poll(s, now, tx);
     changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
     if changed {
@@ -358,7 +360,9 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                             "send",
                             strings::t("promptInput.overlay.send"),
                             s.phase != Phase::Ready
-                                || s.screen.launcher().is_some_and(|l| l.pending)
+                                || s.screen
+                                    .launcher()
+                                    .is_some_and(launcher::Launcher::blocks_prompt)
                                 || s.agent.as_ref().is_some_and(|a| a.blocked()),
                             crate::screen::action_tx(&scope, send),
                         )),

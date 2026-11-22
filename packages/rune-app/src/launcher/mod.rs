@@ -29,6 +29,7 @@ pub struct Launcher {
     pub sessions: Vec<Session>,
     pub next: Option<String>,
     pub pending: bool,
+    listing: bool,
     pub error: Option<&'static str>,
     pub creation_uncertain: bool,
     pub openings: crate::workspace::opening::Openings,
@@ -41,7 +42,7 @@ enum Reply {
     Connected(Backend, Vec<Project>, String),
     Opened(crate::workspace::opening::Opening, Sessions, Restored),
     Listed(Sessions, bool),
-    Created(Backend, String, String),
+    Created(Backend, String, String, Option<u64>),
     Selected(Vec<String>, Option<Selection>, Option<u64>),
 }
 type Selection = (Backend, String, Option<usize>);
@@ -54,6 +55,9 @@ impl Launcher {
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn fixture() -> Self {
         Self::with_boot(std::sync::Arc::new(|| {}), None)
+    }
+    pub fn blocks_prompt(&self) -> bool {
+        self.pending && !self.listing
     }
     pub fn local_connection(&self) -> bool {
         #[cfg(not(target_arch = "wasm32"))]
@@ -108,6 +112,7 @@ impl Launcher {
             sessions: vec![],
             next: None,
             pending: starting,
+            listing: false,
             error: None,
             creation_uncertain: false,
             openings: Default::default(),
@@ -160,6 +165,13 @@ mod tests {
         rt.update(crate::send);
         assert!(commands.try_recv().is_err());
         assert_eq!(rt.state.draft.text, "keep this draft");
+        rt.update(|s, tx| {
+            s.screen.launcher_mut().unwrap().listing = true;
+            crate::send(s, tx);
+        });
+        assert!(
+            matches!(commands.try_recv(), Ok(crate::transport::Command::Send(text)) if text == "keep this draft")
+        );
         rt.update(|s, _| s.phase = Phase::Streaming);
         assert!(!can_change_session(&rt.state));
     }
@@ -172,7 +184,18 @@ mod tests {
         let launcher = state.screen.launcher_mut().unwrap();
         launcher.result = Some(input);
         launcher.pending = true;
-        state.phase = Phase::Streaming;
+        let (events, incoming) = bounded(1);
+        state.incoming = Some(incoming);
+        assert!(
+            events
+                .try_send(crate::transport::Event::Sync(crate::history::Page {
+                    rows: vec![],
+                    older: None,
+                    newer: None,
+                    running: true,
+                }))
+                .is_ok()
+        );
         let backend = Backend {
             client: codenomad_client::http::Http::new().unwrap(),
             base: "http://127.0.0.1:9/".into(),
@@ -196,7 +219,7 @@ mod tests {
             rune::Env::new(false, 1.0),
         );
         rt.update(|s, tx| {
-            poll(s, tx);
+            crate::poll(s, 0.0, tx);
         });
         assert!(rt.state.phase == Phase::Streaming);
         assert_eq!(rt.state.chat_title, "Fixture conversation");
@@ -444,9 +467,10 @@ pub fn list(s: &mut State, more: bool) {
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
-    if more && (l.next.is_none() || l.sessions.len() >= MAX_BROWSED_SESSIONS) {
+    if l.pending || more && (l.next.is_none() || l.sessions.len() >= MAX_BROWSED_SESSIONS) {
         return;
     }
+    l.listing = true;
     let cursor = if more { l.next.clone() } else { None };
     l.job("rune.list_error", async move {
         Ok(Reply::Listed(
@@ -459,6 +483,7 @@ pub fn create(s: &mut State, _: &mut Tx) {
     if !can_change_session(s) {
         return;
     }
+    let dismiss = s.shell.floating_sessions();
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };
@@ -476,6 +501,7 @@ pub fn create(s: &mut State, _: &mut Tx) {
             b.bind(&p, &session.id, true).await?,
             session.title,
             title,
+            dismiss,
         ))
     });
 }
@@ -596,6 +622,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     };
     l.result = None;
     l.pending = false;
+    l.listing = false;
     match result {
         Ok(Reply::Connected(b, projects, server_id)) => {
             l.connection = Some(b);
@@ -659,7 +686,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             l.next = rows.next;
         }
-        Ok(Reply::Created(b, title, submitted)) => {
+        Ok(Reply::Created(b, title, submitted, dismiss)) => {
             if l.title.text == submitted {
                 l.title = TextEdit::new("");
                 l.show_title = false;
@@ -673,6 +700,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     },
                 );
             } else {
+                dismiss_origin_panel(s, dismiss, tx);
                 bind(s, b, title, None, tx);
             }
         }
@@ -692,9 +720,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     || s.phase == Phase::Failed && selected.as_deref() == Some(b.session.as_str())
             }) {
                 l.show_title = false;
-                if dismiss.is_some() && dismiss == s.shell.floating_sessions() {
-                    s.shell.close_floating(tx);
-                }
+                dismiss_origin_panel(s, dismiss, tx);
                 bind(s, b, title, visit, tx);
             } else if !blocked {
                 l.error = Some("rune.open_error");
@@ -716,6 +742,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     }
     tx.instant();
     true
+}
+fn dismiss_origin_panel(s: &mut State, origin: Option<u64>, tx: &mut Tx) {
+    if origin.is_some() && origin == s.shell.floating_sessions() {
+        s.shell.close_floating(tx);
+    }
 }
 pub fn restore(s: &mut State, saved: crate::workspace::Workspace) {
     let intent = s
