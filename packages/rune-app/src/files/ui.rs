@@ -201,5 +201,4 @@ impl Ui {
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
-#[path = "ui_tests.rs"]
 mod tests;

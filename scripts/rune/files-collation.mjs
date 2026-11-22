@@ -118,11 +118,12 @@ try{
           Intl.Collator=function(){throw Error('synthetic constructor failure')};failures.push({case:'constructor',...observe()})
           Intl.Collator=function(){return {compare:()=>NaN,resolvedOptions:()=>({locale:'en-US'})}};failures.push({case:'NaN',...observe()})
           Intl.Collator=original
-          Array.prototype.sort=function(){this[1][0]=this[0][0];return this};failures.push({case:'duplicate-index',...observe()})
+          Array.prototype.sort=function(){throw Error('synthetic sort failure')};failures.push({case:'sort-throws',...observe()})
+          Array.prototype.sort=function(){this[1]=this[0];return this};failures.push({case:'duplicate-index',...observe()})
         }finally{globalThis.Intl=intl;intl.Collator=original;Array.prototype.sort=sort}
         return failures
       },rows)
-      assert.equal(record.failures.length,4);assert(record.failures.every(f=>f.rejected&&!f.runtimePanic))
+      assert.equal(record.failures.length,5);assert(record.failures.every(f=>f.rejected&&!f.runtimePanic))
       assert.deepEqual(record.errors,[]);record.pass=true
     }finally{await context.close()}
   }

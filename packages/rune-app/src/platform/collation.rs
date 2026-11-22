@@ -54,27 +54,6 @@ mod browser {
     use super::{Entry, EntryKind, Ordering};
     use wasm_bindgen::{JsCast, JsValue};
 
-    #[wasm_bindgen::prelude::wasm_bindgen(inline_js = "
-export function sortRuneFiles(rows, compare) {
-    return rows.sort((a, b) => {
-        const kind = Number(b[1]) - Number(a[1]);
-        if (kind) return kind;
-        const value = compare(a[2], b[2]);
-        if (typeof value !== 'number' || !Number.isFinite(value)) {
-            throw new TypeError('Invalid collation result');
-        }
-        return value;
-    }).map(row => row[0]);
-}
-")]
-    extern "C" {
-        #[wasm_bindgen::prelude::wasm_bindgen(catch, js_name = sortRuneFiles)]
-        fn sort_files_js(
-            rows: &js_sys::Array,
-            compare: &js_sys::Function,
-        ) -> Result<js_sys::Array, JsValue>;
-    }
-
     pub(crate) struct Collation {
         compare: js_sys::Function,
         locale: String,
@@ -121,32 +100,42 @@ export function sortRuneFiles(rows, compare) {
                 .ok_or_else(|| "Invalid browser collation result".into())
         }
         pub(crate) fn sort_files(&self, entries: Vec<Entry>) -> Result<Vec<Entry>, String> {
-            let rows = js_sys::Array::new();
-            for (index, entry) in entries.iter().enumerate() {
-                rows.push(&js_sys::Array::of3(
-                    &JsValue::from_f64(index as f64),
-                    &JsValue::from_bool(entry.kind == EntryKind::Directory),
-                    &JsValue::from_str(&entry.name),
-                ));
-            }
-            let indices = sort_files_js(&rows, &self.compare).map_err(error)?;
+            let index = |value: JsValue| {
+                value
+                    .as_f64()
+                    .filter(|value| {
+                        value.is_finite()
+                            && *value >= 0.0
+                            && value.fract() == 0.0
+                            && *value < entries.len() as f64
+                    })
+                    .map(|value| value as usize)
+                    .ok_or_else(|| "Invalid collation index".to_owned())
+            };
+            let indices = js_sys::Array::from_iter(
+                (0..entries.len()).map(|index| JsValue::from_f64(index as f64)),
+            )
+            .try_sort_by(&mut |a, b| {
+                let compare = || -> Result<i32, String> {
+                    let a = &entries[index(a)?];
+                    let b = &entries[index(b)?];
+                    let kind =
+                        (b.kind == EntryKind::Directory).cmp(&(a.kind == EntryKind::Directory));
+                    Ok(if kind == Ordering::Equal {
+                        self.compare(&a.name, &b.name)?
+                    } else {
+                        kind
+                    } as i32)
+                };
+                compare().map_err(|error| wasm_bindgen::JsError::new(&error))
+            })
+            .map_err(error)?;
             if indices.length() as usize != entries.len() {
                 return Err("Invalid collation permutation".into());
             }
             let indices = indices
                 .iter()
-                .map(|value| {
-                    value
-                        .as_f64()
-                        .filter(|value| {
-                            value.is_finite()
-                                && *value >= 0.0
-                                && value.fract() == 0.0
-                                && *value < entries.len() as f64
-                        })
-                        .map(|value| value as usize)
-                        .ok_or_else(|| "Invalid collation index".into())
-                })
+                .map(index)
                 .collect::<Result<Vec<_>, String>>()?;
             super::reorder(entries, indices)
         }
