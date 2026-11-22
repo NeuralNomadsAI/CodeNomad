@@ -356,6 +356,43 @@ fn storage_boundary_excludes_native_identity_added_to_the_window() {
 }
 
 #[test]
+fn dense_user_attachments_keep_the_message_and_native_tail() {
+    let mut value = window(vec![]);
+    value["messages"][0]["skills"] = Value::Array(
+        (0..1001)
+            .map(|i| json!({"id":format!("s-{i}"),"name":format!("Skill {i}")}))
+            .collect(),
+    );
+    let page = history::decode(value).unwrap();
+    let row = &page.rows[0];
+    assert_eq!(row.body, "attached");
+    assert_eq!(row.parts.len(), 1001);
+    assert!(matches!(row.parts[500], Part::HiddenUserAttachments(1)));
+    assert!(matches!(&row.parts[501], Part::Skill(skill) if skill.name == "Skill 501"));
+    assert!(matches!(row.parts.last(), Some(Part::Skill(skill)) if skill.name == "Skill 1000"));
+}
+
+#[test]
+fn accepted_response_over_budget_is_unconfirmed_not_rejected() {
+    run(async {
+        let server = Server::new(vec![json!({
+            "data":{"id":"queued","sessionID":"session","payload":{"files":[{"data":"x".repeat(crate::prompt::MAX_BODY_BYTES)}]}}
+        })]);
+        let prompt = Prompt {
+            id: Some("queued".into()),
+            delivery: Some(Delivery::Queue),
+            ..Prompt::default()
+        };
+        let error = server.backend.prompt(&prompt).await.unwrap_err();
+        assert_eq!(
+            error.downcast_ref(),
+            Some(&crate::prompt::PromptError::Unconfirmed)
+        );
+        assert_eq!(server.requests.lock().unwrap().len(), 1);
+    });
+}
+
+#[test]
 fn prompt_and_history_limits_do_not_expand_catalogues() {
     run(async {
         let server = Server::new(vec![]);

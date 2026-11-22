@@ -75,6 +75,15 @@ pub fn message(s: &State, i: usize) -> El {
                     .key(file.id.clone()),
                 );
             }
+            Part::HiddenUserAttachments(count) => {
+                let key = if *count == 1 {
+                    "messageBlock.hiddenParts.one"
+                } else {
+                    "messageBlock.hiddenParts.other"
+                };
+                let label = t(key).replace("{count}", &count.to_string());
+                view = view.child(text(label).text_role(TextRole::Small));
+            }
             Part::Tool(tool) => {
                 let key = format!("tool-{}-{}", m.id, tool.id);
                 let expanded = s.expanded_tools.contains(&key);

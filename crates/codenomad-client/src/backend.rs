@@ -122,9 +122,19 @@ impl Backend {
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .body(body)
             .send()
-            .await?
-            .error_for_status()?;
-        let response = read_json_limited(response, crate::prompt::MAX_BODY_BYTES).await?;
+            .await
+            .map_err(|_| crate::prompt::PromptError::Unconfirmed)?;
+        if !response.status().is_success() {
+            let error = if response.status().is_client_error() {
+                crate::prompt::PromptError::Rejected
+            } else {
+                crate::prompt::PromptError::Unconfirmed
+            };
+            return Err(error.into());
+        }
+        let response = read_json_limited(response, crate::prompt::MAX_BODY_BYTES)
+            .await
+            .map_err(|_| crate::prompt::PromptError::Unconfirmed)?;
         let native = response.get("data").unwrap_or(&response);
         if !native.is_object() {
             return Err("invalid prompt acknowledgement".into());
