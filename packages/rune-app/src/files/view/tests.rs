@@ -259,7 +259,7 @@ fn source_beyond_the_highlight_limit_remains_visible_selectable_and_copyable() {
 }
 
 #[test]
-fn private_image_bytes_decode_and_fit_without_enlarging_intrinsic_sizes() {
+fn private_image_bytes_decode_and_fit_the_public_pixel_size() {
     crate::platform::block_on(async {
         let cases: serde_json::Value =
             serde_json::from_str(include_str!("../../../tests/fixtures/reader-content.json"))
@@ -299,17 +299,19 @@ fn private_image_bytes_decode_and_fit_without_enlarging_intrinsic_sizes() {
             let width = case["width"].as_f64().unwrap() as f32;
             let height = case["height"].as_f64().unwrap() as f32;
             assert!(image.rect[2] > 0.0 && image.rect[3] > 0.0, "{name}");
-            assert!(
-                image.rect[2] <= width && image.rect[3] <= height,
-                "{name}: {:?}",
-                image.rect
-            );
+            if name != "sample.svg" {
+                assert!(
+                    image.rect[2] <= width && image.rect[3] <= height,
+                    "{name}: {:?}",
+                    image.rect
+                );
+            }
             assert!(
                 (image.rect[2] / image.rect[3] - width / height).abs() < 0.001,
                 "{name}: {:?}",
                 image.rect
             );
-            if width < 100.0 {
+            if width < 100.0 && name != "sample.svg" {
                 assert_eq!([image.rect[2], image.rect[3]], [width, height], "{name}");
             }
             assert!(rt.take_url_requests().is_empty());

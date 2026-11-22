@@ -5,7 +5,7 @@ pub struct Drawer {
     pub room: bool,
 }
 pub fn resolve(host: f32, wanted: bool) -> Drawer {
-    let [desired, minimum, center] = rune_theme_codenomad::document_reader::drawer_geometry();
+    let [desired, minimum, center] = rune_theme_codenomad::document_reader::DRAWER_GEOMETRY;
     let available = (host - center).max(0.0);
     let desired = desired.max(minimum);
     let room = available >= minimum;

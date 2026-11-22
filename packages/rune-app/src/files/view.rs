@@ -1,5 +1,5 @@
 use super::{document::Format, presentation::Kind};
-use crate::{State, screen, strings::t};
+use crate::{State, components::button, screen, strings::t};
 use rune::{El, text};
 use rune_theme_codenomad::{
     Space, TextRole, document_reader as theme,
@@ -12,7 +12,7 @@ pub fn toggle(s: &State) -> El {
         return rune::el();
     };
     let drawer = ui.drawer();
-    crate::launcher_view::button(
+    button(
         "files-toggle",
         t(if !drawer.room && !ui.panel {
             "filesPanel.widenWindow"
@@ -70,7 +70,7 @@ fn reader(s: &State) -> El {
     };
     let dark = layout::dark();
     let scope = ui.document.scope();
-    let mut actions = vec![crate::launcher_view::button(
+    let mut actions = vec![button(
         "file-refresh",
         t("instanceShell.rightPanel.actions.refresh"),
         ui.reader.busy() || ui.document.pending() || ui.document.dirty(),
@@ -80,17 +80,17 @@ fn reader(s: &State) -> El {
     if let Some(kind) = ui.presentation.kind {
         content_view = match kind {
             Kind::Binary => text(t("filesPanel.binary")).pad(Space::Md),
-            Kind::Image { svg } => match ui.presentation.image.as_ref() {
+            Kind::Image { .. } => match ui.presentation.image.as_ref() {
                 Some(image) if image.error().is_some() => {
                     text(t("filesPanel.binary")).pad(Space::Md)
                 }
-                Some(image) => theme::image(image, &target.path, svg),
+                Some(image) => theme::image(image, &target.path),
                 None => text(t("instanceInfo.loading")).pad(Space::Md),
             },
             Kind::Text(format) => {
                 let text = ui.document.edit().text.as_str();
                 if format != Format::Source {
-                    actions.push(crate::launcher_view::button(
+                    actions.push(button(
                         "file-source-toggle",
                         t(if !ui.presentation.source {
                             "instanceShell.filesShell.showSource"
@@ -106,7 +106,7 @@ fn reader(s: &State) -> El {
                 let source = ui.presentation.source || format == Format::Source;
                 if source {
                     actions.push(
-                        crate::launcher_view::button(
+                        button(
                             "file-wrap",
                             t(if ui.presentation.wrap {
                                 "instanceShell.filesShell.disableWordWrap"
@@ -143,7 +143,7 @@ fn reader(s: &State) -> El {
             }
         };
     }
-    actions.push(crate::launcher_view::button(
+    actions.push(button(
         "file-close",
         t("gitPanel.backChat"),
         false,
@@ -223,7 +223,7 @@ fn tree(s: &State) -> El {
         tree = tree.child(
             workspace_tree::row(
                 dark,
-                rune_theme_codenomad::catalogue::direction(crate::strings::locale()) == "rtl",
+                rtl,
                 workspace_tree::Row {
                     label: &row.entry.name,
                     depth: row.depth as u32,
@@ -265,18 +265,16 @@ fn tree(s: &State) -> El {
     }
     for (path, error) in ui.tree.errors() {
         let path = path.clone();
-        tree = tree
-            .child(text(error).role("alert"))
-            .child(crate::launcher_view::button(
-                &format!("file-retry-{path}"),
-                t("instanceShell.rightPanel.actions.refresh"),
-                ui.stopped,
-                screen::action(&scope, move |s| {
-                    if let Some(ui) = &mut s.files {
-                        ui.refresh(Some(&path));
-                    }
-                }),
-            ));
+        tree = tree.child(text(error).role("alert")).child(button(
+            &format!("file-retry-{path}"),
+            t("instanceShell.rightPanel.actions.refresh"),
+            ui.stopped,
+            screen::action(&scope, move |s| {
+                if let Some(ui) = &mut s.files {
+                    ui.refresh(Some(&path));
+                }
+            }),
+        ));
     }
     theme::surface(dark)
         .key("files-panel")

@@ -21,18 +21,7 @@ pub fn pages(history: El, reader: Option<El>) -> El {
     }
     root
 }
-pub fn drawer_geometry() -> [f32; 3] {
-    [
-        "rightDrawerWidth",
-        "minimumRightDrawerWidth",
-        "minimumSessionCenterWidth",
-    ]
-    .map(|key| {
-        crate::document()["layout"][key]
-            .as_f64()
-            .expect("generated drawer geometry") as f32
-    })
-}
+pub use crate::generated_layout::DRAWER_GEOMETRY;
 pub fn split(main: El, tree: Option<El>, width: f32, expanded: bool) -> El {
     let minimum = crate::interruption::history_minimum(expanded);
     let main = main.grow(1.0).min_w(0.0).min_h(minimum);
@@ -44,12 +33,11 @@ pub fn split(main: El, tree: Option<El>, width: f32, expanded: bool) -> El {
         .child(main)
         .children(tree.map(|tree| rune::col().w(width).h_full().min_h(0.0).child(tree)))
 }
-pub fn image(image: &rune::Image, label: &str, svg: bool) -> El {
+pub fn image(image: &rune::Image, label: &str) -> El {
     let Some([width, height]) = image.size() else {
         return rune::el();
     };
-    // Rune's intrinsic SVG loader rasterizes at twice the document's dimensions.
-    let scale = if svg { 0.5 } else { 1.0 };
+    // Intrinsic SVG metadata: https://github.com/anomalyco/rune/issues/1361.
     rune::col()
         .grow(1.0)
         .min_h(0.0)
@@ -60,8 +48,8 @@ pub fn image(image: &rune::Image, label: &str, svg: bool) -> El {
             rune::el()
                 .pixels_fit(image.pixels(), rune::SurfaceFit::Fit)
                 .aspect_fit(width as f32 / height as f32)
-                .max_w(width as f32 * scale)
-                .max_h(height as f32 * scale)
+                .max_w(width as f32)
+                .max_h(height as f32)
                 .role("img")
                 .label(label),
         )

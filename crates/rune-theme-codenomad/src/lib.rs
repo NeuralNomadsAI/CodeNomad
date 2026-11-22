@@ -6,6 +6,7 @@ pub mod action_menu_scene;
 pub mod catalogue;
 pub mod document_reader;
 mod generated_catalogues;
+mod generated_layout;
 pub mod interruption;
 mod kit;
 pub mod layout;
