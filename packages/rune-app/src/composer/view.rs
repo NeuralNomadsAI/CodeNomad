@@ -88,6 +88,18 @@ pub fn view(s: &State) -> El {
         }
         body = body.child(chips);
     }
+    if s.composer.picker.command_unavailable(&s.draft.text) {
+        actions = actions.child(
+            layout::button(
+                t("rune.refresh"),
+                false,
+                screen::action(&scope, |s| {
+                    s.composer.picker.refresh_commands(&s.reads, &s.wake);
+                }),
+            )
+            .key("refresh-command-catalogue"),
+        );
+    }
     body.child(actions)
         .children(
             s.composer

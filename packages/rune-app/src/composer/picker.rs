@@ -15,6 +15,7 @@ use std::{ops::Range, time::Duration};
 pub struct Picker {
     backend: Option<Backend>,
     dismissed: Option<usize>,
+    dismissed_command: Option<String>,
     current: Option<(Query, String)>,
     directory: Option<String>,
     catalog: Vec<Item>,
@@ -24,6 +25,7 @@ pub struct Picker {
     pub generation: u64,
     commands: Vec<Item>,
     command_read: Option<Read>,
+    command_error: bool,
     read: Option<Read>,
     search: Option<Read>,
     pub error: bool,
@@ -163,7 +165,25 @@ impl Picker {
             .then_some((name, args.trim_matches(whitespace)))
     }
     pub fn command_pending(&self, text: &str) -> bool {
-        text.trim_start_matches(whitespace).starts_with('/') && self.command_read.is_some()
+        text.trim_start_matches(whitespace).starts_with('/')
+            && (self.command_read.is_some() || self.command_error)
+    }
+    pub fn command_unavailable(&self, text: &str) -> bool {
+        self.command_error && self.command_read.is_none() && self.command_pending(text)
+    }
+    pub fn refresh_commands(&mut self, reads: &platform::reads::Reads, wake: &rune::Waker) {
+        if self.command_read.is_none()
+            && let Some(backend) = &self.backend
+        {
+            self.command_read = Some(launch(
+                backend.clone(),
+                self.directory.clone(),
+                None,
+                true,
+                reads.clone(),
+                wake.clone(),
+            ));
+        }
     }
     pub fn slash(&self) -> bool {
         matches!(self.current, Some((Query::Command(_), _)))
@@ -174,16 +194,19 @@ impl Picker {
             || (self.slash() && self.command_read.is_some())
     }
     pub fn close(&mut self) {
-        if let Some((token, _)) = &self.current {
-            self.dismissed = Some(match token {
-                Query::Command(range) | Query::Mention(range) => range.start,
-            });
-        }
+        let current = self.current.take();
         self.reset();
+        match current {
+            Some((Query::Mention(range), _)) => self.dismissed = Some(range.start),
+            Some((Query::Command(_), text)) => self.dismissed_command = Some(text),
+            None => {}
+        }
     }
     pub fn reset(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.current = None;
+        self.dismissed = None;
+        self.dismissed_command = None;
         self.catalog.clear();
         self.files.clear();
         self.entries.clear();
@@ -201,11 +224,15 @@ impl Picker {
         let range = match &token {
             Query::Command(range) | Query::Mention(range) => range,
         };
-        if self.dismissed == Some(range.start) {
+        let draft = edit.text[range.start + 1..range.end].to_owned();
+        if match token {
+            Query::Mention(_) => self.dismissed == Some(range.start),
+            Query::Command(_) => self.dismissed_command.as_deref() == Some(&draft),
+        } {
             return;
         }
         self.dismissed = None;
-        let draft = edit.text[range.start + 1..range.end].to_owned();
+        self.dismissed_command = None;
         let same_mode = self.open() && (matches!(token, Query::Command(_)) == self.slash());
         if self
             .current
@@ -270,6 +297,7 @@ impl Picker {
         );
         let changed = catalogue.is_some() || files.is_some() || commands.is_some();
         if let Some(reply) = commands {
+            self.command_error = reply.error;
             if self.slash() {
                 self.error |= reply.error;
             }
@@ -661,5 +689,64 @@ mod tests {
         assert!(rt.state.draft.text.is_empty());
         rt.state.draft = TextEdit::new("a different prompt");
         assert!(crate::composer::can_send(&rt.state));
+    }
+
+    #[test]
+    fn editing_or_sending_a_dismissed_command_releases_its_picker_marker() {
+        let mut rt = runtime();
+        let (sender, receiver) = bounded(1);
+        rt.state.commands = Some(sender);
+        rt.state
+            .composer
+            .picker
+            .commands
+            .push(Item::Command(named("review")));
+        rt.paste("/rev");
+        rt.frame(0.0);
+        press(&mut rt, Key::Escape, Mods::default());
+        assert!(!rt.state.composer.picker.open());
+        rt.paste("iew");
+        rt.frame(0.0);
+        assert!(rt.state.composer.picker.open());
+        press(&mut rt, Key::Enter, Mods::default());
+        press(&mut rt, Key::Enter, Mods::default());
+        let crate::transport::Command::Slash { attempt, .. } = receiver.try_recv().unwrap() else {
+            panic!("expected command")
+        };
+        crate::composer::acknowledge(
+            &mut rt.state,
+            &attempt,
+            crate::transport::PromptOutcome::Confirmed(attempt.clone()),
+        );
+        rt.paste("/");
+        rt.frame(0.0);
+        assert!(rt.state.composer.picker.open());
+    }
+
+    #[test]
+    fn catalogue_failure_cannot_fall_through_to_prompt() {
+        let mut rt = runtime();
+        let (sender, receiver) = bounded(1);
+        rt.state.commands = Some(sender);
+        let (cancel, _cancelled) = bounded(1);
+        let (out, replies) = bounded(1);
+        rt.state.composer.picker.command_read = Some(Read {
+            _cancel: cancel,
+            replies,
+        });
+        out.try_send(Reply {
+            directory: String::new(),
+            items: vec![],
+            error: true,
+        })
+        .ok()
+        .unwrap();
+        assert!(rt.state.composer.picker.poll());
+        rt.paste("/review 🦀");
+        rt.frame(0.0);
+        press(&mut rt, Key::Enter, Mods::default());
+        assert!(receiver.try_recv().is_err());
+        assert_eq!(rt.state.draft.text, "/review 🦀");
+        assert!(rt.find("refresh-command-catalogue").is_some());
     }
 }
