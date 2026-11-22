@@ -10,7 +10,7 @@ pub fn wrap_button<S: 'static>(
     dark: bool,
     label: &str,
     active: bool,
-    press: impl Fn(&mut S) + 'static,
+    press: impl Fn(&mut S, &mut rune::Tx) + 'static,
 ) -> El {
     let t = tokens(dark);
     let side = t.length(Length::IconButton).px();
@@ -50,12 +50,14 @@ pub fn wrap_button<S: 'static>(
         } else {
             "surface-hover"
         }))
-        .on_key(move |s: &mut S, key, _| {
-            if key.key != rune::Key::Enter {
+        .on_key(move |s: &mut S, key, tx| {
+            if key.key != rune::Key::Enter || key.mods != rune::Mods::default() {
                 return false;
             }
-            enter(s);
+            if !tx.key_repeat() {
+                enter(s, tx);
+            }
             true
         })
-        .on_press(move |s: &mut S| press(s))
+        .on_press_tx(move |s: &mut S, tx| press(s, tx))
 }

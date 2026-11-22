@@ -1,6 +1,46 @@
 use super::*;
 
 #[test]
+fn source_reader_can_scroll_with_tab_and_page_down() {
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut rt = runtime(http.ui(Store::default(), "source-keyboard"));
+        open(&mut rt, &http, "main.rs", &"bGV0IHggPSAxOwog".repeat(120)).await;
+        let focused = |rt: &Runtime<State>| {
+            rt.elements()
+                .iter()
+                .any(|node| node.key.as_deref() == Some("file-source-scroll") && node.focused)
+        };
+        for _ in 0..20 {
+            if focused(&rt) {
+                break;
+            }
+            rt.key(KeyEvent {
+                key: Key::Tab,
+                mods: Mods::default(),
+            });
+            rt.frame(0.02);
+        }
+        assert!(focused(&rt));
+        let y = |rt: &Runtime<State>| {
+            rt.elements()
+                .into_iter()
+                .find(|node| node.key.as_deref() == Some("file-source-text"))
+                .unwrap()
+                .rect[1]
+        };
+        let before = y(&rt);
+        rt.key(KeyEvent {
+            key: Key::PageDown,
+            mods: Mods::default(),
+        });
+        rt.frame(0.02);
+        assert!(y(&rt) < before);
+        http.quiet().await;
+    });
+}
+
+#[test]
 fn reader_uses_product_palette_and_compact_named_actions() {
     crate::platform::block_on(async {
         let http = http::Http::new().await;

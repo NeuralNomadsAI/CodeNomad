@@ -327,7 +327,9 @@ impl Ui {
             .activate(self.active && !self.document.writing());
         changed |= self.reader.poll(now);
         changed |= self.document.poll(&mut self.reader);
-        changed |= self.presentation.sync(&self.reader);
+        changed |= self
+            .presentation
+            .sync(&self.reader, self.document.revision());
         changed
     }
     fn launch(&mut self, requests: Vec<Read>) {

@@ -15,6 +15,100 @@ async fn markup(rt: &mut Runtime<State>, http: &http::Http) {
         .unwrap();
     open(rt, http, "markup.md", case["base64"].as_str().unwrap()).await;
 }
+fn markdown_text(rt: &mut Runtime<State>, text: String) {
+    rt.update(|state, _| {
+        let ui = state.files.as_mut().unwrap();
+        let scope = ui.document.scope();
+        ui.document.input(scope).replace_text(&text);
+        ui.document.changed(scope);
+    });
+    rt.frame(0.02);
+}
+
+#[test]
+fn rendered_scroll_survives_switching_to_source_and_back() {
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut rt = runtime(http.ui(Store::default(), "markdown-position"));
+        markup(&mut rt, &http).await;
+        markdown_text(
+            &mut rt,
+            format!("# Reader\n\n{}", "Long document paragraph.\n\n".repeat(180)),
+        );
+        rt.update(|_, tx| tx.scroll_to_y("file-rendered-scroll", 350.0));
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        let offset = |rt: &Runtime<State>| {
+            rt.state
+                .files
+                .as_ref()
+                .unwrap()
+                .presentation
+                .rendered_scroll
+                .get()
+        };
+        let before = offset(&rt);
+        assert_eq!(before, 350.0);
+        click(&mut rt, "file-source-toggle");
+        assert!(rt.find("file-source-scroll").is_some());
+        click(&mut rt, "file-source-toggle");
+        for _ in 0..30 {
+            rt.frame(0.02);
+        }
+        assert_eq!(offset(&rt), before);
+        http.quiet().await;
+    });
+}
+
+#[test]
+fn rendered_code_wrap_and_copy_are_per_block() {
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut rt = runtime(http.ui(Store::default(), "markdown-code"));
+        let clipboard = rune::clipboard::memory();
+        rt.use_clipboard(&clipboard);
+        markup(&mut rt, &http).await;
+        markdown_text(
+            &mut rt,
+            "```ts\nconst a = 1;\n```\n\n```ts\nconst b = 2;\n```".into(),
+        );
+        assert!(
+            rt.state
+                .files
+                .as_ref()
+                .unwrap()
+                .presentation
+                .unwrapped_blocks
+                .is_empty()
+        );
+        click(&mut rt, "file-code-wrap-0");
+        assert_eq!(
+            rt.state
+                .files
+                .as_ref()
+                .unwrap()
+                .presentation
+                .unwrapped_blocks
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            [0]
+        );
+        rt.update(|_, tx| tx.focus("file-code-copy-1", true));
+        rt.frame(0.02);
+        rt.key(KeyEvent {
+            key: Key::Enter,
+            mods: Mods::default(),
+        });
+        rt.frame(0.02);
+        assert_eq!(
+            clipboard.text().as_ref().map(|text| text.trim_end()),
+            Some("const b = 2;")
+        );
+        http.quiet().await;
+    });
+}
 
 #[test]
 fn enter_activates_the_focused_view_toggle_and_refresh() {

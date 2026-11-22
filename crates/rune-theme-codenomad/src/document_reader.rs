@@ -1,5 +1,6 @@
 use crate::{Length, Space, TextRole, Tokens, kit, layout::Layout, tokens};
 use rune::{El, Icon, ScrollSpec, TextStyle};
+pub use rune_kit::markdown::CodeFrame;
 use rune_kit::{Markdown, MarkdownStyle, syntax};
 
 mod toolbar;
@@ -118,8 +119,11 @@ pub fn viewport(content: El, wrap: bool) -> El {
     .child(content)
 }
 pub fn rendered_viewport(dark: bool, content: El) -> El {
+    focus_scroll(dark, viewport(content, true))
+}
+fn focus_scroll(dark: bool, viewport: El) -> El {
     let t = tokens(dark);
-    viewport(content, true).focusable(true).focus_ring(
+    viewport.focusable(true).focus_ring(
         t.metric("windowIconFocus", "outlineWidth").px(),
         t.metric("windowIconFocus", "outlineOffset").px(),
         t.color("focus-ring-color"),
@@ -161,7 +165,8 @@ pub fn source(dark: bool, path: &str, text: &str, wrap: bool, view_width: Option
 }
 pub fn source_view(dark: bool, content: El, wrap: bool) -> El {
     let t = tokens(dark);
-    viewport(content, wrap)
+    focus_scroll(dark, viewport(content, wrap))
+        .key("file-source-scroll")
         .fill(t.color("surface-inset"))
         .px(t.space(Space::Sm).px())
 }
@@ -263,16 +268,59 @@ pub fn markdown<S: 'static>(
     text: &str,
     diagram_label: &'static str,
     open: impl Fn(&mut S, &str, &mut rune::Tx) + 'static,
+    wrap: impl Fn(usize, &str) -> bool + 'static,
+    code_header: impl Fn(&CodeFrame<'_>) -> El + 'static,
 ) -> El {
     Markdown::new(text)
         .style(markdown_style(dark))
         .tasks_read_only()
         .selectable(true)
         .scroll_wide(true)
+        .code_wrap(wrap)
+        .code_frame(move |body, code| rune::col().w_full().child(code_header(code)).child(body))
         .on_link_tx(open)
         .diagram_frame(move |diagram, _| diagram.label(diagram_label))
         .build(kit(dark))
 }
+pub fn code_header(dark: bool, language: &str, wrap: El, copy: El) -> El {
+    let t = tokens(dark);
+    rune::row()
+        .w_full()
+        .items_center()
+        .gap(t.space(Space::Xs).px())
+        .px(t.space(Space::Sm).px())
+        .fill(t.color("surface-secondary"))
+        .child(
+            rune::text(language.to_uppercase())
+                .grow(1.0)
+                .text_role(TextRole::Small),
+        )
+        .child(wrap)
+        .child(copy)
+}
+pub fn code_copy<S: 'static>(
+    dark: bool,
+    label: &str,
+    copy: impl Fn(&mut S, &mut rune::Tx) + 'static,
+) -> El {
+    let copy = std::rc::Rc::new(copy);
+    let enter = copy.clone();
+    rune_kit::IconButton::new(&workspace_icons::COPY)
+        .variant(rune_kit::IconButtonVariant::GhostMuted)
+        .label(label)
+        .on_press_tx(move |s, tx| copy(s, tx))
+        .build(kit(dark))
+        .on_key(move |s: &mut S, key, tx| {
+            if key.key != rune::Key::Enter || key.mods != rune::Mods::default() {
+                return false;
+            }
+            if !tx.key_repeat() {
+                enter(s, tx);
+            }
+            true
+        })
+}
+use crate::workspace_tree::icons as workspace_icons;
 pub fn mermaid(dark: bool, text: &str) -> Option<El> {
     let t = tokens(dark);
     rune_kit::mermaid::render(
