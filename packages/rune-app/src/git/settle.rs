@@ -63,7 +63,7 @@ impl Ui {
                 } else if previous
                     .as_ref()
                     .zip(self.tree())
-                    .is_some_and(|(a, b)| a.branch != b.branch)
+                    .is_some_and(|(a, b)| a.branch != b.branch || a.head != b.head)
                 {
                     self.invalidate_checkout_content();
                 }

@@ -492,12 +492,12 @@ impl Ui {
     fn refresh(&mut self) {
         self.retry_panel_reads();
         self.dirty(&[Lane::Worktrees]);
+        self.invalidate_index();
         if self.repository() == Repository::Git {
             match self.mode {
                 Mode::Workspace => {}
                 Mode::Changes => {
                     self.reconcile_revision = Some(self.preview_revision);
-                    self.invalidate_index();
                     if self
                         .preview
                         .as_ref()
