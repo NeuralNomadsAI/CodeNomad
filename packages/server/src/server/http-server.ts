@@ -449,6 +449,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     done()
   })
 
+  const uiEntry = findUiEntry(deps.uiStaticDir)
   app.get("/", async (request, reply) => {
     const session = deps.authManager.getSessionFromRequest(request)
     if (!session) {
@@ -462,10 +463,10 @@ export function createHttpServer(deps: HttpServerDeps) {
     }
 
     const uiDir = deps.uiStaticDir
-    const indexPath = path.join(uiDir, "index.html")
+    const indexPath = path.join(uiDir, uiEntry)
     if (uiDir && fs.existsSync(indexPath)) {
       reply.header("cache-control", "no-store")
-      if (reply.sendFile) return reply.sendFile("index.html", { cacheControl: false })
+      if (reply.sendFile) return reply.sendFile(uiEntry, { cacheControl: false })
       reply.type("text/html").send(fs.readFileSync(indexPath, "utf-8"))
       return
     }
@@ -631,7 +632,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   if (deps.uiDevServerUrl) {
     setupDevProxy(app, deps.uiDevServerUrl, deps.authManager, deps.previewManager, proxyLogger, remotePreviewsAllowed)
   } else {
-    setupStaticUi(app, deps.uiStaticDir, deps.authManager, deps.previewManager, proxyLogger, remotePreviewsAllowed)
+    setupStaticUi(app, deps.uiStaticDir, uiEntry, deps.authManager, deps.previewManager, proxyLogger, remotePreviewsAllowed)
   }
 
   return {
@@ -2233,9 +2234,19 @@ function normalizeInstanceSuffix(pathSuffix: string | undefined) {
   return trimmed.length === 0 ? "/" : `/${trimmed}`
 }
 
+function findUiEntry(dir: string): string {
+  const name = "index.html"
+  if (!dir || !fs.existsSync(path.join(dir, name))) return name
+  try {
+    const entries = fs.readdirSync(dir)
+    return entries.includes(name) ? name : entries.find(entry => entry.toLowerCase() === name) ?? name
+  } catch { return name }
+}
+
 function setupStaticUi(
   app: FastifyInstance,
   uiDir: string,
+  uiEntry: string,
   authManager: AuthManager,
   previewManager: PreviewManager,
   logger: Logger,
@@ -2308,7 +2319,7 @@ function setupStaticUi(
     },
   })
 
-  const indexPath = path.join(uiDir, "index.html")
+  const indexPath = path.join(uiDir, uiEntry)
 
   app.setNotFoundHandler((request: FastifyRequest, reply: FastifyReply) => {
     const url = request.raw.url ?? ""
@@ -2330,7 +2341,7 @@ function setupStaticUi(
 
     if (fs.existsSync(indexPath)) {
       const rejectIdentity = identityRefused.getStore() !== undefined || negotiate(request)
-      return rejectIdentity ? identityRefused.run({}, () => reply.sendFile("index.html")) : reply.sendFile("index.html")
+      return rejectIdentity ? identityRefused.run({}, () => reply.sendFile(uiEntry)) : reply.sendFile(uiEntry)
     } else {
       reply.code(404).send({ message: "UI bundle missing" })
     }
