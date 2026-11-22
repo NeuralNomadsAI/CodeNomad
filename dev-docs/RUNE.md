@@ -67,6 +67,8 @@ Active and cached tabs share the same guard for pending replies and edited permi
 
 The isolated 12px SVG stroke raster discrepancy is tracked in [Rune issue 1346](https://github.com/anomalyco/rune/issues/1346), with a public API reproduction and Chromium cross-prediction controls. Component pixel budgets require separate qualification.
 
+Lazy and empty folders require branch semantics independent of loaded children. The pinned Rune Tree projects these nodes as leaves despite the directory flag and stored expansion bit; public-model, keyboard and accessibility reproductions are tracked in [Rune issue 1348](https://github.com/anomalyco/rune/issues/1348).
+
 The component index is `rune-components.generated.json`; full sheets and captures are generated under ignored `target/`. Install locked npm dependencies before generating checker-derived sheets. Each qualified component requires a gallery, explicit light/dark pixel thresholds, accessibility and simulated interactions, then two independent blind reviews. Solid/Tauri modules are removed only at complete qualified parity. Integration uses short branches and merge commits into `feat/rust-server`; its synchronization owns merges from `dev`.
 
 Tests use isolated `trial-*` profiles, owned processes and existing Cargo caches, without visible windows or writes to installed profiles, shared OpenCode or user sessions. Qualification commands and evidence are in `packages/rune-app/JOURNAL_TESTS.md` and `scripts/rune/QUALIFICATION.md`. Synthetic scenes and probes require explicit `test-support`; default native/WASM artifacts retain Rune inspection and simulated-input tooling.
