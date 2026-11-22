@@ -27,6 +27,7 @@ pub struct Worktree {
     pub directory: String,
     pub service_directory: Option<String>,
     pub branch: Option<String>,
+    pub head: Option<String>,
     pub missing: bool,
 }
 
@@ -201,11 +202,16 @@ impl Backend {
                 {
                     return Err("invalid worktree service directory".into());
                 }
+                let head = optional(row, "head")?;
+                if let Some(head) = &head {
+                    sha(head)?;
+                }
                 Ok(Worktree {
                     slug,
                     directory,
                     service_directory,
                     branch: optional(row, "branch")?,
+                    head,
                     missing: flag(row, "nestedFolderMissing")?,
                 })
             })
