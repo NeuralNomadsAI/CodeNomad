@@ -303,6 +303,10 @@ pub fn back(s: &mut State) {
     s.commands = None;
     s.incoming = None;
     s.files = None;
+    if let Some(git) = &mut s.git.owner {
+        git.online(false);
+        git.close_preview();
+    }
     s.show_launcher();
     list(s, false);
 }

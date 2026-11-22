@@ -1,0 +1,136 @@
+//! Matching content from packages/ui/tests/browser/fixtures/git-history.tsx.
+use crate::git::{Mode, Ui};
+use codenomad_client::{
+    backend::Backend,
+    git::{Change, Commit, Diff, Page, Repository, Status, Worktree, Worktrees},
+};
+use rune_theme_codenomad::{Space, git_panel, layout::Layout};
+
+pub fn view(s: &crate::State) -> rune::El {
+    let width = crate::platform::setting("RUNE_GIT_PANEL_WIDTH")
+        .and_then(|width| width.parse::<f32>().ok())
+        .filter(|width| width.is_finite() && *width > 0.0)
+        .unwrap_or(360.0);
+    rune::col()
+        .full_width()
+        .full_height()
+        .reading_surface()
+        .child(rune::text("CodeNomad").pad(Space::Md))
+        .child(
+            rune::row()
+                .full_width()
+                .remaining()
+                .child(
+                    git_panel::conversation_column()
+                        .child(crate::git::reader(s))
+                        .child(crate::composer(s)),
+                )
+                .child(crate::git::panel(s, width, rune::el())),
+        )
+}
+
+pub fn changes(s: &mut crate::State) {
+    setup(s, Mode::Changes);
+}
+
+pub fn commits(s: &mut crate::State) {
+    setup(s, Mode::History);
+}
+
+fn setup(s: &mut crate::State, mode: Mode) {
+    const PATH: &str = "src/components/git-panel.tsx";
+    let Ok(client) = codenomad_client::http::Http::new() else {
+        return;
+    };
+    let backend = Backend {
+        client,
+        base: "http://127.0.0.1:1/".into(),
+        workspace: "git-prototype".into(),
+        session: "session".into(),
+        client_id: "git-fixture".into(),
+        fresh_mode: false,
+    };
+    let mut ui = Ui::new(
+        backend,
+        Some("/CodeNomad".into()),
+        s.reads.clone(),
+        s.wake.clone(),
+    );
+    let inventory = Worktrees {
+        repository: Repository::Git,
+        trees: vec![
+            Worktree {
+                slug: "root".into(),
+                directory: "/CodeNomad".into(),
+                branch: Some("feat/git-history".into()),
+                service_directory: None,
+                missing: false,
+            },
+            Worktree {
+                slug: "review".into(),
+                directory: "/CodeNomad/.codenomad/worktrees/review".into(),
+                branch: Some("dev".into()),
+                service_directory: None,
+                missing: false,
+            },
+        ],
+    };
+    let statuses = vec![
+        Status {
+            path: PATH.into(),
+            original_path: None,
+            staged: Some(Change {
+                kind: "modified".into(),
+                additions: 4,
+                deletions: 2,
+            }),
+            unstaged: None,
+            whitespace_only: false,
+        },
+        Status {
+            path: "src/styles/panels/git-history.css".into(),
+            original_path: None,
+            staged: None,
+            unstaged: Some(Change {
+                kind: "untracked".into(),
+                additions: 34,
+                deletions: 0,
+            }),
+            whitespace_only: false,
+        },
+    ];
+    let commits: Vec<_> = [
+        (
+            "Make Git history the starting point",
+            "HEAD -> feat/git-history",
+        ),
+        (
+            "Open file diffs beside the Git navigator",
+            "origin/feat/git-history",
+        ),
+        ("Preserve conversation drafts when opening a preview", ""),
+        ("Merge pull request #788: qualify OpenCode 2.0.18", "dev"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, (subject, refs))| Commit {
+        id: (i + 1).to_string().repeat(40),
+        subject: subject.into(),
+        refs: refs.into(),
+        author: "Pascal André".into(),
+        date: format!("2026-09-{}T12:00:00Z", 26 - i),
+    })
+    .collect();
+    let page = Page {
+        head: commits.first().map(|c| c.id.clone()),
+        commits,
+        has_more: false,
+    };
+    ui.load_scene(mode, inventory, statuses, page, PATH, Diff::Text {
+        before: "export function openGitPanel() {\n  return {\n    title: \"Git Changes\",\n    view: \"changes\",\n    diffPlacement: \"sidebar\",\n  }\n}\n".into(),
+        after: "export function openGitPanel() {\n  return {\n    title: \"Git\",\n    view: \"history\",\n    diffPlacement: \"conversation\",\n    preserveDraft: true,\n  }\n}\n".into(),
+    });
+    s.git.owner = Some(ui);
+    s.git.scene = true;
+    s.phase = crate::Phase::Ready;
+}

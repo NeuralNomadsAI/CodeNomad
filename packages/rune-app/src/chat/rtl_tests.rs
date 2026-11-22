@@ -14,7 +14,7 @@ fn runtime(render: fn(&State, &mut Cx<State>) -> El) -> Runtime<State> {
         completed: true,
         id: "rtl-code".into(),
         role: "assistant".into(),
-        body: CODE.into(),
+        body: format!("```rust\n{CODE}\n```"),
         parts: vec![],
     }];
     let mut runtime = Runtime::new(state, render, (1400.0, 900.0), Env::new(false, 1.0));
@@ -48,7 +48,7 @@ fn rtl_chat_keeps_code_selectable_and_editor_paragraphs_in_their_own_direction()
     let body = rt
         .elements()
         .into_iter()
-        .find(|e| e.path.ends_with("/body-rtl-code"))
+        .find(|e| e.path.contains("/body-rtl-code/") && e.text.as_deref() == Some(CODE))
         .unwrap();
     let [x, y, width, height] = body.rect;
     rt.pointer_down(x + 1.0, y + 3.0);

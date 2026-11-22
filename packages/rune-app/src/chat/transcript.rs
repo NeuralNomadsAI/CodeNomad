@@ -1,117 +1,151 @@
-use crate::{State, content::Part, strings::t};
+use super::{actions::Display, document, tools};
+use crate::{
+    State,
+    content::{Part, TextProvenance},
+    screen,
+    strings::{locale, t},
+};
 use rune::{El, col, text};
-use rune_theme_codenomad::{Space, TextRole, layout::Layout};
-fn prose(key: String, body: &str) -> El {
-    let code = body.starts_with("fn ") || body.starts_with("```");
-    let element = text(body)
-        .key(key)
-        .full_width()
-        .wrap()
-        .text_role(if code { TextRole::Mono } else { TextRole::Body })
-        .selectable(true);
-    if code {
-        element.literal_direction()
-    } else {
-        element.content_direction()
-    }
-}
+use rune_theme_codenomad::{
+    Space, TextRole, catalogue,
+    layout::{self, Layout},
+    markdown,
+};
+
+const PART_LIMIT: usize = 1000;
+
 pub fn message(s: &State, i: usize) -> El {
-    let scope = s.input_scope.clone();
     let m = &s.messages[i];
+    let mut header = layout::action_row().child(
+        text(t(if m.role == "user" {
+            "messageItem.speaker.you"
+        } else {
+            "messageItem.speaker.assistant"
+        }))
+        .text_role(TextRole::Label),
+    );
+    if !m.body.trim().is_empty() {
+        let id = m.id.clone();
+        header = header.child(
+            markdown::copy_button(
+                t("messageItem.actions.copy"),
+                screen::action_tx(&s.input_scope, move |s, tx| {
+                    let Some(row) = s.messages.iter().find(|row| row.id == id) else {
+                        return;
+                    };
+                    if row.parts.is_empty() {
+                        tx.copy(row.body.as_str());
+                    } else {
+                        let prose = row
+                            .parts
+                            .iter()
+                            .filter_map(|part| match part {
+                                Part::Text(body) if !body.text.trim().is_empty() => {
+                                    Some(body.text.as_str())
+                                }
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>();
+                        tx.copy(prose.join("\n\n"));
+                    }
+                }),
+            )
+            .key(format!("copy-message-{}", m.id)),
+        );
+    }
     let mut view = col()
         .key(m.id.clone())
         .full_width()
         .pad(Space::Lg)
         .separate(Space::Sm)
-        .child(
-            text(t(if m.role == "user" {
-                "messageItem.speaker.you"
-            } else {
-                "messageItem.speaker.assistant"
-            }))
-            .text_role(TextRole::Label),
-        );
-    if m.parts.iter().all(|p| matches!(p, Part::Text(_))) {
-        return view.child(prose(format!("body-{}", m.id), &m.body));
+        .child(header);
+    let mut ordinal = 0;
+    if m.parts.is_empty() && !m.body.is_empty() {
+        view = view.child(document::prose(s, format!("body-{}", m.id), &m.body, false));
     }
+    let gap_key = format!("parts-gap-{}", m.id);
+    let initial = if m.parts.len() > PART_LIMIT {
+        PART_LIMIT / 2
+    } else {
+        m.parts.len()
+    };
+    let tail = m.parts.len().saturating_sub(PART_LIMIT / 2);
+    let head = initial.saturating_add(
+        s.transcript_display
+            .steps(&gap_key)
+            .saturating_mul(PART_LIMIT),
+    );
+    let mut reveal_start = (head > initial).then(|| head.saturating_sub(PART_LIMIT));
     for (index, part) in m.parts.iter().enumerate() {
-        match part {
-            Part::Text(body) => {
-                view = view.child(prose(format!("part-{}-{index}", m.id), &body.text))
-            }
-            Part::Tool(tool) => {
-                let key = format!("tool-{}-{}", m.id, tool.id);
-                let expanded = s.expanded_tools.contains(&key);
-                let status = match tool.status.as_str() {
-                    "completed" => "toolCall.status.completed",
-                    "error" => "rune.tool_error",
-                    "running" => "toolCall.status.running",
-                    _ => "rune.tool_pending",
-                };
-                let toggle = key.clone();
-                let mut block = col()
-                    .key(key.clone())
-                    .full_width()
-                    .pad(Space::Sm)
-                    .separate(Space::Sm)
-                    .inset_surface()
+        if index == head && head < tail {
+            let hidden = tail - head;
+            let notice = catalogue::format(
+                locale(),
+                if hidden == 1 {
+                    "messageBlock.hiddenParts.one"
+                } else {
+                    "messageBlock.hiddenParts.other"
+                },
+                &[("count", &hidden.to_string())],
+            );
+            let label = catalogue::format(
+                locale(),
+                "messageBlock.hiddenParts.show",
+                &[("count", &hidden.min(PART_LIMIT).to_string())],
+            );
+            let key = gap_key.clone();
+            view = view.child(
+                layout::action_row()
+                    .key(gap_key.clone())
+                    .child(text(notice))
                     .child(
-                        rune_theme_codenomad::layout::action_row()
-                            .separate(Space::Md)
-                            .child(text(&tool.name).text_role(TextRole::Label))
-                            .child(text(t(status)))
-                            .child(
-                                rune_theme_codenomad::layout::button(
-                                    t(if expanded {
-                                        "rune.hide_details"
-                                    } else {
-                                        "rune.details"
-                                    }),
-                                    false,
-                                    crate::screen::action(&scope, move |s: &mut State| {
-                                        crate::transcript_state::toggle_tool(s, &toggle);
-                                    }),
-                                )
-                                .key(format!("toggle-{key}")),
-                            ),
-                    );
-                if expanded {
-                    for (key_part, label, value) in [
-                        ("tool_input", "rune.tool_input", &tool.input),
-                        ("tool_output", "toolCall.task.sections.output", &tool.output),
-                    ] {
-                        if !value.is_empty() {
-                            let reveal = format!("{key}-full-{key_part}");
-                            let clipped = value.chars().count() > 10_000
-                                && !s.expanded_tools.contains(&reveal);
-                            let shown = if clipped {
-                                value.chars().take(10_000).collect::<String>()
-                            } else {
-                                value.clone()
-                            };
-                            block = block
-                                .child(text(t(label)).text_role(TextRole::Label))
-                                .child(prose(format!("{key}-{key_part}"), &shown));
-                            if clipped {
-                                let button_key = format!("reveal-{reveal}");
-                                block = block.child(
-                                    rune_theme_codenomad::layout::button(
-                                        t("messageBlock.hiddenText.showAll"),
-                                        false,
-                                        crate::screen::action(&scope, move |s: &mut State| {
-                                            crate::transcript_state::reveal_tool_output(s, &reveal);
-                                        }),
-                                    )
-                                    .key(button_key),
-                                );
-                            }
-                        }
-                    }
-                    if tool.limited {
-                        block = block.child(text(t("rune.tool_limited")));
-                    }
+                        layout::button_tx(
+                            &label,
+                            false,
+                            screen::action_tx(&s.input_scope, move |s, tx| {
+                                tx.scroll_key_to(format!("{key}-start"), 0.0);
+                                if tx.by_keys() {
+                                    tx.focus(format!("{key}-start"), true);
+                                }
+                                Display::reveal_next(s, &key);
+                            }),
+                        )
+                        .key(format!("reveal-{gap_key}")),
+                    ),
+            );
+        }
+        let visible = index < head || index >= tail;
+        let body = match part {
+            Part::Text(body) => {
+                let key = format!("fragment-{}:{ordinal}", m.id);
+                ordinal += 1;
+                if visible && !body.text.trim().is_empty() {
+                    Some(document::prose(
+                        s,
+                        key,
+                        &body.text,
+                        !m.completed && body.provenance != TextProvenance::Closed,
+                    ))
+                } else {
+                    None
                 }
-                view = view.child(block);
+            }
+            Part::Tool(tool) if visible => Some(tools::view(s, &m.id, tool)),
+            Part::Tool(_) => None,
+        };
+        if let Some(body) = body {
+            if reveal_start.is_some_and(|first| index >= first) {
+                view = view.child(
+                    col()
+                        .key(format!("{gap_key}-start"))
+                        .focusable(true)
+                        .tab_index(-1)
+                        .full_width()
+                        .child(body),
+                );
+                reveal_start = None;
+            } else {
+                view = view.child(body);
             }
         }
     }

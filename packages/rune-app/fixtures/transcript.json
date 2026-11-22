@@ -1,0 +1,14 @@
+{
+  "id": "transcript",
+  "type": "assistant",
+  "agent": "build",
+  "model": {"providerID": "fixture", "id": "fixture"},
+  "time": {"created": 1, "completed": 2},
+  "content": [
+    {"type": "text", "text": "## Results\n\n- **First**\n\n```rust\nlet count = 12;\n```"},
+    {"type": "tool", "id": "read", "name": "read", "state": {"status": "completed", "input": {"filePath": "src/demo.rs", "offset": 4}, "content": [{"type": "text", "text": "return 7;"}]}},
+    {"type": "tool", "id": "edit", "name": "edit", "state": {"status": "completed", "input": {"filePath": "src/demo.rs"}, "metadata": {"files": [{"file": "src/demo.rs", "patch": "@@ -1 +1 @@\n-return 7;\n+return 8;"}]}, "content": [{"type": "text", "text": "Edit applied."}]}},
+    {"type": "tool", "id": "shell", "name": "bash", "state": {"status": "completed", "input": {"command": "printf '%s' result", "description": "Print result"}, "content": [{"type": "text", "text": "result"}]}},
+    {"type": "tool", "id": "search", "name": "grep", "state": {"status": "completed", "input": {"pattern": "return"}, "content": [{"type": "text", "text": "src/demo.rs:1:return 8;"}]}}
+  ]
+}

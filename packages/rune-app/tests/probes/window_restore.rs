@@ -108,7 +108,7 @@ fn send(rt: &mut Runtime<State>, id: &str, turn: usize, prompt: &str) {
     tap(rt, "send");
     assert!(rt.state.draft.text.is_empty(), "submitted composer clears");
     let reply = format!("reply-{id}-{turn}");
-    let key = format!("body-{reply}");
+    let path = super::fragment_path(&reply, 0);
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut visible = false;
     while rt.state.phase != Phase::Ready {
@@ -123,8 +123,9 @@ fn send(rt: &mut Runtime<State>, id: &str, turn: usize, prompt: &str) {
                 .any(|m| m.id == reply && !m.completed)
         {
             if let Some(element) = rt.elements().into_iter().find(|e| {
-                e.key.as_deref() == Some(key.as_str())
+                e.path.contains(&path)
                     && e.text.as_deref().is_some_and(|s| {
+                        let s = super::rendered_text(s);
                         s.starts_with("fn main") && s.contains(&format!("tour {turn}"))
                     })
                     && !e.exiting
