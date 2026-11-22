@@ -1,4 +1,4 @@
-use super::{request::Read, state::Tree};
+use super::{reader::Reader, request::Read, state::Tree};
 use crate::platform::{self, collation::Collation, reads::Reads};
 use codenomad_client::{
     Receiver, Sender, Wake, backend::Backend, bounded, files::Entry, history::Result,
@@ -16,6 +16,7 @@ pub struct Row {
     pub busy: bool,
 }
 pub struct Ui {
+    pub reader: Reader,
     pub tree: Tree,
     pub rows: Vec<Row>,
     pub panel: bool,
@@ -37,6 +38,7 @@ impl Ui {
     pub fn new(backend: Backend, directory: String, reads: Reads, wake: Wake) -> Self {
         let (out, incoming) = bounded(16);
         Self {
+            reader: Reader::new(backend.clone(), reads.clone(), wake.clone()),
             tree: Tree::new(directory),
             rows: vec![],
             panel: false,
@@ -57,6 +59,7 @@ impl Ui {
     }
     pub fn activate(&mut self, active: bool) {
         self.active = active;
+        self.reader.activate(active);
         self.demand();
     }
     pub fn show(&mut self, show: bool) {
@@ -64,6 +67,7 @@ impl Ui {
         self.demand();
     }
     pub fn online(&mut self, online: bool) {
+        self.reader.online(online && !self.stopped);
         if online && !self.online {
             self.tree.invalidate_all();
             self.pending = None;
@@ -101,6 +105,7 @@ impl Ui {
             }
             WorkspaceEvent::Stopped { workspace_id } if workspace_id == self.backend.workspace => {
                 self.tree.close();
+                self.reader.close();
                 self.pending = None;
                 self.stopped = true;
                 self.snapshot();
@@ -115,6 +120,7 @@ impl Ui {
             }
         } else {
             self.tree.refresh(true);
+            self.reader.refresh();
             self.due = Some(0.0);
         }
     }
@@ -125,13 +131,25 @@ impl Ui {
             self.launch(requests);
         }
     }
+    pub fn open(&mut self, path: String) {
+        if !self.stopped {
+            self.reader.open(self.tree.directory().into(), path);
+        }
+    }
+    pub fn close_reader(&mut self) {
+        self.reader.close();
+    }
     pub fn poll(&mut self, now: f64) -> bool {
         self.clock = now;
         let mut changed = false;
         if self.pending.as_ref().is_some_and(|(due, _)| now >= *due) {
             if let Some((_, changes)) = self.pending.take() {
+                let mut reader_changed = changes.is_none();
                 if let Some(changes) = changes {
                     for (directory, path) in changes {
+                        reader_changed |= self.reader.target().is_some_and(|target| {
+                            codenomad_client::same_server_path(&directory, &target.directory)
+                        });
                         self.tree.invalidate(&directory, Some(&path));
                     }
                 } else {
@@ -139,6 +157,9 @@ impl Ui {
                 }
                 self.last_passive = Some(now);
                 self.due = Some(now + 0.1);
+                if reader_changed {
+                    self.reader.invalidate();
+                }
             }
         }
         for _ in 0..8 {
@@ -164,7 +185,15 @@ impl Ui {
             self.snapshot();
             self.due.get_or_insert(now + 0.1);
         }
-        changed
+        if self
+            .reader
+            .target()
+            .is_some_and(|target| target.directory != self.tree.directory())
+        {
+            self.reader.close();
+            changed = true;
+        }
+        changed | self.reader.poll(now)
     }
     fn launch(&mut self, requests: Vec<Read>) {
         for read in requests {
