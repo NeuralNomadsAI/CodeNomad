@@ -5,7 +5,8 @@ use vte::{Params, Perform};
 
 const ESCAPED: [&str; 5] = ["\\u001b", "\\u001B", "\\x1b", "\\x1B", "\\033"];
 // Rune reserves the high ink-index bit for synthetic bold.
-const STYLED_RUN_LIMIT: usize = i16::MAX as usize;
+const SHAPED_RUN_LIMIT: usize = i16::MAX as usize;
+const DECORATION_WORK_LIMIT: usize = 1_000_000;
 
 pub fn present(source: &str) -> bool {
     source.contains('\u{1b}') || ESCAPED.iter().any(|escape| source.contains(escape))
@@ -69,10 +70,7 @@ struct Log {
 
 impl Log {
     fn finish_run(&mut self) {
-        if self.start < self.text.len()
-            && self.style != Style::default()
-            && self.runs.len() < STYLED_RUN_LIMIT
-        {
+        if self.start < self.text.len() && self.style != Style::default() {
             self.runs.push((self.start..self.text.len(), self.style));
         }
         self.start = self.text.len();
@@ -223,10 +221,8 @@ fn parse(mut source: &str) -> Log {
                 .position(|&byte| !byte.is_ascii_digit() && !matches!(byte, b';' | b':'))
                 .map(|index| index + 1);
             if let Some(end) = end.filter(|&index| tail.as_bytes()[index] == b'm') {
-                if end > 1 {
-                    parser.advance(&mut out, b"\x1b");
-                    parser.advance(&mut out, &tail.as_bytes()[..=end]);
-                }
+                parser.advance(&mut out, b"\x1b");
+                parser.advance(&mut out, &tail.as_bytes()[..=end]);
                 source = &tail[end + 1..];
                 continue;
             }
@@ -248,6 +244,9 @@ pub fn code(source: &str, wrap: bool) -> El {
     let mut strikes = vec![];
     let metrics = tokens(dark());
     let default = metrics.color("text-primary");
+    // Rune's range decoration queries revisit the shaped line for each range.
+    let mut decorations_left = DECORATION_WORK_LIMIT / log.text.len().max(1);
+    let mut shaped_left = SHAPED_RUN_LIMIT;
     for (range, mut style) in log.runs {
         if style.inverse {
             std::mem::swap(&mut style.fg, &mut style.bg);
@@ -260,13 +259,15 @@ pub fn code(source: &str, wrap: bool) -> El {
             if style.fg.is_some() || style.dim {
                 span = span.color(dim(style.fg.unwrap_or(default)));
             }
-            if let Some(bg) = style.bg {
+            if let Some(bg) = style.bg.filter(|_| shaped_left > 0) {
                 span = span.bg(dim(bg), 0.0);
             }
-            if style.underline {
+            if style.underline && decorations_left > 0 && shaped_left > 0 {
+                decorations_left -= 1;
                 span = span.underline(dim(style.fg.unwrap_or(default)));
             }
-            if style.strike {
+            if style.strike && decorations_left > 0 {
+                decorations_left -= 1;
                 strikes.push((
                     range.start,
                     range.end,
@@ -274,11 +275,14 @@ pub fn code(source: &str, wrap: bool) -> El {
                 ));
             }
         }
-        if style.bold {
+        if style.bold && shaped_left > 0 {
             span = span.weight(metrics.number("font-weight-semibold").px());
         }
-        if style.italic {
+        if style.italic && shaped_left > 0 {
             span = span.italic();
+        }
+        if span.weight.is_some() || span.italic || span.bg.is_some() || span.underline.is_some() {
+            shaped_left -= 1;
         }
         spans.push(span);
     }
@@ -333,11 +337,16 @@ mod tests {
     }
 
     #[test]
-    fn style_index_limit_leaves_the_rest_of_the_output_visible() {
-        let source = format!("\u{1b}[4m{}", "\u{1b}[31mA\u{1b}[32mB".repeat(40_000));
+    fn color_only_runs_and_conceal_survive_beyond_the_shaping_index_limit() {
+        let source = format!(
+            "{}\u{1b}[8mhidden\u{1b}[0m\u{1b}[31mEND",
+            "\u{1b}[31mA\u{1b}[32mB\n".repeat(16_384)
+        );
         let log = parse(&source);
-        assert_eq!(log.runs.len(), STYLED_RUN_LIMIT);
-        assert_eq!(log.text, "AB".repeat(40_000));
+        assert!(log.runs.len() > SHAPED_RUN_LIMIT);
+        assert!(log.text.ends_with("\nhiddenEND"));
+        assert!(log.runs[log.runs.len() - 2].1.hidden);
+        assert_eq!(log.runs.last().unwrap().1.fg, Some(rgb(187, 0, 0)));
     }
 
     #[test]
@@ -357,9 +366,32 @@ mod tests {
         let bold = parse("\u{1b}[1mA\u{1b}[21mB");
         assert!(bold.runs[0].1.bold);
         assert_eq!(bold.runs[0].0, 0..1);
-        let empty = parse("\u{1b}[31mA\u{1b}[mB");
-        assert_eq!(empty.runs[0].0, 0..2);
         let mixed = parse("\u{1b}[31;39mA");
         assert_eq!(mixed.runs[0].1.fg, Some(rgb(187, 0, 0)));
+    }
+
+    #[test]
+    fn empty_sgr_resets_including_conceal() {
+        let empty = parse("\u{1b}[8;31mA\u{1b}[mB");
+        assert_eq!(empty.text, "AB");
+        assert_eq!(empty.runs.len(), 1);
+        assert_eq!(empty.runs[0].0, 0..1);
+    }
+
+    #[test]
+    fn a_long_unwrapped_decorated_line_builds_in_the_runtime() {
+        let source = format!("\u{1b}[4;9m{}", "\u{1b}[31mA\u{1b}[32mB".repeat(16_000));
+        let mut rt = rune::Runtime::new(
+            source,
+            |source, _| code(source, false),
+            (640.0, 360.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        assert!(
+            rt.accessibility_json()
+                .to_string()
+                .contains(&"AB".repeat(16_000))
+        );
     }
 }
