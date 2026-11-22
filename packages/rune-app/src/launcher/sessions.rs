@@ -164,11 +164,12 @@ fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>, dismiss:
     l.job("rune.open_error", async move {
         let mut missing = Vec::new();
         for (id, step) in candidates {
+            let started = Instant::now();
             match b.bind_session(&p, &id, false).await {
                 Ok((bound, session)) => {
                     return Ok(Reply::Selected(
                         missing,
-                        Some((bound, session.title, step, Instant::now())),
+                        Some((bound, session.title, step, started)),
                         dismiss,
                     ));
                 }
@@ -253,11 +254,11 @@ pub(super) fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize
         }
     }
     let draft = crate::workspace::bound(s, &b);
+    s.transcript_display.bind(&b.base, &b.workspace, &b.session);
     s.chat_title = title;
     if !same_session {
         crate::files::bind(s, &b);
         s.agent = None;
-        s.expanded_tools.clear();
         s.messages.clear();
         s.can_older = false;
     } else if let Some(agent) = &mut s.agent {

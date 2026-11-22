@@ -48,10 +48,16 @@ impl Signals {
     }
 
     pub(super) fn observe(&self, frame: &Value) {
-        let Some(id) = frame["instanceId"].as_str().filter(|id| valid_id(id)) else {
+        let kind = frame["type"].as_str();
+        let workspace = match kind {
+            Some("workspace.worktreesChanged" | "workspace.stopped") => &frame["workspaceId"],
+            _ => &frame["instanceId"],
+        };
+        let Some(id) = workspace.as_str().filter(|id| valid_id(id)) else {
             return;
         };
-        let invalidates = match frame["type"].as_str() {
+        let invalidates = match kind {
+            Some("workspace.worktreesChanged" | "workspace.stopped") => true,
             Some("instance.eventStatus") => frame["status"] == "connected",
             Some("instance.event") => matches!(
                 frame["event"]["type"].as_str(),
@@ -82,14 +88,17 @@ pub struct CatalogueWatch {
 }
 
 impl CatalogueWatch {
-    pub fn new(backend: Backend, wake: Wake) -> Self {
+    pub fn new(
+        backend: Backend,
+        wake: Wake,
+    ) -> (Self, impl std::future::Future<Output = ()> + 'static) {
         let signals = Arc::new(Signals {
             pending: Mutex::default(),
             wake,
         });
         let (stop, cancelled) = bounded(1);
         let observer = signals.clone();
-        runtime::spawn(async move {
+        let task = async move {
             let (out, events) = bounded(2);
             let mut epoch = 0;
             let mut delay = 250;
@@ -122,11 +131,14 @@ impl CatalogueWatch {
                 .await;
                 delay = (delay * 2).min(4000);
             }
-        });
-        Self {
-            signals,
-            _stop: stop,
-        }
+        };
+        (
+            Self {
+                signals,
+                _stop: stop,
+            },
+            task,
+        )
     }
 
     pub fn take(&self) -> CatalogueChanges {

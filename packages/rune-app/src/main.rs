@@ -190,9 +190,11 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let chat = poll_chat(s, 64);
     let mut changed = chat | transcript_state::Display::poll(s, chat, now, tx);
     changed |= launcher::poll(s, tx);
+    shell::sync(s);
     changed |= workspace::poll(s, now, tx);
     changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
     changed |= git::poll(s, now, tx);
+    workspace::capture_files_mode(s);
     if changed {
         tx.instant();
     }
@@ -208,6 +210,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             Event::Connected(backend) => {
                 s.renew_scope();
                 git::connected(s, &backend);
+                workspace::restore_files_mode(s);
                 if s.agent.is_none() {
                     s.agent = Some(agent::Ui::new(agent::start(backend, s.wake.clone())));
                 }
@@ -330,7 +333,9 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         .as_ref()
         .is_some_and(|a| a.picker || !a.ids().is_empty());
     rune_theme_codenomad::interruption::session_surface(expanded)
-        .child(rune_theme_codenomad::interruption::history(expanded).child(rows))
+        .child(shell::reader(s, || {
+            rune_theme_codenomad::interruption::history(expanded).child(rows)
+        }))
         .child(agent_view::view(s, cx))
         .child(composer(s))
 }

@@ -181,10 +181,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     l.listing = false;
     match result {
         Ok(Reply::Connected(b, projects, server_id)) => {
-            l.catalogue_watch = Some(codenomad_client::stream::CatalogueWatch::new(
-                b.clone(),
-                l.wake.clone(),
-            ));
+            l.catalogue_watch = None;
             l.connection = Some(b);
             l.server_id = Some(server_id);
             l.projects = projects;
@@ -201,6 +198,14 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             l.folder = TextEdit::new(&project.path);
             l.project = Some(project.clone());
+            if l.catalogue_watch.is_none()
+                && let Some(backend) = &l.connection
+            {
+                let (watch, task) =
+                    codenomad_client::stream::CatalogueWatch::new(backend.clone(), l.wake.clone());
+                l.catalogue_watch = Some(watch);
+                crate::platform::spawn(task);
+            }
             l.apply_listing(rows, false, None);
             l.search = TextEdit::new("");
             crate::workspace::opened(s, &project);
@@ -209,8 +214,12 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 Restored::Missing(id) => {
                     retire_session(s, &id);
                     crate::git::project_opened(s);
+                    crate::workspace::restore_files_mode(s);
                 }
-                Restored::Empty => crate::git::project_opened(s),
+                Restored::Empty => {
+                    crate::git::project_opened(s);
+                    crate::workspace::restore_files_mode(s);
+                }
             }
         }
         Ok(Reply::Listed(rows, more)) => {
