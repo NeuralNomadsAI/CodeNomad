@@ -21,6 +21,7 @@ pub struct Row {
     pub busy: bool,
 }
 pub struct Ui {
+    pub reading: crate::chat::reading::Position,
     pub presentation: super::presentation::Presentation,
     pub document: Editor,
     pub reader: Reader,
@@ -46,6 +47,7 @@ impl Ui {
     pub fn new(backend: Backend, directory: String, reads: Reads, wake: Wake) -> Self {
         let (out, incoming) = bounded(16);
         Self {
+            reading: Default::default(),
             presentation: super::presentation::Presentation::new(wake.clone()),
             document: Editor::new(
                 backend.clone(),

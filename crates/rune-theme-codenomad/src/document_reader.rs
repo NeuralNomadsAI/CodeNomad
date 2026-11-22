@@ -11,15 +11,11 @@ pub fn surface(dark: bool) -> El {
         .color(tokens(dark).color("text-primary"))
 }
 pub fn pages(history: El, reader: Option<El>) -> El {
-    let mut root = rune::col().w_full().h_full().min_h(0.0);
-    if let Some(reader) = reader {
-        root = root
-            .child(history.opacity(0.0).inert().a11y_hidden())
-            .child(reader.absolute(0.0, 0.0).w_full().h_full());
-    } else {
-        root = root.child(history);
-    }
-    root
+    rune::col()
+        .w_full()
+        .h_full()
+        .min_h(0.0)
+        .child(reader.unwrap_or(history))
 }
 pub use crate::generated_layout::DRAWER_GEOMETRY;
 pub fn split(main: El, tree: Option<El>, width: f32, expanded: bool) -> El {

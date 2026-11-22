@@ -326,7 +326,11 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     let rows = layout::transcript_rows(
         s.messages.len(),
         |s: &State, i| s.messages[i].id.clone().into(),
-        move |s: &State, i| strings::with_locale(locale, || transcript::message(s, i)),
+        move |s: &State, i| {
+            strings::with_locale(locale, || {
+                chat::reading::row(s, i, transcript::message(s, i))
+            })
+        },
     )
     .key("rows")
     .virtual_rows_version(s.revision);
@@ -403,7 +407,10 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         })
         .child(files::view::body(
             s,
-            rune_theme_codenomad::interruption::history(expanded).child(rows),
+            chat::reading::history(
+                s,
+                rune_theme_codenomad::interruption::history(expanded).child(rows),
+            ),
             expanded,
         ))
         .child(agent_view::view(s, cx))

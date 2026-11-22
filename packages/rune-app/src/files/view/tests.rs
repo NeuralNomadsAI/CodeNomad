@@ -5,6 +5,7 @@ use codenomad_client::files::{Entry, EntryKind};
 use rune::{Env, Key, KeyEvent, Mods, Runtime};
 use std::time::{Duration, Instant};
 
+mod reading;
 mod resize;
 mod server;
 
@@ -516,6 +517,7 @@ fn closing_reader_restores_the_transcript_reading_position() {
         let mut rt = runtime(http.ui(Store::default(), "history"));
         rt.update(|state, _| {
             state.messages = crate::transport::synthetic();
+            state.draft = rune::TextEdit::new("unfinished reader return · été 🦀");
             state.revision += 1;
         });
         for _ in 0..30 {
@@ -540,11 +542,13 @@ fn closing_reader_restores_the_transcript_reading_position() {
         let before = first_visible(&rt).unwrap();
         open(&mut rt, &http, "main.rs", &"bGV0IHggPSAxOwog".repeat(400)).await;
         assert!(accessible(&rt.accessibility_json(), "history").is_none());
-        assert!(
-            rt.elements()
-                .iter()
-                .any(|node| node.key.as_deref() == Some("history") && node.inert)
-        );
+        assert!(!rt.elements().iter().any(|node| {
+            node.key.as_deref() == Some("history")
+                || node
+                    .key
+                    .as_deref()
+                    .is_some_and(|key| key.starts_with("body-"))
+        }));
         let source_rect = |rt: &Runtime<State>| {
             rt.elements()
                 .into_iter()
@@ -571,12 +575,15 @@ fn closing_reader_restores_the_transcript_reading_position() {
             rt.frame(0.02);
         }
         click(&mut rt, "file-close");
+        assert_eq!(first_visible(&rt).unwrap(), before, "first return frame");
         for _ in 0..30 {
             rt.frame(0.02);
+            assert_eq!(first_visible(&rt).unwrap(), before, "settling return frame");
         }
         assert_eq!(rt.scroll_at_bottom("history"), Some(false));
         assert_eq!(first_visible(&rt).unwrap(), before);
         assert_eq!(rt.state.messages.len(), 10001);
+        assert_eq!(rt.state.draft.text, "unfinished reader return · été 🦀");
         http.quiet().await;
     });
 }

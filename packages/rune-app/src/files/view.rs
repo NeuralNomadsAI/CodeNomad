@@ -1,5 +1,10 @@
 use super::{document::Format, presentation::Kind};
-use crate::{State, components::button, screen, strings::t};
+use crate::{
+    State,
+    components::{button, button_tx},
+    screen,
+    strings::t,
+};
 use rune::{El, text};
 use rune_theme_codenomad::{
     Space, TextRole, document_reader as theme,
@@ -143,11 +148,19 @@ fn reader(s: &State) -> El {
             }
         };
     }
-    actions.push(button(
+    let input_scope = s.input_scope.clone();
+    actions.push(button_tx(
         "file-close",
         t("gitPanel.backChat"),
         false,
-        document_action(s, super::Ui::close_reader),
+        screen::action_tx(&input_scope, move |s, tx| {
+            if let Some(ui) = &mut s.files {
+                if scope == ui.document.scope() {
+                    ui.close_reader();
+                    ui.reading.restore(tx);
+                }
+            }
+        }),
     ));
     theme::surface(dark)
         .key(format!("file-reader-{scope}"))
