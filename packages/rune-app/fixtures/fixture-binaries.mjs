@@ -5,7 +5,7 @@ import {spawnSync} from 'node:child_process'
 import {mkdirSync} from 'node:fs'
 import {randomUUID} from 'node:crypto'
 
-const root = path.resolve(import.meta.dirname, '../..')
+const root = path.resolve(import.meta.dirname, '../../..')
 const suffix = process.platform === 'win32' ? '.exe' : ''
 function explicit(value, fallback) {
   if (value !== undefined) assert(path.isAbsolute(value), 'Fixture binary override must be absolute')

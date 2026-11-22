@@ -10,7 +10,7 @@ import {textStream} from './fixture-response.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requireTestSupport()
-const here=import.meta.dirname
+const here=path.resolve(import.meta.dirname,'..')
 const profile=path.join(here,'fixture-profile',`recovery-${randomUUID()}`)
 const project=path.join(profile,'projects','synthetic')
 await mkdir(project,{recursive:true})

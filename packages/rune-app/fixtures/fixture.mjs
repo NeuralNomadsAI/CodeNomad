@@ -59,7 +59,7 @@ const server = createServer(async (req, res) => {
 })
 await new Promise(r => server.listen(0,'127.0.0.1',r))
 const child = spawn(clientBinary, process.argv.slice(2), {
-  cwd: import.meta.dirname, windowsHide:true, stdio:'inherit', env:{...process.env,
+  cwd: path.resolve(import.meta.dirname,'..'), windowsHide:true, stdio:'inherit', env:{...process.env,
     RUNE_BACKEND:`http://127.0.0.1:${server.address().port}/`,RUNE_WORKSPACE:workspace,RUNE_SESSION:session,
     RUNE_BOOTSTRAP_TOKEN:'',RUNE_LOCALE:'fr',CODENOMAD_PROFILE:'trial-rune-fixture'},
 })

@@ -9,13 +9,13 @@ import {parseArgs} from 'node:util'
 import {OpenCode} from '@opencode/client'
 import {privateEnvironment} from './private-profile.mjs'
 import {clientBinary,serverBinary,requireTestSupport} from './fixture-binaries.mjs'
-import {preparePruning} from '../../scripts/perf/pruning.mjs'
-import {privatePath} from '../../scripts/perf/isolation.mjs'
-import {stopFixtureChild} from '../../scripts/native-fixture-guards.mjs'
+import {preparePruning} from '../../../scripts/perf/pruning.mjs'
+import {privatePath} from '../../../scripts/perf/isolation.mjs'
+import {stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
 
 const {values}=parseArgs({options:{opencode:{type:'string'}}})
 assert(values.opencode&&path.isAbsolute(values.opencode),'--opencode requires an absolute private-runtime executable')
-const repository=path.resolve(import.meta.dirname,'../..')
+const repository=path.resolve(import.meta.dirname,'../../..')
 const root=privatePath(path.join(repository,'scripts/perf/run',`trial-rune-store-${randomUUID()}`))
 await mkdir(root,{recursive:true})
 const project=path.join(root,'project'),config=path.join(root,'opencode-config')

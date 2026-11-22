@@ -9,7 +9,7 @@ import {connectNative} from './live-access.mjs'
 
 export async function prepareRealHistory() {
   const native=await connectNative()
-  const here=import.meta.dirname
+  const here=path.resolve(import.meta.dirname,'..')
   const profile=path.join(here,'fixture-profile',`real-history-${randomUUID()}`)
   const project=path.join(profile,'project')
   const plugins=path.join(project,'.opencode','plugins')

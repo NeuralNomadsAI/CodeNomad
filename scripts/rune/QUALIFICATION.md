@@ -1,12 +1,11 @@
 # Qualification Rune sans fenêtre
 
-Le workflow `.github/workflows/rune-native.yml` prépare et contrôle la révision Rune, les sources générées et l'inventaire, puis exécute les tests Rust et le contrôle de styles sous Windows, macOS et Linux. `CARGO_TARGET_DIR` désigne explicitement le cache Cargo ; les captures et arbres restent sous `target/rune-evidence/<OS>`. Chaque artefact est nommé `rune-native-<OS>-<architecture>`.
+Le workflow `.github/workflows/rune-native.yml` utilise les dépendances Git Rune épinglées par Cargo, contrôle les sources générées et l'inventaire, puis exécute les tests Rust et le contrôle de styles sous Windows, macOS et Linux. `CARGO_TARGET_DIR` désigne explicitement le cache Cargo ; les captures et arbres restent sous `target/rune-evidence/<OS>`. Chaque artefact est nommé `rune-native-<OS>-<architecture>`. Les journaux d'exécution restent dans ces sorties ignorées ou les artefacts CI.
 
 Pour inspecter et agir sur le vrai runtime sans fenêtre, après compilation :
 
 ```powershell
 $env:CARGO_TARGET_DIR = 'D:/CodeNomad/.codenomad/worktrees/rune-native-chat/packages/rune-chat/target'
-node scripts/rune/prepare.mjs --check
 cargo build --locked -p codenomad-rune-app --bin codenomad-rune --features test-support
 node scripts/rune/headless.mjs --binary "$env:CARGO_TARGET_DIR/debug/codenomad-rune.exe"
 ```

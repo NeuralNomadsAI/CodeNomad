@@ -13,7 +13,7 @@ import solid from 'vite-plugin-solid'
 import {createFixtureCache} from '../../../packages/ui/tests/browser/fixture-cache.ts'
 import {createFixtureShutdown} from '../../../packages/ui/tests/browser/fixture-shutdown.ts'
 import {buildInventory} from '../component-inventory.mjs'
-import {privateEnvironment} from '../../../packages/rune-app/private-profile.mjs'
+import {privateEnvironment} from '../../../packages/rune-app/fixtures/private-profile.mjs'
 
 const root=fileURLToPath(new URL('../../../',import.meta.url)),require=createRequire(import.meta.url)
 const {values}=parseArgs({options:{binary:{type:'string'},'reuse-solid':{type:'boolean'}}})

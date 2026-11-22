@@ -9,13 +9,13 @@ Les conventions, correspondances et critères de qualification sont dans [RUNE.m
 Depuis ce worktree isolé, définir `CARGO_TARGET_DIR` vers le cache Cargo existant avant toute compilation :
 
 ```powershell
-./packages/rune-app/setup.ps1
+cargo +1.99.1 build --locked -p codenomad-rune-app --bin codenomad-rune
 cargo +1.99.1 test --locked --workspace
 cargo +1.99.1 run --locked -p rune-style-policy -- packages/rune-app/src
 cargo +1.99.1 build --locked --target wasm32-unknown-unknown -p codenomad-rune-app --bin codenomad-rune
 ```
 
-Le binaire natif est `$env:CARGO_TARGET_DIR/debug/codenomad-rune.exe` sous Windows. La préparation vérifie la révision Rune épinglée dans le manifeste et la propreté de sa dépendance. Le verrou Cargo appartient à la racine du workspace.
+Le binaire natif est `$env:CARGO_TARGET_DIR/debug/codenomad-rune.exe` sous Windows. Cargo résout Rune et ses correctifs de plateforme à la révision Git épinglée dans le manifeste du workspace. Le verrou Cargo à sa racine conserve les versions résolues ; les scripts de packaging trouvent les polices via ses métadonnées.
 
 ## Ouvrir une conversation
 
@@ -49,22 +49,22 @@ Les sondes natives, la galerie et les scènes synthétiques sont compilées avec
 cargo +1.99.1 build --locked -p codenomad-rune-app --bin codenomad-rune --features test-support
 $env:RUNE_CLIENT_EXE = "$env:CARGO_TARGET_DIR/debug/codenomad-rune.exe"
 $env:RUNE_SERVER_EXE = 'D:/chemin/worktree-serveur/packages/server-rs/target/debug/codenomad-rs.exe'
-node packages/rune-app/fixture.mjs --probe-contract
-node packages/rune-app/launcher-fixture.mjs
-node packages/rune-app/launcher-fixture.mjs --uncertain-create
-node packages/rune-app/launcher-fixture.mjs --with-tools
-node packages/rune-app/launcher-fixture.mjs --controls
-node packages/rune-app/recovery-fixture.mjs
+node packages/rune-app/fixtures/fixture.mjs --probe-contract
+node packages/rune-app/fixtures/launcher-fixture.mjs
+node packages/rune-app/fixtures/launcher-fixture.mjs --uncertain-create
+node packages/rune-app/fixtures/launcher-fixture.mjs --with-tools
+node packages/rune-app/fixtures/launcher-fixture.mjs --controls
+node packages/rune-app/fixtures/recovery-fixture.mjs
 node scripts/rune/headless.mjs --binary $env:RUNE_CLIENT_EXE
 ```
 
 Les fixtures créent leurs projets, profils `trial-*`, ports éphémères et processus ; OpenCode est simulé dans ces scénarios. Le serveur Rust reste réel. `RUNE_CLIENT_EXE` et `RUNE_SERVER_EXE` sélectionnent des exécutables absolus ; le client utilise sinon le cache `CARGO_TARGET_DIR`, ou `target` à la racine du workspace.
 Les runners contrôlent `--test-support-info` avant de lancer une fixture. Les implémentations des sondes vivent sous `tests/probes/` et sont propres à la cible native.
 
-`node packages/rune-app/files-fixture.mjs` vérifie le client typé Files avec le vrai serveur Rust et des fichiers jetables. Fournir `RUNE_SERVER_EXE` absolu et un `CARGO_TARGET_DIR` existant ; le test Cargo est exécuté avec `--offline --locked`. Le serveur utilise un service natif de métadonnées simulé ; Unicode, octets binaires, versions, limites et liens sont lus sur le vrai système de fichiers du profil privé.
+`node packages/rune-app/fixtures/files-fixture.mjs` vérifie le client typé Files avec le vrai serveur Rust et des fichiers jetables. Fournir `RUNE_SERVER_EXE` absolu et un `CARGO_TARGET_DIR` existant ; le test Cargo est exécuté avec `--offline --locked`. Le serveur utilise un service natif de métadonnées simulé ; Unicode, octets binaires, versions, limites et liens sont lus sur le vrai système de fichiers du profil privé.
 
-`node packages/rune-app/native-store-fixture.mjs --opencode <chemin-absolu-opencode>` qualifie le stockage natif dans un daemon privé avec le plugin d'historique de production : 600 messages importés, session hors première page, trois démarrages Rune, deux occurrences et brouillons, pagination et ancre de lecture. Les générations et créations de sessions par Rune sont refusées par les relais du banc ; les sessions de préparation sont supprimées par identité. Le processus OpenCode reste actif entre les trois clients. Les preuves sont sous `scripts/perf/run/trial-rune-store-*`.
+`node packages/rune-app/fixtures/native-store-fixture.mjs --opencode <chemin-absolu-opencode>` qualifie le stockage natif dans un daemon privé avec le plugin d'historique de production : 600 messages importés, session hors première page, trois démarrages Rune, deux occurrences et brouillons, pagination et ancre de lecture. Les générations et créations de sessions par Rune sont refusées par les relais du banc ; les sessions de préparation sont supprimées par identité. Le processus OpenCode reste actif entre les trois clients. Les preuves sont sous `scripts/perf/run/trial-rune-store-*`.
 
-`controls-live.mjs` et les scripts `real-history-*` sont des essais explicites avec un OpenCode réel déjà configuré, des sessions jetables et des outils interdits. `interactive-live.mjs` ouvre une fenêtre et demande un dossier et un titre exacts ; ses essais utilisent une copie de la conversation source. Leur lancement interactif appartient à une qualification dédiée.
+Sous `fixtures/`, `controls-live.mjs` et les scripts `real-history-*` sont des essais explicites avec un OpenCode réel déjà configuré, des sessions jetables et des outils interdits. `interactive-live.mjs` ouvre une fenêtre et demande un dossier et un titre exacts ; ses essais utilisent une copie de la conversation source. Leur lancement interactif appartient à une qualification dédiée.
 
-Les preuves sont écrites dans les répertoires ignorés `target/`, `evidence/` et `fixture-profile/`. Le journal distingue les environnements et les vérifications exécutées. La comparaison Solid/Rune, les mesures face à la TUI et les essais sur téléphone gardent leurs critères propres.
+Les preuves et journaux d'exécution sont écrits dans les répertoires ignorés `target/`, `evidence/` et `fixture-profile/`, ou joints aux artefacts CI. Ils distinguent les environnements et les vérifications exécutées. La comparaison Solid/Rune, les mesures face à la TUI et les essais sur téléphone gardent leurs critères propres.

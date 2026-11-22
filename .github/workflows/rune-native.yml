@@ -61,10 +61,6 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Install generator browser
         run: npx --workspace @codenomad/ui playwright install --with-deps chromium
-      - name: Fetch and verify pinned Rune source
-        run: |
-          node scripts/rune/prepare.mjs
-          node scripts/rune/prepare.mjs --check
       - name: Restore trusted Cargo downloads
         if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
         uses: ./.github/actions/download-cache
@@ -76,6 +72,7 @@ jobs:
           node scripts/rune/generate-catalogues.mjs --check
           node scripts/rune/component-inventory.mjs --check
           node --test scripts/rune/*.test.mjs
+          node --test packages/rune-app/fixtures/*.test.mjs
           node --test scripts/perf/*.test.mjs
       - name: Build application and run native runtime tests
         run: |
@@ -112,12 +109,12 @@ jobs:
           if [[ "$RUNNER_OS" == Windows ]]; then suffix='.exe'; fi
           export RUNE_CLIENT_EXE="$CARGO_TARGET_DIR/debug/codenomad-rune$suffix"
           export RUNE_SERVER_EXE="$CARGO_TARGET_DIR/debug/codenomad-rs$suffix"
-          node packages/rune-app/launcher-fixture.mjs --workspace-claims
-          node packages/rune-app/launcher-fixture.mjs --restore-state
-          node packages/rune-app/launcher-fixture.mjs --files-state
-          node packages/rune-app/files-fixture.mjs
-          node packages/rune-app/files-fixture.mjs --write
-          node packages/rune-app/recovery-fixture.mjs
+          node packages/rune-app/fixtures/launcher-fixture.mjs --workspace-claims
+          node packages/rune-app/fixtures/launcher-fixture.mjs --restore-state
+          node packages/rune-app/fixtures/launcher-fixture.mjs --files-state
+          node packages/rune-app/fixtures/files-fixture.mjs
+          node packages/rune-app/fixtures/files-fixture.mjs --write
+          node packages/rune-app/fixtures/recovery-fixture.mjs
       - name: Compare shared controls with Solid on Windows
         if: runner.os == 'Windows'
         run: |

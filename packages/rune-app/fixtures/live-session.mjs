@@ -7,7 +7,7 @@ import {randomUUID} from 'node:crypto'
 import {connectNative} from './live-access.mjs'
 export async function prepareLive() {
   const native=await connectNative()
-  const profile=path.join(import.meta.dirname,'fixture-profile',`live-${randomUUID()}`)
+  const profile=path.join(path.resolve(import.meta.dirname,'..'),'fixture-profile',`live-${randomUUID()}`)
   const project=path.join(profile,'project')
   await mkdir(project,{recursive:true})
   await promisify(execFile)('git',['init','--quiet',project],{windowsHide:true,env:{...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:'NUL'}})

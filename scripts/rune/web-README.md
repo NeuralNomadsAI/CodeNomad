@@ -18,7 +18,7 @@ Le parcours connecté utilise le bundle produit sous `target/rune-web-connected`
 ```powershell
 cargo build --locked --target wasm32-unknown-unknown -p codenomad-rune-app
 node scripts/rune/bundle-web.mjs --wasm "$env:CARGO_TARGET_DIR/wasm32-unknown-unknown/debug/codenomad-rune.wasm" --out target/rune-web-connected
-node packages/rune-app/launcher-fixture.mjs --web
+node packages/rune-app/fixtures/launcher-fixture.mjs --web
 ```
 
 Cette fixture vérifie cookies, refus sans authentification, deux pages de sessions, conversation exacte, session vide et retour, EventSource et arrêt du serveur, sans création ni envoi. Les six contextes et preuves restent sous `target/rune-web-tests/launcher-*/`.

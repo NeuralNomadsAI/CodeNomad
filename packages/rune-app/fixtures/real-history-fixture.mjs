@@ -8,7 +8,7 @@ import {connectNative} from './live-access.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requireTestSupport()
-const here=import.meta.dirname
+const here=path.resolve(import.meta.dirname,'..')
 const file=path.resolve(process.argv[2]??'')
 assert(file.startsWith(path.join(here,'fixture-profile')+path.sep),'owned manifest required')
 const manifest=JSON.parse(await readFile(file,'utf8'))
