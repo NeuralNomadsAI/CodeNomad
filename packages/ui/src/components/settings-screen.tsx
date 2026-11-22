@@ -118,9 +118,12 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   })
 
   const activeSection = createMemo(() => sections().find((section) => section.id === activeSettingsSection()) ?? sections()[0]!)
+  // Persisted selection can lag the available page. Keep the body keyed by ID
+  // so changes to the navigation options alone do not discard its drafts.
+  const visibleSectionId = createMemo(() => activeSection().id)
 
   const renderSection = () => {
-    switch (activeSettingsSection()) {
+    switch (visibleSectionId()) {
       case "chat":
         return <ChatSettingsSection />
       case "hotkeys":
@@ -318,8 +321,8 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
                       <button
                         type="button"
                         class="settings-nav-button"
-                        data-selected={activeSettingsSection() === section.id ? "true" : "false"}
-                        aria-current={activeSettingsSection() === section.id ? "page" : undefined}
+                        data-selected={visibleSectionId() === section.id ? "true" : "false"}
+                        aria-current={visibleSectionId() === section.id ? "page" : undefined}
                         onClick={() => void handleSectionChange(section.id)}
                       >
                         <Icon class="settings-nav-button-icon" />

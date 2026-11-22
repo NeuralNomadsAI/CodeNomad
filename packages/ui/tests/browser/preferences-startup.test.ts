@@ -32,6 +32,10 @@ async function installHost(page: Page, host: "electron" | "tauri", request: Nati
     w.fixtureAccept = async (request) => {
       w.fixtureSaving = request
       if (w.fixtureHoldPersistence) await new Promise(resolve => { w.fixtureReleasePersistence = resolve })
+      if (w.fixtureRejectSection === request.section) {
+        w.fixtureRejected = request
+        throw new Error("Fixture persistence rejected")
+      }
       w.fixtureRequest = request
       w.fixtureSaved.push(request)
     }
@@ -85,6 +89,46 @@ const requestDirectory = (request: string) => {
 }
 
 for (const host of ["electron", "tauri"] as const) {
+  test(`${host}: confirmed disable hides Missions settings even when saving General fails`, async () => {
+    const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
+    const project = workspace("a")
+    const fixture = await restoredFixture(page, host, { section: "missions", instanceId: project.id,
+      workspacePath: project.path, location: { directory: project.path } })
+    fixture.inventory([project])
+    let disabled = false
+    await page.route("**/api/workspaces/a/plugin-controls**", route => route.fulfill({ json: {
+      ...pluginControls(project.path), controls: [{ id: "codenomad.missions", managedBy: "codenomad", builtin: false,
+        global: disabled ? "disabled" : "default", project: "default", effective: disabled ? "disabled" : "default" }],
+    } }))
+    try {
+      await Promise.all([page.waitForResponse("**/api/workspaces/a/plugin-controls**", { timeout: 60_000 }), page.goto(url)])
+      const deletion = page.getByRole("checkbox", { name: "Deleting a mission also deletes its task conversations" })
+      await deletion.waitFor()
+      assert.equal(await deletion.isEnabled(), true)
+      await page.evaluate(() => {
+        Object.assign(window, { fixtureHoldPersistence: true, fixtureRejectSection: "general" })
+      })
+      disabled = true
+      await emit(page, { type: "instance.event", instanceId: project.id, event: { type: "config.updated", data: {} } })
+      await page.waitForFunction(() => (window as any).fixtureSaving?.section === "general")
+      await page.locator(".settings-screen-content-title").getByText("General", { exact: true }).waitFor()
+      assert.equal(await deletion.count(), 0, "the confirmed disable removes the editable body before the save settles")
+      const general = page.locator(".settings-screen-nav-list").getByRole("button", { name: "General", exact: true })
+      assert.equal(await general.getAttribute("aria-current"), "page")
+      await page.locator(".theme-scheme-actions").waitFor()
+      await page.evaluate(() => {
+        const w = window as any
+        w.fixtureHoldPersistence = false
+        w.fixtureReleasePersistence()
+      })
+      await page.waitForFunction(() => (window as any).fixtureRejected?.section === "general")
+      assert.equal(await page.evaluate(() => (window as any).fixtureRequest.section), "missions", "the host rejected the new selection")
+      assert.equal(await deletion.count(), 0)
+      assert.equal(await general.getAttribute("aria-current"), "page")
+      assert.deepEqual(fixture.errors, [])
+    } finally { await page.close() }
+  })
+
   test(`${host} Preferences reads activation and providers only for its explicit project`, async () => {
     const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
     const workspaceRequests: string[] = []
