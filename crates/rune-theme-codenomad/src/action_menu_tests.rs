@@ -1,0 +1,239 @@
+use super::*;
+use rune::{Cx, Env, Key, KeyEvent, Mods, Runtime};
+use rune_kit::{Button, ButtonVariant};
+
+#[derive(Default)]
+struct App {
+    menu: State<App>,
+    events: Vec<String>,
+    replacement: bool,
+    owner_removed: bool,
+    gesture: bool,
+    dialog: bool,
+}
+fn at(s: &mut App) -> Option<&mut State<App>> {
+    Some(&mut s.menu)
+}
+fn descriptor(s: &App) -> Rc<Menu<App>> {
+    let mut item = Item::new("open", "Open", |s: &mut App, tx| {
+        s.events.push(format!("select:{:?}", tx.focused()));
+        s.dialog = true;
+    });
+    item.description = Some("Details".into());
+    item.checked = Some(true);
+    item.select_before_close = s.gesture;
+    item.on_mouse_enter = Some(Rc::new(|s, _| s.events.push("enter".into())));
+    item.on_mouse_leave = Some(Rc::new(|s, _| s.events.push("leave".into())));
+    if s.replacement {
+        item.on_select = Rc::new(|s, _| s.events.push("replacement".into()));
+    }
+    let mut disabled = Item::new("disabled", "Disabled", |s: &mut App, _| {
+        s.events.push("disabled".into())
+    });
+    disabled.disabled = true;
+    let mut menu = Menu::new("actions", "Actions", vec![Rc::new(item), Rc::new(disabled)]);
+    menu.on_open_change = Some(Rc::new(|s, open, _| s.events.push(format!("open:{open}"))));
+    menu.on_focus_restored = Some(Rc::new(|s, tx| {
+        s.events.push(format!("restored:{:?}", tx.focused()))
+    }));
+    Rc::new(menu)
+}
+fn view_app(s: &App, cx: &mut Cx<App>) -> El {
+    layout::render(cx, |_| {
+        if s.owner_removed {
+            return rune::el();
+        }
+        let trigger = Button::new("Actions")
+            .variant(ButtonVariant::Ghost)
+            .build(kit(layout::dark()));
+        let (trigger, surface) = view(&s.menu, at, descriptor(s), trigger, 500.0);
+        let mut layers: Vec<_> = surface.into_iter().collect();
+        if s.dialog {
+            layers.push(
+                rune::col()
+                    .key("dialog")
+                    .absolute(150.0, 150.0)
+                    .role("dialog")
+                    .modal(true, |s: &mut App| s.dialog = false)
+                    .child(
+                        Button::new("Cancel")
+                            .on_press(|s: &mut App| s.dialog = false)
+                            .build(kit(layout::dark()))
+                            .key("cancel"),
+                    ),
+            );
+        }
+        rune_kit::root(rune::col().w_full().h_full().child(trigger), layers)
+    })
+}
+fn runtime() -> Runtime<App> {
+    let mut rt = Runtime::new(
+        App::default(),
+        view_app,
+        (500.0, 400.0),
+        Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+    rt
+}
+fn tap(rt: &mut Runtime<App>, key: &str) {
+    let (x, y) = rt.find(key).expect(key);
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.0);
+}
+fn key(rt: &mut Runtime<App>, key: Key) {
+    rt.key(KeyEvent {
+        key,
+        mods: Mods::default(),
+    });
+    rt.frame(0.0);
+}
+fn deliver(rt: &mut Runtime<App>) {
+    rt.update(|s, tx| {
+        poll(s, at, tx);
+    });
+    rt.frame(0.0);
+}
+fn focused(rt: &Runtime<App>) -> Option<String> {
+    rt.elements()
+        .into_iter()
+        .find(|e| e.focused)
+        .and_then(|e| e.key)
+}
+#[test]
+fn selection_runs_after_actual_focus_return_and_captures_original_descriptor() {
+    let mut rt = runtime();
+    tap(&mut rt, "actions:trigger");
+    key(&mut rt, Key::Down);
+    key(&mut rt, Key::Enter);
+    assert!(!rt.state.menu.is_open("actions"));
+    assert_eq!(focused(&rt).as_deref(), Some("actions:trigger"));
+    assert!(!rt.state.events.iter().any(|e| e.starts_with("select:")));
+    rt.state.replacement = true;
+    deliver(&mut rt);
+    assert!(
+        rt.state
+            .events
+            .contains(&"select:Some(\"actions:trigger\")".into())
+    );
+    assert!(!rt.state.events.contains(&"replacement".into()));
+    assert_eq!(focused(&rt).as_deref(), Some("cancel"));
+    deliver(&mut rt);
+    let select = rt
+        .state
+        .events
+        .iter()
+        .position(|e| e.starts_with("select:"))
+        .unwrap();
+    let restored = rt
+        .state
+        .events
+        .iter()
+        .position(|e| e.starts_with("restored:"))
+        .unwrap();
+    assert!(select < restored);
+    assert!(
+        rt.state
+            .events
+            .contains(&"restored:Some(\"cancel\")".into())
+    );
+    tap(&mut rt, "cancel");
+    assert_eq!(focused(&rt).as_deref(), Some("actions:trigger"));
+}
+#[test]
+fn immediate_action_keeps_gesture_and_precedes_close() {
+    let mut rt = runtime();
+    rt.state.gesture = true;
+    tap(&mut rt, "actions:trigger");
+    key(&mut rt, Key::Down);
+    key(&mut rt, Key::Enter);
+    let select = rt
+        .state
+        .events
+        .iter()
+        .position(|e| e.starts_with("select:"))
+        .unwrap();
+    let close = rt
+        .state
+        .events
+        .iter()
+        .position(|e| e == "open:false")
+        .unwrap();
+    assert!(select < close);
+    assert_eq!(focused(&rt).as_deref(), Some("cancel"));
+    deliver(&mut rt);
+    assert!(rt.state.events.iter().any(|e| e.starts_with("restored:")));
+}
+#[test]
+fn escape_and_outside_dismiss_with_hover_cleanup() {
+    let mut rt = runtime();
+    tap(&mut rt, "actions:trigger");
+    let (x, y) = rt.find("actions:item:open").unwrap();
+    rt.pointer_move(x, y);
+    rt.frame(0.0);
+    assert!(rt.state.events.contains(&"enter".into()));
+    key(&mut rt, Key::Escape);
+    deliver(&mut rt);
+    assert!(!rt.state.menu.is_open("actions"));
+    let leave = rt.state.events.iter().position(|e| e == "leave").unwrap();
+    let close = rt
+        .state
+        .events
+        .iter()
+        .position(|e| e == "open:false")
+        .unwrap();
+    assert!(leave < close);
+    tap(&mut rt, "actions:trigger");
+    rt.pointer_down(450.0, 350.0);
+    rt.pointer_up(450.0, 350.0);
+    rt.frame(0.0);
+    assert!(!rt.state.menu.is_open("actions"));
+}
+#[test]
+fn disabled_checked_and_description_match_accessible_contract() {
+    let mut rt = runtime();
+    tap(&mut rt, "actions:trigger");
+    let mirror: Vec<serde_json::Value> = serde_json::from_str(&rt.a11y_json()).unwrap();
+    assert!(
+        mirror.iter().any(|e| e["o"] == "menuitemcheckbox"
+            && e["t"] == "Open"
+            && e["c"] == "true"
+            && e["d"] == "Details"),
+        "{}",
+        rt.a11y_json()
+    );
+    let elements = rt.elements();
+    assert!(
+        !elements
+            .iter()
+            .find(|e| e.key.as_deref() == Some("actions:item:disabled"))
+            .unwrap()
+            .focusable
+    );
+    assert!(
+        !elements
+            .iter()
+            .any(|e| e.text.as_deref() == Some("Details"))
+    );
+    tap(&mut rt, "actions:item:disabled");
+    deliver(&mut rt);
+    assert!(rt.state.menu.is_open("actions"));
+    assert!(!rt.state.events.contains(&"disabled".into()));
+}
+#[test]
+fn removing_visible_owner_preserves_the_admitted_selection() {
+    let mut rt = runtime();
+    tap(&mut rt, "actions:trigger");
+    key(&mut rt, Key::Down);
+    key(&mut rt, Key::Enter);
+    rt.update(|s, tx| {
+        clear(s, at, "actions", tx);
+        s.owner_removed = true;
+    });
+    rt.frame(0.0);
+    deliver(&mut rt);
+    deliver(&mut rt);
+    assert!(rt.state.events.iter().any(|e| e.starts_with("select:")));
+    assert!(rt.state.events.iter().any(|e| e.starts_with("restored:")));
+}

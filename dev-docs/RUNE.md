@@ -51,6 +51,7 @@ When a whole module reaches parity, its Solid and Tauri version is deleted on `f
 | Browser client | Remote access contracts and Rune web target | Shared WASM state/views: six local and six authenticated session-reading contexts qualified with shared Rust and simulated OpenCode; physical mobile pending |
 | Window state | Host client-state and browser sessionStorage contracts | `workspace/` restores projects, tabs, selected sessions and drafts; shared Rust with simulated OpenCode qualified on three OS; Windows private OpenCode storage qualified with 600 imported rows across three Rune boots; browser reload/quota and in-flight creation qualified separately |
 | Project tabs | `components/instance-tabs.tsx`, `instance-tab.tsx`, `tab-scroll.tsx` | Shared rune-kit Button composite with CSS-generated geometry: select/close/New, keyboard navigation, web tab roles, direction, column sizing and focus halo qualified; SVG/text raster, complete bar parity and web tablist grouping pending |
+| Action overflow menu | `components/action-overflow-menu.tsx` | Shared `action_menu` candidate: generated geometry, deferred selection and focus handoff exercised in Rune Runtime; actual Solid fixture, pixel parity, gallery and blind reviews pending |
 
 ## Workspace and qualification
 

@@ -1,5 +1,6 @@
 //! Generated CodeNomad design tokens and shared UI messages for the native application.
 #![forbid(unsafe_code)]
+pub mod action_menu;
 pub mod catalogue;
 mod generated_catalogues;
 pub mod interruption;
