@@ -105,7 +105,7 @@ import { guardProxyListener, proxyConnector, ProxyDestinationDenied } from "./pr
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
 import { guardServerPairRequest, isServerPairExchange, SERVER_PAIR_PATH } from "../remote-control/server-pairing"
-import { gateRemoteRequest, isHostOnlyPath, isBackendUiRoute, isMemoryRelayRoute, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
+import { gateRemoteRequest, isHostOnlyPath, isHtmlBundlePath, isBackendUiRoute, isMemoryRelayRoute, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
 import { createBackendUiAccess } from "../codenomad-servers/ui-caller"
 import { createRelayPrincipalBinding } from "../codenomad-servers/relay-principal"
 import { isLocalRequest, isRemoteRequest } from "../remote-control/request-origin"
@@ -440,7 +440,7 @@ export function createHttpServer(deps: HttpServerDeps) {
       return
     }
 
-    if (!session && wantsHtml(request)) {
+    if (!session && (wantsHtml(request) || isHtmlBundlePath(pathname))) {
       reply.redirect("/login")
       return
     }
@@ -463,6 +463,8 @@ export function createHttpServer(deps: HttpServerDeps) {
     const uiDir = deps.uiStaticDir
     const indexPath = path.join(uiDir, "index.html")
     if (uiDir && fs.existsSync(indexPath)) {
+      reply.header("cache-control", "no-store")
+      if (reply.sendFile) return reply.sendFile("index.html", { cacheControl: false })
       reply.type("text/html").send(fs.readFileSync(indexPath, "utf-8"))
       return
     }
@@ -2253,13 +2255,26 @@ function setupStaticUi(
     if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, remotePreviewsAllowed)) {
       return
     }
+    if (request.routeOptions.url === "/" || request.routeOptions.url === "/*") {
+      // Expand the wildcard for fastify-static, which maps it to gzip alone.
+      const encodings = request.headers["accept-encoding"]?.split(",")
+      const name = (entry: string) => entry.split(";", 1)[0]!.trim().toLowerCase()
+      if (encodings?.some(entry => name(entry) === "*")) {
+        const explicit = new Set(encodings.map(name))
+        request.headers["accept-encoding"] = encodings.flatMap(entry => name(entry) !== "*" ? [entry]
+          : ["br", "gzip", "deflate"].filter(coding => !explicit.has(coding)).map(coding => entry.replace("*", coding))).join(",")
+      }
+    }
     done()
   })
 
   app.register(fastifyStatic, {
     root: uiDir,
     prefix: "/",
-    decorateReply: false,
+    preCompressed: true,
+    setHeaders: (reply, file) => {
+      if (isHtmlBundlePath(file)) reply.header("cache-control", "no-store")
+    },
   })
 
   const indexPath = path.join(uiDir, "index.html")
@@ -2276,13 +2291,14 @@ function setupStaticUi(
       return
     }
 
-    if (!session && wantsHtml(request)) {
-      reply.redirect("/login")
+    if (!session) {
+      if (wantsHtml(request)) reply.redirect("/login")
+      else reply.code(404).send({ message: "Not Found" })
       return
     }
 
     if (fs.existsSync(indexPath)) {
-      reply.type("text/html").send(fs.readFileSync(indexPath, "utf-8"))
+      reply.header("cache-control", "no-store").type("text/html").send(fs.readFileSync(indexPath, "utf-8"))
     } else {
       reply.code(404).send({ message: "UI bundle missing" })
     }

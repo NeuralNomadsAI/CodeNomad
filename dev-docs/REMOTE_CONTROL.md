@@ -108,9 +108,12 @@ override them. An unknown value refuses startup.
   `devices.ts` stores only the opt-out, `PUT /api/remote-control/previews` is
   host-only, and turning it off also closes live preview WebSockets. Remote
   `/api/meta` reports `previewsUnavailable` while it is off, so the UI hides
-  its preview entry. Static UI bundle files stay public, as
-  on local listeners, because browsers fetch the PWA manifest without cookies.
-  Every other path requires a paired device. Refusals close the connection,
+  its preview entry. Static UI bundle files stay public, as on local listeners,
+  because browsers fetch the PWA manifest without cookies. Put precompressed
+  `.br` and `.gz` files alongside their original assets; the server negotiates
+  on the original URL with `Accept-Encoding` and preserves its media type.
+  HTML entry points and their compressed variants require a paired device.
+  Refusals close the connection,
   because an unread body would otherwise break the client's next keep-alive
   request.
 - Server-to-server `POST /api/remote-control/pair` accepts a valid one-use

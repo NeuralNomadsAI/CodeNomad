@@ -6,6 +6,7 @@ import os from "node:os"
 import fs from "node:fs"
 import path from "node:path"
 import test, { type TestContext } from "node:test"
+import { brotliCompressSync, gzipSync } from "node:zlib"
 import { FAKE_TUNNEL_HOST, startRemoteSurface } from "./test-support/surface"
 import { backendAdmissionFixture, backendAuthorityHeader, backendBootstrap, assertServerCapabilities, assertPrivateBackendReply } from "./test-support/backend-admission"
 
@@ -142,6 +143,7 @@ interface Reply {
   status: number
   headers: http.IncomingHttpHeaders
   body: string
+  bytes: Buffer
 }
 
 // Speaks plain HTTP to the ingress, as the in-process TLS terminator does.
@@ -152,10 +154,12 @@ function send(target: string, pathname: string, options: { method?: string; head
       hostname, port: Number(port), path: pathname, method: options.method ?? "GET",
       headers: { host: HOST, ...options.headers },
     }, (response) => {
-      let body = ""
-      response.setEncoding("utf8")
-      response.on("data", (chunk) => { body += chunk })
-      response.on("end", () => resolve({ status: response.statusCode ?? 0, headers: response.headers, body }))
+      const chunks: Buffer[] = []
+      response.on("data", (chunk: Buffer) => chunks.push(chunk))
+      response.on("end", () => {
+        const bytes = Buffer.concat(chunks)
+        resolve({ status: response.statusCode ?? 0, headers: response.headers, body: bytes.toString(), bytes })
+      })
     })
     request.on("error", reject)
     request.end(options.body)
@@ -202,6 +206,55 @@ test("the static UI bundle stays public while HTML entry points require pairing"
   assert.equal((await send(target(), "/index.html")).status, 401)
   assert.equal((await send(target(), "/api/test/echo.json")).status, 401)
   assert.equal((await send(target(), "/sidecars/example/app.js")).status, 404)
+})
+
+test("negotiates precompressed static assets without loosening HTML entry admission", async t => {
+  const { target, code, registryPath } = await startRemoteSurface(t)
+  const ui = path.join(path.dirname(registryPath), "ui")
+  const wasm = Buffer.from("static byte fixture ".repeat(200))
+  const br = brotliCompressSync(wasm)
+  const gzip = gzipSync(wasm)
+  fs.writeFileSync(path.join(ui, "app.wasm"), wasm)
+  fs.writeFileSync(path.join(ui, "app.wasm.br"), br)
+  fs.writeFileSync(path.join(ui, "app.wasm.gz"), gzip)
+  fs.writeFileSync(path.join(ui, "only-gzip.wasm"), wasm)
+  fs.writeFileSync(path.join(ui, "only-gzip.wasm.gz"), gzip)
+  const index = fs.readFileSync(path.join(ui, "index.html"))
+  fs.writeFileSync(path.join(ui, "index.html.br"), brotliCompressSync(index))
+
+  const variants = [
+    ["/app.wasm", "br, gzip", "br", br],
+    ["/app.wasm", "br;q=0, gzip", "gzip", gzip],
+    ["/app.wasm", "br;q=0.2, gzip;q=0.8", "gzip", gzip],
+    ["/app.wasm", "gzip;q=0, *;q=1, identity;q=0", "br", br],
+    ["/app.wasm", "identity", undefined, wasm],
+    ["/only-gzip.wasm", "br, gzip", "gzip", gzip],
+  ] as const
+  for (const [route, accept, encoding, bytes] of variants) {
+    const headers = { "accept-encoding": accept }
+    const response = await send(target(), route, { headers })
+    assert.equal(response.status, 200)
+    assert.equal(response.headers["content-encoding"], encoding)
+    assert.equal(response.headers["content-type"], "application/wasm")
+    assert.match(String(response.headers.vary), /(?:^|,\s*)accept-encoding(?:,|$)/i)
+    assert.deepEqual(response.bytes, bytes)
+    const head = await send(target(), route, { method: "HEAD", headers })
+    assert.equal(head.headers["content-encoding"], encoding)
+    assert.equal(Number(head.headers["content-length"]), bytes.length)
+    assert.equal(head.bytes.length, 0)
+  }
+  const headers = { "accept-encoding": "br" }
+  for (const url of ["/index.html", "/index.html.br"]) {
+    assert.equal((await send(target(), url, { headers })).status, 401)
+  }
+  assert.equal((await send(target(), "/absent.wasm", { headers })).status, 404)
+  const cookie = await pair(target(), code)
+  const page = await send(target(), "/", { headers: { ...headers, cookie, accept: "text/html" } })
+  assert.equal(page.status, 200)
+  assert.equal(page.headers["content-encoding"], "br")
+  assert.equal(page.headers["cache-control"], "no-store")
+  assert.match(String(page.headers["content-type"]), /^text\/html\b/)
+  assert.deepEqual(page.bytes, brotliCompressSync(index))
 })
 
 test("pairing requires the public origin and issues a host-only secure cookie once", async (t) => {
