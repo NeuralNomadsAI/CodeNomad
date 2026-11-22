@@ -1,4 +1,5 @@
 use crate::{
+    State,
     catalog::Session,
     history::Result,
     platform::{self, reads},
@@ -19,7 +20,14 @@ impl Search {
     }
 }
 
-pub(super) fn poll(l: &mut super::Launcher, reads: reads::Reads) -> bool {
+pub(super) fn poll(s: &mut State) -> bool {
+    if !s.screen.is_launcher() {
+        return false;
+    }
+    let reads = s.reads.clone();
+    let Some(l) = s.screen.launcher_mut() else {
+        return false;
+    };
     let scope = l
         .project
         .as_ref()
@@ -65,7 +73,11 @@ pub(super) fn poll(l: &mut super::Launcher, reads: reads::Reads) -> bool {
     l.search_results.result = None;
     match result {
         Ok(rows) => l.search_results.rows = rows,
-        Err(_) => l.search_results.failed = true,
+        Err(_) => {
+            l.search_results.failed = true;
+            #[cfg(target_arch = "wasm32")]
+            crate::platform::pairing::observe(s);
+        }
     }
     true
 }

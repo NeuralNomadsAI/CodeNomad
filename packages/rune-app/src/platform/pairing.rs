@@ -84,6 +84,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     }
     s.pairing.required = required;
     if required {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.password = rune::edit::TextEdit::new("");
+        }
         s.pairing.focus = FocusCheck::new(s.wake.clone());
     } else {
         s.pairing.focus = None;

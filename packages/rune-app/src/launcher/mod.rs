@@ -387,12 +387,10 @@ pub(crate) fn set_project(l: &mut Launcher, project: Option<Project>) {
     l.project = project;
 }
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
-    let reads = s.reads.clone();
-    let visible = s.screen.is_launcher();
+    let mut boot_changed = search::poll(s);
     let Some(l) = s.screen.launcher_mut() else {
         return false;
     };
-    let mut boot_changed = visible && search::poll(l, reads);
     if let Some(result) = l
         .boot
         .as_ref()
