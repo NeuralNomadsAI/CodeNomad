@@ -79,15 +79,7 @@ impl Log {
             style.inverse = false;
         }
         if self.start < self.text.len() && style != Style::default() {
-            if let Some((range, _)) = self
-                .runs
-                .last_mut()
-                .filter(|(range, previous)| range.end == self.start && *previous == style)
-            {
-                range.end = self.text.len();
-            } else {
-                self.runs.push((self.start..self.text.len(), style));
-            }
+            self.runs.push((self.start..self.text.len(), style));
         }
         self.start = self.text.len();
     }
@@ -293,22 +285,47 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
     let mut line = 0..0;
     let mut previous_content_end = 0;
     let mut ascii = false;
+    let mut line_runs = 0;
     let mut text = log.text.into_bytes();
-    for (range, style) in log.runs {
-        while range.start >= line.end {
-            // Remember the last nonempty line's end, excluding its newline.
-            if line.len() > 1 {
-                previous_content_end = line.end - 1;
+    let mut runs = log.runs.as_slice();
+    while let Some(((range, style), tail)) = runs.split_first() {
+        let mut range = range.clone();
+        if range.start >= line.end {
+            while range.start >= line.end {
+                // Remember the last nonempty line's end, excluding its newline.
+                if line.len() > 1 {
+                    previous_content_end = line.end - 1;
+                }
+                let start = line.end;
+                let end = text[start..]
+                    .iter()
+                    .position(|&byte| byte == b'\n')
+                    .map_or(text.len(), |newline| start + newline + 1);
+                line = start..end;
             }
-            let start = line.end;
-            let end = text[start..]
-                .iter()
-                .position(|&byte| byte == b'\n')
-                .map_or(text.len(), |newline| start + newline + 1);
-            line = start..end;
             line_budget = LINE_WORK_LIMIT;
             ascii = text[line.clone()].is_ascii();
+            line_runs = runs.partition_point(|(range, _)| range.start < line.end);
         }
+        runs = tail;
+        line_runs -= 1;
+        // Keep Unicode underline requests separate until charging them. A long run
+        // that exceeds the budget should not displace a short SGR run after it.
+        if ascii || !style.underline {
+            while let Some(((next, next_style), tail)) = runs.split_first() {
+                if range.end != next.start || style != next_style {
+                    break;
+                }
+                range.end = next.end;
+                runs = tail;
+                line_runs -= 1;
+            }
+        }
+        // Reserve the base paint passes before spending the remainder on decorations.
+        let ink_reserve = line.len().saturating_mul(line_runs);
+        let mut decoration_budget = line_budget
+            .min(window_budget)
+            .saturating_sub(line.len().saturating_add(ink_reserve));
         // Rune can revisit the shaped line for every span, even for foreground-only ink.
         let mut charge = |cost| {
             if cost > line_budget || cost > window_budget {
@@ -348,11 +365,13 @@ fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
                         .filter(|&&byte| byte & 0xc0 != 0x80)
                         .count()
                 };
-                if charge(runs.saturating_mul(line.len())) {
+                let cost = runs.saturating_mul(line.len());
+                if cost <= decoration_budget && charge(cost) {
+                    decoration_budget -= cost;
                     span = span.underline(dim(style.fg.unwrap_or(default)));
                 }
             }
-            if style.strike && charge(line.len()) {
+            if style.strike && line.len() <= decoration_budget && charge(line.len()) {
                 let ink = Some(dim(style.fg.unwrap_or(default)));
                 if let Some(last) = strikes.last_mut().filter(|last| {
                     last.2 == ink && matches!(text.get(last.1..range.start), Some(b"" | b"\n"))
@@ -715,6 +734,24 @@ mod tests {
         );
         assert_eq!(warning.color, Some(rgb(187, 0, 0)));
         assert!(warning.underline.is_some());
+    }
+
+    #[test]
+    fn unicode_underline_does_not_displace_a_later_short_run() {
+        for (count, warning, trailing) in [(1100, "\u{1b}[4m", 0), (990, "\u{1b}[31;4m", 32)] {
+            let source = format!(
+                "\u{1b}[4m{}\u{1b}[0m{warning}FAILED\u{1b}[0m{}",
+                "é".repeat(count),
+                "x".repeat(trailing)
+            );
+            let (text, spans, _) = styled(parse(&source));
+            let last = spans.last().unwrap();
+            assert_eq!(&text[last.start as usize..last.end as usize], "FAILED");
+            assert!(last.underline.is_some());
+            if count == 990 {
+                assert_eq!(last.color, Some(rgb(187, 0, 0)));
+            }
+        }
     }
 
     #[test]

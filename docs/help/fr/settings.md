@@ -85,7 +85,7 @@ La disposition intégrée est propre à la fenêtre, pas une modification du pro
 ## Détail de transcription et taille de saisie {#transcript-composer}
 
 1. Ouvrez **Chat** pour choisir les niveaux de détail par défaut. Les préréglages sont **Rien**, **Minimal**, **Équilibré** et **Tout** ; les changements individuels produisent **Personnalisé**.
-2. Réglez l’**État par défaut** de chaque ligne (**Masqué**, **Réduit** ou **Développé**) pour la réflexion, les diagnostics, les entrées d’outils, les tokens, les messages système et chaque type d’outil, ou utilisez le menu **Contenu des messages** de la conversation, qui partage ces choix.
+2. Réglez l’**État par défaut** de chaque ligne (**Masqué**, **Réduit** ou **Développé**), ou utilisez le menu **Contenu des messages** de la conversation, qui partage ces choix. Pour **Groupes d’outils**, **Désactivé** affiche une carte par appel ; **Réduit** et **Développé** règlent l’ouverture des groupes.
 3. Dans **Général**, cochez au besoin **Afficher la chronologie des messages**, **Placer les flèches premier/dernier message sous la chronologie**, **Scinder les diffs des appels d’outils** et **Mettre les prompts envoyés en file d’attente** (mettre en file les prompts envoyés pendant qu’une session travaille au lieu de l’orienter).
 4. Redimensionnez la zone de saisie avec sa commande ; les longs brouillons défilent dans le champ.
 

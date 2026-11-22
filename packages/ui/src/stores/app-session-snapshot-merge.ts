@@ -236,7 +236,8 @@ function mergeWorkspaceState(
     else delete result.seenInterruptions
   }
   const catalog = current.sessionCatalog ?? preserved.sessionCatalog
-  if (catalog) result.sessionCatalog = catalog.filter(row => !authority.deletedSessions?.has(row.id))
+  if (catalog) result.sessionCatalog = catalog.some(row => authority.deletedSessions?.has(row.id))
+    ? catalog.filter(row => !authority.deletedSessions?.has(row.id)) : catalog
   if (current.outlineIndexes || preserved.outlineIndexes) {
     result.outlineIndexes = mergeRecords(current.outlineIndexes ?? {}, preserved.outlineIndexes ?? {}, authority.idleMarkers)
     for (const id of authority.deletedSessions ?? []) delete result.outlineIndexes[id]

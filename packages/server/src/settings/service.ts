@@ -8,6 +8,7 @@ import { migrateSettingsLayout } from "./migrate"
 import type { WorkspaceEventPayload } from "../api-types"
 import { sanitizeConfigOwner } from "./public-config"
 import { applyMergePatch } from "./merge-patch"
+import { preserveLegacyTranscriptDefaults } from "./transcript-preset-defaults"
 import { compactRemoteProjectHistory } from "./remote-project-history"
 import { readAdmissionEnvironment } from "./admission-environment"
 import { ServerFlagReader } from "./server-flag-reader"
@@ -226,7 +227,8 @@ export class SettingsService {
     if (kind === "config") {
       assertVoiceConversationPatch(patch.server)
       const before = this.configStore.reloadAuthoritative()
-      const after = normalizeConfigDoc(applyMergePatch(before, patch) as SettingsDoc)
+      const changes = Object.hasOwn(patch, "ui") ? { ...patch, ui: preserveLegacyTranscriptDefaults(before.ui, patch.ui) } : patch
+      const after = normalizeConfigDoc(applyMergePatch(before, changes) as SettingsDoc)
       check?.(before, after)
       updated = this.configStore.replace(after)
     } else {
@@ -294,7 +296,8 @@ export class SettingsService {
     if (kind === "config") {
       if (owner === "server") assertVoiceConversationPatch(patch)
       const before = this.configStore.reloadAuthoritative()
-      const merged = applyMergePatch(this.configStore.getOwner(owner), patch) as SettingsDoc
+      const changes = owner === "ui" ? preserveLegacyTranscriptDefaults(before.ui, patch) : patch
+      const merged = applyMergePatch(this.configStore.getOwner(owner), changes) as SettingsDoc
       const next = owner === "server" ? normalizeServerConfigOwner(merged) : merged
       check?.(before, { ...before, [owner]: next })
       updated = this.configStore.replaceOwner(owner, next)

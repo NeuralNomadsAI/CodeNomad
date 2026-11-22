@@ -1796,6 +1796,10 @@ answers mutations with 405 and writes `browser-report.json` to the absolute
 
 ## Agent conventions
 
+- The bounded panel inventory shares its display projection across readers of
+  the same occurrence snapshot. A loading-only lane update keeps that projection;
+  published rows, failures, and retired ownership invalidate it.
+
 - Model-facing tool schemas use a plain object at the root, with variants inside properties. Keep scope and action validation in the execution codec.
 
 - Missions project tools admit every owned project conversation, including descendants and scheduled passages, and include human-created Missions. Keep coordinator-only topology and authenticated human-answer evidence at their existing domain boundaries.

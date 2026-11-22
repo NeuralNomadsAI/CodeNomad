@@ -86,6 +86,8 @@ Text fragments retain native ordinals and live/partial/closed provenance. One sh
 
 The Rune transcript renders native prose with kit Markdown and uses kit syntax for read, edit, shell and search output. Shell output with ANSI sequences uses styled text from the bounded display window; per-line and window-wide work limits retain readable output on densely styled logs. Copy retains the native sequences. Display windows count UTF-16 units and preserve line cuts. Tool disclosures and reveal steps belong to each project tab's live transcript state.
 
+ANSI styling uses at most 4,096 ranges per block to bound [selection-to-HTML work](https://github.com/anomalyco/rune/issues/1418). Beyond that limit plain text stays visible, concealed cells become spaces, and the tool's Copy action retains the native output.
+
 Completed edit patches inside the tool display budget use the shared Git diff component. Visible cards parse their patch into a bounded occurrence-local cache; oversized or unrecognized patches use the text window. The layout choice is shared across the window, with unified as the compact default. Split wrap follows Rune [#1407](https://github.com/anomalyco/rune/issues/1407). Copy uses the complete native patch independently of the selected diff layout.
 
 Persistent isolated hosts require an explicit root and `trial-*` profile. A versioned marker binds the root, profile and configuration; an OS lock covers child containment and reader drain. Window-state writes use the alpha-owned store, preserving the last complete file through atomic replacement. Browser state belongs to the current tab's sessionStorage. The snapshot uses the existing v1 field names and UTF-16 budgets; unsupported payloads require explicit recovery before any replacement.

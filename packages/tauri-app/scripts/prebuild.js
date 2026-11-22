@@ -76,7 +76,7 @@ function ensureServerBuild() {
 function ensureUiBuild() {
   const loadingHtml = path.join(uiDist, "loading.html")
   if (fs.existsSync(loadingHtml)) {
-    return
+    return false
   }
 
   console.log("[prebuild] ui build missing; running workspace build...")
@@ -88,6 +88,7 @@ function ensureUiBuild() {
   if (!fs.existsSync(loadingHtml)) {
     throw new Error("[prebuild] ui loading assets missing after build")
   }
+  return true
 }
 
 function syncServerUiBundle() {
@@ -163,8 +164,7 @@ async function main() {
   requireRootBuildDependencies()
   await ensureMonacoAssets()
   ensureServerBuild()
-  ensureUiBuild()
-  syncServerUiBundle()
+  if (ensureUiBuild()) syncServerUiBundle()
   const staged = stagePackagedServer({
     workspaceRoot,
     serverRoot,

@@ -35,7 +35,7 @@ import {
 export type { SessionThread } from "./session-tree"
 import { getDirectoryOnlyWorktree, getGitRepoStatus, worktreesByInstance } from "./worktrees"
 import { selectWorkspaceFamilyIds } from "./workspace-session-scope"
-import { confirmedSessionListDirectory } from "./session-events"
+import { confirmedSessionListDirectory, getSessionPlacementEvidence } from "./session-events"
 import { resolveRestoredSessionSelection } from "./app-session-reconciliation"
 import { getSessionListView } from "./session-list-view"
 
@@ -130,7 +130,10 @@ function getSessionListIds(instanceId: string): string[] {
   const current = sessions().get(instanceId)
   if (!current) return ids
   const directoryOnly = getDirectoryOnlyWorktree(instanceId)
-  const directory = directoryOnly?.serviceDirectory ?? directoryOnly?.directory
+  return projectSessionListIds(ids, current, directoryOnly?.serviceDirectory ?? directoryOnly?.directory)
+}
+
+function projectSessionListIds(ids: string[], current: ReadonlyMap<string, Session>, directory?: string): string[] {
   // Restored catalogs retain all candidates before worktree scope is known.
   // Match the thread builder's root projection without rewriting native parents.
   return ids.filter(id => !current.has(id) || getSessionRootFromMap(current, id, directory)?.id === id)
@@ -222,23 +225,31 @@ function isSessionSearchLoading(instanceId: string): boolean {
 // directory), every held session is in scope. The active session's family is
 // always in scope: a session opened explicitly is shown where it was opened.
 // A session a move located elsewhere (`markSessionMovedAway`) is never in scope.
-const workspaceScopes = new Map<string, { sessions: unknown; worktrees: unknown; active?: string; away: unknown; scope: ReadonlySet<string> }>()
+const NO_SESSIONS: ReadonlyMap<string, Session> = new Map()
+const workspaceScopes = new WeakMap<ReadonlyMap<string, Session>, {
+  worktrees: unknown; active?: string; away: unknown; scope: ReadonlySet<string>; unscoped: boolean; folder: string; client: unknown; evidence: unknown
+}>()
 
 function getWorkspaceSessionScope(instanceId: string): ReadonlySet<string> | null {
-  const all = sessions()
+  const held = sessions().get(instanceId) ?? NO_SESSIONS
   const worktrees = worktreesByInstance().get(instanceId)
   const away = getMovedAwaySessions(instanceId)
   const unscoped = !worktrees || getGitRepoStatus(instanceId) === null || Boolean(getDirectoryOnlyWorktree(instanceId))
   if (unscoped && !away.size) return null
   const active = activeSessionId().get(instanceId)
-  const cached = workspaceScopes.get(instanceId)
-  if (cached && cached.sessions === all && cached.worktrees === worktrees && cached.active === active && cached.away === away) return cached.scope
-  const scope = unscoped ? new Set(all.get(instanceId)?.keys() ?? [])
-    : selectWorkspaceFamilyIds([...(all.get(instanceId)?.values() ?? [])].map((session) => ({
+  const instance = instances().get(instanceId)
+  const folder = instance?.folder ?? ""
+  const client = instance?.client
+  const evidence = getSessionPlacementEvidence(instanceId)
+  const cached = workspaceScopes.get(held)
+  if (cached && cached.worktrees === worktrees && cached.active === active && cached.away === away
+    && cached.unscoped === unscoped && cached.folder === folder && cached.client === client && cached.evidence === evidence) return cached.scope
+  const scope = unscoped ? new Set(held.keys())
+    : selectWorkspaceFamilyIds([...held.values()].map((session) => ({
       id: session.id, parentId: session.parentId, directory: confirmedSessionListDirectory(instanceId, session.id, session) ?? session.location?.directory })),
-    instances().get(instanceId)?.folder ?? "", worktrees!, active ? [active] : [])
+    folder, worktrees!, active ? [active] : [])
   for (const id of away.keys()) scope.delete(id)
-  workspaceScopes.set(instanceId, { sessions: all, worktrees, active, away, scope })
+  workspaceScopes.set(held, { worktrees, active, away, scope, unscoped, folder, client, evidence })
   return scope
 }
 
@@ -260,8 +271,7 @@ export function canRelistReturnedSession(instanceId: string, sessionId: string):
   return scope.has(sessionId) && getSessionRootFromMap(members, sessionId, directoryOnly?.serviceDirectory ?? directoryOnly?.directory) !== null
 }
 
-const NO_SESSIONS: ReadonlyMap<string, Session> = new Map()
-const listedSessionMaps = new Map<string, { held: unknown; scope: unknown; listed: ReadonlyMap<string, Session> }>()
+const listedSessionMaps = new WeakMap<ReadonlyMap<string, Session>, { scope: unknown; directory?: string; listed: ReadonlyMap<string, Session> }>()
 
 /** The held sessions the list shows: in scope and connected to a listed root.
  * Its rows, its parents' subsession activity and the tab indicator all derive
@@ -272,24 +282,22 @@ function getListedSessionMap(instanceId: string): ReadonlyMap<string, Session> {
   const held = sessions().get(instanceId) ?? NO_SESSIONS
   const scope = getWorkspaceSessionScope(instanceId)
   if (!scope) return held
-  const cached = listedSessionMaps.get(instanceId)
-  if (cached && cached.held === held && cached.scope === scope) return cached.listed
-  const scoped = new Map([...held].filter(([id]) => scope.has(id)))
   const directoryOnly = getDirectoryOnlyWorktree(instanceId)
   const directory = directoryOnly?.serviceDirectory ?? directoryOnly?.directory
+  const cached = listedSessionMaps.get(held)
+  if (cached && cached.scope === scope && cached.directory === directory) return cached.listed
+  const scoped = new Map([...held].filter(([id]) => scope.has(id)))
   const listed = new Map([...scoped].filter(([id]) => getSessionRootFromMap(scoped, id, directory) !== null))
-  listedSessionMaps.set(instanceId, { held, scope, listed })
+  listedSessionMaps.set(held, { scope, directory, listed })
   return listed
 }
 
-// The listed map can share the held map, which withSession updates in place.
-const indicatorStatuses = new Map<string, { publication: unknown; listed: unknown; status: InstanceSessionIndicatorStatus }>()
+const indicatorStatuses = new WeakMap<ReadonlyMap<string, Session>, InstanceSessionIndicatorStatus>()
 
 export function getInstanceSessionIndicatorStatusCached(instanceId: string): InstanceSessionIndicatorStatus {
-  const publication = sessions()
   const listed = getListedSessionMap(instanceId)
-  const cached = indicatorStatuses.get(instanceId)
-  if (cached && cached.publication === publication && cached.listed === listed) return cached.status
+  const cached = indicatorStatuses.get(listed)
+  if (cached !== undefined) return cached
   let status: InstanceSessionIndicatorStatus = "idle"
   for (const session of listed.values()) {
     if (session.pendingPermission || session.pendingForm) {
@@ -299,7 +307,7 @@ export function getInstanceSessionIndicatorStatusCached(instanceId: string): Ins
     if (session.status === "compacting") status = "compacting"
     else if (session.status === "working" && status === "idle") status = "working"
   }
-  indicatorStatuses.set(instanceId, { publication, listed, status })
+  indicatorStatuses.set(listed, status)
   return status
 }
 
@@ -629,11 +637,8 @@ function withSession(instanceId: string, sessionId: string, updater: (session: S
       return prev
     }
 
-    instanceSessions.set(sessionId, updatedSession)
-
-    const next = new Map(prev)
-    next.set(instanceId, instanceSessions)
-    return next
+    const updated = new Map(instanceSessions).set(sessionId, updatedSession)
+    return new Map(prev).set(instanceId, updated)
   })
 }
 
@@ -975,11 +980,11 @@ function getDescendantSessions(instanceId: string, parentId: string): Session[] 
   return instanceSessions ? getDescendantSessionsFromMap(instanceSessions, parentId) : []
 }
 
-function getSessionFamily(instanceId: string, parentId: string): Session[] {
-  const parent = sessions().get(instanceId)?.get(parentId)
-  if (!parent) return []
+function getSessionFamily(instanceId: string, parentId: string, held = sessions().get(instanceId)): Session[] {
+  const parent = held?.get(parentId)
+  if (!held || !parent) return []
 
-  const children = getDescendantSessions(instanceId, parentId)
+  const children = getDescendantSessionsFromMap(held, parentId)
   return [parent, ...children]
 }
 
@@ -996,13 +1001,26 @@ function buildSessionThreads(instanceId: string, rootIds: string[], childIds?: S
   return instanceSessions ? buildSessionThreadsFromMap(instanceSessions, rootIds, childIds, directoryOnly?.serviceDirectory ?? directoryOnly?.directory) : []
 }
 
+const sessionThreadProjections = new WeakMap<ReadonlyMap<string, Session>, {
+  listed: ReadonlyMap<string, Session>; ids: string[]; directory?: string; threads: SessionThread[]
+}>()
+const EMPTY_SESSION_THREADS: SessionThread[] = []
+
 function getSessionThreads(instanceId: string): SessionThread[] {
   // A row under an ancestor outside the listed map is shown as a child whose
   // parent is missing is: not at all.
-  const listed = getListedSessionMap(instanceId) as Map<string, Session>
+  const held = sessions().get(instanceId)
+  const listed = getListedSessionMap(instanceId)
+  if (!held?.size || !listed.size) return EMPTY_SESSION_THREADS
+  const ids = sessionPagination().get(instanceId)?.ids
+  if (!ids?.length) return EMPTY_SESSION_THREADS
   const directoryOnly = getDirectoryOnlyWorktree(instanceId)
-  return buildSessionThreadsFromMap(listed, getSessionListIds(instanceId).filter((id) => listed.has(id)), undefined,
-    directoryOnly?.serviceDirectory ?? directoryOnly?.directory)
+  const directory = directoryOnly?.serviceDirectory ?? directoryOnly?.directory
+  const cached = sessionThreadProjections.get(held)
+  if (cached && cached.listed === listed && cached.ids === ids && cached.directory === directory) return cached.threads
+  const threads = buildSessionThreadsFromMap(listed, projectSessionListIds(ids, held, directory).filter(id => listed.has(id)), undefined, directory)
+  sessionThreadProjections.set(held, { listed, ids, directory, threads })
+  return threads
 }
 
 function getSessionSearchSessions(instanceId: string): Session[] {
