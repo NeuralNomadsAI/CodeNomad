@@ -85,8 +85,8 @@ The next-results action advances by result page, independently of scanned rows.
 Ownership checks are shared by identical locations only within each broker request
 and revalidated on subsequent requests. Closing the window,
 changing query/scope or leaving the session cancels obsolete UI work. The System
-visibility setting controls whether system hits are included; disclosure and
-grouping leave the current search and reading position in place. Resident matches
+visibility setting controls whether system hits are included. The two Tool groups
+controls leave the current search and reading position in place. Resident matches
 scroll to their existing row without a network read.
 
 Ranked workspace results retain rank order, with only consecutive hits sharing a

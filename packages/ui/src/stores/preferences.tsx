@@ -7,6 +7,7 @@ import { tGlobal } from "../lib/i18n"
 import { parseInstanceKey } from "../lib/backend-identity"
 import { generateUUID } from "../lib/client-identity"
 import { transcriptCustomExpansionPatch } from "../components/transcript-visibility"
+import { LazyToolCall } from "../components/lazy-tool-call"
 import { OTHER_TOOL_NAME, resolveToolVisibility } from "../components/tool-call/tool-presentation"
 import { sameServerSelection } from "../lib/native/server-selection-intent"
 import { readRemoteProjectHistory, RECENT_PROJECT_LIMIT, type RemoteProjectRecentEdit } from "../lib/remote-project-recent-data"
@@ -865,7 +866,13 @@ function updateUiSettings(updates: Partial<UiSettings>): Promise<boolean> {
       Object.keys(updates).map((key) => [key, nextSettings[key as keyof UiSettings]]),
     ),
   }
-  return patchConfigOwner("ui", patch).then(
+  const save = () => patchConfigOwner("ui", patch)
+  const groups = updates.toolGroupVisibility
+  // Revealing cards above the reading line must be part of the same reflow.
+  const write = groups && groups !== "collapsed" && groups !== preferences().toolGroupVisibility
+    ? LazyToolCall.preload().then(save)
+    : save()
+  return write.then(
     () => true,
     (error) => {
       log.error("Failed to patch ui settings", error)

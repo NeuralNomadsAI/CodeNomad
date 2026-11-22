@@ -1,4 +1,4 @@
-import { For, Match, Show, Suspense, Switch, createMemo, createSignal, lazy } from "solid-js"
+import { For, Match, Show, Suspense, Switch, createMemo, createSignal } from "solid-js"
 import { ChevronRight, Copy } from "lucide-solid"
 import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
@@ -13,10 +13,9 @@ import {
 import { copyToClipboard } from "../lib/clipboard"
 import { getPastedTextLineCount } from "../lib/pasted-text-display"
 import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
+import { LazyToolCall } from "./lazy-tool-call"
 
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
-
-const LazyToolCall = lazy(() => import("./tool-call"))
 
 interface MessagePartProps {
   part: ClientPart

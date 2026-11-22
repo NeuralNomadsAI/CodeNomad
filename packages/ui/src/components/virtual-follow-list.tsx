@@ -323,9 +323,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       const pending = selected === "pending"
       // Seek an unmounted row by its estimate, just as for a timeline jump.
       if (!anchor.element && (!selected || pending) && !row?.isConnected) {
-        return writeIndex("reader-settle", index) ? "pending" : false
+        return writeIndex("reader-settle", index)
       }
-      if (anchor.reflow && pending) return "pending"
+      if (anchor.reflow && pending) return
       const target = anchor.element ?? (pending ? row : selected ?? row)
       // A detached revealed part is gone.
       if (!element || !target?.isConnected) return false
@@ -334,7 +334,6 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
         : anchor.offset < 0 ? settledReaderOffset(anchor.offset, target.getBoundingClientRect().height) : anchor.offset
       const delta = measureAnchorDelta(element, target, offset)
       if (Math.abs(delta) >= 1) writeScroll(anchor.element ? "align-element" : "reader-settle", { type: "dom", top: element.scrollTop + delta, record: true })
-      if (pending) return "pending"
     },
   })
 
@@ -1267,10 +1266,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const held = readerSettlement.held()
     // Resolve the same reading target in the new layout rather than capturing
     // a placeholder or another block while the original placement settles.
-    if (change?.preserve && held?.reflow) {
-      readerSettlement.resettle()
-      return
-    }
+    if (change?.preserve && held?.reflow) return
     if (held?.reflow || held?.select?.() === null) readerSettlement.cancel()
     if (!change?.preserve || !isActive()) return
     if (autoScroll()) api.notifyContentRendered()

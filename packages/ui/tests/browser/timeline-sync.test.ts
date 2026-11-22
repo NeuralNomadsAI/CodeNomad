@@ -80,7 +80,7 @@ const longMessages = Array.from({ length: 260 }, (_, index) => index === LONG.in
   : index % 2 ? assistant(index, [{ type: "text", text: prose(`Note ${index}`, 2) }]) : { id: id(index), type: "user", time: { created: index + 1 }, text: prose(`Ask ${index}`, 1) })
 
 let server: Awaited<ReturnType<typeof startTimelineSyncServer>>, directory: string, store: string, visibilityStore: string, wideStore: string, longStore: string
-let groupedStore: string, coldGroupStore: string, longGroupStore: string, proseStore: string, splitTextStore: string
+let groupedStore: string, coldGroupStore: string, coldPrecedingToolsStore: string, longGroupStore: string, proseStore: string, splitTextStore: string
 let tailGroupStore: string, tailToolStore: string
 before(async () => {
   directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-timeline-sync-"))
@@ -110,6 +110,11 @@ before(async () => {
   createSessionStore(coldGroupStore, grouped.map(row => row.id === id(1) ? {
     ...row, content: row.content.filter((part: { name?: string }) => part.name !== "edit"),
   } : row))
+  coldPrecedingToolsStore = path.join(directory, "cold-preceding-tools.sqlite")
+  createSessionStore(coldPrecedingToolsStore, [message(0),
+    assistant(1, [...reads.slice(0, 12), { type: "text", text: "Reading after the tools." }]),
+    ...grouped.slice(3),
+  ])
   longGroupStore = path.join(directory, "long-group.sqlite")
   createSessionStore(longGroupStore, [
     message(0),
@@ -217,6 +222,38 @@ test("scrolling activates the marker of the block at the reading line", { timeou
 const READING_LINE_TOLERANCE = 4
 
 for (const label of ["Expand Tool groups", "Disable tool grouping"]) {
+  test(`a cold tool renderer above the reply preserves the reading line on ${label}`, { timeout: 90_000 }, () => withSession("minimal", async page => {
+    const { promise: requested, resolve: markRequested } = Promise.withResolvers<void>()
+    const { promise: held, resolve: release } = Promise.withResolvers<void>()
+    await page.route(/\/src\/components\/tool-call\.tsx(?:\?|$)/, async route => {
+      markRequested()
+      await held
+      await route.continue()
+    })
+    try {
+      const reply = (await markers(page)).find(marker => marker.id === `${id(1)}:assistant:0`)!
+      await clickMarker(page, reply)
+      const before = await blockOffset(page, reply)
+      assert.ok(before !== null && Math.abs(before) <= READING_LINE_TOLERANCE)
+      assert.equal(await page.locator(".tool-call-message").count(), 0)
+      await page.evaluate(() => (window as any).fixture.showFilters(true))
+      await page.getByRole("button", { name: "Message content", exact: true }).click()
+      await page.getByRole("button", { name: label, exact: true }).click()
+      await requested
+      await page.waitForTimeout(1100)
+      assert.equal(await page.locator(".tool-call-message").count(), 0, "the cold module has not changed the transcript")
+      release()
+      await page.locator(".tool-call-message .tool-call-header-toggle").first().waitFor()
+      await settleTranscript(page, 450)
+      const after = await blockOffset(page, reply)
+      assert.ok(after !== null && Math.abs(before - after) <= READING_LINE_TOLERANCE,
+        `the reply stays at the reading line when the tools load (${before}px → ${after}px)`)
+      assert.equal(await active(page), reply.id)
+    } finally { release() }
+  }, coldPrecedingToolsStore))
+}
+
+for (const label of ["Expand Tool groups", "Disable tool grouping"]) {
   test(`open history search keeps its results and reading position on ${label}`, { timeout: 90_000 }, () => withSession("minimal", async page => {
     let searches = 0
     await page.route("**/session-history/query", route => {
@@ -283,8 +320,10 @@ test("ungrouping mounts and aligns the 61st call of a collapsed 120-call group",
 }, longGroupStore))
 
 test("a second grouping change retains the 68th call while the tool renderer loads", { timeout: 90_000 }, () => withSession("minimal", async (page) => {
+  const { promise: requested, resolve: markRequested } = Promise.withResolvers<void>()
   const { promise: held, resolve: release } = Promise.withResolvers<void>()
   await page.route(/\/src\/components\/tool-call\.tsx(?:\?|$)/, async route => {
+    markRequested()
     await held
     await route.continue()
   })
@@ -296,10 +335,10 @@ test("a second grouping change retains the 68th call while the tool renderer loa
     await page.evaluate(() => (window as any).fixture.showFilters(true))
     await page.getByRole("button", { name: "Message content", exact: true }).click()
     await page.getByRole("button", { name: "Expand Tool groups", exact: true }).click()
-    await page.locator(".tool-call-loading").first().waitFor({ state: "attached" })
+    await requested
     await page.getByRole("button", { name: "Disable tool grouping", exact: true }).click()
-    await page.getByRole("button", { name: "Explored: 120 reads", exact: true }).waitFor({ state: "detached" })
     release()
+    await page.getByRole("button", { name: "Explored: 120 reads", exact: true }).waitFor({ state: "detached" })
 
     await page.locator('.tool-call-message[data-part-id="long-group-67-read"] .tool-call-header-toggle').waitFor({ timeout: 7000 })
     await settleTranscript(page, 450)
@@ -379,7 +418,6 @@ for (const cancel of [false, true]) test(`a cold tool anchor ${cancel ? "yields 
     await page.evaluate(() => (window as any).fixture.showFilters(true))
     await page.getByRole("button", { name: "Message content", exact: true }).click()
     await page.getByRole("button", { name: "Disable tool grouping", exact: true }).click()
-    await card.locator(".tool-call-loading").waitFor({ state: "attached" })
     await requested
     if (cancel) {
       await page.keyboard.press("Escape")

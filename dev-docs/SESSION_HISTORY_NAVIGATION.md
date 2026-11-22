@@ -183,7 +183,7 @@ qualifies the replacement, such as an individual tool represented by a collapsed
 group header. The bounded reader-settlement hold resolves the replacement and
 leaves scroll untouched if the block is gone. Further grouping changes during
 the hold keep the same block identity and offset, resolving its row in the
-current layout within the original deadline. A shorter
+current layout. A shorter
 block starts at the viewport top if the saved clipping would put its end at or
 above the reading line. At a scrollbar limit, the rail follows the block the
 reader actually reaches. A shared marker can stand for several distinct reasoning
@@ -390,11 +390,11 @@ previous offset after the jump's write, which would otherwise carry the reader b
 down (a First jump from the bottom of a long transcript). While
 a jump's row is not rendered, the hold rewrites Virtua's current estimate of its
 offset instead, since measuring the rows around a distant estimate can carry the
-row out of the rendered range; once rendered it is aligned. The 30-frame
-settlement window starts when the requested block is measurable. A reflow uses
-the same estimate to bring an unmounted row into range. Once the row mounts,
-reflow alignment waits for the actual block. A filtered or removed target
-releases the hold. The entire hold has a five-second deadline. Within it,
+row out of the rendered range; once rendered it is aligned. A reflow uses the
+same estimate to bring an unmounted row into range and aligns the actual block.
+Grouping settings that reveal cards preload their renderer before applying the
+change. A filtered or removed target releases the hold. The 30-frame settlement
+window starts with the request. Within it,
 viewport and header resizes re-align the
 element instead of dropping it, and its requested offset is kept and clamped into
 the current viewport only when applied. Gestures, navigation and focus moving to

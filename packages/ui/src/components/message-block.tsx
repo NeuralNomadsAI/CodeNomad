@@ -1,4 +1,4 @@
-import { For, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, lazy, onCleanup, untrack, type Accessor } from "solid-js"
+import { For, Match, Show, Suspense, Switch, createEffect, createMemo, createSignal, onCleanup, untrack, type Accessor } from "solid-js"
 import { ChevronRight, Copy, ExternalLink, FoldVertical, Layers3, Loader2, Trash2, XCircle } from "lucide-solid"
 import MessageItem from "./message-item"
 import SystemMessage from "./system-message"
@@ -61,11 +61,10 @@ import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
 import { groupTranscriptRows, isTechnicalGroupingVisiblePart, segmentExplorationItems, transcriptPartKind, sumMessageUsage, technicalPartKey, type TechnicalCleanupPart, type TranscriptTechnicalGroup } from "../lib/message-part-grouping"
 import { MessageUsage } from "./message-usage"
+import { LazyToolCall } from "./lazy-tool-call"
 
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
 const BACKGROUNDABLE_TOOLS = new Set(["bash", "shell", "task", "subagent"])
-
-const LazyToolCall = lazy(() => import("./tool-call"))
 
 function ToolCallFallback() {
   return <div class="tool-call tool-call-loading" />
