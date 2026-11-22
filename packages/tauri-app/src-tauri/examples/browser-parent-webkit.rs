@@ -98,7 +98,7 @@ fn register(
     url: &str,
     open_request_id: Option<&str>,
 ) -> Result<(), String> {
-    let input: BrowserTargetRegistration = serde_json::from_value(json!({"sessionId":SESSION,"registrationId":id,"instanceId":"fixture-tab","url":url,"bounds":bounds(),"visible":false,"openRequestId":open_request_id})).unwrap();
+    let input: BrowserTargetRegistration = serde_json::from_value(json!({"sessionId":SESSION,"registrationId":id,"instanceId":open_request_id.map(|_| "fixture-tab"),"url":url,"bounds":bounds(),"visible":false,"openRequestId":open_request_id})).unwrap();
     controller.register(&app.get_window(owner).ok_or("Fixture owner closed")?, input)?;
     update(app, controller, owner, id, true)
 }
@@ -195,12 +195,11 @@ fn main() {
             controller.observe_owner(&app.get_window(OWNER).unwrap())?;
             let view = app.get_webview(OWNER).unwrap();
             let discovery = controller.clone();
-            let discovery_app = app.handle().clone();
             view.listen("browser-target:discover", move |event| {
                 let payload: Value = serde_json::from_str(event.payload()).unwrap();
                 let request = payload["requestID"].as_str().unwrap();
-                assert!(discovery.claim_open(&discovery_app, OWNER, request, browser_controller::OpenResponse::Discover {
-                    instance_id: Some(Some("fixture-tab".into())), ambiguous: None,
+                assert!(discovery.claim_open(OWNER, request, browser_controller::OpenResponse::Discover {
+                    instance_id: Some("fixture-tab".into()),
                 }).unwrap());
             });
             let open_app = app.handle().clone();
@@ -211,14 +210,20 @@ fn main() {
                 let request = payload["requestID"].as_str().unwrap().to_string();
                 use browser_controller::OpenResponse;
                 let instance_id = payload["instanceId"].as_str().unwrap().to_string();
-                if !open_controller.claim_open(&open_app, OWNER, &request, OpenResponse::Claim { instance_id: instance_id.clone() }).unwrap() {
-                    return;
-                }
                 let app = open_app.clone();
                 let controller = open_controller.clone();
                 let live = open_live.clone();
                 std::thread::spawn(move || {
-                    assert!(controller.claim_open(&app, OWNER, &request, OpenResponse::Adopt { instance_id: instance_id.clone() }).unwrap());
+                    assert!(controller.change_ownership(&app, OWNER, browser_controller::OwnershipAction::Ready {
+                        session_id: SESSION.into(), instance_id: instance_id.clone(), request_id: request.clone(),
+                    }).unwrap().is_some());
+                    let existing = live.lock().unwrap().clone();
+                    if !existing.is_empty() && update(&app, &controller, OWNER, &existing, true).is_ok() {
+                        assert!(controller.claim_open(OWNER, &request, OpenResponse::Target {
+                            instance_id, registration_id: existing,
+                        }).unwrap());
+                        return;
+                    }
                     let id = format!("fixture-{}", uuid::Uuid::new_v4());
                     let result = register(
                         &app,
@@ -230,12 +235,12 @@ fn main() {
                     );
                     if result.is_ok() {
                         *live.lock().unwrap() = id.clone();
-                        assert!(controller.claim_open(&app, OWNER, &request, OpenResponse::Target {
+                        assert!(controller.claim_open(OWNER, &request, OpenResponse::Target {
                             instance_id, registration_id: id,
                         }).unwrap());
                     } else {
                         eprintln!("open fixture failed: {result:?}");
-                        controller.release_open(OWNER, &request, false);
+                        controller.release_open(OWNER, &request);
                     }
                 });
             });

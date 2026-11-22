@@ -45,6 +45,8 @@ import { startNotificationIconBadge } from "./lib/notification-icon-badge"
 import RemoteRestoreView from "./components/remote-restore-view"
 import {
   claimNativeBrowserOpen,
+  changeBrowserPreviewOwnership,
+  onBrowserPreviewOwnership,
   onNativeBrowserOpen,
   releaseNativeBrowserOpen,
   selectBrowserOpenOwner,
@@ -81,10 +83,10 @@ import {
   updateSessionAgent,
   updateSessionModel,
 } from "./stores/sessions"
-import { getSessionPreview, openSessionPreview, settleSessionPreviewOpen } from "./stores/session-previews"
+import { acceptPreviewOwnership, openSessionPreview, settleSessionPreviewOpen, showSessionPreview } from "./stores/session-previews"
 import { isInstanceOccurrenceOpen } from "./stores/instance-lifecycle-authority"
 import { SessionPreviewHost } from "./components/session-preview-view"
-import { beginGesture } from "./stores/session-surface"
+import { observeSurfaceGesture } from "./stores/session-surface"
 import { useForegroundRefresh } from "./lib/hooks/use-foreground-refresh"
 import { messagesLoaded, invalidateSessionMessageLoad } from "./stores/session-state"
 
@@ -276,7 +278,8 @@ const App: Component = () => {
   onMount(() => {
     let disposed = false
     let browserOpenUnsubscribe = () => {}
-    const pendingBrowserOpens = new Map<string, { sessionID: string; retire: () => void }>()
+    let browserOwnershipUnsubscribe = () => {}
+    const browserDeliveries = new Map<string, AbortController>()
     void initGithubStars()
     updateInstanceTabBarHeight()
     const handleResize = () => updateInstanceTabBarHeight()
@@ -291,46 +294,63 @@ const App: Component = () => {
     const localInstances = () => appTabs().flatMap(tab => tab.kind === "instance"
       && parseInstanceKey(tab.instance.id).backendId === "local" && isInstanceOccurrenceOpen(tab.instance.id)
       && tab.instance.status === "ready" && tab.instance.client ? [tab.instance] : [])
-    const discoverPreviewOwner = ({ workspaceIDs, requestID }: BrowserOpenDiscovery) => {
+    const recentTabs = new Map<string, string[]>()
+    let lastUsedTab: string | undefined, lastUsedSession: string | undefined
+    const reportTabUse = () => {
+      if (lastUsedTab && lastUsedSession) {
+        void changeBrowserPreviewOwnership({ action: "used", instanceId: lastUsedTab, sessionId: lastUsedSession })?.catch(() => {})
+      }
+    }
+    window.addEventListener("focus", reportTabUse)
+    createEffect(() => {
+      const tab = activeAppTab()
+      const id = tab?.kind === "instance" && parseInstanceKey(tab.instance.id).backendId === "local" ? tab.instance.id : undefined
+      const session = id ? activeSessionId().get(id) : undefined
+      if (id && session && session !== "info") {
+        const previous = recentTabs.get(session) ?? []
+        recentTabs.delete(session)
+        recentTabs.set(session, [id, ...previous.filter(other => other !== id)].slice(0, 32))
+        if (recentTabs.size > 512) recentTabs.delete(recentTabs.keys().next().value!)
+        if (lastUsedTab !== id || lastUsedSession !== session) {
+          lastUsedTab = id
+          lastUsedSession = session
+          if (document.hasFocus()) reportTabUse()
+        }
+      } else { lastUsedTab = lastUsedSession = undefined }
+    })
+    const discoverPreviewOwner = ({ workspaceIDs, requestID, sessionID }: BrowserOpenDiscovery) => {
       if (disposed) return
       const eligible = new Set(workspaceIDs)
       const owners = localInstances().filter(instance => eligible.has(parseInstanceKey(instance.id).workspaceId))
       const activeTab = activeAppTab()
-      const owner = selectBrowserOpenOwner(owners, activeTab?.kind === "instance" ? activeTab.instance.id : undefined)
-      return claimNativeBrowserOpen(requestID, !owner && owners.length > 1
-        ? { kind: "discover", ambiguous: true } : { kind: "discover", instanceId: owner?.id ?? null })
+      const recent = recentTabs.get(sessionID)?.find(id => owners.some(owner => owner.id === id))
+      const owner = selectBrowserOpenOwner(owners, recent ?? (activeTab?.kind === "instance" ? activeTab.instance.id : undefined))
+      return claimNativeBrowserOpen(requestID, { kind: "discover", instanceId: owner?.id ?? owners[0]?.id ?? null })
     }
     const openRequestedPreview = async ({ sessionID, url, requestID, instanceId }: BrowserOpenRequest) => {
       const eligible = () => !disposed && localInstances().some(instance => instance.id === instanceId)
+      const delivery = new AbortController()
       let published = false
-      let retired = false
-      const pending = { sessionID, retire: () => { retired = true } }
       try {
         if (!eligible()) return
-        if (getSessionPreview(sessionID, instanceId)?.nativeOpen
-          || [...pendingBrowserOpens.values()].some(open => open.sessionID === sessionID)) return
-        pendingBrowserOpens.set(requestID, pending)
+        browserDeliveries.set(requestID, delivery)
         const operation = captureBackendOperation(instanceId, undefined, eligible)
-        const intent = beginGesture({ instanceId, sessionId: sessionID })
+        const intent = observeSurfaceGesture({ instanceId, sessionId: sessionID })
         const selectionRevision = appTabSelectionRevision()
-        const current = () => !retired && operation.current() && intent.current()
         const loaded = () => getSessions(instanceId).some(session => session.id === sessionID)
-        const needsHydration = !loaded()
-        if (!current() || !await claimNativeBrowserOpen(requestID, { kind: "claim", instanceId }) || !current()) return
-        if (needsHydration && !loaded()) await hydrateRestoredSessionChain(instanceId, [sessionID], operation.signal, current)
+        const current = () => operation.current() && intent.current() && !delivery.signal.aborted
+        if (!loaded()) await hydrateRestoredSessionChain(instanceId, [sessionID], operation.signal, current)
         if (!current() || !loaded()) return
-        const stillOwned = () => current() && loaded()
-        await openSessionPreview(sessionID, url, instanceId,
-          async () => stillOwned() && await claimNativeBrowserOpen(requestID, { kind: "adopt", instanceId }) && stillOwned(), intent,
-          { requestID, instanceId, current: stillOwned })
-        if (!stillOwned()) return
+        await openSessionPreview(sessionID, url, instanceId, intent, { requestID, instanceId }, delivery.signal, () =>
+          changeBrowserPreviewOwnership({ action: "ready", sessionId: sessionID, instanceId, requestID }))
+        if (!current()) return
         if (appTabSelectionRevision() === selectionRevision) {
           selectInstanceTab(instanceId)
           setActiveSessionFromList(instanceId, sessionID, intent)
         }
         published = true
       } finally {
-        if (pendingBrowserOpens.get(requestID) === pending) pendingBrowserOpens.delete(requestID)
+        browserDeliveries.delete(requestID)
         if (!published) await releaseNativeBrowserOpen(requestID).catch((releaseError) => {
           log.warn("Failed to release agent-requested web preview", { sessionID, releaseError })
         })
@@ -341,15 +361,26 @@ const App: Component = () => {
     }, (request) => {
       void openRequestedPreview(request).catch(error => log.warn("Failed to open agent-requested web preview", { sessionID: request.sessionID, error }))
     }, ({ requestID, sessionID, instanceId, committedUrl, keepGuest, successorUrl }) => {
-      if (!committedUrl) pendingBrowserOpens.get(requestID)?.retire()
+      browserDeliveries.get(requestID)?.abort()
       settleSessionPreviewOpen(sessionID, instanceId, requestID, committedUrl, keepGuest, successorUrl)
     }).then((cleanup) => {
       if (disposed) cleanup()
       else browserOpenUnsubscribe = cleanup
     }).catch((error) => log.warn("Failed to listen for native browser open requests", { error }))
+    void onBrowserPreviewOwnership(acceptPreviewOwnership, ({ sessionId, instanceId }) => {
+      if (!localInstances().some(instance => instance.id === instanceId)) return
+      selectInstanceTab(instanceId)
+      setActiveSessionFromList(instanceId, sessionId)
+      showSessionPreview(sessionId, instanceId)
+    }).then(cleanup => {
+      if (disposed) cleanup()
+      else browserOwnershipUnsubscribe = cleanup
+    }).catch(error => log.warn("Failed to listen for browser ownership changes", { error }))
     onCleanup(() => {
       disposed = true
       browserOpenUnsubscribe()
+      browserOwnershipUnsubscribe()
+      window.removeEventListener("focus", reportTabUse)
       window.removeEventListener("resize", handleResize)
       window.clearInterval(livenessTimer)
     })

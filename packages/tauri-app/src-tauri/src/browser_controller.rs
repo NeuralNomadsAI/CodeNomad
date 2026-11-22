@@ -44,7 +44,9 @@ mod open_navigation;
 #[path = "browser_controller_page.rs"]
 mod page;
 use open::OpenClaim;
-pub(crate) use open::OpenResponse;
+#[path = "browser_preview_owners.rs"]
+mod preview_owners;
+pub(crate) use open::{OpenResponse, OwnershipAction};
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 #[path = "browser_owner_visibility.rs"]
@@ -132,6 +134,7 @@ struct Inner {
     page_load_sequence: u64,
     page_load_expectations: HashMap<String, PageLoadExpectation>,
     open_claims: HashMap<String, OpenClaim>,
+    preview_owners: preview_owners::BrowserPreviewOwners,
 }
 
 #[derive(Clone)]
@@ -178,9 +181,9 @@ impl BrowserController {
             .map_err(|error| preview_error("read renderer generation", error))?;
         let registration_id = input.registration_id.clone();
         let generation = self.registration_sequence.fetch_add(1, Ordering::Relaxed);
-        if let Some(request_id) = &input.open_request_id {
-            self.reserve_open_construction(request_id, window.label(), &input, generation)?;
-        }
+        self.inner.0.lock().map_err(|error| error.to_string())?.check_preview_owner(
+            &input.session_id, window.label(), input.instance_id.as_deref(),
+        )?;
         // Native labels are unique across replacements, including in-flight creations.
         let label = format!("browser-{}-{generation}", input.registration_id);
         let navigation_controller = self.clone();
@@ -262,7 +265,7 @@ impl BrowserController {
                 registration,
                 renderer_version,
                 url.as_str(),
-                input.open_request_id.as_deref(),
+                None,
             )
             .map_err(|error| preview_error("publish registration", error))
         {
@@ -358,12 +361,18 @@ impl BrowserController {
         registration: Registration,
         renderer_version: u64,
         url: &str,
-        open_request_id: Option<&str>,
+        _open_request_id: Option<&str>,
     ) -> Result<Option<Registration>, String> {
         let (inner, ready) = &*self.inner;
         let mut inner = inner.lock().map_err(|error| error.to_string())?;
-        if let Some(request_id) = open_request_id {
-            Self::check_open_publication(&inner, request_id, &registration)?;
+        inner.check_preview_owner(
+            &registration.session_id, &registration.window_label, registration.instance_id.as_deref(),
+        )?;
+        if registration.instance_id.is_some() && inner.registrations.values().any(|current|
+            current.session_id == registration.session_id && current.instance_id.is_some()
+                && current.registration_id != registration.registration_id
+        ) {
+            return Err("This session already has a native preview".into());
         }
         if inner
             .renderer_versions
@@ -427,6 +436,9 @@ impl BrowserController {
         let registration = self.owned_registration(window_label, &input.registration_id)?;
         if let Some(id) = &input.instance_id {
             validate_id(id, 256)?;
+            self.inner.0.lock().map_err(|error| error.to_string())?.check_preview_owner(
+                &registration.session_id, window_label, Some(id),
+            )?;
         }
         let visible = input.visible.unwrap_or(true);
         if visible {
@@ -725,7 +737,7 @@ impl BrowserController {
     }
 
     pub(crate) fn remove_window<R: tauri::Runtime>(&self, app: &AppHandle<R>, window_label: &str) {
-        let children = if let Ok(mut inner) = self.inner.0.lock() {
+        let (children, released) = if let Ok(mut inner) = self.inner.0.lock() {
             let version = inner
                 .renderer_versions
                 .entry(window_label.to_string())
@@ -763,10 +775,13 @@ impl BrowserController {
             inner
                 .open_claims
                 .retain(|_, claim| !claim.belongs_to(window_label));
-            children
+            (children, inner.preview_owners.release(window_label, None))
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
+        for (session, _, revision) in released {
+            self.publish_preview_ownership(app, &session, revision, None);
+        }
         for child in children {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             webkit_history::remove(app, child);
@@ -1152,7 +1167,7 @@ impl BrowserController {
         registration: &Registration,
         url: &str,
         document: Option<u64>,
-        open_request: Option<(&str, &open::OpenPreviewCheck)>,
+        open_request: Option<&str>,
         check_admission: impl FnOnce() -> Result<(), String>,
     ) -> Result<u64, String> {
         let mut inner = self.inner.0.lock().map_err(|error| error.to_string())?;
@@ -1163,12 +1178,12 @@ impl BrowserController {
             return Err(STALE_TARGET.into());
         }
         check_admission()?;
-        if let Some((request_id, visibility)) = open_request {
-            open::check_open_target(&inner, request_id, registration, visibility)?;
+        if let Some(request_id) = open_request {
+            open::check_open_target(&inner, request_id, registration)?;
         }
         invalidate_page(&mut inner, id);
         let sequence = record_page_load(&mut inner, id, url, true);
-        if let Some((request_id, _)) = open_request {
+        if let Some(request_id) = open_request {
             inner.open_claims.get_mut(request_id).unwrap().load_sequence = Some(sequence);
         }
         Ok(sequence)

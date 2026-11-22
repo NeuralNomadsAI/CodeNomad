@@ -58,12 +58,10 @@ import type { Attachment } from "../../types/attachment"
 import { setAgentModelPreference, useConfig } from "../../stores/preferences"
 import { showAlertDialog } from "../../stores/alerts"
 import {
-  DEFAULT_PREVIEW_URL,
   getSessionPreview,
-  openSessionPreview,
-  restoreSessionPreview,
+  previewBlockedByOwner,
+  requestSessionPreview,
   showSessionChatFor,
-  showSessionPreview,
   setPreviewSessionOwners,
 } from "../../stores/session-previews"
 import { clearSelectedSession, createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
@@ -467,15 +465,11 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     if (!sessionId || sessionId === "info") return
     const instanceId = props.instance.id
     const operation = captureBackendOperation(instanceId, undefined, () => props.instance.id === instanceId && activeSessionIdForInstance() === sessionId)
-    const intent = beginGesture({ instanceId, sessionId })
     try {
       if (!operation.current()) return
-      const restored = await restoreSessionPreview(sessionId, instanceId)
-      if (!operation.current() || !intent.current()) return
-      if (restored) showSessionPreview(sessionId, instanceId, intent)
-      else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, instanceId, undefined, intent)
+      await requestSessionPreview(sessionId, instanceId)
     } catch (error) {
-      if (!operation.current() || !intent.current()) return
+      if (!operation.current()) return
       if (error instanceof Error && error.name === "AbortError") return
       if (props.isActiveInstance === false || activeSessionIdForInstance() !== sessionId) return
       showAlertDialog(t("sessionPreview.open.title"), {
@@ -490,21 +484,18 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return
 
-    const preview = activeSessionPreview()
-    if (showingPreview() && preview) {
+    if (showingPreview() && (activeSessionPreview() || previewBlockedByOwner(sessionId, props.instance.id))) {
       showSessionChatFor(sessionId, props.instance.id)
       return
     }
 
-    if (preview && !preview.nativeOpen?.created) {
-      showSessionPreview(sessionId, props.instance.id)
-      return
-    }
     void handleOpenPreview()
   }
 
   const previewToggleLabel = createMemo(() => {
-    return showingPreview() && activeSessionPreview() ? t("sessionPreview.chat.button") : t("sessionPreview.open.button")
+    const sessionId = activeSessionIdForInstance()
+    return showingPreview() && (activeSessionPreview() || (sessionId && previewBlockedByOwner(sessionId, props.instance.id)))
+      ? t("sessionPreview.chat.button") : t("sessionPreview.open.button")
   })
 
   const activeSessionStatusPill = createMemo(() => {

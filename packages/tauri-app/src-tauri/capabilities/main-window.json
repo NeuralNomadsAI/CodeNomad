@@ -55,6 +55,7 @@
     "allow-open-workspace-target",
     "allow-set-workspace-menu-enabled",
     "allow-browser-target-register",
+    "allow-browser-target-ownership",
     "allow-browser-target-update",
     "allow-browser-target-action",
     "allow-browser-target-unregister",

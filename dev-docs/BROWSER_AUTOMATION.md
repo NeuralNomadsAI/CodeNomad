@@ -319,58 +319,22 @@ WebKitGTK clipboard writes and native Ctrl+C/V use the engine's user-initiated p
 - WebKit history reads the native back/forward list on the UI thread. Each retained native item gets a monotonic numeric handle, with at most 32 exposed entries; redirects and `replaceState` update that item's URL, while distinct same-URL entries keep distinct handles. Reads and traversal revalidate the registration's owner/generation, reject expired or removed handles and release retained items on replacement, close and primary-renderer reload. GTK observes native URI/list changes. WKWebView samples native lists every 250 ms while visible and every second while hidden because its public list API has no same-URL `pushState` notification. Saved restoration keeps only URLs/cursor and loads the selected URL on explicit reopening.
 - Keep application capabilities confined to primary local webviews. Never apply `linux_tls.rs` remote-window exceptions to browser previews.
 
-Autonomous native opens ask visible, non-minimized local application windows for
-an eligible tab in native focus/MRU order. Discovery reads the open occurrence
-set and backend-verified workspace IDs; it sends no URL, refreshes no session
-list, and changes no selection. A definite absence advances to the next window.
-In the first eligible window, the active owning tab wins; otherwise a single
-owning tab wins or ambiguity stops the request. An inconclusive discovery stops.
+The native host synchronously grants one preview owner per session: a local
+window and exact tab occurrence. A manual open changes the surface only after
+the reply. A duplicate presents the owner and explicit actions to focus it or
+move the preview within that window. Transfer matches the observed owner revision,
+retains the guest, and invalidates its prior automation witness. Closing the tab,
+window or renderer releases ownership. Returning to chat keeps ownership.
 
-The host sends the URL to that renderer and occurrence alone, without raising the
-window. Foreground selection respects tab selections made after the renderer
-receives the open; the existing claim still requires its exact visible registration.
-The renderer refuses adoption while the owning tab shows a file or Mission reader.
-Claim and adoption are scoped to the native window incarnation, renderer
-generation and tab; the host waits for that renderer's acknowledgement of its visible native registration
-and checks the same registration after load. Hide, minimize, renderer reload,
-window/occurrence closure or failed adoption retires the request; never reroute it.
-A retained preview in another window blocks guest construction. An existing preview
-can still navigate when it is the only visible guest and belongs to the selected occurrence.
+An autonomous open targets the current owner or the most recently used eligible
+tab for that session. When there is no recent eligible entry, discovery asks local
+windows in native focus/MRU order using backend-verified workspace IDs. The
+selected tab asks for ownership once it can display the preview; the host grants
+it synchronously before the tab can create or show a guest. Only the exact
+visible registration can acknowledge delivery. Its window, occurrence,
+registration and deadline remain fenced through navigation and receipt.
 Page actions require exactly one visible native target for the invoking session.
-Ambiguity, hiding and closure invalidate it. Registrations retain the real native
-session ID on Electron and Tauri Windows/macOS/Linux.
-
-Renderer preview operations retain occurrence/session identity fences while pending.
-Lifecycle unavailability or removal invalidates those fences; completion releases
-the exact operation's fence. Admission checks the lifecycle authority's open
-occurrence set.
-
-`stores/session-surface.ts` supplies occurrence gesture generations. Autonomous opens
-capture their generation after owner selection and before claiming, and recheck it with
-ownership and operation fences before adoption. Passive browser resource restoration
-uses its own occurrence/session operation fence, allocates independently of foreground
-authority and preserves the saved foreground mode. Rejected creations release their
-own proxy tokens. SessionView reads the shared typed foreground projection; browser
-resources retain their independent lifetimes. Location/history notifications apply
-immediately while pending gestures retain their generation.
-
-Native open claims use up to ten seconds for discovery and adoption, then the remaining
-native request deadline for the command slot and load. The UI rejects competing opens
-before changing the gesture and revalidates after asynchronous record
-creation. A new guest starts on a neutral document: Electron consumes the exact
-claim before attachment; Tauri checks it before construction and at publication.
-Retirement before acknowledgement releases the abandoned guest and record; a prior
-preview remains available.
-An explicit surface gesture retires the superseded request immediately. A user navigation
-on its acknowledged guest retires the open and retains that guest. Before dispatching
-the user's navigation, the journal excludes the retired native entry by identity.
-A main-frame link navigation that supersedes an in-flight open also retains its exact guest.
-When its location arrives before the open settles, a matching native successor receipt
-saves the new visit without saving the interrupted load.
-An explicit open from another occurrence can replace the first agent open's provisional
-guest. Address submission waits for that guest's attachment acknowledgement while the
-address field stays editable. Refresh waits for the first open to settle. The native
-dispatch rechecks the exact reservation immediately before navigating.
+Hiding, minimizing, closing or moving the preview invalidates its old witness.
 
 The native host issues the URL only after the exact visible registration is admitted.
 It returns that navigation's committed URL, including redirects, after the main document's
@@ -418,5 +382,5 @@ IDs stay retired independently of subsequent requests.
 - Give `embedded_view.rs` child modules explicit `#[path = "embedded_view/..."]` attributes so the native qualification example can include the production layer directly. Keep fixture-only lifecycle controls inside the example executable.
 
 - Native session previews behave as tabs in one browser: share the persistent preview profile's cookies/site storage across sessions and projects within a CodeNomad data profile/config pair, but never with the trusted app renderer, remote-window profiles or the other desktop engine. Each session owns one document, navigation stack, history cursor, device template, proxy token and native registration within a renderer. Native registrations retain the real session ID for ownership and automation authority. Electron uses `persist:codenomad-browser-shared-v1`; Windows/Linux Tauri uses `browser/shared-v1`; macOS Tauri uses its profile/config-derived identified WebKit store. Leave per-session preview profiles found on disk in place and never merge them into the shared profile: they can hold conflicting accounts. Iframe fallbacks keep their sandbox; never grant guests native capabilities.
-- `viewState.previews` retains each occurrence's per-session foreground mode. `session-browser-persistence.ts` saves shared URL/history/template resources by session in `opencode-session-browser-state-v1`. `SessionPreviewHost` keeps opened guests mounted in stable DOM order and follows the active occurrence's slot geometry; the preview's X returns only that occurrence to chat. Inactive transcripts and composers still unmount and the transcript memory budget stays independent. Hidden guests must stop being automation targets (Electron unregisters, Tauri hides). Closing an occurrence invalidates its pending opens/restores; the shared guest and token live until the session's last owning occurrence closes. Late responses and failures honor the originating operation's lifetime; error dialogs appear only in its active view. Across renderer restart, restore URL history/cursor and device template only on explicit browser opening; never eagerly visit saved pages or persist native pageState/forms/POST bodies. Reuse owned CDP history IDs for live traversal and load just the selected saved URL when its native entry no longer exists. History is bounded to 32 credential-free HTTP(S) URLs per session within the 4 KB aggregate window budget; trim history before evicting saved previews.
+- `viewState.previews` retains each occurrence's per-session foreground mode. `session-browser-persistence.ts` saves shared URL/history/template resources by session in `opencode-session-browser-state-v1`. `SessionPreviewHost` retains the guest and follows the active owner's slot geometry. Hidden guests relinquish automation authority (Electron unregisters, Tauri hides); closing the owner releases the guest. Inactive transcripts and composers unmount and keep an independent memory budget. Reopen saved pages explicitly to restore their URL, cursor and template; never persist native pageState/forms/POST bodies. Use owned CDP history IDs to traverse live history. The journal keeps up to 32 credential-free HTTP(S) URLs per session within the 4 KB aggregate window budget; trim history before evicting saved previews.
 - Plain-browser and Remote Control clients retain bounded occurrence mode/Mission/panel envelopes in local storage, keyed by normalized folder and duplicate occurrence. Allocation and closure compaction share the local bound-occurrence inventory, so duplicates opened during a pending backend deletion retain contiguous ranks. Repeated opening notifications reuse the existing binding. The fallback admits 32 envelopes within 64K UTF-16 units. Imported occurrence browser entries merge into session resources before their envelopes reduce to foreground modes, preferring the active descriptor or most recently written local occurrence. Explicit browser opening adopts each missing session's matching legacy URL; exact session entries take precedence over project-wide fallbacks independently of source order. Only the consumed source retires after successful persistence; hydration stays data-only. Native primary windows use their existing captured workspace descriptors and partition publication.

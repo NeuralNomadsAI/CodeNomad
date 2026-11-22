@@ -22,7 +22,7 @@ impl BrowserController {
         let open_request_id = open_request_id.map(str::to_owned);
         let dispatch_request_id = open_request_id.clone();
         let dispatch_fence = fence.clone();
-        let check = move || -> Result<Option<super::open::OpenPreviewCheck>, String> {
+        let check = move || -> Result<(), String> {
             fence.check()?;
             if Instant::now() >= deadline {
                 return Err("Native browser command timed out".into());
@@ -31,24 +31,13 @@ impl BrowserController {
             if document.is_some() {
                 controller.check_target_identity(&app, &expected, deadline, &fence)?;
             } else {
-                let visibility = open_request_id
-                    .as_ref()
-                    .map(|_| {
-                        controller.read_open_preview(
-                            &app,
-                            &expected.session_id,
-                            &expected.window_label,
-                        )
-                    })
-                    .transpose()?;
                 controller.check_registration(&app, &expected)?;
-                if let Some((id, visibility)) = open_request_id.as_deref().zip(visibility) {
+                if let Some(id) = open_request_id.as_deref() {
                     let inner = controller.inner.0.lock().map_err(|error| error.to_string())?;
-                    super::open::check_open_target(&inner, id, &expected, &visibility)?;
-                    return Ok(Some(visibility));
+                    super::open::check_open_target(&inner, id, &expected)?;
                 }
             }
-            Ok(None)
+            Ok(())
         };
         check()?;
         #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -67,22 +56,13 @@ impl BrowserController {
         let dispatched = Arc::new(Mutex::new(None));
         let receipt = dispatched.clone();
         let admit = move || -> Result<u64, String> {
-            let visibility = dispatch_check()?;
-            let open_request = dispatch_request_id
-                .as_deref()
-                .map(|id| {
-                    visibility
-                        .as_ref()
-                        .map(|check| (id, check))
-                        .ok_or("Browser open target changed")
-                })
-                .transpose()?;
+            dispatch_check()?;
             let mut receipt = receipt.lock().map_err(|error| error.to_string())?;
             let sequence = controller.prepare_navigation(
                 &expected,
                 &target,
                 document,
-                open_request,
+                dispatch_request_id.as_deref(),
                 || {
                     dispatch_fence.check()?;
                     if Instant::now() >= deadline {

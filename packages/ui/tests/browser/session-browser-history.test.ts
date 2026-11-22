@@ -1103,28 +1103,43 @@ test("native open receipts keep the live address separate from the saved journal
   })
 })
 
-test("user navigation retires the acknowledged open before sending native navigation", async () => {
+test("native ownership: delayed refusal, go to owner, explicit transfer and owner closure", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
   try {
-    await prepare(page, "tauri")
-    const requested = `${base}/page/queued`, manual = `${base}/page/manual`
-    await page.evaluate(url => (window as any).fixture.openNativePreview("queued", url), requested)
-    await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_claim_open"))
-    const address = page.getByRole("textbox", { name: "Preview URL", exact: true })
-    await address.evaluate((input: HTMLInputElement, url) => {
-      ;(window as any).fixture.native.deferOpenRelease = true
-      input.value = url
-      input.dispatchEvent(new Event("input", { bubbles: true }))
-      input.form!.requestSubmit()
-    }, manual)
-    const commands = () => page.evaluate(() => (window as any).fixture.native.calls
-      .filter((call: any) => call.command === "browser_target_release_open" || call.payload?.action === "navigate"))
-    assert.deepEqual(await commands(), [{ command: "browser_target_release_open", requestId: "queued", keepGuest: true }])
-    await page.evaluate(() => (window as any).fixture.native.settleOpenRelease())
-    await page.waitForFunction(url => (window as any).fixture.savedPreview("session").targetUrl === url, manual)
-    await page.evaluate(url => (window as any).fixture.settleNativePreview("queued", url), requested)
-    assert.equal((await preview(page, "session")).targetUrl, manual)
-    assert.equal((await commands()).length, 2)
+    await prepare(page, "tauri", "&duplicate=1&ownership=1&assistant=1&links=1")
+    const first = "header-windows", second = "header-duplicate"
+    const site = `${base}/page/original`
+    const pane = (id: string) => page.locator(`[data-preview-instance="${id}"]`)
+    const select = (id: string) => page.evaluate(id => (window as any).fixture.selectOccurrence(id), id)
+    const conflict = page.getByText("Preview open in another tab", { exact: true })
+    const registrations = () => page.evaluate(() => (window as any).fixture.native.calls.filter((call: any) => call.command === "browser_target_register").length)
+    await page.evaluate(url => (window as any).fixture.openPreview("session", url), site)
+    await pane(first).getByRole("textbox", { name: "Preview URL" }).waitFor()
+    await select(second)
+    await page.evaluate(() => { (window as any).fixture.native.deferOwnership = true })
+    await page.getByRole("button", { name: "Open web preview", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.input?.instanceId === "header-duplicate"))
+    assert.equal(await conflict.count(), 0, "the asking tab does not change before the host replies")
+    assert.equal(await registrations(), 1)
+    await page.evaluate(() => {
+      const native = (window as any).fixture.native
+      native.deferOwnership = false
+      native.settleOwnership()
+    })
+    await conflict.waitFor()
+    await page.getByRole("button", { name: "Go to tab" }).click()
+    await pane(first).getByRole("textbox", { name: "Preview URL" }).waitFor()
+    await select(second)
+    await page.getByRole("button", { name: "Open here" }).click()
+    assert.equal(await pane(second).getByRole("textbox", { name: "Preview URL" }).inputValue(), site)
+    assert.equal(await registrations(), 1, "a transfer retains the existing native document")
+    await select(first)
+    await conflict.waitFor()
+    await page.evaluate(id => (window as any).fixture.closeOccurrence(id), second)
+    await conflict.waitFor({ state: "hidden" })
+    await page.getByRole("button", { name: "Open web preview", exact: true }).click()
+    assert.equal(await pane(first).getByRole("textbox", { name: "Preview URL" }).inputValue(), site)
+    await page.waitForFunction(() => (window as any).fixture.native.calls.filter((call: any) => call.command === "browser_target_register").length === 2)
   } finally { await page.close() }
 })
 
@@ -1155,10 +1170,9 @@ test("Enter before the first open's attachment acknowledgement preserves the add
     await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('[data-preview-instance] button[type="submit"]')?.disabled)
     assert.equal(await address.inputValue(), manual)
     await address.press("Enter")
-    await page.waitForFunction(url => (window as any).fixture.savedPreview("session").targetUrl === url, manual)
-    const [release, navigate] = await actions()
-    assert.equal(release.requestId, "first")
-    assert.equal(release.keepGuest, true)
+    await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.payload?.action === "navigate"))
+    await page.evaluate(url => (window as any).fixture.settleNativePreview("first", undefined, true, url), manual)
+    const [navigate] = await actions()
     assert.equal(navigate.payload.registrationId, registrationId)
     assert.equal(navigate.payload.url, manual)
   } finally { await page.close() }
@@ -1203,64 +1217,62 @@ test("closing the preview drops its unsubmitted address before opening a convers
   } finally { await page.close() }
 })
 
-test("Back skips an agent open that committed but was cancelled before finishing", async () => {
+test("Back skips an interrupted agent visit without retiring the guest", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
   try {
     await prepare(page, "tauri")
     const [a, b, c] = ["a", "b", "c"].map(path => `${base}/page/${path}`)
     await page.evaluate(url => (window as any).fixture.openPreview("session", url), a)
     await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.payload?.action === "history"))
-    await page.evaluate(url => (window as any).fixture.openNativePreview("pending-load", url), b)
+    await page.evaluate(url => (window as any).fixture.openNativePreview("interrupted", url), b)
     await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_claim_open"))
     await page.evaluate(url => {
-      const { native } = (window as any).fixture
+      const fixture = (window as any).fixture
+      const { native } = fixture
       const { registrationId } = native.calls.find((call: any) => call.command === "browser_target_claim_open").response
-      native.navigate(registrationId, url) // Main document committed, but the agent's load receipt is still pending.
+      native.navigate(registrationId, url)
+      native.beforeNavigate = () => fixture.settleNativePreview("interrupted")
     }, b)
     const address = page.getByRole("textbox", { name: "Preview URL", exact: true })
     assert.equal(await address.inputValue(), b)
-    assert.deepEqual((await preview(page, "session")).history, { urls: [a], index: 0 })
     await address.fill(c)
     await address.press("Enter")
     await page.waitForFunction(url => (window as any).fixture.savedPreview("session").targetUrl === url, c)
     assert.deepEqual((await preview(page, "session")).history, { urls: [a, c], index: 1 })
     await page.locator('[data-preview-instance="header-windows"]').getByRole("button", { name: "Back", exact: true }).click()
     await page.waitForFunction(url => (window as any).fixture.preview("session").targetUrl === url, a)
-    assert.deepEqual((await preview(page, "session")).history, { urls: [a, c], index: 0 })
+    assert.equal(await page.evaluate(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_release_open")), false)
   } finally { await page.close() }
 })
 
-test("a duplicate's explicit preview survives retirement of the agent's first open", async () => {
+for (const manualFirst of [true, false]) test(`native ownership: ${manualFirst ? "manual" : "agent"} opener owns the preview`, async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   try {
-    await prepare(page, "tauri", "&duplicate=1")
-    await page.evaluate(url => {
-      const f = (window as any).fixture
-      f.native.deferOpenTarget = true
-      return f.openNativePreview("first", url)
-    }, `${base}/page/agent`)
-    await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_claim_open"))
-    await page.evaluate(() => {
-      const f = (window as any).fixture
-      f.selectOccurrence("header-duplicate")
-      document.querySelector<HTMLButtonElement>('[data-occurrence="header-duplicate"] [aria-label="Open web preview"]')!.click()
-    })
-    await page.waitForFunction(() => (window as any).fixture.preview("session", "header-duplicate")?.mode === "preview")
-    await page.evaluate(() => {
-      const f = (window as any).fixture
-      f.settleNativePreview("first")
-      f.native.settleOpenTarget()
-    })
-    const address = page.locator('[data-preview-instance="header-duplicate"]').getByRole("textbox", { name: "Preview URL" })
-    const registrations = await page.waitForFunction(() => {
-      const ids = (window as any).fixture.native.calls.filter((call: any) => call.command === "browser_target_register")
-        .map((call: any) => call.payload.registrationId)
-      return ids.length === 2 && ids
-    })
-    assert.equal(new Set(await registrations.jsonValue()).size, 2, "the replacement owns its native registration")
-    assert.equal(await address.inputValue(), "http://localhost:3000")
+    await prepare(page, "tauri", "&duplicate=1&ownership=1&assistant=1&links=1")
+    if (manualFirst) {
+      await page.getByRole("link", { name: "Local preview", exact: true }).click()
+      await page.locator('[data-preview-instance="header-windows"]').waitFor()
+    }
+    const url = `${base}/page/agent`
+    await page.evaluate(url => (window as any).fixture.deliverAgentOpen(url, "header-duplicate"), url)
+    const target = await page.waitForFunction(() => (window as any).fixture.native.calls
+      .find((call: any) => call.command === "browser_target_claim_open")?.response)
+    const expected = manualFirst ? "header-windows" : "header-duplicate"
+    const response = await target.jsonValue()
+    assert.equal(response.instanceId, expected)
+    await page.evaluate(({ registrationId, instanceId, url }) => {
+      const { native } = (window as any).fixture
+      native.navigate(registrationId, url)
+      native.emit("browser-target:open-settled", { sessionID: "session", requestID: "agent", instanceId, committedUrl: url })
+    }, { ...response, url })
+    assert.equal(await page.getByRole("textbox", { name: "Preview URL" }).inputValue(), url)
+    const duplicate = manualFirst ? "header-duplicate" : "header-windows"
+    await page.evaluate(id => (window as any).fixture.selectOccurrence(id), duplicate)
+    await page.getByRole("button", { name: "Open web preview", exact: true }).click()
+    await page.getByText("Preview open in another tab", { exact: true }).waitFor()
+    assert.equal(await page.evaluate(() => (window as any).fixture.native.calls.filter((call: any) => call.command === "browser_target_register").length), 1)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

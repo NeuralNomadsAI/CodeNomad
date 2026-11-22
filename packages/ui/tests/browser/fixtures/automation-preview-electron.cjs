@@ -66,15 +66,16 @@ app.whenReady().then(async () => {
     guests.set(contents.id, contents)
     controller.observeGuest(window.webContents, contents)
     if (pendingOpen) {
-      const { requestID, instanceId, sessionID } = pendingOpen
+      const { requestID, instanceId, sessionID, ownership } = pendingOpen
       pendingOpen = undefined
       contents.once("dom-ready", () => {
-        if (controller.permitOpenAttachment(window.webContents, { src: "about:blank", webpreferences: `codenomadOpen=${requestID}` })) {
+        if (controller.permitOpenAttachment(window.webContents, { src: "about:blank", webpreferences: `codenomadPreview=${ownership.revision}` })) {
           controller.releaseOpen(window.webContents, requestID)
           contents.close()
           return
         }
         controller.register(window.webContents, { sessionId: sessionID, registrationId: requestID, instanceId, guestWebContentsId: contents.id })
+        contents.fixtureRegistration = requestID
         openGuests.set(sessionID, contents)
         if (!controller.claimOpen(window.webContents, requestID, { kind: "target", instanceId, registrationId: requestID })) contents.close()
       })
@@ -93,12 +94,17 @@ app.whenReady().then(async () => {
     const { requestID, instanceId } = payload
     if (channel === "browser-target:discover") return controller.claimOpen(window.webContents, requestID, { kind: "discover", instanceId: "fixture-tab" })
     if (channel === "browser-target:open") {
-      controller.claimOpen(window.webContents, requestID, { kind: "claim", instanceId })
-      controller.claimOpen(window.webContents, requestID, { kind: "adopt", instanceId })
-      pendingOpen = payload
+      const ownership = controller.changeOwnership(window.webContents, { action: "ready", sessionId: payload.sessionID, instanceId, requestID })
+      const existing = openGuests.get(payload.sessionID)
+      if (existing && !existing.isDestroyed()) {
+        return controller.claimOpen(window.webContents, requestID, {
+          kind: "target", instanceId, registrationId: existing.fixtureRegistration,
+        })
+      }
+      pendingOpen = { ...payload, ownership }
       void window.webContents.executeJavaScript(`(() => {
         const preview = document.createElement("webview")
-        preview.setAttribute("webpreferences", "codenomadOpen=${requestID}")
+         preview.setAttribute("webpreferences", "codenomadPreview=${ownership.revision}")
         preview.setAttribute("partition", "persist:codenomad-browser-open-fixture")
         preview.src = "about:blank"
         document.body.append(preview)
