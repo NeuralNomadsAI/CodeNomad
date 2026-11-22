@@ -2,7 +2,7 @@ use super::*;
 use std::{fs, path::PathBuf, sync::Arc};
 
 #[test]
-#[ignore = "requires the private files-fixture --reader manifest and real Rust server"]
+#[ignore = "requires the private files-fixture --reader or --editor manifest and real Rust server"]
 fn real_rust_reader_ui_contract() {
     let manifest = PathBuf::from(std::env::var_os("RUNE_FILES_TEST_MANIFEST").unwrap());
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -117,6 +117,41 @@ fn real_rust_reader_ui_contract() {
             "été\n日本語🦀\r\n"
         );
         assert!(rt.state.files.as_ref().unwrap().reader.error().is_none());
+        if data["editor"] == true {
+            let input = rt
+                .elements()
+                .into_iter()
+                .find(|node| editable_source(&node.path, &node.role))
+                .unwrap();
+            let [x, y, width, height] = input.visible;
+            rt.pointer_down(x + width / 2.0, y + height / 2.0);
+            rt.pointer_up(x + width / 2.0, y + height / 2.0);
+            rt.frame(0.02);
+            let ctrl = Mods {
+                ctrl: true,
+                ..Mods::default()
+            };
+            for (key, mods) in [
+                (Key::End, ctrl),
+                (Key::Text("saved".into()), Mods::default()),
+                (Key::Command('s'), ctrl),
+            ] {
+                rt.key(KeyEvent { key, mods });
+                rt.frame(0.02);
+            }
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                rt.update_if(|state, _| state.files.as_mut().unwrap().poll(20.0));
+                let document = &rt.state.files.as_ref().unwrap().document;
+                assert!(document.error().is_none() && document.confirmation().is_none());
+                assert_eq!(document.edit().text, "été\n日本語🦀\r\nsaved");
+                if !document.dirty() && !document.pending() {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "real save deadline");
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }
         rt.set_viewport((1000.0, 700.0), 1.0);
         for _ in 0..30 {
             rt.frame(0.02);
@@ -132,7 +167,7 @@ fn real_rust_reader_ui_contract() {
         println!(
             "{}",
             serde_json::json!({"type":"files-native-proof","result":"ok","reader":true,
-            "messages":rt.state.messages.len(),"content":"été\n日本語🦀\r\n","anchor":before})
+            "messages":rt.state.messages.len(),"edited":data["editor"],"anchor":before})
         );
     });
 }
