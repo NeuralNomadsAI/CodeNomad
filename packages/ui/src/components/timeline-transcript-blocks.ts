@@ -73,6 +73,7 @@ export function readingLineBlock(scroller: HTMLElement, segmentsByMessage: Reado
       const segment = segmentForBlock(messageId, segments, block)
       if (segment) return {
         segment,
+        block,
         partId: block.dataset.partId ?? block.dataset.messageContentStartPartId,
         preferGroupHeader: block.matches(GROUP_HEADER_SELECTOR),
         offset: rect.top - top,

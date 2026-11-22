@@ -264,6 +264,10 @@ export default function MessageSection(props: MessageSectionProps) {
     return projectTranscriptTechnicalGroups(items)
   })
   const technicalGroupForPart = (messageId: string, partId: string) => technicalGroupProjection().byPartKey.get(technicalPartKey(messageId, partId))
+  // Layout capture runs before the DOM updates, so resolve a selected marker
+  // against the same cross-message groups as the blocks still on screen.
+  let renderedGroups = technicalGroupProjection().byPartKey
+  createEffect(() => { renderedGroups = technicalGroupProjection().byPartKey })
   const technicalGroupingSignature = (messageId: string) => {
     const resolvedStore = store()
     const record = resolvedStore.getMessage(messageId)
@@ -934,12 +938,17 @@ export default function MessageSection(props: MessageSectionProps) {
     const segments = timelineSegmentsByMessage()
     const staysVisible = (segment: TimelineSegment) => !isTimelineSegmentHidden(segment)
       || segment.toolPartIds?.some(partId => store().getPermissionState(segment.messageId, partId)?.active)
+    const position = readingLineBlock(scroller, segments)
+    if (!position) return
+    const { block, ...reading } = position
     const selected = readerOwnsActiveSegment ? null : activeSegmentId()
     const target = selected ? parseTimelineSegmentId(selected) : undefined
     const marker = target && segments.get(target.messageId)?.find(segment => segment.id === selected)
-    if (marker && staysVisible(marker)) return timelineBlockAnchor(marker.messageId, marker.id, 0)
-    const reading = readingLineBlock(scroller, segments)
-    if (reading && staysVisible(reading.segment)) {
+    if (marker && staysVisible(marker) && block === findTimelineSegmentBlock(scroller, marker,
+      (messageId, partId) => renderedGroups.get(technicalPartKey(messageId, partId)))) {
+      return timelineBlockAnchor(marker.messageId, marker.id, reading.offset)
+    }
+    if (staysVisible(reading.segment)) {
       return timelineBlockAnchor(reading.segment.messageId, reading.segment.id, reading.offset, reading)
     }
   }

@@ -176,10 +176,10 @@ jumps and an activation restore also hand the active marker back to the reading
 line. Otherwise the active
 marker is the first marked block reaching more than 4 px below the transcript top,
 re-read once per frame on scroll and content rendering from the mounted rows only.
-Message content layout preferences capture the selected marker or the exact block
-at the reading line (message and part identity, header or card, and viewport offset)
-before rendering changes. The bounded reader-settlement hold resolves that target
-again, including an individual tool card or its collapsed group header. A shorter
+Message content layout preferences preserve the exact block and measured offset
+at the reading line. If the selected marker points to that block, its identity
+qualifies the replacement, such as an individual tool represented by a collapsed
+group header. The bounded reader-settlement hold resolves the replacement. A shorter
 block starts at the viewport top if the saved clipping would put its end at or
 above the reading line. At a scrollbar limit, the rail follows the block the
 reader actually reaches. A shared marker can stand for several distinct reasoning

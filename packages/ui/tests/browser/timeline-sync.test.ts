@@ -80,7 +80,7 @@ const longMessages = Array.from({ length: 260 }, (_, index) => index === LONG.in
   : index % 2 ? assistant(index, [{ type: "text", text: prose(`Note ${index}`, 2) }]) : { id: id(index), type: "user", time: { created: index + 1 }, text: prose(`Ask ${index}`, 1) })
 
 let server: Awaited<ReturnType<typeof startTimelineSyncServer>>, directory: string, store: string, visibilityStore: string, wideStore: string, longStore: string
-let groupedStore: string
+let groupedStore: string, proseStore: string
 let tailGroupStore: string, tailToolStore: string
 before(async () => {
   directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-timeline-sync-"))
@@ -105,6 +105,9 @@ before(async () => {
     assistant(2, reads.slice(12)),
     ...Array.from({ length: 20 }, (_, n) => assistant(n + 3, [{ type: "text", text: prose(`Reply ${n}`, 4) }])),
   ])
+  proseStore = path.join(directory, "prose.sqlite")
+  createSessionStore(proseStore, [message(0), ...Array.from({ length: 20 }, (_, n) =>
+    assistant(n + 1, [{ type: "text", text: `Paragraph ${n}.\n\n`.repeat(25) }]))])
   const tail = [{ ...message(0), text: "Earlier passage.\n\n".repeat(55) },
     ...Array.from({ length: 4 }, (_, n) => assistant(n + 1, [{ type: "text", text: "An earlier reply." }]))]
   const tailReads = Array.from({ length: 5 }, (_, n) => tool(`tail-${n}`, "read", n === 1 ? 48 : 6))
@@ -193,6 +196,26 @@ test("scrolling activates the marker of the block at the reading line", { timeou
 
 // The product treats blocks reaching past the 4 px reading line as visible.
 const READING_LINE_TOLERANCE = 4
+
+test("changing grouping does not move an unchanged passage below a selected marker", { timeout: 90_000 }, () => withSession("minimal", async (page) => {
+  const marker = (await markers(page)).find(candidate => candidate.id === `${id(15)}:assistant:0`)!
+  await clickMarker(page, marker)
+  await page.setViewportSize({ width: 1280, height: 600 })
+  await settleTranscript(page, 450)
+  const before = await blockOffset(page, marker)
+  assert.ok(before !== null && before < -180, `the selected reply is partly above the viewport (${before}px)`)
+  assert.equal(await active(page), marker.id)
+  assert.equal(await page.locator(".message-exploration-group").count(), 0)
+  await page.evaluate(() => (window as any).fixture.showFilters(true))
+  await page.getByRole("button", { name: "Message content", exact: true }).click()
+  const groups = page.getByRole("group", { name: "Tool groups", exact: true })
+  await groups.getByRole("button", { name: "Expand Tool groups", exact: true }).click()
+  await page.locator('.transcript-filters[aria-busy="false"]').waitFor()
+  await settleTranscript(page, 450)
+  assert.equal(await active(page), marker.id)
+  const after = await blockOffset(page, marker)
+  assert.ok(after !== null && Math.abs(before - after) <= READING_LINE_TOLERANCE, `the reply stays at ${before}px (${after}px after the display change)`)
+}, proseStore))
 
 test("changing tool grouping keeps the selected marker or the reader on the same block", { timeout: 90_000 }, () => withSession("minimal", async (page) => {
   // The 21st call is in a different message from the collapsed group's header.
