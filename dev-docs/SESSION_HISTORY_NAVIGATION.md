@@ -181,9 +181,10 @@ at the reading line (message and part identity, header or card, and viewport off
 before rendering changes. The bounded reader-settlement hold resolves that target
 again, including an individual tool card or its collapsed group header. A shorter
 block starts at the viewport top if the saved clipping would put its end at or
-above the reading line. A shared marker can stand for several distinct reasoning
-cards. Following the latest reply keeps the bottom; paging and restoration retain
-their own placement.
+above the reading line. At a scrollbar limit, the visible anchor's marker stays
+active until the reader scrolls, as with a clipped timeline jump. A shared marker
+can stand for several distinct reasoning cards. Following the latest reply keeps
+the bottom; paging and restoration retain their own placement.
 Previous/next user-message jumps advance from that highlighted marker's message,
 including a selected marker, while it has a timeline marker or remains in the
 visible resident order. A vanished reference, or the first jump before a

@@ -81,6 +81,7 @@ const longMessages = Array.from({ length: 260 }, (_, index) => index === LONG.in
 
 let server: Awaited<ReturnType<typeof startTimelineSyncServer>>, directory: string, store: string, visibilityStore: string, wideStore: string, longStore: string
 let groupedStore: string
+let tailGroupStore: string, tailToolStore: string
 before(async () => {
   directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-timeline-sync-"))
   store = path.join(directory, "session.sqlite")
@@ -104,6 +105,13 @@ before(async () => {
     assistant(2, reads.slice(12)),
     ...Array.from({ length: 20 }, (_, n) => assistant(n + 3, [{ type: "text", text: prose(`Reply ${n}`, 4) }])),
   ])
+  const tail = [{ ...message(0), text: "Earlier passage.\n\n".repeat(55) },
+    ...Array.from({ length: 4 }, (_, n) => assistant(n + 1, [{ type: "text", text: "An earlier reply." }]))]
+  const tailReads = Array.from({ length: 5 }, (_, n) => tool(`tail-${n}`, "read", n === 1 ? 48 : 6))
+  tailGroupStore = path.join(directory, "tail-group.sqlite")
+  createSessionStore(tailGroupStore, [...tail, assistant(5, tailReads), assistant(6, [{ type: "text", text: "Done." }])])
+  tailToolStore = path.join(directory, "tail-tool.sqlite")
+  createSessionStore(tailToolStore, [...tail, assistant(5, [tool("tail", "bash", 100)]), assistant(6, [{ type: "text", text: "Done." }])])
   server = await startTimelineSyncServer({ instrument: true })
 })
 after(async () => { await server?.close(); if (directory) await rm(directory, { recursive: true, force: true }) })
@@ -297,6 +305,62 @@ test("a collapsed group header replaces a deeply clipped tool at the reading lin
   assert.ok(Math.abs(offset) <= READING_LINE_TOLERANCE, `the replacement header starts at the reading line (${offset}px)`)
   assert.equal(await active(page), markersInGroup[0].id, "the group header owns the line rather than the next message")
 }, groupedStore))
+
+test("a clamped group reflow keeps the visible replacement header as the active marker", { timeout: 90_000 }, () => withSession("everything", async (page) => {
+  const first = (await markers(page)).find(marker => marker.id === `${id(5)}:tool:0`)!
+  const second = (await markers(page)).find(marker => marker.id === `${id(5)}:tool:1`)!
+  await clickMarker(page, second)
+  const stream = page.locator(".message-stream")
+  const box = (await stream.boundingBox())!
+  await page.mouse.move(box.x + 6, box.y + 6)
+  await page.mouse.wheel(0, 90)
+  await settleTranscript(page, 450)
+  const clip = await blockOffset(page, second)
+  assert.ok(clip !== null && Math.abs(clip + 90) <= READING_LINE_TOLERANCE, `reading ${clip}px into the second call`)
+  assert.equal(await active(page), second.id)
+
+  await page.evaluate(() => (window as any).fixture.showFilters(true))
+  await page.getByRole("button", { name: "Message content", exact: true }).click()
+  await page.getByRole("button", { name: "Collapse Tool groups", exact: true }).click()
+  const header = page.getByRole("button", { name: "Explored: 5 reads", exact: true })
+  await header.and(page.locator('[aria-expanded="false"]')).waitFor()
+  await settleTranscript(page, 450)
+  const gap = await stream.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop)
+  assert.ok(Math.abs(gap) <= 1, `the browser is clamped to the end (${gap}px)`)
+  const offset = await header.evaluate(element => element.getBoundingClientRect().top - element.closest(".message-stream")!.getBoundingClientRect().top)
+  assert.ok(offset > READING_LINE_TOLERANCE, `the visible header cannot be raised to the line (${offset}px)`)
+  assert.equal(await active(page), first.id)
+  await page.keyboard.press("Escape")
+  await page.mouse.move(box.x + 6, box.y + 6)
+  await page.mouse.wheel(0, -80)
+  await settleTranscript(page, 450)
+  await assertReadingLineActive(page, "reader scroll releases the clamped marker")
+}, tailGroupStore))
+
+test("a standalone card collapsed near the end clamps at the natural scrollbar limit", { timeout: 90_000 }, () => withSession("everything", async (page) => {
+  await page.setViewportSize({ width: 1280, height: 300 })
+  const marker = (await markers(page)).find(candidate => candidate.id === `${id(5)}:tool:0`)!
+  const toggle = page.locator('[data-part-id="tail-bash"] .tool-call-header-toggle')
+  await toggle.and(page.locator('[aria-expanded="true"]')).waitFor()
+  await clickMarker(page, marker)
+  await toggle.focus()
+  const stream = page.locator(".message-stream")
+  const box = (await stream.boundingBox())!
+  await page.mouse.move(box.x + 6, box.y + 6)
+  await page.mouse.wheel(0, 90)
+  await settleTranscript(page, 450)
+  assert.equal(await active(page), marker.id)
+  const before = await stream.evaluate(element => element.scrollTop)
+  await page.keyboard.press("Enter")
+  await toggle.and(page.locator('[aria-expanded="false"]')).waitFor()
+  await settleTranscript(page, 450)
+  const position = await stream.evaluate(element => ({ top: element.scrollTop, max: element.scrollHeight - element.clientHeight }))
+  assert.ok(position.top < before && Math.abs(position.top - position.max) <= 1, `the end clamps (${before}px → ${position.top}px of ${position.max}px)`)
+  const offset = await blockOffset(page, marker)
+  assert.ok(offset !== null && offset > READING_LINE_TOLERANCE, `the card is below the reading line (${offset}px)`)
+  assert.notEqual(await active(page), marker.id, "manual card collapse leaves the rail on the actual reading line")
+  await assertReadingLineActive(page, "standalone card clamped after manual collapse")
+}, tailToolStore))
 
 /** The active marker stands for the block at the transcript's reading line. */
 async function assertReadingLineActive(page: Page, context: string) {

@@ -3,6 +3,7 @@ import type { TimelineSegment } from "./message-timeline-projection"
 import { READING_LINE_OFFSET_PX } from "./virtual-reader-settlement"
 
 const GROUP_HEADER_SELECTOR = ".message-technical-group-toggle"
+const TRANSCRIPT_ROW_SELECTOR = "[data-virtual-follow-key]"
 // Transcript blocks with a timeline marker, in document order.
 const SEGMENT_BLOCK_SELECTOR = `.message-item-base[data-message-content-start-part-id], .tool-call-message[data-part-id], ${GROUP_HEADER_SELECTOR}, .message-reasoning-card[data-part-id], .message-compaction-card, [data-message-kind="system"]`
 
@@ -60,7 +61,7 @@ export function findTimelineSegmentBlock(scroller: HTMLElement, segment: Timelin
 export function readingLineBlock(scroller: HTMLElement, segmentsByMessage: ReadonlyMap<string, readonly TimelineSegment[]>) {
   const top = scroller.getBoundingClientRect().top
   const line = top + READING_LINE_OFFSET_PX
-  const rows = Array.from(scroller.querySelectorAll<HTMLElement>("[data-virtual-follow-key]"), row => ({ row, rect: row.getBoundingClientRect() }))
+  const rows = Array.from(scroller.querySelectorAll<HTMLElement>(TRANSCRIPT_ROW_SELECTOR), row => ({ row, rect: row.getBoundingClientRect() }))
     .filter(({ rect }) => rect.height > 0 && rect.bottom > line)
     .sort((a, b) => a.rect.top - b.rect.top)
   for (const { row } of rows) {
@@ -80,6 +81,13 @@ export function readingLineBlock(scroller: HTMLElement, segmentsByMessage: Reado
     }
   }
   return null
+}
+
+export function markerForTranscriptBlock(block: HTMLElement, segmentsByMessage: ReadonlyMap<string, readonly TimelineSegment[]>) {
+  const messageId = block.closest<HTMLElement>(TRANSCRIPT_ROW_SELECTOR)?.dataset.virtualFollowKey
+  if (messageId === undefined) return
+  const segments = segmentsByMessage.get(messageId)
+  return segments && segmentForBlock(messageId, segments, block)
 }
 
 function segmentForBlock(messageId: string, segments: readonly TimelineSegment[], block: HTMLElement) {

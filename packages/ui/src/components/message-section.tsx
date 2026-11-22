@@ -36,7 +36,7 @@ import { createSessionOutline } from "../stores/session-outline"
 import { MissingHistoryAnchorError } from "../stores/history-window"
 import { sessions } from "../stores/session-state"
 import { createSessionOutlineProjection } from "./session-outline-projection"
-import { findTimelineSegmentBlock, readingLineBlock, type TranscriptBlockIdentity } from "./timeline-transcript-blocks"
+import { findTimelineSegmentBlock, markerForTranscriptBlock, readingLineBlock, type TranscriptBlockIdentity } from "./timeline-transcript-blocks"
 import { JUMP_USER_MESSAGE_EVENT, findUserMessageJumpTarget, keyAllowsUserMessageJump, type JumpUserMessageDetail, type UserMessageJumpDirection } from "./user-message-navigation"
 import SessionCleanupProgress from "./session-cleanup-progress"
 import type { SessionSearchMatch } from "../lib/session-search"
@@ -940,7 +940,17 @@ export default function MessageSection(props: MessageSectionProps) {
     if (marker && staysVisible(marker)) return timelineBlockAnchor(marker.messageId, marker.id, 0)
     const reading = readingLineBlock(scroller, segments)
     if (reading && staysVisible(reading.segment)) {
-      return timelineBlockAnchor(reading.segment.messageId, reading.segment.id, reading.offset, reading)
+      return {
+        ...timelineBlockAnchor(reading.segment.messageId, reading.segment.id, reading.offset, reading),
+        onClamped: (block: HTMLElement) => {
+          const marker = markerForTranscriptBlock(block, timelineSegmentsByMessage())
+          if (!marker) return
+          // Like a timeline jump at the same bound, the visible target owns
+          // the rail until the reader next scrolls.
+          readerOwnsActiveSegment = false
+          setActiveSegmentId(marker.id)
+        },
+      }
     }
   }
 
