@@ -1,0 +1,180 @@
+//! Preferences geometry follows settings-screen.css and the native Preferences bounds.
+use crate::{
+    Space, TextRole,
+    layout::{self, Layout},
+    tokens,
+};
+use rune::{AppSpec, Cx, El, ScrollSpec, col, el, row, text};
+use rune_kit::{SegmentedControl, Select, SelectAppearance, Sidebar, SidebarRow};
+
+pub const WINDOW_SIZE: (f32, f32) = (1100.0, 760.0);
+pub const WINDOW_MIN: (f32, f32) = (760.0, 560.0);
+
+pub fn spec<S: 'static>(
+    title: &'static str,
+    init: fn() -> S,
+    view: fn(&S, &mut Cx<S>) -> El,
+) -> AppSpec<S> {
+    AppSpec {
+        min_size: Some(WINDOW_MIN),
+        families: layout::font_families(),
+        ..AppSpec::new(title, WINDOW_SIZE, init, view)
+    }
+}
+
+pub fn shell_entry(tabs: El, entry: El) -> El {
+    row()
+        .full_width()
+        .child(tabs.grow(1.0).shrink())
+        .child(entry)
+}
+
+pub fn nav<S: 'static>(
+    title: &str,
+    label: &str,
+    sections: impl IntoIterator<Item = (&'static str, &'static str, bool)>,
+    select: impl Fn(&mut S, &'static str) + Clone + 'static,
+) -> El {
+    let dark = layout::dark();
+    let kit = crate::kit(dark);
+    let mut sidebar = Sidebar::new()
+        .inset(tokens(dark).space(Space::Sm).px())
+        .header(heading(title))
+        .label(label);
+    for (key, label, selected) in sections {
+        let select = select.clone();
+        sidebar = sidebar.child(
+            SidebarRow::new(label)
+                .selected(selected)
+                .on_select(move |s, _| select(s, key))
+                .build(kit)
+                .key(key),
+        );
+    }
+    sidebar.build(kit)
+}
+
+pub fn segments<S: 'static>(
+    label: &str,
+    options: &[&str],
+    selected: Option<usize>,
+    disabled: bool,
+    choose: impl Fn(&mut S, usize) + Clone + 'static,
+) -> El {
+    let mut control = SegmentedControl::new(options, selected)
+        .label(label)
+        .fit()
+        .on_pick(move |s, index, _| choose(s, index));
+    if disabled {
+        for index in 0..options.len() {
+            control = control.segment_state(index, rune_kit::State::Disabled);
+        }
+    }
+    control.build(crate::kit(layout::dark()))
+}
+
+pub fn picker(key: &str, label: &str, options: &[&str]) -> Select {
+    Select::new(key, options)
+        .label(label)
+        .width(180.0)
+        .appearance(SelectAppearance::Field)
+}
+
+pub fn build_picker(control: Select, layers: &mut Vec<El>) -> El {
+    let dark = layout::dark();
+    let mut kit = crate::kit(dark).clone();
+    kit.c.bg_base = tokens(dark).color("surface-control");
+    kit.c.layer_01 = tokens(dark).color("surface-overlay");
+    control.build(&kit, layers)
+}
+pub fn render<S, T>(
+    cx: &mut Cx<S>,
+    dark: bool,
+    palette: Option<&'static crate::palettes::Palette>,
+    build: impl FnOnce(&mut Cx<S>) -> T,
+) -> T {
+    crate::palettes::with_palette(palette, || {
+        cx.foreground(tokens(dark).color("text-primary"));
+        layout::with_appearance(dark, || build(cx))
+    })
+}
+
+pub fn frame(sidebar: El, body: El, overlays: Vec<El>) -> El {
+    let t = tokens(layout::dark());
+    el().full_width()
+        .full_height()
+        .fill(t.color("surface-secondary"))
+        .child(
+            row()
+                .full_width()
+                .full_height()
+                .child(
+                    col()
+                        .w(260.0)
+                        .full_height()
+                        .border_sides([0.0, 1.0, 0.0, 0.0], t.color("border-divider"))
+                        .child(sidebar),
+                )
+                .child(body),
+        )
+        .children(overlays)
+}
+
+pub fn heading(title: &str) -> El {
+    let t = tokens(layout::dark());
+    row()
+        .full_width()
+        .center_y()
+        .h(t.length(crate::Length::Chrome).px())
+        .fill(t.color("surface-chrome"))
+        .px(t.space(Space::Md).px())
+        .border_sides([0.0, 0.0, 1.0, 0.0], t.color("border-divider"))
+        .child(text(title).role("heading").text_role(TextRole::Title))
+}
+
+pub fn pane(section: &str, title: &str, children: impl IntoIterator<Item = El>) -> El {
+    let t = tokens(layout::dark());
+    col()
+        .grow(1.0)
+        .shrink()
+        .full_height()
+        .child(heading(title))
+        .child(
+            col()
+                .key(section)
+                .full_width()
+                .remaining()
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .px(t.space(Space::Lg).px())
+                .py(t.space(Space::Md).px())
+                .children(children),
+        )
+}
+
+pub fn card(child: El) -> El {
+    let t = tokens(layout::dark());
+    col()
+        .full_width()
+        .py(14.0)
+        .separate(Space::Sm)
+        .border_sides([0.0, 0.0, 1.0, 0.0], t.color("border-divider"))
+        .child(child)
+}
+
+pub fn setting_row(label: &str, control: El) -> El {
+    layout::action_row()
+        .justify_between()
+        .child(text(label).text_role(TextRole::Button))
+        .child(control)
+}
+
+pub fn color_scheme(title: &str, mode: &str, segments: El, picker: El) -> El {
+    col()
+        .full_width()
+        .separate(Space::Sm)
+        .child(text(title).role("heading").text_role(TextRole::Button))
+        .child(layout::action_row().child(text(mode)).child(segments))
+        .child(picker)
+}

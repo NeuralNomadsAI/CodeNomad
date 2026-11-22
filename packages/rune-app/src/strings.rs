@@ -1,8 +1,10 @@
 //! Shared UI catalogue access. Locale override supports isolated fixtures.
 pub fn locale() -> &'static str {
-    static LOCALE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    static LOCALE: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
     rune_theme_codenomad::catalogue::render_locale(|| {
-        LOCALE.get_or_init(crate::platform::locale).as_str()
+        LOCALE.get_or_init(|| {
+            rune_theme_codenomad::catalogue::canonical_locale(&crate::platform::locale())
+        })
     })
 }
 /// Scope a render and its text to an explicit locale without process-global environment changes.

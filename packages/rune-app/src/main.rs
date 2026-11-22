@@ -18,6 +18,7 @@ mod platform;
 #[path = "../tests/probes/mod.rs"]
 mod probes;
 mod screen;
+mod settings;
 mod strings;
 use screen::Screen;
 mod workspace;
@@ -41,6 +42,7 @@ struct State {
     reads: platform::reads::Reads,
     expanded_tools: std::collections::HashSet<String>,
     screen: Screen,
+    settings: settings::Host,
     input_scope: std::rc::Rc<()>,
     rejected_edit: TextEdit,
     workspace: Option<workspace::Ui>,
@@ -72,6 +74,7 @@ fn init() -> State {
         reads: Default::default(),
         expanded_tools: Default::default(),
         screen: Screen::Chat { launcher: None },
+        settings: Default::default(),
         input_scope: std::rc::Rc::new(()),
         rejected_edit: TextEdit::new(""),
         workspace: None,
@@ -177,6 +180,7 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = launcher::poll(s, tx);
     changed |= poll_chat(s, 64);
     changed |= workspace::poll(s, now, tx);
+    changed |= settings::poll(s);
     changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
     if changed {
         tx.instant();
@@ -285,7 +289,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
     changed
 }
 fn view(s: &State, cx: &mut Cx<State>) -> El {
-    layout::render(cx, |cx| {
+    settings::render(s, cx, |cx| {
         let scope = s.input_scope.clone();
         let mut body = match &s.screen {
             Screen::Launcher(_) => launcher_view::view(s),
@@ -302,7 +306,10 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
             .full_width()
             .full_height()
             .reading_surface()
-            .child(tabs)
+            .child(rune_theme_codenomad::settings::shell_entry(
+                tabs,
+                settings::entry(),
+            ))
             .child(if let Some(error) = workspace::status(s) {
                 layout::action_row()
                     .pad(Space::Sm)
@@ -318,7 +325,6 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
             })
             .child(body.remaining())
     })
-    .locale_direction(strings::locale())
 }
 fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     let scope = s.input_scope.clone();
@@ -465,6 +471,11 @@ fn main() {
         gallery::run();
         return;
     }
+    #[cfg(feature = "test-support")]
+    if platform::has_flag("--gallery-preferences") {
+        settings::gallery();
+        return;
+    }
     run_app();
 }
 #[cfg(target_arch = "wasm32")]
@@ -483,7 +494,10 @@ fn run_app() {
             })],
             ..layout::app_spec(strings::t("window.title.main"), init, view)
         },
-        workspace::finish,
+        |s, tx| {
+            settings::close(s);
+            workspace::finish(s, tx);
+        },
     );
     platform::finish();
 }

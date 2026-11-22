@@ -24,6 +24,7 @@
     "tr"
   ],
   "sources": {
+    "packages/ui/src/components/locale-selector.tsx": "8ebfca291fbd2213b4290cf6220e985a13bde507e725a51f080c4098b69d1182",
     "packages/ui/src/lib/i18n/index.tsx": "3e87b9236cd6537da0fa1112986131029eb3c01a23a6040cf2e7c480baba551b",
     "packages/ui/src/lib/i18n/messages/de/advancedSettings.ts": "919828fac5b7a708021a7724884d76e9a57350e5d7aa33f43f05f17f089f459c",
     "packages/ui/src/lib/i18n/messages/de/agent-memory.ts": "b84ee582778c0bc11b0b70e7728365b9c2081e9b66f5d81ac1632f1d971b11c0",

@@ -106,7 +106,9 @@ pub fn setting(_: &str) -> Option<String> {
 pub fn locale() -> String {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        setting("RUNE_LOCALE").unwrap_or_else(|| "fr".into())
+        setting("RUNE_LOCALE")
+            .or_else(sys_locale::get_locale)
+            .unwrap_or_else(|| "en".into())
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -143,6 +145,18 @@ pub fn has_flag(flag: &str) -> bool {
         let _ = flag;
         false
     }
+}
+#[cfg(not(target_arch = "wasm32"))]
+pub fn preferences_window<S: 'static>(
+    spec: rune::AppSpec<S>,
+    state: S,
+    close: fn(&mut S, &mut rune::Tx),
+) -> rune::WindowHandle {
+    rune::open_window(
+        rune::WindowSpec::new("preferences", spec)
+            .state(state)
+            .on_close(close),
+    )
 }
 #[cfg(feature = "test-support")]
 pub fn synthetic_scene() -> bool {

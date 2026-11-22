@@ -12,6 +12,7 @@ pub mod files;
 pub mod history;
 pub mod http;
 pub mod recovery;
+pub mod settings;
 pub mod runtime;
 mod server_path;
 pub use server_path::absolute as absolute_server_path;

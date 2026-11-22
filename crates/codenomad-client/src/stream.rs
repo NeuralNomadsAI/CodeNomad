@@ -28,6 +28,7 @@ impl State {
             && !self.cancelled.load(SeqCst)
     }
 }
+
 pub fn start(backend: Backend, epoch: u64, out: Sender<Input>, state: Arc<State>) {
     runtime::spawn(async move {
         #[cfg(not(target_arch = "wasm32"))]
@@ -81,6 +82,20 @@ pub(super) async fn dispatch(
         return Ok(());
     }
     let value: Value = serde_json::from_str(data.trim())?;
+    if b.workspace.is_empty() && value["owner"] == "ui" {
+        match value["type"].as_str() {
+            Some("storage.configChanged") => {
+                out.send(Input::Preferences(crate::settings::Owner::Config))
+                    .await?
+            }
+            Some("storage.stateChanged") => {
+                out.send(Input::Preferences(crate::settings::Owner::State))
+                    .await?
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
     if let Some(event) = workspace_event(b, &value) {
         out.send(Input::Workspace(epoch, event)).await?;
         return Ok(());

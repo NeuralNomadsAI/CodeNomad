@@ -98,6 +98,7 @@ pub fn transcript_rows<S: 'static>(
     // Solid virtual-follow-measurements.ts uses a 40px first-row fallback;
     // the matching CSS touch-target token keeps this estimate in the shared scale.
     let appearance = dark();
+    let palette = crate::palettes::current();
     rune::col()
         .w_full()
         .growth(GrowthSpec::default())
@@ -105,7 +106,11 @@ pub fn transcript_rows<S: 'static>(
             count,
             tokens(dark()).length(crate::Length::TouchTarget).px(),
             key,
-            move |state, index| with_appearance(appearance, || build(state, index)),
+            move |state, index| {
+                crate::palettes::with_palette(palette, || {
+                    with_appearance(appearance, || build(state, index))
+                })
+            },
         )
 }
 pub fn composer(editor: El) -> El {

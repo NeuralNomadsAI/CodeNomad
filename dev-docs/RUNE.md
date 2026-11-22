@@ -56,6 +56,7 @@ When a whole module reaches parity, its Solid and Tauri version is deleted on `f
 | Workspace document drafts and saves | `workspace-file-editor.ts` | `files/document/editor`: window-owned drafts keyed by server, occurrence, directory and path; fresh preflight reads, snapshot writes and typed confirmation decisions. Interface and editor parity require component qualification |
 | Tokens and typography | `packages/ui/src/styles/tokens.css` | `crates/rune-theme-codenomad`: generated values; component parity qualified individually |
 | Text | Ten UI catalogues | Generated catalogues, fallback and Hebrew direction qualified |
+| Preferences → General | `settings-screen.tsx`, `locale-selector.tsx`, `theme-scheme-settings.tsx` | `settings/`: Windows native window, host language, appearance mode and built-in palettes use the shared owner documents. Windows headless light/dark captures and real Runtime selector checks cover the General subset. Contrast, custom palettes, full Preferences rendering and the remaining sections require qualification. |
 | Window close | `components/window-close-button.tsx` | `components/window_close_button.rs`: six Windows light/dark pairs, accessibility and interaction qualified at scale 1 |
 | Server startup | Tauri `cli_manager.rs` | `platform/host/`: isolated Windows bootstrap, shutdown and generation qualified |
 | Chat, composer and session launcher | Solid transcript, composer and project fixtures | `chat/`, `agent/`, `launcher/`: native flows with shared Rust and simulated OpenCode qualified; Solid parity pending |
