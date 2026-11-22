@@ -45,7 +45,7 @@ pub struct Tree {
     state: Snapshot,
     cache: VecDeque<(String, Snapshot)>,
     requests: BTreeMap<String, Pending>,
-    errors: BTreeMap<String, String>,
+    errors: BTreeMap<String, codenomad_client::history::Error>,
     active: bool,
     closed: bool,
     dirty: bool,
@@ -77,7 +77,7 @@ impl Tree {
     pub fn select(&mut self, path: String) {
         self.state.selected = Some(path);
     }
-    pub fn errors(&self) -> &BTreeMap<String, String> {
+    pub fn errors(&self) -> &BTreeMap<String, codenomad_client::history::Error> {
         &self.errors
     }
     pub fn busy(&self, path: &str) -> bool {
@@ -304,6 +304,7 @@ impl Tree {
                 };
                 self.state.directories.retain(|key, _| !invalid(key));
                 self.state.loaded.retain(|key, _| !invalid(key));
+                self.errors.retain(|key, _| !invalid(key));
                 self.requests.retain(|key, pending| {
                     if invalid(key) {
                         pending.cancel.close();
@@ -317,7 +318,7 @@ impl Tree {
                 self.dirty |= self.visible().iter().any(|path| self.stale(path));
             }
             Err(error) => {
-                self.errors.insert(read.path, error.to_string());
+                self.errors.insert(read.path, error);
             }
         }
         true

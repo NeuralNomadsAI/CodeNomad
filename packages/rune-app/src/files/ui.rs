@@ -171,6 +171,29 @@ impl Ui {
             _ => {}
         }
     }
+    pub(super) fn listing_errors(
+        &self,
+    ) -> impl Iterator<Item = (&str, &codenomad_client::history::Error)> {
+        self.tree.errors().iter().filter_map(|(path, error)| {
+            self.listing_visible(path).then_some((path.as_str(), error))
+        })
+    }
+    fn listing_visible(&self, path: &str) -> bool {
+        path == "."
+            || self
+                .rows
+                .iter()
+                .any(|row| row.expanded.is_some() && row.entry.path == path)
+    }
+    pub(super) fn retry_listing(&mut self, directory: &str, path: &str) {
+        if !self.stopped
+            && directory == self.tree.directory()
+            && self.listing_visible(path)
+            && self.tree.errors().contains_key(path)
+        {
+            self.refresh(Some(path));
+        }
+    }
     pub fn refresh(&mut self, path: Option<&str>) {
         if let Some(path) = path {
             if let Some(read) = self.tree.load(path, true) {

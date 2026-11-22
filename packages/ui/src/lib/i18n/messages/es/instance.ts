@@ -143,6 +143,7 @@ export const instanceMessages = {
   "gitPanel.history": "Historial",
   "filesPanel.widenWindow": "Archivos — ampliar ventana",
   "filesPanel.workspace": "Espacio de trabajo",
+  "filesPanel.listingTooLarge": "{path}: más de 4096 entradas.",
   "filesPanel.commits": "Commits",
   "filesPanel.gitInit.notRepository": "Esta carpeta no es un repositorio Git.",
   "filesPanel.gitInit.action": "Inicializar Git",

@@ -87,6 +87,7 @@ pub fn row(dark: bool, rtl: bool, row: Row<'_>) -> El {
         .label(row.label)
         .level(row.depth)
         .focus_selected(row.selected)
+        .busy(row.busy)
         .w_full()
         .min_h(m("minHeight"))
         .pt(m("paddingTop"))

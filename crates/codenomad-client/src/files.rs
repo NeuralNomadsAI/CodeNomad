@@ -13,6 +13,15 @@ pub const MAX_ENTRIES: usize = 4096;
 const MAX_CONTENTS: usize = MAX_FILE_BYTES.div_ceil(3) * 4;
 const MAX_PREVIEW_JSON: usize = MAX_CONTENTS + 64 * 1024;
 
+#[derive(Debug)]
+pub struct ListingTooLarge;
+impl std::fmt::Display for ListingTooLarge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Directory listing too large")
+    }
+}
+impl std::error::Error for ListingTooLarge {}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryKind {
     File,
@@ -92,22 +101,28 @@ impl Backend {
     /// One listing, with the shared 2 MiB JSON budget; an oversized folder fails intact.
     pub async fn files(&self, directory: &str, path: &str) -> Result<Vec<Entry>> {
         self.file_scope(directory, path, true)?;
-        let data = read_json(
-            self.client
-                .get(format!(
-                    "{}api/workspaces/{}/files",
-                    self.base, self.workspace
-                ))
-                .query(&[("path", path), ("directory", directory)])
-                .send()
-                .await?
-                .error_for_status()?,
-        )
-        .await?;
-        let rows = data
-            .as_array()
-            .filter(|r| r.len() <= MAX_ENTRIES)
-            .ok_or("invalid file listing")?;
+        let response = self
+            .client
+            .get(format!(
+                "{}api/workspaces/{}/files",
+                self.base, self.workspace
+            ))
+            .query(&[("path", path), ("directory", directory)])
+            .send()
+            .await?;
+        if response.status() == reqwest::StatusCode::BAD_REQUEST {
+            let error = response.error_for_status_ref().err();
+            let body = read_json_limited(response, 4096).await;
+            if body.is_ok_and(|body| body["error"] == "Directory listing too large") {
+                return Err(ListingTooLarge.into());
+            }
+            return Err(error.ok_or("invalid file listing response")?.into());
+        }
+        let data = read_json(response.error_for_status()?).await?;
+        let rows = data.as_array().ok_or("invalid file listing")?;
+        if rows.len() > MAX_ENTRIES {
+            return Err(ListingTooLarge.into());
+        }
         let mut seen = HashSet::new();
         rows.iter()
             .map(|row| {
