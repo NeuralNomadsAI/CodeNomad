@@ -107,21 +107,23 @@ fn workspace_chat_keeps_history_agent_and_composer_inside_the_viewport() {
 }
 #[test]
 fn permissions_keep_actions_visible_and_reason_reachable_across_viewports() {
-    for with_files in [false, true] {
+    for files_wanted in [None, Some(false), Some(true)] {
         for size in [(1400.0, 900.0), (390.0, 740.0), (390.0, 320.0)] {
             let mut state = state();
-            if with_files {
+            if let Some(wanted) = files_wanted {
                 let backend = crate::platform::block_on(crate::backend::Backend::connect(
                     "http://127.0.0.1:9",
                     "",
                 ))
                 .unwrap();
-                state.files = Some(crate::files::Ui::new(
+                let mut files = crate::files::Ui::new(
                     backend,
                     "/private".into(),
                     crate::platform::reads::Reads::default(),
                     std::sync::Arc::new(|| {}),
-                ));
+                );
+                files.show(wanted);
+                state.files = Some(files);
             }
             let ui = state.agent.as_mut().unwrap();
             ui.selected = "permission-fixture".into();
@@ -136,6 +138,10 @@ fn permissions_keep_actions_visible_and_reason_reachable_across_viewports() {
             });
             ui.reasons.insert(ui.selected.clone(), TextEdit::new(""));
             let mut rt = runtime(state, size);
+            if let Some(wanted) = files_wanted {
+                let files = rt.state.files.as_ref().unwrap();
+                assert_eq!(files.drawer().pinned, wanted && size.0 == 1400.0);
+            }
             for key in ["allow_once", "allow_always", "reject"] {
                 if size.1 == 320.0 {
                     reveal(&mut rt, key);
