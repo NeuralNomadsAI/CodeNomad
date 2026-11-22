@@ -113,7 +113,8 @@ test("Missions defaults are editable with no project open", async () => {
   try {
     await page.route("**/api/**", route => {
       if (route.request().url().includes("/subagent-depth")) reads++
-      return route.fulfill({ json: route.request().postDataJSON() ?? {} })
+      const body = route.request().postDataJSON()
+      return route.fulfill({ json: body?.patch ?? body ?? {} })
     })
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).missionVisibility))
@@ -124,9 +125,12 @@ test("Missions defaults are editable with no project open", async () => {
     assert.equal(await deletion.isEnabled(), true)
     const delegation = page.getByRole("combobox", { name: "Task sessions", exact: true })
     assert.equal(await delegation.isEnabled(), true)
-    const saved = (key: string, value: unknown) => page.waitForRequest(request =>
-      request.method() === "PATCH" && request.url().endsWith("/api/storage/config/ui")
-      && (JSON.stringify(request.postDataJSON()?.settings?.[key]) ?? "").includes(JSON.stringify(value)))
+    const saved = (key: string, value: unknown) => page.waitForResponse(response => {
+      const request = response.request()
+      if (!response.ok() || request.method() !== "PATCH" || new URL(request.url()).pathname !== "/api/storage/config/ui") return false
+      const body = request.postDataJSON()
+      return (JSON.stringify((body?.patch ?? body)?.settings?.[key]) ?? "").includes(JSON.stringify(value))
+    })
     await Promise.all([saved("missionProfileDefaults", "independent"), delegation.selectOption("independent")])
     await Promise.all([saved("missionDeleteSessions", true), deletion.check()])
     assert.equal(reads, 0, "project depth needs a workspace")
