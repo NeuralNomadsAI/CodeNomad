@@ -1,3 +1,4 @@
+use codenomad_client::Receiver;
 use std::collections::HashSet;
 
 struct Visit {
@@ -9,6 +10,7 @@ struct Visit {
 pub struct Visits {
     ids: Vec<Option<Visit>>,
     cursor: usize,
+    checks: Option<Receiver<String>>,
 }
 
 impl Visits {
@@ -65,6 +67,20 @@ impl Visits {
             let id = visit.id.as_str();
             (visit.listed && seen.insert(id)).then_some(id)
         })
+    }
+    pub fn set_checks(&mut self, checks: Option<Receiver<String>>) {
+        self.checks = checks;
+    }
+    pub fn poll_checks(&mut self) -> bool {
+        let Some(checks) = &self.checks else {
+            return false;
+        };
+        let missing: Vec<_> = std::iter::from_fn(|| checks.try_recv().ok()).collect();
+        if checks.is_closed() && checks.is_empty() {
+            self.checks = None;
+        }
+        self.forget(&missing);
+        !missing.is_empty()
     }
 }
 

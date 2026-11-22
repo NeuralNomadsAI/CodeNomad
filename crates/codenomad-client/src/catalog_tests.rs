@@ -34,6 +34,7 @@ impl Server {
         let address = format!("http://{}", listener.local_addr().unwrap());
         let (stop, stopped) = mpsc::channel();
         let worker = thread::spawn(move || {
+            let mut withheld = vec![];
             for reply in replies {
                 let deadline = Instant::now() + Duration::from_secs(5);
                 let mut socket = loop {
@@ -87,6 +88,10 @@ impl Server {
                     (!body.is_empty()).then(|| serde_json::from_slice::<Value>(&body).unwrap()),
                     reply.body
                 );
+                if reply.status == 0 {
+                    withheld.push(socket);
+                    continue;
+                }
                 let response = if reply.status == 204 {
                     &[][..]
                 } else {
@@ -536,6 +541,12 @@ fn catalogue_omissions_require_targeted_absence() {
     run(async {
         let server = Server::start(vec![
             reply(
+                "GET /workspaces/workspace/instance/api/session/unresponsive",
+                None,
+                0,
+                json!({}),
+            ),
+            reply(
                 "GET /workspaces/workspace/instance/api/session/reordered",
                 None,
                 200,
@@ -559,10 +570,12 @@ fn catalogue_omissions_require_targeted_absence() {
             id: "workspace".into(),
             path: "/trial".into(),
         };
-        let ids = ["reordered", "unavailable", "deleted"].map(str::to_owned);
-        assert_eq!(
-            backend.confirm_missing_sessions(&project, ids.into()).await,
-            ["deleted"]
-        );
+        let ids = ["unresponsive", "reordered", "unavailable", "deleted"].map(str::to_owned);
+        let (out, results) = async_channel::bounded(ids.len());
+        backend
+            .confirm_missing_sessions(&project, ids.into(), out, || {})
+            .await;
+        assert_eq!(results.try_recv().unwrap(), "deleted");
+        assert!(results.try_recv().is_err());
     });
 }

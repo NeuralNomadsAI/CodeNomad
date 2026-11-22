@@ -255,26 +255,35 @@ impl Backend {
         &self,
         project: &Project,
         ids: Vec<String>,
-    ) -> Vec<String> {
-        let mut missing = vec![];
-        if !ids.is_empty() {
-            futures_lite::future::race(
-                async {
-                    for id in ids {
-                        if self
-                            .bind_session(project, &id, false)
-                            .await
-                            .is_err_and(|e| e.is::<SessionMissing>())
-                        {
-                            missing.push(id);
+        missing: async_channel::Sender<String>,
+        notify: impl Fn(),
+    ) {
+        futures_lite::future::race(
+            async {
+                for id in ids {
+                    let confirmed = futures_lite::future::race(
+                        async {
+                            self.bind_session(project, &id, false)
+                                .await
+                                .is_err_and(|error| error.is::<SessionMissing>())
+                        },
+                        async {
+                            crate::runtime::sleep(std::time::Duration::from_secs(1)).await;
+                            false
+                        },
+                    )
+                    .await;
+                    if confirmed {
+                        if missing.send(id).await.is_err() {
+                            return;
                         }
+                        notify();
                     }
-                },
-                crate::runtime::sleep(std::time::Duration::from_secs(2)),
-            )
-            .await;
-        }
-        missing
+                }
+            },
+            missing.closed(),
+        )
+        .await;
     }
     pub async fn bind_session(
         &self,

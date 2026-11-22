@@ -42,7 +42,7 @@ pub struct Launcher {
 enum Reply {
     Connected(Backend, Vec<Project>, String),
     Opened(crate::workspace::opening::Opening, Sessions, Restored),
-    Listed(Sessions, bool, Vec<String>),
+    Listed(Sessions, bool),
     Created(Backend, String, String, Option<u64>),
     Selected(Vec<String>, Option<Selection>, Option<u64>),
 }
@@ -134,6 +134,7 @@ impl Launcher {
         }
         self.pending = true;
         self.error = None;
+        self.visits.set_checks(None);
         let (out, input) = bounded(1);
         self.result = Some(input);
         let wake = self.wake.clone();
@@ -171,12 +172,32 @@ impl Launcher {
         self.next = page.next;
     }
 
-    fn listed_visits_not_seen(&self, more: bool) -> Vec<String> {
+    fn listed_visits_not_seen(&self) -> Vec<String> {
         self.visits
             .listed_ids()
-            .filter(|id| !more || !self.listed_sessions.contains(*id))
+            .filter(|id| !self.listed_sessions.contains(*id))
             .map(str::to_owned)
             .collect()
+    }
+
+    fn check_omitted_visits(&mut self) {
+        let (Some(backend), Some(project)) = (self.connection.clone(), self.project.clone()) else {
+            return;
+        };
+        let ids = self.listed_visits_not_seen();
+        if ids.is_empty() {
+            return;
+        }
+        let (out, checks) = bounded(ids.len());
+        self.visits.set_checks(Some(checks));
+        let wake = self.wake.clone();
+        // Results belong to the listing; dropping its receiver cancels the worker.
+        crate::platform::spawn(async move {
+            backend
+                .confirm_missing_sessions(&project, ids, out, || wake())
+                .await;
+            wake();
+        });
     }
 }
 
@@ -237,7 +258,7 @@ mod tests {
         assert!(!launcher.listed_sessions.contains("a"));
         assert_eq!(launcher.visits.listed_ids().next(), Some("a"));
         launcher.visits.record("child", None, false);
-        assert_eq!(launcher.listed_visits_not_seen(true), ["a"]);
+        assert_eq!(launcher.listed_visits_not_seen(), ["a"]);
     }
 
     #[test]
@@ -253,24 +274,24 @@ mod tests {
         rt.update(|s, tx| {
             let l = s.screen.launcher_mut().unwrap();
             l.visits.record("a", None, true);
-            for missing in [vec![], vec![String::from("a")]] {
-                let confirmed = !missing.is_empty();
-                let (out, input) = bounded(1);
-                s.screen.launcher_mut().unwrap().result = Some(input);
-                assert!(
-                    out.try_send(Ok(Reply::Listed(
-                        Sessions {
-                            rows: vec![row("b")],
-                            next: None,
-                        },
-                        true,
-                        missing
-                    )))
-                    .is_ok()
-                );
-                assert!(poll(s, tx));
-                assert_eq!(can_visit(s, true), !confirmed);
-            }
+            l.apply_listing(
+                Sessions {
+                    rows: vec![row("b")],
+                    next: None,
+                },
+                true,
+                None,
+            );
+            assert!(can_visit(s, true));
+            let (out, input) = bounded(1);
+            s.screen
+                .launcher_mut()
+                .unwrap()
+                .visits
+                .set_checks(Some(input));
+            assert!(out.try_send("a".into()).is_ok());
+            assert!(poll(s, tx));
+            assert!(!can_visit(s, true));
         });
     }
 
@@ -598,16 +619,11 @@ pub fn list(s: &mut State, more: bool) {
     }
     l.listing = true;
     let cursor = if more { l.next.clone() } else { None };
-    let mut candidates = l.listed_visits_not_seen(more);
     l.job("rune.list_error", async move {
-        let page = b.sessions(&p, cursor.as_deref()).await?;
-        let missing = if page.next.is_none() {
-            candidates.retain(|id| !page.rows.iter().any(|row| &row.id == id));
-            b.confirm_missing_sessions(&p, candidates).await
-        } else {
-            vec![]
-        };
-        Ok(Reply::Listed(page, more, missing))
+        Ok(Reply::Listed(
+            b.sessions(&p, cursor.as_deref()).await?,
+            more,
+        ))
     });
 }
 pub fn create(s: &mut State, _: &mut Tx) {
@@ -721,7 +737,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let Some(l) = s.screen.launcher_mut() else {
         return false;
     };
-    let mut boot_changed = false;
+    let mut changed = l.visits.poll_checks();
     if let Some(result) = l
         .boot
         .as_ref()
@@ -729,7 +745,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     {
         l.boot = None;
         l.pending = false;
-        boot_changed = true;
+        changed = true;
         match result {
             Ok((backend, host)) => {
                 l.address = TextEdit::new(&backend.base);
@@ -746,10 +762,10 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
     }
     let Some(result) = l.result.as_ref().and_then(|rx| rx.try_recv().ok()) else {
-        if boot_changed {
+        if changed {
             tx.instant();
         }
-        return boot_changed;
+        return changed;
     };
     l.result = None;
     l.pending = false;
@@ -781,9 +797,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 Restored::Empty => {}
             }
         }
-        Ok(Reply::Listed(rows, more, missing)) => {
+        Ok(Reply::Listed(rows, more)) => {
             l.apply_listing(rows, more, selected.as_deref());
-            l.visits.forget(&missing);
+            if l.next.is_none() {
+                l.check_omitted_visits();
+            }
         }
         Ok(Reply::Created(b, title, submitted, dismiss)) => {
             if l.title.text == submitted {
