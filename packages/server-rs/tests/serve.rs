@@ -315,7 +315,7 @@ async fn desktop_launch_contract() {
     for path in ["/sidecars", "/sidecars?x=1", &long_sidecar] {
         let fallback = get(path, Some(&cookie)).send().await.unwrap();
         assert_eq!(fallback.status(), 200, "{path}");
-        assert_eq!(fallback.headers()["content-type"], "text/html", "{path}");
+        assert_eq!(fallback.headers()["content-type"], "text/html; charset=utf-8", "{path}");
         assert!(fallback.text().await.unwrap().contains("<title>ui</title>"), "{path}");
     }
     for hidden in ["/.secret", "/assets%5C..%5C..%5C..%5Ccwd%5Cplain.txt"] {

@@ -398,7 +398,13 @@ pub async fn admit(State(app): State<Shared>, mut req: Request, next: Next) -> R
                 req.extensions_mut().insert(principal);
             }
             next.run(req).await
-        } else if path == "/" || html && (!api || req.method() == Method::GET && !path.starts_with("/api/")) {
+        } else if path == "/"
+            || !api
+                && percent_encoding::percent_decode_str(&path)
+                    .decode_utf8()
+                    .is_ok_and(|p| crate::host::ui::is_html_path(&p))
+            || html && (!api || req.method() == Method::GET && !path.starts_with("/api/"))
+        {
             found("/login")
         } else if api {
             unauthorized().into_response()

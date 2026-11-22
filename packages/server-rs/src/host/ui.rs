@@ -1,11 +1,15 @@
 //! The UI on the local listener (`setupStaticUi`, `setupDevProxy`): the built bundle (`--ui-dir`,
 //! else `public/` beside the executable) with the single-page fallback, or a development server.
-use std::{path::PathBuf, sync::LazyLock, time::UNIX_EPOCH};
+use std::{
+    path::{Path, PathBuf},
+    sync::LazyLock,
+    time::UNIX_EPOCH,
+};
 
 use axum::{
     body::Body,
     extract::Request,
-    http::{HeaderValue, Method, StatusCode as Status, header},
+    http::{HeaderMap, HeaderValue, Method, StatusCode as Status, header},
     response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
@@ -53,59 +57,143 @@ pub async fn serve(source: &Source, req: Request) -> Response {
     match source {
         Source::Absent => crate::unavailable(),
         Source::Dev(base) => proxy(base, req).await,
-        Source::Dir(dir, _) => match asset(
-            dir,
-            req.method().clone(),
-            req.uri().path().to_owned(),
-            req.headers().get(header::IF_NONE_MATCH).cloned(),
-        )
-        .await
-        {
-            Some(response) => response,
-            None => match tokio::fs::read_to_string(dir.join("index.html")).await {
-                Ok(page) => ([(header::CONTENT_TYPE, "text/html")], page).into_response(),
-                Err(_) => (Status::NOT_FOUND, axum::Json(json!({"message": "UI bundle missing"}))).into_response(),
-            },
-        },
+        Source::Dir(dir, _) => {
+            let (head, _) = req.into_parts();
+            let path = if head.uri.path() == "/" { "/index.html" } else { head.uri.path() };
+            if let Some(response) = asset(dir, &head.method, path, &head.headers).await {
+                return response;
+            }
+            if head.extensions.get::<crate::auth::Principal>().is_none() {
+                return (Status::NOT_FOUND, axum::Json(json!({"message": "Not Found"}))).into_response();
+            }
+            if path != "/index.html"
+                && let Some(response) = asset(dir, &head.method, "/index.html", &head.headers).await
+            {
+                return response;
+            }
+            (Status::NOT_FOUND, axum::Json(json!({"message": "UI bundle missing"}))).into_response()
+        }
     }
 }
 
+pub(crate) fn is_html_path(mut path: &str) -> bool {
+    while let Some((stem, extension)) = path.rsplit_once('.') {
+        match extension.to_ascii_lowercase().as_str() {
+            "html" | "htm" => return true,
+            "br" | "gz" | "deflate" => path = stem,
+            _ => break,
+        }
+    }
+    false
+}
+
 /// A regular file of the bundle for GET and HEAD, never a dotfile or a path leaving the folder.
-async fn asset(dir: &PathBuf, method: Method, path: String, cached: Option<HeaderValue>) -> Option<Response> {
-    if !matches!(method, Method::GET | Method::HEAD) {
+async fn asset(dir: &Path, method: &Method, path: &str, request_headers: &HeaderMap) -> Option<Response> {
+    if !matches!(*method, Method::GET | Method::HEAD) {
         return None;
     }
-    let decoded = percent_encoding::percent_decode_str(&path).decode_utf8().ok()?;
-    let mut file = dir.clone();
+    let decoded = percent_encoding::percent_decode_str(path).decode_utf8().ok()?;
+    let root = dunce::canonicalize(dir).ok()?;
+    let mut file = root.clone();
     for part in decoded.split('/').filter(|p| !p.is_empty()) {
         if part.starts_with('.') || part.contains(['\\', ':', '\0']) {
             return None;
         }
         file.push(part);
     }
-    let real = dunce::canonicalize(&file).ok()?;
-    if !real.starts_with(dunce::canonicalize(dir).ok()?) {
-        return None;
+    let (codings, identity) = accepted(request_headers);
+    for coding in codings.into_iter().flatten().map(Some).chain([None]) {
+        let candidate = match coding {
+            Some((_, suffix)) => {
+                let mut name = file.as_os_str().to_owned();
+                name.push(suffix);
+                PathBuf::from(name)
+            }
+            None => file.clone(),
+        };
+        let Ok(real) = dunce::canonicalize(candidate) else { continue };
+        if !real.starts_with(&root) {
+            continue;
+        }
+        let Ok(meta) = tokio::fs::metadata(&real).await else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        if coding.is_none() && !identity {
+            return Some((Status::NOT_ACCEPTABLE, [(header::VARY, "Origin, Accept-Encoding")]).into_response());
+        }
+        let logical = if coding.is_some() { &file } else { &real };
+        let extension = logical.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+        let modified = meta.modified().ok()?;
+        let millis = modified.duration_since(UNIX_EPOCH).ok()?.as_millis();
+        let etag = format!("W/\"{:x}-{millis:x}\"", meta.len());
+        let mut response =
+            if request_headers.get(header::IF_NONE_MATCH).is_some_and(|v| v.as_bytes() == etag.as_bytes()) {
+                Status::NOT_MODIFIED.into_response()
+            } else {
+                let body = if *method == Method::HEAD {
+                    Body::empty()
+                } else {
+                    let Ok(opened) = tokio::fs::File::open(real).await else { continue };
+                    Body::from_stream(tokio_util::io::ReaderStream::new(opened))
+                };
+                ([(header::CONTENT_LENGTH, meta.len().to_string())], body).into_response()
+            };
+        let headers = response.headers_mut();
+        if let Some((encoding, _)) = coding {
+            headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static(encoding));
+        }
+        headers.insert(header::VARY, HeaderValue::from_static("Origin, Accept-Encoding"));
+        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type(&extension)));
+        headers.insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static(if is_html_path(&decoded) || matches!(extension.as_str(), "html" | "htm") {
+                "no-store"
+            } else {
+                "public, max-age=0"
+            }),
+        );
+        let date = chrono::DateTime::<chrono::Utc>::from(modified).format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+        headers.insert(header::LAST_MODIFIED, HeaderValue::from_str(&date).ok()?);
+        headers.insert(header::ETAG, HeaderValue::from_str(&etag).ok()?);
+        return Some(response);
     }
-    let meta = tokio::fs::metadata(&real).await.ok().filter(|m| m.is_file())?;
-    let modified = meta.modified().ok()?;
-    let millis = modified.duration_since(UNIX_EPOCH).ok()?.as_millis();
-    let etag = format!("W/\"{:x}-{millis:x}\"", meta.len());
-    let mut response = if cached.is_some_and(|v| v.as_bytes() == etag.as_bytes()) {
-        Status::NOT_MODIFIED.into_response()
-    } else if method == Method::HEAD {
-        ([(header::CONTENT_LENGTH, meta.len().to_string())], Body::empty()).into_response()
-    } else {
-        tokio::fs::read(&real).await.ok()?.into_response()
-    };
-    let extension = real.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-    let headers = response.headers_mut();
-    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type(&extension)));
-    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=0"));
-    let date = chrono::DateTime::<chrono::Utc>::from(modified).format("%a, %d %b %Y %H:%M:%S GMT").to_string();
-    headers.insert(header::LAST_MODIFIED, HeaderValue::from_str(&date).ok()?);
-    headers.insert(header::ETAG, HeaderValue::from_str(&etag).ok()?);
-    Some(response)
+    None
+}
+
+type Coding = (&'static str, &'static str);
+
+fn accepted(headers: &HeaderMap) -> ([Option<Coding>; 3], bool) {
+    let mut codings = [("br", ".br", None::<f32>), ("gzip", ".gz", None), ("deflate", ".deflate", None)];
+    let (mut wildcard, mut identity) = (None::<f32>, None::<f32>);
+    for header in headers.get_all(header::ACCEPT_ENCODING).iter().filter_map(|v| v.to_str().ok()) {
+        for item in header.split(',') {
+            let (name, quality) = item.split_once(';').map_or((item, 1.), |(name, param)| {
+                let quality = param
+                    .split_once('=')
+                    .filter(|(key, _)| key.trim().eq_ignore_ascii_case("q"))
+                    .and_then(|(_, value)| value.trim().parse::<f32>().ok())
+                    .unwrap_or(0.);
+                (name, quality)
+            });
+            let name = name.trim();
+            let quality = if (0. ..=1.).contains(&quality) { quality } else { 0. };
+            if name == "*" {
+                wildcard = Some(wildcard.unwrap_or_default().max(quality));
+            } else if name.eq_ignore_ascii_case("identity") {
+                identity = Some(identity.unwrap_or_default().max(quality));
+            } else if let Some((_, _, q)) = codings.iter_mut().find(|(coding, _, _)| coding.eq_ignore_ascii_case(name))
+            {
+                *q = Some(q.unwrap_or_default().max(quality));
+            }
+        }
+    }
+    let mut codings = codings.map(|(coding, suffix, q)| (coding, suffix, q.or(wildcard).unwrap_or_default()));
+    codings.sort_by(|a, b| b.2.total_cmp(&a.2));
+    (
+        codings.map(|(coding, suffix, q)| (q > 0. && q >= identity.unwrap_or_default()).then_some((coding, suffix))),
+        identity.or(wildcard).unwrap_or(1.) > 0.,
+    )
 }
 
 fn content_type(extension: &str) -> &'static str {
