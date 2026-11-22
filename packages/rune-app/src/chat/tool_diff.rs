@@ -12,12 +12,17 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
     markdown,
 };
-use std::{collections::VecDeque, sync::Arc};
+use std::{
+    collections::{HashSet, VecDeque},
+    ops::Range,
+    sync::Arc,
+};
 
 const RETAINED: usize = 32;
 
 struct Entry {
     key: String,
+    message: String,
     patch: String,
     file: String,
     state: DiffState,
@@ -27,10 +32,20 @@ struct Entry {
 #[derive(Default)]
 pub(super) struct Cache {
     entries: VecDeque<Entry>,
+    visible: HashSet<String>,
     detached: DiffState,
 }
 
 impl Cache {
+    pub(super) fn visible_rows(s: &mut State, range: Range<usize>) -> bool {
+        let cache = &mut s.transcript_display.diffs;
+        cache.visible.clear();
+        if let Some(rows) = s.messages.get(range) {
+            cache.visible.extend(rows.iter().map(|row| row.id.clone()));
+        }
+        false
+    }
+
     fn read(&self, key: &str) -> &DiffState {
         self.entries
             .iter()
@@ -45,7 +60,7 @@ impl Cache {
             .map_or(&mut self.detached, |entry| &mut entry.state)
     }
 
-    fn load(&mut self, key: &str, patch: &str, path: &str, width: f32) -> bool {
+    fn load(&mut self, message: &str, key: &str, patch: &str, path: &str, width: f32) -> bool {
         let former = self
             .entries
             .iter()
@@ -58,7 +73,17 @@ impl Cache {
             self.entries.extend(former);
             return false;
         }
-        let files = if patch.trim_start().starts_with("@@ ")
+        if self.entries.len() >= RETAINED {
+            let Some(index) = self
+                .entries
+                .iter()
+                .position(|entry| !self.visible.contains(&entry.message))
+            else {
+                return false;
+            };
+            self.entries.remove(index);
+        }
+        let mut files = if patch.trim_start().starts_with("@@ ")
             && !path.contains(['\r', '\n'])
             && !path.is_empty()
         {
@@ -69,6 +94,18 @@ impl Cache {
         } else {
             diff::parse(patch)
         };
+        // Chunked highlighting in the pinned Kit requires the next 128-line boundary to fit.
+        let max_line = u32::MAX - 127;
+        if files.iter().flat_map(|file| &file.hunks).any(|hunk| {
+            [
+                (hunk.old_start, hunk.old_count),
+                (hunk.new_start, hunk.new_count),
+            ]
+            .into_iter()
+            .any(|(start, count)| start.saturating_add(count) > max_line)
+        }) {
+            files.clear();
+        }
         let lines = files
             .iter()
             .map(|file| {
@@ -89,11 +126,9 @@ impl Cache {
             },
             |entry| entry.state.mode(),
         ));
-        if self.entries.len() >= RETAINED {
-            self.entries.pop_front();
-        }
         self.entries.push_back(Entry {
             key: key.into(),
+            message: message.into(),
             patch: patch.into(),
             file: path.into(),
             state,
@@ -112,15 +147,14 @@ pub(super) fn candidate(tool: &Tool, patch: &str) -> bool {
 
 pub(super) fn body(
     s: &State,
+    message: &str,
     key: &str,
     tool: &Arc<Tool>,
     patch: &str,
     path: &str,
     fallback: impl FnOnce() -> El,
 ) -> El {
-    let path = path
-        .get(..path.floor_char_boundary(path.len().min(4096)))
-        .unwrap_or_default();
+    let path = &path[..path.floor_char_boundary(path.len().min(4096))];
     if let Some(entry) = s
         .transcript_display
         .diffs
@@ -134,6 +168,7 @@ pub(super) fn body(
         return view(s, key, entry, path);
     }
     let scope = s.input_scope.clone();
+    let message = message.to_owned();
     let key = key.to_owned();
     let patch = patch.to_owned();
     let path = path.to_owned();
@@ -145,11 +180,11 @@ pub(super) fn body(
             .child(fallback()),
         move |s: &mut State, width, tx| {
             if s.current_scope(&scope)
-                && s.messages.iter().flat_map(|row| &row.parts).any(|part|
+                && s.messages.iter().find(|row| row.id == message).into_iter().flat_map(|row| &row.parts).any(|part|
                     matches!(part, crate::content::Part::Tool(current) if Arc::ptr_eq(current, &tool)))
                 && s.transcript_display
                     .diffs
-                    .load(&key, &patch, &path, width)
+                    .load(&message, &key, &patch, &path, width)
             {
                 s.revision += 1;
             } else {
@@ -177,6 +212,7 @@ fn view(s: &State, key: &str, entry: &Entry, path: &str) -> El {
     let mode_key = key.to_owned();
     let wrap_key = key.to_owned();
     let (read, write) = (key.to_owned(), key.to_owned());
+    let patch = entry.patch.clone();
     col()
         .full_width()
         .separate(Space::Sm)
@@ -184,6 +220,13 @@ fn view(s: &State, key: &str, entry: &Entry, path: &str) -> El {
             layout::action_row()
                 .label(t("toolCall.diff.viewMode.ariaLabel"))
                 .child(text(title))
+                .child(
+                    markdown::copy_button(
+                        t("toolCall.diff.copyPatch"),
+                        screen::action_tx(&s.input_scope, move |_, tx| tx.copy(patch.as_str())),
+                    )
+                    .key(format!("{key}-copy-patch")),
+                )
                 .child(
                     layout::button(
                         t(if split {
@@ -209,12 +252,12 @@ fn view(s: &State, key: &str, entry: &Entry, path: &str) -> El {
                 )
                 .child(
                     layout::button(
-                        t(if wrapped {
+                        t(if wrapped || split {
                             "toolCall.diff.disableWordWrap"
                         } else {
                             "toolCall.diff.enableWordWrap"
                         }),
-                        false,
+                        split,
                         screen::action(&s.input_scope, move |s| {
                             s.transcript_display
                                 .diffs
@@ -224,7 +267,7 @@ fn view(s: &State, key: &str, entry: &Entry, path: &str) -> El {
                         }),
                     )
                     .key(format!("{key}-wrap"))
-                    .checked(wrapped),
+                    .checked(wrapped || split),
                 ),
         )
         .child(markdown::diff_pane(
@@ -237,4 +280,24 @@ fn view(s: &State, key: &str, entry: &Entry, path: &str) -> El {
             ),
             entry.lines,
         ))
+}
+
+#[cfg(test)]
+#[test]
+fn admission_never_evicts_a_still_visible_diff() {
+    let mut cache = Cache::default();
+    let patch = "@@ -1 +1 @@\n-A\n+B";
+    for i in 0..RETAINED {
+        let message = i.to_string();
+        assert!(cache.load(&message, &message, patch, "file.rs", 960.0));
+        cache.visible.insert(message);
+    }
+    for _ in 0..3 {
+        assert!(!cache.load("next", "next", patch, "file.rs", 960.0));
+        assert!(cache.entries.iter().any(|entry| entry.message == "0"));
+    }
+    cache.visible.remove("0");
+    assert!(cache.load("next", "next", patch, "file.rs", 960.0));
+    assert!(!cache.entries.iter().any(|entry| entry.message == "0"));
+    assert_eq!(cache.entries.len(), RETAINED);
 }

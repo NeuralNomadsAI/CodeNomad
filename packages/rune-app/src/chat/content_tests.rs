@@ -157,7 +157,7 @@ fn transcript_edit_switches_the_shared_diff_without_changing_the_copied_patch() 
     );
     for key in [
         "tool-transcript:4:edit-mode",
-        "copy-tool-transcript:4:edit-output",
+        "tool-transcript:4:edit-copy-patch",
     ] {
         let (x, y) = rt.find(key).unwrap();
         rt.pointer_down(x, y);
@@ -173,6 +173,23 @@ fn transcript_edit_switches_the_shared_diff_without_changing_the_copied_patch() 
         clipboard.text().as_deref().map(String::as_str),
         Some("--- a/src/demo.rs\n+++ b/src/demo.rs\n@@ -1 +1 @@\n-return 7;\n+return 8;")
     );
+}
+
+#[test]
+fn transcript_patch_with_out_of_range_lines_uses_the_raw_fallback() {
+    let patch = "--- a/app.rs\n+++ b/app.rs\n@@ -4294967295 +4294967295 @@\n-return 1;\n+return 2;";
+    let mut state = init();
+    state.messages = vec![history::decode_message(&json!({"id":"range","type":"assistant","time":{"completed":1},"content":[
+        {"type":"tool","name":"edit","id":"edit","state":{"status":"completed","input":{"filePath":"app.rs"},
+            "metadata":{"diff":patch}}}
+    ]})).unwrap()];
+    state.phase = Phase::Ready;
+    let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
+    for _ in 0..12 {
+        rt.frame(1.0 / 60.0);
+    }
+    assert!(rt.find("tool-range:4:edit-diff").is_none());
+    assert!(rt.accessibility_json().to_string().contains("+return 2;"));
 }
 
 #[test]

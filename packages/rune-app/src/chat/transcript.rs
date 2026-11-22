@@ -1,4 +1,4 @@
-use super::{actions::Display, document, tools};
+use super::{actions::Display, document, tool_diff, tools};
 use crate::{
     State,
     content::{Part, TextProvenance},
@@ -13,6 +13,18 @@ use rune_theme_codenomad::{
 };
 
 const PART_LIMIT: usize = 1000;
+
+pub fn rows(s: &State) -> El {
+    let locale = locale();
+    layout::transcript_rows(
+        s.messages.len(),
+        |s: &State, i| s.messages[i].id.clone().into(),
+        move |s: &State, i| crate::strings::with_locale(locale, || message(s, i)),
+    )
+    .key("rows")
+    .virtual_rows_version(s.revision)
+    .on_visible_rows(tool_diff::Cache::visible_rows)
+}
 
 pub fn message(s: &State, i: usize) -> El {
     let m = &s.messages[i];

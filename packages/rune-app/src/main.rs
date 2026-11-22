@@ -317,20 +317,12 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
     .locale_direction(strings::locale())
 }
 fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
-    let locale = strings::locale();
-    let rows = layout::transcript_rows(
-        s.messages.len(),
-        |s: &State, i| s.messages[i].id.clone().into(),
-        move |s: &State, i| strings::with_locale(locale, || transcript::message(s, i)),
-    )
-    .key("rows")
-    .virtual_rows_version(s.revision);
     let expanded = s
         .agent
         .as_ref()
         .is_some_and(|a| a.picker || !a.ids().is_empty());
     rune_theme_codenomad::interruption::session_surface(expanded)
-        .child(rune_theme_codenomad::interruption::history(expanded).child(rows))
+        .child(rune_theme_codenomad::interruption::history(expanded).child(transcript::rows(s)))
         .child(agent_view::view(s, cx))
         .child(composer(s))
 }

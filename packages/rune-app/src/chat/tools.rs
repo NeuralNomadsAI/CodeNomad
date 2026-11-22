@@ -334,7 +334,7 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
                 ))
         };
         block = block.child(if tool_diff::candidate(tool, parts[0]) {
-            tool_diff::body(s, key, tool, parts[0], path(tool), fallback)
+            tool_diff::body(s, message, key, tool, parts[0], path(tool), fallback)
         } else {
             fallback()
         });
