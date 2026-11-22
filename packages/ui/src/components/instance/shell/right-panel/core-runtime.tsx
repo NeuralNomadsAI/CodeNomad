@@ -9,7 +9,6 @@ import { sessionWorktreeSlug } from "../file-preview-lifetime"
 import { closeFilePreview, openFilePreview, type FilePreviewTarget } from "../../../../stores/files-preview"
 import { useGitChanges } from "./useGitChanges"
 import { useGitHistory } from "./useGitHistory"
-import { createCoreRightPanelModule } from "./core-plugin"
 import { useWorkspaceTree } from "./useWorkspaceTree"
 import { useGitInit } from "./useGitInit"
 import { FILES_PANEL_MODE_KEY, type FilesPanelMode } from "./files-panel-state"
@@ -81,7 +80,7 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
     if (!sessionId || sessionId === "info") return
     openFilePreview(options.instanceId, { ...file, sessionId, slug: slug(), directory: directory(), serviceDirectory: worktree()?.serviceDirectory })
   }
-  return createCoreRightPanelModule({
+  return {
     renderFilesTab: () => <LazyFilesPanel t={options.t} git={git} history={history} tree={tree} gitAvailable={gitAvailable()} gitInit={gitInit} mode={mode()} onModeChange={setMode}
       instanceId={options.instanceId} worktrees={worktrees()} slug={slug()} directory={worktree()?.directory ?? options.instance.folder}
       branch={worktree()?.branch ?? null} onWorktreeChange={value => {
@@ -93,5 +92,5 @@ export function createCoreRightPanelRuntime(options: CoreRightPanelRuntimeOption
       expandedItems={options.expandedItems} onExpandedItemsChange={options.onExpandedItemsChange}
       customization={options.customization} onCustomizationChange={options.onCustomizationChange} extraSections={options.extraStatusSections()}
       extraContent={options.extraStatusContent?.()} />,
-  })
+  }
 }

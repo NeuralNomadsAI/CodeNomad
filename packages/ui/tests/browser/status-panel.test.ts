@@ -86,6 +86,24 @@ test("a saved right-panel tab order takes precedence over the Status-first defau
   } finally { await page.close() }
 })
 
+test("Files can initialize as the selected fallback while Missions activation is unknown", async () => {
+  const page = await browser.newPage({ viewport: { width: 700, height: 900 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/plugin-controls?*", route => route.fulfill({ status: 503, json: {} }))
+  await page.addInitScript(() => {
+    localStorage.setItem("opencode-session-right-panel-tab-v2", "missions")
+    localStorage.setItem("opencode-session-right-panel-customization-v1", JSON.stringify({ tabOrder: ["files", "status"] }))
+  })
+  try {
+    await page.goto(url)
+    await page.getByRole("tab", { name: "Files", exact: true, selected: true }).waitFor()
+    await page.getByRole("tabpanel", { name: "Files", exact: true }).waitFor()
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("Status tokens use the message chips and expand in the header line, wrapping in narrow LTR and RTL panels", async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 1000 }, locale: "en-US", reducedMotion: "reduce" })
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))

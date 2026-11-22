@@ -30,6 +30,7 @@ import {
   type RightPanelTabModule,
 } from "./registry"
 import { createCoreRightPanelRuntime } from "./core-runtime"
+import { createCoreRightPanelModule } from "./core-plugin"
 import { createMissionsRightPanelModule } from "./missions-plugin"
 import { FILES_PANEL_MIGRATION_KEY, mergeFilesPanelCustomization } from "./files-panel-state"
 import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
@@ -188,24 +189,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     queueMicrotask(() => document.getElementById(tabId(target.id))?.focus())
   }
 
-  const coreModule = createCoreRightPanelRuntime({
-    isActive: props.isActive,
-    t: props.t,
-    instanceId: props.instanceId,
-    get instance() { return props.instance },
-    activeSessionId: props.activeSessionId,
-    activeSession: props.activeSession,
-    isPhoneLayout: props.isPhoneLayout,
-    rightDrawerWidth: props.rightDrawerWidth,
-    rightDrawerWidthInitialized: props.rightDrawerWidthInitialized,
-    promptInputApi: props.promptInputApi,
-    rightPanelTab: () => activeRightPanelTab()?.id ?? rightPanelTab(),
-    expandedItems: rightPanelExpandedItems,
-    onExpandedItemsChange: handleAccordionChange,
-    customization: rightPanelCustomization,
-    onCustomizationChange: updateRightPanelCustomization,
-    extraStatusSections: () => extraStatusSections(),
-    extraStatusContent: () => extraStatusContent(),
+  const coreModule = createCoreRightPanelModule({
+    renderFilesTab: () => coreRuntime.renderFilesTab(),
+    renderStatusTab: () => coreRuntime.renderStatusTab(),
   })
   const missionsModule = createMissionsRightPanelModule({
     instanceId: props.instanceId,
@@ -256,6 +242,27 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     ),
   )
   const activeRightPanelTab = createMemo(() => visibleRightPanelTabs().find((tab) => tab.id === rightPanelTab()) ?? visibleRightPanelTabs()[0])
+  // Runtime hooks may read their selection synchronously. Build the tab
+  // registry and its effective selection before starting those hooks.
+  const coreRuntime = createCoreRightPanelRuntime({
+    isActive: props.isActive,
+    t: props.t,
+    instanceId: props.instanceId,
+    get instance() { return props.instance },
+    activeSessionId: props.activeSessionId,
+    activeSession: props.activeSession,
+    isPhoneLayout: props.isPhoneLayout,
+    rightDrawerWidth: props.rightDrawerWidth,
+    rightDrawerWidthInitialized: props.rightDrawerWidthInitialized,
+    promptInputApi: props.promptInputApi,
+    rightPanelTab: () => activeRightPanelTab()?.id ?? rightPanelTab(),
+    expandedItems: rightPanelExpandedItems,
+    onExpandedItemsChange: handleAccordionChange,
+    customization: rightPanelCustomization,
+    onCustomizationChange: updateRightPanelCustomization,
+    extraStatusSections: () => extraStatusSections(),
+    extraStatusContent: () => extraStatusContent(),
+  })
 
   createEffect(() => {
     const active = activeRightPanelTab()
