@@ -43,8 +43,7 @@ pub fn run() {
     });
     assert!(rt.state.screen.launcher().unwrap().password.text.is_empty());
     let folder = std::env::var("RUNE_TEST_FOLDER").unwrap();
-    rt.state.screen.launcher_mut().unwrap().folder = TextEdit::new("relative-invalid");
-    rt.frame(1.0 / 60.0);
+    super::window_restore::type_text(&mut rt, "folder-path", "relative-invalid");
     tap(&mut rt, "open-folder");
     wait(&mut rt, "bad folder", |s| {
         s.screen.launcher().unwrap().error.is_some()
@@ -89,8 +88,7 @@ pub fn run() {
     wait(&mut rt, "return session list", |s| {
         !s.screen.launcher().unwrap().pending
     });
-    rt.state.screen.launcher_mut().unwrap().title = TextEdit::new("Rune functional test");
-    rt.frame(1.0 / 60.0);
+    super::window_restore::type_text(&mut rt, "session-title", "Rune functional test");
     tap(&mut rt, "create-session");
     if std::env::var_os("RUNE_TEST_CREATE_UNCERTAIN").is_some() {
         wait(&mut rt, "uncertain create", |s| {

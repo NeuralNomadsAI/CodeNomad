@@ -36,6 +36,9 @@ const server = await createServer({
 shutdown.own(server)
 let browser
 const report = []
+// The header-only budget covers missing toolbar actions and independent rasterization.
+// Semantic assertions below still require both fixed panel buttons and the same title.
+const headerBudget = 0.10
 try {
   await server.listen()
   browser = await chromium.launch({headless: true, executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined})
@@ -61,6 +64,9 @@ try {
     const solidPng = await page.screenshot({path: path.join(out, `solid-${appearance}.png`), clip: solidClip, animations: 'disabled'})
     await writeFile(path.join(out, `solid-${appearance}.aria.yml`), await frame.ariaSnapshot())
     const left = page.getByRole('button', {name: 'Left panel', exact: true})
+    const right = page.getByRole('button', {name: 'Right panel', exact: true})
+    const [leftBox, rightBox] = await Promise.all([left.boundingBox(), right.boundingBox()])
+    await page.getByText('Fixture conversation', {exact: true}).first().waitFor()
     assert.equal(await left.getAttribute('aria-expanded'), 'true')
     await left.click()
     assert.equal(await left.getAttribute('aria-expanded'), 'false')
@@ -76,9 +82,19 @@ try {
     const open = await capture('0.3', ''), closed = await capture('0.9', '-closed')
     const flatten = node => node ? [node, ...(node.children ?? []).flatMap(flatten)] : []
     for (const [capture, expanded] of [[open, true], [closed, false]]) {
-      const node = flatten(capture.tree.accessibility).find(node => node.key === 'sessions-panel-toggle')
+      const nodes = flatten(capture.tree.accessibility)
+      const node = nodes.find(node => node.key === 'sessions-panel-toggle')
       assert(node && node.role === 'button' && node.name === 'Left panel')
       assert(node.states.includes(expanded ? 'expanded' : 'collapsed'))
+      assert(nodes.some(node => node.key === 'chat-title' && node.name === 'Fixture conversation'))
+      const frame = capture.tree.elements.find(node => node.key === 'session-shell').rect
+      for (const [key, box, name] of [['sessions-panel-toggle', leftBox, 'Left panel'], ['right-panel-toggle', rightBox, 'Right panel']]) {
+        const toggle = nodes.find(item => item.key === key)
+        assert(toggle && toggle.name === name && toggle.role === 'button')
+        const [x, y, w, h] = toggle.bounds
+        assert.equal(x + w / 2, box.x + box.width / 2)
+        assert.equal(y + h / 2 - frame[1], box.y + box.height / 2 - solidBox.y)
+      }
     }
     const frameY = open.tree.elements.find(node => node.key === 'session-shell').rect[1]
     await installPngReader(page)
@@ -92,10 +108,11 @@ try {
       }
       return {width: solid.width, height: solid.height, different, ratio: different / (solid.width * solid.height)}
     }, {images: [solidPng, await readFile(open.snap)].map(png => `data:image/png;base64,${png.toString('base64')}`), frameY})
-    report.push({appearance, solidClip, runeFrameTop: frameY, compare, expandedStates: [true, false]})
+    report.push({appearance, solidClip, runeFrameTop: frameY, compare, headerBudget, expandedStates: [true, false]})
     await page.close()
   }
   await writeFile(path.join(out, 'evidence.json'), JSON.stringify(report, null, 2))
+  for (const entry of report) assert(entry.compare.ratio <= headerBudget, `${entry.appearance}: shell header pixel budget exceeded`)
 } finally {
   try { await browser?.close() } finally { await server.close() }
 }

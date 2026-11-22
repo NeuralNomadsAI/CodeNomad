@@ -2,7 +2,7 @@ mod panels;
 mod right_panel;
 mod sidebar;
 
-use crate::{Phase, Screen, State, launcher_view, strings::t, workspace};
+use crate::{Phase, Screen, State, components::button_tx, launcher_view, strings::t, workspace};
 use rune::{Cx, El, Tx, col, text};
 use rune_theme_codenomad::{
     Space,
@@ -16,7 +16,11 @@ pub fn view(
     cx: &mut Cx<State>,
     conversation: impl FnOnce(&State, &mut Cx<State>) -> El,
 ) -> El {
-    let mut root = col().full_width().full_height().reading_surface();
+    let mut root = col()
+        .key("application-shell")
+        .full_width()
+        .full_height()
+        .reading_surface();
     if crate::platform::titlebar::available() {
         root = root.child(crate::platform::titlebar::view(cx));
     }
@@ -27,7 +31,7 @@ pub fn view(
                 layout::action_row()
                     .pad(Space::Sm)
                     .child(text(t(error)).role("alert"))
-                    .child(launcher_view::button_tx(
+                    .child(button_tx(
                         "workspace-retry",
                         t("sessionList.loadError.retry"),
                         false,

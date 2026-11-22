@@ -22,6 +22,7 @@ Rust binary: `CODENOMAD_RS_BINARY` or `CNRS_RUST_BINARY`, else `$CARGO_TARGET_DI
 $OpenCode = "<absolute path>\opencode.exe"
 cd packages/server-rs/bench
 node compare.mjs http $OpenCode           # one mode
+node compare.mjs prompt-admission         # simulated OpenCode, no native CLI/model
 pwsh -NoProfile -File run-all.ps1 -OpenCode $OpenCode [-Only http,contract]   # all modes, summary and CPU load in out\summary.txt
 node security.mjs $OpenCode
 node hardening.mjs $OpenCode
@@ -33,10 +34,11 @@ node roundtrip.mjs $OpenCode
 
 | Mode | Covers |
 |---|---|
-| (every mode) | Sign-in on both servers, then the Rust local admission surface (device, authority and server-pairing refusals; workspace claims, instance storage, `pending-requests`). |
+| (native-daemon modes) | Sign-in on both servers, then the Rust local admission surface (device, authority and server-pairing refusals; workspace claims, instance storage, `pending-requests`). |
 | `http` | Linked worktrees: creation, session move, evacuation on deletion, refusal of a modified checkout; owned locations and VCS reads. |
 | `files` | Files and Git on a rich repository (rename, gitlink, conflict, CRLF, large and binary files), mutations, refusals, watches. |
 | `contract` | Session placement header, foreign sessions, outline in a worktree, `pending-requests`. |
+| `prompt-admission` | Real TS/Rust HTTP servers, each on its own recording OpenCode substitute and `trial-*` profile. Two distinct prompt receipts, native fields forwarded intact, project file paths versus inline and remote URI, data validation, 5 MiB/file, 10 inline files, 20 MiB total and 32 MiB JSON boundaries, foreign Location/session and Mission-carrier refusals, environment-before-send, interruption controls and the ordinary 1 MiB mutation bound. Reports lengths and canonical JSON hash checks; no provider, native CLI, UI or account data. |
 | `workspace-claims` | Cancellation before creation, JavaScript-trimmed request IDs capped at 128 Unicode scalars across create/cancel/release, independent occurrences, released ownership and exact record cleanup; no model request. |
 | `agent-controls` | Native permission decisions and durable reasons, typed stale and cross-session refusals, Form reply/cancellation, and interrupt query options against a held synthetic response and an idle session. |
 | `depth` | `subagent-depth` on subfolders, linked worktree, junctions, written documents, worktree deletion fence. |
@@ -68,6 +70,7 @@ node roundtrip.mjs $OpenCode
 `node host-survey.mjs $OpenCode` records every request the Solid UI makes to a TS local host (start-up, folder picker, conversation, Files, Git, worktree, recents, Settings) in `out/host-survey.json`; [HOST_ROUTES.md](HOST_ROUTES.md) classifies them. The local-host fixtures require explicit private profile and config paths outside the user's home. The `host` comparison checks the served `homePath` before navigating there.
 
 `sidecars` serves a private static UI fixture on both servers to check the SPA fallback for unmatched paths. Set `CNRS_SIDECARS_NO_UI=1` to compare the same paths with no UI bundle. Neither run launches a window.
+`prompt-admission` compares the Source `application/json` contract, including exact error envelopes and combined budget/foreign-Location priority. It also checks a real disposable Git worktree, native carrier ownership and uncertain-read refusals, relocation during admission, malformed small JSON, `Content-Length` and chunked boundaries. `outsideJson` retains plain-stream observations separately: TypeScript's `text/plain` serialization failure returns 500 and Rust returns 400. `--transport-only` selects framing/guard probes; `--admission-order-only` selects combined budget/Location probes. Full admission uses the mode without either option. This mode writes its proof and redacted child logs under a fresh `out/trial-prompt-admission-*` directory.
 `CNRS_BENCH_STARTUP_TIMEOUT_MS` changes the readiness budget for `compare.mjs` when the machine is busy.
 Set `CNRS_BENCH_MISSIONS_SERVE=1` on Windows to compare `missions` or `missions-calendar` with Rust's production `serve` contract. `missions-wayfinder` uses it by default. The packaged plugins and CLI shim are bound to the owned fixture daemon, with no Tauri window.
 

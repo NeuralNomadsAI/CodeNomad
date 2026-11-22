@@ -297,7 +297,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         .child(
             rune_theme_codenomad::interruption::history(expanded)
                 .child(if s.can_older {
-                    launcher_view::button_tx(
+                    components::button_tx(
                         "older",
                         strings::t(if s.history_error {
                             "sessionList.loadError.retry"
@@ -344,13 +344,13 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                 )
                 .child(
                     layout::action_row()
-                        .child(launcher_view::button_tx(
+                        .child(components::button_tx(
                             "latest",
                             strings::t("rune.latest"),
                             false,
                             crate::screen::action_tx(&scope, latest),
                         ))
-                        .child(launcher_view::button_tx(
+                        .child(components::button_tx(
                             "send",
                             strings::t("promptInput.overlay.send"),
                             s.phase != Phase::Ready

@@ -47,6 +47,7 @@ pub fn panel_grip<S: 'static>(
         })
         .hover(accent)
         .cursor(rune::Cursor::ResizeColumn)
+        .touch_drags_at_once()
         .on_drag(move |s, drag, tx| {
             let event = match drag.phase {
                 rune::Phase::Down => {

@@ -247,7 +247,7 @@ fn header(s: &State, project: bool, docked: [Option<f32>; 2], touch: bool) -> El
     let reserve = |i: usize| project && docked[i].is_none();
     let warning = match s.phase {
         crate::Phase::Reconnecting => Some(text(connection(s)).role("status")),
-        crate::Phase::Failed => Some(crate::launcher_view::button(
+        crate::Phase::Failed => Some(crate::components::button(
             "connection-retry",
             t("sessionList.loadError.retry"),
             false,

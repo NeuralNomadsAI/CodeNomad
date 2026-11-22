@@ -314,9 +314,6 @@ fn activate(s: &mut State, tx: &mut Tx) {
     tx.instant();
 }
 pub fn select(s: &mut State, id: &str, tx: &mut Tx) {
-    if busy(s) {
-        return;
-    }
     let Some(index) = s
         .workspace
         .as_ref()
@@ -326,6 +323,9 @@ pub fn select(s: &mut State, id: &str, tx: &mut Tx) {
     };
     if s.workspace.as_ref().is_some_and(|ui| ui.active == index) {
         s.shell.leave_project();
+        return;
+    }
+    if busy(s) {
         return;
     }
     stash(s);

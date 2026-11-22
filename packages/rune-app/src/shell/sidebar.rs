@@ -1,6 +1,7 @@
 use crate::{
-    State, launcher,
-    launcher_view::{button, button_tx},
+    State,
+    components::{button, button_tx},
+    launcher,
     screen::{self, Editor},
     strings::t,
     workspace,

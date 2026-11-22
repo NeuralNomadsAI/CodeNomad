@@ -59,7 +59,11 @@ async function run(theme, at, name) {
   const finalMessageVisible = Boolean(finalRect && intersects(finalRect, historyRect)
     && intersects(finalRect, [0, 0, ...data.viewport]))
   assert.equal(finalMessageVisible, name === 'edited', 'Wheel must leave the last message; Latest must restore it')
-  if (name === 'edited') canvasByTheme.set(theme, data.elements[0].fill)
+  if (name === 'edited') {
+    const canvas = data.elements.find(element => element.key === 'application-shell')
+    assert.equal(canvas?.fill, palette[theme]['surface-canvas'], 'App canvas must use the resolved token')
+    canvasByTheme.set(theme, canvas.fill)
+  }
   assert(data.accessibility, 'Rune must emit its actual accessibility tree')
   const nodes = []
   function walk(node) {if (!node || typeof node !== 'object') return; nodes.push(node); for (const child of node.children ?? []) walk(child)}

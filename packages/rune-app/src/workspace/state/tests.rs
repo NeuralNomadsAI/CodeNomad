@@ -29,6 +29,26 @@ fn runtime(s: State) -> rune::Runtime<State> {
 }
 
 #[test]
+fn panel_visibility_returns_only_with_its_own_project_tab() {
+    let mut s = init();
+    let mut ui = Ui::new();
+    ui.ready = true;
+    ui.entries.push(entry("tab-1".into(), Tab::Blank));
+    s.workspace = Some(ui);
+    let mut rt = runtime(s);
+    rt.update(|s, tx| {
+        s.shell.wanted = [Some([false, true]), None];
+        select(s, "tab-1", tx);
+        assert_eq!(s.shell.wanted, [None; 2]);
+        s.shell.wanted = [Some([true, false]), None];
+        select(s, "tab-0", tx);
+        assert_eq!(s.shell.wanted, [Some([false, true]), None]);
+        select(s, "tab-1", tx);
+        assert_eq!(s.shell.wanted, [Some([true, false]), None]);
+    });
+}
+
+#[test]
 fn waiting_saved_session_keeps_its_draft_until_native_binding() {
     let mut s = init();
     let mut ui = Ui::new();
