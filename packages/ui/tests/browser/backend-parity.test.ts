@@ -175,11 +175,11 @@ test("embedded Settings Missions reads the selected qualified project's worktree
 
 test("web clients manage and select saved servers through embedded Settings without a native bridge", async () => fixturePage(async page => {
   await page.evaluate(() => (window as any).parity.openServers())
-  const row = page.locator('[data-remote-server="A"]')
-  await row.waitFor()
-  assert.equal(await page.getByRole("textbox", { name: "Server address or link" }).isVisible(), true)
-  assert.equal(await page.getByRole("button", { name: "Add SSH server", exact: true }).isVisible(), true)
-  assert.equal(await page.getByRole("button", { name: "Edit server: Server A", exact: true }).count(), 1)
+  const settings = page.locator(".settings-screen-shell")
+  const row = settings.locator('[data-remote-server="A"]')
+  await settings.getByRole("textbox", { name: "Server address or link" }).waitFor()
+  await settings.getByRole("button", { name: "Add SSH server", exact: true }).waitFor()
+  await row.getByRole("button", { name: "Edit server: Server A", exact: true }).waitFor()
   await row.getByRole("button", { name: "Open: Server A", exact: true }).click()
   await page.waitForFunction(() => (window as any).parity.serverSelection()?.id === "A")
   const id = await page.evaluate(async () => {

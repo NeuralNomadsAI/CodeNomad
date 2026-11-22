@@ -1,6 +1,9 @@
 //! Open workspaces: creation (validated by the daemon's location, cancellable by request
 //! ID), listing, release of a creation claim and removal.
-use std::time::Duration;
+use std::{
+    collections::VecDeque,
+    time::{Duration, Instant},
+};
 
 use axum::{
     Extension, Json, Router,
@@ -45,6 +48,25 @@ struct Claim {
     request_id: String,
 }
 
+#[derive(Default)]
+pub struct EarlyCancellations(VecDeque<(String, Instant)>);
+impl EarlyCancellations {
+    fn cancel(&mut self, key: String, now: Instant) {
+        self.0.retain(|(id, _)| id != &key);
+        self.0.push_back((key, now + Duration::from_secs(30)));
+        if self.0.len() > 1024 {
+            self.0.pop_front();
+        }
+    }
+    fn admits(&mut self, key: &str, now: Instant) -> bool {
+        if self.0.iter().any(|(id, until)| id == key && *until > now) {
+            return false;
+        }
+        self.0.retain(|(id, _)| id != key);
+        true
+    }
+}
+
 async fn list(State(app): State<Shared>) -> Json<Vec<Workspace>> {
     Json(app.inner.lock().unwrap().workspaces.clone())
 }
@@ -61,7 +83,7 @@ impl Drop for CreationGuard {
 }
 
 fn request_id_valid(key: &str) -> bool {
-    !key.is_empty() && key.encode_utf16().count() <= 128
+    !key.is_empty() && key.chars().count() <= 128
 }
 
 async fn create(
@@ -71,13 +93,16 @@ async fn create(
 ) -> Response {
     let bad_request = |message: String| (Status::BAD_REQUEST, message).into_response();
     let Ok(Json(input)) = input else { return bad_request("Invalid workspace creation request".into()) };
-    let request_id = input.request_id.map(|s| s.trim().to_owned());
+    let request_id = input.request_id.map(|s| s.trim_matches(crate::shared::js_space).to_owned());
     if request_id.as_ref().is_some_and(|s| !request_id_valid(s)) {
         return bad_request("Invalid workspace creation request".into());
     }
     let cancellation = CancellationToken::new();
     let _claim = if let Some(key) = &request_id {
         let mut store = app.inner.lock().unwrap();
+        if !store.early_cancellations.admits(key, Instant::now()) {
+            return bad_request(format!("Workspace creation request {key} was cancelled"));
+        }
         if store.pending.contains_key(key)
             || store.released.values().any(|v| v == key)
             || store.workspaces.iter().any(|w| w.request_id.as_deref() == Some(key))
@@ -199,7 +224,7 @@ async fn delete(State(app): State<Shared>, Path(id): Path<String>) -> Status {
 fn read_claim(input: Result<Json<Claim>, JsonRejection>) -> Result<String, (Status, &'static str)> {
     input
         .ok()
-        .map(|value| value.0.request_id.trim().to_owned())
+        .map(|value| value.0.request_id.trim_matches(crate::shared::js_space).to_owned())
         .filter(|key| request_id_valid(key))
         .ok_or((Status::BAD_REQUEST, "Invalid workspace creation request"))
 }
@@ -213,11 +238,64 @@ async fn cancel(
     let mut store = app.inner.lock().unwrap();
     if let Some(pending) = store.pending.get(&key) {
         pending.cancel();
+    } else if !store.released.values().any(|id| id == &key)
+        && !store.workspaces.iter().any(|w| w.request_id.as_deref() == Some(&key))
+    {
+        // A departing client's keepalive can arrive before its creation POST.
+        store.early_cancellations.cancel(key.clone(), Instant::now());
     }
     if let Some(index) = store.workspaces.iter().position(|w| w.request_id.as_deref() == Some(&key)) {
         app.remove(&mut store, index);
     }
     Ok(Status::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn early_cancellation_keeps_exact_identity_until_its_deadline() {
+        let now = Instant::now();
+        let mut cancelled = EarlyCancellations::default();
+        cancelled.cancel("departing".into(), now);
+        assert!(!cancelled.admits("departing", now));
+        assert!(!cancelled.admits("departing", now + Duration::from_millis(29_999)));
+        assert!(cancelled.admits("other", now));
+        assert_eq!(cancelled.0.len(), 1);
+        assert!(cancelled.admits("departing", now + Duration::from_secs(30)));
+        assert!(cancelled.0.is_empty());
+    }
+
+    #[test]
+    fn repeated_cancellation_refreshes_ttl_and_eviction_order_with_a_fixed_bound() {
+        let now = Instant::now();
+        let mut cancelled = EarlyCancellations::default();
+        for i in 0..1024 {
+            cancelled.cancel(i.to_string(), now);
+        }
+        cancelled.cancel("0".into(), now + Duration::from_secs(5));
+        cancelled.cancel("new".into(), now + Duration::from_secs(5));
+        assert_eq!(cancelled.0.len(), 1024);
+        assert!(cancelled.admits("1", now + Duration::from_secs(5)));
+        assert!(!cancelled.admits("0", now + Duration::from_secs(30)));
+        assert!(!cancelled.admits("new", now + Duration::from_secs(30)));
+        assert!(cancelled.admits("0", now + Duration::from_secs(35)));
+        assert!(cancelled.admits("new", now + Duration::from_secs(35)));
+    }
+
+    #[test]
+    fn claim_parsing_uses_javascript_trim_and_zod_scalar_bound() {
+        let claim = |id: &str| read_claim(Ok(Json(Claim { request_id: id.into() })));
+        assert_eq!(claim("\u{feff} request \u{feff}").unwrap(), "request");
+        assert_eq!(claim("\u{85}request\u{85}").unwrap(), "\u{85}request\u{85}");
+        assert!(claim(&format!("{}x", "🦀".repeat(64))).is_ok());
+        assert!(claim(&"🦀".repeat(128)).is_ok());
+        assert!(claim(&"🦀".repeat(129)).is_err());
+        assert!(claim(&"x".repeat(128)).is_ok());
+        assert!(claim(&"x".repeat(129)).is_err());
+        assert!(claim("\u{feff} \t\u{feff}").is_err());
+    }
 }
 
 async fn release(
