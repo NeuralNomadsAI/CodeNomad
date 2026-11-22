@@ -43,10 +43,7 @@ pub fn run() {
     });
     assert!(rt.state.screen.launcher().unwrap().password.text.is_empty());
     let folder = std::env::var("RUNE_TEST_FOLDER").unwrap();
-    rt.update(|s, _| {
-        s.screen.launcher_mut().unwrap().folder = TextEdit::new("relative-invalid");
-    });
-    rt.frame(1.0 / 60.0);
+    super::window_restore::type_text(&mut rt, "folder-path", "relative-invalid");
     tap(&mut rt, "open-folder");
     wait(&mut rt, "bad folder", |s| {
         s.screen.launcher().unwrap().error.is_some()
@@ -78,10 +75,9 @@ pub fn run() {
     assert_eq!(rt.state.messages[0].body, "Existing project history");
     rt.state.draft = TextEdit::new("unsent draft");
     rt.frame(1.0 / 60.0);
-    tap(&mut rt, "sessions-back");
-    wait(&mut rt, "return with retained draft", |s| {
-        s.screen.is_launcher() && !s.screen.launcher().unwrap().pending
-    });
+    tap(&mut rt, "sessions-panel-toggle");
+    assert!(rt.find("session-ses_existing").is_none());
+    tap(&mut rt, "sessions-panel-toggle");
     tap(&mut rt, "session-ses_existing");
     wait(&mut rt, "restore existing draft", |s| {
         !s.screen.is_launcher() && s.phase == Phase::Ready
@@ -92,10 +88,7 @@ pub fn run() {
     wait(&mut rt, "return session list", |s| {
         !s.screen.launcher().unwrap().pending
     });
-    rt.update(|s, _| {
-        s.screen.launcher_mut().unwrap().title = TextEdit::new("Rune functional test");
-    });
-    rt.frame(1.0 / 60.0);
+    super::window_restore::type_text(&mut rt, "session-title", "Rune functional test");
     tap(&mut rt, "create-session");
     if std::env::var_os("RUNE_TEST_CREATE_UNCERTAIN").is_some() {
         wait(&mut rt, "uncertain create", |s| {

@@ -1,14 +1,17 @@
 //! One serialized opening action at a time; HTTP never runs on the UI thread.
 pub(crate) mod view;
+mod visits;
 use crate::{
     Phase, State,
     backend::Backend,
-    catalog::{Project, Session, Sessions},
+    catalog::{Project, Session, SessionMissing, Sessions},
     history::Result,
 };
 use codenomad_client::{Receiver, bounded};
 use rune::{Tx, edit::TextEdit};
 use std::future::Future;
+pub const MAX_BROWSED_SESSIONS: usize = 2_000;
+pub(crate) use visits::Visits;
 
 pub struct Launcher {
     pub address: TextEdit,
@@ -16,6 +19,9 @@ pub struct Launcher {
     pub folder: TextEdit,
     pub title: TextEdit,
     pub search: TextEdit,
+    pub show_title: bool,
+    pub show_search: bool,
+    pub visits: Visits,
     pub connection: Option<Backend>,
     pub server_id: Option<String>,
     pub projects: Vec<Project>,
@@ -23,6 +29,7 @@ pub struct Launcher {
     pub sessions: Vec<Session>,
     pub next: Option<String>,
     pub pending: bool,
+    listing: bool,
     pub error: Option<&'static str>,
     pub creation_uncertain: bool,
     pub openings: crate::workspace::opening::Openings,
@@ -33,18 +40,24 @@ pub struct Launcher {
 }
 enum Reply {
     Connected(Backend, Vec<Project>, String),
-    Opened(
-        crate::workspace::opening::Opening,
-        Sessions,
-        Option<(Backend, String)>,
-    ),
+    Opened(crate::workspace::opening::Opening, Sessions, Restored),
     Listed(Sessions, bool),
+    Created(Backend, String, String, Option<u64>),
+    Selected(Vec<String>, Option<Selection>, Option<u64>),
+}
+type Selection = (Backend, String, Option<usize>);
+enum Restored {
+    Empty,
     Bound(Backend, String),
+    Missing(String),
 }
 impl Launcher {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn fixture() -> Self {
         Self::with_boot(std::sync::Arc::new(|| {}), None)
+    }
+    pub fn blocks_prompt(&self) -> bool {
+        self.pending && !self.listing
     }
     pub fn local_connection(&self) -> bool {
         #[cfg(not(target_arch = "wasm32"))]
@@ -89,6 +102,9 @@ impl Launcher {
             folder: TextEdit::new(""),
             title: TextEdit::new(""),
             search: TextEdit::new(""),
+            show_title: false,
+            show_search: false,
+            visits: Visits::default(),
             connection: None,
             server_id: None,
             projects: vec![],
@@ -96,6 +112,7 @@ impl Launcher {
             sessions: vec![],
             next: None,
             pending: starting,
+            listing: false,
             error: None,
             creation_uncertain: false,
             openings: Default::default(),
@@ -130,6 +147,130 @@ impl Launcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_selection_cannot_consume_the_departing_draft() {
+        let mut state = crate::init();
+        crate::gallery::shell::fixture(&mut state);
+        let (out, commands) = bounded(1);
+        state.commands = Some(out);
+        state.draft = TextEdit::new("keep this draft");
+        state.screen.launcher_mut().unwrap().pending = true;
+        let mut rt = rune::Runtime::new(
+            state,
+            crate::view,
+            (1000.0, 800.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.update(crate::send);
+        assert!(commands.try_recv().is_err());
+        assert_eq!(rt.state.draft.text, "keep this draft");
+        rt.update(|s, tx| {
+            s.screen.launcher_mut().unwrap().listing = true;
+            crate::send(s, tx);
+        });
+        assert!(
+            matches!(commands.try_recv(), Ok(crate::transport::Command::Send(text)) if text == "keep this draft")
+        );
+        rt.update(|s, _| s.phase = Phase::Streaming);
+        assert!(!can_change_session(&rt.state));
+    }
+
+    #[test]
+    fn a_selection_reply_cannot_replace_a_session_that_resumed_streaming() {
+        let mut state = crate::init();
+        crate::gallery::shell::fixture(&mut state);
+        let (out, input) = bounded(1);
+        let launcher = state.screen.launcher_mut().unwrap();
+        launcher.result = Some(input);
+        launcher.pending = true;
+        let (events, incoming) = bounded(1);
+        state.incoming = Some(incoming);
+        assert!(
+            events
+                .try_send(crate::transport::Event::Sync(crate::history::Page {
+                    rows: vec![],
+                    older: None,
+                    newer: None,
+                    running: true,
+                }))
+                .is_ok()
+        );
+        let backend = Backend {
+            client: codenomad_client::http::Http::new().unwrap(),
+            base: "http://127.0.0.1:9/".into(),
+            workspace: "header-windows".into(),
+            session: "another".into(),
+            client_id: "fixture".into(),
+            fresh_mode: false,
+        };
+        assert!(
+            out.try_send(Ok(Reply::Selected(
+                vec![],
+                Some((backend, "Another".into(), None)),
+                None
+            )))
+            .is_ok()
+        );
+        let mut rt = rune::Runtime::new(
+            state,
+            crate::view,
+            (1000.0, 800.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.update(|s, tx| {
+            crate::poll(s, 0.0, tx);
+        });
+        assert!(rt.state.phase == Phase::Streaming);
+        assert_eq!(rt.state.chat_title, "Fixture conversation");
+        assert!(!rt.state.screen.launcher().unwrap().pending);
+    }
+
+    #[test]
+    fn a_rebind_of_the_current_session_keeps_the_last_history_until_sync() {
+        let mut state = crate::init();
+        crate::gallery::shell::fixture(&mut state);
+        let backend = Backend {
+            client: codenomad_client::http::Http::new().unwrap(),
+            base: "http://127.0.0.1:9/".into(),
+            workspace: "header-windows".into(),
+            session: "session".into(),
+            client_id: "fixture".into(),
+            fresh_mode: false,
+        };
+        let launcher = state.screen.launcher_mut().unwrap();
+        let project = launcher.project.clone().unwrap();
+        launcher.connection = Some(backend.clone());
+        state.workspace = Some(crate::workspace::Ui::new());
+        crate::workspace::opened(&mut state, &project);
+        crate::workspace::bound(&mut state, &backend);
+        state.draft = TextEdit::new("held draft");
+        let mut agent =
+            crate::agent::Ui::new(crate::agent::start(backend.clone(), state.wake.clone()));
+        agent
+            .reasons
+            .insert("pending".into(), TextEdit::new("unsent answer"));
+        agent.busy = true;
+        state.agent = Some(agent);
+        state.phase = Phase::Failed;
+        assert!(can_rebind(&state, "session") && crate::agent::navigation_blocked(&state));
+        let mut rt = rune::Runtime::new(
+            state,
+            crate::view,
+            (1100.0, 800.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.update(move |s, tx| bind(s, backend, "Fixture conversation".into(), None, tx));
+        assert_eq!(rt.state.draft.text, "held draft");
+        assert_eq!(rt.state.messages.len(), 1);
+        assert_eq!(rt.state.messages[0].body, "Fixture message");
+        assert!(rt.state.phase == Phase::Loading);
+        assert_eq!(
+            rt.state.agent.as_ref().unwrap().reasons["pending"].text,
+            "unsent answer"
+        );
+        assert!(rt.state.agent.as_ref().unwrap().busy);
+    }
     #[test]
     fn session_choices_remain_visible_in_the_scrolling_launcher() {
         for viewport in [(320.0, 640.0), (1400.0, 1600.0)] {
@@ -154,7 +295,14 @@ mod tests {
             state.screen = crate::Screen::Launcher(launcher);
             let mut runtime =
                 rune::Runtime::new(state, crate::view, viewport, rune::Env::new(false, 1.0));
-            runtime.frame(0.0);
+            for _ in 0..8 {
+                runtime.frame(1.0 / 60.0);
+            }
+            if viewport.0 < 610.0 {
+                let (x, y) = runtime.find("sessions-panel-toggle").unwrap();
+                runtime.pointer_down(x, y);
+                runtime.pointer_up(x, y);
+            }
             runtime.update(|_, tx| {
                 tx.scroll_into_view("session-existing");
                 tx.instant();
@@ -309,7 +457,7 @@ pub fn open(s: &mut State, tx: &mut Tx) {
     l.job("rune.open_error", async move {
         let opening = pending.create(&folder).await?;
         let rows = b.sessions(&opening.project, None).await?;
-        Ok(Reply::Opened(opening, rows, None))
+        Ok(Reply::Opened(opening, rows, Restored::Empty))
     });
 }
 pub fn list(s: &mut State, more: bool) {
@@ -319,6 +467,10 @@ pub fn list(s: &mut State, more: bool) {
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
+    if l.pending || more && (l.next.is_none() || l.sessions.len() >= MAX_BROWSED_SESSIONS) {
+        return;
+    }
+    l.listing = true;
     let cursor = if more { l.next.clone() } else { None };
     l.job("rune.list_error", async move {
         Ok(Reply::Listed(
@@ -328,9 +480,10 @@ pub fn list(s: &mut State, more: bool) {
     });
 }
 pub fn create(s: &mut State, _: &mut Tx) {
-    if !crate::workspace::input_ready(s) {
+    if !can_change_session(s) {
         return;
     }
+    let dismiss = s.shell.floating_sessions();
     let Some(l) = s.screen.launcher_mut() else {
         return;
     };
@@ -344,14 +497,34 @@ pub fn create(s: &mut State, _: &mut Tx) {
     // A create request is never automatically retried. Refresh reconciles a lost response.
     l.job("rune.create_error", async move {
         let session = b.create_session(&p, &title).await?;
-        Ok(Reply::Bound(
+        Ok(Reply::Created(
             b.bind(&p, &session.id, true).await?,
             session.title,
+            title,
+            dismiss,
         ))
     });
 }
-pub fn choose(s: &mut State, id: String, title: String) {
-    if !crate::workspace::input_ready(s) {
+pub fn choose(s: &mut State, id: String, tx: &mut Tx) {
+    if !s.screen.is_launcher()
+        && crate::workspace::active_session(s) == Some(id.as_str())
+        && s.phase != Phase::Failed
+    {
+        if s.shell.floating_sessions().is_some() {
+            s.shell.close_floating(tx);
+        }
+    } else {
+        choose_from(s, vec![(id, None)], s.shell.floating_sessions());
+    }
+}
+fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>, dismiss: Option<u64>) {
+    let recovery = candidates
+        .first()
+        .is_some_and(|(id, step)| step.is_none() && can_rebind(s, id));
+    if candidates.is_empty()
+        || !crate::workspace::input_ready(s)
+        || !recovery && !can_change_session(s)
+    {
         return;
     }
     let Some(l) = s.screen.launcher_mut() else {
@@ -360,11 +533,60 @@ pub fn choose(s: &mut State, id: String, title: String) {
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
+    if l.pending {
+        return;
+    }
     l.job("rune.open_error", async move {
-        Ok(Reply::Bound(b.bind(&p, &id, false).await?, title))
+        let mut missing = Vec::new();
+        for (id, step) in candidates {
+            match b.bind_session(&p, &id, false).await {
+                Ok((bound, session)) => {
+                    return Ok(Reply::Selected(
+                        missing,
+                        Some((bound, session.title, step)),
+                        dismiss,
+                    ));
+                }
+                Err(err) if err.is::<SessionMissing>() => missing.push(id),
+                Err(err) if missing.is_empty() => return Err(err),
+                Err(_) => break,
+            }
+        }
+        Ok(Reply::Selected(missing, None, dismiss))
     });
 }
+pub fn can_change_session(s: &State) -> bool {
+    s.phase != Phase::Streaming
+        && crate::workspace::input_ready(s)
+        && !crate::agent::navigation_blocked(s)
+}
+fn can_rebind(s: &State, id: &str) -> bool {
+    !s.screen.is_launcher()
+        && s.phase == Phase::Failed
+        && crate::workspace::active_session(s) == Some(id)
+}
+pub fn can_visit(s: &State, back: bool) -> bool {
+    s.screen
+        .launcher()
+        .is_some_and(|l| l.visits.steps(back, shown(s)).next().is_some())
+}
+pub fn visit(s: &mut State, back: bool) {
+    let Some(l) = s.screen.launcher() else { return };
+    let candidates = l
+        .visits
+        .steps(back, shown(s))
+        .map(|(step, id)| (id.into(), Some(step)))
+        .collect();
+    choose_from(s, candidates, None);
+}
+fn shown(s: &State) -> Option<&str> {
+    (!s.screen.is_launcher())
+        .then(|| crate::workspace::active_session(s))
+        .flatten()
+}
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
+    let blocked = !can_change_session(s);
+    let selected = crate::workspace::active_session(s).map(str::to_owned);
     let Some(l) = s.screen.launcher_mut() else {
         return false;
     };
@@ -400,6 +622,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     };
     l.result = None;
     l.pending = false;
+    l.listing = false;
     match result {
         Ok(Reply::Connected(b, projects, server_id)) => {
             l.connection = Some(b);
@@ -423,26 +646,85 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             l.search = TextEdit::new("");
             l.creation_uncertain = false;
             crate::workspace::opened(s, &project);
-            if let Some((backend, title)) = restored {
-                bind(s, backend, title, tx);
+            match restored {
+                Restored::Bound(backend, title) => bind(s, backend, title, None, tx),
+                Restored::Missing(id) => retire_session(s, &id),
+                Restored::Empty => {}
             }
         }
-        Ok(Reply::Listed(rows, more)) => {
+        Ok(Reply::Listed(mut rows, more)) => {
             if !more {
                 l.creation_uncertain = false;
             }
-            if !more {
-                l.sessions.clear();
-            }
-            for row in rows.rows {
-                if !l.sessions.iter().any(|s| s.id == row.id) {
-                    l.sessions.push(row);
+            if more {
+                let remaining = MAX_BROWSED_SESSIONS.saturating_sub(l.sessions.len());
+                let mut ids = l
+                    .sessions
+                    .iter()
+                    .map(|row| row.id.clone())
+                    .collect::<std::collections::HashSet<_>>();
+                l.sessions.extend(
+                    rows.rows
+                        .into_iter()
+                        .filter(|row| ids.insert(row.id.clone()))
+                        .take(remaining),
+                );
+            } else {
+                let ids = rows
+                    .rows
+                    .iter()
+                    .map(|row| row.id.clone())
+                    .collect::<std::collections::HashSet<_>>();
+                if let Some(old) = l
+                    .sessions
+                    .iter()
+                    .find(|row| Some(&row.id) == selected.as_ref() && !ids.contains(&row.id))
+                {
+                    rows.rows.push(old.clone());
                 }
+                l.sessions = rows.rows;
             }
             l.next = rows.next;
         }
-        Ok(Reply::Bound(b, title)) => {
-            bind(s, b, title, tx);
+        Ok(Reply::Created(b, title, submitted, dismiss)) => {
+            if l.title.text == submitted {
+                l.title = TextEdit::new("");
+                l.show_title = false;
+            }
+            if blocked {
+                l.sessions.insert(
+                    0,
+                    Session {
+                        id: b.session,
+                        title,
+                    },
+                );
+            } else {
+                dismiss_origin_panel(s, dismiss, tx);
+                bind(s, b, title, None, tx);
+            }
+        }
+        Ok(Reply::Selected(missing, selection, dismiss)) => {
+            l.sessions.retain(|row| !missing.contains(&row.id));
+            l.visits.forget(&missing);
+            if let Some(id) = selected
+                .as_deref()
+                .filter(|id| s.phase == Phase::Failed && missing.iter().any(|m| m == id))
+            {
+                retire_session(s, id);
+                tx.instant();
+                return true;
+            }
+            if let Some((b, title, visit)) = selection.filter(|(b, _, _)| {
+                !blocked
+                    || s.phase == Phase::Failed && selected.as_deref() == Some(b.session.as_str())
+            }) {
+                l.show_title = false;
+                dismiss_origin_panel(s, dismiss, tx);
+                bind(s, b, title, visit, tx);
+            } else if !blocked {
+                l.error = Some("rune.open_error");
+            }
         }
         Err(error) => {
             let key = match error.to_string().as_str() {
@@ -460,6 +742,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     }
     tx.instant();
     true
+}
+fn dismiss_origin_panel(s: &mut State, origin: Option<u64>, tx: &mut Tx) {
+    if origin.is_some() && origin == s.shell.floating_sessions() {
+        s.shell.close_floating(tx);
+    }
 }
 pub fn restore(s: &mut State, saved: crate::workspace::Workspace) {
     let intent = s
@@ -504,24 +791,67 @@ pub fn restore(s: &mut State, saved: crate::workspace::Workspace) {
         let opening = pending.create(&saved.folder).await?;
         let rows = backend.sessions(&opening.project, None).await?;
         let bound = if let Some(id) = &saved.active_session_id {
-            let (bound, session) = backend.bind_session(&opening.project, id, false).await?;
-            Some((bound, session.title))
+            match backend.bind_session(&opening.project, id, false).await {
+                Ok((bound, session)) => Restored::Bound(bound, session.title),
+                Err(err) if err.is::<SessionMissing>() => Restored::Missing(id.clone()),
+                Err(err) => return Err(err),
+            }
         } else {
-            None
+            Restored::Empty
         };
         Ok(Reply::Opened(opening, rows, bound))
     });
 }
-fn bind(s: &mut State, b: Backend, title: String, tx: &mut Tx) {
-    let draft = crate::workspace::bound(s, &b);
-    crate::files::bind(s, &b);
+fn retire_session(s: &mut State, id: &str) {
+    if !crate::workspace::unselect_missing(s, id) {
+        return;
+    }
+    s.commands = None;
+    s.incoming = None;
     s.agent = None;
+    s.files = None;
+    s.messages.clear();
+    s.chat_title.clear();
+    s.draft = TextEdit::new("");
+    s.phase = Phase::Ready;
+    s.show_launcher();
+    if let Some(l) = s.screen.launcher_mut() {
+        l.sessions.retain(|row| row.id != id);
+        l.error = Some("rune.open_error");
+    }
+}
+fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize>, tx: &mut Tx) {
+    let same_session =
+        !s.screen.is_launcher() && crate::workspace::active_session(s) == Some(b.session.as_str());
+    if let Some(l) = s.screen.launcher_mut() {
+        l.visits.record(&b.session, visit);
+        if let Some(row) = l.sessions.iter_mut().find(|row| row.id == b.session) {
+            row.title.clone_from(&title);
+        } else {
+            l.sessions.insert(
+                0,
+                Session {
+                    id: b.session.clone(),
+                    title: title.clone(),
+                },
+            );
+        }
+    }
+    let draft = crate::workspace::bound(s, &b);
     s.transcript_display.bind(&b.base, &b.workspace, &b.session);
     s.chat_title = title;
-    s.messages.clear();
+    if !same_session {
+        crate::files::bind(s, &b);
+        s.agent = None;
+        s.messages.clear();
+        s.can_older = false;
+    } else if let Some(agent) = &mut s.agent {
+        // This is the same owned occurrence and session; the in-flight reply guard stays live.
+        agent.online = false;
+        agent.pending_known = false;
+    }
     s.draft = TextEdit::new(draft);
     s.phase = Phase::Loading;
-    s.can_older = false;
     s.paging = false;
     s.history_error = false;
     s.revision += 1;
@@ -540,8 +870,11 @@ fn bind(s: &mut State, b: Backend, title: String, tx: &mut Tx) {
     });
     s.show_chat();
     crate::workspace::capture(s);
-    tx.scroll_to_bottom_instant("history");
+    if !same_session {
+        tx.scroll_to_bottom_instant("history");
+    }
 }
+#[cfg(feature = "test-support")]
 pub fn back(s: &mut State) {
     if !matches!(s.phase, Phase::Ready | Phase::Failed)
         || (!s.draft.text.is_empty() && s.workspace.is_none())

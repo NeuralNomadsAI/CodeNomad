@@ -16,6 +16,9 @@ pub(super) struct Entry {
     project: Option<Project>,
     sessions: Vec<Session>,
     next: Option<String>,
+    visits: crate::launcher::Visits,
+    wanted_panels: [Option<[bool; 2]>; 2],
+    sidebar_edits: Option<(TextEdit, bool, TextEdit, bool)>,
     binding: Option<Backend>,
     cleared: HashSet<String>,
     pending_drafts: HashSet<String>,
@@ -27,6 +30,7 @@ pub struct Ui {
     next_key: u64,
     revision: u64,
     saved_at: u64,
+    panel_widths: [Option<u16>; 2],
     clock: f64,
     pub(super) persistence: Persistence,
     ready: bool,
@@ -46,6 +50,7 @@ impl Ui {
             next_key: 1,
             revision: 0,
             saved_at: 0,
+            panel_widths: [None; 2],
             clock: 0.0,
             persistence: Persistence::new(),
             ready: false,
@@ -64,6 +69,7 @@ impl Ui {
         Snapshot {
             revision: self.revision,
             saved_at: self.saved_at,
+            panel_widths: self.panel_widths,
             tabs: self.entries.iter().map(|e| {
                 let mut saved = e.saved.clone();
                 if let Tab::Workspace(w) = &mut saved {
@@ -100,6 +106,7 @@ impl Ui {
         self.next_key = self.entries.len() as u64;
         self.revision = saved.revision;
         self.saved_at = saved.saved_at;
+        self.panel_widths = saved.panel_widths;
     }
     pub(super) fn release_all(&self) {
         let records = self
@@ -167,6 +174,9 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         project: None,
         sessions: Vec::new(),
         next: None,
+        visits: Default::default(),
+        wanted_panels: [None; 2],
+        sidebar_edits: None,
         binding: None,
         cleared,
         pending_drafts: HashSet::new(),
@@ -178,6 +188,29 @@ fn busy(s: &State) -> bool {
 }
 pub fn input_ready(s: &State) -> bool {
     s.workspace.as_ref().is_none_or(|ui| ui.ready)
+}
+pub fn active_session(s: &State) -> Option<&str> {
+    let ui = s.workspace.as_ref()?;
+    match &ui.entries[ui.active].saved {
+        Tab::Workspace(w) => w.active_session_id.as_deref(),
+        Tab::Blank => None,
+    }
+}
+pub fn unselect_missing(s: &mut State, id: &str) -> bool {
+    if active_session(s) != Some(id) {
+        return false;
+    }
+    capture(s);
+    let Some(ui) = &mut s.workspace else {
+        return false;
+    };
+    if let Tab::Workspace(saved) = &mut ui.entries[ui.active].saved {
+        saved.active_session_id = None;
+        ui.changed();
+        ui.stage();
+        return true;
+    }
+    false
 }
 pub fn prepare_open(s: &mut State, tx: &mut Tx) -> bool {
     if busy(s) {
@@ -242,6 +275,14 @@ pub fn capture(s: &mut State) {
 pub fn draft_changed(s: &mut State, _: &mut Tx) {
     capture(s);
 }
+pub fn panel_width(s: &mut State, index: usize, width: u16) {
+    if let Some(ui) = &mut s.workspace
+        && ui.panel_widths[index] != Some(width)
+    {
+        ui.panel_widths[index] = Some(width);
+        ui.changed();
+    }
+}
 fn stash(s: &mut State) {
     capture(s);
     if let Some(files) = &mut s.files {
@@ -251,28 +292,43 @@ fn stash(s: &mut State) {
     if let Some(ui) = &mut s.workspace {
         let entry = &mut ui.entries[ui.active];
         entry.cache = Some(cache);
-        if let Some(l) = s.screen.launcher() {
+        entry.wanted_panels = s.shell.wanted;
+        if let Some(l) = s.screen.launcher_mut() {
             entry.project = l.project.clone();
             entry.sessions = l.sessions.clone();
             entry.next = l.next.clone();
+            entry.visits = std::mem::take(&mut l.visits);
+            entry.sidebar_edits = Some((
+                std::mem::replace(&mut l.title, TextEdit::new("")),
+                l.show_title,
+                std::mem::replace(&mut l.search, TextEdit::new("")),
+                l.show_search,
+            ));
         }
     }
 }
 fn activate(s: &mut State, tx: &mut Tx) {
+    s.shell.leave_project();
     let Some(ui) = &mut s.workspace else {
         return;
     };
     let item = &mut ui.entries[ui.active];
+    s.shell.wanted = item.wanted_panels;
     if let Some(l) = s.screen.launcher_mut() {
         l.project = item.project.clone();
         l.sessions = item.sessions.clone();
         l.next = item.next.clone();
+        l.visits = std::mem::take(&mut item.visits);
         l.folder = TextEdit::new(match &item.saved {
             Tab::Workspace(w) => w.folder.as_str(),
             _ => "",
         });
         l.error = None;
         l.creation_uncertain = false;
+        (l.title, l.show_title, l.search, l.show_search) = item
+            .sidebar_edits
+            .take()
+            .unwrap_or_else(|| (TextEdit::new(""), false, TextEdit::new(""), false));
     }
     if let Some(cache) = item.cache.take() {
         cache.apply(s);
@@ -294,9 +350,6 @@ fn activate(s: &mut State, tx: &mut Tx) {
     tx.instant();
 }
 pub fn select(s: &mut State, id: &str, tx: &mut Tx) {
-    if busy(s) {
-        return;
-    }
     let Some(index) = s
         .workspace
         .as_ref()
@@ -305,6 +358,10 @@ pub fn select(s: &mut State, id: &str, tx: &mut Tx) {
         return;
     };
     if s.workspace.as_ref().is_some_and(|ui| ui.active == index) {
+        s.shell.leave_project();
+        return;
+    }
+    if busy(s) {
         return;
     }
     stash(s);
@@ -315,12 +372,14 @@ pub fn select(s: &mut State, id: &str, tx: &mut Tx) {
     activate(s, tx);
     capture(s);
 }
-pub fn new_tab(s: &mut State, tx: &mut Tx) {
-    if busy(s)
-        || s.workspace
+pub fn can_new(s: &State) -> bool {
+    !busy(s)
+        && s.workspace
             .as_ref()
-            .is_none_or(|ui| ui.entries.len() >= super::MAX_TABS)
-    {
+            .is_some_and(|ui| ui.entries.len() < super::MAX_TABS)
+}
+pub fn new_tab(s: &mut State, tx: &mut Tx) {
+    if !can_new(s) {
         return;
     }
     stash(s);
@@ -335,6 +394,7 @@ pub fn new_tab(s: &mut State, tx: &mut Tx) {
     capture(s);
 }
 pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
+    crate::shell::Panels::dismiss_outside(s, tx);
     if busy(s) {
         return;
     }
@@ -600,6 +660,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let loaded = ui.persistence.poll_load();
     if let Some(saved) = loaded {
         ui.hydrate(saved);
+        s.shell.restore_widths(ui.panel_widths);
     }
     let became_ready = loading && !ui.persistence.loading;
     if became_ready {
