@@ -6,6 +6,8 @@ import { backendEvents } from "../lib/backend-events"
 import { tGlobal } from "../lib/i18n"
 import { parseInstanceKey } from "../lib/backend-identity"
 import { generateUUID } from "../lib/client-identity"
+import { transcriptCustomExpansionPatch } from "../components/transcript-visibility"
+import { OTHER_TOOL_NAME, resolveToolVisibility } from "../components/tool-call/tool-presentation"
 import { sameServerSelection } from "../lib/native/server-selection-intent"
 import { readRemoteProjectHistory, RECENT_PROJECT_LIMIT, type RemoteProjectRecentEdit } from "../lib/remote-project-recent-data"
 import type { ConversationPermissionMode, RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
@@ -1498,18 +1500,8 @@ function setDiffViewMode(mode: DiffViewMode): void {
 
 function setToolOutputExpansion(mode: VisibilityPreference): void {
   const current = preferences()
-  if (current.toolCallExpansionDefaults.tools.other === mode) return
-  updateUiSettings({
-    toolOutputExpansion: mode === "hidden" ? current.toolOutputExpansion : mode,
-    toolCallExpansionDefaults: {
-      ...current.toolCallExpansionDefaults,
-      preset: "custom",
-      tools: {
-        ...current.toolCallExpansionDefaults.tools,
-        other: mode,
-      },
-    },
-  })
+  if (resolveToolVisibility(current, OTHER_TOOL_NAME) === mode) return
+  updateUiSettings(transcriptCustomExpansionPatch(current, { tool: { key: OTHER_TOOL_NAME, mode } }))
 }
 
 function setDiagnosticsExpansion(mode: VisibilityPreference): void {
@@ -1525,14 +1517,7 @@ function setToolInputsVisibility(mode: ToolInputsVisibilityPreference): void {
 function setThinkingBlocksExpansion(mode: ExpansionPreference): void {
   const current = preferences()
   if (current.thinkingBlocksExpansion === mode && current.toolCallExpansionDefaults.thinking === mode) return
-  updateUiSettings({
-    thinkingBlocksExpansion: mode,
-    toolCallExpansionDefaults: {
-      ...current.toolCallExpansionDefaults,
-      preset: "custom",
-      thinking: mode,
-    },
-  })
+  updateUiSettings(transcriptCustomExpansionPatch(current, { thinking: mode }))
 }
 
 function toggleShowThinkingBlocks(): void {

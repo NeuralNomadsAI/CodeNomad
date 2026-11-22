@@ -22,6 +22,30 @@ const center = async (locator: ReturnType<Page["locator"]>) => {
 }
 const pressed = (column: ReturnType<Page["locator"]>) => column.evaluateAll(buttons => buttons.map(button => button.getAttribute("aria-pressed")))
 
+test("customizing Shell from a saved Everything preset keeps the other rows unchanged", async () => {
+  const page = await fixture.browser.newPage({ viewport: { width: 1200, height: 900 }, locale: "en-US" })
+  try {
+    await page.addInitScript(() => { (window as any).EventSource = class { addEventListener() {} removeEventListener() {} close() {} } })
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await page.goto(`${fixture.url}?legacyEverything`)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.getByRole("button", { name: "Message content", exact: true }).click()
+    assert.equal(await preset(page).inputValue(), "everything")
+    const groups = page.getByRole("group", { name: "Tool groups", exact: true })
+    const shell = page.getByRole("group", { name: "shell", exact: true })
+    const states = () => pressed(page.locator(".transcript-filter-row button"))
+    const before = await states()
+    const shellChevron = shell.getByRole("button", { name: "Collapse shell", exact: true })
+    const index = await shellChevron.evaluate(button => [...document.querySelectorAll(".transcript-filter-row button")].indexOf(button))
+    assert.equal(await groups.getByRole("button", { name: "Collapse Tool groups" }).getAttribute("aria-pressed"), "true")
+    await shellChevron.click()
+    await page.locator('.transcript-filters[aria-busy="false"]').waitFor()
+    assert.equal(await preset(page).inputValue(), "custom")
+    before[index] = "false"
+    assert.deepEqual(await states(), before)
+  } finally { await page.close() }
+})
+
 test("dragging across Message content toggles gives every crossed row of that column the first one's new state", async () => {
   const page = await fixture.browser.newPage({ viewport: { width: 1200, height: 900 }, locale: "en-US" })
   const errors: string[] = []

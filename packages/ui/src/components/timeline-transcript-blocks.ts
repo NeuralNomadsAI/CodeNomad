@@ -13,13 +13,19 @@ function transcriptRow(scroller: HTMLElement, messageId: string) {
   return scroller.querySelector<HTMLElement>(`[data-virtual-follow-key="${CSS.escape(messageId)}"]`)
 }
 
+export interface TranscriptBlockIdentity {
+  partId?: string
+  preferGroupHeader?: boolean
+}
+
 /** The rendered transcript block a marker stands for; a collapsed group's tools share its header. */
 export function findTimelineSegmentBlock(scroller: HTMLElement, segment: TimelineSegment,
   technicalGroupForPart: (messageId: string, partId: string) => TranscriptTechnicalGroup | undefined,
-  preferGroupHeader = false): HTMLElement | null {
+  identity?: TranscriptBlockIdentity): HTMLElement | null {
   const row = transcriptRow(scroller, segment.messageId)
-  const byPart = (selector: (id: string) => string, ids: readonly string[] | undefined) =>
-    (ids ?? []).map(id => row?.querySelector(selector(CSS.escape(id)))).find(shown) ?? null
+  const ids = identity?.partId ? [identity.partId] : segment.toolPartIds ?? segment.partIds ?? []
+  const byPart = (selector: (id: string) => string) =>
+    ids.map(id => row?.querySelector(selector(CSS.escape(id)))).find(shown) ?? null
   // The header renders in the message where the group starts.
   const groupHeader = (partId: string | undefined) => {
     if (!partId) return null
@@ -28,18 +34,18 @@ export function findTimelineSegmentBlock(scroller: HTMLElement, segment: Timelin
     const header = scope?.querySelector(`[data-group-part-ids~="${CSS.escape(start?.partId ?? partId)}"] ${GROUP_HEADER_SELECTOR}`)
     return shown(header) ? header : null
   }
-  if (preferGroupHeader) {
-    const header = groupHeader(segment.toolPartIds?.[0] ?? segment.partIds?.[0])
+  if (identity?.preferGroupHeader) {
+    const header = groupHeader(ids[0])
     if (header) return header
   }
   switch (segment.type) {
     case "user":
     case "assistant":
-      return byPart(id => `.message-item-base[data-message-content-start-part-id="${id}"]`, segment.partIds)
+      return byPart(id => `.message-item-base[data-message-content-start-part-id="${id}"]`)
     case "reasoning":
-      return byPart(id => `.message-reasoning-card[data-part-id="${id}"]`, segment.partIds) ?? groupHeader(segment.partIds?.[0])
+      return byPart(id => `.message-reasoning-card[data-part-id="${id}"]`) ?? groupHeader(ids[0])
     case "tool":
-      return byPart(id => `.tool-call-message[data-part-id="${id}"]`, segment.toolPartIds) ?? groupHeader(segment.toolPartIds?.[0])
+      return byPart(id => `.tool-call-message[data-part-id="${id}"]`) ?? groupHeader(ids[0])
     case "compaction": {
       const card = row?.querySelector(".message-compaction-card")
       return shown(card) ? card : null
@@ -66,7 +72,12 @@ export function readingLineBlock(scroller: HTMLElement, segmentsByMessage: Reado
       const rect = block.getBoundingClientRect()
       if (rect.height === 0 || rect.bottom <= line) continue
       const segment = segmentForBlock(messageId, segments, block)
-      if (segment) return { segment, preferGroupHeader: block.matches(GROUP_HEADER_SELECTOR), offset: rect.top - top }
+      if (segment) return {
+        segment,
+        partId: block.dataset.partId ?? block.dataset.messageContentStartPartId,
+        preferGroupHeader: block.matches(GROUP_HEADER_SELECTOR),
+        offset: rect.top - top,
+      }
     }
   }
   return null

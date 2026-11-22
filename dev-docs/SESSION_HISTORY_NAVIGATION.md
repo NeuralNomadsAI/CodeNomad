@@ -176,10 +176,11 @@ jumps and an activation restore also hand the active marker back to the reading
 line. Otherwise the active
 marker is the first marked block reaching more than 4 px below the transcript top,
 re-read once per frame on scroll and content rendering from the mounted rows only.
-Message content layout preferences capture the selected marker (or the actual block
-at the reading line and its viewport offset) before rendering changes. The same
-bounded reader-settlement hold resolves that marker's new block, including an
-individual tool card or its collapsed group header. Following the latest reply
+Message content layout preferences capture the selected marker or the exact block
+at the reading line (message and part identity, header or card, and viewport offset)
+before rendering changes. The bounded reader-settlement hold resolves that target
+again, including an individual tool card or its collapsed group header. A shared
+marker can stand for several distinct reasoning cards. Following the latest reply
 keeps the bottom; paging and restoration retain their own placement.
 Previous/next user-message jumps advance from that highlighted marker's message,
 including a selected marker, while it has a timeline marker or remains in the

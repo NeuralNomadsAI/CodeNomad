@@ -4,7 +4,7 @@ import StatusTab from "../../../src/components/instance/shell/right-panel/tabs/S
 import { ChatSettingsSection } from "../../../src/components/settings/chat-settings-section"
 import { NotificationRoutingTable } from "../../../src/components/settings/notification-routing-table"
 import TranscriptFilters from "../../../src/components/transcript-filters"
-import { transcriptVisibility, transcriptVisibilityRows } from "../../../src/components/transcript-visibility"
+import { transcriptPresetPatch, transcriptVisibility, transcriptVisibilityRows } from "../../../src/components/transcript-visibility"
 import { ConfigProvider, preferences, toggleUsageMetrics, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
@@ -30,6 +30,10 @@ const client: any = {
 const query = new URLSearchParams(location.search)
 const saved = query.get("saved"), saveDelay = Number(query.get("saveDelay") ?? 0)
 let config: any = { settings: { locale: "en", ...(saved === null ? {} : { showUsageMetrics: saved === "true", usageMetricsExpansion: "expanded" }) } }
+if (query.has("legacyEverything")) {
+  Object.assign(config.settings, transcriptPresetPatch("everything"))
+  delete config.settings.toolGroupVisibility
+}
 serverApi.fetchConfigOwner = async () => config
 let saves = 0, inFlight = 0, maxInFlight = 0, systemChecks = 0
 serverApi.patchConfigOwner = async (_owner, patch: any) => {

@@ -36,7 +36,7 @@ import { createSessionOutline } from "../stores/session-outline"
 import { MissingHistoryAnchorError } from "../stores/history-window"
 import { sessions } from "../stores/session-state"
 import { createSessionOutlineProjection } from "./session-outline-projection"
-import { findTimelineSegmentBlock, readingLineBlock } from "./timeline-transcript-blocks"
+import { findTimelineSegmentBlock, readingLineBlock, type TranscriptBlockIdentity } from "./timeline-transcript-blocks"
 import { JUMP_USER_MESSAGE_EVENT, findUserMessageJumpTarget, keyAllowsUserMessageJump, type JumpUserMessageDetail, type UserMessageJumpDirection } from "./user-message-navigation"
 import SessionCleanupProgress from "./session-cleanup-progress"
 import type { SessionSearchMatch } from "../lib/session-search"
@@ -912,18 +912,18 @@ export default function MessageSection(props: MessageSectionProps) {
     return scroller ? readingLineBlock(scroller, timelineSegmentsByMessage())?.segment ?? null : null
   }
 
-  function timelineBlockAnchor(messageId: string, segmentId: string, offset: number, preferGroupHeader = false) {
-    const getSegment = () => timelineSegmentsByMessage().get(messageId)?.find(segment => segment.id === segmentId)
+  function timelineBlockAnchor(messageId: string, segmentId: string, offset: number, reading?: TranscriptBlockIdentity & { segment: TimelineSegment }) {
+    const getSegment = () => reading?.segment ?? timelineSegmentsByMessage().get(messageId)?.find(segment => segment.id === segmentId)
     const segment = getSegment()
-    const partId = segment?.toolPartIds?.[0] ?? (segment?.type === "reasoning" ? segment.partIds?.[0] : undefined)
+    const partId = reading?.partId ?? segment?.toolPartIds?.[0] ?? (segment?.type === "reasoning" ? segment.partIds?.[0] : undefined)
     const group = partId ? technicalGroupForPart(messageId, partId) : undefined
-    const groupStart = group && group.parts.length > 1 && (preferGroupHeader || !isTechnicalGroupExpanded(group)) ? group.parts[0] : undefined
+    const groupStart = group && group.parts.length > 1 && (reading?.preferGroupHeader || !isTechnicalGroupExpanded(group)) ? group.parts[0] : undefined
     return {
       key: groupStart?.messageId ?? messageId,
       offset,
       select: () => {
         const scroller = streamElement(), current = getSegment()
-        return scroller && current ? findTimelineSegmentBlock(scroller, current, technicalGroupForPart, preferGroupHeader) : null
+        return scroller && current ? findTimelineSegmentBlock(scroller, current, technicalGroupForPart, reading) : null
       },
     }
   }
@@ -940,7 +940,7 @@ export default function MessageSection(props: MessageSectionProps) {
     if (marker && staysVisible(marker)) return timelineBlockAnchor(marker.messageId, marker.id, 0)
     const reading = readingLineBlock(scroller, segments)
     if (reading && staysVisible(reading.segment)) {
-      return timelineBlockAnchor(reading.segment.messageId, reading.segment.id, reading.offset, reading.preferGroupHeader)
+      return timelineBlockAnchor(reading.segment.messageId, reading.segment.id, reading.offset, reading)
     }
   }
 

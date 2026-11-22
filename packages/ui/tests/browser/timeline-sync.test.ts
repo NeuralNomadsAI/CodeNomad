@@ -94,7 +94,12 @@ before(async () => {
   groupedStore = path.join(directory, "grouped.sqlite")
   const reads = Array.from({ length: 30 }, (_, n) => tool(`${id(1)}-${n}`, "read"))
   createSessionStore(groupedStore, [message(0),
-    assistant(1, [{ type: "text", text: "Checking the source." }, ...reads.slice(0, 12)]),
+    assistant(1, [
+      { type: "reasoning", text: "First check\n".repeat(32) },
+      { type: "reasoning", text: "Second check\n".repeat(12) },
+      { type: "text", text: "Checking the source." },
+      ...reads.slice(0, 12),
+    ]),
     assistant(2, reads.slice(12)),
     ...Array.from({ length: 20 }, (_, n) => assistant(n + 3, [{ type: "text", text: prose(`Reply ${n}`, 4) }])),
   ])
@@ -234,6 +239,29 @@ test("changing tool grouping keeps the selected marker or the reader on the same
   await header.and(page.locator('[aria-expanded="true"]')).waitFor()
   await settleTranscript(page, 450)
   assert.ok(Math.abs(await headerOffset() - after) <= 2)
+}, groupedStore))
+
+test("tool grouping preserves the exact reasoning card being read, not the first card of its marker", { timeout: 90_000 }, () => withSession("everything", async (page) => {
+  const marker = (await markers(page)).find(candidate => candidate.id === `${id(1)}:reasoning:0`)!
+  assert.equal(marker.partIds?.length, 2, "both reasoning cards share one marker")
+  await clickMarker(page, marker)
+  const stream = page.locator(".message-stream")
+  const card = page.locator(`.message-reasoning-card[data-part-id="${marker.partIds![1]}"]`)
+  const offset = async () => (await card.boundingBox())!.y - (await stream.boundingBox())!.y
+  const box = (await stream.boundingBox())!
+  await page.mouse.move(box.x + 6, box.y + 6)
+  await page.mouse.wheel(0, Math.round(await offset() + 8))
+  await settleTranscript(page, 450)
+  const before = await offset()
+  assert.ok(Math.abs(before + 8) <= 2, `reading the second reasoning card (${before}px)`)
+  await assertReadingLineActive(page, "inside the second reasoning card")
+  await page.evaluate(() => (window as any).fixture.showFilters(true))
+  await page.getByRole("button", { name: "Message content", exact: true }).click()
+  await page.getByRole("button", { name: "Disable tool grouping" }).click()
+  await page.locator(".message-exploration-group").first().waitFor({ state: "detached" })
+  await settleTranscript(page, 450)
+  const after = await offset()
+  assert.ok(Math.abs(before - after) <= 2, `second reasoning card moves from ${before}px to ${after}px`)
 }, groupedStore))
 
 /** The active marker stands for the block at the transcript's reading line. */

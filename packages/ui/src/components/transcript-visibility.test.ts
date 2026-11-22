@@ -51,6 +51,13 @@ describe("shared transcript visibility controls", () => {
       assert.equal(transcriptVisibility(after, item), transcriptVisibility(before, item), item.key)
     }
   })
+  it("saves inherited non-tool defaults along with the Custom tool column", () => {
+    const before = { ...current(), ...transcriptPresetPatch("everything") }
+    const patch = transcriptVisibilityPatch(before, row("bash"), "collapsed")
+    assert.equal(patch.toolCallExpansionDefaults?.preset, "custom")
+    assert.equal(patch.toolGroupVisibility, "expanded")
+    assert.equal(patch.usageMetricsExpansion, "expanded")
+  })
   it("routes retired tools through Other even with conflicting saved overrides", () => {
     const before = current()
     before.toolCallExpansionDefaults = {
