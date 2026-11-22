@@ -5,7 +5,8 @@ use crate::{
     tokens,
 };
 use rune::{Color, Cx, El, Icon, Tx};
-use rune_kit::shell::{TabItem, TabItemStatus, TabOrientation, TabStrip, TabWords};
+use rune_kit::{Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant};
+use std::rc::Rc;
 
 // Lucide Plus, as used by Solid instance-tabs.tsx.
 static PLUS: Icon = Icon {
@@ -32,12 +33,13 @@ impl Status {
             Self::Unavailable => "instanceShell.worktree.unavailable",
         }
     }
-    fn mark(self) -> Option<TabItemStatus> {
+    fn color(self) -> &'static str {
         match self {
-            Self::Working | Self::Compacting => Some(TabItemStatus::Busy),
-            Self::Permission => Some(TabItemStatus::Attention),
-            Self::Idle => None,
-            Self::Unavailable => Some(TabItemStatus::Failed),
+            Self::Working => "session-status-working-fg",
+            Self::Compacting => "session-status-compacting-fg",
+            Self::Permission => "session-status-permission-fg",
+            Self::Idle => "session-status-idle-fg",
+            Self::Unavailable => "status-error-fg",
         }
     }
 }
@@ -93,61 +95,156 @@ pub fn strip<S: 'static>(
                 .color(t.color("new-tab-text"))
                 .a11y_hidden(),
         );
-    TabStrip::new("project-tabs", TabOrientation::Horizontal)
-        .tabs(tabs.iter().map(|tab| {
-            let selected = active == Some(tab.id);
-            let description = tab
-                .status
-                .map(|status| {
-                    catalogue::format(
-                        locale,
-                        "instanceTab.status.ariaLabel",
-                        &[("status", word(status.key()))],
-                    )
-                })
-                .unwrap_or_default();
-            TabItem::new(tab.id, tab.title)
-                .closable(tab.closable)
-                .status(tab.status.and_then(Status::mark))
-                .decorate(move |el, _| {
-                    el.role("tab")
-                        .description(description)
-                        .radius(t.number("radius-md").px())
-                        .fill(t.color(if selected {
-                            "surface-shade-light"
-                        } else {
-                            "surface-secondary"
-                        }))
-                        .hover(t.color(if selected {
-                            "surface-shade-light"
-                        } else {
-                            "tab-inactive-hover-bg"
-                        }))
-                })
-        }))
-        .active(active)
-        .viewport_width(cx.layout_size("project-tabs").map(|size| size[0]))
-        .row_height(
-            t.length(Length::Chrome).px() + t.space(Space::Xs).px()
-                - t.metric("button", "borderTopWidth").px(),
-        )
-        .gap(0.0)
-        .fill(t.color("surface-secondary"))
-        .hover_none(true)
-        .close_tab_stop(true)
-        .words(TabWords {
-            close: word("instanceTab.actions.close.ariaLabel"),
-            busy: word("instanceTab.status.working"),
-            attention: word("instanceTab.status.permission"),
-            unread: word("settings.nav.notifications"),
-            failed: word("instanceShell.worktree.unavailable"),
-        })
+    let select = Rc::new(on_select);
+    let close = Rc::new(on_close);
+    let height = t.length(Length::Chrome).px() + t.space(Space::Xs).px()
+        - t.metric("button", "borderTopWidth").px();
+    let minimum = t.length(Length::TouchTarget).px();
+    let width = cx
+        .layout_size("project-tabs")
+        .map(|size| ((size[0] - new_size) / tabs.len().max(1) as f32).max(minimum))
+        .unwrap_or(minimum);
+    let items = tabs.iter().map(|tab| {
+        let selected = active == Some(tab.id);
+        let description = tab
+            .status
+            .map(|status| {
+                catalogue::format(
+                    locale,
+                    "instanceTab.status.ariaLabel",
+                    &[("status", word(status.key()))],
+                )
+            })
+            .unwrap_or_default();
+        let ink = t.color(if selected {
+            "tab-active-text"
+        } else {
+            "tab-inactive-text"
+        });
+        let background = t.color(if selected {
+            "surface-shade-light"
+        } else {
+            "surface-secondary"
+        });
+        let title = tab.title.to_owned();
+        let font = theme.ty.ui_compact;
+        let (id, key, action) = (tab.id.to_owned(), format!("t-{}", tab.id), select.clone());
+        let reveal = key.clone();
+        let mut tab_button = Button::new(tab.title)
+            .variant(ButtonVariant::Ghost)
+            .label_with(move |_, _| {
+                rune::text(title)
+                    .font(font)
+                    .color(ink)
+                    .truncate()
+                    .dir(rune::Direction::Auto)
+            })
+            .on_press_tx(move |s, tx| {
+                action(s, &id, tx);
+                tx.scroll_into_view_in("project-tabs-scroll", reveal.clone());
+            })
+            .build(&theme)
+            .key(key)
+            .role("tab")
+            .label(tab.title)
+            .description(description)
+            .focus_selected(selected)
+            .h(height)
+            .grow(1.0)
+            .shrink()
+            .min_w(0.0)
+            .radius(t.number("radius-md").px())
+            .fill(background)
+            .hover(t.color(if selected {
+                "surface-shade-light"
+            } else {
+                "tab-inactive-hover-bg"
+            }));
+        if tab.closable {
+            let (id, action) = (tab.id.to_owned(), close.clone());
+            tab_button = tab_button.on_middle_press(move |s, tx| action(s, &id, tx));
+        }
+        // Share the measured viewport until Solid's intrinsic/max widths are generated.
+        let mut slot = rune::row()
+            .key(format!("occurrence-{}", tab.id))
+            .w(width)
+            .h(height)
+            .items_center()
+            .fill(background)
+            .child(tab_button.role("tab"));
+        if let Some(status) = tab.status {
+            let side = t.length(Length::Icon).px() / 2.0;
+            slot = slot.child(
+                rune::el()
+                    .size(side, side)
+                    .radius(side / 2.0)
+                    .fill(t.color(status.color()))
+                    .a11y_hidden(),
+            );
+        }
+        if tab.closable {
+            let (id, action) = (tab.id.to_owned(), close.clone());
+            slot = slot.child(
+                IconButton::new(theme.glyph.close)
+                    .control_size(ControlSize::Small)
+                    .variant(IconButtonVariant::GhostMuted)
+                    .label(word("instanceTab.actions.close.ariaLabel"))
+                    .on_press_tx(move |s, tx| action(s, &id, tx))
+                    .build(&theme)
+                    .key(format!("c-{}", tab.id)),
+            );
+        }
+        slot
+    });
+    let ids: Vec<_> = tabs.iter().map(|tab| tab.id.to_owned()).collect();
+    let active_index = tabs
+        .iter()
+        .position(|tab| Some(tab.id) == active)
+        .unwrap_or(0);
+    let rtl = catalogue::direction(locale) == "rtl";
+    let list = rune::row()
+        .key("project-tabs-list")
+        .role("tablist")
         .label(word("instanceShell.rightPanel.customize.tabs"))
-        .trailing_action(new)
-        .trailing_width(new_size)
-        .on_select(on_select)
-        .on_close(on_close)
-        .build(&theme)
+        .focus_group()
+        .items_center()
+        .children(items)
+        .on_key(move |s, event, tx| {
+            if ids.is_empty() || event.mods != rune::Mods::default() {
+                return false;
+            }
+            let index = match event.key {
+                rune::Key::Right => {
+                    (active_index + if rtl { ids.len() - 1 } else { 1 }) % ids.len()
+                }
+                rune::Key::Left => (active_index + if rtl { 1 } else { ids.len() - 1 }) % ids.len(),
+                rune::Key::Home => 0,
+                rune::Key::End => ids.len() - 1,
+                _ => return false,
+            };
+            select(s, &ids[index], tx);
+            let key = format!("t-{}", ids[index]);
+            tx.focus(key.clone(), true);
+            tx.scroll_into_view_in("project-tabs-scroll", key);
+            true
+        });
+    rune::row()
+        .key("project-tabs")
+        .grow(1.0)
+        .shrink()
+        .min_w(0.0)
+        .items_center()
+        .fill(t.color("surface-secondary"))
+        .child(
+            rune::row()
+                .key("project-tabs-scroll")
+                .shrink()
+                .min_w(0.0)
+                .h(height)
+                .scroll_x()
+                .child(list),
+        )
+        .child(new)
         .locale_direction(locale)
 }
 
@@ -210,6 +307,68 @@ mod tests {
         rt.frame(1.0 / 60.0);
     }
     #[test]
+    fn web_mirror_keeps_tabs_selected_state_and_sibling_closes() {
+        let rt = runtime("fr");
+        let items: Vec<serde_json::Value> = serde_json::from_str(&rt.a11y_json()).unwrap();
+        let tabs: Vec<_> = items.iter().filter(|e| e["o"] == "tab").collect();
+        assert_eq!(tabs.len(), 2, "real web mirror: {}", rt.a11y_json());
+        assert_eq!(tabs.iter().filter(|e| e["se"] == true).count(), 1);
+        assert!(tabs.iter().any(|e| e["t"] == "Alpha" && e["se"] == true));
+        let close = catalogue::message("fr", "instanceTab.actions.close.ariaLabel").unwrap();
+        assert_eq!(
+            items
+                .iter()
+                .filter(|e| e["k"] == "button" && e["t"] == close)
+                .count(),
+            2
+        );
+    }
+    #[test]
+    fn keyboard_arrows_select_tabs_and_close_remains_a_tab_stop() {
+        for (locale, key) in [("en", rune::Key::Right), ("he", rune::Key::Left)] {
+            let mut rt = runtime(locale);
+            let point = rt.find("t-a").unwrap();
+            tap(&mut rt, point);
+            rt.key(rune::KeyEvent {
+                key,
+                mods: rune::Mods::default(),
+            });
+            rt.frame(1.0 / 60.0);
+            assert_eq!(rt.state.active, "b", "arrow selection follows tabs");
+            assert!(
+                rt.elements()
+                    .iter()
+                    .any(|e| e.key.as_deref() == Some("c-a") && e.focusable)
+            );
+            let mirror: Vec<serde_json::Value> = serde_json::from_str(&rt.a11y_json()).unwrap();
+            assert!(
+                mirror
+                    .iter()
+                    .any(|e| e["o"] == "tab" && e["t"] == "Beta" && e["se"] == true)
+            );
+            rt.update(|_, tx| tx.focus("c-a", true));
+            rt.frame(1.0 / 60.0);
+            assert!(
+                rt.elements()
+                    .iter()
+                    .any(|e| e.key.as_deref() == Some("c-a") && e.focused),
+                "focused: {:?}",
+                rt.elements()
+                    .iter()
+                    .filter(|e| e.focused)
+                    .map(|e| &e.path)
+                    .collect::<Vec<_>>()
+            );
+            rt.key(rune::KeyEvent {
+                key: rune::Key::Text(" ".into()),
+                mods: rune::Mods::default(),
+            });
+            rt.frame(1.0 / 60.0);
+            assert_eq!(rt.state.closed, ["a"]);
+            assert_eq!(rt.state.active, "b");
+        }
+    }
+    #[test]
     fn real_kit_tabs_dispatch_select_close_and_trailing_new() {
         let mut rt = runtime("fr");
         let point = rt.find("t-b").unwrap();
@@ -219,7 +378,9 @@ mod tests {
         let button = rt
             .elements()
             .into_iter()
-            .find(|e| e.path.contains("/t-a/") && e.label.as_deref() == Some(close) && e.focusable)
+            .find(|e| {
+                e.key.as_deref() == Some("c-a") && e.label.as_deref() == Some(close) && e.focusable
+            })
             .expect("scoped close button");
         tap(
             &mut rt,

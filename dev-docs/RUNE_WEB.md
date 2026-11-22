@@ -22,6 +22,8 @@ La révision Rune est celle épinglée dans le manifeste de l'application. Les r
 
 Chaque défaut reçoit une reproduction minimale et une attribution : adaptation CodeNomad lorsqu'elle possède le contrat concerné, issue Rune lorsque le défaut se reproduit dans une scène Rune isolée. Les mesures de navigateur avec émulation et celles sur appareil physique sont conservées séparément dans les preuves.
 
+Les onglets CodeNomad assemblent un bouton de sélection et un bouton de fermeture frères : leurs rôles et états restent présents dans le miroir web. Le regroupement `tablist` nécessite une évolution Rune, suivie dans [l'issue 1344](https://github.com/anomalyco/rune/issues/1344), avec reproduction autonome des onglets fermables et du conteneur. Le parcours lecteur d'écran complet conserve sa qualification propre.
+
 ## Vérifications reproductibles
 
 Le bundle produit est qualifié en lecture avec le vrai serveur Rust et OpenCode simulé : connexion avec cookies, deux pages de sessions, historique exact, session vide puis retour, véritable EventSource et refus 401 sans cookie. Six contextes Chromium couvrent bureau/tablette/téléphone et clair/sombre, avec contrôles dans le viewport, captures et contraste. L'accès HTTPS appairé et les appareils physiques demandent leur qualification propre.
