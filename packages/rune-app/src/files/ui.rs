@@ -23,6 +23,7 @@ pub struct Row {
 pub struct Ui {
     pub reading: crate::chat::reading::Position,
     pub reader_close: crate::window_control::WindowCloseState,
+    pub(super) pictures: super::markdown_images::Pictures,
     pub presentation: super::presentation::Presentation,
     pub document: Editor,
     pub reader: Reader,
@@ -50,6 +51,7 @@ impl Ui {
         Self {
             reading: Default::default(),
             reader_close: Default::default(),
+            pictures: super::markdown_images::Pictures::new(wake.clone()),
             presentation: super::presentation::Presentation::new(wake.clone()),
             document: Editor::new(
                 backend.clone(),
@@ -81,6 +83,7 @@ impl Ui {
         self.active = active;
         if !active {
             self.host_width = None;
+            self.pictures.suspend();
         }
         self.document.activate(active);
         self.reader.activate(active);
@@ -112,6 +115,9 @@ impl Ui {
         self.demand();
     }
     pub fn online(&mut self, online: bool) {
+        if !online {
+            self.pictures.suspend();
+        }
         self.document.online(online && !self.stopped);
         self.reader.online(online && !self.stopped);
         if online && !self.online {
@@ -151,6 +157,7 @@ impl Ui {
                 }
             }
             WorkspaceEvent::Stopped { workspace_id } if workspace_id == self.backend.workspace => {
+                self.pictures.suspend();
                 self.tree.close();
                 self.document.close();
                 self.reader.close();
@@ -228,6 +235,7 @@ impl Ui {
     }
     pub fn open(&mut self, path: String) {
         if !self.stopped {
+            self.pictures.suspend();
             self.reader_close = Default::default();
             self.presentation.reset();
             self.document
@@ -241,6 +249,7 @@ impl Ui {
         }
     }
     pub fn close_reader(&mut self) {
+        self.pictures.suspend();
         self.presentation.reset();
         self.document.close();
         self.reader.close();
@@ -330,6 +339,16 @@ impl Ui {
         changed |= self
             .presentation
             .sync(&self.reader, self.document.revision());
+        let markdown = self.presentation.kind
+            == Some(super::presentation::Kind::Text(
+                super::document::Format::Markdown,
+            ));
+        changed |= self.pictures.sync(
+            markdown.then(|| (self.document.scope(), self.document.revision())),
+            markdown && !self.presentation.source && self.active && self.online && !self.stopped,
+            &self.backend.base,
+            &self.document.edit().text,
+        );
         changed
     }
     fn launch(&mut self, requests: Vec<Read>) {

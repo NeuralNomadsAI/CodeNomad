@@ -92,6 +92,11 @@ try {
       assert(Math.abs(heading.rect[0] - x - hx) <= 1 && Math.abs(heading.rect[1] - y - hy) <= 1, 'Rendered heading origin')
       const image = tree.elements.find(n => n.role === 'image' && n.label === 'blocked')
       geometry.markdownImageOffset = image.rect[1] - y - geometry['.workspace-markdown img'].y
+      geometry.markdownBlocks = await view.locator('.workspace-markdown .markdown-body').evaluate(body =>
+        [...body.children].map(node => {
+          const { marginTop, marginBottom, lineHeight } = getComputedStyle(node)
+          return { tag: node.tagName, marginTop, marginBottom, lineHeight, y: node.getBoundingClientRect().y, height: node.getBoundingClientRect().height }
+        }))
     }
     assert.deepEqual(errors, [])
     await page.close()

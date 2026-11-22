@@ -169,7 +169,9 @@ fn reader(s: &State) -> El {
                         false,
                         |ui, tx| {
                             ui.presentation.source = !ui.presentation.source;
-                            if !ui.presentation.source {
+                            if ui.presentation.source {
+                                ui.pictures.suspend();
+                            } else {
                                 tx.scroll_to_y(
                                     "file-rendered-scroll",
                                     ui.presentation.rendered_scroll.get(),
@@ -226,6 +228,7 @@ fn reader(s: &State) -> El {
                             let unwrapped = ui.presentation.unwrapped_blocks.clone();
                             let input_scope = s.input_scope.clone();
                             let revision = ui.document.revision();
+                            let pictures = ui.pictures.shown.clone();
                             rune::col().pad(Space::Lg).child(theme::markdown(
                                 dark,
                                 text,
@@ -235,6 +238,7 @@ fn reader(s: &State) -> El {
                                 move |code| {
                                     code_controls(dark, &input_scope, scope, revision, code)
                                 },
+                                move |source| pictures.get(source).cloned(),
                             ))
                         },
                     )
