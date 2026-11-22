@@ -1,11 +1,8 @@
 import assert from "node:assert/strict"
 import { before, after, test } from "node:test"
-import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
-import { createFixtureShutdown } from "./fixture-shutdown"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
-import { createFixtureCache } from "./fixture-cache"
+import { borrowFixture } from "./fixture-borrow"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
 // Scroll-pipeline convergence over the real VirtualFollowList: streaming
 // growth issues at most one list-owned scrollTop write per frame, keeps
@@ -13,25 +10,19 @@ import { createFixtureCache } from "./fixture-cache"
 // measurement, wheel routing stops re-probing the ancestor chain on every
 // event, and reactive effect re-runs never write scrollTop synchronously.
 
-let server: ViteDevServer, browser: Browser, url: string
-let fixtureCache: Awaited<ReturnType<typeof createFixtureCache>>
+let browser: Browser, url: string
 before(async () => {
-  fixtureCache = await createFixtureCache()
-  const shutdown = createFixtureShutdown(fixtureCache)
-  server = await createServer({ cacheDir: fixtureCache.cacheDir, configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", plugins: [shutdown.plugin, solid(), {
-    name: "scroll-pipeline-fixture", configureServer(server) {
-      server.middlewares.use("/fixture", async (req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await server.transformIndexHtml("/fixture", `<html><body><div id="root" style="display:flex;height:700px;width:1100px"></div><script type="module" src="/tests/browser/fixtures/scroll-pipeline.tsx"></script></body></html>`))
-      })
-    },
-  }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
-  shutdown.own(server)
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
+  const fixture = await borrowFixture({
+    name: "scroll-pipeline",
+    routes: [
+      { path: "/fixture", html: "<html><body><div id=\"root\" style=\"display:flex;height:700px;width:1100px\"></div><script type=\"module\" src=\"/tests/browser/fixtures/scroll-pipeline.tsx\"></script></body></html>" },
+    ],
+  })
+  url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); await server?.close(); await fixtureCache?.dispose() })
+after(async () => { await browser?.close() })
 
 async function frames(page: Page, count = 30) {
   await page.evaluate(`new Promise(resolve => { let count = ${count}; const next = () => --count ? requestAnimationFrame(next) : resolve(); requestAnimationFrame(next) })`)
