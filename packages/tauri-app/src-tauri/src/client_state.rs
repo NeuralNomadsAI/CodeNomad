@@ -71,10 +71,12 @@ const CLIENT_STATE_FILENAME: &str = "client-state.json";
 const MAX_CLIENT_SNAPSHOT_BYTES: usize = envelope::MAX_SNAPSHOT_BYTES;
 const RENDERER_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
 
-#[derive(Clone, Copy, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RendererFlushRequest {
     pub(crate) generation: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) prepare_generation: Option<u64>,
 }
 
 #[derive(Default)]
@@ -950,9 +952,10 @@ impl ClientState {
             state.0 += 1;
             state.0
         };
-        if let Err(err) = webview.emit(
+        if let Err(err) = webview.emit_to(
+            window_label,
             "client-state:navigation-flush-requested",
-            RendererFlushRequest { generation },
+            RendererFlushRequest { generation, prepare_generation: None },
         ) {
             eprintln!("[client-state] failed to request renderer flush: {err}");
             return;

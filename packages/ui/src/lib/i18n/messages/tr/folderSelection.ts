@@ -32,6 +32,7 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "Workspace'i yeniden adlandır",
   "folderSelection.recent.remove": "Son kullanılanlardan kaldır",
   "folderSelection.recent.openBadge": "Aç",
+  "folderSelection.recent.openElsewhere": "Başka bir pencerede açık",
   "newInstanceLauncher.searchLabel": "Son projelerde ara",
   "newInstanceLauncher.searchPlaceholder": "Son sekmelerde ara…",
   "newInstanceLauncher.recentTitle": "Son sekmeler",

@@ -1,5 +1,12 @@
 use super::*;
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
+
+fn commit_close(coordinator: &ShutdownCoordinator, label: &str, removes_state: bool) -> u64 {
+    let generation = coordinator.begin_local_close(label.into(), "a".into(), removes_state).unwrap();
+    let pending = coordinator.acknowledge_local(label, "a", generation).unwrap();
+    assert!(coordinator.commit_local_close(label.into(), pending));
+    generation
+}
 
 #[test]
 fn close_generations_are_label_isolated_and_stale_ack_is_ignored() {
@@ -198,7 +205,7 @@ fn windows_query_and_cancel_revoke_unarmed_developer_restart() {
 fn failed_shutdown_paths_emit_the_renderer_resume_event() {
     let source = include_str!("shutdown.rs");
     assert_eq!(FLUSH_CANCELLED_EVENT, "client-state:flush-cancelled");
-    assert!(source.contains("RendererFlushRequest { generation }"));
+    assert!(source.contains("emit_prepare(&app, &label, generation)"));
     assert!(source.contains("emit_flush_cancellations(&app, cancellations)"));
 }
 
@@ -226,11 +233,11 @@ fn committed_local_close_retains_exact_authority_until_consumed() {
         .unwrap();
 
     assert!(coordinator.commit_local_close("local-a".into(), pending.clone()));
-    assert_eq!(
-        coordinator.take_committed_local_close("local-a"),
-        Some(pending)
-    );
-    assert!(coordinator.take_committed_local_close("local-a").is_none());
+    assert!(coordinator.approve_local_close("local-a", |committed| {
+        assert_eq!(committed, &pending);
+        Ok(())
+    }).unwrap().is_ok());
+    assert!(coordinator.approve_local_close("local-a", |_| panic!()).is_none());
 }
 
 #[test]
@@ -245,11 +252,26 @@ fn pending_and_approved_local_closes_remain_visible_to_final_window_decisions() 
         .unwrap();
     assert!(coordinator.commit_local_close("local-a".into(), pending));
     assert!(coordinator.local_close_in_flight("local-a"));
-    coordinator.take_committed_local_close("local-a").unwrap();
-    coordinator.approve_local_close("local-a".into());
+    let release = coordinator.approve_local_close("local-a", |_| Ok(())).unwrap().unwrap();
+    assert_eq!(release.prepare_generation, Some(generation));
+    assert!(coordinator.local_close_in_flight("local-a"));
+    assert!(!coordinator.finish_local_release("local-a", generation));
+    assert!(coordinator.finish_local_release("local-a", release.generation));
     assert!(coordinator.local_close_in_flight("local-a"));
     coordinator.local_window_destroyed("local-a");
     assert!(!coordinator.local_close_in_flight("local-a"));
+}
+
+#[test]
+fn refused_close_never_gains_workspace_release_authority() {
+    let coordinator = ShutdownCoordinator::default();
+    let generation = commit_close(&coordinator, "local-a", true);
+    assert_eq!(
+        coordinator.approve_local_close("local-a", |_| Err("refused".into())),
+        Some(Err((generation, "refused".into())))
+    );
+    assert!(!coordinator.finish_local_release("local-a", 1));
+    assert!(coordinator.begin_local_close("local-a".into(), "a".into(), true).is_some());
 }
 
 #[test]
@@ -289,12 +311,10 @@ fn the_last_user_window_close_keeps_its_saved_state() {
         .unwrap();
     assert!(coordinator.commit_local_close("local-a".into(), pending));
     // consume_local_window_close approves it without removing the window from client state.
-    assert!(
-        !coordinator
-            .take_committed_local_close("local-a")
-            .unwrap()
-            .removes_state
-    );
+    coordinator.approve_local_close("local-a", |pending| {
+        assert!(!pending.removes_state);
+        Ok(())
+    }).unwrap().unwrap();
 }
 
 #[test]
@@ -310,7 +330,7 @@ fn local_close_dispatch_rollback_reopens_close_authority() {
 
     coordinator.rollback_local_close("local-a");
 
-    assert!(coordinator.take_committed_local_close("local-a").is_none());
+    assert!(coordinator.approve_local_close("local-a", |_| panic!()).is_none());
     assert!(coordinator
         .begin_local_close("local-a".into(), "window-a".into(), true)
         .is_some());
@@ -386,6 +406,81 @@ fn failed_global_shutdown_cancels_the_exact_renderer_generations() {
     requests.sort();
     cancellations.sort();
     assert_eq!(cancellations, requests);
+}
+
+#[test]
+fn shutdown_release_has_its_own_bounded_wait_after_persistence() {
+    let coordinator = ShutdownCoordinator::default();
+    commit_close(&coordinator, "local-closing", true);
+    let closing = coordinator.approve_local_close("local-closing", |_| Ok(())).unwrap().unwrap();
+    let requests = coordinator.begin_shutdown(["local-a".into(), "remote-b".into(), "local-closing".into()]).unwrap();
+    assert_eq!(requests.len(), 2, "the already approved close must not preflush a forgotten record");
+    assert!(coordinator.finish_local_release("local-closing", closing.generation));
+    for (label, generation) in &requests {
+        coordinator.acknowledge_global(label, *generation);
+    }
+    assert!(coordinator.begin_cleanup(false));
+    let releases = coordinator.begin_workspace_releases();
+    assert_eq!(releases.len(), 2);
+    for (label, generation) in &requests {
+        let release = releases.iter().find(|(target, _)| target == label).unwrap().1;
+        assert_eq!(release.prepare_generation, Some(*generation));
+        assert_ne!(release.generation, *generation);
+        assert!(!coordinator.acknowledge_global(label, *generation));
+    }
+    assert!(!coordinator.acknowledge_global(&releases[0].0, releases[0].1.generation));
+    coordinator.wait_for_workspace_releases(Duration::ZERO);
+    assert!(coordinator.shutdown_started());
+    assert!(coordinator.acknowledge_global(&releases[1].0, releases[1].1.generation));
+}
+
+#[test]
+fn shutdown_joins_an_in_flight_local_release_without_requesting_it_again() {
+    let coordinator = ShutdownCoordinator::default();
+    let label = "local-closing";
+    commit_close(&coordinator, label, true);
+    let release = coordinator.approve_local_close(label, |_| Ok(())).unwrap().unwrap();
+    assert!(coordinator.begin_shutdown([label.into()]).unwrap().is_empty());
+    assert!(coordinator.begin_cleanup(false));
+    assert!(coordinator.begin_workspace_releases().is_empty());
+    assert!(!coordinator.wait_for_workspace_releases(Duration::ZERO));
+    assert!(!coordinator.finish_local_release(label, release.prepare_generation.unwrap()));
+    assert!(!coordinator.wait_for_workspace_releases(Duration::ZERO));
+    assert!(coordinator.finish_local_release(label, release.generation));
+    assert!(coordinator.wait_for_workspace_releases(Duration::ZERO));
+}
+
+#[test]
+fn quit_selects_windows_after_an_in_flight_removal_settles() {
+    for refused in [false, true] {
+        let coordinator = ShutdownCoordinator::default();
+        let label = "local-closing";
+        commit_close(&coordinator, label, true);
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (finish_tx, finish_rx) = mpsc::channel();
+        let (requests_tx, requests_rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let state = &coordinator;
+            let close = scope.spawn(move || {
+                state.approve_local_close(label, |_| {
+                    entered_tx.send(()).unwrap();
+                    finish_rx.recv().unwrap();
+                    if refused { Err("refused".into()) } else { Ok(()) }
+                }).unwrap()
+            });
+            entered_rx.recv().unwrap();
+            scope.spawn(move || {
+                requests_tx.send(state.begin_shutdown([label.into(), "local-other".into()]).unwrap()).unwrap();
+            });
+            let early = requests_rx.recv_timeout(Duration::from_millis(20));
+            finish_tx.send(()).unwrap();
+            assert!(early.is_err(), "quit decided before removal settled");
+            let requests = requests_rx.recv().unwrap();
+            assert_eq!(requests.iter().any(|(target, _)| target == label), refused);
+            assert!(requests.iter().any(|(target, _)| target == "local-other"));
+            assert_eq!(close.join().unwrap().is_err(), refused);
+        });
+    }
 }
 
 #[test]

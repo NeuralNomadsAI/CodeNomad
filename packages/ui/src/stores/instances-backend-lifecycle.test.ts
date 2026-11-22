@@ -4,9 +4,10 @@ import { createBackendClient, registerBackendClient } from "../lib/backend-clien
 import { backendEvents } from "../lib/backend-events"
 import { preferences } from "./preferences"
 import { addInstance, createInstance, closeWorkspace, instances, removeInstance, releaseRestoreCreatedInstance, type WorkspaceCreationOwnership } from "./instances"
-import { selectInstanceTab, activeAppTabId } from "./app-tabs"
+import { selectInstanceTab, activeAppTabId, attachInstanceTab, closeInstanceTab } from "./app-tabs"
 import { serverApi } from "../lib/api-client"
 import { deferred } from "../../tests/test-support/deferred"
+import { RELAY_AUTHORITY_HEADER } from "../../../server/src/codenomad-servers/relay-authority"
 
 for (const recovery of ["discard", "event"] as const) for (const mode of recovery === "discard"
   ? ["lost-response", "resolved", "retired", "removed"] as const
@@ -237,10 +238,12 @@ it("keeps flag-off admission remote-free and the default owner strictly local", 
   const bodies: unknown[] = []
   t.mock.method(serverApi, "createWorkspace", async (body: Parameters<typeof serverApi.createWorkspace>[0]) => {
     bodies.push(body)
-    return { id: "local-default", path: body.path, status: "starting", proxyPath: "", createdAt: "", updatedAt: "" }
+    return { id: "local-default", requestId: body.requestId, path: body.path, status: "starting", proxyPath: "", createdAt: "", updatedAt: "" }
   })
-  assert.equal((await createInstance("C:\\physical\\repo", "Named")).instanceId, "local-default")
-  assert.deepEqual(bodies, [{ path: "C:\\physical\\repo", name: "Named", requestId: undefined }])
+  const result = await createInstance("C:\\physical\\repo", "Named")
+  assert.equal(result.instanceId, "local-default")
+  assert.ok(result.requestId)
+  assert.deepEqual(bodies, [{ path: "C:\\physical\\repo", name: "Named", requestId: result.requestId }])
   assert.equal(instances().get("local-default")?.backendId, undefined)
 })
 
@@ -289,11 +292,14 @@ it("captures create/close/release owner, converges qualified identities and fenc
   preferences().multiBackend = true
   t.after(() => { preferences().multiBackend = previous })
   const requests: Array<[string, string, string]> = []
+  const closeTransport: Array<{ keepalive?: boolean; credentials?: RequestCredentials; proof: string | null }> = []
   const make = (id: string) => createBackendClient({ id, baseUrl: `https://${id}.invalid`,
     relayProfileId: id, bindRelayAuthority: true,
     fetcher: async (input, init) => {
       const url = new URL(String(input)), method = init?.method ?? "GET"
       requests.push([id, method, url.pathname])
+      if (method === "DELETE") closeTransport.push({ keepalive: init?.keepalive, credentials: init?.credentials,
+        proof: new Headers(init?.headers).get(RELAY_AUTHORITY_HEADER) })
       if (method === "POST" && url.pathname.endsWith("/api/workspaces")) {
         const body = JSON.parse(String(init?.body))
         return Response.json({ id: "w", path: body.path, requestId: body.requestId, status: "starting", proxyPath: "/workspaces/w/instance", createdAt: "", updatedAt: "" })
@@ -313,9 +319,11 @@ it("captures create/close/release owner, converges qualified identities and fenc
   await releaseRestoreCreatedInstance(br.instanceId, br.requestId!)
   await releaseRestoreCreatedInstance(br.instanceId, br.requestId!)
   assert.equal(requests.filter(([id, , route]) => id === "B" && route.endsWith("/w/creation/release")).length, 1)
-  const close = closeWorkspace(br.instanceId)
-  await Promise.all([close, closeWorkspace(br.instanceId)])
+  attachInstanceTab(br.instanceId, { source: "restore" })
+  closeInstanceTab(br.instanceId)
+  await closeWorkspace(br.instanceId)
   assert.deepEqual(requests.filter(([, method]) => method === "DELETE"), [["B", "DELETE", "/api/backends/B/api/workspaces/w"]])
+  assert.deepEqual(closeTransport, [{ keepalive: true, credentials: "include", proof: "b".repeat(43) }])
   const queued = closeWorkspace(ar.instanceId)
   detachA()
   await assert.rejects(queued)

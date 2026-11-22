@@ -219,8 +219,9 @@ function publishLocalInstanceTabLifecycle(type: "opened" | "removed", instanceId
     .filter((candidate) => workspaceIdentity(candidate.folder, candidate.backendId) === project)
     .findIndex((candidate) => candidate.id === instanceId)
   if (occurrence >= 0) publishInstanceLifecycleAuthority({
-    type, instanceId, folder: instance.folder, occurrence,
+    type, instanceId, folder: instance.folder, occurrence, projectTab: true,
     ...(instance.backendId ? { backendId: instance.backendId } : {}),
+    ...(instance.serverId ? { serverId: instance.serverId } : {}),
   })
 }
 
@@ -238,7 +239,7 @@ function attachInstanceTab(instanceId: string, options?: { source?: "restore" })
 function closeInstanceTab(instanceId: string): void {
   if (!openInstanceTabIds().has(instanceId)) return
   detachInstanceTab(instanceId)
-  void closeWorkspace(instanceId).catch(() => {})
+  void closeWorkspace(instanceId, { keepalive: true }).catch(() => {})
 }
 
 /** Local-only removal for server stops, temporary discard and disconnected-dialog dismissal. */

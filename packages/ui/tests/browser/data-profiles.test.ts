@@ -119,6 +119,7 @@ async function open(kind: "preferences" | "inline", host: "electron" | "tauri" |
     }
     if (${JSON.stringify(host)} === "tauri") {
       w.__TAURI_INTERNALS__ = {
+        metadata: { currentWindow: { label: w.__CODENOMAD_WINDOW_CONTEXT__ }, currentWebview: { label: w.__CODENOMAD_WINDOW_CONTEXT__ } },
         transformCallback: () => 1,
         invoke: async (command, args) => {
           if (command === "data_profiles_list_others") return w.profileHost.list()

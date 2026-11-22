@@ -11,6 +11,7 @@ import { activeAppTabId, appTabs, attachInstanceTab, closeInstanceTab, ensureAct
 import { appSessionRestoreGateActive } from "../../../src/stores/app-session-restore-gate"
 import { backendRegistry } from "../../../src/stores/remote-backends"
 import { backends } from "../../../src/lib/backend-client"
+import { parseInstanceKey } from "../../../src/lib/backend-identity"
 import { ConfigProvider, preferences, preferencesForBackend } from "../../../src/stores/preferences"
 import { I18nProvider, preloadLocaleMessages } from "../../../src/lib/i18n"
 import { getSessionDraftPromptsForInstance } from "../../../src/stores/session-state"
@@ -59,6 +60,10 @@ function Fixture() {
     drafts: tab.kind === "instance" ? getSessionDraftPromptsForInstance(tab.instance.id) : tab.kind === "remote-restore" ? tab.snapshot.drafts : {},
   })),
   active: activeAppTabId, close,
+  stopped: (id: string) => {
+    const { backendId, workspaceId } = parseInstanceKey(id.slice("instance:".length))
+    ;(backends.get(backendId)!.events as any).dispatch({ type: "workspace.stopped", workspaceId, reason: "deleted" })
+  },
   view: getTabViewState,
   reopen: async (backendId: string) => {
     const opened = await createInstance("/same", undefined, { backend: backends.get(backendId)! })
@@ -74,10 +79,6 @@ function Fixture() {
   },
   activateNotice: () => retainedNotice && runToastAction(retainedNotice),
   retry: async () => { await Promise.all(appTabs().filter(tab => tab.kind === "remote-restore").map(tab => tab.retry())) },
-  openSaved: (index: number) => {
-    const tab = appTabs()[index]
-    if (tab?.kind === "remote-restore") return tab.open?.()
-  },
   restartBackend: async () => { const client = backends.get("a")!; await refreshWorkspaceList("a", client.api) },
   disconnect: () => backends.get("a")!.events.restart(),
   state: () => backendRegistry.state("a"),

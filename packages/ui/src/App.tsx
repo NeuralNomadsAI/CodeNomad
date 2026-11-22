@@ -61,6 +61,7 @@ import {
 import { preferencesForBackend, recentFolders, useConfig } from "./stores/preferences"
 import {
   createInstance,
+  WorkspaceCreationDeparture,
   instances,
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
@@ -583,6 +584,7 @@ const App: Component = () => {
       })
       return true
     } catch (error) {
+      if (error instanceof WorkspaceCreationDeparture) return false
       const message = formatLaunchErrorMessage(
         error,
         t("app.launchError.fallbackMessage"),
@@ -614,6 +616,7 @@ const App: Component = () => {
       selectInstanceTab(id)
       replaceBlankTab(blankId ?? undefined, getInstanceAppTabId(id))
     } catch (error) {
+      if (error instanceof WorkspaceCreationDeparture) return
       const message = formatLaunchErrorMessage(
         error,
         t("app.launchError.fallbackMessage"),
@@ -633,8 +636,9 @@ const App: Component = () => {
   }
 
   function handleSelectExistingInstance(instanceId: string, recentPath: string, blankId: string | null | undefined = activeBlankTabId()) {
-    const instance = instances().get(instanceId)
-    if (!instance) return
+    const tab = appTabs().find(tab => tab.kind === "instance" && tab.instance.id === instanceId)
+    if (tab?.kind !== "instance") return
+    const { instance } = tab
     recordWorkspaceLaunch(instance.folder, recentPath)
     selectInstanceTab(instanceId)
     if (blankId) closeBlankTab(blankId)
@@ -762,7 +766,7 @@ const App: Component = () => {
   onMount(() => {
     onCleanup(observeDesktopUpdates())
     const executeMenuAction = (action: unknown) => {
-      if (typeof action !== "string") return
+      if (typeof action !== "string" || document.documentElement.inert) return
       if (action === "get-updates") { void requestDesktopUpdate(); return }
       if (executeViewMenuAction(action)) return
       if (action === "open-command-palette") {

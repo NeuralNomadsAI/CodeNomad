@@ -54,7 +54,10 @@ for (const host of ["electron", "tauri"]) for (const windowContext of ["local", 
     await page.addInitScript({ content: `Object.assign(window, {
       __CODENOMAD_RUNTIME_HOST__: ${JSON.stringify(host)}, __CODENOMAD_WINDOW_CONTEXT__: ${JSON.stringify(windowContext)},
       open: () => null,
-      __TAURI_INTERNALS__: { invoke: async () => undefined },
+      __TAURI_INTERNALS__: {
+        metadata: { currentWindow: { label: ${JSON.stringify(windowContext)} }, currentWebview: { label: ${JSON.stringify(windowContext)} } },
+        invoke: async () => undefined,
+      },
     })` })
     let config: any = {}
     const patches: unknown[] = []

@@ -486,6 +486,8 @@ test("V3 window records isolate state, tokens, partitions, clear, and removal", 
   assert.equal(await manager.loadClientStatePartition(keyB, "token-b", windowB), contentB)
 
   assert.equal(await manager.removeWindow(windowA), true)
+  assert.doesNotThrow(() => manager.resetRendererAccessToken(windowA), "the closing renderer can be destroyed after its record is forgotten")
+  assert.doesNotThrow(() => manager.assertRendererAccessToken("token-b", windowB))
   const envelope = JSON.parse(readFileSync(h.statePath, "utf8"))
   assert.equal(envelope.activeWindowId, windowB)
   assert.deepEqual(envelope.windowOrder, [windowB])

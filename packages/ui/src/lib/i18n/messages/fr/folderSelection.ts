@@ -38,6 +38,7 @@ export const folderSelectionMessages = {
   "folderSelection.recent.rename": "Renommer l'espace de travail",
   "folderSelection.recent.remove": "Retirer des récents",
   "folderSelection.recent.openBadge": "Ouvert",
+  "folderSelection.recent.openElsewhere": "Ouvert ailleurs",
   "newInstanceLauncher.searchLabel": "Rechercher un projet récent",
   "newInstanceLauncher.searchPlaceholder": "Rechercher dans les onglets récents…",
   "newInstanceLauncher.recentTitle": "Onglets récents",

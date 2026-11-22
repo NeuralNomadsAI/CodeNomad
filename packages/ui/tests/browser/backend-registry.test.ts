@@ -351,8 +351,9 @@ test("failed inventory recovery composes with restore cancellation and user open
       request.on("data", chunk => { body += chunk })
       request.on("end", () => {
         const input = JSON.parse(body); bodies.push({ backend: id, ...input })
-        if (id === "a" && input.requestId && holdPost) { postResponse = response; postEntered() }
-        else json(response, { ...descriptor, requestId: input.requestId, binaryLabel: input.requestId ? "restore" : "user" })
+        const restore = input.requestId === requestId
+        if (id === "a" && restore && holdPost) { postResponse = response; postEntered() }
+        else json(response, { ...descriptor, requestId: restore ? requestId : undefined, binaryLabel: restore ? "restore" : "user" })
       })
     })
     remote.state.handlers.set("/api/workspaces/creation/cancel", (request, response) => {
@@ -619,7 +620,7 @@ test("failed inventory recovery composes with restore cancellation and user open
       assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("title")), "/local")
       assert.equal(local.some(route => /^(POST|DELETE) \/api\/workspaces/.test(route)), false)
       assert.equal(requests.some(route => route.includes("DELETE")), false)
-      assert.deepEqual(bodies.filter((body: any) => body.backend === "a" && body.requestId), [{ backend: "a", path: "/same", requestId }], "restore POST is never replayed")
+      assert.deepEqual(bodies.filter((body: any) => body.backend === "a" && body.requestId === requestId), [{ backend: "a", path: "/same", requestId }], "restore POST is never replayed")
       if (change !== "dispose") { expectedAborts.add("GET /api/backends/a/api/events"); expectedAborts.add("GET /api/backends/b/api/events") }
       await page.evaluate(() => (window as any).registryFixture.dispose()); await page.close()
       assert.deepEqual(errors, []); assert.deepEqual(failures, []); assert.deepEqual([...expectedAborts], [])
