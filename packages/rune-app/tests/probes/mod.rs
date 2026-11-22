@@ -1,5 +1,6 @@
 //! Native qualification entry points, enabled exclusively by `test-support`.
 mod controls;
+mod files_document;
 mod files_reader;
 mod files_state;
 mod latency;

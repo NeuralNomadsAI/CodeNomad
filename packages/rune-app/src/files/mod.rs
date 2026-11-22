@@ -11,12 +11,20 @@ pub fn bind(s: &mut crate::State, backend: &crate::backend::Backend) {
             .project
             .as_ref()
             .filter(|p| p.id == backend.workspace)?;
-        Some(Ui::new(
-            backend.clone(),
-            project.path.clone(),
-            s.reads.clone(),
-            s.wake.clone(),
-        ))
+        Some(
+            Ui::new(
+                backend.clone(),
+                project.path.clone(),
+                s.reads.clone(),
+                s.wake.clone(),
+            )
+            .with_documents(
+                s.documents.clone(),
+                s.workspace
+                    .as_ref()
+                    .map_or_else(|| backend.workspace.clone(), |ui| ui.active_key().into()),
+            ),
+        )
     });
 }
 

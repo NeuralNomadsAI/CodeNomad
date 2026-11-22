@@ -111,7 +111,7 @@ jobs:
           export RUNE_SERVER_EXE="$CARGO_TARGET_DIR/debug/codenomad-rs$suffix"
           node packages/rune-app/fixtures/launcher-fixture.mjs --workspace-claims
           node packages/rune-app/fixtures/launcher-fixture.mjs --restore-state
-          node packages/rune-app/fixtures/launcher-fixture.mjs --files-state
+          node packages/rune-app/fixtures/launcher-fixture.mjs --files-state --document-state
           node packages/rune-app/fixtures/files-fixture.mjs
           node packages/rune-app/fixtures/files-fixture.mjs --write
           node packages/rune-app/fixtures/recovery-fixture.mjs

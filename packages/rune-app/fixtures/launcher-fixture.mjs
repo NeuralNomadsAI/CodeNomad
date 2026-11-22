@@ -31,13 +31,16 @@ const controls=process.argv.includes('--controls')
 const workspaceClaims=process.argv.includes('--workspace-claims')
 const restoreState=process.argv.includes('--restore-state')
 const pendingOpen=process.argv.includes('--pending-open')
-const filesState=process.argv.includes('--files-state')
+const documentState=process.argv.includes('--document-state')
+const filesState=process.argv.includes('--files-state')||documentState
 assert(!filesState||(!web&&!controls&&!withTools&&!uncertain&&!workspaceClaims&&!restoreState&&!pendingOpen),'Files state uses its own qualification mode')
 if(filesState){await mkdir(path.join(project,'src'));await writeFile(path.join(project,'initial.txt'),'initial');await writeFile(path.join(project,'src/initial.ts'),'initial')}
 assert(!workspaceClaims||(!web&&!controls&&!withTools&&!uncertain),'Workspace claims use their own qualification mode')
 assert(!restoreState||(!web&&!controls&&!withTools&&!uncertain&&!workspaceClaims),'Restore uses its own qualification mode')
 const gates=new Map(),visibleProof=[],restoreStages=[],restorePrompts=[]
 const filesStages=[],filesExpected=['reader-visible','create','rename','delete','collapsed','hidden','tabbed']
+if(documentState)filesExpected.push('document-external','document-cancelled','document-race','document-conflict','document-saved')
+const documentDraft='Rune saved · été 🦀\nsecond line',documentExternal='External change · 日本語',documentRace='Changed after confirmation'
 const readerTexts=['initial','Reader visible · été 🦀\nsecond version','Reader hidden · 日本語\nthird version','Reader resumed · quatrième\nversion after suspension']
 let filesChain=Promise.resolve(),filesProof
 async function filesStage(ack) {
@@ -50,6 +53,11 @@ async function filesStage(ack) {
     case 'collapsed': await writeFile(path.join(project,'src/collapsed.ts'),'collapsed');break
     case 'hidden': await writeFile(path.join(project,'hidden.txt'),'hidden');await writeFile(path.join(project,'src/initial.ts'),readerTexts[2]);break
     case 'tabbed': await writeFile(path.join(project,'tabbed.txt'),'tabbed');await writeFile(path.join(project,'src/initial.ts'),readerTexts[3]);break
+    case 'document-external': await writeFile(path.join(project,'src/initial.ts'),documentExternal);break
+    case 'document-cancelled': assert.equal(await readFile(path.join(project,'src/initial.ts'),'utf8'),documentExternal);break
+    case 'document-race': await writeFile(path.join(project,'src/initial.ts'),documentRace);break
+    case 'document-conflict': assert.equal(await readFile(path.join(project,'src/initial.ts'),'utf8'),documentRace);break
+    case 'document-saved': assert.equal(await readFile(path.join(project,'src/initial.ts'),'utf8'),documentDraft);break
   }
   client.stdin.write(`${JSON.stringify({stage:ack.stage})}\n`)
 }
@@ -204,7 +212,7 @@ try{
       assert.equal(stats.created,2,'Restore must not create native sessions');assert.equal(stats.prompts,stage==='prepare'?0:2,'Only explicit resumed sends submit prompts')
     }
   }else {
-    client=spawn(clientBinary,[filesState?'--probe-files-state':workspaceClaims?'--probe-workspace-claims':controls?'--probe-controls':'--probe-launcher'],{cwd:profile,windowsHide:true,stdio:[filesState?'pipe':'ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState?{RUNE_STATE_DIR:path.join(profile,'rune-state')}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{})}})
+    client=spawn(clientBinary,[filesState?'--probe-files-state':workspaceClaims?'--probe-workspace-claims':controls?'--probe-controls':'--probe-launcher'],{cwd:profile,windowsHide:true,stdio:[filesState?'pipe':'ignore','pipe','pipe'],env:{...env,RUNE_BACKEND:`${origin}/`,RUNE_PASSWORD:'fixture-backend',RUNE_TEST_FOLDER:project,RUNE_LOCALE:'fr',...(filesState?{RUNE_STATE_DIR:path.join(profile,'rune-state'),RUNE_TEST_DOCUMENT_STATE:documentState?'1':'0'}:{}),...(uncertain?{RUNE_TEST_CREATE_UNCERTAIN:'1'}:{}),...(withTools?{RUNE_TEST_TOOLS:'1'}:{})}})
     client.stdout.on('data',clientOutput);client.stderr.on('data',d=>{clientLog=(clientLog+d).slice(-262144);process.stderr.write(d)})
     client.on('close',()=>{for(const gate of gates.values())gate.reject()})
   }
@@ -225,13 +233,14 @@ try{
     assert.equal(new Set(filesProof.readerVersions.map(p=>p.workspace)).size,1)
     assert.equal(filesProof.readerReplacement.path,'initial.txt');assert.equal(filesProof.readerReplacement.text,'initial');assert.equal(filesProof.readerReplacement.version,version('initial'))
     for(const key of ['readerHiddenLive','readerSuspensionRetained','readerQueuedCloseAndReplacementFenced','readerClosed'])assert.equal(filesProof[key],true)
+    if(documentState)assert.deepEqual(filesProof.document,{cancelled:true,versionConflict:true,saved:documentDraft,draftRetained:true,lateEditRejected:true,discarded:true,interfaceQualified:false})
     assert(!requests.includes('POST /api/session'));assert(!requests.some(r=>r.endsWith('/prompt')))
     http=await request.newContext({baseURL:origin});assert.equal((await http.post('/api/auth/login',{data:{username:'codenomad',password:'fixture-backend'}})).status(),200);assert.deepEqual(await (await http.get('/api/workspaces')).json(),[])
   }
   if(!web&&!controls&&!workspaceClaims&&!pendingOpen&&!filesState)assert.deepEqual(visibleProof.map(p=>p.turn),[1,2],'Both distinct assistant turns must be visible before their endings')
   if(restoreState){assert.deepEqual(restoreStages.map(s=>s.stage),['prepare','resume','verify']);assert.deepEqual(restorePrompts.map(p=>p.sessionID),['ses_created_2','ses_created_1']);for(const id of ['ses_created_1','ses_created_2']){const rows=stores.get(id).rows;assert.deepEqual(rows.map(r=>r.type),['user','assistant']);assert(rows[1].time.completed)}}
   if(gitCount)assert.equal(requests.filter(r=>r==='GET /api/worktree').length,0,'root mutations must not enumerate sibling worktrees')
-  console.log(JSON.stringify({fixture:'launcher',uncertain,withTools,workspaceClaims,restoreState,webRestore,filesState,...stats,profile}))
+  console.log(JSON.stringify({fixture:'launcher',uncertain,withTools,workspaceClaims,restoreState,webRestore,filesState,documentState,...stats,profile}))
 }catch(error){result=1;throw error}finally{
   control?.close()
   for(const gate of gates.values())gate.reject()
