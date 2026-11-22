@@ -2197,9 +2197,11 @@ async function loadMessages(
       }
       if (!isCurrent()) return false
       const expectedRevision = nextWindow.kind === "latest" && !initialSeed ? messageRevision : undefined
-      const seeded = seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false, true, true)
-      if ((!initialSeed && hasLatestRevisionConflict())
-        || !(await seeded)) {
+      // Short-circuit: a load already raced by a native event must not seed
+      // its stale snapshot at all (the retry re-fetches instead).
+      if (!initialSeed && hasLatestRevisionConflict()) {
+        retryAfterRevisionConflict = true
+      } else if (!(await seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false, true, true))) {
         retryAfterRevisionConflict = true
       } else {
         store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
