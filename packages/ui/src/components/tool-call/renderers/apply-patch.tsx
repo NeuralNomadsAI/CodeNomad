@@ -4,7 +4,8 @@ import { getToolName, isToolStateCompleted, limitToolTitleForRender, readToolSta
 import { buildDiagnosticView, hasDiagnosticMessages, type DiagnosticEntry, type DiagnosticsMap } from "../diagnostics"
 import { DiagnosticsPayloadAccess } from "../diagnostics-section"
 import { getApplyPatchToolSearchText } from "../search-text"
-import { APPLY_PATCH_FILE_RENDER_LIMIT, getApplyPatchCopyAccess, getApplyPatchCopyText, getApplyPatchDiagnosticPaths, getApplyPatchFilesForRender, getApplyPatchPathLabel, getApplyPatchRenderData, hasApplyPatchCopyText, type ApplyPatchFile } from "./apply-patch-data"
+import { sessions } from "../../../stores/session-state"
+import { APPLY_PATCH_FILE_RENDER_LIMIT, getApplyPatchCopyAccess, getApplyPatchDiagnosticPaths, getApplyPatchDiff, getApplyPatchFileChange, getApplyPatchFileCopyText, getApplyPatchFilePath, getApplyPatchFiles, getApplyPatchFilesForRender, getApplyPatchRenderData, hasApplyPatchCopyText } from "./apply-patch-data"
 
 function DiagnosticsInline(props: { entries: DiagnosticEntry[]; label: string; t: (key: string, params?: Record<string, unknown>) => string }) {
   return (
@@ -42,46 +43,40 @@ export const applyPatchRenderer: ToolRenderer = {
   tools: ["apply_patch"],
   getSearchText: getApplyPatchToolSearchText,
   getAction: ({ t }) => t("toolCall.renderer.action.preparingPatch"),
-  getTitle({ toolState, t }) {
+  getTitle({ toolState, toolName, t }) {
     const state = toolState()
     if (!state) return undefined
-    if (state.status === "pending") return getToolName("apply_patch")
-    const { metadata } = readToolStatePayload(state)
-    const files = Array.isArray((metadata as any).files) ? ((metadata as any).files as ApplyPatchFile[]) : []
-    if (files.length > 0) {
-      const tool = getToolName("apply_patch")
-      return files.length === 1
-        ? t("toolCall.applyPatch.title.withFileCount.one", { tool, count: files.length })
-        : t("toolCall.applyPatch.title.withFileCount.other", { tool, count: files.length })
-    }
-    return getToolName("apply_patch")
+    const tool = getToolName(toolName())
+    const count = getApplyPatchFiles(readToolStatePayload(state).metadata).length
+    return count > 0
+      ? t(count === 1 ? "toolCall.applyPatch.title.withFileCount.one" : "toolCall.applyPatch.title.withFileCount.other", { tool, count })
+      : tool
   },
-  getOutputChrome({ toolState }) {
+  getOutputChrome({ toolState, instanceId, sessionId }) {
     const state = toolState()
     if (!state || state.status === "pending") return undefined
 
     const payload = readToolStatePayload(state)
-    const files = Array.isArray((payload.metadata as any).files) ? ((payload.metadata as any).files as ApplyPatchFile[]) : []
+    const files = getApplyPatchFiles(payload.metadata)
     const fallback = isToolStateCompleted(state) && typeof state.output === "string" && state.output.length > 0 ? state.output : null
-    const access = getApplyPatchCopyAccess(files, fallback)
+    const directory = sessions().get(instanceId)?.get(sessionId)?.location?.directory
+    const access = getApplyPatchCopyAccess(files, fallback, directory)
     if (!access) return undefined
     return access.language === "diff"
       ? { ...access, suppressInnerHeader: false }
       : { ...access, wrapToggle: true, suppressInnerHeader: true }
   },
-  renderBody({ toolState, renderDiff, renderMarkdown, t }) {
+  renderBody({ toolState, renderDiff, renderMarkdown, instanceId, sessionId, t }) {
     const state = toolState()
     if (!state || state.status === "pending") return null
 
     const payload = readToolStatePayload(state)
+    const directory = sessions().get(instanceId)?.get(sessionId)?.location?.directory
     const diagnosticsMap = createMemo(() => {
       const value = (payload.metadata as any).diagnostics
       return value && typeof value === "object" ? (value as DiagnosticsMap) : {}
     })
-    const allFiles = createMemo(() => {
-      const list = (payload.metadata as any).files
-      return getApplyPatchFilesForRender(Array.isArray(list) ? list as ApplyPatchFile[] : [], getApplyPatchDiagnosticPaths(diagnosticsMap()))
-    })
+    const allFiles = createMemo(() => getApplyPatchFilesForRender(getApplyPatchFiles(payload.metadata), getApplyPatchDiagnosticPaths(diagnosticsMap())))
     const renderData = createMemo(() => getApplyPatchRenderData(allFiles().files, APPLY_PATCH_FILE_RENDER_LIMIT, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT, allFiles().truncated))
     const files = createMemo(() => renderData().rendered)
     const fallback = createMemo(() => {
@@ -91,7 +86,7 @@ export const applyPatchRenderer: ToolRenderer = {
     const diagnosticViews = createMemo(() => {
       let remaining = 100
       return files().map(({ file }) => {
-        const view = buildDiagnosticView(diagnosticsMap(), [file.filePath, file.relativePath])
+        const view = buildDiagnosticView(diagnosticsMap(), [getApplyPatchFilePath(file), file.relativePath])
         const entries = view.entries.slice(0, remaining)
         remaining -= entries.length
         return { ...view, entries, truncated: view.truncated || entries.length < view.entries.length }
@@ -131,26 +126,27 @@ export const applyPatchRenderer: ToolRenderer = {
         <For each={files()}>
           {(renderedFile, index) => {
             const file = renderedFile.file
-            const labelBase = file.relativePath || file.filePath || t("toolCall.applyPatch.fileFallback", { number: index() + 1 })
-            const label = getApplyPatchPathLabel(labelBase)
-            const fullDiff = typeof file.diff === "string" ? file.diff : typeof file.patch === "string" ? file.patch : ""
+            const filePath = getApplyPatchFilePath(file) ?? file.relativePath
+            const change = getApplyPatchFileChange(file, directory)
+            const path = change.path || t("toolCall.applyPatch.fileFallback", { number: index() + 1 })
+            const label = limitToolTitleForRender(t(change.status ? `toolCall.applyPatch.${change.status}` : "toolCall.diff.label.withPath", { path }))
             const diffText = renderedFile.diffText
-            const filePath = typeof file.filePath === "string" ? file.filePath : file.relativePath
             const entries = createMemo(() => diagnosticViews()[index()]?.entries ?? [])
 
             return (
               <div class="tool-call-apply-patch-file">
                 <Show when={diffText.trim().length > 0}>
                   {renderDiff(
-                    { diffText, copyText: fullDiff, filePath },
+                    { diffText, copyText: getApplyPatchDiff(file), filePath },
                     {
-                      label: limitToolTitleForRender(t("toolCall.diff.label.withPath", { path: label })),
+                      label,
+                      getCopyText: () => getApplyPatchFileCopyText(file, directory),
                       cacheKey: `apply_patch:${index()}`,
                       renderLimit: renderedFile.renderLimit,
                     },
                   )}
                 </Show>
-                <DiagnosticsInline entries={entries()} label={label} t={t} />
+                <DiagnosticsInline entries={entries()} label={limitToolTitleForRender(path)} t={t} />
               </div>
             )
           }}

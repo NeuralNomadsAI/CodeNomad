@@ -54,6 +54,31 @@ async function copyWithPointer(page: Page, button: Locator): Promise<string> {
   return page.evaluate(() => navigator.clipboard.readText())
 }
 
+test("multi-file patch shows file operations and both paths of a rename in the transcript and clipboard", { timeout: 60_000 }, async () => withFixture("patch", async page => {
+  const header = page.locator(".tool-call > .tool-call-header")
+  await header.getByText(/\(5 files\)/).waitFor()
+  const files = page.locator(".tool-call-apply-patch-file")
+  await files.nth(0).getByText("Added · new.txt", { exact: true }).waitFor()
+  await files.nth(1).getByText("Deleted · old.txt", { exact: true }).waitFor()
+  await files.nth(2).getByText("Renamed · old/previous.ts → right/shared.ts", { exact: true }).waitFor()
+  await files.nth(2).getByText("renamedAfter", { exact: true }).waitFor()
+  await files.nth(3).getByText("Modified · left/shared.ts", { exact: true }).waitFor()
+  await files.nth(3).getByText("modifiedAfter", { exact: true }).waitFor()
+  const caseRename = files.nth(4).locator(".tool-call-diff-toolbar-label")
+  await caseRename.waitFor()
+  assert.equal(await caseRename.innerText(), "Renamed · src/foo.ts → src/Foo.ts")
+  assert.equal(await files.count(), 5)
+
+  const patches = await page.evaluate(() => (window as any).fixture.patchFiles.map((file: { patch: string }) => file.patch) as string[])
+  const operations = ["A new.txt", "D old.txt", "R old/previous.ts → right/shared.ts", "M left/shared.ts", "R src/foo.ts → src/Foo.ts"]
+  await header.hover()
+  const copied = await copyWithPointer(page, header.getByRole("button", { name: "Copy tool output", exact: true }))
+  assert.equal(copied.replace(/\r\n/g, "\n"), patches.map((patch, index) => `${operations[index]}\n${patch}`).join("\n"))
+  await page.evaluate(() => navigator.clipboard.writeText("clipboard sentinel"))
+  const rename = await copyWithPointer(page, files.nth(2).getByRole("button", { name: "Copy patch", exact: true }))
+  assert.equal(rename.replace(/\r\n/g, "\n"), `${operations[2]}\n${patches[2]}`)
+}))
+
 for (const scenario of ["diagnostics-many", "diagnostics-long"]) {
   test(`${scenario}: desktop body copy retains original diagnostics beyond the bounded preview`, { timeout: 45_000 }, async () => withFixture(scenario, async page => {
     await page.locator(".tool-call-diagnostics-heading").click()
