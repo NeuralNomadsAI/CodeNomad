@@ -1,0 +1,103 @@
+use super::{Reply, Restored, State, TextEdit, Tx};
+use crate::catalog::SessionMissing;
+
+pub fn choose_project(s: &mut State, path: &str, tx: &mut Tx) {
+    let Some(l) = s.screen.launcher_mut() else {
+        return;
+    };
+    l.folder = TextEdit::new(path);
+    open(s, tx);
+}
+pub fn open(s: &mut State, tx: &mut Tx) {
+    if !crate::workspace::input_ready(s) {
+        return;
+    }
+    if !crate::workspace::prepare_open(s, tx) {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.error = Some("rune.open_error");
+        }
+        return;
+    }
+    let intent = s
+        .workspace
+        .as_ref()
+        .map(|ui| ui.active_key().to_string())
+        .unwrap_or_else(|| "launcher".into());
+    let Some(l) = s.screen.launcher_mut() else {
+        return;
+    };
+    let Some(b) = l.connection.clone() else {
+        return;
+    };
+    if l.pending {
+        return;
+    }
+    let pending = match l.openings.begin(b.clone(), &intent) {
+        Ok(pending) => pending,
+        Err(_) => {
+            l.error = Some("rune.open_error");
+            return;
+        }
+    };
+    let folder = l.folder.text.trim().to_string();
+    l.job("rune.open_error", async move {
+        let opening = pending.create(&folder).await?;
+        let rows = b.sessions(&opening.project, None).await?;
+        Ok(Reply::Opened(opening, rows, Restored::Empty))
+    });
+}
+
+pub fn restore(s: &mut State, saved: crate::workspace::Workspace) {
+    let intent = s
+        .workspace
+        .as_ref()
+        .map(|ui| ui.active_key().to_string())
+        .unwrap_or_else(|| "launcher".into());
+    let Some(l) = s.screen.launcher_mut() else {
+        return;
+    };
+    if l.pending {
+        return;
+    }
+    let Some(backend) = l.connection.clone() else {
+        return;
+    };
+    let local = l.local_connection();
+    let identity = if local {
+        saved.backend_id.is_none()
+    } else {
+        saved.backend_id.as_deref()
+            == Some(if cfg!(target_arch = "wasm32") {
+                "web"
+            } else {
+                "external"
+            })
+            && saved.server_id.is_some()
+            && saved.server_id == l.server_id
+    };
+    if !identity {
+        l.error = Some("rune.restore_error");
+        return;
+    }
+    let pending = match l.openings.begin(backend.clone(), &intent) {
+        Ok(pending) => pending,
+        Err(_) => {
+            l.error = Some("rune.restore_error");
+            return;
+        }
+    };
+    l.job("rune.restore_error", async move {
+        let opening = pending.create(&saved.folder).await?;
+        let rows = backend.sessions(&opening.project, None).await?;
+        let bound = if let Some(id) = &saved.active_session_id {
+            match backend.bind_session(&opening.project, id, false).await {
+                Ok((bound, session)) => Restored::Bound(bound, session.title),
+                Err(err) if err.is::<SessionMissing>() => Restored::Missing(id.clone()),
+                Err(err) => return Err(err),
+            }
+        } else {
+            Restored::Empty
+        };
+        Ok(Reply::Opened(opening, rows, bound))
+    });
+}

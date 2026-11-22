@@ -1,0 +1,256 @@
+use super::{
+    Backend, Launcher, MAX_BROWSED_SESSIONS, Reply, Session, Sessions, State, TextEdit, Tx, bounded,
+};
+use crate::{Phase, catalog::SessionMissing};
+use std::collections::HashSet;
+
+impl Launcher {
+    pub(super) fn apply_listing(&mut self, mut page: Sessions, more: bool, selected: Option<&str>) {
+        let listed: HashSet<_> = page.rows.iter().map(|row| row.id.clone()).collect();
+        if more {
+            self.listed_sessions.extend(listed);
+            let mut known: HashSet<_> = self.sessions.iter().map(|row| row.id.clone()).collect();
+            self.sessions.extend(
+                page.rows
+                    .into_iter()
+                    .filter(|row| known.insert(row.id.clone())),
+            );
+        } else {
+            self.creation_uncertain = false;
+            if let Some(old) = self
+                .sessions
+                .iter()
+                .find(|row| Some(row.id.as_str()) == selected && !listed.contains(&row.id))
+            {
+                page.rows.push(old.clone());
+            }
+            self.sessions = page.rows;
+            self.listed_sessions = listed;
+        }
+        self.visits
+            .observe_listing(&self.listed_sessions, page.next.is_none());
+        self.next = page.next;
+    }
+}
+
+pub fn list(s: &mut State, more: bool) {
+    let Some(l) = s.screen.launcher_mut() else {
+        return;
+    };
+    let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
+        return;
+    };
+    if l.pending || more && (l.next.is_none() || l.sessions.len() >= MAX_BROWSED_SESSIONS) {
+        return;
+    }
+    l.listing = true;
+    let cursor = if more { l.next.clone() } else { None };
+    l.job("rune.list_error", async move {
+        Ok(Reply::Listed(
+            b.sessions(&p, cursor.as_deref()).await?,
+            more,
+        ))
+    });
+}
+pub fn create(s: &mut State, _: &mut Tx) {
+    if !can_change_session(s) {
+        return;
+    }
+    let dismiss = s.shell.floating_sessions();
+    let Some(l) = s.screen.launcher_mut() else {
+        return;
+    };
+    if l.creation_uncertain || l.title.text.trim().is_empty() {
+        return;
+    }
+    let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
+        return;
+    };
+    let title = l.title.text.clone();
+    // A create request is never automatically retried. Refresh reconciles a lost response.
+    l.job("rune.create_error", async move {
+        let session = b.create_session(&p, &title).await?;
+        Ok(Reply::Created(
+            b.bind(&p, &session.id, true).await?,
+            session.title,
+            title,
+            dismiss,
+        ))
+    });
+}
+pub fn choose(s: &mut State, id: String, tx: &mut Tx) {
+    if !s.screen.is_launcher()
+        && crate::workspace::active_session(s) == Some(id.as_str())
+        && s.phase != Phase::Failed
+    {
+        if s.shell.floating_sessions().is_some() {
+            s.shell.close_floating(tx);
+        }
+    } else {
+        choose_from(s, vec![(id, None)], s.shell.floating_sessions());
+    }
+}
+fn choose_from(s: &mut State, candidates: Vec<(String, Option<usize>)>, dismiss: Option<u64>) {
+    let recovery = candidates
+        .first()
+        .is_some_and(|(id, step)| step.is_none() && can_rebind(s, id));
+    if candidates.is_empty()
+        || !crate::workspace::input_ready(s)
+        || !recovery && !can_change_session(s)
+    {
+        return;
+    }
+    let Some(l) = s.screen.launcher_mut() else {
+        return;
+    };
+    let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
+        return;
+    };
+    if l.pending {
+        return;
+    }
+    l.job("rune.open_error", async move {
+        let mut missing = Vec::new();
+        for (id, step) in candidates {
+            match b.bind_session(&p, &id, false).await {
+                Ok((bound, session)) => {
+                    return Ok(Reply::Selected(
+                        missing,
+                        Some((bound, session.title, step)),
+                        dismiss,
+                    ));
+                }
+                Err(err) if err.is::<SessionMissing>() => missing.push(id),
+                Err(err) if missing.is_empty() => return Err(err),
+                Err(_) => break,
+            }
+        }
+        Ok(Reply::Selected(missing, None, dismiss))
+    });
+}
+pub fn can_change_session(s: &State) -> bool {
+    s.phase != Phase::Streaming
+        && crate::workspace::input_ready(s)
+        && !crate::agent::navigation_blocked(s)
+}
+pub(super) fn can_rebind(s: &State, id: &str) -> bool {
+    !s.screen.is_launcher()
+        && s.phase == Phase::Failed
+        && crate::workspace::active_session(s) == Some(id)
+}
+pub fn can_visit(s: &State, back: bool) -> bool {
+    s.screen
+        .launcher()
+        .is_some_and(|l| l.visits.steps(back, shown(s)).next().is_some())
+}
+pub fn visit(s: &mut State, back: bool) {
+    let Some(l) = s.screen.launcher() else { return };
+    let candidates = l
+        .visits
+        .steps(back, shown(s))
+        .map(|(step, id)| (id.into(), Some(step)))
+        .collect();
+    choose_from(s, candidates, None);
+}
+fn shown(s: &State) -> Option<&str> {
+    (!s.screen.is_launcher())
+        .then(|| crate::workspace::active_session(s))
+        .flatten()
+}
+
+pub(super) fn dismiss_origin_panel(s: &mut State, origin: Option<u64>, tx: &mut Tx) {
+    if origin.is_some() && origin == s.shell.floating_sessions() {
+        s.shell.close_floating(tx);
+    }
+}
+
+pub(super) fn retire_session(s: &mut State, id: &str) {
+    if !crate::workspace::unselect_missing(s, id) {
+        return;
+    }
+    s.commands = None;
+    s.incoming = None;
+    s.agent = None;
+    s.files = None;
+    s.messages.clear();
+    s.chat_title.clear();
+    s.draft = TextEdit::new("");
+    s.phase = Phase::Ready;
+    s.show_launcher();
+    if let Some(l) = s.screen.launcher_mut() {
+        l.sessions.retain(|row| row.id != id);
+        l.error = Some("rune.open_error");
+    }
+}
+pub(super) fn bind(s: &mut State, b: Backend, title: String, visit: Option<usize>, tx: &mut Tx) {
+    let same_session =
+        !s.screen.is_launcher() && crate::workspace::active_session(s) == Some(b.session.as_str());
+    if let Some(l) = s.screen.launcher_mut() {
+        l.visits
+            .record(&b.session, visit, l.listed_sessions.contains(&b.session));
+        if let Some(row) = l.sessions.iter_mut().find(|row| row.id == b.session) {
+            row.title.clone_from(&title);
+        } else {
+            l.sessions.insert(
+                0,
+                Session {
+                    id: b.session.clone(),
+                    title: title.clone(),
+                },
+            );
+        }
+    }
+    let draft = crate::workspace::bound(s, &b);
+    s.chat_title = title;
+    if !same_session {
+        crate::files::bind(s, &b);
+        s.agent = None;
+        s.expanded_tools.clear();
+        s.messages.clear();
+        s.can_older = false;
+    } else if let Some(agent) = &mut s.agent {
+        // This is the same owned occurrence and session; the in-flight reply guard stays live.
+        agent.online = false;
+        agent.pending_known = false;
+    }
+    s.draft = TextEdit::new(draft);
+    s.phase = Phase::Loading;
+    s.paging = false;
+    s.history_error = false;
+    s.revision += 1;
+    let (out, incoming) = bounded(64);
+    let (commands, input) = bounded(1);
+    s.incoming = Some(incoming);
+    s.commands = Some(commands);
+    let wake = s.wake.clone();
+    crate::platform::spawn(async move {
+        if crate::transport::run_backend(b, out.clone(), input, wake.clone())
+            .await
+            .is_err()
+        {
+            crate::transport::publish(&out, &wake, crate::transport::Event::Failed).await;
+        }
+    });
+    s.show_chat();
+    crate::workspace::capture(s);
+    if !same_session {
+        tx.scroll_to_bottom_instant("history");
+    }
+}
+#[cfg(feature = "test-support")]
+pub fn back(s: &mut State) {
+    if !matches!(s.phase, Phase::Ready | Phase::Failed)
+        || (!s.draft.text.is_empty() && s.workspace.is_none())
+        || crate::agent::navigation_blocked(s)
+        || s.screen.launcher().is_none()
+    {
+        return;
+    }
+    crate::workspace::capture(s);
+    s.agent = None;
+    s.commands = None;
+    s.incoming = None;
+    s.files = None;
+    s.show_launcher();
+    list(s, false);
+}
