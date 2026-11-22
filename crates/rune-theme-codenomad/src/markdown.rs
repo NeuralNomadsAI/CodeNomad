@@ -1,6 +1,8 @@
 use crate::{Space, TextRole, kit, layout::dark, tokens};
+use pulldown_cmark::{Event, Options, Parser};
 use rune::{El, ScrollSpec, rich};
 use rune_kit::{CodeFrame, Markdown, MarkdownStyle, syntax};
+use std::borrow::Cow;
 
 pub fn prose<S: 'static>(
     source: &str,
@@ -15,7 +17,7 @@ pub fn prose<S: 'static>(
         .code_block(kit.c.bg_deep, kit.c.border_base)
         .link(kit.c.text_accent)
         .syntax_highlight(highlight);
-    Markdown::new(source)
+    Markdown::new(literal_breaks(source).into_owned())
         .style(style)
         .selectable(true)
         .tasks_read_only()
@@ -27,8 +29,57 @@ pub fn prose<S: 'static>(
         .build(kit)
 }
 
-pub fn knows_language(language: &str) -> bool {
-    syntax::known(language)
+// Normalize only parsed HTML and soft breaks so fences, inline code and link URLs stay intact.
+fn literal_breaks(source: &str) -> Cow<'_, str> {
+    if !source.contains(['<', '\n']) {
+        return Cow::Borrowed(source);
+    }
+    let options =
+        Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
+    let mut last = 0;
+    let mut result = String::new();
+    for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
+        match event {
+            Event::SoftBreak => {
+                result.push_str(&source[last..range.start]);
+                result.push_str("  \n");
+            }
+            Event::Html(raw) | Event::InlineHtml(raw) => {
+                result.push_str(&source[last..range.start]);
+                for c in raw.chars() {
+                    match c {
+                        '\n' => result.push_str("  \n"),
+                        '\r' => {}
+                        c if c.is_ascii_punctuation() => {
+                            use std::fmt::Write;
+                            let _ = write!(result, "&#{};", c as u32);
+                        }
+                        c => result.push(c),
+                    }
+                }
+            }
+            _ => continue,
+        }
+        last = range.end;
+    }
+    if last == 0 {
+        return Cow::Borrowed(source);
+    }
+    result.push_str(&source[last..]);
+    Cow::Owned(result)
+}
+
+pub fn language_for_path(path: &str) -> &str {
+    syntax::lang_for_path(path).unwrap_or("text")
+}
+
+pub fn copy_button<S: 'static>(label: &str, copy: impl Fn(&mut S, &mut rune::Tx) + 'static) -> El {
+    let kit = kit(dark());
+    rune_kit::IconButton::new(kit.glyph.copy)
+        .label(label)
+        .help(label)
+        .on_press_tx(copy)
+        .build(kit)
 }
 
 pub fn hold_frame(key: String, stamp: impl std::hash::Hash, build: impl FnOnce() -> El) -> El {

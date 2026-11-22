@@ -3061,6 +3061,7 @@ dependencies = [
 name = "rune-theme-codenomad"
 version = "0.1.0"
 dependencies = [
+ "pulldown-cmark",
  "rune",
  "rune-kit",
  "serde_json",

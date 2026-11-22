@@ -9,25 +9,56 @@ use rune::{El, col, text};
 use rune_theme_codenomad::{
     Space, TextRole, catalogue,
     layout::{self, Layout},
+    markdown,
 };
 
 const PART_LIMIT: usize = 1000;
 
 pub fn message(s: &State, i: usize) -> El {
     let m = &s.messages[i];
+    let mut header = layout::action_row().child(
+        text(t(if m.role == "user" {
+            "messageItem.speaker.you"
+        } else {
+            "messageItem.speaker.assistant"
+        }))
+        .text_role(TextRole::Label),
+    );
+    if !m.body.trim().is_empty() {
+        let id = m.id.clone();
+        header = header.child(
+            markdown::copy_button(
+                t("messageItem.actions.copy"),
+                screen::action_tx(&s.input_scope, move |s, tx| {
+                    let Some(row) = s.messages.iter().find(|row| row.id == id) else {
+                        return;
+                    };
+                    if row.parts.is_empty() {
+                        tx.copy(row.body.as_str());
+                    } else {
+                        let prose = row
+                            .parts
+                            .iter()
+                            .filter_map(|part| match part {
+                                Part::Text(body) if !body.text.trim().is_empty() => {
+                                    Some(body.text.as_str())
+                                }
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>();
+                        tx.copy(prose.join("\n\n"));
+                    }
+                }),
+            )
+            .key(format!("copy-message-{}", m.id)),
+        );
+    }
     let mut view = col()
         .key(m.id.clone())
         .full_width()
         .pad(Space::Lg)
         .separate(Space::Sm)
-        .child(
-            text(t(if m.role == "user" {
-                "messageItem.speaker.you"
-            } else {
-                "messageItem.speaker.assistant"
-            }))
-            .text_role(TextRole::Label),
-        );
+        .child(header);
     let mut ordinal = 0;
     if m.parts.is_empty() && !m.body.is_empty() {
         view = view.child(document::prose(s, format!("body-{}", m.id), &m.body, false));
@@ -73,7 +104,7 @@ pub fn message(s: &State, i: usize) -> El {
                             false,
                             screen::action_tx(&s.input_scope, move |s, tx| {
                                 tx.scroll_key_to(format!("{key}-start"), 0.0);
-                                if tx.by_keys() && hidden <= PART_LIMIT {
+                                if tx.by_keys() {
                                     tx.focus(format!("{key}-start"), true);
                                 }
                                 Display::reveal_next(s, &key);
@@ -86,7 +117,7 @@ pub fn message(s: &State, i: usize) -> El {
         let visible = index < head || index >= tail;
         let body = match part {
             Part::Text(body) => {
-                let key = format!("body-{}-{ordinal}", m.id);
+                let key = format!("fragment-{}:{ordinal}", m.id);
                 ordinal += 1;
                 if visible && !body.text.trim().is_empty() {
                     Some(document::prose(

@@ -230,8 +230,8 @@ pub struct Tool {
     pub metadata: Value,
     pub output: String,
     pub error: String,
-    pub input_display_bytes: usize,
     bytes: usize,
+    output_bytes: usize,
 }
 pub fn decode(v: &Value) -> Result<Vec<Part>> {
     let Some(parts) = v["content"].as_array() else {
@@ -283,16 +283,24 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                 .filter(|item| item["type"] == "text")
                 .filter_map(|item| item["text"].as_str());
             let error = state["error"]["message"].as_str().unwrap_or_default();
+            let (input_nodes, input_text) = resident_json(&state["input"]);
+            let (metadata_nodes, metadata_text) = resident_json(&state["metadata"]);
+            let output_bytes = metadata_text
+                + error.len()
+                + text_parts
+                    .clone()
+                    .map(|text| text.len() + 1)
+                    .sum::<usize>()
+                    .saturating_sub(1);
             let bytes = id.len()
                 + name.len()
                 + status.len()
-                + error.len()
                 + size_of::<Tool>()
-                + resident_json(&state["input"])
-                + resident_json(&state["metadata"]);
+                + input_nodes
+                + input_text
+                + metadata_nodes;
             charge(&mut resident, bytes)?;
-            tool_text = tool_text
-                .saturating_add(text_parts.clone().map(|text| text.len() + 1).sum::<usize>());
+            tool_text = tool_text.saturating_add(output_bytes);
             if tool_text > crate::history::MAX_TOOL_TEXT_BYTES {
                 return Err("resident tool text limit reached".into());
             }
@@ -304,8 +312,8 @@ pub fn decode(v: &Value) -> Result<Vec<Part>> {
                 metadata: state["metadata"].clone(),
                 output: text_parts.collect::<Vec<_>>().join("\n"),
                 error: error.into(),
-                input_display_bytes: json_bytes(&state["input"]),
                 bytes,
+                output_bytes,
             })));
         }
     }
@@ -319,31 +327,25 @@ fn charge(resident: &mut usize, added: usize) -> Result<()> {
     Ok(())
 }
 
-fn resident_json(v: &Value) -> usize {
-    (match v {
-        Value::Array(items) => items.iter().map(resident_json).sum(),
-        Value::Object(items) => items
-            .iter()
-            .map(|(key, item)| key.len() + size_of::<String>() * 2 + resident_json(item))
-            .sum(),
-        Value::String(s) => s.len(),
-        _ => 0,
-    }) + size_of::<Value>()
-}
-
-fn json_bytes(v: &Value) -> usize {
+fn resident_json(v: &Value) -> (usize, usize) {
+    let root = size_of::<Value>();
     match v {
-        Value::String(s) => s.len() + 2,
-        Value::Array(items) => 2 + items.iter().map(|item| 1 + json_bytes(item)).sum::<usize>(),
-        Value::Object(items) => {
-            2 + items
-                .iter()
-                .map(|(key, item)| key.len() + 4 + json_bytes(item))
-                .sum::<usize>()
-        }
-        _ => 24,
+        Value::Array(items) => items.iter().fold((root, 0), |(nodes, text), item| {
+            let (child, bytes) = resident_json(item);
+            (nodes + child, text + bytes)
+        }),
+        Value::Object(items) => items.iter().fold((root, 0), |(nodes, text), (key, item)| {
+            let (child, bytes) = resident_json(item);
+            (
+                nodes + key.len() + size_of::<String>() * 2 + child,
+                text + bytes,
+            )
+        }),
+        Value::String(s) => (root, s.len()),
+        _ => (root, 0),
     }
 }
+
 pub fn bytes(parts: &[Part]) -> usize {
     std::mem::size_of_val(parts)
         + parts
@@ -359,7 +361,7 @@ pub(crate) fn tool_text_bytes(parts: &[Part]) -> usize {
     parts
         .iter()
         .filter_map(|part| match part {
-            Part::Tool(tool) => Some(tool.output.len()),
+            Part::Tool(tool) => Some(tool.output_bytes),
             _ => None,
         })
         .sum()

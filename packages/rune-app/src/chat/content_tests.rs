@@ -313,3 +313,37 @@ fn tool_json_is_charged_before_a_large_resident_clone() {
         matches!(history::decode_message(&raw), Err(error) if error.to_string() == "resident history limit reached")
     );
 }
+
+#[test]
+fn prose_keeps_literal_html_line_breaks_and_copies_undisplayed_source() {
+    let source = format!(
+        "Alice\nBob\n\n<div>bonjour</div>\n\n**bold**\n\n{}\n\nEND-PROSE",
+        "source ".repeat(8000)
+    );
+    let row =
+        history::decode_message(&json!({"type":"user","id":"literal","text":source})).unwrap();
+    let mut state = init();
+    state.messages = vec![row];
+    state.phase = Phase::Ready;
+    let mut rt = Runtime::new(state, view, (960.0, 720.0), Env::new(false, 1.0));
+    let clipboard = rune::clipboard::memory();
+    rt.use_clipboard(&clipboard);
+    rt.frame(0.0);
+    rt.wheel(400.0, 300.0, 15000.0);
+    for _ in 0..10 {
+        rt.frame(1.0 / 60.0);
+    }
+    let tree = rt.accessibility_json().to_string();
+    assert!(tree.contains("Alice\\nBob"));
+    assert!(tree.contains("<div>bonjour</div>"));
+    assert!(!tree.contains("END-PROSE"));
+    let (x, y) = rt.find("copy-message-literal").unwrap();
+    // A focused message copy stays reachable without revealing the concealed source.
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(1.0 / 60.0);
+    assert_eq!(
+        clipboard.text().as_deref().map(String::as_str),
+        Some(source.as_str())
+    );
+}

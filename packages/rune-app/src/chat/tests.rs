@@ -34,7 +34,7 @@ fn opens_ten_thousand_rows_with_bounded_mounts_and_scrolls() {
         })
         .count();
     assert!(rows < 64, "only visible rows mount: {rows}");
-    assert!(mounted.len() < 350, "bounded markup: {}", mounted.len());
+    assert!(mounted.len() < 500, "bounded markup: {}", mounted.len());
     assert_eq!(rt.scroll_at_bottom("history"), Some(true));
     rt.wheel(400.0, 300.0, 1200.0);
     for _ in 0..90 {

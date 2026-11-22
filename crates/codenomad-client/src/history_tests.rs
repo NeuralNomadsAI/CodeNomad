@@ -25,6 +25,29 @@ fn older_pages_preserve_complete_tool_text_above_the_metadata_budget() {
     );
 }
 
+#[test]
+fn edit_patches_in_metadata_share_the_tool_text_budget() {
+    let rows: Vec<_> = (0..25)
+        .map(|i| {
+            history::decode_message(&json!({
+                "id": format!("edit_{i}"),
+                "type": "assistant",
+                "content": [{
+                    "type": "tool", "id": "call", "name": "edit",
+                    "state": {"status": "completed", "input":{"newString":"x".repeat(170 * 1024)},
+                        "metadata":{"files":[{"patch":"p".repeat(180 * 1024)}]}}
+                }]
+            }))
+            .unwrap()
+        })
+        .collect();
+    let mut resident = rows[24..].to_vec();
+    for i in (0..24).rev() {
+        resident = history::join(&rows[i..=i + 1], &resident).unwrap();
+    }
+    assert_eq!(resident, rows);
+}
+
 fn rows(ids: &[&str]) -> Vec<Message> {
     ids.iter()
         .map(|id| Message {

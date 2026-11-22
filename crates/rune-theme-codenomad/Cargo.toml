@@ -10,4 +10,5 @@ test-support = []
 [dependencies]
 rune = { workspace = true }
 rune-kit = { workspace = true, features = ["markdown"] }
+pulldown-cmark = { version = "0.13", default-features = false }
 serde_json = { workspace = true }

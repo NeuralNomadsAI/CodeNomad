@@ -1,6 +1,6 @@
 use super::{
     actions::Display,
-    document::{TOOL_LIMIT, window},
+    document::{HIGHLIGHT_LIMIT, TOOL_LIMIT, window},
 };
 use crate::{
     State,
@@ -15,7 +15,7 @@ use rune_theme_codenomad::{
     markdown,
 };
 use serde_json::Value;
-use std::sync::Arc;
+use std::{io, sync::Arc};
 
 fn string<'a>(value: &'a Value, keys: &[&str]) -> &'a str {
     keys.iter()
@@ -35,23 +35,24 @@ fn path(tool: &Tool) -> &str {
     )
 }
 
-fn language(path: &str) -> &str {
-    let file = path.rsplit(['/', '\\']).next().unwrap_or_default();
-    if matches!(file, "Dockerfile" | "Makefile") {
-        return file;
+fn input_json(value: &Value) -> Option<String> {
+    #[derive(Default)]
+    struct Limited(Vec<u8>);
+    impl io::Write for Limited {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if bytes.len() > TOOL_LIMIT.saturating_sub(self.0.len()) {
+                return Err(io::ErrorKind::FileTooLarge.into());
+            }
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
     }
-    let Some((_, ext)) = file.rsplit_once('.') else {
-        return "text";
-    };
-    if ext.eq_ignore_ascii_case("py") {
-        "python"
-    } else if ext.eq_ignore_ascii_case("md") {
-        "markdown"
-    } else if markdown::knows_language(ext) {
-        ext
-    } else {
-        "text"
-    }
+    let mut out = Limited::default();
+    serde_json::to_writer_pretty(&mut out, value).ok()?;
+    String::from_utf8(out.0).ok()
 }
 
 fn title(tool: &Tool) -> String {
@@ -205,30 +206,36 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
     let title = title(tool);
     let toggle = message.to_owned();
     let owner = tool.clone();
+    let mut parts = [""; 4];
+    let pending = matches!(tool.status.as_str(), "pending" | "streaming");
+    let lang = output(tool, &mut parts);
+    let has_output = !pending && parts.iter().any(|part| !part.trim().is_empty());
+    let mut header = layout::action_row()
+        .child(
+            layout::button(
+                &title,
+                false,
+                screen::action(&s.input_scope, move |s| {
+                    Display::toggle(s, &tool_key(&toggle, &owner.id))
+                }),
+            )
+            .key(format!("toggle-{key}"))
+            .expanded(expanded),
+        )
+        .child(text(t(status)).text_role(TextRole::Label));
+    if has_output {
+        header = header.child(copy(s, message, &tool.id, Section::Output));
+    }
     let mut block = col()
         .full_width()
         .pad(Space::Sm)
         .separate(Space::Sm)
         .inset_surface()
-        .child(
-            layout::action_row()
-                .child(
-                    layout::button(
-                        &title,
-                        false,
-                        screen::action(&s.input_scope, move |s| {
-                            Display::toggle(s, &tool_key(&toggle, &owner.id))
-                        }),
-                    )
-                    .key(format!("toggle-{key}"))
-                    .expanded(expanded),
-                )
-                .child(text(t(status)).text_role(TextRole::Label)),
-        );
+        .child(header);
     if !expanded {
         return block;
     }
-    if matches!(tool.status.as_str(), "pending" | "streaming") {
+    if pending {
         return block.child(text(t("toolCall.pending.waitingToRun")));
     }
     if !tool.input.is_null() {
@@ -250,26 +257,29 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
         );
         if show {
             block = block.child(copy(s, message, &tool.id, Section::Input));
-            if !tool.input.is_string() && tool.input_display_bytes > TOOL_LIMIT {
-                block = block.child(text(t("toolCall.output.tooLarge")).key(input_key));
-            } else if let Ok(input) = serde_json::to_string_pretty(&tool.input) {
+            let input = tool
+                .input
+                .as_str()
+                .map(std::borrow::Cow::Borrowed)
+                .or_else(|| input_json(&tool.input).map(std::borrow::Cow::Owned));
+            if let Some(input) = input {
                 block = block.child(markdown::tool_pane(
                     window(s, input_key, &[&input], TOOL_LIMIT, |shown, _| {
                         markdown::code(shown, "json", true, true)
                     }),
                     false,
                 ));
+            } else {
+                block = block.child(text(t("toolCall.output.tooLarge")).key(input_key));
             }
         }
     }
-    let mut parts = [""; 4];
-    let lang = output(tool, &mut parts);
     let lang = if tool.name == "read" {
-        language(path(tool))
+        markdown::language_for_path(path(tool))
     } else {
         lang
     };
-    if parts.iter().any(|part| !part.trim().is_empty()) {
+    if has_output {
         let highlight = tool.status != "running"
             && (lang != "diff"
                 || parts
@@ -283,7 +293,6 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
         block = block
             .child(
                 layout::action_row()
-                    .child(copy(s, message, &tool.id, Section::Output))
                     .child(layout::button(
                         t(if wrap {
                             "toolCall.diff.disableWordWrap"
@@ -297,7 +306,7 @@ fn render(s: &State, message: &str, tool: &Arc<Tool>, key: &str) -> El {
             )
             .child(markdown::tool_pane(
                 window(s, output_key, &parts, TOOL_LIMIT, |shown, units| {
-                    markdown::code(shown, lang, highlight && units <= TOOL_LIMIT, wrap)
+                    markdown::code(shown, lang, highlight && units <= HIGHLIGHT_LIMIT, wrap)
                 }),
                 tool.name == "edit",
             ));
@@ -353,13 +362,12 @@ fn copy(s: &State, message: &str, call: &str, section: Section) -> El {
             Section::Error => "error",
         }
     );
-    layout::button_tx(
+    markdown::copy_button(
         t(if matches!(section, Section::Input) {
             "toolCall.io.copyInputAriaLabel"
         } else {
             "toolCall.io.copyOutputAriaLabel"
         }),
-        false,
         screen::action_tx(&s.input_scope, move |s, tx| {
             let Some(tool) = s.messages.iter().find(|m| m.id == message).and_then(|m| {
                 m.parts.iter().find_map(|part| match part {
@@ -385,4 +393,16 @@ fn copy(s: &State, message: &str, call: &str, section: Section) -> El {
         }),
     )
     .key(key)
+}
+
+#[cfg(test)]
+#[test]
+fn nested_tool_arguments_stop_at_the_actual_pretty_json_budget() {
+    let mut value = serde_json::json!(vec!["x"; 2300]);
+    for _ in 0..100 {
+        value = serde_json::Value::Array(vec![value]);
+    }
+    assert!(value.to_string().len() < TOOL_LIMIT);
+    assert!(serde_json::to_string_pretty(&value).unwrap().len() > 400_000);
+    assert!(input_json(&value).is_none());
 }

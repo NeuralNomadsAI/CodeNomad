@@ -13,6 +13,7 @@ use std::borrow::Cow;
 
 pub(super) const PROSE_LIMIT: usize = 50_000;
 pub(super) const TOOL_LIMIT: usize = 10_000;
+pub(super) const HIGHLIGHT_LIMIT: usize = 100_000;
 const STEP: usize = 250_000;
 
 pub(super) fn prose(s: &State, key: String, source: &str, streaming: bool) -> El {
@@ -34,7 +35,12 @@ pub(super) fn prose(s: &State, key: String, source: &str, streaming: bool) -> El
             markdown::prose(
                 shown,
                 streaming,
-                units <= if streaming { TOOL_LIMIT } else { 100_000 },
+                units
+                    <= if streaming {
+                        TOOL_LIMIT
+                    } else {
+                        HIGHLIGHT_LIMIT
+                    },
                 |_: &mut State, url, tx| {
                     let _ = tx.open_url(url);
                 },
@@ -46,9 +52,8 @@ pub(super) fn prose(s: &State, key: String, source: &str, streaming: bool) -> El
                     let index = frame.index;
                     let source = frame.source.to_owned();
                     let group = group.clone();
-                    let copy = layout::button_tx(
+                    let copy = markdown::copy_button(
                         t("markdown.codeBlock.copy.label"),
-                        false,
                         screen::action_tx(&scope, move |_, tx| tx.copy(source.as_str())),
                     )
                     .key(format!("{group}-code-{index}-copy"));
