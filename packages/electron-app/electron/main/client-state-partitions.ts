@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
-import { link, lstat, mkdir, open, readFile, readdir, rm, unlink } from "node:fs/promises"
+import { isUtf8 } from "node:buffer"
+import { link, lstat, mkdir, open, readdir, rm, unlink } from "node:fs/promises"
 import { join } from "node:path"
 import { hasErrorCode } from "./client-state-process"
 
@@ -23,6 +24,7 @@ export interface ValidatedClientStatePartitionCommit {
   snapshot: unknown
   partitions: Array<readonly [string, string]>
   partitionKeys: string[]
+  suppliedBytes: number
 }
 
 const digest = (value: string | Buffer) => createHash("sha256").update(value).digest("hex")
@@ -73,8 +75,8 @@ export function validateClientStatePartitionCommit(value: unknown): ValidatedCli
     || rootPartitionKeys.length !== partitionKeys.length) {
     throw new TypeError("Client state root partition keys do not match the commit")
   }
-  if (partitions.length !== rootPartitionKeys.length
-    || partitions.some(([key], index) => key !== rootPartitionKeys[index])) {
+  const allowed = new Set(rootPartitionKeys)
+  if (partitions.some(([key]) => !allowed.has(key))) {
     throw new TypeError("Client state partitions do not match the root")
   }
   const rootBytes = Buffer.byteLength(serializedSnapshot, "utf8")
@@ -90,7 +92,7 @@ export function validateClientStatePartitionCommit(value: unknown): ValidatedCli
     if (commitBytes > MAX_CLIENT_STATE_PARTITION_COMMIT_BYTES) throw new RangeError("Client state partition commit exceeds the 256 MiB limit")
     if (digest(content) !== key) throw new TypeError("Client state partition digest mismatch")
   }
-  return { snapshot: normalizedSnapshot, partitions, partitionKeys: rootPartitionKeys }
+  return { snapshot: normalizedSnapshot, partitions, partitionKeys: rootPartitionKeys, suppliedBytes: commitBytes }
 }
 
 export async function syncDirectory(path: string): Promise<void> {
@@ -117,6 +119,19 @@ export class ClientStatePartitionStore {
   async prepare(commit: ValidatedClientStatePartitionCommit, authorityValid: () => void): Promise<void> {
     await mkdir(this.directory, { recursive: true })
     await this.assertDirectory()
+    // The manager's publication queue covers verification, root replacement and sweep.
+    const supplied = new Set(commit.partitions.map(([key]) => key))
+    let totalBytes = commit.suppliedBytes
+    for (const key of commit.partitionKeys) {
+      if (supplied.has(key)) continue
+      const content = await this.readVerified(key)
+      authorityValid()
+      if (content === null) throw new Error(`Missing or invalid client state partition ${key}`)
+      totalBytes += content.byteLength
+      if (totalBytes > MAX_CLIENT_STATE_PARTITION_COMMIT_BYTES) {
+        throw new RangeError("Client state partition commit exceeds the 256 MiB limit")
+      }
+    }
     let published = false
     for (const [key, content] of commit.partitions) published = await this.writeImmutable(key, content, authorityValid) || published
     if (published) {
@@ -124,18 +139,13 @@ export class ClientStatePartitionStore {
       await syncDirectory(this.directory)
       authorityValid()
     }
-    for (const key of commit.partitionKeys) {
-      const content = await this.readVerified(key)
-      authorityValid()
-      if (content === null) throw new Error(`Missing client state partition ${key}`)
-    }
   }
 
   async load(key: string, authorityValid: () => void): Promise<string | null> {
     if (!await this.assertDirectory(true)) return null
     const content = await this.readVerified(key)
     authorityValid()
-    return content
+    return content?.toString("utf8") ?? null
   }
 
   async sweep(partitionKeys: readonly string[], authorityValid: () => void): Promise<void> {
@@ -170,14 +180,25 @@ export class ClientStatePartitionStore {
     }
   }
 
-  private async readVerified(key: string): Promise<string | null> {
+  private async readVerified(key: string): Promise<Buffer | null> {
     try {
       const path = join(this.directory, key)
       const stats = await lstat(path)
-      if (!stats.isFile() || stats.isSymbolicLink()) return null
-      const bytes = await readFile(path)
-      if (bytes.length > MAX_PARTITION_BYTES || digest(bytes) !== key) return null
-      return bytes.toString("utf8")
+      if (!stats.isFile() || stats.isSymbolicLink() || stats.size > MAX_PARTITION_BYTES) return null
+      const file = await open(path, "r")
+      try {
+        const buffer = Buffer.allocUnsafe(stats.size + 1)
+        let size = 0
+        while (size < buffer.length) {
+          const { bytesRead } = await file.read(buffer, size, buffer.length - size, size)
+          if (!bytesRead) break
+          size += bytesRead
+        }
+        const bytes = buffer.subarray(0, size)
+        return size === stats.size && digest(bytes) === key && isUtf8(bytes) ? bytes : null
+      } finally {
+        await file.close()
+      }
     } catch (error) {
       if (hasErrorCode(error, "ENOENT")) return null
       throw error
