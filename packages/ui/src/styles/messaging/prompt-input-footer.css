@@ -99,6 +99,7 @@
   }
   .prompt-input-footer .prompt-actions-menu-trigger.action-overflow-trigger,
   .prompt-input-footer .stop-button,
+  .prompt-input-footer .voice-button,
   .prompt-input-footer .send-button {
     width: var(--touch-target-size);
     height: auto;

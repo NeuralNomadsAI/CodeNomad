@@ -1086,17 +1086,28 @@ export default function PromptInput(props: PromptInputProps) {
                   type="button"
                   class={`voice-button ${voiceInput.isRecording() ? "recording" : ""} ${voiceInput.isTranscribing() ? "transcribing" : ""}`}
                   onPointerDown={(e) => {
-                    if (e.button !== 0) return
+                    if (e.pointerType === "mouse" && e.button !== 0) return
+                    try {
+                      e.currentTarget.setPointerCapture(e.pointerId)
+                    } catch {
+                      // no-op
+                    }
                     if (voiceInput.canStartRecording()) {
                       beginVoiceInput()
                     }
                   }}
                   onPointerUp={(e) => {
-                    if (e.button !== 0) return
+                    if (e.pointerType === "mouse" && e.button !== 0) return
+                    try {
+                      e.currentTarget.releasePointerCapture(e.pointerId)
+                    } catch {
+                      // no-op
+                    }
                     if (voiceInput.isRecording()) {
                       voiceInput.stopRecording()
                     }
                   }}
+                  onContextMenu={(e) => e.preventDefault()}
                   disabled={voiceInput.isTranscribing()}
                   aria-label={voiceInput.buttonTitle()}
                   title={voiceInput.buttonTitle()}
