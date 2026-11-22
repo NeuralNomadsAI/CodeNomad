@@ -38,6 +38,9 @@ impl Visits {
             }
         }
     }
+    pub fn contains(&self, id: &str) -> bool {
+        self.ids.iter().any(|entry| entry.as_deref() == Some(id))
+    }
 }
 
 #[cfg(test)]

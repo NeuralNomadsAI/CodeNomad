@@ -173,7 +173,12 @@ impl Launcher {
                 page.rows.push(old.clone());
             }
             self.sessions = page.rows;
-            self.listed_sessions = listed;
+            if page.next.is_some() {
+                self.listed_sessions.retain(|id| self.visits.contains(id));
+                self.listed_sessions.extend(listed);
+            } else {
+                self.listed_sessions = listed;
+            }
         }
         self.next = page.next;
     }
@@ -216,6 +221,22 @@ mod tests {
         );
         launcher.visits.record("a", None);
         launcher.visits.record("b", None);
+        launcher.apply_listing(
+            Sessions {
+                rows: vec![row("b")],
+                next: Some("continuation".into()),
+            },
+            false,
+            Some("b"),
+        );
+        assert_eq!(
+            launcher
+                .visits
+                .steps(true, Some("b"))
+                .next()
+                .map(|(_, id)| id),
+            Some("a")
+        );
         launcher.apply_listing(
             Sessions {
                 rows: vec![row("b")],
