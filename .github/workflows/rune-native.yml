@@ -112,6 +112,7 @@ jobs:
           export RUNE_SERVER_EXE="$CARGO_TARGET_DIR/debug/codenomad-rs$suffix"
           node packages/rune-app/launcher-fixture.mjs --workspace-claims
           node packages/rune-app/launcher-fixture.mjs --restore-state
+          node packages/rune-app/launcher-fixture.mjs --files-state
           node packages/rune-app/recovery-fixture.mjs
       - name: Compare shared controls with Solid on Windows
         if: runner.os == 'Windows'
