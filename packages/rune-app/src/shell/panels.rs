@@ -268,7 +268,11 @@ pub fn view(s: &State, touch: bool, project: bool, body: El) -> El {
         Some(id) => format!("conversation-session-{id}"),
         None => "conversation-draft".into(),
     });
-    if project || !s.chat_title.is_empty() {
+    let dock_open = s
+        .agent
+        .as_ref()
+        .is_some_and(|ui| ui.picker || !ui.ids().is_empty());
+    if project || !s.chat_title.is_empty() || s.files.is_some() && !dock_open {
         center = center.child(header(s, project, docked, touch));
     } else {
         let warning = connection_warning(s);
