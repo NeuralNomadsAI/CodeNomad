@@ -60,6 +60,12 @@ impl Ui {
                     if !replaced {
                         self.mutation_message = notice;
                     }
+                } else if previous
+                    .as_ref()
+                    .zip(self.tree())
+                    .is_some_and(|(a, b)| a.branch != b.branch)
+                {
+                    self.invalidate_checkout_content();
                 }
             }
             Value::Changes(mut statuses, revision, index_revision) => {

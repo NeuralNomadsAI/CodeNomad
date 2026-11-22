@@ -434,6 +434,52 @@ fn branch_hint_holds_index_actions_until_the_new_label_is_read() {
 }
 
 #[test]
+fn refresh_revalidates_the_checkout_even_when_the_inventory_was_cached() {
+    let mut ui = ui();
+    ui.select_tree("other".into());
+    ui.replace_preview(Preview {
+        path: "a".into(),
+        source: Source::Commit {
+            id: "a".into(),
+            subject: "a".into(),
+        },
+        original_path: None,
+    });
+    let mut inventory = ui.inventory.clone().unwrap();
+    inventory.trees.retain(|tree| tree.slug == "root");
+    ui.mode = Mode::History;
+    ui.refresh();
+    assert!(ui.requests.slot(Lane::Worktrees).dirty);
+    ui.accept(Lane::Worktrees, Value::Worktrees(inventory));
+    assert_eq!(ui.tree().unwrap().slug, "root");
+    assert!(!ui.has_preview());
+}
+
+#[test]
+fn refreshed_inventory_detects_a_branch_switch_without_a_stream_hint() {
+    let mut ui = ui();
+    ui.mode = Mode::Changes;
+    ui.online = true;
+    ui.shown = true;
+    statuses(&mut ui, vec![change("a", true, false, 1)]);
+    ui.changes.draft = TextEdit::new("a");
+    assert!(ui.can_commit());
+    let row = ui
+        .changes
+        .find(ui.changes.current.as_ref().unwrap())
+        .unwrap();
+    ui.replace_preview(Preview::local(row));
+    let mut inventory = ui.inventory.clone().unwrap();
+    inventory.trees[0].branch = Some("new".into());
+    ui.accept(Lane::Worktrees, Value::Worktrees(inventory));
+    assert!(ui.has_preview());
+    assert!(ui.requests.slot(Lane::Preview).dirty);
+    assert!(!ui.can_commit());
+    statuses(&mut ui, vec![change("a", true, false, 1)]);
+    assert!(ui.can_commit());
+}
+
+#[test]
 fn invalidated_status_cannot_remove_the_diff_before_its_trailing_read() {
     let mut ui = ui();
     let row = change("a", false, false, 1);

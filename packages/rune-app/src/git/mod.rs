@@ -349,15 +349,8 @@ impl Ui {
             WorkspaceEvent::WorktreesChanged { workspace_id }
                 if workspace_id == &self.backend.workspace =>
             {
-                self.invalidate_index();
-                self.dirty(&[Lane::Worktrees, Lane::History]);
-                if self
-                    .preview
-                    .as_ref()
-                    .is_some_and(|target| matches!(target.source, Source::Local(_)))
-                {
-                    self.dirty(&[Lane::Preview]);
-                }
+                self.dirty(&[Lane::Worktrees]);
+                self.invalidate_checkout_content();
             }
             WorkspaceEvent::Stopped { workspace_id } if workspace_id == &self.backend.workspace => {
                 self.stopped = true;
@@ -388,6 +381,19 @@ impl Ui {
     fn invalidate_index(&mut self) {
         self.index_revision = self.index_revision.wrapping_add(1);
         self.dirty(&[Lane::Changes]);
+    }
+
+    fn invalidate_checkout_content(&mut self) {
+        self.invalidate_index();
+        self.dirty(&[Lane::History]);
+        if self
+            .preview
+            .as_ref()
+            .is_some_and(|target| matches!(target.source, Source::Local(_)))
+        {
+            self.requests.slot_mut(Lane::Preview).cancel();
+            self.dirty(&[Lane::Preview]);
+        }
     }
 
     fn demand(&mut self) {
@@ -485,16 +491,10 @@ impl Ui {
 
     fn refresh(&mut self) {
         self.retry_panel_reads();
-        if matches!(
-            self.repository(),
-            Repository::Uninitialized | Repository::NoGit
-        ) || self.inventory.is_none()
-            || self.requests.slot(Lane::Worktrees).error.is_some()
-        {
-            self.dirty(&[Lane::Worktrees]);
-        } else {
+        self.dirty(&[Lane::Worktrees]);
+        if self.repository() == Repository::Git {
             match self.mode {
-                Mode::Workspace => self.dirty(&[Lane::Worktrees]),
+                Mode::Workspace => {}
                 Mode::Changes => {
                     self.reconcile_revision = Some(self.preview_revision);
                     self.invalidate_index();
