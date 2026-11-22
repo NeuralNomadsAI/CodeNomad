@@ -227,12 +227,7 @@ mod tests {
         assert_eq!(prompt.skills[0].id, "opaque/skill");
         assert!(matches!(
             &parts[..],
-            [
-                Part::Skill(_),
-                Part::File(_),
-                Part::File(_),
-                Part::File(_)
-            ]
+            [Part::Skill(_), Part::File(_), Part::File(_), Part::File(_)]
         ));
     }
 
