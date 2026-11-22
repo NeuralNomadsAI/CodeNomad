@@ -171,7 +171,7 @@ fn transcript_edit_switches_the_shared_diff_without_changing_the_copied_patch() 
     );
     assert_eq!(
         clipboard.text().as_deref().map(String::as_str),
-        Some("@@ -1 +1 @@\n-return 7;\n+return 8;")
+        Some("--- a/src/demo.rs\n+++ b/src/demo.rs\n@@ -1 +1 @@\n-return 7;\n+return 8;")
     );
 }
 

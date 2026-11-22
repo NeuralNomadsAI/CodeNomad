@@ -17,7 +17,10 @@ const [binary, out] = process.argv.slice(2)
 assert(binary && path.isAbsolute(binary) && out && path.isAbsolute(out), 'Pass an absolute binary and output directory')
 await mkdir(out, {recursive: true})
 const script = path.join(out, 'rune-interaction.json')
-await writeFile(script, JSON.stringify({events:[{t: 0.1, type: 'tap', key: 'toggle-tool-transcript:4:read'}]}))
+await writeFile(script, JSON.stringify({events: [
+  {t: 0.1, type: 'tap', key: 'toggle-tool-transcript:4:read'},
+  {t: 0.4, type: 'tap', key: 'tool-transcript:4:edit-mode'},
+]}))
 const cache = await createFixtureCache()
 const shutdown = createFixtureShutdown(cache)
 const entry = '/tests/browser/fixtures/reveal-truncated-text.tsx'
@@ -66,6 +69,8 @@ try {
     await writeFile(path.join(out, `solid-${theme}.aria.yml`), await page.locator('.message-stream').ariaSnapshot())
     await tool('read').locator('.tool-call-header-toggle').click()
     await tool('read').getByText('return 7;', {exact: true}).waitFor()
+    await tool('edit').getByRole('button', {name: 'Switch to unified view'}).click()
+    await tool('edit').getByRole('button', {name: 'Switch to split view'}).waitFor()
     assert.deepEqual(errors, [])
 
     const tree = path.join(out, `rune-${theme}.json`)
@@ -76,7 +81,9 @@ try {
     for (const label of ['Results', 'Grep return', 'demo.rs']) assert(accessibility.includes(label))
     const after = path.join(out, `rune-${theme}-read.json`)
     await capture(theme, ['--script', script, '--tree', after])
-    assert(JSON.stringify(JSON.parse(await readFile(after, 'utf8')).accessibility).includes('return 7;'))
+    const interacted = JSON.stringify(JSON.parse(await readFile(after, 'utf8')).accessibility)
+    assert(interacted.includes('return 7;'))
+    assert(interacted.includes('Switch to split view'), 'Rune toggles the shared diff to unified')
     await installPngReader(page)
     const images = await Promise.all(['solid', 'rune'].map(async type =>
       `data:image/png;base64,${(await readFile(path.join(out, `${type}-${theme}.png`))).toString('base64')}`))

@@ -18,7 +18,8 @@ const RETAINED: usize = 32;
 
 struct Entry {
     key: String,
-    tool: Arc<Tool>,
+    patch: String,
+    file: String,
     state: DiffState,
     lines: usize,
 }
@@ -44,7 +45,7 @@ impl Cache {
             .map_or(&mut self.detached, |entry| &mut entry.state)
     }
 
-    fn load(&mut self, key: &str, tool: Arc<Tool>, patch: &str, path: &str, width: f32) -> bool {
+    fn load(&mut self, key: &str, patch: &str, path: &str, width: f32) -> bool {
         let former = self
             .entries
             .iter()
@@ -52,7 +53,7 @@ impl Cache {
             .and_then(|index| self.entries.remove(index));
         if former
             .as_ref()
-            .is_some_and(|entry| Arc::ptr_eq(&entry.tool, &tool))
+            .is_some_and(|entry| entry.patch == patch && entry.file == path)
         {
             self.entries.extend(former);
             return false;
@@ -93,7 +94,8 @@ impl Cache {
         }
         self.entries.push_back(Entry {
             key: key.into(),
-            tool,
+            patch: patch.into(),
+            file: path.into(),
             state,
             lines,
         });
@@ -116,12 +118,15 @@ pub(super) fn body(
     path: &str,
     fallback: impl FnOnce() -> El,
 ) -> El {
+    let path = path
+        .get(..path.floor_char_boundary(path.len().min(4096)))
+        .unwrap_or_default();
     if let Some(entry) = s
         .transcript_display
         .diffs
         .entries
         .iter()
-        .find(|entry| entry.key == key && Arc::ptr_eq(&entry.tool, tool))
+        .find(|entry| entry.key == key && entry.patch == patch && entry.file == path)
     {
         if entry.state.files().iter().all(|file| file.hunks.is_empty()) {
             return fallback();
@@ -144,7 +149,7 @@ pub(super) fn body(
                     matches!(part, crate::content::Part::Tool(current) if Arc::ptr_eq(current, &tool)))
                 && s.transcript_display
                     .diffs
-                    .load(&key, tool.clone(), &patch, &path, width)
+                    .load(&key, &patch, &path, width)
             {
                 s.revision += 1;
             } else {
@@ -157,11 +162,17 @@ pub(super) fn body(
 fn view(s: &State, key: &str, entry: &Entry, path: &str) -> El {
     let split = entry.state.mode() == DiffMode::Split;
     let wrapped = entry.state.wrap();
-    let file = path.rsplit(['/', '\\']).next().unwrap_or_default();
+    let file = path
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or_default()
+        .chars()
+        .take(250)
+        .collect::<String>();
     let title = if file.is_empty() {
         t("toolCall.diff.label").into()
     } else {
-        catalogue::format(locale(), "toolCall.diff.label.withPath", &[("path", file)])
+        catalogue::format(locale(), "toolCall.diff.label.withPath", &[("path", &file)])
     };
     let mode_key = key.to_owned();
     let wrap_key = key.to_owned();
