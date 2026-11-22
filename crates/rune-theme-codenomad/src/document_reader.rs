@@ -3,6 +3,7 @@ use rune::{El, Icon, ScrollSpec, TextStyle};
 pub use rune_kit::markdown::CodeFrame;
 use rune_kit::{Markdown, MarkdownStyle, syntax};
 
+pub mod editor;
 mod toolbar;
 pub use toolbar::wrap_button;
 
@@ -150,9 +151,9 @@ fn focus_scroll(dark: bool, viewport: El) -> El {
         t.color("focus-ring-color"),
     )
 }
-pub fn source(dark: bool, path: &str, text: &str, wrap: bool, view_width: Option<f32>) -> El {
+fn source_spans(dark: bool, path: &str, text: &str) -> Vec<rune::Span> {
     let t = tokens(dark);
-    let spans = syntax::highlight(syntax::lang_for_path(path), text)
+    syntax::highlight(syntax::lang_for_path(path), text)
         .into_iter()
         .filter_map(|(range, paint)| {
             use syntax::Syntax::*;
@@ -167,8 +168,10 @@ pub fn source(dark: bool, path: &str, text: &str, wrap: bool, view_width: Option
             span.color = Some(t.color(role));
             Some(span)
         })
-        .collect::<Vec<_>>();
-    let source = rune::rich(text, spans)
+        .collect()
+}
+pub fn source(dark: bool, path: &str, text: &str, wrap: bool, view_width: Option<f32>) -> El {
+    let source = rune::rich(text, source_spans(dark, path, text))
         .key("file-source-text")
         .selectable(true)
         .literal_direction()

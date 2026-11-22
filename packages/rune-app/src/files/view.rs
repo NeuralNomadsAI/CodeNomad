@@ -8,6 +8,7 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
 };
 
+mod editor;
 mod tree;
 pub(crate) use tree::tree;
 
@@ -144,7 +145,7 @@ fn reader_content(s: &State) -> El {
         s,
         "file-refresh",
         t("instanceShell.rightPanel.actions.refresh"),
-        ui.reader.busy() || ui.document.pending() || ui.document.dirty(),
+        ui.reader.busy() || ui.document.pending(),
         |ui, _| ui.refresh_document(ui.document.scope()),
     )];
     let mut content_view = rune::el();
@@ -200,17 +201,19 @@ fn reader_content(s: &State) -> El {
                         )
                         .key("file-wrap"),
                     );
-                    theme::source_view(
-                        dark,
-                        theme::source(
+                    editor::source(s, ui, &target.path, &mut actions).unwrap_or_else(|| {
+                        theme::source_view(
                             dark,
-                            &target.path,
-                            text,
+                            theme::source(
+                                dark,
+                                &target.path,
+                                text,
+                                ui.presentation.wrap,
+                                view_width.map(|width| theme::source_width(dark, width)),
+                            ),
                             ui.presentation.wrap,
-                            view_width.map(|width| theme::source_width(dark, width)),
-                        ),
-                        ui.presentation.wrap,
-                    )
+                        )
+                    })
                 } else {
                     theme::rendered_viewport(
                         dark,
@@ -313,6 +316,7 @@ fn reader_content(s: &State) -> El {
             }),
         )
         .child(content_view.remaining())
+        .children(editor::decision(s, ui))
 }
 
 fn code_controls(

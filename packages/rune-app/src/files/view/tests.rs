@@ -5,6 +5,7 @@ use codenomad_client::files::{Entry, EntryKind};
 use rune::{Env, Key, KeyEvent, Mods, Runtime};
 use std::time::{Duration, Instant};
 
+mod editor;
 mod markdown;
 mod reading;
 mod resize;

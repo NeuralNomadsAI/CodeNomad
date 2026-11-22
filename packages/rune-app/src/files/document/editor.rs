@@ -123,6 +123,16 @@ impl Editor {
     pub fn edit(&self) -> &TextEdit {
         &self.edit
     }
+    pub fn editable(&self) -> bool {
+        self.active
+            && self
+                .draft
+                .as_ref()
+                .is_some_and(|draft| lock(draft).original.is_some())
+    }
+    pub fn writable(&self) -> bool {
+        self.editable() && self.online && self.dirty() && !self.pending()
+    }
     pub fn input(&mut self, scope: u64) -> &mut TextEdit {
         self.rejected = TextEdit::new("");
         if scope != self.scope
