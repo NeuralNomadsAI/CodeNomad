@@ -73,8 +73,9 @@ async function harness(memory?: Pick<MemoryService, "sessionTitles"> & Partial<P
   const assertCurrent = () => { if (!control.current) throw new Error("Stale connection") }
   const fetcher: typeof fetch = (input, init) => { assertCurrent(); return fetch(input, init) }
   const client = OpenCode.make({ baseUrl: endpoint.url, fetch: fetcher })
+  const workspace = { id: "w", path: "/repo" } as never
   const manager: InstanceProxyWorkspaceManager = {
-    get: () => ({ id: "w", path: "/repo" }) as never,
+    get: () => workspace,
     getSharedServiceEndpoint: async () => endpoint,
     getSharedServiceClient: async () => { throw new Error("Must use the pinned client") },
     getSharedServiceConnection: async () => ({ endpoint, client, fetch: fetcher, assertCurrent, invalidate() {}, profile: async () => "modern" }),
