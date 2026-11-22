@@ -1081,6 +1081,41 @@ export default function PromptInput(props: PromptInputProps) {
             </div>
 
             <div class="prompt-input-primary-actions">
+              <Show when={preferences().showPromptVoiceInput}>
+                <button
+                  type="button"
+                  class={`voice-button ${voiceInput.isRecording() ? "recording" : ""} ${voiceInput.isTranscribing() ? "transcribing" : ""}`}
+                  onPointerDown={(e) => {
+                    if (e.button !== 0) return
+                    if (voiceInput.canStartRecording()) {
+                      beginVoiceInput()
+                    }
+                  }}
+                  onPointerUp={(e) => {
+                    if (e.button !== 0) return
+                    if (voiceInput.isRecording()) {
+                      voiceInput.stopRecording()
+                    }
+                  }}
+                  disabled={voiceInput.isTranscribing()}
+                  aria-label={voiceInput.buttonTitle()}
+                  title={voiceInput.buttonTitle()}
+                >
+                  <Show
+                    when={voiceInput.isTranscribing()}
+                    fallback={
+                      <Show
+                        when={voiceInput.isRecording()}
+                        fallback={<Mic class="h-4 w-4" aria-hidden="true" />}
+                      >
+                        <Mic class="h-4 w-4 text-red-500 animate-pulse" aria-hidden="true" />
+                      </Show>
+                    }
+                  >
+                    <Loader2 class="h-4 w-4 animate-spin" aria-hidden="true" />
+                  </Show>
+                </button>
+              </Show>
               <button
                 type="button"
                 class="stop-button"

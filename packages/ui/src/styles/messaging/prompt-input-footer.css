@@ -54,7 +54,8 @@
 }
 
 .prompt-input-footer .send-button,
-.prompt-input-footer .stop-button {
+.prompt-input-footer .stop-button,
+.prompt-input-footer .voice-button {
   height: auto;
   min-height: 28px;
   align-self: stretch;
@@ -80,6 +81,7 @@
 
 .prompt-input-footer .prompt-actions-menu-trigger.action-overflow-trigger,
 .prompt-input-footer .stop-button,
+.prompt-input-footer .voice-button,
 .prompt-input-footer .send-button {
   width: 28px;
   height: auto;

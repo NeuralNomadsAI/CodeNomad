@@ -241,6 +241,27 @@
   color: var(--text-inverted);
 }
 
+.voice-button {
+  @apply w-7 h-7 border-none cursor-pointer flex items-center justify-center transition-all flex-shrink-0;
+  border-radius: var(--button-radius);
+  background-color: transparent;
+  color: var(--text-secondary);
+}
+
+.voice-button:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.voice-button.recording {
+  background-color: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.voice-button:disabled {
+  @apply opacity-40 cursor-not-allowed;
+}
+
 .send-button.shell-mode {
   background-color: var(--status-success);
 }
