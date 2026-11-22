@@ -25,6 +25,7 @@
 
 ## UI and extensions
 
+- [Rune application](RUNE.md): code style, UI rules, platform constraints and the Solid-to-Rune conversion circuit.
 - [UI conventions](UI_CONVENTIONS.md): dialogs, utility windows, icon toggles, surfaces and scrollbars.
 - [Application shell](UI_SHELL.md): panel toggles, drawers, tabs, session sidebar and native menus.
 - [Composer](COMPOSER.md): context selectors, height, focus, delivery, attachments and mentions.
