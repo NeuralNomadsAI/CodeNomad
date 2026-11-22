@@ -47,6 +47,26 @@ fn document_action(s: &State, run: fn(&mut super::Ui)) -> impl Fn(&mut State) + 
         }
     })
 }
+fn document_link(s: &State) -> impl Fn(&mut State, &str, &mut rune::Tx) + 'static {
+    let input_scope = s.input_scope.clone();
+    let document = s
+        .files
+        .as_ref()
+        .map(|ui| (ui.document.scope(), ui.document.revision()));
+    let target = s.files.as_ref().and_then(|ui| ui.reader.target()).cloned();
+    move |s, url, tx| {
+        if s.current_scope(&input_scope)
+            && s.files.as_ref().is_some_and(|ui| {
+                !ui.stopped
+                    && !ui.presentation.source
+                    && document == Some((ui.document.scope(), ui.document.revision()))
+                    && target.as_ref() == ui.reader.target()
+            })
+        {
+            let _ = tx.open_url(url);
+        }
+    }
+}
 pub fn body(s: &State, history: El, expanded: bool) -> El {
     let Some(ui) = &s.files else {
         return history;
@@ -140,7 +160,12 @@ fn reader(s: &State) -> El {
                                         .child(theme::source(dark, &target.path, text, true))
                                 })
                         } else {
-                            theme::markdown(dark, text, t("markdown.mermaid.diagram"))
+                            theme::markdown(
+                                dark,
+                                text,
+                                t("markdown.mermaid.diagram"),
+                                document_link(s),
+                            )
                         },
                         true,
                     )

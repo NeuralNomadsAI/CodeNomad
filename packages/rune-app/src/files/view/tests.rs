@@ -5,6 +5,7 @@ use codenomad_client::files::{Entry, EntryKind};
 use rune::{Env, Key, KeyEvent, Mods, Runtime};
 use std::time::{Duration, Instant};
 
+mod markdown;
 mod reading;
 mod resize;
 mod server;
@@ -398,16 +399,6 @@ fn markdown_links_html_and_mermaid_fallback_use_only_the_loaded_document() {
                 "markup.md" => {
                     assert!(shown.contains("Reader") && shown.contains("safe"));
                     assert!(!shown.contains("never_execute"));
-                    if let Some(node) = nodes.iter().find(|node| {
-                        node.text
-                            .as_deref()
-                            .is_some_and(|text| text.contains("remote"))
-                    }) {
-                        let [x, y, w, h] = node.rect;
-                        rt.pointer_down(x + w / 2.0, y + h / 2.0);
-                        rt.pointer_up(x + w / 2.0, y + h / 2.0);
-                        rt.frame(0.02);
-                    }
                     click(&mut rt, "file-source-toggle");
                     assert!(rt.state.files.as_ref().unwrap().presentation.source);
                     assert!(

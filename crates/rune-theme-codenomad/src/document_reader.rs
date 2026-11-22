@@ -101,11 +101,17 @@ pub fn source(dark: bool, path: &str, text: &str, wrap: bool) -> El {
         .text_role(TextRole::Mono);
     if wrap { source.w_full().wrap() } else { source }
 }
-pub fn markdown(dark: bool, text: &str, diagram_label: &'static str) -> El {
+pub fn markdown<S: 'static>(
+    dark: bool,
+    text: &str,
+    diagram_label: &'static str,
+    open: impl Fn(&mut S, &str, &mut rune::Tx) + 'static,
+) -> El {
     Markdown::new(text)
         .tasks_read_only()
         .selectable(true)
         .scroll_wide(true)
+        .on_link_tx(open)
         .diagram_frame(move |diagram, _| diagram.label(diagram_label))
         .build(kit(dark))
 }
