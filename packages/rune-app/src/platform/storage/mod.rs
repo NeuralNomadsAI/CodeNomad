@@ -184,28 +184,33 @@ struct BrowserStage {
     storage: web_sys::Storage,
     payload: std::cell::RefCell<(Vec<u8>, Vec<(String, String)>)>,
     departing: std::cell::Cell<bool>,
+    openings: std::cell::RefCell<Option<crate::workspace::opening::Openings>>,
 }
 #[cfg(target_arch = "wasm32")]
 impl BrowserStage {
     fn depart(&self) {
-        if self.departing.get() {
+        if self.departing.replace(true) {
             return;
         }
-        let Ok(current) = self.payload.try_borrow() else {
+        let current = self.payload.try_borrow();
+        let saved = current.as_ref().ok().is_some_and(|current| {
+            !current.0.is_empty()
+                && std::str::from_utf8(&current.0).is_ok_and(|text| {
+                    self.storage.set_item(Store::KEY, text).is_ok()
+                        && self.storage.set_item(Store::RELEASED, "1").is_ok()
+                })
+        });
+        if let Ok(openings) = self.openings.try_borrow() {
+            if let Some(openings) = openings.as_ref() {
+                cancel_openings(openings);
+            }
+        }
+        if !saved {
+            return;
+        }
+        let Ok(current) = current else {
             return;
         };
-        let Ok(text) = std::str::from_utf8(&current.0) else {
-            return;
-        };
-        if current.0.is_empty() {
-            return;
-        }
-        self.departing.set(true);
-        if self.storage.set_item(Store::KEY, text).is_err()
-            || self.storage.set_item(Store::RELEASED, "1").is_err()
-        {
-            return;
-        }
         for (base, id) in &current.1 {
             let request = web_sys::RequestInit::new();
             request.set_method("DELETE");
@@ -255,6 +260,7 @@ impl Store {
             storage: storage.clone(),
             payload: Default::default(),
             departing: Default::default(),
+            openings: Default::default(),
         });
         let copy = staged.clone();
         let callback =
@@ -311,8 +317,45 @@ impl Store {
     pub fn stage(&self, bytes: &[u8], records: &[(String, String)]) {
         *self.staged.payload.borrow_mut() = (bytes.to_vec(), records.to_vec());
     }
+    pub fn watch_openings(&self, openings: crate::workspace::opening::Openings) {
+        *self.staged.openings.borrow_mut() = Some(openings);
+    }
+    pub fn depart(&self) {
+        self.staged.depart();
+    }
     pub fn save_exit(&self, bytes: Vec<u8>) -> Result<()> {
         self.save_now(&bytes)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn cancel_openings(openings: &crate::workspace::opening::Openings) {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    for claim in openings.departure() {
+        let request = web_sys::RequestInit::new();
+        request.set_method("POST");
+        request.set_credentials(web_sys::RequestCredentials::Include);
+        request.set_body(
+            &serde_json::json!({"requestId":claim.request})
+                .to_string()
+                .into(),
+        );
+        let headers = js_sys::Object::new();
+        if js_sys::Reflect::set(&headers, &"content-type".into(), &"application/json".into()).ok()
+            != Some(true)
+            || js_sys::Reflect::set(request.as_ref(), &"headers".into(), &headers).ok()
+                != Some(true)
+            || js_sys::Reflect::set(request.as_ref(), &"keepalive".into(), &true.into()).ok()
+                != Some(true)
+        {
+            continue;
+        }
+        let _ = window.fetch_with_str_and_init(
+            &format!("{}api/workspaces/creation/cancel", claim.backend.base),
+            &request,
+        );
     }
 }
 

@@ -7,6 +7,8 @@ pub struct Openings(Arc<Mutex<Claims>>);
 struct Claims {
     closed: bool,
     cleanup_allowed: bool,
+    #[cfg(any(target_arch = "wasm32", test))]
+    departed: bool,
     generation: u64,
     entries: Vec<Claim>,
 }
@@ -137,6 +139,33 @@ impl Openings {
                 claim.revoked = true;
             }
         }
+    }
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub fn departure(&self) -> Vec<Cleanup> {
+        let Ok(mut state) = self.state() else {
+            return Vec::new();
+        };
+        if state.departed {
+            return Vec::new();
+        }
+        state.closed = true;
+        state.cleanup_allowed = true;
+        state.departed = true;
+        state
+            .entries
+            .iter_mut()
+            .filter_map(|claim| {
+                claim.revoked = true;
+                if claim.done == Some(true) && (!claim.sent || claim.project.is_some()) {
+                    return None;
+                }
+                Some(Cleanup {
+                    backend: claim.backend.clone(),
+                    request: claim.request.clone(),
+                    project: claim.project.clone(),
+                })
+            })
+            .collect()
     }
     pub fn allow_cleanup(&self) {
         if let Ok(mut state) = self.state() {
@@ -337,5 +366,20 @@ mod tests {
         assert!(crate::platform::block_on(pending.create("/fixture")).is_err());
         assert!(owner.begin(backend(), "tab-1").is_err());
         assert!(!owner.state().unwrap().entries[0].sent);
+    }
+    #[test]
+    fn unstaged_departure_keeps_exact_rights_and_is_idempotent() {
+        let owner = Openings::default();
+        let pending = owner.begin(backend(), "tab-0").unwrap();
+        let cleanup = owner.departure();
+        assert_eq!(cleanup.len(), 1);
+        assert_eq!(cleanup[0].request, pending.request);
+        assert_eq!(cleanup[0].backend.base, pending.backend.base);
+        assert!(cleanup[0].project.is_none());
+        assert!(!owner.current(&pending.request, pending.generation));
+        assert!(owner.begin(backend(), "tab-1").is_err());
+        assert!(owner.departure().is_empty());
+        // Suppress actual IO when this pure admission proof drops its guard.
+        owner.state().unwrap().cleanup_allowed = false;
     }
 }

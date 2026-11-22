@@ -165,6 +165,10 @@ Le test réel crée son profil sous `target/rune-host-tests`, puis le retire apr
 
 ## Reproduire la restauration de l'interface
 
+Le nettoyage navigateur en vol passe avec le serveur partagé corrigé : `target/rune-web-tests/launcher-fcbf70fb-1365-40fa-a16a-0d986befa75c/browser/pending-open-proof.json`. Quatre départs réels couvrent POST retenu (inventaire 1→0), ACK retenu (2→0), quota (2→1) et snapshot corrompu sans Store valide (2→1). Le successeur du même dossier est préservé ; snapshot/marque précèdent les requêtes keepalive admissibles, et le record adopté est préservé lorsque la sauvegarde échoue. Le document parti abandonne son ACK ; la livraison tardive reste vérifiée séparément en natif. Trois tests du registre, WASM et bundle réussissent. Commande : `node packages/rune-app/launcher-fixture.mjs --web-pending-open`, avec `RUNE_SERVER_EXE` debug du serveur partagé qualifié. Régression bureau/téléphone, quota et BFCache synthétique réussie sur le même bundle : profil `launcher-c9f20cde-7598-4b07-a187-87e69fa4e46e`, sortie serveur zéro.
+
+Les deux revues indépendantes ont reproduit des P2 de la tranche dans `target/rune-review-{contracts,standards}/REPORT.md` : admission épuisée après seize créations rejetées, accumulation de brouillons vides rendant le snapshot impersistable et récupération d'une seule occurrence fermée au lieu de fusionner ses sessions. Corrections et contre-vérifications restent nécessaires avant intégration.
+
 Fournir les exécutables privés dans `RUNE_CLIENT_EXE` et `RUNE_SERVER_EXE`, le cache Cargo existant et le cache Chromium privé dans `PLAYWRIGHT_BROWSERS_PATH` :
 
 ```powershell

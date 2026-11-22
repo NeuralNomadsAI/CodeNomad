@@ -13,7 +13,7 @@ import {privateEnvironment} from './private-profile.mjs'
 import {controlsFixture} from './controls-fixture.mjs'
 import {pendingOpenFixture} from './pending-open-fixture.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
-const webRestore=process.argv.includes('--web-restore'),web=process.argv.includes('--web')||webRestore,root=path.resolve(import.meta.dirname,'../..')
+const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending,web=process.argv.includes('--web')||webRestore,root=path.resolve(import.meta.dirname,'../..')
 if(!web)requireTestSupport()
 const here=import.meta.dirname,profile=path.join(web?path.join(root,'target/rune-web-tests'):path.join(here,'fixture-profile'),`launcher-${randomUUID()}`)
 const project=path.join(profile,'projects','synthetic');await mkdir(project,{recursive:true})
@@ -166,7 +166,7 @@ try{
     assert.equal(sha256,manifest.files.find(file=>file.file==='app_bg.wasm').sha256)
     staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,serverBinary,ui}
     const runner=webRestore?'web-restore.mjs':'web-smoke.mjs'
-    client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),'--url',`${origin}/`,...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',chromium.executablePath()],{cwd:root,env,windowsHide:true,stdio:['ignore','pipe','pipe']})
+    client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),'--url',`${origin}/`,...(webPending?['--pending-open']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',chromium.executablePath()],{cwd:root,env,windowsHide:true,stdio:['ignore','pipe','pipe']})
     for(const stream of [client.stdout,client.stderr])stream.on('data',d=>{if(diagnostic.length<262144)diagnostic+=d})
   }else if(pendingOpen){
     await pendingOpenFixture({origin,profile,project,env,clientBinary});result=0

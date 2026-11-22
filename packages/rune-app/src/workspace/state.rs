@@ -92,6 +92,10 @@ impl Ui {
         platform::release_records_on_exit(records, self.openings.clone());
     }
     fn stage(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(store) = &self.persistence.store {
+            store.watch_openings(self.openings.clone());
+        }
         if self.persistence.read_error || !self.ready || self.staged_revision == Some(self.revision)
         {
             return;
@@ -341,6 +345,13 @@ pub fn connected(s: &mut State) {
 impl Drop for Ui {
     fn drop(&mut self) {
         self.openings.close();
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(store) = &self.persistence.store {
+                store.depart();
+            }
+            platform::storage::cancel_openings(&self.openings);
+        }
     }
 }
 pub fn resume(s: &mut State, tx: &mut Tx) {
