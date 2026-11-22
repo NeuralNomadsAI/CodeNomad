@@ -34,6 +34,9 @@ async function fixturePage(run: (page: Page) => Promise<void>) {
     }
   })
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/meta", route => route.fulfill({ json: {
+    localRequest: false, serversUsable: true, serversManageable: true, secretEntryAllowed: false,
+  } }))
   try {
     await page.goto(fixture.url)
     await page.waitForFunction(() => Boolean((window as any).parity) && document.querySelectorAll(".image-settings select:not(:disabled)").length === 3
@@ -173,21 +176,17 @@ test("embedded Settings Missions reads the selected qualified project's worktree
 }))
 
 test("web clients manage and select saved servers through embedded Settings without a native bridge", async () => fixturePage(async page => {
-  await page.route("**/api/meta", route => route.fulfill({ json: {
-    localRequest: false, serversUsable: true, serversManageable: true, secretEntryAllowed: false,
-  } }))
   await page.evaluate(() => (window as any).parity.openServers())
-  const row = page.locator('[data-remote-server="A"]')
-  await row.waitFor()
-  assert.equal(await page.getByRole("textbox", { name: "Server address or link" }).isVisible(), true)
-  assert.equal(await page.getByRole("button", { name: "Add SSH server", exact: true }).isVisible(), true)
-  assert.equal(await page.getByRole("button", { name: "Edit server: Server A", exact: true }).count(), 1)
+  const settings = page.getByRole("dialog")
+  await page.getByRole("textbox", { name: "Server address or link" }).waitFor()
+  await settings.getByRole("button", { name: "Add SSH server", exact: true }).waitFor()
+  await settings.getByRole("button", { name: "Edit server: Server A", exact: true }).waitFor()
   const id = await page.evaluate(async () => {
     Object.defineProperty(crypto, "randomUUID", { value: undefined })
     return (await (window as any).parity.addServer()).id
   })
   assert.match(id, /^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i)
-  await row.getByRole("button", { name: "Open: Server A", exact: true }).click()
+  await settings.getByRole("button", { name: "Open: Server A", exact: true }).click()
   await page.waitForFunction(() => (window as any).parity.serverSelection()?.id === "A")
   assert.equal(await page.evaluate(() => Boolean(window.electronAPI || (window as any).__TAURI_INTERNALS__)), false)
 }))
