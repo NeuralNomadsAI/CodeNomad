@@ -1,12 +1,10 @@
-import { createEffect, createSignal, onCleanup, untrack, type Accessor, type JSXElement } from "solid-js"
+import { createEffect, createSignal, onCleanup, type Accessor, type JSXElement } from "solid-js"
 import { SCROLL_INTENT_KEYS, USER_SCROLL_INTENT_WINDOW_MS, VirtualScrollController, describeKeyTarget, getKeyboardScrollIntent, isAutoFollowing, isMiddleButtonScrollIntent, type ScrollControllerMetrics } from "../components/virtual-follow-behavior"
 import { getElementZoom, wheelDeltaUnit } from "./scroll-gesture-routing"
 
 interface FollowScrollOptions {
   getScrollTopSnapshot: Accessor<number>
   setScrollTopSnapshot: (next: number) => void
-  getFollowingSnapshot?: Accessor<boolean>
-  setFollowingSnapshot?: (next: boolean) => void
   sentinelClassName: string
 }
 
@@ -23,14 +21,8 @@ export interface FollowScrollHelpers {
 export function createFollowScroll(options: FollowScrollOptions): FollowScrollHelpers {
   const [scrollContainer, setScrollContainer] = createSignal<HTMLDivElement | undefined>()
   const [bottomSentinel, setBottomSentinel] = createSignal<HTMLDivElement | null>(null)
-  const initialFollowing = options.getFollowingSnapshot?.() ?? true
-  const [autoScroll, setAutoScroll] = createSignal(initialFollowing)
-  const scrollController = new VirtualScrollController(initialFollowing)
-  const syncFollowing = (following: boolean) => {
-    if (following === untrack(autoScroll)) return
-    setAutoScroll(following)
-    options.setFollowingSnapshot?.(following)
-  }
+  const [autoScroll, setAutoScroll] = createSignal(true)
+  const scrollController = new VirtualScrollController(true)
 
   let scrollContainerRef: HTMLDivElement | undefined
   let detachScrollIntentListeners: (() => void) | undefined
@@ -67,7 +59,7 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
     // autoscroll waits longer than the intent deadline before its first scroll
     // event; a downward gesture reaching the bottom resumes follow (shared rule).
     const result = scrollController.userGesture(direction, now + USER_SCROLL_INTENT_WINDOW_MS, container ? getMetrics(container) : null, distance)
-    syncFollowing(isAutoFollowing(result.state.mode))
+    setAutoScroll(isAutoFollowing(result.state.mode))
     if (direction === "up") cancelFollowFrames()
   }
 
@@ -79,7 +71,7 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
   }
 
   const stopFollowing = () => {
-    syncFollowing(isAutoFollowing(scrollController.setFollow(false).state.mode))
+    setAutoScroll(isAutoFollowing(scrollController.setFollow(false).state.mode))
     cancelFollowFrames()
   }
 
@@ -163,7 +155,7 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
       return
     }
     const result = scrollController.observeViewport(getMetrics(container), typeof performance !== "undefined" ? performance.now() : Date.now(), false)
-    syncFollowing(isAutoFollowing(result.state.mode))
+    setAutoScroll(isAutoFollowing(result.state.mode))
   }
 
   const handleScroll = (event: Event & { currentTarget: HTMLDivElement }) => {
@@ -195,7 +187,7 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
 
     const now = typeof performance !== "undefined" ? performance.now() : Date.now()
     const result = scrollController.observeViewport(getMetrics(container), now, false)
-    syncFollowing(isAutoFollowing(result.state.mode))
+    setAutoScroll(isAutoFollowing(result.state.mode))
     // Never let a render-time caller force follow mode back on after the user
     // has already escaped it. Staying pinned should depend on the current
     // follow state at execution, not a value captured before pointer input.

@@ -45,40 +45,18 @@ async function withFixture(scenario: string, run: (page: Page) => Promise<void>)
   } finally { await context.close() }
 }
 
-for (const [partId, output] of [["group-shell-0", "Command completed"], ["full-source-tool", "Tool completed"]]) {
-  test(`regrouping keeps only ${partId}'s output open`, () => withFixture("tool-group-disclosure", async page => {
-    const card = (id: string) => page.locator(`.tool-call-message[data-part-id="${id}"]`)
-    const toggle = (id: string) => card(id).locator(".tool-call-header-toggle")
-    const shellGroup = page.getByRole("button", { name: "Shell: 2", exact: true })
-    const body = card(partId).getByText(output, { exact: true })
-    if (partId === "group-shell-0") await shellGroup.click()
-    await toggle(partId).click()
-    await body.waitFor()
-    const standaloneToggle = partId === "full-source-tool" ? await toggle(partId).elementHandle() : null
-    const assertOnlyTargetOpen = async () => {
-      assert.equal(await toggle(partId).getAttribute("aria-expanded"), "true", `${partId} keeps its own disclosure`)
-      for (const other of ["group-shell-0", "group-shell-1", "full-source-tool"].filter(id => id !== partId)) {
-        assert.equal(await toggle(other).getAttribute("aria-expanded"), "false", `${other} stays closed`)
-      }
-      await body.waitFor()
-    }
-    await page.getByRole("button", { name: "Message content", exact: true }).click()
-    await page.getByRole("button", { name: "Disable tool grouping" }).click()
-    await shellGroup.waitFor({ state: "detached" })
-    await assertOnlyTargetOpen()
-    if (standaloneToggle) {
-      assert.equal(await toggle(partId).evaluate((button, original) => button === original, standaloneToggle), true,
-        "the standalone card keeps its mounted identity when it changes position")
-    }
-
-    await page.getByRole("button", { name: "Enable tool grouping" }).click()
-    await shellGroup.waitFor()
-    // An explicit group disclosure takes precedence over the preference.
-    await page.getByRole("button", { name: "Expand Tool groups" }).click()
-    await shellGroup.and(page.locator('[aria-expanded="true"]')).waitFor()
-    await assertOnlyTargetOpen()
-  }))
-}
+test("ungrouping does not transfer an open tool's disclosure to another call", () => withFixture("tool-group-disclosure", async page => {
+  const toggle = (id: string) => page.locator(`.tool-call-message[data-part-id="${id}"] .tool-call-header-toggle`)
+  const standalone = toggle("full-source-tool")
+  await standalone.click()
+  assert.equal(await standalone.getAttribute("aria-expanded"), "true")
+  const original = await standalone.elementHandle()
+  await page.getByRole("button", { name: "Message content", exact: true }).click()
+  await page.getByRole("button", { name: "Disable tool grouping" }).click()
+  await page.getByRole("button", { name: "Shell: 2", exact: true }).waitFor({ state: "detached" })
+  for (const id of ["group-shell-0", "group-shell-1"]) assert.equal(await toggle(id).getAttribute("aria-expanded"), "false")
+  assert.equal(await standalone.evaluate((button, original) => button === original, original), true)
+}))
 
 test("tool groups can be opened by default or replaced by ordinary cards without changing tool visibility", async () => {
   await withFixture("tool-groups", async page => {
@@ -131,33 +109,23 @@ test("tool groups can be opened by default or replaced by ordinary cards without
   })
 })
 
-test("an unmounted tool follows the new Input default even when it returns to its earlier value", () => withFixture("tool-group-disclosure", async page => {
+test("showing a hidden tool type mounts the card with its default disclosure", () => withFixture("tool-group-disclosure", async page => {
   const filters = page.getByRole("button", { name: "Message content", exact: true })
   const popup = page.locator(".transcript-filters")
-  const save = () => popup.and(page.locator('[aria-busy="false"]')).waitFor()
-  const shell = page.locator('.tool-call-message[data-part-id="group-shell-0"]')
-  const input = shell.getByRole("button", { name: /^Tool Input/ })
+  const shell = page.locator('.tool-call-message[data-part-id="group-shell-0"] .tool-call-header-toggle')
   await filters.click()
-  await popup.getByRole("combobox").selectOption("everything")
-  await save()
+  await popup.getByRole("button", { name: "Disable tool grouping", exact: true }).click()
+  await shell.waitFor()
   await page.keyboard.press("Escape")
-  await input.and(page.locator('[aria-expanded="true"]')).waitFor()
-  await input.click()
-  assert.equal(await input.getAttribute("aria-expanded"), "false")
-  await shell.getByRole("button", { name: "Disable word wrap", exact: true }).click()
-
+  assert.equal(await shell.getAttribute("aria-expanded"), "false")
+  await shell.click()
+  assert.equal(await shell.getAttribute("aria-expanded"), "true")
   await filters.click()
-  await popup.getByRole("button", { name: "Collapse Tool groups", exact: true }).click()
+  await popup.getByRole("button", { name: "Hide shell", exact: true }).click()
   await shell.waitFor({ state: "detached" })
-  await popup.getByRole("button", { name: "Hide Input", exact: true }).click()
-  await save()
-  await popup.getByRole("button", { name: "Show Input", exact: true }).click()
-  await save()
-  assert.equal(await popup.getByRole("button", { name: "Collapse Input", exact: true }).getAttribute("aria-pressed"), "true")
-  await popup.getByRole("button", { name: "Expand Tool groups", exact: true }).click()
-  await input.waitFor()
-  assert.equal(await input.getAttribute("aria-expanded"), "true")
-  assert.equal(await shell.getByRole("button", { name: "Enable word wrap", exact: true }).count(), 1)
+  await popup.getByRole("button", { name: "Show shell", exact: true }).click()
+  await shell.waitFor()
+  assert.equal(await shell.getAttribute("aria-expanded"), "false")
 }))
 
 async function copyWithPointer(page: Page, button: Locator): Promise<string> {

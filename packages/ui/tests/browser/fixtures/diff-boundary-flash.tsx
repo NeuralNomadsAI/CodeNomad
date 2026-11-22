@@ -153,13 +153,12 @@ function emitToolStep(type: string, data: Record<string, unknown>) {
     location: { directory: "/fixture" }, data: { sessionID: "s", ...data },
   })
 }
-function appendShell(id: string, live = false) {
+function appendShell(id: string) {
   const tool = { assistantMessageID: "m-shell", id }
   const input = { command: `make ${id}`, description: `make ${id}` }
   emitToolStep("session.tool.input.started", { ...tool, name: "bash" })
   emitToolStep("session.tool.called", { ...tool, input })
-  if (live) emitToolStep("session.tool.progress", { ...tool, metadata: { output: `Output from ${id}\n`.repeat(80) } })
-  else emitToolStep("session.tool.success", { ...tool, content: [{ type: "text", text: `Output from ${id}` }], metadata: {}, executed: true })
+  emitToolStep("session.tool.success", { ...tool, content: [{ type: "text", text: `Output from ${id}` }], metadata: {}, executed: true })
 }
 
 const [activeId, setActiveId] = createSignal("s")
@@ -184,11 +183,12 @@ const resetSamples = (baseline?: number) => {
 const samplesOf = () => ({ frames, missingBodyFrames, collapsedBodyFrames, missingReportFrames })
 
 ;(window as any).fixture = {
-  async startShellGroup(count = 2, live = false) {
-    await applyUiSettings({ ...transcriptPresetPatch("everything"), ...(live && { toolInputsVisibility: "hidden" as const }) })
+  async startShellGroup() {
+    await applyUiSettings(transcriptPresetPatch("everything"))
     emitToolStep("session.execution.started", {})
     emitToolStep("session.step.started", { assistantMessageID: "m-shell", agent: "build", model, started: 20 })
-    for (let i = 1; i <= count; i++) appendShell(`shell-${i}`, live)
+    appendShell("shell-1")
+    appendShell("shell-2")
   },
   appendShell,
   /** Waits until the formatted diff is rendered and its cache entry written. */

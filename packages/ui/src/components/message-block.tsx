@@ -449,7 +449,6 @@ function ToolCallItem(props: ToolCallItemProps) {
             instanceId={props.instanceId}
             sessionId={props.sessionId}
             isActive={props.isActive}
-            rememberView
             onContentRendered={props.onContentRendered}
             headerAction={isBackgroundableTool(toolPart()) ? (
               <button
