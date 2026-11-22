@@ -35,6 +35,8 @@
     "env-vars-bg": "#0082ff33",
     "env-vars-border": "#0081ff4d",
     "env-vars-text": "#0080ffff",
+    "file-row-active-bg": "#498be670",
+    "file-row-active-hover-bg": "#478de68f",
     "focus-ring-color": "#0080ffff",
     "focus-ring-offset": "#1e1e1eff",
     "folder-overlay-bg": "#00000073",
@@ -174,6 +176,8 @@
     "env-vars-bg": "#0062ff1a",
     "env-vars-border": "#0064ff33",
     "env-vars-text": "#0066ffff",
+    "file-row-active-bg": "#5996ff70",
+    "file-row-active-hover-bg": "#5996ff8f",
     "focus-ring-color": "#0066ffff",
     "focus-ring-offset": "#fcfcfcff",
     "folder-overlay-bg": "#00000059",
@@ -323,9 +327,19 @@
         "opacity": 0.7,
         "paddingLeft": 0
       },
+      "fileRowActionFocus": {
+        "outlineOffset": -1,
+        "outlineWidth": 1
+      },
       "fileRowActionGlyph": {
         "height": 14,
         "width": 14
+      },
+      "fileRowActions": {
+        "gap": 2,
+        "inlineGap": 2,
+        "overflowSlop": 0.5,
+        "pinnedGap": 2
       },
       "input": {
         "fontSize": 12,
@@ -452,9 +466,19 @@
         "opacity": 0.7,
         "paddingLeft": 0
       },
+      "fileRowActionFocus": {
+        "outlineOffset": -1,
+        "outlineWidth": 1
+      },
       "fileRowActionGlyph": {
         "height": 14,
         "width": 14
+      },
+      "fileRowActions": {
+        "gap": 2,
+        "inlineGap": 2,
+        "overflowSlop": 0.5,
+        "pinnedGap": 2
       },
       "input": {
         "fontSize": 12,
@@ -661,6 +685,7 @@
   },
   "sources": {
     "packages/ui/postcss.config.js": "aca4c5d8a44abcaa54e72615c5d31f28b24d2e1f5651e22be318eadaf1d57144",
+    "packages/ui/src/components/instance/shell/right-panel/row-compact-actions.ts": "805d85e79b9279be23495643d69e5efcafef3b946819a1b488e2fb7b9abf7bad",
     "packages/ui/src/index.css": "c1f241cec89239ab2bb645d8c4bcb8981f5a630dd8e3492fe03a8854a47e725d",
     "packages/ui/src/styles/components/agent-memory.css": "18ab270707d67c71a56ff15ead52eea1c74e542e824142881f8ac53ba0bc357c",
     "packages/ui/src/styles/components/alert-dialog.css": "7c6cb4526b6f3ab280842f36e830ec1c93c4da5fde83b2c6ded73325c8d1fd43",

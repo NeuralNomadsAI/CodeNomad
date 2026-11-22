@@ -5,10 +5,16 @@ import {fileURLToPath} from 'node:url'
 import {test} from 'node:test'
 import {createServer} from 'vite'
 import {chromium} from 'playwright'
-import {collectTheme} from './generate-theme-browser.mjs'
+import {collectTheme,collectFileActionColors} from './generate-theme-browser.mjs'
 import {themeFixtureHtml,sourceMenuGutter} from './generate-theme-fixture.mjs'
+import {overflowSlop} from './file-actions-source.mjs'
 
 const root=fileURLToPath(new URL('../../',import.meta.url))
+test('file action overflow tolerance follows its Source comparison',()=>{
+  assert.equal(overflowSlop('const next = required > available + 0.75'),0.75)
+  assert.throws(()=>overflowSlop('const next = required > available + tolerance'),/numeric tolerance/)
+  assert.throws(()=>overflowSlop('const next = other > available + 0.5'),/one Source/)
+})
 test('action menu gutter follows its actual numeric JSX contract',()=>{
   assert.equal(sourceMenuGutter('<DropdownMenu gutter={7}></DropdownMenu>'),7)
   assert.throws(()=>sourceMenuGutter('<DropdownMenu gutter={spacing}></DropdownMenu>'),/numeric JSX gutter/)
@@ -31,19 +37,20 @@ test('generated semantic metrics survive actual font changes and viewport change
     await server.listen()
     browser=await chromium.launch({headless:true})
     const page=await browser.newPage({viewport:{width:1024,height:768}})
+    const collect=async()=>{const value=await page.evaluate(collectTheme,names);Object.assign(value.colors,await collectFileActionColors(page));return value}
     for(const appearance of ['light','dark']){
       await page.emulateMedia({colorScheme:appearance,reducedMotion:'no-preference'})
       await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/theme-contract`,{waitUntil:'networkidle'})
       await page.evaluate(value=>document.documentElement.setAttribute('data-theme',value),appearance)
       await page.keyboard.press('Tab')
       assert(await page.locator('.window-icon-button').evaluate(element=>element.matches(':focus-visible')))
-      const baseline=await page.evaluate(collectTheme,names)
+      const baseline=await collect()
       assert.deepEqual(baseline.metrics,generated.metrics[appearance],'Baseline must match the checked-in semantic contract')
       const familyKeys=['font-family-sans','message-part-header-font-family']
       const widths=[]
       for(const family of ['"Segoe UI"','Arial','Helvetica','sans-serif','serif','monospace']){
         await page.evaluate(font=>document.documentElement.style.setProperty('--font-family-sans',font),family)
-        const value=await page.evaluate(collectTheme,names)
+        const value=await collect()
         const intrinsic=await page.evaluate(()=>({title:getComputedStyle(document.querySelector('.window-title')).width,input:getComputedStyle(document.querySelector('.selector-input')).width}))
         widths.push(intrinsic.title)
         assert.deepEqual(value.metrics,baseline.metrics,`${appearance} semantic metrics changed under ${family}`)
@@ -77,6 +84,12 @@ test('generated semantic metrics survive actual font changes and viewport change
       assert.equal(baseline.metrics.actionMenuDisabled.opacity,0.5)
       assert.deepEqual(baseline.metrics.fileRowActionGlyph,{width:14,height:14})
       assert.deepEqual(baseline.metrics.fileRowAction,{minWidth:24,minHeight:24,paddingLeft:0,opacity:0.7})
+      assert.deepEqual(baseline.metrics.fileRowActions,{gap:2,pinnedGap:2,inlineGap:2,overflowSlop:0.5})
+      assert.deepEqual(baseline.metrics.fileRowActionFocus,{outlineWidth:1,outlineOffset:-1})
+      assert.notEqual(baseline.colors['file-row-active-bg'],baseline.colors['file-row-active-hover-bg'])
+      const specificity=await page.addStyleTag({content:'#file-actions-contract .icon-toggle:hover {background-color:rgb(255,0,0)!important} .icon-toggle:hover {background-color:rgb(0,255,0)!important}'})
+      assert.equal((await collectFileActionColors(page))['file-row-active-hover-bg'],'#ff0000ff','Actual hover must preserve specificity over later !important rules')
+      await specificity.evaluate(el=>el.remove())
       await page.locator('.action-overflow-item').first().evaluate(element=>element.style.lineHeight='normal')
       await assert.rejects(page.evaluate(collectTheme,names),/lineHeight requires an explicit numeric CSS value/)
       await page.locator('.action-overflow-item').first().evaluate(element=>element.style.removeProperty('line-height'))

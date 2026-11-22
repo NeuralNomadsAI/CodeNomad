@@ -53,6 +53,7 @@ When a whole module reaches parity, its Solid and Tauri version is deleted on `f
 | Window state | Host client-state and browser sessionStorage contracts | `workspace/` restores projects, tabs, selected sessions and drafts; shared Rust with simulated OpenCode qualified on three OS; Windows private OpenCode storage qualified with 600 imported rows across three Rune boots; browser reload/quota and in-flight creation qualified separately |
 | Project tabs | `components/instance-tabs.tsx`, `instance-tab.tsx`, `tab-scroll.tsx` | Shared rune-kit Button composite with CSS-generated geometry: select/close/New, keyboard navigation, web tab roles, direction, column sizing and focus halo qualified; SVG/text raster, complete bar parity and web tablist grouping pending |
 | Action overflow menu | `components/action-overflow-menu.tsx` | Shared `action_menu`: CSS-generated geometry, keyboard, selection, focus and item-removal contracts exercised in Rune Runtime; actual Solid fixtures and native gallery available. Six Windows popup pairs pass reviewed regional budgets; complete caller, tooltip, responsive and touch parity remains pending |
+| File row actions | `FileRowActions.tsx`, `row-compact-actions.ts` | Shared `file_row_actions`: pinned toggles, inline/overflow state, inert secondary controls, focus handoff and generated CSS tints exercised in native Runtime. Complete Source/native capture, motion, pointer lifecycle and caller assembly remain pending |
 
 ## Workspace and qualification
 
