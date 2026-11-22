@@ -39,6 +39,8 @@ struct State {
     files: Option<files::Ui>,
     documents: files::document::store::Store,
     reads: platform::reads::Reads,
+    #[cfg(target_arch = "wasm32")]
+    pairing: platform::pairing::Recovery,
     expanded_tools: std::collections::HashSet<String>,
     screen: Screen,
     input_scope: std::rc::Rc<()>,
@@ -70,6 +72,8 @@ fn init() -> State {
         files: None,
         documents: Default::default(),
         reads: Default::default(),
+        #[cfg(target_arch = "wasm32")]
+        pairing: Default::default(),
         expanded_tools: Default::default(),
         screen: Screen::Chat { launcher: None },
         input_scope: std::rc::Rc::new(()),
@@ -176,6 +180,10 @@ fn latest(_: &mut State, tx: &mut Tx) {
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = launcher::poll(s, tx);
     changed |= poll_chat(s, 64);
+    #[cfg(target_arch = "wasm32")]
+    {
+        changed |= platform::pairing::poll(s, tx);
+    }
     changed |= workspace::poll(s, now, tx);
     changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
     if changed {
@@ -238,7 +246,11 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 }
                 s.paging = false;
             }
-            Event::Reconnecting => {
+            Event::Reconnecting | Event::ConnectionLost => {
+                #[cfg(target_arch = "wasm32")]
+                if matches!(event, Event::ConnectionLost) && !platform::pairing::required(s) {
+                    platform::pairing::observe(s);
+                }
                 if let Some(files) = &mut s.files {
                     files.online(false);
                 }
@@ -270,6 +282,10 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::Done => s.phase = Phase::Ready,
             Event::Failed => {
+                #[cfg(target_arch = "wasm32")]
+                if !platform::pairing::required(s) {
+                    platform::pairing::observe(s);
+                }
                 if let Some(files) = &mut s.files {
                     files.online(false);
                 }
@@ -291,6 +307,14 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
             Screen::Launcher(_) => launcher_view::view(s),
             Screen::Chat { .. } => chat_view(s, cx),
         };
+        #[cfg(target_arch = "wasm32")]
+        if platform::pairing::required(s) {
+            body = col()
+                .full_width()
+                .full_height()
+                .child(platform::pairing::view(s))
+                .child(body.remaining());
+        }
         if s.workspace.is_none() {
             return body;
         }
@@ -341,6 +365,11 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         .agent
         .as_ref()
         .is_some_and(|a| a.picker || !a.ids().is_empty());
+    let composer = if expanded {
+        layout::compact_composer
+    } else {
+        layout::composer
+    };
     rune_theme_codenomad::interruption::session_surface(expanded)
         .child(
             rune_theme_codenomad::layout::action_row()
@@ -411,7 +440,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                 .pad(Space::Md)
                 .separate(Space::Sm)
                 .child(
-                    layout::composer(
+                    composer(
                         input(&s.draft)
                             .key("composer")
                             .label(strings::t("rune.prompt"))

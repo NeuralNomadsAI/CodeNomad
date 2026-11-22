@@ -7,7 +7,8 @@ import {parseArgs} from 'node:util'
 import {chromium} from 'playwright'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
 import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
-import {mobileClientHints, mobileContext, mobileInteraction, mobileViewport} from './web-mobile.mjs'
+import {mobileClientHints, mobileContext, mobileInteraction} from './web-mobile.mjs'
+import {mobileLive} from './web-live.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
@@ -50,17 +51,14 @@ try {
         ...(values['storage-state'] ? {storageState: values['storage-state']} : {})})
       const page = await context.newPage()
       page.setDefaultTimeout(15000)
-      if(values.mobile){
-        await page.addInitScript(mobileViewport)
-      }
       const errors = [], forbiddenRequests = [], routes=[], history=[]
       let measured
       const policy=workspacePolicy({origin:url.origin,project:values.project,assets})
-      let eventSource=false
+      let eventSource=0
       page.on('response',async response=>{
         if(!values.connected)return
         const request=response.request(),pathname=new URL(response.url()).pathname
-        if(pathname==='/api/events'&&response.status()===200&&request.resourceType()==='eventsource')eventSource=true
+        if(pathname==='/api/events'&&response.status()===200&&request.resourceType()==='eventsource')eventSource++
         if(pathname.endsWith('/session-history/window')&&response.ok())history.push({input:request.postDataJSON(),body:await response.json().catch(()=>null)})
       })
       page.on('pageerror', error => errors.push({name: error.name, message: error.message}))
@@ -85,17 +83,22 @@ try {
       })
       const started = performance.now()
       try {
+        let network
         if(values.mobile){
           const cdp=await mobileClientHints(page,browser)
-          if(colorScheme==='dark')await cdp.send('Network.emulateNetworkConditions',{
-            offline:false,latency:80,downloadThroughput:2_500_000,uploadThroughput:625_000,connectionType:'cellular4g',
-          })
+          if(colorScheme==='dark'){
+            network=cdp
+            await cdp.send('Network.emulateNetworkConditions',{
+              offline:false,latency:80,downloadThroughput:2_500_000,uploadThroughput:625_000,connectionType:'cellular4g',
+            })
+          }
         }
         await page.goto(url.href, {waitUntil: 'domcontentloaded', timeout: 60_000})
         await page.waitForFunction(() => ['ready', 'failed'].includes(globalThis.__codenomadRuneBoot?.state), undefined, {timeout: 60_000})
         assert.equal(await page.evaluate(() => globalThis.__codenomadRuneBoot.state), 'ready', 'Shared WASM app must initialize')
         await page.waitForFunction(() => document.querySelector('[data-rune-a11y] button'), undefined, {timeout: 30_000})
         const firstAccessibleMs = performance.now() - started
+        if(network)await network.send('Network.emulateNetworkConditions',{offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1})
         assert.equal(await page.locator('html').getAttribute('lang'), values.locale)
         assert.equal(await page.locator('html').getAttribute('dir'), values.locale === 'he' ? 'rtl' : 'ltr')
         if(values.connected){
@@ -113,6 +116,16 @@ try {
           await press(values.project)
           await press('Existing history');await reading()
           await press(messages['sessionList.header.title'])
+          if(values.mobile){
+            assert.equal(await page.getByRole('button',{name:'Another session',exact:true}).count(),0)
+            const search=page.getByRole('group',{name:messages['sessionList.filter.ariaLabel'],exact:true})
+            const box=await search.boundingBox();assert(box)
+            await page.touchscreen.tap(box.x+box.width/2,box.y+box.height/2)
+            await page.locator('textarea:focus').fill('Another session')
+            await page.getByRole('button',{name:'Another session',exact:true}).waitFor()
+            assert(routes.some(row=>row.query.includes('search=Another+session')),'Use the native search before loading the next ordinary page')
+            await page.locator('textarea:focus').fill('')
+          }
           await press(messages['rune.more'])
           await press('Another session')
           await page.waitForFunction(()=>document.querySelector('[data-rune-a11y]')?.textContent.includes('Another session')&&!document.querySelector('[data-rune-a11y]')?.textContent.includes('Existing project history'))
@@ -177,6 +190,8 @@ try {
           const {width:backingWidth,height:backingHeight}=measured.canvases[0]
           assert(Math.abs(backingWidth-width*measured.viewport.dpr)<=1 && Math.abs(backingHeight-height*measured.viewport.dpr)<=1)
           assert.equal(measured.android.touchScroll.moved,true,'Physical touch dispatch must move the portrait transcript')
+          measured.live=await mobileLive({page,context,url,messages,revoke:control,
+            eventSources:()=>eventSource})
         }
         assert.equal(forbiddenRequests.length, 0, 'Synthetic web smoke must stay offline from API and external origins')
         assert.equal(errors.length, 0, 'Web app must initialize and handle multiline input without JS exceptions')
@@ -186,7 +201,8 @@ try {
           assert(existing.length>=2)
           for(const row of existing){
             const bodies=row.body.messages.map(message=>message.text??message.content?.[0]?.text)
-            assert.deepEqual(values.mobile?bodies.slice(-2):bodies,['Existing project history','Existing answer'])
+            if(values.mobile)assert(bodies.includes('Existing project history')&&bodies.includes('Existing answer'))
+            else assert.deepEqual(bodies,['Existing project history','Existing answer'])
           }
           assert(history.some(row=>row.input.sessionID==='ses_another'&&row.body.messages.length===0))
           assert(routes.some(row=>row.query.includes('cursor=')))
@@ -195,12 +211,16 @@ try {
           assert(owned.length>0&&owned.every(id=>before.includes(id)),'Browser must own its admitted occurrences')
           // Closing a browser context skips pagehide; use the product's ordinary departure first.
           const departure=values.mobile?new URL('/remote-pair',url).href:'about:blank'
+          if(values.mobile)await page.waitForFunction(()=>sessionStorage.getItem('codenomad.rune.alpha.client-state.v1'))
           await page.goto(departure)
           let after
           for(const until=Date.now()+10000;;){
             after=await inventory()
             if(owned.every(id=>!after.includes(id)))break
-            assert(Date.now()<until,'Normal browser departure must release its owned occurrences')
+            if(Date.now()>=until){
+              const stage=await page.evaluate(()=>sessionStorage.getItem('codenomad.rune.alpha.records-released'))
+              assert.fail(`Normal browser departure must release its owned occurrences (stage: ${stage})`)
+            }
             await page.waitForTimeout(25)
           }
           assert(retained.every(id=>after.includes(id)),'Departure must preserve every unowned fixture record')

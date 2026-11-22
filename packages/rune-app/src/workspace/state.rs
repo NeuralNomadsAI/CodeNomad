@@ -264,7 +264,7 @@ fn activate(s: &mut State, tx: &mut Tx) {
     };
     let item = &mut ui.entries[ui.active];
     if let Some(l) = s.screen.launcher_mut() {
-        l.project = item.project.clone();
+        crate::launcher::set_project(l, item.project.clone());
         l.sessions = item.sessions.clone();
         l.next = item.next.clone();
         l.folder = TextEdit::new(match &item.saved {

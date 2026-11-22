@@ -80,6 +80,10 @@ pub async fn serve_rune(dir: &PathBuf, req: Request) -> Response {
     response
 }
 
+pub(crate) async fn rune_pair_page(dir: &PathBuf, method: Method) -> Option<Response> {
+    asset(dir, method, "/remote-pair.html".into(), None).await
+}
+
 /// Paths no route matched: API paths stay unavailable, everything else is the UI.
 pub async fn serve(source: &Source, req: Request) -> Response {
     let path = req.uri().path();

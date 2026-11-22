@@ -8,6 +8,10 @@ Le client, l'état et les écrans de `packages/rune-app` ciblent le bureau et `w
 
 Les capacités du bureau sont isolées par la plateforme. La sélection d'un dossier serveur conserve un chemin explicite sur le web. Le lancement d'un processus local appartient à l'hôte bureau. Les fonctions de fenêtres multiples, de fichiers, de notifications et de presse-papiers publient leurs capacités disponibles avant d'être proposées.
 
+La page d'appairage embarque le thème et les dix catalogues ; le code à usage unique disparaît du fragment avant l'échange HTTPS. En cas de rupture du flux, le client sonde le statut d'authentification. Une réponse `pairingRequired` présente les étapes d'appairage sans remplacer le document ni le brouillon. Le bouton de vérification ou le retour au premier plan relit le statut ; la reprise relit l'historique sur la même conversation.
+
+La recherche de sessions interroge le serveur sur le dossier du projet et ses worktrees déclarés. La pagination reste attachée au dossier demandé ; changer de projet ou de requête annule la recherche précédente. Effacer le texte retrouve la liste paginée du projet.
+
 ## Risques à qualifier
 
 La révision Rune est celle épinglée dans le manifeste de l'application. Les références suivantes décrivent les mécanismes présents dans ses sources. La qualification utilisateur exige les essais indiqués dans la dernière colonne.
@@ -30,7 +34,7 @@ Le miroir web omet aussi le conteneur `menu`, les entrées désactivées du Menu
 
 ## Vérifications reproductibles
 
-Le bundle produit est qualifié en lecture avec le vrai serveur Rust et OpenCode simulé : connexion avec cookies, deux pages de sessions, historique exact, session vide puis retour, véritable EventSource et refus 401 sans cookie. Six contextes Chromium couvrent bureau/tablette/téléphone et clair/sombre, avec contrôles dans le viewport, captures et contraste. `launcher-fixture.mjs --web-mobile` exerce aussi l'appairage HTTPS et ces lectures en profil Android portrait. Le relais hébergé et les appareils physiques gardent leurs essais propres.
+Le bundle produit est qualifié avec le vrai serveur Rust et OpenCode simulé : connexion avec cookies, deux pages de sessions, historique exact, session vide puis retour, et refus 401 sans cookie. Le smoke mobile vérifie le toucher au centre, l'IME, le redimensionnement, un message visible uniquement via SSE, la récupération d'un message absent pendant la coupure et la conservation du brouillon après révocation et réappairage. Sur l'émulateur Android, `interactive-widget=resizes-content` fait redimensionner le viewport de mise en page à l'ouverture de Gboard. Les commandes et limites du banc sont dans [Coquille web Rune](../scripts/rune/web-README.md).
 
 Depuis le worktree isolé, avec le `CARGO_TARGET_DIR` existant :
 

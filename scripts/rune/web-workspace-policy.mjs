@@ -42,7 +42,7 @@ export function workspacePolicy({origin,project,assets=new Set()}){
     allows(method,p,body,{forbidRelease=false}={}){
       if(body&&Buffer.byteLength(JSON.stringify(body))>32768)return false
       if((method==='GET'||method==='HEAD')&&assets.has(p))return true
-      if(method==='GET'&&['/api/workspaces','/api/meta','/api/events'].includes(p))return true
+      if(method==='GET'&&['/api/workspaces','/api/meta','/api/events','/api/auth/status'].includes(p))return true
       if(method==='POST'&&p==='/api/client-connections/pong')return true
       if(method==='POST'&&p==='/api/workspaces'&&creation(body)){if(!claims.has(body.requestId))claims.set(body.requestId,null);return true}
       if(method==='POST'&&p==='/api/workspaces/creation/cancel')return claim(body)&&claims.has(body.requestId)
@@ -50,6 +50,7 @@ export function workspacePolicy({origin,project,assets=new Set()}){
       if(scoped&&workspaces.has(scoped[1])&&method==='GET')return /^(model|session)$/.test(scoped[2])||/^session\/(ses_existing|ses_another)(?:\/(permission|form))?$/.test(scoped[2])
       const owned=p.match(/^\/api\/workspaces\/([^/]+)(?:\/(.*))?$/)
       if(!owned||!workspaces.has(owned[1]))return false
+      if(method==='GET'&&owned[2]==='worktrees')return true
       if(method==='POST'&&owned[2]==='session-history/window')return ['ses_existing','ses_another'].includes(body?.sessionID)
       if(method==='POST'&&owned[2]==='creation/release')return claim(body)&&owners.get(owned[1])===body.requestId
       return method==='DELETE'&&!owned[2]&&!forbidRelease

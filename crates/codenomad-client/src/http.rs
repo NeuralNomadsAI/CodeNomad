@@ -38,6 +38,24 @@ impl Http {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
+pub async fn pairing_required() -> Result<Option<bool>> {
+    let base = endpoint("/")?;
+    let response = Http::new()?
+        .get(format!("{base}api/auth/status"))
+        .fetch_cache_no_store()
+        .timeout(Duration::from_secs(8))
+        .send()
+        .await?
+        .error_for_status()?;
+    let status = crate::backend::read_json_limited(response, 4096).await?;
+    Ok(match status["authenticated"].as_bool() {
+        Some(true) => Some(false),
+        Some(false) if status["pairingRequired"].as_bool() == Some(true) => Some(true),
+        _ => None,
+    })
+}
+
 pub fn endpoint(address: &str) -> Result<String> {
     #[cfg(target_arch = "wasm32")]
     let origin = web_sys::window()

@@ -10,7 +10,7 @@ use axum::{
     body::Bytes,
     extract::{Path as RoutePath, Request, State},
     http::{StatusCode as Status, header},
-    response::{IntoResponse, Response},
+    response::{Html, IntoResponse, Response},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
@@ -430,16 +430,17 @@ fn device_name(agent: &str) -> String {
     format!("{os} · {browser}")
 }
 pub async fn page() -> Response {
-    (
-        [
-            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
-            (header::CACHE_CONTROL, "no-store"),
-            (header::REFERRER_POLICY, "no-referrer"),
-            (header::X_FRAME_OPTIONS, "DENY"),
-        ],
-        include_str!("../../../server/src/server/routes/auth-pages/remote-pair.html"),
-    )
-        .into_response()
+    pairing_page(Html(include_str!("../../../server/src/server/routes/auth-pages/remote-pair.html")).into_response())
+}
+pub(super) fn pairing_page(mut response: Response) -> Response {
+    for (name, value) in [
+        (header::CACHE_CONTROL, "no-store"),
+        (header::REFERRER_POLICY, "no-referrer"),
+        (header::X_FRAME_OPTIONS, "DENY"),
+    ] {
+        response.headers_mut().insert(name, axum::http::HeaderValue::from_static(value));
+    }
+    response
 }
 
 #[cfg(test)]

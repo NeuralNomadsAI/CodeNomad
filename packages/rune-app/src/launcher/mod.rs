@@ -1,4 +1,5 @@
 //! One serialized opening action at a time; HTTP never runs on the UI thread.
+mod search;
 pub(crate) mod view;
 use crate::{
     Phase, State,
@@ -16,6 +17,7 @@ pub struct Launcher {
     pub folder: TextEdit,
     pub title: TextEdit,
     pub search: TextEdit,
+    search_results: search::Search,
     pub connection: Option<Backend>,
     pub server_id: Option<String>,
     pub projects: Vec<Project>,
@@ -89,6 +91,7 @@ impl Launcher {
             folder: TextEdit::new(""),
             title: TextEdit::new(""),
             search: TextEdit::new(""),
+            search_results: Default::default(),
             connection: None,
             server_id: None,
             projects: vec![],
@@ -150,6 +153,7 @@ mod tests {
             launcher.sessions = vec![Session {
                 id: "existing".into(),
                 title: "Existing history".into(),
+                directory: "/fixture".into(),
             }];
             state.screen = crate::Screen::Launcher(launcher);
             let mut runtime =
@@ -319,6 +323,10 @@ pub fn list(s: &mut State, more: bool) {
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
+    if !l.search.text.trim().is_empty() {
+        l.search_results = Default::default();
+        return;
+    }
     let cursor = if more { l.next.clone() } else { None };
     l.job("rune.list_error", async move {
         Ok(Reply::Listed(
@@ -350,7 +358,11 @@ pub fn create(s: &mut State, _: &mut Tx) {
         ))
     });
 }
+#[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub fn choose(s: &mut State, id: String, title: String) {
+    choose_at(s, id, title, None);
+}
+fn choose_at(s: &mut State, id: String, title: String, directory: Option<String>) {
     if !crate::workspace::input_ready(s) {
         return;
     }
@@ -361,14 +373,26 @@ pub fn choose(s: &mut State, id: String, title: String) {
         return;
     };
     l.job("rune.open_error", async move {
-        Ok(Reply::Bound(b.bind(&p, &id, false).await?, title))
+        Ok(Reply::Bound(
+            b.bind_at(&p, &id, directory.as_deref(), false).await?.0,
+            title,
+        ))
     });
 }
+pub(crate) fn set_project(l: &mut Launcher, project: Option<Project>) {
+    if l.project.as_ref().map(|p| &p.id) != project.as_ref().map(|p| &p.id) {
+        l.search = TextEdit::new("");
+        l.search_results = Default::default();
+    }
+    l.project = project;
+}
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
+    let reads = s.reads.clone();
+    let visible = s.screen.is_launcher();
     let Some(l) = s.screen.launcher_mut() else {
         return false;
     };
-    let mut boot_changed = false;
+    let mut boot_changed = visible && search::poll(l, reads);
     if let Some(result) = l
         .boot
         .as_ref()
@@ -417,10 +441,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 return true;
             }
             l.folder = TextEdit::new(&project.path);
-            l.project = Some(project.clone());
+            set_project(l, Some(project.clone()));
             l.sessions = rows.rows;
             l.next = rows.next;
-            l.search = TextEdit::new("");
             l.creation_uncertain = false;
             crate::workspace::opened(s, &project);
             if let Some((backend, title)) = restored {
@@ -456,6 +479,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 l.creation_uncertain = true;
             }
             l.error = Some(key);
+            #[cfg(target_arch = "wasm32")]
+            crate::platform::pairing::observe(s);
         }
     }
     tx.instant();
@@ -504,7 +529,7 @@ pub fn restore(s: &mut State, saved: crate::workspace::Workspace) {
         let opening = pending.create(&saved.folder).await?;
         let rows = backend.sessions(&opening.project, None).await?;
         let bound = if let Some(id) = &saved.active_session_id {
-            let (bound, session) = backend.bind_session(&opening.project, id, false).await?;
+            let (bound, session) = backend.bind_at(&opening.project, id, None, false).await?;
             Some((bound, session.title))
         } else {
             None

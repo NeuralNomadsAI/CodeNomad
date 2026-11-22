@@ -14,7 +14,8 @@ import {controlsFixture} from './controls-fixture.mjs'
 import {pendingOpenFixture} from './pending-open-fixture.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 import {pairFixture} from '../../../scripts/rune/web-mobile.mjs'
-const webMobile=process.argv.includes('--web-mobile')
+import {webLiveFixture} from './web-live-fixture.mjs'
+const webAndroid=process.argv.includes('--web-android'),webMobile=webAndroid||process.argv.includes('--web-mobile')
 const webPending=process.argv.includes('--web-pending-open'),webRestore=process.argv.includes('--web-restore')||webPending,web=process.argv.includes('--web')||webRestore||webMobile,root=path.resolve(import.meta.dirname,'../../..')
 if(!web)requireTestSupport()
 const here=path.resolve(import.meta.dirname,'..'),profile=path.join(web?path.join(root,'target/rune-web-tests'):path.join(here,'fixture-profile'),`launcher-${randomUUID()}`)
@@ -95,6 +96,7 @@ add('ses_existing','Existing history')
 if(webMobile)for(let i=0;i<70;i++)stores.get('ses_existing').append('assistant',`Mobile history row ${i}`)
 stores.get('ses_existing').append('user','Existing project history');stores.get('ses_existing').append('assistant','Existing answer')
 add('ses_another','Another session')
+const mobile=webMobile?webLiveFixture({stores,project,streams}):null
 if(withTools)stores.get('ses_existing').rows[1].content.push({type:'tool',id:'historical-read',name:'read',state:{status:'completed',input:{file:'synthetic.rs'},content:[{type:'text',text:'fn historical() {}'}]}})
 const control=controls?controlsFixture({records,stores,streams,project,stats}):null
 const upstream=createServer(async(req,res)=>{
@@ -112,6 +114,7 @@ const upstream=createServer(async(req,res)=>{
     }
     if(control&&await control.route(req,url,raw,json,res))return
     if(url.pathname==='/api/event') {
+      if(mobile?.held){res.statusCode=503;return json({})}
       res.writeHead(200,{'content-type':'text/event-stream'});res.write(`data: ${JSON.stringify({id:randomUUID(),type:'server.connected',created:Date.now(),data:{}})}\n\n`)
       streams.add(res);req.on('close',()=>streams.delete(res));return
     }
@@ -123,6 +126,8 @@ const upstream=createServer(async(req,res)=>{
       let next
       if(!url.searchParams.has('cursor')){
         assert.equal(url.searchParams.get('directory'),project);assert.equal(url.searchParams.get('limit'),'200')
+        const search=url.searchParams.get('search')
+        if(webMobile&&search!==null)return json({data:rows.filter(row=>row.title.toLowerCase().includes(search.toLowerCase())),cursor:{}})
         next=Buffer.from(JSON.stringify({directory:project,anchor:{id:rows[0].id,time:1,direction:'next'}})).toString('base64url')
         rows=rows.slice(0,1)
       }else{assert.equal(JSON.parse(Buffer.from(url.searchParams.get('cursor'),'base64url')).directory,project);rows=rows.slice(1)}
@@ -197,9 +202,11 @@ try{
     let uiOrigin=origin, paired
     if(webMobile){
       uiOrigin=log.match(/^HTTPS (https:\/\/127\.0\.0\.1:\d+)\r?$/m)?.[1];assert(uiOrigin,'Rust HTTPS fixture missing')
-      const issue=await http.post('/api/remote-control/pairings')
-      assert.equal(issue.status(),200)
-      paired=await pairFixture({origin:uiOrigin,pairingUrl:(await issue.json()).url,storage,manifest,ui})
+      if(!webAndroid){
+        const issue=await http.post('/api/remote-control/pairings')
+        assert.equal(issue.status(),200)
+        paired=await pairFixture({origin:uiOrigin,pairingUrl:(await issue.json()).url,storage,manifest,ui})
+      }
     }else await http.storageState({path:storage})
     let workspace
     if(!webRestore){const opened=await http.post('/api/workspaces',{data:{path:project}});assert(opened.ok(),`Open isolated workspace: ${await opened.text()}`);workspace=(await opened.json()).id;assert(workspace)}
@@ -207,8 +214,15 @@ try{
     const sha256=createHash('sha256').update(await wasm.body()).digest('hex')
     assert.equal(sha256,manifest.files.find(file=>file.file==='app_bg.wasm').sha256)
     staticProof={sha256,testSupport:manifest.testSupport,origin,workspace,serverBinary,ui,paired}
-    const runner=webRestore?'web-restore.mjs':'web-smoke.mjs'
-    client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),'--url',`${uiOrigin}/`,...(webMobile?['--mobile']:[]),...(webPending?['--pending-open']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',chromium.executablePath()],{cwd:root,env,windowsHide:true,stdio:['ignore','pipe','pipe']})
+    const runner=webAndroid?'web-android.mjs':webRestore?'web-restore.mjs':'web-smoke.mjs'
+    const args=webAndroid?[uiOrigin,profile,project,ui]:['--url',`${uiOrigin}/`,...(webMobile?['--mobile']:[]),...(webPending?['--pending-open']:[]),...(webRestore?[]:['--connected','--workspace',workspace]),'--project',project,'--storage-state',storage,'--out',path.join(profile,'browser'),'--executable',chromium.executablePath()]
+    const androidEnv=webAndroid?Object.fromEntries(['RUNE_ANDROID_ADB','RUNE_ANDROID_SERIAL','RUNE_ANDROID_ADB_PORT'].map(key=>[key,process.env[key]])):{}
+    if(webAndroid)androidEnv.NODE_EXTRA_CA_CERTS=path.join(profile,'identity.data/tls/ca-cert.pem')
+    client=spawn(process.execPath,[path.join(root,`scripts/rune/${runner}`),...args],{cwd:root,env:{...env,...androidEnv},windowsHide:true,stdio:['ignore','pipe','pipe',...(webMobile?['ipc']:[])]})
+    if(mobile)client.on('message',async action=>{
+      try{client.send({value:await mobile.command(action,http)})}
+      catch(error){client.send({error:String(error.message)})}
+    })
     for(const stream of [client.stdout,client.stderr])stream.on('data',d=>{if(diagnostic.length<262144)diagnostic+=d})
   }else if(pendingOpen){
     await pendingOpenFixture({origin,profile,project,env,clientBinary});result=0
@@ -235,7 +249,7 @@ try{
     try{result=await new Promise((resolve,reject)=>{client.on('exit',resolve);client.on('error',reject)})}finally{clearTimeout(timer)}
     assert(!expired,`Client probe exceeded ${budget}ms; last Files stage: ${filesStages.at(-1)?.stage??'none'}`)
   }
-  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,0);if(!webRestore)assert(stats.lists>=(webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
+  assert.equal(result,0,diagnostic||undefined);if(web){assert.equal(stats.created,0);assert.equal(stats.prompts,0);if(!webRestore)assert(stats.lists>=(webAndroid?1:webMobile?6:12))}else if(workspaceClaims||pendingOpen||filesState){assert.equal(stats.created,0);assert.equal(stats.prompts,0)}else if(controls){control.done()}else{assert.equal(stats.created,restoreState?2:1);assert.equal(stats.prompts,2)}
   if(filesState){
     await filesChain;assert(filesProof);assert.deepEqual(filesStages.map(s=>s.stage),filesExpected)
     const version=text=>`"${createHash('sha256').update(text).digest('hex')}"`

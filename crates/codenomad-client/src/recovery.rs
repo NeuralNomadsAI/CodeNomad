@@ -112,7 +112,7 @@ pub async fn run(
             Some(Input::Closed(e)) if e == epoch => {
                 opened = false;
                 dirty = true;
-                publish(&out, &wake, Event::Reconnecting).await;
+                publish(&out, &wake, Event::ConnectionLost).await;
                 attempts += 1;
                 if attempts <= 6 {
                     retry = Some(

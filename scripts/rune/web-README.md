@@ -23,7 +23,15 @@ node packages/rune-app/fixtures/launcher-fixture.mjs --web
 
 Cette fixture vérifie cookies, refus sans authentification, deux pages de sessions, conversation exacte, session vide et retour, EventSource et arrêt du serveur, sans création ni envoi. Les six contextes et preuves restent sous `target/rune-web-tests/launcher-*/`.
 
-`node packages/rune-app/fixtures/launcher-fixture.mjs --web-mobile` utilise le même bundle produit avec un serveur Rust compilé, son listener HTTPS d'entrée isolé et le véritable appairage navigateur. La fixture configure le profil Chromium Android portrait, clair et sombre. Elle capture aussi les gestes tactiles, l'injection d'IME, la réduction simulée du viewport et le miroir d'accessibilité. Le certificat de test est accepté uniquement dans ces contextes loopback. Les essais du relais hébergé et du téléphone physique restent séparés.
+Avec le même bundle produit et `RUNE_SERVER_EXE` pointant vers le serveur Rust compilé, le smoke d'intégration se rejoue en une commande :
+
+```powershell
+node packages/rune-app/fixtures/launcher-fixture.mjs --web-mobile
+```
+
+Il vérifie l'appairage HTTPS, la recherche d'une session hors page, l'arrivée d'un message uniquement en SSE, la récupération après coupure de l'amont, le toucher au centre, l'IME injectée, le redimensionnement et le brouillon après révocation et réappairage. Le profil Chromium Android portrait couvre clair, sombre et DPR 1 ; le miroir accessible expose l'état observé d'« Anciens » pour le suivi Rune #118.
+
+`node packages/rune-app/fixtures/launcher-fixture.mjs --web-android` utilise Chrome et le clavier logiciel d'un émulateur Android jetable déjà démarré, avec `RUNE_ANDROID_ADB` (chemin absolu), `RUNE_ANDROID_ADB_PORT` (serveur ADB privé) et `RUNE_ANDROID_SERIAL` (unique `emulator-*`). Il vérifie l'ouverture réelle du clavier, le viewport, le texte injecté par CDP et la reprise SSE. Le certificat de fixture est épinglé au lancement de Chrome. La dictée, la composition propre à Gboard et TalkBack gardent leurs essais distincts.
 
 Les libellés de démarrage et d'erreur proviennent des dix catalogues générés. `?locale=he` sélectionne par exemple l'hébreu et la direction RTL ; la valeur par défaut est `fr`. Les couleurs, dimensions et polices du démarrage consomment le thème généré et `crates/rune-theme-codenomad/assets/web-shell.css`. Le zoom du navigateur reste disponible.
 

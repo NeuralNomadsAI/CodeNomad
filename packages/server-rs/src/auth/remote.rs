@@ -199,6 +199,11 @@ pub async fn admit(State((app, rune)): State<(Shared, Option<PathBuf>)>, mut req
         });
     let backend_ui = !server && crate::previews::backend::enabled(&app) && preview_control(&path, &method);
     if path == "/remote-pair" && matches!(method, Method::GET | Method::HEAD) && direct && !server {
+        if let Some(dir) = &rune
+            && let Some(page) = crate::host::ui::rune_pair_page(dir, method).await
+        {
+            return cors(devices::pairing_page(page), supplied);
+        }
         return cors(next.run(req).await, supplied);
     }
     if path == "/api/remote-control/pair" && method == Method::POST && !server {

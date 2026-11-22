@@ -35,6 +35,7 @@ pub enum Event {
     Text(String, crate::content::TextEvent),
     Done,
     Failed,
+    ConnectionLost,
     Reconnecting,
     PagingFailed,
 }

@@ -101,21 +101,29 @@ pub fn view(s: &State) -> El {
                         )),
                 )
                 .child(
-                    hinted_field(&l.search, t("rune.search"))
-                        .label(t("rune.search"))
-                        .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Search))
-                        .build(field_kit(layout::dark()))
-                        .key("session-search"),
+                    col()
+                        .role("group")
+                        .label(t("sessionList.filter.ariaLabel"))
+                        .full_width()
+                        .child(
+                            hinted_field(&l.search, t("sessionList.filter.placeholder"))
+                                .label(t("sessionList.filter.ariaLabel"))
+                                .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Search))
+                                .build(field_kit(layout::dark()))
+                                .key("session-search"),
+                        ),
                 );
-            let filter = l.search.text.to_lowercase();
+            let searching = !l.search.text.trim().is_empty();
+            let sessions = if searching {
+                &l.search_results.rows
+            } else {
+                &l.sessions
+            };
             let mut items = col().full_width().separate(Space::Xs);
-            for session in l
-                .sessions
-                .iter()
-                .filter(|s| s.title.to_lowercase().contains(&filter))
-            {
+            for session in sessions {
                 let id = session.id.clone();
                 let title = session.title.clone();
+                let directory = session.directory.clone();
                 items = items.child(
                     button(
                         &format!("session-{id}"),
@@ -126,16 +134,29 @@ pub fn view(s: &State) -> El {
                         },
                         l.pending || waiting,
                         crate::screen::action(&scope, move |s: &mut State| {
-                            launcher::choose(s, id.clone(), title.clone())
+                            launcher::choose_at(
+                                s,
+                                id.clone(),
+                                title.clone(),
+                                Some(directory.clone()),
+                            )
                         }),
                     )
                     .full_width(),
                 );
             }
-            if l.sessions.is_empty() {
-                items = items.child(text(t("rune.empty_sessions")));
+            if sessions.is_empty()
+                && (!searching || l.search_results.pending() || l.search_results.failed)
+            {
+                items = items.child(text(t(if searching && l.search_results.pending() {
+                    "rune.loading"
+                } else if searching && l.search_results.failed {
+                    "rune.list_error"
+                } else {
+                    "rune.empty_sessions"
+                })));
             }
-            if l.next.is_some() {
+            if !searching && l.next.is_some() {
                 items = items.child(button(
                     "more-sessions",
                     t("rune.more"),

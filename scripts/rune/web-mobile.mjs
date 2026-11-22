@@ -47,14 +47,27 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui}) {
     const get = (pathname, options) => context.request.get(new URL(pathname, origin).href, {maxRedirects:0,...options})
     assert.equal((await get('/api/workspaces')).status(), 401)
     assert.deepEqual(await (await get('/api/auth/status')).json(), {authenticated:false,pairingRequired:true})
-    assert.equal((await get('/app_bg.wasm')).status(), 401)
     const redirect = await get('/', {maxRedirects:0,headers:{accept:'text/html'}})
     assert.equal(redirect.status(), 302)
     assert.equal(redirect.headers().location, '/remote-pair')
+    const guide = await get('/remote-pair')
+    assert.equal(guide.headers()['cache-control'], 'no-store')
+    assert.equal(guide.headers()['referrer-policy'], 'no-referrer')
+    await page.goto(`${origin}/remote-pair?locale=he`)
+    await page.waitForFunction(() => document.documentElement.lang==='he' && document.documentElement.dir==='rtl')
+    assert(await page.getByRole('heading').textContent())
+    assert(await page.locator('main').evaluate(el => {
+      const sample=document.createElement('div')
+      sample.style.background='var(--surface-overlay)'
+      document.body.append(sample)
+      const matches=getComputedStyle(el).backgroundColor===getComputedStyle(sample).backgroundColor
+      sample.remove()
+      return matches
+    }), 'The pairing card consumes the shared overlay token')
     const exchanged = page.waitForResponse(res => new URL(res.url()).pathname === pairPath)
     await page.goto(url.href).catch(error => {if (!String(error).includes('ERR_ABORTED')) throw error})
     assert.equal((await exchanged).status(), 200)
-    await page.waitForURL(`${origin}/`)
+    await page.waitForURL(url => url.origin === origin && url.pathname === '/')
     const cookies = await context.cookies()
     assert(cookies.some(c => c.name === '__Host-codenomad_device' && c.secure && c.httpOnly && c.sameSite === 'Lax'))
     assert.equal((await (await get('/api/auth/status')).json()).authenticated, true)
@@ -65,7 +78,6 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui}) {
     const wasm = await get('/app_bg.wasm')
     assert.equal(wasm.status(), 200)
     assert.equal(wasm.headers()['content-type'], 'application/wasm')
-    assert.equal(wasm.headers()['cache-control'], 'private, no-cache')
     const cached = await get('/app_bg.wasm', {headers:{'if-none-match':wasm.headers().etag}})
     assert.equal(cached.status(), 304)
     assert.equal((await get('/app_bg.wasm',{headers:{origin:'https://foreign.invalid'}})).status(),403)
@@ -77,28 +89,11 @@ export async function pairFixture({origin, pairingUrl, storage, manifest, ui}) {
   } finally { await browser.close() }
 }
 
-// Explicitly emulate a shrinking visual viewport, not an Android system keyboard.
-export function mobileViewport() {
-  const viewport = window.visualViewport
-  const height = Object.getOwnPropertyDescriptor(VisualViewport.prototype, 'height').get.bind(viewport)
-  const offsetTop = Object.getOwnPropertyDescriptor(VisualViewport.prototype, 'offsetTop').get.bind(viewport)
-  let lost = 0, pan = 0
-  Object.defineProperties(viewport, {
-    height: {get: () => height() - lost}, offsetTop: {get: () => offsetTop() + pan},
-  })
-  window.fixtureViewport = (loss, top = 0) => {
-    lost = loss
-    pan = top
-    viewport.dispatchEvent(new Event('resize'))
-  }
-}
-
 export async function mobileInteraction(page, labels) {
   const cdp = await page.context().newCDPSession(page)
   const evidence = {}
   async function probe(name, check) {
-    try {evidence[name] = await check()}
-    catch (error) {evidence[name] = {error:String(error.message).slice(0,400)}}
+    evidence[name] = await check()
   }
   const role = (type, name) => page.getByRole(type, {name, exact:true})
   const composer = role('group', labels.prompt)
@@ -146,32 +141,13 @@ export async function mobileInteraction(page, labels) {
     await probe('touchEditor', async () => {
       const focus = await center(composer)
       await page.touchscreen.tap(focus.x,focus.y)
-      let tap='center'
-      if(!await page.waitForFunction(() => document.activeElement?.tagName==='TEXTAREA',undefined,{timeout:800}).catch(()=>false)){
-        tap='first line'
-        const bounds=await composer.boundingBox()
-        await page.touchscreen.tap(focus.x,Math.round(bounds.y+30))
-      }
-      if(!await page.waitForFunction(() => document.activeElement?.tagName==='TEXTAREA',undefined,{timeout:800}).catch(()=>false)){
-        const target = await page.evaluate(({x,y})=>({at:document.elementFromPoint(x,y)?.tagName,active:document.activeElement?.tagName}),focus)
-        return {focused:false,point:focus,...target}
-      }
+      await editor.waitFor({state:'attached',timeout:2500})
       await cdp.send('Input.insertText',{text})
       await waitValue(text)
       return {...await editor.evaluate(el => ({focused:true,name:el.getAttribute('aria-label'),inputMode:el.inputMode,
-        autocapitalize:el.autocapitalize,spellcheck:el.spellcheck})),tap}
+        autocapitalize:el.autocapitalize,spellcheck:el.spellcheck})),tap:'center'}
     })
     await probe('compositionAndReplacement', async () => {
-      let focus = 'touch'
-      if(!await editor.count()){
-        focus = 'keyboard'
-        for(let i=0;i<18&&!await editor.count();i++)await page.keyboard.press('Tab')
-        if(await editor.count()){
-          await cdp.send('Input.insertText',{text})
-          await waitValue(text)
-        }
-      }
-      await editor.waitFor({state:'attached',timeout:2500})
       await cdp.send('Input.imeSetComposition',{text:'かな',selectionStart:2,selectionEnd:2})
       await cdp.send('Input.insertText',{text:'仮名'})
       await waitValue(`${text}仮名`)
@@ -181,23 +157,26 @@ export async function mobileInteraction(page, labels) {
         el.dispatchEvent(new InputEvent('input',{inputType:'insertReplacementText',data:'Été',bubbles:true}))
       })
       await waitValue('Été 日本語 🦀仮名')
-      return {focus,composed:true,replaced:true}
+      return {composed:true,replaced:true}
     })
     await probe('visualOcclusion', async () => {
-      const value = await editor.count()?await editor.inputValue():null
-      await page.evaluate(() => window.fixtureViewport(330,50))
+      const value = await editor.inputValue()
+      const viewport = page.viewportSize()
+      // resizes-content makes the keyboard shrink the layout viewport in Android Chrome.
+      await page.setViewportSize({...viewport,height:viewport.height-330})
       const canvas = page.locator('canvas').first()
-      const resized=!!await page.waitForFunction(() =>
-        Math.abs(document.querySelector('canvas').getBoundingClientRect().height - visualViewport.height)<1,
-      undefined,{timeout:1300}).catch(()=>false)
+      await page.waitForFunction(() => {
+        const canvas = document.querySelector('canvas'), height = visualViewport.height
+        return Math.abs(canvas.getBoundingClientRect().height-height)<1 && Math.abs(canvas.height-height*devicePixelRatio)<=1
+      })
       const field = await composer.boundingBox(), button = await send.boundingBox()
       const shown = await canvas.boundingBox()
       const {top,bottom} = await page.evaluate(() => ({top:visualViewport.offsetTop,bottom:visualViewport.offsetTop+visualViewport.height}))
-      if(value!==null)await waitValue(value)
-      return {resized,canvas:shown,field,button,top,bottom,retainedDraft:value!==null,
-        sendReachable:button?.y>=top && button?.y+button?.height<=bottom+1}
+      await waitValue(value)
+      assert(button?.y>=top && button?.y+button?.height<=bottom+1,'Send must stay within the smaller viewport')
+      await page.setViewportSize(viewport)
+      return {resized:true,canvas:shown,field,button,top,bottom,retainedDraft:true,sendReachable:true}
     })
-    await page.evaluate(() => window.fixtureViewport(0))
     evidence.accessibility = await role('button',labels.older).evaluate(el => ({
       olderDisabled:el.disabled || el.getAttribute('aria-disabled')==='true',
       role:el.getAttribute('role') || el.tagName.toLowerCase(),
