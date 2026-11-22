@@ -2,6 +2,9 @@
 
 ## Agent conventions
 
+- A scheduled transcript drain batches all pages admitted for the same frame
+  so readers of several watched transcripts observe one reactive publication.
+
 - Transcript watch marks retain a unique view lease under the captured backend attachment and the session's native location, project and instance generation. Scalar bindings preserve that lease across catalogue hydration; hiding, session clearing and owner revocation release its visibility and memory protection. Each cleanup releases only its own lease, including after same-ID reattachment. Mounted session and child views reacquire the current attachment reactively. The acyclic visibility leaf receives authority from these producers; projection gates and the transcript LRU share its current-lease check.
 - Mermaid fences (`mermaid`/`mmd`) use only `@mermaid-js/tiny`, loaded on demand and excluded from PWA precaching. `lib/markdown.ts` publishes a per-render token/encoded-source/completeness sidecar from actual fenced tokens alongside cached HTML; raw HTML cannot supply that provenance. `markdown-mermaid.tsx` consumes the sidecar and retains source for unfinished or display-truncated fences and while streaming. Source/diagram choices remain local to the Markdown owner; copy/wrap keep the native source. `mermaid-renderer.ts` serializes bounded renders in one opaque `allow-scripts` iframe with network-disabled CSP; returned SVGs are image documents rather than host HTML. Keep 50,000-character/500-edge input limits, a 2M-character SVG ceiling and the initialization/render deadlines, including late-import fencing. `MermaidDiagram` is shared with `.mmd` file previews; invalid/unsupported/oversized content keeps an actionable source fallback. Regression coverage: `tests/browser/mermaid.test.ts`.
 
