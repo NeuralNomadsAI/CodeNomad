@@ -139,7 +139,10 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
 }
 
 fn branch(ui: &Ui) -> String {
-    if ui.repository() == Repository::Uninitialized {
+    if matches!(
+        ui.repository(),
+        Repository::Uninitialized | Repository::NoGit
+    ) {
         return ui
             .tree()
             .map(|tree| basename(&tree.directory))
@@ -254,7 +257,8 @@ fn changes_view(s: &State, ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El {
                 ui.body_bounds = bounds;
             }
         }));
-    if ui.changes.count() == 0 {
+    let status = ui.requests.slot(Lane::Changes);
+    if ui.changes.count() == 0 && (ui.loading() || ui.changes.ready() && status.error.is_none()) {
         body = body.child(theme::note(
             t(if ui.loading() {
                 "instanceInfo.loading"

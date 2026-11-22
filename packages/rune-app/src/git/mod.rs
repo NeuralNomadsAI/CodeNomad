@@ -418,6 +418,38 @@ impl Ui {
         self.history.selected = Some(details.id.clone());
         self.accept(Lane::Details, Value::Details(details));
     }
+
+    pub(crate) fn load_empty_scene(&mut self, error: bool) {
+        self.close_preview();
+        if self.mode == Mode::Changes {
+            self.changes = Changes::default();
+            if error {
+                self.read_failed(Lane::Changes, "fixture status refused".into());
+            } else {
+                self.accept(
+                    Lane::Changes,
+                    Value::Changes(vec![], None, self.index_revision),
+                );
+            }
+        } else if self.mode == Mode::History {
+            self.history = History::default();
+            if error {
+                self.read_failed(Lane::History, "fixture history refused".into());
+            } else {
+                self.accept(
+                    Lane::History,
+                    Value::History(
+                        Page {
+                            head: None,
+                            commits: vec![],
+                            has_more: false,
+                        },
+                        false,
+                    ),
+                );
+            }
+        }
+    }
 }
 mod settle;
 #[cfg(test)]
