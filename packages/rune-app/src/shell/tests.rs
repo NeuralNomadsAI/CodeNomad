@@ -212,16 +212,23 @@ fn escape_from_the_search_editor_closes_its_floating_panel() {
     settle(&mut rt);
     click(&mut rt, "sessions-panel-toggle");
     click(&mut rt, "session-search-toggle");
-    rt.key(KeyEvent {
-        key: Key::Function(6),
-        mods: Mods::default(),
-    });
-    settle(&mut rt);
-    assert!(
-        rt.elements()
-            .iter()
-            .any(|element| element.focused && element.path.contains("/session-search/"))
-    );
+    for shift in [false, true] {
+        let event = KeyEvent {
+            key: Key::Function(6),
+            mods: Mods {
+                shift,
+                ..Mods::default()
+            },
+        };
+        rt.key(event.clone());
+        settle(&mut rt);
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|element| element.focused && element.path.contains("/session-search/"))
+        );
+        rt.key_up(event);
+    }
     rt.key(KeyEvent {
         key: Key::Escape,
         mods: Mods::default(),

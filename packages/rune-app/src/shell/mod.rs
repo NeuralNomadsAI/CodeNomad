@@ -75,13 +75,15 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     if event.key == Key::Tab && !event.mods.ctrl && !event.mods.cmd && !event.mods.alt {
         return s.shell.wrap_floating_focus(event.mods.shift, tx);
     }
+    if event.key == Key::Function(6) && s.shell.has_floating() {
+        return !event.mods.ctrl && !event.mods.cmd && !event.mods.alt;
+    }
     if tx.key_repeat() {
         return false;
     }
     if event.mods == Mods::default() {
         return match event.key {
             Key::Escape => s.shell.close_floating(tx),
-            Key::Function(6) => s.shell.has_floating(),
             Key::Function(11) if crate::platform::titlebar::available() => {
                 tx.toggle_full_screen();
                 true
