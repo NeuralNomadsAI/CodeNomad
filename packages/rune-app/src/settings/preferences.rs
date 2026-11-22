@@ -1,25 +1,13 @@
+mod document;
+
 use crate::{backend::Backend, platform};
 pub(super) use codenomad_client::settings::Owner;
-use codenomad_client::{Receiver, bounded, settings::PreferencesWatch};
+use codenomad_client::settings::PreferencesWatch;
+use document::{Choice, Document};
 use rune_theme_codenomad::palettes::{Palette, built_in};
-use serde_json::{Value, json};
-#[derive(Default)]
-struct Document {
-    snapshot: Option<Value>,
-    pending: Option<Value>,
-    writing: Option<Value>,
-    read: bool,
-    error: Option<&'static str>,
-    flight: Option<Receiver<Reply>>,
-    barrier: Option<Receiver<Reply>>,
-    uncertain: bool,
-    read_failed: bool,
-}
-struct Reply {
-    snapshot: Option<Value>,
-    error: Option<&'static str>,
-    uncertain: bool,
-}
+use serde_json::Value;
+#[cfg(any(test, feature = "test-support"))]
+use serde_json::json;
 
 #[derive(Default)]
 pub(super) struct Preferences {
@@ -36,43 +24,29 @@ impl Preferences {
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn flush(&mut self) -> bool {
         use std::time::Duration;
-        if self.backend.is_none() || !self.has_writes() {
-            return ![&self.config, &self.state]
-                .into_iter()
-                .any(|doc| doc.uncertain || doc.error == Some("settings.preferenceSaveFailed"));
+        if self.backend.is_some() {
+            self.take_invalidations();
+            self.config.prepare_drain();
+            self.state.prepare_drain();
+            // Each lane can finish a PATCH/readback, a retry preflight, and one trailing PATCH/readback.
+            if self.config.draining() || self.state.draining() {
+                platform::block_on(async {
+                    let _ = tokio::time::timeout(
+                        codenomad_client::http::REQUEST_TIMEOUT * 5 + Duration::from_millis(100),
+                        async {
+                            while self.config.draining() || self.state.draining() {
+                                self.poll_documents();
+                                if self.config.draining() || self.state.draining() {
+                                    platform::sleep(Duration::from_millis(10)).await;
+                                }
+                            }
+                        },
+                    )
+                    .await;
+                });
+            }
         }
-        self.unwatch();
-        // In-flight operation, readback, and one queued intent can each use
-        // the HTTP deadline. Both owner lanes keep running during the drain.
-        platform::block_on(async {
-            tokio::time::timeout(codenomad_client::http::REQUEST_TIMEOUT * 4, async {
-                for doc in [&mut self.config, &mut self.state] {
-                    doc.read = doc.pending.is_some() && (doc.read_failed || doc.uncertain);
-                }
-                while self.has_writes() {
-                    self.poll();
-                    if [&self.config, &self.state]
-                        .into_iter()
-                        .any(|doc| doc.pending.is_some() && doc.read_failed && doc.flight.is_none())
-                    {
-                        return false;
-                    }
-                    if self.has_writes() {
-                        platform::sleep(Duration::from_millis(10)).await;
-                    }
-                }
-                self.error().is_none()
-            })
-            .await
-            .unwrap_or(false)
-        })
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn has_writes(&self) -> bool {
-        [&self.config, &self.state]
-            .into_iter()
-            .any(|doc| doc.writing.is_some() || doc.pending.is_some())
+        !self.config.has_unconfirmed() && !self.state.has_unconfirmed()
     }
     pub fn bind(&mut self, owner: Option<Backend>) -> bool {
         if self.backend.as_ref().map(|b| &b.client_id) == owner.as_ref().map(|b| &b.client_id) {
@@ -83,15 +57,8 @@ impl Preferences {
             .as_ref()
             .zip(owner.as_ref())
             .is_some_and(|(old, new)| old.base == new.base);
-        for document in [&mut self.config, &mut self.state] {
-            let barrier = same_address
-                .then(|| document.barrier.take().or_else(|| document.flight.take()))
-                .flatten();
-            *document = Document {
-                barrier,
-                ..Document::default()
-            };
-        }
+        self.config.rebind(same_address);
+        self.state.rebind(same_address);
         self.backend = owner;
         self.stream = None;
         self.refresh();
@@ -100,8 +67,14 @@ impl Preferences {
     }
 
     pub fn refresh(&mut self) {
-        self.config.read = true;
-        self.state.read = true;
+        self.config.invalidate();
+        self.state.invalidate();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn retry(&mut self) {
+        self.config.retry();
+        self.state.retry();
     }
 
     pub fn watch(&mut self, wake: &rune::Waker) {
@@ -119,9 +92,13 @@ impl Preferences {
     }
 
     pub fn invalidate(&mut self, owner: Owner) {
+        self.doc_mut(owner).invalidate();
+    }
+
+    fn doc_mut(&mut self, owner: Owner) -> &mut Document {
         match owner {
-            Owner::Config => self.config.read = true,
-            Owner::State => self.state.read = true,
+            Owner::Config => &mut self.config,
+            Owner::State => &mut self.state,
         }
     }
 
@@ -137,19 +114,37 @@ impl Preferences {
     }
 
     pub fn error(&self) -> Option<&'static str> {
-        self.config.error.or(self.state.error)
+        if self.config.write_failed() || self.state.write_failed() {
+            Some("settings.preferenceSaveFailed")
+        } else if self.config.read_failed() || self.state.read_failed() {
+            Some("rune.connect_error")
+        } else {
+            None
+        }
     }
 
     pub fn poll(&mut self) -> bool {
+        self.take_invalidations();
+        self.poll_documents()
+    }
+
+    fn take_invalidations(&mut self) {
+        if let Some(stream) = &self.stream {
+            let (config, state) = stream.take();
+            if config {
+                self.config.invalidate();
+            }
+            if state {
+                self.state.invalidate();
+            }
+        }
+    }
+
+    fn poll_documents(&mut self) -> bool {
         let Some(backend) = &self.backend else {
             return false;
         };
         let (main, window) = (self.main_wake.clone(), self.window_wake.clone());
-        if let Some(stream) = &self.stream {
-            let (config, state) = stream.take();
-            self.config.read |= config;
-            self.state.read |= state;
-        }
         let changed = self.config.poll(backend, Owner::Config, &main, &window)
             | self.state.poll(backend, Owner::State, &main, &window);
         if changed {
@@ -164,21 +159,19 @@ impl Preferences {
     }
 
     pub fn locale_display(&self) -> Option<&'static str> {
-        [&self.config.pending, &self.config.writing]
-            .into_iter()
-            .flatten()
-            .find_map(|patch| patch["settings"]["locale"].as_str())
+        self.config
+            .requested(Choice::Locale)
             .map(rune_theme_codenomad::catalogue::canonical_locale)
             .or_else(|| self.locale())
     }
 
     pub fn locale_ready(&self) -> bool {
-        self.config.snapshot.is_some() && !self.config.read_failed && !self.config.uncertain
+        self.config.snapshot.is_some() && !self.config.read_failed()
     }
 
     pub fn set_locale(&mut self, locale: &'static str) {
         if self.locale_ready() && self.backend.is_some() && Some(locale) != self.locale_display() {
-            self.config.pending = Some(json!({"settings":{"locale":locale}}));
+            self.config.stage(Choice::Locale, locale);
         }
     }
 
@@ -202,26 +195,16 @@ impl Preferences {
         }
         // The legacy selection still supplies a missing slot. Only update the
         // mode, so neither defaults nor another window's palette move with it.
-        self.state.pending.get_or_insert_with(|| json!({}))["appearancePreferences"]["mode"] =
-            json!(mode);
+        self.state.stage(Choice::Mode, mode);
     }
 
     pub fn mode_ready(&self) -> bool {
-        self.state.snapshot.is_some() && !self.state.uncertain && !self.state.read_failed
+        self.state.snapshot.is_some() && !self.state.read_failed()
     }
 
     pub fn mode_display(&self) -> &'static str {
-        [&self.state.pending, &self.state.writing]
-            .into_iter()
-            .flatten()
-            .find_map(
-                |patch| match patch["appearancePreferences"]["mode"].as_str() {
-                    Some("light") => Some("light"),
-                    Some("dark") => Some("dark"),
-                    Some("system") => Some("system"),
-                    _ => None,
-                },
-            )
+        self.state
+            .requested(Choice::Mode)
             .unwrap_or_else(|| self.mode())
     }
 
@@ -284,37 +267,27 @@ impl Preferences {
         if !self.palette_ready() || self.backend.is_none() {
             return;
         }
-        let mode = if palette.dark { "dark" } else { "light" };
-        let patch = self.state.pending.get_or_insert_with(|| json!({}));
-        patch["appearancePreferences"][mode] = json!({
-            "scheme":{"id":palette.id,"appearance":mode,"colors":null},"presetId":null
-        });
+        if self.state.requested(Choice::Palette(palette.dark)) != Some(palette.id) {
+            self.state.stage(Choice::Palette(palette.dark), palette.id);
+        }
     }
 
     pub fn palette_ready(&self) -> bool {
         self.mode_ready()
             && (self.config.snapshot.is_some()
-                || self.config.read_failed
+                || self.config.read_failed()
                 || self.state.snapshot.as_ref().is_some_and(|state| {
                     state["appearancePreferences"]["mode"].is_string()
                         || state.get("theme").is_some()
                         || state.get("colorScheme").is_some()
                 }))
-            && [&self.state.pending, &self.state.writing]
-                .into_iter()
-                .flatten()
-                .all(|patch| patch["appearancePreferences"]["mode"].is_null())
+            && self.state.requested(Choice::Mode).is_none()
     }
 
     pub fn palette_display(&self, dark: bool) -> Option<&'static Palette> {
-        let mode = if dark { "dark" } else { "light" };
-        [&self.state.pending, &self.state.writing]
-            .into_iter()
-            .flatten()
-            .find_map(|patch| {
-                let id = patch["appearancePreferences"][mode]["scheme"]["id"].as_str()?;
-                built_in().iter().find(|p| p.dark == dark && p.id == id)
-            })
+        self.state
+            .requested(Choice::Palette(dark))
+            .and_then(|id| built_in().iter().find(|p| p.dark == dark && p.id == id))
             .or_else(|| self.palette(dark))
     }
 
@@ -339,113 +312,6 @@ impl Preferences {
         self.state.snapshot = Some(
             json!({"appearancePreferences":{"mode":"system","light":{"scheme":{"id":"light"}},"dark":{"scheme":{"id":"classic"}}}}),
         );
-    }
-}
-
-impl Document {
-    fn poll(
-        &mut self,
-        backend: &Backend,
-        owner: Owner,
-        main: &Option<rune::Waker>,
-        window: &Option<rune::Waker>,
-    ) -> bool {
-        if self
-            .barrier
-            .as_ref()
-            .is_some_and(|barrier| barrier.try_recv().is_err() && !barrier.is_closed())
-        {
-            return false;
-        }
-        self.barrier = None;
-        let mut changed = false;
-        if let Some(reply) = self.flight.as_ref().and_then(|r| r.try_recv().ok()) {
-            self.flight = None;
-            if self.writing.take().is_some() || !self.read {
-                self.error = reply.error;
-                self.uncertain = reply.uncertain || self.uncertain && reply.snapshot.is_none();
-                self.read_failed = reply.snapshot.is_none();
-                if let Some(snapshot) = reply.snapshot {
-                    self.snapshot = Some(snapshot);
-                }
-            }
-            changed = true;
-        }
-        if self.flight.is_some() {
-            return changed;
-        }
-        let patch = if self.read_failed || self.uncertain {
-            None
-        } else {
-            self.pending.take()
-        };
-        if patch.is_none() && !self.read {
-            return changed;
-        }
-        if patch.is_none() {
-            self.read = false;
-        }
-        self.writing.clone_from(&patch);
-        let (sender, receiver) = bounded(1);
-        self.flight = Some(receiver);
-        let backend = backend.clone();
-        let (main, window) = (main.clone(), window.clone());
-        platform::spawn(async move {
-            let reply = if let Some(patch) = patch {
-                match owner.patch(&backend, &patch).await {
-                    Ok(snapshot) => Reply {
-                        snapshot: Some(snapshot),
-                        error: None,
-                        uncertain: false,
-                    },
-                    // An unconfirmed PATCH is never sent twice.
-                    Err(_) => {
-                        let snapshot = owner.read(&backend).await.ok();
-                        let saved = snapshot
-                            .as_ref()
-                            .is_some_and(|value| contains_patch(value, &patch));
-                        Reply {
-                            uncertain: snapshot.is_none(),
-                            snapshot,
-                            error: (!saved).then_some("settings.preferenceSaveFailed"),
-                        }
-                    }
-                }
-            } else {
-                let snapshot = owner.read(&backend).await.ok();
-                Reply {
-                    error: snapshot.is_none().then_some("rune.connect_error"),
-                    snapshot,
-                    uncertain: false,
-                }
-            };
-            let _ = sender.send(reply).await;
-            if let Some(wake) = main {
-                wake();
-            }
-            if let Some(wake) = window {
-                wake();
-            }
-        });
-        true
-    }
-}
-
-fn contains_patch(value: &Value, patch: &Value) -> bool {
-    match patch {
-        Value::Object(entries) => {
-            value.is_object()
-                && entries.iter().all(|(key, expected)| {
-                    if expected.is_null() {
-                        value.get(key).is_none()
-                    } else {
-                        value
-                            .get(key)
-                            .is_some_and(|actual| contains_patch(actual, expected))
-                    }
-                })
-        }
-        other => value == other,
     }
 }
 

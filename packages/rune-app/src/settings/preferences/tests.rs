@@ -1,4 +1,5 @@
 use super::*;
+use codenomad_client::bounded;
 use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -83,18 +84,27 @@ fn settings_uses_separate_owners_and_reads_back_an_uncertain_write_once() {
 #[test]
 fn settings_mode_patch_leaves_defaults_and_legacy_slots_alone() {
     platform::block_on(async {
-        let mut prefs = Preferences {
-            backend: Some(Backend::connect("http://127.0.0.1:9/", "").await.unwrap()),
-            ..Preferences::default()
-        };
+        let (listener, mut prefs) = fixture().await;
+        prefs.config = Document::default();
+        prefs.state = Document::default();
         prefs.state.snapshot = Some(json!({}));
         assert!(!prefs.palette_ready());
         prefs.set_mode("light");
-        assert!(
-            prefs.state.pending.take().is_some(),
+        assert_eq!(
+            prefs.state.requested(Choice::Mode),
+            Some("light"),
             "state-only mode can save"
         );
-        prefs.config.read_failed = true;
+        prefs.state = Document::default();
+        prefs.state.snapshot = Some(json!({}));
+        prefs.config.invalidate();
+        prefs.poll();
+        request(&listener).await.reply(503, json!({})).await;
+        wait_until(|| {
+            prefs.poll();
+            prefs.config.read_failed()
+        })
+        .await;
         assert!(
             prefs.palette_ready(),
             "unreadable configuration does not disable appearance"
@@ -104,10 +114,7 @@ fn settings_mode_patch_leaves_defaults_and_legacy_slots_alone() {
         assert_eq!(prefs.locale(), Some("de"));
         assert_eq!(prefs.palette(true).map(|p| p.id), Some("classic"));
         prefs.set_mode("light");
-        assert_eq!(
-            prefs.state.pending.take().unwrap(),
-            json!({"appearancePreferences":{"mode":"light"}})
-        );
+        assert_eq!(prefs.state.requested(Choice::Mode), Some("light"));
         prefs.state.snapshot = Some(
             json!({"appearancePreferences":{"mode":"light","dark":{"scheme":{"id":"basalt"}}}}),
         );
@@ -135,17 +142,12 @@ fn settings_palette_changes_remain_available_and_coalesce_during_an_in_flight_wr
             prefs.set_palette(built_in().iter().find(|palette| palette.id == id).unwrap());
         };
         select(&mut prefs, "slate");
-        prefs.state.writing = prefs.state.pending.take();
-        let (_out, in_flight) = bounded(1);
-        prefs.state.flight = Some(in_flight);
+        assert!(prefs.poll());
         select(&mut prefs, "fjord");
         select(&mut prefs, "basalt");
         assert_eq!(prefs.palette_display(true).map(|p| p.id), Some("basalt"));
         assert_eq!(prefs.palette(true).map(|p| p.id), Some("classic"));
-        assert_eq!(
-            prefs.state.pending.unwrap()["appearancePreferences"]["dark"]["scheme"]["id"],
-            "basalt"
-        );
+        assert_eq!(prefs.state.requested(Choice::Palette(true)), Some("basalt"));
     });
 }
 
@@ -164,17 +166,11 @@ fn settings_mode_write_fences_palette_until_the_new_color_slot_is_known() {
         prefs.set_mode("dark");
         assert!(!prefs.palette_ready());
         prefs.set_palette(linen);
-        assert_eq!(
-            prefs.state.pending.as_ref().unwrap(),
-            &json!({"appearancePreferences":{"mode":"dark"}})
-        );
-        prefs.state.writing = prefs.state.pending.take();
+        assert_eq!(prefs.state.requested(Choice::Mode), Some("dark"));
+        assert_eq!(prefs.state.requested(Choice::Palette(false)), None);
+        assert!(prefs.poll());
         prefs.set_palette(linen);
-        assert!(prefs.state.pending.is_none());
-        prefs.state.writing = None;
-        prefs.state.read_failed = true;
-        assert!(!prefs.palette_ready());
-        assert!(!prefs.mode_ready());
+        assert_eq!(prefs.state.requested(Choice::Palette(false)), None);
     });
 }
 
@@ -192,10 +188,8 @@ fn settings_sse_refreshes_only_the_invalidated_owner() {
         let _ = sender.try_send(());
     });
     let mut prefs = Preferences::default();
-    prefs.bind(Some(backend));
+    prefs.backend = Some(backend);
     prefs.fixture();
-    prefs.config.read = false;
-    prefs.state.read = false;
     prefs.watch(&wake);
     platform::block_on(async {
         let mut stream = request(&listener).await;
@@ -234,7 +228,11 @@ fn settings_sse_refreshes_only_the_invalidated_owner() {
             .unwrap();
         assert!(prefs.poll());
         assert_eq!(prefs.locale(), Some("he"));
-        assert!(prefs.state.flight.is_none());
+        assert!(
+            timeout(Duration::from_millis(60), listener.accept())
+                .await
+                .is_err()
+        );
     });
 }
 
@@ -274,7 +272,7 @@ fn settings_shutdown_flushes_the_last_queued_palette_and_observes_a_lost_receipt
         first
             .reply(
                 200,
-                json!({"appearancePreferences":{"dark":{"scheme":{"id":"slate"}}}}),
+                json!({"appearancePreferences":{"dark":{"scheme":{"id":"slate","appearance":"dark"}}}}),
             )
             .await;
         let second = request(&listener).await;
@@ -337,9 +335,12 @@ fn settings_failed_readback_keeps_the_unsent_palette_parked_until_fresh_authorit
             .unwrap()
             .unwrap();
         assert!(prefs.poll());
-        assert!(prefs.state.uncertain);
+        assert!(prefs.state.read_failed());
+        assert!(prefs.state.write_failed());
         assert!(
-            prefs.state.flight.is_none(),
+            timeout(Duration::from_millis(60), listener.accept())
+                .await
+                .is_err(),
             "do not replay the uncertain or dispatch the queued PATCH"
         );
         assert_eq!(prefs.palette_display(true).map(|p| p.id), Some("basalt"));
@@ -366,7 +367,7 @@ fn settings_failed_readback_keeps_the_unsent_palette_parked_until_fresh_authorit
         queued
             .reply(
                 200,
-                json!({"appearancePreferences":{"dark":{"scheme":{"id":"basalt"}}}}),
+                json!({"appearancePreferences":{"dark":{"scheme":{"id":"basalt","appearance":"dark"}}}}),
             )
             .await;
         timeout(Duration::from_secs(3), completed.recv())
@@ -375,8 +376,236 @@ fn settings_failed_readback_keeps_the_unsent_palette_parked_until_fresh_authorit
             .unwrap();
         prefs.poll();
         assert_eq!(prefs.palette(true).map(|p| p.id), Some("basalt"));
-        assert!(prefs.state.pending.is_none());
+        assert_eq!(prefs.state.requested(Choice::Palette(true)), None);
     });
+}
+
+async fn fixture() -> (TcpListener, Preferences) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend = Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
+        .await
+        .unwrap();
+    let mut prefs = Preferences {
+        backend: Some(backend),
+        ..Preferences::default()
+    };
+    prefs.fixture();
+    (listener, prefs)
+}
+
+async fn wait_until(mut check: impl FnMut() -> bool) {
+    timeout(Duration::from_secs(3), async {
+        while !check() {
+            platform::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[test]
+fn settings_closing_drains_the_other_owner_even_when_one_cannot_read_back() {
+    for (broken, healthy) in [(Owner::Config, Owner::State), (Owner::State, Owner::Config)] {
+        let (listener, mut prefs) = platform::block_on(fixture());
+        prefs.doc_mut(broken).stage(choice(broken), desired(broken));
+        prefs.poll();
+        let first = platform::block_on(request(&listener));
+        assert!(
+            first
+                .first
+                .starts_with(&format!("PATCH /api/storage/{}/ui ", owner_path(broken)))
+        );
+        let fallback = if broken == Owner::Config {
+            "ja"
+        } else {
+            "light"
+        };
+        prefs.doc_mut(broken).stage(choice(broken), fallback);
+        prefs
+            .doc_mut(healthy)
+            .stage(choice(healthy), desired(healthy));
+        let (done, receipt) = bounded(1);
+        platform::spawn(async move {
+            first.reply(503, json!({})).await;
+            let mut healthy_write = None;
+            for _ in 0..2 {
+                let next = request(&listener).await;
+                if next
+                    .first
+                    .starts_with(&format!("GET /api/storage/{}/ui?", owner_path(broken)))
+                {
+                    next.reply(503, json!({})).await;
+                } else {
+                    assert!(
+                        next.first.starts_with(&format!(
+                            "PATCH /api/storage/{}/ui ",
+                            owner_path(healthy)
+                        ))
+                    );
+                    healthy_write = Some(next);
+                }
+            }
+            let write = healthy_write.unwrap();
+            assert_eq!(write.body, desired_doc(healthy));
+            platform::sleep(Duration::from_millis(60)).await;
+            write.reply(200, desired_doc(healthy)).await;
+            done.send(()).await.unwrap();
+        });
+        assert!(!prefs.flush());
+        assert!(receipt.try_recv().is_ok());
+        assert_eq!(prefs.doc(broken).requested(choice(broken)), Some(fallback));
+        assert_eq!(prefs.doc(healthy).snapshot, Some(desired_doc(healthy)));
+        assert_eq!(prefs.doc(healthy).requested(choice(healthy)), None);
+    }
+}
+
+fn owner_path(owner: Owner) -> &'static str {
+    match owner {
+        Owner::Config => "config",
+        Owner::State => "state",
+    }
+}
+
+fn choice(owner: Owner) -> Choice {
+    match owner {
+        Owner::Config => Choice::Locale,
+        Owner::State => Choice::Mode,
+    }
+}
+
+fn desired(owner: Owner) -> &'static str {
+    match owner {
+        Owner::Config => "he",
+        Owner::State => "dark",
+    }
+}
+
+fn desired_doc(owner: Owner) -> Value {
+    match owner {
+        Owner::Config => json!({"settings":{"locale":desired(owner)}}),
+        Owner::State => json!({"appearancePreferences":{"mode":desired(owner)}}),
+    }
+}
+
+#[test]
+fn settings_passive_reads_never_retry_unconfirmed_writes_but_the_retry_action_does() {
+    for confirmed_on_retry in [false, true] {
+        let (listener, mut prefs) = platform::block_on(fixture());
+        let before = json!({"settings":{"locale":"en"}});
+        let after = json!({"settings":{"locale":"he"}});
+        platform::block_on(async {
+            prefs.set_locale("he");
+            assert!(prefs.poll());
+            let write = request(&listener).await;
+            assert_eq!(write.body, after);
+            write.reply(503, json!({})).await;
+            request(&listener).await.reply(503, json!({})).await;
+            wait_until(|| {
+                prefs.poll();
+                prefs.config.write_failed()
+            })
+            .await;
+
+            prefs.invalidate(Owner::Config);
+            assert!(prefs.poll());
+            let read = request(&listener).await;
+            assert!(read.first.starts_with("GET "));
+            read.reply(200, before.clone()).await;
+            wait_until(|| {
+                prefs.poll();
+                prefs.locale_ready()
+            })
+            .await;
+            assert_eq!(prefs.error(), Some("settings.preferenceSaveFailed"));
+            assert_eq!(prefs.locale_display(), Some("he"));
+            assert_eq!(prefs.locale(), Some("en"));
+            assert!(
+                timeout(Duration::from_millis(60), listener.accept())
+                    .await
+                    .is_err()
+            );
+        });
+        assert!(
+            !prefs.flush(),
+            "a successful read of the old value is not success"
+        );
+        platform::block_on(async {
+            prefs.retry();
+            assert!(prefs.poll());
+            let read = request(&listener).await;
+            assert!(read.first.starts_with("GET "));
+            read.reply(
+                200,
+                if confirmed_on_retry {
+                    after.clone()
+                } else {
+                    before
+                },
+            )
+            .await;
+            if !confirmed_on_retry {
+                wait_until(|| prefs.poll()).await;
+                let retry = request(&listener).await;
+                assert!(retry.first.starts_with("PATCH "));
+                assert_eq!(retry.body, after);
+                retry.reply(200, after).await;
+            }
+            wait_until(|| {
+                prefs.poll();
+                prefs.error().is_none()
+            })
+            .await;
+            assert!(
+                timeout(Duration::from_millis(60), listener.accept())
+                    .await
+                    .is_err()
+            );
+        });
+        assert!(prefs.flush());
+        assert_eq!(prefs.locale(), Some("he"));
+    }
+}
+
+#[test]
+fn settings_window_close_waits_and_warns_only_if_the_choice_is_unconfirmed() {
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
+    for saved in [false, true] {
+        let (listener, mut prefs) = platform::block_on(fixture());
+        prefs.set_locale("he");
+        let shared = Rc::new(RefCell::new(prefs));
+        let mut window =
+            crate::settings::view::Window::new(shared.clone(), Rc::new(Cell::new(false)));
+        let (done, receipt) = bounded(1);
+        platform::spawn(async move {
+            let write = request(&listener).await;
+            assert_eq!(write.body, json!({"settings":{"locale":"he"}}));
+            platform::sleep(Duration::from_millis(60)).await;
+            if saved {
+                write.reply(200, json!({"settings":{"locale":"he"}})).await;
+            } else {
+                drop(write);
+                let read = request(&listener).await;
+                assert!(read.first.starts_with("GET "));
+                read.reply(200, json!({"settings":{"locale":"en"}})).await;
+            }
+            done.send(()).await.unwrap();
+        });
+        let mut warned = None;
+        window.close(|locale| warned = Some(locale));
+        assert!(
+            receipt.try_recv().is_ok(),
+            "closing must wait for settlement"
+        );
+        assert_eq!(warned, (!saved).then_some("en"));
+        assert_eq!(
+            shared.borrow().locale(),
+            Some(if saved { "he" } else { "en" })
+        );
+        assert_eq!(shared.borrow().locale_display(), Some("he"));
+    }
 }
 
 async fn request(listener: &TcpListener) -> Request {

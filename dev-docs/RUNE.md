@@ -67,7 +67,7 @@ When a whole module reaches parity, its Solid and Tauri version is deleted on `f
 
 ## Workspace and qualification
 
-Preferences serializes writes per owner. An uncertain write holds any later unsent choice until an authoritative read succeeds. Normal Windows closure drains pending writes within their HTTP deadlines and reports failed settlement in an acknowledgement window; Rune [issue 174](https://github.com/anomalyco/rune/issues/174) tracks deferring closure in the originating window.
+Preferences keeps each owner's requested choices and write failures separately from its read snapshot. An authoritative read confirms only matching choices; Retry reads first and sends only choices still unconfirmed. Closing Preferences or the app drains both owners independently within their HTTP deadlines and reports unconfirmed writes in an acknowledgement window; Rune [issue 174](https://github.com/anomalyco/rune/issues/174) tracks deferring closure in the originating window.
 
 `packages/rune-app` holds application state and views. `crates/codenomad-client` owns typed API contracts and transports; `crates/rune-theme-codenomad` owns generated visuals/catalogues; `crates/codenomad-host-process` confines native child processes behind a safe API. The workspace pins Rune and its platform patches with Cargo Git dependencies at one revision; `Cargo.lock` records the resolved versions and source identities. Asset packaging and API qualification locate Rune through locked Cargo metadata.
 

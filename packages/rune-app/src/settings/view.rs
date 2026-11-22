@@ -9,46 +9,43 @@ use rune_theme_codenomad::{
     layout::{self, Layout},
     palettes, settings as chrome,
 };
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 #[derive(Default)]
 pub(super) struct Window {
     shared: Rc<RefCell<Preferences>>,
     #[cfg(not(target_arch = "wasm32"))]
-    token: Option<Rc<()>>,
+    token: Option<Rc<Cell<bool>>>,
     picker: Option<&'static str>,
     seen_revision: u64,
 }
 impl Window {
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn new(shared: Rc<RefCell<Preferences>>, token: Rc<()>) -> Self {
+    pub fn new(shared: Rc<RefCell<Preferences>>, token: Rc<Cell<bool>>) -> Self {
         Self {
             shared,
             token: Some(token),
             ..Self::default()
         }
     }
+
+    pub(super) fn close(&mut self, warn: impl FnOnce(&'static str)) {
+        self.shared.borrow_mut().window_wake = None;
+        if !self.token.take().is_some_and(|token| token.get()) {
+            super::settle_close(&self.shared, warn);
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn closed(s: &mut Window, _: &mut rune::Tx) {
-    s.shared.borrow_mut().window_wake = None;
-    s.token = None;
+    s.close(super::warn_save_failed);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(super) fn warn_before_quit(locale: &'static str) {
-    let spec = chrome::save_warning_spec(
-        crate::strings::with_locale(locale, || t("settings.title")),
-        crate::strings::locale,
-        save_warning,
-    );
-    // Rune's close hook cannot veto an OS close. A normal window close still
-    // permits a separate acknowledgement window before the event loop exits.
-    rune::open_window(rune::WindowSpec::new("settings-save-warning", spec).state(locale));
-}
-
-fn save_warning(locale: &&'static str, cx: &mut Cx<&'static str>) -> El {
+pub(super) fn save_warning(locale: &&'static str, cx: &mut Cx<&'static str>) -> El {
     use rune_theme_codenomad::Space;
     crate::strings::with_locale(locale, || {
         layout::render(cx, |_| {
@@ -129,7 +126,7 @@ fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     t("sessionList.loadError.retry"),
                     prefs.backend.is_none(),
                     |s: &mut Window| {
-                        s.shared.borrow_mut().refresh();
+                        s.shared.borrow_mut().retry();
                     },
                 ))
         } else if prefs.saved(Owner::Config).is_none() {

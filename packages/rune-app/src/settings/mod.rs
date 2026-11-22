@@ -6,13 +6,15 @@ mod view;
 use crate::{State, strings};
 use preferences::Preferences;
 use rune::{Cx, El};
+#[cfg(not(target_arch = "wasm32"))]
+use std::cell::Cell;
 use std::{cell::RefCell, rc::Rc};
 
 #[derive(Default)]
 pub(crate) struct Host {
     shared: Rc<RefCell<Preferences>>,
     #[cfg(not(target_arch = "wasm32"))]
-    window: Option<(rune::WindowHandle, Rc<()>)>,
+    window: Option<(rune::WindowHandle, Rc<Cell<bool>>)>,
     last_display: Option<[&'static str; 4]>,
 }
 
@@ -83,7 +85,7 @@ fn open(host: &mut Host) {
         window.close();
         return;
     }
-    let token = Rc::new(());
+    let token = Rc::new(Cell::new(false));
     let state = view::Window::new(host.shared.clone(), token.clone());
     let locale = host
         .shared
@@ -95,18 +97,28 @@ fn open(host: &mut Host) {
     host.window = Some((window, token));
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn settle_close(shared: &RefCell<Preferences>, warn: impl FnOnce(&'static str)) {
+    let mut prefs = shared.borrow_mut();
+    if !prefs.flush() {
+        let locale = prefs.locale().unwrap_or_else(strings::locale);
+        drop(prefs);
+        warn(locale);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn warn_save_failed(locale: &'static str) {
+    crate::platform::preferences_save_warning(locale, view::save_warning);
+}
+
 pub(crate) fn close(s: &mut State) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let mut preferences = s.settings.shared.borrow_mut();
-        let finished = preferences.flush();
-        let locale = preferences.locale().unwrap_or_else(strings::locale);
-        drop(preferences);
-        if let Some((window, _)) = s.settings.window.take() {
+        settle_close(&s.settings.shared, warn_save_failed);
+        if let Some((window, token)) = s.settings.window.take() {
+            token.set(true);
             window.close();
-        }
-        if !finished {
-            view::warn_before_quit(locale);
         }
     }
     #[cfg(target_arch = "wasm32")]
