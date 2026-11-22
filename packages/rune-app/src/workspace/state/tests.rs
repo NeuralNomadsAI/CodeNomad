@@ -502,3 +502,134 @@ fn snapshot_preserves_needed_clear_authority_and_untouched_sibling_absence() {
         );
     }
 }
+
+#[test]
+fn delivered_bundles_follow_live_edits_and_sends_without_retiring_other_sessions() {
+    for mode in ["cleared", "sent", "edited"] {
+        for restart in [false, true] {
+            let mut s = draft_state();
+            s.workspace.as_mut().unwrap().closed =
+                vec![closed("alpha", "Old Alpha"), closed("beta", "Beta")];
+            reopen(&mut s);
+            s.draft = TextEdit::new(bound(&mut s, &backend("alpha")));
+            assert_eq!(s.draft.text, "Old Alpha");
+            let mut rt = runtime(s);
+            if mode == "sent" {
+                let (commands, input) = bounded(1);
+                rt.state.commands = Some(commands);
+                rt.state.phase = Phase::Ready;
+                rt.update(crate::send);
+                assert!(
+                    matches!(input.try_recv(), Ok(crate::transport::Command::Send(text)) if text == "Old Alpha")
+                );
+            } else {
+                rt.state.draft = TextEdit::new(if mode == "edited" { "New Alpha" } else { "" });
+                capture(&mut rt.state);
+            }
+            if restart {
+                let snapshot = rt.state.workspace.as_ref().unwrap().snapshot();
+                let bytes = super::super::encode(&snapshot).unwrap();
+                let mut ui = Ui::new();
+                ui.hydrate(super::super::decode(&bytes).unwrap());
+                ui.ready = true;
+                rt.state.workspace = Some(ui);
+            }
+            rt.update(new_tab);
+            opened(
+                &mut rt.state,
+                &Project {
+                    id: "third".into(),
+                    path: "/fixture".into(),
+                },
+            );
+            rt.state.draft = TextEdit::new(bound(&mut rt.state, &backend("alpha")));
+            assert!(
+                rt.state.draft.text.is_empty(),
+                "a live owner reserves its delivered bundle"
+            );
+            rt.update(|s, tx| close(s, "tab-0", tx));
+            rt.update(|s, tx| close(s, "tab-1", tx));
+            opened(
+                &mut rt.state,
+                &Project {
+                    id: "fourth".into(),
+                    path: "/fixture".into(),
+                },
+            );
+            rt.state.draft = TextEdit::new(bound(&mut rt.state, &backend("alpha")));
+            assert_eq!(
+                rt.state.draft.text,
+                if mode == "edited" { "New Alpha" } else { "" }
+            );
+            assert_eq!(
+                bound(&mut rt.state, &backend("beta")),
+                "Beta",
+                "undelivered sessions survive"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_unbound_or_failed_open_keeps_its_source_and_binding_revalidates_pending_text() {
+    for bind in [false, true] {
+        let mut s = draft_state();
+        s.workspace.as_mut().unwrap().closed =
+            vec![closed("alpha", "Old Alpha"), closed("beta", "Beta")];
+        reopen(&mut s);
+        s.workspace
+            .as_mut()
+            .unwrap()
+            .closed
+            .push(closed("alpha", "New Alpha"));
+        if bind {
+            s.draft = TextEdit::new(bound(&mut s, &backend("alpha")));
+            assert_eq!(
+                s.draft.text, "New Alpha",
+                "successful binding admits the current source"
+            );
+        }
+        // Failed native admission never calls bound; closing returns no obsolete pending copy.
+        let mut rt = runtime(s);
+        rt.update(|s, tx| close(s, "tab-0", tx));
+        opened(
+            &mut rt.state,
+            &Project {
+                id: "retry".into(),
+                path: "/fixture".into(),
+            },
+        );
+        rt.state.draft = TextEdit::new(bound(&mut rt.state, &backend("alpha")));
+        assert_eq!(rt.state.draft.text, "New Alpha");
+        assert_eq!(bound(&mut rt.state, &backend("beta")), "Beta");
+    }
+}
+
+#[test]
+fn delivery_retires_pending_copies_but_preserves_independent_occurrence_authority() {
+    let mut s = draft_state();
+    s.workspace.as_mut().unwrap().closed = vec![closed("alpha", "Source Alpha")];
+    reopen(&mut s);
+    let mut rt = runtime(s);
+    rt.update(new_tab);
+    opened(
+        &mut rt.state,
+        &Project {
+            id: "pending".into(),
+            path: "/fixture".into(),
+        },
+    );
+    let ui = rt.state.workspace.as_mut().unwrap();
+    ui.entries.push(entry(
+        "independent".into(),
+        Tab::Workspace(closed("alpha", "Own Alpha")),
+    ));
+    rt.state.draft = TextEdit::new(bound(&mut rt.state, &backend("alpha")));
+    assert_eq!(rt.state.draft.text, "Source Alpha");
+    let ui = rt.state.workspace.as_ref().unwrap();
+    assert!(matches!(&ui.entries[0].saved, Tab::Workspace(w) if !w.drafts.contains_key("alpha")));
+    assert!(matches!(&ui.entries[2].saved, Tab::Workspace(w) if w.drafts["alpha"] == "Own Alpha"));
+    assert!(ui.closed.iter().all(|w| !w.drafts.contains_key("alpha")));
+    rt.update(|s, tx| select(s, "tab-0", tx));
+    assert_eq!(bound(&mut rt.state, &backend("alpha")), "");
+}

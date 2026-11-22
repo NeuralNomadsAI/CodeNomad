@@ -17,6 +17,7 @@ pub(super) struct Entry {
     next: Option<String>,
     binding: Option<Backend>,
     cleared: HashSet<String>,
+    pending_drafts: HashSet<String>,
 }
 pub struct Ui {
     pub(super) openings: super::opening::Openings,
@@ -167,6 +168,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         next: None,
         binding: None,
         cleared,
+        pending_drafts: HashSet::new(),
     }
 }
 fn busy(s: &State) -> bool {
@@ -346,10 +348,18 @@ pub fn close(s: &mut State, id: &str, tx: &mut Tx) {
     };
     let removed = ui.entries.remove(index);
     if let Tab::Workspace(mut saved) = removed.saved {
-        // Clear authority belongs to this occurrence's live lifetime, outside text budgets.
+        // Undelivered copies still belong to their closed source.
         saved
             .drafts
-            .extend(removed.cleared.into_iter().map(|id| (id, String::new())));
+            .retain(|id, _| !removed.pending_drafts.contains(id));
+        // Clear authority belongs to this occurrence's live lifetime, outside text budgets.
+        saved.drafts.extend(
+            removed
+                .cleared
+                .into_iter()
+                .filter(|id| !removed.pending_drafts.contains(id))
+                .map(|id| (id, String::new())),
+        );
         ui.closed.push(saved);
         if ui.closed.len() > 16 {
             ui.closed.remove(0);
@@ -470,6 +480,7 @@ pub fn opened(s: &mut State, project: &Project) {
                 }
             }
         }
+        item.pending_drafts = drafts.keys().chain(item.cleared.iter()).cloned().collect();
         item.saved = Tab::Workspace(Workspace {
             backend_id: backend_id.clone(),
             server_id: if backend_id.is_some() {
@@ -493,6 +504,7 @@ pub fn bound(s: &mut State, backend: &Backend) -> String {
     let Some(ui) = &mut s.workspace else {
         return String::new();
     };
+    deliver_draft(ui, &backend.session);
     let item = &mut ui.entries[ui.active];
     item.binding = Some(backend.clone());
     let Tab::Workspace(saved) = &mut item.saved else {
@@ -506,6 +518,49 @@ pub fn bound(s: &mut State, backend: &Backend) -> String {
         .unwrap_or_default();
     ui.changed();
     draft
+}
+fn deliver_draft(ui: &mut Ui, id: &str) {
+    let item = &ui.entries[ui.active];
+    let Tab::Workspace(scope) = &item.saved else {
+        return;
+    };
+    if !item.pending_drafts.contains(id) {
+        return;
+    }
+    let scope = scope.clone();
+    let current = ui
+        .closed
+        .iter()
+        .rev()
+        .filter(|w| same_project(&scope, w))
+        .find_map(|w| w.drafts.get(id))
+        .cloned();
+    for (index, item) in ui.entries.iter_mut().enumerate() {
+        if !matches!(&item.saved, Tab::Workspace(w) if same_project(&scope, w))
+            || !item.pending_drafts.remove(id)
+        {
+            continue;
+        }
+        let Tab::Workspace(saved) = &mut item.saved else {
+            continue;
+        };
+        saved.drafts.remove(id);
+        item.cleared.remove(id);
+        if index == ui.active {
+            match &current {
+                Some(text) if !text.is_empty() => {
+                    saved.drafts.insert(id.into(), text.clone());
+                }
+                Some(_) => {
+                    item.cleared.insert(id.into());
+                }
+                None => {}
+            }
+        }
+    }
+    for w in ui.closed.iter_mut().filter(|w| same_project(&scope, w)) {
+        w.drafts.remove(id);
+    }
 }
 pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let Some(mut ui) = s.workspace.take() else {
