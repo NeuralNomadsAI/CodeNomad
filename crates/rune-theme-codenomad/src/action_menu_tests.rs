@@ -10,6 +10,7 @@ struct App {
     owner_removed: bool,
     gesture: bool,
     focus_target: bool,
+    many: bool,
     dialog: bool,
 }
 fn at(s: &mut App) -> Option<&mut State<App>> {
@@ -35,7 +36,11 @@ fn descriptor(s: &App) -> Rc<Menu<App>> {
         s.events.push("disabled".into())
     });
     disabled.disabled = true;
-    let mut menu = Menu::new("actions", "Actions", vec![Rc::new(item), Rc::new(disabled)]);
+    let mut items = vec![Rc::new(item), Rc::new(disabled)];
+    if s.many {
+        items.push(Rc::new(Item::new("last", "Last", |_, _| {})));
+    }
+    let mut menu = Menu::new("actions", "Actions", items);
     menu.on_open_change = Some(Rc::new(|s, open, _| s.events.push(format!("open:{open}"))));
     menu.on_focus_restored = Some(Rc::new(|s, tx| {
         s.events.push(format!("restored:{:?}", tx.focused()))
@@ -65,7 +70,11 @@ fn view_app(s: &App, cx: &mut Cx<App>) -> El {
                             .build(kit(layout::dark()))
                             .key("cancel"),
                     )
-                    .child(Button::new("Accept").build(kit(layout::dark())).key("accept")),
+                    .child(
+                        Button::new("Accept")
+                            .build(kit(layout::dark()))
+                            .key("accept"),
+                    ),
             );
         }
         rune_kit::root(rune::col().w_full().h_full().child(trigger), layers)
@@ -180,7 +189,39 @@ fn gesture_target_overrides_dialog_autofocus() {
     key(&mut rt, Key::Enter);
     assert_eq!(focused(&rt).as_deref(), Some("accept"));
     deliver(&mut rt);
-    assert!(rt.state.events.contains(&"restored:Some(\"accept\")".into()));
+    assert!(
+        rt.state
+            .events
+            .contains(&"restored:Some(\"accept\")".into())
+    );
+}
+#[test]
+fn trigger_arrows_open_at_enabled_edges_and_keep_menu_navigation() {
+    let mut rt = runtime();
+    rt.state.many = true;
+    key(&mut rt, Key::Tab);
+    key(&mut rt, Key::Up);
+    assert_eq!(focused(&rt).as_deref(), Some("actions:item:last"));
+    key(&mut rt, Key::Home);
+    assert_eq!(focused(&rt).as_deref(), Some("actions:item:open"));
+    key(&mut rt, Key::Text("l".into()));
+    assert_eq!(focused(&rt).as_deref(), Some("actions:item:last"));
+    key(&mut rt, Key::Escape);
+    deliver(&mut rt);
+    key(&mut rt, Key::Down);
+    assert_eq!(focused(&rt).as_deref(), Some("actions:item:open"));
+    key(&mut rt, Key::Escape);
+    deliver(&mut rt);
+    key(&mut rt, Key::Enter);
+    assert_eq!(focused(&rt).as_deref(), Some("actions:item:open"));
+    key(&mut rt, Key::Escape);
+    deliver(&mut rt);
+    key(&mut rt, Key::Text(" ".into()));
+    assert!(rt.state.menu.is_open("actions"));
+    assert_eq!(
+        rt.state.events.iter().filter(|e| *e == "open:true").count(),
+        4
+    );
 }
 #[test]
 fn escape_and_outside_dismiss_with_hover_cleanup() {

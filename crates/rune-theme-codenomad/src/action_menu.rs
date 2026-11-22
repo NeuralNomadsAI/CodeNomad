@@ -91,6 +91,27 @@ fn clear_hover<S>(s: &mut S, at: StateAt<S>, key: &str, tx: &mut Tx) {
         leave(s, tx);
     }
 }
+fn open<S>(s: &mut S, at: StateAt<S>, menu: &Menu<S>, tx: &mut Tx) {
+    let Some(state) = at(s) else { return };
+    if state.is_open(&menu.key) {
+        return;
+    }
+    state.menus.insert(menu.key.clone(), Open { hovered: None });
+    if let Some(change) = &menu.on_open_change {
+        change(s, true, tx);
+    }
+}
+fn unique_items<S>(menu: &Menu<S>) -> Vec<Rc<Item<S>>> {
+    let mut items: Vec<Rc<Item<S>>> = vec![];
+    for item in &menu.items {
+        if let Some(index) = items.iter().position(|old| old.key == item.key) {
+            items[index] = item.clone();
+        } else {
+            items.push(item.clone());
+        }
+    }
+    items
+}
 fn close<S>(s: &mut S, at: StateAt<S>, menu: &Menu<S>, action: Option<Action<S>>, tx: &mut Tx) {
     clear_hover(s, at, &menu.key, tx);
     let Some(state) = at(s) else { return };
@@ -165,6 +186,17 @@ pub fn view<S: 'static>(
     let k = kit(layout::dark());
     let trigger_key = format!("{}:trigger", menu.key);
     let disabled = menu.items.iter().all(|item| item.disabled);
+    let items = unique_items(&menu);
+    let key_action = menu.clone();
+    let first = items
+        .iter()
+        .find(|item| !item.disabled)
+        .map(|item| item.key.clone());
+    let last = items
+        .iter()
+        .rev()
+        .find(|item| !item.disabled)
+        .map(|item| item.key.clone());
     let action = menu.clone();
     let control = trigger
         .key(trigger_key.clone())
@@ -180,25 +212,26 @@ pub fn view<S: 'static>(
             if state.is_open(&action.key) {
                 close(s, at, &action, None, tx);
             } else {
-                state
-                    .menus
-                    .insert(action.key.clone(), Open { hovered: None });
-                if let Some(change) = &action.on_open_change {
-                    change(s, true, tx);
-                }
+                open(s, at, &action, tx);
             }
+        })
+        .on_key(move |s, event, tx| {
+            let target = match event.key {
+                rune::Key::Down | rune::Key::Enter => &first,
+                rune::Key::Up => &last,
+                _ => return false,
+            };
+            if disabled || event.mods != rune::Mods::default() {
+                return false;
+            }
+            open(s, at, &key_action, tx);
+            if let Some(target) = target {
+                tx.focus(format!("{}:item:{target}", key_action.key), true);
+            }
+            true
         });
     if !state.is_open(&menu.key) {
         return (control, None);
-    }
-    // Map semantics: first key position, final descriptor for duplicate keys.
-    let mut items: Vec<Rc<Item<S>>> = vec![];
-    for item in &menu.items {
-        if let Some(index) = items.iter().position(|old| old.key == item.key) {
-            items[index] = item.clone();
-        } else {
-            items.push(item.clone());
-        }
     }
     let rows = items.into_iter().map(|item| {
         let metric = |name| t.metric("actionMenuItem", name).px();
