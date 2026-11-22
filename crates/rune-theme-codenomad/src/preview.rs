@@ -36,6 +36,10 @@ impl OffscreenTrial {
         q.submit([ops.finish()]);
     }
 
+    pub fn resize(&mut self, w: u32, h: u32) {
+        self.target = rune::render::Offscreen::new(&self.gpu.device, w, h);
+    }
+
     pub fn save(&self, path: &std::path::Path) -> std::io::Result<()> {
         let mut ops = self.gpu.device.create_command_encoder(&Default::default());
         self.target.copy(&mut ops);

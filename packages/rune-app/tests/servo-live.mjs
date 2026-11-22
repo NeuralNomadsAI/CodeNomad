@@ -258,8 +258,11 @@ try {
     })
     if(solid) await check("solid",async()=>{
       const vite=path.join(solid,"..","..","node_modules","vite","dist","node","index.js")
+      const reservation=tcp()
+      const port=await listen(reservation)
+      await new Promise(resolve=>reservation.close(resolve))
       const source=`import {createServer} from ${JSON.stringify(pathToFileURL(vite).href)};
-        const v=await createServer({cacheDir:${JSON.stringify(path.join(root,"solid-cache"))},server:{port:0,host:'127.0.0.1',
+        const v=await createServer({cacheDir:${JSON.stringify(path.join(root,"solid-cache"))},server:{port:${port},strictPort:true,host:'127.0.0.1',
           fs:{allow:${JSON.stringify([path.resolve(solid,"../.."),path.join(root,"solid-cache")])}}}});
         await v.listen(); console.log('VITE '+v.httpServer.address().port);`
       const launch=path.join(root,"solid.mjs")
@@ -267,7 +270,7 @@ try {
       const child=start(process.execPath,[launch],{cwd:solid,env,stdio:["ignore","pipe","pipe"]})
       let output=""
       for(const stream of [child.stdout,child.stderr]) stream.on("data",b=>{output+=b})
-      const port=await eventually("Solid Vite",()=>{if(child.exitCode!==null)throw Error(output);return output.match(/VITE (\d+)/)?.[1]},15000)
+      await eventually("Solid Vite",()=>{if(child.exitCode!==null)throw Error(output);return output.includes(`VITE ${port}`)},15000)
       await navigate(`http://127.0.0.1:${port}/`)
       await delay(1800)
       const snapshot=await snap()

@@ -98,10 +98,7 @@ pub fn run() {
         if !resized && reload.exists() {
             tap(&mut rt, "servo-reload");
             rt.set_viewport((1020.0, 920.0), dpi);
-            offscreen = rune_theme_codenomad::preview::OffscreenTrial::new(
-                (1020.0 * dpi) as u32,
-                (920.0 * dpi) as u32,
-            );
+            offscreen.resize((1020.0 * dpi) as u32, (920.0 * dpi) as u32);
             resized = true;
             println!("SERVO_RESIZED");
         }
