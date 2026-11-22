@@ -17,7 +17,9 @@ mod platform;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 #[path = "../tests/probes/mod.rs"]
 mod probes;
+mod screen;
 mod strings;
+use screen::Screen;
 mod workspace;
 use codenomad_client::{Receiver, Sender, bounded};
 use rune::edit::TextEdit;
@@ -37,9 +39,10 @@ struct State {
     files: Option<files::Ui>,
     reads: platform::reads::Reads,
     expanded_tools: std::collections::HashSet<String>,
-    launcher: Option<launcher::Launcher>,
+    screen: Screen,
+    input_scope: std::rc::Rc<()>,
+    rejected_edit: TextEdit,
     workspace: Option<workspace::Ui>,
-    launcher_visible: bool,
     chat_title: String,
     messages: Vec<Message>,
     draft: TextEdit,
@@ -66,9 +69,10 @@ fn init() -> State {
         files: None,
         reads: Default::default(),
         expanded_tools: Default::default(),
-        launcher: None,
+        screen: Screen::Chat { launcher: None },
+        input_scope: std::rc::Rc::new(()),
+        rejected_edit: TextEdit::new(""),
         workspace: None,
-        launcher_visible: false,
         chat_title: String::new(),
         messages: vec![],
         draft: TextEdit::new(""),
@@ -87,9 +91,9 @@ fn setup(s: &mut State, wake: rune::Waker) {
         .iter()
         .all(|key| platform::setting(key).is_some());
     if !scoped && !local_stress() {
-        s.launcher = Some(launcher::Launcher::new(wake));
+        s.screen = Screen::Launcher(launcher::Launcher::new(wake));
         s.workspace = Some(workspace::Ui::new());
-        s.launcher_visible = true;
+        s.renew_scope();
         workspace::connected(s);
         return;
     }
@@ -185,6 +189,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
         };
         match event {
             Event::Connected(backend) => {
+                s.renew_scope();
                 s.agent = Some(agent::Ui::new(agent::start(backend, s.wake.clone())));
             }
             Event::AgentHint(catalog) => {
@@ -279,19 +284,15 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
 }
 fn view(s: &State, cx: &mut Cx<State>) -> El {
     layout::render(cx, |cx| {
+        let scope = s.input_scope.clone();
+        let mut body = match &s.screen {
+            Screen::Launcher(_) => launcher_view::view(s),
+            Screen::Chat { .. } => chat_view(s, cx),
+        };
         if s.workspace.is_none() {
-            return if s.launcher_visible {
-                launcher_view::view(s)
-            } else {
-                chat_view(s, cx)
-            };
+            return body;
         }
         let tabs = workspace::strip(s, cx);
-        let mut body = if s.launcher_visible {
-            launcher_view::view(s)
-        } else {
-            chat_view(s, cx)
-        };
         if let Some(ui) = &s.workspace {
             body = body.key(format!("tab-body-{}", ui.active_key()));
         }
@@ -305,8 +306,12 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
                     .pad(Space::Sm)
                     .child(text(strings::t(error)).role("alert"))
                     .child(
-                        launcher_view::button("workspace-retry", strings::t("retry"), false)
-                            .on_press_tx(workspace::retry),
+                        launcher_view::button(
+                            "workspace-retry",
+                            strings::t("sessionList.loadError.retry"),
+                            false,
+                        )
+                        .on_press_tx(crate::screen::action_tx(&scope, workspace::retry)),
                     )
             } else {
                 rune::el()
@@ -316,6 +321,7 @@ fn view(s: &State, cx: &mut Cx<State>) -> El {
     .locale_direction(strings::locale())
 }
 fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
+    let scope = s.input_scope.clone();
     let locale = strings::locale();
     let rows = layout::transcript_rows(
         s.messages.len(),
@@ -325,11 +331,11 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
     .key("rows")
     .virtual_rows_version(s.revision);
     let status = match s.phase {
-        Phase::Loading => "loading",
-        Phase::Ready => "ready",
-        Phase::Streaming => "streaming",
-        Phase::Failed => "failed",
-        Phase::Reconnecting => "reconnecting",
+        Phase::Loading => "rune.loading",
+        Phase::Ready => "rune.ready",
+        Phase::Streaming => "rune.streaming",
+        Phase::Failed => "rune.failed",
+        Phase::Reconnecting => "rune.reconnecting",
     };
     let expanded = s
         .agent
@@ -343,46 +349,50 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                 .pad(Space::Md)
                 .separate(Space::Lg)
                 .child(
-                    text(strings::t("title"))
+                    text(strings::t("window.title.main"))
                         .key("app-title")
                         .text_role(TextRole::Title),
                 )
-                .child(if s.launcher.is_some() {
+                .child(if s.screen.launcher().is_some() {
                     launcher_view::button(
                         "sessions-back",
-                        strings::t("sessions"),
+                        strings::t("sessionList.header.title"),
                         !matches!(s.phase, Phase::Ready | Phase::Failed)
                             || (!s.draft.text.is_empty() && s.workspace.is_none())
                             || agent::navigation_blocked(s),
                     )
-                    .on_press(launcher::back)
+                    .on_press(crate::screen::action(&scope, launcher::back))
                 } else {
                     rune::el()
                 })
                 .child(text(strings::t(status)))
                 .child(
-                    text(strings::t(if s.paging { "loading" } else { "older" }))
-                        .key("older")
-                        .role("button")
-                        .focusable(true)
-                        .disabled(!s.can_older || s.paging || s.phase == Phase::Reconnecting)
-                        .on_press_tx(request_older),
+                    text(strings::t(if s.paging {
+                        "rune.loading"
+                    } else {
+                        "rune.older"
+                    }))
+                    .key("older")
+                    .role("button")
+                    .focusable(true)
+                    .disabled(!s.can_older || s.paging || s.phase == Phase::Reconnecting)
+                    .on_press_tx(crate::screen::action_tx(&scope, request_older)),
                 )
                 .child(if s.phase == Phase::Failed || s.history_error {
-                    text(strings::t("retry"))
+                    text(strings::t("sessionList.loadError.retry"))
                         .key("retry")
                         .role("button")
                         .focusable(true)
-                        .on_press(retry)
+                        .on_press(crate::screen::action(&scope, retry))
                 } else {
                     rune::el()
                 })
                 .child(
-                    text(strings::t("latest"))
+                    text(strings::t("rune.latest"))
                         .key("latest")
                         .role("button")
                         .focusable(true)
-                        .on_press_tx(latest),
+                        .on_press_tx(crate::screen::action_tx(&scope, latest)),
                 ),
         )
         .child(if s.chat_title.is_empty() {
@@ -396,7 +406,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
             col()
                 .key("session-composer")
                 .role("group")
-                .label(strings::t("prompt"))
+                .label(strings::t("rune.prompt"))
                 .full_width()
                 .pad(Space::Md)
                 .separate(Space::Sm)
@@ -404,25 +414,28 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
                     layout::composer(
                         input(&s.draft)
                             .key("composer")
-                            .label(strings::t("prompt"))
+                            .label(strings::t("rune.prompt"))
                             .full_width()
                             .pad(Space::Sm)
                             .field_surface()
-                            .hint(strings::t("prompt"))
+                            .hint(strings::t("rune.prompt"))
                             .content_direction()
-                            .on_edit(|s: &mut State| &mut s.draft)
-                            .on_input_change(workspace::draft_changed)
-                            .on_submit(send),
+                            .on_edit(screen::edit(&scope, screen::Editor::Composer))
+                            .on_input_change(crate::screen::action_tx(
+                                &scope,
+                                workspace::draft_changed,
+                            ))
+                            .on_submit(crate::screen::action_tx(&scope, send)),
                     )
                     .field_surface(),
                 )
                 .child(
                     launcher_view::button(
                         "send",
-                        strings::t("send"),
+                        strings::t("promptInput.overlay.send"),
                         s.phase != Phase::Ready || s.agent.as_ref().is_some_and(|a| a.blocked()),
                     )
-                    .on_press_tx(send),
+                    .on_press_tx(crate::screen::action_tx(&scope, send)),
                 ),
         )
 }
@@ -470,7 +483,7 @@ fn run_app() {
                 s.messages = transport::synthetic();
                 s.phase = Phase::Ready;
             })],
-            ..layout::app_spec(strings::t("title"), init, view)
+            ..layout::app_spec(strings::t("window.title.main"), init, view)
         },
         workspace::finish,
     );

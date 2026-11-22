@@ -16,6 +16,7 @@ fn prose(key: String, body: &str) -> El {
     }
 }
 pub fn message(s: &State, i: usize) -> El {
+    let scope = s.input_scope.clone();
     let m = &s.messages[i];
     let mut view = col()
         .key(m.id.clone())
@@ -24,9 +25,9 @@ pub fn message(s: &State, i: usize) -> El {
         .separate(Space::Sm)
         .child(
             text(t(if m.role == "user" {
-                "user"
+                "messageItem.speaker.you"
             } else {
-                "assistant"
+                "messageItem.speaker.assistant"
             }))
             .text_role(TextRole::Label),
         );
@@ -42,10 +43,10 @@ pub fn message(s: &State, i: usize) -> El {
                 let key = format!("tool-{}-{}", m.id, tool.id);
                 let expanded = s.expanded_tools.contains(&key);
                 let status = match tool.status.as_str() {
-                    "completed" => "tool_done",
-                    "error" => "tool_error",
-                    "running" => "tool_running",
-                    _ => "tool_pending",
+                    "completed" => "toolCall.status.completed",
+                    "error" => "rune.tool_error",
+                    "running" => "toolCall.status.running",
+                    _ => "rune.tool_pending",
                 };
                 let toggle = key.clone();
                 let mut block = col()
@@ -61,21 +62,26 @@ pub fn message(s: &State, i: usize) -> El {
                             .child(text(t(status)))
                             .child(
                                 rune_theme_codenomad::layout::button(
-                                    t(if expanded { "hide_details" } else { "details" }),
+                                    t(if expanded {
+                                        "rune.hide_details"
+                                    } else {
+                                        "rune.details"
+                                    }),
                                     false,
                                 )
                                 .key(format!("toggle-{key}"))
-                                .on_press(move |s: &mut State| {
+                                .on_press(crate::screen::action(&scope, move |s: &mut State| {
                                     crate::transcript_state::toggle_tool(s, &toggle);
-                                }),
+                                })),
                             ),
                     );
                 if expanded {
-                    for (label, value) in
-                        [("tool_input", &tool.input), ("tool_output", &tool.output)]
-                    {
+                    for (key_part, label, value) in [
+                        ("tool_input", "rune.tool_input", &tool.input),
+                        ("tool_output", "toolCall.task.sections.output", &tool.output),
+                    ] {
                         if !value.is_empty() {
-                            let reveal = format!("{key}-full-{label}");
+                            let reveal = format!("{key}-full-{key_part}");
                             let clipped = value.chars().count() > 10_000
                                 && !s.expanded_tools.contains(&reveal);
                             let shown = if clipped {
@@ -85,20 +91,25 @@ pub fn message(s: &State, i: usize) -> El {
                             };
                             block = block
                                 .child(text(t(label)).text_role(TextRole::Label))
-                                .child(prose(format!("{key}-{label}"), &shown));
+                                .child(prose(format!("{key}-{key_part}"), &shown));
                             if clipped {
                                 block = block.child(
-                                    rune_theme_codenomad::layout::button(t("tool_more"), false)
-                                        .key(format!("reveal-{reveal}"))
-                                        .on_press(move |s: &mut State| {
+                                    rune_theme_codenomad::layout::button(
+                                        t("messageBlock.hiddenText.showAll"),
+                                        false,
+                                    )
+                                    .key(format!("reveal-{reveal}"))
+                                    .on_press(
+                                        crate::screen::action(&scope, move |s: &mut State| {
                                             crate::transcript_state::reveal_tool_output(s, &reveal);
                                         }),
+                                    ),
                                 );
                             }
                         }
                     }
                     if tool.limited {
-                        block = block.child(text(t("tool_limited")));
+                        block = block.child(text(t("rune.tool_limited")));
                     }
                 }
                 view = view.child(block);

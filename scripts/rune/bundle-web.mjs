@@ -11,6 +11,7 @@ import {parseArgs} from 'node:util'
 import path from 'node:path'
 import {constants, createBrotliCompress, createGzip} from 'node:zlib'
 import {shell, themeCss} from './web-shell.mjs'
+import {runeSource} from './source.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {wasm: {type: 'string'}, bindgen: {type: 'string'}, out: {type: 'string', default: 'target/rune-web'}, 'test-support': {type:'boolean',default:false}}})
@@ -38,7 +39,7 @@ async function run(binary, args) {
   })
 }
 assert.equal(await run(bindgen, ['--version']), `wasm-bindgen ${version}`, `Use wasm-bindgen-cli ${version} matching Cargo.lock`)
-await run(process.execPath, [path.join(root, 'scripts/rune/prepare.mjs'), '--check'])
+const rune = runeSource(root)
 const descriptor = await open(values.wasm, 'r')
 try {const bytes = Buffer.alloc(8); await descriptor.read(bytes, 0, 8, 0); assert(bytes.equals(Buffer.from([0,97,115,109,1,0,0,0])), 'Expected a WebAssembly module')} finally {await descriptor.close()}
 const hasSyntheticScene=(await readFile(values.wasm)).includes(Buffer.from('Synthetic message '))
@@ -61,7 +62,7 @@ async function compressedSize(file, transform) {let count = 0; await pipeline(cr
 try {
   await run(bindgen, ['--target', 'web', '--out-dir', staging, '--out-name', 'app', '--remove-name-section', values.wasm])
   for (const font of ['Inter-Regular.ttf', 'Inter-Medium.ttf', 'Inter-SemiBold.ttf']) {
-    await copyFile(path.join(root, '.prototype-deps/rune/crates/rune/assets/web', font), path.join(staging, font))
+    await copyFile(path.join(rune, 'assets/web', font), path.join(staging, font))
   }
   const themeFile = path.join(root, 'crates/rune-theme-codenomad/assets/theme.json')
   const theme = JSON.parse(await readFile(themeFile, 'utf8'))

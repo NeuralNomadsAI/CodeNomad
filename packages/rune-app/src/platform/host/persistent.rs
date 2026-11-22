@@ -99,13 +99,19 @@ fn validate(root: &Path, expected: &Value) -> io::Result<()> {
     Ok(())
 }
 pub(super) struct Lease {
-    _file: File,
+    file: File,
+}
+impl Drop for Lease {
+    fn drop(&mut self) {
+        // A concurrent fork can retain a duplicate until exec.
+        let _ = self.file.unlock();
+    }
 }
 fn lock(root: &Path, create: bool) -> io::Result<Lease> {
     let file = open(&root.join(LOCK), create)?;
     file.try_lock()
         .map_err(|_| io::Error::other("Persistent isolated host is in use"))?;
-    Ok(Lease { _file: file })
+    Ok(Lease { file })
 }
 pub(super) fn prepare(executable: PathBuf, root: &Path, profile: &str) -> io::Result<LaunchConfig> {
     let profile = LaunchConfig::trial_profile(root, profile)?;
@@ -204,6 +210,34 @@ mod tests {
             acquire(&second).unwrap().is_some(),
             "failed spawn must release its owned lock"
         );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn releasing_a_lease_does_not_wait_for_inherited_descriptors() {
+        let root = Root::new();
+        let config = root.config("trial-inherited").unwrap();
+        let file = open(&root.0.join(LOCK), false).unwrap();
+        file.try_lock().unwrap();
+        let inherited = file.try_clone().unwrap();
+        drop(file);
+        assert!(
+            acquire(&config).is_err(),
+            "control: a duplicate retains a close-only lock"
+        );
+        drop(inherited);
+
+        let lease = acquire(&config).unwrap().unwrap();
+        let inherited = lease.file.try_clone().unwrap();
+        drop(lease);
+        let replacement = acquire(&config).unwrap().unwrap();
+        assert!(
+            acquire(&config).is_err(),
+            "the replacement still owns the lock"
+        );
+        drop(inherited);
+        assert!(acquire(&config).is_err());
+        drop(replacement);
+        assert!(acquire(&config).unwrap().is_some());
     }
     #[test]
     fn foreign_version_profile_and_identity_fail_closed() {

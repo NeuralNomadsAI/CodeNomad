@@ -4,6 +4,45 @@ use crate::{
 };
 use serde_json::json;
 #[test]
+fn settled_requests_and_removed_models_reject_late_actions_before_dispatch() {
+    let (jobs, incoming) = super::bounded(4);
+    let (stop, _) = super::bounded(1);
+    let (_, results) = super::bounded(1);
+    let mut ui = super::Ui::new(super::Handle {
+        jobs,
+        stop,
+        results,
+    });
+    let _ = incoming.try_recv();
+    ui.reading = false;
+    ui.pending_known = true;
+    ui.online = true;
+    let model = super::Model {
+        reference: json!({"id":"model","providerID":"fixture"}),
+        label: "Model".into(),
+    };
+    ui.models.push(model);
+    let model = ui.models.pop().unwrap();
+    ui.picker = true;
+    ui.choose_model(model.reference.clone());
+    assert!(ui.picker);
+    ui.selected = "current".into();
+    ui.select_request("settled".into());
+    ui.reply_permission("settled".into(), "once");
+    ui.cancel_form("settled".into());
+    assert_eq!(ui.selected, "current");
+    assert!(incoming.try_recv().is_err());
+    assert!(!ui.busy);
+    ui.models.push(model.clone());
+    ui.choose_model(model.reference);
+    assert!(matches!(
+        incoming.try_recv(),
+        Ok(super::Job::Act(agent_api::Action::Model(_)))
+    ));
+    assert!(ui.busy);
+    assert!(!ui.picker);
+}
+#[test]
 fn native_questions_keep_typed_defaults_conditions_and_validation() {
     let form = Form {
         id: "form_one".into(),

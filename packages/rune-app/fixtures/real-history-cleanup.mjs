@@ -4,7 +4,7 @@ import path from 'node:path'
 import {connectNative} from './live-access.mjs'
 export async function cleanupRealHistory(file) {
   file=path.resolve(file)
-  assert(file.startsWith(path.join(import.meta.dirname,'fixture-profile')+path.sep))
+  assert(file.startsWith(path.join(path.resolve(import.meta.dirname,'..'),'fixture-profile')+path.sep))
   const manifest=JSON.parse(await readFile(file,'utf8'))
   assert.equal(manifest.seedCount,600)
   const native=await connectNative()

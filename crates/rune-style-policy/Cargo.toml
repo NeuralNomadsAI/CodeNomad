@@ -7,3 +7,6 @@ publish = false
 [dependencies]
 syn = { version = "2", features = ["full", "visit"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }

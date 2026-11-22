@@ -8,7 +8,7 @@ import {connectNative} from './live-access.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary} from './fixture-binaries.mjs'
 requireTestSupport()
-const here=import.meta.dirname,profile=path.join(here,'fixture-profile',`controls-live-${randomUUID()}`)
+const here=path.resolve(import.meta.dirname,'..'),profile=path.join(here,'fixture-profile',`controls-live-${randomUUID()}`)
 const project=path.join(profile,'projects','empty');await mkdir(project,{recursive:true})
 const native=await connectNative(),permissions=[{action:'*',resource:'*',effect:'deny'}]
 const target={id:'opus',providerID:'claude-agent',variant:'low'}

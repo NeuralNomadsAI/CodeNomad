@@ -26,16 +26,9 @@ pub fn with_appearance<T>(dark: bool, render: impl FnOnce() -> T) -> T {
     render()
 }
 pub fn button(label: &str, disabled: bool) -> El {
-    let t = tokens(dark());
-    let label = label.to_owned();
-    rune_kit::Button::new(&label)
+    rune_kit::Button::new(label)
         .disabled(disabled)
-        .label_with(move |_, ink| rune::text(label).font(t.text(TextRole::Button)).color(ink))
         .build(kit(dark()))
-        .h(t.metric("button", "minHeight").px())
-        .px(t.metric("button", "paddingLeft").px())
-        .py(t.metric("button", "paddingTop").px())
-        .radius(t.number("button-radius").px())
 }
 pub fn input(edit: &TextEdit) -> El {
     // Rune's low-level editor retains the application's edit accessor and submit contract.
@@ -44,6 +37,18 @@ pub fn input(edit: &TextEdit) -> El {
         .padding(tokens(dark()).space(Space::Sm).px())
         .fill(tokens(dark()).color("surface-field"))
         .dir(rune::Direction::Auto)
+}
+pub fn field(edit: &TextEdit) -> rune_kit::TextInput {
+    rune_kit::TextInput::new(edit).width(None)
+}
+pub fn literal_field(edit: &TextEdit) -> rune_kit::TextInput {
+    field(edit).dir(rune::Direction::Ltr)
+}
+pub fn hinted_field(edit: &TextEdit, hint: &str) -> rune_kit::TextInput {
+    field(edit).placeholder(hint)
+}
+pub fn textarea(edit: &TextEdit) -> rune_kit::TextArea {
+    rune_kit::TextArea::new(edit).width(None).auto_grow(1, 1)
 }
 /// Shared wrapping action groups follow the available native/browser width.
 pub fn action_row() -> El {
@@ -125,6 +130,50 @@ pub trait Layout {
 mod tests {
     use super::*;
     #[test]
+    fn shared_button_preserves_kit_geometry_and_disabled_semantics() {
+        fn view(&(direct, disabled): &(bool, bool), cx: &mut rune::Cx<(bool, bool)>) -> El {
+            render(cx, |_| {
+                if direct {
+                    rune_kit::Button::new("Save")
+                        .disabled(disabled)
+                        .build(kit(dark()))
+                } else {
+                    button("Save", disabled)
+                }
+            })
+        }
+        for dark in [false, true] {
+            for disabled in [false, true] {
+                let inspect = |direct| {
+                    let mut rt = rune::Runtime::new(
+                        (direct, disabled),
+                        view,
+                        (320.0, 180.0),
+                        rune::Env::new(dark, 1.0),
+                    );
+                    rt.frame(1.0);
+                    rt.elements()
+                        .into_iter()
+                        .map(|e| {
+                            (
+                                e.role,
+                                e.label,
+                                e.rect,
+                                e.radius,
+                                e.fill,
+                                e.text_color,
+                                e.focusable,
+                                e.inert,
+                                e.opacity,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(inspect(false), inspect(true));
+            }
+        }
+    }
+    #[test]
     fn native_geometry_tracks_the_shared_sources() {
         let composer = include_str!("../../../packages/ui/src/styles/messaging/prompt-input.css");
         assert!(composer.contains("min-height: 104px;"));
@@ -154,6 +203,8 @@ mod tests {
                     .child(rune::text("Bare text").key("bare"))
                     .child(rune::text("Title").key("title").text_role(TextRole::Title))
                     .child(input(edit).key("editor"))
+                    .child(field(edit).build(crate::field_kit(dark())).key("field"))
+                    .child(textarea(edit).build(crate::field_kit(dark())).key("area"))
             })
         }
         let mut runtime = rune::Runtime::new(
@@ -180,6 +231,14 @@ mod tests {
                     Some(tokens(dark).color("text-primary")),
                     "inherited ink for {key}"
                 );
+            }
+            for key in ["field", "area"] {
+                let node = runtime
+                    .elements()
+                    .into_iter()
+                    .find(|node| node.key.as_deref() == Some(key))
+                    .unwrap();
+                assert_eq!(node.fill, tokens(dark).color("surface-field"));
             }
         }
     }

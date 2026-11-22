@@ -5,7 +5,7 @@ import {mkdir, readFile, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
-import {requireTestSupport} from '../../packages/rune-app/fixture-binaries.mjs'
+import {requireTestSupport} from '../../packages/rune-app/fixtures/fixture-binaries.mjs'
 import {chromium} from 'playwright'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
 

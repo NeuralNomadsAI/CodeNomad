@@ -5,7 +5,7 @@ import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
-import {privateEnvironment} from '../../packages/rune-app/private-profile.mjs'
+import {privateEnvironment} from '../../packages/rune-app/fixtures/private-profile.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {binary: {type:'string'}, wasm: {type:'string'}, out: {type:'string',default:'target/rune-production'}}})

@@ -173,7 +173,7 @@ fn entry(key: String, mut saved: Tab) -> Entry {
     }
 }
 fn busy(s: &State) -> bool {
-    s.launcher.as_ref().is_some_and(|l| l.pending)
+    s.screen.launcher().is_some_and(|l| l.pending)
         || s.workspace.as_ref().is_some_and(|ui| !ui.ready)
 }
 pub fn input_ready(s: &State) -> bool {
@@ -194,12 +194,12 @@ pub fn prepare_open(s: &mut State, tx: &mut Tx) -> bool {
             return false;
         }
         let folder = s
-            .launcher
-            .as_ref()
+            .screen
+            .launcher()
             .map(|l| l.folder.text.clone())
             .unwrap_or_default();
         new_tab(s, tx);
-        if let Some(l) = &mut s.launcher {
+        if let Some(l) = s.screen.launcher_mut() {
             l.folder = TextEdit::new(folder);
         }
     }
@@ -251,7 +251,7 @@ fn stash(s: &mut State) {
     if let Some(ui) = &mut s.workspace {
         let entry = &mut ui.entries[ui.active];
         entry.cache = Some(cache);
-        if let Some(l) = &s.launcher {
+        if let Some(l) = s.screen.launcher() {
             entry.project = l.project.clone();
             entry.sessions = l.sessions.clone();
             entry.next = l.next.clone();
@@ -263,7 +263,7 @@ fn activate(s: &mut State, tx: &mut Tx) {
         return;
     };
     let item = &mut ui.entries[ui.active];
-    if let Some(l) = &mut s.launcher {
+    if let Some(l) = s.screen.launcher_mut() {
         l.project = item.project.clone();
         l.sessions = item.sessions.clone();
         l.next = item.next.clone();
@@ -276,15 +276,16 @@ fn activate(s: &mut State, tx: &mut Tx) {
     }
     if let Some(cache) = item.cache.take() {
         cache.apply(s);
+        s.renew_scope();
         if let Some(files) = &mut s.files {
             files.activate(true);
         }
     } else {
-        s.launcher_visible = true;
         let restore = match &item.saved {
             Tab::Workspace(w) => Some(w.clone()),
             _ => None,
         };
+        s.show_launcher();
         if let Some(saved) = restore {
             crate::launcher::restore(s, saved);
         }
@@ -415,13 +416,13 @@ pub fn connected(s: &mut State) {
     let Some(ui) = &mut s.workspace else {
         return;
     };
-    if let Some(l) = &mut s.launcher {
+    if let Some(l) = s.screen.launcher_mut() {
         l.openings = ui.openings.clone();
     }
     #[cfg(not(target_arch = "wasm32"))]
     let directory = s
-        .launcher
-        .as_ref()
+        .screen
+        .launcher()
         .and_then(|l| l.state_directory())
         .or_else(|| {
             platform::setting("CODENOMAD_PROFILE").filter(|p| p.starts_with("trial-"))?;
@@ -466,7 +467,7 @@ pub fn retry(s: &mut State, tx: &mut Tx) {
     resume(s, tx);
 }
 pub fn opened(s: &mut State, project: &Project) {
-    let (Some(ui), Some(l)) = (&mut s.workspace, &s.launcher) else {
+    let (Some(ui), Some(l)) = (&mut s.workspace, s.screen.launcher()) else {
         return;
     };
     let backend_id = if l.local_connection() {
@@ -657,7 +658,7 @@ pub fn strip(s: &State, cx: &mut Cx<State>) -> El {
             |(index, (entry, title))| rune_theme_codenomad::tabs::ProjectTab {
                 id: &entry.key,
                 title,
-                status: if index == ui.active && !s.launcher_visible {
+                status: if index == ui.active && !s.screen.is_launcher() {
                     super::cache::status(&s.phase, s.agent.as_ref())
                 } else if let Some(cache) = &entry.cache {
                     cache.status()

@@ -184,6 +184,35 @@ fn hidden_tab_drains_events_without_changing_active_conversation() {
     assert!(scratch.phase == Phase::Ready);
     assert!(scratch.incoming.as_ref().unwrap().try_recv().is_err());
 }
+#[test]
+fn polling_preserves_the_active_editor_scope_and_tab_switch_expires_it() {
+    let mut s = init();
+    s.phase = Phase::Ready;
+    let mut ui = Ui::new();
+    ui.ready = true;
+    s.workspace = Some(ui);
+    let mut rt = runtime(s);
+    rt.poll = Some(crate::poll);
+    let scope = rt.state.input_scope.clone();
+    for _ in 0..8 {
+        rt.frame(0.02);
+    }
+    assert!(rt.state.current_scope(&scope));
+    let (x, y) = rt.find("composer").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.paste("active input");
+    rt.frame(0.02);
+    assert_eq!(rt.state.draft.text, "active input");
+    rt.update(|s, tx| new_tab(s, tx));
+    assert!(!rt.state.current_scope(&scope));
+    let active = rt.state.draft.text.clone();
+    rt.state
+        .editor(&scope, crate::screen::Editor::Composer)
+        .text
+        .push_str("late");
+    assert_eq!(rt.state.draft.text, active);
+}
 
 fn draft_state() -> State {
     let mut s = init();
@@ -192,7 +221,7 @@ fn draft_state() -> State {
     let mut l = crate::launcher::Launcher::fixture();
     l.connection = Some(backend(""));
     l.server_id = Some("trial-server".into());
-    s.launcher = Some(l);
+    s.screen = crate::Screen::Chat { launcher: Some(l) };
     s.workspace = Some(ui);
     opened(
         &mut s,
@@ -267,8 +296,8 @@ fn full_tab_admission_preserves_the_project_then_reuses_only_an_admitted_slot() 
     });
     let mut state = draft_state();
     state
-        .launcher
-        .as_mut()
+        .screen
+        .launcher_mut()
         .unwrap()
         .connection
         .as_mut()
@@ -282,18 +311,18 @@ fn full_tab_admission_preserves_the_project_then_reuses_only_an_admitted_slot() 
         id: "original-record".into(),
         path: "/original".into(),
     };
-    rt.state.launcher.as_mut().unwrap().project = Some(original.clone());
+    rt.state.screen.launcher_mut().unwrap().project = Some(original.clone());
     opened(&mut rt.state, &original);
     rt.state.draft = TextEdit::new("KEEP THIS UNSENT DRAFT");
     capture(&mut rt.state);
     let before = rt.state.workspace.as_ref().unwrap().snapshot();
-    rt.state.launcher.as_mut().unwrap().folder = TextEdit::new("/replacement");
+    rt.state.screen.launcher_mut().unwrap().folder = TextEdit::new("/replacement");
     rt.update(crate::launcher::open);
-    assert!(!rt.state.launcher.as_ref().unwrap().pending);
+    assert!(!rt.state.screen.launcher().unwrap().pending);
     assert!(
         rt.state
-            .launcher
-            .as_ref()
+            .screen
+            .launcher()
             .unwrap()
             .openings
             .pending()
@@ -306,18 +335,18 @@ fn full_tab_admission_preserves_the_project_then_reuses_only_an_admitted_slot() 
         "full admission must not dispatch any request"
     );
     rt.update(|s, tx| close(s, "tab-1", tx));
-    rt.state.launcher.as_mut().unwrap().folder = TextEdit::new("/replacement");
+    rt.state.screen.launcher_mut().unwrap().folder = TextEdit::new("/replacement");
     rt.update(crate::launcher::open);
     let wait = |rt: &mut rune::Runtime<State>| {
         let deadline = Instant::now() + Duration::from_secs(4);
-        while rt.state.launcher.as_ref().unwrap().pending {
+        while rt.state.screen.launcher().unwrap().pending {
             assert!(Instant::now() < deadline);
             rt.update(|s, tx| {
                 crate::launcher::poll(s, tx);
             });
             std::thread::sleep(Duration::from_millis(2));
         }
-        assert!(rt.state.launcher.as_ref().unwrap().error.is_none());
+        assert!(rt.state.screen.launcher().unwrap().error.is_none());
     };
     wait(&mut rt);
     let after = rt.state.workspace.as_ref().unwrap().snapshot();
@@ -333,7 +362,7 @@ fn full_tab_admission_preserves_the_project_then_reuses_only_an_admitted_slot() 
     assert_eq!(rt.state.draft.text, "KEEP THIS UNSENT DRAFT");
     rt.update(|s, tx| select(s, "tab-2", tx));
     let blank_index = rt.state.workspace.as_ref().unwrap().snapshot().active;
-    rt.state.launcher.as_mut().unwrap().folder = TextEdit::new("/blank-origin");
+    rt.state.screen.launcher_mut().unwrap().folder = TextEdit::new("/blank-origin");
     rt.update(crate::launcher::open);
     wait(&mut rt);
     let saved = rt.state.workspace.as_ref().unwrap().snapshot();

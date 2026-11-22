@@ -5,7 +5,7 @@ import {randomUUID} from 'node:crypto'
 import {connectNative} from './live-access.mjs'
 export async function seedRealHistory(file) {
   file=path.resolve(file)
-  assert(file.startsWith(path.join(import.meta.dirname,'fixture-profile')+path.sep))
+  assert(file.startsWith(path.join(path.resolve(import.meta.dirname,'..'),'fixture-profile')+path.sep))
   const manifest=JSON.parse(await readFile(file,'utf8'))
   const native=await connectNative()
   assert(manifest.pluginActive,'history plugin must be active in the disposable Location')

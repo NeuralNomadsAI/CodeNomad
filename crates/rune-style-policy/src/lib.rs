@@ -468,8 +468,42 @@ mod tests {
     }
     #[test]
     fn pinned_visual_api_manifest_is_complete() {
-        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.prototype-deps/rune/crates/rune/src/el");
+        let host = std::process::Command::new("rustc")
+            .args(["--print", "host-tuple"])
+            .output()
+            .unwrap();
+        assert!(host.status.success());
+        let host = String::from_utf8(host.stdout).unwrap();
+        let metadata = std::process::Command::new(env!("CARGO"))
+            .args([
+                "metadata",
+                "--locked",
+                "--offline",
+                "--format-version",
+                "1",
+                "--filter-platform",
+                host.trim(),
+            ])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .unwrap();
+        assert!(
+            metadata.status.success(),
+            "{}",
+            String::from_utf8_lossy(&metadata.stderr)
+        );
+        let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout).unwrap();
+        let packages: Vec<_> = metadata["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|package| package["name"] == "rune")
+            .collect();
+        assert_eq!(packages.len(), 1);
+        let base = std::path::Path::new(packages[0]["manifest_path"].as_str().unwrap())
+            .parent()
+            .unwrap()
+            .join("src/el");
         let semantic = [
             "wrap",
             "set_wrap",

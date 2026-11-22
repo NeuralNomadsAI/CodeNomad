@@ -7,9 +7,9 @@ import {createServer,request} from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import {privateEnvironment} from './private-profile.mjs'
-import {stopFixtureChild} from '../../scripts/native-fixture-guards.mjs'
+import {stopFixtureChild} from '../../../scripts/native-fixture-guards.mjs'
 
-const repository=path.resolve(import.meta.dirname,'../..')
+const repository=path.resolve(import.meta.dirname,'../../..')
 const write=process.argv.includes('--write')
 const source=process.env.RUNE_SERVER_EXE,target=process.env.CARGO_TARGET_DIR
 for(const [name,value]of Object.entries({RUNE_SERVER_EXE:source,CARGO_TARGET_DIR:target}))assert(value&&path.isAbsolute(value),`${name} must be explicit and absolute`)

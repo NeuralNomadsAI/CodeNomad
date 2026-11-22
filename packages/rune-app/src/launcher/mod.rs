@@ -134,7 +134,6 @@ mod tests {
     fn session_choices_remain_visible_in_the_scrolling_launcher() {
         for viewport in [(320.0, 640.0), (1400.0, 1600.0)] {
             let mut state = crate::init();
-            state.launcher_visible = true;
             let mut launcher = Launcher::with_boot(std::sync::Arc::new(|| {}), None);
             launcher.connection = Some(Backend {
                 client: codenomad_client::http::Http::new().unwrap(),
@@ -152,7 +151,7 @@ mod tests {
                 id: "existing".into(),
                 title: "Existing history".into(),
             }];
-            state.launcher = Some(launcher);
+            state.screen = crate::Screen::Launcher(launcher);
             let mut runtime =
                 rune::Runtime::new(state, crate::view, viewport, rune::Env::new(false, 1.0));
             runtime.frame(0.0);
@@ -182,8 +181,8 @@ mod tests {
     fn bootstrap_failure_reaches_the_rendered_launcher() {
         let (out, input) = bounded(1);
         let mut state = crate::init();
-        state.launcher_visible = true;
-        state.launcher = Some(Launcher::with_boot(std::sync::Arc::new(|| {}), Some(input)));
+        state.screen =
+            crate::Screen::Launcher(Launcher::with_boot(std::sync::Arc::new(|| {}), Some(input)));
         out.try_send(Err("private backend startup detail".into()))
             .unwrap();
         let mut runtime = rune::Runtime::new(
@@ -195,16 +194,64 @@ mod tests {
         runtime.poll = Some(crate::poll);
         runtime.frame(0.0);
         assert_eq!(
-            runtime.state.launcher.as_ref().unwrap().error,
-            Some("connect_error")
+            runtime.state.screen.launcher().unwrap().error,
+            Some("rune.connect_error")
         );
         let tree = runtime.accessibility_json().to_string();
-        assert!(tree.contains(crate::strings::t("connect_error")));
+        assert!(tree.contains(crate::strings::t("rune.connect_error")));
         assert!(!tree.contains("private backend startup detail"));
+    }
+    #[test]
+    fn shared_fields_edit_their_inner_models_and_stale_launcher_input_is_discarded() {
+        let mut state = crate::init();
+        let mut launcher = Launcher::fixture();
+        launcher.address = TextEdit::new("");
+        launcher.password = TextEdit::new("");
+        state.screen = crate::Screen::Launcher(launcher);
+        let mut rt = rune::Runtime::new(
+            state,
+            crate::view,
+            (640.0, 800.0),
+            rune::Env::new(false, 1.0),
+        );
+        rt.frame(0.0);
+        for (key, value) in [
+            ("server-address", "synthetic-server"),
+            ("server-password", "synthetic-password"),
+        ] {
+            let node = rt
+                .elements()
+                .into_iter()
+                .find(|node| node.key.as_deref() == Some(key))
+                .unwrap();
+            assert_eq!(node.fill, rune_theme_codenomad::field_kit(false).c.bg_base);
+            let (x, y) = rt.find(key).unwrap();
+            rt.pointer_down(x, y);
+            rt.pointer_up(x, y);
+            rt.paste(value);
+            rt.frame(0.02);
+        }
+        assert_eq!(
+            rt.state.screen.launcher().unwrap().address.text,
+            "synthetic-server"
+        );
+        assert_eq!(
+            rt.state.screen.launcher().unwrap().password.text,
+            "synthetic-password"
+        );
+        rt.state.show_chat();
+        rt.state.draft = TextEdit::new("current composer");
+        rt.paste("late password edit");
+        rt.frame(0.02);
+        assert_eq!(
+            rt.state.screen.launcher().unwrap().password.text,
+            "synthetic-password"
+        );
+        assert_eq!(rt.state.draft.text, "current composer");
     }
 }
 pub fn connect(s: &mut State, _: &mut Tx) {
-    let Some(l) = &mut s.launcher else {
+    let Some(l) = s.screen.launcher_mut() else {
         return;
     };
     if l.pending {
@@ -213,7 +260,7 @@ pub fn connect(s: &mut State, _: &mut Tx) {
     l.host = None;
     let address = l.address.text.clone();
     let password = l.password.text.clone();
-    l.job("connect_error", async move {
+    l.job("rune.connect_error", async move {
         let b = Backend::connect(&address, &password).await?;
         let server_id = b.server_id().await?;
         let projects = b.projects().await?;
@@ -221,7 +268,10 @@ pub fn connect(s: &mut State, _: &mut Tx) {
     });
 }
 pub fn choose_project(s: &mut State, path: &str, tx: &mut Tx) {
-    s.launcher.as_mut().unwrap().folder = TextEdit::new(path);
+    let Some(l) = s.screen.launcher_mut() else {
+        return;
+    };
+    l.folder = TextEdit::new(path);
     open(s, tx);
 }
 pub fn open(s: &mut State, tx: &mut Tx) {
@@ -229,8 +279,8 @@ pub fn open(s: &mut State, tx: &mut Tx) {
         return;
     }
     if !crate::workspace::prepare_open(s, tx) {
-        if let Some(l) = &mut s.launcher {
-            l.error = Some("open_error");
+        if let Some(l) = s.screen.launcher_mut() {
+            l.error = Some("rune.open_error");
         }
         return;
     }
@@ -239,7 +289,7 @@ pub fn open(s: &mut State, tx: &mut Tx) {
         .as_ref()
         .map(|ui| ui.active_key().to_string())
         .unwrap_or_else(|| "launcher".into());
-    let Some(l) = &mut s.launcher else {
+    let Some(l) = s.screen.launcher_mut() else {
         return;
     };
     let Some(b) = l.connection.clone() else {
@@ -251,26 +301,26 @@ pub fn open(s: &mut State, tx: &mut Tx) {
     let pending = match l.openings.begin(b.clone(), &intent) {
         Ok(pending) => pending,
         Err(_) => {
-            l.error = Some("open_error");
+            l.error = Some("rune.open_error");
             return;
         }
     };
     let folder = l.folder.text.trim().to_string();
-    l.job("open_error", async move {
+    l.job("rune.open_error", async move {
         let opening = pending.create(&folder).await?;
         let rows = b.sessions(&opening.project, None).await?;
         Ok(Reply::Opened(opening, rows, None))
     });
 }
 pub fn list(s: &mut State, more: bool) {
-    let Some(l) = &mut s.launcher else {
+    let Some(l) = s.screen.launcher_mut() else {
         return;
     };
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
     let cursor = if more { l.next.clone() } else { None };
-    l.job("list_error", async move {
+    l.job("rune.list_error", async move {
         Ok(Reply::Listed(
             b.sessions(&p, cursor.as_deref()).await?,
             more,
@@ -281,7 +331,7 @@ pub fn create(s: &mut State, _: &mut Tx) {
     if !crate::workspace::input_ready(s) {
         return;
     }
-    let Some(l) = &mut s.launcher else {
+    let Some(l) = s.screen.launcher_mut() else {
         return;
     };
     if l.creation_uncertain || l.title.text.trim().is_empty() {
@@ -292,7 +342,7 @@ pub fn create(s: &mut State, _: &mut Tx) {
     };
     let title = l.title.text.clone();
     // A create request is never automatically retried. Refresh reconciles a lost response.
-    l.job("create_error", async move {
+    l.job("rune.create_error", async move {
         let session = b.create_session(&p, &title).await?;
         Ok(Reply::Bound(
             b.bind(&p, &session.id, true).await?,
@@ -304,18 +354,18 @@ pub fn choose(s: &mut State, id: String, title: String) {
     if !crate::workspace::input_ready(s) {
         return;
     }
-    let Some(l) = &mut s.launcher else {
+    let Some(l) = s.screen.launcher_mut() else {
         return;
     };
     let (Some(b), Some(p)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
-    l.job("open_error", async move {
+    l.job("rune.open_error", async move {
         Ok(Reply::Bound(b.bind(&p, &id, false).await?, title))
     });
 }
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
-    let Some(l) = &mut s.launcher else {
+    let Some(l) = s.screen.launcher_mut() else {
         return false;
     };
     let mut boot_changed = false;
@@ -333,13 +383,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 l.host = Some(host);
                 // Bootstrap owns the authenticated cookie jar even if project listing fails.
                 l.connection = Some(backend.clone());
-                l.job("list_error", async move {
+                l.job("rune.list_error", async move {
                     let server_id = backend.server_id().await?;
                     let projects = backend.projects().await?;
                     Ok(Reply::Connected(backend, projects, server_id))
                 });
             }
-            Err(_) => l.error = Some("connect_error"),
+            Err(_) => l.error = Some("rune.connect_error"),
         }
     }
     let Some(result) = l.result.as_ref().and_then(|rx| rx.try_recv().ok()) else {
@@ -362,7 +412,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         Ok(Reply::Opened(opening, rows, restored)) => {
             let project = opening.project.clone();
             if opening.adopt().is_err() {
-                l.error = Some("open_error");
+                l.error = Some("rune.open_error");
                 tx.instant();
                 return true;
             }
@@ -396,13 +446,13 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         Err(error) => {
             let key = match error.to_string().as_str() {
-                "connect_error" => "connect_error",
-                "list_error" => "list_error",
-                "create_error" => "create_error",
+                "rune.connect_error" => "rune.connect_error",
+                "rune.list_error" => "rune.list_error",
+                "rune.create_error" => "rune.create_error",
                 "rune.restore_error" => "rune.restore_error",
-                _ => "open_error",
+                _ => "rune.open_error",
             };
-            if key == "create_error" {
+            if key == "rune.create_error" {
                 l.creation_uncertain = true;
             }
             l.error = Some(key);
@@ -417,7 +467,7 @@ pub fn restore(s: &mut State, saved: crate::workspace::Workspace) {
         .as_ref()
         .map(|ui| ui.active_key().to_string())
         .unwrap_or_else(|| "launcher".into());
-    let Some(l) = &mut s.launcher else {
+    let Some(l) = s.screen.launcher_mut() else {
         return;
     };
     if l.pending {
@@ -488,7 +538,7 @@ fn bind(s: &mut State, b: Backend, title: String, tx: &mut Tx) {
             crate::transport::publish(&out, &wake, crate::transport::Event::Failed).await;
         }
     });
-    s.launcher_visible = false;
+    s.show_chat();
     crate::workspace::capture(s);
     tx.scroll_to_bottom_instant("history");
 }
@@ -496,7 +546,7 @@ pub fn back(s: &mut State) {
     if !matches!(s.phase, Phase::Ready | Phase::Failed)
         || (!s.draft.text.is_empty() && s.workspace.is_none())
         || crate::agent::navigation_blocked(s)
-        || s.launcher.is_none()
+        || s.screen.launcher().is_none()
     {
         return;
     }
@@ -505,6 +555,6 @@ pub fn back(s: &mut State) {
     s.commands = None;
     s.incoming = None;
     s.files = None;
-    s.launcher_visible = true;
+    s.show_launcher();
     list(s, false);
 }

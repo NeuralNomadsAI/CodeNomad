@@ -41,6 +41,9 @@ fn visible(rt: &Runtime<State>, key: &str) {
         .into_iter()
         .find(|e| e.key.as_deref() == Some(key))
         .unwrap_or_else(|| panic!("missing {key}"));
+    if node.role == "textbox" {
+        assert_eq!(node.fill, rune_theme_codenomad::field_kit(false).c.bg_base);
+    }
     assert!(
         node.rect[3] > 0.0 && node.visible[2] > 0.0 && node.visible[3] >= node.rect[3] - 1.0,
         "{key} must be a usable visible control: rect={:?} visible={:?}",
@@ -247,4 +250,48 @@ fn audit_permission_settled_while_reason_focused() {
 #[test]
 fn audit_question_settled_while_answer_focused() {
     audit_settlement_during_edit(false);
+}
+#[test]
+fn late_editor_event_cannot_change_a_replacement_session_with_the_same_request_id() {
+    let mut initial = state();
+    let ui = initial.agent.as_mut().unwrap();
+    ui.selected = "reused-request".into();
+    ui.permissions.push(Permission {
+        id: ui.selected.clone(),
+        action: "read".into(),
+        resources: vec![],
+        message: String::new(),
+        supported: true,
+    });
+    ui.reasons
+        .insert(ui.selected.clone(), TextEdit::new("first session"));
+    let mut rt = runtime(initial, (960.0, 760.0));
+    reveal(&mut rt, "reason-reused-request");
+    let (x, y) = rt.find("reason-reused-request").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.paste(" active edit");
+    rt.frame(0.02);
+    assert!(
+        rt.state.agent.as_ref().unwrap().reasons["reused-request"]
+            .text
+            .contains("active edit"),
+        "Control: the real inner editor must accept input before its owner changes"
+    );
+    // Replace the session before reconciling the rendered editor and its captured accessor.
+    rt.state.show_chat();
+    let mut replacement = state().agent.unwrap();
+    replacement.reasons.insert(
+        "reused-request".into(),
+        TextEdit::new("replacement session"),
+    );
+    rt.state.agent = Some(replacement);
+    rt.state.draft = TextEdit::new("replacement composer");
+    rt.paste(" late event");
+    rt.frame(0.02);
+    assert_eq!(
+        rt.state.agent.as_ref().unwrap().reasons["reused-request"].text,
+        "replacement session"
+    );
+    assert_eq!(rt.state.draft.text, "replacement composer");
 }

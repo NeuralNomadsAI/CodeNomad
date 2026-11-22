@@ -10,7 +10,7 @@ import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 
 const cli=process.argv[2];assert(cli&&path.isAbsolute(cli),'Supply an absolute private-daemon CLI executable')
-const root=path.resolve(import.meta.dirname,'../../target/rune-real-pending',`trial-${randomUUID()}`),project=path.join(root,'projects','empty')
+const root=path.resolve(import.meta.dirname,'../../../target/rune-real-pending',`trial-${randomUUID()}`),project=path.join(root,'projects','empty')
 await mkdir(project,{recursive:true})
 const rune=path.join(root,`rune-client${process.platform==='win32'?'.exe':''}`);await copyFile(clientBinary,rune);requireTestSupport(rune)
 const env=await privateEnvironment(root),password=randomUUID(),proof={root,project,native:true,ui:'Rune Runtime, offscreen',modelCalls:0,tools:0,requests:[],events:[],stages:[],visible:[],cases:[],cleaned:false,result:1}

@@ -8,7 +8,7 @@ import {connectNative} from './live-access.mjs'
 import {privateEnvironment} from './private-profile.mjs'
 import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.mjs'
 requireTestSupport()
-const here=import.meta.dirname
+const here=path.resolve(import.meta.dirname,'..')
 const existing=process.argv.indexOf('--reuse')
 let live
 if(existing>=0) {

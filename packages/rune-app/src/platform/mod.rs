@@ -167,27 +167,35 @@ pub fn folder_picker_available() -> bool {
     cfg!(not(target_arch = "wasm32"))
 }
 pub fn browse(s: &mut crate::State, tx: &mut rune::Tx) {
+    let scope = s.input_scope.clone();
     #[cfg(not(target_arch = "wasm32"))]
     tx.open_folder(
         rune::file_dialog::FileDialogOptions {
-            title: crate::strings::t("folder").into(),
+            title: crate::strings::t("instanceInfo.labels.folder").into(),
             ..Default::default()
         },
-        |s: &mut crate::State, result, tx| match result {
-            Ok(Some(path)) => {
-                s.launcher.as_mut().unwrap().folder =
-                    rune::edit::TextEdit::new(path.to_string_lossy());
-                crate::launcher::open(s, tx);
+        move |s: &mut crate::State, result, tx| {
+            if !s.current_scope(&scope) {
+                return;
             }
-            Ok(None) => {}
-            Err(_) => s.launcher.as_mut().unwrap().error = Some("open_error"),
+            let Some(l) = s.screen.launcher_mut() else {
+                return;
+            };
+            match result {
+                Ok(Some(path)) => {
+                    l.folder = rune::edit::TextEdit::new(path.to_string_lossy());
+                    crate::launcher::open(s, tx);
+                }
+                Ok(None) => {}
+                Err(_) => l.error = Some("rune.open_error"),
+            }
         },
     );
     #[cfg(target_arch = "wasm32")]
     {
         let _ = tx;
-        if let Some(launcher) = s.launcher.as_mut() {
-            launcher.error = Some("open_error");
+        if let Some(launcher) = s.screen.launcher_mut() {
+            launcher.error = Some("rune.open_error");
         }
     }
     #[cfg(not(target_arch = "wasm32"))]

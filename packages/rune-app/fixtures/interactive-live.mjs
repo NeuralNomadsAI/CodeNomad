@@ -10,7 +10,7 @@ import {requireTestSupport,clientBinary,serverBinary} from './fixture-binaries.m
 requireTestSupport()
 const directory=path.resolve(process.argv[2]??''),title=process.argv[3]
 assert(directory&&path.isAbsolute(directory)&&title,'usage: interactive-live.mjs <project-folder> <existing-session-title>')
-const native=await connectNative(),here=import.meta.dirname
+const native=await connectNative(),here=path.resolve(import.meta.dirname,'..')
 const profile=path.join(here,'fixture-profile',`interactive-${randomUUID()}`);await mkdir(profile,{recursive:true})
 const list=await native.read(`/api/session?${new URLSearchParams({directory,limit:'200'})}`)
 const sources=list.data.filter(s=>s.title===title&&!s.parentID&&!s.id.startsWith('ses_cn_schedule_'))

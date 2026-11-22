@@ -42,6 +42,7 @@ async function filesUnder(directory) {
   for (const entry of await readdir(directory, {withFileTypes: true})) {
     if (['node_modules', 'dist', '.git'].includes(entry.name)) continue
     const file = path.join(directory, entry.name)
+    if (slash(file).endsWith('/packages/ui/src/renderer/public/monaco')) continue
     if (entry.isDirectory()) result.push(...await filesUnder(file))
     else result.push(file)
   }

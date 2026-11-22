@@ -119,7 +119,7 @@ pub fn start(wake: rune::Waker) -> Option<Receiver<Result<(Backend, LocalHost)>>
         });
         if result.is_err() {
             // Do not expose paths, auth output or process diagnostics in the UI.
-            let _ = out.send_blocking(Err("connect_error".into()));
+            let _ = out.send_blocking(Err("rune.connect_error".into()));
             wake();
         }
     });

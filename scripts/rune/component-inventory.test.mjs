@@ -37,6 +37,16 @@ export function Consumer() { return <div><Alias title="one" onClick={() => {}}/>
     await run(root, put)
   } finally { await rm(root, {recursive: true, force: true}) }
 }
+test('copied Monaco distribution cannot change Source hashes or CSS evidence', async () => fixture(async (root, put) => {
+  await put('packages/ui/src/renderer/public/monaco.worker.js', 'self.onmessage = () => {}')
+  const before = await buildInventory(root)
+  await put('packages/ui/src/renderer/public/monaco/vs/editor/editor.main.css', '.shared { color: red; }')
+  await put('packages/ui/src/renderer/public/monaco/vs/editor/editor.main.js', 'self.vendor = true')
+  const after = await buildInventory(root)
+  assert.deepEqual(after, before)
+  assert.ok(after.get('dev-docs/rune-components.generated.json').inputHashes['packages/ui/src/renderer/public/monaco.worker.js'])
+}))
+
 test('AST resolves typed inherited props, aliased state, CSS references, dynamic keys and reexported usages', async () => fixture(async root => {
   const output = await buildInventory(root)
   const sheet = output.get('target/rune-inventory/components__control.json')

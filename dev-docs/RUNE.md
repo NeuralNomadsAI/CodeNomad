@@ -19,6 +19,10 @@ Native Rune client for CodeNomad, replacing the Solid UI and the Tauri host modu
 4. **Text comes from the existing catalogues** (`packages/ui/src/lib/i18n/messages/<locale>`, ten locales), generated at build time; never written in Rust.
 5. **Accessibility is complete**: role, name and state on every interactive element.
 
+Kit builders consume the mapped `Kit` directly. Keep visual configuration before `build(kit)` through public builder options and reviewed shared-theme variants; never restyle the resulting control. `Kit` exposes palette, typography, radii, elevation and motion. Component spacing and several dimensions are fixed inside the pinned kit; [Rune issue 573](https://github.com/anomalyco/rune/issues/573) tracks theme-owned component metrics. Source geometry qualification remains required for those controls. Use the public kit components for fields, selectors, menus, dialogs, tabs, shell regions and document renderers as their owning modules are assembled.
+
+`TextInput` and `TextArea` use the cached `field_kit` variant, whose base surface resolves to `surface-field` before building. The general Kit retains the canvas role for reading components.
+
 ## Platform
 
 - Shared code builds for native and `wasm32-unknown-unknown`; CI builds both.
@@ -58,7 +62,7 @@ When a whole module reaches parity, its Solid and Tauri version is deleted on `f
 
 ## Workspace and qualification
 
-`packages/rune-app` holds application state and views. `crates/codenomad-client` owns typed API contracts and transports; `crates/rune-theme-codenomad` owns generated visuals/catalogues; `crates/codenomad-host-process` confines native child processes behind a safe API. Rune is pinned in the app manifest and verified by `scripts/rune/prepare.mjs --check`.
+`packages/rune-app` holds application state and views. `crates/codenomad-client` owns typed API contracts and transports; `crates/rune-theme-codenomad` owns generated visuals/catalogues; `crates/codenomad-host-process` confines native child processes behind a safe API. The workspace pins Rune and its platform patches with Cargo Git dependencies at one revision; `Cargo.lock` records the resolved versions and source identities. Asset packaging and API qualification locate Rune through locked Cargo metadata.
 
 Workspace file trees own their requests and eight departed-directory snapshots. A completion retains its tree occurrence, directory, request identity and read version; cancellation or a foreign occurrence fences publication before sorting. The owner drains coalesced refreshes after the shared debounce and the last completion. Sorting belongs to a captured platform collator and completes before any snapshot change: native ICU uses the system locale, or Unicode root collation in unconfigured/POSIX environments; browser Intl uses its default locale. Translation selection remains independent. Equal names retain input order, and errors preserve the last complete listing.
 
@@ -82,7 +86,7 @@ The component index is `rune-components.generated.json`; full sheets and capture
 
 Shared action menus keep their state outside virtualized rows. Model updates call `action_menu::sync` when items or their minimum count change, and `clear` when an owner disappears; the host calls `poll` after input commits. Captured selections survive these updates. A gesture action runs immediately; its deferred focus target respects focus already established outside the closing menu. Popup raster qualification separates the initial hover from deferred platform help and checks frame, surface, text and shadow independently.
 
-Tests use isolated `trial-*` profiles, owned processes and existing Cargo caches, without visible windows or writes to installed profiles, shared OpenCode or user sessions. Qualification commands and evidence are in `packages/rune-app/JOURNAL_TESTS.md` and `scripts/rune/QUALIFICATION.md`. Synthetic scenes and probes require explicit `test-support`; default native/WASM artifacts retain Rune inspection and simulated-input tooling.
+Tests use isolated `trial-*` profiles, owned processes and existing Cargo caches, without visible windows or writes to installed profiles, shared OpenCode or user sessions. JavaScript fixtures live in `packages/rune-app/fixtures/`; qualification commands are in `scripts/rune/QUALIFICATION.md`, and execution evidence belongs in ignored output directories or CI artifacts. Synthetic scenes and probes require explicit `test-support`; default native/WASM artifacts retain Rune inspection and simulated-input tooling.
 
 Browser/mobile risks and physical-device gates are in [RUNE_WEB.md](RUNE_WEB.md). The latency guard reuses `scripts/perf/` markers and TUI budgets. Webview and PTY capabilities require a short decision before implementation.
 
