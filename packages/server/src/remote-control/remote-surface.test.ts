@@ -221,6 +221,9 @@ test("negotiates precompressed static assets without loosening HTML entry admiss
   fs.writeFileSync(path.join(ui, "only-gzip.wasm.gz"), gzip)
   const index = fs.readFileSync(path.join(ui, "index.html"))
   fs.writeFileSync(path.join(ui, "index.html.br"), brotliCompressSync(index))
+  fs.mkdirSync(path.join(ui, "nested.assets"))
+  fs.writeFileSync(path.join(ui, "nested.assets", "index.html"), index)
+  fs.writeFileSync(path.join(ui, "nested.assets", "index.html.br"), brotliCompressSync(index))
 
   const variants = [
     ["/app.wasm", "br, gzip", "br", br],
@@ -228,6 +231,7 @@ test("negotiates precompressed static assets without loosening HTML entry admiss
     ["/app.wasm", "br;q=0.2, gzip;q=0.8", "gzip", gzip],
     ["/app.wasm", "gzip;q=0, *;q=1, identity;q=0", "br", br],
     ["/app.wasm", "identity", undefined, wasm],
+    ["/app.wasm", "identity;q=1, br;q=0.1", undefined, wasm],
     ["/only-gzip.wasm", "br, gzip", "gzip", gzip],
   ] as const
   for (const [route, accept, encoding, bytes] of variants) {
@@ -252,13 +256,16 @@ test("negotiates precompressed static assets without loosening HTML entry admiss
     assert.equal((await send(target(), url, { headers })).status, 401)
   }
   assert.equal((await send(target(), "/absent.wasm", { headers })).status, 404)
+  assert.equal((await send(target(), "/nested.assets", { headers })).status, 404)
   const cookie = await pair(target(), code)
-  const page = await send(target(), "/", { headers: { ...headers, cookie, accept: "text/html" } })
-  assert.equal(page.status, 200)
-  assert.equal(page.headers["content-encoding"], "br")
-  assert.equal(page.headers["cache-control"], "no-store")
-  assert.match(String(page.headers["content-type"]), /^text\/html\b/)
-  assert.deepEqual(page.bytes, brotliCompressSync(index))
+  for (const route of ["/", "/settings"]) {
+    const page = await send(target(), route, { headers: { "accept-encoding": "br, identity;q=0", cookie, accept: "text/html" } })
+    assert.equal(page.status, 200)
+    assert.equal(page.headers["content-encoding"], "br")
+    assert.equal(page.headers["cache-control"], "no-store")
+    assert.match(String(page.headers["content-type"]), /^text\/html\b/)
+    assert.deepEqual(page.bytes, brotliCompressSync(index))
+  }
 })
 
 test("pairing requires the public origin and issues a host-only secure cookie once", async (t) => {

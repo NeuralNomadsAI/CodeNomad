@@ -2252,29 +2252,33 @@ function setupStaticUi(
   }
 
   const identityRefused = new WeakSet<FastifyRequest>()
+  const selectedStatic = new WeakSet<FastifyRequest>()
+  const negotiate = (request: FastifyRequest) => {
+    // Expand the wildcard for fastify-static, which maps it to gzip alone.
+    const encodings = request.headers["accept-encoding"]?.toLowerCase().split(",") ?? []
+    const explicit = new Map(encodings.map(entry => [entry.split(";", 1)[0]!.trim(), entry]))
+    const quality = (entry: string) => Number(/;\s*q\s*=\s*([01](?:\.\d{0,3})?)\s*$/.exec(entry)?.[1] ?? 1)
+    const identity = explicit.get("identity"), wildcard = explicit.get("*")
+    const identityQuality = identity === undefined ? undefined : quality(identity)
+    if ((identityQuality ?? (wildcard && quality(wildcard))) === 0) identityRefused.add(request)
+    if (wildcard || identityQuality !== undefined) {
+      request.headers["accept-encoding"] = ["br", "gzip", "deflate"]
+        .map(coding => explicit.get(coding) ?? wildcard?.replace("*", coding))
+        .filter(entry => entry !== undefined && quality(entry) >= (identityQuality ?? 0)).join(",")
+    }
+  }
   app.addHook("preHandler", (request, reply, done) => {
     const session = authManager.getSessionFromRequest(request)
     if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, remotePreviewsAllowed)) {
       return
     }
-    if (request.routeOptions.url === "/" || request.routeOptions.url === "/*") {
-      // Expand the wildcard for fastify-static, which maps it to gzip alone.
-      const encodings = request.headers["accept-encoding"]?.toLowerCase().split(",") ?? []
-      const name = (entry: string) => entry.split(";", 1)[0]!.trim()
-      const explicit = new Map(encodings.map(entry => [name(entry), entry]))
-      const identity = explicit.get("identity") ?? explicit.get("*")
-      if (identity && /;\s*q\s*=\s*0(?:\.0{0,3})?\s*$/.test(identity)) identityRefused.add(request)
-      if (explicit.has("*")) {
-        request.headers["accept-encoding"] = encodings.flatMap(entry => name(entry) !== "*" ? [entry]
-          : ["br", "gzip", "deflate"].filter(coding => !explicit.has(coding)).map(coding => entry.replace("*", coding))).join(",")
-      }
-    }
+    if (!("previewCapability" in request.routeOptions.config)
+      && (request.routeOptions.url === "/" || request.routeOptions.url === "/*")) negotiate(request)
     done()
   })
 
   app.addHook("onSend", (request, reply, payload, done) => {
-    if (identityRefused.has(request) && !reply.hasHeader("content-encoding")
-      && /(?:^|,\s*)accept-encoding(?:,|$)/i.test(String(reply.getHeader("vary")))) {
+    if (selectedStatic.has(request) && identityRefused.has(request) && !reply.hasHeader("content-encoding")) {
       if (payload instanceof Readable) payload.destroy()
       for (const name of ["accept-ranges", "content-length", "content-range", "content-type", "etag", "last-modified"]) reply.removeHeader(name)
       reply.code(406)
@@ -2287,7 +2291,9 @@ function setupStaticUi(
     root: uiDir,
     prefix: "/",
     preCompressed: true,
+    allowedPath: (file, _root, request) => !isHtmlBundlePath(file) || Boolean(authManager.getSessionFromRequest(request)),
     setHeaders: (reply, file) => {
+      selectedStatic.add(reply.request)
       if (isHtmlBundlePath(file)) reply.header("cache-control", "no-store")
     },
   })
@@ -2313,7 +2319,8 @@ function setupStaticUi(
     }
 
     if (fs.existsSync(indexPath)) {
-      reply.header("cache-control", "no-store").type("text/html").send(fs.readFileSync(indexPath, "utf-8"))
+      negotiate(request)
+      return reply.sendFile("index.html")
     } else {
       reply.code(404).send({ message: "UI bundle missing" })
     }
