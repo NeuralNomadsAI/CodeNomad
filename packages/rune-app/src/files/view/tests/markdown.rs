@@ -17,6 +17,38 @@ async fn markup(rt: &mut Runtime<State>, http: &http::Http) {
 }
 
 #[test]
+fn enter_activates_the_focused_view_toggle_and_refresh() {
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut rt = runtime(http.ui(Store::default(), "reader-toolbar"));
+        markup(&mut rt, &http).await;
+        let activate = |rt: &mut Runtime<State>, key: &'static str| {
+            rt.update(|_, tx| tx.focus(key, true));
+            rt.frame(0.02);
+            rt.key(KeyEvent {
+                key: Key::Enter,
+                mods: Mods::default(),
+            });
+            rt.frame(0.02);
+        };
+        activate(&mut rt, "file-source-toggle");
+        assert!(rt.find("file-source-text").is_some());
+        activate(&mut rt, "file-refresh");
+        rt.update_if(|state, _| state.files.as_mut().unwrap().poll(20.0));
+        http.request("GET", "markup.md")
+            .await
+            .preview("markup.md", "c2Vjb25k", Some("v2"))
+            .await;
+        settle(&mut rt).await;
+        assert_eq!(
+            rt.state.files.as_ref().unwrap().document.edit().text,
+            "second"
+        );
+        http.quiet().await;
+    });
+}
+
+#[test]
 fn rendered_document_without_links_has_a_keyboard_scroll_stop() {
     crate::platform::block_on(async {
         let http = http::Http::new().await;

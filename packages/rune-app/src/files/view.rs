@@ -42,6 +42,23 @@ fn document_action(s: &State, run: fn(&mut super::Ui)) -> impl Fn(&mut State) + 
         }
     })
 }
+fn reader_action(s: &State, key: &str, label: &str, disabled: bool, run: fn(&mut super::Ui)) -> El {
+    let control = button(key, label, disabled, document_action(s, run));
+    if disabled {
+        return control;
+    }
+    let enter = document_action(s, run);
+    // The native Kit reserves Return for a default button; the reader has HTML-style actions.
+    control.on_key(move |s: &mut State, key, tx| {
+        if key.key != rune::Key::Enter || key.mods != rune::Mods::default() {
+            return false;
+        }
+        if !tx.key_repeat() {
+            enter(s);
+        }
+        true
+    })
+}
 fn document_link(s: &State) -> impl Fn(&mut State, &str, &mut rune::Tx) + 'static {
     let input_scope = s.input_scope.clone();
     let document = s
@@ -101,11 +118,12 @@ fn reader_content(s: &State) -> El {
             width
         }
     });
-    let mut actions = vec![button(
+    let mut actions = vec![reader_action(
+        s,
         "file-refresh",
         t("instanceShell.rightPanel.actions.refresh"),
         ui.reader.busy() || ui.document.pending() || ui.document.dirty(),
-        document_action(s, |ui| ui.refresh_document(ui.document.scope())),
+        |ui| ui.refresh_document(ui.document.scope()),
     )];
     let mut content_view = rune::el();
     if let Some(kind) = ui.presentation.kind {
@@ -121,7 +139,8 @@ fn reader_content(s: &State) -> El {
             Kind::Text(format) => {
                 let text = ui.document.edit().text.as_str();
                 if format != Format::Source {
-                    actions.push(button(
+                    actions.push(reader_action(
+                        s,
                         "file-source-toggle",
                         t(if !ui.presentation.source {
                             "instanceShell.filesShell.showSource"
@@ -131,7 +150,7 @@ fn reader_content(s: &State) -> El {
                             "instanceShell.filesShell.previewMarkdown"
                         }),
                         false,
-                        document_action(s, |ui| ui.presentation.source = !ui.presentation.source),
+                        |ui| ui.presentation.source = !ui.presentation.source,
                     ));
                 }
                 let source = ui.presentation.source || format == Format::Source;
