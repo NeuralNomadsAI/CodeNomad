@@ -63,13 +63,17 @@ fn sidebar_search_and_title_edits_are_kept_only_by_their_origin_tab() {
         launcher.title = TextEdit::new("unsent title");
         launcher.show_title = true;
         launcher.show_search = true;
+        launcher.creation_uncertain = true;
         select(s, "tab-1", tx);
         assert!(s.screen.launcher().unwrap().search.text.is_empty());
+        assert!(!s.screen.launcher().unwrap().creation_uncertain);
         select(s, "tab-0", tx);
         let launcher = s.screen.launcher().unwrap();
         assert_eq!(launcher.search.text, "alpha");
         assert_eq!(launcher.title.text, "unsent title");
         assert!(launcher.show_title && launcher.show_search);
+        assert!(launcher.creation_uncertain);
+        assert_eq!(launcher.error, Some("rune.create_error"));
     });
 }
 

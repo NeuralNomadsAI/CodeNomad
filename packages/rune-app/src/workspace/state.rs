@@ -15,6 +15,8 @@ pub(super) struct Entry {
     cache: Option<Cache>,
     project: Option<Project>,
     sessions: Vec<Session>,
+    listed_sessions: HashSet<String>,
+    creation_uncertain: bool,
     next: Option<String>,
     visits: crate::launcher::Visits,
     wanted_panels: [Option<[bool; 2]>; 2],
@@ -173,6 +175,8 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         cache: None,
         project: None,
         sessions: Vec::new(),
+        listed_sessions: HashSet::new(),
+        creation_uncertain: false,
         next: None,
         visits: Default::default(),
         wanted_panels: [None; 2],
@@ -296,6 +300,8 @@ fn stash(s: &mut State) {
         if let Some(l) = s.screen.launcher_mut() {
             entry.project = l.project.clone();
             entry.sessions = l.sessions.clone();
+            entry.listed_sessions = std::mem::take(&mut l.listed_sessions);
+            entry.creation_uncertain = l.creation_uncertain;
             entry.next = l.next.clone();
             entry.visits = std::mem::take(&mut l.visits);
             entry.sidebar_edits = Some((
@@ -317,14 +323,15 @@ fn activate(s: &mut State, tx: &mut Tx) {
     if let Some(l) = s.screen.launcher_mut() {
         l.project = item.project.clone();
         l.sessions = item.sessions.clone();
+        l.listed_sessions = std::mem::take(&mut item.listed_sessions);
         l.next = item.next.clone();
         l.visits = std::mem::take(&mut item.visits);
         l.folder = TextEdit::new(match &item.saved {
             Tab::Workspace(w) => w.folder.as_str(),
             _ => "",
         });
-        l.error = None;
-        l.creation_uncertain = false;
+        l.creation_uncertain = item.creation_uncertain;
+        l.error = l.creation_uncertain.then_some("rune.create_error");
         (l.title, l.show_title, l.search, l.show_search) = item
             .sidebar_edits
             .take()

@@ -9,7 +9,7 @@ use crate::{
 };
 use codenomad_client::{Receiver, bounded};
 use rune::{Tx, edit::TextEdit};
-use std::future::Future;
+use std::{collections::HashSet, future::Future};
 pub const MAX_BROWSED_SESSIONS: usize = 2_000;
 pub(crate) use visits::Visits;
 
@@ -27,6 +27,7 @@ pub struct Launcher {
     pub projects: Vec<Project>,
     pub project: Option<Project>,
     pub sessions: Vec<Session>,
+    pub listed_sessions: HashSet<String>,
     pub next: Option<String>,
     pub pending: bool,
     listing: bool,
@@ -110,6 +111,7 @@ impl Launcher {
             projects: vec![],
             project: None,
             sessions: vec![],
+            listed_sessions: HashSet::new(),
             next: None,
             pending: starting,
             listing: false,
@@ -142,11 +144,107 @@ impl Launcher {
             wake();
         });
     }
+
+    fn apply_listing(&mut self, mut page: Sessions, more: bool, selected: Option<&str>) {
+        let listed: HashSet<_> = page.rows.iter().map(|row| row.id.clone()).collect();
+        if more {
+            self.listed_sessions.extend(listed);
+            let mut known: HashSet<_> = self.sessions.iter().map(|row| row.id.clone()).collect();
+            self.sessions.extend(
+                page.rows
+                    .into_iter()
+                    .filter(|row| known.insert(row.id.clone())),
+            );
+        } else {
+            self.creation_uncertain = false;
+            if page.next.is_none() {
+                let missing = self
+                    .listed_sessions
+                    .difference(&listed)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                self.visits.forget(&missing);
+            }
+            if let Some(old) = self
+                .sessions
+                .iter()
+                .find(|row| Some(row.id.as_str()) == selected && !listed.contains(&row.id))
+            {
+                page.rows.push(old.clone());
+            }
+            self.sessions = page.rows;
+            self.listed_sessions = listed;
+        }
+        self.next = page.next;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn row(id: &str) -> Session {
+        Session {
+            id: id.into(),
+            title: id.into(),
+        }
+    }
+
+    #[test]
+    fn an_admitted_page_is_not_truncated_at_the_browse_budget() {
+        let mut launcher = Launcher::fixture();
+        launcher.sessions = (0..MAX_BROWSED_SESSIONS - 1)
+            .map(|index| row(&format!("old-{index}")))
+            .collect();
+        let rows = (0..101).map(|i| row(&format!("more-{i}"))).collect();
+        launcher.apply_listing(Sessions { rows, next: None }, true, None);
+        assert_eq!(launcher.sessions.len(), MAX_BROWSED_SESSIONS + 100);
+        assert_eq!(launcher.sessions.last().unwrap().id, "more-100");
+        assert!(launcher.next.is_none());
+    }
+
+    #[test]
+    fn a_full_refresh_retires_absent_listed_rows_but_not_targeted_children() {
+        let mut launcher = Launcher::fixture();
+        launcher.apply_listing(
+            Sessions {
+                rows: vec![row("a"), row("b")],
+                next: None,
+            },
+            false,
+            None,
+        );
+        launcher.visits.record("a", None);
+        launcher.visits.record("b", None);
+        launcher.apply_listing(
+            Sessions {
+                rows: vec![row("b")],
+                next: None,
+            },
+            false,
+            Some("b"),
+        );
+        assert!(launcher.visits.steps(true, Some("b")).next().is_none());
+
+        launcher.visits.record("child", None);
+        launcher.visits.record("b", None);
+        launcher.apply_listing(
+            Sessions {
+                rows: vec![row("b")],
+                next: None,
+            },
+            false,
+            Some("b"),
+        );
+        assert_eq!(
+            launcher
+                .visits
+                .steps(true, Some("b"))
+                .next()
+                .map(|(_, id)| id),
+            Some("child")
+        );
+    }
 
     #[test]
     fn pending_selection_cannot_consume_the_departing_draft() {
@@ -641,10 +739,8 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             l.folder = TextEdit::new(&project.path);
             l.project = Some(project.clone());
-            l.sessions = rows.rows;
-            l.next = rows.next;
+            l.apply_listing(rows, false, None);
             l.search = TextEdit::new("");
-            l.creation_uncertain = false;
             crate::workspace::opened(s, &project);
             match restored {
                 Restored::Bound(backend, title) => bind(s, backend, title, None, tx),
@@ -652,40 +748,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 Restored::Empty => {}
             }
         }
-        Ok(Reply::Listed(mut rows, more)) => {
-            if !more {
-                l.creation_uncertain = false;
-            }
-            if more {
-                let remaining = MAX_BROWSED_SESSIONS.saturating_sub(l.sessions.len());
-                let mut ids = l
-                    .sessions
-                    .iter()
-                    .map(|row| row.id.clone())
-                    .collect::<std::collections::HashSet<_>>();
-                l.sessions.extend(
-                    rows.rows
-                        .into_iter()
-                        .filter(|row| ids.insert(row.id.clone()))
-                        .take(remaining),
-                );
-            } else {
-                let ids = rows
-                    .rows
-                    .iter()
-                    .map(|row| row.id.clone())
-                    .collect::<std::collections::HashSet<_>>();
-                if let Some(old) = l
-                    .sessions
-                    .iter()
-                    .find(|row| Some(&row.id) == selected.as_ref() && !ids.contains(&row.id))
-                {
-                    rows.rows.push(old.clone());
-                }
-                l.sessions = rows.rows;
-            }
-            l.next = rows.next;
-        }
+        Ok(Reply::Listed(rows, more)) => l.apply_listing(rows, more, selected.as_deref()),
         Ok(Reply::Created(b, title, submitted, dismiss)) => {
             if l.title.text == submitted {
                 l.title = TextEdit::new("");
@@ -706,6 +769,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         Ok(Reply::Selected(missing, selection, dismiss)) => {
             l.sessions.retain(|row| !missing.contains(&row.id));
+            l.listed_sessions.retain(|id| !missing.contains(id));
             l.visits.forget(&missing);
             if let Some(id) = selected
                 .as_deref()
