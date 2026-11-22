@@ -1217,6 +1217,34 @@ test("closing the preview drops its unsubmitted address before opening a convers
   } finally { await page.close() }
 })
 
+test("Back skips an interrupted agent visit without retiring the guest", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
+  try {
+    await prepare(page, "tauri")
+    const [a, b, c] = ["a", "b", "c"].map(path => `${base}/page/${path}`)
+    await page.evaluate(url => (window as any).fixture.openPreview("session", url), a)
+    await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.payload?.action === "history"))
+    await page.evaluate(url => (window as any).fixture.openNativePreview("interrupted", url), b)
+    await page.waitForFunction(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_claim_open"))
+    await page.evaluate(url => {
+      const fixture = (window as any).fixture
+      const { native } = fixture
+      const { registrationId } = native.calls.find((call: any) => call.command === "browser_target_claim_open").response
+      native.navigate(registrationId, url)
+      native.beforeNavigate = () => fixture.settleNativePreview("interrupted")
+    }, b)
+    const address = page.getByRole("textbox", { name: "Preview URL", exact: true })
+    assert.equal(await address.inputValue(), b)
+    await address.fill(c)
+    await address.press("Enter")
+    await page.waitForFunction(url => (window as any).fixture.savedPreview("session").targetUrl === url, c)
+    assert.deepEqual((await preview(page, "session")).history, { urls: [a, c], index: 1 })
+    await page.locator('[data-preview-instance="header-windows"]').getByRole("button", { name: "Back", exact: true }).click()
+    await page.waitForFunction(url => (window as any).fixture.preview("session").targetUrl === url, a)
+    assert.equal(await page.evaluate(() => (window as any).fixture.native.calls.some((call: any) => call.command === "browser_target_release_open")), false)
+  } finally { await page.close() }
+})
+
 for (const manualFirst of [true, false]) test(`native ownership: ${manualFirst ? "manual" : "agent"} opener owns the preview`, async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 900 } })
   const errors: string[] = []

@@ -19,15 +19,20 @@ impl BrowserPreviewOwners {
         self.owners.get(session_id)
     }
 
-    pub(super) fn last_used(&self, session_id: &str) -> Option<(&str, &str)> {
+    pub(super) fn last_used<'a>(
+        &'a self,
+        session_id: &'a str,
+    ) -> impl Iterator<Item = (&'a str, &'a str)> {
         self.recent
             .iter()
-            .find(|(session, _, _)| session == session_id)
+            .filter(move |(session, _, _)| session == session_id)
             .map(|(_, window, instance)| (window.as_str(), instance.as_str()))
     }
 
     pub(super) fn used(&mut self, session_id: String, window: &str, instance_id: String) {
-        self.recent.retain(|(session, _, _)| session != &session_id);
+        self.recent.retain(|(session, owner, id)| {
+            session != &session_id || owner != window || id != &instance_id
+        });
         self.recent
             .push_front((session_id, window.into(), instance_id));
         self.recent.truncate(512);
@@ -104,6 +109,18 @@ mod tests {
             let second = scope.spawn(move || open("second"));
             assert_eq!(first.join().unwrap(), second.join().unwrap());
         });
+    }
+
+    #[test]
+    fn closing_a_recent_tab_keeps_the_previous_occurrence() {
+        let mut owners = BrowserPreviewOwners::default();
+        owners.used("session".into(), "first-window", "first-tab".into());
+        owners.used("session".into(), "second-window", "second-tab".into());
+        owners.release("second-window", Some("second-tab"));
+        assert_eq!(
+            owners.last_used("session").next(),
+            Some(("first-window", "first-tab"))
+        );
     }
 
     #[test]

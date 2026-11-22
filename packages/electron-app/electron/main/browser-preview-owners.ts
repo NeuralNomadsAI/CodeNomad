@@ -7,17 +7,18 @@ export interface PreviewOwner<T> {
 /** Called synchronously in the main process, before any guest or renderer work. */
 export class BrowserPreviewOwners<T> {
   private readonly owners = new Map<string, PreviewOwner<T>>()
-  private readonly recent = new Map<string, { window: T; instanceId: string }>()
+  private recent: { sessionId: string; window: T; instanceId: string }[] = []
   private revision = 0
 
   get(sessionId: string) { return this.owners.get(sessionId) }
 
-  lastUsed(sessionId: string) { return this.recent.get(sessionId) }
+  lastUsed(sessionId: string, eligible: (window: T, instanceId: string) => boolean) {
+    return this.recent.find(tab => tab.sessionId === sessionId && eligible(tab.window, tab.instanceId))
+  }
 
   used(sessionId: string, window: T, instanceId: string) {
-    this.recent.delete(sessionId)
-    this.recent.set(sessionId, { window, instanceId })
-    if (this.recent.size > 512) this.recent.delete(this.recent.keys().next().value!)
+    this.recent = [{ sessionId, window, instanceId }, ...this.recent.filter(tab =>
+      tab.sessionId !== sessionId || tab.window !== window || tab.instanceId !== instanceId)].slice(0, 512)
   }
 
   sessionFor(window: T, revision: number) {
@@ -37,9 +38,7 @@ export class BrowserPreviewOwners<T> {
   }
 
   release(window: T, instanceId?: string) {
-    for (const [sessionId, tab] of this.recent) {
-      if (tab.window === window && (instanceId === undefined || tab.instanceId === instanceId)) this.recent.delete(sessionId)
-    }
+    this.recent = this.recent.filter(tab => tab.window !== window || (instanceId !== undefined && tab.instanceId !== instanceId))
     const released: { sessionId: string; owner: PreviewOwner<T>; revision: number }[] = []
     for (const [sessionId, owner] of this.owners) {
       if (owner.window !== window || (instanceId !== undefined && owner.instanceId !== instanceId)) continue

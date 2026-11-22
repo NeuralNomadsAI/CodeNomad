@@ -5,7 +5,7 @@ import { tGlobal } from "../lib/i18n"
 import type { PreviewSession } from "../../../server/src/api-types"
 import { BrowserHistoryJournal, browserAddress, historyUrl, parseBrowserHistory, type BrowserHistory } from "../lib/browser-history"
 import { remotePreviewContent, remotePreviewSource } from "../lib/remote-preview-address"
-import { applySurface, beginGesture, type SurfaceGesture } from "./session-surface"
+import { applySurface, beginGesture, getSessionSurface, type SurfaceGesture } from "./session-surface"
 import { changeBrowserPreviewOwnership, hasNativePreviewOwnership, type BrowserPreviewOwnership } from "../lib/native/browser"
 import { adoptLegacyTabPreview, getTabViewState, updateTabViewState } from "./tab-view-state"
 import type { RestorableTabPreview } from "./tab-view-state-codec"
@@ -24,6 +24,7 @@ interface SessionPreviewRecord extends PreviewSession {
   history: BrowserHistory
   viewport?: RestorableTabPreview["viewport"]
   nativeOpen?: { requestID: string; instanceId: string; observedAddress?: string }
+  interruptedOpenId?: string
 }
 type StoredSessionPreview = RestorableTabPreview
 const DEFAULT_PREVIEW_URL = "http://localhost:3000"
@@ -104,7 +105,7 @@ export function settleSessionPreviewOpen(sessionId: string, instanceId: string, 
   const request = record?.nativeOpen
   if (!record || request?.requestID !== requestID || request.instanceId !== instanceId) return
   const confirmed = browserAddress(committedUrl)
-  const next = { ...record, nativeOpen: undefined }
+  const next = { ...record, nativeOpen: undefined, interruptedOpenId: confirmed ? undefined : requestID }
   const successor = keepGuest ? browserAddress(successorUrl) : undefined
   // A native start alone is not a commit; require the retained guest's location event.
   const committed = confirmed ?? (successor === request.observedAddress ? successor : undefined)
@@ -242,6 +243,12 @@ async function openSessionPreview(sessionId: string, url: string, instanceId: st
   if (!isInstanceOccurrenceOpen(instanceId)) throw new DOMException("Preview occurrence is closed", "AbortError")
   if (managed(instanceId) && !isPreviewOwner(sessionId, instanceId)) throw new DOMException("Preview belongs to another tab", "AbortError")
   if (!(local(instanceId) ? browserAddress(url) : historyUrl(url))) throw new TypeError(tGlobal("sessionPreview.open.invalidUrl"))
+  const canShow = () => {
+    if (!nativeOpen) return true
+    const { kind } = getSessionSurface({ sessionId: null, instanceId })
+    return kind !== "file" && kind !== "mission"
+  }
+  if (!canShow()) throw new DOMException("Close the file or Mission reader before opening a preview", "AbortError")
   const storageKey = previewKey(sessionId, instanceId)
   const operation = beginOperation(storageKey, sessionId, instanceId, intent)
   const existing = sessionPreviews().get(storageKey)
@@ -250,7 +257,7 @@ async function openSessionPreview(sessionId: string, url: string, instanceId: st
     if (!operation.current()) throw new DOMException("Preview navigation was superseded", "AbortError")
     const preview = existing && (nativeOpen || existing.targetUrl === url) && existing.owner.signal === operation.signal
       ? existing : await createPreview(sessionId, url, operation)
-    if (delivery?.aborted || !operation.current() || (managed(instanceId) && !isPreviewOwner(sessionId, instanceId))) {
+    if (delivery?.aborted || !canShow() || !operation.current() || (managed(instanceId) && !isPreviewOwner(sessionId, instanceId))) {
       if (preview !== existing) void releasePreview(operation.client, preview)
       throw new DOMException("Preview navigation was superseded", "AbortError")
     }

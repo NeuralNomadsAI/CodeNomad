@@ -75,6 +75,7 @@ const VIEWPORT_OPTIONS = [
 interface BrowserFrameProps {
   instanceId?: string
   openRequestId?: string
+  interruptedOpenId?: string
   ownershipRevision?: number
   onNativeRegistration?: (registrationId: string) => Promise<boolean>
   active?: boolean
@@ -275,7 +276,30 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     }
   }
 
-  const startNavigation = () => props.onNavigationStart?.()
+  let interruptedCandidate: { requestId: string; registration: string; guestId?: number; id: number } | undefined
+  const retireInterruptedEntry = () => {
+    const entry = interruptedCandidate
+    if (entry && entry.requestId === props.interruptedOpenId
+      && entry.registration === browserRegistrationId && entry.guestId === historyGuestId()) {
+      journal?.retireEntry(entry.id)
+      interruptedCandidate = undefined
+    }
+  }
+  const startNavigation = () => {
+    props.onNavigationStart?.()
+    const requestId = props.openRequestId
+    if (!requestId || !journal || !capabilities.history || !untrack(registrationReady)) return
+    const registration = browserRegistrationId
+    const guestId = historyGuestId()
+    const observed = browserHost === "electron" ? webviewObservedUrl : untrack(nativeTarget)
+    return readBrowserHistory(registration, guestId).then(value => {
+      const entry = value.entries[value.index]
+      if (!disposed && entry && entry.url === observed && registration === browserRegistrationId && guestId === historyGuestId()) {
+        interruptedCandidate = { requestId, registration, guestId, id: entry.id }
+        retireInterruptedEntry()
+      }
+    }).catch(() => {})
+  }
 
   const framePolicy = getBrowserFramePolicy(runtimeEnv, { trustedSameOrigin: props.trustedSameOrigin, isolatedOrigin: props.isolatedSource && !props.opaqueSource })
   const canComment = createMemo(() => !nativeMode() && (framePolicy.canInspectDom || props.commentBridge) && Boolean(props.onToggleCommentMode && props.onCommentTarget))
@@ -863,6 +887,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     openPending = pending
     untrack(() => {
       if (settled) {
+        retireInterruptedEntry()
         // The receipt updates only the journal; native location events own the live address.
         const committed = props.initialHistory
         if (journal && committed && committed !== historyBeforeOpen) {
@@ -930,7 +955,8 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     event.stopPropagation()
     if (journal) { void traverseHistory(-1); return }
     const instanceId = props.instanceId
-    startNavigation()
+    const preparing = startNavigation()
+    if (preparing) await preparing
     if (!canNavigate(instanceId)) return
     if (nativeMode()) {
       if (browserHost === "tauri") actOnTauri("back")
@@ -950,12 +976,13 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     if (index < 0 || index >= journal.value.urls.length) return
     setAddressDraft(undefined)
     const instanceId = props.instanceId
-    startNavigation()
+    const preparing = startNavigation()
     pendingTauriNavigation = undefined
     setHistoryBusy(true)
     const version = ++historyTravelVersion
     ++historyRead // Fence reads started before this explicit traversal.
     try {
+      if (preparing) await preparing
       if (disposed || version !== historyTravelVersion) return
       if (!canNavigate(instanceId)) { setHistoryBusy(false); return }
       const native: NativeBrowserHistory = nativeMode() ? await readBrowserHistory(browserRegistrationId, historyGuestId()) : { entries: [], index: -1 }
@@ -997,7 +1024,8 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     const instanceId = props.instanceId
     supersedeHistoryTraversal()
     const version = historyTravelVersion
-    startNavigation()
+    const preparing = startNavigation()
+    if (preparing) await preparing
     if (version !== historyTravelVersion || !canNavigate(instanceId)) return
     if (nativeMode()) {
       if (browserHost === "tauri") actOnTauri("reload")
@@ -1051,7 +1079,8 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
           const instanceId = props.instanceId
           supersedeHistoryTraversal()
           const version = historyTravelVersion
-          startNavigation()
+          const preparing = startNavigation()
+          if (preparing) await preparing
           if (version !== historyTravelVersion || !canNavigate(instanceId)) return
           setPathInput(target)
           setAddressDraft(current => current === submittedDraft ? undefined : current)

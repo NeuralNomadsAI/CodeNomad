@@ -146,6 +146,7 @@ const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
         active={props.active}
         instanceId={props.preview.capability ? undefined : props.instanceId}
         openRequestId={props.preview.nativeOpen?.requestID}
+        interruptedOpenId={props.preview.interruptedOpenId}
         ownershipRevision={previewOwnershipRevision(props.preview.sessionId, props.instanceId)}
         onNativeRegistration={async registrationId => {
           const request = props.preview.nativeOpen

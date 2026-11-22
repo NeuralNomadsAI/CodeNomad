@@ -376,7 +376,12 @@ impl BrowserController {
                     inner
                         .preview_owners
                         .last_used(session_id)
-                        .map(|(window, tab)| (window.to_owned(), tab.to_owned())),
+                        .filter(|(window, tab)| {
+                            workspaces.iter().any(|id| id == tab)
+                                && candidates.iter().any(|(label, _)| label == window)
+                        })
+                        .map(|(window, tab)| (window.to_owned(), tab.to_owned()))
+                        .collect::<Vec<_>>(),
                 )
             };
             if existing.as_ref().is_some_and(|owner| {
@@ -387,14 +392,17 @@ impl BrowserController {
             }
             let preferred = if let Some(owner) = &existing {
                 Some((owner.window.clone(), owner.instance_id.clone()))
-            } else if let Some((window, tab)) = recent {
-                let eligible = workspaces.contains(&tab)
-                    && candidates.iter().any(|(label, _)| *label == window)
-                    && window_visible(app, &window)
-                        .map_err(|error| preview_error("inventory is incomplete", error))?;
-                eligible.then_some((window, tab))
             } else {
-                None
+                let mut preferred = None;
+                for (window, tab) in recent {
+                    if window_visible(app, &window)
+                        .map_err(|error| preview_error("inventory is incomplete", error))?
+                    {
+                        preferred = Some((window, tab));
+                        break;
+                    }
+                }
+                preferred
             };
             for (window, incarnation) in &candidates {
                 if preferred.as_ref().is_some_and(|(label, _)| label != window) {

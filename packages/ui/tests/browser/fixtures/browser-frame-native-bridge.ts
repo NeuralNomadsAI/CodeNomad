@@ -28,6 +28,7 @@ export const nativeFixture = {
   deferEmulation: false,
   deferOpenTarget: false,
   deferOwnership: false,
+  beforeNavigate: undefined as (() => void) | undefined,
   settleOpenTarget() { pendingOpenTarget?.(); pendingOpenTarget = undefined },
   settleOwnership() { pendingOwnership?.(); pendingOwnership = undefined },
   async ownership(input: any) {
@@ -82,7 +83,10 @@ async function invoke(command: string, args: any = {}) {
   if (command === "browser_target_register") histories.set(args.payload.registrationId, args.payload.openRequestId
     ? { entries: [], index: -1 } : { entries: [{ id: ++historyId, url: args.payload.url }], index: 0 })
   if (command === "browser_target_action" && args.payload.action === "history") return histories.get(args.payload.registrationId)
-  if (command === "browser_target_action" && args.payload.action === "navigate") nativeFixture.navigate(args.payload.registrationId, args.payload.url)
+  if (command === "browser_target_action" && args.payload.action === "navigate") {
+    nativeFixture.beforeNavigate?.()
+    nativeFixture.navigate(args.payload.registrationId, args.payload.url)
+  }
   if (command === "browser_target_action" && args.payload.action === "history-go") {
     const history = histories.get(args.payload.registrationId)!
     history.index = history.entries.findIndex(entry => entry.id === args.payload.entryId)

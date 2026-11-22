@@ -450,6 +450,23 @@ test("a native open does not deliver to a tab closed during session hydration", 
   assert.deepEqual(released, ["delivery"])
 })
 
+test("an agent open leaves the owning tab's file and Mission reader in place", async t => {
+  const instanceId = "reader-tab", sessionId = "session"
+  const context = { instanceId, sessionId }
+  publishInstanceLifecycleAuthority({ ...context, type: "opened", folder: "/repo", occurrence: 0 })
+  const surfaces: CentralSurface[] = [
+    { kind: "file", target: { sessionId, kind: "workspace", slug: "root", directory: "/repo", path: "notes.md" } },
+    { kind: "mission", target: { missionId: "mission", kind: "overview" } },
+  ]
+  const create = t.mock.method(localBackend.api, "createPreview", async () => assert.fail("reader was replaced"))
+  for (const surface of surfaces) {
+    applySurface(context, surface)
+    await assert.rejects(openSessionPreview(sessionId, "https://example.com/", instanceId, undefined, { requestID: "agent", instanceId }), { name: "AbortError" })
+    assert.deepEqual(getSessionSurface(context), surface)
+  }
+  assert.equal(create.mock.callCount(), 0)
+})
+
 test("App automatic host setup follows the selected live or restoring backend without gating remote tabs", () => {
   let active: any, saved: any
   const automatic = appCallback("automaticLocalSetup", {

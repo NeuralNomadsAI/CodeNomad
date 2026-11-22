@@ -685,6 +685,9 @@ describe("BrowserController preview lifecycle", () => {
     })
     h.controller.changeOwnership(h.owner, { action: "used", sessionId: "session", instanceId: "focused-window-tab" })
     h.controller.changeOwnership(h.other, { action: "used", sessionId: "session", instanceId: "older-window-tab" })
+    h.controller.changeOwnership(h.owner, { action: "used", sessionId: "session", instanceId: "closed-tab" })
+    h.controller.changeOwnership(h.owner, { action: "release", instanceId: "closed-tab" })
+    h.controller.changeOwnership(h.owner, { action: "used", sessionId: "session", instanceId: "ineligible-tab" })
     await assert.rejects(h.controller.open("session", "https://example.com/", Infinity, ["focused-window-tab", "older-window-tab"]), /changed/)
   })
 

@@ -456,8 +456,8 @@ export class BrowserController {
     if (existingOwner && (!workspaceIDs.includes(existingOwner.instanceId) || !this.openWindowVisible(existingOwner.window))) {
       throw new Error("The owning preview tab is unavailable")
     }
-    const recent = this.previewOwners.lastUsed(sessionID)
-    const preferred = existingOwner ?? (recent && workspaceIDs.includes(recent.instanceId) && this.openWindowVisible(recent.window) ? recent : undefined)
+    const preferred = existingOwner ?? this.previewOwners.lastUsed(sessionID, (window, instanceId) =>
+      workspaceIDs.includes(instanceId) && this.openWindowVisible(window))
     for (const owner of preferred ? [preferred.window] : this.openCandidates()) {
       if (!this.openWindowVisible(owner)) continue
       ensureDeadline(registrationDeadline)
