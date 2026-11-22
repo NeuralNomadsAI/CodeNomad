@@ -10,6 +10,7 @@ pub fn dark() -> bool {
 }
 /// Install Rune's inherited ink for every render, including unstyled text and editors.
 pub fn render<S, T>(cx: &mut rune::Cx<S>, build: impl FnOnce(&mut rune::Cx<S>) -> T) -> T {
+    cx.web_focus();
     let dark = cx.system_dark();
     cx.foreground(tokens(dark).color("text-primary"));
     with_appearance(dark, || build(cx))

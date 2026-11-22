@@ -4,6 +4,8 @@ use rune::{Cx, El};
 use rune_theme_codenomad::layout::Layout;
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub mod action_menu;
+#[cfg(test)]
+mod focus_tests;
 
 #[derive(Default)]
 pub struct Gallery {

@@ -46,7 +46,7 @@ assert(inspection.accessibility,'Product --tree must expose the actual accessibi
 assert(!JSON.stringify(inspection).includes('Synthetic message '),'Default inspector must render the product launcher')
 for(const kind of ['binary','wasm']){
   const artifact=await readFile(values[kind])
-  for(const marker of ['Synthetic message ','nativeProbes','real history operation failed:','action-menu-event:']){
+  for(const marker of ['Synthetic message ','nativeProbes','real history operation failed:','action-menu-event:','Rune web focus fixture']){
     assert(!artifact.includes(Buffer.from(marker)),`${kind} default artifact retains qualification marker ${marker}`)
   }
 }

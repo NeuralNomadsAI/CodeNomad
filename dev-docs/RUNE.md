@@ -25,6 +25,8 @@ Kit builders consume the mapped `Kit` directly. Keep visual configuration before
 
 Shared button factories accept their action before building the Kit control. Disabled buttons omit pointer and keyboard actions; application callbacks retain their captured screen scope.
 
+Shared renders enable `Cx::web_focus`: Tab follows pressable controls, pointer presses take focus, and Return on a focused button precedes an explicit default action. Close preserves the source's Shift+Return and held-Return activation through its shared handler, with Ctrl/Alt/Meta left to shortcut routing. The pinned runtime's Space press phase, modified Space and held Return on Kit buttons have separate source qualification gaps.
+
 ## Platform
 
 - Shared code builds for native and `wasm32-unknown-unknown`; CI builds both.

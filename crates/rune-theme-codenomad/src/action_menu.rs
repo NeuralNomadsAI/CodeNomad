@@ -251,6 +251,8 @@ pub fn view<S: 'static>(
         .rev()
         .find(|item| !item.disabled)
         .map(|item| item.key.clone());
+    let menu_first = first.clone();
+    let menu_last = last.clone();
     let action = menu.clone();
     let control = trigger
         .key(trigger_key.clone())
@@ -365,12 +367,30 @@ pub fn view<S: 'static>(
         })
     });
     let dismiss = menu.clone();
+    let menu_key = format!("{}:menu", menu.key);
+    let focus_menu = menu.key.clone();
     let surface = rune::col()
-        .key(format!("{}:menu", menu.key))
+        .key(menu_key.clone())
         .role("menu")
         .label(&menu.label)
         .focus_group()
+        .focusable(true)
+        .tab_index(-1)
         .focus_return(&trigger_key)
+        .on_key(move |_: &mut S, event, tx| {
+            if tx.focused() != Some(menu_key.as_str()) || event.mods != rune::Mods::default() {
+                return false;
+            }
+            let target = match event.key {
+                rune::Key::Down => &menu_first,
+                rune::Key::Up => &menu_last,
+                _ => return false,
+            };
+            if let Some(target) = target {
+                tx.focus(format!("{focus_menu}:item:{target}"), true);
+            }
+            true
+        })
         .modal_tx(true, move |s, tx| close(s, at, &dismiss, None, None, tx))
         .min_w(t.metric("actionMenu", "minWidth").px())
         .max_w((viewport_width - t.metric("actionMenu", "viewportInset").px()).max(0.0))

@@ -20,6 +20,14 @@ Le mode `--files-state` ouvre un projet privé et sa session synthétique exista
 
 La feature `test-support` active les scènes, la galerie et les sondes de qualification. Avant ces builds, `check-production.mjs` vérifie les artefacts par défaut : refus des arguments de qualification, absence de marqueurs de sondes dans les binaires natif et WASM, et fonctionnement de l'inspection Rune sur le lanceur du produit.
 
+Le binaire séparé `web-focus-fixture` exige `test-support` et importe le vrai Close applicatif. `tests/web_focus_probe.rs` compare le Runtime public natif au mode commun ; `parity/web-focus.mjs` exerce son vrai WASM et miroir DOM sous Chromium headless en clair/sombre, sur un hôte loopback possédé. Les compteurs séparent action unique, défaut explicite, champ submit, focus, modal et Tx ; les phases Espace et la répétition gardent leurs témoins d'écart avec Solid. Le vrai scope applicatif est qualifié par `launcher::view::tests::web_focus_keyboard_actions_keep_their_screen_scope_and_tx` ; la scène WASM couvre les composants et le dispatch.
+
+```powershell
+cargo +1.99.1 test --locked -p rune-theme-codenomad --test web_focus_probe -- --nocapture
+cargo +1.99.1 build --locked -p rune-theme-codenomad --example web-focus-fixture --features test-support --target wasm32-unknown-unknown
+node scripts/rune/parity/web-focus.mjs --wasm <target>/wasm32-unknown-unknown/debug/examples/web-focus-fixture.wasm --bindgen <wasm-bindgen-matching-lock.exe> --rune <locked-rune-crate> --executable <chromium.exe>
+```
+
 ## Parité par composant
 
 Les composants Solid et Rune demandent des paires de captures exécutées à géométrie identique, dans chaque palette, avec références d'accessibilité et interactions dédiées. Le statut de parité reste à qualifier pour les composants de l'inventaire.

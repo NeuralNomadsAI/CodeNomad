@@ -54,3 +54,57 @@ fn queued_actions_keep_their_screen_scope_and_tx() {
         assert_eq!(destination.focused, tx);
     }
 }
+
+fn web_view(s: &State, cx: &mut Cx<State>) -> El {
+    cx.web_focus();
+    view(s, cx)
+}
+
+#[test]
+fn web_focus_keyboard_actions_keep_their_screen_scope_and_tx() {
+    for transactional in [false, true] {
+        for key in [rune::Key::Enter, rune::Key::Text(" ".into())] {
+            let mut s = crate::init();
+            s.paging = transactional;
+            let mut rt = Runtime::new(s, web_view, (320.0, 180.0), Env::new(false, 1.0));
+            rt.frame(0.0);
+            rt.update(|_, tx| tx.focus("action", true));
+            rt.frame(0.0);
+            let event = rune::KeyEvent {
+                key,
+                mods: rune::Mods::default(),
+            };
+            rt.key(event.clone());
+            rt.state.renew_scope();
+            rt.frame(0.0);
+            rt.key_up(event.clone());
+            rt.frame(0.0);
+            assert!(
+                rt.state.draft.text.is_empty(),
+                "queued activation keeps old screen scope"
+            );
+            assert!(
+                !rt.elements()
+                    .iter()
+                    .any(|node| node.key.as_deref() == Some("destination") && node.focused)
+            );
+
+            rt.update(|_, _| {});
+            rt.frame(0.0);
+            rt.key(event.clone());
+            rt.frame(0.0);
+            rt.key_up(event);
+            rt.frame(0.0);
+            assert_eq!(rt.state.draft.text, "accepted");
+            let destination = rt
+                .elements()
+                .into_iter()
+                .find(|node| node.key.as_deref() == Some("destination"))
+                .unwrap();
+            assert_eq!(
+                destination.focused, transactional,
+                "original Tx reaches the destination"
+            );
+        }
+    }
+}
