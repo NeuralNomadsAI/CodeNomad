@@ -1,4 +1,5 @@
 use super::{
+    opencode,
     preferences::{Owner, Preferences},
     render_with,
 };
@@ -21,6 +22,8 @@ pub(super) struct Window {
     picker: Cell<Option<Picker>>,
     palette_choice: Cell<Option<&'static palettes::Palette>>,
     seen_revision: u64,
+    open_code_section: bool,
+    pub(super) opencode: opencode::Status,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -39,6 +42,17 @@ impl Picker {
 }
 
 impl Window {
+    pub(super) fn check_opencode(&mut self, recheck: bool) {
+        let prefs = self.shared.borrow();
+        let backend = prefs.backend.as_ref().filter(|_| prefs.can_retry());
+        self.opencode
+            .read(backend, prefs.window_wake.as_ref(), recheck);
+    }
+
+    pub(super) fn has_backend(&self) -> bool {
+        self.shared.borrow().can_retry()
+    }
+
     pub fn new(shared: Rc<RefCell<Preferences>>, token: Rc<Cell<bool>>) -> Self {
         Self {
             shared,
@@ -116,7 +130,11 @@ pub(super) fn spec() -> AppSpec<Window> {
                     || t("settings.title"),
                 ));
             }
-            updated
+            drop(prefs);
+            if s.open_code_section {
+                s.check_opencode(false);
+            }
+            updated | s.opencode.poll()
         }),
         on_key: Some(|_, event, tx| {
             if event.key != rune::Key::Escape {
@@ -126,7 +144,14 @@ pub(super) fn spec() -> AppSpec<Window> {
             true
         }),
         #[cfg(any(test, feature = "test-support"))]
-        scenes: &[("settings", |s| s.shared.borrow_mut().fixture())],
+        scenes: &[
+            ("settings", |s| s.shared.borrow_mut().fixture()),
+            ("opencode", |s| {
+                s.shared.borrow_mut().fixture();
+                s.open_code_section = true;
+                s.opencode.fixture();
+            }),
+        ],
         ..chrome::spec(t("settings.title"), Window::default, view)
     }
 }
@@ -146,12 +171,27 @@ fn view(s: &Window, cx: &mut Cx<Window>) -> El {
     let system_dark = cx.system_dark();
     s.close_palette_on_slot_change(prefs.dark(system_dark));
     render_with(cx, &prefs, |_| {
-        let section = t("settings.nav.general");
+        let general_label = t("settings.nav.general");
+        let opencode_label = t("settings.nav.opencode");
+        let section = if s.open_code_section {
+            opencode_label
+        } else {
+            general_label
+        };
         let nav = chrome::nav(
             t("settings.title"),
             t("settings.navigationAriaLabel"),
-            [("settings-general", section, true)],
-            |s: &mut Window, _| s.picker.set(None),
+            [
+                ("settings-general", general_label, !s.open_code_section),
+                ("settings-opencode", opencode_label, s.open_code_section),
+            ],
+            |s: &mut Window, key| {
+                s.picker.set(None);
+                s.open_code_section = key == "settings-opencode";
+                if !s.open_code_section {
+                    s.opencode = opencode::Status::default();
+                }
+            },
         );
         let mut layers = Vec::new();
         let status = if let Some(error) = prefs.error().or_else(|| {
@@ -172,8 +212,12 @@ fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         } else {
             rune::el()
         };
-        let content = [status, general(s, &prefs, system_dark, &mut layers)];
-        chrome::frame(nav, chrome::pane("general", section, content), layers)
+        let (key, controls) = if s.open_code_section {
+            ("opencode", opencode::view(s))
+        } else {
+            ("general", general(s, &prefs, system_dark, &mut layers))
+        };
+        chrome::frame(nav, chrome::pane(key, section, [status, controls]), layers)
     })
 }
 
@@ -201,6 +245,42 @@ mod tests {
         assert!(tree.contains("Could not save the preference."));
         assert!(tree.contains("\"role\":\"alert\""));
         assert!(tree.contains("\"name\":\"OK\""));
+    }
+
+    #[test]
+    fn settings_opencode_versions_and_fold_use_the_runtime() {
+        let mut state = Window::default();
+        state.shared.borrow_mut().fixture();
+        state.opencode.fixture();
+        let mut rt = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+        rt.frame(0.0);
+        let click = |rt: &mut Runtime<Window>, key| {
+            let (x, y) = rt.find(key).unwrap();
+            rt.pointer_down(x, y);
+            rt.pointer_up(x, y);
+            rt.frame(0.02);
+        };
+        assert!(
+            !rt.accessibility_json()
+                .to_string()
+                .contains("Installed version")
+        );
+        click(&mut rt, "settings-opencode");
+        let before = rt.accessibility_json().to_string();
+        assert!(before.contains("2.3.0") && before.contains("2.2.5"));
+        assert!(!before.contains("Minimum version"));
+        click(&mut rt, "trigger");
+        assert!(
+            rt.accessibility_json()
+                .to_string()
+                .contains("Minimum version")
+        );
+        click(&mut rt, "settings-general");
+        assert!(
+            !rt.accessibility_json()
+                .to_string()
+                .contains("Installed version")
+        );
     }
 
     #[test]

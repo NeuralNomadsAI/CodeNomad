@@ -1,4 +1,6 @@
 //! Preferences owns its native window; its confirmed host settings also feed the shell.
+#[cfg(not(target_arch = "wasm32"))]
+mod opencode;
 mod preferences;
 #[cfg(not(target_arch = "wasm32"))]
 mod view;

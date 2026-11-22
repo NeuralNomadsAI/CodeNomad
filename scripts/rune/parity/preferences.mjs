@@ -8,11 +8,12 @@ import {root} from '../generate-common.mjs'
 import {installPngReader} from '../png-pixels.mjs'
 import {requireTestSupport} from '../../../packages/rune-app/fixtures/fixture-binaries.mjs'
 
-const {values:{binary}}=parseArgs({options:{binary:{type:'string'}}})
+const {values:{binary,section='general'}}=parseArgs({options:{binary:{type:'string'},section:{type:'string'}}})
 assert(binary&&path.isAbsolute(binary),'Supply --binary ABSOLUTE_EXE')
+assert(['general','opencode'].includes(section),'Unknown preferences section')
 requireTestSupport(binary)
 const ui=path.join(root,'packages/ui')
-const out=path.join(root,'target/rune-parity/preferences')
+const out=path.join(root,'target/rune-parity/preferences',section==='general'?'':'opencode')
 await mkdir(out,{recursive:true})
 const {startFixtureDaemon}=await import('../../../packages/ui/tests/browser/fixture-daemon/server.ts')
 const fixture='/tests/browser/fixtures/preferences-window.tsx'
@@ -26,25 +27,31 @@ try {
   for(const theme of ['light','dark']) {
     const page=await browser.newPage({viewport:{width:1100,height:760},locale:'en-US',colorScheme:theme,reducedMotion:'reduce'})
     page.on('pageerror',error=>console.error(error.message))
-    await page.addInitScript(()=>{
+    await page.addInitScript(section=>{
       window.__CODENOMAD_RUNTIME_HOST__='electron'
       window.__CODENOMAD_WINDOW_CONTEXT__='preferences'
       window.electronAPI={
-        getPreferencesRequest:async()=>({section:'general'}),acceptPreferencesRequest:async()=>{},
+        getPreferencesRequest:async()=>({section}),acceptPreferencesRequest:async()=>{},
         preferencesReady:async()=>{},onPreferencesSection:()=>()=>{},onPreferencesCloseRequested:()=>()=>{},
         onPreferencesTransitionRequested:()=>()=>{},closeWindow:async()=>{},
       }
-    })
+    },section)
     await page.route('**/api/**',route=>{
       const target=new URL(route.request().url()).pathname
       if(!target.startsWith('/api/'))return route.continue()
       if(target==='/api/storage/config/ui')return route.fulfill({json:{settings:{locale:'en'}}})
       if(target==='/api/storage/state/ui')return route.fulfill({json:{appearancePreferences:{mode:'system',
         light:{scheme:{id:'light'}},dark:{scheme:{id:'classic'}}}}})
+      if(target==='/api/meta')return route.fulfill({json:{apiContract:1,capabilities:['opencode-admin'],localRequest:true}})
+      if(target==='/api/opencode/update')return route.fulfill({json:{
+        state:'ready',serviceState:'ready',currentVersion:'2.3.0',daemonVersion:'2.2.5',
+        minimumVersion:'2.2.3',recommendedVersion:'2.2.5',target:'host',binaryPath:'opencode2',
+      }})
       return route.fulfill({json:{}})
     })
     await page.goto(url,{waitUntil:'domcontentloaded',timeout:90000})
-    await page.locator('.settings-language-row .selector-trigger').waitFor({timeout:90000})
+    if(section==='general')await page.locator('.settings-language-row .selector-trigger').waitFor({timeout:90000})
+    else await page.getByText('2.3.0',{exact:true}).first().waitFor({timeout:90000})
     await page.waitForFunction(id=>document.documentElement.dataset.colorScheme===id,theme==='dark'?'classic':'light')
     const solidPng=path.join(out,`solid-${theme}.png`)
     const sourceBounds=await page.evaluate(()=>Object.fromEntries(Object.entries({
@@ -64,7 +71,7 @@ try {
     const env={...process.env,CODENOMAD_PROFILE:'trial-settings-parity',RUNE_LOCALE:'en'}
     for(const key of Object.keys(env))if(key.startsWith('RUNE_')&&key!=='RUNE_LOCALE')delete env[key]
     await new Promise((resolve,reject)=>{
-      const child=spawn(binary,['--gallery-preferences','--scene','settings','--theme',theme,'--tree',tree,'--snap',png,
+      const child=spawn(binary,['--gallery-preferences','--scene',section==='general'?'settings':'opencode','--theme',theme,'--tree',tree,'--snap',png,
         '--size','1100x760','--scale','1','--at','0.5'],{cwd:root,env,windowsHide:true,stdio:['ignore','ignore','inherit']})
       const timer=setTimeout(()=>{child.kill();reject(Error('Rune capture timeout'))},60000)
       child.once('error',error=>{clearTimeout(timer);reject(error)})
@@ -73,12 +80,18 @@ try {
     const nodes=[]
     const walk=node=>{nodes.push(node);for(const child of node.children??[])walk(child)}
     walk(JSON.parse(await readFile(tree,'utf8')).accessibility)
-    for(const [key,name,value] of [['locale-trigger','Language','English'],['palette-trigger','Color scheme','Classic']]){
-      const node=nodes.find(node=>node.key===key)
-      assert.equal(node?.name,name)
-      assert.equal(node?.value,value)
-      assert.equal(node?.role,'combo-box')
-      assert(node.states.includes('collapsed'))
+    if(section==='general'){
+      for(const [key,name,value] of [['locale-trigger','Language','English'],['palette-trigger','Color scheme','Classic']]){
+        const node=nodes.find(node=>node.key===key)
+        assert.equal(node?.name,name)
+        assert.equal(node?.value,value)
+        assert.equal(node?.role,'combo-box')
+        assert(node.states.includes('collapsed'))
+      }
+    }else{
+      assert(nodes.some(node=>node.name==='2.3.0'))
+      assert(nodes.some(node=>node.name==='2.2.5'))
+      assert(nodes.find(node=>node.name==='Version details')?.states.includes('collapsed'))
     }
     const actualBounds={
       locale:nodes.find(node=>node.key==='locale-trigger').bounds,
