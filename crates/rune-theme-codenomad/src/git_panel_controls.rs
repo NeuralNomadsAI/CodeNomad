@@ -47,25 +47,44 @@ pub fn icon_button<S: 'static>(
     glyph: &'static Glyph,
     name: impl Into<String>,
     disabled: bool,
-    active: bool,
+    active: Option<bool>,
     press: impl Fn(&mut S, &mut Tx) + 'static,
 ) -> El {
     let name = name.into();
-    IconButton::new(glyph)
+    let button = IconButton::new(glyph)
         .variant(IconButtonVariant::GhostMuted)
         .control_size(ControlSize::Small)
         .label(name.clone())
         .help(name)
         .state(if disabled {
             State::Disabled
-        } else if active {
+        } else if active == Some(true) {
             State::Pressed
         } else {
             State::Rest
         })
         .on_press_tx(press)
+        .build(kit(dark()));
+    match active {
+        Some(active) => button.checked(active),
+        None => button,
+    }
+}
+
+pub fn overflow_trigger(label: &str) -> El {
+    IconButton::new(&super::MORE_HORIZONTAL)
+        .label(label)
+        .variant(IconButtonVariant::GhostMuted)
+        .control_size(ControlSize::Small)
         .build(kit(dark()))
-        .checked(active)
+}
+
+pub fn compact_file_actions(width: f32, label: &str) -> bool {
+    let t = crate::tokens(dark());
+    let button = t.metric("fileRowAction", "minWidth").px();
+    let font = t.text(crate::TextRole::Label).size;
+    // Until Rune exposes intrinsic text width, use the UI face's average advance.
+    width < 3.0 * button + label.chars().count() as f32 * font * 0.55
 }
 
 pub fn modes<S: 'static>(
@@ -149,12 +168,14 @@ pub fn file<S: 'static>(
                         .color(ink)
                         .truncate()
                         .remaining()
+                        .shrink()
                         .literal_direction(),
                 )
                 .child(counts.map_or_else(rune::el, |(plus, minus)| super::changes(plus, minus)))
         })
         .build(kit(dark()))
         .remaining()
+        .shrink()
         .checked(selected)
 }
 

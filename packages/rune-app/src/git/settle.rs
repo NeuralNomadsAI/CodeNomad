@@ -57,7 +57,7 @@ impl Ui {
                     }
                 }
             }
-            Value::Changes(mut statuses) => {
+            Value::Changes(mut statuses, revision) => {
                 if let Some(collation) = &self.collation {
                     statuses.sort_by(|a, b| {
                         collation
@@ -65,7 +65,9 @@ impl Ui {
                             .unwrap_or_else(|_| a.path.cmp(&b.path))
                     });
                 }
-                if self.changes.replace(statuses, self.hide_whitespace) {
+                if self.changes.replace(statuses, self.hide_whitespace)
+                    && self.preview_revision == revision
+                {
                     self.reconcile_preview();
                 }
             }

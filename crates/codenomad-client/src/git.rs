@@ -243,7 +243,8 @@ impl Backend {
                 let whitespace_only = flag(row, "unstagedWhitespaceOnly")?
                     && unstaged
                         .as_ref()
-                        .is_some_and(|value| value.kind == "modified");
+                        .is_some_and(|value| value.kind == "modified")
+                    && staged.as_ref().is_none_or(|value| value.kind != "unmerged");
                 Ok(Status {
                     path,
                     original_path: original_path(row, &tree.directory)?,

@@ -47,7 +47,7 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
                     &theme::REFRESH_CW,
                     t("instanceShell.rightPanel.actions.refresh"),
                     ui.loading() || !ui.online,
-                    false,
+                    None,
                     run(s, |s, _| {
                         if let Some(ui) = &mut s.git.owner {
                             ui.refresh();
@@ -70,7 +70,7 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
         } else {
             el()
         });
-    let mut panel = theme::dock(theme::panel(), width)
+    let mut panel = theme::panel()
         .key("git-panel")
         .role("region")
         .label(title)
@@ -84,6 +84,14 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
         if let Some(error) = &ui.requests.slot(*lane).error {
             panel = panel.child(theme::note(error, "alert"));
         }
+    }
+    if ui.repository() == Repository::NoGit
+        && ui.mode != Mode::Workspace
+        && mode_lanes
+            .iter()
+            .all(|lane| ui.requests.slot(*lane).error.is_none())
+    {
+        panel = panel.child(theme::note(t("filesPanel.gitInit.gitRequired"), "alert"));
     }
     if ui.mode != Mode::Workspace
         && let Some((ok, message)) = &ui.mutation_message
@@ -121,12 +129,12 @@ pub(crate) fn panel(s: &State, width: f32, workspace: El) -> El {
         }
     } else {
         match ui.mode {
-            Mode::Changes => changes_view(s, ui),
+            Mode::Changes => changes_view(s, ui, width, &mut overlay),
             Mode::History => history::view(s, ui),
             Mode::Workspace => el(),
         }
     };
-    panel.child(body).children(overlay)
+    theme::dock(theme::with_overlays(panel.child(body), overlay), width)
 }
 
 fn branch(ui: &Ui) -> String {
@@ -238,9 +246,8 @@ fn worktree_picker(ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El {
     )
 }
 
-fn changes_view(s: &State, ui: &Ui) -> El {
-    let mut body = theme::scroll()
-        .key("git-changes-body")
+fn changes_view(s: &State, ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El {
+    let mut body = theme::saved_scroll::<State>("git-changes-body", &ui.changes_scroll)
         .on_drawn_layout_tx(action(s, |s, bounds, _| {
             if let Some(ui) = &mut s.git.owner {
                 ui.body_bounds = bounds;
@@ -293,7 +300,7 @@ fn changes_view(s: &State, ui: &Ui) -> El {
             let mut visible = 0;
             for entry in ui.changes.visible(section) {
                 visible += 1;
-                group = group.child(file_row(s, ui, entry));
+                group = group.child(file_row(s, ui, entry, width, overlay));
             }
             let hidden = count - visible;
             if hidden > 0 {
@@ -353,8 +360,8 @@ fn commit_box(s: &State, ui: &Ui) -> El {
                 )
             };
             group = group.child(
-                button(s, name, Flat, !ui.can_change_index(), move |ui, _| {
-                    ui.move_paths(&target)
+                button(s, name, Flat, !ui.can_change_index(), move |ui, tx| {
+                    ui.move_paths(&target, tx.focused())
                 })
                 .key(format!("git-bulk-{}", section.key())),
             );
@@ -388,7 +395,7 @@ fn commit_box(s: &State, ui: &Ui) -> El {
     )
 }
 
-fn file_row(s: &State, ui: &Ui, entry: &changes::Row) -> El {
+fn file_row(s: &State, ui: &Ui, entry: &changes::Row, width: f32, overlay: &mut Vec<El>) -> El {
     let id = entry.id.clone();
     let key = id.key();
     let selected = ui.changes.is_selected(&id);
@@ -423,11 +430,11 @@ fn file_row(s: &State, ui: &Ui, entry: &changes::Row) -> El {
     let main = if !disabled {
         theme::with_file_drop(
             main,
-            action(s, move |s, point, _| {
+            action(s, move |s, point, tx| {
                 if let Some(ui) = &mut s.git.owner {
                     let other = 1 - changes::index(drag_id.section);
                     if inside(point, ui.body_bounds) && inside(point, ui.zones[other]) {
-                        ui.move_paths(&drag_id);
+                        ui.move_paths(&drag_id, tx.focused());
                     }
                 }
             }),
@@ -435,8 +442,34 @@ fn file_row(s: &State, ui: &Ui, entry: &changes::Row) -> El {
     } else {
         main
     };
+    let stage = format!("{} · {}", stage_label(id.section), id.path);
+    let action_id = id.clone();
+    let action = run(s, move |s, tx| {
+        if let Some(ui) = &mut s.git.owner {
+            ui.move_paths(&action_id, tx.focused());
+        }
+    });
+    let stage =
+        if ui.open_menu.as_ref() == Some(&id) || theme::compact_file_actions(width, &id.path) {
+            let (trigger, menu) = super::menu::control(ui, &id, width, &stage, action);
+            overlay.extend(menu);
+            trigger
+        } else {
+            icon(
+                &id.action_key("stage"),
+                if id.section == Section::Staged {
+                    &theme::MINUS
+                } else {
+                    &theme::PLUS
+                },
+                stage,
+                !ui.can_change_index(),
+                None,
+                action,
+            )
+        };
     theme::file_row(selected)
-        .key(format!("{key}-container"))
+        .key(id.action_key("container"))
         .child(main)
         .child(preview_button(
             s,
@@ -445,22 +478,7 @@ fn file_row(s: &State, ui: &Ui, entry: &changes::Row) -> El {
             disabled,
             active,
         ))
-        .child(icon(
-            &id.action_key("stage"),
-            if id.section == Section::Staged {
-                &theme::MINUS
-            } else {
-                &theme::PLUS
-            },
-            format!("{} · {}", stage_label(id.section), id.path),
-            !ui.can_change_index(),
-            false,
-            run(s, move |s, _| {
-                if let Some(ui) = &mut s.git.owner {
-                    ui.move_paths(&id);
-                }
-            }),
-        ))
+        .child(stage)
 }
 
 fn inside([x, y]: [f32; 2], [left, top, w, h]: [f32; 4]) -> bool {
@@ -479,7 +497,7 @@ pub(super) fn preview_button(
         &theme::EYE,
         format!("{} · {}", t("filesPanel.viewer"), target.path),
         disabled,
-        active,
+        Some(active),
         run(s, move |s, _| {
             if s.git
                 .owner
@@ -498,7 +516,7 @@ pub(super) fn icon(
     glyph: &'static theme::Glyph,
     name: impl Into<String>,
     disabled: bool,
-    active: bool,
+    active: Option<bool>,
     press: impl Fn(&mut State, &mut Tx) + 'static,
 ) -> El {
     theme::icon_button(glyph, name, disabled, active, press).key(key)

@@ -7,6 +7,10 @@ use codenomad_client::{
 use rune_theme_codenomad::{Space, git_panel, layout::Layout};
 
 pub fn view(s: &crate::State) -> rune::El {
+    let width = crate::platform::setting("RUNE_GIT_PANEL_WIDTH")
+        .and_then(|width| width.parse::<f32>().ok())
+        .filter(|width| width.is_finite() && *width > 0.0)
+        .unwrap_or(360.0);
     rune::col()
         .full_width()
         .full_height()
@@ -21,7 +25,7 @@ pub fn view(s: &crate::State) -> rune::El {
                         .child(crate::git::reader(s))
                         .child(crate::composer(s)),
                 )
-                .child(crate::git::panel(s, 360.0, rune::el())),
+                .child(crate::git::panel(s, width, rune::el())),
         )
 }
 

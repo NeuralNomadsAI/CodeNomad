@@ -1,11 +1,13 @@
-use super::{Mode, Ui};
+use super::{DiffPreferences, Mode, Ui};
 use crate::{State, components::diff::DiffState};
 use codenomad_client::{backend::Backend, transport::WorkspaceEvent};
+use std::{cell::Cell, rc::Rc};
 
 pub(crate) struct Binding {
     pub owner: Option<Ui>,
     pub(super) detached_diff: DiffState,
     pub(super) close: crate::components::window_close_button::WindowCloseState,
+    preferences: Rc<Cell<DiffPreferences>>,
     #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
     pub scene: bool,
 }
@@ -16,10 +18,38 @@ impl Default for Binding {
             owner: None,
             detached_diff: DiffState::new(vec![]),
             close: Default::default(),
+            preferences: Rc::new(Cell::new(DiffPreferences::default())),
             #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
             scene: false,
         }
     }
+}
+
+impl Binding {
+    pub(crate) fn take(binding: &mut Self) -> Self {
+        let taken = std::mem::take(binding);
+        binding.preferences = taken.preferences.clone();
+        taken
+    }
+}
+
+pub(crate) fn diff_preferences(s: &State) -> DiffPreferences {
+    s.git.preferences.get()
+}
+
+pub(crate) fn set_diff_preferences(s: &mut State, preference: DiffPreferences) {
+    s.git.preferences.set(preference);
+    if let Some(owner) = &mut s.git.owner {
+        apply_preference(owner, preference);
+    }
+}
+
+fn apply_preference(owner: &mut Ui, preference: DiffPreferences) -> bool {
+    owner.reader.apply(
+        preference,
+        owner.preview.as_ref().map(|target| target.path.as_str()),
+        owner.hide_whitespace,
+    )
 }
 
 pub(crate) fn connected(s: &mut State, backend: &Backend) {
@@ -98,6 +128,7 @@ pub(crate) fn event(s: &mut State, event: &WorkspaceEvent) {
 }
 
 pub(crate) fn poll(s: &mut State, now: f64, tx: &mut rune::Tx) -> bool {
+    let preference = diff_preferences(s);
     let Some(owner) = &mut s.git.owner else {
         return false;
     };
@@ -108,9 +139,18 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut rune::Tx) -> bool {
     } else {
         None
     };
-    let changed = owner.poll(now);
+    let preference_changed = owner.active && apply_preference(owner, preference);
+    let changed = owner.poll(now) || preference_changed;
+    let change_slot = owner.requests.slot(super::Lane::Changes);
+    let parked = if owner.requests.mutation.is_none() && !change_slot.busy() && !change_slot.dirty {
+        owner.pending_row_focus.take().filter(|_| {
+            owner.active && owner.shown && owner.mode() == Mode::Changes && tx.focused().is_none()
+        })
+    } else {
+        None
+    };
     if changed
-        && let Some(focus) = focus
+        && let Some(focus) = focus.or(parked)
         && let Some(next) = owner.changes.focus_after(focus)
     {
         tx.focus(next, tx.focus_visible());
@@ -140,7 +180,7 @@ pub(crate) fn poll(s: &mut State, now: f64, tx: &mut rune::Tx) -> bool {
         sync_files(s);
         tx.instant();
     }
-    changed
+    changed | super::menu::poll(s, tx)
 }
 
 pub(crate) fn show(s: &mut State, visible: bool) {

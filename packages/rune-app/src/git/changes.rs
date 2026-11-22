@@ -271,6 +271,8 @@ impl Changes {
             ["file", "preview", "stage"]
                 .into_iter()
                 .any(|action| id.action_key(action) == key)
+                || format!("{}:trigger", id.action_key("menu")) == key
+                || format!("{}:item:stage", id.action_key("menu")) == key
         })?;
         Some((rows, index))
     }

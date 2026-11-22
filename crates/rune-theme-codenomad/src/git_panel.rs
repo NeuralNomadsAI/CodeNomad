@@ -4,6 +4,7 @@ use crate::{
     tokens,
 };
 use rune::{El, ScrollSpec, Tx, col, icon, row, text};
+use std::{cell::Cell, rc::Rc};
 #[path = "git_panel_controls.rs"]
 mod controls;
 pub use controls::*;
@@ -13,7 +14,7 @@ pub use crate::workspace_tree::icons::{CHEVRON_DOWN, CHEVRON_RIGHT, EYE, REFRESH
 mod icons;
 pub use icons::{
     ARROW_LEFT, COLUMNS, FOLD_VERTICAL, GIT_BRANCH as BRANCH, GIT_COMMIT_HORIZONTAL as COMMIT,
-    MINUS, PLUS, ROWS, UNFOLD_VERTICAL, WRAP_TEXT,
+    MINUS, MORE_HORIZONTAL, PLUS, ROWS, UNFOLD_VERTICAL, WRAP_TEXT,
 };
 
 pub fn selector_width(panel: f32) -> f32 {
@@ -28,6 +29,10 @@ pub fn panel() -> El {
 
 pub fn dock(panel: El, width: f32) -> El {
     panel.w(width).min_w(width).max_w(width)
+}
+
+pub fn with_overlays(panel: El, overlays: Vec<El>) -> El {
+    rune_kit::root(panel, overlays)
 }
 
 pub fn conversation_column() -> El {
@@ -46,6 +51,34 @@ pub fn scroll() -> El {
     col().full_width().remaining().scroll(ScrollSpec {
         stick_bottom: false,
     })
+}
+
+#[derive(Default)]
+pub struct ScrollBookmark(Rc<Cell<(f32, bool)>>);
+
+impl ScrollBookmark {
+    pub fn retain_for_remount(&self) {
+        self.0.set((self.0.get().0, true));
+    }
+}
+
+pub fn saved_scroll<S: 'static>(key: &'static str, bookmark: &ScrollBookmark) -> El {
+    let save = bookmark.0.clone();
+    let restore = bookmark.0.clone();
+    scroll()
+        .key(key)
+        .on_scroll_offset(move |position| {
+            if !save.get().1 {
+                save.set((position.offset[1], false));
+            }
+        })
+        .on_layout_tx(move |_: &mut S, _, tx| {
+            let (offset, queued) = restore.get();
+            if queued {
+                restore.set((offset, false));
+                tx.scroll_to_instant(key, 0.0, offset);
+            }
+        })
 }
 
 pub fn section() -> El {

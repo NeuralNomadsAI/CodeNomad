@@ -32,11 +32,12 @@ function elements(tree) {
   return nodes
 }
 
-function native(scene, theme, stem, script, mark = "end") {
+function native(scene, theme, stem, script, mark = "end", width) {
   const tree = path.join(out, `${stem}.json`)
   const png = path.join(out, `${stem}.png`)
   const env = { ...process.env, RUNE_LOCALE: "fr", CODENOMAD_PROFILE: "trial-git-parity" }
   for (const key of Object.keys(env)) if (key.startsWith("RUNE_") && key !== "RUNE_LOCALE") delete env[key]
+  if (width) env.RUNE_GIT_PANEL_WIDTH = String(width)
   const args = ["--scene", scene, "--theme", theme, "--tree", tree, "--snap", png,
     "--size", `${viewport.width}x${viewport.height}`, "--scale", "1"]
   if (script) args.push("--script", script, "--at", `mark:${mark}`)
@@ -108,6 +109,13 @@ try {
   const nodes = elements(tree)
   assert(nodes.some(node => node.key === "git-section-staged" && !node.states.includes("expanded")))
   assert(nodes.some(node => node.key === "git-diff-mode" && node.states.includes("checked")))
+  const compact = path.join(out, "compact-interaction.json")
+  await writeFile(compact, JSON.stringify({ events: [
+    { t: 0.2, type: "tap", key: "git-row-staged:menu:src/components/git-panel.tsx:trigger" },
+    { t: 0.6, type: "mark", name: "end" },
+  ] }))
+  const menu = elements(JSON.parse(await readFile(native("git-changes", "dark", "compact", compact, "end", 180), "utf8")))
+  assert(menu.some(node => node.role === "menuitem" && node.key?.endsWith(":item:stage")))
   await writeFile(path.join(out, "report.json"), JSON.stringify(report, null, 2) + "\n")
   console.log(`Git captures and accessibility trees: ${out}`)
 } finally {

@@ -20,3 +20,5 @@ pub static UNFOLD_VERTICAL: Icon = Icon { name: "lucide-unfold-vertical", view: 
 pub static WRAP_TEXT: Icon = Icon { name: "lucide-wrap-text", view: 24.0, body: r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" x2="21" y1="6" y2="6"/><path d="M3 12h15a3 3 0 1 1 0 6h-4"/><polyline points="16 16 14 18 16 20"/><line x1="3" x2="10" y1="18" y2="18"/></g>"# };
 #[rustfmt::skip]
 pub static ARROW_LEFT: Icon = Icon { name: "lucide-arrow-left", view: 24.0, body: r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></g>"# };
+#[rustfmt::skip]
+pub static MORE_HORIZONTAL: Icon = Icon { name: "lucide-more-horizontal", view: 24.0, body: r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></g>"# };

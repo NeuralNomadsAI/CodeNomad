@@ -16,6 +16,10 @@ fn change(path: impl Into<String>, staged: bool, whitespace: bool, score: u64) -
     }
 }
 
+fn statuses(ui: &mut Ui, rows: Vec<Status>) {
+    ui.accept(Lane::Changes, Value::Changes(rows, ui.preview_revision));
+}
+
 #[test]
 fn large_status_preserves_sticky_rows_and_never_stages_hidden_whitespace() {
     let mut changes = Changes::default();
@@ -106,18 +110,18 @@ fn ui() -> Ui {
 fn status_moves_an_open_file_without_opening_sidebar_selection() {
     let mut ui = ui();
     let unstaged = change("file.rs", false, false, 2);
-    ui.accept(Lane::Changes, Value::Changes(vec![unstaged.clone()]));
+    statuses(&mut ui, vec![unstaged]);
     let id = ui.changes.current.clone().unwrap();
     assert!(!ui.has_preview());
     ui.replace_preview(Preview::local(ui.changes.find(&id).unwrap()));
     let mut staged = change("file.rs", true, false, 2);
     staged.unstaged = None;
-    ui.accept(Lane::Changes, Value::Changes(vec![staged]));
+    statuses(&mut ui, vec![staged]);
     assert_eq!(
         ui.preview.as_ref().unwrap().source,
         Source::Local(Section::Staged)
     );
-    ui.accept(Lane::Changes, Value::Changes(vec![]));
+    statuses(&mut ui, vec![]);
     assert!(!ui.has_preview());
 }
 
@@ -223,9 +227,12 @@ fn no_second_commit_until_status_reconciles_and_possible_new_selection_survives(
     ui.shown = true;
     ui.online = true;
     let changes = vec![change("a", true, false, 1), change("b", false, false, 0)];
-    ui.accept(Lane::Changes, Value::Changes(changes.clone()));
+    statuses(&mut ui, changes.clone());
     ui.changes.draft = TextEdit::new("commit draft");
     assert!(ui.can_commit());
+    ui.filesystem_hint();
+    assert!(!ui.can_commit());
+    ui.passive_due = None;
     ui.settle_mutation(
         ui.tree_epoch,
         &tree,
@@ -240,7 +247,7 @@ fn no_second_commit_until_status_reconciles_and_possible_new_selection_survives(
     ui.requests.slot_mut(Lane::Changes).error = Some("read failed".into());
     assert!(!ui.can_commit());
     ui.requests.slot_mut(Lane::Changes).error = None;
-    ui.accept(Lane::Changes, Value::Changes(changes));
+    statuses(&mut ui, changes);
     assert!(ui.can_commit());
     let id = Id {
         section: Section::Unstaged,
@@ -278,15 +285,28 @@ fn changing_session_closes_preview_and_resets_manually_selected_worktree() {
 #[test]
 fn action_focus_reaches_same_file_in_its_new_section() {
     let mut ui = ui();
-    let mut row = change("a-stage", false, false, 2);
-    ui.accept(Lane::Changes, Value::Changes(vec![row.clone()]));
+    let mut row = change("a-container", false, false, 2);
+    let neighbor = change("a", true, false, 0);
+    statuses(&mut ui, vec![neighbor.clone(), row.clone()]);
     let id = ui.changes.current.clone().unwrap();
     let focus = ui
         .changes
         .focus_order(Some(&id.action_key("stage")))
         .unwrap();
     row.staged = row.unstaged.take();
-    ui.accept(Lane::Changes, Value::Changes(vec![row]));
+    statuses(&mut ui, vec![neighbor, row]);
+    assert_ne!(
+        Id {
+            section: Section::Staged,
+            path: "a".into()
+        }
+        .action_key("container"),
+        Id {
+            section: Section::Staged,
+            path: "a-container".into()
+        }
+        .key()
+    );
     assert_eq!(
         ui.changes.focus_after(focus),
         Some(
@@ -305,4 +325,33 @@ fn files_mode_uses_only_the_persisted_source_values() {
         assert!(Mode::restore(mode.key()).is_some_and(|saved| saved == mode));
     }
     assert!(Mode::restore("other").is_none());
+}
+
+#[test]
+fn status_before_a_reader_gesture_cannot_close_its_new_target() {
+    let mut ui = ui();
+    statuses(&mut ui, vec![change("a", false, false, 1)]);
+    let revision = ui.preview_revision;
+    let row = ui
+        .changes
+        .find(ui.changes.current.as_ref().unwrap())
+        .unwrap();
+    ui.replace_preview(Preview::local(row));
+    ui.accept(Lane::Changes, Value::Changes(vec![], revision));
+    assert!(ui.has_preview());
+}
+
+#[test]
+fn diff_preferences_follow_the_window_when_an_occurrence_is_restored() {
+    let mut state = crate::init();
+    state.git.owner = Some(ui());
+    let previous = Binding::take(&mut state.git);
+    let preferences = DiffPreferences {
+        split: true,
+        full: true,
+        wrap: false,
+    };
+    set_diff_preferences(&mut state, preferences);
+    state.git = previous;
+    assert!(diff_preferences(&state) == preferences);
 }

@@ -1,12 +1,14 @@
 mod binding;
 mod changes;
 mod diff;
+mod menu;
 mod request;
 mod view;
 pub(crate) use binding::{
-    Binding, close_preview, connected, event, has_preview, mode, online, poll, project_opened,
-    set_mode, show,
+    Binding, close_preview, connected, diff_preferences, event, has_preview, mode, online, poll,
+    project_opened, set_diff_preferences, set_mode, show,
 };
+pub(crate) use diff::DiffPreferences;
 pub(crate) use view::{panel, reader};
 
 use crate::platform::{collation::Collation, reads::Reads};
@@ -23,6 +25,7 @@ use codenomad_client::{
 use request::{Completed, Lane, Mutation, MutationKind, Read, Requests, Value};
 use rune::edit::TextEdit;
 use rune_theme_codenomad::git_diff::{ImageCache, image_cache};
+use rune_theme_codenomad::git_panel::ScrollBookmark;
 use std::collections::HashSet;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -105,10 +108,16 @@ pub(crate) struct Ui {
     filter: TextEdit,
     history: History,
     changes: Changes,
+    menu: rune_theme_codenomad::action_menu::State<crate::State>,
+    open_menu: Option<Id>,
+    changes_scroll: ScrollBookmark,
+    history_scroll: ScrollBookmark,
     reader: diff::Reader,
     images: ImageCache,
     preview: Option<Preview>,
     preview_revision: u64,
+    reconcile_revision: Option<u64>,
+    pending_row_focus: Option<(Vec<Id>, usize)>,
     mutation_message: Option<(bool, String)>,
     invalidated_files: bool,
     init_sessions: Option<Sessions>,
@@ -143,9 +152,15 @@ impl Ui {
             filter: TextEdit::new(""),
             history: History::default(),
             changes: Changes::default(),
+            menu: Default::default(),
+            open_menu: None,
+            changes_scroll: ScrollBookmark::default(),
+            history_scroll: ScrollBookmark::default(),
             reader: diff::Reader::default(),
             preview: None,
             preview_revision: 0,
+            reconcile_revision: None,
+            pending_row_focus: None,
             mutation_message: None,
             invalidated_files: false,
             init_sessions: None,
@@ -192,13 +207,28 @@ impl Ui {
     }
 
     pub(crate) fn activate(&mut self, active: bool) {
+        if !active {
+            self.keep_scroll();
+        }
         self.active = active;
         self.demand();
     }
 
     pub(crate) fn show(&mut self, shown: bool) {
         if self.shown != shown {
+            if !shown {
+                self.keep_scroll();
+            }
             self.shown = shown;
+            if shown
+                && self.mode == Mode::Changes
+                && self
+                    .preview
+                    .as_ref()
+                    .is_some_and(|target| matches!(target.source, Source::Local(_)))
+            {
+                self.dirty(&[Lane::Changes, Lane::Preview]);
+            }
             self.demand();
         }
     }
@@ -208,9 +238,15 @@ impl Ui {
     }
     pub(crate) fn set_mode(&mut self, mode: Mode) {
         if self.mode != mode {
+            self.keep_scroll();
             self.mode = mode;
             self.demand();
         }
+    }
+
+    fn keep_scroll(&self) {
+        self.changes_scroll.retain_for_remount();
+        self.history_scroll.retain_for_remount();
     }
 
     pub(crate) fn tree(&self) -> Option<&Worktree> {
@@ -241,9 +277,15 @@ impl Ui {
         self.picker = false;
         let open = self.changes.open;
         self.changes = Changes::default();
+        self.menu = Default::default();
+        self.open_menu = None;
         self.changes.open = open;
+        self.changes_scroll = ScrollBookmark::default();
+        self.history_scroll = ScrollBookmark::default();
         self.history = History::default();
         self.mutation_message = None;
+        self.reconcile_revision = None;
+        self.pending_row_focus = None;
         self.close_preview();
         for lane in [Lane::Changes, Lane::History, Lane::Details] {
             *self.requests.slot_mut(lane) = Default::default();
@@ -355,10 +397,13 @@ impl Ui {
         }
         if let Some(tree) = self.tree().cloned() {
             if changes {
-                self.ensure(
-                    Read::Changes(tree.clone(), self.hide_whitespace),
+                let revision = self.reconcile_revision.unwrap_or(self.preview_revision);
+                if self.ensure(
+                    Read::Changes(tree.clone(), self.hide_whitespace, revision),
                     !self.changes.ready(),
-                );
+                ) {
+                    self.reconcile_revision = None;
+                }
             }
             if history {
                 self.ensure(
@@ -378,11 +423,13 @@ impl Ui {
         }
     }
 
-    fn ensure(&mut self, read: Read, missing: bool) {
+    fn ensure(&mut self, read: Read, missing: bool) -> bool {
         let slot = self.requests.slot(read.lane());
-        if slot.dirty || missing && slot.error.is_none() {
+        if !slot.busy() && (slot.dirty || missing && slot.error.is_none()) {
             self.requests.start(read);
+            return true;
         }
+        false
     }
 
     fn repository(&self) -> Repository {
@@ -403,6 +450,7 @@ impl Ui {
             match self.mode {
                 Mode::Workspace => self.dirty(&[Lane::Worktrees]),
                 Mode::Changes => {
+                    self.reconcile_revision = Some(self.preview_revision);
                     self.dirty(&[Lane::Changes]);
                     if self
                         .preview
@@ -465,6 +513,7 @@ impl Ui {
             return;
         }
         self.back_to_history();
+        self.history_scroll.retain_for_remount();
         self.history.selected = Some(id);
         self.demand();
     }
@@ -513,6 +562,7 @@ impl Ui {
 
     fn replace_preview(&mut self, preview: Preview) {
         self.close_preview();
+        self.preview_revision = self.preview_revision.wrapping_add(1);
         if let Source::Local(section) = preview.source {
             self.changes.keep_visible(Id {
                 section,
@@ -527,7 +577,7 @@ impl Ui {
     }
     pub(crate) fn close_preview(&mut self) {
         if self.preview.take().is_some() {
-            self.preview_revision += 1;
+            self.preview_revision = self.preview_revision.wrapping_add(1);
             self.reader.clear();
             *self.requests.slot_mut(Lane::Preview) = Default::default();
         }
@@ -581,6 +631,7 @@ impl Ui {
             && changes.error.is_none()
             && !preference.busy()
             && !preference.dirty
+            && self.passive_due.is_none()
     }
 
     fn mutation(&mut self, action: Mutation) {
@@ -591,13 +642,15 @@ impl Ui {
                 self.requests.slot_mut(lane).cancel();
             }
             self.mutation_message = None;
+            self.reconcile_revision = Some(self.preview_revision);
             self.requests.mutate(self.tree_epoch, tree, action);
         }
     }
 
-    fn move_paths(&mut self, id: &Id) {
+    fn move_paths(&mut self, id: &Id, focus: Option<&str>) {
         let paths = self.changes.paths(id);
         if self.can_change_index() && !paths.is_empty() {
+            self.pending_row_focus = self.changes.focus_order(focus);
             self.mutation(Mutation::Paths(id.section, paths));
         }
     }
@@ -643,7 +696,10 @@ impl Ui {
         diff: codenomad_client::git::Diff,
     ) {
         self.accept(Lane::Worktrees, Value::Worktrees(inventory));
-        self.accept(Lane::Changes, Value::Changes(statuses));
+        self.accept(
+            Lane::Changes,
+            Value::Changes(statuses, self.preview_revision),
+        );
         self.accept(Lane::History, Value::History(commits, false));
         self.replace_preview(Preview {
             source: Source::Local(Section::Staged),

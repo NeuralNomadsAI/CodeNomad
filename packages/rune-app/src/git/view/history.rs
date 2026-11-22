@@ -5,7 +5,7 @@ pub(super) fn view(s: &State, ui: &Ui) -> El {
         return details(s, ui);
     }
     let name = t("gitPanel.filter");
-    let mut body = theme::scroll().key("git-history-list").child(
+    let mut body = theme::saved_scroll::<State>("git-history-list", &ui.history_scroll).child(
         theme::header().child(
             layout::hinted_field(&ui.filter, name)
                 .label(name)

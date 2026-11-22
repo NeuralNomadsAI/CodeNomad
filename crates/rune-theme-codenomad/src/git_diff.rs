@@ -1,6 +1,7 @@
 use crate::{kit, layout::dark};
 pub use rune::image::{Image, ImageCache};
 use rune::{El, Tx, Waker};
+pub use rune_kit::diff::LineRef;
 pub use rune_kit::diff::{DiffMode, DiffState, FileDiff, LineKind, LineRange, Side, parse};
 pub use rune_kit::syntax::highlight;
 use std::rc::Rc;

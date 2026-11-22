@@ -37,7 +37,7 @@ impl Cache {
         Self {
             agent: s.agent.take(),
             files: s.files.take(),
-            git: std::mem::take(&mut s.git),
+            git: crate::git::Binding::take(&mut s.git),
             tools: std::mem::take(&mut s.expanded_tools),
             title: std::mem::take(&mut s.chat_title),
             messages: std::mem::take(&mut s.messages),

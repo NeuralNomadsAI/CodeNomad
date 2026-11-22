@@ -5,7 +5,7 @@ import {ts,walk} from '../component-inventory-ast.mjs'
 import {generated} from '../generate-common.mjs'
 const require=createRequire(import.meta.url)
 const glyphs=['chevron-right','chevron-down','refresh-cw','folder','folder-open','file','file-code','file-text','image','copy','eye']
-const gitGlyphs=['plus','minus','git-branch','git-commit-horizontal','columns','rows','fold-vertical','unfold-vertical','wrap-text','arrow-left']
+const gitGlyphs=['plus','minus','git-branch','git-commit-horizontal','columns','rows','fold-vertical','unfold-vertical','wrap-text','arrow-left','more-horizontal']
 function literal(node){
   if(ts.isStringLiteral(node)||ts.isNumericLiteral(node))return node.text
   if(ts.isArrayLiteralExpression(node))return node.elements.map(literal)

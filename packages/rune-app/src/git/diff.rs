@@ -9,6 +9,23 @@ pub(super) enum Hidden {
     Invisible,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DiffPreferences {
+    pub split: bool,
+    pub full: bool,
+    pub wrap: bool,
+}
+
+impl Default for DiffPreferences {
+    fn default() -> Self {
+        Self {
+            split: false,
+            full: false,
+            wrap: true,
+        }
+    }
+}
+
 const MAX_DIFF_LINES: usize = 50_000;
 const MAX_LINE_BYTES: usize = 64 * 1024;
 
@@ -198,6 +215,7 @@ impl Reader {
     }
 
     pub fn rebuild(&mut self, path: &str, hide: bool) {
+        let selection = self.state.selection();
         let (files, notice) = match &self.content {
             Some(Diff::Text { before, after }) => {
                 let (file, notice) = text_diff(path, before, after, hide, self.full);
@@ -205,22 +223,68 @@ impl Reader {
             }
             _ => (Vec::new(), None),
         };
+        let selection = selection.filter(|selection| {
+            files.first().is_some_and(|file| {
+                [selection.start, selection.end].into_iter().all(|line| {
+                    file.text(line.side).is_some_and(|source| {
+                        source
+                            .lines()
+                            .nth(line.line.saturating_sub(1) as usize)
+                            .is_some()
+                    })
+                })
+            })
+        });
         self.notice = notice;
         self.state.set_files(files);
+        self.state.set_selection(selection);
     }
 
-    pub fn toggle_mode(&mut self) {
-        self.state.set_mode(match self.state.mode() {
-            DiffMode::Unified => DiffMode::Split,
-            DiffMode::Split => DiffMode::Unified,
-        })
+    pub fn apply(&mut self, preference: DiffPreferences, path: Option<&str>, hide: bool) -> bool {
+        let mode = if preference.split {
+            DiffMode::Split
+        } else {
+            DiffMode::Unified
+        };
+        let changed = self.state.mode() != mode || self.state.wrap() != preference.wrap;
+        self.state.set_mode(mode);
+        self.state.set_wrap(preference.wrap);
+        if self.full == preference.full {
+            return changed;
+        }
+        self.full = preference.full;
+        if let Some(path) = path {
+            self.rebuild(path, hide);
+        }
+        true
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rune_theme_codenomad::git_diff::{LineKind, Side, highlight};
+    use rune_theme_codenomad::git_diff::{LineKind, LineRef, Side, highlight};
+
+    #[test]
+    fn refreshed_text_preserves_a_still_valid_selection() {
+        let cache = rune_theme_codenomad::git_diff::image_cache(std::sync::Arc::new(|| {}));
+        let mut reader = Reader::default();
+        let text = |after: &str| Diff::Text {
+            before: "a\nold\nz\n".into(),
+            after: after.into(),
+        };
+        reader
+            .replace(text("a\nnew\nz\n"), "x.rs", false, &cache)
+            .unwrap();
+        let range = crate::components::diff::LineRange::line(0, LineRef::new(Side::New, 3));
+        reader.state.set_selection(Some(range));
+        reader
+            .replace(text("a\nedited\nz\n"), "x.rs", false, &cache)
+            .unwrap();
+        assert_eq!(reader.state.selection(), Some(range));
+        reader.replace(text("a\n"), "x.rs", false, &cache).unwrap();
+        assert!(reader.state.selection().is_none());
+    }
 
     #[test]
     fn oversized_projection_keeps_reader_clear_without_construction() {

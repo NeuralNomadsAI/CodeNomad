@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     components::{
-        diff::{self, DiffMode, LineRange, Side},
+        diff::{self, LineRange, Side},
         window_close_button,
     },
     git::{Source, diff::Hidden},
@@ -17,7 +17,8 @@ pub(crate) fn reader(s: &State) -> El {
         return el();
     };
     let path = &target.path;
-    let split = ui.reader.state.mode() == DiffMode::Split;
+    let preferences = crate::git::diff_preferences(s);
+    let split = preferences.split;
     let label = match &target.source {
         Source::Local(section) => section_label(*section).into(),
         Source::Commit { id, subject } => format!(
@@ -27,7 +28,6 @@ pub(crate) fn reader(s: &State) -> El {
         ),
     };
     let image = matches!(&ui.reader.content, Some(Diff::Image { .. }));
-    let named = target.clone();
     let mut header = theme::chrome()
         .child(
             col()
@@ -48,16 +48,20 @@ pub(crate) fn reader(s: &State) -> El {
                 "instanceShell.diff.switchToSplit"
             }),
             false,
-            split,
-            run(s, |s, _| {
-                if let Some(ui) = &mut s.git.owner {
-                    ui.reader.toggle_mode();
-                }
+            Some(split),
+            run(s, move |s, _| {
+                crate::git::set_diff_preferences(
+                    s,
+                    crate::git::DiffPreferences {
+                        split: !split,
+                        ..crate::git::diff_preferences(s)
+                    },
+                );
             }),
         ));
     if !image {
-        let full = ui.reader.full;
-        let wrap = ui.reader.state.wrap();
+        let full = preferences.full;
+        let wrap = preferences.wrap;
         header = header
             .child(icon(
                 "git-diff-context",
@@ -72,14 +76,15 @@ pub(crate) fn reader(s: &State) -> El {
                     "instanceShell.diff.showFull"
                 }),
                 false,
-                full,
+                Some(full),
                 run(s, move |s, _| {
-                    if let Some(ui) = &mut s.git.owner
-                        && ui.preview.as_ref() == Some(&named)
-                    {
-                        ui.reader.full = !ui.reader.full;
-                        ui.reader.rebuild(&named.path, ui.hide_whitespace);
-                    }
+                    crate::git::set_diff_preferences(
+                        s,
+                        crate::git::DiffPreferences {
+                            full: !full,
+                            ..crate::git::diff_preferences(s)
+                        },
+                    );
                 }),
             ))
             .child(icon(
@@ -91,11 +96,15 @@ pub(crate) fn reader(s: &State) -> El {
                     "instanceShell.filesShell.enableWordWrap"
                 }),
                 split,
-                wrap,
-                run(s, |s, _| {
-                    if let Some(ui) = &mut s.git.owner {
-                        ui.reader.state.set_wrap(!ui.reader.state.wrap());
-                    }
+                Some(wrap),
+                run(s, move |s, _| {
+                    crate::git::set_diff_preferences(
+                        s,
+                        crate::git::DiffPreferences {
+                            wrap: !wrap,
+                            ..crate::git::diff_preferences(s)
+                        },
+                    );
                 }),
             ));
     }
