@@ -97,7 +97,7 @@ export function RightPanelCustomizationPopover(props: RightPanelCustomizationPop
                     <input
                       type="checkbox"
                       checked={visible()}
-                      indeterminate={missions && props.missionActivation.checking()}
+                      aria-busy={missions && props.missionActivation.checking() ? true : undefined}
                       disabled={tab.alwaysVisible || (missions && !props.missionActivation.canToggle())
                         || (Boolean(extension()) && (!props.extensions.verified() || props.extensions.activating() || !props.isActive()))}
                       // Activation changes have side effects beyond panel visibility.
