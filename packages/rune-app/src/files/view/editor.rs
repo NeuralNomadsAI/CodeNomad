@@ -42,23 +42,17 @@ pub(super) fn source(
         }))
         .on_submit(document_action_tx(s, |ui, _| {
             let scope = ui.document.scope();
-            let edit = ui.document.input(scope);
-            let crlf = edit
-                .text
-                .split_inclusive('\n')
-                .next()
-                .is_some_and(|line| line.ends_with("\r\n"));
-            edit.insert(if crlf { "\r\n" } else { "\n" });
+            ui.document.input(scope).insert("\n");
             ui.document.changed(scope);
         }))
         .on_key({
             let save = document_action_tx(s, save);
             move |s, key, tx| {
                 if matches!(key.key, Key::Command('s' | 'S'))
-                    && (key.mods.ctrl || key.mods.cmd)
+                    && (key.mods.ctrl || key.mods.cmd || cfg!(target_os = "macos") && key.mods.logo)
                     && !key.mods.shift
                     && !key.mods.alt
-                    && !key.mods.logo
+                    && (!key.mods.logo || cfg!(target_os = "macos"))
                 {
                     if !tx.key_repeat() {
                         save(s, tx);

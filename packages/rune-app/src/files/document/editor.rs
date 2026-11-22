@@ -1,5 +1,6 @@
 use super::{
     Content, content,
+    source_text::{Snapshot, lf},
     store::{Error, Key, Pending, Shared, Store, Writes, lock},
 };
 use crate::{files::reader::Reader, platform};
@@ -25,11 +26,11 @@ enum Intent {
     Checking {
         id: u64,
         receipt: u64,
-        text: String,
+        text: Snapshot,
     },
     Overwrite {
         id: u64,
-        text: String,
+        text: Snapshot,
         version: String,
     },
     Discard(u64),
@@ -84,6 +85,9 @@ impl Editor {
     pub fn dirty(&self) -> bool {
         self.draft.as_ref().is_some_and(|draft| lock(draft).dirty())
     }
+    pub(crate) fn has_edits(&self) -> bool {
+        self.store.has_edits(&self.backend.base, &self.instance)
+    }
     pub fn pending(&self) -> bool {
         self.draft
             .as_ref()
@@ -99,7 +103,9 @@ impl Editor {
         std::mem::replace(&mut self.written, written) != written
     }
     pub fn error(&self) -> Option<Error> {
-        self.draft.as_ref().and_then(|draft| lock(draft).error)
+        self.draft
+            .as_ref()
+            .and_then(|draft| lock(draft).error.clone())
     }
     pub fn confirmation(&self) -> Option<Confirmation> {
         match self.intent {
@@ -196,7 +202,7 @@ impl Editor {
                     self.edit = TextEdit::new(&draft.text);
                     return;
                 }
-                draft.text = self.edit.text.clone();
+                draft.text = lf(&self.edit.text);
                 draft.revision += 1;
                 self.revision = draft.revision;
             }
@@ -232,7 +238,15 @@ impl Editor {
         if draft.pending.is_some() || !draft.dirty() {
             return;
         }
+        let Some(original) = &draft.original else {
+            return;
+        };
         if draft.text.len() > MAX_FILE_BYTES {
+            draft.error = Some(Error::TooLarge);
+            return;
+        }
+        let text = original.edited(&draft.text);
+        if text.wire.len() > MAX_FILE_BYTES {
             draft.error = Some(Error::TooLarge);
             return;
         }
@@ -242,7 +256,7 @@ impl Editor {
         self.intent = Intent::Checking {
             id,
             receipt: reader.reread(),
-            text: draft.text.clone(),
+            text,
         };
         drop(draft);
         if let Some(key) = &self.key {
@@ -331,8 +345,8 @@ impl Editor {
             self.revision = draft.revision;
             changed = true;
         }
-        let observed = (draft.dirty(), draft.pending.is_some(), draft.error);
-        changed |= self.observed != Some(observed);
+        let observed = (draft.dirty(), draft.pending.is_some(), draft.error.clone());
+        changed |= self.observed.as_ref() != Some(&observed);
         self.observed = Some(observed);
         changed
     }
@@ -345,12 +359,12 @@ impl Editor {
             if draft.dirty() || draft.pending.is_some() || draft.uncertain.is_some() && !refreshed {
                 return;
             }
-            if let Content::Text { text, .. } = content(&preview.path, &preview.bytes) {
-                draft.original = Some(text.into());
-                if draft.text != text {
-                    draft.text = text.into();
+            if let Some(text) = disk_text(&preview.path, &preview.bytes) {
+                if draft.text != text.text {
+                    draft.text.clone_from(&text.text);
                     draft.revision += 1;
                 }
+                draft.original = Some(text);
                 draft.error = None;
             } else {
                 draft.original = None;
@@ -362,7 +376,7 @@ impl Editor {
             draft.uncertain = None;
         }
     }
-    fn checked(&mut self, id: u64, text: String, reader: &mut Reader) {
+    fn checked(&mut self, id: u64, text: Snapshot, reader: &mut Reader) {
         let Some(shared) = self.draft.clone() else {
             return;
         };
@@ -379,14 +393,18 @@ impl Editor {
             draft.error = Some(Error::Read);
             return;
         };
-        let Content::Text { text: disk, .. } = content(&preview.path, &preview.bytes) else {
+        let Some(disk) = disk_text(&preview.path, &preview.bytes) else {
             draft.error = Some(Error::ReadOnly);
             return;
         };
-        if draft.uncertain.as_deref() == Some(disk) {
+        if draft
+            .uncertain
+            .as_ref()
+            .is_some_and(|saved| saved.wire == disk.wire)
+        {
             draft.original = draft.uncertain.take();
         }
-        if disk == text {
+        if disk.wire == text.wire {
             draft.original = Some(text);
             draft.uncertain = None;
             draft.error = None;
@@ -405,7 +423,11 @@ impl Editor {
             draft.error = Some(Error::MissingVersion);
             return;
         };
-        if draft.original.as_deref() != Some(disk) {
+        if draft
+            .original
+            .as_ref()
+            .is_none_or(|original| original.wire != disk.wire)
+        {
             draft.pending = Some(Pending::Check(id));
             self.intent = Intent::Overwrite {
                 id,
@@ -417,7 +439,7 @@ impl Editor {
             self.write(id, text, version.clone(), reader);
         }
     }
-    fn write(&mut self, id: u64, text: String, version: String, reader: &mut Reader) {
+    fn write(&mut self, id: u64, text: Snapshot, version: String, reader: &mut Reader) {
         let (Some(key), Some(shared)) = (self.key.clone(), self.draft.clone()) else {
             return;
         };
@@ -431,7 +453,7 @@ impl Editor {
         );
         platform::spawn(async move {
             let result = backend
-                .write_file(&key.directory, &key.path, &text, &version)
+                .write_file(&key.directory, &key.path, &text.wire, &version)
                 .await;
             let saved = matches!(&result, Ok(WriteResult::Saved));
             {
@@ -446,7 +468,9 @@ impl Editor {
                         draft.uncertain = None;
                         draft.error = None;
                     }
-                    Ok(WriteResult::Conflict) => draft.error = Some(Error::Conflict),
+                    Ok(WriteResult::Conflict(reason)) => {
+                        draft.error = Some(Error::Conflict(reason))
+                    }
                     Err(_) => {
                         draft.uncertain = Some(text);
                         draft.error = Some(Error::Uncertain);
@@ -460,6 +484,12 @@ impl Editor {
             wake();
         });
     }
+}
+fn disk_text(path: &str, bytes: &[u8]) -> Option<Snapshot> {
+    if !matches!(content(path, bytes), Content::Text { .. }) {
+        return None;
+    }
+    std::str::from_utf8(bytes).ok().map(Snapshot::loaded)
 }
 impl Drop for Editor {
     fn drop(&mut self) {

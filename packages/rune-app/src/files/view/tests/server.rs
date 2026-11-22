@@ -98,7 +98,7 @@ fn real_rust_reader_ui_contract() {
         settle(&mut rt).await;
         assert_eq!(
             rt.state.files.as_ref().unwrap().document.edit().text,
-            "été\n日本語🦀\r\n"
+            "été\n日本語🦀\n"
         );
         assert!(
             rt.elements()
@@ -114,7 +114,7 @@ fn real_rust_reader_ui_contract() {
         settle(&mut rt).await;
         assert_eq!(
             rt.state.files.as_ref().unwrap().document.edit().text,
-            "été\n日本語🦀\r\n"
+            "été\n日本語🦀\n"
         );
         assert!(rt.state.files.as_ref().unwrap().reader.error().is_none());
         if data["editor"] == true {
@@ -144,7 +144,7 @@ fn real_rust_reader_ui_contract() {
                 rt.update_if(|state, _| state.files.as_mut().unwrap().poll(20.0));
                 let document = &rt.state.files.as_ref().unwrap().document;
                 assert!(document.error().is_none() && document.confirmation().is_none());
-                assert_eq!(document.edit().text, "été\n日本語🦀\r\nsaved");
+                assert_eq!(document.edit().text, "été\n日本語🦀\nsaved");
                 if !document.dirty() && !document.pending() {
                     break;
                 }

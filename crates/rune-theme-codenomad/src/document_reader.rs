@@ -56,7 +56,7 @@ pub fn image(image: &rune::Image, label: &str) -> El {
                 .label(label),
         )
 }
-pub fn header(title: &str, directory: &str, readonly: Option<&str>, actions: Vec<El>) -> El {
+pub fn header(title: &str, directory: &str, status: Option<&str>, actions: Vec<El>) -> El {
     let t = tokens(crate::layout::dark());
     let metric = |name| t.metric("readerHeader", name).px();
     rune::row()
@@ -78,7 +78,7 @@ pub fn header(title: &str, directory: &str, readonly: Option<&str>, actions: Vec
                 .gap(t.metric("readerHeading", "rowGap").px())
                 .child(rune::text(title).truncate().font(font(t, "readerTitle")))
                 .child(
-                    rune::text(readonly.map_or_else(
+                    rune::text(status.map_or_else(
                         || directory.to_owned(),
                         |label| format!("{directory} · {label}"),
                     ))

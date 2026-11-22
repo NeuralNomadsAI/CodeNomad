@@ -37,10 +37,10 @@ pub struct Preview {
     pub version: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WriteResult {
     Saved,
-    Conflict,
+    Conflict(Option<String>),
 }
 
 impl Backend {
@@ -82,7 +82,14 @@ impl Backend {
             .send()
             .await?;
         if response.status() == reqwest::StatusCode::CONFLICT {
-            return Ok(WriteResult::Conflict);
+            let reason = read_json_limited(response, 4096)
+                .await
+                .ok()
+                .and_then(|body| {
+                    let reason = body["error"].as_str()?.trim();
+                    (!reason.is_empty()).then(|| reason.to_owned())
+                });
+            return Ok(WriteResult::Conflict(reason));
         }
         let response = response.error_for_status()?;
         if !response.status().is_success() {

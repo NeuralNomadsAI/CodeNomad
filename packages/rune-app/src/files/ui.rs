@@ -285,6 +285,14 @@ impl Ui {
     pub fn save_document(&mut self, scope: u64) {
         self.document.save(scope, &mut self.reader);
     }
+    pub(super) fn document_kind(&self) -> Option<super::presentation::Kind> {
+        use super::presentation::Kind;
+        self.reader
+            .target()
+            .filter(|_| self.document.editable())
+            .map(|target| Kind::Text(super::document::text_format(&target.path)))
+            .or(self.presentation.kind)
+    }
     pub fn refresh_document(&mut self, scope: u64) {
         self.document.refresh(scope, &mut self.reader);
     }
@@ -363,7 +371,7 @@ impl Ui {
         changed |= self
             .presentation
             .sync(&self.reader, self.document.revision());
-        let markdown = self.presentation.kind
+        let markdown = self.document_kind()
             == Some(super::presentation::Kind::Text(
                 super::document::Format::Markdown,
             ));

@@ -22,7 +22,7 @@ const root=path.join(repository,'target/rune-files-tests',`trial-${randomUUID()}
 await mkdir(root,{recursive:true})
 const directory=path.join(root,'project'),foreign=path.join(root,'foreign')
 await mkdir(path.join(directory,'empty'),{recursive:true});await mkdir(path.join(directory,'nested'));await mkdir(path.join(directory,'.git'));await mkdir(foreign)
-for(const [file,bytes]of [['été 日本語.txt','été\n日本語🦀\r\n'],['empty.txt',''],['binary.bin',Buffer.from([0,1,255,128,0,42])],
+for(const [file,bytes]of [['été 日本語.txt',editor?'\ufeffété\r\n日本語🦀\r\n':'été\n日本語🦀\r\n'],['empty.txt',''],['binary.bin',Buffer.from([0,1,255,128,0,42])],
   ['nested/日本語.txt','nested bytes'],['full.bin',Buffer.alloc(5*1024*1024,0x93)],['oversized.bin',Buffer.alloc(5*1024*1024+1,0x93)],['.git/private.txt','protected']])await writeFile(path.join(directory,file),bytes)
 await writeFile(path.join(foreign,'foreign.txt'),'private sibling bytes')
 const proof={root,directory,foreign,write,reader,editor,result:'failed',requests:[],nativeRequests:[],links:{},client:null,shutdown:null}
@@ -107,7 +107,7 @@ try{
   assert(!proof.requests.some(row=>row.blocked),'Typed client stays inside the explicit fixture request policy')
   assert(!proof.nativeRequests.some(row=>row.method!=='GET'||row.path.includes('/session')||row.path.endsWith('/prompt')),'No native session or prompt mutations')
   if(reader)assert.equal(await readFile(path.join(directory,'été 日本語.txt'),'utf8'),
-    editor?'été\n日本語🦀\r\nsaved':'été\n日本語🦀\r\n')
+    editor?'\ufeffété\r\n日本語🦀\r\nsaved':'été\n日本語🦀\r\n')
   if(editor)assert.deepEqual(proof.requests.filter(row=>row.method==='PUT').map(row=>row.status),[204])
   if(write){
     const versions=proof.client.versions,contents=proof.client.contents

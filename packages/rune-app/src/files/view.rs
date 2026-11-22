@@ -149,7 +149,8 @@ fn reader_content(s: &State) -> El {
         |ui, _| ui.refresh_document(ui.document.scope()),
     )];
     let mut content_view = rune::el();
-    if let Some(kind) = ui.presentation.kind {
+    let kind = ui.document_kind();
+    if let Some(kind) = kind {
         content_view = match kind {
             Kind::Binary => text(t("filesPanel.binary")).pad(Space::Md),
             Kind::Image => match ui.presentation.image.as_ref() {
@@ -296,8 +297,15 @@ fn reader_content(s: &State) -> El {
             }
         }),
     ));
-    let readonly =
-        (!matches!(ui.presentation.kind, Some(Kind::Text(_)))).then(|| t("filesPanel.readOnly"));
+    let status = if ui.document.dirty() {
+        Some(t("settings.configFiles.state.unsaved"))
+    } else {
+        (!matches!(kind, Some(Kind::Text(_)))).then(|| t("filesPanel.readOnly"))
+    };
+    let save_error = ui.document.error().map(|error| match error {
+        super::document::store::Error::Conflict(Some(reason)) => reason,
+        _ => t("instanceShell.rightPanel.toast.saveError").into(),
+    });
     theme::surface(dark)
         .key(format!("file-reader-{scope}"))
         .role("region")
@@ -305,7 +313,7 @@ fn reader_content(s: &State) -> El {
         .child(theme::header(
             &target.path,
             &target.directory,
-            readonly,
+            status,
             actions,
         ))
         .children(
@@ -314,11 +322,9 @@ fn reader_content(s: &State) -> El {
                 .map(|error| text(error).role("alert").pad(Space::Md)),
         )
         .children(
-            (ui.reader.error().is_none() && ui.document.error().is_some()).then(|| {
-                text(t("instanceShell.rightPanel.toast.saveError"))
-                    .role("alert")
-                    .pad(Space::Md)
-            }),
+            save_error
+                .filter(|_| ui.reader.error().is_none())
+                .map(|message| text(message).role("alert").pad(Space::Md)),
         )
         .children(
             (ui.reader.busy() && ui.reader.preview().is_none()).then(|| {

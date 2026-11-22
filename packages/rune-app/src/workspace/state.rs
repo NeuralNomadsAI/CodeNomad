@@ -405,6 +405,9 @@ fn close_blocked(s: &State, index: usize) -> bool {
     };
     if ui.active == index {
         crate::agent::navigation_blocked(s)
+            || s.files
+                .as_ref()
+                .is_some_and(|files| files.document.has_edits())
     } else {
         ui.entries[index]
             .cache

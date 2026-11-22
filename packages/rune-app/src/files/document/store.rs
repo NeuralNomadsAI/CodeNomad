@@ -1,3 +1,4 @@
+use super::source_text::Snapshot;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, MutexGuard, Weak},
@@ -10,12 +11,12 @@ pub struct Key {
     pub directory: String,
     pub path: String,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
     Read,
     ReadOnly,
     MissingVersion,
-    Conflict,
+    Conflict(Option<String>),
     Uncertain,
     TooLarge,
 }
@@ -26,10 +27,10 @@ pub(super) enum Pending {
 }
 #[derive(Default)]
 pub(super) struct Draft {
-    pub original: Option<String>,
+    pub original: Option<Snapshot>,
     pub text: String,
     pub pending: Option<Pending>,
-    pub uncertain: Option<String>,
+    pub uncertain: Option<Snapshot>,
     pub error: Option<Error>,
     pub revision: u64,
 }
@@ -37,7 +38,10 @@ impl Draft {
     pub fn dirty(&self) -> bool {
         self.original
             .as_ref()
-            .is_some_and(|original| *original != self.text)
+            .is_some_and(|original| original.text != self.text)
+    }
+    fn retained(&self) -> bool {
+        self.dirty() || self.pending.is_some() || self.uncertain.is_some()
     }
 }
 pub(super) type Shared = Arc<Mutex<Draft>>;
@@ -57,6 +61,11 @@ pub(super) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     }
 }
 impl Store {
+    pub(super) fn has_edits(&self, server: &str, instance: &str) -> bool {
+        lock(&self.0).drafts.iter().any(|(key, draft)| {
+            key.server == server && key.instance == instance && lock(draft).retained()
+        })
+    }
     pub(super) fn writes(&self, server: &str, instance: &str) -> Writes {
         let mut store = lock(&self.0);
         store.writes.retain(|_, writes| writes.strong_count() > 0);
@@ -80,10 +89,7 @@ impl Store {
         store.sequence
     }
     pub(super) fn sync(&self, key: &Key, shared: &Shared) {
-        let retained = {
-            let draft = lock(shared);
-            draft.dirty() || draft.pending.is_some() || draft.uncertain.is_some()
-        };
+        let retained = lock(shared).retained();
         let mut store = lock(&self.0);
         let drafts = &mut store.drafts;
         if retained {
