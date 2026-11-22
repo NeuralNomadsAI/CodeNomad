@@ -110,18 +110,18 @@ fn tree_content(s: &State) -> El {
     let mut status = Vec::new();
     let directory = ui.tree.directory();
     let name = codenomad_client::server_path_basename(directory);
-    for (path, error) in ui.tree.errors() {
+    for (path, error) in ui.listing_errors() {
         let message = if error.is::<codenomad_client::files::ListingTooLarge>() {
             t("filesPanel.listingTooLarge").replace("{path}", if path == "." { name } else { path })
         } else {
             error.to_string()
         };
-        let path = path.clone();
         let retry = std::rc::Rc::new(screen::action_tx(&scope, {
-            let path = path.clone();
+            let path = path.to_owned();
+            let directory = directory.to_owned();
             move |s, _| {
                 if let Some(ui) = &mut s.files {
-                    ui.refresh(Some(&path));
+                    ui.retry_listing(&directory, &path);
                 }
             }
         }));

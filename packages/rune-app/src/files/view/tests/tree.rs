@@ -1,6 +1,50 @@
 use super::*;
 
 #[test]
+fn collapsed_ancestor_hides_retry_and_fences_its_late_activation() {
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut ui = http.ui(Store::default(), "files-hidden-retry");
+        let folder = |name: &str, path: &str| Entry {
+            name: name.into(),
+            path: path.into(),
+            kind: EntryKind::Directory,
+            absolute_path: None,
+            directory_identity: None,
+            size: None,
+            modified_at: None,
+        };
+        ui.tree.activate(true);
+        let root = ui.tree.take_refresh().pop().unwrap();
+        ui.tree.complete(root, Ok(vec![folder("src", "src")]), Ok);
+        let parent = ui.tree.toggle("src").pop().unwrap();
+        ui.tree
+            .complete(parent, Ok(vec![folder("old", "src/old")]), Ok);
+        let child = ui.tree.toggle("src/old").pop().unwrap();
+        ui.tree.complete(child, Err("listing failed".into()), Ok);
+        ui.panel = true;
+        let mut rt = runtime(ui);
+        let retry = "file-retry-src/old";
+        let has_retry = |rt: &Runtime<State>| accessible(&rt.accessibility_json(), retry).is_some();
+        assert!(has_retry(&rt));
+        click(&mut rt, "file-row-src");
+        assert!(!has_retry(&rt));
+        rt.update(|state, _| {
+            let ui = state.files.as_mut().unwrap();
+            assert!(ui.tree.errors().contains_key("src/old"));
+            ui.retry_listing("/private", "src/old");
+            assert!(!ui.tree.busy("src/old"));
+            let parent = ui.tree.load("src", true).unwrap();
+            ui.tree.complete(parent, Ok(vec![]), Ok);
+        });
+        click(&mut rt, "file-row-src");
+        assert!(!has_retry(&rt));
+        assert!(rt.state.files.as_ref().unwrap().tree.expanded("src"));
+        http.quiet().await;
+    });
+}
+
+#[test]
 fn tab_selects_the_row_and_reaches_refresh_after_a_failed_listing() {
     crate::platform::block_on(async {
         let http = http::Http::new().await;
