@@ -1,3 +1,4 @@
+pub mod document;
 pub mod reader;
 pub mod request;
 pub mod state;
