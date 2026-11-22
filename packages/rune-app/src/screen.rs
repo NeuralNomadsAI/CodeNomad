@@ -101,7 +101,9 @@ impl State {
             | Editor::Folder
             | Editor::Title
             | Editor::Search => {
-                if let Screen::Launcher(l) = &mut self.screen {
+                if let Some(l) = self.screen.launcher_mut()
+                    && (matches!(target, Editor::Title | Editor::Search) || l.project.is_none())
+                {
                     Some(match target {
                         Editor::Address => &mut l.address,
                         Editor::Password => &mut l.password,

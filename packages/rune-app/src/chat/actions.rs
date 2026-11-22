@@ -1,13 +1,142 @@
 //! Session-owned transcript disclosure actions.
 use crate::State;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
-pub fn toggle_tool(s: &mut State, key: &str) {
-    if !s.expanded_tools.remove(key) {
-        s.expanded_tools.insert(key.into());
-    }
-    s.revision += 1;
+const RENDER_INTERVAL: f64 = 0.2;
+
+#[derive(Default)]
+pub struct Display {
+    workspace: Option<(String, String)>,
+    session: String,
+    active: SessionDisplay,
+    saved: HashMap<String, SessionDisplay>,
+    stream: StreamRender,
 }
-pub fn reveal_tool_output(s: &mut State, key: &str) {
-    s.expanded_tools.insert(key.into());
-    s.revision += 1;
+
+#[derive(Default)]
+struct StreamRender {
+    version: u64,
+    due: f64,
+    pending: bool,
+}
+
+#[derive(Default)]
+struct SessionDisplay {
+    toggled: HashSet<String>,
+    revealed: HashMap<String, usize>,
+    unwrapped: HashMap<String, BTreeSet<usize>>,
+}
+impl Display {
+    pub fn bind(&mut self, server: &str, workspace: &str, session: &str) {
+        if !self
+            .workspace
+            .as_ref()
+            .is_some_and(|(a, b)| a == server && b == workspace)
+        {
+            *self = Self {
+                workspace: Some((server.into(), workspace.into())),
+                session: session.into(),
+                ..Self::default()
+            };
+        } else if self.session != session {
+            let next = self.saved.remove(session).unwrap_or_default();
+            self.saved.insert(
+                std::mem::replace(&mut self.session, session.into()),
+                std::mem::replace(&mut self.active, next),
+            );
+            self.stream = StreamRender::default();
+        }
+    }
+
+    pub fn toggled(&self, key: &str) -> bool {
+        self.active.toggled.contains(key)
+    }
+
+    pub fn steps(&self, key: &str) -> usize {
+        self.active.revealed.get(key).copied().unwrap_or_default()
+    }
+
+    pub fn stream_version(&self) -> u64 {
+        self.stream.version
+    }
+
+    pub fn poll(s: &mut State, changed: bool, now: f64, tx: &mut rune::Tx) -> bool {
+        let stream = &mut s.transcript_display.stream;
+        if changed {
+            stream.pending = s.messages.last().is_some_and(|row| {
+                !row.completed
+                    && row.parts.iter().any(|part| {
+                        matches!(part, crate::content::Part::Text(t)
+                    if t.provenance != crate::content::TextProvenance::Closed
+                    && t.text.encode_utf16().nth(super::document::TOOL_LIMIT).is_some())
+                    })
+            });
+        }
+        if !stream.pending {
+            return false;
+        }
+        if now < stream.due {
+            tx.wake_at(stream.due);
+            return false;
+        }
+        stream.pending = false;
+        stream.due = now + RENDER_INTERVAL;
+        stream.version += 1;
+        s.revision += 1;
+        true
+    }
+
+    pub fn unwrapped(&self, key: &str) -> BTreeSet<usize> {
+        self.active.unwrapped.get(key).cloned().unwrap_or_default()
+    }
+
+    pub fn toggle_code(s: &mut State, key: &str, index: usize) {
+        let blocks = s
+            .transcript_display
+            .active
+            .unwrapped
+            .entry(key.into())
+            .or_default();
+        if !blocks.remove(&index) {
+            blocks.insert(index);
+        }
+        s.revision += 1;
+    }
+
+    pub fn toggle(s: &mut State, key: &str) {
+        let toggled = &mut s.transcript_display.active.toggled;
+        if !toggled.remove(key) {
+            toggled.insert(key.into());
+        }
+        s.revision += 1;
+    }
+
+    pub fn reveal_next(s: &mut State, key: &str) {
+        let steps = s
+            .transcript_display
+            .active
+            .revealed
+            .entry(key.into())
+            .or_default();
+        *steps = steps.saturating_add(1);
+        s.revision += 1;
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn disclosure_survives_session_switch_and_never_crosses_workspaces() {
+    let mut s = crate::init();
+    let key = "message";
+    s.transcript_display.bind("server", "project", "a");
+    Display::reveal_next(&mut s, key);
+    Display::toggle(&mut s, key);
+    s.transcript_display.bind("server", "project", "b");
+    assert_eq!(s.transcript_display.steps(key), 0);
+    assert!(!s.transcript_display.toggled(key));
+    s.transcript_display.bind("server", "project", "a");
+    assert_eq!(s.transcript_display.steps(key), 1);
+    assert!(s.transcript_display.toggled(key));
+    s.transcript_display.bind("other", "project", "a");
+    assert_eq!(s.transcript_display.steps(key), 0);
 }

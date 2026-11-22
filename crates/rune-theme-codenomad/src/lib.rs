@@ -10,6 +10,8 @@ pub mod git_panel;
 pub mod interruption;
 mod kit;
 pub mod layout;
+pub mod markdown;
+pub mod shell;
 pub mod tabs;
 mod tokens;
 pub mod window_control;

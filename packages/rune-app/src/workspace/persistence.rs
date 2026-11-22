@@ -185,6 +185,7 @@ mod tests {
         let snapshot = Snapshot {
             revision: 1,
             saved_at: 1,
+            panel_widths: [None; 2],
             tabs: vec![super::super::Tab::Blank],
             active: Some(0),
         };

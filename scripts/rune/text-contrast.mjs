@@ -11,8 +11,8 @@ export async function assertRenderedTextContrast(page, png, regions, palette) {
     const luminance = rgb => rgb.map(value => {const s = value / 255; return s <= .04045 ? s / 12.92 : ((s + .055) / 1.055) ** 2.4})
       .reduce((sum, value, i) => sum + value * [.2126, .7152, .0722][i], 0)
     const contrast = (a, b) => {const x = luminance(a), y = luminance(b); return (Math.max(x, y) + .05) / (Math.min(x, y) + .05)}
-    return regions.map(({name, rect, surface, inset = 0}) => {
-      const background = rgb(palette[surface]), ink = rgb(palette['text-primary'])
+    return regions.map(({name, rect, surface, inset = 0, text = 'text-primary'}) => {
+      const background = rgb(palette[surface]), ink = rgb(palette[text])
       const [x, y, width, height] = rect
       const box = [Math.max(0, Math.ceil(x + inset)), Math.max(0, Math.ceil(y + inset)),
         Math.min(image.width, Math.floor(x + width - inset)), Math.min(image.height, Math.floor(y + height - inset))]

@@ -15,6 +15,7 @@ fn snapshot(workspace: Workspace) -> Snapshot {
     Snapshot {
         revision: 7,
         saved_at: 1234,
+        panel_widths: [None; 2],
         tabs: vec![Tab::Workspace(workspace)],
         active: Some(0),
     }
@@ -48,6 +49,7 @@ fn canonical_round_trip_keeps_occurrences_and_text_separate() {
     let input = Snapshot {
         revision: MAX_SAFE,
         saved_at: MAX_SAFE,
+        panel_widths: [None; 2],
         tabs: vec![Tab::Blank, Tab::Workspace(first), Tab::Workspace(second)],
         active: Some(2),
     };
@@ -130,6 +132,7 @@ fn enforces_count_byte_path_identity_and_selection_bounds() {
     let mut input = Snapshot {
         revision: 0,
         saved_at: 0,
+        panel_widths: [None; 2],
         tabs: vec![Tab::Blank; MAX_TABS],
         active: Some(31),
     };
@@ -175,6 +178,7 @@ fn enforces_count_byte_path_identity_and_selection_bounds() {
     let empty = Snapshot {
         revision: 0,
         saved_at: 0,
+        panel_widths: [None; 2],
         tabs: vec![],
         active: None,
     };
@@ -190,6 +194,7 @@ fn accepts_v1_null_session_and_safe_integer_json_numbers() {
     let mut raw = value(&Snapshot {
         revision: 0,
         saved_at: 0,
+        panel_widths: [None; 2],
         tabs: vec![],
         active: None,
     });
@@ -200,8 +205,23 @@ fn accepts_v1_null_session_and_safe_integer_json_numbers() {
         Snapshot {
             revision: 1,
             saved_at: 0,
+            panel_widths: [None; 2],
             tabs: vec![],
             active: None
         }
     );
+}
+
+#[test]
+fn native_store_preserves_panel_widths_under_the_solid_layout_keys() {
+    let mut input = snapshot(workspace());
+    input.panel_widths = [Some(440), Some(295)];
+    let mut raw = value(&input);
+    assert_eq!(raw["layout"][PANEL_WIDTH_KEYS[0]], "440");
+    assert_eq!(raw["layout"][PANEL_WIDTH_KEYS[1]], "295");
+    assert_eq!(from_value(&raw), Ok(input.clone()));
+    raw["layout"][PANEL_WIDTH_KEYS[1]] = json!("295.35");
+    assert_eq!(from_value(&raw), Ok(input.clone()));
+    input.panel_widths[0] = Some(0);
+    assert_eq!(encode(&input), Err(Error::Limit));
 }
