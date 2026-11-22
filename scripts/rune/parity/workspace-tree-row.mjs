@@ -29,8 +29,14 @@ try{
     const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',msg=>{if(msg.type()==='error')console.error(msg.text())})
     await page.route('**/*',route=>{const url=new URL(route.request().url());assert.equal(url.origin,origin);return url.pathname==='/api/events'?route.fulfill({contentType:'text/event-stream',body:': fixture\n\n'}):url.pathname.startsWith('/api/')?route.fulfill({json:{}}):route.continue()})
     await page.emulateMedia({colorScheme:theme,reducedMotion:'reduce'})
-    await page.goto(`${origin}/rune-workspace-row?${new URLSearchParams({theme,rtl:String(rtl),open:String(mode==='open'),file:String(mode==='file'),busy:String(mode==='busy'),selected:String(mode==='open'),depth:'1'})}`,{waitUntil:'domcontentloaded'})
-    for(let retry=0;retry<3;retry++){try{await page.waitForFunction(()=>globalThis.runeWorkspaceRow?.ready,undefined,{timeout:15000});break}catch(error){if(retry===2)throw Error(`${error.message}: ${JSON.stringify(errors)} ${await page.content()}`);await page.reload({waitUntil:'domcontentloaded'})}}
+    const url=`${origin}/rune-workspace-row?${new URLSearchParams({theme,rtl:String(rtl),open:String(mode==='open'),file:String(mode==='file'),busy:String(mode==='busy'),selected:String(mode==='open'),depth:'1'})}`
+    for(let retry=0;retry<3;retry++){
+      try{
+        await page.goto(url,{waitUntil:'domcontentloaded'})
+        await page.waitForFunction(()=>globalThis.runeWorkspaceRow?.ready,undefined,{timeout:15000})
+        record.bootstrapAttempts=retry+1;break
+      }catch(error){if(retry===2)throw Error(`${error.message}: ${JSON.stringify(errors)} ${await page.content()}`)}
+    }
     await page.evaluate(()=>document.fonts.ready)
     await page.evaluate(rtl=>document.documentElement.dir=rtl?'rtl':'ltr',rtl)
     const row=page.getByRole('treeitem')
