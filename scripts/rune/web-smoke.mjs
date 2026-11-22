@@ -57,6 +57,9 @@ try {
       let eventSource=0
       let releaseLinked
       const beforeLinked=values.mobile?new Promise(resolve=>{releaseLinked=resolve}):null
+      const failLinkedPage=values.mobile&&!control&&colorScheme==='light'
+      const linkedReads=[]
+      let linkedContinuationRecovered
       page.on('response',async response=>{
         if(!values.connected)return
         const request=response.request(),pathname=new URL(response.url()).pathname
@@ -82,6 +85,12 @@ try {
           }
         }
         if(values.mobile&&req.method()==='GET'&&p.endsWith('/worktrees'))await beforeLinked
+        if(values.mobile&&req.method()==='GET'&&p.endsWith('/instance/api/session')&&
+          requested.searchParams.get('directory')===path.join(path.dirname(values.project),'linked')){
+          const cursor=requested.searchParams.get('cursor')
+          linkedReads.push(cursor)
+          if(failLinkedPage&&cursor&&linkedReads.length===2)return route.fulfill({status:503})
+        }
         await route.continue()
       })
       const started = performance.now()
@@ -138,7 +147,17 @@ try {
             await row('Existing history').waitFor()
             releaseLinked()
             await row('Linked checkout session').waitFor()
+            if(failLinkedPage){
+              await sessions.getByText(messages['rune.list_error'],{exact:true}).waitFor()
+              assert.equal(await row('Linked checkout next page').count(),0,'The acquired first page remains visible after the failed continuation')
+              await press(messages['rune.refresh'])
+            }
             await row('Linked checkout next page').waitFor()
+            if(failLinkedPage){
+              assert(linkedReads[1])
+              assert.deepEqual(linkedReads,[null,linkedReads[1],linkedReads[1]],'Refresh resumes the precise linked cursor')
+              linkedContinuationRecovered=true
+            }
             assert.equal(await row('Another session').count(),0)
             await press(messages['sessionList.filter.ariaLabel'])
             await page.locator('textarea:focus').fill('Another session')
@@ -208,6 +227,7 @@ try {
           latest:messages['rune.latest'],
         },imagePage)
         if(values.mobile){
+          measured.linkedContinuationRecovered=linkedContinuationRecovered
           measured.network=colorScheme==='dark'?{rttMs:80,downloadBytesPerSecond:2_500_000,uploadBytesPerSecond:625_000}:'loopback'
           assert.deepEqual(measured.viewport,{width,height,touch:true,dpr:control?1:android.deviceScaleFactor,platform:'Android',mobile:true})
           const {width:backingWidth,height:backingHeight}=measured.canvases[0]

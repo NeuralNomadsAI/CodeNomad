@@ -6,16 +6,36 @@ use crate::{
     platform::{self, reads},
 };
 use codenomad_client::{Receiver, Sender, bounded};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 #[derive(Clone, Default)]
 pub(crate) struct Pages {
     pub rows: Vec<Session>,
+    remaining: VecDeque<Location>,
+}
+#[derive(Clone, Default)]
+struct Location {
+    directory: String,
+    cursor: Option<String>,
+    seen: HashSet<String>,
+}
+impl Pages {
+    fn keep(&mut self, rows: Vec<Session>, ids: &mut HashSet<String>) -> bool {
+        for row in rows {
+            if ids.insert(row.id.clone()) {
+                if self.rows.len() == super::MAX_BROWSED_SESSIONS {
+                    return false;
+                }
+                self.rows.push(row);
+            }
+        }
+        true
+    }
 }
 #[derive(Default)]
 pub(crate) struct Linked {
     pub pages: Option<Pages>,
-    job: Option<(Sender<()>, Receiver<Result<Pages>>)>,
+    job: Option<(Sender<()>, Receiver<Result<(Pages, bool)>>)>,
     pub failed: bool,
 }
 impl Linked {
@@ -32,6 +52,12 @@ pub(super) fn load(s: &mut State) {
     let (Some(backend), Some(project)) = (l.connection.clone(), l.project.clone()) else {
         return;
     };
+    let resume = l
+        .linked
+        .pages
+        .as_ref()
+        .filter(|pages| l.linked.failed && !pages.remaining.is_empty())
+        .cloned();
     let wake = l.wake.clone();
     let (cancel, cancelled) = bounded(1);
     let (out, input) = bounded(1);
@@ -43,36 +69,53 @@ pub(super) fn load(s: &mut State) {
                 return;
             };
             let result = async {
-                let mut pages = Pages::default();
-                let mut ids = HashSet::new();
-                let mut budget = 1000; // Includes empty pages, across all linked locations.
-                for directory in backend.linked_session_directories(&project).await? {
-                    let mut cursor = None;
-                    let mut seen = HashSet::new();
-                    loop {
-                        if budget == 0 {
-                            return Err("linked session page limit reached".into());
+                let mut pages = match resume {
+                    Some(pages) => pages,
+                    None => Pages {
+                        rows: Vec::new(),
+                        remaining: backend
+                            .linked_session_directories(&project)
+                            .await?
+                            .into_iter()
+                            .map(|directory| Location {
+                                directory,
+                                ..Default::default()
+                            })
+                            .collect(),
+                    },
+                };
+                let mut ids = pages.rows.iter().map(|row| row.id.clone()).collect();
+                for _ in 0..1000 {
+                    let Some(location) = pages.remaining.front() else {
+                        return Ok((pages, true));
+                    };
+                    let Ok(page) = backend
+                        .linked_session_page(
+                            &project,
+                            &location.directory,
+                            location.cursor.as_deref(),
+                        )
+                        .await
+                    else {
+                        break;
+                    };
+                    if !pages.keep(page.rows, &mut ids) {
+                        break;
+                    }
+                    if let Some(next) = page.next {
+                        let Some(location) = pages.remaining.front_mut() else {
+                            break;
+                        };
+                        if location.seen.len() >= 1000 || !location.seen.insert(next.clone()) {
+                            break;
                         }
-                        budget -= 1;
-                        let page = backend
-                            .linked_session_page(&project, &directory, cursor.as_deref())
-                            .await?;
-                        pages.rows.extend(
-                            page.rows
-                                .into_iter()
-                                .filter(|row| ids.insert(row.id.clone())),
-                        );
-                        if pages.rows.len() > 2000 {
-                            return Err("linked session list limit reached".into());
-                        }
-                        let Some(next) = page.next else { break };
-                        if !seen.insert(next.clone()) {
-                            return Err("repeated linked session cursor".into());
-                        }
-                        cursor = Some(next);
+                        location.cursor = Some(next);
+                    } else {
+                        pages.remaining.pop_front();
                     }
                 }
-                Ok(pages)
+                let complete = pages.remaining.is_empty();
+                Ok((pages, complete))
             }
             .await;
             let _ = out.send(result).await;
@@ -103,8 +146,34 @@ pub(super) fn poll(s: &mut State) -> bool {
     };
     l.linked.job = None;
     match result {
-        Ok(pages) => l.linked.pages = Some(pages),
+        Ok((pages, complete)) => {
+            l.linked.pages = Some(pages);
+            l.linked.failed = !complete;
+        }
         Err(_) => l.linked.failed = true,
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_overflowing_page_preserves_the_retained_rows_and_its_cursor() {
+        let mut pages = Pages::default();
+        pages.remaining.push_back(Location {
+            cursor: Some("opaque".into()),
+            ..Default::default()
+        });
+        let rows = (0..=super::super::MAX_BROWSED_SESSIONS)
+            .map(|id| Session {
+                id: id.to_string(),
+                title: String::new(),
+            })
+            .collect();
+        assert!(!pages.keep(rows, &mut HashSet::new()));
+        assert_eq!(pages.rows.len(), super::super::MAX_BROWSED_SESSIONS);
+        assert_eq!(pages.remaining[0].cursor.as_deref(), Some("opaque"));
+    }
 }
