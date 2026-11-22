@@ -168,6 +168,39 @@ fn permissions_keep_actions_visible_and_reason_reachable_across_viewports() {
                 rt.paste("short viewport draft");
                 rt.frame(0.02);
                 assert_eq!(rt.state.draft.text, "short viewport draft");
+                let long = "Long draft line\n".repeat(60);
+                let (commands, received) = bounded(1);
+                rt.update(|s, _| {
+                    s.commands = Some(commands);
+                    s.draft.replace_text(&long);
+                });
+                settle(&mut rt);
+                let editor = rt
+                    .elements()
+                    .into_iter()
+                    .find(|node| node.key.as_deref() == Some("composer"))
+                    .unwrap();
+                let viewport = rt
+                    .elements()
+                    .into_iter()
+                    .find(|node| node.path.ends_with("/session-composer/scroll"))
+                    .unwrap();
+                assert!(editor.rect[3] > 320.0, "fixture must overflow the editor");
+                assert!(
+                    viewport.rect[3] <= 320.0,
+                    "long draft must not grow the viewport"
+                );
+                rt.update(|_, tx| tx.scroll_to_bottom_instant("session-composer/scroll"));
+                rt.frame(0.02);
+                assert_eq!(rt.scroll_at_bottom("session-composer/scroll"), Some(true));
+                reveal(&mut rt, "send");
+                let (x, y) = rt.find("send").unwrap();
+                rt.pointer_down(x, y);
+                rt.pointer_up(x, y);
+                rt.frame(0.02);
+                assert!(
+                    matches!(received.try_recv().unwrap(), crate::transport::Command::Send(text) if text == long)
+                );
             }
             reveal(&mut rt, "history");
             reveal(&mut rt, "allow_once");
