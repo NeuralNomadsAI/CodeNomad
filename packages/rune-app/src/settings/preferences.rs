@@ -37,18 +37,17 @@ impl Preferences {
     pub(super) fn flush(&mut self) -> bool {
         use std::time::Duration;
         if self.backend.is_none() || !self.has_writes() {
-            return true;
+            return ![&self.config, &self.state]
+                .into_iter()
+                .any(|doc| doc.uncertain || doc.error == Some("settings.preferenceSaveFailed"));
         }
         self.unwatch();
-        // The host still owns its server here. A deliberate close drains the
-        // last admitted choice, within the same budget for both documents.
+        // In-flight operation, readback, and one queued intent can each use
+        // the HTTP deadline. Both owner lanes keep running during the drain.
         platform::block_on(async {
-            tokio::time::timeout(Duration::from_secs(5), async {
-                if self.config.read_failed {
-                    self.config.read = true;
-                }
-                if self.state.read_failed {
-                    self.state.read = true;
+            tokio::time::timeout(codenomad_client::http::REQUEST_TIMEOUT * 4, async {
+                for doc in [&mut self.config, &mut self.state] {
+                    doc.read = doc.pending.is_some() && (doc.read_failed || doc.uncertain);
                 }
                 while self.has_writes() {
                     self.poll();
@@ -208,11 +207,7 @@ impl Preferences {
     }
 
     pub fn mode_ready(&self) -> bool {
-        self.config.snapshot.is_some()
-            && self.state.snapshot.is_some()
-            && !self.state.uncertain
-            && !self.state.read_failed
-            && !self.config.read_failed
+        self.state.snapshot.is_some() && !self.state.uncertain && !self.state.read_failed
     }
 
     pub fn mode_display(&self) -> &'static str {
@@ -230,7 +225,7 @@ impl Preferences {
             .unwrap_or_else(|| self.mode())
     }
 
-    fn legacy(&self, state: &Value) -> Option<(&'static str, Value)> {
+    fn legacy(&self, state: &Value) -> Option<(&'static str, &'static str)> {
         let config = self.saved(Owner::Config).unwrap_or(&Value::Null);
         let scheme = state
             .get("colorScheme")
@@ -246,14 +241,11 @@ impl Preferences {
                 } else {
                     "dark"
                 };
-                return Some((appearance, scheme.clone()));
+                return Some((appearance, "custom"));
             }
             if let Some(palette) = built_in().iter().find(|p| Some(p.id) == id) {
                 let appearance = if palette.dark { "dark" } else { "light" };
-                return Some((
-                    appearance,
-                    json!({"id":palette.id,"appearance":appearance,"colors":scheme["colors"]}),
-                ));
+                return Some((appearance, palette.id));
             }
         }
         let (appearance, id) = match state
@@ -265,7 +257,7 @@ impl Preferences {
             Some("dark") => ("dark", "classic"),
             _ => return None,
         };
-        Some((appearance, json!({"id":id,"appearance":appearance})))
+        Some((appearance, id))
     }
 
     pub fn palette(&self, dark: bool) -> Option<&'static Palette> {
@@ -276,11 +268,7 @@ impl Preferences {
             .filter(|(appearance, _)| *appearance == mode);
         let id = state["appearancePreferences"][mode]["scheme"]["id"]
             .as_str()
-            .or_else(|| {
-                legacy
-                    .as_ref()
-                    .and_then(|(_, scheme)| scheme["id"].as_str())
-            });
+            .or_else(|| legacy.map(|(_, id)| id));
         let palettes = built_in();
         palettes
             .iter()
@@ -305,6 +293,13 @@ impl Preferences {
 
     pub fn palette_ready(&self) -> bool {
         self.mode_ready()
+            && (self.config.snapshot.is_some()
+                || self.config.read_failed
+                || self.state.snapshot.as_ref().is_some_and(|state| {
+                    state["appearancePreferences"]["mode"].is_string()
+                        || state.get("theme").is_some()
+                        || state.get("colorScheme").is_some()
+                }))
             && [&self.state.pending, &self.state.writing]
                 .into_iter()
                 .flatten()
@@ -370,9 +365,6 @@ impl Document {
                 self.error = reply.error;
                 self.uncertain = reply.uncertain || self.uncertain && reply.snapshot.is_none();
                 self.read_failed = reply.snapshot.is_none();
-                if self.uncertain {
-                    self.pending = None;
-                }
                 if let Some(snapshot) = reply.snapshot {
                     self.snapshot = Some(snapshot);
                 }
@@ -382,7 +374,7 @@ impl Document {
         if self.flight.is_some() {
             return changed;
         }
-        let patch = if self.read_failed {
+        let patch = if self.read_failed || self.uncertain {
             None
         } else {
             self.pending.take()

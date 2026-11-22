@@ -22,6 +22,17 @@ pub fn spec<S: 'static>(
     }
 }
 
+pub fn save_warning_spec<S: 'static>(
+    title: &'static str,
+    init: fn() -> S,
+    view: fn(&S, &mut Cx<S>) -> El,
+) -> AppSpec<S> {
+    AppSpec {
+        families: layout::font_families(),
+        ..AppSpec::new(title, (460.0, 150.0), init, view)
+    }
+}
+
 pub fn shell_entry(tabs: El, entry: El) -> El {
     row()
         .full_width()

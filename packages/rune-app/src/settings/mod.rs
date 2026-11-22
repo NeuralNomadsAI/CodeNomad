@@ -98,11 +98,15 @@ fn open(host: &mut Host) {
 pub(crate) fn close(s: &mut State) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        if !s.settings.shared.borrow_mut().flush() {
-            eprintln!("Rune preferences were not fully saved before shutdown");
-        }
+        let mut preferences = s.settings.shared.borrow_mut();
+        let finished = preferences.flush();
+        let locale = preferences.locale().unwrap_or_else(strings::locale);
+        drop(preferences);
         if let Some((window, _)) = s.settings.window.take() {
             window.close();
+        }
+        if !finished {
+            view::warn_before_quit(locale);
         }
     }
     #[cfg(target_arch = "wasm32")]

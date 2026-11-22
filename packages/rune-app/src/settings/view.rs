@@ -36,6 +36,41 @@ pub(super) fn closed(s: &mut Window, _: &mut rune::Tx) {
     s.token = None;
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn warn_before_quit(locale: &'static str) {
+    let spec = chrome::save_warning_spec(
+        crate::strings::with_locale(locale, || t("settings.title")),
+        crate::strings::locale,
+        save_warning,
+    );
+    // Rune's close hook cannot veto an OS close. A normal window close still
+    // permits a separate acknowledgement window before the event loop exits.
+    rune::open_window(rune::WindowSpec::new("settings-save-warning", spec).state(locale));
+}
+
+fn save_warning(locale: &&'static str, cx: &mut Cx<&'static str>) -> El {
+    use rune_theme_codenomad::Space;
+    crate::strings::with_locale(locale, || {
+        layout::render(cx, |_| {
+            col()
+                .full_width()
+                .full_height()
+                .reading_surface()
+                .pad(Space::Lg)
+                .separate(Space::Md)
+                .child(text(t("settings.preferenceSaveFailed")).role("alert"))
+                .child(layout::button_tx(
+                    t("alertDialog.actions.ok"),
+                    false,
+                    |_: &mut &str, tx| {
+                        tx.close_window();
+                    },
+                ))
+        })
+        .locale_direction(locale)
+    })
+}
+
 pub(super) fn spec() -> AppSpec<Window> {
     AppSpec {
         setup: Some(|s, wake| {
@@ -121,6 +156,16 @@ mod tests {
             .as_array()?
             .iter()
             .find_map(|child| node(child, key))
+    }
+
+    #[test]
+    fn settings_shutdown_failure_warning_requires_visible_acknowledgement() {
+        let mut runtime = Runtime::new("en", save_warning, (460.0, 150.0), Env::new(false, 1.0));
+        runtime.frame(0.0);
+        let tree = runtime.accessibility_json().to_string();
+        assert!(tree.contains("Could not save the preference."));
+        assert!(tree.contains("\"role\":\"alert\""));
+        assert!(tree.contains("\"name\":\"OK\""));
     }
 
     #[test]

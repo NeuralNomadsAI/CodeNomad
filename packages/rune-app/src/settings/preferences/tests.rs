@@ -90,7 +90,16 @@ fn settings_mode_patch_leaves_defaults_and_legacy_slots_alone() {
         prefs.state.snapshot = Some(json!({}));
         assert!(!prefs.palette_ready());
         prefs.set_mode("light");
-        assert!(prefs.state.pending.is_none(), "wait for legacy config");
+        assert!(
+            prefs.state.pending.take().is_some(),
+            "state-only mode can save"
+        );
+        prefs.config.read_failed = true;
+        assert!(
+            prefs.palette_ready(),
+            "unreadable configuration does not disable appearance"
+        );
+        assert!(!prefs.locale_ready());
         prefs.config.snapshot = Some(json!({"theme":"dark","settings":{"locale":"de-DE"}}));
         assert_eq!(prefs.locale(), Some("de"));
         assert_eq!(prefs.palette(true).map(|p| p.id), Some("classic"));
@@ -260,6 +269,8 @@ fn settings_shutdown_flushes_the_last_queued_palette_and_observes_a_lost_receipt
             first.body["appearancePreferences"]["dark"]["scheme"]["id"],
             "slate"
         );
+        // The old five-second drain would abandon Basalt here.
+        tokio::time::sleep(Duration::from_millis(5400)).await;
         first
             .reply(
                 200,
@@ -290,6 +301,82 @@ fn settings_shutdown_flushes_the_last_queued_palette_and_observes_a_lost_receipt
     assert!(receipt.try_recv().is_ok());
     assert_eq!(prefs.palette(true).map(|p| p.id), Some("basalt"));
     assert!(prefs.error().is_none());
+}
+
+#[test]
+fn settings_failed_readback_keeps_the_unsent_palette_parked_until_fresh_authority() {
+    platform::block_on(async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let backend = Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
+            .await
+            .unwrap();
+        let mut prefs = Preferences {
+            backend: Some(backend),
+            ..Preferences::default()
+        };
+        prefs.fixture();
+        let palette = |id| built_in().iter().find(|p| p.id == id).unwrap();
+        let (signal, completed) = bounded(4);
+        prefs.main_wake = Some(std::sync::Arc::new(move || {
+            let _ = signal.try_send(());
+        }));
+        prefs.set_palette(palette("slate"));
+        prefs.poll();
+        let patch = request(&listener).await;
+        assert_eq!(
+            patch.body["appearancePreferences"]["dark"]["scheme"]["id"],
+            "slate"
+        );
+        prefs.set_palette(palette("basalt"));
+        drop(patch);
+        let read = request(&listener).await;
+        assert!(read.first.starts_with("GET "));
+        read.reply(503, json!({})).await;
+        timeout(Duration::from_secs(3), completed.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(prefs.poll());
+        assert!(prefs.state.uncertain);
+        assert!(
+            prefs.state.flight.is_none(),
+            "do not replay the uncertain or dispatch the queued PATCH"
+        );
+        assert_eq!(prefs.palette_display(true).map(|p| p.id), Some("basalt"));
+        prefs.invalidate(Owner::State);
+        prefs.poll();
+        let read = request(&listener).await;
+        assert!(read.first.starts_with("GET "));
+        read.reply(
+            200,
+            json!({"appearancePreferences":{"mode":"system","dark":{"scheme":{"id":"slate"}}}}),
+        )
+        .await;
+        timeout(Duration::from_secs(3), completed.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(prefs.poll());
+        let queued = request(&listener).await;
+        assert!(queued.first.starts_with("PATCH "));
+        assert_eq!(
+            queued.body["appearancePreferences"]["dark"]["scheme"]["id"],
+            "basalt"
+        );
+        queued
+            .reply(
+                200,
+                json!({"appearancePreferences":{"dark":{"scheme":{"id":"basalt"}}}}),
+            )
+            .await;
+        timeout(Duration::from_secs(3), completed.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        prefs.poll();
+        assert_eq!(prefs.palette(true).map(|p| p.id), Some("basalt"));
+        assert!(prefs.state.pending.is_none());
+    });
 }
 
 async fn request(listener: &TcpListener) -> Request {
