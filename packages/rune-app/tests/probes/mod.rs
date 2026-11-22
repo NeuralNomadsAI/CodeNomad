@@ -14,6 +14,7 @@ mod pending_open;
 mod real_history;
 mod recovery;
 mod session_transport;
+mod slash;
 mod window_restore;
 mod workspaces;
 
@@ -39,6 +40,7 @@ pub fn dispatch() -> bool {
         ("--probe-fresh", session_transport::fresh),
         ("--probe-recovery", recovery::run),
         ("--probe-contract", session_transport::contract),
+        ("--probe-slash", slash::run),
     ] {
         if crate::platform::has_flag(flag) {
             run();

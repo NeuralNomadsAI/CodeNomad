@@ -135,7 +135,7 @@ pub fn overlays(s: &State, layer: &mut Vec<El>) {
         }),
         t(if picker.loading() {
             "unifiedPicker.loading.searching"
-        } else if picker.error {
+        } else if picker.error() {
             "promptInput.skills.error"
         } else {
             "unifiedPicker.empty"

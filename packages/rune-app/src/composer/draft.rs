@@ -128,17 +128,30 @@ impl Draft {
             Attachment::Project { path, .. } | Attachment::Path(path) => Some(path),
             _ => None,
         }) {
-            let path = path.strip_prefix("./").unwrap_or(path);
+            let path = path
+                .strip_prefix("./")
+                .unwrap_or(path)
+                .trim_end_matches('/');
             if !path.is_empty() && path != "." {
                 let token = format!("@{path}");
-                let end = |start| start + token.len();
-                if let Some((start, _)) = text.match_indices(&token).find(|(start, _)| {
-                    text[end(*start)..]
+                let mut resolved = String::new();
+                let mut offset = 0;
+                for (start, matched) in text.match_indices(&token) {
+                    let end = start + matched.len();
+                    if text[end..]
                         .chars()
                         .next()
                         .is_none_or(|next| next == '/' || whitespace(next))
-                }) {
-                    text.replace_range(start..start + 1, "./");
+                    {
+                        resolved.push_str(&text[offset..start]);
+                        resolved.push_str("./");
+                        resolved.push_str(path);
+                        offset = end;
+                    }
+                }
+                if offset != 0 {
+                    resolved.push_str(&text[offset..]);
+                    text = resolved;
                 }
             }
         }
