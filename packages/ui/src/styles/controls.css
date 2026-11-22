@@ -18,6 +18,7 @@
 @import "./components/folder-drop.css";
 @import "./components/folder-loading.css";
 @import "./components/dropdown.css";
+@import "./components/positioner.css";
 @import "./components/selector.css";
 @import "./components/native-select.css";
 @import "./components/env-vars.css";

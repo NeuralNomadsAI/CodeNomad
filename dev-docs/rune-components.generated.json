@@ -13059,6 +13059,24 @@
     },
     {
       "specifier": "solid-js",
+      "file": "packages/ui/tests/browser/fixtures/file-row-actions.tsx",
+      "line": 1,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "solid-js/web",
+      "file": "packages/ui/tests/browser/fixtures/file-row-actions.tsx",
+      "line": 2,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "lucide-solid",
+      "file": "packages/ui/tests/browser/fixtures/file-row-actions.tsx",
+      "line": 3,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "solid-js",
       "file": "packages/ui/tests/browser/fixtures/file-search-retry.tsx",
       "line": 1,
       "resolution": "external-dependency-requires-installed-contract"
@@ -17967,6 +17985,24 @@
     },
     {
       "specifier": "node:assert/strict",
+      "file": "packages/ui/tests/browser/positioner-motion.test.ts",
+      "line": 1,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "node:test",
+      "file": "packages/ui/tests/browser/positioner-motion.test.ts",
+      "line": 2,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "playwright",
+      "file": "packages/ui/tests/browser/positioner-motion.test.ts",
+      "line": 3,
+      "resolution": "external-dependency-requires-installed-contract"
+    },
+    {
+      "specifier": "node:assert/strict",
       "file": "packages/ui/tests/browser/preferences-backends.test.ts",
       "line": 1,
       "resolution": "external-dependency-requires-installed-contract"
@@ -22279,6 +22315,7 @@
     "packages/ui/src/styles/components/plugin-package-action.css": "fde5fd20fd4b155eaf9ca1f385153926596a6f7e1296d4a6870d45f586daaa27",
     "packages/ui/src/styles/components/plugin-source-add.css": "0c2d73801860f2b16343a4a0a8510b4a6b1542f8dcfdef9d62eefe2c3eb18c54",
     "packages/ui/src/styles/components/plugin-system-attention.css": "ba9d6f61f54a1a026a931e015eedf8656313fec7776521d451ad995990256d49",
+    "packages/ui/src/styles/components/positioner.css": "cf0adb9204d4849d7d4d77c023672a0d4568ec436bdd19a5b69f9581a0bd75c0",
     "packages/ui/src/styles/components/profile-manager.css": "f96d5abcb15cfa6611c9944ed98435c38382445a1bd285b54760c1e3e68ec503",
     "packages/ui/src/styles/components/prompt-context-controls.css": "f60caa15d742f5dfeb37765599c1d4297a8e844d4512e1114c4c7421e257d4b3",
     "packages/ui/src/styles/components/prompt-help.css": "2c81d4521ee1d568bf98c9262d9bbaa5bb555032372385c526fe2eb0a4f333d2",
@@ -22308,7 +22345,7 @@
     "packages/ui/src/styles/components/usage-metrics.css": "df551e69ed9dddd46fd61f0237b70dff10be0361d63aa60fbaf89768f87bf734",
     "packages/ui/src/styles/components/websearch-settings.css": "e90b18ca3cb0bd6a30a27ff3f331a936808b86b9596370906a682423d84c26d1",
     "packages/ui/src/styles/components/window.css": "8822d4ca58809457be862473895d96f41fb5ff66509eee8e613785e950999026",
-    "packages/ui/src/styles/controls.css": "ad19642fce1d39b56e0c2cc1608c0e43880bd18bd129fca37802819dec605982",
+    "packages/ui/src/styles/controls.css": "dec22749dcd99face0a0f540946006dec6ff0556d0185d7472fc8815e3f14008",
     "packages/ui/src/styles/markdown.css": "2b5c5a6b33ec437951d8acf7c1da1f231287905cc60022851c0557fbadc554f2",
     "packages/ui/src/styles/messaging.css": "827ce7714f2c374baf200445406488c3aba5488810de61a30ea8ef08c87245d8",
     "packages/ui/src/styles/messaging/delete-overlays.css": "ec2f533cff61dd85f871884e5ff4195b6e1be87337cc2aa44557602a5a8600bb",
@@ -22520,6 +22557,7 @@
     "packages/ui/tests/browser/fixtures/event-subscriber-isolation.tsx": "027d77aa0ceec1961c51709bf64cac19b1b7adc2dcfc712156cf81401dc8b593",
     "packages/ui/tests/browser/fixtures/external-link-clicks.ts": "c4b48ccd38f798c766b0f43e56cb510f55d040fadbadcab6f6d3b45699a91165",
     "packages/ui/tests/browser/fixtures/file-preview-panel.tsx": "a9793f66152469f6e90e36f8b45ffc006151c59b99cda3fee4c21cf5dca6feb2",
+    "packages/ui/tests/browser/fixtures/file-row-actions.tsx": "1b6795fc8ffe0384caa8eb382577b2d41971c5cd139f2b2aceb30d86ce3823a7",
     "packages/ui/tests/browser/fixtures/file-search-retry.tsx": "7ba7bc9a8c2fe7f1ffa92ca1e017ec5013395dfe12a6cd4ec20e43815653dd5d",
     "packages/ui/tests/browser/fixtures/fork.tsx": "186759a91ba8eadca4b21d22bf4fed04f2ff81070beec154b3334c1281fa486b",
     "packages/ui/tests/browser/fixtures/full-source-copy.tsx": "f749f63da70106826106a2bedca3ec2f20d545f7bf074e288f7810f74b727b85",
@@ -22800,6 +22838,7 @@
     "packages/ui/tests/browser/plugin-controls.test.ts": "0cef35ad576b6e320f30af0b5030dd74b7df8e6cbc2af6b31bcf7c0e72c23943",
     "packages/ui/tests/browser/plugin-packages.test.ts": "8284afcf700c6f10c01db0715492369879a027f8ca7734cb4a50ec3d6e83bc3b",
     "packages/ui/tests/browser/plugin-sources.test.ts": "97ab22ba1e8e44d3b9ca123e3f5c1004f4eb0ce9d4efc1b6bc1eac800227576c",
+    "packages/ui/tests/browser/positioner-motion.test.ts": "f0e9759e25607764ca5f422c3b0974182161e53294f74d620941679d7021aec9",
     "packages/ui/tests/browser/preferences-backends.test.ts": "7fe17f74a44dafb4ab0d1da4dd5230ff2dd6d5e43b6be5dcca8a0d0f0c33f3d1",
     "packages/ui/tests/browser/preferences-startup-state.test.ts": "9f5cef59d03c8fcd4e77d726ca5b3c6b55b0c809a690a8132f0d1872edbe3547",
     "packages/ui/tests/browser/preferences-startup.test.ts": "8027b5b3747f02e3cc9ba0b78cc72abb83c42b78b6d2faab70921a1d377b2a6e",
@@ -22922,7 +22961,7 @@
     {
       "source": "packages/ui/src/components/action-overflow-menu.tsx",
       "sheet": "target/rune-inventory/components__action-overflow-menu.json",
-      "sheetSha256": "e68e29daaf3abf46f33fc8047e17f0b2991b204c9e13a5f89861f5d53e2ea000",
+      "sheetSha256": "8394ba833bc107d07cbde2933f4d8301d1e72a32ca706d70e5f2d99b35af0286",
       "components": [
         {
           "id": "packages/ui/src/components/action-overflow-menu.tsx#ActionOverflowMenu",
@@ -22930,7 +22969,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 143
+      "testReferenceCount": 144
     },
     {
       "source": "packages/ui/src/components/advanced-settings-modal.tsx",
@@ -23536,7 +23575,7 @@
     {
       "source": "packages/ui/src/components/instance/shell/right-panel/FileRowActions.tsx",
       "sheet": "target/rune-inventory/components__instance__shell__right-panel__FileRowActions.json",
-      "sheetSha256": "961d4032f0c5e43dafe637597c4905ce190432be82a1323fd2e1ef2d027be5a7",
+      "sheetSha256": "b8c1ad45b6e659dd5006f8840f18d5b1a7f900522ec3dcadacf11f63b5dd93b0",
       "components": [
         {
           "id": "packages/ui/src/components/instance/shell/right-panel/FileRowActions.tsx#FileRowActions",
@@ -23544,7 +23583,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 1
+      "testReferenceCount": 2
     },
     {
       "source": "packages/ui/src/components/instance/shell/right-panel/RightPanel.tsx",
@@ -26348,7 +26387,7 @@
     {
       "source": "packages/ui/src/lib/i18n/index.tsx",
       "sheet": "target/rune-inventory/lib__i18n__index.json",
-      "sheetSha256": "733c152b6ec040a7f675b793bd0f8bdb41bc5b0f05b3823cdb7abc45239b181a",
+      "sheetSha256": "a5c8d65436100697fe3be1819aff03b8381046197d49d98058ccb428d32c0586",
       "components": [
         {
           "id": "packages/ui/src/lib/i18n/index.tsx#I18nProvider",
@@ -26356,7 +26395,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 358
+      "testReferenceCount": 359
     },
     {
       "source": "packages/ui/src/lib/theme.tsx",
@@ -26400,7 +26439,7 @@
     {
       "source": "packages/ui/src/stores/instance-config.tsx",
       "sheet": "target/rune-inventory/stores__instance-config.json",
-      "sheetSha256": "16fa6ffe52ce35761513b232a44a7725360a6f91eafc3333807b0b9d84314e2b",
+      "sheetSha256": "e3c5a485833d2fdc60b529dda3174ac838410bcd6010d628f5c250812d1dfb9f",
       "components": [
         {
           "id": "packages/ui/src/stores/instance-config.tsx#InstanceConfigProvider",
@@ -26408,12 +26447,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 358
+      "testReferenceCount": 359
     },
     {
       "source": "packages/ui/src/stores/preferences.tsx",
       "sheet": "target/rune-inventory/stores__preferences.json",
-      "sheetSha256": "464669f39ce456c7b521fd84cf7581a2babb371119ec33330b66ceb6b2201626",
+      "sheetSha256": "07b813694ab2da03ee4e9c2c4e3faa462b7c9057f07abe9830c6a182365ffccd",
       "components": [
         {
           "id": "packages/ui/src/stores/preferences.tsx#ConfigProvider",
@@ -26421,7 +26460,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 358
+      "testReferenceCount": 359
     }
   ]
 }
