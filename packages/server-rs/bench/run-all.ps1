@@ -3,7 +3,7 @@ param([Parameter(Mandatory)][string]$OpenCode, [string[]]$Only)
 $Only = @($Only | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 Set-Location $PSScriptRoot
 New-Item -ItemType Directory -Force out | Out-Null
-$runs = 'http', 'files', 'contract', 'workspace-claims', 'remote-session-controls', 'depth', 'worktree-gone', 'links', 'search', 'memory', 'design', 'automation', 'missions', 'missions-family', 'missions-calendar', 'missions-wayfinder', 'mission-permissions', 'host', 'sidecars', 'usage', 'providers', 'previews', 'remote-previews', 'solid', 'security', 'hardening', 'launch', 'service', 'roundtrip', 'opencode-install'
+$runs = 'http', 'files', 'contract', 'workspace-claims', 'remote-session-controls', 'command-admission', 'depth', 'worktree-gone', 'links', 'search', 'memory', 'design', 'automation', 'missions', 'missions-family', 'missions-calendar', 'missions-wayfinder', 'mission-permissions', 'host', 'sidecars', 'usage', 'providers', 'previews', 'remote-previews', 'solid', 'security', 'hardening', 'launch', 'service', 'roundtrip', 'opencode-install'
 $summary = foreach ($name in $runs) {
   if ($Only -and $name -notin $Only) { continue }
   $cpu = (Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average
