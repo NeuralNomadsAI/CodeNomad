@@ -54,6 +54,7 @@ export async function collectTheme(names){
     gitModeButton:['.git-panel-switch button',['paddingLeft','paddingTop','fontSize','fontWeight','lineHeight']],
     gitModeDivider:['.git-panel-switch button + button',['borderInlineStartWidth']],
     gitHistoryRow:['.git-history-row',['paddingLeft','paddingTop','columnGap','borderBottomWidth']],
+    gitCommitSummary:['.git-commit-summary',['paddingLeft','paddingTop','borderBottomWidth']],
     gitCount:['.git-panel-count',['opacity']],
     gitSection:['.git-change-section-header',['columnGap']],
     gitSectionTitle:['.git-change-section-title',['fontSize','fontWeight','lineHeight']],

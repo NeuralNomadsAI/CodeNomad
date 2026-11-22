@@ -122,6 +122,29 @@ pub fn history_row<S: 'static>(
     disabled: bool,
     press: impl Fn(&mut S, &mut Tx) + Clone + 'static,
 ) -> El {
+    history_action(name, &COMMIT, content, disabled, press)
+}
+
+pub fn history_back<S: 'static>(
+    name: &str,
+    press: impl Fn(&mut S, &mut Tx) + Clone + 'static,
+) -> El {
+    history_action(
+        name.into(),
+        &ARROW_LEFT,
+        text(name).text_role(TextRole::Small),
+        false,
+        press,
+    )
+}
+
+fn history_action<S: 'static>(
+    name: String,
+    glyph: &'static rune::Icon,
+    content: El,
+    disabled: bool,
+    press: impl Fn(&mut S, &mut Tx) + Clone + 'static,
+) -> El {
     let t = tokens(dark());
     let metric = |name| t.metric("gitHistoryRow", name).px();
     let body = row()
@@ -141,7 +164,7 @@ pub fn history_row<S: 'static>(
         .focusable(!disabled)
         .disabled(disabled)
         .child(
-            icon(&COMMIT, t.length(crate::Length::Icon).px())
+            icon(glyph, t.length(crate::Length::Icon).px())
                 .color(t.color("text-muted"))
                 .a11y_hidden(),
         )
@@ -159,6 +182,20 @@ pub fn history_row<S: 'static>(
                 true
             })
     }
+}
+
+pub fn history_summary(id: &str, message: &str, count: String) -> El {
+    let t = tokens(dark());
+    let small = t.text(TextRole::Small);
+    let muted = t.color("text-muted");
+    band("gitCommitSummary")
+        .child(
+            text(id.chars().take(8).collect::<String>())
+                .font(small.mono())
+                .color(muted),
+        )
+        .child(text(message).wrap().content_direction())
+        .child(text(count).font(small).color(muted))
 }
 
 pub fn history_refs(refs: String) -> El {

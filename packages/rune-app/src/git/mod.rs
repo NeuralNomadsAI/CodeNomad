@@ -378,6 +378,11 @@ impl Ui {
         self.online = true;
         self.shown = true;
     }
+
+    pub(crate) fn load_commit_scene(&mut self, details: Details) {
+        self.history.selected = Some(details.id.clone());
+        self.accept(Lane::Details, Value::Details(details));
+    }
 }
 mod settle;
 #[cfg(test)]
