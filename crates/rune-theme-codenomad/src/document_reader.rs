@@ -10,6 +10,17 @@ pub fn surface(dark: bool) -> El {
         .fill(tokens(dark).color("surface-canvas"))
         .color(tokens(dark).color("text-primary"))
 }
+pub fn pages(history: El, reader: Option<El>) -> El {
+    let mut root = rune::col().w_full().h_full().min_h(0.0);
+    if let Some(reader) = reader {
+        root = root
+            .child(history.opacity(0.0).inert().a11y_hidden())
+            .child(reader.absolute(0.0, 0.0).w_full().h_full());
+    } else {
+        root = root.child(history);
+    }
+    root
+}
 pub fn split(main: El, tree: Option<El>) -> El {
     let main = main.grow(1.0).min_w(0.0);
     let Some(tree) = tree else {
@@ -47,10 +58,13 @@ pub fn image(image: &rune::Image, label: &str, svg: bool) -> El {
                 .label(label),
         )
 }
-pub fn header(title: &str, directory: &str, actions: El) -> El {
-    actions_row()
+pub fn header(title: &str, directory: &str, actions: Vec<El>) -> El {
+    rune::row()
+        .items_center()
+        .gap(tokens(crate::layout::dark()).space(Space::Sm).px())
         .w_full()
-        .pad(Space::Md)
+        .flex_wrap()
+        .pad(Space::Sm)
         .child(
             rune::col()
                 .grow(1.0)
@@ -58,18 +72,19 @@ pub fn header(title: &str, directory: &str, actions: El) -> El {
                 .child(rune::text(title).truncate().text_role(TextRole::Label))
                 .child(rune::text(directory).truncate().text_role(TextRole::Small)),
         )
-        .child(actions)
+        .children(actions)
 }
-pub fn actions_row() -> El {
-    rune::row()
-        .items_center()
-        .gap(tokens(crate::layout::dark()).space(Space::Sm).px())
-}
-pub fn eye(dark: bool, label: &str, disabled: bool) -> El {
+pub fn eye<S: 'static>(
+    dark: bool,
+    label: &str,
+    disabled: bool,
+    press: impl Fn(&mut S) + 'static,
+) -> El {
     rune_kit::IconButton::new(kit(dark).glyph.eye)
         .label(label)
         .disabled(disabled)
         .variant(rune_kit::IconButtonVariant::Ghost)
+        .on_press(press)
         .build(kit(dark))
 }
 pub fn viewport(content: El, wrap: bool) -> El {

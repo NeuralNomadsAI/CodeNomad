@@ -1,4 +1,4 @@
-use super::document::{Content, Format, content};
+use super::{document::Format, presentation::Kind};
 use crate::{State, screen, strings::t};
 use rune::{El, text};
 use rune_theme_codenomad::{
@@ -19,23 +19,29 @@ pub fn toggle(s: &State) -> El {
             "instanceShell.filesShell.showFiles"
         }),
         ui.stopped,
+        screen::action(&s.input_scope, |s| {
+            if let Some(ui) = &mut s.files {
+                ui.show(!ui.panel);
+            }
+        }),
     )
     .expanded(ui.panel)
-    .on_press(screen::action(&s.input_scope, |s| {
+}
+fn document_action(s: &State, run: fn(&mut super::Ui)) -> impl Fn(&mut State) + 'static {
+    let scope = s.files.as_ref().map(|ui| ui.document.scope());
+    screen::action(&s.input_scope, move |s| {
         if let Some(ui) = &mut s.files {
-            ui.show(!ui.panel);
+            if scope == Some(ui.document.scope()) {
+                run(ui);
+            }
         }
-    }))
+    })
 }
 pub fn body(s: &State, history: El) -> El {
     let Some(ui) = &s.files else {
         return history;
     };
-    let main = if ui.reader.target().is_some() {
-        reader(s)
-    } else {
-        history
-    };
+    let main = theme::pages(history, ui.reader.target().is_some().then(|| reader(s)));
     theme::split(main, ui.panel.then(|| tree(s)))
 }
 fn reader(s: &State) -> El {
@@ -47,59 +53,42 @@ fn reader(s: &State) -> El {
     };
     let dark = layout::dark();
     let scope = ui.document.scope();
-    let mut actions = theme::actions_row().child(
-        crate::launcher_view::button(
-            "file-refresh",
-            t("instanceShell.rightPanel.actions.refresh"),
-            ui.reader.busy() || ui.document.pending() || ui.document.dirty(),
-        )
-        .on_press(screen::action(&s.input_scope, move |s| {
-            if let Some(ui) = &mut s.files {
-                ui.refresh_document(scope);
-            }
-        })),
-    );
+    let mut actions = vec![crate::launcher_view::button(
+        "file-refresh",
+        t("instanceShell.rightPanel.actions.refresh"),
+        ui.reader.busy() || ui.document.pending() || ui.document.dirty(),
+        document_action(s, |ui| ui.refresh_document(ui.document.scope())),
+    )];
     let mut content_view = rune::el();
-    if let Some(preview) = ui.reader.preview() {
-        content_view = match content(&target.path, &preview.bytes) {
-            Content::Binary => text(t("filesPanel.binary")).pad(Space::Md),
-            Content::Image(mime) => match ui.presentation.image.as_ref() {
+    if let Some(kind) = ui.presentation.kind {
+        content_view = match kind {
+            Kind::Binary => text(t("filesPanel.binary")).pad(Space::Md),
+            Kind::Image { svg } => match ui.presentation.image.as_ref() {
                 Some(image) if image.error().is_some() => {
                     text(t("filesPanel.binary")).pad(Space::Md)
                 }
-                Some(image) => theme::image(image, &target.path, mime == "image/svg+xml"),
+                Some(image) => theme::image(image, &target.path, svg),
                 None => text(t("instanceInfo.loading")).pad(Space::Md),
             },
-            Content::Text { format, .. } => {
+            Kind::Text(format) => {
                 let text = ui.document.edit().text.as_str();
                 if format != Format::Source {
-                    actions = actions.child(
-                        crate::launcher_view::button(
-                            "file-source-toggle",
-                            t(if !ui.presentation.source {
-                                "instanceShell.filesShell.showSource"
-                            } else if format == Format::Mermaid {
-                                "markdown.mermaid.preview"
-                            } else {
-                                "instanceShell.filesShell.previewMarkdown"
-                            }),
-                            false,
-                        )
-                        .on_press(screen::action(
-                            &s.input_scope,
-                            move |s| {
-                                if let Some(ui) = &mut s.files {
-                                    if ui.document.scope() == scope {
-                                        ui.presentation.source = !ui.presentation.source;
-                                    }
-                                }
-                            },
-                        )),
-                    );
+                    actions.push(crate::launcher_view::button(
+                        "file-source-toggle",
+                        t(if !ui.presentation.source {
+                            "instanceShell.filesShell.showSource"
+                        } else if format == Format::Mermaid {
+                            "markdown.mermaid.preview"
+                        } else {
+                            "instanceShell.filesShell.previewMarkdown"
+                        }),
+                        false,
+                        document_action(s, |ui| ui.presentation.source = !ui.presentation.source),
+                    ));
                 }
                 let source = ui.presentation.source || format == Format::Source;
                 if source {
-                    actions = actions.child(
+                    actions.push(
                         crate::launcher_view::button(
                             "file-wrap",
                             t(if ui.presentation.wrap {
@@ -108,18 +97,9 @@ fn reader(s: &State) -> El {
                                 "instanceShell.filesShell.enableWordWrap"
                             }),
                             false,
+                            document_action(s, |ui| ui.presentation.wrap = !ui.presentation.wrap),
                         )
-                        .checked(ui.presentation.wrap)
-                        .on_press(screen::action(
-                            &s.input_scope,
-                            move |s| {
-                                if let Some(ui) = &mut s.files {
-                                    if ui.document.scope() == scope {
-                                        ui.presentation.wrap = !ui.presentation.wrap;
-                                    }
-                                }
-                            },
-                        )),
+                        .checked(ui.presentation.wrap),
                     );
                     theme::viewport(
                         theme::source(dark, &target.path, text, ui.presentation.wrap),
@@ -146,17 +126,12 @@ fn reader(s: &State) -> El {
             }
         };
     }
-    actions = actions.child(
-        crate::launcher_view::button("file-close", t("gitPanel.backChat"), false).on_press(
-            screen::action(&s.input_scope, move |s| {
-                if let Some(ui) = &mut s.files {
-                    if ui.document.scope() == scope {
-                        ui.close_reader();
-                    }
-                }
-            }),
-        ),
-    );
+    actions.push(crate::launcher_view::button(
+        "file-close",
+        t("gitPanel.backChat"),
+        false,
+        document_action(s, super::Ui::close_reader),
+    ));
     theme::surface(dark)
         .key(format!("file-reader-{scope}"))
         .role("region")
@@ -206,6 +181,14 @@ fn tree(s: &State) -> El {
                 dark,
                 &format!("{} · {}", t("filesPanel.viewer"), path),
                 ui.stopped,
+                screen::action(&scope, {
+                    let path = path.clone();
+                    move |s| {
+                        if let Some(ui) = &mut s.files {
+                            ui.open(path.clone());
+                        }
+                    }
+                }),
             )
             .key(format!("file-eye-{path}"))
             .on_key(|_: &mut State, key, _| {
@@ -219,14 +202,6 @@ fn tree(s: &State) -> El {
                         | rune::Key::End
                 )
             })
-            .on_press(screen::action(&scope, {
-                let path = path.clone();
-                move |s| {
-                    if let Some(ui) = &mut s.files {
-                        ui.open(path.clone());
-                    }
-                }
-            }))
         });
         tree = tree.child(
             workspace_tree::row(
@@ -273,18 +248,18 @@ fn tree(s: &State) -> El {
     }
     for (path, error) in ui.tree.errors() {
         let path = path.clone();
-        tree = tree.child(text(error).role("alert")).child(
-            crate::launcher_view::button(
+        tree = tree
+            .child(text(error).role("alert"))
+            .child(crate::launcher_view::button(
                 &format!("file-retry-{path}"),
                 t("instanceShell.rightPanel.actions.refresh"),
-                false,
-            )
-            .on_press(screen::action(&scope, move |s| {
-                if let Some(ui) = &mut s.files {
-                    ui.refresh(Some(&path));
-                }
-            })),
-        );
+                ui.stopped,
+                screen::action(&scope, move |s| {
+                    if let Some(ui) = &mut s.files {
+                        ui.refresh(Some(&path));
+                    }
+                }),
+            ));
     }
     theme::surface(dark)
         .key("files-panel")
