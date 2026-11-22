@@ -1,22 +1,12 @@
 use crate::{layout::dark, tokens};
 use rune::{Color, El, Span};
-use std::{borrow::Cow, ops::Range};
+use std::ops::Range;
 use vte::{Params, Perform};
 
 const ESCAPED: [&str; 5] = ["\\u001b", "\\u001B", "\\x1b", "\\x1B", "\\033"];
 
 pub fn present(source: &str) -> bool {
     source.contains('\u{1b}') || ESCAPED.iter().any(|escape| source.contains(escape))
-}
-
-fn normalized(source: &str) -> Cow<'_, str> {
-    let mut text = Cow::Borrowed(source);
-    for escape in ESCAPED {
-        if text.contains(escape) {
-            text = Cow::Owned(text.replace(escape, "\u{1b}"));
-        }
-    }
-    text
 }
 
 // The same 16 named colors as Solid's ansi-sequence-parser.
@@ -44,14 +34,7 @@ fn palette(index: u8) -> Color {
 }
 
 fn rgb(red: u32, green: u32, blue: u32) -> Color {
-    let linear = |byte: u32| {
-        let s = byte as f32 / 255.0;
-        if s <= 0.04045 {
-            s / 12.92
-        } else {
-            ((s + 0.055) / 1.055).powf(2.4)
-        }
-    };
+    let linear = |byte: u32| rune::color::srgb_decode(byte as f32 / 255.0);
     Color {
         r: linear(red),
         g: linear(green),
@@ -96,21 +79,20 @@ impl Log {
         }
         self.text.push(c);
     }
+
+    fn literal(&mut self, text: &str) {
+        for c in text.chars() {
+            match c {
+                '\r' => self.pending_cr = true,
+                '\n' | '\t' => self.push(c),
+                c if !c.is_control() => self.push(c),
+                _ => {}
+            }
+        }
+    }
 }
 
 impl Perform for Log {
-    fn print(&mut self, c: char) {
-        self.push(c);
-    }
-
-    fn execute(&mut self, byte: u8) {
-        match byte {
-            b'\r' => self.pending_cr = true,
-            b'\n' | b'\t' => self.push(char::from(byte)),
-            _ => {}
-        }
-    }
-
     fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], ignore: bool, action: char) {
         if action != 'm' || ignore || !intermediates.is_empty() {
             return;
@@ -184,17 +166,49 @@ impl Perform for Log {
 }
 
 fn color(mode: u16, mut values: impl Iterator<Item = u16>) -> Option<Color> {
-    let mut next = || values.next().and_then(|n| u8::try_from(n).ok());
     match mode {
-        5 => Some(palette(next()?)),
-        2 => Some(rgb(next()?.into(), next()?.into(), next()?.into())),
+        5 => Some(palette(u8::try_from(values.next()?).ok()?)),
+        2 => {
+            let mut channel = || values.next().map(|value| u32::from(value.min(255)));
+            Some(rgb(channel()?, channel()?, channel()?))
+        }
         _ => None,
     }
 }
 
-fn parse(source: &str) -> Log {
+fn parse(mut source: &str) -> Log {
     let mut out = Log::default();
-    vte::Parser::new().advance(&mut out, normalized(source).as_bytes());
+    let mut parser = vte::Parser::new();
+    // A transcript is a log, not a terminal. Feed only complete SGR to VTE;
+    // unsupported or truncated escapes retain their printable text.
+    while let Some(index) = source.find(['\u{1b}', '\\']) {
+        out.literal(&source[..index]);
+        let rest = &source[index..];
+        let escape_len = if rest.starts_with('\u{1b}') {
+            1
+        } else {
+            ESCAPED
+                .iter()
+                .find(|escape| rest.starts_with(**escape))
+                .map_or(1, |escape| escape.len())
+        };
+        let tail = &rest[escape_len..];
+        if (escape_len > 1 || rest.starts_with('\u{1b}')) && tail.starts_with('[') {
+            let end = tail.as_bytes()[1..]
+                .iter()
+                .position(|&byte| !byte.is_ascii_digit() && !matches!(byte, b';' | b':'))
+                .map(|index| index + 1);
+            if let Some(end) = end.filter(|&index| tail.as_bytes()[index] == b'm') {
+                parser.advance(&mut out, b"\x1b");
+                parser.advance(&mut out, &tail.as_bytes()[..=end]);
+                source = &tail[end + 1..];
+                continue;
+            }
+        }
+        out.literal(&rest[..escape_len]);
+        source = tail;
+    }
+    out.literal(source);
     if out.pending_cr {
         out.push('\n');
     }
@@ -269,5 +283,26 @@ mod tests {
         assert_eq!(log.runs[1].0, 6..10);
         assert_eq!(log.runs[1].1.fg, Some(rgb(0, 255, 0)));
         assert_eq!(log.runs[2].1.bg, Some(rgb(1, 2, 3)));
+    }
+
+    #[test]
+    fn incomplete_or_unsupported_sequences_never_consume_printable_lines() {
+        for source in [
+            "Example \\x1b]0;not a title\nÉchec visible",
+            "Example \u{1b}]0;not a title\nÉchec visible",
+            "Example \u{1b}[31\nÉchec visible",
+        ] {
+            assert!(parse(source).text.ends_with("\nÉchec visible"));
+        }
+        assert_eq!(parse("before \\x1b]0;title").text, "before \\x1b]0;title");
+        assert_eq!(parse("partial \\x1b[31").text, "partial \\x1b[31");
+    }
+
+    #[test]
+    fn rgb_channels_are_not_reinterpreted_as_sgr_attributes() {
+        let log = parse("\u{1b}[38;2;256;0;8mVisible");
+        assert_eq!(log.text, "Visible");
+        assert_eq!(log.runs[0].1.fg, Some(rgb(255, 0, 8)));
+        assert!(!log.runs[0].1.hidden);
     }
 }
