@@ -7,6 +7,7 @@ import { locationRequestOptions } from "../opencode/compatibility/location"
 import {
   readCheckout, readCheckoutIdentity, readWorktreeAnnotations, createCheckoutRootVerifier, resolveRepoRoot,
   prepareWorktreeBranch, attachWorktreeBranch, revisionContainsFolder,
+  WorktreeConfigChangedError,
 } from "./git-worktrees"
 import { ensureCodenomadGitExclude } from "./worktree-map"
 import { GitRequiredError } from "./git-requirement"
@@ -252,7 +253,11 @@ export async function createNativeWorktree(context: NativeWorktreeContext, branc
     }
     throw error
   }
-  const updated = await listNativeWorktrees(context)
+  // Creation and branch attachment have committed. Retry only the invalidated read.
+  const updated = await listNativeWorktrees(context).catch(error => {
+    if (!(error instanceof WorktreeConfigChangedError)) throw error
+    return listNativeWorktrees(context)
+  })
   const registered = await realpath(host)
   const result = updated.worktrees.find(entry => entry.registeredDirectory === registered)
   if (!result) throw new Error("Created worktree is missing from native inventory")

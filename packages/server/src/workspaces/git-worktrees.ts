@@ -85,6 +85,10 @@ async function configStamp(file: string): Promise<string | null> {
   return `${stamp(entry)}:${target && stamp(target)}`
 }
 
+export class WorktreeConfigChangedError extends Error {
+  constructor() { super("Git configuration changed during worktree validation") }
+}
+
 export async function createCheckoutRootVerifier(directory: string, local: Parameters<typeof validateCheckoutLayout>[0]) {
   const files = new Map<string, Promise<string | null>>()
   const remember = (file: string) => {
@@ -123,10 +127,10 @@ export async function createCheckoutRootVerifier(directory: string, local: Param
   }
   const assertCurrent = async () => {
     // Let Git resolve unrestricted include paths; the ordinary scan uses only stats.
-    if (usedShortcut && includes && await readConfig() !== effective) throw new Error("Git configuration changed during worktree validation")
+    if (usedShortcut && includes && await readConfig() !== effective) throw new WorktreeConfigChangedError()
     // Shared config was recorded first; check it last, closest to publication.
     for (const [file, expected] of [...files].reverse()) {
-      if (await configStamp(file) !== await expected) throw new Error("Git configuration changed during worktree validation")
+      if (await configStamp(file) !== await expected) throw new WorktreeConfigChangedError()
     }
   }
   return { verify, assertCurrent }
