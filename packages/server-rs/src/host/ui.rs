@@ -60,11 +60,25 @@ pub async fn serve(source: &Source, req: Request) -> Response {
         Source::Dir(dir, _) => {
             let (head, _) = req.into_parts();
             let path = if head.uri.path() == "/" { "/index.html" } else { head.uri.path() };
+            let signed_in = head.extensions.get::<crate::auth::Principal>().is_some();
             if let Some(response) = asset(dir, &head.method, path, &head.headers).await {
+                if !signed_in
+                    && response
+                        .headers()
+                        .get(header::CONTENT_TYPE)
+                        .is_some_and(|mime| mime == "text/html; charset=utf-8")
+                {
+                    return crate::auth::found("/login");
+                }
                 return response;
             }
-            if head.extensions.get::<crate::auth::Principal>().is_none() {
-                return (Status::NOT_FOUND, axum::Json(json!({"message": "Not Found"}))).into_response();
+            if !signed_in {
+                return (
+                    Status::NOT_FOUND,
+                    [(header::CACHE_CONTROL, "no-store")],
+                    axum::Json(json!({"message": "Not Found"})),
+                )
+                    .into_response();
             }
             if path != "/index.html"
                 && let Some(response) = asset(dir, &head.method, "/index.html", &head.headers).await
@@ -102,6 +116,19 @@ async fn asset(dir: &Path, method: &Method, path: &str, request_headers: &Header
         }
         file.push(part);
     }
+    let extension = file
+        .extension()
+        .map(std::ffi::OsStr::to_os_string)
+        .or_else(|| {
+            let original = dunce::canonicalize(&file).ok()?;
+            if !original.starts_with(&root) {
+                return None;
+            }
+            original.extension().map(std::ffi::OsStr::to_os_string)
+        })
+        .and_then(|extension| extension.into_string().ok())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     let (codings, identity) = accepted(request_headers);
     for coding in codings.into_iter().flatten().map(Some).chain([None]) {
         let candidate = match coding {
@@ -122,8 +149,6 @@ async fn asset(dir: &Path, method: &Method, path: &str, request_headers: &Header
         if coding.is_none() && !identity {
             return Some((Status::NOT_ACCEPTABLE, [(header::VARY, "Origin, Accept-Encoding")]).into_response());
         }
-        let logical = if coding.is_some() { &file } else { &real };
-        let extension = logical.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
         let Ok(opened) = tokio::fs::File::open(&real).await else { continue };
         let Ok(meta) = opened.metadata().await else { continue };
         if !meta.is_file() {
@@ -132,15 +157,24 @@ async fn asset(dir: &Path, method: &Method, path: &str, request_headers: &Header
         let modified = meta.modified().ok()?;
         let millis = modified.duration_since(UNIX_EPOCH).ok()?.as_millis();
         let etag = format!("W/\"{:x}-{millis:x}\"", meta.len());
+        let date = chrono::DateTime::<chrono::Utc>::from(modified);
         let no_cache = request_headers
             .get_all(header::CACHE_CONTROL)
             .iter()
             .filter_map(|v| v.to_str().ok())
             .flat_map(|v| v.split(','))
             .any(|directive| directive.trim().eq_ignore_ascii_case("no-cache"));
-        let mut response = if !no_cache
-            && request_headers.get(header::IF_NONE_MATCH).is_some_and(|v| v.as_bytes() == etag.as_bytes())
-        {
+        let unchanged = match request_headers.get(header::IF_NONE_MATCH) {
+            Some(v) => v.to_str().is_ok_and(|value| {
+                value.split(',').map(str::trim).any(|tag| tag == "*" || tag.trim_start_matches("W/") == &etag[2..])
+            }),
+            None => request_headers
+                .get(header::IF_MODIFIED_SINCE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| chrono::NaiveDateTime::parse_from_str(v, "%a, %d %b %Y %H:%M:%S GMT").ok())
+                .is_some_and(|since| since.and_utc().timestamp() >= date.timestamp()),
+        };
+        let mut response = if !no_cache && unchanged {
             Status::NOT_MODIFIED.into_response()
         } else {
             let body = if *method == Method::HEAD {
@@ -164,7 +198,7 @@ async fn asset(dir: &Path, method: &Method, path: &str, request_headers: &Header
                 "public, max-age=0"
             }),
         );
-        let date = chrono::DateTime::<chrono::Utc>::from(modified).format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+        let date = date.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
         headers.insert(header::LAST_MODIFIED, HeaderValue::from_str(&date).ok()?);
         headers.insert(header::ETAG, HeaderValue::from_str(&etag).ok()?);
         return Some(response);

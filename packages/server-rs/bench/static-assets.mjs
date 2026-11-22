@@ -57,12 +57,14 @@ export async function run({ call, origin }) {
     }
     assert.deepEqual(Buffer.from(await get.arrayBuffer()), Buffer.from(text))
     assert.equal((await head.arrayBuffer()).byteLength, 0)
-    const etag = get.headers.get("etag")
-    assert(etag)
-    const unchanged = await call(route, { headers: { ...headers, "if-none-match": etag, "cache-control": "max-age=0" } })
-    assert.equal(unchanged.status, 304, `${route}: ${accept}`)
-    assert.match(unchanged.headers.get("vary"), /(?:^|,\s*)accept-encoding(?:,|$)/i)
-    assert.equal((await unchanged.arrayBuffer()).byteLength, 0)
+    for (const [condition, responseHeader] of [["if-none-match", "etag"], ["if-modified-since", "last-modified"]]) {
+      const validator = get.headers.get(responseHeader)
+      assert(validator)
+      const unchanged = await call(route, { headers: { ...headers, [condition]: validator, "cache-control": "max-age=0" } })
+      assert.equal(unchanged.status, 304, `${route}: ${accept} with ${condition}`)
+      assert.match(unchanged.headers.get("vary"), /(?:^|,\s*)accept-encoding(?:,|$)/i)
+      assert.equal((await unchanged.arrayBuffer()).byteLength, 0)
+    }
     observed.push({ route, accept, coding, bytes: expectedLength })
   }
   const headers = { "accept-encoding": "br, identity;q=0" }
