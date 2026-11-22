@@ -3,6 +3,7 @@ mod controls;
 mod files_document;
 mod files_reader;
 mod files_state;
+pub(crate) mod git_scene;
 mod latency;
 mod launcher;
 mod live_controls;

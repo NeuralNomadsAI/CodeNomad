@@ -648,8 +648,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             crate::workspace::opened(s, &project);
             match restored {
                 Restored::Bound(backend, title) => bind(s, backend, title, None, tx),
-                Restored::Missing(id) => retire_session(s, &id),
-                Restored::Empty => {}
+                Restored::Missing(id) => {
+                    retire_session(s, &id);
+                    crate::git::project_opened(s);
+                }
+                Restored::Empty => crate::git::project_opened(s),
             }
         }
         Ok(Reply::Listed(mut rows, more)) => {
@@ -888,6 +891,10 @@ pub fn back(s: &mut State) {
     s.commands = None;
     s.incoming = None;
     s.files = None;
+    if let Some(git) = &mut s.git.owner {
+        git.online(false);
+        git.close_preview();
+    }
     s.show_launcher();
     list(s, false);
 }

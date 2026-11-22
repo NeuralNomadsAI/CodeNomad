@@ -87,7 +87,23 @@ pub(super) async fn dispatch(
     }
     let own = value["instanceId"] == b.workspace;
     let native = &value["event"];
-    if own && value["type"] == "instance.eventStatus" {
+    if own && value["type"] == "instance.event" && native["type"] == "vcs.branch.updated" {
+        out.send(Input::Workspace(
+            epoch,
+            WorkspaceEvent::WorktreesChanged {
+                workspace_id: b.workspace.clone(),
+            },
+        ))
+        .await?;
+    } else if own && value["type"] == "instance.event" && native["type"] == "filesystem.changed" {
+        out.send(Input::Workspace(
+            epoch,
+            WorkspaceEvent::NativeFilesystemChanged {
+                workspace_id: b.workspace.clone(),
+            },
+        ))
+        .await?;
+    } else if own && value["type"] == "instance.eventStatus" {
         let ready = value["status"] == "connected";
         state.upstream.store(ready, SeqCst);
         let version = state.version.fetch_add(1, SeqCst) + 1;
@@ -114,12 +130,18 @@ pub(super) async fn dispatch(
 }
 
 fn workspace_event(b: &Backend, value: &Value) -> Option<WorkspaceEvent> {
+    if value["type"] == "storage.configChanged" && value["owner"] == "ui" {
+        return Some(WorkspaceEvent::UiPreferencesChanged);
+    }
     let id = value["workspaceId"].as_str()?;
     if id != b.workspace || !crate::history::valid_id(id) {
         return None;
     }
     match value["type"].as_str()? {
         "workspace.stopped" => Some(WorkspaceEvent::Stopped {
+            workspace_id: id.into(),
+        }),
+        "workspace.worktreesChanged" => Some(WorkspaceEvent::WorktreesChanged {
             workspace_id: id.into(),
         }),
         "workspace.filesChanged" => {

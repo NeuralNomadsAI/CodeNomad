@@ -1,3 +1,4 @@
+pub(crate) mod diff;
 pub(crate) mod window_close_button;
 
 use crate::State;

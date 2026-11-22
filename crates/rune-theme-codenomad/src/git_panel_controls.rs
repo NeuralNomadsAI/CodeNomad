@@ -1,0 +1,194 @@
+use crate::{
+    Space, field_kit, kit,
+    layout::{self, Layout, dark},
+};
+pub use rune::Icon as Glyph;
+use rune::{El, Phase, Tx, edit::TextEdit, row, text};
+use rune_kit::{
+    Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, SegmentedControl, Select,
+    State,
+};
+
+pub enum ButtonLook {
+    Neutral,
+    Flat,
+    Submit,
+    WithIcon(&'static Glyph),
+    Section(bool),
+}
+
+pub fn button<S: 'static>(
+    label: impl Into<String>,
+    look: ButtonLook,
+    disabled: bool,
+    press: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    let mut button = Button::new(label).disabled(disabled).on_press_tx(press);
+    button = match look {
+        ButtonLook::Neutral => button,
+        ButtonLook::Flat => button.variant(ButtonVariant::Ghost),
+        ButtonLook::Submit => button.variant(ButtonVariant::Submit),
+        ButtonLook::WithIcon(glyph) => button.variant(ButtonVariant::Ghost).icon(glyph),
+        ButtonLook::Section(open) => {
+            button
+                .variant(ButtonVariant::Ghost)
+                .expanded(open)
+                .icon(if open {
+                    &super::CHEVRON_DOWN
+                } else {
+                    &super::CHEVRON_RIGHT
+                })
+        }
+    };
+    button.build(kit(dark()))
+}
+
+pub fn icon_button<S: 'static>(
+    glyph: &'static Glyph,
+    name: impl Into<String>,
+    disabled: bool,
+    active: Option<bool>,
+    press: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    let name = name.into();
+    let button = IconButton::new(glyph)
+        .variant(IconButtonVariant::GhostMuted)
+        .control_size(ControlSize::Small)
+        .label(name.clone())
+        .help(name)
+        .state(if disabled {
+            State::Disabled
+        } else if active == Some(true) {
+            State::Pressed
+        } else {
+            State::Rest
+        })
+        .on_press_tx(press)
+        .build(kit(dark()));
+    match active {
+        Some(active) => button.checked(active),
+        None => button,
+    }
+}
+
+pub fn overflow_trigger(label: &str) -> El {
+    IconButton::new(&super::MORE_HORIZONTAL)
+        .label(label)
+        .variant(IconButtonVariant::GhostMuted)
+        .control_size(ControlSize::Small)
+        .build(kit(dark()))
+}
+
+pub fn compact_file_actions(width: f32, label: &str) -> bool {
+    let t = crate::tokens(dark());
+    let button = t.metric("fileRowAction", "minWidth").px();
+    let font = t.text(crate::TextRole::Label).size;
+    // Until Rune exposes intrinsic text width, use the UI face's average advance.
+    width < 3.0 * button + label.chars().count() as f32 * font * 0.55
+}
+
+pub fn modes<S: 'static>(
+    labels: &[&str],
+    title: &str,
+    selected: Option<usize>,
+    select: impl Fn(&mut S, usize, &mut Tx) + Clone + 'static,
+) -> El {
+    SegmentedControl::new(labels, selected)
+        .label(title)
+        .width(None)
+        .on_pick(select)
+        .build(kit(dark()))
+}
+
+pub fn worktree_picker<S: 'static>(
+    labels: &[String],
+    current: Option<&str>,
+    name: &str,
+    width: f32,
+    open: bool,
+    disabled: bool,
+    toggle: impl Fn(&mut S) + 'static,
+    close: impl Fn(&mut S) + 'static,
+    choose: impl Fn(&mut S, &str, &mut Tx) + Clone + 'static,
+    overlay: &mut Vec<El>,
+) -> El {
+    Select::new("git-worktree", labels)
+        .current(current)
+        .label(name)
+        .width(super::selector_width(width))
+        .open(open)
+        .disabled(disabled)
+        .on_toggle(toggle)
+        .on_close(close)
+        .on_choose(choose)
+        .build(kit(dark()), overlay)
+}
+
+pub fn commit_message<S: 'static>(
+    text: &TextEdit,
+    label: &str,
+    edit: impl Fn(&mut S) -> &mut TextEdit + 'static,
+) -> El {
+    layout::textarea(text)
+        .label(label)
+        .placeholder(label)
+        .on_edit(edit)
+        .build(field_kit(dark()))
+        .remaining()
+}
+
+pub fn file<S: 'static>(
+    path: String,
+    kind: String,
+    counts: Option<(u64, u64)>,
+    help: String,
+    disabled: bool,
+    selected: bool,
+    click: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    let label = counts.map_or_else(
+        || format!("{kind} {path}"),
+        |(a, d)| format!("{kind} {path} +{a} −{d}"),
+    );
+    Button::new(label)
+        .variant(ButtonVariant::GhostMuted)
+        .control_size(ControlSize::Small)
+        .help(help)
+        .disabled(disabled)
+        .on_press_tx(click)
+        .label_with(move |font, ink| {
+            row()
+                .full_width()
+                .items_center()
+                .separate(Space::Sm)
+                .child(text(kind).font(font).color(ink))
+                .child(
+                    text(path)
+                        .font(font)
+                        .color(ink)
+                        .truncate()
+                        .remaining()
+                        .shrink()
+                        .literal_direction(),
+                )
+                .child(counts.map_or_else(rune::el, |(plus, minus)| super::changes(plus, minus)))
+        })
+        .build(kit(dark()))
+        .remaining()
+        .shrink()
+        .checked(selected)
+}
+
+pub fn with_file_drop<S: 'static>(
+    button: El,
+    drop: impl Fn(&mut S, [f32; 2], &mut Tx) + 'static,
+) -> El {
+    button.on_drag(move |s, drag, tx| {
+        if drag.phase == Phase::Move {
+            drag.data = 1.0;
+        }
+        if drag.phase == Phase::Up && !drag.cancelled() && drag.data != 0.0 {
+            drop(s, drag.window_point(), tx);
+        }
+    })
+}

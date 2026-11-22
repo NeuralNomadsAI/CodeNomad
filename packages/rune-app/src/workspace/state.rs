@@ -288,6 +288,9 @@ fn stash(s: &mut State) {
     if let Some(files) = &mut s.files {
         files.activate(false);
     }
+    if let Some(git) = &mut s.git.owner {
+        git.activate(false);
+    }
     let cache = Cache::take(s);
     if let Some(ui) = &mut s.workspace {
         let entry = &mut ui.entries[ui.active];
@@ -335,6 +338,9 @@ fn activate(s: &mut State, tx: &mut Tx) {
         s.renew_scope();
         if let Some(files) = &mut s.files {
             files.activate(true);
+        }
+        if let Some(git) = &mut s.git.owner {
+            git.activate(true);
         }
     } else {
         let restore = match &item.saved {
@@ -673,6 +679,7 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
             cache.apply(s);
             changed |= crate::poll_chat(s, 8);
             changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
+            changed |= crate::git::poll(s, now, tx);
             item.cache = Some(Cache::take(s));
         }
     }
