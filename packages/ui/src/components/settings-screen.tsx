@@ -59,6 +59,7 @@ interface SettingsScreenProps {
   projectUnbound?: boolean
   onClose?: () => void | Promise<void>
   onSectionChange?: (section: SettingsSectionId) => void | Promise<void>
+  onMissionsDisabled?: (current: () => boolean) => void
   scrollPosition?: { scrollTop?: number }
   onScrollPositionChange?: (top: number) => void
 }
@@ -80,15 +81,19 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const projectUnavailable = () => props.projectUnavailable || !props.standalone && !props.providerContext &&
     parseInstanceKey(activeInstanceId() ?? "").backendId !== "local" && !embeddedProject()
   const missionInstanceId = () => props.providerContext?.instanceId ?? activeInstanceId() ?? undefined
-  const missionActivation = useMissionActivation(missionInstanceId, () => {
+  const missionDirectory = () => {
     const id = missionInstanceId()
     return props.providerContext?.workspacePath ?? (id ? instances().get(id)?.folder : undefined) ?? props.providerContext?.location?.directory
-  }, () => Boolean(props.standalone || settingsOpen()) && activeSettingsSection() !== "servers" && !props.projectUnavailable)
+  }
+  const missionActivation = useMissionActivation(missionInstanceId, missionDirectory,
+    () => Boolean(props.standalone || settingsOpen()) && activeSettingsSection() !== "servers" && !props.projectUnavailable)
   const missionsDisabled = missionActivation.disabled
   createEffect(() => {
-    if (!missionsDisabled() || activeSettingsSection() !== "missions") return
-    setActiveSettingsSection("general")
-    void props.onSectionChange?.("general")
+    if (activeSettingsSection() !== "missions") return
+    const disable = missionActivation.captureDisable(missionInstanceId(), missionDirectory())
+    if (!disable?.current()) return
+    if (props.onMissionsDisabled) props.onMissionsDisabled(disable.current)
+    else setActiveSettingsSection("general")
   })
 
   const sections = createMemo(() => {

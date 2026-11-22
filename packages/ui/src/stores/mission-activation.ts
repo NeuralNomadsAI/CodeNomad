@@ -35,6 +35,11 @@ export function useMissionActivation(
   // The checkbox reports a failed or pending read as unknown. Visibility
   // changes only with the last confirmed rule, not while refreshing it.
   const disabled = () => control()?.effective === "disabled"
+  const captureDisable = (instanceId: string | undefined, directory: string | undefined) => {
+    const owner = target()
+    if (!active() || !disabled() || !owner || owner.id !== instanceId || owner.location.directory !== directory) return
+    return captureBackendOperation(owner.id, lifetime, () => active() && target() === owner && disabled())
+  }
   const globalEnabled = () => control()?.global !== "disabled"
   const projectOverride = () => status() !== "unknown" && control()?.controllingRule?.scope === "project"
     && (status() === "enabled") !== globalEnabled()
@@ -78,5 +83,5 @@ export function useMissionActivation(
       setPending(current => current === owner ? undefined : current)
     }
   }
-  return { status, disabled, checking, readFailed, retry, canToggle, toggle, projectOverride, globalEnabled }
+  return { status, disabled, captureDisable, checking, readFailed, retry, canToggle, toggle, projectOverride, globalEnabled }
 }

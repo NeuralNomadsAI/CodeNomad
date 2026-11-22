@@ -28,10 +28,12 @@ async function installHost(page: Page, host: "electron" | "tauri", request: Nati
     w.__CODENOMAD_RUNTIME_HOST__ = host
     w.__CODENOMAD_WINDOW_CONTEXT__ = "preferences"
     w.fixtureRequest = request
+    w.fixtureSaved = []
     w.fixtureAccept = async (request) => {
       w.fixtureSaving = request
       if (w.fixtureHoldPersistence) await new Promise(resolve => { w.fixtureReleasePersistence = resolve })
       w.fixtureRequest = request
+      w.fixtureSaved.push(request)
     }
     w.fixtureEvents = []
     w.EventSource = class extends EventTarget {
@@ -256,6 +258,38 @@ for (const host of ["electron", "tauri"] as const) {
       assert.deepEqual(fixture.writes, [])
       assert.deepEqual(fixture.errors, [])
     } finally { hold.resolve(); await page.unrouteAll({ behavior: "wait" }); await page.close() }
+  })
+
+  for (const switchProject of [true, false]) test(`${host}: a late Missions disable cannot save General over ${switchProject ? "a newer project" : "a newer section"}`, async () => {
+    const page = await browser.newPage()
+    const first = workspace("a"), second = switchProject ? workspace("b", "D:/other-project") : first
+    const fixture = await restoredFixture(page, host, { section: "missions", instanceId: first.id, workspacePath: first.path })
+    fixture.inventory(switchProject ? [first, second] : [first])
+    const hold = Promise.withResolvers<void>()
+    await page.route("**/api/workspaces/a/plugin-controls**", async route => {
+      await hold.promise
+      await route.fulfill({ json: { ...pluginControls(first.path), controls: [
+        { id: "codenomad.missions", managedBy: "codenomad", builtin: false, global: "disabled", project: "default", effective: "disabled" },
+      ] } })
+    })
+    try {
+      await Promise.all([page.waitForRequest("**/api/workspaces/a/plugin-controls**", { timeout: 60_000 }), page.goto(url)])
+      await page.waitForFunction(() => (window as any).fixtureReady)
+      await page.evaluate(() => { (window as any).fixtureHoldPersistence = true })
+      await nativeRequest(page, { section: "chat", instanceId: second.id, workspacePath: second.path, scrollTop: 120 })
+      await page.waitForFunction(() => (window as any).fixtureSaving?.section === "chat")
+      const response = page.waitForResponse("**/api/workspaces/a/plugin-controls**")
+      hold.resolve()
+      await response
+      await page.locator(".settings-screen-nav-list").getByRole("button", { name: "Missions", exact: true }).waitFor({ state: "detached" })
+      await page.evaluate(() => { (window as any).fixtureHoldPersistence = false; (window as any).fixtureReleasePersistence() })
+      await page.locator(".settings-screen-content-title").getByText("Chat", { exact: true }).waitFor()
+      await page.evaluate(() => (window as any).__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?.())
+      const saved = await page.evaluate(id => (window as any).fixtureSaved.filter((value: NativePreferencesRequest) => value.instanceId === id), second.id)
+      assert.ok(saved.length)
+      assert.ok(saved.every((value: NativePreferencesRequest) => value.section === "chat" && value.scrollTop === 120), JSON.stringify(saved))
+      assert.deepEqual(fixture.errors, [])
+    } finally { hold.resolve(); await page.close() }
   })
 
   test(`${host}: ambiguous restored folders stay unbound; an explicit occurrence keeps its worktree and is revoked on deletion`, async () => {

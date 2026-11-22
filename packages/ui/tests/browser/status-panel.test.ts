@@ -107,6 +107,27 @@ test("confirmed Missions disable selects Status even when Files comes first", as
   } finally { await page.close() }
 })
 
+test("a panel remembers its inherited tab across a remount without changing the shared default", async () => {
+  const page = await browser.newPage({ viewport: { width: 700, height: 900 }, locale: "en-US" })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.addInitScript(() => localStorage.setItem("opencode-session-right-panel-tab-v2", "files"))
+  const show = (id?: string) => page.evaluate(id => (window as any).statusFixture.showPanel(id), id)
+  const files = page.getByRole("tab", { name: "Files", exact: true, selected: true })
+  try {
+    await page.goto(url)
+    await files.waitFor()
+    await show()
+    await files.waitFor({ state: "detached" })
+    await show("other-project")
+    await page.getByRole("tab", { name: "Status", exact: true }).click()
+    await show()
+    await show("status-fixture")
+    await files.waitFor({ timeout: 4500 })
+    await show("new-project")
+    await page.getByRole("tab", { name: "Status", exact: true, selected: true }).waitFor()
+  } finally { await page.close() }
+})
+
 test("Status tokens use the message chips and expand in the header line, wrapping in narrow LTR and RTL panels", async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 1000 }, locale: "en-US", reducedMotion: "reduce" })
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))

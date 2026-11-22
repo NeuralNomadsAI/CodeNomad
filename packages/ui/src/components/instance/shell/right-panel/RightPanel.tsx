@@ -1,4 +1,4 @@
-import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, type Accessor, type Component } from "solid-js"
+import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, untrack, type Accessor, type Component } from "solid-js"
 import {
   DragDropProvider,
   DragDropSensors,
@@ -116,7 +116,6 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const [rightPanelTab, selectRightPanelTab] = createSignal<RightPanelTab>(savedTab === "git-changes" ? "files" : savedTab)
   const setRightPanelTab = (tab: RightPanelTab) => {
     selectRightPanelTab(tab)
-    updateTabViewState(props.instanceId, { rightPanelTab: tab })
     writeClientLayoutValue(RIGHT_PANEL_TAB_STORAGE_KEY, tab)
   }
   const defaultStatusSectionIds = CORE_STATUS_SECTION_ITEMS.map((section) => section.id)
@@ -134,6 +133,11 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const tabGroupId = `right-panel-${createUniqueId()}`
   const tabId = (id: string) => `${tabGroupId}-tab-${id}`
   const tabPanelId = (id: string) => `${tabGroupId}-panel-${id}`
+
+  createEffect(() => {
+    const tab = rightPanelTab()
+    untrack(() => updateTabViewState(props.instanceId, { rightPanelTab: tab }))
+  })
 
   const handleAccordionChange = (values: string[]) => {
     setRightPanelExpandedItems(values)
@@ -254,13 +258,13 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   createEffect(() => {
     const current = rightPanelTab()
     if (current === "missions" && missionActivation.disabled()) {
-      setRightPanelTab("status")
+      const disable = missionActivation.captureDisable(props.instanceId, props.instance.folder)
+      if (disable?.current() && untrack(() => getTabViewState(props.instanceId).rightPanelTab) === "missions") selectRightPanelTab("status")
       return
     }
     const tabs = visibleRightPanelTabs()
     if (tabs[0] && !tabs.some(tab => tab.id === current)) {
       selectRightPanelTab(tabs[0].id)
-      updateTabViewState(props.instanceId, { rightPanelTab: tabs[0].id })
     }
   })
 

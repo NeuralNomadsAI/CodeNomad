@@ -32,8 +32,11 @@ export const PreferencesWindow: Component = () => {
   let scrollTop = 0
   let scrollTimer: ReturnType<typeof setTimeout> | undefined
   let persistenceQueue = Promise.resolve()
-  const persist = (next: () => NativePreferencesRequest, generation?: number) => {
-    persistenceQueue = persistenceQueue.catch(() => undefined).then(() => acceptNativePreferencesRequest(next(), generation))
+  const persist = (next: () => NativePreferencesRequest | undefined, generation?: number) => {
+    persistenceQueue = persistenceQueue.catch(() => undefined).then(() => {
+      const value = next()
+      if (value) return acceptNativePreferencesRequest(value, generation)
+    })
     return persistenceQueue
   }
   const flushScroll = (generation?: number) => {
@@ -198,6 +201,27 @@ export const PreferencesWindow: Component = () => {
             setRequest(next)
           })
           return requestQueue
+        }}
+        onMissionsDisabled={(current) => {
+          const context = providerContext()
+          const canReset = () => current() && providerContext() === context
+            && request().section === "missions" && activeSettingsSection() === "missions"
+          requestQueue = requestQueue.catch(() => undefined).then(async () => {
+            let saved: NativePreferencesRequest | undefined
+            await persist(() => {
+              // A native opener or section change may have saved while we waited.
+              if (!canReset()) return
+              clearTimeout(scrollTimer)
+              return saved = { ...request(), section: "general", scrollTop: 0 }
+            })
+            const next = saved
+            if (!next || !canReset()) return
+            scrollTop = 0
+            batch(() => {
+              setRequest(next)
+              setActiveSettingsSection("general")
+            })
+          }).catch(() => undefined)
         }}
         onClose={() => close(false)}
       /></Show>
