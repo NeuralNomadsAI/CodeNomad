@@ -156,7 +156,8 @@ async fn asset(dir: &Path, method: &Method, path: &str, request_headers: &Header
         }
         let modified = meta.modified().ok()?;
         let millis = modified.duration_since(UNIX_EPOCH).ok()?.as_millis();
-        let etag = format!("W/\"{:x}-{millis:x}\"", meta.len());
+        let tag_coding = coding.map_or("", |(_, suffix)| suffix);
+        let etag = format!("W/\"{:x}-{millis:x}{tag_coding}\"", meta.len());
         let date = chrono::DateTime::<chrono::Utc>::from(modified);
         let no_cache = request_headers
             .get_all(header::CACHE_CONTROL)
@@ -164,15 +165,23 @@ async fn asset(dir: &Path, method: &Method, path: &str, request_headers: &Header
             .filter_map(|v| v.to_str().ok())
             .flat_map(|v| v.split(','))
             .any(|directive| directive.trim().eq_ignore_ascii_case("no-cache"));
-        let unchanged = match request_headers.get(header::IF_NONE_MATCH) {
-            Some(v) => v.to_str().is_ok_and(|value| {
-                value.split(',').map(str::trim).any(|tag| tag == "*" || tag.trim_start_matches("W/") == &etag[2..])
-            }),
-            None => request_headers
+        let unchanged = if request_headers.contains_key(header::IF_NONE_MATCH) {
+            request_headers
+                .get_all(header::IF_NONE_MATCH)
+                .iter()
+                .filter_map(|v| v.to_str().ok())
+                .flat_map(|value| value.split(',').map(str::trim))
+                .any(|tag| tag == "*" || tag.trim_start_matches("W/") == &etag[2..])
+        } else {
+            request_headers
                 .get(header::IF_MODIFIED_SINCE)
                 .and_then(|v| v.to_str().ok())
-                .and_then(|v| chrono::NaiveDateTime::parse_from_str(v, "%a, %d %b %Y %H:%M:%S GMT").ok())
-                .is_some_and(|since| since.and_utc().timestamp() >= date.timestamp()),
+                .and_then(|v| {
+                    ["%a, %d %b %Y %H:%M:%S GMT", "%A, %d-%b-%y %H:%M:%S GMT", "%a %b %e %H:%M:%S %Y"]
+                        .into_iter()
+                        .find_map(|format| chrono::NaiveDateTime::parse_from_str(v, format).ok())
+                })
+                .is_some_and(|since| since.and_utc().timestamp() >= date.timestamp())
         };
         let mut response = if !no_cache && unchanged {
             Status::NOT_MODIFIED.into_response()

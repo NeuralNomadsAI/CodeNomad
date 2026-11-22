@@ -18,7 +18,7 @@ Only the `solid` mode uses that UI. It hides the features of route families a ba
 
 Rust binary: `CODENOMAD_RS_BINARY` or `CNRS_RUST_BINARY`, else `$CARGO_TARGET_DIR/release/codenomad-rs.exe`, else `packages/server-rs/target/release/`. OpenCode: absolute path of a native OpenCode 2 executable (not an npm shim), passed as an argument.
 
-To compare a separate TypeScript checkout, build it there first. From a bench checkout without `packages/server/dist`, use `New-Item -ItemType Junction -Path packages/server/dist -Target <absolute-reference-dist>`, then run `compare.mjs` as usual.
+For `static-assets`, build the TypeScript checkout with precompression support instead of building the local TypeScript checkout in step 2. In the Rust checkout, where `packages/server/dist` is absent, run `New-Item -ItemType Junction -Path packages/server/dist -Target <absolute-reference-dist>` and then `node compare.mjs static-assets $OpenCode` from `bench/`.
 
 ```powershell
 $OpenCode = "<absolute path>\opencode.exe"
