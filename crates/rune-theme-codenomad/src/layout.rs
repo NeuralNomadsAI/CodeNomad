@@ -26,16 +26,9 @@ pub fn with_appearance<T>(dark: bool, render: impl FnOnce() -> T) -> T {
     render()
 }
 pub fn button(label: &str, disabled: bool) -> El {
-    let t = tokens(dark());
-    let label = label.to_owned();
-    rune_kit::Button::new(&label)
+    rune_kit::Button::new(label)
         .disabled(disabled)
-        .label_with(move |_, ink| rune::text(label).font(t.text(TextRole::Button)).color(ink))
         .build(kit(dark()))
-        .h(t.metric("button", "minHeight").px())
-        .px(t.metric("button", "paddingLeft").px())
-        .py(t.metric("button", "paddingTop").px())
-        .radius(t.number("button-radius").px())
 }
 pub fn input(edit: &TextEdit) -> El {
     // Rune's low-level editor retains the application's edit accessor and submit contract.
@@ -124,6 +117,50 @@ pub trait Layout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shared_button_preserves_kit_geometry_and_disabled_semantics() {
+        fn view(&(direct, disabled): &(bool, bool), cx: &mut rune::Cx<(bool, bool)>) -> El {
+            render(cx, |_| {
+                if direct {
+                    rune_kit::Button::new("Save")
+                        .disabled(disabled)
+                        .build(kit(dark()))
+                } else {
+                    button("Save", disabled)
+                }
+            })
+        }
+        for dark in [false, true] {
+            for disabled in [false, true] {
+                let inspect = |direct| {
+                    let mut rt = rune::Runtime::new(
+                        (direct, disabled),
+                        view,
+                        (320.0, 180.0),
+                        rune::Env::new(dark, 1.0),
+                    );
+                    rt.frame(1.0);
+                    rt.elements()
+                        .into_iter()
+                        .map(|e| {
+                            (
+                                e.role,
+                                e.label,
+                                e.rect,
+                                e.radius,
+                                e.fill,
+                                e.text_color,
+                                e.focusable,
+                                e.inert,
+                                e.opacity,
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(inspect(false), inspect(true));
+            }
+        }
+    }
     #[test]
     fn native_geometry_tracks_the_shared_sources() {
         let composer = include_str!("../../../packages/ui/src/styles/messaging/prompt-input.css");
