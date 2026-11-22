@@ -280,14 +280,19 @@ pub async fn event_catalogue(app: &crate::Shared, w: &Workspace) -> Option<Arc<C
     store(&mut cache, w.id, result.clone());
     result
 }
-pub async fn catalogue(app: &App, w: &Workspace, refresh: bool) -> Result<Catalogue, Error> {
+struct Root {
+    project: String,
+    local: Physical,
+    main: Physical,
+}
+async fn root(app: &App, w: &Workspace) -> Result<Root, Error> {
     let native_dir = w.location["directory"].as_str().ok_or_else(native_error)?;
     let here =
         native(app, Method::GET, "/api/location", &[("location[directory]", native_dir)], None, 128 * 1024).await?;
     let project = here["project"]["id"].as_str().filter(|p| crate::opencode::valid_id(p)).ok_or_else(native_error)?;
     let local = checkout(&w.path).await?;
     let main_path = here["project"]["canonical"].as_str().and_then(physical).ok_or_else(native_error)?;
-    let main = checkout(&main_path).await?;
+    let main = if main_path == local.root { local.clone() } else { checkout(&main_path).await? };
     if here["directory"].as_str().and_then(physical).as_ref() != Some(&w.path)
         || here["project"]["directory"].as_str().and_then(physical).as_ref() != Some(&local.root)
         || main.root != main_path
@@ -299,6 +304,19 @@ pub async fn catalogue(app: &App, w: &Workspace, refresh: bool) -> Result<Catalo
     {
         return Err(conflict("Workspace and native project do not share a checkout"));
     }
+    if !local.live() || !main.live() {
+        return Err(native_error());
+    }
+    Ok(Root { project: project.into(), local, main })
+}
+/// Root-only session mutations need the opened checkout's proof, independent of sibling inventory size.
+pub async fn root_supported(app: &App, w: &Workspace) -> bool {
+    root(app, w).await.is_ok()
+}
+pub async fn catalogue(app: &App, w: &Workspace, refresh: bool) -> Result<Catalogue, Error> {
+    let Root { project, local, main } = root(app, w).await?;
+    let native_dir = w.location["directory"].as_str().ok_or_else(native_error)?;
+    let project = project.as_str();
     let tail = w.path.strip_prefix(&local.root).map_err(|_| native_error())?;
     if refresh {
         native(app, Method::POST, "/api/worktree/refresh", &[], Some(json!({"projectID":project})), 16384).await?;
@@ -306,7 +324,8 @@ pub async fn catalogue(app: &App, w: &Workspace, refresh: bool) -> Result<Catalo
     // The reference lists every registration; only the response sizes are bounded.
     let entries = native(app, Method::GET, "/api/worktree", &[("projectID", project)], None, 4 << 20).await?;
     let entries = entries.as_array().ok_or_else(native_error)?;
-    let annotations = crate::git::run(&main.root, &["worktree", "list", "--porcelain", "-z"], 4 << 20).await?.ok()?.text();
+    let annotations =
+        crate::git::run(&main.root, &["worktree", "list", "--porcelain", "-z"], 4 << 20).await?.ok()?.text();
     let snapshot: HashMap<_, _> = annotations
         .split("\0\0")
         .filter_map(|s| Some((physical(s.split('\0').next()?.strip_prefix("worktree ")?)?, s)))

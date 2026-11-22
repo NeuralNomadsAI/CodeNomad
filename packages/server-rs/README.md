@@ -61,6 +61,8 @@ cargo build --release --locked
 
 Behaviour must match `packages/server`: every change runs the matching comparison in `bench/` (`node compare.mjs <mode> <opencode>`). Parity cases are regenerated from the TypeScript sources with `bench/generate-*.mjs`.
 
+Workspace agent controls relay native model changes, session permission replies, Form replies/cancellation and interruption. Exact pending-request reads fence settlement; native confirmation supplies durable CodeNomad permission receipts and reasons. Both backends reject malformed decisions, oversized reasons, invalid interruption options and stale requests, and revalidate the session before forwarding. `bench/agent-controls.mjs` compares these controls on separate native daemons with a held synthetic provider response; `contract` compares root/worktree placement and foreign-session refusal. The bounded Rust root proof checks the opened checkout and common Git identity without listing sibling worktrees; TypeScript already admits an owned root directly through its workspace ownership path.
+
 Conversation permission modes share the private `sessionPermissionBlocks` state with TypeScript. Native creation and fork evidence can record copied rules; only an owned root block is rewritable, with additive deny refresh for verified copies from subagents. Sends, native events and reconnects refresh known targets; exact native deletion clears their records.
 
 Known divergence: when a platform package does not match its registry integrity, the TypeScript server installs it anyway through `@opencode/cli`'s postinstall fallback; Rust refuses it (`bench/opencode-install.mjs`). OpenCode 1.x npm replacement is not ported: such an installation is refused.
