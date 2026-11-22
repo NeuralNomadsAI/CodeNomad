@@ -84,7 +84,10 @@ try {
     if (scene === 'source') {
       const text = tree.elements.find(n => n.role === 'textbox' && n.path.includes('/file-editor/'))
       const { x: sx, y: sy } = geometry['.view-lines']
-      assert(Math.abs(text.rect[0] - x - sx) <= 2 && Math.abs(text.rect[1] - y - sy) <= 2, 'Source text origin')
+      const editorOffset = [text.rect[0] - x - sx, text.rect[1] - y - sy]
+      geometry.editorOffset = editorOffset
+      assert(Math.abs(editorOffset[0]) <= 2, 'Source editor column')
+      assert(editorOffset[1] >= 0 && editorOffset[1] <= 8, 'Source editor gutter stays within the Kit inset')
     }
     if (scene === 'markup-md') {
       const heading = tree.elements.find(n => n.role === 'heading' && n.text === 'Reader')

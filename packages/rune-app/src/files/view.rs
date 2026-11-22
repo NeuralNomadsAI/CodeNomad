@@ -310,6 +310,13 @@ fn reader_content(s: &State) -> El {
                 .map(|error| text(error).role("alert").pad(Space::Md)),
         )
         .children(
+            (ui.reader.error().is_none() && ui.document.error().is_some()).then(|| {
+                text(t("instanceShell.rightPanel.toast.saveError"))
+                    .role("alert")
+                    .pad(Space::Md)
+            }),
+        )
+        .children(
             (ui.reader.busy() && ui.reader.preview().is_none()).then(|| {
                 text(t("instanceInfo.loading"))
                     .role("status")

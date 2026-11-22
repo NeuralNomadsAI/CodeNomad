@@ -34,6 +34,7 @@ pub(super) fn source(
             {
                 return ui.document.input(scope);
             }
+            s.rejected_edit = TextEdit::new("");
             &mut s.rejected_edit
         })
         .on_change(document_action_tx(s, |ui, _| {

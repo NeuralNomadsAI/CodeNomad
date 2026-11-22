@@ -1,6 +1,43 @@
 use super::*;
 
 #[test]
+fn overwrite_dialog_defaults_to_cancel_and_keeps_the_draft() {
+    crate::platform::block_on(async {
+        let http = http::Http::new().await;
+        let mut rt = runtime(http.ui(Store::default(), "source-conflict"));
+        open(&mut rt, &http, "main.rs", "YQ==").await;
+        rt.update(|state, _| {
+            let ui = state.files.as_mut().unwrap();
+            let scope = ui.document.scope();
+            ui.document.input(scope).replace_text("local");
+            ui.document.changed(scope);
+        });
+        rt.frame(0.02);
+        click(&mut rt, "file-save");
+        rt.update_if(|state, _| state.files.as_mut().unwrap().poll(20.0));
+        http.request("GET", "main.rs")
+            .await
+            .preview("main.rs", "ZXh0ZXJuYWw=", Some("v2"))
+            .await;
+        settle(&mut rt).await;
+        assert!(
+            rt.elements()
+                .iter()
+                .any(|node| node.key.as_deref() == Some("file-decision-cancel") && node.focused)
+        );
+        rt.key(KeyEvent {
+            key: Key::Enter,
+            mods: Mods::default(),
+        });
+        rt.frame(0.02);
+        let document = &rt.state.files.as_ref().unwrap().document;
+        assert!(document.confirmation().is_none());
+        assert_eq!(document.edit().text, "local");
+        http.quiet().await;
+    });
+}
+
+#[test]
 fn typing_and_control_save_use_the_versioned_workspace_file() {
     crate::platform::block_on(async {
         let http = http::Http::new().await;

@@ -12,8 +12,9 @@ fn drawing_width(dark: bool, text: &str, viewport_width: f32) -> f32 {
     let lines = text.as_bytes().iter().filter(|&&c| c == b'\n').count() + 1;
     (source_width(dark, viewport_width)
         - gutter_width(style, lines)
-        - tokens(dark).space(Space::Lg).px())
-    .max(0.0)
+        - tokens(dark).space(Space::Lg).px()
+        + INSET)
+        .max(0.0)
 }
 pub fn field(
     dark: bool,
@@ -54,7 +55,7 @@ pub fn editor_view(
     // The gutter's wrap width excludes the TextArea's inner chrome; its logical lines
     // use the same line spacing as the editor.
     let width = if wrap {
-        viewport_width.map(|width| source_width(dark, width) - 2.0 * INSET)
+        viewport_width.map(|width| source_width(dark, width))
     } else {
         None
     };
@@ -65,7 +66,7 @@ pub fn editor_view(
         rune::row()
             .w_full()
             .literal_direction()
-            .child(gutter_style(dark, text, width, style).pt(INSET))
+            .child(gutter_style(dark, text, width, style, INSET).pt(INSET))
             .child(field),
         wrap,
     )
