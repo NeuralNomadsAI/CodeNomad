@@ -176,11 +176,16 @@ jumps and an activation restore also hand the active marker back to the reading
 line. Otherwise the active
 marker is the first marked block reaching more than 4 px below the transcript top,
 re-read once per frame on scroll and content rendering from the mounted rows only.
+Message content layout preferences capture the selected marker (or the actual block
+at the reading line and its viewport offset) before rendering changes. The same
+bounded reader-settlement hold resolves that marker's new block, including an
+individual tool card or its collapsed group header. Following the latest reply
+keeps the bottom; paging and restoration retain their own placement.
 Previous/next user-message jumps advance from that highlighted marker's message,
 including a selected marker, while it has a timeline marker or remains in the
 visible resident order. A vanished reference, or the first jump before a
 highlight, uses the same
-reading-line probe (`readingLinePosition` / `readingLineSegment`), which returns
+reading-line probe (`readingLinePosition` / `readingLineBlock`), which returns
 both marker and message identity. A pending jump's target stays the reference
 while paging or shown, so repeated jumps advance even near a clamped bottom;
 deferred jumps retain their requested direction until the index arrives.

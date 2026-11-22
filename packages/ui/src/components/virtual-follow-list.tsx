@@ -1,10 +1,10 @@
-import { Show, batch, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup, untrack } from "solid-js"
+import { Show, batch, createComputed, createEffect, createMemo, createSignal, type Accessor, type JSX, on, onCleanup, untrack } from "solid-js"
 import { Virtualizer, type VirtualizerHandle } from "virtua/solid"
 import { trackHeightDelta } from "../lib/height-delta"
 import { flushFrameBatchedMounts } from "../lib/frame-batch-schedule"
 import { attachScrollGestureRouting, findNestedScroller, getElementZoom, POINTER_CONTROL_SELECTOR, wheelDeltaUnit } from "../lib/scroll-gesture-routing"
 import { remapVirtualMeasurements } from "./virtual-follow-measurements"
-import { createVirtualReaderSettlement } from "./virtual-reader-settlement"
+import { createVirtualReaderSettlement, type VirtualItemAnchor } from "./virtual-reader-settlement"
 import { advanceBottomPinSettlement, AnchorRestoreStabilizer, canScrollInDirection, classifyVirtualItemKeyChange, describeKeyTarget, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottomForMode, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, SCROLL_INTENT_KEYS, ScrollObservationGate, USER_SCROLL_INTENT_WINDOW_MS, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldNavigateAtBoundary, VirtualScrollController, type BottomPinSettlementState, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 import { isScrollTraceEnabled, traceScroll, type ScrollReason, type ScrollTraceEntry, type ScrollTraceKind } from "./virtual-scroll-trace"
 
@@ -121,6 +121,7 @@ export interface VirtualFollowListProps<T> {
   initialAutoScroll?: Accessor<boolean>
   resetKey?: Accessor<string | number>
   followToken?: Accessor<string | number>
+  captureLayoutAnchor?: () => VirtualItemAnchor | undefined
   explicitBottomPinIntent?: Accessor<VirtualExplicitBottomPinIntent | null>
   autoPinHoldTargetKey?: Accessor<string | null>
   resolveAutoPinHoldElement?: HoldTargetElementResolver
@@ -324,8 +325,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
       const target = anchor.element ?? (anchor.select?.() || row)
       // A detached revealed part is gone.
       if (!element || !target?.isConnected) return !anchor.element
-      // A held element keeps its requested offset; only its application follows the viewport.
-      const delta = measureAnchorDelta(element, target, anchor.element ? clampAlignmentOffset(element, anchor.offset) : anchor.offset)
+      // A held element keeps its requested offset; a shrinking block stays partly visible.
+      const offset = anchor.element ? clampAlignmentOffset(element, anchor.offset)
+        : anchor.offset < 0 ? Math.max(anchor.offset, 1 - target.getBoundingClientRect().height) : anchor.offset
+      const delta = measureAnchorDelta(element, target, offset)
       if (Math.abs(delta) >= 1) writeScroll(anchor.element ? "align-element" : "reader-settle", { type: "dom", top: element.scrollTop + delta, record: true })
     },
   })
@@ -1251,8 +1254,15 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     startExplicitBottomPin(intent)
   }))
 
-  createEffect(on(() => props.followToken?.(), () => {
+  createComputed(on(() => props.followToken?.(), () => {
+    if (!isActive()) return
     if (autoScroll()) api.notifyContentRendered()
+    else if (!scrollController.snapshot().restoring) {
+      // Capture before render effects replace the old blocks; resolve the held
+      // block after layout changes, using the ordinary cancellable settlement.
+      const anchor = props.captureLayoutAnchor?.()
+      if (anchor) readerSettlement.hold(anchor, true)
+    }
   }, { defer: true }))
 
   createEffect(on(

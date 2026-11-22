@@ -3,13 +3,13 @@
  * the row itself. `select` finds a block standing for the row on every frame,
  * so it survives a remount of that row; until it finds one, the row is held.
  */
-interface VirtualItemAnchor { key: string; offset: number; element?: HTMLElement; select?: () => HTMLElement | null }
+export interface VirtualItemAnchor { key: string; offset: number; element?: HTMLElement; select?: () => HTMLElement | null }
 
 // A hold lasts the former element-alignment window, counted from its request:
 // later layout never extends it.
 const HOLD_FRAMES = 30
 
-/** A held anchor (a jump's row or a revealed element) is measured and
+/** A held anchor (a jump, reveal or reflow target) is measured and
  * re-aligned on every frame of its fixed window, like the former element
  * alignment: layout lands after animation
  * frames, so waiting for a layout notification would paint the displaced frame
@@ -38,12 +38,13 @@ export function createVirtualReaderSettlement(options: {
     cancel,
     /** The held anchor, if any. */
     held: () => anchor,
-    /** Takes ownership of `next` at once: aligns it now, then on every frame of its window. */
-    hold: (next: VirtualItemAnchor) => {
+    /** Aligns now, or after a pending render, then on each frame of the window. */
+    hold: (next: VirtualItemAnchor, defer = false) => {
       cancel()
       anchor = next
       remaining = HOLD_FRAMES
-      tick()
+      if (defer) frame = requestAnimationFrame(tick)
+      else tick()
     },
   }
 }

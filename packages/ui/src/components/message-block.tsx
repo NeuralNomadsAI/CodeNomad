@@ -530,7 +530,7 @@ interface MessageBlockProps {
   thinkingDefaultExpanded: () => boolean
   usageMetricsVisibility: () => VisibilityPreference
   systemMessagesVisibility?: () => VisibilityPreference
-  toolGroupVisibility?: () => VisibilityPreference
+  groupToolCalls?: () => boolean
   toolVisibility: (toolName: string) => VisibilityPreference
   onRevert?: (messageId: string) => void
   onFork?: (messageId?: string) => void
@@ -551,7 +551,7 @@ interface MessageBlockProps {
   technicalCleanupParts?: (messageId: string, partId: string) => TechnicalCleanupPart[]
   technicalCleanupPartKeys?: Accessor<ReadonlySet<string>>
   onTechnicalCleanupHoverChange?: (messageId: string, partId: string, hovered: boolean) => void
-  isTechnicalGroupExpanded?: (groupId: string, defaultExpanded: boolean) => boolean
+  isTechnicalGroupExpanded?: (group: TranscriptTechnicalGroup) => boolean
   setTechnicalGroupExpanded?: (groupId: string, expanded: boolean) => void
   /**
    * Leaves bottom-following and holds `target` `viewportOffset` px below the
@@ -609,7 +609,7 @@ export default function MessageBlock(props: MessageBlockProps) {
     if (!current) return null
 
     const messageInfoVersion = props.store().state.messageInfoVersion[current.id] ?? 0
-    const groupTools = props.toolGroupVisibility?.() !== "hidden"
+    const groupTools = props.groupToolCalls?.() ?? true
 
     const cacheSignature = [
       current.id,
@@ -991,10 +991,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                       activePartId={activeSearchMatch()?.partId}
                       showHeader={technicalGroupStartsHere((item() as ExplorationDisplayItem).technicalGroup)}
                       expanded={(item() as ExplorationDisplayItem).technicalGroup
-                        ? () => {
-                            const defaultExpanded = props.toolGroupVisibility?.() === "expanded"
-                            return props.isTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!.id, defaultExpanded) ?? defaultExpanded
-                          }
+                        ? () => props.isTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!) ?? false
                         : undefined}
                       onExpandedChange={(item() as ExplorationDisplayItem).technicalGroup
                         ? (expanded) => props.setTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!.id, expanded)
@@ -1036,10 +1033,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     activePartId={activeSearchMatch()?.partId}
                     showHeader={technicalGroupStartsHere((item() as ReasoningDisplayItem).technicalGroup)}
                     expanded={(item() as ReasoningDisplayItem).technicalGroup
-                      ? () => props.isTechnicalGroupExpanded?.(
-                          (item() as ReasoningDisplayItem).technicalGroup!.id,
-                          (item() as ReasoningDisplayItem).defaultExpanded,
-                        ) ?? false
+                      ? () => props.isTechnicalGroupExpanded?.((item() as ReasoningDisplayItem).technicalGroup!) ?? false
                       : undefined}
                     onExpandedChange={(item() as ReasoningDisplayItem).technicalGroup
                       ? (expanded) => props.setTechnicalGroupExpanded?.((item() as ReasoningDisplayItem).technicalGroup!.id, expanded)

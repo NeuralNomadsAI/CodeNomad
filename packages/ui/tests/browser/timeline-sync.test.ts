@@ -80,6 +80,7 @@ const longMessages = Array.from({ length: 260 }, (_, index) => index === LONG.in
   : index % 2 ? assistant(index, [{ type: "text", text: prose(`Note ${index}`, 2) }]) : { id: id(index), type: "user", time: { created: index + 1 }, text: prose(`Ask ${index}`, 1) })
 
 let server: Awaited<ReturnType<typeof startTimelineSyncServer>>, directory: string, store: string, visibilityStore: string, wideStore: string, longStore: string
+let groupedStore: string
 before(async () => {
   directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-timeline-sync-"))
   store = path.join(directory, "session.sqlite")
@@ -90,6 +91,13 @@ before(async () => {
   createSessionStore(wideStore, wideMessages)
   longStore = path.join(directory, "long.sqlite")
   createSessionStore(longStore, longMessages)
+  groupedStore = path.join(directory, "grouped.sqlite")
+  const reads = Array.from({ length: 30 }, (_, n) => tool(`${id(1)}-${n}`, "read"))
+  createSessionStore(groupedStore, [message(0),
+    assistant(1, [{ type: "text", text: "Checking the source." }, ...reads.slice(0, 12)]),
+    assistant(2, reads.slice(12)),
+    ...Array.from({ length: 20 }, (_, n) => assistant(n + 3, [{ type: "text", text: prose(`Reply ${n}`, 4) }])),
+  ])
   server = await startTimelineSyncServer({ instrument: true })
 })
 after(async () => { await server?.close(); if (directory) await rm(directory, { recursive: true, force: true }) })
@@ -168,6 +176,65 @@ test("scrolling activates the marker of the block at the reading line", { timeou
     await assertReadingLineActive(page, `scrolled ${distance}px`)
   }
 }))
+
+test("changing tool grouping keeps the selected marker or the reader on the same block", { timeout: 90_000 }, () => withSession("minimal", async (page) => {
+  // The 21st call is in a different message from the collapsed group's header.
+  const marker = (await markers(page)).find(candidate => candidate.id === `${id(2)}:tool:8`)!
+  const header = page.getByRole("button", { name: "Explored: 30 reads", exact: true })
+  const stream = page.locator(".message-stream")
+  const filters = page.getByRole("button", { name: "Message content", exact: true })
+  const groups = page.getByRole("group", { name: "Tool groups", exact: true })
+  await page.evaluate(() => (window as any).fixture.showFilters(true))
+  await header.waitFor()
+  assert.equal(await header.getAttribute("aria-expanded"), "false")
+  await clickMarker(page, marker)
+  await filters.click()
+
+  const headerOffset = async () => (await header.boundingBox())!.y - (await stream.boundingBox())!.y
+  const assertSelectedAtLine = async (collapsed = false) => {
+    await settleTranscript(page, 450)
+    assert.equal(await active(page), marker.id)
+    const offset = collapsed ? await headerOffset() : await blockOffset(page, marker)
+    assert.ok(offset !== null && Math.abs(offset) <= 2, `${marker.id} is at the reading line (${offset}px)`)
+  }
+  await assertSelectedAtLine(true)
+
+  await groups.getByRole("button", { name: "Disable tool grouping" }).click()
+  await header.waitFor({ state: "detached" })
+  await assertSelectedAtLine()
+  await groups.getByRole("button", { name: "Enable tool grouping" }).click()
+  await header.waitFor()
+  await assertSelectedAtLine(true)
+  await groups.getByRole("button", { name: "Expand Tool groups" }).click()
+  await header.and(page.locator('[aria-expanded="true"]')).waitFor()
+  await assertSelectedAtLine()
+  await page.keyboard.press("Escape")
+
+  // Give the reader ownership by scrolling inside the expanded group. Changing
+  // its disclosure then anchors the group header that represents the current call.
+  const box = (await stream.boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.wheel(0, 45)
+  await settleTranscript(page, 450)
+  await assertReadingLineActive(page, "scrolled inside the expanded group")
+  const readerId = await active(page)
+  assert.notEqual(readerId, marker.id)
+  const readerMarker = (await markers(page)).find(candidate => candidate.id === readerId)!
+  const before = await blockOffset(page, readerMarker)
+  assert.equal(readerMarker.type, "tool")
+  await filters.click()
+  await groups.getByRole("button", { name: "Collapse Tool groups" }).click()
+  await header.and(page.locator('[aria-expanded="false"]')).waitFor()
+  await settleTranscript(page, 450)
+  const after = await headerOffset()
+  assert.ok(before !== null && after !== null && Math.abs(before - after) <= 2, `reader's block stays at ${before}px (${after}px after collapse)`)
+
+  // A reader on the collapsed header stays on that header when opening it.
+  await groups.getByRole("button", { name: "Expand Tool groups" }).click()
+  await header.and(page.locator('[aria-expanded="true"]')).waitFor()
+  await settleTranscript(page, 450)
+  assert.ok(Math.abs(await headerOffset() - after) <= 2)
+}, groupedStore))
 
 /** The active marker stands for the block at the transcript's reading line. */
 async function assertReadingLineActive(page: Page, context: string) {

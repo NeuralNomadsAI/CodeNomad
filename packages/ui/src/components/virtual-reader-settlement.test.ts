@@ -47,6 +47,14 @@ test("a hold aligns at once, then on every frame of a window that nothing extend
     reader.hold({ key: "jumped", offset: 0 })
     enabled = false; step(1)
     assert.equal(reader.held(), undefined, "A disabled list releases the hold")
+    enabled = true
+    const beforeLayout = aligned
+    reader.hold({ key: "reflowed", offset: -8, select: () => element }, true)
+    assert.equal(aligned, beforeLayout, "A layout hold waits for the replacement block")
+    assert.equal(step(1), 1)
+    assert.equal(aligned, beforeLayout + 1)
+    reader.cancel()
+    assert.equal(step(1), 0)
   } finally {
     globalThis.requestAnimationFrame = previousFrame
     globalThis.cancelAnimationFrame = previousCancel

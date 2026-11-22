@@ -3,8 +3,9 @@ import type { TimelineSegment } from "./message-timeline-projection"
 
 // A block cut by the viewport top within this distance is already read.
 const READING_LINE_OFFSET_PX = 4
+const GROUP_HEADER_SELECTOR = ".message-technical-group-toggle"
 // Transcript blocks with a timeline marker, in document order.
-const SEGMENT_BLOCK_SELECTOR = '.message-item-base[data-message-content-start-part-id], .tool-call-message[data-part-id], .message-technical-group-toggle, .message-reasoning-card[data-part-id], .message-compaction-card, [data-message-kind="system"]'
+const SEGMENT_BLOCK_SELECTOR = `.message-item-base[data-message-content-start-part-id], .tool-call-message[data-part-id], ${GROUP_HEADER_SELECTOR}, .message-reasoning-card[data-part-id], .message-compaction-card, [data-message-kind="system"]`
 
 const shown = (element: Element | null | undefined): element is HTMLElement => element instanceof HTMLElement && element.getBoundingClientRect().height > 0
 
@@ -14,18 +15,22 @@ function transcriptRow(scroller: HTMLElement, messageId: string) {
 
 /** The rendered transcript block a marker stands for; a collapsed group's tools share its header. */
 export function findTimelineSegmentBlock(scroller: HTMLElement, segment: TimelineSegment,
-  technicalGroupForPart: (messageId: string, partId: string) => TranscriptTechnicalGroup | undefined): HTMLElement | null {
+  technicalGroupForPart: (messageId: string, partId: string) => TranscriptTechnicalGroup | undefined,
+  preferGroupHeader = false): HTMLElement | null {
   const row = transcriptRow(scroller, segment.messageId)
-  if (!row) return null
   const byPart = (selector: (id: string) => string, ids: readonly string[] | undefined) =>
-    (ids ?? []).map(id => row.querySelector(selector(CSS.escape(id)))).find(shown) ?? null
+    (ids ?? []).map(id => row?.querySelector(selector(CSS.escape(id)))).find(shown) ?? null
   // The header renders in the message where the group starts.
   const groupHeader = (partId: string | undefined) => {
     if (!partId) return null
     const start = technicalGroupForPart(segment.messageId, partId)?.parts[0]
     const scope = start ? transcriptRow(scroller, start.messageId) : row
-    const header = scope?.querySelector(`[data-group-part-ids~="${CSS.escape(start?.partId ?? partId)}"] .message-technical-group-toggle`)
+    const header = scope?.querySelector(`[data-group-part-ids~="${CSS.escape(start?.partId ?? partId)}"] ${GROUP_HEADER_SELECTOR}`)
     return shown(header) ? header : null
+  }
+  if (preferGroupHeader) {
+    const header = groupHeader(segment.toolPartIds?.[0] ?? segment.partIds?.[0])
+    if (header) return header
   }
   switch (segment.type) {
     case "user":
@@ -36,19 +41,20 @@ export function findTimelineSegmentBlock(scroller: HTMLElement, segment: Timelin
     case "tool":
       return byPart(id => `.tool-call-message[data-part-id="${id}"]`, segment.toolPartIds) ?? groupHeader(segment.toolPartIds?.[0])
     case "compaction": {
-      const card = row.querySelector(".message-compaction-card")
+      const card = row?.querySelector(".message-compaction-card")
       return shown(card) ? card : null
     }
     case "system": {
-      const block = row.querySelector('[data-message-kind="system"]')
+      const block = row?.querySelector('[data-message-kind="system"]')
       return shown(block) ? block : null
     }
   }
 }
 
-/** The marker of the first marked block reaching below the reading line, from the mounted rows only. */
-export function readingLineSegment(scroller: HTMLElement, segmentsByMessage: ReadonlyMap<string, readonly TimelineSegment[]>): TimelineSegment | null {
-  const line = scroller.getBoundingClientRect().top + READING_LINE_OFFSET_PX
+/** The first marked block reaching below the reading line, from the mounted rows only. */
+export function readingLineBlock(scroller: HTMLElement, segmentsByMessage: ReadonlyMap<string, readonly TimelineSegment[]>) {
+  const top = scroller.getBoundingClientRect().top
+  const line = top + READING_LINE_OFFSET_PX
   const rows = Array.from(scroller.querySelectorAll<HTMLElement>("[data-virtual-follow-key]"), row => ({ row, rect: row.getBoundingClientRect() }))
     .filter(({ rect }) => rect.height > 0 && rect.bottom > line)
     .sort((a, b) => a.rect.top - b.rect.top)
@@ -60,7 +66,7 @@ export function readingLineSegment(scroller: HTMLElement, segmentsByMessage: Rea
       const rect = block.getBoundingClientRect()
       if (rect.height === 0 || rect.bottom <= line) continue
       const segment = segmentForBlock(messageId, segments, block)
-      if (segment) return segment
+      if (segment) return { segment, preferGroupHeader: block.matches(GROUP_HEADER_SELECTOR), offset: rect.top - top }
     }
   }
   return null
@@ -75,7 +81,7 @@ function segmentForBlock(messageId: string, segments: readonly TimelineSegment[]
   }
   if (block.matches(".tool-call-message")) return segments.find(segment => segment.type === "tool" && has(segment.toolPartIds, block.dataset.partId))
   if (block.matches(".message-reasoning-card")) return segments.find(segment => segment.type === "reasoning" && has(segment.partIds, block.dataset.partId))
-  if (block.matches(".message-technical-group-toggle")) {
+  if (block.matches(GROUP_HEADER_SELECTOR)) {
     const ids = block.closest<HTMLElement>("[data-group-part-ids]")?.dataset.groupPartIds?.split(" ") ?? []
     return segments.find(segment => ids.some(id => has(segment.toolPartIds, id) || (segment.type === "reasoning" && has(segment.partIds, id))))
   }
