@@ -185,11 +185,10 @@ fn full_tab_admission_preserves_the_project_then_reuses_only_an_admitted_slot() 
             } else {
                 (204, String::new())
             };
-            let _ = write!(
-                socket,
+            let _ = socket.write_all(format!(
                 "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
-            );
+            ).as_bytes());
         }
     });
     let mut state = draft_state();
@@ -632,4 +631,165 @@ fn delivery_retires_pending_copies_but_preserves_independent_occurrence_authorit
     assert!(ui.closed.iter().all(|w| !w.drafts.contains_key("alpha")));
     rt.update(|s, tx| select(s, "tab-0", tx));
     assert_eq!(bound(&mut rt.state, &backend("alpha")), "");
+}
+
+#[test]
+fn delivery_hidden_interruptions_keep_the_active_close_guard_and_button() {
+    for kind in ["form", "reason", "busy", "stopping"] {
+        let mut s = draft_state();
+        let mut a = crate::agent::Ui::new(crate::agent::start(backend("alpha"), s.wake.clone()));
+        match kind {
+            "form" => {
+                let mut d = crate::agent::forms::Draft::default();
+                d.choose("UNSENT FORM RESPONSE");
+                a.drafts.insert(("request".into(), "answer".into()), d);
+            }
+            "reason" => {
+                a.reasons
+                    .insert("request".into(), TextEdit::new("UNSENT REASON"));
+            }
+            "busy" => a.busy = true,
+            _ => a.stopping = true,
+        }
+        s.agent = Some(a);
+        let mut rt = runtime(s);
+        rt.frame(0.0);
+        assert!(rt.find("c-tab-0").is_none());
+        rt.update(|s, tx| close(s, "tab-0", tx));
+        assert_eq!(rt.state.workspace.as_ref().unwrap().entries.len(), 1);
+        rt.update(new_tab);
+        rt.frame(0.0);
+        assert!(
+            rt.find("c-tab-0").is_none(),
+            "hidden {kind} must retain the same rendered guard"
+        );
+        rt.update(|s, tx| close(s, "tab-0", tx));
+        assert_eq!(rt.state.workspace.as_ref().unwrap().entries.len(), 2);
+        rt.update(|s, tx| select(s, "tab-0", tx));
+        let a = rt.state.agent.as_mut().unwrap();
+        a.busy = false;
+        a.stopping = false;
+        a.drafts.clear();
+        a.reasons.clear();
+        rt.update(new_tab);
+        rt.frame(0.0);
+        assert!(rt.find("c-tab-0").is_some());
+        rt.update(|s, tx| close(s, "tab-0", tx));
+        assert_eq!(rt.state.workspace.as_ref().unwrap().entries.len(), 2);
+    }
+}
+
+#[test]
+fn delivery_folder_spelling_preserves_only_the_same_server_project_scope() {
+    for (saved, path, server, backend_id, preserve) in [
+        (
+            "D:/Fixture",
+            r"d:\FIXTURE",
+            "trial-server",
+            "external",
+            true,
+        ),
+        (
+            r"\\Host\Share\Fixture",
+            r"\\host/SHARE/fixture",
+            "trial-server",
+            "external",
+            true,
+        ),
+        ("/Fixture", "/fixture", "trial-server", "external", false),
+        (
+            "D:/Fixture",
+            "E:/Fixture",
+            "trial-server",
+            "external",
+            false,
+        ),
+        (
+            "D:/Fixture",
+            "d:/fixture",
+            "another-server",
+            "external",
+            false,
+        ),
+        (
+            "D:/Fixture",
+            "d:/fixture",
+            "trial-server",
+            "another-backend",
+            false,
+        ),
+    ] {
+        let mut s = draft_state();
+        let mut saved_project = closed("alpha", "RESTORED UNSENT TEXT");
+        saved_project.folder = saved.into();
+        saved_project.server_id = Some(server.into());
+        saved_project.backend_id = Some(backend_id.into());
+        s.workspace.as_mut().unwrap().entries[0] =
+            entry("tab-0".into(), Tab::Workspace(saved_project));
+        opened(
+            &mut s,
+            &Project {
+                id: "fresh-record".into(),
+                path: path.into(),
+            },
+        );
+        assert_eq!(
+            bound(&mut s, &backend("alpha")),
+            if preserve { "RESTORED UNSENT TEXT" } else { "" },
+            "scope {saved} -> {path}, {server}, {backend_id}"
+        );
+    }
+}
+
+#[test]
+fn delivery_inactive_close_preserves_the_active_reader_and_focus() {
+    for before in [false, true] {
+        let mut s = init();
+        s.phase = Phase::Ready;
+        s.messages = crate::transport::synthetic();
+        let mut ui = Ui::new();
+        ui.ready = true;
+        ui.entries.push(entry("tab-1".into(), Tab::Blank));
+        ui.active = usize::from(before);
+        s.workspace = Some(ui);
+        let mut rt = runtime(s);
+        for _ in 0..12 {
+            rt.frame(1.0 / 60.0);
+        }
+        let (x, y) = rt.find("composer").unwrap();
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.paste("KEEP FOCUS 🦀");
+        rt.wheel(400.0, 300.0, 1200.0);
+        for _ in 0..90 {
+            rt.frame(1.0 / 60.0);
+        }
+        assert_eq!(rt.scroll_at_bottom("history"), Some(false));
+        let focus = rt
+            .elements()
+            .into_iter()
+            .find(|e| e.focused)
+            .and_then(|e| e.key);
+        let active = rt
+            .state
+            .workspace
+            .as_ref()
+            .unwrap()
+            .active_key()
+            .to_string();
+        rt.update(|s, tx| close(s, if before { "tab-0" } else { "tab-1" }, tx));
+        for _ in 0..12 {
+            rt.frame(1.0 / 60.0);
+        }
+        assert_eq!(rt.state.workspace.as_ref().unwrap().active_key(), active);
+        assert_eq!(rt.scroll_at_bottom("history"), Some(false));
+        assert_eq!(rt.state.draft.text, "KEEP FOCUS 🦀");
+        assert_eq!(
+            rt.elements()
+                .into_iter()
+                .find(|e| e.focused)
+                .and_then(|e| e.key),
+            focus
+        );
+    }
 }
