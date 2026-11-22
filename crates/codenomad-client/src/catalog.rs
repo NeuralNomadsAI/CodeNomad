@@ -21,6 +21,80 @@ pub struct Sessions {
 }
 
 impl Backend {
+    pub async fn server_id(&self) -> Result<String> {
+        server_id(
+            &read_json(
+                self.client
+                    .get(format!("{}api/meta", self.base))
+                    .send()
+                    .await?
+                    .error_for_status()?,
+            )
+            .await?,
+        )
+    }
+    /// Creates an independent occurrence; the request retains cleanup ownership until released.
+    pub async fn create_project(&self, path: &str, request_id: &str) -> Result<Project> {
+        if !crate::server_path::absolute(path) {
+            return Err("absolute folder required".into());
+        }
+        let request_id = claim(request_id)?;
+        let data = read_json(
+            self.client
+                .post(format!("{}api/workspaces", self.base))
+                .json(&json!({"path":path,"requestId":request_id}))
+                .send()
+                .await?
+                .error_for_status()?,
+        )
+        .await?;
+        if data["requestId"].as_str() != Some(request_id) {
+            return Err("workspace creation claim mismatch".into());
+        }
+        project(&data)
+    }
+    pub async fn cancel_project_creation(&self, request_id: &str) -> Result<()> {
+        let request_id = claim(request_id)?;
+        no_content(
+            self.client
+                .post(format!("{}api/workspaces/creation/cancel", self.base))
+                .json(&json!({"requestId":request_id}))
+                .send()
+                .await?,
+        )
+    }
+    pub async fn release_project_creation(
+        &self,
+        workspace_id: &str,
+        request_id: &str,
+    ) -> Result<()> {
+        if !valid_id(workspace_id) {
+            return Err("invalid workspace id".into());
+        }
+        let request_id = claim(request_id)?;
+        no_content(
+            self.client
+                .post(format!(
+                    "{}api/workspaces/{workspace_id}/creation/release",
+                    self.base
+                ))
+                .json(&json!({"requestId":request_id}))
+                .send()
+                .await?,
+        )
+    }
+    /// Removes only the logical record; ordinary DELETE retains its physical folder.
+    pub async fn release_project(&self, workspace_id: &str) -> Result<()> {
+        if !valid_id(workspace_id) {
+            return Err("invalid workspace id".into());
+        }
+        no_content(
+            self.client
+                .delete(format!("{}api/workspaces/{workspace_id}", self.base))
+                .send()
+                .await?,
+        )
+    }
     pub async fn projects(&self) -> Result<Vec<Project>> {
         let data = read_json(
             self.client
@@ -138,6 +212,31 @@ impl Backend {
         backend.client_id = crate::http::client_id()?;
         Ok(backend)
     }
+}
+fn server_id(data: &Value) -> Result<String> {
+    let id = data["serverId"].as_str().ok_or("invalid server identity")?;
+    if data["apiContract"].as_u64() != Some(1)
+        || id.trim().is_empty()
+        || id.encode_utf16().count() > 512
+        || id.chars().any(char::is_control)
+    {
+        return Err("invalid server identity".into());
+    }
+    Ok(id.to_owned())
+}
+fn claim(request_id: &str) -> Result<&str> {
+    let request_id = request_id.trim();
+    if request_id.is_empty() || request_id.encode_utf16().count() > 128 {
+        return Err("invalid workspace creation request".into());
+    }
+    Ok(request_id)
+}
+fn no_content(response: reqwest::Response) -> Result<()> {
+    let response = response.error_for_status()?;
+    if response.status() != reqwest::StatusCode::NO_CONTENT {
+        return Err("invalid workspace release acknowledgement".into());
+    }
+    Ok(())
 }
 fn project(data: &Value) -> Result<Project> {
     let id = data["id"]

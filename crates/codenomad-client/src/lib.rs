@@ -31,6 +31,8 @@ pub struct Message {
     pub parts: Vec<content::Part>,
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod catalog_tests;
 #[cfg(test)]
 mod fragment_tests;
 #[cfg(test)]
