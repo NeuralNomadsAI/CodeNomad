@@ -14,7 +14,7 @@ pub struct Owner {
     sending: Option<Send>,
     pub send_error: bool,
     pub unconfirmed: Option<String>,
-    pub command_unconfirmed: Option<String>,
+    pub command_unconfirmed: Option<(String, String)>,
     pub restored: bool,
 }
 struct Send {
@@ -22,7 +22,18 @@ struct Send {
     edit: TextEdit,
     draft: Draft,
     was_running: bool,
-    slash: bool,
+    slash: Option<(String, String)>,
+}
+
+fn repeats_uncertain_command(s: &State) -> bool {
+    s.composer
+        .command_unconfirmed
+        .as_ref()
+        .is_some_and(|(name, text)| {
+            super::picker::command_parts(&s.draft.text).is_some_and(|(candidate, args)| {
+                candidate == name && s.composer.draft.resolve_text(args) == *text
+            })
+        })
 }
 
 pub fn can_send(s: &State) -> bool {
@@ -36,7 +47,7 @@ pub fn can_send(s: &State) -> bool {
         && !s.composer.picker.open()
         && !s.composer.picker.command_pending(&s.draft.text)
         && s.composer.unconfirmed.is_none()
-        && s.composer.command_unconfirmed.as_deref() != Some(s.draft.text.trim())
+        && !repeats_uncertain_command(s)
         && s.composer.draft.can_send(&s.draft)
         && s.commands.as_ref().is_some_and(|tx| !tx.is_closed())
         && s.agent.as_ref().is_none_or(|a| !a.blocked())
@@ -51,10 +62,11 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         return;
     };
     if let Some((name, text)) = s.composer.picker.selected_command(&s.draft.text) {
+        let slash = (name.to_owned(), s.composer.draft.resolve_text(text));
         let command = Command::Slash {
             attempt: id.clone(),
-            name: name.into(),
-            text: s.composer.draft.resolve_text(text),
+            name: slash.0.clone(),
+            text: slash.1.clone(),
         };
         if s.commands
             .as_ref()
@@ -65,7 +77,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
                 edit: s.draft.clone(),
                 draft: Draft::default(),
                 was_running: true,
-                slash: true,
+                slash: Some(slash),
             });
             s.composer.send_error = false;
             s.composer.command_unconfirmed = None;
@@ -97,7 +109,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         edit: s.draft.clone(),
         draft: std::mem::take(&mut s.composer.draft),
         was_running,
-        slash: false,
+        slash: None,
     });
     s.draft.clear();
     s.composer.picker.reset();
@@ -130,7 +142,7 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
     let Some(send) = s.composer.sending.take() else {
         return;
     };
-    if send.slash {
+    if let Some(slash) = send.slash {
         match outcome {
             PromptOutcome::Confirmed(_) if s.draft.text == send.edit.text => {
                 s.draft.clear();
@@ -138,7 +150,7 @@ pub fn acknowledge(s: &mut State, attempted: &str, outcome: PromptOutcome) {
                 s.composer.restored = true;
             }
             PromptOutcome::Unconfirmed => {
-                s.composer.command_unconfirmed = Some(send.edit.text.trim().into());
+                s.composer.command_unconfirmed = Some(slash);
             }
             PromptOutcome::Rejected => s.composer.send_error = true,
             _ => {}

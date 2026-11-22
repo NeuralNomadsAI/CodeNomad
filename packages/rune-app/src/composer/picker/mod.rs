@@ -1,6 +1,7 @@
 mod commands;
 mod lookup;
 mod mentions;
+pub(super) use commands::parts as command_parts;
 #[cfg(test)]
 mod tests;
 
@@ -24,6 +25,7 @@ pub struct Picker {
     completed: Option<(Range<usize>, String)>,
     pub entries: Vec<Item>,
     pub selected: usize,
+    selection_moved: bool,
     pub generation: u64,
 }
 
@@ -115,6 +117,7 @@ impl Picker {
         self.dismissed = None;
         self.dismissed_command = None;
         self.entries.clear();
+        self.selection_moved = false;
         self.mentions.reset();
     }
 
@@ -158,6 +161,7 @@ impl Picker {
         }
         self.current = Some((token, draft));
         self.selected = 0;
+        self.selection_moved = false;
         self.refresh_entries();
     }
 
@@ -165,15 +169,17 @@ impl Picker {
         let commands = self.commands.poll(self.backend.as_ref(), reads, wake);
         let mentions = self.mentions.poll(self.backend.as_ref(), reads, wake);
         if self.open() && if self.slash() { commands } else { mentions } {
-            let active = self.entries.get(self.selected).cloned();
+            let active = (self.slash() || self.selection_moved)
+                .then(|| self.entries.get(self.selected).cloned())
+                .flatten();
             self.refresh_entries();
-            self.selected = active
-                .and_then(|active| {
-                    self.entries
-                        .iter()
-                        .position(|item| item.identity() == active.identity())
-                })
-                .unwrap_or(0);
+            let active = active.and_then(|active| {
+                self.entries
+                    .iter()
+                    .position(|item| item.identity() == active.identity())
+            });
+            self.selection_moved &= active.is_some();
+            self.selected = active.unwrap_or(0);
         }
         commands || mentions
     }
@@ -219,9 +225,17 @@ impl Picker {
             _ => return false,
         }
         if let Some(item) = self.entries.get(self.selected) {
+            self.selection_moved = true;
             rune_theme_codenomad::layout::announce_selection(tx, item.label());
         }
         true
+    }
+
+    pub fn activate(&mut self, index: usize, generation: u64) {
+        if generation == self.generation && index < self.entries.len() {
+            self.selected = index;
+            self.selection_moved = true;
+        }
     }
 
     pub fn choose(

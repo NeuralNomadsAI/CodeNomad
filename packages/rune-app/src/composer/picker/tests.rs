@@ -150,6 +150,127 @@ fn a_late_mentions_catalogue_does_not_redirect_enter() {
 }
 
 #[test]
+fn an_incomplete_catalogue_keeps_the_last_choices_until_recovery() {
+    let mut rt = runtime();
+    rt.paste("@rev");
+    rt.frame(0.0);
+    rt.update(|s, _| {
+        let picker = &mut s.composer.picker;
+        picker.mentions.catalog = vec![Item::Skill(named("review-skill"))];
+        picker.refresh_entries();
+        for error in [true, false] {
+            let (cancel, _) = bounded(1);
+            let (out, replies) = bounded(1);
+            picker.mentions.catalog_read = Some(Read {
+                _cancel: cancel,
+                replies,
+            });
+            out.try_send(Reply {
+                directory: "/project".into(),
+                items: vec![Item::Agent(named("review-agent"))],
+                error,
+            })
+            .ok()
+            .unwrap();
+            assert!(picker.poll(&s.reads, &s.wake));
+            assert_eq!(picker.error(), error);
+            assert_eq!(
+                picker.entries[0].label(),
+                if error {
+                    "review-skill"
+                } else {
+                    "review-agent"
+                }
+            );
+        }
+    });
+}
+
+#[test]
+fn an_automatic_mention_target_follows_the_first_file() {
+    let mut rt = runtime();
+    rt.paste("@review");
+    rt.frame(0.0);
+    rt.update(|s, _| {
+        let picker = &mut s.composer.picker;
+        picker.mentions.catalog.push(Item::Skill(named("review")));
+        picker.refresh_entries();
+        let (cancel, _) = bounded(1);
+        let (out, replies) = bounded(1);
+        picker.mentions.file_read = Some(Read {
+            _cancel: cancel,
+            replies,
+        });
+        out.try_send(Reply {
+            directory: "/project".into(),
+            items: vec![Item::File(ProjectMatch {
+                path: "review.ts".into(),
+                kind: EntryKind::File,
+            })],
+            error: false,
+        })
+        .ok()
+        .unwrap();
+        assert!(picker.poll(&s.reads, &s.wake));
+    });
+    press(&mut rt, Key::Enter, Mods::default());
+    assert_eq!(rt.state.draft.text, "@./review.ts ");
+}
+
+#[test]
+fn deleting_a_selected_mention_does_not_leave_a_sendable_attachment() {
+    let mut rt = runtime();
+    rt.paste("@review");
+    rt.frame(0.0);
+    rt.update(|s, _| {
+        let picker = &mut s.composer.picker;
+        picker.mentions.directory = Some("/project".into());
+        picker.mentions.files.push(Item::File(ProjectMatch {
+            path: "review.ts".into(),
+            kind: EntryKind::File,
+        }));
+        picker.refresh_entries();
+    });
+    press(&mut rt, Key::Enter, Mods::default());
+    assert_eq!(rt.state.composer.draft.attachments.len(), 1);
+    rt.update(|s, _| s.draft.set_selection(0, s.draft.text.len()));
+    press(&mut rt, Key::Delete, Mods::default());
+    assert!(rt.state.draft.text.is_empty());
+    assert!(rt.state.composer.draft.attachments.is_empty());
+}
+
+#[test]
+fn held_enter_completes_a_command_without_executing_it() {
+    let mut rt = runtime();
+    let (sender, receiver) = bounded(1);
+    rt.state.commands = Some(sender);
+    rt.state
+        .composer
+        .picker
+        .commands
+        .items
+        .push(Item::Command(named("review")));
+    rt.paste("/rev");
+    rt.frame(0.0);
+    let enter = KeyEvent {
+        key: Key::Enter,
+        mods: Mods::default(),
+    };
+    rt.key(enter.clone());
+    rt.frame(0.0);
+    assert_eq!(rt.state.draft.text, "/review ");
+    rt.repeat_key(enter.clone());
+    rt.key_up(enter);
+    rt.frame(0.0);
+    assert!(receiver.try_recv().is_err());
+    press(&mut rt, Key::Enter, Mods::default());
+    assert!(matches!(
+        receiver.try_recv(),
+        Ok(crate::transport::Command::Slash { .. })
+    ));
+}
+
+#[test]
 fn tab_navigates_a_directory_with_spaces_without_sending() {
     let mut rt = runtime();
     rt.paste("@rel");
@@ -376,6 +497,8 @@ fn pasted_known_command_uses_current_catalogue_without_requiring_picker_selectio
     assert_eq!(rt.state.draft.text, "/review 🦀");
     press(&mut rt, Key::Enter, Mods::default());
     assert!(receiver.try_recv().is_err());
+    rt.state.draft = TextEdit::new("/review  🦀");
+    assert!(!crate::composer::can_send(&rt.state));
     rt.state.draft = TextEdit::new("a different prompt");
     assert!(crate::composer::can_send(&rt.state));
 }

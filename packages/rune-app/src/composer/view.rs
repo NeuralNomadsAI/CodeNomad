@@ -169,11 +169,8 @@ pub fn overlays(s: &State, layer: &mut Vec<El>) {
         s.composer.picker.close(&s.draft.text)
     }))
     .on_active(move |s: &mut State, index| {
-        if s.current_scope(&hover_scope)
-            && generation == s.composer.picker.generation
-            && index < s.composer.picker.entries.len()
-        {
-            s.composer.picker.selected = index;
+        if s.current_scope(&hover_scope) {
+            s.composer.picker.activate(index, generation);
         }
     })
     .on_choose(move |s: &mut State, id, tx| {
@@ -206,6 +203,20 @@ fn choose(s: &mut State, tx: &mut Tx, index: usize, tab: bool, path_only: bool) 
 }
 
 fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
+    if event.key == Key::Enter
+        && tx.key_repeat()
+        && (s.composer.picker.open() || s.composer.picker.selected_command(&s.draft.text).is_some())
+    {
+        return true;
+    }
+    if matches!(event.key, Key::Backspace | Key::Delete)
+        && s.composer
+            .draft
+            .delete_mention(&mut s.draft, event.key == Key::Backspace)
+    {
+        changed(s, tx);
+        return true;
+    }
     if s.composer.picker.open() {
         if s.composer.picker.key(&s.draft.text, event, tx) {
             return true;

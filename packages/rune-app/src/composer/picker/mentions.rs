@@ -19,8 +19,9 @@ pub(super) struct Mentions {
     pub(super) files: Vec<Item>,
     pub(super) catalog_read: Option<Read>,
     catalog_dirty: bool,
-    file_read: Option<Read>,
-    error: bool,
+    pub(super) file_read: Option<Read>,
+    catalog_error: bool,
+    file_error: bool,
 }
 
 impl Mentions {
@@ -30,7 +31,8 @@ impl Mentions {
         self.catalog_read = None;
         self.catalog_dirty = false;
         self.file_read = None;
-        self.error = false;
+        self.catalog_error = false;
+        self.file_error = false;
     }
 
     pub(super) fn loading(&self) -> bool {
@@ -38,7 +40,7 @@ impl Mentions {
     }
 
     pub(super) fn error(&self) -> bool {
-        self.error
+        self.catalog_error || self.file_error
     }
 
     pub(super) fn search(
@@ -51,6 +53,7 @@ impl Mentions {
     ) {
         self.files.clear();
         self.file_read = None;
+        self.file_error = false;
         let Some(backend) = backend else { return };
         if opening {
             self.catalogue_changed(Some(backend), reads, wake);
@@ -86,20 +89,21 @@ impl Mentions {
                 self.catalogue_changed(backend, reads, wake);
             } else {
                 self.observe(&reply);
-                if !reply.error || !reply.items.is_empty() {
+                self.catalog_error = reply.error;
+                if !reply.error || self.catalog.is_empty() {
                     self.catalog = reply.items;
                 }
             }
         }
         if let Some(reply) = files {
             self.observe(&reply);
+            self.file_error = reply.error;
             self.files = reply.items;
         }
         changed
     }
 
     fn observe(&mut self, reply: &Reply) {
-        self.error |= reply.error;
         if !reply.directory.is_empty() {
             self.directory = Some(reply.directory.clone());
         }

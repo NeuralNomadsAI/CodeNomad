@@ -1,10 +1,10 @@
-use super::tokens::{mention, whitespace};
+use super::tokens::{mention, mention_start, whitespace};
 use codenomad_client::{
     content::{self, Part},
     prompt::{self, Delivery, Prompt},
 };
 use rune::edit::TextEdit;
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
 pub const MAX_FILE: usize = 5 * 1024 * 1024;
 pub const MAX_FILES: usize = 10;
@@ -32,6 +32,37 @@ pub enum Attachment {
     },
 }
 
+impl Attachment {
+    fn tokens(&self) -> Vec<String> {
+        match self {
+            Self::Agent(name) => vec![format!("@{name}")],
+            Self::Project {
+                path, directory, ..
+            } => {
+                let mut tokens = vec![format!("@{path}")];
+                if *directory && path != "./" {
+                    tokens.push(format!("@{}/", path.strip_prefix("./").unwrap_or(path)));
+                }
+                tokens
+            }
+            Self::Path(path) => vec![
+                format!("@{path}"),
+                format!("@{}/", path.strip_prefix("./").unwrap_or(path)),
+            ],
+            Self::Device { token, .. } => token.iter().cloned().collect(),
+            Self::Skill { .. } => vec![],
+        }
+    }
+}
+
+fn token_ranges<'a>(text: &'a str, token: &'a str) -> impl Iterator<Item = Range<usize>> + 'a {
+    text.match_indices(token).filter_map(move |(start, found)| {
+        let end = start + found.len();
+        (mention_start(text, start) && text[end..].chars().next().is_none_or(whitespace))
+            .then_some(start..end)
+    })
+}
+
 #[derive(Default)]
 pub struct Draft {
     pub attachments: Vec<Attachment>,
@@ -39,42 +70,42 @@ pub struct Draft {
 impl Draft {
     pub fn remove(&mut self, edit: &mut TextEdit, index: usize) {
         let item = self.attachments.remove(index);
-        let tokens = match item {
-            Attachment::Agent(name) => vec![format!("@{name}")],
-            Attachment::Project {
-                path, directory, ..
-            } => {
-                let mut tokens = vec![format!("@{path}")];
-                if directory && path != "./" {
-                    tokens.push(format!("@{}/", path.strip_prefix("./").unwrap_or(&path)));
-                }
-                tokens
-            }
-            Attachment::Path(path) => vec![
-                format!("@{path}"),
-                format!("@{}/", path.strip_prefix("./").unwrap_or(&path)),
-            ],
-            Attachment::Device { token, .. } => token.into_iter().collect(),
-            Attachment::Skill { .. } => vec![],
-        };
-        for token in tokens {
-            let ranges: Vec<_> = edit
-                .text
-                .match_indices(&token)
-                .filter_map(|(start, found)| {
-                    let end = start + found.len();
-                    edit.text[end..]
-                        .chars()
-                        .next()
-                        .is_none_or(whitespace)
-                        .then_some((start, end))
-                })
-                .collect();
-            for (start, end) in ranges.into_iter().rev() {
-                edit.set_selection(start, end);
+        for token in item.tokens() {
+            let ranges: Vec<_> = token_ranges(&edit.text, &token).collect();
+            for range in ranges.into_iter().rev() {
+                edit.set_selection(range.start, range.end);
                 edit.insert("");
             }
         }
+    }
+
+    pub fn delete_mention(&mut self, edit: &mut TextEdit, backwards: bool) -> bool {
+        let (start, end) = edit.range();
+        let selection = start < end;
+        let mut deletion = None;
+        self.attachments.retain(|item| {
+            let matched = item.tokens().iter().find_map(|token| {
+                token_ranges(&edit.text, token).find(|range| {
+                    if selection {
+                        start <= range.start && range.end <= end
+                    } else if backwards {
+                        start == range.end
+                    } else {
+                        start == range.start
+                    }
+                })
+            });
+            if let Some(range) = matched {
+                deletion = Some(if selection { start..end } else { range });
+                false
+            } else {
+                true
+            }
+        });
+        let Some(range) = deletion else { return false };
+        edit.set_selection(range.start, range.end);
+        edit.insert("");
+        true
     }
 
     pub fn can_send(&self, edit: &TextEdit) -> bool {
@@ -138,7 +169,7 @@ impl Draft {
                 let mut offset = 0;
                 for (start, matched) in text.match_indices(&token) {
                     let end = start + matched.len();
-                    if super::tokens::mention_start(&text, start)
+                    if mention_start(&text, start)
                         && text[end..]
                             .chars()
                             .next()
@@ -229,23 +260,32 @@ impl Draft {
 
 fn resolve_relative_paths(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some((before, after)) = rest.split_once("@.") {
-        result.push_str(before);
-        match after.as_bytes().first() {
-            Some(b'.') => result.push_str("@."),
-            Some(b'/') => result.push('.'),
-            _ => result.push_str("./"),
+    let mut prefix = 0;
+    for (start, _) in text.match_indices("@.") {
+        if mention_start(text, start) && text.as_bytes().get(start + 2) != Some(&b'.') {
+            result.push_str(&text[prefix..start]);
+            result.push_str(if text.as_bytes().get(start + 2) == Some(&b'/') {
+                "."
+            } else {
+                "./"
+            });
+            prefix = start + 2;
         }
-        rest = after;
     }
-    result.push_str(rest);
+    result.push_str(&text[prefix..]);
     result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalizing_a_selected_path_keeps_an_internal_at_sign() {
+        let mut draft = Draft::default();
+        draft.attach(Attachment::Path("./rapport@.txt".into()));
+        assert_eq!(draft.resolve_text("@./rapport@.txt"), "./rapport@.txt");
+    }
 
     #[test]
     fn separates_project_references_device_bytes_agents_and_skills() {

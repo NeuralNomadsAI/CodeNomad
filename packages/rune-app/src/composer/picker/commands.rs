@@ -106,7 +106,7 @@ impl Picker {
     }
 }
 
-fn parts(text: &str) -> Option<(&str, &str)> {
+pub(in crate::composer) fn parts(text: &str) -> Option<(&str, &str)> {
     use super::super::tokens::whitespace;
     let text = text.trim_matches(whitespace).strip_prefix('/')?;
     let (name, args) = text.split_once(' ').unwrap_or((text, ""));

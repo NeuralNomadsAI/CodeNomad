@@ -117,7 +117,14 @@ pub(super) async fn dispatch(
         .await?;
     } else if own && value["type"] == "instance.eventStatus" {
         let ready = value["status"] == "connected";
-        state.upstream.store(ready, SeqCst);
+        let was_ready = state.upstream.swap(ready, SeqCst);
+        if ready && !was_ready {
+            out.send(Input::Workspace(
+                epoch,
+                WorkspaceEvent::ComposerCataloguesChanged,
+            ))
+            .await?;
+        }
         let version = state.version.fetch_add(1, SeqCst) + 1;
         out.send(if ready {
             Input::Hint(epoch, version)

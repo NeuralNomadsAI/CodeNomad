@@ -32,6 +32,35 @@ async fn deliver(b: &Backend, out: &Sender<Input>, state: &State, value: Value) 
 }
 
 #[test]
+fn an_upstream_reconnect_invalidates_picker_catalogues_without_a_new_sse_connection() {
+    run(async {
+        let b = backend().await;
+        let (out, input) = bounded(6);
+        let state = State::default();
+        state.upstream.store(true, SeqCst);
+        for status in ["disconnected", "connected", "connected"] {
+            deliver(
+                &b,
+                &out,
+                &state,
+                json!({
+                    "type":"instance.eventStatus","instanceId":"owner","status":status
+                }),
+            )
+            .await;
+        }
+        assert!(matches!(input.try_recv().unwrap(), Input::Unavailable(7)));
+        assert!(matches!(
+            input.try_recv().unwrap(),
+            Input::Workspace(7, WorkspaceEvent::ComposerCataloguesChanged)
+        ));
+        assert!(matches!(input.try_recv().unwrap(), Input::Hint(7, _)));
+        assert!(matches!(input.try_recv().unwrap(), Input::Hint(7, _)));
+        assert!(input.is_empty());
+    });
+}
+
+#[test]
 fn global_command_update_reaches_only_the_owning_catalogue() {
     run(async {
         let b = backend().await;
