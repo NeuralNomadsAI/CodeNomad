@@ -5,6 +5,7 @@ pub(crate) use codenomad_client::{agent_api, backend, catalog, content, history}
 mod chat;
 pub(crate) use chat::{actions as transcript_state, transcript, transport};
 mod components;
+mod composer;
 mod files;
 pub(crate) use components::window_close_button as window_control;
 #[cfg(any(test, feature = "test-support"))]
@@ -26,7 +27,7 @@ use rune::edit::TextEdit;
 use rune::{AppSpec, Cx, El, Tx, col, text};
 use rune_theme_codenomad::{
     Space, TextRole,
-    layout::{self, Layout, input},
+    layout::{self, Layout},
 };
 use transport::{Command, Event};
 
@@ -47,6 +48,7 @@ struct State {
     chat_title: String,
     messages: Vec<Message>,
     draft: TextEdit,
+    composer: composer::Owner,
     incoming: Option<Receiver<Event>>,
     commands: Option<Sender<Command>>,
     phase: Phase,
@@ -78,6 +80,7 @@ fn init() -> State {
         chat_title: String::new(),
         messages: vec![],
         draft: TextEdit::new(""),
+        composer: Default::default(),
         incoming: None,
         commands: None,
         phase: Phase::Loading,
@@ -116,31 +119,6 @@ fn local_stress() -> bool {
     }
 }
 
-fn send(s: &mut State, tx: &mut Tx) {
-    if s.phase != Phase::Ready
-        || s.draft.text.trim().is_empty()
-        || s.agent.as_ref().is_some_and(|a| a.blocked())
-    {
-        return;
-    }
-    let body = s.draft.text.clone();
-    if s.commands
-        .as_ref()
-        .is_some_and(|c| c.try_send(Command::Send(body.clone())).is_ok())
-    {
-        s.messages.push(Message {
-            completed: true,
-            id: format!("rune-user-{}", s.revision),
-            role: "user".into(),
-            body,
-            parts: vec![],
-        });
-        s.revision += 1;
-        s.draft = TextEdit::new("");
-        s.phase = Phase::Streaming;
-        workspace::draft_changed(s, tx);
-    }
-}
 fn request_older(s: &mut State, _: &mut Tx) {
     if s.can_older
         && !s.paging
@@ -259,6 +237,13 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 if !s.messages.iter().any(|existing| existing.id == m.id) {
                     s.messages.push(m);
                 }
+            }
+            Event::PromptAcknowledged {
+                attempted,
+                confirmed,
+            } => {
+                composer::acknowledge(s, &attempted, confirmed);
+                workspace::capture(s);
             }
             Event::Text(id, event) => {
                 if let Some(m) = s.messages.iter_mut().find(|m| m.id == id) {
@@ -402,40 +387,7 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         })
         .child(rune_theme_codenomad::interruption::history(expanded).child(rows))
         .child(agent_view::view(s, cx))
-        .child(
-            col()
-                .key("session-composer")
-                .role("group")
-                .label(strings::t("rune.prompt"))
-                .full_width()
-                .pad(Space::Md)
-                .separate(Space::Sm)
-                .child(
-                    layout::composer(
-                        input(&s.draft)
-                            .key("composer")
-                            .label(strings::t("rune.prompt"))
-                            .full_width()
-                            .pad(Space::Sm)
-                            .field_surface()
-                            .hint(strings::t("rune.prompt"))
-                            .content_direction()
-                            .on_edit(screen::edit(&scope, screen::Editor::Composer))
-                            .on_input_change(crate::screen::action_tx(
-                                &scope,
-                                workspace::draft_changed,
-                            ))
-                            .on_submit(crate::screen::action_tx(&scope, send)),
-                    )
-                    .field_surface(),
-                )
-                .child(launcher_view::button_tx(
-                    "send",
-                    strings::t("promptInput.overlay.send"),
-                    s.phase != Phase::Ready || s.agent.as_ref().is_some_and(|a| a.blocked()),
-                    crate::screen::action_tx(&scope, send),
-                )),
-        )
+        .child(composer::view::view(s))
 }
 
 #[cfg(not(target_arch = "wasm32"))]

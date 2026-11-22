@@ -13,6 +13,7 @@ pub(super) struct Cache {
     title: String,
     messages: Vec<Message>,
     draft: TextEdit,
+    composer: crate::composer::Owner,
     incoming: Option<Receiver<Event>>,
     commands: Option<Sender<Command>>,
     phase: Phase,
@@ -40,6 +41,7 @@ impl Cache {
             title: std::mem::take(&mut s.chat_title),
             messages: std::mem::take(&mut s.messages),
             draft: std::mem::replace(&mut s.draft, TextEdit::new("")),
+            composer: std::mem::take(&mut s.composer),
             incoming: s.incoming.take(),
             commands: s.commands.take(),
             phase: std::mem::replace(&mut s.phase, Phase::Ready),
@@ -58,6 +60,7 @@ impl Cache {
         s.chat_title = self.title;
         s.messages = self.messages;
         s.draft = self.draft;
+        s.composer = self.composer;
         s.incoming = self.incoming;
         s.commands = self.commands;
         s.phase = self.phase;

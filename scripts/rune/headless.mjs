@@ -69,7 +69,9 @@ async function run(theme, at, name) {
   assert(scroll?.length === 3 && scroll.every(Number.isFinite), 'History must expose its actual accessibility scroll offset and maximum')
   if (name === 'reading') assert(scroll[1] < scroll[2] - 1, 'Wheel must move above the bottom of history')
   else assert(Math.abs(scroll[1] - scroll[2]) < 1, 'Latest must restore the actual bottom scroll offset')
-  const composer = byKey('composer')
+  const findEditor = node => node?.role === 'multiline-text-input' ? node
+    : node?.children?.map(findEditor).find(Boolean)
+  const composer = findEditor(byKey('session-composer'))
   assert(composer, 'Composer missing from accessibility tree')
   assert.match(composer.role, /text/i, 'Composer must expose a text input role')
   assert(composer.name, 'Composer needs an accessible name')
@@ -88,7 +90,7 @@ async function run(theme, at, name) {
     textContrast = await assertRenderedTextContrast(imagePage, png, [
       {name: 'header', rect: element('app-title').rect, surface: 'surface-canvas'},
       {name: 'transcript', rect: finalRect, surface: 'surface-canvas'},
-      {name: 'composer', rect: element('composer').rect, surface: 'surface-field', inset: palette.numbers[theme]['space-sm']},
+      {name: 'composer', rect: composer.bounds, surface: 'surface-field'},
     ], palette[theme])
   }
   files.push({theme, at, tree: path.basename(tree), snapshot: path.basename(snap), accessibilityNodes: nodes.length,

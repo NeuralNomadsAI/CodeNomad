@@ -82,7 +82,7 @@ fn rtl_chat_keeps_code_selectable_and_editor_paragraphs_in_their_own_direction()
         let first_element = rt
             .elements()
             .into_iter()
-            .find(|e| e.key.as_deref() == Some("composer"))
+            .find(|e| e.path.contains("/composer/") && e.edit_range.is_some())
             .unwrap();
         assert_eq!(first_element.text.as_deref(), Some(text));
         assert_eq!(first_element.edit_range, Some([0, 0]));
@@ -100,7 +100,7 @@ fn rtl_chat_keeps_code_selectable_and_editor_paragraphs_in_their_own_direction()
         let last_element = rt
             .elements()
             .into_iter()
-            .find(|e| e.key.as_deref() == Some("composer"))
+            .find(|e| e.path.contains("/composer/") && e.edit_range.is_some())
             .unwrap();
         assert_eq!(last_element.edit_range, Some([text.len(), text.len()]));
         let last = last_element.caret.unwrap()[0];

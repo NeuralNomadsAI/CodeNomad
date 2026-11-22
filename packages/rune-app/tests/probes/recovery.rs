@@ -1,5 +1,5 @@
 //! CPU-only Rune runtime: no window, GPU presentation, global input or clipboard access.
-use crate::{Phase, State, init, poll, request_older, send, setup, view};
+use crate::{Phase, State, composer::send, init, poll, request_older, setup, view};
 use rune::{Env, Runtime};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
@@ -135,7 +135,7 @@ pub fn run() {
     max_jump = max_jump.max(check_anchor(&rt, &reading));
     rt.update(|s, tx| {
         s.draft = rune::TextEdit::new("Recovery synthetic prompt");
-        send(s, tx);
+        send(s, tx, false);
     });
     wait(&mut rt, "initial live delta", |s| {
         s.messages

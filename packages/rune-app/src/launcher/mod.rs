@@ -520,6 +520,7 @@ fn bind(s: &mut State, b: Backend, title: String, tx: &mut Tx) {
     s.chat_title = title;
     s.messages.clear();
     s.draft = TextEdit::new(draft);
+    s.composer = Default::default();
     s.phase = Phase::Loading;
     s.can_older = false;
     s.paging = false;

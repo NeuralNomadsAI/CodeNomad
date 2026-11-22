@@ -562,6 +562,7 @@ dependencies = [
  "async-channel",
  "base64 0.22.1",
  "futures-lite",
+ "getrandom 0.4.3",
  "js-sys",
  "reqwest",
  "serde",

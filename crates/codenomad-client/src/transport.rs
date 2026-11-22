@@ -19,6 +19,7 @@ pub enum WorkspaceEvent {
 #[derive(Debug)]
 pub enum Command {
     Send(String),
+    Prompt(crate::prompt::Prompt),
     Older,
     Retry,
     Close,
@@ -32,6 +33,10 @@ pub enum Event {
     Sync(Page),
     Older(Page),
     Message(Message),
+    PromptAcknowledged {
+        attempted: String,
+        confirmed: Option<String>,
+    },
     Text(String, crate::content::TextEvent),
     Done,
     Failed,

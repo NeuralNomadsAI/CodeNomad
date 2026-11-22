@@ -48,10 +48,26 @@ async fn run_synthetic(out: Sender<Event>, input: Receiver<Command>, wake: rune:
         if matches!(command, Command::Close) {
             return;
         }
-        let Command::Send(_) = command else {
-            publish(&out, &wake, Event::PagingFailed).await;
-            continue;
-        };
+        match command {
+            Command::Send(_) => {}
+            Command::Prompt(prompt) => {
+                if let Some(attempted) = prompt.id {
+                    publish(
+                        &out,
+                        &wake,
+                        Event::PromptAcknowledged {
+                            confirmed: Some(attempted.clone()),
+                            attempted,
+                        },
+                    )
+                    .await;
+                }
+            }
+            _ => {
+                publish(&out, &wake, Event::PagingFailed).await;
+                continue;
+            }
+        }
         turn += 1;
         let id = format!("assistant-{turn}");
         publish(

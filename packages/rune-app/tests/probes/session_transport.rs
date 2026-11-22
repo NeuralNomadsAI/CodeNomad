@@ -132,6 +132,7 @@ pub fn contract() {
             | Event::Connected(_)
             | Event::AgentHint(_)
             | Event::Workspace(_)
+            | Event::PromptAcknowledged { .. }
             | Event::PagingFailed => {}
             Event::Message(message) => {
                 assert!(

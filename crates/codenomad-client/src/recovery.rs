@@ -185,6 +185,32 @@ pub async fn run(
                     publish(&out, &wake, Event::Failed).await;
                 }
             }
+            Some(Input::Command(Command::Prompt(prompt))) => {
+                let Some(id) = &prompt.id else { continue };
+                let admitted = opened && !dirty && !parked && wire.upstream.load(SeqCst);
+                let confirmed = if admitted {
+                    backend.prompt(&prompt).await.ok().map(|ack| ack.id)
+                } else {
+                    None
+                };
+                if confirmed.is_some()
+                    && !busy
+                    && prompt.delivery != Some(crate::prompt::Delivery::Queue)
+                {
+                    busy = true;
+                    repairs = 0;
+                    settlement_reads = 0;
+                }
+                publish(
+                    &out,
+                    &wake,
+                    Event::PromptAcknowledged {
+                        attempted: id.clone(),
+                        confirmed,
+                    },
+                )
+                .await;
+            }
             Some(Input::Native(e, v, native)) if e == epoch => {
                 let kind = native["type"].as_str().unwrap_or_default();
                 if kind.starts_with("permission.")

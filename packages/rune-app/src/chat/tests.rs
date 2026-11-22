@@ -108,7 +108,7 @@ fn multiline_input_submits_once_and_stream_preserves_unicode() {
     assert_eq!(rt.state.draft.text, "Bonjour 🦀\nDeuxième ligne");
     tap(&mut rt, "send");
     assert!(
-        matches!(commands.try_recv(), Ok(Command::Send(body)) if body == "Bonjour 🦀\nDeuxième ligne")
+        matches!(commands.try_recv(), Ok(Command::Prompt(body)) if body.text == "Bonjour 🦀\nDeuxième ligne")
     );
     tap(&mut rt, "send");
     assert!(commands.try_recv().is_err());
@@ -155,7 +155,15 @@ fn consecutive_sends_keep_distinct_responses_and_reenable_send() {
         rt.paste(prompt.clone());
         rt.frame(0.0);
         tap(&mut rt, "send");
-        assert!(matches!(commands.try_recv(), Ok(Command::Send(body)) if body == prompt));
+        let Ok(Command::Prompt(body)) = commands.try_recv() else {
+            panic!("missing prompt")
+        };
+        assert_eq!(body.text, prompt);
+        out.send_blocking(Event::PromptAcknowledged {
+            attempted: body.id.unwrap(),
+            confirmed: Some(format!("confirmed-{turn}")),
+        })
+        .unwrap();
         assert!(rt.state.phase == Phase::Streaming);
         for (kind, fields) in [
             (

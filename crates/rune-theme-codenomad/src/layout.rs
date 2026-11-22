@@ -58,6 +58,12 @@ pub fn hinted_field(edit: &TextEdit, hint: &str) -> rune_kit::TextInput {
 pub fn textarea(edit: &TextEdit) -> rune_kit::TextArea {
     rune_kit::TextArea::new(edit).width(None).auto_grow(1, 1)
 }
+pub fn composer_field(edit: &TextEdit) -> rune_kit::TextArea {
+    rune_kit::TextArea::new(edit)
+        .width(None)
+        .rows(5)
+        .max_height(320.0)
+}
 /// Shared wrapping action groups follow the available native/browser width.
 pub fn action_row() -> El {
     rune::row()
