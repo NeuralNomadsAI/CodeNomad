@@ -247,3 +247,50 @@ test("a current model missing from the catalog stays listed as an unavailable ro
     assert.deepEqual(await listed(page), ["GPT-6 Astra", "GPT-6 Sol", "retired-model (unavailable)"])
   } finally { await page.close() }
 })
+
+test("model search matches display names and identities without changing catalog order", async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await gotoFixture(page)
+    await openPicker(page)
+    const cases: [string, string[]][] = [
+      ["", allModels],
+      ["  GPT  ", ["GPT-6 Astra", "GPT-6 Sol"]],
+      ["openai/gpt-6", ["GPT-6 Astra", "GPT-6 Sol"]],
+      ["OpenCode Zen", ["Muse Spark", "Zen Other"]],
+      ["gpt6", []],
+      ["gpt-6 sol", ["GPT-6 Sol"]],
+    ]
+    for (const [query, expected] of cases) {
+      await page.locator(".selector-search-input").fill(query)
+      await page.waitForFunction(expected => JSON.stringify(Array.from(document.querySelectorAll(".selector-listbox .selector-option-label"), item => item.textContent?.trim())) === JSON.stringify(expected), expected)
+      assert.deepEqual(await listed(page), expected, query)
+    }
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("model selection accepts modified Enter independently of composer submission", async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    for (const key of ["Enter", "Shift+Enter", "Control+Enter", "Alt+Enter", "Meta+Enter", "Control+Shift+Enter", "Meta+Shift+Enter"]) {
+      await gotoFixture(page)
+      assert.match(await page.locator(".selector-trigger-primary").innerText(), /Zen Other/)
+      await openPicker(page)
+      const input = page.locator(".selector-search-input")
+      await input.fill("GPT-6 Astra")
+      await page.locator(".selector-option-label", { hasText: "GPT-6 Astra" }).waitFor()
+      await input.press("ArrowDown")
+      await input.press(key)
+      await input.waitFor({ state: "hidden" })
+      assert.match(await page.locator(".selector-trigger-primary").innerText(), /GPT-6 Astra/, key)
+    }
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})

@@ -22812,7 +22812,7 @@
     "packages/ui/tests/browser/mission-view-capture.ts": "e1437886421afc2ece161b7bdf639f613b048e8c70607d82d1b755c2a2389a8b",
     "packages/ui/tests/browser/mission-visibility.test.ts": "001b886f5209f4fa5d301d267767fb9cadfbd1c0fc3a055899b0aaf12e753f65",
     "packages/ui/tests/browser/mobile-interruption.test.ts": "d9d881579df4adecac2243e31bdc5f5a953c52e12c4af98b196032ee61b0f4de",
-    "packages/ui/tests/browser/model-favorites-mode.test.ts": "8b6ddd1d609db758e0113be26909b02b82d7092ab8e267f8cda7a85ff7ba351d",
+    "packages/ui/tests/browser/model-favorites-mode.test.ts": "645588e0f464c1ad8636bafa94c32e7c52190907042aa9770b7e7b82afc8f90b",
     "packages/ui/tests/browser/native-mission-integration.qualification.ts": "b2af356b7a529c84fef4bdcf026f97b52d30ecb9ff719b7acbe5e3556f5f01c5",
     "packages/ui/tests/browser/new-instance-launcher.test.ts": "986cead45a0d6fa346bacd6203578e895551006d856873bccc29dceff24d2946",
     "packages/ui/tests/browser/notification-icon-badge.test.ts": "6b882b946c19665216139cace3351c819e98aeeefc17d1ef81eafa10632c49f2",
