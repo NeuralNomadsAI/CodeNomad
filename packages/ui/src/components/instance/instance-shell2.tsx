@@ -179,7 +179,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     () => props.isActiveInstance !== false,
   )
   createEffect(() => {
-    if (missionActivation.status() === "disabled") {
+    if (missionActivation.disabled()) {
       closeMissionReader({ instanceId: props.instance.id, sessionId: activeSessionIdForInstance() })
     }
   })
@@ -891,7 +891,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const headerActionMenuItems = createMemo(() => buildHeaderActionMenuItems())
 
   // Readers that need no conversation: schedules and playbook details.
-  const readingWithoutConversation = () => Boolean(props.isActiveInstance) && missionActivation.status() === "enabled"
+  const readingWithoutConversation = () => Boolean(props.isActiveInstance)
     && ["recurrence", "playbook"].includes(missionProjectView(props.instance.id).reader?.kind ?? "")
   const activeSessionTitle = createMemo(() => {
     if (showingInfoView()) return null
@@ -1274,7 +1274,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     activeSessions={activeSessions()}
                     instanceId={props.instance.id}
                     instanceFolder={props.instance.folder}
-                    missionsEnabled={missionActivation.status() === "enabled"}
                     escapeInDebounce={props.escapeInDebounce}
                     isPhoneLayout={isPhoneLayout()}
                     focusConversationOnActivate={focusConversationSessionId() === sessionId}

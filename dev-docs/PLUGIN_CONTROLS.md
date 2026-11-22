@@ -290,10 +290,10 @@ when `plugin.list` omits inactive entries.
 negative rule for the verified bundled ID and uses the ordinary removal or
 verified positive rule on enable. The mutation applies the requested Global
 state. A fresh authoritative read of the opened workspace supplies its effective
-state and any deciding Project override. Pending and failed reads make Missions
-activation unknown, independently of the last-good Plugins inventory display.
-Deliberate disable (including a hand-edited rule) is omitted
-from managed-plugin attention, while failures in enabled Locations stay visible.
+state and any deciding Project override. Pending and failed reads make the
+checkbox indeterminate. The exact Global disable for Missions is omitted from
+managed-plugin attention. A Project disable keeps its ordinary warning and
+scoped **Re-enable** action, and failures in enabled Locations stay visible.
 
 A scope without an explicit matching rule inherits predictably in the compact
 switch UI: Global uses OpenCode's enabled baseline, while Project inherits the

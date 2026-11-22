@@ -27,10 +27,11 @@ checkbox shows the effective state read-only and its info button shows the
 Global setting. Config and plugin events and reconnects
 reconcile manual edits through the shared plugin controls cache. Activation is
 enabled, disabled or unknown. A pending or failed read makes the checkbox
-indeterminate and hides the feature; opening customization retries a failed
-read and **Try again** is available there. A confirmed disable closes any Mission
-reader through the central surface so it releases preview arbitration. A window
-layout reset retains activation and restores tab order.
+indeterminate and keeps the last confirmed visibility; opening customization retries a
+failed read and **Try again** is available there. A confirmed disable hides
+Missions, closes its readers and changes a selected Missions tab or settings
+section to Status or General. Re-enabling leaves those selections in place.
+A window layout reset retains activation and restores tab order.
 
 When the effective state is off, OpenCode's config watcher unloads the plugin, removing
 `mission_*` from subsequent model turns in existing sessions after reload.

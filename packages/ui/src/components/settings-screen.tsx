@@ -56,8 +56,9 @@ interface SettingsScreenProps {
   standalone?: boolean
   providerContext?: { instanceId?: string; location?: LocationRef; serverId?: string; workspacePath?: string }
   projectUnavailable?: boolean
+  projectUnbound?: boolean
   onClose?: () => void | Promise<void>
-  onSectionChange?: (section: SettingsSectionId, scrollTop?: number) => void | Promise<void>
+  onSectionChange?: (section: SettingsSectionId) => void | Promise<void>
   scrollPosition?: { scrollTop?: number }
   onScrollPositionChange?: (top: number) => void
 }
@@ -74,7 +75,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
     return { section: "general", instanceId, serverId: instanceId ? backendRegistry.serverId(parseInstanceKey(instanceId).backendId) : undefined,
       workspacePath: instanceId ? instances().get(instanceId)?.folder : undefined,
       location: instanceId ? getActiveCatalogLocation(instanceId) : undefined }
-  }, () => !props.standalone && !props.providerContext && settingsOpen() && shownSection() === "general", () => {})
+  }, () => !props.standalone && !props.providerContext && settingsOpen() && activeSettingsSection() === "general", () => {})
   const memoryContext = () => props.providerContext ?? embeddedProject()
   const projectUnavailable = () => props.projectUnavailable || !props.standalone && !props.providerContext &&
     parseInstanceKey(activeInstanceId() ?? "").backendId !== "local" && !embeddedProject()
@@ -83,7 +84,12 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
     const id = missionInstanceId()
     return props.providerContext?.workspacePath ?? (id ? instances().get(id)?.folder : undefined) ?? props.providerContext?.location?.directory
   }, () => Boolean(props.standalone || settingsOpen()) && activeSettingsSection() !== "servers" && !props.projectUnavailable)
-  const showMissions = () => !props.projectUnavailable && (!missionInstanceId() || missionActivation.status() === "enabled")
+  const missionsDisabled = missionActivation.disabled
+  createEffect(() => {
+    if (!missionsDisabled() || activeSettingsSection() !== "missions") return
+    setActiveSettingsSection("general")
+    void props.onSectionChange?.("general")
+  })
 
   const sections = createMemo(() => {
     const items: SettingsSectionOption[] = [
@@ -103,15 +109,13 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
     ]
     items.splice(5, 0, { id: "remote", icon: MonitorUp, label: t("settings.nav.remote") })
     if (serversEnabled()) items.splice(6, 0, { id: "servers", icon: Server, label: t("settings.nav.servers") })
-    return showMissions() ? items : items.filter(item => item.id !== "missions")
+    return missionsDisabled() ? items.filter(item => item.id !== "missions") : items
   })
 
   const activeSection = createMemo(() => sections().find((section) => section.id === activeSettingsSection()) ?? sections()[0]!)
-  // List changes may replace its option objects without changing the mounted page.
-  const shownSection = createMemo(() => activeSection().id)
 
   const renderSection = () => {
-    switch (shownSection()) {
+    switch (activeSettingsSection()) {
       case "chat":
         return <ChatSettingsSection />
       case "hotkeys":
@@ -140,7 +144,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
       case "providers":
         return <Show when={!props.projectUnavailable} fallback={<p role="status">{t("commands.openWorkspace.projectRequired.message")}</p>}><ProvidersSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} /></Show>
       case "missions":
-        return <Show when={!props.projectUnavailable} fallback={<p role="status">{t("commands.openWorkspace.projectRequired.message")}</p>}><MissionsSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} /></Show>
+        return <Show when={!props.projectUnavailable && !props.projectUnbound} fallback={<p role="status">{t("commands.openWorkspace.projectRequired.message")}</p>}><MissionsSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} /></Show>
       case "usage":
         return <Show when={!props.projectUnavailable} fallback={<p role="status">{t("settings.usage.noProject")}</p>}><UsageSettingsSection instanceId={props.providerContext?.instanceId} /></Show>
       case "sidecars":
@@ -164,12 +168,6 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
     setActiveSettingsSection(sectionId)
     settingsScroll?.scrollTo({ top: 0 })
   }
-  const rememberFallback = (event: Event) => {
-    const section = shownSection()
-    if (!event.isTrusted || section === activeSettingsSection()) return
-    setActiveSettingsSection(section)
-    void props.onSectionChange?.(section, Math.round(settingsScroll?.scrollTop ?? 0))
-  }
 
   const handleCloseSettings = async () => {
     if (!(await confirmSettingsDiscard())) return
@@ -183,10 +181,10 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   })
   let settingsShell: HTMLDivElement | undefined
   let settingsScroll: HTMLDivElement | undefined
-  const fallbackScroll = { scrollTop: 0 }
-  createSettingsScrollRestoration(() => settingsScroll,
-    () => shownSection() === activeSettingsSection() ? props.scrollPosition : fallbackScroll,
-    top => { if (shownSection() === activeSettingsSection()) props.onScrollPositionChange?.(top) })
+  createSettingsScrollRestoration(() => settingsScroll, () => {
+    activeSettingsSection()
+    return props.scrollPosition
+  }, top => props.onScrollPositionChange?.(top))
   let dragStart: { x: number; y: number; pointerX: number; pointerY: number; minX: number; maxX: number; minY: number; maxY: number } | undefined
 
   const handleDragStart = (event: PointerEvent) => {
@@ -315,8 +313,8 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
                       <button
                         type="button"
                         class="settings-nav-button"
-                        data-selected={shownSection() === section.id ? "true" : "false"}
-                        aria-current={shownSection() === section.id ? "page" : undefined}
+                        data-selected={activeSettingsSection() === section.id ? "true" : "false"}
+                        aria-current={activeSettingsSection() === section.id ? "page" : undefined}
                         onClick={() => void handleSectionChange(section.id)}
                       >
                         <Icon class="settings-nav-button-icon" />
@@ -352,8 +350,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
                 </button></Show>
               </header>
 
-              <div ref={settingsScroll} class="window-body settings-screen-scroll"
-                on:click={rememberFallback} on:input={rememberFallback}>{renderSection()}</div>
+              <div ref={settingsScroll} class="window-body settings-screen-scroll">{renderSection()}</div>
             </div>
     </Show>
   )

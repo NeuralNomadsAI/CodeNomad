@@ -52,7 +52,8 @@ export function PluginSystemAttention(props: {
       result.set(key, { key, name: source.pluginId ?? source.target })
     }
     const missions = missionsPluginControl(props.snapshot)
-    if (missions?.effective === "disabled") result.delete(`id:${missions.id}`)
+    if (missions?.effective === "disabled" && missions.controllingRule?.scope === "global"
+      && missions.controllingRule.selector === missions.id) result.delete(`id:${missions.id}`)
     return new Map([...result].filter(([, entry]) => entry.control?.effective === "disabled" || entry.runtime?.state.status !== "active" || props.runtimeUnconfirmed?.has(entry.name)))
   })
   const keys = createMemo(() => [...entries().keys()])

@@ -113,7 +113,30 @@ async function api(page: Page, selected: () => string) {
 }
 
 for (const kind of ["electron", "tauri"] as const) {
-  test(`${kind}: offline Missions restores General without dropping its saved choice or returning over a palette draft`, async () => {
+  test(`${kind}: a local Missions restore waits for its project without falling back to host defaults`, async () => {
+    const page = await browser.newPage(), f = await api(page, () => "local")
+    let release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    await page.route("**/api/workspaces", async route => { await held; await route.fallback() })
+    await page.route("**/api/workspaces/same/plugin-controls**", route => route.fulfill({ json: {
+      location: { directory: "/homonym" }, runtime: [], configured: { rules: [], sources: [] }, targets: [],
+      controls: [{ id: "codenomad.missions", managedBy: "codenomad", builtin: false, global: "disabled", effective: "disabled", project: "default" }],
+    } }))
+    await host(page, kind, project("local", "missions"))
+    try {
+      const inventory = page.waitForRequest(request => new URL(request.url()).pathname === "/api/workspaces", { timeout: 60_000 })
+      await Promise.all([inventory, page.goto(url)])
+      await page.getByRole("heading", { name: "Missions", exact: true }).waitFor()
+      assert.equal(await page.locator(".mission-preferences").count(), 0, "an explicit project is not a host-only Preferences visit")
+      assert.equal(await page.evaluate(() => (window as any).request.section), "missions")
+      release()
+      await page.getByRole("heading", { name: "General", exact: true }).waitFor()
+      await page.waitForFunction(() => (window as any).request.section === "general")
+      assert.deepEqual(f.errors, [])
+    } finally { release(); await page.close() }
+  })
+
+  test(`${kind}: offline Missions keeps its section and restores only that project's preferences`, async () => {
     const page = await browser.newPage({ viewport: { width: 430, height: 800 } }), f = await api(page, () => "a")
     f.unavailable()
     await host(page, kind, project("a", "missions"))
@@ -126,20 +149,17 @@ for (const kind of ["electron", "tauri"] as const) {
         const path = "/src/stores/settings-screen.ts"
         return (await import(path)).activeSettingsSection()
       })
-      await page.locator(".settings-section-selector-value").getByText("General", { exact: true }).waitFor()
-      assert.equal(await selected(), "missions", "a rendered fallback is not a selection gesture")
-      await page.locator(".theme-scheme-actions button").filter({ hasText: "New" }).click({ timeout: 4500 })
-      const draft = page.locator(".theme-scheme-name-editor input")
-      await draft.fill("Offline palette")
-      await page.waitForFunction(() => (window as any).request.section === "general")
+      await page.locator(".settings-section-selector-value").getByText("Missions", { exact: true }).waitFor()
+      await page.getByRole("status").filter({ hasText: "Open a project first." }).waitFor()
+      assert.equal(await selected(), "missions")
       f.available()
       await page.evaluate(async () => {
         const path = "/src/stores/remote-backends.ts"
         await (await import(path)).backendRegistry.ensure("a")
       })
-      await page.waitForFunction(() => [...document.querySelectorAll(".settings-nav-button")].some(button => button.textContent?.trim() === "Missions"))
-      assert.equal(await selected(), "general")
-      assert.equal(await draft.inputValue(), "Offline palette")
+      await page.locator(".mission-preferences").waitFor()
+      assert.equal(await selected(), "missions")
+      assert.equal(await page.evaluate(() => (window as any).request.section), "missions")
       assert.deepEqual(f.errors, [])
     } finally { await page.close() }
   })

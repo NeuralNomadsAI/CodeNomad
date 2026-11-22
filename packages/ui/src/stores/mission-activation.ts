@@ -32,6 +32,9 @@ export function useMissionActivation(
   }
   const control = () => missionsPluginControl(state()?.snapshot)
   const status = createMemo(() => missionActivationStatus(state()))
+  // The checkbox reports a failed or pending read as unknown. Visibility
+  // changes only with the last confirmed rule, not while refreshing it.
+  const disabled = () => control()?.effective === "disabled"
   const globalEnabled = () => control()?.global !== "disabled"
   const projectOverride = () => status() !== "unknown" && control()?.controllingRule?.scope === "project"
     && (status() === "enabled") !== globalEnabled()
@@ -75,5 +78,5 @@ export function useMissionActivation(
       setPending(current => current === owner ? undefined : current)
     }
   }
-  return { status, checking, readFailed, retry, canToggle, toggle, projectOverride, globalEnabled }
+  return { status, disabled, checking, readFailed, retry, canToggle, toggle, projectOverride, globalEnabled }
 }

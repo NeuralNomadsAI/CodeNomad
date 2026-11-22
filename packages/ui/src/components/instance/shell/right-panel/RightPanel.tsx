@@ -30,7 +30,6 @@ import {
   type RightPanelTabModule,
 } from "./registry"
 import { createCoreRightPanelRuntime } from "./core-runtime"
-import { createCoreRightPanelModule } from "./core-plugin"
 import { createMissionsRightPanelModule } from "./missions-plugin"
 import { FILES_PANEL_MIGRATION_KEY, mergeFilesPanelCustomization } from "./files-panel-state"
 import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
@@ -185,15 +184,30 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     queueMicrotask(() => document.getElementById(tabId(target.id))?.focus())
   }
 
-  const coreModule = createCoreRightPanelModule({
-    renderFilesTab: () => coreRuntime.renderFilesTab(),
-    renderStatusTab: () => coreRuntime.renderStatusTab(),
+  const coreModule = createCoreRightPanelRuntime({
+    isActive: props.isActive,
+    t: props.t,
+    instanceId: props.instanceId,
+    get instance() { return props.instance },
+    activeSessionId: props.activeSessionId,
+    activeSession: props.activeSession,
+    isPhoneLayout: props.isPhoneLayout,
+    rightDrawerWidth: props.rightDrawerWidth,
+    rightDrawerWidthInitialized: props.rightDrawerWidthInitialized,
+    promptInputApi: props.promptInputApi,
+    rightPanelTab,
+    expandedItems: rightPanelExpandedItems,
+    onExpandedItemsChange: handleAccordionChange,
+    customization: rightPanelCustomization,
+    onCustomizationChange: updateRightPanelCustomization,
+    extraStatusSections: () => extraStatusSections(),
+    extraStatusContent: () => extraStatusContent(),
   })
   const missionsModule = createMissionsRightPanelModule({
     instanceId: props.instanceId,
     t: props.t,
     activeSessionId: props.activeSessionId,
-    isActive: () => props.isActive() && activeRightPanelTab()?.id === "missions",
+    isActive: () => props.isActive() && rightPanelTab() === "missions",
     revealConversation: restoreChat => {
       if (restoreChat) props.onRestoreConversation?.()
       if (props.isPhoneLayout()) props.onCloseRightDrawer()
@@ -207,7 +221,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const externalModules = createMemo<RightPanelModule[]>(() => extensions.entries().map(entry => {
     const id = `extension:${entry.manifest.id}`
     return { id, displayNameKey: "", origin: "external", tabs: [{ id, labelKey: "", label: entry.manifest.name, order: 1000,
-      render: () => <ExtensionPanel entry={entry} instanceId={props.instanceId} active={entry.enabled && extensions.verified() && props.isActive() && activeRightPanelTab()?.id === id}
+      render: () => <ExtensionPanel entry={entry} instanceId={props.instanceId} active={entry.enabled && extensions.verified() && props.isActive() && rightPanelTab() === id}
         context={{ apiVersion: 1, sessionId: props.activeSessionId(), locale: locale(), appearance: theme.isDark() ? "dark" : "light" }}
         host={extensionHost} />,
     }] }
@@ -218,7 +232,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const allRightPanelTabs = createMemo(() => collectRightPanelItems<RightPanelTabModule>(rightPanelModules(), "tabs"))
   const visibleRightPanelTabs = createMemo(() =>
     applyRightPanelItemCustomization(
-      allRightPanelTabs().filter(tab => tab.id === "missions" ? missionActivation.status() === "enabled" : extensionForTab(tab.id)?.enabled ?? true),
+      allRightPanelTabs().filter(tab => tab.id === "missions" ? !missionActivation.disabled() : extensionForTab(tab.id)?.enabled ?? true),
       rightPanelCustomization().tabOrder,
       // Addons have one profile-wide activation; Missions follows OpenCode's effective activation.
       rightPanelCustomization().hiddenTabIds.filter(id => !id.startsWith("extension:")),
@@ -237,33 +251,18 @@ const RightPanel: Component<RightPanelProps> = (props) => {
       rightPanelCustomization().hiddenStatusSectionIds,
     ),
   )
-  const activeRightPanelTab = createMemo(() => visibleRightPanelTabs().find((tab) => tab.id === rightPanelTab()) ?? visibleRightPanelTabs()[0])
-  // Runtime hooks may read their selection synchronously. Build the tab
-  // registry and its effective selection before starting those hooks.
-  const coreRuntime = createCoreRightPanelRuntime({
-    isActive: props.isActive,
-    t: props.t,
-    instanceId: props.instanceId,
-    get instance() { return props.instance },
-    activeSessionId: props.activeSessionId,
-    activeSession: props.activeSession,
-    isPhoneLayout: props.isPhoneLayout,
-    rightDrawerWidth: props.rightDrawerWidth,
-    rightDrawerWidthInitialized: props.rightDrawerWidthInitialized,
-    promptInputApi: props.promptInputApi,
-    rightPanelTab: () => activeRightPanelTab()?.id ?? rightPanelTab(),
-    expandedItems: rightPanelExpandedItems,
-    onExpandedItemsChange: handleAccordionChange,
-    customization: rightPanelCustomization,
-    onCustomizationChange: updateRightPanelCustomization,
-    extraStatusSections: () => extraStatusSections(),
-    extraStatusContent: () => extraStatusContent(),
+  createEffect(() => {
+    const current = rightPanelTab()
+    if (current === "missions" && missionActivation.disabled()) {
+      setRightPanelTab("status")
+      return
+    }
+    const tabs = visibleRightPanelTabs()
+    if (tabs[0] && !tabs.some(tab => tab.id === current)) {
+      selectRightPanelTab(tabs[0].id)
+      updateTabViewState(props.instanceId, { rightPanelTab: tabs[0].id })
+    }
   })
-
-  const rememberFallback = (event: Event) => {
-    const tab = activeRightPanelTab()
-    if (event.isTrusted && tab && tab.id !== rightPanelTab()) setRightPanelTab(tab.id)
-  }
 
   return (
     <div id={props.panelId} class="relative flex flex-col h-full" ref={props.setContentEl}>
@@ -292,12 +291,12 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                         {(tab) => (
                           <SortableRightPanelTab
                             tab={tab}
-                            active={activeRightPanelTab()?.id === tab.id}
+                            active={rightPanelTab() === tab.id}
                             tabId={tabId(tab.id)}
                             panelId={tabPanelId(tab.id)}
                             label={tab.label ?? props.t(tab.labelKey)}
                             dragTitle={props.t("instanceShell.rightPanel.customize.dragToReorder")}
-                            tabIndex={activeRightPanelTab()?.id === tab.id ? 0 : -1}
+                            tabIndex={rightPanelTab() === tab.id ? 0 : -1}
                             onSelect={() => setRightPanelTab(tab.id)}
                             onKeyDown={(event) => handleTabKeyDown(event, tab.id)}
                           />
@@ -321,9 +320,9 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
       {/* The tab's scroller contains its absolutely positioned descendants, so no tab
           content can grow the shell's overflow and scroll the whole window. */}
-      <div class="relative flex-1 overflow-y-auto" on:click={rememberFallback} on:input={rememberFallback}>
+      <div class="relative flex-1 overflow-y-auto">
         <For each={visibleRightPanelTabs()}>
-          {(tab) => <Show when={activeRightPanelTab()?.id === tab.id}>
+          {(tab) => <Show when={rightPanelTab() === tab.id}>
             <div id={tabPanelId(tab.id)} role="tabpanel" aria-labelledby={tabId(tab.id)} class="h-full min-h-0">
               <Suspense fallback={<RightPanelTabFallback />}>{tab.render()}</Suspense>
             </div>

@@ -10,7 +10,7 @@ Görevler kullanılamıyorsa **OpenCode ayarları**, eksik veya başarısız bir
 
 Önce etkin ve zamanlanmış görevleri duraklatın. Devre dışı bırakmak görev kayıtlarını, zamanlamaları ve konuşmaları korur. OpenCode’a gönderilmiş işler sürebilir, ancak görev araçları kullanılamaz ve zamanlanan çalıştırmalar atlanabilir. Yeniden etkinleştirdikten sonra görevlerinizi kontrol edin ve hazır olduğunuzda duraklatılanları sürdürün.
 
-Bir çalışma ağacındaki konuşmayı seçseniz de onay kutusu açık çalışma alanının durumunu gösterir. Durum okunamazsa özelleştirmeyi yeniden açın veya **Tekrar dene** seçeneğini seçin. Bu sırada başka bir sekmede veya Ayarlar’daki **Genel** bölümünde işlem yaparsanız o görünüm seçili kalır. Proje açık değilken de **Ayarlar → Görevler** bölümünden genel varsayılanları düzenleyebilirsiniz.
+Bir çalışma ağacındaki konuşmayı seçseniz de onay kutusu açık çalışma alanının durumunu gösterir. Durum okunamazsa sekme kullanılabilir kalır; özelleştirmeyi yeniden açın veya **Tekrar dene** seçeneğini seçin. Devre dışı bırakma doğrulandığında açık Görevler okuyucuları kapanır; seçili Görevler sekmesinin veya ayar bölümünün yerini **Durum** ya da **Genel** alır. Yeniden etkinleştirme seçiminizi değiştirmez. Proje açık değilken de **Ayarlar → Görevler** bölümünden genel varsayılanları düzenleyebilirsiniz.
 
 ## Görev oluşturma {#create}
 

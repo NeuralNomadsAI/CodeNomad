@@ -62,7 +62,6 @@ interface SessionViewProps {
   onSidebarToggle?: () => void
   forceCompactStatusLayout?: boolean
   isActive?: boolean
-  missionsEnabled?: boolean
   onAgentChange: (agent: string) => Promise<void>
   onModelChange: (model: { providerId: string; modelId: string }) => Promise<void>
   registerSessionPromptApi?: (sessionId: string, api: PromptInputApi | null) => void
@@ -112,7 +111,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   const surface = createMemo(() => getSessionSurface({ instanceId: props.instanceId, sessionId: props.sessionId }))
   const missionReader = () => {
     const current = surface()
-    return props.isActive && props.missionsEnabled !== false && current.kind === "mission" ? current.target : undefined
+    return props.isActive && current.kind === "mission" ? current.target : undefined
   }
   const readingMission = () => Boolean(missionReader())
   // A layout-restored reader for a one-time Mission the loaded map no longer

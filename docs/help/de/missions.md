@@ -10,7 +10,7 @@ Schalten Sie unter **Rechtes Panel anpassen** mit **Missionen** das Plugin in de
 
 Pausieren Sie zuerst laufende und geplante Missionen. Beim Ausschalten bleiben Missionen, Zeitpläne und Unterhaltungen erhalten. Bereits an OpenCode gesendete Arbeit kann weiterlaufen, aber Missionswerkzeuge sind nicht verfügbar und geplante Läufe können ausfallen. Prüfen Sie nach dem Einschalten Ihre Missionen und setzen Sie pausierte Einträge fort, wenn Sie bereit sind.
 
-Das Kontrollkästchen folgt dem geöffneten Arbeitsbereich, auch bei Auswahl einer Unterhaltung in einem Worktree. Lässt sich der Zustand nicht lesen, öffnen Sie die Anpassung erneut oder wählen Sie **Erneut versuchen**. Solange Missionen nicht verfügbar sind, können Sie einen anderen Tab oder **Allgemein** in den Einstellungen nutzen; sobald Sie dort etwas tun, bleibt diese Ansicht ausgewählt. Unter **Einstellungen → Missionen** können Sie globale Vorgaben auch ohne geöffnetes Projekt bearbeiten.
+Das Kontrollkästchen folgt dem geöffneten Arbeitsbereich, auch bei Auswahl einer Unterhaltung in einem Worktree. Lässt sich der Zustand nicht lesen, bleibt der Tab verfügbar. Öffnen Sie die Anpassung erneut oder wählen Sie **Erneut versuchen**. Eine bestätigte Deaktivierung schließt offene Missionsansichten und wählt **Status** oder **Allgemein**, wenn Missionen ausgewählt war. Beim erneuten Aktivieren bleibt die Auswahl erhalten. Unter **Einstellungen → Missionen** können Sie globale Vorgaben auch ohne geöffnetes Projekt bearbeiten.
 
 ## Eine Mission erstellen {#create}
 

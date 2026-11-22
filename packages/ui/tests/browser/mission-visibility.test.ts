@@ -24,10 +24,11 @@ const call = (page: Page, method: string, arg?: unknown) => page.evaluate(({ met
 const emptyPluginSnapshot = { location: { directory: "/fixture" }, targets: [], runtime: [], configured: { rules: [], sources: [] }, controls: [] }
 const globalTarget = { scope: "global" as const, path: "/daemon/opencode.jsonc", exists: true }
 function activationSnapshot(global: "default" | "disabled", override?: "enabled" | "disabled"): PluginControlsSnapshot {
-  return { ...emptyPluginSnapshot, targets: [globalTarget], controls: [{
+  return { ...emptyPluginSnapshot, targets: [globalTarget, { scope: "project", path: "/fixture/.opencode/opencode.jsonc", exists: true }], controls: [{
     id: "codenomad.missions", managedBy: "codenomad", builtin: false, global, project: override ?? "default",
-    effective: override ?? global, ...(override ? { controllingRule: { scope: "project", selector: "codenomad.missions", enabled: override === "enabled",
-      order: 1, entryIndex: 0 } } : {}),
+    effective: override ?? global, ...(override || global === "disabled" ? { controllingRule: {
+      scope: override ? "project" : "global", selector: "codenomad.missions", enabled: override === "enabled", order: 1, entryIndex: 0,
+    } } : {}),
   }] }
 }
 
@@ -63,8 +64,7 @@ test("a Global write waits for a fresh effective state and explains a Project ov
     const fresh = page.waitForRequest(request => request.method() === "GET" && request.url().includes("/plugin-controls?"), { timeout: 4500 })
     await page.locator(".alert-dialog").getByRole("button", { name: "Confirm", exact: true }).click()
     await fresh
-    assert.equal(await tab.count(), 0, "activation is unknown until the effective read returns")
-    await page.getByRole("tabpanel", { name: "Status", exact: true }).waitFor()
+    assert.equal(await tab.count(), 1, "a pending read leaves the selected tab in place")
     release()
     if (!await page.getByRole("checkbox", { name: "Missions", exact: true }).count()) await customize.click()
     const info = page.getByRole("button", { name: "Project rule decides Missions here.", exact: true })
@@ -106,7 +106,7 @@ test("disabling the open Missions settings selects General and re-enabling prese
     global = "disabled"
     await call(page, "event", "config.updated")
     await missions.waitFor({ state: "detached" })
-    assert.equal(await call(page, "settingsSection"), "missions", "fallback does not persist a choice")
+    assert.equal(await call(page, "settingsSection"), "general", "confirmed disable remembers General")
     await page.locator(".theme-scheme-actions button").filter({ hasText: "New" }).click()
     const draft = page.locator(".theme-scheme-name-editor input")
     await draft.fill("Unsaved palette")
@@ -118,7 +118,7 @@ test("disabling the open Missions settings selects General and re-enabling prese
   } finally { await page.close() }
 })
 
-test("the remembered Missions preferences render General while loading and after a failed read without saving General", async () => {
+test("Missions preferences stay selected and rendered during a delayed or failed activation read", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   let release!: () => void
   const hold = new Promise<void>(resolve => { release = resolve })
@@ -133,10 +133,10 @@ test("the remembered Missions preferences render General while loading and after
     await call(page, "restoreMissionsSettings")
     await call(page, "activate", true)
     await call(page, "settings", true)
-    const general = page.locator(".settings-screen-content-title").getByText("General", { exact: true })
-    const palette = page.locator(".theme-scheme-actions")
-    await general.waitFor()
-    await palette.waitFor({ timeout: 4500 })
+    const missions = page.locator(".settings-screen-content-title").getByText("Missions", { exact: true })
+    const preferences = page.locator(".mission-preferences")
+    await missions.waitFor({ timeout: 4500 })
+    await preferences.waitFor()
     assert.equal(await call(page, "settingsSection"), "missions")
     const failure = page.waitForResponse(response => response.url().includes("/plugin-controls?") && response.status() === 503)
     release()
@@ -144,17 +144,18 @@ test("the remembered Missions preferences render General while loading and after
     await page.getByRole("button", { name: "Customize right panel" }).click()
     await page.getByRole("group", { name: "Customize right panel" }).getByRole("button", { name: "Try again", exact: true }).waitFor()
     assert.equal(await call(page, "settingsSection"), "missions")
-    assert.equal(await palette.isVisible(), true)
+    assert.equal(await preferences.isVisible(), true)
   } finally { release(); await page.close() }
 })
 
-for (const initialFailure of [false, true]) test(`Status use preserves the fallback${initialFailure ? " after a first 503" : " after a disabled read"}`, async () => {
+test("confirmed disable remembers Status and re-enable preserves the scrolled view", async () => {
   const page = await browser.newPage({ locale: "en-US" })
-  let state: "failed" | "default" | "disabled" = initialFailure ? "failed" : "disabled"
+  let state: "default" | "disabled" = "disabled"
+  let fail = false
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
-    await page.route("**/api/workspaces/mission-visibility/plugin-controls**", route =>
-      state === "failed" ? route.fulfill({ status: 503, json: {} }) : route.fulfill({ json: activationSnapshot(state) }))
+    await page.route("**/api/workspaces/mission-visibility/plugin-controls**", route => fail
+      ? route.fulfill({ status: 503, json: {} }) : route.fulfill({ json: activationSnapshot(state) }))
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).missionVisibility))
     const read = page.waitForResponse(response => response.url().includes("/plugin-controls?"))
@@ -162,14 +163,45 @@ for (const initialFailure of [false, true]) test(`Status use preserves the fallb
     await read
     const status = page.getByRole("tabpanel", { name: "Status", exact: true })
     await status.waitFor()
-    assert.equal(await call(page, "savedTab"), "missions", "displaying Status alone never changes the remembered tab")
-    const plugins = status.getByRole("button", { name: "Plugins", exact: true })
-    await plugins.click()
-    assert.equal(await call(page, "savedTab"), "status", "an explicit action in Status remembers Status")
+    await status.evaluate(panel => {
+      panel.style.minHeight = "1500px"
+      panel.parentElement!.scrollTop = 300
+    })
+    assert.equal(await call(page, "savedTab"), "status", "confirmed disable remembers Status")
+    fail = true
+    const rejected = page.waitForResponse(response => response.url().includes("/plugin-controls?") && response.status() === 503)
+    await call(page, "event", "config.updated")
+    await rejected
+    assert.equal(await page.getByRole("tab", { name: "Missions", exact: true }).count(), 0)
+    fail = false
     state = "default"
     await call(page, "event", "config.updated")
     await page.getByRole("tab", { name: "Missions", exact: true }).waitFor()
     assert.equal(await status.count(), 1)
+    assert.equal(await status.evaluate(panel => panel.parentElement!.scrollTop), 300)
+  } finally { await page.close() }
+})
+
+test("Plugins can re-enable a Project-disabled Missions plugin", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  let disabled = true
+  const request: PluginActivationMutationRequest[] = []
+  try {
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await page.route("**/api/workspaces/mission-visibility/plugin-controls**", route => {
+      if (route.request().method() === "GET") return route.fulfill({ json: activationSnapshot("default", disabled ? "disabled" : undefined) })
+      request.push(route.request().postDataJSON())
+      disabled = false
+      return route.fulfill({ json: { snapshot: activationSnapshot("default"), target: globalTarget, changed: true, reloadPending: false, rule: "codenomad.missions" } })
+    })
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).missionVisibility))
+    await call(page, "activate", true)
+    const reenable = page.getByRole("button", { name: "Re-enable codenomad.missions in Project", exact: true })
+    await reenable.click({ timeout: 6000 })
+    assert.deepEqual(request, [{ location: { directory: "/fixture" }, pluginId: "codenomad.missions", scope: "project", enabled: true }])
+    await page.getByRole("tab", { name: "Missions", exact: true }).waitFor()
+    await page.getByRole("tabpanel", { name: "Status", exact: true }).waitFor()
   } finally { await page.close() }
 })
 
@@ -203,7 +235,7 @@ test("Missions defaults are editable with no project open", async () => {
   } finally { await page.close() }
 })
 
-test("an unknown Missions state stays hidden and reopening retries the failed read", async () => {
+test("an unknown Missions state preserves the tab and reopening retries the failed read", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   let fail = true, reads = 0
   try {
@@ -217,16 +249,14 @@ test("an unknown Missions state stays hidden and reopening retries the failed re
     const refused = page.waitForResponse(response => response.url().includes("/plugin-controls?") && response.status() === 503)
     await call(page, "activate", true)
     await refused
-    const status = page.getByRole("tab", { name: "Status", exact: true })
-    assert.equal(await status.getAttribute("aria-selected"), "true")
-    await page.getByRole("tabpanel", { name: "Status", exact: true }).waitFor({ timeout: 4500 })
+    await page.getByRole("tabpanel", { name: "Missions", exact: true }).waitFor({ timeout: 4500 })
     assert.equal(await call(page, "savedTab"), "missions")
     const customize = page.getByRole("button", { name: "Customize right panel" })
     const checkbox = page.getByRole("checkbox", { name: "Missions", exact: true })
     await customize.click()
     assert.equal(await checkbox.isChecked(), false)
     assert.equal(await checkbox.evaluate(node => (node as HTMLInputElement).indeterminate), true)
-    assert.equal(await page.getByRole("tab", { name: "Missions", exact: true }).count(), 0)
+    assert.equal(await page.getByRole("tab", { name: "Missions", exact: true, selected: true }).count(), 1)
     await page.getByRole("button", { name: "Try again", exact: true }).waitFor()
     await customize.click()
     fail = false
@@ -256,8 +286,8 @@ test("Missions checkbox writes Global activation and follows manual changes with
       features: { server: true }, state: failed ? { status: "failed", error: "Broken plugin" } : { status: "active" },
     }]
     const state = enabled ? "default" : "disabled"
-    return { location, targets: [target], runtime, configured: { rules: [], sources: [] },
-      controls: [{ id: pluginId, managedBy: "codenomad", builtin: false, effective: state, global: state, project: "default", runtime: runtime[0] }] }
+    const snapshot = activationSnapshot(state)
+    return { ...snapshot, runtime, controls: snapshot.controls.map(control => ({ ...control, runtime: runtime[0] })) }
   }
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))

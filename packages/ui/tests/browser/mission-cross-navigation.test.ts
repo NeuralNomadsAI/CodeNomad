@@ -129,7 +129,7 @@ test("Missions stays tied to the opened project when a selected worktree has a d
     assert.deepEqual([...new Set(directories)], ["/fixture"])
   } finally { hold.release(); await page.close() }
 })
-for (const failed of [true, false]) test(failed ? "a failed re-read hides a previously enabled Missions tab and reader"
+for (const failed of [true, false]) test(failed ? "a failed re-read leaves the selected Missions tab and its reader closable"
   : "a confirmed Missions disable releases its reader for an agent preview", async () => {
   const { page, hold } = await setup()
   try {
@@ -144,14 +144,16 @@ for (const failed of [true, false]) test(failed ? "a failed re-read hides a prev
     const refreshed = page.waitForResponse(response => response.url().includes("/plugin-controls?") && response.status() === (failed ? 503 : 200))
     await page.evaluate(() => window.missionCrossNavigation.refreshActivation())
     await refreshed
-    await reader.waitFor({ state: "detached", timeout: 4500 })
-    assert.equal(await page.getByRole("tab", { name: "Missions", exact: true }).count(), 0)
     if (failed) {
       await page.getByRole("button", { name: "Customize right panel" }).click()
-      await page.getByRole("button", { name: "Try again", exact: true }).waitFor()
-      assert.notEqual((await page.evaluate(() => window.missionCrossNavigation.snapshot())).reader, null)
-      return
+      const popup = page.getByRole("group", { name: "Customize right panel" })
+      await popup.getByRole("button", { name: "Try again", exact: true }).waitFor()
+      assert.equal(await page.getByRole("tab", { name: "Missions", exact: true, selected: true }).count(), 1)
+      assert.equal(await reader.isVisible(), true)
+      await page.getByRole("button", { name: "Customize right panel" }).click()
+      await reader.getByRole("button", { name: "Back to chat", exact: true }).click()
     }
+    await reader.waitFor({ state: "detached", timeout: 4500 })
     await page.evaluate(() => window.missionCrossNavigation.openAgentPreview())
     assert.equal((await page.evaluate(() => window.missionCrossNavigation.snapshot())).reader, null)
   } finally { hold.release(); await page.close() }

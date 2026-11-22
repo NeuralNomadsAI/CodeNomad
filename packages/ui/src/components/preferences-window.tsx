@@ -64,7 +64,7 @@ export const PreferencesWindow: Component = () => {
     return {
       instanceId: bound?.instanceId ?? (parseInstanceKey(current.instanceId ?? "").backendId !== "local" ? current.instanceId : "") ?? "",
       location: bound?.location ?? current.location,
-      workspacePath: bound?.workspacePath,
+      workspacePath: bound?.workspacePath ?? current.workspacePath,
       serverId: current.serverId,
     }
   }, undefined, { equals: (left, right) => left.instanceId === right.instanceId && left.serverId === right.serverId && left.workspacePath === right.workspacePath
@@ -181,6 +181,7 @@ export const PreferencesWindow: Component = () => {
         standalone
         providerContext={providerContext()}
         projectUnavailable={parseInstanceKey(request().instanceId ?? "").backendId !== "local" && !project()}
+        projectUnbound={Boolean(request().instanceId && !project())}
         scrollPosition={request()}
         onScrollPositionChange={(top) => {
           if (activeSettingsSection() !== request().section) return
@@ -188,12 +189,12 @@ export const PreferencesWindow: Component = () => {
           clearTimeout(scrollTimer)
           scrollTimer = setTimeout(() => { void flushScroll().catch(() => undefined) }, 150)
         }}
-        onSectionChange={(section, top = 0) => {
+        onSectionChange={(section) => {
           requestQueue = requestQueue.catch(() => undefined).then(async () => {
             clearTimeout(scrollTimer)
-            const next = { ...request(), section, scrollTop: top }
+            const next = { ...request(), section, scrollTop: 0 }
             await persist(() => next)
-            scrollTop = top
+            scrollTop = 0
             setRequest(next)
           })
           return requestQueue
