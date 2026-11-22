@@ -24,7 +24,7 @@ mod shell;
 mod strings;
 use screen::Screen;
 mod workspace;
-use codenomad_client::{Receiver, Sender, bounded};
+use codenomad_client::{Receiver, Sender};
 use rune::edit::TextEdit;
 use rune::{AppSpec, Cx, El, Tx, col};
 use rune_theme_codenomad::{
@@ -116,11 +116,7 @@ fn setup(s: &mut State, wake: rune::Waker) {
         workspace::connected(s);
         return;
     }
-    let (out, incoming) = bounded(64);
-    let (commands, input) = bounded(1);
-    s.incoming = Some(incoming);
-    s.commands = Some(commands);
-    platform::spawn(transport::run_async(out, input, wake));
+    transport::start(s);
 }
 fn local_stress() -> bool {
     #[cfg(feature = "test-support")]
@@ -177,6 +173,11 @@ fn retry_connection(s: &mut State, tx: &mut Tx) {
     {
         if let Some(id) = workspace::active_session(s).map(str::to_owned) {
             launcher::choose(s, id, tx);
+        } else if s.screen.launcher().is_none()
+            && s.incoming.as_ref().is_some_and(Receiver::is_closed)
+        {
+            s.phase = Phase::Reconnecting;
+            transport::start(s);
         }
     } else if s
         .commands

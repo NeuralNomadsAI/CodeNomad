@@ -119,13 +119,13 @@ pub async fn run(
             Some(Input::Closed(e)) if e == epoch => {
                 opened = false;
                 dirty = true;
-                publish(&out, &wake, Event::Reconnecting).await;
-                attempts += 1;
+                attempts = attempts.saturating_add(1);
+                retry =
+                    Some(Instant::now() + Duration::from_millis(250 * (1u64 << attempts.min(4))));
                 if attempts <= 6 {
-                    retry = Some(
-                        Instant::now() + Duration::from_millis(250 * (1u64 << attempts.min(4))),
-                    );
-                } else {
+                    publish(&out, &wake, Event::Reconnecting).await;
+                } else if attempts == 7 {
+                    // Keep the same subscription owner after showing the outage.
                     publish(&out, &wake, Event::Failed).await;
                 }
             }

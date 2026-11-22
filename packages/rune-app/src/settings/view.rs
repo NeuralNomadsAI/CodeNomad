@@ -19,6 +19,7 @@ pub(super) struct Window {
     shared: Rc<RefCell<Preferences>>,
     token: Option<Rc<Cell<bool>>>,
     picker: Cell<Option<Picker>>,
+    palette_choice: Cell<Option<&'static palettes::Palette>>,
     seen_revision: u64,
 }
 
@@ -131,6 +132,16 @@ pub(super) fn spec() -> AppSpec<Window> {
 }
 
 fn view(s: &Window, cx: &mut Cx<Window>) -> El {
+    if let Some(palette) = s.palette_choice.take() {
+        let mut prefs = s.shared.borrow_mut();
+        // Pointer actions can be queued on the previous tree when the system appearance changes.
+        if palette.dark == prefs.dark(cx.system_dark()) {
+            prefs.set_palette(palette);
+            if let Some(wake) = &prefs.window_wake {
+                wake();
+            }
+        }
+    }
     let prefs = s.shared.borrow();
     let system_dark = cx.system_dark();
     s.close_palette_on_slot_change(prefs.dark(system_dark));
@@ -271,6 +282,41 @@ mod tests {
         runtime.update(|s, _| s.shared.borrow_mut().fixture_mode("light"));
         runtime.frame(0.02);
         assert!(node(&runtime.accessibility_json(), "listbox").is_none());
+    }
+
+    #[test]
+    fn settings_palette_pointer_release_cannot_commit_a_stale_system_slot() {
+        for change_theme in [false, true] {
+            let state = Window::default();
+            let mut prefs = state.shared.borrow_mut();
+            prefs.fixture();
+            prefs.backend = Some(
+                crate::platform::block_on(crate::backend::Backend::connect(
+                    "http://127.0.0.1:9/",
+                    "",
+                ))
+                .unwrap(),
+            );
+            drop(prefs);
+            let mut runtime = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+            runtime.frame(0.0);
+            let (x, y) = runtime.find("palette-trigger").unwrap();
+            runtime.pointer_down(x, y);
+            runtime.pointer_up(x, y);
+            runtime.frame(0.02);
+            let (x, y) = runtime.find("option1").unwrap();
+            runtime.pointer_down(x, y);
+            runtime.frame(0.02);
+            runtime.pointer_up(x, y);
+            runtime.set_system_dark(change_theme);
+            runtime.frame(0.02);
+            let prefs = runtime.state.shared.borrow();
+            assert_eq!(
+                prefs.palette_display(false).unwrap().id == "light",
+                change_theme
+            );
+            assert!(node(&runtime.accessibility_json(), "listbox").is_none());
+        }
     }
 
     #[test]
@@ -425,13 +471,11 @@ fn general(s: &Window, prefs: &Preferences, system_dark: bool, layers: &mut Vec<
         !prefs.palette_ready(),
         layers,
         move |s, value| {
-            let mut prefs = s.shared.borrow_mut();
-            if prefs.dark(system_dark) == dark
-                && let Some(palette) = palettes::built_in()
-                    .iter()
-                    .find(|p| p.dark == dark && t(p.label) == value)
+            if let Some(palette) = palettes::built_in()
+                .iter()
+                .find(|p| p.dark == dark && t(p.label) == value)
             {
-                prefs.set_palette(palette);
+                s.palette_choice.set(Some(palette));
             }
         },
     );

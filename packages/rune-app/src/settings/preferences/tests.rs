@@ -795,7 +795,11 @@ fn settings_window_close_waits_and_warns_only_if_the_choice_is_unconfirmed() {
 }
 
 async fn request(listener: &TcpListener) -> Request {
-    timeout(Duration::from_secs(3), async {
+    request_with_timeout(listener, Duration::from_secs(3)).await
+}
+
+async fn request_with_timeout(listener: &TcpListener, deadline: Duration) -> Request {
+    timeout(deadline, async {
         let (mut socket, _) = listener.accept().await.unwrap();
         let mut header = Vec::new();
         while !header.ends_with(b"\r\n\r\n") {

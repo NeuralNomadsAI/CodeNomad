@@ -163,3 +163,71 @@ fn settings_failed_prompt_keeps_one_sse_subscription_and_one_config_read() {
         commands.send(Command::Close).await.unwrap();
     });
 }
+
+#[test]
+fn settings_config_observation_resumes_after_the_conversation_reports_an_outage() {
+    platform::block_on(async {
+        let (listener, mut prefs) = fixture().await;
+        let backend = prefs.backend.take().unwrap();
+        let (out, events) = bounded(16);
+        let (commands, input) = bounded(1);
+        platform::spawn(async move {
+            run_backend(backend, out, input, Arc::new(|| {}))
+                .await
+                .unwrap();
+        });
+        for _ in 0..7 {
+            let sse = request_with_timeout(&listener, Duration::from_secs(6)).await;
+            assert!(sse.first.starts_with("GET /api/events?"));
+            assert!(!sse.first.contains("-preferences"));
+            sse.reply(503, json!({})).await;
+        }
+        until(&events, |event| matches!(event, Event::Failed)).await;
+        let mut restored = request_with_timeout(&listener, Duration::from_secs(6)).await;
+        assert!(restored.first.starts_with("GET /api/events?"));
+        assert!(!restored.first.contains("-preferences"));
+        restored
+            .socket
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n\
+            data: {\"type\":\"storage.configChanged\",\"owner\":\"ui\",\"value\":{}}\n\n",
+            )
+            .await
+            .unwrap();
+        // Opening itself invalidates both owners; wait for the distinct Git hint from this frame.
+        until(&events, |event| {
+            matches!(
+                event,
+                Event::Workspace(WorkspaceEvent::UiPreferencesChanged)
+            )
+        })
+        .await;
+        commands.send(Command::Close).await.unwrap();
+    });
+}
+
+#[test]
+fn settings_direct_retry_replaces_a_closed_transport() {
+    let (out, incoming) = bounded::<Event>(1);
+    let mut root = crate::init();
+    root.phase = crate::Phase::Failed;
+    root.incoming = Some(incoming.clone());
+    drop(out);
+
+    let mut runtime = rune::Runtime::new(
+        root,
+        crate::view,
+        (1100.0, 760.0),
+        rune::Env::new(false, 1.0),
+    );
+    runtime.update(crate::retry_connection);
+    assert!(runtime.state.phase == crate::Phase::Reconnecting);
+    assert!(
+        !runtime
+            .state
+            .incoming
+            .as_ref()
+            .unwrap()
+            .same_channel(&incoming)
+    );
+}
