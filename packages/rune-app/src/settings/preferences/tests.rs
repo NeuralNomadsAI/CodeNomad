@@ -123,7 +123,7 @@ async fn attest(listener: &TcpListener, backend: &Backend, id: &str) {
     let (out, identity) = bounded(1);
     let backend = backend.clone();
     platform::spawn(async move {
-        out.send(backend.server_id().await).await.unwrap();
+        out.send(backend.attest_server().await).await.unwrap();
     });
     let request = request(listener).await;
     assert_eq!(request.first, "GET /api/meta HTTP/1.1");

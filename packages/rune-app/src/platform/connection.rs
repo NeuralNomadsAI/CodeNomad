@@ -15,6 +15,6 @@ pub async fn configured_backend(bootstrap: bool) -> Result<Backend> {
     backend.fresh_mode =
         bootstrap && crate::platform::setting("RUNE_EMPTY_SESSION").as_deref() == Some("1");
     #[cfg(not(target_arch = "wasm32"))]
-    let _ = backend.server_id().await;
+    let _ = backend.attest_server().await;
     Ok(backend)
 }

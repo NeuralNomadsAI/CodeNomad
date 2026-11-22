@@ -71,7 +71,7 @@ pub struct Sessions {
 
 impl Backend {
     pub async fn server_id(&self) -> Result<String> {
-        let id = server_id(
+        server_id(
             &read_json(
                 self.client
                     .get(format!("{}api/meta", self.base))
@@ -80,7 +80,11 @@ impl Backend {
                     .error_for_status()?,
             )
             .await?,
-        )?;
+        )
+    }
+
+    pub async fn attest_server(&self) -> Result<String> {
+        let id = self.server_id().await?;
         if self.client.verify_server_identity(&id) {
             Ok(id)
         } else {
