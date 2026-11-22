@@ -75,6 +75,21 @@ fn suspension_preserves_selection_and_expansion_while_revoking_pending_reads() {
 }
 
 #[test]
+fn browsed_checkout_change_closes_the_reader_and_reuses_each_listing() {
+    let mut ui = owner();
+    ui.open("src/file.txt".into());
+    ui.tree.select("src".into());
+    ui.browse("/private".into());
+    assert!(ui.reader.target().is_some());
+    ui.browse("/other".into());
+    assert!(ui.reader.target().is_none());
+    assert!(ui.rows.is_empty());
+    ui.browse("/private".into());
+    assert_eq!(ui.rows[0].entry.path, "src");
+    assert_eq!(ui.tree.selected(), Some("src"));
+}
+
+#[test]
 fn compressed_hidden_drawer_revokes_tree_reads_and_retains_its_intention() {
     let mut ui = owner();
     ui.panel = true;

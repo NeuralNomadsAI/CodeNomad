@@ -1,5 +1,11 @@
 use super::{document::Format, presentation::Kind};
-use crate::{State, components::button, screen, strings::t, window_control::scoped_close_button};
+use crate::{
+    State,
+    components::{button, button_tx},
+    screen,
+    strings::t,
+    window_control::scoped_close_button,
+};
 use rune::{El, text};
 use rune_theme_codenomad::{
     Space, document_reader as theme,
@@ -32,29 +38,38 @@ pub fn toggle(s: &State) -> El {
     )
     .expanded(drawer.pinned)
 }
-fn document_action(s: &State, run: fn(&mut super::Ui)) -> impl Fn(&mut State) + 'static {
+fn document_action_tx(
+    s: &State,
+    run: impl Fn(&mut super::Ui, &mut rune::Tx) + 'static,
+) -> impl Fn(&mut State, &mut rune::Tx) + 'static {
     let scope = s.files.as_ref().map(|ui| ui.document.scope());
-    screen::action(&s.input_scope, move |s| {
+    screen::action_tx(&s.input_scope, move |s, tx| {
         if let Some(ui) = &mut s.files {
             if scope == Some(ui.document.scope()) {
-                run(ui);
+                run(ui, tx);
             }
         }
     })
 }
-fn reader_action(s: &State, key: &str, label: &str, disabled: bool, run: fn(&mut super::Ui)) -> El {
-    let control = button(key, label, disabled, document_action(s, run));
+fn reader_action(
+    s: &State,
+    key: &str,
+    label: &str,
+    disabled: bool,
+    run: fn(&mut super::Ui, &mut rune::Tx),
+) -> El {
+    let control = button_tx(key, label, disabled, document_action_tx(s, run));
     if disabled {
         return control;
     }
-    let enter = document_action(s, run);
+    let enter = document_action_tx(s, run);
     // The native Kit reserves Return for a default button; the reader has HTML-style actions.
     control.on_key(move |s: &mut State, key, tx| {
         if key.key != rune::Key::Enter || key.mods != rune::Mods::default() {
             return false;
         }
         if !tx.key_repeat() {
-            enter(s);
+            enter(s, tx);
         }
         true
     })
@@ -123,13 +138,13 @@ fn reader_content(s: &State) -> El {
         "file-refresh",
         t("instanceShell.rightPanel.actions.refresh"),
         ui.reader.busy() || ui.document.pending() || ui.document.dirty(),
-        |ui| ui.refresh_document(ui.document.scope()),
+        |ui, _| ui.refresh_document(ui.document.scope()),
     )];
     let mut content_view = rune::el();
     if let Some(kind) = ui.presentation.kind {
         content_view = match kind {
             Kind::Binary => text(t("filesPanel.binary")).pad(Space::Md),
-            Kind::Image { .. } => match ui.presentation.image.as_ref() {
+            Kind::Image => match ui.presentation.image.as_ref() {
                 Some(image) if image.error().is_some() => {
                     text(t("filesPanel.binary")).pad(Space::Md)
                 }
@@ -150,7 +165,15 @@ fn reader_content(s: &State) -> El {
                             "instanceShell.filesShell.previewMarkdown"
                         }),
                         false,
-                        |ui| ui.presentation.source = !ui.presentation.source,
+                        |ui, tx| {
+                            ui.presentation.source = !ui.presentation.source;
+                            if !ui.presentation.source {
+                                tx.scroll_to_y(
+                                    "file-rendered-scroll",
+                                    ui.presentation.rendered_scroll.get(),
+                                );
+                            }
+                        },
                     ));
                 }
                 let source = ui.presentation.source || format == Format::Source;
@@ -164,7 +187,9 @@ fn reader_content(s: &State) -> El {
                                 "instanceShell.filesShell.enableWordWrap"
                             }),
                             ui.presentation.wrap,
-                            document_action(s, |ui| ui.presentation.wrap = !ui.presentation.wrap),
+                            document_action_tx(s, |ui, _| {
+                                ui.presentation.wrap = !ui.presentation.wrap
+                            }),
                         )
                         .key("file-wrap"),
                     );
@@ -196,15 +221,26 @@ fn reader_content(s: &State) -> El {
                                     }),
                             )
                         } else {
+                            let unwrapped = ui.presentation.unwrapped_blocks.clone();
+                            let input_scope = s.input_scope.clone();
+                            let revision = ui.document.revision();
                             rune::col().pad(Space::Lg).child(theme::markdown(
                                 dark,
                                 text,
                                 t("markdown.mermaid.diagram"),
                                 document_link(s),
+                                move |index, _| !unwrapped.contains(&index),
+                                move |code| {
+                                    code_controls(dark, &input_scope, scope, revision, code)
+                                },
                             ))
                         },
                     )
                     .key("file-rendered-scroll")
+                    .on_scroll_offset({
+                        let offset = ui.presentation.rendered_scroll.clone();
+                        move |scroll| offset.set(scroll.offset[1] as f32)
+                    })
                     .on_key(|_: &mut State, key, tx| {
                         if matches!(&key.key, rune::Key::Text(text) if text == " ")
                             && !key.mods.alt
@@ -270,6 +306,55 @@ fn reader_content(s: &State) -> El {
             }),
         )
         .child(content_view.remaining())
+}
+
+fn code_controls(
+    dark: bool,
+    input_scope: &std::rc::Rc<()>,
+    scope: u64,
+    revision: u64,
+    code: &theme::CodeFrame<'_>,
+) -> El {
+    let index = code.index;
+    let wrap = theme::wrap_button(
+        dark,
+        t(if code.wrapped {
+            "markdown.codeBlock.wrap.disable"
+        } else {
+            "markdown.codeBlock.wrap.enable"
+        }),
+        code.wrapped,
+        screen::action_tx(input_scope, move |s, _| {
+            if let Some(ui) = current_markdown(s, scope, revision) {
+                let overrides = &mut ui.presentation.unwrapped_blocks;
+                if !overrides.remove(&index) {
+                    overrides.insert(index);
+                }
+            }
+        }),
+    )
+    .key(format!("file-code-wrap-{index}"));
+    let text = code.source.to_owned();
+    let copy = theme::code_copy(
+        dark,
+        t("markdown.codeBlock.copy.label"),
+        screen::action_tx(input_scope, move |s, tx| {
+            if current_markdown(s, scope, revision).is_some() {
+                tx.copy(text.clone());
+            }
+        }),
+    )
+    .key(format!("file-code-copy-{index}"));
+    theme::code_header(dark, code.language.unwrap_or_default(), wrap, copy)
+}
+fn current_markdown(s: &mut State, scope: u64, revision: u64) -> Option<&mut super::Ui> {
+    s.files.as_mut().filter(|ui| {
+        !ui.stopped
+            && !ui.presentation.source
+            && ui.presentation.kind == Some(Kind::Text(Format::Markdown))
+            && ui.document.scope() == scope
+            && ui.document.revision() == revision
+    })
 }
 
 pub(crate) fn tree(s: &State) -> El {
