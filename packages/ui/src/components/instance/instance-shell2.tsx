@@ -175,7 +175,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   useFilePreviewLifetime(props.instance.id, activeSessionIdForInstance)
   const missionActivation = useMissionActivation(
     () => props.instance.status === "ready" ? props.instance.id : undefined,
-    () => activeSessionForInstance()?.location.directory ?? props.instance.folder,
+    () => props.instance.folder,
     () => props.isActiveInstance !== false,
   )
 
@@ -886,7 +886,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const headerActionMenuItems = createMemo(() => buildHeaderActionMenuItems())
 
   // Readers that need no conversation: schedules and playbook details.
-  const readingWithoutConversation = () => Boolean(props.isActiveInstance) && missionActivation.shown()
+  const readingWithoutConversation = () => Boolean(props.isActiveInstance) && missionActivation.enabled()
     && ["recurrence", "playbook"].includes(missionProjectView(props.instance.id).reader?.kind ?? "")
   const activeSessionTitle = createMemo(() => {
     if (showingInfoView()) return null
@@ -1269,7 +1269,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                     activeSessions={activeSessions()}
                     instanceId={props.instance.id}
                     instanceFolder={props.instance.folder}
-                    missionsEnabled={missionActivation.shown()}
+                    missionsEnabled={missionActivation.enabled()}
                     escapeInDebounce={props.escapeInDebounce}
                     isPhoneLayout={isPhoneLayout()}
                     focusConversationOnActivate={focusConversationSessionId() === sessionId}

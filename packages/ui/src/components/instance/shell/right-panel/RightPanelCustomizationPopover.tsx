@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal, onCleanup, type Accessor } from "solid-js"
+import { For, Show, createEffect, createSignal, onCleanup, onMount, type Accessor } from "solid-js"
 import { ChevronRight } from "lucide-solid"
 import { toggleSweepGroup } from "../../../../lib/toggle-sweep"
 import { ExtensionManager } from "../../../panel-extensions/extension-manager"
@@ -35,6 +35,7 @@ export function RightPanelCustomizationPopover(props: RightPanelCustomizationPop
   const [extensionsExpanded, setExtensionsExpanded] = createSignal(false)
   const [statusExpanded, setStatusExpanded] = createSignal(true)
   const extensionForTab = (id: string) => props.extensions.entries().find(entry => id === `extension:${entry.manifest.id}`)
+  onMount(() => props.missionActivation.retry())
 
   createEffect(() => {
     const fitPopover = () => {
@@ -97,6 +98,9 @@ export function RightPanelCustomizationPopover(props: RightPanelCustomizationPop
                     <input
                       type="checkbox"
                       checked={visible()}
+                      ref={input => {
+                        if (missions) createEffect(() => { input.indeterminate = props.missionActivation.unknown() })
+                      }}
                       aria-busy={missions && props.missionActivation.checking() ? true : undefined}
                       disabled={tab.alwaysVisible || (missions && !props.missionActivation.canToggle())
                         || (Boolean(extension()) && (!props.extensions.verified() || props.extensions.activating() || !props.isActive()))}
@@ -124,6 +128,10 @@ export function RightPanelCustomizationPopover(props: RightPanelCustomizationPop
                     />
                     <span>{label()}</span>
                   </label>
+                  </Show>
+                  <Show when={missions && props.missionActivation.readFailed()}>
+                    <button type="button" class="right-panel-customization-button"
+                      onClick={() => props.missionActivation.retry()}>{props.t("missions.control.retry")}</button>
                   </Show>
                 </div>
                 <Show when={tab.id === "status" && statusExpanded()}>

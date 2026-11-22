@@ -99,6 +99,8 @@ async function api(page: Page, selected: () => string) {
         scopeKey: "same", observedAt: "2026-11-01T00:00:00Z", cleanupWritable: true, cleanupDirectory: "/homonym",
       } : { revision: "b".repeat(64), flagged: false }
       : path.includes("/instance/api/") ? { data }
+      : path.endsWith("/plugin-controls") ? { location: { directory: "/homonym" }, controls: [], targets: [], runtime: [],
+        configured: { rules: [], sources: [] } }
       : path.endsWith("/image-settings") ? { location: { directory: "/homonym" }, generation: { global: true, effective: true, models: [] } }
       : path.endsWith("/websearch-settings") ? { location: { directory: "/homonym" }, effective: null,
         scopes: [{ scope: "global", path: "/global.jsonc", selection: null }, { scope: "project", path: "/homonym/opencode.jsonc", selection: null }] } : {}
@@ -141,6 +143,7 @@ for (const kind of ["electron", "tauri"] as const) {
       const patch = (value: typeof f.requests[number]) => value.owner === "local" && value.method === "PATCH" && value.path === "/api/storage/state/ui"
       const edits = f.requests.slice(before)
       assert.equal(edits.some(value => value.owner !== "local" || forget(value)), false)
+      assert.equal(f.requests.some(value => value.owner !== "local"), false, "Servers never resolves the previously selected remote project")
       assert.equal(edits.filter(patch).length, reason === "transport" ? 1 : 0)
       assert.equal(await page.locator('[data-remote-server="a"]').count(), 1)
       assert.deepEqual(f.errors, [])

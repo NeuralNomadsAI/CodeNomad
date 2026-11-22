@@ -19,11 +19,13 @@ the execution journal retains its task, report and lifecycle contracts.
 ## Activation
 
 **Customize right panel → Missions** writes the connected OpenCode server's
-Global `plugins` through native plugin controls. The current Location's
-effective OpenCode rule drives the checkbox, tab, readers and project-bound
-Settings. Config and plugin events and reconnects reconcile manual edits
-through the shared plugin controls cache. A window layout reset leaves
-activation alone; layout restoration retains tab order.
+Global `plugins` through native plugin controls. The opened workspace's native
+Location drives the checkbox, tab, readers and project-bound Settings, matching
+the project-wide Missions routes. Config and plugin events and reconnects
+reconcile manual edits through the shared plugin controls cache. Before the
+first successful read the checkbox is indeterminate and the feature stays
+hidden; opening customization retries a failed read and **Try again** is
+available there. A window layout reset retains activation and restores tab order.
 
 Disabling unloads the plugin through OpenCode's config watcher, removing
 `mission_*` from subsequent model turns in existing sessions after reload.

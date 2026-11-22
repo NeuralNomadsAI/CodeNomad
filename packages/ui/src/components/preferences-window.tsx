@@ -46,7 +46,7 @@ export const PreferencesWindow: Component = () => {
     await flushScroll(generation)
   }
 
-  const project = createPreferencesProjectContext(request, initialized, (context, current) => {
+  const project = createPreferencesProjectContext(request, () => initialized() && activeSettingsSection() !== "servers", (context, current) => {
     // Share the native request queue: an explicit newer opener always wins over a late restore read.
     requestQueue = requestQueue.catch(() => undefined).then(async () => {
       if (!current()) return
@@ -64,9 +64,10 @@ export const PreferencesWindow: Component = () => {
     return {
       instanceId: bound?.instanceId ?? (parseInstanceKey(current.instanceId ?? "").backendId !== "local" ? current.instanceId : "") ?? "",
       location: bound?.location ?? current.location,
+      workspacePath: bound?.workspacePath,
       serverId: current.serverId,
     }
-  }, undefined, { equals: (left, right) => left.instanceId === right.instanceId && left.serverId === right.serverId
+  }, undefined, { equals: (left, right) => left.instanceId === right.instanceId && left.serverId === right.serverId && left.workspacePath === right.workspacePath
     && left.location?.directory === right.location?.directory && left.location?.workspaceID === right.location?.workspaceID })
   createEffect(() => {
     const instanceId = project()?.instanceId

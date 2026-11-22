@@ -40,7 +40,7 @@ function mission(id: string): MissionMap {
     createdAt: 1, updatedAt: 1, history: [], historyTruncated: false }
 }
 function gate() { let release!: () => void; const promise = new Promise<void>(resolve => { release = resolve }); return { promise, release } }
-async function setup(missing = false, holdEvents = false, web = false) {
+async function setup(missing = false, holdEvents = false, web = false, requestedPluginDirectories?: string[]) {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1600, height: 950 } })
   const errors: string[] = [], networkErrors: string[] = [], requests: string[] = [], hold = gate(), reached = gate(), complete = gate()
   const panelReads = collectPanelReadFailures(page, url)
@@ -65,6 +65,15 @@ async function setup(missing = false, holdEvents = false, web = false) {
       return route.continue({ url: nativeStream.url })
     }
     if (pathname === "/api/panel-extensions") return route.fulfill({ json: [] })
+    if (pathname.endsWith("/plugin-controls")) {
+      const directory = new URL(route.request().url()).searchParams.get("directory")!
+      requestedPluginDirectories?.push(directory)
+      return route.fulfill({ json: { location: { directory }, runtime: [], configured: { rules: [], sources: [] },
+        targets: [{ scope: "global", path: "/daemon/opencode.jsonc", exists: true }], controls: [{
+          id: "codenomad.missions", managedBy: "codenomad", builtin: false, global: "default",
+          project: directory === "/fixture" ? "default" : "disabled", effective: directory === "/fixture" ? "default" : "disabled",
+        }] } })
+    }
     if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([mission("A"), mission("B")]), generatedAt: 1, discardedEvents: 0 } })
     if (pathname.endsWith("/instance/api/session/ses_A")) {
       if (defer) { reached.release(); await hold.promise }
@@ -107,6 +116,19 @@ async function setup(missing = false, holdEvents = false, web = false) {
     events.release(); hold.release(); await page.close(); throw error
   }
 }
+test("Missions stays tied to the opened project when a selected worktree has a different activation rule", async () => {
+  const directories: string[] = []
+  const { page, hold } = await setup(false, false, false, directories)
+  try {
+    await page.evaluate(() => window.missionCrossNavigation.selectWorktree())
+    assert.equal(await page.evaluate(() => window.missionCrossNavigation.snapshot().session), "ses_B")
+    await page.getByRole("button", { name: "Customize right panel" }).click()
+    const checkbox = page.getByRole("checkbox", { name: "Missions", exact: true })
+    assert.equal(await checkbox.isChecked(), true)
+    await page.getByRole("tab", { name: "Missions", exact: true }).waitFor({ timeout: 3000 })
+    assert.deepEqual([...new Set(directories)], ["/fixture"])
+  } finally { hold.release(); await page.close() }
+})
 test("first native stream open reconciles the completed HTTP catalogue without a synthetic disconnect", { timeout: 60000 }, async () => {
   let fixture: Awaited<ReturnType<typeof setup>> | undefined
   try {

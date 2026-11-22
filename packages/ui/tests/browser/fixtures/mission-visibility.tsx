@@ -10,6 +10,7 @@ import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { serverEvents } from "../../../src/lib/server-events"
 import { missionStore } from "../../../src/stores/missions"
+import { pluginControlsCache } from "../../../src/stores/plugin-controls"
 import type { Instance } from "../../../src/types/instance"
 import "../../../src/index.css"
 import { setSessionListFetching } from "./session-list-restored"
@@ -25,6 +26,7 @@ function Fixture() {
   const [settings, showSettings] = createSignal(false)
   ;(window as any).missionVisibility = {
     activate: setActive,
+    warmActivation: () => pluginControlsCache.load(instance.id, { directory: instance.folder }),
     // Selection persists in the per-window view; unmounting disposes the selected toolbar.
     mount: setMounted,
     settings: showSettings,

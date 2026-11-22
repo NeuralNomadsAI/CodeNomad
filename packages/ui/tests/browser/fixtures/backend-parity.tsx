@@ -45,7 +45,9 @@ function transport(owner: string) {
       return new Response(null, { status: 204 })
     }
     const location = { directory: `/${owner}` }
-    const result = path.endsWith("subagent-depth") ? { location: { directory: url.searchParams.get("directory") },
+    const result = path.endsWith("plugin-controls") ? { location: { directory: url.searchParams.get("directory") }, targets: [], runtime: [],
+      controls: [], configured: { rules: [], sources: [] } }
+      : path.endsWith("subagent-depth") ? { location: { directory: url.searchParams.get("directory") },
         capability: { minimum: 1, maximum: 10 }, project: { depth: null, path: "/opencode.json", expectation: {} }, effectiveDepth: 2 }
       : path.endsWith("images-conversation") ? { status: "found", sessionID: "ses_homonym", created: false }
       : path.endsWith("image-settings") ? { location, generation: { global: data.generation, effective: data.generation, models: [] },

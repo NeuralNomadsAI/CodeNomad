@@ -10,6 +10,8 @@ En **Personalizar panel derecho**, desmarca **Misiones** para desactivar el plug
 
 Pausa primero las Misiones activas y programadas. La desactivación conserva las Misiones, sus calendarios y las conversaciones. El trabajo que ya se envió a OpenCode puede continuar, pero las herramientas de Misiones no están disponibles y pueden omitirse ejecuciones programadas. Al volver a activarlas, revisa tus Misiones y reanuda las que pausaste cuando quieras.
 
+La casilla sigue el espacio de trabajo abierto, incluso al seleccionar una conversación de un worktree. Si no se puede leer el estado, vuelve a abrir la personalización o selecciona **Intentar de nuevo**.
+
 ## Crear una Misión {#create}
 
 Las conexiones remotas usan el mismo formulario y los mismos controles. Usa preferentemente HTTPS para proteger el tráfico de red.

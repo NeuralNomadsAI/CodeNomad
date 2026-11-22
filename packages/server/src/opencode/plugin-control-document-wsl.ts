@@ -310,8 +310,11 @@ export function createWslPluginControlDocumentFileSystem(
       verify: () => check(VERIFY_SCRIPT),
       commit: async () => {
         assertActive()
-        try { options?.beforeCommit?.() }
-        catch (error) { throw new PluginControlDocumentError("OpenCode configuration replacement is no longer authorized", "filesystem", { cause: error }) }
+        try { await options?.beforeCommit?.() }
+        catch (error) {
+          if (error instanceof PluginControlDocumentError) throw error
+          throw new PluginControlDocumentError("OpenCode configuration replacement is no longer authorized", "filesystem", { cause: error })
+        }
         await check(COMMIT_SCRIPT)
         committed = true
       },

@@ -108,7 +108,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const extensions = usePanelExtensions(() => props.instanceId, props.isActive)
   const ownMissionActivation = useMissionActivation(
     () => props.missionActivation ? undefined : props.instanceId,
-    () => props.activeSession()?.location.directory ?? props.instance.folder,
+    () => props.instance.folder,
     props.isActive,
   )
   const missionActivation = props.missionActivation ?? ownMissionActivation
@@ -236,7 +236,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   const allRightPanelTabs = createMemo(() => collectRightPanelItems<RightPanelTabModule>(rightPanelModules(), "tabs"))
   const visibleRightPanelTabs = createMemo(() =>
     applyRightPanelItemCustomization(
-      allRightPanelTabs().filter(tab => tab.id === "missions" ? missionActivation.shown() : extensionForTab(tab.id)?.enabled ?? true),
+      allRightPanelTabs().filter(tab => tab.id === "missions" ? missionActivation.enabled() : extensionForTab(tab.id)?.enabled ?? true),
       rightPanelCustomization().tabOrder,
       // Addons have one profile-wide activation; Missions follows OpenCode's effective activation.
       rightPanelCustomization().hiddenTabIds.filter(id => !id.startsWith("extension:")),
@@ -259,7 +259,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
 
   createEffect(() => {
     const active = activeRightPanelTab()
-    if (rightPanelTab() === "missions" && missionActivation.checking()) return
+    if (rightPanelTab() === "missions" && missionActivation.unknown()) return
     if (active && active.id !== rightPanelTab()) {
       selectRightPanelTab(active.id)
     }

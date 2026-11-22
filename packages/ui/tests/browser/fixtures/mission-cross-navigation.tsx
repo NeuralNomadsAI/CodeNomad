@@ -69,6 +69,11 @@ function Fixture() {
       clearSessionCatalogState(id)
     },
     clearActive: () => clearActiveSession(id),
+    selectWorktree: () => {
+      const session = { ...initial[1]!, location: { directory: "/fixture-worktree" } }
+      setSessions(previous => new Map(previous).set(id, new Map([[initial[0]!.id, initial[0]!], [session.id, session]])))
+      seedRestoredSessionSelection(id, session.id, session.id)
+    },
     created: () => (sseManager as unknown as { handleEvent(instanceId: string, event: V2Event): void }).handleEvent(id, {
       type: "session.created", id: "private-created-A", created: 1, location: { directory: scope },
       durable: { aggregateID: "ses_A", seq: 1, version: 1 },
@@ -87,7 +92,7 @@ declare global {
   interface Window {
     missionCrossNavigation: {
       snapshot(): ReturnType<typeof snapshot>; history(): ReturnType<typeof snapshot>[]
-      coldCatalogue(): Promise<void>; clearActive(): void; created(): void
+      coldCatalogue(): Promise<void>; clearActive(): void; created(): void; selectWorktree(): void
       transport(status: "connected" | "disconnected"): void
     }
   }

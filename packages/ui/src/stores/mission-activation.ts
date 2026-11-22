@@ -26,9 +26,14 @@ export function useMissionActivation(
     return owner && pluginControlsCache.state(owner.id, owner.location)
   }
   const control = () => missionsPluginControl(state()?.snapshot)
-  const enabled = () => control()?.effective !== "disabled"
-  const checking = () => Boolean(active() && target() && !state()?.snapshot && !state()?.error)
-  const shown = () => enabled() && !checking()
+  const unknown = () => !state()?.snapshot
+  const enabled = () => !unknown() && control()?.effective !== "disabled"
+  const checking = () => Boolean(active() && target() && unknown() && !state()?.error)
+  const readFailed = () => Boolean(state()?.error)
+  const retry = () => {
+    const owner = target()
+    if (owner && active() && readFailed()) void pluginControlsCache.load(owner.id, owner.location, { force: true })
+  }
   const [pending, setPending] = createSignal<ReturnType<typeof target>>()
   const canToggle = () => active() && Boolean(control()) && pending() !== target()
     && Boolean(state()?.snapshot?.targets.some(value => value.scope === "global"))
@@ -62,5 +67,5 @@ export function useMissionActivation(
       setPending(current => current === owner ? undefined : current)
     }
   }
-  return { enabled, checking, shown, canToggle, toggle }
+  return { enabled, unknown, checking, readFailed, retry, canToggle, toggle }
 }

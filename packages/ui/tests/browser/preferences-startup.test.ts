@@ -272,7 +272,8 @@ for (const host of ["electron", "tauri"] as const) {
       await nativeRequest(page, { section: "providers", instanceId: "second", location: { directory } })
       await page.locator(".providers-card-title").filter({ hasText: "Fixture AI" }).waitFor()
       assert.ok(fixture.requests.length > 0 && fixture.requests.every(request => new URL(request).pathname.includes("/second/")
-        && requestDirectory(request) === directory), "a valid explicit record preserves the selected worktree")
+        && requestDirectory(request) === (request.includes("/plugin-controls?") ? second.path : directory)),
+      "activation uses the opened workspace and provider reads preserve the selected worktree")
       // Deletion still revokes the bound occurrence when its Settings section is hidden.
       await page.getByRole("button", { name: "Chat", exact: true }).click()
       fixture.inventory([first])
@@ -381,8 +382,8 @@ for (const host of ["electron", "tauri"] as const) {
       assert.deepEqual(await page.evaluate(() => (window as any).fixtureRequest.location), { directory })
       assert.ok(fixture.requests.length > 0 && fixture.requests.every(request => {
         const target = new URL(request)
-        return target.pathname.includes("/wsl/") && target.searchParams.get(target.pathname.startsWith("/api/") ? "directory" : "location[directory]") === directory
-      }), "Windows root is only the lookup hint; reads keep their exact execution-host directory")
+        return target.pathname.includes("/wsl/") && requestDirectory(request) === (target.pathname.endsWith("/plugin-controls") ? ready.path : directory)
+      }), "activation uses the opened workspace and provider reads keep the native worktree")
       assert.deepEqual(fixture.errors, [])
     } finally { await page.close() }
   })

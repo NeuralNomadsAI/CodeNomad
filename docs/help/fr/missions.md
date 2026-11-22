@@ -10,6 +10,8 @@ Dans **Personnaliser le panneau droit**, décochez **Missions** pour désactiver
 
 Mettez d’abord en pause les Missions en cours et planifiées. La désactivation conserve les Missions, leurs calendriers et les conversations. Le travail déjà envoyé à OpenCode peut continuer, mais les outils Missions deviennent indisponibles et des exécutions planifiées peuvent être manquées. Après réactivation, vérifiez vos Missions et reprenez les éléments en pause quand vous le souhaitez.
 
+La case suit l’espace de travail ouvert, même si vous sélectionnez une conversation d’un worktree. Si l’état est indisponible, rouvrez la personnalisation ou sélectionnez **Réessayer**.
+
 ## Créer une Mission {#create}
 
 Les connexions distantes utilisent le même formulaire et les mêmes commandes. Préférez HTTPS pour protéger les échanges réseau.

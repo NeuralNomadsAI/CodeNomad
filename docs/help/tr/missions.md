@@ -10,6 +10,8 @@ Görevler kullanılamıyorsa **OpenCode ayarları**, eksik veya başarısız bir
 
 Önce etkin ve zamanlanmış görevleri duraklatın. Devre dışı bırakmak görev kayıtlarını, zamanlamaları ve konuşmaları korur. OpenCode’a gönderilmiş işler sürebilir, ancak görev araçları kullanılamaz ve zamanlanan çalıştırmalar atlanabilir. Yeniden etkinleştirdikten sonra görevlerinizi kontrol edin ve hazır olduğunuzda duraklatılanları sürdürün.
 
+Bir çalışma ağacındaki konuşmayı seçseniz de onay kutusu açık çalışma alanının durumunu gösterir. Durum okunamazsa özelleştirmeyi yeniden açın veya **Tekrar dene** seçeneğini seçin.
+
 ## Görev oluşturma {#create}
 
 Uzak bağlantılar aynı formu ve kontrolleri kullanır. Ağ trafiğini korumak için HTTPS tercih edin.

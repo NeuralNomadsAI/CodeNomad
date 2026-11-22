@@ -10,6 +10,8 @@ In **Customize right panel**, clear **Missions** to disable the plugin in the co
 
 Pause active and scheduled Missions before turning this off. Disabling keeps Mission records, schedules and conversations. Work already sent to OpenCode can continue, but Mission tools are unavailable and scheduled runs can be missed. After enabling, check your Missions and resume paused items when ready.
 
+The checkbox follows the opened workspace, even when you select a worktree conversation. If the state cannot be read, reopen customization or select **Try again**.
+
 ## Create a Mission {#create}
 
 Remote connections use the same form and controls. Prefer HTTPS to protect network traffic.

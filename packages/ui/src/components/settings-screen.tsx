@@ -54,7 +54,7 @@ type SettingsSectionOption = {
 
 interface SettingsScreenProps {
   standalone?: boolean
-  providerContext?: { instanceId?: string; location?: LocationRef; serverId?: string }
+  providerContext?: { instanceId?: string; location?: LocationRef; serverId?: string; workspacePath?: string }
   projectUnavailable?: boolean
   onClose?: () => void | Promise<void>
   onSectionChange?: (section: SettingsSectionId) => void | Promise<void>
@@ -81,9 +81,9 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const missionInstanceId = () => props.providerContext?.instanceId ?? activeInstanceId() ?? undefined
   const missionActivation = useMissionActivation(missionInstanceId, () => {
     const id = missionInstanceId()
-    return props.providerContext?.location?.directory ?? (id ? getActiveCatalogLocation(id)?.directory ?? instances().get(id)?.folder : undefined)
-  }, () => Boolean(props.standalone || settingsOpen()) && !props.projectUnavailable)
-  const showMissions = () => Boolean(missionInstanceId() && !props.projectUnavailable && missionActivation.shown())
+    return props.providerContext?.workspacePath ?? (id ? instances().get(id)?.folder : undefined) ?? props.providerContext?.location?.directory
+  }, () => Boolean(props.standalone || settingsOpen()) && activeSettingsSection() !== "servers" && !props.projectUnavailable)
+  const showMissions = () => Boolean(missionInstanceId() && !props.projectUnavailable && missionActivation.enabled())
   const shownSection = () => activeSettingsSection() === "missions" && !showMissions() ? "general" : activeSettingsSection()
 
   const sections = createMemo(() => {

@@ -10,6 +10,8 @@ Deaktivieren Sie unter **Rechtes Panel anpassen** das Kontrollkästchen **Missio
 
 Pausieren Sie zuerst laufende und geplante Missionen. Beim Ausschalten bleiben Missionen, Zeitpläne und Unterhaltungen erhalten. Bereits an OpenCode gesendete Arbeit kann weiterlaufen, aber Missionswerkzeuge sind nicht verfügbar und geplante Läufe können ausfallen. Prüfen Sie nach dem Einschalten Ihre Missionen und setzen Sie pausierte Einträge fort, wenn Sie bereit sind.
 
+Das Kontrollkästchen folgt dem geöffneten Arbeitsbereich, auch bei Auswahl einer Unterhaltung in einem Worktree. Lässt sich der Zustand nicht lesen, öffnen Sie die Anpassung erneut oder wählen Sie **Erneut versuchen**.
+
 ## Eine Mission erstellen {#create}
 
 Remote-Verbindungen verwenden dasselbe Formular und dieselben Steuerelemente. Verwenden Sie vorzugsweise HTTPS, um den Netzwerkverkehr zu schützen.
