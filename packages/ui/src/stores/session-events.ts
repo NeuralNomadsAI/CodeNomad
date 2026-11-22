@@ -28,7 +28,9 @@ import type { PermissionRequest } from "../types/permission"
 import { showToastNotification, type ToastHandle, ToastVariant, type ToastPayload } from "../lib/notifications"
 import { uiState } from "./preferences"
 import { getInstanceLabel } from "../lib/instance-label"
+import { batch } from "solid-js"
 import { setActiveSessionFromList } from "./session-state"
+import { applySurface, beginGesture } from "./session-surface"
 import {
   instances,
   markPermissionReplied,
@@ -696,22 +698,31 @@ function getInstanceDisplayName(instanceId: string, detail?: string): string {
 
 /** Keep navigation and displayed notices on the exact event attachment. */
 function showInstanceToast(instanceId: string, sessionId: string | undefined | null, payload: ToastPayload): ToastHandle {
-  if (parseInstanceKey(instanceId).backendId === "local") return showToastNotification(payload)
+  const local = parseInstanceKey(instanceId).backendId === "local"
+  if (local && (!sessionId || payload.transient)) return showToastNotification(payload)
   const authority = captureEventAuthority(instanceId)
+  const onClick = async () => {
+    if (!authority.current()) return
+    // An explicit open: show the conversation over any Mission reader, file or preview.
+    const gesture = sessionId ? beginGesture({ instanceId, sessionId }) : undefined
+    const { appTabs, selectAppTab } = await import("./app-tabs")
+    if (!authority.current()) return
+    const waiting = appTabs().find(tab => tab.kind === "remote-restore" && tab.instanceId === instanceId)
+    if (waiting) { selectAppTab(waiting.id); return }
+    // Only this window's tabs: another window's project is not ours to open.
+    const tab = appTabs().find(tab => tab.kind === "instance" && tab.instance.id === instanceId)
+    if (!tab) return
+    if (sessionId && !sessions().get(instanceId)?.has(sessionId)) return
+    selectAppTab(tab.id)
+    if (sessionId && gesture) batch(() => {
+      setActiveSessionFromList(instanceId, sessionId, gesture)
+      applySurface({ instanceId, sessionId }, { kind: "conversation" }, gesture)
+    })
+  }
+  if (local) return showToastNotification({ ...payload, systemAction: onClick })
   return showToastNotification({ ...payload, signal: authority.signal, action: {
     label: tGlobal(sessionId ? "interruption.viewConversation" : "folderSelection.recent.switchToOpenProject"),
-    onClick: async () => {
-      if (!authority.current()) return
-      const { appTabs, selectAppTab } = await import("./app-tabs")
-      if (!authority.current()) return
-      const waiting = appTabs().find(tab => tab.kind === "remote-restore" && tab.instanceId === instanceId)
-      if (waiting) { selectAppTab(waiting.id); return }
-      const tab = appTabs().find(tab => tab.kind === "instance" && tab.instance.id === instanceId)
-      if (!tab) return
-      if (sessionId && !sessions().get(instanceId)?.has(sessionId)) return
-      selectAppTab(tab.id)
-      if (sessionId) setActiveSessionFromList(instanceId, sessionId)
-    },
+    onClick,
   } })
 }
 

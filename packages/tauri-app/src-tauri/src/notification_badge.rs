@@ -157,7 +157,7 @@ fn is_main_owner(label: &str, window_label: &str, local: bool, remote: bool) -> 
             || (remote && label.starts_with("remote-")))
 }
 
-fn require_owner(webview: &Webview, app: &AppHandle) -> Result<Url, String> {
+pub(crate) fn require_owner(webview: &Webview, app: &AppHandle) -> Result<Url, String> {
     let state = app.state::<crate::AppState>();
     let local = app
         .state::<crate::local_windows::LocalWindows>()
@@ -516,7 +516,9 @@ mod tests {
                 "notification:allow-request-permission",
                 "notification:allow-notify",
                 "allow-notification-badge-set",
-                "allow-client-state-renderer-flushed"
+                "allow-client-state-renderer-flushed",
+                "allow-notification-permission",
+                "allow-notification-show"
             ])
         );
     }

@@ -27,6 +27,8 @@
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",
     "notification:allow-notify",
+    "allow-notification-show",
+    "allow-notification-permission",
     "notification:allow-show",
     "allow-check-desktop-update",
     "allow-install-desktop-update",
