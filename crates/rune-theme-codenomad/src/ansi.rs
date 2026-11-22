@@ -7,7 +7,8 @@ const ESCAPED: [&str; 5] = ["\\u001b", "\\u001B", "\\x1b", "\\x1B", "\\033"];
 // Rune reserves the high ink-index bit for synthetic bold.
 const SHAPED_RUN_LIMIT: usize = i16::MAX as usize;
 const INK_RUN_LIMIT: usize = u16::MAX as usize;
-const DECORATION_WORK_LIMIT: usize = 1_000_000;
+const LINE_WORK_LIMIT: usize = 2_000_000;
+const WINDOW_WORK_LIMIT: usize = 16_000_000;
 
 pub fn present(source: &str) -> bool {
     source.contains('\u{1b}') || ESCAPED.iter().any(|escape| source.contains(escape))
@@ -80,8 +81,7 @@ impl Log {
 
     fn push(&mut self, c: char) {
         if std::mem::take(&mut self.pending_cr) && c != '\n' {
-            self.text.push('\n');
-            self.column = 0;
+            self.newline();
         }
         match c {
             '\t' => {
@@ -90,15 +90,19 @@ impl Log {
                     .extend(std::iter::repeat_n(' ', 4 - self.column % 4));
                 self.column = 0;
             }
-            '\n' => {
-                self.text.push(c);
-                self.column = 0;
-            }
+            '\n' => self.newline(),
             _ => {
                 self.text.push(c);
                 self.column += 1;
             }
         }
+    }
+
+    fn newline(&mut self) {
+        self.finish_run();
+        self.text.push('\n');
+        self.start = self.text.len();
+        self.column = 0;
     }
 
     fn literal(&mut self, text: &str) {
@@ -255,26 +259,45 @@ fn parse(mut source: &str) -> Log {
 }
 
 pub fn code(source: &str, wrap: bool) -> El {
-    let log = parse(source);
+    let (text, spans, strikes) = styled(parse(source));
+    super::markdown::code_body(rune::rich(text, spans).strikes(strikes), wrap)
+}
+
+type Strike = (usize, usize, Option<Color>);
+
+fn styled(log: Log) -> (String, Vec<Span>, Vec<Strike>) {
     let mut spans = Vec::with_capacity(log.runs.len().min(INK_RUN_LIMIT));
     let mut strikes = vec![];
     let metrics = tokens(dark());
     let default = metrics.color("text-primary");
-    // Rune's range decoration queries revisit the shaped line for each range.
-    let line_bytes = log.text.lines().map(str::len).max().unwrap_or(0).max(1);
-    let mut decoration_budget = DECORATION_WORK_LIMIT;
+    let mut window_budget = WINDOW_WORK_LIMIT;
+    let mut line_budget = LINE_WORK_LIMIT;
+    let mut line = 0..0;
     let mut shaped_left = SHAPED_RUN_LIMIT;
     let mut text = log.text.into_bytes();
     for (range, mut style) in log.runs {
-        if spans.len() == INK_RUN_LIMIT {
-            // Keep the remainder readable even if Rune cannot index more ink spans.
-            // Conceal still applies; the original source stays available to Copy.
+        while range.start >= line.end {
+            let start = line.end;
+            let end = text[start..]
+                .iter()
+                .position(|&byte| byte == b'\n')
+                .map_or(text.len(), |newline| start + newline + 1);
+            line = start..end;
+            line_budget = LINE_WORK_LIMIT;
+        }
+        // Rune can revisit the shaped line for every span, even for foreground-only ink.
+        let mut charge = |cost| {
+            if cost > line_budget || cost > window_budget {
+                return false;
+            }
+            line_budget -= cost;
+            window_budget -= cost;
+            true
+        };
+        if spans.len() == INK_RUN_LIMIT || !charge(line.len()) {
+            // The native source stays available to Copy; keep conceal even without ink.
             if style.hidden {
-                for byte in &mut text[range] {
-                    if *byte != b'\n' {
-                        *byte = b' ';
-                    }
-                }
+                text[range].fill(b' ');
             }
             continue;
         }
@@ -292,13 +315,12 @@ pub fn code(source: &str, wrap: bool) -> El {
             if let Some(bg) = style.bg.filter(|_| shaped_left > 0) {
                 span = span.bg(dim(bg), 0.0);
             }
-            let underline_cost = range.len().saturating_mul(line_bytes);
-            if style.underline && underline_cost <= decoration_budget && shaped_left > 0 {
-                decoration_budget -= underline_cost;
+            // Underline bounds are queried for each glyph run in the decorated range.
+            if style.underline && shaped_left > 0 && charge(range.len().saturating_mul(line.len()))
+            {
                 span = span.underline(dim(style.fg.unwrap_or(default)));
             }
-            if style.strike && text.len() <= decoration_budget {
-                decoration_budget -= text.len();
+            if style.strike && charge(line.len()) {
                 strikes.push((
                     range.start,
                     range.end,
@@ -317,8 +339,7 @@ pub fn code(source: &str, wrap: bool) -> El {
         }
         spans.push(span);
     }
-    let text = String::from_utf8(text).unwrap_or_default();
-    super::markdown::code_body(rune::rich(text, spans).strikes(strikes), wrap)
+    (String::from_utf8(text).unwrap_or_default(), spans, strikes)
 }
 
 #[cfg(test)]
@@ -456,5 +477,26 @@ mod tests {
         let log = parse("\u{1b}[58;5;8mErreur");
         assert_eq!(log.text, "Erreur");
         assert!(log.runs.is_empty());
+    }
+
+    #[test]
+    fn an_unstyled_long_line_does_not_suppress_a_bounded_underline() {
+        let source = format!(
+            "\u{1b}[4m{}\u{1b}[0m\n{}",
+            "A".repeat(1001),
+            "x".repeat(7000)
+        );
+        let (_, spans, _) = styled(parse(&source));
+        assert_eq!(spans[0].end, 1001);
+        assert!(spans[0].underline.is_some());
+    }
+
+    #[test]
+    fn mixed_script_ink_cannot_reach_quadratic_shaping() {
+        let source = "\u{1b}[44mA\u{1b}[45m🦀".repeat(16_000);
+        let (text, spans, _) = styled(parse(&source));
+        assert_eq!(text, "A🦀".repeat(16_000));
+        assert!(!spans.is_empty());
+        assert!(spans.len() * text.len() <= LINE_WORK_LIMIT);
     }
 }
