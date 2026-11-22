@@ -93,30 +93,8 @@ impl Preferences {
         self.doc(owner).snapshot.as_ref()
     }
 
-    pub fn ready(&self, owner: Owner) -> bool {
-        let doc = self.doc(owner);
-        doc.snapshot.is_some()
-            && doc.flight.is_none()
-            && doc.pending.is_none()
-            && !doc.read
-            && !doc.uncertain
-            && !doc.read_failed
-    }
-
     pub fn error(&self) -> Option<&'static str> {
         self.config.error.or(self.state.error)
-    }
-
-    pub fn change(&mut self, owner: Owner, patch: Value) {
-        // Reject captured clicks from before this owner's current display was ready.
-        if !self.ready(owner) || self.backend.is_none() {
-            return;
-        }
-        let doc = match owner {
-            Owner::Config => &mut self.config,
-            Owner::State => &mut self.state,
-        };
-        doc.pending = Some(patch);
     }
 
     pub fn poll(&mut self) -> bool {
@@ -176,12 +154,36 @@ impl Preferences {
     }
 
     pub fn set_mode(&mut self, mode: &'static str) {
-        if self.saved(Owner::Config).is_none() || self.mode() == mode {
+        if !self.mode_ready() || self.backend.is_none() || self.mode_display() == mode {
             return;
         }
         // The legacy selection still supplies a missing slot. Only update the
         // mode, so neither defaults nor another window's palette move with it.
-        self.change(Owner::State, json!({"appearancePreferences":{"mode":mode}}));
+        self.state.pending.get_or_insert_with(|| json!({}))["appearancePreferences"]["mode"] =
+            json!(mode);
+    }
+
+    pub fn mode_ready(&self) -> bool {
+        self.config.snapshot.is_some()
+            && self.state.snapshot.is_some()
+            && !self.state.uncertain
+            && !self.state.read_failed
+            && !self.config.read_failed
+    }
+
+    pub fn mode_display(&self) -> &'static str {
+        [&self.state.pending, &self.state.writing]
+            .into_iter()
+            .flatten()
+            .find_map(
+                |patch| match patch["appearancePreferences"]["mode"].as_str() {
+                    Some("light") => Some("light"),
+                    Some("dark") => Some("dark"),
+                    Some("system") => Some("system"),
+                    _ => None,
+                },
+            )
+            .unwrap_or_else(|| self.mode())
     }
 
     fn legacy(&self, state: &Value) -> Option<(&'static str, Value)> {
@@ -258,9 +260,7 @@ impl Preferences {
     }
 
     pub fn palette_ready(&self) -> bool {
-        self.state.snapshot.is_some()
-            && !self.state.uncertain
-            && !self.state.read_failed
+        self.mode_ready()
             && [&self.state.pending, &self.state.writing]
                 .into_iter()
                 .flatten()

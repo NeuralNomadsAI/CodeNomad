@@ -182,6 +182,41 @@ mod tests {
             assert!(node(&tree, "listbox").is_none());
         }
     }
+
+    #[test]
+    fn settings_mode_keeps_keyboard_focus_while_the_choice_is_unconfirmed() {
+        let state = Window::default();
+        let mut prefs = state.shared.borrow_mut();
+        prefs.fixture();
+        prefs.backend = Some(
+            crate::platform::block_on(crate::backend::Backend::connect("http://127.0.0.1:9/", ""))
+                .unwrap(),
+        );
+        drop(prefs);
+        let mut runtime = Runtime::new(state, view, chrome::WINDOW_SIZE, Env::new(false, 1.0));
+        runtime.frame(0.0);
+        runtime.update(|_, tx| tx.focus("segment0", true));
+        runtime.frame(0.02);
+        for key in ["segment1", "segment2"] {
+            let event = rune::KeyEvent {
+                key: rune::Key::Right,
+                mods: rune::Mods::default(),
+            };
+            runtime.key(event.clone());
+            runtime.key_up(event);
+            runtime.frame(0.02);
+            let tree = runtime.accessibility_json();
+            assert!(
+                node(&tree, key).unwrap()["states"]
+                    .to_string()
+                    .contains("focused")
+            );
+        }
+        let prefs = runtime.state.shared.borrow();
+        assert_eq!(prefs.mode(), "system");
+        assert_eq!(prefs.mode_display(), "light");
+        assert!(!prefs.palette_ready());
+    }
 }
 
 const MODES: [(&str, &str); 3] = [
@@ -219,13 +254,12 @@ fn general(s: &Window, prefs: &Preferences, layers: &mut Vec<El>) -> El {
             }
         },
     );
-    let state_ready = prefs.ready(Owner::State) && prefs.saved(Owner::Config).is_some();
     let mode = t("settings.appearance.palette.mode");
     let segments = chrome::segments(
         mode,
         &MODES.map(|(_, label)| t(label)),
-        MODES.iter().position(|(id, _)| *id == prefs.mode()),
-        !state_ready,
+        MODES.iter().position(|(id, _)| *id == prefs.mode_display()),
+        !prefs.mode_ready(),
         |s: &mut Window, i| {
             if let Some((mode, _)) = MODES.get(i) {
                 s.shared.borrow_mut().set_mode(mode);

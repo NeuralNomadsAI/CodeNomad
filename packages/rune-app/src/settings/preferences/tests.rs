@@ -64,7 +64,7 @@ fn settings_uses_separate_owners_and_reads_back_an_uncertain_write_once() {
         assert_eq!(prefs.mode(), "system");
         assert_eq!(prefs.palette(true).map(|p| p.id), Some("slate"));
         assert!(!prefs.palette_ready());
-        prefs.change(Owner::Config, json!({"settings":{"locale":"he"}}));
+        prefs.set_locale("he");
         assert!(prefs.poll());
         let write = request(&listener).await;
         assert_eq!(write.first, "PATCH /api/storage/config/ui HTTP/1.1");
@@ -88,6 +88,7 @@ fn settings_mode_patch_leaves_defaults_and_legacy_slots_alone() {
             ..Preferences::default()
         };
         prefs.state.snapshot = Some(json!({}));
+        assert!(!prefs.palette_ready());
         prefs.set_mode("light");
         assert!(prefs.state.pending.is_none(), "wait for legacy config");
         prefs.config.snapshot = Some(json!({"theme":"dark","settings":{"locale":"de-DE"}}));
@@ -164,7 +165,7 @@ fn settings_mode_write_fences_palette_until_the_new_color_slot_is_known() {
         prefs.state.writing = None;
         prefs.state.read_failed = true;
         assert!(!prefs.palette_ready());
-        assert!(!prefs.ready(Owner::State));
+        assert!(!prefs.mode_ready());
     });
 }
 
