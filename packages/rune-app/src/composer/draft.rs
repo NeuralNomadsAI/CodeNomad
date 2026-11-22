@@ -122,7 +122,7 @@ impl Draft {
         true
     }
 
-    pub fn prepare(&self, text: &str, id: &str, delivery: Delivery) -> (Prompt, Vec<Part>) {
+    pub fn resolve_text(&self, text: &str) -> String {
         let mut text = resolve_relative_paths(text.trim_matches(whitespace));
         for path in self.attachments.iter().filter_map(|item| match item {
             Attachment::Project { path, .. } | Attachment::Path(path) => Some(path),
@@ -134,10 +134,14 @@ impl Draft {
                 text = text.replacen(&format!("@{path}/"), &format!("./{path}/"), 1);
             }
         }
+        text
+    }
+
+    pub fn prepare(&self, text: &str, id: &str, delivery: Delivery) -> (Prompt, Vec<Part>) {
         let mut parts = Vec::new();
         let mut prompt = Prompt {
             id: Some(id.into()),
-            text,
+            text: self.resolve_text(text),
             resume: (delivery == Delivery::Queue).then_some(false),
             delivery: Some(delivery),
             ..Prompt::default()

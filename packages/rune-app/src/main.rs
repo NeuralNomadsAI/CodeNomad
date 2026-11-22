@@ -187,10 +187,13 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             Event::Connected(backend) => {
                 s.renew_scope();
                 s.attachments.bind(backend.clone());
-                s.composer.picker.bind(backend.clone(), &s.reads, &s.wake);
+                s.composer.picker.bind(backend.clone());
                 s.agent = Some(agent::Ui::new(agent::start(backend, s.wake.clone())));
             }
             Event::AgentHint(catalog) => {
+                if catalog {
+                    s.composer.picker.reconnect_commands(&s.reads, &s.wake);
+                }
                 if catalog && let Some(files) = &mut s.files {
                     files.online(true);
                 }
@@ -213,6 +216,7 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 if let Some(a) = s.agent.as_mut() {
                     if !a.online {
                         a.online = true;
+                        s.composer.picker.refresh_commands(&s.reads, &s.wake);
                         a.refresh(false);
                     }
                 }

@@ -143,7 +143,9 @@ pub fn overlays(s: &State, layer: &mut Vec<El>) {
         picker.selected,
         items,
     )
-    .on_close(screen::action(&scope, |s| s.composer.picker.close()))
+    .on_close(screen::action(&scope, |s| {
+        s.composer.picker.close(&s.draft.text)
+    }))
     .on_active(move |s: &mut State, index| {
         if s.current_scope(&hover_scope)
             && generation == s.composer.picker.generation
@@ -183,7 +185,7 @@ fn choose(s: &mut State, tx: &mut Tx, index: usize, tab: bool, path_only: bool) 
 
 fn key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
     if s.composer.picker.open() {
-        if s.composer.picker.key(event, tx) {
+        if s.composer.picker.key(&s.draft.text, event, tx) {
             return true;
         }
         if matches!(event.key, Key::Enter | Key::Tab) {

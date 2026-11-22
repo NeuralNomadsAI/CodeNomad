@@ -138,16 +138,8 @@ fn launch(
 }
 
 impl Picker {
-    pub fn bind(&mut self, backend: Backend, reads: &platform::reads::Reads, wake: &rune::Waker) {
+    pub fn bind(&mut self, backend: Backend) {
         *self = Self {
-            command_read: Some(launch(
-                backend.clone(),
-                None,
-                None,
-                true,
-                reads.clone(),
-                wake.clone(),
-            )),
             backend: Some(backend),
             ..Self::default()
         };
@@ -157,7 +149,7 @@ impl Picker {
     }
     pub fn selected_command<'a>(&self, text: &'a str) -> Option<(&'a str, &'a str)> {
         let text = text.trim_matches(whitespace).strip_prefix('/')?;
-        let end = text.find(whitespace).unwrap_or(text.len());
+        let end = text.find(' ').unwrap_or(text.len());
         let (name, args) = text.split_at(end);
         self.commands
             .iter()
@@ -177,13 +169,17 @@ impl Picker {
         {
             self.command_read = Some(launch(
                 backend.clone(),
-                self.directory.clone(),
+                None,
                 None,
                 true,
                 reads.clone(),
                 wake.clone(),
             ));
         }
+    }
+    pub fn reconnect_commands(&mut self, reads: &platform::reads::Reads, wake: &rune::Waker) {
+        self.command_read = None;
+        self.refresh_commands(reads, wake);
     }
     pub fn slash(&self) -> bool {
         matches!(self.current, Some((Query::Command(_), _)))
@@ -193,12 +189,12 @@ impl Picker {
             || self.search.is_some()
             || (self.slash() && self.command_read.is_some())
     }
-    pub fn close(&mut self) {
+    pub fn close(&mut self, text: &str) {
         let current = self.current.take();
         self.reset();
         match current {
             Some((Query::Mention(range), _)) => self.dismissed = Some(range.start),
-            Some((Query::Command(_), text)) => self.dismissed_command = Some(text),
+            Some((Query::Command(_), _)) => self.dismissed_command = Some(text.into()),
             None => {}
         }
     }
@@ -227,7 +223,7 @@ impl Picker {
         let draft = edit.text[range.start + 1..range.end].to_owned();
         if match token {
             Query::Mention(_) => self.dismissed == Some(range.start),
-            Query::Command(_) => self.dismissed_command.as_deref() == Some(&draft),
+            Query::Command(_) => self.dismissed_command.as_deref() == Some(edit.text.as_str()),
         } {
             return;
         }
@@ -248,39 +244,29 @@ impl Picker {
         self.files.clear();
         self.selected = 0;
         self.search = None;
-        if let Some(backend) = &self.backend {
-            let slash = self.slash();
-            if slash && !same_mode {
-                if self.command_read.is_none() {
-                    self.command_read = Some(launch(
-                        backend.clone(),
-                        self.directory.clone(),
-                        None,
-                        true,
-                        reads.clone(),
-                        wake.clone(),
-                    ));
-                }
-            } else if !same_mode {
+        if self.slash() {
+            if !same_mode {
+                self.refresh_commands(reads, wake);
+            }
+        } else if let Some(backend) = &self.backend {
+            if !same_mode {
                 self.read = Some(launch(
                     backend.clone(),
                     self.directory.clone(),
                     None,
-                    slash,
-                    reads.clone(),
-                    wake.clone(),
-                ));
-            }
-            if !slash {
-                self.search = Some(launch(
-                    backend.clone(),
-                    self.directory.clone(),
-                    Some(draft),
                     false,
                     reads.clone(),
                     wake.clone(),
                 ));
             }
+            self.search = Some(launch(
+                backend.clone(),
+                self.directory.clone(),
+                Some(draft),
+                false,
+                reads.clone(),
+                wake.clone(),
+            ));
         }
         self.refresh_entries();
     }
@@ -359,14 +345,14 @@ impl Picker {
             );
         }
     }
-    pub fn key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
+    pub fn key(&mut self, text: &str, event: &KeyEvent, tx: &mut Tx) -> bool {
         match event.key {
             Key::Up => self.selected = self.selected.saturating_sub(1),
             Key::Down => {
                 self.selected = (self.selected + 1).min(self.entries.len().saturating_sub(1))
             }
             Key::Escape => {
-                self.close();
+                self.close(text);
                 return true;
             }
             _ => return false,
@@ -387,7 +373,9 @@ impl Picker {
         let Some((query, _)) = self.current.as_ref() else {
             return false;
         };
-        if super::tokens::query(&edit.text, edit.range().0).as_ref() != Some(query) {
+        if matches!(query, Query::Mention(_))
+            && super::tokens::query(&edit.text, edit.range().0).as_ref() != Some(query)
+        {
             return false;
         }
         let Some(item) = self.entries.get(index) else {
@@ -470,7 +458,7 @@ impl Picker {
             }
         };
         replace(edit, range, &insertion);
-        self.close();
+        self.close(&edit.text);
         true
     }
 }
@@ -634,7 +622,7 @@ mod tests {
         });
         press(&mut rt, Key::Enter, Mods::default());
         assert_eq!(rt.state.draft.text, "/review ");
-        rt.paste("🦀 arguments");
+        rt.paste("🦀 @./notes.txt ensuite");
         rt.frame(0.0);
         press(&mut rt, Key::Enter, Mods::default());
         let crate::transport::Command::Slash {
@@ -645,7 +633,10 @@ mod tests {
         else {
             panic!("expected native command")
         };
-        assert_eq!((name.as_str(), text.as_str()), ("review", "🦀 arguments"));
+        assert_eq!(
+            (name.as_str(), text.as_str()),
+            ("review", "🦀 ./notes.txt ensuite")
+        );
         assert!(rt.state.messages.is_empty());
         assert_eq!(rt.state.composer.draft.attachments.len(), 1);
         crate::composer::acknowledge(
@@ -653,7 +644,7 @@ mod tests {
             &attempt,
             crate::transport::PromptOutcome::Rejected,
         );
-        assert_eq!(rt.state.draft.text, "/review 🦀 arguments");
+        assert_eq!(rt.state.draft.text, "/review 🦀 @./notes.txt ensuite");
         assert_eq!(rt.state.composer.draft.attachments.len(), 1);
     }
 
@@ -748,5 +739,77 @@ mod tests {
         assert!(receiver.try_recv().is_err());
         assert_eq!(rt.state.draft.text, "/review 🦀");
         assert!(rt.find("refresh-command-catalogue").is_some());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn reconnection_replaces_a_stale_catalogue_read_before_dispatch() {
+        let mut rt = runtime();
+        let backend = platform::block_on(Backend::connect("http://127.0.0.1:1/", "")).unwrap();
+        let picker = &mut rt.state.composer.picker;
+        picker.bind(backend);
+        let (cancel, cancelled) = bounded(1);
+        let (_out, replies) = bounded(1);
+        picker.command_read = Some(Read {
+            _cancel: cancel,
+            replies,
+        });
+        let (events, incoming) = bounded(1);
+        rt.state.incoming = Some(incoming);
+        events
+            .try_send(crate::transport::Event::AgentHint(true))
+            .unwrap();
+        crate::poll_chat(&mut rt.state, 1);
+        assert!(cancelled.is_closed());
+        assert!(rt.state.composer.picker.command_pending("/new argument"));
+    }
+
+    #[test]
+    fn literal_space_is_the_only_command_argument_separator() {
+        let mut p = Picker::default();
+        p.commands.push(Item::Command(named("review")));
+        assert_eq!(p.selected_command("/review @./a"), Some(("review", "@./a")));
+        assert!(p.selected_command("/review\targument").is_none());
+        assert!(p.selected_command("/review\nargument").is_none());
+    }
+
+    #[test]
+    fn caret_motion_does_not_disable_the_visible_command() {
+        let mut rt = runtime();
+        rt.state
+            .composer
+            .picker
+            .commands
+            .push(Item::Command(named("review")));
+        rt.paste("/review");
+        rt.frame(0.0);
+        press(&mut rt, Key::Left, Mods::default());
+        press(&mut rt, Key::Enter, Mods::default());
+        assert_eq!(rt.state.draft.text, "/review ");
+        assert!(!rt.state.composer.picker.open());
+    }
+
+    #[test]
+    fn changing_text_after_the_caret_reopens_a_dismissed_command() {
+        let mut rt = runtime();
+        rt.state
+            .composer
+            .picker
+            .commands
+            .push(Item::Command(named("review")));
+        rt.paste("/reiew argument");
+        rt.frame(0.0);
+        press(&mut rt, Key::Home, Mods::default());
+        for _ in 0..3 {
+            press(&mut rt, Key::Right, Mods::default());
+        }
+        rt.paste("v");
+        rt.frame(0.0);
+        assert_eq!(rt.state.draft.text, "/review argument");
+        assert!(rt.state.composer.picker.open());
+        press(&mut rt, Key::Escape, Mods::default());
+        press(&mut rt, Key::Delete, Mods::default());
+        assert_eq!(rt.state.draft.text, "/revew argument");
+        assert!(rt.state.composer.picker.open());
     }
 }

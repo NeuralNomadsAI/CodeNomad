@@ -49,7 +49,7 @@ pub fn send(s: &mut State, tx: &mut Tx, alternate: bool) {
         let command = Command::Slash {
             attempt: id.clone(),
             name: name.into(),
-            text: text.into(),
+            text: s.composer.draft.resolve_text(text),
         };
         if s.commands
             .as_ref()
