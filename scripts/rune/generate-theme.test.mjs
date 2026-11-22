@@ -7,8 +7,15 @@ import {createServer} from 'vite'
 import {chromium} from 'playwright'
 import {collectTheme} from './generate-theme-browser.mjs'
 import {themeFixtureHtml,sourceMenuGutter} from './generate-theme-fixture.mjs'
+import {workspaceRowContract,workspaceSource} from './parity/workspace-tree-row-source.mjs'
 
 const root=fileURLToPath(new URL('../../',import.meta.url))
+test('workspace geometry follows the actual JSX expressions and rejects unknown indents',async()=>{
+  assert.deepEqual(workspaceSource,{base:8,step:14,chevron:12,icon:14,busy:12})
+  const source=await readFile(path.join(root,'packages/ui/src/components/instance/shell/right-panel/components/WorkspaceTree.tsx'),'utf8')
+  assert.equal(workspaceRowContract(source.replace('8 + row.depth * 14','11 + row.depth * 17')).step,17)
+  assert.throws(()=>workspaceRowContract(source.replace('8 + row.depth * 14','row.depth * 14')),/requires base/)
+})
 test('action menu gutter follows its actual numeric JSX contract',()=>{
   assert.equal(sourceMenuGutter('<DropdownMenu gutter={7}></DropdownMenu>'),7)
   assert.throws(()=>sourceMenuGutter('<DropdownMenu gutter={spacing}></DropdownMenu>'),/numeric JSX gutter/)
@@ -76,6 +83,10 @@ test('generated semantic metrics survive actual font changes and viewport change
       assert.equal(baseline.metrics.actionMenuItem.minHeight,32)
       assert.equal(baseline.metrics.actionMenuDisabled.opacity,0.5)
       assert.deepEqual(baseline.metrics.fileRowActionGlyph,{width:14,height:14})
+      assert.equal(baseline.metrics.workspaceRow.minHeight,27)
+      assert.equal(baseline.metrics.workspaceRow.columnGap,5)
+      assert.equal(baseline.metrics.workspaceRow.outlineWidth,1)
+      assert.equal(baseline.metrics.workspaceRow.outlineOffset,-1)
       assert.deepEqual(baseline.metrics.fileRowAction,{minWidth:24,minHeight:24,paddingLeft:0,opacity:0.7})
       await page.locator('.action-overflow-item').first().evaluate(element=>element.style.lineHeight='normal')
       await assert.rejects(page.evaluate(collectTheme,names),/lineHeight requires an explicit numeric CSS value/)

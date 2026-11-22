@@ -138,7 +138,7 @@ impl Backend {
     }
 }
 // The listing contract emits relative slash paths. The server owns OS-specific admission.
-fn relative(path: &str, listing: bool, directory: &str) -> Result<()> {
+pub(crate) fn relative(path: &str, listing: bool, directory: &str) -> Result<()> {
     if listing && path == "." {
         return Ok(());
     }

@@ -5,6 +5,7 @@ pub(crate) use codenomad_client::{agent_api, backend, catalog, content, history}
 mod chat;
 pub(crate) use chat::{actions as transcript_state, transcript, transport};
 mod components;
+mod files;
 pub(crate) use components::window_close_button as window_control;
 #[cfg(any(test, feature = "test-support"))]
 mod gallery;
@@ -33,6 +34,8 @@ pub use codenomad_client::Message;
 struct State {
     wake: codenomad_client::Wake,
     agent: Option<agent::Ui>,
+    files: Option<files::Ui>,
+    reads: platform::reads::Reads,
     expanded_tools: std::collections::HashSet<String>,
     launcher: Option<launcher::Launcher>,
     workspace: Option<workspace::Ui>,
@@ -60,6 +63,8 @@ fn init() -> State {
     State {
         wake: std::sync::Arc::new(|| {}),
         agent: None,
+        files: None,
+        reads: Default::default(),
         expanded_tools: Default::default(),
         launcher: None,
         workspace: None,
@@ -166,6 +171,7 @@ fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let mut changed = launcher::poll(s, tx);
     changed |= poll_chat(s, 64);
     changed |= workspace::poll(s, now, tx);
+    changed |= s.files.as_mut().is_some_and(|files| files.poll(now));
     if changed {
         tx.instant();
     }
@@ -189,7 +195,15 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                     a.refresh(catalog)
                 }
             }
+            Event::Workspace(event) => {
+                if let Some(files) = &mut s.files {
+                    files.event(event);
+                }
+            }
             Event::Sync(page) => {
+                if let Some(files) = &mut s.files {
+                    files.online(true);
+                }
                 if let Some(a) = s.agent.as_mut() {
                     if !a.online {
                         a.online = true;
@@ -218,6 +232,9 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
                 s.paging = false;
             }
             Event::Reconnecting => {
+                if let Some(files) = &mut s.files {
+                    files.online(false);
+                }
                 s.phase = Phase::Reconnecting;
                 if let Some(a) = s.agent.as_mut() {
                     a.online = false;
@@ -246,6 +263,9 @@ fn poll_chat(s: &mut State, limit: usize) -> bool {
             }
             Event::Done => s.phase = Phase::Ready,
             Event::Failed => {
+                if let Some(files) = &mut s.files {
+                    files.online(false);
+                }
                 s.phase = Phase::Failed;
                 if let Some(a) = s.agent.as_mut() {
                     a.online = false;

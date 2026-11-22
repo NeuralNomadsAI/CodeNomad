@@ -15,7 +15,9 @@ Le scénario `headless-interaction.json` utilise la scène synthétique de 10 00
 
 Le lanceur retire les variables `RUNE_*` héritées et impose la scène synthétique ; les essais utilisent `trial-rune-headless`. Les interactions restent internes au runtime, y compris le collage simulé. Le script reçoit un chemin absolu de binaire compilé et effectue uniquement des lancements avec `--tree` et `--snap`.
 
-La CI restaure les téléchargements Cargo vérifiés par l'action partagée, puis reconstruit ses artefacts. Elle compile aussi `packages/server-rs` et exerce `launcher-fixture.mjs --workspace-claims`, `launcher-fixture.mjs --restore-state` et `recovery-fixture.mjs` sur les trois systèmes. Ces essais relient le vrai client et le vrai serveur Rust à un OpenCode simulé isolé ; les preuves JSON des profils possédés sont jointes aux artefacts du job.
+La CI restaure les téléchargements Cargo vérifiés par l'action partagée, puis reconstruit ses artefacts. Elle compile aussi `packages/server-rs` et exerce `launcher-fixture.mjs --workspace-claims`, `launcher-fixture.mjs --restore-state`, `launcher-fixture.mjs --files-state` et `recovery-fixture.mjs` sur les trois systèmes. Ces essais relient le vrai client et le vrai serveur Rust à un OpenCode simulé isolé ; les preuves JSON des profils possédés sont jointes aux artefacts du job.
+
+Le mode `--files-state` ouvre un projet privé et sa session synthétique existante. Des ACK JSON synchronisent les créations, renommages et suppressions du runner avec les observations du contrôleur via les watches et le SSE réels. Repli, masquage et retour d'onglet vérifient la rétention de sélection et d'expansion ; le scénario exige zéro prompt, zéro session native créée et la libération des records. Il qualifie le modèle et ses hooks, avec un parcours d'ouverture réel ; la vue Files, les requêtes masquées et l'annulation de corps HTTP ont leurs essais séparés.
 
 La feature `test-support` active les scènes, la galerie et les sondes de qualification. Avant ces builds, `check-production.mjs` vérifie les artefacts par défaut : refus des arguments de qualification, absence de marqueurs de sondes dans les binaires natif et WASM, et fonctionnement de l'inspection Rune sur le lanceur du produit.
 
@@ -30,6 +32,8 @@ node scripts/rune/qualify-pixels.mjs --component <identité> --theme light --sol
 ```
 
 La matrice CI doit être exécutée sur ses trois runners pour qualifier les dépendances natives, le GPU offscreen et les différences de rendu propres aux plateformes. Les arbres et images produits servent de preuves à cette qualification.
+
+La galerie `workspace-tree-row` produit vingt scènes natives clair/sombre, LTR/RTL sur chaque OS. Windows monte aussi le vrai WorkspaceTree Solid et applique `workspace-tree-row-thresholds.json` : budgets régionaux revus pour échelle 1 et largeur 360, avec 208 mutations négatives exigées. `compare-workspace-tree-row.mjs` vérifie la géométrie, l'exhaustivité des cas, chaque pixel et les empreintes avant de comparer. Les actions fournies par la galerie et l'image figée d'activité gardent ce périmètre ; l'arbre complet, les autres dimensions, les animations et le miroir DOM demandent leurs qualifications.
 
 ## Latence face à la TUI
 

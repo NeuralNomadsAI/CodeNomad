@@ -404,6 +404,25 @@
       "windowIconGlyph": {
         "height": 14,
         "width": 14
+      },
+      "workspaceRow": {
+        "actionGap": 2,
+        "base": 8,
+        "busy": 12,
+        "chevron": 12,
+        "columnGap": 5,
+        "fontSize": 11,
+        "fontWeight": 400,
+        "icon": 14,
+        "lineHeight": 16.5,
+        "minHeight": 27,
+        "outlineOffset": -1,
+        "outlineWidth": 1,
+        "paddingBottom": 3,
+        "paddingInlineEnd": 8,
+        "paddingTop": 3,
+        "spinSeconds": 1,
+        "step": 14
       }
     },
     "light": {
@@ -533,6 +552,25 @@
       "windowIconGlyph": {
         "height": 14,
         "width": 14
+      },
+      "workspaceRow": {
+        "actionGap": 2,
+        "base": 8,
+        "busy": 12,
+        "chevron": 12,
+        "columnGap": 5,
+        "fontSize": 11,
+        "fontWeight": 400,
+        "icon": 14,
+        "lineHeight": 16.5,
+        "minHeight": 27,
+        "outlineOffset": -1,
+        "outlineWidth": 1,
+        "paddingBottom": 3,
+        "paddingInlineEnd": 8,
+        "paddingTop": 3,
+        "spinSeconds": 1,
+        "step": 14
       }
     }
   },
@@ -661,6 +699,7 @@
   },
   "sources": {
     "packages/ui/postcss.config.js": "aca4c5d8a44abcaa54e72615c5d31f28b24d2e1f5651e22be318eadaf1d57144",
+    "packages/ui/src/components/instance/shell/right-panel/components/WorkspaceTree.tsx": "d7a5fece63b366f70f2cd8b6826700c1a052812eda50dd518dcae07721d2d568",
     "packages/ui/src/index.css": "c1f241cec89239ab2bb645d8c4bcb8981f5a630dd8e3492fe03a8854a47e725d",
     "packages/ui/src/styles/components/agent-memory.css": "18ab270707d67c71a56ff15ead52eea1c74e542e824142881f8ac53ba0bc357c",
     "packages/ui/src/styles/components/alert-dialog.css": "7c6cb4526b6f3ab280842f36e830ec1c93c4da5fde83b2c6ded73325c8d1fd43",
