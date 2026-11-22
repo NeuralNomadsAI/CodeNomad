@@ -14,13 +14,34 @@ export async function privateWebFixture({root,project,storageState,out,origin}){
   assert(inside(profile,path.resolve(out)),'Output must stay in the private fixture profile')
   return {profile,storage,project:directory,inside}
 }
-export function workspacePolicy({origin,project}){
+export async function bundleAssetPaths(directory){
+  const manifest=JSON.parse(await readFile(path.join(directory,'bundle-manifest.json'),'utf8'))
+  assert.equal(manifest.generator,'scripts/rune/bundle-web.mjs')
+  assert(Array.isArray(manifest.files)&&manifest.files.length>0&&manifest.files.length<=4096,'Bounded bundle file manifest required')
+  const paths=new Set(['/'])
+  for(const entry of manifest.files){
+    assert(typeof entry.file==='string'&&entry.file.length<=1024&&!entry.file.includes('\\')&&entry.file.split('/').every(part=>part&&part!=='.'&&part!=='..'),'Invalid bundle asset path')
+    const url='/'+entry.file.split('/').map(encodeURIComponent).join('/')
+    assert(!/^\/(api|workspaces)(?:\/|$)/.test(url),'Bundle assets cannot claim protected routes')
+    assert(!paths.has(url),'Duplicate bundle asset path');paths.add(url)
+  }
+  return paths
+}
+export function workspacePolicy({origin,project,assets=new Set()}){
   const workspaces=new Set(),claims=new Map(),owners=new Map()
   const claim=body=>typeof body?.requestId==='string'&&body.requestId.length>0&&body.requestId.length<=128&&body.requestId.trim()===body.requestId
   const creation=body=>body?.path===project&&claim(body)&&Object.keys(body).every(key=>['path','requestId'].includes(key))
   return {workspaces,
+    async request(req,{allowApi=true,forbidRelease=false}={}){
+      const requested=new URL(req.url()),protectedRoute=/^\/(api|workspaces)(?:\/|$)/.test(requested.pathname)
+      if(requested.origin!==origin)return false
+      if(protectedRoute&&(!allowApi||!(await req.allHeaders()).cookie))return false
+      let body;try{body=req.postDataJSON()}catch{}
+      return this.allows(req.method(),requested.pathname,body,{forbidRelease})
+    },
     allows(method,p,body,{forbidRelease=false}={}){
       if(body&&Buffer.byteLength(JSON.stringify(body))>32768)return false
+      if((method==='GET'||method==='HEAD')&&assets.has(p))return true
       if(method==='GET'&&['/api/workspaces','/api/meta','/api/events'].includes(p))return true
       if(method==='POST'&&p==='/api/client-connections/pong')return true
       if(method==='POST'&&p==='/api/workspaces'&&creation(body)){if(!claims.has(body.requestId))claims.set(body.requestId,null);return true}

@@ -5,6 +5,14 @@ import {workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.m
 const origin='http://127.0.0.1:12345',project='D:/private/projects/synthetic'
 const creation=requestId=>({path:project,requestId})
 const response=(id,requestId)=>({id,requestId,location:{directory:project}})
+test('origin and cookie refusals never register a creation claim',async()=>{
+  const p=workspacePolicy({origin,project})
+  const req=(base,cookie)=>({url:()=>base+'/api/workspaces',method:()=> 'POST',postDataJSON:()=>creation('unadmitted'),allHeaders:async()=>({cookie})})
+  assert(!await p.request(req(origin,'')))
+  assert(!await p.request(req('http://localhost:12345','private=fixture')))
+  assert(!await p.request(req(origin,'private=fixture'),{allowApi:false}))
+  assert(!p.allows('POST','/api/workspaces/creation/cancel',{requestId:'unadmitted'}))
+})
 test('only the exact private project and bounded creation claims enter the owned policy',()=>{
   const p=workspacePolicy({origin,project})
   for(const input of [{path:project},creation(''),creation(' '),creation('x'.repeat(129)),{...creation('valid'),path:project+'/other'},{...creation('valid'),location:{directory:'/foreign'}}])assert(!p.allows('POST','/api/workspaces',input))

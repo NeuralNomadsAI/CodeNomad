@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
 import {chromium} from 'playwright'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
-import {privateWebFixture,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
+import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const {values} = parseArgs({options: {url: {type: 'string'}, out: {type: 'string', default: 'target/rune-web-smoke'},
@@ -34,6 +34,7 @@ const browser = await chromium.launch({headless: true, ...(values.executable ? {
 const records = []
 const imagePage = await browser.newPage()
 const palette = JSON.parse(await readFile(path.join(root, 'crates/rune-theme-codenomad/assets/theme.json'), 'utf8'))
+const assets=await bundleAssetPaths(path.resolve(root,process.env.RUNE_WEB_DIR??(values.connected?'target/rune-web-connected':'target/rune-web')))
 try {
   for (const [name, width, height, touch] of [['desktop', 960, 760, false], ['tablet', 768, 1024, true], ['phone', 390, 844, true]]) {
     for (const colorScheme of ['light', 'dark']) {
@@ -42,7 +43,7 @@ try {
       const page = await context.newPage()
       page.setDefaultTimeout(15000)
       const errors = [], forbiddenRequests = [], routes=[], history=[]
-      const policy=workspacePolicy({origin:url.origin,project:values.project})
+      const policy=workspacePolicy({origin:url.origin,project:values.project,assets})
       let eventSource=false
       page.on('response',async response=>{
         if(!values.connected)return
@@ -54,12 +55,9 @@ try {
       // Connected scenes admit only their private creations; synthetic scenes refuse all API access.
       await context.route('**/*', async route => {
         const requested = new URL(route.request().url())
-        if (!['http:', 'https:'].includes(requested.protocol)) return route.continue()
         const req=route.request(),p=requested.pathname
         const protectedRoute=/^\/(api|workspaces)(?:\/|$)/.test(p)
-        let body;try{body=req.postDataJSON()}catch{}
-        const allowed=requested.origin===url.origin&&values.connected&&Boolean((await req.allHeaders()).cookie)&&policy.allows(req.method(),p,body)
-        if (requested.origin !== url.origin || (protectedRoute&&!allowed)) {
+        if (!await policy.request(req,{allowApi:values.connected===true})) {
           forbiddenRequests.push({origin: requested.origin, path: requested.pathname})
           return route.abort('blockedbyclient')
         }

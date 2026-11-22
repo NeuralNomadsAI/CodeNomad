@@ -7,7 +7,7 @@ import {parseArgs} from 'node:util'
 import {chromium} from 'playwright'
 import {pendingBrowser} from './web-pending-open.mjs'
 import {assertRenderedTextContrast} from './text-contrast.mjs'
-import {privateWebFixture,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
+import {privateWebFixture,bundleAssetPaths,workspacePolicy,fulfillWorkspaceCreation} from './web-workspace-policy.mjs'
 
 const root=fileURLToPath(new URL('../../',import.meta.url))
 const {values}=parseArgs({options:{url:{type:'string'},project:{type:'string'},'storage-state':{type:'string'},out:{type:'string'},executable:{type:'string'},workspace:{type:'string'},'pending-open':{type:'boolean'}}})
@@ -27,6 +27,7 @@ const retryDraft='Brouillon Beta enregistré après retry 🦀',unsaved='Derniè
 const browser=await chromium.launch({headless:true,...(values.executable?{executablePath:values.executable}:{}),args:['--enable-unsafe-webgpu','--use-angle=swiftshader']})
 const results=[]
 const palette=JSON.parse(await readFile(path.join(root,'crates/rune-theme-codenomad/assets/theme.json'),'utf8'))
+const assets=await bundleAssetPaths(path.resolve(root,process.env.RUNE_WEB_DIR??'target/rune-web-connected'))
 const imagePage=await browser.newPage()
 try {
   for(const spec of [{name:'desktop-light',width:1100,height:900,colorScheme:'light',touch:false},{name:'phone-dark',width:390,height:844,colorScheme:'dark',touch:true}]) {
@@ -35,7 +36,7 @@ try {
     const record={context:spec.name,phoneEmulated:spec.touch,requests:[],eventSource:[],storage:[],storageLocal:[],history:[],errors:[],forbidden:[],stages:[]}
     results.push(record)
     let forbidRelease=false,sequence=0
-    const policy=workspacePolicy({origin:url.origin,project:values.project}),workspaces=policy.workspaces
+    const policy=workspacePolicy({origin:url.origin,project:values.project,assets}),workspaces=policy.workspaces
     const stamp=()=>++sequence
     await page.addInitScript(({key,released,proof})=>{
       globalThis.__runeRestoreQuota=false
@@ -119,13 +120,7 @@ try {
     })
     await context.route('**/*',async route=>{
       const req=route.request(),requested=new URL(req.url()),p=requested.pathname,method=req.method()
-      let allowed=requested.origin===url.origin
-      const protectedRoute=/^\/(api|workspaces)(?:\/|$)/.test(p)
-      if(allowed&&protectedRoute){
-        let body;try{body=req.postDataJSON()}catch{}
-        const headers=await req.allHeaders()
-        allowed=Boolean(headers.cookie)&&policy.allows(method,p,body,{forbidRelease})
-      }
+      let allowed=await policy.request(req,{forbidRelease})
       const entry={sequence:stamp(),method,path:p,status:allowed?'allowed':'refused',...(requested.searchParams.has('cursor')?{pagination:true}:{})}
       if(record.requests.length<4000)record.requests.push(entry);else allowed=false
       if(!allowed){record.forbidden.push(entry);return route.abort('blockedbyclient')}
