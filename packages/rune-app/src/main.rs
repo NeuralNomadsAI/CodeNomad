@@ -36,6 +36,10 @@ use transport::{Command, Event};
 pub const CODE: &str = "fn main() {\n    println!(\"Rune · Code Nomad\");\n}";
 pub use codenomad_client::Message;
 struct State {
+    #[cfg(target_os = "windows")]
+    native_locale: std::cell::Cell<Option<&'static str>>,
+    #[cfg(target_os = "windows")]
+    native_locale_repaint: std::cell::Cell<bool>,
     wake: codenomad_client::Wake,
     agent: Option<agent::Ui>,
     files: Option<files::Ui>,
@@ -69,6 +73,10 @@ enum Phase {
 }
 fn init() -> State {
     State {
+        #[cfg(target_os = "windows")]
+        native_locale: std::cell::Cell::new(None),
+        #[cfg(target_os = "windows")]
+        native_locale_repaint: std::cell::Cell::new(false),
         wake: std::sync::Arc::new(|| {}),
         agent: None,
         files: None,
@@ -189,6 +197,7 @@ fn latest(_: &mut State, tx: &mut Tx) {
 fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let chat = poll_chat(s, 64);
     let mut changed = chat | transcript_state::Display::poll(s, chat, now, tx);
+    changed |= platform::titlebar::poll(s);
     changed |= launcher::poll(s, tx);
     shell::sync(s);
     changed |= workspace::poll(s, now, tx);

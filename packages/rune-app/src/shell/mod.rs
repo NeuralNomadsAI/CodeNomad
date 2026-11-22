@@ -22,7 +22,7 @@ pub fn view(
         .full_height()
         .reading_surface();
     if crate::platform::titlebar::available() {
-        root = root.child(crate::platform::titlebar::view(cx));
+        root = root.child(crate::platform::titlebar::view(s, cx));
     }
     if let Some(ui) = &s.workspace {
         root = root.child(workspace::strip(s, cx).on_background_press_tx(Panels::dismiss_outside));
