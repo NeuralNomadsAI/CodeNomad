@@ -5,6 +5,8 @@ use codenomad_client::files::{Entry, EntryKind};
 use rune::{Env, Key, KeyEvent, Mods, Runtime};
 use std::time::{Duration, Instant};
 
+mod server;
+
 fn english(s: &State, cx: &mut rune::Cx<State>) -> El {
     crate::strings::with_locale("en", || crate::view(s, cx))
 }
@@ -335,9 +337,13 @@ fn markdown_links_html_and_mermaid_fallback_use_only_the_loaded_document() {
                 }
                 "valid.mmd" => assert!(nodes.iter().any(|node| node.role == "figure"
                     && node.label.as_deref() == Some("Mermaid diagram"))),
-                "unsupported.mmd" => {
+                "unsupported.mmd" | "unreadable.mmd" => {
                     assert!(nodes.iter().any(|node| node.role == "alert"));
-                    assert!(shown.contains("unknownDiagram"));
+                    assert!(shown.contains(if name == "unsupported.mmd" {
+                        "unknownDiagram"
+                    } else {
+                        "flowchart LR"
+                    }));
                 }
                 "nul.bin" | "broken.png" => {
                     assert!(shown.contains("Preview unavailable for this binary file."))

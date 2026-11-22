@@ -37,12 +37,12 @@ fn document_action(s: &State, run: fn(&mut super::Ui)) -> impl Fn(&mut State) + 
         }
     })
 }
-pub fn body(s: &State, history: El) -> El {
+pub fn body(s: &State, history: El, expanded: bool) -> El {
     let Some(ui) = &s.files else {
         return history;
     };
     let main = theme::pages(history, ui.reader.target().is_some().then(|| reader(s)));
-    theme::split(main, ui.panel.then(|| tree(s)))
+    theme::split(main, ui.panel.then(|| tree(s)), expanded)
 }
 fn reader(s: &State) -> El {
     let Some(ui) = &s.files else {

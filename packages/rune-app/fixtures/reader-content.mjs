@@ -16,6 +16,7 @@ cases.push({name:'sample.svg',width:16,height:8,base64:Buffer.from(svg).toString
 const documents=[
   ['markup.md','# Reader\n\n**safe** [remote](https://example.invalid/never)\n\n![blocked](https://example.invalid/image.png)\n\n<script>never_execute()</script>'],
   ['valid.mmd','flowchart LR\n A-->B\n'],['unsupported.mmd','unknownDiagram\n A-->B\n'],
+  ['unreadable.mmd','flowchart LR\n'],
   ['nul.bin',Buffer.from([0,1,255])],['broken.png',Buffer.from('malformed image')],
 ].map(([name,text])=>({name,base64:Buffer.from(text).toString('base64')}))
 const target=path.join(root,'packages/rune-app/tests/fixtures/reader-content.json')

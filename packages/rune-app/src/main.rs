@@ -401,13 +401,11 @@ fn chat_view(s: &State, cx: &mut Cx<State>) -> El {
         } else {
             text(&s.chat_title).key("chat-title").pad(Space::Md)
         })
-        .child(
-            files::view::body(
-                s,
-                rune_theme_codenomad::interruption::history(expanded).child(rows),
-            )
-            .remaining(),
-        )
+        .child(files::view::body(
+            s,
+            rune_theme_codenomad::interruption::history(expanded).child(rows),
+            expanded,
+        ))
         .child(agent_view::view(s, cx))
         .child(
             col()
