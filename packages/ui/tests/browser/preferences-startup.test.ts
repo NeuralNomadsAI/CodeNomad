@@ -74,29 +74,38 @@ const emit = (page: Page, event: unknown) => page.evaluate(event => {
   for (const source of (window as any).fixtureEvents) source.onmessage?.(new MessageEvent("message", { data: JSON.stringify(event) }))
 }, event)
 const nativeRequest = (page: Page, request: NativePreferencesRequest) => page.evaluate(request => (window as any).fixtureOpen(request), request)
+const pluginControls = (directory: string) => ({
+  location: { directory }, controls: [], runtime: [], configured: { rules: [], sources: [] }, targets: [],
+})
 
 for (const host of ["electron", "tauri"] as const) {
-  test(`${host} Preferences starts without hydrating workspaces and loads only its explicit provider context`, async () => {
+  test(`${host} Preferences reads activation and providers only for its explicit project`, async () => {
     const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
     const workspaceRequests: string[] = []
     const errors: string[] = []
     page.on("pageerror", error => errors.push(error.message))
     await installHost(page, host, { section: "chat", scrollTop: 300, instanceId: "current-project", location: { directory: "D:/current-project" } })
     await page.route(/\/(?:api|workspaces)\//, async route => {
-      const path = new URL(route.request().url()).pathname
+      const target = new URL(route.request().url()), path = target.pathname
       if (!path.startsWith("/api/") && !path.startsWith("/workspaces/")) return route.continue()
       if (path.includes("/workspaces")) workspaceRequests.push(route.request().url())
       const body = path === "/api/workspaces" ? [workspace("current-project"), ...Array.from({ length: 20 }, (_, i) => workspace(`project-${i}`, `D:/project-${i}`))]
         : path === "/api/storage/config/ui" ? { settings: { locale: "en" } }
         : path.includes("/instance/api/") ? { location: { directory: "D:/current-project" }, data: [] }
-        : path.endsWith("/websearch-settings") ? { location: { directory: "D:/current-project" }, scopes: [], effective: null } : {}
+        : path.endsWith("/websearch-settings") ? { location: { directory: "D:/current-project" }, scopes: [], effective: null }
+        : path.endsWith("/plugin-controls") ? pluginControls(target.searchParams.get("directory")!) : {}
       await route.fulfill({ json: body })
     })
     try {
-      await page.goto(url)
+      await Promise.all([
+        page.waitForResponse(response => new URL(response.url()).pathname === "/api/workspaces/current-project/plugin-controls"),
+        page.goto(url),
+      ])
       await page.waitForFunction(() => (window as any).fixtureReady)
       await page.waitForFunction(() => document.querySelector(".settings-screen-scroll")?.scrollTop === 300)
-      assert.deepEqual(workspaceRequests, [], "startup must not load the project inventory")
+      const startupPaths = ["/api/workspaces", "/api/workspaces/current-project/plugin-controls"]
+      assert.deepEqual([...new Set(workspaceRequests.map(request => new URL(request).pathname))], startupPaths,
+        "startup only resolves project ownership and reads activation for Settings navigation")
 
       // Both reconnect reconciliation and live workspace events used to start
       // full session/catalog hydration in this secondary renderer.
@@ -112,7 +121,8 @@ for (const host of ["electron", "tauri"] as const) {
         }
       })
       await page.getByRole("button", { name: "Fournisseurs", exact: true }).waitFor()
-      assert.deepEqual(workspaceRequests, [], "reconnect/events must not hydrate unrelated projects")
+      assert.deepEqual([...new Set(workspaceRequests.map(request => new URL(request).pathname))], startupPaths,
+        "reconnect/events must not hydrate unrelated projects")
       await Promise.all([
         page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/integration")),
         page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/model")),
@@ -124,7 +134,7 @@ for (const host of ["electron", "tauri"] as const) {
         page.getByRole("heading", { name: "Recherche web", exact: true }).click(),
       ])
       assert.deepEqual(new Set(workspaceRequests.map(request => new URL(request).pathname)), new Set([
-        "/api/workspaces",
+        ...startupPaths,
         "/workspaces/current-project/instance/api/provider", "/workspaces/current-project/instance/api/model",
         "/workspaces/current-project/instance/api/integration", "/workspaces/current-project/instance/api/websearch/provider",
         "/api/workspaces/current-project/websearch-settings",
@@ -163,6 +173,7 @@ async function restoredFixture(page: Page, host: "electron" | "tauri", request: 
       : path.includes("/instance/api/") ? { data }
         : path.endsWith("/websearch-settings") ? { location: { directory }, effective: null,
           scopes: [{ scope: "global", path: "/fixture/global.jsonc", selection: null }, { scope: "project", path: `${directory}/opencode.jsonc`, selection: null }] }
+          : path.endsWith("/plugin-controls") ? pluginControls(directory)
           : path.endsWith("/subagent-depth") ? { location: { directory }, capability: { minimum: 0 }, effectiveDepth: 2,
             project: { path: `${directory}/opencode.jsonc`, depth: null, expectation: "fixture" } }
             : {}
