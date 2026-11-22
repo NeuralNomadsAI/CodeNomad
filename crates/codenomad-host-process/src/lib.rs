@@ -22,6 +22,12 @@ pub struct OwnedProcess {
     child: Child,
     family: Family,
 }
+#[cfg(windows)]
+impl std::os::windows::io::AsHandle for OwnedProcess {
+    fn as_handle(&self) -> std::os::windows::io::BorrowedHandle<'_> {
+        self.child.as_handle()
+    }
+}
 impl OwnedProcess {
     /// Spawn only after configuring this child's containment boundary.
     pub fn spawn(command: &mut Command) -> io::Result<Self> {

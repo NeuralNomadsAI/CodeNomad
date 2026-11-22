@@ -1,0 +1,27 @@
+diff --git a/Libraries/LibWebView/ViewImplementation.cpp b/Libraries/LibWebView/ViewImplementation.cpp
+index 628b31c1..f95faa3c 100644
+--- a/Libraries/LibWebView/ViewImplementation.cpp
++++ b/Libraries/LibWebView/ViewImplementation.cpp
+@@ -2346,6 +2346,10 @@ void ViewImplementation::request_node_picker_hit_test(NodePickerRequestType type
+ 
+ void ViewImplementation::did_receive_node_hit_test(u64 request_id, Web::UniqueNodeID node_id)
+ {
++    if (on_preview_hit_test && (request_id >> 63)) {
++        on_preview_hit_test(request_id & ~(1ULL << 63), node_id);
++        return;
++    }
+     if (request_id == m_inspect_element_hit_test_request_id) {
+         m_inspect_element_hit_test_request_id.clear();
+         if (node_id != 0)
+diff --git a/Libraries/LibWebView/ViewImplementation.h b/Libraries/LibWebView/ViewImplementation.h
+index 136c2ae9..9e31bfa6 100644
+--- a/Libraries/LibWebView/ViewImplementation.h
++++ b/Libraries/LibWebView/ViewImplementation.h
+@@ -707,6 +707,7 @@ public:
+     Function<void(u64 base_sequence, u64 sequence, AccessibilityTreeDelta)> on_accessibility_tree_changed;
+     Function<void(i64)> on_accessibility_focus_changed;
+     Function<void(Web::UniqueNodeID)> on_received_hovered_node_id;
++    Function<void(u64, Web::UniqueNodeID)> on_preview_hit_test;
+     Function<void(Mutation)> on_dom_mutation_received;
+     Function<void(Optional<Web::UniqueNodeID> const& node_id)> on_finished_editing_dom_node;
+     Function<void(String)> on_received_dom_node_html;

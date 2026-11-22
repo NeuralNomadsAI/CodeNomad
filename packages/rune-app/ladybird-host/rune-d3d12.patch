@@ -1,0 +1,128 @@
+diff --git a/crates/rune-media/src/native_surface/mod.rs b/crates/rune-media/src/native_surface/mod.rs
+index c1d2e362..d581d2e3 100644
+--- a/crates/rune-media/src/native_surface/mod.rs
++++ b/crates/rune-media/src/native_surface/mod.rs
+@@ -66,6 +66,8 @@ pub(crate) enum Source {
+     PixelBuffer(macos::PixelBuffer),
+     #[cfg(target_os = "windows")]
+     Shared(windows::SharedTexture),
++    #[cfg(target_os = "windows")]
++    Loaned(windows::LoanedTexture),
+     /// A video decoder's NV12 picture and the fence value that marks it written.
+     #[cfg(target_os = "windows")]
+     Decoded(Arc<windows::DecodedPlanes>, u64),
+@@ -306,6 +308,16 @@ impl NativeSurface {
+         });
+         Ok(())
+     }
++    /// Sample the producer's texture directly. The frame owns the loan through its last GPU read.
++    #[cfg(target_os = "windows")]
++    pub fn push_loaned(&self, texture: windows::LoanedTexture, size: [u32; 2], frame_id: u64) -> Result<(), String> {
++        if size.contains(&0) || size.iter().any(|v| *v > 16384) {
++            return Err("invalid shared frame size".into());
++        }
++        self.replace(Frame { id: frame_id, size, format: Format::Bgra, color: ColorInfo::default(),
++            orient: Orient::UP, source: Source::Loaned(texture) });
++        Ok(())
++    }
+     /// Shows the frame in a dmabuf (`linux::Dmabuf`), read on Rune's Vulkan device the first time
+     /// it draws.
+     #[cfg(target_os = "linux")]
+diff --git a/crates/rune-media/src/native_surface/pipeline/frame.rs b/crates/rune-media/src/native_surface/pipeline/frame.rs
+index 3f3bb507..cffb7293 100644
+--- a/crates/rune-media/src/native_surface/pipeline/frame.rs
++++ b/crates/rune-media/src/native_surface/pipeline/frame.rs
+@@ -211,6 +211,8 @@ impl SurfaceRenderer {
+                 })?
+             }
+             #[cfg(target_os = "windows")]
++            Source::Loaned(texture) => texture.import(device, frame.size)?,
++            #[cfg(target_os = "windows")]
+             Source::Shared(t) => {
+                 if self.shared.is_none() {
+                     self.shared = Some(windows::Importer::new(device)?);
+diff --git a/crates/rune-media/src/native_surface/video.wgsl b/crates/rune-media/src/native_surface/video.wgsl
+index ba01806b..633a3d09 100644
+--- a/crates/rune-media/src/native_surface/video.wgsl
++++ b/crates/rune-media/src/native_surface/video.wgsl
+@@ -32,6 +32,12 @@ fn convert(a: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
+     return vec4<f32>(linear(vec3<f32>(r,g,b)), 1.0);
+ }
+ fn sample_linear(uv: vec2<f32>) -> vec4<f32> {
++    if u.color.x < 0.5 {
++        // A live resize can leave padding at the right and bottom of the shared buffer.
++        let picture = u.sampling.yz;
++        let texel = clamp(uv * picture, vec2<f32>(0.5), picture - 0.5);
++        return convert(textureSampleLevel(plane0, filtering, texel / vec2<f32>(textureDimensions(plane0)), 0.0), vec2<f32>(0.0));
++    }
+     return convert(textureSampleLevel(plane0, filtering, uv, 0.0), textureSampleLevel(plane1, filtering, uv, 0.0).rg);
+ }
+ // Apple's continuous corner (crates/rune/src/shaders/clip.wgsl `sd_continuous` / `sd_rounded`).
+diff --git a/crates/rune-media/src/native_surface/windows.rs b/crates/rune-media/src/native_surface/windows.rs
+index 577962a6..8c682e9b 100644
+--- a/crates/rune-media/src/native_surface/windows.rs
++++ b/crates/rune-media/src/native_surface/windows.rs
+@@ -14,10 +14,62 @@
+ use super::*;
+ use ::windows::Win32::Foundation::{CloseHandle, GENERIC_ALL, HANDLE};
+ use ::windows::Win32::Graphics::Direct3D12::{D3D12_RESOURCE_DIMENSION_TEXTURE2D, ID3D12Device, ID3D12Fence, ID3D12Resource};
+-use ::windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
++use ::windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM};
+ use ::windows::core::{HSTRING, Interface};
+ use std::sync::atomic::{AtomicU64, Ordering};
+ use wgpu::hal::api::Dx12;
++use std::os::windows::io::{AsRawHandle, OwnedHandle};
++
++pub struct LoanedTexture {
++    handle: OwnedHandle,
++    returned: Option<Box<dyn FnOnce() + Send + Sync>>,
++}
++
++impl LoanedTexture {
++    /// # Safety
++    /// `handle` must refer to a D3D12 shared texture in COMMON which has completed all writes.
++    /// The producer must keep it immutable until `returned`. The GPU takes only implicit read promotions.
++    pub unsafe fn new(handle: OwnedHandle, returned: impl FnOnce() + Send + Sync + 'static) -> Self {
++        Self { handle, returned: Some(Box::new(returned)) }
++    }
++
++    pub(crate) fn import(&self, device: &wgpu::Device, [w, h]: [u32; 2]) -> Result<[wgpu::Texture; 2], String> {
++        let hal = unsafe { device.as_hal::<Dx12>() }.ok_or("shared textures require DX12")?;
++        let mut resource: Option<ID3D12Resource> = None;
++        unsafe { hal.raw_device().OpenSharedHandle(HANDLE(self.handle.as_raw_handle()), &mut resource) }
++            .map_err(|e| format!("open loaned D3D12 texture: {e}"))?;
++        let resource = resource.ok_or("missing D3D12 resource")?;
++        drop(hal);
++        let raw = unsafe { resource.GetDesc() };
++        use ::windows::Win32::Graphics::Direct3D12::D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
++        if raw.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || raw.Width < u64::from(w) ||
++            raw.Width > u64::from(device.limits().max_texture_dimension_2d) ||
++            raw.Height < h || raw.Height > device.limits().max_texture_dimension_2d ||
++            raw.DepthOrArraySize != 1 || raw.MipLevels != 1 || raw.SampleDesc.Count != 1 ||
++            !raw.Flags.contains(D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS) {
++            return Err("unexpected loaned texture descriptor".into());
++        }
++        let format = match raw.Format {
++            DXGI_FORMAT_R8G8B8A8_UNORM => wgpu::TextureFormat::Rgba8Unorm,
++            DXGI_FORMAT_B8G8R8A8_UNORM => wgpu::TextureFormat::Bgra8Unorm,
++            _ => return Err("unexpected loaned texture format".into()),
++        };
++        let desc = pipeline::descriptor(raw.Width as u32, raw.Height, format);
++        // This matches the video plane import: simultaneous-access resources decay to COMMON
++        // after a submission and implicitly promote to a shader read state at the next draw.
++        let hal = unsafe { wgpu::hal::dx12::Device::texture_from_raw(resource, format, desc.dimension, desc.size, 1, 1) };
++        let texture = unsafe { device.create_texture_from_hal::<Dx12>(hal, &desc, wgpu::TextureUses::RESOURCE) };
++        Ok([texture.clone(), texture])
++    }
++}
++
++impl Drop for LoanedTexture {
++    fn drop(&mut self) {
++        if let Some(returned) = self.returned.take() {
++            returned();
++        }
++    }
++}
+ 
+ /// How many opened textures and fences an importer keeps: a producer usually cycles a few
+ /// textures per stream, and one fence.

@@ -8,6 +8,7 @@ mod generated_catalogues;
 pub mod interruption;
 mod kit;
 pub mod layout;
+pub mod preview;
 pub mod tabs;
 mod tokens;
 pub mod window_control;

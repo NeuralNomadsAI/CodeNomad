@@ -31,6 +31,7 @@ pub struct LaunchConfig {
     pub startup_timeout: Duration,
     pub ephemeral_ports: bool,
     pub(super) persistent_root: Option<PathBuf>,
+    pub preview: bool,
 }
 impl LaunchConfig {
     pub fn explicit(
@@ -60,6 +61,7 @@ impl LaunchConfig {
             startup_timeout: Duration::from_secs(60),
             ephemeral_ports: false,
             persistent_root: None,
+            preview: false,
         })
     }
     /// Allocate one fresh test profile. Its root must not already exist.
@@ -194,7 +196,10 @@ impl LaunchConfig {
             .env("CODENOMAD_UPDATE_CHANNEL", &self.profile)
             .env("CODENOMAD_PROFILE_CONFIG_IDENTITY", &self.config_identity)
             .env("CODENOMAD_NATIVE_PARENT", "1")
-            .env("CODENOMAD_NATIVE_BROWSER_AUTOMATION", "0")
+            .env(
+                "CODENOMAD_NATIVE_BROWSER_AUTOMATION",
+                if self.preview { "1" } else { "0" },
+            )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

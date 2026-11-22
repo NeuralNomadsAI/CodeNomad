@@ -244,6 +244,8 @@ pub fn draft_changed(s: &mut State, _: &mut Tx) {
 }
 fn stash(s: &mut State) {
     capture(s);
+    #[cfg(not(target_arch = "wasm32"))]
+    s.preview.unbind();
     if let Some(files) = &mut s.files {
         files.activate(false);
     }
@@ -275,6 +277,10 @@ fn activate(s: &mut State, tx: &mut Tx) {
         l.creation_uncertain = false;
     }
     if let Some(cache) = item.cache.take() {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(backend) = item.binding.as_ref() {
+            s.preview.bind(backend);
+        }
         cache.apply(s);
         if let Some(files) = &mut s.files {
             files.activate(true);

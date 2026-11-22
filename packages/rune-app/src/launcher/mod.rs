@@ -502,6 +502,8 @@ pub fn back(s: &mut State) {
     }
     crate::workspace::capture(s);
     s.agent = None;
+    #[cfg(not(target_arch = "wasm32"))]
+    s.preview.unbind();
     s.commands = None;
     s.incoming = None;
     s.files = None;

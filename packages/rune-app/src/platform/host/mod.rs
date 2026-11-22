@@ -142,14 +142,29 @@ impl ChildHost {
                     }
                     protocol::Line::Native {
                         response,
+                        request,
                         expires,
                         deadline,
                     } => {
-                        let _ = replies.try_send(Control::Native {
-                            response,
-                            expires,
-                            deadline,
-                        });
+                        let respond = {
+                            let replies = replies.clone();
+                            move |response| {
+                                let _ = replies.try_send(Control::Native {
+                                    response,
+                                    expires,
+                                    deadline,
+                                });
+                            }
+                        };
+                        if let Some(response) =
+                            crate::platform::browser::dispatch(request, response, respond)
+                        {
+                            let _ = replies.try_send(Control::Native {
+                                response,
+                                expires,
+                                deadline,
+                            });
+                        }
                     }
                     protocol::Line::Diagnostic => {}
                 }

@@ -1,0 +1,84 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index ff886075..4fd6823b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -132,7 +132,13 @@ endif()
+ 
+ if (ENABLE_GUI_TARGETS)
+     add_subdirectory(Services)
+-    add_subdirectory(UI)
++    if (LADYBIRD_HEADLESS_ONLY)
++        include(UI/cmake/ResourceFiles.cmake)
++        set_target_properties(Hub PROPERTIES OUTPUT_NAME "Ladybird")
++        copy_resources_to_build("${CMAKE_BINARY_DIR}/${IN_BUILD_PREFIX}${CMAKE_INSTALL_DATADIR}/Lagom" Hub)
++    else()
++        add_subdirectory(UI)
++    endif()
+ 
+     include(check_skia_confinement)
+     set(processes_without_skia ${ladybird_helper_processes} ladybird WebDriver)
+diff --git a/Meta/CMake/check_for_dependencies.cmake b/Meta/CMake/check_for_dependencies.cmake
+index db142b9b..db8a2d56 100644
+--- a/Meta/CMake/check_for_dependencies.cmake
++++ b/Meta/CMake/check_for_dependencies.cmake
+@@ -145,7 +145,7 @@ else()
+     set(HAS_DIRECTX OFF CACHE BOOL "" FORCE)
+ endif()
+ 
+-if (ENABLE_GUI_TARGETS AND NOT ANDROID)
++if (ENABLE_GUI_TARGETS AND NOT ANDROID AND NOT LADYBIRD_HEADLESS_ONLY)
+     set(LADYBIRD_QT_COMPONENTS Core Gui Widgets)
+     if (NOT APPLE)
+         list(APPEND LADYBIRD_QT_COMPONENTS Positioning)
+diff --git a/Meta/CMake/cmake_options.cmake b/Meta/CMake/cmake_options.cmake
+index 7032bfc7..15e4461b 100644
+--- a/Meta/CMake/cmake_options.cmake
++++ b/Meta/CMake/cmake_options.cmake
+@@ -33,6 +33,7 @@ else()
+ endif()
+ 
+ option(ENABLE_GUI_TARGETS "Enable building GUI targets" ON)
++option(LADYBIRD_HEADLESS_ONLY "Use the standalone headless Hub without Qt" OFF)
+ option(LADYBIRD_BUILD_QT "Build and bundle Qt with vcpkg on Linux" OFF)
+ option(ENABLE_INSTALL_HEADERS "Enable installing headers" ON)
+ option(ENABLE_INSTALL_FREEDESKTOP_FILES "Enable installing .desktop and .service files" ${freedesktop_files_default})
+diff --git a/Meta/CMake/rust_crate.cmake b/Meta/CMake/rust_crate.cmake
+index 3b3e6214..84d56fc4 100644
+--- a/Meta/CMake/rust_crate.cmake
++++ b/Meta/CMake/rust_crate.cmake
+@@ -1,4 +1,4 @@
+-set_property(GLOBAL PROPERTY JOB_POOLS "${JOB_POOLS};cargo=1")
++set_property(GLOBAL APPEND PROPERTY JOB_POOLS cargo=1)
+ 
+ # Detect the Rust toolchain.
+ find_program(RUST_CARGO cargo REQUIRED)
+diff --git a/Services/Hub/CMakeLists.txt b/Services/Hub/CMakeLists.txt
+index 410288c3..f71daaa5 100644
+--- a/Services/Hub/CMakeLists.txt
++++ b/Services/Hub/CMakeLists.txt
+@@ -31,4 +31,8 @@ add_executable(Hub main.cpp)
+ target_include_directories(Hub PRIVATE ${LADYBIRD_SOURCE_DIR}/Services/)
+ target_link_libraries(Hub PRIVATE hubservice hubipc LibCore LibHTTP LibIPC LibMain LibRequests LibThreading LibURL LibWebView)
+ 
++if (WIN32 AND LADYBIRD_HEADLESS_ONLY)
++    ladybird_windows_bin(Hub CONSOLE)
++endif()
++
+ ladybird_sign_helper_process(Hub)
+diff --git a/Services/WebDriver/CMakeLists.txt b/Services/WebDriver/CMakeLists.txt
+index b0443a57..39706feb 100644
+--- a/Services/WebDriver/CMakeLists.txt
++++ b/Services/WebDriver/CMakeLists.txt
+@@ -18,7 +18,11 @@ target_link_libraries(WebDriver PRIVATE LibCore LibCrypto LibFileSystem LibGfx L
+ target_link_libraries(WebDriver PRIVATE OpenSSL::Crypto OpenSSL::SSL)
+ 
+ if (WIN32)
+-    ladybird_windows_bin(WebDriver)
++    if (LADYBIRD_HEADLESS_ONLY)
++        ladybird_windows_bin(WebDriver CONSOLE)
++    else()
++        ladybird_windows_bin(WebDriver)
++    endif()
+ endif()
+ 
+ ladybird_sign_helper_process(WebDriver)
